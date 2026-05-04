@@ -32,7 +32,7 @@ git remote -v
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "将一部分的环境变量调整为修改后无需重启服务"
+git commit -m "v0.5.3版本备份"
 
 # 2. 推送当前分支到私有仓库
 # 格式: git push <远程名称> <分支名>
