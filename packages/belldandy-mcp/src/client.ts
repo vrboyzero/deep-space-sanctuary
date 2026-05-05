@@ -469,6 +469,7 @@ export class MCPClient {
       return {
         success: !result.isError,
         content: normalized.content,
+        structuredContent: "structuredContent" in result ? result.structuredContent : undefined,
         isError: Boolean(result.isError),
         diagnostics: normalized.diagnostics,
       };

@@ -16,6 +16,7 @@ import {
 } from "@belldandy/mcp";
 import type { ToolExecutor, Tool, ToolContext, ToolCallResult } from "@belldandy/skills";
 import type { JsonObject } from "@belldandy/protocol";
+import { formatMcpToolError } from "./error-format.js";
 
 // ============================================================================
 // MCP 集成状态
@@ -184,7 +185,9 @@ export function getMCPTools(): Tool[] {
       });
 
       if (result.isError) {
-        throw new Error(result.error || "MCP 工具调用失败");
+        throw new Error(
+          formatMcpToolError(result, `MCP 工具调用失败: ${name}`)
+        );
       }
 
       // 提取结果内容

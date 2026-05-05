@@ -246,6 +246,29 @@ describe("MCPClient result normalization", () => {
     expect(result.content?.[0]?.text).toContain("/generated/");
   });
 
+  it("preserves structuredContent returned by MCP server", async () => {
+    const { client, internals } = createConnectedClient();
+    internals.client = {
+      callTool: vi.fn().mockResolvedValue({
+        isError: false,
+        structuredContent: {
+          ok: true,
+          value: 42
+        },
+        content: [{ type: "text", text: "{\"ok\":true,\"value\":42}" }],
+      }),
+      readResource: vi.fn(),
+    };
+
+    const result = await client.callTool("structured-demo", {});
+
+    expect(result.success).toBe(true);
+    expect(result.structuredContent).toEqual({
+      ok: true,
+      value: 42
+    });
+  });
+
   it("omits oversized resource blobs from inline payload and reports diagnostics", async () => {
     const { client, internals } = createConnectedClient();
     internals.client = {

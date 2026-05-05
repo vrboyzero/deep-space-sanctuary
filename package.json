@@ -61,9 +61,22 @@
     "start": "node packages/belldandy-core/dist/bin/bdd.js start",
     "dev": "node --import tsx packages/belldandy-core/src/bin/bdd.ts dev",
     "dev:gateway": "node --import tsx packages/belldandy-core/src/bin/bdd.ts dev",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:star-weaver-engine": "vitest run --config Star_Weaver_Engine/vitest.config.ts",
+    "typecheck:star-weaver-engine": "tsc -p Star_Weaver_Engine/tsconfig.json",
+    "starweaver:mcp": "node --import tsx Star_Weaver_Engine/mcp-server/index.ts",
+    "starweaver:southbound": "node --import tsx Star_Weaver_Engine/adapters/southbound/ws/serve.ts",
+    "smoke:star-weaver-engine:prepare": "node Star_Weaver_Engine/smoke/prepareWebVerify.mjs",
+    "smoke:star-weaver-engine:wait-session": "node Star_Weaver_Engine/smoke/waitForSession.mjs",
+    "smoke:star-weaver-engine:fullchain": "node Star_Weaver_Engine/smoke/fullchainSmoke.mjs",
+    "smoke:star-weaver-engine:event-automation": "node Star_Weaver_Engine/smoke/eventAutomationSmoke.mjs",
+    "smoke:star-weaver-engine:target-aware": "node Star_Weaver_Engine/smoke/targetAwareSmoke.mjs",
+    "smoke:star-weaver-engine:combat-regression": "node Star_Weaver_Engine/smoke/combatRegressionSmoke.mjs",
+    "smoke:star-weaver-engine:regression-chain": "node Star_Weaver_Engine/smoke/regressionChainSmoke.mjs",
+    "smoke:star-weaver-engine:all": "node Star_Weaver_Engine/smoke/allSmoke.mjs"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "@types/express": "^5.0.3",
     "@types/node": "^22.13.1",
     "@types/ws": "^8.18.1",
@@ -73,7 +86,8 @@
     "tsx": "^4.20.5",
     "typescript": "^5.7.3",
     "vitest": "^2.1.9",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "^3.24.0"
   }
 }
 

@@ -1,5 +1,6 @@
 import type { MCPManager } from "@belldandy/mcp";
 import type { MCPRuntimeCapabilities } from "@belldandy/skills";
+import { formatMcpToolError } from "./error-format.js";
 
 function formatMcpBridgeResultContent(result: Awaited<ReturnType<MCPManager["callTool"]>>): unknown {
   if (!result.content || result.content.length === 0) {
@@ -43,7 +44,12 @@ export function createBridgeMcpCapabilities(
       });
 
       if (result.isError) {
-        throw new Error(result.error || `MCP 工具调用失败: ${request.serverId}/${request.toolName}`);
+        throw new Error(
+          formatMcpToolError(
+            result,
+            `MCP 工具调用失败: ${request.serverId}/${request.toolName}`
+          )
+        );
       }
 
       return formatMcpBridgeResultContent(result);

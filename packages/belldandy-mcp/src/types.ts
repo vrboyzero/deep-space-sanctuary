@@ -268,6 +268,8 @@ export interface MCPToolCallResult {
   success: boolean;
   /** 结果内容 */
   content?: MCPToolContentItem[];
+  /** 结构化输出内容（如果 MCP server 返回） */
+  structuredContent?: unknown;
   /** 错误信息 */
   error?: string;
   /** 是否为错误响应 */
