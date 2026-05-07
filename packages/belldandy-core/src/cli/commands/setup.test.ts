@@ -81,10 +81,12 @@ test("bdd setup quickstart guidance points users to WebChat settings instead of 
     flow: "quickstart",
     interactive: true,
     existedBefore: false,
+    starweaverCentralConfigured: true,
   });
 
   expect(notes[0]).toContain("QuickStart no longer collects provider/API/model in CLI");
   expect(notes).toContain("Then open WebChat Settings to complete provider / API Key / model setup.");
+  expect(notes).toContain("Starweaver shared-host routing was written to mcp.json; start Star_Weaver_Engine with 'pnpm host:central' and replace the placeholder SSE API key before connect.");
 });
 
 test("bdd setup advanced guidance keeps deployment setup but still hands model config to WebChat", () => {
@@ -92,8 +94,10 @@ test("bdd setup advanced guidance keeps deployment setup but still hands model c
     flow: "advanced",
     interactive: true,
     existedBefore: true,
+    starweaverCentralConfigured: false,
   });
 
   expect(notes[0]).toContain("Advanced saved deployment settings only");
   expect(notes).toContain("Run 'bdd doctor' to verify the updated setup.");
+  expect(notes).toContain("Run 'bdd configure bridge starweaver-central' to write the recommended Starweaver shared-host routing template.");
 });

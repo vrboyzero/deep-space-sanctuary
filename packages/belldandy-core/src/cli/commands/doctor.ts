@@ -28,6 +28,7 @@ import {
   buildToolContractV2Summary,
   listToolContractsV2,
 } from "@belldandy/skills";
+import { readMcpRoutingDoctorReport } from "../../mcp-config-routing.js";
 import { buildResidentAgentObservabilitySnapshot } from "../../resident-agent-observability.js";
 import { resolveResidentMemoryPolicy } from "../../resident-memory-policy.js";
 import { buildDeploymentBackendsDoctorReport } from "../../deployment-backends.js";
@@ -259,19 +260,37 @@ function checkMemoryDb(stateDir: string): CheckResult {
   return { name: "Memory DB", status: "warn", message: "not created yet (will be created on first start)" };
 }
 
-function checkMcpConfig(stateDir: string): CheckResult {
-  const mcpPath = path.join(stateDir, "mcp.json");
-  if (!fs.existsSync(mcpPath)) {
+async function checkMcpConfig(stateDir: string): Promise<CheckResult> {
+  const report = await readMcpRoutingDoctorReport(stateDir);
+  if (!report.exists) {
     return { name: "MCP config", status: "pass", message: "not configured (optional)" };
   }
-  try {
-    const raw = fs.readFileSync(mcpPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    const serverCount = parsed.servers?.length ?? Object.keys(parsed.mcpServers ?? {}).length ?? 0;
-    return { name: "MCP config", status: "pass", message: `${serverCount} server(s) configured` };
-  } catch (err) {
-    return { name: "MCP config", status: "warn", message: `Parse error: ${err instanceof Error ? err.message : String(err)}` };
+  if (report.parseError) {
+    return { name: "MCP config", status: "warn", message: `Parse error: ${report.parseError}` };
   }
+  return { name: "MCP config", status: "pass", message: `${report.serverCount} server(s) configured` };
+}
+
+async function checkStarweaverMcpRouting(stateDir: string): Promise<CheckResult> {
+  const report = await readMcpRoutingDoctorReport(stateDir);
+  if (report.parseError) {
+    return {
+      name: "Starweaver MCP Routing",
+      status: "warn",
+      message: `Unavailable: ${report.parseError}`,
+      fix: "Fix mcp.json before relying on Star Weaver MCP routes.",
+    };
+  }
+
+  const status = report.starweaver.status === "central_primary" || report.starweaver.status === "not_configured"
+    ? "pass"
+    : "warn";
+  return {
+    name: "Starweaver MCP Routing",
+    status,
+    message: report.starweaver.headline,
+    fix: status === "warn" ? report.starweaver.fix : undefined,
+  };
 }
 
 function formatDoctorKeyCountSummary(value: Record<string, number> | undefined): string {
@@ -361,6 +380,9 @@ export default defineCommand({
       optionalCapabilities,
       cameraRuntime,
       runtimeResilience,
+      mcpConfigCheck,
+      starweaverRoutingCheck,
+      mcpRouting,
     ] = await Promise.all([
       checkPnpm(),
       checkPort(port),
@@ -375,6 +397,9 @@ export default defineCommand({
         },
       }),
       readRuntimeResilienceDoctorReport(stateDir),
+      checkMcpConfig(stateDir),
+      checkStarweaverMcpRouting(stateDir),
+      readMcpRoutingDoctorReport(stateDir),
     ]);
 
     results.push(checkNodeVersion());
@@ -385,7 +410,8 @@ export default defineCommand({
     results.push(...requiredEnvChecks);
     results.push(portCheck);
     results.push(checkMemoryDb(stateDir));
-    results.push(checkMcpConfig(stateDir));
+    results.push(mcpConfigCheck);
+    results.push(starweaverRoutingCheck);
     if (args["check-model"]) {
       results.push(modelConnectivityCheck ?? { name: "Model connectivity", status: "warn", message: "skipped" });
     }
@@ -485,6 +511,7 @@ export default defineCommand({
         residentAgents,
         deploymentBackends,
         optionalCapabilities,
+        mcpRouting,
         ...(cameraRuntime ? { cameraRuntime } : {}),
         ...(runtimeResilience ? { runtimeResilience } : {}),
         ...(runtimeResilienceDiagnostics ? { runtimeResilienceDiagnostics } : {}),

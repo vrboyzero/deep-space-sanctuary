@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -47,6 +48,26 @@ beforeAll(() => {
 afterEach(() => {
   cleanupGlobalMemoryManagersForTest();
 });
+
+async function listenOnEphemeralPort(): Promise<{ port: number; close: () => Promise<void> }> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer((socket) => socket.destroy());
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to resolve ephemeral port")));
+        return;
+      }
+      resolve({
+        port: address.port,
+        close: () => new Promise<void>((closeResolve, closeReject) => {
+          server.close((error) => error ? closeReject(error) : closeResolve());
+        }),
+      });
+    });
+  });
+}
 
 async function createFakeCameraDoctorHelperScript(): Promise<string> {
   const helperDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-camera-doctor-helper-"));
@@ -1060,20 +1081,22 @@ test("system.doctor exposes config source summary for state-dir config mode", as
 
     const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-config-source");
     expect(response.ok).toBe(true);
+    expect(["default_home", "bootstrap_env", "process_env"]).toContain(response.payload?.configSource?.stateDirSource);
+    expect(["default home", "bootstrap env", "process env"]).toContain(response.payload?.configSource?.stateDirSourceLabel);
     expect(response.payload?.configSource).toMatchObject({
       source: "state_dir",
-      stateDirSource: "default_home",
-      stateDirSourceLabel: "default home",
       sourceLabel: "state-dir config",
       envDir: path.resolve(stateDir),
       stateDir: path.resolve(stateDir),
       stateDirActive: true,
       projectRootWins: false,
       resolutionOrder: expect.arrayContaining([
-        "stateDir source (default home)",
         "state-dir config (BELLDANDY_STATE_DIR)",
       ]),
     });
+    expect(response.payload?.configSource?.resolutionOrder?.[0]).toBe(
+      `stateDir source (${response.payload?.configSource?.stateDirSourceLabel})`
+    );
     expect(response.payload?.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "config_source",
@@ -1194,6 +1217,171 @@ test("system.doctor includes MCP recovery and persisted-result summary when MCP 
     } else {
       process.env.BELLDANDY_MCP_ENABLED = previousMcpEnabled;
     }
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("system.doctor reports starweaver-central as primary when local stdio fallback is inactive", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-starweaver-routing-"));
+  const listener = await listenOnEphemeralPort();
+  await fs.promises.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      starweaver: {
+        command: "node",
+        args: ["E:/project/star-sanctuary/Star_Weaver_Engine/host/mcpSouthboundHost.ts"],
+        autoConnect: false,
+      },
+      "starweaver-central": {
+        url: `http://127.0.0.1:${listener.port}/sse`,
+        headers: {
+          Authorization: "Bearer real-sse-key",
+        },
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    ws.send(JSON.stringify({ type: "req", id: "system-doctor-starweaver-routing", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-starweaver-routing"));
+
+    const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-starweaver-routing");
+    expect(response.ok).toBe(true);
+    expect(response.payload?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "starweaver_mcp_routing",
+        status: "pass",
+        message: "starweaver-central SSE is primary; local starweaver fallback is present but inactive.",
+      }),
+    ]));
+    expect(response.payload?.mcpRouting).toMatchObject({
+      serverCount: 2,
+      starweaver: {
+        status: "central_primary",
+      },
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await listener.close().catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("system.doctor warns when starweaver-central still uses the placeholder API key", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-starweaver-placeholder-"));
+  await fs.promises.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      starweaver: {
+        command: "node",
+        args: ["E:/project/star-sanctuary/Star_Weaver_Engine/host/mcpSouthboundHost.ts"],
+        autoConnect: false,
+      },
+      "starweaver-central": {
+        url: "http://127.0.0.1:28767/sse",
+        headers: {
+          Authorization: "Bearer replace-with-your-sse-api-key",
+        },
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    ws.send(JSON.stringify({ type: "req", id: "system-doctor-starweaver-placeholder", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-starweaver-placeholder"));
+
+    const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-starweaver-placeholder");
+    expect(response.ok).toBe(true);
+    expect(response.payload?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "starweaver_mcp_routing",
+        status: "warn",
+        message: expect.stringContaining("placeholder API key"),
+      }),
+    ]));
+    expect([
+      "central_primary_placeholder_key",
+      "central_primary_placeholder_key_unreachable",
+    ]).toContain(response.payload?.mcpRouting?.starweaver?.status);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("system.doctor warns when starweaver-central shared host is unreachable", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-starweaver-unreachable-"));
+  await fs.promises.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      "starweaver-central": {
+        url: "http://127.0.0.1:28779/sse",
+        headers: {
+          Authorization: "Bearer real-sse-key",
+        },
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    ws.send(JSON.stringify({ type: "req", id: "system-doctor-starweaver-unreachable", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-starweaver-unreachable"));
+
+    const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-starweaver-unreachable");
+    expect(response.ok).toBe(true);
+    expect(response.payload?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "starweaver_mcp_routing",
+        status: "warn",
+        message: expect.stringContaining("shared host is unreachable"),
+      }),
+    ]));
+    expect(response.payload?.mcpRouting?.starweaver?.status).toBe("central_primary_unreachable");
+    expect(response.payload?.mcpRouting?.starweaver?.runtimeProbe?.reachable).toBe(false);
+  } finally {
     ws.close();
     await closeP;
     await server.close();

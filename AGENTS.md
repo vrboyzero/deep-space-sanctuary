@@ -42,6 +42,16 @@ Persist local machine settings in `.env.local`, not `.env`. Do not commit secret
 
 WebChat security-sensitive settings are pairing-protected by default. If multiple settings suddenly show “read failed,” verify whether the current session has completed pairing before treating it as a UI regression. Also confirm auth combinations before enabling external APIs or public bind addresses; `BELLDANDY_AUTH_MODE=none` is not compatible with every outbound capability.
 
+## Planning Requirements
+When a task needs an implementation plan, architecture note, rollout plan, or phased proposal, do not stop at a step list. The written plan must explicitly cover:
+- risk level and the main failure modes,
+- feasibility and key prerequisites or dependencies,
+- rough workload / implementation size,
+- closure boundary: what is included, what is explicitly excluded, and what counts as done,
+- intended effect: why each planned item exists and what outcome it should produce.
+
+The goal is to prevent plans from expanding without control. If any item is intentionally deferred, say so directly.
+
 ## Testing & Validation Guidelines
 Vitest is the primary test runner. Add or update tests for logic changes, especially in `packages/*/src` and `apps/web/public/app/features/`. For small frontend, settings, or doctor changes, prefer this order: pure function tests, then targeted module validation, then minimal browser verification.
 

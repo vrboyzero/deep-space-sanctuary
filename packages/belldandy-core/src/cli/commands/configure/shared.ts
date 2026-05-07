@@ -5,7 +5,10 @@ import type { AdvancedModulesWizardResult } from "../../wizard/advanced-modules.
 export interface ConfigureCompletionSummary {
   changed: boolean;
   message: string;
+  notes: string[];
 }
+
+const STARWEAVER_SHARED_HOST_NOTE = "Starweaver shared-host default remains: prefer starweaver-central, keep local starweaver only as fallback with autoConnect=false.";
 
 export function describeConfigureCompletion(
   module: AdvancedModule,
@@ -16,6 +19,7 @@ export function describeConfigureCompletion(
   return {
     changed,
     message: changed ? `${label} configuration saved` : `${label} configuration unchanged`,
+    notes: [...result.notes, STARWEAVER_SHARED_HOST_NOTE],
   };
 }
 
@@ -33,7 +37,7 @@ export function printConfigureCompletion(
       label,
       changed: summary.changed,
       configuredModules: result.configuredModules,
-      notes: result.notes,
+      notes: summary.notes,
     });
     return;
   }
@@ -43,7 +47,7 @@ export function printConfigureCompletion(
   } else {
     ctx.log(summary.message);
   }
-  for (const note of result.notes) {
+  for (const note of summary.notes) {
     ctx.log(`  ${note}`);
   }
 }

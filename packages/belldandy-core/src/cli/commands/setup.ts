@@ -9,6 +9,7 @@ import fs from "node:fs";
 import pc from "picocolors";
 import { ensureDefaultEnvFiles } from "@star-sanctuary/distribution";
 import { createCLIContext } from "../shared/context.js";
+import { configureStarweaverCentral } from "./configure/bridge-starweaver-central.js";
 import {
   parseEnvFile,
   removeEnvValue,
@@ -50,6 +51,9 @@ const INTERACTIVE_MANAGED_ENV_KEYS = [
   "BELLDANDY_AUTH_PASSWORD",
 ] as const;
 
+const DEFAULT_STARWEAVER_CENTRAL_URL = "http://127.0.0.1:28767/sse";
+const DEFAULT_STARWEAVER_AUTH_HEADER = "Bearer replace-with-your-sse-api-key";
+
 function hasNonInteractiveFlags(args: Record<string, unknown>): boolean {
   return NON_INTERACTIVE_INPUT_KEYS.some((key) => {
     const value = args[key];
@@ -61,10 +65,14 @@ export function buildSetupNextStepNotes(params: {
   flow: SetupFlow;
   interactive: boolean;
   existedBefore: boolean;
+  starweaverCentralConfigured: boolean;
 }): string[] {
   const doctorLine = params.existedBefore
     ? "Run 'bdd doctor' to verify the updated setup."
     : "Run 'bdd doctor' to verify your setup.";
+  const starweaverLine = params.starweaverCentralConfigured
+    ? "Starweaver shared-host routing was written to mcp.json; start Star_Weaver_Engine with 'pnpm host:central' and replace the placeholder SSE API key before connect."
+    : "Run 'bdd configure bridge starweaver-central' to write the recommended Starweaver shared-host routing template.";
 
   if (!params.interactive) {
     return [
@@ -72,6 +80,7 @@ export function buildSetupNextStepNotes(params: {
       params.existedBefore
         ? "Run 'bdd start' to relaunch Belldandy with the new config."
         : "Run 'bdd start' to launch Belldandy.",
+      starweaverLine,
     ];
   }
 
@@ -82,6 +91,7 @@ export function buildSetupNextStepNotes(params: {
     "Next: run your installed start.bat or start.sh (or use 'bdd start' in a dev workspace).",
     "Then open WebChat Settings to complete provider / API Key / model setup.",
     doctorLine,
+    starweaverLine,
   ];
 }
 
@@ -206,10 +216,25 @@ export default defineCommand({
       updateEnvValue(envPath, key, value);
     }
 
+    const starweaverRouting = await configureStarweaverCentral({
+      stateDir: ctx.stateDir,
+      workspaceRoot: process.cwd(),
+      centralUrl: DEFAULT_STARWEAVER_CENTRAL_URL,
+      authorizationHeader: DEFAULT_STARWEAVER_AUTH_HEADER,
+      localServerId: "starweaver",
+      centralServerId: "starweaver-central",
+    });
+    const starweaverNotes = [
+      starweaverRouting.changed
+        ? `Wrote Starweaver shared-host routing to ${starweaverRouting.mcpPath} (starweaver-central primary, local starweaver fallback autoConnect=false).`
+        : `Starweaver shared-host routing in ${starweaverRouting.mcpPath} already matched the recommended central-mode template.`,
+    ];
+
     const nextStepNotes = buildSetupNextStepNotes({
       flow: answers.flow,
       interactive: interactiveSetup,
       existedBefore,
+      starweaverCentralConfigured: true,
     });
 
     if (ctx.json) {
@@ -225,7 +250,15 @@ export default defineCommand({
         flow: answers.flow,
         scenario: answers.scenario,
         configuredModules: [],
-        notes: [...setupNotes, ...nextStepNotes],
+        notes: [...setupNotes, ...starweaverNotes, ...nextStepNotes],
+        starweaverRouting: {
+          configured: true,
+          changed: starweaverRouting.changed,
+          mcpPath: starweaverRouting.mcpPath,
+          primaryServerId: starweaverRouting.centralServerId,
+          fallbackServerId: starweaverRouting.localServerId,
+          centralUrl: starweaverRouting.centralUrl,
+        },
         config: written,
       });
     } else {
@@ -238,10 +271,13 @@ export default defineCommand({
       for (const note of setupNotes) {
         console.log(pc.dim(`  ${note}`));
       }
+      for (const note of starweaverNotes) {
+        console.log(pc.dim(`  ${note}`));
+      }
       for (const note of nextStepNotes) {
         console.log(pc.dim(`  ${note}`));
       }
-      if (setupNotes.length > 0 || nextStepNotes.length > 0) {
+      if (setupNotes.length > 0 || starweaverNotes.length > 0 || nextStepNotes.length > 0) {
         console.log("");
       }
     }

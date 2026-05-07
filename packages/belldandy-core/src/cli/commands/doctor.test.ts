@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -26,6 +27,26 @@ afterEach(() => {
   vi.restoreAllMocks();
   execFileSyncMock.mockReset();
 });
+
+async function listenOnEphemeralPort(): Promise<{ port: number; close: () => Promise<void> }> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer((socket) => socket.destroy());
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to resolve ephemeral port")));
+        return;
+      }
+      resolve({
+        port: address.port,
+        close: () => new Promise<void>((closeResolve, closeReject) => {
+          server.close((error) => error ? closeReject(error) : closeResolve());
+        }),
+      });
+    });
+  });
+}
 
 async function createFakeCameraDoctorHelperScript(): Promise<string> {
   const helperDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-camera-doctor-helper-"));
@@ -520,6 +541,139 @@ test("bdd doctor json output includes runtime resilience summary when available"
       status: "warn",
       message: "recent_degrade: Latest runtime required retry/fallback to recover.",
     });
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, CLI_DOCTOR_TEST_TIMEOUT_MS);
+
+test("bdd doctor reports starweaver-central as the primary route when local stdio fallback is inactive", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-doctor-starweaver-"));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const listener = await listenOnEphemeralPort();
+  await fs.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      starweaver: {
+        command: "node",
+        args: ["E:/project/star-sanctuary/Star_Weaver_Engine/host/mcpSouthboundHost.ts"],
+        autoConnect: false,
+      },
+      "starweaver-central": {
+        url: `http://127.0.0.1:${listener.port}/sse`,
+        headers: {
+          Authorization: "Bearer real-sse-key",
+        },
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  try {
+    await doctorCommand.run?.({
+      args: {
+        json: true,
+        "state-dir": stateDir,
+      },
+    } as never);
+
+    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    const parsed = JSON.parse(output);
+    const routingCheck = parsed.checks.find((item: { name: string }) => item.name === "Starweaver MCP Routing");
+    expect(routingCheck).toMatchObject({
+      status: "pass",
+      message: "starweaver-central SSE is primary; local starweaver fallback is present but inactive.",
+    });
+    expect(parsed.mcpRouting).toMatchObject({
+      serverCount: 2,
+      starweaver: {
+        status: "central_primary",
+      },
+    });
+    expect(parsed.mcpRouting.starweaver.local).toMatchObject({
+      id: "starweaver",
+      autoConnect: false,
+      transport: "stdio",
+    });
+    expect(parsed.mcpRouting.starweaver.central).toMatchObject({
+      id: "starweaver-central",
+      autoConnect: true,
+      transport: "sse",
+      url: `http://127.0.0.1:${listener.port}/sse`,
+    });
+  } finally {
+    await listener.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, CLI_DOCTOR_TEST_TIMEOUT_MS);
+
+test("bdd doctor warns when starweaver-central still uses the placeholder API key", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-doctor-starweaver-placeholder-"));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  await fs.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      starweaver: {
+        command: "node",
+        args: ["E:/project/star-sanctuary/Star_Weaver_Engine/host/mcpSouthboundHost.ts"],
+        autoConnect: false,
+      },
+      "starweaver-central": {
+        url: "http://127.0.0.1:28767/sse",
+        headers: {
+          Authorization: "Bearer replace-with-your-sse-api-key",
+        },
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  try {
+    await doctorCommand.run?.({
+      args: {
+        json: true,
+        "state-dir": stateDir,
+      },
+    } as never);
+
+    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    const parsed = JSON.parse(output);
+    const routingCheck = parsed.checks.find((item: { name: string }) => item.name === "Starweaver MCP Routing");
+    expect(routingCheck.status).toBe("warn");
+    expect(routingCheck.message).toContain("placeholder API key");
+    expect([
+      "central_primary_placeholder_key",
+      "central_primary_placeholder_key_unreachable",
+    ]).toContain(parsed.mcpRouting.starweaver.status);
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, CLI_DOCTOR_TEST_TIMEOUT_MS);
+
+test("bdd doctor warns when starweaver-central shared host is unreachable", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-doctor-starweaver-unreachable-"));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  await fs.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      "starweaver-central": {
+        url: "http://127.0.0.1:28779/sse",
+        headers: {
+          Authorization: "Bearer real-sse-key",
+        },
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  try {
+    await doctorCommand.run?.({
+      args: {
+        json: true,
+        "state-dir": stateDir,
+      },
+    } as never);
+
+    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    const parsed = JSON.parse(output);
+    const routingCheck = parsed.checks.find((item: { name: string }) => item.name === "Starweaver MCP Routing");
+    expect(routingCheck.status).toBe("warn");
+    expect(routingCheck.message).toContain("shared host is unreachable");
+    expect(parsed.mcpRouting.starweaver.status).toBe("central_primary_unreachable");
+    expect(parsed.mcpRouting.starweaver.runtimeProbe.reachable).toBe(false);
   } finally {
     await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }

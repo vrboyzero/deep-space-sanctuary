@@ -28,20 +28,83 @@ git remote -v
 
 所有的日常开发、实验性功能、碎片的提交，都应该推送到 `private` 仓库。
 
-### 提交并推送到私有仓库
+### 先确认你当前在哪个分支
+
+执行前先看一次：
+
+```bash
+git branch --show-current
+```
+
+注意：
+
+- `git push private main` 的意思是：把**本地 `main` 分支**推送到**远端 `private/main`**
+- 它**不是**“把当前所在分支推送到 private”
+- 如果你当前开发分支不是 `main`，直接执行 `git push private main`，很可能会看到 `Everything up-to-date`，因为 Git 检查的是“本地 `main` 和远端 `private/main` 是否一致”
+
+### 场景 A：你就是在 `main` 上日常开发
 ```bash
 # 1. 正常添加并提交代码
 git add .
 git commit -m "增加.star_sanctuary-bootstrap/.env.local，实现状态目录的自举与真实环境路径的迁移"
 
 # 2. 推送当前分支到私有仓库
-# 格式: git push <远程名称> <分支名>
+# 这里当前分支就是 main，所以这样写没有问题
 git push private main
 ```
 
-### 内部从私有库拉取更新
+### 场景 B：你在功能分支上开发，但想直接覆盖更新到 `private/main`
+
+例如你当前在 `release-origin-main`、`dev`、`feature/foo` 之类的分支上开发。
+
+```bash
+# 1. 正常提交当前分支
+git add .
+git commit -m "your commit message"
+
+# 2. 把“当前分支 HEAD”推送到远端 private/main
+git push private HEAD:main
+```
+
+适用场景：
+
+- 私有仓库只作为内部开发备份
+- 你不要求“本地 `main` 始终等于 private/main”
+- 你只是希望把当前这批提交安全同步到私有仓库
+
+### 场景 C：你在功能分支上开发，但希望严格保持“先合到本地 main，再推 private/main”
+
+```bash
+# 1. 在当前功能分支完成开发并提交
+git add .
+git commit -m "your commit message"
+
+# 2. 切回 main
+git checkout main
+
+# 3. 合并功能分支
+git merge release-origin-main
+
+# 4. 再推送 main 到 private/main
+git push private main
+```
+
+适用场景：
+
+- 你希望 `main` 始终代表当前内部主线
+- 你希望 `git push private main` 的语义始终稳定
+- 你后续还要从 `main` 再同步到 `origin`
+
+### 内部从私有库拉取 `main` 更新
 如果有多台设备协作，从私有库拉取最新的内部代码：
 ```bash
+git pull private main
+```
+
+如果你本地跟踪的也是 `main`，更稳妥的做法通常是：
+
+```bash
+git checkout main
 git pull private main
 ```
 
@@ -98,6 +161,28 @@ git remote set-url private <新的仓库URL>
 ```bash
 git remote remove private
 ```
+
+### 判断为什么出现 `Everything up-to-date`
+
+```bash
+# 当前分支名
+git branch --show-current
+
+# 查看本地分支与远端跟踪关系
+git branch -vv
+
+# 看当前分支相对 main 多了哪些提交
+git log --oneline main..HEAD
+
+# 看 private/main 当前实际指向什么提交
+git ls-remote private refs/heads/main
+```
+
+常见原因：
+
+- 你执行了 `git push private main`，但当前开发分支其实不是 `main`
+- 本地 `main` 没有合入你当前分支的新提交
+- 远端 `private/main` 其实已经包含这些提交了
 
 ## 6. 发布链路维护提醒
 

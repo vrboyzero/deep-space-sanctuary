@@ -357,6 +357,7 @@ import { loadWebhookConfig, IdempotencyManager } from "../webhook/index.js";
 import { BELLDANDY_VERSION } from "../version.generated.js";
 import { checkForUpdates } from "../update-checker.js";
 import { writeMCPDiscoveryWorkspaceDocs, type MCPPromptDiscoveryState } from "../mcp-discovery.js";
+import { readMcpRoutingDoctorReport } from "../mcp-config-routing.js";
 import { createScopedMemoryManagers } from "../resident-memory-managers.js";
 import { loadConversationPromptSnapshotArtifact } from "../conversation-prompt-snapshot.js";
 import { PromptSnapshotStore } from "../prompt-snapshot-store.js";
@@ -1264,6 +1265,20 @@ if (mcpEnabled && toolsEnabled) {
       logger.info("mcp", `已启用，注册了 ${registeredCount} 个 MCP 工具`);
     }
     printMCPStatus(logger);
+    const mcpRouting = await readMcpRoutingDoctorReport(stateDir);
+    if (mcpRouting.parseError) {
+      logger.warn("mcp", `Starweaver MCP routing unavailable: ${mcpRouting.parseError}`);
+    } else if (mcpRouting.starweaver.status === "local_fallback_active") {
+      logger.warn("mcp", `${mcpRouting.starweaver.headline} ${mcpRouting.starweaver.fix ?? ""}`.trim());
+    } else if (
+      mcpRouting.starweaver.status === "central_primary_placeholder_key"
+      || mcpRouting.starweaver.status === "central_primary_unreachable"
+      || mcpRouting.starweaver.status === "central_primary_placeholder_key_unreachable"
+    ) {
+      logger.warn("mcp", `${mcpRouting.starweaver.headline} ${mcpRouting.starweaver.fix ?? ""}`.trim());
+    } else if (mcpRouting.starweaver.status === "central_primary") {
+      logger.info("mcp", mcpRouting.starweaver.headline);
+    }
   } catch (err) {
     logger.warn("mcp", "初始化失败，MCP 工具将不可用", err);
   }

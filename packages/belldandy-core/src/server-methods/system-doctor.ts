@@ -7,6 +7,7 @@ import {
   type StateDirBootstrapSource,
 } from "@star-sanctuary/distribution";
 import { loadStateDirBootstrapInfo } from "../../../star-sanctuary-distribution/src/state-dir-bootstrap.js";
+import { readMcpRoutingDoctorReport } from "../mcp-config-routing.js";
 
 import type {
   AgentRegistry,
@@ -935,6 +936,7 @@ export async function handleSystemDoctorMethod(
     loadError: extensionMarketplace.loadError,
   });
   const mcpRuntime = unwrapDoctorStageResult(mcpRuntimeResult);
+  const mcpRouting = await readMcpRoutingDoctorReport(ctx.stateDir);
 
   checks.push({
     id: "session_digest_runtime",
@@ -1145,6 +1147,18 @@ export async function handleSystemDoctorMethod(
         : mcpDiag
           ? `${mcpDiag.connectedCount}/${mcpDiag.serverCount} connected, ${mcpDiag.toolCount} tools${mcpRecoverySummary}${mcpPersistedSummary}`
       : "Unavailable",
+  });
+  checks.push({
+    id: "starweaver_mcp_routing",
+    name: "Starweaver MCP Routing",
+    status: mcpRouting.parseError
+      ? "warn"
+      : mcpRouting.starweaver.status === "central_primary" || mcpRouting.starweaver.status === "not_configured"
+        ? "pass"
+        : "warn",
+    message: mcpRouting.parseError
+      ? `Unavailable: ${mcpRouting.parseError}`
+      : mcpRouting.starweaver.headline,
   });
 
   let conversationDebug: Record<string, unknown> | undefined;
@@ -1617,6 +1631,7 @@ export async function handleSystemDoctorMethod(
       ...(emailInboundRuntime ? { emailInboundRuntime } : {}),
       ...(assistantModeRuntime ? { assistantModeRuntime } : {}),
       mcpRuntime,
+      mcpRouting,
       ...(channelSecurity.items.length ? { channelSecurity } : {}),
       ...(promptObservability ? { promptObservability } : {}),
       ...(toolBehaviorObservability ? { toolBehaviorObservability } : {}),

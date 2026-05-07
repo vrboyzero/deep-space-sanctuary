@@ -140,6 +140,8 @@ interface ExternalServerEntry {
   baseUrl?: string;
   /** SSE/HTTP: 请求头 */
   headers?: Record<string, string>;
+  /** 可选：是否自动连接 */
+  autoConnect?: boolean;
   /** 可选：是否禁用 */
   disabled?: boolean;
 }
@@ -168,6 +170,7 @@ function isExternalFormat(raw: unknown): raw is ExternalMCPConfig {
  * - 对象 key → id + name
  * - command/args/env/cwd → transport { type: "stdio", ... }
  * - url 或 baseUrl → transport { type: "sse", url, headers? }
+ * - autoConnect: false → autoConnect: false
  * - disabled: true → enabled: false
  * - 其余字段使用默认值
  */
@@ -202,6 +205,7 @@ function convertExternalConfig(external: ExternalMCPConfig): Record<string, unkn
       id,
       name: id,
       transport,
+      ...(typeof entry.autoConnect === "boolean" ? { autoConnect: entry.autoConnect } : {}),
       enabled: entry.disabled === true ? false : true,
     });
   }
