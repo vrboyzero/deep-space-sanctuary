@@ -32,7 +32,7 @@ git remote -v
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "开始做牵星系统"
+git commit -m "增加.star_sanctuary-bootstrap/.env.local，实现状态目录的自举与真实环境路径的迁移"
 
 # 2. 推送当前分支到私有仓库
 # 格式: git push <远程名称> <分支名>

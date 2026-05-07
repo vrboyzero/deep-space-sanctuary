@@ -3,13 +3,20 @@
  * Provides stateDir resolution, output mode, and logging helpers.
  */
 import pc from "picocolors";
-import { resolveEnvFilePaths, type EnvDirSource } from "@star-sanctuary/distribution";
+import {
+  resolveEnvFilePaths,
+  type EnvDirSource,
+  type StateDirBootstrapSource,
+} from "@star-sanctuary/distribution";
+import { loadStateDirBootstrapInfo } from "../../../../star-sanctuary-distribution/src/state-dir-bootstrap.js";
 import { resolveStateDir, loadProjectEnvFiles } from "./env-loader.js";
 
 export interface CLIContext {
   stateDir: string;
   envDir: string;
   envSource: EnvDirSource;
+  stateDirSource: StateDirBootstrapSource;
+  stateDirBootstrapFilePath?: string;
   json: boolean;
   verbose: boolean;
   log: (msg: string) => void;
@@ -25,7 +32,9 @@ export function createCLIContext(args: {
   stateDir?: string;
   verbose?: boolean;
 }): CLIContext {
-  const stateDir = args.stateDir ?? resolveStateDir();
+  const bootstrap = loadStateDirBootstrapInfo(process.env);
+  const resolvedEnv = bootstrap.env;
+  const stateDir = args.stateDir ?? resolveStateDir(resolvedEnv);
   const envDir = stateDir;
   const envFiles = resolveEnvFilePaths({ envDir });
   loadProjectEnvFiles({
@@ -39,6 +48,8 @@ export function createCLIContext(args: {
     stateDir,
     envDir,
     envSource: "state_dir" as EnvDirSource,
+    stateDirSource: args.stateDir ? "process_env" : bootstrap.source,
+    ...(bootstrap.bootstrapFilePath ? { stateDirBootstrapFilePath: bootstrap.bootstrapFilePath } : {}),
     json,
     verbose: args.verbose ?? false,
     log: (msg) => {

@@ -4,7 +4,9 @@ import path from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
+import { createCLIContext } from "./context.js";
 import { loadEnvFileIfExists, loadProjectEnvFiles, resolveEnvLocalPath } from "./env-loader.js";
+import { resolveStateDirBootstrapEnvPath } from "../../../../star-sanctuary-distribution/src/state-dir-bootstrap.js";
 
 const TRACKED_ENV_KEYS = [
   "BELLDANDY_AUTH_MODE",
@@ -137,4 +139,49 @@ test("loadEnvFileIfExists strips quotes and export prefix", async () => {
 test("resolveEnvLocalPath uses explicit env dir when provided", () => {
   expect(resolveEnvLocalPath("E:/project/star-sanctuary/.star_sanctuary"))
     .toBe(path.resolve("E:/project/star-sanctuary/.star_sanctuary", ".env.local"));
+});
+
+test("createCLIContext resolves stateDir from bootstrap env when explicit stateDir is absent", async () => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-bootstrap-"));
+  tempDirs.add(homeDir);
+  const bootstrapPath = resolveStateDirBootstrapEnvPath(homeDir);
+  await fs.mkdir(path.dirname(bootstrapPath), { recursive: true });
+  await fs.writeFile(bootstrapPath, 'BELLDANDY_STATE_DIR="H:/bootstrap-state"\n', "utf-8");
+
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousHomeDrive = process.env.HOMEDRIVE;
+  const previousHomePath = process.env.HOMEPATH;
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+  process.env.HOMEDRIVE = path.parse(homeDir).root.replace(/[\\\/]+$/, "");
+  process.env.HOMEPATH = homeDir.slice(path.parse(homeDir).root.length - 1).replace(/\//g, "\\");
+  try {
+    const ctx = createCLIContext({ json: true });
+    expect(path.normalize(ctx.stateDir)).toBe(path.normalize("H:/bootstrap-state"));
+    expect(path.normalize(ctx.envDir)).toBe(path.normalize("H:/bootstrap-state"));
+    expect(ctx.stateDirSource).toBe("bootstrap_env");
+    expect(ctx.stateDirBootstrapFilePath).toBe(bootstrapPath);
+  } finally {
+    if (typeof previousHome === "string") {
+      process.env.HOME = previousHome;
+    } else {
+      delete process.env.HOME;
+    }
+    if (typeof previousUserProfile === "string") {
+      process.env.USERPROFILE = previousUserProfile;
+    } else {
+      delete process.env.USERPROFILE;
+    }
+    if (typeof previousHomeDrive === "string") {
+      process.env.HOMEDRIVE = previousHomeDrive;
+    } else {
+      delete process.env.HOMEDRIVE;
+    }
+    if (typeof previousHomePath === "string") {
+      process.env.HOMEPATH = previousHomePath;
+    } else {
+      delete process.env.HOMEPATH;
+    }
+  }
 });

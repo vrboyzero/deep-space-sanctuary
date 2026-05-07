@@ -474,6 +474,12 @@ export default defineCommand({
       ctx.output({
         checks: results,
         summary,
+        configSource: {
+          stateDir: ctx.stateDir,
+          envDir: ctx.envDir,
+          stateDirSource: ctx.stateDirSource,
+          ...(ctx.stateDirBootstrapFilePath ? { stateDirBootstrapFilePath: ctx.stateDirBootstrapFilePath } : {}),
+        },
         toolBehaviorObservability,
         toolContractV2Observability,
         residentAgents,
@@ -487,6 +493,7 @@ export default defineCommand({
     }
 
     ctx.log("Star Sanctuary Doctor\n");
+    ctx.log(`  State Dir Source: ${ctx.stateDirSource}${ctx.stateDirBootstrapFilePath ? ` (${ctx.stateDirBootstrapFilePath})` : ""}`);
     for (const r of results) {
       const icon = r.status === "pass" ? "\u2713" : r.status === "warn" ? "\u26A0" : "\u2717";
       const colorFn =

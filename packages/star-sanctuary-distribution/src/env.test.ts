@@ -13,6 +13,7 @@ import {
   resolveRuntimeEnvDir,
   resolveDefaultEnvTemplatePaths,
 } from "./env.js";
+import { loadStateDirBootstrapInfo, resolveStateDirBootstrapEnvPath } from "./state-dir-bootstrap.js";
 
 const tempDirs = new Set<string>();
 
@@ -167,6 +168,46 @@ test("resolveRuntimeEnvDir prefers explicit env dir over fallback state dir", ()
   });
 
   expect(envDir).toBe("/tmp/custom-env");
+});
+
+test("loadStateDirBootstrapInfo loads BELLDANDY_STATE_DIR from bootstrap env when process env is absent", async () => {
+  const homeDir = await createTempDir();
+  const bootstrapDir = path.dirname(resolveStateDirBootstrapEnvPath(homeDir));
+  await fs.mkdir(bootstrapDir, { recursive: true });
+  await fs.writeFile(
+    resolveStateDirBootstrapEnvPath(homeDir),
+    'BELLDANDY_STATE_DIR="H:/bootstrap-state"\nBELLDANDY_PORT=39999\n',
+    "utf-8",
+  );
+
+  try {
+    const result = loadStateDirBootstrapInfo({}, { homeDir });
+    expect(result.source).toBe("bootstrap_env");
+    expect(result.env.BELLDANDY_STATE_DIR).toBe("H:/bootstrap-state");
+    expect(result.env.BELLDANDY_PORT).toBeUndefined();
+    expect(result.bootstrapFilePath).toBe(resolveStateDirBootstrapEnvPath(homeDir));
+  } finally {
+  }
+});
+
+test("loadStateDirBootstrapInfo keeps explicit process env over bootstrap env", async () => {
+  const homeDir = await createTempDir();
+  const bootstrapDir = path.dirname(resolveStateDirBootstrapEnvPath(homeDir));
+  await fs.mkdir(bootstrapDir, { recursive: true });
+  await fs.writeFile(
+    resolveStateDirBootstrapEnvPath(homeDir),
+    'BELLDANDY_STATE_DIR="H:/bootstrap-state"\n',
+    "utf-8",
+  );
+
+  try {
+    const result = loadStateDirBootstrapInfo({
+      BELLDANDY_STATE_DIR: "E:/process-state",
+    }, { homeDir });
+    expect(result.source).toBe("process_env");
+    expect(result.env.BELLDANDY_STATE_DIR).toBe("E:/process-state");
+  } finally {
+  }
 });
 
 test("default env template loader resolves template asset paths", () => {

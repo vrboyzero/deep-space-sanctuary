@@ -366,6 +366,32 @@ The current rule is now:
 2. always read `.env / .env.local` from `stateDir`
 3. by default, `stateDir` is usually the `.star_sanctuary` folder under your home directory
 
+If you need to redirect the state directory before the runtime starts reading `stateDir/.env`, you can add a small bootstrap hint file:
+
+```text
+<homeDir>/.star_sanctuary-bootstrap/.env.local
+```
+
+Common Windows path:
+
+```text
+C:\Users\YourName\.star_sanctuary-bootstrap\.env.local
+```
+
+This file only handles early `stateDir` bootstrap. It should normally contain only one of these variables:
+
+```env
+BELLDANDY_STATE_DIR=H:\.star_sanctuary
+# BELLDANDY_STATE_DIR_WINDOWS=C:\Users\your-name\.star_sanctuary
+# BELLDANDY_STATE_DIR_WSL=~/.star_sanctuary
+```
+
+Important:
+
+- `.star_sanctuary-bootstrap/.env.local` is not a full runtime config entrypoint
+- keep model, port, logging, channel, and API key settings in the final `stateDir/.env` and `stateDir/.env.local`
+- if this bootstrap file does not exist, the runtime still falls back to the normal default `~/.star_sanctuary`
+
 Notes:
 
 - there is no separate runtime `envDir` anymore

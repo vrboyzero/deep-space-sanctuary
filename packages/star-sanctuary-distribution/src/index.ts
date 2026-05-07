@@ -10,6 +10,12 @@ export {
   type EnsureDefaultEnvFilesResult,
 } from "./env.js";
 export {
+  loadStateDirBootstrapInfo,
+  resolveStateDirBootstrapEnvPath,
+  type StateDirBootstrapInfo,
+  type StateDirBootstrapSource,
+} from "./state-dir-bootstrap.js";
+export {
   getForegroundPidFile,
   preflightGatewayCleanup,
   removeForegroundPid,

@@ -2,7 +2,11 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
-import type { EnvDirSource } from "@star-sanctuary/distribution";
+import {
+  type EnvDirSource,
+  type StateDirBootstrapSource,
+} from "@star-sanctuary/distribution";
+import { loadStateDirBootstrapInfo } from "../../../star-sanctuary-distribution/src/state-dir-bootstrap.js";
 
 import type {
   AgentRegistry,
@@ -293,17 +297,28 @@ function buildConfigSourceDoctorReport(ctx: Pick<SystemDoctorMethodContext, "env
   const stateDir = path.resolve(ctx.stateDir);
   const envDir = stateDir;
   const source = resolveDoctorEnvSource(envDir, stateDir, ctx.envSource);
+  const bootstrap = loadStateDirBootstrapInfo(process.env);
+  const stateDirSource: StateDirBootstrapSource = bootstrap.source;
+  const stateDirSourceLabel = stateDirSource === "bootstrap_env"
+    ? "bootstrap env"
+    : stateDirSource === "process_env"
+      ? "process env"
+      : "default home";
   const sourceLabel = "state-dir config";
-  const headline = `Using state-dir config from ${stateDir}; Gateway reads .env / .env.local from BELLDANDY_STATE_DIR on every start.`;
+  const headline = `Using state-dir config from ${stateDir}; stateDir source=${stateDirSourceLabel}; Gateway reads .env / .env.local from BELLDANDY_STATE_DIR on every start.`;
 
   return {
     envDir,
     stateDir,
     source,
+    stateDirSource,
+    stateDirSourceLabel,
+    ...(bootstrap.bootstrapFilePath ? { stateDirBootstrapFilePath: bootstrap.bootstrapFilePath } : {}),
     sourceLabel,
     stateDirActive: true,
     projectRootWins: false,
     resolutionOrder: [
+      `stateDir source (${stateDirSourceLabel})`,
       "state-dir config (BELLDANDY_STATE_DIR)",
     ],
     headline,

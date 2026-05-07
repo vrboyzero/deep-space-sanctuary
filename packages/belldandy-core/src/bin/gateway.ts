@@ -464,6 +464,10 @@ const extraWorkspaceRoots = extraWorkspaceRootsRaw
 // Logger（尽早初始化，后续所有输出走统一日志）
 const logger = createLoggerFromEnv(stateDir);
 logger.info("gateway", `Environment Dir: ${runtimePaths.envDir}`);
+logger.info(
+  "gateway",
+  `State Dir Source: ${runtimePaths.stateDirSource}${runtimePaths.stateDirBootstrapFilePath ? ` (${runtimePaths.stateDirBootstrapFilePath})` : ""}`,
+);
 if (ensuredDefaultEnvFiles.createdEnv) {
   logger.info("gateway", `Generated default .env at ${ensuredDefaultEnvFiles.envPath}`);
 }

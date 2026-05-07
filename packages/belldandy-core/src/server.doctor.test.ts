@@ -1062,12 +1062,15 @@ test("system.doctor exposes config source summary for state-dir config mode", as
     expect(response.ok).toBe(true);
     expect(response.payload?.configSource).toMatchObject({
       source: "state_dir",
+      stateDirSource: "default_home",
+      stateDirSourceLabel: "default home",
       sourceLabel: "state-dir config",
       envDir: path.resolve(stateDir),
       stateDir: path.resolve(stateDir),
       stateDirActive: true,
       projectRootWins: false,
       resolutionOrder: expect.arrayContaining([
+        "stateDir source (default home)",
         "state-dir config (BELLDANDY_STATE_DIR)",
       ]),
     });

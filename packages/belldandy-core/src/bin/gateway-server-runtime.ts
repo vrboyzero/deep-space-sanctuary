@@ -62,6 +62,7 @@ export function buildGatewayServerOptions(input: GatewayServerRuntimeInput): Gat
     auth: input.auth,
     webRoot: input.webRoot,
     envDir: input.envDir,
+    envSource: input.envSource,
     stateDir: input.stateDir,
     additionalWorkspaceRoots: input.additionalWorkspaceRoots,
     agentFactory: input.agentFactory,

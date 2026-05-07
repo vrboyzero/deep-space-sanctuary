@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadStateDirBootstrapInfo, type StateDirBootstrapSource } from "./state-dir-bootstrap.js";
 import { resolveStateDir } from "./state-dir.js";
 
 export type RuntimeMode = "source" | "portable" | "single-exe";
@@ -10,6 +11,8 @@ export type GatewayRuntimePaths = {
   mode: RuntimeMode;
   cwd: string;
   stateDir: string;
+  stateDirSource: StateDirBootstrapSource;
+  stateDirBootstrapFilePath?: string;
   envDir: string;
   envSource: EnvDirSource;
   runtimeDir?: string;
@@ -121,9 +124,11 @@ export function resolvePreferredEnvDir(
 export function resolvePreferredEnvDirInfo(
   options: ResolvePreferredEnvDirOptions = {},
 ): ResolvePreferredEnvDirResult {
+  const bootstrap = loadStateDirBootstrapInfo(options.env ?? process.env);
+  const resolvedEnv = bootstrap.env;
   const explicitEnvDir = resolveMaybePath(
     options.envDir
-      ?? readTrimmedEnv(options.env ?? process.env, "STAR_SANCTUARY_ENV_DIR", "BELLDANDY_ENV_DIR"),
+      ?? readTrimmedEnv(resolvedEnv, "STAR_SANCTUARY_ENV_DIR", "BELLDANDY_ENV_DIR"),
   );
   if (explicitEnvDir) {
     return {
@@ -131,7 +136,7 @@ export function resolvePreferredEnvDirInfo(
       source: "explicit",
     };
   }
-  const stateDir = path.resolve(options.stateDir ?? resolveStateDir(options.env ?? process.env));
+  const stateDir = path.resolve(options.stateDir ?? resolveStateDir(resolvedEnv));
   return {
     envDir: stateDir,
     source: "state_dir",
@@ -141,7 +146,8 @@ export function resolvePreferredEnvDirInfo(
 export function resolveGatewayRuntimePaths(
   options: ResolveGatewayRuntimePathsOptions = {},
 ): GatewayRuntimePaths {
-  const env = options.env ?? process.env;
+  const bootstrap = loadStateDirBootstrapInfo(options.env ?? process.env);
+  const env = bootstrap.env;
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const runtimeDir = resolveMaybePath(
     options.runtimeDir
@@ -200,6 +206,8 @@ export function resolveGatewayRuntimePaths(
     mode,
     cwd,
     stateDir,
+    stateDirSource: options.stateDir ? "process_env" : bootstrap.source,
+    ...(bootstrap.bootstrapFilePath ? { stateDirBootstrapFilePath: bootstrap.bootstrapFilePath } : {}),
     envDir,
     envSource: envSelection.source,
     runtimeDir,

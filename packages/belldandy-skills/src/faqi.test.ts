@@ -50,6 +50,37 @@ describe("faqi helpers", () => {
     expect(loaded.issues[0]?.name).toBe("broken");
   });
 
+  it("accepts grouped tool comments inside the tools section", async () => {
+    const stateDir = await createTempStateDir("belldandy-faqi-groups-");
+    await fs.writeFile(path.join(stateDir, "faqis", "full-dev.md"), [
+      "# 【FAQI | 法器 | full-dev】",
+      "",
+      "用途：带分组标题的 FAQI",
+      "",
+      "## tools",
+      "",
+      "# === 基础文件操作 ===",
+      "- file_read",
+      "- file_write",
+      "",
+      "# === 系统执行 ===",
+      "- run_command",
+      "",
+      "## notes",
+      "后续段落不应被当成工具",
+      "- not_a_tool_after_notes",
+    ].join("\n"), "utf-8");
+
+    const loaded = await loadFaqiDefinitions(stateDir);
+
+    expect(loaded.issues).toHaveLength(0);
+    expect(loaded.definitions).toHaveLength(1);
+    expect(loaded.definitions[0]).toMatchObject({
+      name: "full-dev",
+      toolNames: ["file_read", "file_write", "run_command"],
+    });
+  });
+
   it("resolves tool whitelist from currentFaqi and falls back to toolWhitelist", async () => {
     const stateDir = await createTempStateDir("belldandy-faqi-resolution-");
     await fs.writeFile(path.join(stateDir, "faqis", "safe-dev.md"), [

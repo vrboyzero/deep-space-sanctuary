@@ -398,6 +398,32 @@ cd star-sanctuary
 2. `.env / .env.local` 固定从 `stateDir` 读取
 3. 默认 `stateDir` 通常位于用户目录下的 `.star_sanctuary` 文件夹
 
+如果你需要在程序正式读取 `stateDir/.env` 之前，就把状态目录切到别的位置，可以额外使用一个 bootstrap 提示文件：
+
+```text
+<homeDir>/.star_sanctuary-bootstrap/.env.local
+```
+
+Windows 常见路径：
+
+```text
+C:\Users\你的用户名\.star_sanctuary-bootstrap\.env.local
+```
+
+这个文件只负责启动早期的 `stateDir` 自举，推荐只放下面三个变量之一：
+
+```env
+BELLDANDY_STATE_DIR=H:\.star_sanctuary
+# BELLDANDY_STATE_DIR_WINDOWS=C:\Users\your-name\.star_sanctuary
+# BELLDANDY_STATE_DIR_WSL=~/.star_sanctuary
+```
+
+注意：
+
+- `.star_sanctuary-bootstrap/.env.local` 不是完整运行配置入口
+- 模型、端口、日志、渠道、API Key 等常规配置，仍然应写在最终状态目录下的 `.env` / `.env.local`
+- 如果没有这个 bootstrap 文件，程序仍按默认规则回退到 `~/.star_sanctuary`
+
 补充说明：
 
 - 当前不再使用独立 `envDir`

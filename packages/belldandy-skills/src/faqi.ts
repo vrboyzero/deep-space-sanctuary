@@ -95,6 +95,9 @@ export function parseFaqiMarkdown(input: {
   for (let i = toolsStart; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
+    if (/^#\s*=+.*=+\s*$/.test(line)) {
+      continue;
+    }
     if (/^#{1,6}\s+/.test(line)) {
       break;
     }

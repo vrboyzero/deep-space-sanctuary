@@ -144,6 +144,11 @@ test("bdd doctor json output includes tool behavior observability", async () => 
 
     const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
     const parsed = JSON.parse(output);
+    expect(parsed.configSource).toMatchObject({
+      stateDir: stateDir,
+      envDir: stateDir,
+      stateDirSource: "process_env",
+    });
     expect(parsed.toolBehaviorObservability).toMatchObject({
       counts: {
         includedContractCount: expect.any(Number),

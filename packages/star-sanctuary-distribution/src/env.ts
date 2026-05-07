@@ -170,6 +170,7 @@ function loadEnvFileInto(
   targetEnv: NodeJS.ProcessEnv,
   filePath: string,
   protectedKeys?: ReadonlySet<string>,
+  allowedKeys?: ReadonlySet<string>,
 ): void {
   let raw: string;
   try {
@@ -190,6 +191,7 @@ function loadEnvFileInto(
 
     const key = normalized.slice(0, eq).trim();
     if (!key) continue;
+    if (allowedKeys && !allowedKeys.has(key)) continue;
     if (protectedKeys?.has(key)) continue;
 
     let value = normalized.slice(eq + 1).trim();
