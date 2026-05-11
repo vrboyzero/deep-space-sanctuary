@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import {
+  ensureDefaultEnvFiles,
+  loadRuntimeEnvFiles,
+  readTrimmedEnv,
+  resolveRuntimeEnvDir,
   preflightGatewayCleanup,
   removeForegroundPid,
   writeForegroundPid,
-} from "./gateway-preflight.js";
+} from "./index.js";
 
 export const RESTART_EXIT_CODE = 100;
 export const RESTART_DELAY_MS = 500;
@@ -18,14 +22,26 @@ export type GatewaySupervisorParams = {
   env: NodeJS.ProcessEnv;
 };
 
+function reloadSupervisorEnv(baseEnv: NodeJS.ProcessEnv, stateDir: string): NodeJS.ProcessEnv {
+  const envDir = resolveRuntimeEnvDir({
+    baseEnv,
+    fallbackEnvDir: stateDir,
+  });
+  ensureDefaultEnvFiles(envDir);
+  const env = loadRuntimeEnvFiles(baseEnv, envDir);
+  env.AUTO_OPEN_BROWSER = readTrimmedEnv(env, "AUTO_OPEN_BROWSER") ?? "true";
+  return env;
+}
+
 export async function startGatewaySupervisor(params: GatewaySupervisorParams): Promise<void> {
   const { label, gatewayEntry, runtimeExecutable, cwd, stateDir, env } = params;
 
   const launch = async () => {
+    const launchEnv = reloadSupervisorEnv(env, stateDir);
     await preflightGatewayCleanup({
       label,
       stateDir,
-      env,
+      env: launchEnv,
       ownershipTokens: [gatewayEntry],
     });
     console.log(`[${label}] Starting Gateway...`);
@@ -34,7 +50,7 @@ export async function startGatewaySupervisor(params: GatewaySupervisorParams): P
     const child = spawn(runtimeExecutable ?? process.execPath, [gatewayEntry], {
       stdio: "inherit",
       cwd,
-      env,
+      env: launchEnv,
     });
     if (child.pid) {
       writeForegroundPid(stateDir, child.pid);

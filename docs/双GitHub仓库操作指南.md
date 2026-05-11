@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "增加.star_sanctuary-bootstrap/.env.local，实现状态目录的自举与真实环境路径的迁移"
+git commit -m "修复了重启后环境变量不生效的问题，修复了自动统计任务时间与token开关无效的问题"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

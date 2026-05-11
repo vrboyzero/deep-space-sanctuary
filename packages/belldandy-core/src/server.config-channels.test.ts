@@ -624,6 +624,66 @@ test("config.update hot reloads multimedia and attachment settings without resta
   }
 });
 
+test("config.update hot reloads auto task report flags", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const envDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-env-"));
+  await fs.promises.writeFile(path.join(envDir, ".env"), "", "utf-8");
+
+  const originalAutoTaskTime = process.env.BELLDANDY_AUTO_TASK_TIME_ENABLED;
+  const originalAutoTaskToken = process.env.BELLDANDY_AUTO_TASK_TOKEN_ENABLED;
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    envDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "config-update-auto-task-report-flags",
+      method: "config.update",
+      params: {
+        updates: {
+          BELLDANDY_AUTO_TASK_TIME_ENABLED: "false",
+          BELLDANDY_AUTO_TASK_TOKEN_ENABLED: "false",
+        },
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-auto-task-report-flags"));
+    const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-auto-task-report-flags");
+    expect(updateRes.ok).toBe(true);
+
+    expect(process.env.BELLDANDY_AUTO_TASK_TIME_ENABLED).toBe("false");
+    expect(process.env.BELLDANDY_AUTO_TASK_TOKEN_ENABLED).toBe("false");
+    expect(isConfigFileRestartSuppressed(".env.local")).toBe(true);
+    expect(isConfigFileRestartSuppressed(".env")).toBe(true);
+
+    const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
+    expect(envLocalContent).toContain('BELLDANDY_AUTO_TASK_TIME_ENABLED="false"');
+    expect(envLocalContent).toContain('BELLDANDY_AUTO_TASK_TOKEN_ENABLED="false"');
+  } finally {
+    if (originalAutoTaskTime == null) delete process.env.BELLDANDY_AUTO_TASK_TIME_ENABLED;
+    else process.env.BELLDANDY_AUTO_TASK_TIME_ENABLED = originalAutoTaskTime;
+    if (originalAutoTaskToken == null) delete process.env.BELLDANDY_AUTO_TASK_TOKEN_ENABLED;
+    else process.env.BELLDANDY_AUTO_TASK_TOKEN_ENABLED = originalAutoTaskToken;
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(envDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("config.update accepts channel settings and config.read redacts channel secrets", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const envDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-env-"));

@@ -7,6 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ensureDefaultEnvFiles,
+  loadRuntimeEnvFiles,
+  readTrimmedEnv,
+  resolveRuntimeEnvDir,
   preflightGatewayCleanup,
   removeForegroundPid,
   writeForegroundPid,
@@ -30,6 +34,17 @@ function resolveGatewayScript(): string {
 // 重启信号 exit code（与 system.restart 保持一致）
 const RESTART_EXIT_CODE = 100;
 const RESTART_DELAY_MS = 500;
+
+export function reloadLauncherEnv(baseEnv: NodeJS.ProcessEnv, stateDir: string): NodeJS.ProcessEnv {
+  const envDir = resolveRuntimeEnvDir({
+    baseEnv,
+    fallbackEnvDir: stateDir,
+  });
+  ensureDefaultEnvFiles(envDir);
+  const env = loadRuntimeEnvFiles(baseEnv, envDir);
+  env.AUTO_OPEN_BROWSER = readTrimmedEnv(env, "AUTO_OPEN_BROWSER") ?? "true";
+  return env;
+}
 
 export interface DaemonStatus {
   running: boolean;
@@ -122,10 +137,11 @@ export function getDaemonStatus(stateDir?: string): DaemonStatus {
 /** Start gateway in daemon mode (detached background process) */
 export async function startDaemon(stateDir?: string): Promise<{ success: boolean; pid?: number; error?: string }> {
   const resolvedStateDir = stateDir ?? resolveStateDir();
+  const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
   await preflightGatewayCleanup({
     label: "Launcher",
     stateDir: resolvedStateDir,
-    env: process.env,
+    env: launchEnv,
     ownershipTokens: [resolveGatewayScript(), BDD_SCRIPT],
   });
 
@@ -141,7 +157,7 @@ export async function startDaemon(stateDir?: string): Promise<{ success: boolean
       detached: true,
       stdio: ["ignore", logFd, logFd, "ipc"],
       execArgv: EXT === ".ts" ? ["--import", "tsx"] : [],
-      env: { ...process.env },
+      env: launchEnv,
     });
 
     if (!child.pid) {
@@ -225,11 +241,13 @@ export async function startForeground(stateDir?: string): Promise<void> {
   const resolvedStateDir = stateDir ?? resolveStateDir();
 
   function launchGateway(): void {
+    const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
     console.log(`[Launcher] Starting Gateway...`);
 
     const child = fork(resolveGatewayScript(), [], {
       stdio: "inherit",
       execArgv: EXT === ".ts" ? ["--import", "tsx"] : [],
+      env: launchEnv,
     });
     if (child.pid) {
       writeForegroundPid(resolvedStateDir, child.pid);
@@ -257,7 +275,7 @@ export async function startForeground(stateDir?: string): Promise<void> {
   await preflightGatewayCleanup({
     label: "Launcher",
     stateDir: resolvedStateDir,
-    env: process.env,
+    env: reloadLauncherEnv(process.env, resolvedStateDir),
     ownershipTokens: [resolveGatewayScript(), BDD_SCRIPT],
   });
   launchGateway();
