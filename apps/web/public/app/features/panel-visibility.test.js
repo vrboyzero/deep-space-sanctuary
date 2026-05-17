@@ -103,11 +103,13 @@ describe("panel visibility feature", () => {
     const { refs, feature } = createHarness();
 
     refs.toggleAgentPanelBtn.click();
-    expect(refs.agentRightPanelEl.classList.contains("hidden")).toBe(true);
+    expect(refs.agentRightPanelEl.classList.contains("hidden")).toBe(false);
+    expect(refs.agentRightPanelEl.classList.contains("is-empty")).toBe(true);
 
     feature.setAgentPanelHasContent(true);
 
     expect(refs.agentRightPanelEl.classList.contains("hidden")).toBe(false);
+    expect(refs.agentRightPanelEl.classList.contains("is-empty")).toBe(false);
     expect(refs.toggleAgentPanelBtn.classList.contains("is-active")).toBe(true);
     expect(localStorage.getItem("test.agent.visible")).toBe("1");
   });

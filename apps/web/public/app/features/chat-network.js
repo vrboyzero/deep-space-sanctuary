@@ -100,6 +100,15 @@ export function normalizeRequestFrame(frame, makeId = null) {
   return normalized;
 }
 
+export function shouldClearTransientSetupTokenOnClose({ event, authMode, authValue }) {
+  if (authMode !== "token") return false;
+  const normalizedValue = typeof authValue === "string" ? authValue.trim() : "";
+  if (!normalizedValue.startsWith("setup-")) return false;
+  if (Number(event?.code) !== 4403) return false;
+  const reason = typeof event?.reason === "string" ? event.reason.trim() : "";
+  return reason.toLowerCase() === "invalid token";
+}
+
 export function formatModelOptionLabel(model, t = (_key, _params, fallback) => fallback ?? "") {
   if (!model || typeof model !== "object") return "";
   const baseLabel = model.displayName || model.model || model.id || t("composer.defaultModel", {}, "Default Model");
@@ -266,6 +275,7 @@ export function createChatNetworkFeature({
 
   const {
     storeKey,
+    sessionAuthTokenKey,
     workspaceRootsKey,
     uuidKey,
     agentIdKey,
@@ -384,6 +394,18 @@ export function createChatNetworkFeature({
     }
     setSocket(null);
     setReady(false);
+  }
+
+  function clearTransientSetupTokenAuth() {
+    if (!authModeEl || !authValueEl) return;
+    authValueEl.value = "";
+    try {
+      if (sessionAuthTokenKey) {
+        globalThis.sessionStorage?.removeItem(sessionAuthTokenKey);
+      }
+    } catch {
+      // ignore storage failures
+    }
   }
 
   function sendConnect() {
@@ -644,6 +666,13 @@ export function createChatNetworkFeature({
         sendBtn.disabled = true;
       }
       if (isAuthRejectedClose(event)) {
+        if (shouldClearTransientSetupTokenOnClose({
+          event,
+          authMode: authModeEl?.value || "",
+          authValue: authValueEl?.value || "",
+        })) {
+          clearTransientSetupTokenAuth();
+        }
         const reason = formatCloseReason(event, "token required");
         setLocalizedStatus(
           "status.authRequired",

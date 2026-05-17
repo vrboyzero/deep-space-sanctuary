@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { applyWebConfigLinks } from "./web-config-links.js";
 
 describe("applyWebConfigLinks", () => {
   it("applies configured external links including aliyun one-key entry", () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     const recommendApiLink = document.createElement("a");
     const aliyunOneKeyLink = document.createElement("a");
     const officialHomeLink = document.createElement("a");
@@ -30,6 +31,12 @@ describe("applyWebConfigLinks", () => {
     expect(aliyunOneKeyLink.href).toBe("https://example.com/aliyun");
     expect(officialHomeLink.href).toBe("https://example.com/home");
     expect(workshopLink.href).toBe("https://example.com/workshop");
+    expect(recommendApiLink.target).toBe("_blank");
+    expect(recommendApiLink.rel).toBe("noopener noreferrer");
+
+    recommendApiLink.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(openSpy).toHaveBeenCalledWith("https://example.com/recommend", "_blank", "noopener,noreferrer");
+    openSpy.mockRestore();
   });
 
   it("skips missing refs or urls", () => {

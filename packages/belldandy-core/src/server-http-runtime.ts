@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 
@@ -122,6 +123,7 @@ function readGatewayHttpRuntimeSettings(
 ): GatewayHttpRuntimeSettings {
   const governanceDetailMode = input.getGovernanceDetailMode?.() ?? readGovernanceDetailModeEnv();
   const experienceDraftGenerateNoticeEnabled = readExperienceDraftGenerateNoticeEnabledEnv();
+  const staticWebConfig = readStaticWebConfigFile(input.options.webRoot);
   const communityApiSettings = readCommunityApiRuntimeSettings(input.options.auth);
   const limiterCache = createWebhookRuntimeLimiterCache();
   const webhookRuntimeSettings = readWebhookRuntimeSettings(input.options.webhookConfig, limiterCache);
@@ -133,10 +135,12 @@ function readGatewayHttpRuntimeSettings(
     webConfig: {
       governanceDetailMode,
       experienceDraftGenerateNoticeEnabled,
+      ...staticWebConfig,
     },
     getWebConfig: () => ({
       governanceDetailMode: input.getGovernanceDetailMode?.() ?? readGovernanceDetailModeEnv(),
       experienceDraftGenerateNoticeEnabled: readExperienceDraftGenerateNoticeEnabledEnv(),
+      ...readStaticWebConfigFile(input.options.webRoot),
     }),
     webhookEnabled: webhookRuntimeSettings.enabled,
     webhookPreAuthMaxBytes: webhookRuntimeSettings.preAuthMaxBytes,
@@ -148,6 +152,37 @@ function readGatewayHttpRuntimeSettings(
     webhookInFlightLimiter: webhookRuntimeSettings.inFlightLimiter,
     getWebhookRuntimeSettings: () => readWebhookRuntimeSettings(input.options.webhookConfig, limiterCache),
   };
+}
+
+function readStaticWebConfigFile(webRoot: string): Pick<
+  GatewayWebConfig,
+  "recommendApiUrl" | "aliyunOneKeyUrl" | "officialHomeUrl" | "workshopUrl"
+> {
+  const configPath = path.join(webRoot, "config.js");
+  const emptyConfig = {};
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    const match = raw.match(/window\.BELLDANDY_WEB_CONFIG\s*=\s*(\{[\s\S]*?\});?/);
+    if (!match?.[1]) {
+      return emptyConfig;
+    }
+    const normalized = match[1]
+      .replace(/^\uFEFF/, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+      .trim();
+    const parsed = Function(`"use strict"; return (${normalized});`)();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return emptyConfig;
+    }
+    return {
+      recommendApiUrl: typeof parsed.recommendApiUrl === "string" ? parsed.recommendApiUrl : undefined,
+      aliyunOneKeyUrl: typeof parsed.aliyunOneKeyUrl === "string" ? parsed.aliyunOneKeyUrl : undefined,
+      officialHomeUrl: typeof parsed.officialHomeUrl === "string" ? parsed.officialHomeUrl : undefined,
+      workshopUrl: typeof parsed.workshopUrl === "string" ? parsed.workshopUrl : undefined,
+    };
+  } catch {
+    return emptyConfig;
+  }
 }
 
 function readCommunityApiRuntimeSettings(

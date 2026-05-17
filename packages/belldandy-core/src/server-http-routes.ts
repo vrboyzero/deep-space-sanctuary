@@ -30,10 +30,18 @@ export type RegisterGatewayHttpRoutesContext = {
   webConfig?: {
     governanceDetailMode?: "compact" | "full";
     experienceDraftGenerateNoticeEnabled?: boolean;
+    recommendApiUrl?: string;
+    aliyunOneKeyUrl?: string;
+    officialHomeUrl?: string;
+    workshopUrl?: string;
   };
   getWebConfig?: () => {
     governanceDetailMode?: "compact" | "full";
     experienceDraftGenerateNoticeEnabled?: boolean;
+    recommendApiUrl?: string;
+    aliyunOneKeyUrl?: string;
+    officialHomeUrl?: string;
+    workshopUrl?: string;
   };
   getCommunityApiSettings?: () => {
     enabled: boolean;
@@ -403,6 +411,10 @@ function buildGatewayWebConfigScript(
   const configObject = {
     governanceDetailMode: webConfig?.governanceDetailMode === "full" ? "full" : "compact",
     experienceDraftGenerateNoticeEnabled: webConfig?.experienceDraftGenerateNoticeEnabled !== false,
+    recommendApiUrl: typeof webConfig?.recommendApiUrl === "string" ? webConfig.recommendApiUrl : undefined,
+    aliyunOneKeyUrl: typeof webConfig?.aliyunOneKeyUrl === "string" ? webConfig.aliyunOneKeyUrl : undefined,
+    officialHomeUrl: typeof webConfig?.officialHomeUrl === "string" ? webConfig.officialHomeUrl : undefined,
+    workshopUrl: typeof webConfig?.workshopUrl === "string" ? webConfig.workshopUrl : undefined,
   };
   const serialized = JSON.stringify(configObject, null, 2);
   return [

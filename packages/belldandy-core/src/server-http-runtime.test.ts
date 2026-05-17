@@ -1,3 +1,7 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { buildGatewayHttpRoutesContext } from "./server-http-runtime.js";
@@ -84,6 +88,41 @@ describe("buildGatewayHttpRoutesContext governance detail mode", () => {
       expect(context.webConfig?.experienceDraftGenerateNoticeEnabled).toBe(false);
       expect(context.getWebConfig?.().experienceDraftGenerateNoticeEnabled).toBe(false);
     });
+  });
+
+  it("loads external web links from webRoot config.js into runtime web config", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-web-config-"));
+    await fs.writeFile(
+      path.join(tempRoot, "config.js"),
+      [
+        "window.BELLDANDY_WEB_CONFIG = {",
+        "  recommendApiUrl: \"https://example.com/recommend\",",
+        "  aliyunOneKeyUrl: \"https://example.com/aliyun\",",
+        "  officialHomeUrl: \"https://example.com/home\",",
+        "  workshopUrl: \"https://example.com/workshop\"",
+        "};",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    try {
+      await withEnv({}, async () => {
+        const context = buildGatewayHttpRoutesContext({
+          ...createRuntimeInput(),
+          options: {
+            ...createRuntimeInput().options,
+            webRoot: tempRoot,
+          },
+        });
+        expect(context.webConfig?.recommendApiUrl).toBe("https://example.com/recommend");
+        expect(context.webConfig?.aliyunOneKeyUrl).toBe("https://example.com/aliyun");
+        expect(context.webConfig?.officialHomeUrl).toBe("https://example.com/home");
+        expect(context.webConfig?.workshopUrl).toBe("https://example.com/workshop");
+        expect(context.getWebConfig?.().officialHomeUrl).toBe("https://example.com/home");
+      });
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("reads Community API and Webhook guard settings through runtime getters", async () => {

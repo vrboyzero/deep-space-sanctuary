@@ -11,6 +11,7 @@ import {
   parseManualModelValue,
   resolvePreferredAgentSelection,
   resolvePreferredModelSelection,
+  shouldClearTransientSetupTokenOnClose,
   syncAgentSelectOptions,
 } from "./chat-network.js";
 
@@ -185,5 +186,33 @@ describe("chat network request frame normalization", () => {
     expect(normalizeRequestFrame({ id: "req-2" })).toBeNull();
     expect(normalizeRequestFrame(null)).toBeNull();
     expect(normalizeRequestFrame("bad-frame")).toBeNull();
+  });
+});
+
+describe("chat network transient setup token recovery", () => {
+  it("clears only setup tokens rejected as invalid", () => {
+    expect(shouldClearTransientSetupTokenOnClose({
+      event: { code: 4403, reason: "invalid token" },
+      authMode: "token",
+      authValue: "setup-123456",
+    })).toBe(true);
+  });
+
+  it("keeps non-setup tokens and other close reasons intact", () => {
+    expect(shouldClearTransientSetupTokenOnClose({
+      event: { code: 4403, reason: "invalid token" },
+      authMode: "token",
+      authValue: "permanent-token",
+    })).toBe(false);
+    expect(shouldClearTransientSetupTokenOnClose({
+      event: { code: 4403, reason: "token required" },
+      authMode: "token",
+      authValue: "setup-123456",
+    })).toBe(false);
+    expect(shouldClearTransientSetupTokenOnClose({
+      event: { code: 1006, reason: "invalid token" },
+      authMode: "token",
+      authValue: "setup-123456",
+    })).toBe(false);
   });
 });

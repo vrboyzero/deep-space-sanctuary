@@ -101,7 +101,8 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshAgentPanelState() {
-    agentRightPanelEl?.classList.toggle("hidden", !agentPanelVisible || !agentPanelHasContent);
+    agentRightPanelEl?.classList.toggle("hidden", !agentPanelVisible);
+    agentRightPanelEl?.classList.toggle("is-empty", !agentPanelHasContent);
     if (!toggleAgentPanelBtn) return;
     toggleAgentPanelBtn.classList.toggle("is-active", agentPanelVisible);
     toggleAgentPanelBtn.setAttribute("aria-pressed", String(agentPanelVisible));

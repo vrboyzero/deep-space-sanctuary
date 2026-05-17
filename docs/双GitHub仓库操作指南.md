@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "修复了长期任务无法加载的问题，添加了指挥官Agent模式的相关使用说明"
+git commit -m "修复了外链错误和Gateway 重启后WebChat 临时token会话恢复问题"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题
