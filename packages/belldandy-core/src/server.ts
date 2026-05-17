@@ -1992,7 +1992,7 @@ async function handleReq(
         goalManager: ctx.goalManager,
         stateDir: ctx.stateDir,
         residentMemoryManagers: ctx.residentMemoryManagers,
-        readEnv,
+        readEnv: readEnvTrimmed,
         parseGoalTaskCheckpointStatus,
         parseGoalTaskCreateStatus,
       });

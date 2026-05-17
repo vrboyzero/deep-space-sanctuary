@@ -1,6 +1,6 @@
 # 指挥官 Agent 实现方案
 
-更新时间：2026-05-16
+更新时间：2026-05-17
 
 ## 0. 结论
 
@@ -1134,6 +1134,90 @@ Excluded
 4. `goal.capability.get / update` 最小后端接口
 
 完成这一层后，再进入 `14.B` 的 Commander 接受 / 返工 / 升级操作面。
+
+### 14.6.1 当前实际开启方式与使用路径
+
+截至 `2026-05-17`，Commander 模式已经不是纯方案状态，而是**可在 WebChat 中实际开启和使用**的治理模式。当前推荐按下面路径理解和使用：
+
+前置条件
+
+1. 已正常启动 Gateway / WebChat。
+2. 已能进入 `🎯 长期任务` 页面。
+3. 对应 Goal 至少已经生成过 capability plan；如果该 Goal 还没有 `capability-plans.json` 记录，需先对该 Goal 执行一次 capability planning / orchestration。
+
+全局默认开启入口
+
+1. 打开 `⚙️ 设置 -> 系统 -> Commander / Goal Governance`。
+2. 当前可直接配置并保存以下运行时默认值：
+   - `Commander Mode`
+   - `Commander Agent ID`
+   - `Goal Execution Mode`
+   - `Goal Governance Mode`
+   - `Commander Auto Rework`
+3. 这些配置分别映射到：
+   - `BELLDANDY_COMMANDER_MODE`
+   - `BELLDANDY_COMMANDER_AGENT_ID`
+   - `BELLDANDY_GOAL_EXECUTION_MODE`
+   - `BELLDANDY_GOAL_GOVERNANCE_MODE`
+   - `BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED`
+
+推荐开启方式
+
+1. 如果希望后续新建 / 新规划的 Goal 默认走指挥官治理，推荐设置：
+   - `Commander Mode = on`
+   - `Commander Agent ID = commander`
+   - `Goal Execution Mode = multi_agent_parallel`
+   - `Goal Governance Mode = commander`
+2. 如果希望只在高风险 / 复杂节点中择机启用，推荐设置：
+   - `Commander Mode = auto`
+   - `Goal Governance Mode = auto`
+3. `Commander Auto Rework` 是返工增强开关：
+   - 开启后，后续新的 commander `rework` 决策会优先只重发失败 lanes，并保持节点留在 commander 治理链路中。
+   - 关闭后，`rework` 会退回旧语义，把节点打回 `blocked`，等待人工后续处理。
+4. 该组设置已经接入 hot reload；**保存后不需要重启服务**，但它影响的是后续新的 capability planning / commander 决策，不会追改历史已完成节点。
+
+Goal / Node 级启用入口
+
+1. 打开 `🎯 长期任务`，进入某个 Goal 的详情页。
+2. 在 `Capability / Governance` 相关区域找到 Node 级治理设置入口。
+3. 当前可对焦点节点直接修改并保存：
+   - `executionMode`
+   - `governanceMode`
+   - `commanderAgentId`
+   - `preferredAgents`
+   - `finalApprovalMode`
+4. 如果某个 Goal 不想吃全局默认值，优先用这里做节点级覆盖。
+
+Commander 审批 / 接受 / 返工 / 升级入口
+
+1. 当某个节点的 `governanceMode=commander` 后，Goal 详情页的 capability 面板会出现 Commander 决策区。
+2. 当前前端已接入显式治理操作：
+   - `Accept`
+   - `Rework`
+   - `Escalate`
+3. 决策时可填写：
+   - `decisionSummary`
+   - `decisionNote`
+   - `requireUserApproval / final approval`
+4. `Rework` 区当前还提供返工快捷预填，便于把 gate hint、上一轮返工原因和历史上下文直接带回决策输入框。
+
+查看治理汇总与 fan-in
+
+1. Goal 详情页右侧 `评审治理 / 统一审批` 面板已经聚合 `Commander Review / Fan-in` 摘要。
+2. 若希望看到更完整的 commander 汇总信息，建议在 `⚙️ 设置 -> 系统` 中将 `Governance Detail Mode` 切到 `full`。
+3. 在 `full` 模式下，当前可直接查看：
+   - 当前 focus commander 节点
+   - review 状态
+   - final approval 默认值
+   - rework revision / rework context / rework target lanes
+   - delegation lane 结果
+   - `review` / `commander-plan` / `work-order` 文件入口
+
+当前边界说明
+
+1. Commander 基础治理闭环已可用，但仍然建立在现有 Goal capability / orchestration 主链路之上，不是独立的新 runtime。
+2. `Commander Auto Rework` 当前是**用户可切换的半自动返工增强**，不是无人值守自动无限返工循环。
+3. 经验晋升到长期记忆、独立 Commander runtime、云端记忆链路仍明确不在当前实现范围内。
 
 ### 14.7 截至当前的未实现项清单
 

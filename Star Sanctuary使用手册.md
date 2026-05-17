@@ -1,7 +1,7 @@
 # Star Sanctuary 使用手册
 
-最后更新时间：2026-05-03  
-适用版本：当前仓库主干，workspace version `0.5.1`
+最后更新时间：2026-05-17  
+适用版本：当前仓库主干，workspace version `0.5.3`
 
 Star Sanctuary 是一个 **本地优先的个人 AI 助手与 Agent 工作台**。  
 它不是单纯的聊天网页，而是一套把 `Gateway`、`WebChat`、`CLI`、`工具系统`、`长期记忆`、`长期任务`、`多 Agent`、`渠道接入`、`浏览器自动化`、`Webhook` 和 `MCP` 统一到一起的本地运行时。
@@ -1481,6 +1481,181 @@ BELLDANDY_COMMONS_OBSIDIAN_ROOT_DIR=Star Sanctuary
 ```
 
 如果你不配这个文件，Goals 仍然能用，但组织级 reviewer / template / SLA / 通知策略会明显弱很多。
+
+### 7.3.1 怎么开启指挥官 Agent 模式
+
+如果你希望长期任务不要只是“主 Agent 自己做”，而是进入“Commander 规划 / 分工 / 审查 / 返工收口”的治理模式，当前已经可以直接在 WebChat 里开启。
+
+最常用的开启路径有两层：
+
+1. 全局默认开启
+2. 某个 Goal / 某个节点单独开启
+
+#### A. 全局默认开启
+
+入口：
+
+- `⚙️ 设置 -> 系统 -> Commander / Goal Governance`
+
+这里当前可以直接保存 5 个相关设置：
+
+- `Commander Mode`
+- `Commander Agent ID`
+- `Goal Execution Mode`
+- `Goal Governance Mode`
+- `Commander Auto Rework`
+
+如果你想让后续新的长期任务默认就走指挥官治理，推荐先这样配：
+
+- `Commander Mode = on`
+- `Commander Agent ID = commander`
+- `Goal Execution Mode = multi_agent_parallel`
+- `Goal Governance Mode = commander`
+
+这组配置的实际效果可以直接理解成：
+
+- 后续新生成的 capability plan，会优先按“多 Agent 并行 + commander 治理”规划
+- 默认由 `commander` 这个 Agent 负责统一派发、review 和收口
+
+如果你不想所有任务都强制走 Commander，也可以改成偏保守的自动策略：
+
+- `Commander Mode = auto`
+- `Goal Governance Mode = auto`
+
+这样更接近“复杂的、高风险的再启用指挥官治理”，而不是无差别全开。
+
+补充说明：
+
+- 这组设置已经支持**保存后热切换**
+- 一般不需要重启 Gateway
+- 但它影响的是**后续新的规划和后续新的 commander 决策**
+- 不会追改历史已经生成好的旧 plan
+
+#### B. 某个 Goal / 节点单独开启
+
+如果你不想动全局默认值，或者只想让某一个 Goal 的某一个节点走 Commander，可以直接在 Goal 详情里改。
+
+入口：
+
+1. 打开左侧 `🎯 长期任务`
+2. 进入某个 Goal 详情
+3. 找到 `Capability` / `Governance` 区域中的节点治理设置
+
+这里当前可以直接改：
+
+- `executionMode`
+- `governanceMode`
+- `commanderAgentId`
+- `preferredAgents`
+- `finalApprovalMode`
+
+最直接的启用方式是把：
+
+- `governanceMode` 改成 `commander`
+- `commanderAgentId` 设成 `commander`
+
+保存之后，这个节点后续就会按 commander 治理链路推进。
+
+#### C. 开启后你会看到什么
+
+当某个节点已经是 `commander` 治理时，Goal 详情页里会出现两类最关键入口：
+
+1. `Capability` 面板里的 Commander 决策区
+2. `评审治理 / 统一审批` 面板里的 `Commander Review / Fan-in` 汇总卡
+
+你会看到的典型信息包括：
+
+- 当前节点是不是 commander 治理
+- Commander 是哪个 Agent
+- 当前是单 Agent 还是多 Agent
+- review 状态
+- final approval 默认值
+- rework revision 次数
+- delegation lane 结果
+- `review` / `commander-plan` / `work-order` 文件入口
+
+如果你觉得默认信息太少，可以去：
+
+- `⚙️ 设置 -> 系统 -> Governance Detail Mode`
+
+把它切到 `full`。  
+`full` 更适合看 commander 治理细节、fan-in、返工上下文和 lane 级结果。
+
+#### D. Commander 决策怎么用
+
+当前前端已经直接提供了 3 个核心动作：
+
+- `Accept`
+- `Rework`
+- `Escalate`
+
+你可以把它们这样理解：
+
+- `Accept`
+  当前轮结果通过，节点继续往下走
+- `Rework`
+  当前轮结果不够好，要求按返工上下文再做一轮
+- `Escalate`
+  当前问题需要抬高处理级别，不直接在本轮收口
+
+`Rework` 当前还支持快捷预填：
+
+- 会把上一轮返工原因
+- 当前 gate hint / gate summary
+- 历史返工摘要
+
+自动带回输入框，减少你每次手写返工说明。
+
+#### E. Commander Auto Rework 是什么
+
+`Commander Auto Rework` 是指挥官返工增强开关，位置同样在：
+
+- `⚙️ 设置 -> 系统 -> Commander / Goal Governance`
+
+开启后：
+
+- 当你做 `Rework` 决策时，系统会优先只重发失败的 lanes
+- 节点会尽量保持在 commander 治理链路里继续推进
+
+关闭后：
+
+- `Rework` 会退回更保守的旧语义
+- 节点会被打回 `blocked`
+- 等你后续再人工处理
+
+要注意的是：
+
+- 这不是“系统自己无限自动返工”
+- 当前仍然是**用户显式决策 + 可控开关下的半自动增强**
+- 默认目标是减少无意义整节点重跑，而不是替你完全自动治理
+
+#### F. 一条最实用的上手顺序
+
+如果你第一次用 Commander，推荐直接照这个顺序：
+
+1. 在 `⚙️ 设置 -> 系统 -> Commander / Goal Governance` 中把
+   - `Commander Mode` 设为 `on`
+   - `Commander Agent ID` 设为 `commander`
+   - `Goal Execution Mode` 设为 `multi_agent_parallel`
+   - `Goal Governance Mode` 设为 `commander`
+2. 新建一个长期任务，或对现有 Goal 重新生成 capability plan
+3. 进入该 Goal 详情，确认某个节点的 `governanceMode=commander`
+4. 在 `Capability` 面板里查看当前 Commander 决策区
+5. 在 `评审治理 / 统一审批` 面板里查看 `Commander Review / Fan-in` 汇总
+6. 需要时用 `Accept / Rework / Escalate` 完成这一轮治理收口
+
+如果你已经有一批旧 Goal，但它们不是按 commander 模式建的，也没关系：
+
+- 直接去 Goal 详情页，把节点级 `governanceMode` 改成 `commander`
+- 再保存即可，不一定非要从头新建任务
+
+#### G. 当前边界
+
+当前 Commander 模式已经可用，但要避免把它理解成“全自动项目经理”：
+
+- 它已经具备可配置、可操作、可观察的最小治理闭环
+- 但还不是独立的新运行时系统
+- 经验自动晋升长期记忆、独立 Commander runtime、无人值守无限自动返工，都不在当前主线范围内
 
 ### 7.4 Resident、Shared Review、Mind Profile
 
