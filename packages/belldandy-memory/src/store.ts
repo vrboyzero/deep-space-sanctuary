@@ -1,6 +1,14 @@
 
 import Database from "better-sqlite3";
 import type { MemoryCategory, MemoryChunk, MemorySearchResult, MemoryIndexStatus, MemoryType, MemorySearchFilter, MemorySharedPromotionStatus, MemoryVisibility } from "./types.js";
+import {
+  buildMemoryExactDedupApplyPlan,
+  buildMemoryExactDedupPreviewReport,
+  ensureMemoryDedupBackupFile,
+  type MemoryExactDedupApplyOptions,
+  type MemoryExactDedupApplyResult,
+  type MemoryExactDedupPreviewReport,
+} from "./memory-dedup.js";
 import type {
   ResumeContextSnapshot,
   TaskActivityKind,
@@ -1076,6 +1084,198 @@ export class MemoryStore {
     return Number(result.changes ?? 0);
   }
 
+  previewExactDedup(filter?: MemorySearchFilter, options: { maxGroups?: number } = {}): MemoryExactDedupPreviewReport {
+    this.ensureOpen();
+    const { clause, params } = this.buildFilterClause(filter);
+    const rows = this.db.prepare(`
+      SELECT
+        c.id,
+        c.source_path,
+        c.source_type,
+        c.memory_type,
+        c.visibility,
+        c.start_line,
+        c.end_line,
+        c.content,
+        c.created_at,
+        c.updated_at,
+        (
+          SELECT COUNT(*)
+          FROM task_memory_links l
+          WHERE l.chunk_id = c.id
+        ) AS task_link_count
+      FROM chunks c
+      WHERE 1=1${clause}
+      ORDER BY c.updated_at DESC, c.rowid DESC
+    `).all(...params) as Array<{
+      id: string;
+      source_path: string;
+      source_type: string;
+      memory_type?: MemoryType | null;
+      visibility?: MemoryVisibility | null;
+      start_line?: number | null;
+      end_line?: number | null;
+      content: string;
+      created_at?: string | null;
+      updated_at?: string | null;
+      task_link_count?: number | null;
+    }>;
+
+    return buildMemoryExactDedupPreviewReport({
+      chunks: rows.map((row) => ({
+        id: row.id,
+        sourcePath: row.source_path,
+        sourceType: row.source_type,
+        memoryType: row.memory_type ?? undefined,
+        visibility: row.visibility ?? "private",
+        startLine: row.start_line ?? undefined,
+        endLine: row.end_line ?? undefined,
+        content: row.content,
+        createdAt: row.created_at ?? undefined,
+        updatedAt: row.updated_at ?? undefined,
+        taskLinkCount: row.task_link_count ?? 0,
+      })),
+      filter,
+      maxGroups: options.maxGroups,
+    });
+  }
+
+  applyExactDedup(filter: MemorySearchFilter | undefined, options: MemoryExactDedupApplyOptions): MemoryExactDedupApplyResult {
+    this.ensureOpen();
+    const { clause, params } = this.buildFilterClause(filter);
+    const rows = this.db.prepare(`
+      SELECT
+        c.id,
+        c.source_path,
+        c.source_type,
+        c.memory_type,
+        c.visibility,
+        c.start_line,
+        c.end_line,
+        c.content,
+        c.created_at,
+        c.updated_at,
+        (
+          SELECT COUNT(*)
+          FROM task_memory_links l
+          WHERE l.chunk_id = c.id
+        ) AS task_link_count
+      FROM chunks c
+      WHERE 1=1${clause}
+      ORDER BY c.updated_at DESC, c.rowid DESC
+    `).all(...params) as Array<{
+      id: string;
+      source_path: string;
+      source_type: string;
+      memory_type?: MemoryType | null;
+      visibility?: MemoryVisibility | null;
+      start_line?: number | null;
+      end_line?: number | null;
+      content: string;
+      created_at?: string | null;
+      updated_at?: string | null;
+      task_link_count?: number | null;
+    }>;
+    const snapshots = rows.map((row) => ({
+      id: row.id,
+      sourcePath: row.source_path,
+      sourceType: row.source_type,
+      memoryType: row.memory_type ?? undefined,
+      visibility: row.visibility ?? "private",
+      startLine: row.start_line ?? undefined,
+      endLine: row.end_line ?? undefined,
+      content: row.content,
+      createdAt: row.created_at ?? undefined,
+      updatedAt: row.updated_at ?? undefined,
+      taskLinkCount: row.task_link_count ?? 0,
+    }));
+    const plan = buildMemoryExactDedupApplyPlan({
+      chunks: snapshots,
+      filter,
+      maxGroups: options.maxGroups,
+    });
+    const backup = ensureMemoryDedupBackupFile({
+      dbPath: this.getDbPath(),
+      backupRootDir: options.backupRootDir,
+      runId: options.runId,
+    });
+    const selectLinks = this.db.prepare(`
+      SELECT task_id, relation
+      FROM task_memory_links
+      WHERE chunk_id = ?
+    `);
+    const upsertLink = this.db.prepare(`
+      INSERT OR IGNORE INTO task_memory_links (task_id, chunk_id, relation, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    const deleteLinks = this.db.prepare(`DELETE FROM task_memory_links WHERE chunk_id = ?`);
+    const selectRowId = this.db.prepare(`SELECT rowid FROM chunks WHERE id = ?`);
+    const deleteChunk = this.db.prepare(`DELETE FROM chunks WHERE id = ?`);
+    const deleteVec = this.vecDims
+      ? this.db.prepare(`DELETE FROM chunks_vec WHERE rowid = ?`)
+      : null;
+    let removedChunks = 0;
+    let relinkedTaskMemoryLinks = 0;
+    const appliedGroups: Array<{
+      normalizedHash: string;
+      keepChunkId: string;
+      removedChunkIds: string[];
+      relinkedTaskMemoryLinks: number;
+    }> = [];
+
+    const tx = this.db.transaction(() => {
+      for (const operation of plan.operations) {
+        let groupRelinked = 0;
+        const now = new Date().toISOString();
+        for (const removeChunkId of operation.removeChunkIds) {
+          const links = selectLinks.all(removeChunkId) as Array<{ task_id: string; relation: "used" | "generated" | "referenced" }>;
+          for (const link of links) {
+            const result = upsertLink.run(link.task_id, operation.keepChunkId, link.relation, now);
+            groupRelinked += Number(result.changes ?? 0);
+          }
+          deleteLinks.run(removeChunkId);
+          const row = selectRowId.get(removeChunkId) as { rowid: number } | undefined;
+          if (row && deleteVec) {
+            deleteVec.run(BigInt(row.rowid));
+          }
+          const deleteResult = deleteChunk.run(removeChunkId);
+          removedChunks += Number(deleteResult.changes ?? 0);
+        }
+        relinkedTaskMemoryLinks += groupRelinked;
+        appliedGroups.push({
+          normalizedHash: operation.normalizedHash,
+          keepChunkId: operation.keepChunkId,
+          removedChunkIds: [...operation.removeChunkIds],
+          relinkedTaskMemoryLinks: groupRelinked,
+        });
+      }
+      if (removedChunks > 0) {
+        this.incrementNumericMeta(MEMORY_CHANGE_SEQ_META_KEY, removedChunks);
+      }
+    });
+    tx();
+    if (removedChunks > 0) {
+      this.ensureFtsRebuiltIfNeeded();
+    }
+    return {
+      mode: "apply",
+      strategy: "hash_only_exact",
+      normalization: "trimmed_lf",
+      ...(filter ? { filter } : {}),
+      runId: backup.runId,
+      backupPath: backup.backupPath,
+      totals: {
+        scannedChunks: plan.report.totals.scannedChunks,
+        duplicateGroups: plan.report.totals.duplicateGroups,
+        duplicateChunks: plan.report.totals.duplicateChunks,
+        removedChunks,
+        relinkedTaskMemoryLinks,
+        keptChunks: plan.operations.length,
+      },
+      groups: appliedGroups,
+    };
+  }
+
   deleteExperienceCandidates(filter?: ExperienceCandidateListFilter): number {
     this.ensureOpen();
     const { clause, params } = this.buildExperienceCandidateFilterClause(filter);
@@ -1403,6 +1603,13 @@ export class MemoryStore {
       this.db.close();
       this.closed = true;
     }
+  }
+
+  getDbPath(): string {
+    this.ensureOpen();
+    const row = this.db.prepare(`PRAGMA database_list`).all() as Array<{ file?: string | null }>;
+    const main = row.find((item) => item.file);
+    return String(main?.file ?? "");
   }
 
   // ========== Phase M-1: 元数据过滤 ==========

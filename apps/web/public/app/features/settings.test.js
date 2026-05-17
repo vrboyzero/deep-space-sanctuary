@@ -236,6 +236,8 @@ function createSettingsRefs(overrides = {}) {
     cfgToolGroups: overrides.cfgToolGroups || createInput(""),
     cfgMaxInputTokens: overrides.cfgMaxInputTokens || createInput(""),
     cfgMaxOutputTokens: overrides.cfgMaxOutputTokens || createInput(""),
+    cfgToolLoopIterationBudget: overrides.cfgToolLoopIterationBudget || createInput(""),
+    cfgToolLoopWarningFraction: overrides.cfgToolLoopWarningFraction || createInput(""),
     cfgDangerousToolsEnabled: overrides.cfgDangerousToolsEnabled || createCheckbox(false),
     cfgToolsPolicyFile: overrides.cfgToolsPolicyFile || createInput(""),
     cfgSubAgentMaxConcurrent: overrides.cfgSubAgentMaxConcurrent || createInput(""),
@@ -394,6 +396,8 @@ function createSettingsRefs(overrides = {}) {
     cfgCompactionBlockingThreshold: overrides.cfgCompactionBlockingThreshold || createInput(""),
     cfgCompactionMaxConsecutiveFailures: overrides.cfgCompactionMaxConsecutiveFailures || createInput(""),
     cfgCompactionMaxPtlRetries: overrides.cfgCompactionMaxPtlRetries || createInput(""),
+    cfgCompactionContextWindowFraction: overrides.cfgCompactionContextWindowFraction || createInput(""),
+    cfgCompactionModelRoute: overrides.cfgCompactionModelRoute || createInput(""),
     cfgCompactionModel: overrides.cfgCompactionModel || createInput(""),
     cfgCompactionBaseUrl: overrides.cfgCompactionBaseUrl || createInput(""),
     cfgCompactionApiKey: overrides.cfgCompactionApiKey || createInput(""),
@@ -460,6 +464,11 @@ function createSettingsRefs(overrides = {}) {
     cfgExtraWorkspaceRoots: overrides.cfgExtraWorkspaceRoots || createInput(""),
     cfgWebRoot: overrides.cfgWebRoot || createInput(""),
     cfgGovernanceDetailMode: overrides.cfgGovernanceDetailMode || createInput("compact"),
+    cfgCommanderMode: overrides.cfgCommanderMode || createInput("auto"),
+    cfgCommanderAgentId: overrides.cfgCommanderAgentId || createInput(""),
+    cfgGoalExecutionMode: overrides.cfgGoalExecutionMode || createInput("auto"),
+    cfgGoalGovernanceMode: overrides.cfgGoalGovernanceMode || createInput("auto"),
+    cfgCommanderAutoReworkEnabled: overrides.cfgCommanderAutoReworkEnabled || createCheckbox(false),
     cfgExperienceDraftGenerateNoticeEnabled: overrides.cfgExperienceDraftGenerateNoticeEnabled || createCheckbox(true),
     cfgLogLevel: overrides.cfgLogLevel || createInput(""),
     cfgLogConsole: overrides.cfgLogConsole || createCheckbox(false),
@@ -1523,9 +1532,13 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_BLOCKING_THRESHOLD: "18000",
       BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES: "3",
       BELLDANDY_COMPACTION_MAX_PTL_RETRIES: "2",
+      BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
+      BELLDANDY_COMPACTION_MODEL_ROUTE: "compact-fallback",
       BELLDANDY_COMPACTION_MODEL: "gpt-4o-mini",
       BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
       BELLDANDY_COMPACTION_API_KEY: "[REDACTED]",
+      BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
+      BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
       BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
       BELLDANDY_TOOLS_POLICY_FILE: "~/.star_sanctuary/tools-policy.json",
       BELLDANDY_SUB_AGENT_MAX_CONCURRENT: "3",
@@ -1576,8 +1589,12 @@ describe("settings controller", () => {
     expect(refs.cfgPromptExperimentDisableSections.value).toBe("methodology,context");
     expect(refs.cfgPromptSnapshotRetentionDays.value).toBe("7");
     expect(refs.cfgCompactionEnabled.checked).toBe(true);
+    expect(refs.cfgCompactionContextWindowFraction.value).toBe("0.1");
+    expect(refs.cfgCompactionModelRoute.value).toBe("compact-fallback");
     expect(refs.cfgCompactionBaseUrl.value).toBe("https://compaction.example.com/v1");
     expect(refs.cfgCompactionApiKey.value).toBe("[REDACTED]");
+    expect(refs.cfgToolLoopIterationBudget.value).toBe("8");
+    expect(refs.cfgToolLoopWarningFraction.value).toBe("0.75");
     expect(refs.cfgDangerousToolsEnabled.checked).toBe(true);
     expect(refs.cfgToolsPolicyFile.value).toBe("~/.star_sanctuary/tools-policy.json");
     expect(refs.cfgSubAgentMaxDepth.value).toBe("2");
@@ -1668,6 +1685,69 @@ describe("settings controller", () => {
       globalThis.dispatchEvent = originalDispatchEvent;
       globalThis.CustomEvent = originalCustomEvent;
     }
+  });
+
+  it("loads and saves commander governance defaults through system settings", async () => {
+    const refs = createSettingsRefs({
+      cfgCommanderMode: createInput("auto"),
+      cfgCommanderAgentId: createInput(""),
+      cfgGoalExecutionMode: createInput("auto"),
+      cfgGoalGovernanceMode: createInput("auto"),
+      cfgCommanderAutoReworkEnabled: createCheckbox(false),
+    });
+    const sendReq = vi.fn(async (frame) => {
+      switch (frame.method) {
+        case "config.update":
+          return { ok: true, payload: {} };
+        case "models.config.update":
+          return { ok: true, payload: {} };
+        case "channel.security.get":
+        case "channel.reply_chunking.get":
+          return { ok: true, payload: { path: "ok.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+        case "channel.security.pending.list":
+          return { ok: true, payload: { pending: [] } };
+        case "system.restart":
+          return { ok: true, payload: {} };
+        default:
+          return { ok: true, payload: {} };
+      }
+    });
+    const { controller } = createController({
+      refs,
+      sendReq,
+      loadServerConfig: vi.fn().mockResolvedValue({
+        BELLDANDY_COMMANDER_MODE: "on",
+        BELLDANDY_COMMANDER_AGENT_ID: "commander-main",
+        BELLDANDY_GOAL_EXECUTION_MODE: "multi_agent_parallel",
+        BELLDANDY_GOAL_GOVERNANCE_MODE: "commander",
+        BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED: "true",
+      }),
+    });
+
+    await controller.loadConfig();
+    expect(refs.cfgCommanderMode.value).toBe("on");
+    expect(refs.cfgCommanderAgentId.value).toBe("commander-main");
+    expect(refs.cfgGoalExecutionMode.value).toBe("multi_agent_parallel");
+    expect(refs.cfgGoalGovernanceMode.value).toBe("commander");
+    expect(refs.cfgCommanderAutoReworkEnabled.checked).toBe(true);
+
+    refs.cfgCommanderMode.value = "off";
+    refs.cfgCommanderAgentId.value = "commander-2";
+    refs.cfgGoalExecutionMode.value = "single_agent";
+    refs.cfgGoalGovernanceMode.value = "direct";
+    refs.cfgCommanderAutoReworkEnabled.checked = false;
+    await controller.saveConfig();
+
+    const updateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
+    expect(updateCall?.[0]?.params?.updates).toMatchObject({
+      BELLDANDY_COMMANDER_MODE: "off",
+      BELLDANDY_COMMANDER_AGENT_ID: "commander-2",
+      BELLDANDY_GOAL_EXECUTION_MODE: "single_agent",
+      BELLDANDY_GOAL_GOVERNANCE_MODE: "direct",
+      BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED: "false",
+    });
+    const restartCall = sendReq.mock.calls.find(([frame]) => frame.method === "system.restart");
+    expect(restartCall).toBeUndefined();
   });
 
   it("loads and updates runtime experience draft notice mode after saving system settings", async () => {
@@ -1899,9 +1979,13 @@ describe("settings controller", () => {
       cfgCompactionBlockingThreshold: createInput("18000"),
       cfgCompactionMaxConsecutiveFailures: createInput("3"),
       cfgCompactionMaxPtlRetries: createInput("2"),
+      cfgCompactionContextWindowFraction: createInput(" 0.1 "),
+      cfgCompactionModelRoute: createInput(" compact-fallback "),
       cfgCompactionModel: createInput(" gpt-4o-mini "),
       cfgCompactionBaseUrl: createInput(" https://compaction.example.com/v1 "),
       cfgCompactionApiKey: createInput("compaction-secret"),
+      cfgToolLoopIterationBudget: createInput(" 8 "),
+      cfgToolLoopWarningFraction: createInput(" 0.75 "),
       cfgDangerousToolsEnabled: createCheckbox(true),
       cfgToolsPolicyFile: createInput(" ~/.star_sanctuary/tools-policy.json "),
       cfgSubAgentMaxConcurrent: createInput("3"),
@@ -1983,9 +2067,13 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_BLOCKING_THRESHOLD: "18000",
       BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES: "3",
       BELLDANDY_COMPACTION_MAX_PTL_RETRIES: "2",
+      BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
+      BELLDANDY_COMPACTION_MODEL_ROUTE: "compact-fallback",
       BELLDANDY_COMPACTION_MODEL: "gpt-4o-mini",
       BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
       BELLDANDY_COMPACTION_API_KEY: "compaction-secret",
+      BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
+      BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
       BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
       BELLDANDY_TOOLS_POLICY_FILE: "~/.star_sanctuary/tools-policy.json",
       BELLDANDY_SUB_AGENT_MAX_CONCURRENT: "3",

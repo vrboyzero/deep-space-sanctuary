@@ -4,6 +4,11 @@ import path from "node:path";
 import type { AgentRegistry } from "@belldandy/agent";
 import type { GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
 import {
+  buildVirtualCandidateFromPublishedAsset,
+  listPublishedAssets,
+} from "@belldandy/memory";
+import {
+  buildExperienceSynthesisPreviewFromSourceCandidates,
   buildExperienceCandidateSlug,
   createTaskWorkSurface,
   getGlobalMemoryManager,
@@ -48,6 +53,10 @@ import {
   findSkillFreshnessForUsage,
 } from "../skill-freshness.js";
 import { updateSkillFreshnessManualMark } from "../skill-freshness-state.js";
+import {
+  resolveExperienceSynthesisTemplate,
+  resolveExperienceSynthesisTemplateInfo,
+} from "../experience-synthesis-template.js";
 
 type MemoryExperienceMethodContext = {
   stateDir: string;
@@ -74,6 +83,12 @@ type MemoryExperienceMethodContext = {
     warn?: (message: string, data?: unknown) => void;
     error?: (message: string, data?: unknown) => void;
   };
+};
+
+type ExperienceSynthesisModelRequestConfig = {
+  model?: string;
+  thinking?: Record<string, unknown>;
+  reasoningEffort?: string;
 };
 
 const DEFAULT_EXPERIENCE_SYNTHESIS_MAX_SIMILAR_SOURCES = 5;
@@ -192,6 +207,45 @@ export async function handleMemoryExperienceMethod(
         },
         queryView: buildResidentMemoryQueryView(residentPolicy),
         ...(includeRecentTasks ? { recentTasks: manager.getRecentTasks(5) } : {}),
+      });
+    }
+
+    case "memory.dedup.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const maxGroups = clampListLimit(params.maxGroups, 50, 500);
+      const report = manager.previewExactDedup(filter as any, { maxGroups });
+      return ok(req.id, {
+        report,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.dedup.apply": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const confirmed = params.confirmed === true;
+      if (!confirmed) {
+        return confirmationRequired(req.id, "memory.dedup.apply requires explicit confirmed=true because it mutates memory.sqlite.");
+      }
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const maxGroups = clampListLimit(params.maxGroups, 50, 500);
+      const runId = readOptionalString(params, "runId");
+      const backupRootDir = path.join(ctx.stateDir, "artifacts", "memory-dedup-backups");
+      await fs.mkdir(backupRootDir, { recursive: true });
+      const result = manager.applyExactDedup(filter as any, {
+        backupRootDir,
+        maxGroups,
+        runId,
+      });
+      return ok(req.id, {
+        result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
       });
     }
 
@@ -639,6 +693,28 @@ export async function handleMemoryExperienceMethod(
       });
     }
 
+    case "experience.asset.list": {
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      const limit = clampListLimit(params.limit, 50, 500);
+      const rawType = readOptionalString(params, "type");
+      const assetType = rawType
+        ? normalizePublishedAssetType(rawType)
+        : undefined;
+      if (rawType && !assetType) {
+        return invalid(req.id, "type must be method or skill.");
+      }
+      const items = listPublishedAssets(ctx.stateDir, assetType)
+        .sort(comparePublishedAssetRecords)
+        .slice(0, limit)
+        .map((item) => toPublishedExperienceAssetPayloadItem(item));
+      return ok(req.id, {
+        items,
+        limit,
+        ...(assetType ? { type: assetType } : {}),
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
     case "experience.candidate.accept": {
       const manager = resolveScopedMemoryManager(params);
       if (!manager) return notAvailable(req.id);
@@ -761,28 +837,49 @@ export async function handleMemoryExperienceMethod(
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
       if (!manager) return notAvailable(req.id);
 
-      const candidateId = readRequiredString(params, "candidateId");
+      const candidateId = readOptionalString(params, "candidateId");
+      const assetPath = readOptionalString(params, "assetPath");
       const limit = clampListLimit(params.limit, 50, 200);
-      if (!candidateId) {
+      if (!candidateId && !assetPath) {
         logWarn("Experience synthesis preview rejected because candidateId is missing", {
           limit,
         });
-        return invalid(req.id, "candidateId is required");
+        return invalid(req.id, "candidateId or assetPath is required");
+      }
+      const assetPathValidationError = assetPath
+        ? getPublishedAssetPathValidationError(ctx.stateDir, assetPath)
+        : "";
+      if (assetPathValidationError) {
+        logWarn("Experience synthesis preview rejected because assetPath is invalid", {
+          assetPath,
+          limit,
+          reason: assetPathValidationError,
+        });
+        return invalid(req.id, assetPathValidationError);
       }
 
-      const seedCandidate = manager.getExperienceCandidate(candidateId);
+      const virtualSeedCandidate = assetPath
+        ? resolveVirtualPublishedSeedCandidate(ctx.stateDir, assetPath)
+        : null;
+      const seedCandidate = candidateId
+        ? manager.getExperienceCandidate(candidateId)
+        : virtualSeedCandidate;
       if (!seedCandidate) {
         logWarn("Experience synthesis preview rejected because seed candidate was not found", {
           candidateId,
+          assetPath,
           limit,
         });
         return notFound(req.id, "Experience candidate not found.");
       }
 
-      const preview = manager.previewExperienceCandidateSynthesis(candidateId, { limit });
+      const preview = candidateId
+        ? manager.previewExperienceCandidateSynthesis(candidateId, { limit })
+        : buildVirtualCandidateSynthesisPreview(manager, ctx.stateDir, seedCandidate, limit);
       if (!preview) {
         logWarn("Experience synthesis preview rejected because preview data could not be prepared", {
           candidateId,
+          assetPath,
           candidateType: seedCandidate.type,
           limit,
         });
@@ -829,22 +926,41 @@ export async function handleMemoryExperienceMethod(
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
       if (!manager) return notAvailable(req.id);
 
-      const candidateId = readRequiredString(params, "candidateId");
-      if (!candidateId) {
+      const candidateId = readOptionalString(params, "candidateId");
+      const assetPath = readOptionalString(params, "assetPath");
+      if (!candidateId && !assetPath) {
         logWarn("Experience synthesis create rejected because candidateId is missing", {
           requestedSourceCount: readOptionalStringArray(params, "sourceCandidateIds").length,
         });
-        return invalid(req.id, "candidateId is required");
+        return invalid(req.id, "candidateId or assetPath is required");
       }
-      const seedCandidate = manager.getExperienceCandidate(candidateId);
+      const assetPathValidationError = assetPath
+        ? getPublishedAssetPathValidationError(ctx.stateDir, assetPath)
+        : "";
+      if (assetPathValidationError) {
+        logWarn("Experience synthesis create rejected because assetPath is invalid", {
+          assetPath,
+          requestedSourceCount: readOptionalStringArray(params, "sourceCandidateIds").length,
+          reason: assetPathValidationError,
+        });
+        return invalid(req.id, assetPathValidationError);
+      }
+      const virtualSeedCandidate = assetPath
+        ? resolveVirtualPublishedSeedCandidate(ctx.stateDir, assetPath)
+        : null;
+      const seedCandidate = candidateId
+        ? manager.getExperienceCandidate(candidateId)
+        : virtualSeedCandidate;
       if (!seedCandidate) {
         logWarn("Experience synthesis create rejected because seed candidate was not found", {
           candidateId,
+          assetPath,
           requestedSourceCount: readOptionalStringArray(params, "sourceCandidateIds").length,
         });
         return notFound(req.id, "Experience candidate not found.");
       }
-      if (seedCandidate.status !== "draft") {
+      const allowPublishedSources = !candidateId && Boolean(assetPath);
+      if (!allowPublishedSources && seedCandidate.status !== "draft") {
         logWarn("Experience synthesis create rejected because seed candidate is not draft", {
           candidateId: seedCandidate.id,
           candidateType: seedCandidate.type,
@@ -853,11 +969,14 @@ export async function handleMemoryExperienceMethod(
         return invalid(req.id, `Only draft candidates can be synthesized. Current status: ${seedCandidate.status}.`);
       }
 
-      const preview = manager.previewExperienceCandidateSynthesis(candidateId, { limit: 200 });
+      const preview = allowPublishedSources
+        ? buildVirtualCandidateSynthesisPreview(manager, ctx.stateDir, seedCandidate, 200)
+        : manager.previewExperienceCandidateSynthesis(seedCandidate.id, { limit: 200 });
       if (!preview) {
         logWarn("Experience synthesis create rejected because preview data could not be prepared", {
           candidateId: seedCandidate.id,
           candidateType: seedCandidate.type,
+          assetPath,
         });
         return notFound(req.id, "Experience candidate not found.");
       }
@@ -891,15 +1010,19 @@ export async function handleMemoryExperienceMethod(
           maxSimilarSources,
         });
       }
-      const sourceCandidates = limitedOrderedSourceCandidateIds
-        .map((id) => manager.getExperienceCandidate(id))
-        .filter((item): item is ExperienceCandidate => {
-          if (!item) {
-            return false;
-          }
-          return item.type === seedCandidate.type
-            && item.status === "draft";
-        });
+      const sourceCandidates = resolveExperienceSynthesisSourceCandidatesFromIds({
+        manager,
+        stateDir: ctx.stateDir,
+        seedCandidate,
+        orderedSourceCandidateIds: limitedOrderedSourceCandidateIds,
+        allowPublishedSources,
+      });
+      const draftSourceCandidateIds = sourceCandidates
+        .filter((item) => item.status === "draft")
+        .map((item) => item.id);
+      const publishedSourceCandidateIds = sourceCandidates
+        .filter((item) => item.status === "published")
+        .map((item) => item.id);
       logDebug("Experience synthesis create requested", {
         candidateId: seedCandidate.id,
         candidateType: seedCandidate.type,
@@ -908,17 +1031,20 @@ export async function handleMemoryExperienceMethod(
         selectedSourceCount: limitedOrderedSourceCandidateIds.length,
         selectedSameFamilyCount: selection.selectedSameFamilyCount,
         selectedSimilarCount: selection.selectedSimilarCount,
-        resolvedDraftSourceCount: sourceCandidates.length,
+        resolvedSourceCount: sourceCandidates.length,
+        resolvedDraftSourceCount: draftSourceCandidateIds.length,
+        resolvedPublishedSourceCount: publishedSourceCandidateIds.length,
         previewMatchedCount: preview.items.length,
       });
       if (!sourceCandidates.length) {
         logWarn("Experience synthesis create aborted because no draft source candidates were resolved", {
           candidateId: seedCandidate.id,
           candidateType: seedCandidate.type,
+          assetPath,
           requestedSourceCandidateIds,
           orderedSourceCandidateIds,
         });
-        return invalid(req.id, "No draft source candidates are available for synthesis.");
+        return invalid(req.id, "No source candidates are available for synthesis.");
       }
 
       try {
@@ -964,6 +1090,8 @@ export async function handleMemoryExperienceMethod(
           candidateType: seedCandidate.type,
           outputLength: modelResult.content.length,
           finishReason: modelResult.finishReason || "unknown",
+          attemptCount: modelResult.attemptCount,
+          retryApplied: modelResult.retryApplied,
         });
         const parsed = parseExperienceSynthesisModelOutput(modelResult.content, {
           finishReason: modelResult.finishReason,
@@ -1013,7 +1141,7 @@ export async function handleMemoryExperienceMethod(
         });
         const consumedSourceCandidates = markSourcesConsumed
           ? manager.markExperienceCandidatesSynthesisConsumed({
-            candidateIds: sourceCandidates.map((item) => item.id),
+            candidateIds: draftSourceCandidateIds,
             consumedByCandidateId: createdCandidate.id,
           })
           : [];
@@ -1046,6 +1174,7 @@ export async function handleMemoryExperienceMethod(
           queryView: buildResidentMemoryQueryView(residentPolicy),
         });
       } catch (error) {
+        const recoverableMessage = resolveRecoverableExperienceSynthesisErrorMessage(error);
         logError("Experience synthesis create failed", {
           candidateId: seedCandidate.id,
           candidateType: seedCandidate.type,
@@ -1053,6 +1182,9 @@ export async function handleMemoryExperienceMethod(
           requestedSourceCount: requestedSourceCandidateIds.length,
           error: summarizeExperienceSynthesisError(error),
         });
+        if (recoverableMessage) {
+          return invalid(req.id, recoverableMessage);
+        }
         throw error;
       }
     }
@@ -1455,6 +1587,134 @@ function toExperienceCandidatePayloadItem(
   return attachResidentExperienceCandidateSourceView(item, residentPolicy) as unknown as Record<string, unknown>;
 }
 
+function toPublishedExperienceAssetPayloadItem(item: {
+  source: string;
+  type: ExperienceCandidateType;
+  key: string;
+  title?: string;
+  summary?: string;
+  publishedPath: string;
+  metadata?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    source: item.source,
+    type: item.type,
+    key: item.key,
+    ...(item.title ? { title: item.title } : {}),
+    ...(item.summary ? { summary: item.summary } : {}),
+    publishedPath: item.publishedPath,
+    ...(item.metadata ? { metadata: item.metadata } : {}),
+  };
+}
+
+function normalizePublishedAssetType(value: string): ExperienceCandidateType | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "method" || normalized === "skill") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function comparePublishedAssetRecords(
+  left: { type: ExperienceCandidateType; title?: string; key: string; publishedPath: string },
+  right: { type: ExperienceCandidateType; title?: string; key: string; publishedPath: string },
+): number {
+  if (left.type !== right.type) {
+    return left.type.localeCompare(right.type);
+  }
+  const leftLabel = String(left.title || left.key || left.publishedPath).trim();
+  const rightLabel = String(right.title || right.key || right.publishedPath).trim();
+  return leftLabel.localeCompare(rightLabel);
+}
+
+function resolveVirtualPublishedSeedCandidate(
+  stateDir: string,
+  assetPath: string,
+): ExperienceCandidate | null {
+  const normalizedAssetPath = path.resolve(assetPath);
+  const assets = listPublishedAssets(stateDir);
+  const matched = assets.find((item) => path.resolve(item.publishedPath) === normalizedAssetPath);
+  return matched ? buildVirtualCandidateFromPublishedAsset({ asset: matched }) : null;
+}
+
+function getPublishedAssetPathValidationError(stateDir: string, assetPath: string): string {
+  const normalizedAssetPath = path.resolve(assetPath);
+  const methodsDir = path.resolve(path.join(stateDir, "methods"));
+  const skillsDir = path.resolve(path.join(stateDir, "skills"));
+  if (normalizedAssetPath === methodsDir || normalizedAssetPath === skillsDir) {
+    return "assetPath must point to a published method .md file or skill SKILL.md file, not the methods/skills directory.";
+  }
+  return "";
+}
+
+function listExperienceSynthesisSourceCandidates(
+  manager: NonNullable<ReturnType<typeof resolveScopedMemoryManager>>,
+  stateDir: string,
+  seedCandidate: ExperienceCandidate,
+): ExperienceCandidate[] {
+  const storedDraftCandidates = manager.listExperienceCandidates(1000, {
+    type: seedCandidate.type,
+    status: "draft",
+    synthesisConsumed: false,
+  });
+  const publishedVirtualCandidates = listPublishedAssets(stateDir, seedCandidate.type)
+    .map((asset) => buildVirtualCandidateFromPublishedAsset({ asset }))
+    .filter((item) =>
+      item.id !== seedCandidate.id
+      && item.publishedPath !== seedCandidate.publishedPath,
+    );
+  return [...storedDraftCandidates, ...publishedVirtualCandidates];
+}
+
+function buildVirtualCandidateSynthesisPreview(
+  manager: NonNullable<ReturnType<typeof resolveScopedMemoryManager>>,
+  stateDir: string,
+  seedCandidate: ExperienceCandidate,
+  limit: number,
+) {
+  return buildExperienceSynthesisPreviewFromSourceCandidates(
+    seedCandidate,
+    listExperienceSynthesisSourceCandidates(manager, stateDir, seedCandidate),
+    { limit },
+  );
+}
+
+function resolveExperienceSynthesisSourceCandidatesFromIds(input: {
+  manager: NonNullable<ReturnType<typeof resolveScopedMemoryManager>>;
+  stateDir: string;
+  seedCandidate: ExperienceCandidate;
+  orderedSourceCandidateIds: string[];
+  allowPublishedSources: boolean;
+}): ExperienceCandidate[] {
+  const candidateById = new Map<string, ExperienceCandidate>();
+  candidateById.set(input.seedCandidate.id, input.seedCandidate);
+  for (const candidate of listExperienceSynthesisSourceCandidates(input.manager, input.stateDir, input.seedCandidate)) {
+    if (!candidateById.has(candidate.id)) {
+      candidateById.set(candidate.id, candidate);
+    }
+  }
+  const resolvedCandidates: ExperienceCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidateId of input.orderedSourceCandidateIds) {
+    if (seen.has(candidateId)) {
+      continue;
+    }
+    seen.add(candidateId);
+    const candidate = candidateById.get(candidateId);
+    if (!candidate || candidate.type !== input.seedCandidate.type) {
+      continue;
+    }
+    if (candidate.status === "draft") {
+      resolvedCandidates.push(candidate);
+      continue;
+    }
+    if (input.allowPublishedSources && candidate.status === "published") {
+      resolvedCandidates.push(candidate);
+    }
+  }
+  return resolvedCandidates;
+}
+
 function toExperienceUsagePayloadItem(
   manager: ReturnType<typeof resolveScopedMemoryManager>,
   item: any,
@@ -1494,41 +1754,6 @@ function toTaskListPayloadItems(items: Array<any>, summaryOnly: boolean): Array<
     createdAt: item.createdAt,
     metadata: item.metadata,
   }));
-}
-
-async function resolveExperienceSynthesisTemplateInfo(
-  stateDir: string,
-  type: ExperienceCandidateType,
-): Promise<{ id: string; path: string | null }> {
-  const resolved = await resolveExperienceSynthesisTemplate(stateDir, type, { includeContent: false });
-  return {
-    id: resolved.id,
-    path: resolved.path,
-  };
-}
-
-async function resolveExperienceSynthesisTemplate(
-  stateDir: string,
-  type: ExperienceCandidateType,
-  options: { includeContent?: boolean } = {},
-): Promise<{ id: string; path: string | null; content: string }> {
-  const fileName = type === "skill" ? "skill-synthesis.md" : "method-synthesis.md";
-  const candidatePaths = [
-    path.join(stateDir, "experience-templates", fileName),
-    path.resolve(process.cwd(), "docs", "experience-templates", fileName),
-  ];
-  for (const candidatePath of candidatePaths) {
-    const content = await fs.readFile(candidatePath, "utf-8").catch(() => "");
-    if (!content.trim()) {
-      continue;
-    }
-    return {
-      id: `${type}-synthesis`,
-      path: candidatePath,
-      content: options.includeContent === false ? "" : content,
-    };
-  }
-  throw new Error(`Experience synthesis template not found for ${type}. Checked: ${candidatePaths.join(" | ")}`);
 }
 
 function buildExperienceSynthesisSystemPrompt(templateContent: string): string {
@@ -1724,15 +1949,61 @@ async function callPrimaryModelForExperienceSynthesis(input: {
   ctx: MemoryExperienceMethodContext;
   system: string;
   user: string;
+}): Promise<{ content: string; finishReason: string; attemptCount: number; retryApplied: boolean }> {
+  const initialConfig = resolveExperienceSynthesisModelRequestConfig(input.ctx);
+  try {
+    const result = await invokePrimaryModelForExperienceSynthesis({
+      ctx: input.ctx,
+      system: input.system,
+      user: input.user,
+      config: initialConfig,
+    });
+    return {
+      ...result,
+      attemptCount: 1,
+      retryApplied: false,
+    };
+  } catch (error) {
+    const retryConfig = shouldRetryExperienceSynthesisWithReducedReasoning(error)
+      ? buildExperienceSynthesisReducedReasoningRetryConfig(initialConfig)
+      : null;
+    if (!retryConfig) {
+      throw error;
+    }
+    input.ctx.logger?.warn?.("Experience synthesis model exhausted output budget; retrying with reduced reasoning", {
+      initialReasoningEffort: initialConfig.reasoningEffort || "",
+      retryReasoningEffort: retryConfig.reasoningEffort || "",
+      clearedThinking: Boolean(initialConfig.thinking),
+      model: retryConfig.model || initialConfig.model || "",
+    });
+    const retried = await invokePrimaryModelForExperienceSynthesis({
+      ctx: input.ctx,
+      system: input.system,
+      user: input.user,
+      config: retryConfig,
+    });
+    return {
+      ...retried,
+      attemptCount: 2,
+      retryApplied: true,
+    };
+  }
+}
+
+async function invokePrimaryModelForExperienceSynthesis(input: {
+  ctx: MemoryExperienceMethodContext;
+  system: string;
+  user: string;
+  config: ExperienceSynthesisModelRequestConfig;
 }): Promise<{ content: string; finishReason: string }> {
   if (typeof input.ctx.callPrimaryModel === "function") {
     const content = await input.ctx.callPrimaryModel({
       system: input.system,
       user: input.user,
       maxTokens: 8_000,
-      model: input.ctx.primaryModelConfig?.model,
-      thinking: input.ctx.primaryModelConfig?.thinking,
-      reasoningEffort: input.ctx.primaryModelConfig?.reasoningEffort,
+      model: input.config.model,
+      thinking: input.config.thinking,
+      reasoningEffort: input.config.reasoningEffort,
     });
     return {
       content,
@@ -1741,12 +2012,19 @@ async function callPrimaryModelForExperienceSynthesis(input: {
   }
 
   const config = input.ctx.primaryModelConfig;
-  if (!config?.baseUrl || !config.apiKey || !config.model) {
+  const requestConfig = {
+    baseUrl: config?.baseUrl,
+    apiKey: config?.apiKey,
+    model: input.config.model,
+    thinking: input.config.thinking,
+    reasoningEffort: input.config.reasoningEffort,
+  };
+  if (!requestConfig.baseUrl || !requestConfig.apiKey || !requestConfig.model) {
     throw new Error("Primary model is not configured for experience synthesis.");
   }
 
   const payload: Record<string, unknown> = {
-    model: config.model,
+    model: requestConfig.model,
     messages: [
       { role: "system", content: input.system },
       { role: "user", content: input.user },
@@ -1754,11 +2032,11 @@ async function callPrimaryModelForExperienceSynthesis(input: {
     temperature: 0.2,
     max_tokens: 8_000,
   };
-  if (config.thinking) {
-    payload.thinking = config.thinking;
+  if (requestConfig.thinking) {
+    payload.thinking = requestConfig.thinking;
   }
-  if (config.reasoningEffort) {
-    payload.reasoning_effort = config.reasoningEffort;
+  if (requestConfig.reasoningEffort) {
+    payload.reasoning_effort = requestConfig.reasoningEffort;
   }
 
   const controller = new AbortController();
@@ -1768,11 +2046,11 @@ async function callPrimaryModelForExperienceSynthesis(input: {
 
   let response: Response;
   try {
-    response = await fetch(buildOpenAIChatCompletionsUrl(config.baseUrl), {
+    response = await fetch(buildOpenAIChatCompletionsUrl(requestConfig.baseUrl), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${requestConfig.apiKey}`,
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
@@ -1811,6 +2089,59 @@ async function callPrimaryModelForExperienceSynthesis(input: {
     content,
     finishReason,
   };
+}
+
+function resolveExperienceSynthesisModelRequestConfig(
+  ctx: MemoryExperienceMethodContext,
+): ExperienceSynthesisModelRequestConfig {
+  return {
+    model: ctx.primaryModelConfig?.model,
+    thinking: ctx.primaryModelConfig?.thinking,
+    reasoningEffort: normalizeExperienceSynthesisReasoningEffort(ctx.primaryModelConfig?.reasoningEffort),
+  };
+}
+
+function shouldRetryExperienceSynthesisWithReducedReasoning(error: unknown): boolean {
+  const message = error instanceof Error ? normalizeText(error.message) : normalizeText(String(error));
+  return Boolean(
+    message
+    && message.includes("Experience synthesis model returned empty content.")
+    && message.includes("finish_reason=length"),
+  );
+}
+
+function buildExperienceSynthesisReducedReasoningRetryConfig(
+  current: ExperienceSynthesisModelRequestConfig,
+): ExperienceSynthesisModelRequestConfig | null {
+  const normalizedReasoningEffort = normalizeExperienceSynthesisReasoningEffort(current.reasoningEffort);
+  const reducedReasoningEffort = reduceExperienceSynthesisReasoningEffort(normalizedReasoningEffort);
+  const clearsThinking = Boolean(current.thinking);
+  if (!reducedReasoningEffort && !normalizedReasoningEffort && !clearsThinking) {
+    return null;
+  }
+  return {
+    model: current.model,
+    reasoningEffort: reducedReasoningEffort,
+  };
+}
+
+function normalizeExperienceSynthesisReasoningEffort(value: unknown): string {
+  return normalizeText(value)?.toLowerCase() || "";
+}
+
+function reduceExperienceSynthesisReasoningEffort(value: string): string {
+  switch (value) {
+    case "max":
+      return "high";
+    case "high":
+      return "medium";
+    case "medium":
+      return "low";
+    case "low":
+      return "minimal";
+    default:
+      return "";
+  }
 }
 
 function extractExperienceSynthesisResponseText(
@@ -1864,6 +2195,20 @@ function summarizeExperienceSynthesisError(error: unknown): Record<string, unkno
   return {
     message: String(error),
   };
+}
+
+function resolveRecoverableExperienceSynthesisErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? normalizeText(error.message) : normalizeText(String(error));
+  if (!message) {
+    return "";
+  }
+  if (message.includes("Experience synthesis model returned empty content.")) {
+    if (message.includes("finish_reason=length")) {
+      return "Experience synthesis model exhausted its output budget before returning content. Try again, reduce source size, or lower reasoning depth.";
+    }
+    return "Experience synthesis model did not return usable content. Try again or switch to a less reasoning-heavy model.";
+  }
+  return "";
 }
 
 function normalizeJsonCandidate(raw: string, options: { finishReason?: string | null } = {}): string {

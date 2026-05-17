@@ -103,6 +103,58 @@ describe("buildAgentRuntimePromptSections", () => {
       .toContain("prefer `video_understand` with `focus_mode=timestamp_query`");
   });
 
+  it("injects method / skill summary and commander execution policy when available", () => {
+    const sections = buildAgentRuntimePromptSections({
+      hasAvailableTools: true,
+      visibleContracts: [],
+      canDelegate: true,
+      role: "default",
+      profileId: "commander",
+      recommendedSkillNames: ["orchestration-playbook"],
+      methodAssets: [
+        {
+          fileName: "multi-agent-review.md",
+          title: "多 Agent 审查流程",
+          status: "active",
+          summary: "适合需要 coder + verifier 收口的复杂任务。",
+        },
+      ],
+      promptSkillAssets: [
+        {
+          name: "team-fan-in",
+          description: "帮助 manager 组织 fan-in 验收。",
+          priority: "high",
+          source: "bundled",
+          tags: ["team"],
+        },
+      ],
+      searchableSkillAssets: [
+        {
+          name: "memory-guard",
+          description: "在优化方案里检查记忆能力是否退化。",
+          priority: "normal",
+          source: "user",
+          tags: ["memory"],
+        },
+      ],
+    });
+
+    expect(sections.map((section) => section.id)).toContain("method-skill-asset-summary");
+    expect(sections.map((section) => section.id)).toContain("profile-execution-policy");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Profile-preferred skills: orchestration-playbook");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("file=multi-agent-review.md");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Prompt-injected skills already active");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("memory-guard | 在优化方案里检查记忆能力是否退化。");
+    expect(sections.find((section) => section.id === "profile-execution-policy")?.text)
+      .toContain("scope control, delegation, and fan-in acceptance");
+    expect(sections.find((section) => section.id === "profile-execution-policy")?.text)
+      .toContain("adjust the plan or defer it");
+  });
+
   it("skips delegation and role sections when they do not apply", () => {
     const sections = buildAgentRuntimePromptSections({
       hasAvailableTools: true,

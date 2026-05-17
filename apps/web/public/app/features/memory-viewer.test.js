@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildDreamRuntimeBarView,
@@ -8,6 +10,7 @@ import {
   buildSharedReviewBatchActionState,
   buildSharedReviewQueueParams,
   collectActionableSharedReviewIds,
+  createMemoryViewerFeature,
   createDefaultMemoryViewerAgentViewState,
   extractCandidateContextTargets,
   extractTaskContextTargets,
@@ -18,6 +21,204 @@ import {
   paginateMemoryViewerItems,
 } from "./memory-viewer.js";
 import { buildDreamHistoryPanelView } from "./memory-viewer-dream-history.js";
+
+function createDedupHarness(sendReqImpl = vi.fn()) {
+  document.body.innerHTML = `
+    <section id="memoryViewerSection">
+      <div id="memoryViewerTitle"></div>
+      <div id="memoryViewerStats"></div>
+      <div id="memoryViewerList"></div>
+      <div id="memoryViewerDetail"></div>
+      <button id="memoryTabTasks"></button>
+      <button id="memoryTabMemories"></button>
+      <button id="memoryTabSharedReview"></button>
+      <button id="memoryTabOutboundAudit"></button>
+      <div id="memoryTaskFilters"></div>
+      <div id="memoryChunkFilters"></div>
+      <input id="memorySearchInput" />
+      <button id="memoryDedupPreviewBtn" class="hidden"></button>
+      <select id="memoryTaskStatusFilter"></select>
+      <select id="memoryTaskSourceFilter"></select>
+      <select id="memoryChunkTypeFilter"><option value=""></option><option value="daily">daily</option></select>
+      <select id="memoryChunkVisibilityFilter"><option value=""></option></select>
+      <select id="memoryChunkGovernanceFilter"><option value=""></option><option value="pending">pending</option></select>
+      <select id="memoryChunkCategoryFilter"><option value=""></option><option value="experience">experience</option></select>
+      <div id="memorySharedReviewFilters"></div>
+      <select id="memorySharedReviewFocusFilter"></select>
+      <select id="memorySharedReviewTargetFilter"></select>
+      <select id="memorySharedReviewClaimedByFilter"></select>
+      <div id="memoryOutboundAuditFilters"></div>
+      <button id="memoryOutboundAuditFocusAll"></button>
+      <button id="memoryOutboundAuditFocusThreads"></button>
+      <div id="memorySharedReviewBatchBar"></div>
+    </section>
+    <div id="memoryDreamModal"></div>
+    <div id="memoryDreamBar"></div>
+    <div id="memoryDreamStatus"></div>
+    <div id="memoryDreamMeta"></div>
+    <div id="memoryDreamObsidian"></div>
+    <div id="memoryDreamSummary"></div>
+    <button id="memoryDreamRefresh"></button>
+    <button id="memoryDreamRun"></button>
+    <button id="memoryDreamHistoryToggle"></button>
+    <div id="memoryDreamHistory"></div>
+    <div id="memoryDreamHistoryStatus"></div>
+    <button id="memoryDreamHistoryRefresh"></button>
+    <div id="memoryDreamHistoryList"></div>
+    <div id="memoryDreamHistoryDetail"></div>
+    <button id="memoryDreamModalTrigger"></button>
+    <button id="memoryDreamModalClose"></button>
+    <div id="memoryDedupModal" class="hidden">
+      <div id="memoryDedupModalTitle"></div>
+      <div id="memoryDedupModalSummary"></div>
+      <div id="memoryDedupModalStatus" class="hidden"></div>
+      <div id="memoryDedupModalWarning" class="hidden"></div>
+      <div id="memoryDedupModalList"></div>
+      <button id="memoryDedupModalClose"></button>
+      <button id="memoryDedupModalCancel"></button>
+      <button id="memoryDedupModalSubmit"></button>
+    </div>
+  `;
+
+  const state = {
+    tab: "tasks",
+    listPageByTab: {},
+    items: [],
+    stats: null,
+    selectedId: null,
+    selectedTask: null,
+    selectedCandidate: null,
+    outboundAuditFocus: "all",
+    sharedReviewSummary: null,
+    selectedSharedReviewIds: [],
+    sharedReviewBatchBusy: false,
+    dreamRuntime: null,
+    dreamCommons: null,
+    dreamBusy: false,
+    dreamHistoryOpen: false,
+    dreamHistoryLoading: false,
+    dreamHistoryError: "",
+    dreamHistoryItems: [],
+    selectedDreamHistoryId: null,
+    selectedDreamHistoryItem: null,
+    selectedDreamHistoryContent: "",
+    dreamHistoryDetailLoading: false,
+    dreamHistoryDetailError: "",
+    dreamHistorySeq: 0,
+    dreamHistoryDetailSeq: 0,
+    requestToken: 0,
+    activeAgentId: "default",
+    agentViewStates: {},
+    dedupModal: {
+      open: false,
+      loading: false,
+      applying: false,
+      error: "",
+      report: null,
+      result: null,
+    },
+  };
+
+  const refs = {
+    memoryViewerSection: document.getElementById("memoryViewerSection"),
+    memoryViewerTitleEl: document.getElementById("memoryViewerTitle"),
+    memoryViewerStatsEl: document.getElementById("memoryViewerStats"),
+    memoryViewerListEl: document.getElementById("memoryViewerList"),
+    memoryViewerDetailEl: document.getElementById("memoryViewerDetail"),
+    memoryDreamModalTriggerBtn: document.getElementById("memoryDreamModalTrigger"),
+    memoryDreamModalEl: document.getElementById("memoryDreamModal"),
+    memoryDreamModalTitleEl: document.getElementById("memoryDreamModalTitle"),
+    memoryDreamModalCloseBtn: document.getElementById("memoryDreamModalClose"),
+    memoryDreamBarEl: document.getElementById("memoryDreamBar"),
+    memoryDreamStatusEl: document.getElementById("memoryDreamStatus"),
+    memoryDreamMetaEl: document.getElementById("memoryDreamMeta"),
+    memoryDreamObsidianEl: document.getElementById("memoryDreamObsidian"),
+    memoryDreamSummaryEl: document.getElementById("memoryDreamSummary"),
+    memoryDreamRefreshBtn: document.getElementById("memoryDreamRefresh"),
+    memoryDreamRunBtn: document.getElementById("memoryDreamRun"),
+    memoryDreamHistoryToggleBtn: document.getElementById("memoryDreamHistoryToggle"),
+    memoryDreamHistoryEl: document.getElementById("memoryDreamHistory"),
+    memoryDreamHistoryStatusEl: document.getElementById("memoryDreamHistoryStatus"),
+    memoryDreamHistoryRefreshBtn: document.getElementById("memoryDreamHistoryRefresh"),
+    memoryDreamHistoryListEl: document.getElementById("memoryDreamHistoryList"),
+    memoryDreamHistoryDetailEl: document.getElementById("memoryDreamHistoryDetail"),
+    memoryTabTasksBtn: document.getElementById("memoryTabTasks"),
+    memoryTabMemoriesBtn: document.getElementById("memoryTabMemories"),
+    memoryTabSharedReviewBtn: document.getElementById("memoryTabSharedReview"),
+    memoryTabOutboundAuditBtn: document.getElementById("memoryTabOutboundAudit"),
+    memoryOutboundAuditFiltersEl: document.getElementById("memoryOutboundAuditFilters"),
+    memoryOutboundAuditFocusAllBtn: document.getElementById("memoryOutboundAuditFocusAll"),
+    memoryOutboundAuditFocusThreadsBtn: document.getElementById("memoryOutboundAuditFocusThreads"),
+    memorySharedReviewBatchBarEl: document.getElementById("memorySharedReviewBatchBar"),
+    memoryTaskFiltersEl: document.getElementById("memoryTaskFilters"),
+    memoryChunkFiltersEl: document.getElementById("memoryChunkFilters"),
+    memorySearchInputEl: document.getElementById("memorySearchInput"),
+    memoryDedupPreviewBtn: document.getElementById("memoryDedupPreviewBtn"),
+    memoryTaskStatusFilterEl: document.getElementById("memoryTaskStatusFilter"),
+    memoryTaskSourceFilterEl: document.getElementById("memoryTaskSourceFilter"),
+    memoryChunkTypeFilterEl: document.getElementById("memoryChunkTypeFilter"),
+    memoryChunkVisibilityFilterEl: document.getElementById("memoryChunkVisibilityFilter"),
+    memoryChunkGovernanceFilterEl: document.getElementById("memoryChunkGovernanceFilter"),
+    memoryChunkCategoryFilterEl: document.getElementById("memoryChunkCategoryFilter"),
+    memorySharedReviewFiltersEl: document.getElementById("memorySharedReviewFilters"),
+    memorySharedReviewFocusFilterEl: document.getElementById("memorySharedReviewFocusFilter"),
+    memorySharedReviewTargetFilterEl: document.getElementById("memorySharedReviewTargetFilter"),
+    memorySharedReviewClaimedByFilterEl: document.getElementById("memorySharedReviewClaimedByFilter"),
+    memoryDedupModalEl: document.getElementById("memoryDedupModal"),
+    memoryDedupModalTitleEl: document.getElementById("memoryDedupModalTitle"),
+    memoryDedupModalSummaryEl: document.getElementById("memoryDedupModalSummary"),
+    memoryDedupModalStatusEl: document.getElementById("memoryDedupModalStatus"),
+    memoryDedupModalWarningEl: document.getElementById("memoryDedupModalWarning"),
+    memoryDedupModalListEl: document.getElementById("memoryDedupModalList"),
+    memoryDedupModalCloseBtn: document.getElementById("memoryDedupModalClose"),
+    memoryDedupModalCancelBtn: document.getElementById("memoryDedupModalCancel"),
+    memoryDedupModalSubmitBtn: document.getElementById("memoryDedupModalSubmit"),
+  };
+
+  const sendReq = typeof sendReqImpl === "function" ? sendReqImpl : vi.fn(sendReqImpl);
+  const feature = createMemoryViewerFeature({
+    refs,
+    isConnected: () => true,
+    sendReq,
+    makeId: (() => {
+      let seq = 0;
+      return () => `req-${++seq}`;
+    })(),
+    getMemoryViewerState: () => state,
+    getSelectedAgentId: () => "default",
+    getSelectedAgentLabel: () => "Belldandy",
+    getAvailableAgents: () => [],
+    syncMemoryTaskGoalFilterUi: vi.fn(),
+    renderMemoryViewerListEmpty: vi.fn(),
+    renderMemoryViewerDetailEmpty: vi.fn(),
+    loadTaskDetail: vi.fn(),
+    loadMemoryDetail: vi.fn(),
+    escapeHtml: (value) => String(value ?? ""),
+    formatCount: (value) => String(Number.isFinite(Number(value)) ? Number(value) : 0),
+    formatDateTime: (value) => String(value ?? "-"),
+    formatDuration: (value) => String(value ?? "-"),
+    formatLineRange: (start, end) => (typeof start === "number" || typeof end === "number" ? `${start ?? "?"}-${end ?? "?"}` : "-"),
+    formatScore: (value) => String(value ?? "-"),
+    formatMemoryCategory: (value) => String(value ?? "-"),
+    normalizeMemoryVisibility: (value) => value,
+    getVisibilityBadgeClass: () => "",
+    summarizeSourcePath: (value) => String(value ?? ""),
+    getTaskGoalId: () => "",
+    getGoalDisplayName: () => "",
+    getLatestExperienceUsageTimestamp: () => "",
+    getActiveMemoryCategoryLabel: () => "",
+    renderMemoryCategoryDistribution: () => "",
+    renderTaskUsageOverviewCard: () => "",
+    bindStatsAuditJumpLinks: vi.fn(),
+    bindMemoryPathLinks: vi.fn(),
+    bindTaskAuditJumpLinks: vi.fn(),
+    openConversationSession: vi.fn(),
+    showNotice: vi.fn(),
+    t: (_key, _params, fallback) => fallback ?? "",
+  });
+
+  return { refs, state, sendReq, feature };
+}
 
 describe("memory viewer shared review filters", () => {
   it("builds an explicit advice request prompt for opened email thread conversations", () => {
@@ -457,5 +658,135 @@ describe("memory viewer shared review filters", () => {
     expect(view.detail.title).toContain("fallback dream generated");
     expect(view.detail.cards.some((card) => card.label === "生成" && String(card.value).includes("Fallback"))).toBe(true);
     expect(view.detail.content).toContain("# Dream Fallback");
+  });
+
+  it("shows dedup preview entry only on memories tab", () => {
+    const { refs, state, feature } = createDedupHarness();
+
+    state.tab = "tasks";
+    feature.syncMemoryViewerUi();
+    expect(refs.memoryDedupPreviewBtn.classList.contains("hidden")).toBe(true);
+
+    state.tab = "memories";
+    feature.syncMemoryViewerUi();
+    expect(refs.memoryDedupPreviewBtn.classList.contains("hidden")).toBe(false);
+  });
+
+  it("runs dedup preview then apply with confirmed=true from the modal", async () => {
+    const sendReq = vi.fn(async (req) => {
+      if (req.method === "memory.dedup.preview") {
+        return {
+          ok: true,
+          payload: {
+            report: {
+              filter: { memoryType: "daily", category: "experience", sharedPromotionStatus: "pending" },
+              totals: {
+                scannedChunks: 5,
+                duplicateGroups: 1,
+                removableChunks: 1,
+                affectedTaskLinkCount: 2,
+              },
+              groups: [
+                {
+                  normalizedHash: "abc",
+                  preview: "same content",
+                  keep: {
+                    id: "chunk-a",
+                    sourcePath: "memory/a.md",
+                    memoryType: "daily",
+                    startLine: 1,
+                    endLine: 4,
+                    taskLinkCount: 1,
+                  },
+                  remove: [
+                    {
+                      id: "chunk-b",
+                      sourcePath: "memory/b.md",
+                      memoryType: "daily",
+                      startLine: 1,
+                      endLine: 4,
+                      taskLinkCount: 2,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        };
+      }
+      if (req.method === "memory.dedup.apply") {
+        return {
+          ok: true,
+          payload: {
+            result: {
+              backupPath: "state/artifacts/memory-dedup-backups/memory-dedup-run-1.sqlite",
+              totals: {
+                scannedChunks: 5,
+                duplicateGroups: 1,
+                removedChunks: 1,
+                relinkedTaskMemoryLinks: 2,
+              },
+              groups: [
+                {
+                  keepChunkId: "chunk-a",
+                  removedChunkIds: ["chunk-b"],
+                  relinkedTaskMemoryLinks: 2,
+                },
+              ],
+            },
+          },
+        };
+      }
+      if (req.method === "memory.stats") {
+        return { ok: true, payload: { status: { files: 1, chunks: 4, vectorIndexed: 0, summarized: 0 } } };
+      }
+      if (req.method === "memory.recent") {
+        return { ok: true, payload: { items: [] } };
+      }
+      if (req.method === "dream.status.get") {
+        return { ok: true, payload: { availability: { enabled: false, available: false, reason: "not_loaded" } } };
+      }
+      if (req.method === "dream.commons.status.get") {
+        return { ok: true, payload: { availability: { enabled: false, available: false, reason: "not_loaded" } } };
+      }
+      throw new Error(`unexpected method ${req.method}`);
+    });
+    const { refs, state, feature } = createDedupHarness(sendReq);
+
+    state.tab = "memories";
+    refs.memoryChunkTypeFilterEl.value = "daily";
+    refs.memoryChunkGovernanceFilterEl.value = "pending";
+    refs.memoryChunkCategoryFilterEl.value = "experience";
+    feature.syncMemoryViewerUi();
+
+    await feature.openDedupModal();
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "memory.dedup.preview",
+      params: expect.objectContaining({
+        agentId: "default",
+        filter: {
+          memoryType: "daily",
+          category: "experience",
+          sharedPromotionStatus: "pending",
+        },
+      }),
+    }));
+    expect(refs.memoryDedupModalEl.classList.contains("hidden")).toBe(false);
+    expect(refs.memoryDedupModalSubmitBtn.disabled).toBe(false);
+
+    await feature.applyDedupFromModal();
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "memory.dedup.apply",
+      params: expect.objectContaining({
+        agentId: "default",
+        confirmed: true,
+        filter: {
+          memoryType: "daily",
+          category: "experience",
+          sharedPromotionStatus: "pending",
+        },
+      }),
+    }));
+    expect(refs.memoryDedupModalSubmitBtn.textContent).toContain("清理已完成");
   });
 });

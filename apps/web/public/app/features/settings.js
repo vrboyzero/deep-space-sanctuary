@@ -94,6 +94,8 @@ export function createSettingsController({
     cfgToolGroups,
     cfgMaxInputTokens,
     cfgMaxOutputTokens,
+    cfgToolLoopIterationBudget,
+    cfgToolLoopWarningFraction,
     cfgDangerousToolsEnabled,
     cfgToolsPolicyFile,
     cfgSubAgentMaxConcurrent,
@@ -254,6 +256,8 @@ export function createSettingsController({
     cfgCompactionBlockingThreshold,
     cfgCompactionMaxConsecutiveFailures,
     cfgCompactionMaxPtlRetries,
+    cfgCompactionContextWindowFraction,
+    cfgCompactionModelRoute,
     cfgCompactionModel,
     cfgCompactionBaseUrl,
     cfgCompactionApiKey,
@@ -328,6 +332,11 @@ export function createSettingsController({
     cfgExtraWorkspaceRoots,
     cfgWebRoot,
     cfgGovernanceDetailMode,
+    cfgCommanderMode,
+    cfgCommanderAgentId,
+    cfgGoalExecutionMode,
+    cfgGoalGovernanceMode,
+    cfgCommanderAutoReworkEnabled,
     cfgExperienceDraftGenerateNoticeEnabled,
     cfgLogLevel,
     cfgLogConsole,
@@ -374,6 +383,11 @@ export function createSettingsController({
   ];
   const HOT_RELOAD_SETTING_FIELDS = new Set([
     "cfgGovernanceDetailMode",
+    "cfgCommanderMode",
+    "cfgCommanderAgentId",
+    "cfgGoalExecutionMode",
+    "cfgGoalGovernanceMode",
+    "cfgCommanderAutoReworkEnabled",
     "cfgExperienceDraftGenerateNoticeEnabled",
     "cfgAttachmentMaxFileBytes",
     "cfgAttachmentMaxTotalBytes",
@@ -794,6 +808,8 @@ export function createSettingsController({
     if (cfgToolGroups) cfgToolGroups.value = c["BELLDANDY_TOOL_GROUPS"] || "";
     if (cfgMaxInputTokens) cfgMaxInputTokens.value = c["BELLDANDY_MAX_INPUT_TOKENS"] || "";
     if (cfgMaxOutputTokens) cfgMaxOutputTokens.value = c["BELLDANDY_MAX_OUTPUT_TOKENS"] || "";
+    if (cfgToolLoopIterationBudget) cfgToolLoopIterationBudget.value = c["BELLDANDY_TOOL_LOOP_ITERATION_BUDGET"] || "";
+    if (cfgToolLoopWarningFraction) cfgToolLoopWarningFraction.value = c["BELLDANDY_TOOL_LOOP_WARNING_FRACTION"] || "";
     if (cfgDangerousToolsEnabled) cfgDangerousToolsEnabled.checked = c["BELLDANDY_DANGEROUS_TOOLS_ENABLED"] === "true";
     if (cfgToolsPolicyFile) cfgToolsPolicyFile.value = c["BELLDANDY_TOOLS_POLICY_FILE"] || "";
     if (cfgSubAgentMaxConcurrent) cfgSubAgentMaxConcurrent.value = c["BELLDANDY_SUB_AGENT_MAX_CONCURRENT"] || "";
@@ -951,6 +967,8 @@ export function createSettingsController({
     if (cfgCompactionBlockingThreshold) cfgCompactionBlockingThreshold.value = c["BELLDANDY_COMPACTION_BLOCKING_THRESHOLD"] || "";
     if (cfgCompactionMaxConsecutiveFailures) cfgCompactionMaxConsecutiveFailures.value = c["BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES"] || "";
     if (cfgCompactionMaxPtlRetries) cfgCompactionMaxPtlRetries.value = c["BELLDANDY_COMPACTION_MAX_PTL_RETRIES"] || "";
+    if (cfgCompactionContextWindowFraction) cfgCompactionContextWindowFraction.value = c["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] || "";
+    if (cfgCompactionModelRoute) cfgCompactionModelRoute.value = c["BELLDANDY_COMPACTION_MODEL_ROUTE"] || "";
     if (cfgCompactionModel) cfgCompactionModel.value = c["BELLDANDY_COMPACTION_MODEL"] || "";
     if (cfgCompactionBaseUrl) cfgCompactionBaseUrl.value = c["BELLDANDY_COMPACTION_BASE_URL"] || "";
     if (cfgCompactionApiKey) cfgCompactionApiKey.value = c["BELLDANDY_COMPACTION_API_KEY"] || "";
@@ -1017,6 +1035,11 @@ export function createSettingsController({
     if (cfgExtraWorkspaceRoots) cfgExtraWorkspaceRoots.value = c["BELLDANDY_EXTRA_WORKSPACE_ROOTS"] || "";
     if (cfgWebRoot) cfgWebRoot.value = c["BELLDANDY_WEB_ROOT"] || "";
     if (cfgGovernanceDetailMode) cfgGovernanceDetailMode.value = c["BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE"] === "full" ? "full" : "compact";
+    if (cfgCommanderMode) cfgCommanderMode.value = c["BELLDANDY_COMMANDER_MODE"] === "on" ? "on" : c["BELLDANDY_COMMANDER_MODE"] === "off" ? "off" : "auto";
+    if (cfgCommanderAgentId) cfgCommanderAgentId.value = c["BELLDANDY_COMMANDER_AGENT_ID"] || "";
+    if (cfgGoalExecutionMode) cfgGoalExecutionMode.value = c["BELLDANDY_GOAL_EXECUTION_MODE"] || "auto";
+    if (cfgGoalGovernanceMode) cfgGoalGovernanceMode.value = c["BELLDANDY_GOAL_GOVERNANCE_MODE"] || "auto";
+    if (cfgCommanderAutoReworkEnabled) cfgCommanderAutoReworkEnabled.checked = c["BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED"] === "true";
     if (cfgExperienceDraftGenerateNoticeEnabled) {
       cfgExperienceDraftGenerateNoticeEnabled.checked = c["BELLDANDY_WEB_EXPERIENCE_DRAFT_GENERATE_NOTICE_ENABLED"] !== "false";
     }
@@ -1593,6 +1616,8 @@ export function createSettingsController({
     if (cfgToolGroups) updates["BELLDANDY_TOOL_GROUPS"] = cfgToolGroups.value.trim();
     if (cfgMaxInputTokens) updates["BELLDANDY_MAX_INPUT_TOKENS"] = cfgMaxInputTokens.value.trim();
     if (cfgMaxOutputTokens) updates["BELLDANDY_MAX_OUTPUT_TOKENS"] = cfgMaxOutputTokens.value.trim();
+    if (cfgToolLoopIterationBudget) updates["BELLDANDY_TOOL_LOOP_ITERATION_BUDGET"] = cfgToolLoopIterationBudget.value.trim();
+    if (cfgToolLoopWarningFraction) updates["BELLDANDY_TOOL_LOOP_WARNING_FRACTION"] = cfgToolLoopWarningFraction.value.trim();
     if (cfgDangerousToolsEnabled) updates["BELLDANDY_DANGEROUS_TOOLS_ENABLED"] = cfgDangerousToolsEnabled.checked ? "true" : "false";
     if (cfgToolsPolicyFile) updates["BELLDANDY_TOOLS_POLICY_FILE"] = cfgToolsPolicyFile.value.trim();
     if (cfgSubAgentMaxConcurrent) updates["BELLDANDY_SUB_AGENT_MAX_CONCURRENT"] = cfgSubAgentMaxConcurrent.value.trim();
@@ -1749,6 +1774,8 @@ export function createSettingsController({
     if (cfgCompactionBlockingThreshold) updates["BELLDANDY_COMPACTION_BLOCKING_THRESHOLD"] = cfgCompactionBlockingThreshold.value.trim();
     if (cfgCompactionMaxConsecutiveFailures) updates["BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES"] = cfgCompactionMaxConsecutiveFailures.value.trim();
     if (cfgCompactionMaxPtlRetries) updates["BELLDANDY_COMPACTION_MAX_PTL_RETRIES"] = cfgCompactionMaxPtlRetries.value.trim();
+    if (cfgCompactionContextWindowFraction) updates["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] = cfgCompactionContextWindowFraction.value.trim();
+    if (cfgCompactionModelRoute) updates["BELLDANDY_COMPACTION_MODEL_ROUTE"] = cfgCompactionModelRoute.value.trim();
     if (cfgCompactionModel) updates["BELLDANDY_COMPACTION_MODEL"] = cfgCompactionModel.value.trim();
     if (cfgCompactionBaseUrl) updates["BELLDANDY_COMPACTION_BASE_URL"] = cfgCompactionBaseUrl.value.trim();
     if (cfgCommunityApiEnabled) updates["BELLDANDY_COMMUNITY_API_ENABLED"] = cfgCommunityApiEnabled.checked ? "true" : "false";
@@ -1814,6 +1841,11 @@ export function createSettingsController({
     if (cfgExtraWorkspaceRoots) updates["BELLDANDY_EXTRA_WORKSPACE_ROOTS"] = cfgExtraWorkspaceRoots.value.trim();
     if (cfgWebRoot) updates["BELLDANDY_WEB_ROOT"] = cfgWebRoot.value.trim();
     if (cfgGovernanceDetailMode) updates["BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE"] = cfgGovernanceDetailMode.value === "full" ? "full" : "compact";
+    if (cfgCommanderMode) updates["BELLDANDY_COMMANDER_MODE"] = cfgCommanderMode.value === "on" ? "on" : cfgCommanderMode.value === "off" ? "off" : "auto";
+    if (cfgCommanderAgentId) updates["BELLDANDY_COMMANDER_AGENT_ID"] = cfgCommanderAgentId.value.trim();
+    if (cfgGoalExecutionMode) updates["BELLDANDY_GOAL_EXECUTION_MODE"] = cfgGoalExecutionMode.value.trim() || "auto";
+    if (cfgGoalGovernanceMode) updates["BELLDANDY_GOAL_GOVERNANCE_MODE"] = cfgGoalGovernanceMode.value.trim() || "auto";
+    if (cfgCommanderAutoReworkEnabled) updates["BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED"] = cfgCommanderAutoReworkEnabled.checked ? "true" : "false";
     if (cfgExperienceDraftGenerateNoticeEnabled) {
       updates["BELLDANDY_WEB_EXPERIENCE_DRAFT_GENERATE_NOTICE_ENABLED"] = cfgExperienceDraftGenerateNoticeEnabled.checked ? "true" : "false";
     }

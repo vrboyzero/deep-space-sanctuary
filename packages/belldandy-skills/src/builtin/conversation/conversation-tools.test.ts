@@ -5,10 +5,12 @@ import type {
   ConversationTimelineProjectionLike,
   ConversationTranscriptExportLike,
   PersistedConversationSummaryLike,
+  RecentToolResultRecord,
   ToolContext,
 } from "../../types.js";
 import { conversationListTool } from "./list.js";
 import { conversationReadTool } from "./read.js";
+import { retrieveToolResultTool } from "./retrieve-tool-result.js";
 
 function createContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -212,6 +214,33 @@ function createTranscript(): ConversationTranscriptExportLike {
       notes: ["Full transcript and restore text are preserved for internal debugging."],
     },
   };
+}
+
+function createRecentToolResults(): RecentToolResultRecord[] {
+  return [
+    {
+      toolCallId: "call-2",
+      toolName: "run_command",
+      success: false,
+      summary: "run_command failed | target=pnpm test | error=spawn EPERM",
+      content: "",
+      error: "spawn EPERM while launching pnpm test",
+      failureKind: "environment_error",
+      target: "pnpm test",
+      args: { command: "pnpm test" },
+      createdAt: 1712000006100,
+    },
+    {
+      toolCallId: "call-1",
+      toolName: "file_read",
+      success: true,
+      summary: "file_read succeeded | target=src/app.ts | result=export const answer = 42",
+      content: "export const answer = 42;\n".repeat(20),
+      target: "src/app.ts",
+      args: { path: "src/app.ts" },
+      createdAt: 1712000006000,
+    },
+  ];
 }
 
 describe("conversation tools", () => {
@@ -424,5 +453,48 @@ describe("conversation tools", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Conversation access denied by current runtime policy: subtask");
+  });
+
+  it("retrieve_tool_result should recover recent tool outputs by tool_call_id", async () => {
+    const context = createContext({
+      conversationStore: {
+        ...createContext().conversationStore!,
+        getRecentToolResults: vi.fn(() => createRecentToolResults().filter((item) => item.toolCallId === "call-1")),
+      },
+    });
+
+    const result = await retrieveToolResultTool.execute({
+      tool_call_id: "call-1",
+      mode: "head",
+      chars: 160,
+    }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("tool=file_read");
+    expect(result.output).toContain("call_id=call-1");
+    expect(result.output).toContain("src/app.ts");
+    expect(result.output).toContain("export const answer = 42");
+  });
+
+  it("retrieve_tool_result should filter failures by tool_name and respect allowed conversation kinds", async () => {
+    const context = createContext({
+      allowedConversationKinds: ["main"],
+      conversationStore: {
+        ...createContext().conversationStore!,
+        getRecentToolResults: vi.fn(() => createRecentToolResults().filter((item) => item.toolName === "run_command")),
+      },
+    });
+
+    const result = await retrieveToolResultTool.execute({
+      conversation_id: "conv-active",
+      tool_name: "run_command",
+      success: false,
+      mode: "summary",
+    }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("run_command");
+    expect(result.output).toContain("spawn EPERM");
+    expect(result.output).toContain("failure_kind=environment_error");
   });
 });

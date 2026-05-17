@@ -655,6 +655,9 @@ describe("GoalManager", () => {
 
     const planned = await manager.saveCapabilityPlan(goal.id, "node_plan", {
       executionMode: "multi_agent",
+      governanceMode: "commander",
+      commanderAgentId: "commander-main",
+      preferredAgents: ["commander-main", "coder"],
       objective: "Plan Node capability plan",
       summary: "Need methods and sub-agents",
       queryHints: ["Plan Node", "orchestrate"],
@@ -667,7 +670,14 @@ describe("GoalManager", () => {
     });
     expect(planned.status).toBe("planned");
     expect(planned.executionMode).toBe("multi_agent");
+    expect(planned.governanceMode).toBe("commander");
+    expect(planned.commanderAgentId).toBe("commander-main");
     expect(planned.analysis.status).toBe("pending");
+
+    const commanderPlanPath = path.join(goal.runtimeRoot, "runs", "node-node_plan", "commander-plan.md");
+    const workOrderPath = path.join(goal.runtimeRoot, "runs", "node-node_plan", "work-order", "coder.md");
+    expect(await fs.readFile(commanderPlanPath, "utf-8")).toContain("Commander Agent: commander-main");
+    expect(await fs.readFile(workOrderPath, "utf-8")).toContain("Agent ID: coder");
 
     const fetched = await manager.getCapabilityPlan(goal.id, "node_plan");
     expect(fetched?.id).toBe(planned.id);
@@ -676,6 +686,9 @@ describe("GoalManager", () => {
     const orchestrated = await manager.saveCapabilityPlan(goal.id, "node_plan", {
       id: planned.id,
       executionMode: planned.executionMode,
+      governanceMode: planned.governanceMode,
+      commanderAgentId: planned.commanderAgentId,
+      preferredAgents: planned.preferredAgents,
       objective: planned.objective,
       summary: planned.summary,
       queryHints: planned.queryHints,
@@ -737,6 +750,9 @@ describe("GoalManager", () => {
     const listed = await manager.listCapabilityPlans(goal.id);
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0]?.analysis.status).toBe("diverged");
+
+    const orchestratedCommanderPlanPath = path.join(goal.runtimeRoot, "runs", "node-node_plan", "commander-plan.md");
+    expect(await fs.readFile(orchestratedCommanderPlanPath, "utf-8")).toContain("Plan ID:");
 
     const progress = await fs.readFile(goal.progressPath, "utf-8");
     expect(progress).toContain("capability_plan_generated");
@@ -814,6 +830,136 @@ describe("GoalManager", () => {
       requiredSourceTaskIds: ["task_coder"],
       requiredEvidenceTaskIds: ["task_coder"],
     });
+  });
+
+  it("writes commander review fan-in artifact for commander-governed plans", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "ss-goal-state-"));
+    const manager = new GoalManager(stateDir);
+    const goal = await manager.createGoal({
+      title: "Commander Review Goal",
+      objective: "Persist commander review artifact",
+    });
+    await manager.createTaskNode(goal.id, {
+      id: "node_commander",
+      title: "Commander fan-in",
+      status: "ready",
+    });
+
+    const saved = await manager.saveCapabilityPlan(goal.id, "node_commander", {
+      executionMode: "multi_agent_parallel",
+      governanceMode: "commander",
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      objective: "Commander fan-in",
+      summary: "Need commander review to close the loop",
+      status: "orchestrated",
+      subAgents: [{ agentId: "coder", role: "coder", objective: "Ship patch" }],
+      orchestration: {
+        finalApprovalMode: "user_required",
+        reworkRevisionCount: 2,
+        lastReworkReason: "Need regression evidence before close",
+        lastReworkAt: "2026-03-20T09:30:00.000Z",
+        reworkTargetAgentIds: ["coder"],
+        delegated: true,
+        delegationCount: 1,
+        coordinationPlan: {
+          summary: "Commander reviews child lanes.",
+          plannedDelegationCount: 1,
+          managerAgentId: "commander",
+          rolePolicy: {
+            selectedRoles: ["coder"],
+            selectionReasons: ["commander mode"],
+            fanInStrategy: "commander_review",
+          },
+        },
+        delegationResults: [{
+          agentId: "coder",
+          role: "coder",
+          status: "success",
+          summary: "Patch delivered",
+          taskId: "task_coder",
+        }],
+      },
+    });
+
+    expect(saved.orchestration?.acceptanceGate?.status).toBe("accepted");
+    const commanderReviewPath = path.join(goal.runtimeRoot, "runs", "node-node_commander", "review-results", "review-node-commander.md");
+    const reviewContent = await fs.readFile(commanderReviewPath, "utf-8");
+    expect(reviewContent).toContain("Review Status: accepted");
+    expect(reviewContent).toContain("Final Approval Default: user_required");
+    expect(reviewContent).toContain("Rework Revision Count: 2");
+    expect(reviewContent).toContain("Rework Targets: coder");
+    expect(reviewContent).toContain("Need regression evidence before close");
+    expect(reviewContent).toContain("Commander review fan-in is complete");
+    expect(reviewContent).toContain("task_coder");
+    const commanderPlanPath = path.join(goal.runtimeRoot, "runs", "node-node_commander", "commander-plan.md");
+    const commanderPlanContent = await fs.readFile(commanderPlanPath, "utf-8");
+    expect(commanderPlanContent).toContain("Final Approval Default: user_required");
+    expect(commanderPlanContent).toContain("Rework Revision Count: 2");
+    expect(commanderPlanContent).toContain("Rework Targets: coder");
+    const workOrderPath = path.join(goal.runtimeRoot, "runs", "node-node_commander", "work-order", "coder.md");
+    const workOrderContent = await fs.readFile(workOrderPath, "utf-8");
+    expect(workOrderContent).toContain("## Rework Context");
+    expect(workOrderContent).toContain("Need regression evidence before close");
+    expect(workOrderContent).toContain("Rework Targets: coder");
+  });
+
+  it("reissues only failed lane work-orders during commander rework", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "ss-goal-state-"));
+    const manager = new GoalManager(stateDir);
+    const goal = await manager.createGoal({
+      title: "Commander Rework Goal",
+      objective: "Reissue failed lane only",
+    });
+    await manager.createTaskNode(goal.id, {
+      id: "node_rework",
+      title: "Commander rework",
+      status: "ready",
+    });
+
+    await manager.saveCapabilityPlan(goal.id, "node_rework", {
+      runId: "run_rework_1",
+      executionMode: "multi_agent_parallel",
+      governanceMode: "commander",
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder", "reviewer"],
+      objective: "Commander rework",
+      summary: "Need reissue after lane failure",
+      status: "orchestrated",
+      subAgents: [
+        { agentId: "coder", role: "coder", objective: "Ship patch" },
+        { agentId: "reviewer", role: "reviewer", objective: "Review patch" },
+      ],
+      orchestration: {
+        finalApprovalMode: "user_required",
+        reworkRevisionCount: 2,
+        lastReworkReason: "Lane reviewer failed validation",
+        lastReworkAt: "2026-03-21T09:00:00.000Z",
+        reworkTargetAgentIds: ["reviewer"],
+        delegated: true,
+        delegationCount: 2,
+        coordinationPlan: {
+          summary: "Commander retries only failed lanes.",
+          plannedDelegationCount: 2,
+          managerAgentId: "commander",
+          rolePolicy: {
+            selectedRoles: ["coder", "reviewer"],
+            selectionReasons: ["commander mode"],
+            fanInStrategy: "commander_review",
+          },
+        },
+        delegationResults: [
+          { agentId: "coder", role: "coder", status: "success", summary: "Patch delivered", taskId: "task_coder" },
+          { agentId: "reviewer", role: "reviewer", status: "failed", summary: "Review failed", taskId: "task_reviewer" },
+        ],
+      },
+    });
+
+    const reviewerWorkOrderPath = path.join(goal.runtimeRoot, "runs", "run-rework-1", "work-order", "reviewer.md");
+    const coderWorkOrderPath = path.join(goal.runtimeRoot, "runs", "run-rework-1", "work-order", "coder.md");
+    expect(await fs.readFile(reviewerWorkOrderPath, "utf-8")).toContain("Lane reviewer failed validation");
+    expect(await fs.readFile(reviewerWorkOrderPath, "utf-8")).toContain("Rework Targets: reviewer");
+    await expect(fs.access(coderWorkOrderPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("generates handoff markdown from current goal runtime", async () => {
@@ -1195,7 +1341,10 @@ describe("GoalManager", () => {
 
     const json = JSON.parse(await fs.readFile(path.join(goal.runtimeRoot, "method-candidates.json"), "utf-8"));
     expect(json.items[0].nodeId).toBe("node_method");
-    expect(json.items[0].draftContent).toContain("Finalize Delivery 方法候选");
+    expect(json.items[0].draftContent).toContain("# Finalize Delivery 方法候选");
+    expect(json.items[0].draftContent).toContain("## 0. 元信息");
+    expect(json.items[0].draftContent).toContain("## 3. 执行步骤");
+    expect(json.items[0].draftContent).toContain("method-synthesis.md");
 
     const progress = await fs.readFile(goal.progressPath, "utf-8");
     expect(progress).toContain("method_candidates_generated");
@@ -1247,10 +1396,97 @@ describe("GoalManager", () => {
 
     const json = JSON.parse(await fs.readFile(path.join(goal.runtimeRoot, "skill-candidates.json"), "utf-8"));
     expect(json.items[0].nodeId).toBe("node_skill");
-    expect(json.items[0].draftContent).toContain("# 适用场景");
+    expect(json.items[0].draftContent).toContain('name: "node-skill"');
+    expect(json.items[0].draftContent).toContain("## 快速开始");
+    expect(json.items[0].draftContent).toContain("## NEVER");
+    expect(json.items[0].draftContent).toContain("skill-synthesis.md");
 
     const progress = await fs.readFile(goal.progressPath, "utf-8");
     expect(progress).toContain("skill_candidates_generated");
+  });
+
+  it("falls back to legacy draft structure when synthesis templates are unavailable", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "ss-goal-state-"));
+    const originalCwd = process.cwd();
+    const isolatedCwd = await fs.mkdtemp(path.join(os.tmpdir(), "ss-goal-no-template-"));
+    process.chdir(isolatedCwd);
+    try {
+      const manager = new GoalManager(stateDir);
+      const goal = await manager.createGoal({
+        title: "Fallback Template Goal",
+        objective: "Use fallback draft structure when templates are missing",
+      });
+
+      await manager.createTaskNode(goal.id, {
+        id: "node_fallback",
+        title: "Fallback Delivery",
+        status: "ready",
+        checkpointRequired: true,
+        acceptance: ["Fallback regression passes"],
+      });
+      await manager.claimTaskNode(goal.id, "node_fallback", {
+        runId: "run_fallback_1",
+        summary: "Started fallback delivery",
+      });
+      await manager.requestCheckpoint(goal.id, "node_fallback", {
+        title: "Fallback checkpoint",
+        summary: "Fallback ready",
+        reviewer: "producer",
+        requestedBy: "main-agent",
+        runId: "run_fallback_1",
+      });
+      await manager.approveCheckpoint(goal.id, "node_fallback", {
+        summary: "Fallback approved",
+        note: "Fallback looks good",
+        decidedBy: "producer",
+        runId: "run_fallback_1",
+      });
+      await manager.completeTaskNode(goal.id, "node_fallback", {
+        summary: "Fallback delivery completed",
+        runId: "run_fallback_1",
+        artifacts: ["artifacts/fallback.md"],
+      });
+      await manager.saveCapabilityPlan(goal.id, "node_fallback", {
+        executionMode: "single_agent",
+        riskLevel: "low",
+        objective: "Fallback delivery",
+        summary: "Fallback summary",
+        actualUsage: {
+          methods: ["Fallback-Checklist.md"],
+          skills: ["find-skills"],
+          mcpServers: [],
+          toolNames: ["file_read"],
+        },
+        status: "orchestrated",
+        orchestratedAt: "2026-03-20T16:00:00.000Z",
+      });
+
+      const methodResult = await manager.generateMethodCandidates(goal.id);
+      expect(methodResult.candidates[0]?.draftContent).toContain('status: "draft"');
+      expect(methodResult.candidates[0]?.draftContent).toContain("## 建议步骤");
+
+      await manager.saveCapabilityPlan(goal.id, "node_fallback", {
+        executionMode: "multi_agent",
+        riskLevel: "medium",
+        objective: "Fallback skill flow",
+        summary: "Fallback skill summary",
+        gaps: ["Need fallback skill wrapper"],
+        actualUsage: {
+          methods: ["Fallback-Checklist.md"],
+          skills: ["find-skills"],
+          mcpServers: [],
+          toolNames: ["file_read", "apply_patch"],
+        },
+        status: "orchestrated",
+        orchestratedAt: "2026-03-20T16:30:00.000Z",
+      });
+
+      const skillResult = await manager.generateSkillCandidates(goal.id);
+      expect(skillResult.candidates[0]?.draftContent).toContain('version: "0.1.0-draft"');
+      expect(skillResult.candidates[0]?.draftContent).toContain("## 适用场景");
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 
   it("generates flow pattern summaries from repeated node flows", async () => {
@@ -2811,10 +3047,18 @@ describe("GoalManager", () => {
       runId: "run_govern_1",
     });
     await manager.saveCapabilityPlan(goal.id, "node_govern", {
-      executionMode: "single_agent",
-      riskLevel: "low",
+      runId: "run_govern_1",
+      executionMode: "multi_agent_parallel",
+      governanceMode: "commander",
+      commanderAgentId: "commander-main",
+      preferredAgents: ["commander-main", "coder", "reviewer"],
+      riskLevel: "medium",
       objective: "Summarize governance",
       summary: "Stable governance path",
+      subAgents: [
+        { agentId: "coder", role: "coder", objective: "Prepare implementation evidence", deliverable: "patch diff" },
+        { agentId: "reviewer", role: "reviewer", objective: "Summarize regression and review evidence", deliverable: "review note" },
+      ],
       actualUsage: {
         methods: ["Review-Checklist.md"],
         skills: [],
@@ -2823,6 +3067,62 @@ describe("GoalManager", () => {
       },
       status: "orchestrated",
       orchestratedAt: "2026-03-20T18:10:00.000Z",
+      orchestration: {
+        claimed: true,
+        delegated: true,
+        delegationCount: 2,
+        finalApprovalMode: "user_required",
+        reworkRevisionCount: 1,
+        lastReworkReason: "Need final regression confirmation before close",
+        lastReworkAt: "2026-03-20T18:05:00.000Z",
+        reworkContext: {
+          quickSummary: "Need final regression confirmation before close",
+          historySummary: "Rework Revision 1 | current=Need final regression confirmation before close",
+          persistedReason: "Rework Revision 1 || current=Need final regression confirmation before close",
+        },
+        coordinationPlan: {
+          summary: "Commander 汇总 coder / reviewer 两路结果后再进入人工验收。",
+          plannedDelegationCount: 2,
+          managerAgentId: "commander-main",
+          rolePolicy: {
+            selectedRoles: ["coder", "reviewer"],
+            selectionReasons: ["实现与评审分离，便于 fan-in 收口。"],
+            fanInStrategy: "commander_review",
+          },
+        },
+        delegationResults: [
+          {
+            agentId: "coder",
+            role: "coder",
+            status: "success",
+            summary: "Patch delivered with runtime artifact.",
+            taskId: "run_lane_coder",
+            outputPath: "runtime/runs/run_govern_1/work-order/coder.md",
+          },
+          {
+            agentId: "reviewer",
+            role: "reviewer",
+            status: "success",
+            summary: "Regression review completed.",
+            taskId: "run_lane_reviewer",
+            outputPath: "runtime/runs/run_govern_1/work-order/reviewer.md",
+          },
+        ],
+        acceptanceGate: {
+          status: "accepted",
+          summary: "Commander review fan-in is complete and ready for user approval.",
+          managerActionHint: "进入 validating，并等待用户最终审批验收后再收口。",
+          reasons: ["两路 delegation 已成功返回。", "关键验收证据已汇总。"],
+          contractSpecificChecks: [
+            {
+              id: "regression",
+              label: "Regression passes",
+              status: "passed",
+              evidence: "runtime/runs/run_govern_1/review-results/review-node-govern.md",
+            },
+          ],
+        },
+      },
     });
 
     await manager.generateMethodCandidates(goal.id);
@@ -2853,6 +3153,39 @@ describe("GoalManager", () => {
     expect(summary.crossGoal.jsonPath).toContain("cross-goal-flow-patterns.json");
     expect(summary.summary).toContain("published=1");
     expect(summary.recommendations.length).toBeGreaterThan(0);
+    expect(summary.commanderFocus).toMatchObject({
+      nodeId: "node_govern",
+      runId: "run_govern_1",
+      governanceMode: "commander",
+      executionMode: "multi_agent_parallel",
+      commanderAgentId: "commander-main",
+      reviewStatus: "accepted",
+      finalApprovalMode: "user_required",
+      reworkRevisionCount: 1,
+      fanInSummary: "Commander review fan-in is complete and can be used as the acceptance signal for this capability plan.",
+      managerActionHint: "Commander review is complete enough to approve this capability plan or move the node into validating/done.",
+      reworkContext: {
+        quickSummary: "Need final regression confirmation before close",
+      },
+    });
+    expect(summary.commanderFocus?.reworkContext?.historySummary).toContain("Rework Revision 1");
+    expect(summary.commanderFocus?.delegationResults).toHaveLength(2);
+    expect(
+      summary.commanderFocus?.checkLines.some((item) => (
+        item.includes("successful delegated source")
+        && item.includes("sources=coder, reviewer")
+      )),
+    ).toBe(true);
+    expect(
+      summary.commanderFocus?.checkLines.some((item) => (
+        item.includes("no failed delegated source")
+        && item.includes("failed=0")
+      )),
+    ).toBe(true);
+    expect(summary.commanderFocus?.reviewPath).toContain(path.join("run-govern-1", "review-results", "review-node-govern.md"));
+    expect(summary.commanderFocus?.commanderPlanPath).toContain(path.join("run-govern-1", "commander-plan.md"));
+    expect(summary.commanderFocus?.workOrderPaths[0]).toContain(path.join("run-govern-1", "work-order", "coder.md"));
+    expect(summary.recommendations[0]).toContain("Commander 建议");
     memoryManager.close();
   });
 });

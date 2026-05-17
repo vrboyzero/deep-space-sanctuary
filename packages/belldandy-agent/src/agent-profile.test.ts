@@ -6,6 +6,7 @@ import { expect, test } from "vitest";
 
 import {
   buildDefaultProfile,
+  buildBuiltinWorkerProfiles,
   loadAgentProfiles,
   resolveAgentProfileMetadata,
   resolveModelConfig,
@@ -171,6 +172,32 @@ test("resolveModelConfig accepts manual model override without falling back to n
     model: "gpt-5.1-mini",
     source: "manual",
   });
+});
+
+test("buildBuiltinWorkerProfiles exposes commander and verifier defaults", () => {
+  const profiles = buildBuiltinWorkerProfiles();
+  expect(profiles).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      id: "commander",
+      kind: "worker",
+      defaultRole: "default",
+      defaultPermissionMode: "confirm",
+      defaultAllowedToolFamilies: [
+        "workspace-read",
+        "browser",
+        "memory",
+        "goal-governance",
+        "session-orchestration",
+      ],
+      handoffStyle: "structured",
+    }),
+    expect.objectContaining({
+      id: "verifier",
+      kind: "worker",
+      defaultRole: "verifier",
+      handoffStyle: "structured",
+    }),
+  ]));
 });
 
 test("resolveModelConfig preserves primary and named reasoning config", () => {

@@ -43,6 +43,7 @@ import {
     buildSessionTimelineProjection,
     type SessionTimelineProjection,
 } from "./session-timeline.js";
+import type { RecentToolResultRecord } from "@belldandy/skills";
 
 /**
  * 对话消息
@@ -70,9 +71,13 @@ export type ActiveCounterSnapshot = {
   startTime: number;
   baseInputTokens: number;
   baseOutputTokens: number;
+  baseInputCostUsd?: number;
+  baseOutputCostUsd?: number;
   /** 快照保存时的全局累计值（用于跨 run 恢复） */
   savedGlobalInputTokens: number;
   savedGlobalOutputTokens: number;
+  savedGlobalInputCostUsd?: number;
+  savedGlobalOutputCostUsd?: number;
 };
 
 export type TaskTokenRecord = {
@@ -81,6 +86,9 @@ export type TaskTokenRecord = {
     outputTokens: number;
     totalTokens: number;
     durationMs: number;
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+    totalCostUsd?: number;
     createdAt: number;
     auto?: boolean;
 };
@@ -95,6 +103,8 @@ export type ToolDigestRecord = {
     toolCallId?: string;
     createdAt: number;
 };
+
+export type StoredRecentToolResultRecord = RecentToolResultRecord;
 
 export type CompactBoundaryRecord = {
     id: string;
@@ -166,6 +176,8 @@ export type Conversation = {
     taskTokenRecords?: TaskTokenRecord[];
     /** 最近工具摘要 */
     toolDigests?: ToolDigestRecord[];
+    /** 最近可恢复的工具结果 */
+    recentToolResults?: StoredRecentToolResultRecord[];
     /** 当前会话为下一轮模型调用临时排队的 deferred tools */
     loadedToolNames?: string[];
     /** 最近压缩边界元数据 */
@@ -250,7 +262,7 @@ export type PersistedConversationSummary = {
 
 type ConversationMetaSnapshot = Partial<Pick<
     Conversation,
-    "agentId" | "channel" | "activeCounters" | "taskTokenRecords" | "toolDigests" | "loadedToolNames" | "compactBoundaries" | "partialCompactionView" | "createdAt" | "updatedAt"
+    "agentId" | "channel" | "activeCounters" | "taskTokenRecords" | "toolDigests" | "recentToolResults" | "loadedToolNames" | "compactBoundaries" | "partialCompactionView" | "createdAt" | "updatedAt"
 >> & {
     conversationId?: string;
 };
@@ -291,6 +303,11 @@ const DEFAULT_SESSION_DIGEST_THRESHOLD = 6;
 const SESSION_MEMORY_SUMMARY_CHAR_LIMIT = 4000;
 const COMPACT_BOUNDARY_STATE_VERSION = 1;
 const DEFAULT_COMPACT_BOUNDARY_LIMIT = 20;
+const DEFAULT_RECENT_TOOL_RESULT_LIMIT = 24;
+const RECENT_TOOL_RESULT_CONTENT_CHAR_LIMIT = 12_000;
+const RECENT_TOOL_RESULT_SUMMARY_CHAR_LIMIT = 280;
+const RECENT_TOOL_RESULT_ERROR_CHAR_LIMIT = 2_000;
+const RECENT_TOOL_RESULT_TARGET_CHAR_LIMIT = 240;
 let conversationMessageIdCounter = 0;
 let compactBoundaryIdCounter = 0;
 let partialCompactionViewIdCounter = 0;
@@ -333,6 +350,62 @@ function createEmptySessionMemory(): StoredSessionMemory {
         lastSummarizedToolCursor: 0,
         updatedAt: 0,
     };
+}
+
+function compactRecentToolResultText(value: unknown, limit: number): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const normalized = value.trim();
+    if (!normalized) return undefined;
+    if (normalized.length <= limit) return normalized;
+    return `${normalized.slice(0, Math.max(0, limit - 3))}...`;
+}
+
+function normalizeRecentToolResultRecord(
+    record: Omit<StoredRecentToolResultRecord, "createdAt"> & { createdAt?: number },
+    createdAt: number,
+): StoredRecentToolResultRecord {
+    return {
+        toolCallId: String(record.toolCallId ?? "").trim(),
+        toolName: String(record.toolName ?? "").trim(),
+        success: Boolean(record.success),
+        summary: compactRecentToolResultText(record.summary, RECENT_TOOL_RESULT_SUMMARY_CHAR_LIMIT) ?? "",
+        content: compactRecentToolResultText(record.content, RECENT_TOOL_RESULT_CONTENT_CHAR_LIMIT),
+        error: compactRecentToolResultText(record.error, RECENT_TOOL_RESULT_ERROR_CHAR_LIMIT),
+        failureKind: record.failureKind,
+        target: compactRecentToolResultText(record.target, RECENT_TOOL_RESULT_TARGET_CHAR_LIMIT),
+        args: record.args,
+        createdAt,
+        isSynthetic: record.isSynthetic === true ? true : undefined,
+    };
+}
+
+function normalizeRecentToolResultRecords(records: unknown): StoredRecentToolResultRecord[] | undefined {
+    if (!Array.isArray(records)) return undefined;
+    const normalized = records
+        .map((item) => {
+            if (!item || typeof item !== "object") return undefined;
+            const record = item as Partial<StoredRecentToolResultRecord>;
+            if (typeof record.toolCallId !== "string" || !record.toolCallId.trim()) return undefined;
+            if (typeof record.toolName !== "string" || !record.toolName.trim()) return undefined;
+            if (typeof record.summary !== "string") return undefined;
+            const createdAt = typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
+                ? Math.max(0, Math.floor(record.createdAt))
+                : Date.now();
+            return normalizeRecentToolResultRecord({
+                toolCallId: record.toolCallId,
+                toolName: record.toolName,
+                success: Boolean(record.success),
+                summary: record.summary,
+                content: record.content,
+                error: record.error,
+                failureKind: record.failureKind,
+                target: record.target,
+                args: record.args,
+                isSynthetic: record.isSynthetic,
+            }, createdAt);
+        })
+        .filter((item): item is StoredRecentToolResultRecord => Boolean(item));
+    return normalized.length > 0 ? normalized : undefined;
 }
 
 async function readConversationTailLines(filePath: string, maxLines: number): Promise<string[]> {
@@ -675,6 +748,7 @@ export class ConversationStore {
                 activeCounters: meta.activeCounters,
                 taskTokenRecords: meta.taskTokenRecords,
                 toolDigests: meta.toolDigests,
+                recentToolResults: meta.recentToolResults,
                 loadedToolNames: meta.loadedToolNames,
                 compactBoundaries: meta.compactBoundaries,
                 partialCompactionView: meta.partialCompactionView,
@@ -706,7 +780,7 @@ export class ConversationStore {
             }
 
             if (messages.length === 0) {
-                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.loadedToolNames?.length) {
+                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.loadedToolNames?.length) {
                     return undefined;
                 }
                 return {
@@ -719,6 +793,7 @@ export class ConversationStore {
                     activeCounters: meta?.activeCounters,
                     taskTokenRecords: meta?.taskTokenRecords,
                     toolDigests: meta?.toolDigests,
+                    recentToolResults: meta?.recentToolResults,
                     loadedToolNames: meta?.loadedToolNames,
                     compactBoundaries: meta?.compactBoundaries,
                     partialCompactionView: meta?.partialCompactionView,
@@ -740,6 +815,7 @@ export class ConversationStore {
                 activeCounters: meta?.activeCounters,
                 taskTokenRecords: meta?.taskTokenRecords,
                 toolDigests: meta?.toolDigests,
+                recentToolResults: meta?.recentToolResults,
                 loadedToolNames: meta?.loadedToolNames,
                 compactBoundaries: meta?.compactBoundaries,
                 partialCompactionView: meta?.partialCompactionView,
@@ -825,6 +901,7 @@ export class ConversationStore {
                 activeCounters: meta.activeCounters,
                 taskTokenRecords: meta.taskTokenRecords,
                 toolDigests: meta.toolDigests,
+                recentToolResults: meta.recentToolResults,
                 loadedToolNames: meta.loadedToolNames,
                 compactBoundaries: meta.compactBoundaries,
                 partialCompactionView: meta.partialCompactionView,
@@ -853,7 +930,7 @@ export class ConversationStore {
             }
 
             if (messages.length === 0) {
-                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.loadedToolNames?.length) {
+                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.loadedToolNames?.length) {
                     return undefined;
                 }
                 return {
@@ -866,6 +943,7 @@ export class ConversationStore {
                     activeCounters: meta?.activeCounters,
                     taskTokenRecords: meta?.taskTokenRecords,
                     toolDigests: meta?.toolDigests,
+                    recentToolResults: meta?.recentToolResults,
                     loadedToolNames: meta?.loadedToolNames,
                     compactBoundaries: meta?.compactBoundaries,
                     partialCompactionView: meta?.partialCompactionView,
@@ -886,6 +964,7 @@ export class ConversationStore {
                 activeCounters: meta?.activeCounters,
                 taskTokenRecords: meta?.taskTokenRecords,
                 toolDigests: meta?.toolDigests,
+                recentToolResults: meta?.recentToolResults,
                 loadedToolNames: meta?.loadedToolNames,
                 compactBoundaries: meta?.compactBoundaries,
                 partialCompactionView: meta?.partialCompactionView,
@@ -963,6 +1042,7 @@ export class ConversationStore {
                     activeCounters?: ActiveCounterSnapshot[];
                     taskTokenRecords?: TaskTokenRecord[];
                     toolDigests?: ToolDigestRecord[];
+                    recentToolResults?: StoredRecentToolResultRecord[];
                     loadedToolNames?: string[];
                     compactBoundaries?: CompactBoundaryRecord[];
                     partialCompactionView?: PartialCompactionViewRecord;
@@ -975,6 +1055,7 @@ export class ConversationStore {
                     || Array.isArray(parsed.activeCounters)
                     || Array.isArray(parsed.taskTokenRecords)
                     || Array.isArray(parsed.toolDigests)
+                    || Array.isArray(parsed.recentToolResults)
                     || Array.isArray(parsed.loadedToolNames)
                     || Array.isArray(parsed.compactBoundaries)
                     || typeof parsed.partialCompactionView === "object"
@@ -988,6 +1069,7 @@ export class ConversationStore {
                     activeCounters: Array.isArray(parsed.activeCounters) ? parsed.activeCounters : undefined,
                     taskTokenRecords: Array.isArray(parsed.taskTokenRecords) ? parsed.taskTokenRecords : undefined,
                     toolDigests: Array.isArray(parsed.toolDigests) ? parsed.toolDigests : undefined,
+                    recentToolResults: normalizeRecentToolResultRecords(parsed.recentToolResults),
                     loadedToolNames: Array.isArray(parsed.loadedToolNames)
                         ? parsed.loadedToolNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
                         : undefined,
@@ -1015,6 +1097,7 @@ export class ConversationStore {
                     activeCounters?: ActiveCounterSnapshot[];
                     taskTokenRecords?: TaskTokenRecord[];
                     toolDigests?: ToolDigestRecord[];
+                    recentToolResults?: StoredRecentToolResultRecord[];
                     loadedToolNames?: string[];
                     compactBoundaries?: CompactBoundaryRecord[];
                     partialCompactionView?: PartialCompactionViewRecord;
@@ -1027,6 +1110,7 @@ export class ConversationStore {
                     || Array.isArray(parsed.activeCounters)
                     || Array.isArray(parsed.taskTokenRecords)
                     || Array.isArray(parsed.toolDigests)
+                    || Array.isArray(parsed.recentToolResults)
                     || Array.isArray(parsed.loadedToolNames)
                     || Array.isArray(parsed.compactBoundaries)
                     || typeof parsed.partialCompactionView === "object"
@@ -1040,6 +1124,7 @@ export class ConversationStore {
                     activeCounters: Array.isArray(parsed.activeCounters) ? parsed.activeCounters : undefined,
                     taskTokenRecords: Array.isArray(parsed.taskTokenRecords) ? parsed.taskTokenRecords : undefined,
                     toolDigests: Array.isArray(parsed.toolDigests) ? parsed.toolDigests : undefined,
+                    recentToolResults: normalizeRecentToolResultRecords(parsed.recentToolResults),
                     loadedToolNames: Array.isArray(parsed.loadedToolNames)
                         ? parsed.loadedToolNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
                         : undefined,
@@ -1070,6 +1155,7 @@ export class ConversationStore {
             activeCounters: conv.activeCounters,
             taskTokenRecords: conv.taskTokenRecords,
             toolDigests: conv.toolDigests,
+            recentToolResults: conv.recentToolResults,
             loadedToolNames: conv.loadedToolNames,
             compactBoundaries: conv.compactBoundaries,
             partialCompactionView: conv.partialCompactionView,
@@ -1082,6 +1168,7 @@ export class ConversationStore {
             && !payload.activeCounters
             && !payload.taskTokenRecords
             && !payload.toolDigests
+            && !payload.recentToolResults?.length
             && !payload.loadedToolNames?.length
             && !payload.compactBoundaries
             && !payload.partialCompactionView
@@ -2698,6 +2785,76 @@ export class ConversationStore {
         const conv = this.get(conversationId);
         const items = conv?.toolDigests ?? [];
         return items.slice(-Math.max(1, limit));
+    }
+
+    recordRecentToolResult(
+        conversationId: string,
+        record: Omit<StoredRecentToolResultRecord, "createdAt"> & { createdAt?: number },
+        limit: number = DEFAULT_RECENT_TOOL_RESULT_LIMIT,
+    ): void {
+        let conv = this.get(conversationId);
+        const now = Date.now();
+        if (!conv) {
+            conv = {
+                id: conversationId,
+                messages: [],
+                createdAt: now,
+                updatedAt: now,
+            };
+            this.conversations.set(conversationId, conv);
+        }
+
+        const createdAt = typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
+            ? Math.max(0, Math.floor(record.createdAt))
+            : now;
+        const next = normalizeRecentToolResultRecord(record, createdAt);
+        const existing = conv.recentToolResults ?? [];
+        const deduped = existing.filter((item) => item.toolCallId !== next.toolCallId);
+        conv.recentToolResults = [next, ...deduped].slice(0, Math.max(1, limit));
+        conv.updatedAt = now;
+        this.persistConversationMeta(conversationId, conv);
+    }
+
+    getRecentToolResults(
+        conversationId: string,
+        options: {
+            limit?: number;
+            toolCallId?: string;
+            toolName?: string;
+            success?: boolean;
+            query?: string;
+        } = {},
+    ): StoredRecentToolResultRecord[] {
+        const conv = this.get(conversationId);
+        const items = conv?.recentToolResults ?? [];
+        const toolCallId = typeof options.toolCallId === "string" ? options.toolCallId.trim() : "";
+        const toolName = typeof options.toolName === "string" ? options.toolName.trim().toLowerCase() : "";
+        const query = typeof options.query === "string" ? options.query.trim().toLowerCase() : "";
+        const successFilter = typeof options.success === "boolean" ? options.success : undefined;
+        const filtered = items.filter((item) => {
+            if (toolCallId && item.toolCallId !== toolCallId) return false;
+            if (toolName && item.toolName.toLowerCase() !== toolName) return false;
+            if (typeof successFilter === "boolean" && item.success !== successFilter) return false;
+            if (query) {
+                const haystack = [
+                    item.toolCallId,
+                    item.toolName,
+                    item.summary,
+                    item.target,
+                    item.content,
+                    item.error,
+                ]
+                    .filter((value): value is string => typeof value === "string" && value.length > 0)
+                    .join("\n")
+                    .toLowerCase();
+                if (!haystack.includes(query)) return false;
+            }
+            return true;
+        });
+        const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+            ? Math.max(1, Math.floor(options.limit))
+            : DEFAULT_RECENT_TOOL_RESULT_LIMIT;
+        return filtered.slice(0, limit);
     }
 
     recordTaskTokenResult(

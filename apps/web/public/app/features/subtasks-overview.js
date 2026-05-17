@@ -119,6 +119,37 @@ function formatJoinedValues(values) {
   return normalized.length ? normalized.join(", ") : "-";
 }
 
+export function buildSubtaskArtifactEntries(
+  item,
+  contents = {},
+  t = (_key, _params, fallback) => fallback ?? "",
+) {
+  const definitions = [
+    {
+      kind: "scratch",
+      label: t("subtasks.detailScratch", {}, "Scratch Memory"),
+      path: item?.scratchPath || "",
+      content: typeof contents.scratchContent === "string" ? contents.scratchContent : "",
+      emptyMessage: t("subtasks.noScratch", {}, "No scratch memory yet."),
+    },
+    {
+      kind: "review",
+      label: t("subtasks.detailReview", {}, "Commander Review"),
+      path: item?.reviewPath || "",
+      content: typeof contents.reviewContent === "string" ? contents.reviewContent : "",
+      emptyMessage: t("subtasks.noReview", {}, "No review record yet."),
+    },
+    {
+      kind: "lesson",
+      label: t("subtasks.detailLesson", {}, "Lessons Learned"),
+      path: item?.lessonPath || "",
+      content: typeof contents.lessonContent === "string" ? contents.lessonContent : "",
+      emptyMessage: t("subtasks.noLesson", {}, "No lessons learned yet."),
+    },
+  ];
+  return definitions.filter((entry) => entry.path || entry.content);
+}
+
 export function formatTeamLaneState(laneState, t = (_key, _params, fallback) => fallback ?? "") {
   switch (laneState) {
     case "accepted":
@@ -903,6 +934,15 @@ export function createSubtasksOverviewFeature({
     const promptSnapshotView = subtasksState.selectedPromptSnapshot?.taskId === item.id
       ? subtasksState.selectedPromptSnapshot.value
       : null;
+    const scratchText = typeof subtasksState.selectedScratchContent === "string"
+      ? subtasksState.selectedScratchContent
+      : "";
+    const reviewText = typeof subtasksState.selectedReviewContent === "string"
+      ? subtasksState.selectedReviewContent
+      : "";
+    const lessonText = typeof subtasksState.selectedLessonContent === "string"
+      ? subtasksState.selectedLessonContent
+      : "";
     const acceptanceGate = subtasksState.selectedAcceptanceGate?.taskId === item.id
       ? subtasksState.selectedAcceptanceGate.value
       : null;
@@ -925,6 +965,11 @@ export function createSubtasksOverviewFeature({
     const delegation = item?.launchSpec?.delegation && typeof item.launchSpec.delegation === "object"
       ? item.launchSpec.delegation
       : null;
+    const artifactEntries = buildSubtaskArtifactEntries(item, {
+      scratchContent: scratchText,
+      reviewContent: reviewText,
+      lessonContent: lessonText,
+    }, t);
     const worktreeStatus = item?.launchSpec?.worktreeStatus || "";
     const worktreeStatusLabel = formatWorktreeRuntimeStatus(worktreeStatus, t);
     const worktreeStatusDescription = describeWorktreeRuntimeStatus(worktreeStatus, t);
@@ -1186,6 +1231,19 @@ export function createSubtasksOverviewFeature({
             </section>
           ` : ""}
 
+          ${artifactEntries.map((artifact) => `
+            <section class="memory-detail-card">
+              <div class="subtask-output-header">
+                <span class="memory-detail-label">${escapeHtml(artifact.label)}</span>
+                ${artifact.path ? `<button class="memory-path-link" data-open-source="${escapeHtml(artifact.path)}">${escapeHtml(t("subtasks.openArtifactPath", {}, "Open path"))}</button>` : ""}
+              </div>
+              ${artifact.path ? `<div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailArtifactPath", {}, "Artifact Path"))}</span><span>${escapeHtml(artifact.path)}</span></div>` : ""}
+              ${artifact.content
+                ? `<pre class="memory-detail-pre">${escapeHtml(artifact.content)}</pre>`
+                : `<div class="memory-detail-text">${escapeHtml(artifact.emptyMessage)}</div>`}
+            </section>
+          `).join("")}
+
           ${worktreeStatus ? `
             <section class="memory-detail-card">
               <span class="memory-detail-label">${escapeHtml(t("subtasks.detailLaunchWorktreeStatusNote", {}, "Worktree Status Note"))}</span>
@@ -1260,6 +1318,9 @@ export function createSubtasksOverviewFeature({
     if (!res || !res.ok || !res.payload?.item) {
       subtasksState.selectedItem = null;
       subtasksState.selectedOutputContent = "";
+      subtasksState.selectedScratchContent = "";
+      subtasksState.selectedReviewContent = "";
+      subtasksState.selectedLessonContent = "";
       subtasksState.selectedContinuationState = null;
       subtasksState.selectedAcceptanceGate = null;
       subtasksState.selectedTeamSharedState = null;
@@ -1274,6 +1335,9 @@ export function createSubtasksOverviewFeature({
     subtasksState.selectedId = item.id;
     subtasksState.selectedItem = item;
     subtasksState.selectedOutputContent = typeof res.payload.outputContent === "string" ? res.payload.outputContent : "";
+    subtasksState.selectedScratchContent = typeof res.payload.scratchContent === "string" ? res.payload.scratchContent : "";
+    subtasksState.selectedReviewContent = typeof res.payload.reviewContent === "string" ? res.payload.reviewContent : "";
+    subtasksState.selectedLessonContent = typeof res.payload.lessonContent === "string" ? res.payload.lessonContent : "";
     subtasksState.selectedContinuationState = res.payload?.continuationState && typeof res.payload.continuationState === "object"
       ? { taskId: item.id, value: res.payload.continuationState }
       : null;
@@ -1555,6 +1619,9 @@ export function createSubtasksOverviewFeature({
       subtasksState.selectedId = null;
       subtasksState.selectedItem = null;
       subtasksState.selectedOutputContent = "";
+      subtasksState.selectedScratchContent = "";
+      subtasksState.selectedReviewContent = "";
+      subtasksState.selectedLessonContent = "";
       subtasksState.selectedContinuationState = null;
       subtasksState.selectedAcceptanceGate = null;
       subtasksState.selectedTeamSharedState = null;
@@ -1574,6 +1641,9 @@ export function createSubtasksOverviewFeature({
       subtasksState.selectedId = null;
       subtasksState.selectedItem = null;
       subtasksState.selectedOutputContent = "";
+      subtasksState.selectedScratchContent = "";
+      subtasksState.selectedReviewContent = "";
+      subtasksState.selectedLessonContent = "";
       subtasksState.selectedContinuationState = null;
       subtasksState.selectedAcceptanceGate = null;
       subtasksState.selectedTeamSharedState = null;
@@ -1647,6 +1717,9 @@ export function createSubtasksOverviewFeature({
       if (subtasksState.selectedId === item.id && item.archivedAt && !includeArchived) {
         subtasksState.selectedItem = item;
         subtasksState.selectedOutputContent = "";
+        subtasksState.selectedScratchContent = "";
+        subtasksState.selectedReviewContent = "";
+        subtasksState.selectedLessonContent = "";
       }
     } else if (existingIndex >= 0) {
       nextItems.splice(existingIndex, 1, item);
@@ -1663,6 +1736,9 @@ export function createSubtasksOverviewFeature({
       subtasksState.selectedId = null;
       subtasksState.selectedItem = null;
       subtasksState.selectedOutputContent = "";
+      subtasksState.selectedScratchContent = "";
+      subtasksState.selectedReviewContent = "";
+      subtasksState.selectedLessonContent = "";
       subtasksState.selectedContinuationState = null;
       subtasksState.selectedAcceptanceGate = null;
       subtasksState.selectedTeamSharedState = null;

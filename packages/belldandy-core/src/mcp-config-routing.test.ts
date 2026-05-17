@@ -50,3 +50,28 @@ test("inspectMcpConfigRouting flags unreachable shared host when starweaver-cent
     error: "ECONNREFUSED",
   });
 });
+
+test("inspectMcpConfigRouting reports local fallback active when local starweaver still auto-connects", () => {
+  const report = inspectMcpConfigRouting({
+    mcpServers: {
+      starweaver: {
+        command: "node",
+        autoConnect: true,
+      },
+      "starweaver-central": {
+        url: "http://127.0.0.1:28767/sse",
+        headers: {
+          Authorization: "Bearer real-key",
+        },
+      },
+    },
+  }, "mcp.json", {
+    target: "127.0.0.1:28767",
+    reachable: true,
+  });
+
+  expect(report.starweaver.status).toBe("local_fallback_active");
+  expect(report.starweaver.headline).toContain("local starweaver stdio");
+  expect(report.starweaver.local?.id).toBe("starweaver");
+  expect(report.starweaver.central?.id).toBe("starweaver-central");
+});

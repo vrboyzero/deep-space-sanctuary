@@ -535,6 +535,44 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     ],
     userVisibleRiskNote: "这是原始会话读取工具，不是抽象记忆。读取前应先确认目标 conversation 和所需视图，避免把无关历史整段拉进来。",
   },
+  retrieve_tool_result: {
+    family: "memory",
+    riskLevel: "low",
+    needsPermission: false,
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    activityDescription: "Retrieve recent persisted tool results so compressed outputs remain inspectable",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "A prior tool output was compressed, truncated in transcript history, or no longer visible in the active context window",
+      "Need to recover the exact recent result or failure details of file_read, run_command, web_fetch, list_files, or similar tools",
+    ],
+    avoidWhen: [
+      "You still have the required tool output in the current context and do not need persisted recovery",
+      "You need full conversation chronology rather than a specific tool result artifact",
+    ],
+    confirmWhen: [
+      "Recovering tool results may surface previously read file contents, command output, or fetched remote content that is not necessary for the current step",
+    ],
+    preflightChecks: [
+      "Prefer tool_call_id when known; otherwise narrow with tool_name, query, or success filters",
+      "Use summary/head/tail before full unless you explicitly need the whole stored output",
+    ],
+    fallbackStrategy: [
+      "Use conversation_read when you need broader historical dialogue around the tool call",
+      "Re-run the tool only when the original output is stale or the persisted recovery no longer contains the required detail",
+    ],
+    expectedOutput: [
+      "Recent tool result records including tool name, call id, summary, and recoverable output or error content",
+      "Empty matches should return a readable no-results response instead of a generic failure",
+    ],
+    sideEffectSummary: [
+      "Read-only access to recent persisted tool result artifacts stored alongside conversation metadata",
+    ],
+    userVisibleRiskNote: "这是压缩后工具结果的恢复入口。优先按 tool_call_id 或明确过滤读取，避免把无关的大段旧输出重新拉回当前上下文。",
+  },
   memory_search: {
     family: "memory",
     riskLevel: "low",

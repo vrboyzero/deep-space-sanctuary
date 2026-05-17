@@ -1056,6 +1056,23 @@ body.control-panel-hidden .main-content {
   min-height: 0;
 }
 
+.memory-dedup-modal {
+  width: min(92vw, 920px);
+  max-width: 920px;
+  max-height: 82vh;
+  min-height: 0;
+}
+
+.memory-dedup-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+  max-height: 72vh;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 .experience-synthesis-modal-body {
   display: flex;
   flex-direction: column;
@@ -4492,6 +4509,25 @@ body.control-panel-hidden .main-content {
 }
 
 .experience-capability-bulk-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.experience-resynthesize-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--memory-card-border);
+}
+
+.experience-resynthesize-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.experience-resynthesize-bar .memory-usage-action-btn,
+.experience-resynthesize-bar .button {
   flex: 0 0 auto;
   white-space: nowrap;
 }

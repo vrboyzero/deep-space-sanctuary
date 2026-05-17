@@ -708,6 +708,10 @@ export class ToolExecutor {
       allowedConversationKinds: this.allowedConversationKinds,
       bridgeSessionGovernance: this.bridgeSessionGovernance,
       bridgeGovernanceTaskId: normalizeOptionalString(runtimeContext?.bridgeGovernanceTaskId),
+      readEnv: (name) => {
+        const value = process.env[name];
+        return value && value.trim() ? value.trim() : undefined;
+      },
       tokenCounter: this.tokenCounters.get(conversationId), // 传递 token 计数器（任务级统计）
       broadcast: this.broadcast
         ? (event, payload) => {

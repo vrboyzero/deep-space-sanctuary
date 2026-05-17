@@ -35,10 +35,15 @@ describe("buildGoalCapabilityPlan", () => {
           },
         },
       ],
-      forceMode: "multi_agent",
+      forceMode: "multi_agent_parallel",
     });
 
-    expect(plan.executionMode).toBe("multi_agent");
+    expect(plan.executionMode).toBe("multi_agent_parallel");
+    expect(plan.governanceMode).toBe("commander");
+    expect(plan.orchestration?.coordinationPlan?.rolePolicy.fanInStrategy).toBe("commander_review");
+    expect(plan.commanderAgentId).toBe("ops-coder");
+    expect(plan.preferredAgents).toEqual([]);
+    expect(plan.orchestration?.finalApprovalMode).toBe("user_required");
     expect(plan.subAgents ?? []).toEqual(expect.arrayContaining([
       expect.objectContaining({
         agentId: "ops-coder",
@@ -63,5 +68,39 @@ describe("buildGoalCapabilityPlan", () => {
     });
     expect(plan.checkpoint?.suggestedNote).toContain("catalog default");
     expect(plan.checkpoint?.suggestedNote).toContain("ops-coder(coder)");
+  });
+
+  it("respects preferredAgents and direct governance for low-risk focused work", () => {
+    const plan = buildGoalCapabilityPlan({
+      goalTitle: "Small patch",
+      nodeId: "node-2",
+      nodeTitle: "修复单点文案",
+      nodeDescription: "局部调整，不需要额外收口。",
+      availableAgentIds: ["preferred-main", "backup-main"],
+      preferredAgents: ["preferred-main"],
+      forceMode: "single_agent",
+    });
+
+    expect(plan.executionMode).toBe("single_agent");
+    expect(plan.governanceMode).toBe("direct");
+    expect(plan.commanderAgentId).toBeUndefined();
+    expect(plan.preferredAgents).toEqual(["preferred-main", "backup-main"]);
+    expect(plan.orchestration?.coordinationPlan?.rolePolicy.fanInStrategy).toBe("main_agent_summary");
+  });
+
+  it("defaults low-risk commander plans to agent auto completion", () => {
+    const plan = buildGoalCapabilityPlan({
+      goalTitle: "Lightweight commander node",
+      nodeId: "node-3",
+      nodeTitle: "拆成两路做低风险整理",
+      nodeDescription: "需要简单分工，但不需要额外人工验收。",
+      availableAgentIds: ["commander", "coder"],
+      forceMode: "multi_agent_parallel",
+    });
+
+    expect(plan.governanceMode).toBe("commander");
+    expect(plan.riskLevel).toBe("low");
+    expect(plan.checkpoint?.required).toBe(false);
+    expect(plan.orchestration?.finalApprovalMode).toBe("agent_auto_complete");
   });
 });

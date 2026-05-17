@@ -143,4 +143,72 @@ describe("evaluateGoalCapabilityPlanAcceptanceGate", () => {
     });
     expect(gate?.contractSpecificChecks?.every((item) => item.status === "passed")).toBe(true);
   });
+
+  it("accepts commander review when delegated lanes are complete without failures", () => {
+    const gate = evaluateGoalCapabilityPlanAcceptanceGate({
+      status: "orchestrated",
+      executionMode: "multi_agent_parallel",
+      subAgents: [
+        { agentId: "coder", role: "coder", objective: "Implement patch" },
+        { agentId: "researcher", role: "researcher", objective: "Collect context" },
+      ],
+      orchestration: {
+        coordinationPlan: {
+          summary: "Commander fan-in.",
+          plannedDelegationCount: 2,
+          managerAgentId: "commander",
+          rolePolicy: {
+            selectedRoles: ["coder", "researcher"],
+            selectionReasons: ["need fan-in"],
+            fanInStrategy: "commander_review",
+          },
+        },
+        delegated: true,
+        delegationCount: 2,
+        delegationResults: [
+          { agentId: "coder", role: "coder", status: "success", summary: "Patch delivered", taskId: "task_coder" },
+          { agentId: "researcher", role: "researcher", status: "success", summary: "Context collected", taskId: "task_research" },
+        ],
+      },
+    });
+
+    expect(gate).toMatchObject({
+      status: "accepted",
+      requiredSourceAgentIds: ["coder", "researcher"],
+    });
+    expect(gate?.summary).toContain("Commander review");
+  });
+
+  it("rejects commander review when a delegated lane failed", () => {
+    const gate = evaluateGoalCapabilityPlanAcceptanceGate({
+      status: "orchestrated",
+      executionMode: "multi_agent_parallel",
+      subAgents: [
+        { agentId: "coder", role: "coder", objective: "Implement patch" },
+      ],
+      orchestration: {
+        coordinationPlan: {
+          summary: "Commander fan-in.",
+          plannedDelegationCount: 1,
+          managerAgentId: "commander",
+          rolePolicy: {
+            selectedRoles: ["coder"],
+            selectionReasons: ["need fan-in"],
+            fanInStrategy: "commander_review",
+          },
+        },
+        delegated: true,
+        delegationCount: 1,
+        delegationResults: [
+          { agentId: "coder", role: "coder", status: "failed", summary: "Patch failed", taskId: "task_coder" },
+        ],
+      },
+    });
+
+    expect(gate).toMatchObject({
+      status: "rejected",
+      rejectionConfidence: "high",
+    });
+    expect(gate?.managerActionHint).toContain("rework");
+  });
 });

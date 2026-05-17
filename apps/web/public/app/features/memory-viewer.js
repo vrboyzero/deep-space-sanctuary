@@ -779,6 +779,7 @@ export function createMemoryViewerFeature({
     memoryTaskFiltersEl,
     memoryChunkFiltersEl,
     memorySearchInputEl,
+    memoryDedupPreviewBtn,
     memoryTaskStatusFilterEl,
     memoryTaskSourceFilterEl,
     memoryChunkTypeFilterEl,
@@ -789,6 +790,15 @@ export function createMemoryViewerFeature({
     memorySharedReviewFocusFilterEl,
     memorySharedReviewTargetFilterEl,
     memorySharedReviewClaimedByFilterEl,
+    memoryDedupModalEl,
+    memoryDedupModalTitleEl,
+    memoryDedupModalSummaryEl,
+    memoryDedupModalStatusEl,
+    memoryDedupModalWarningEl,
+    memoryDedupModalListEl,
+    memoryDedupModalCloseBtn,
+    memoryDedupModalCancelBtn,
+    memoryDedupModalSubmitBtn,
   } = refs;
   const autoRequestedEmailThreadAdvice = new Set();
   let dreamModalOpen = false;
@@ -796,6 +806,284 @@ export function createMemoryViewerFeature({
   function getActiveAgentId() {
     const agentId = typeof getSelectedAgentId === "function" ? String(getSelectedAgentId() || "").trim() : "";
     return agentId || "default";
+  }
+
+  function getDedupModalState() {
+    const memoryViewerState = getMemoryViewerState();
+    if (!memoryViewerState.dedupModal || typeof memoryViewerState.dedupModal !== "object") {
+      memoryViewerState.dedupModal = {
+        open: false,
+        loading: false,
+        applying: false,
+        error: "",
+        report: null,
+        result: null,
+      };
+    }
+    return memoryViewerState.dedupModal;
+  }
+
+  function buildCurrentMemoryDedupFilter() {
+    if (getMemoryViewerState().tab !== "memories") {
+      return undefined;
+    }
+    const filter = {};
+    const type = typeof memoryChunkTypeFilterEl?.value === "string" ? memoryChunkTypeFilterEl.value.trim() : "";
+    const governance = typeof memoryChunkGovernanceFilterEl?.value === "string" ? memoryChunkGovernanceFilterEl.value.trim() : "";
+    const category = typeof memoryChunkCategoryFilterEl?.value === "string" ? memoryChunkCategoryFilterEl.value.trim() : "";
+    if (type) filter.memoryType = type;
+    if (governance) filter.sharedPromotionStatus = governance;
+    if (category === "uncategorized") {
+      filter.uncategorized = true;
+    } else if (category) {
+      filter.category = category;
+    }
+    return Object.keys(filter).length ? filter : undefined;
+  }
+
+  function closeDedupModal() {
+    const modalState = getDedupModalState();
+    if (modalState.applying) return;
+    modalState.open = false;
+    renderDedupModal();
+  }
+
+  function formatDedupPreviewItem(item) {
+    if (!item || typeof item !== "object") return "-";
+    const sourcePath = typeof item.sourcePath === "string" && item.sourcePath.trim()
+      ? summarizeSourcePath(item.sourcePath.trim())
+      : "-";
+    const taskLinkCount = Number.isFinite(Number(item.taskLinkCount)) ? Number(item.taskLinkCount) : 0;
+    const lines = formatLineRange(item.startLine, item.endLine);
+    return `${sourcePath} · ${formatMemoryTypeLabel(item.memoryType)} · ${lines} · links ${formatCount(taskLinkCount)}`;
+  }
+
+  function renderDedupModal() {
+    if (
+      !memoryDedupModalEl
+      || !memoryDedupModalTitleEl
+      || !memoryDedupModalSummaryEl
+      || !memoryDedupModalStatusEl
+      || !memoryDedupModalWarningEl
+      || !memoryDedupModalListEl
+      || !memoryDedupModalSubmitBtn
+      || !memoryDedupModalCancelBtn
+      || !memoryDedupModalCloseBtn
+    ) {
+      return;
+    }
+
+    const modalState = getDedupModalState();
+    const report = modalState.report && typeof modalState.report === "object" ? modalState.report : null;
+    const result = modalState.result && typeof modalState.result === "object" ? modalState.result : null;
+    const totals = report?.totals && typeof report.totals === "object" ? report.totals : null;
+    const applyTotals = result?.totals && typeof result.totals === "object" ? result.totals : null;
+    const statusText = modalState.loading
+      ? t("memory.dedupScanning", {}, "正在扫描重复记忆…")
+      : modalState.applying
+        ? t("memory.dedupApplying", {}, "正在执行清理并生成备份…")
+        : modalState.error
+          ? modalState.error
+          : result
+            ? t(
+              "memory.dedupAppliedStatus",
+              {
+                removed: formatCount(applyTotals?.removedChunks),
+                relinked: formatCount(applyTotals?.relinkedTaskMemoryLinks),
+              },
+              `已完成清理：删除 ${formatCount(applyTotals?.removedChunks)} 条重复 chunk，迁移 ${formatCount(applyTotals?.relinkedTaskMemoryLinks)} 条 task link。`,
+            )
+            : report
+              ? t(
+                "memory.dedupPreviewStatus",
+                {
+                  groups: formatCount(totals?.duplicateGroups),
+                  removable: formatCount(totals?.removableChunks),
+                },
+                `预检完成：发现 ${formatCount(totals?.duplicateGroups)} 个重复组，可移除 ${formatCount(totals?.removableChunks)} 条重复 chunk。`,
+              )
+              : "";
+    const warningText = result?.backupPath
+      ? `已生成备份：${result.backupPath}`
+      : t(
+        "memory.dedupBackupHint",
+        {},
+        "确认清理后会先备份 memory.sqlite，再执行删除。当前确认只影响筛选范围内的 exact duplicate。",
+      );
+
+    memoryDedupModalEl.classList.toggle("hidden", !modalState.open);
+    memoryDedupModalTitleEl.textContent = result
+      ? t("memory.dedupModalResultTitle", {}, "记忆重复清理结果")
+      : t("memory.dedupModalTitle", {}, "记忆重复预检");
+    memoryDedupModalSummaryEl.innerHTML = `
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">扫描范围</span>
+        <div class="memory-detail-text">${escapeHtml(report?.filter ? "当前记忆筛选结果" : "全部记忆条目")}</div>
+      </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">扫描 chunk</span>
+        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.scannedChunks : totals?.scannedChunks))}</div>
+      </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">重复组</span>
+        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.duplicateGroups : totals?.duplicateGroups))}</div>
+      </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">可移除 chunk</span>
+        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.removedChunks : totals?.removableChunks))}</div>
+      </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">受影响 task links</span>
+        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.relinkedTaskMemoryLinks : totals?.affectedTaskLinkCount))}</div>
+      </div>
+    `;
+    memoryDedupModalStatusEl.classList.toggle("hidden", !statusText);
+    memoryDedupModalStatusEl.textContent = statusText;
+    memoryDedupModalWarningEl.classList.toggle("hidden", !warningText);
+    memoryDedupModalWarningEl.innerHTML = warningText ? `<div>${escapeHtml(warningText)}</div>` : "";
+
+    if (modalState.loading) {
+      memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewLoading", {}, "正在生成 dry-run 报告…"))}</div>`;
+    } else if (result && Array.isArray(result.groups) && result.groups.length) {
+      memoryDedupModalListEl.innerHTML = result.groups.map((group) => `
+        <div class="experience-synthesis-row">
+          <div class="experience-synthesis-row-main">
+            <div class="experience-synthesis-row-title">keeper ${escapeHtml(group.keepChunkId || "-")}</div>
+            <div class="experience-synthesis-row-meta">
+              <span>删除 ${escapeHtml(formatCount(Array.isArray(group.removedChunkIds) ? group.removedChunkIds.length : 0))}</span>
+              <span>迁移 links ${escapeHtml(formatCount(group.relinkedTaskMemoryLinks))}</span>
+            </div>
+            <div class="memory-list-item-snippet">${escapeHtml((group.removedChunkIds || []).join(", ") || "-")}</div>
+          </div>
+        </div>
+      `).join("");
+    } else if (report && Array.isArray(report.groups) && report.groups.length) {
+      memoryDedupModalListEl.innerHTML = report.groups.map((group) => `
+        <div class="experience-synthesis-row">
+          <div class="experience-synthesis-row-main">
+            <div class="experience-synthesis-row-title">${escapeHtml(group.preview || group.normalizedHash || "-")}</div>
+            <div class="experience-synthesis-row-meta">
+              <span>keeper</span>
+              <span>${escapeHtml(formatDedupPreviewItem(group.keep))}</span>
+            </div>
+            <div class="memory-list-item-snippet">${escapeHtml((group.remove || []).map((item) => formatDedupPreviewItem(item)).join(" | "))}</div>
+          </div>
+        </div>
+      `).join("");
+    } else if (report) {
+      memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewEmpty", {}, "当前筛选范围内没有发现 exact duplicate。"))}</div>`;
+    } else {
+      memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewIdle", {}, "尚未生成预检报告。"))}</div>`;
+    }
+
+    memoryDedupModalSubmitBtn.textContent = result
+      ? t("memory.dedupModalApplied", {}, "清理已完成")
+      : t("memory.dedupModalApply", {}, "确认清理");
+    memoryDedupModalSubmitBtn.disabled = modalState.loading || modalState.applying || !report || (Array.isArray(report?.groups) ? report.groups.length <= 0 : true) || Boolean(result);
+    memoryDedupModalCancelBtn.disabled = modalState.applying;
+    memoryDedupModalCloseBtn.disabled = modalState.applying;
+  }
+
+  if (memoryDedupModalCloseBtn) {
+    memoryDedupModalCloseBtn.addEventListener("click", () => {
+      closeDedupModal();
+    });
+  }
+  if (memoryDedupModalCancelBtn) {
+    memoryDedupModalCancelBtn.addEventListener("click", () => {
+      closeDedupModal();
+    });
+  }
+  if (memoryDedupModalSubmitBtn) {
+    memoryDedupModalSubmitBtn.addEventListener("click", () => {
+      void applyDedupFromModal();
+    });
+  }
+  if (memoryDedupModalEl) {
+    memoryDedupModalEl.addEventListener("click", (event) => {
+      if (event.target === memoryDedupModalEl) {
+        closeDedupModal();
+      }
+    });
+  }
+
+  async function openDedupModal() {
+    const modalState = getDedupModalState();
+    modalState.open = true;
+    modalState.loading = true;
+    modalState.applying = false;
+    modalState.error = "";
+    modalState.report = null;
+    modalState.result = null;
+    renderDedupModal();
+
+    if (!isConnected()) {
+      modalState.loading = false;
+      modalState.error = t("memory.dedupPreviewDisconnected", {}, "当前未连接到服务器，无法执行重复预检。");
+      renderDedupModal();
+      return null;
+    }
+
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.dedup.preview",
+      params: {
+        agentId: getActiveAgentId(),
+        filter: buildCurrentMemoryDedupFilter(),
+      },
+    });
+    modalState.loading = false;
+    if (!res?.ok) {
+      modalState.error = res?.error?.message || t("memory.dedupPreviewFailed", {}, "重复预检失败。");
+      renderDedupModal();
+      return null;
+    }
+    modalState.report = res.payload?.report ?? null;
+    renderDedupModal();
+    return modalState.report;
+  }
+
+  async function applyDedupFromModal() {
+    const modalState = getDedupModalState();
+    const report = modalState.report && typeof modalState.report === "object" ? modalState.report : null;
+    if (!report || modalState.loading || modalState.applying || modalState.result) {
+      return null;
+    }
+    if (!Array.isArray(report.groups) || report.groups.length <= 0) {
+      modalState.error = t("memory.dedupApplyNothing", {}, "当前没有可清理的重复组。");
+      renderDedupModal();
+      return null;
+    }
+    modalState.applying = true;
+    modalState.error = "";
+    renderDedupModal();
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.dedup.apply",
+      params: {
+        agentId: getActiveAgentId(),
+        filter: buildCurrentMemoryDedupFilter(),
+        confirmed: true,
+      },
+    });
+    modalState.applying = false;
+    if (!res?.ok) {
+      modalState.error = res?.error?.message || t("memory.dedupApplyFailed", {}, "重复清理失败。");
+      renderDedupModal();
+      return null;
+    }
+    modalState.result = res.payload?.result ?? null;
+    renderDedupModal();
+    showNotice?.(
+      t("memory.dedupNoticeTitle", {}, "记忆重复清理已完成"),
+      modalState.result?.backupPath || "已生成备份并完成清理。",
+      "success",
+      3200,
+    );
+    await loadMemoryViewer(true);
+    return modalState.result;
   }
 
   function ensureListPageByTab() {
@@ -1940,10 +2228,16 @@ export function createMemoryViewerFeature({
           ? t("memory.outboundAuditSearchPlaceholder", {}, "搜索渠道、requestId、messageId、thread、会话、Agent 或消息预览")
         : t("memory.searchPlaceholder", {}, "搜索任务标题、总结或记忆内容");
     }
+    if (memoryDedupPreviewBtn) {
+      memoryDedupPreviewBtn.classList.toggle("hidden", !isMemories);
+      memoryDedupPreviewBtn.disabled = !isMemories;
+      memoryDedupPreviewBtn.textContent = t("memory.dedupPreview", {}, "重复预检");
+    }
     syncSharedReviewFilterUi();
     renderSharedReviewBatchBar();
     renderDreamRuntimeBar();
     renderDreamModal();
+    renderDedupModal();
     syncMemoryTaskGoalFilterUi();
   }
 
@@ -4143,11 +4437,15 @@ export function createMemoryViewerFeature({
     renderDreamHistoryPanel,
     renderDreamModal,
     renderDreamRuntimeBar,
+    renderDedupModal,
     renderMemoryList,
     renderSharedReviewList,
     renderMemoryDetail,
     renderMemoryViewerStats,
     renderTaskList,
+    openDedupModal,
+    applyDedupFromModal,
+    closeDedupModal,
     runDream,
     syncSharedReviewFilterUi,
     syncMemoryViewerHeaderTitle,

@@ -122,6 +122,52 @@ function parseGoalReviewGovernanceSummary(rawSummary, parseGoalCheckpoints) {
     workflowOverdueCount: Number(summary.workflowOverdueCount || 0),
     checkpointWorkflowPendingCount: Number(summary.checkpointWorkflowPendingCount || 0),
     checkpointWorkflowOverdueCount: Number(summary.checkpointWorkflowOverdueCount || 0),
+    commanderFocus: summary.commanderFocus && typeof summary.commanderFocus === "object"
+      ? {
+        goalId: summary.commanderFocus.goalId ? String(summary.commanderFocus.goalId) : "",
+        nodeId: summary.commanderFocus.nodeId ? String(summary.commanderFocus.nodeId) : "",
+        runId: summary.commanderFocus.runId ? String(summary.commanderFocus.runId) : "",
+        planId: summary.commanderFocus.planId ? String(summary.commanderFocus.planId) : "",
+        nodeTitle: summary.commanderFocus.nodeTitle ? String(summary.commanderFocus.nodeTitle) : "",
+        governanceMode: summary.commanderFocus.governanceMode ? String(summary.commanderFocus.governanceMode) : "direct",
+        executionMode: summary.commanderFocus.executionMode ? String(summary.commanderFocus.executionMode) : "single_agent",
+        commanderAgentId: summary.commanderFocus.commanderAgentId ? String(summary.commanderFocus.commanderAgentId) : "",
+        reviewStatus: summary.commanderFocus.reviewStatus ? String(summary.commanderFocus.reviewStatus) : "pending",
+        finalApprovalMode: summary.commanderFocus.finalApprovalMode ? String(summary.commanderFocus.finalApprovalMode) : "",
+        reworkRevisionCount: Number.isFinite(summary.commanderFocus.reworkRevisionCount) ? Number(summary.commanderFocus.reworkRevisionCount) : 0,
+        lastReworkReason: summary.commanderFocus.lastReworkReason ? String(summary.commanderFocus.lastReworkReason) : "",
+        lastReworkAt: summary.commanderFocus.lastReworkAt ? String(summary.commanderFocus.lastReworkAt) : "",
+        reworkTargetAgentIds: parseStringList(summary.commanderFocus.reworkTargetAgentIds),
+        reworkContext: summary.commanderFocus.reworkContext && typeof summary.commanderFocus.reworkContext === "object"
+          ? {
+            quickSummary: summary.commanderFocus.reworkContext.quickSummary ? String(summary.commanderFocus.reworkContext.quickSummary) : "",
+            historySummary: summary.commanderFocus.reworkContext.historySummary ? String(summary.commanderFocus.reworkContext.historySummary) : "",
+            persistedReason: summary.commanderFocus.reworkContext.persistedReason ? String(summary.commanderFocus.reworkContext.persistedReason) : "",
+          }
+          : null,
+        fanInSummary: summary.commanderFocus.fanInSummary ? String(summary.commanderFocus.fanInSummary) : "",
+        managerActionHint: summary.commanderFocus.managerActionHint ? String(summary.commanderFocus.managerActionHint) : "",
+        reasons: parseStringList(summary.commanderFocus.reasons),
+        checkLines: parseStringList(summary.commanderFocus.checkLines),
+        nextAction: summary.commanderFocus.nextAction ? String(summary.commanderFocus.nextAction) : "",
+        reviewPath: summary.commanderFocus.reviewPath ? String(summary.commanderFocus.reviewPath) : "",
+        commanderPlanPath: summary.commanderFocus.commanderPlanPath ? String(summary.commanderFocus.commanderPlanPath) : "",
+        workOrderPaths: parseStringList(summary.commanderFocus.workOrderPaths),
+        delegationResults: Array.isArray(summary.commanderFocus.delegationResults)
+          ? summary.commanderFocus.delegationResults.map((item) => {
+            const data = item && typeof item === "object" ? item : {};
+            return {
+              agentId: data.agentId ? String(data.agentId) : "",
+              role: data.role ? String(data.role) : "",
+              status: data.status ? String(data.status) : "",
+              summary: data.summary ? String(data.summary) : "",
+              taskId: data.taskId ? String(data.taskId) : "",
+              outputPath: data.outputPath ? String(data.outputPath) : "",
+            };
+          }).filter((item) => item.agentId)
+          : [],
+      }
+      : null,
     publishRecords,
     templates: templates.map((item, index) => {
       const data = item && typeof item === "object" ? item : {};
@@ -482,6 +528,9 @@ function parseGoalCapabilityPlans(rawPlans) {
         runId: data.runId ? String(data.runId) : "",
         status: normalizeGoalCapabilityPlanStatus(data.status),
         executionMode: normalizeGoalCapabilityExecutionMode(data.executionMode),
+        governanceMode: data.governanceMode ? String(data.governanceMode) : "direct",
+        commanderAgentId: data.commanderAgentId ? String(data.commanderAgentId) : "",
+        preferredAgents: parseStringList(data.preferredAgents),
         riskLevel: normalizeGoalCapabilityRiskLevel(data.riskLevel),
         objective: data.objective ? String(data.objective) : "",
         summary: data.summary ? String(data.summary) : "",
@@ -568,8 +617,14 @@ function parseGoalCapabilityPlans(rawPlans) {
           claimed: orchestration.claimed === true,
           delegated: orchestration.delegated === true,
           delegationCount: Number.isFinite(orchestration.delegationCount) ? Number(orchestration.delegationCount) : 0,
+          finalApprovalMode: orchestration.finalApprovalMode ? String(orchestration.finalApprovalMode) : "",
+          reworkRevisionCount: Number.isFinite(orchestration.reworkRevisionCount) ? Number(orchestration.reworkRevisionCount) : 0,
+          lastReworkReason: orchestration.lastReworkReason ? String(orchestration.lastReworkReason) : "",
+          lastReworkAt: orchestration.lastReworkAt ? String(orchestration.lastReworkAt) : "",
+          reworkTargetAgentIds: parseStringList(orchestration.reworkTargetAgentIds),
           coordinationPlan: coordinationPlan.summary ? {
             summary: String(coordinationPlan.summary),
+            managerAgentId: coordinationPlan.managerAgentId ? String(coordinationPlan.managerAgentId) : "",
             plannedDelegationCount: Number.isFinite(coordinationPlan.plannedDelegationCount)
               ? Number(coordinationPlan.plannedDelegationCount)
               : 0,
@@ -619,6 +674,18 @@ function parseGoalCapabilityPlans(rawPlans) {
             outputPath: verifierResult.outputPath ? String(verifierResult.outputPath) : "",
             generatedAt: verifierResult.generatedAt ? String(verifierResult.generatedAt) : "",
           } : null,
+          acceptanceGate: orchestration.acceptanceGate && typeof orchestration.acceptanceGate === "object"
+            ? {
+              status: orchestration.acceptanceGate.status ? String(orchestration.acceptanceGate.status) : "pending",
+              summary: orchestration.acceptanceGate.summary ? String(orchestration.acceptanceGate.summary) : "",
+              reasons: parseStringList(orchestration.acceptanceGate.reasons),
+              managerActionHint: orchestration.acceptanceGate.managerActionHint ? String(orchestration.acceptanceGate.managerActionHint) : "",
+              doneDefinitionCheck: orchestration.acceptanceGate.doneDefinitionCheck ? String(orchestration.acceptanceGate.doneDefinitionCheck) : "",
+              rejectionConfidence: orchestration.acceptanceGate.rejectionConfidence ? String(orchestration.acceptanceGate.rejectionConfidence) : "",
+              missingRequiredSections: parseStringList(orchestration.acceptanceGate.missingRequiredSections),
+              requiredSections: parseStringList(orchestration.acceptanceGate.requiredSections),
+            }
+            : null,
           notes: parseStringList(orchestration.notes),
         },
       };

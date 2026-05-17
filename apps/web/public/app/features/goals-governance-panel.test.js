@@ -139,4 +139,102 @@ describe("goals governance panel", () => {
     expect(panel.innerHTML).toContain("data-goal-open-experience-type=\"skill\"");
     expect(panel.innerHTML).toContain("在经验能力中打开");
   });
+
+  it("renders commander review and fan-in focus section", () => {
+    const panel = { innerHTML: "" };
+    const feature = createGoalsGovernancePanelFeature({
+      refs: {
+        goalsDetailEl: {
+          querySelector(selector) {
+            return selector === "#goalGovernancePanel" ? panel : null;
+          },
+        },
+      },
+      escapeHtml: (value) => String(value ?? ""),
+      formatDateTime: (value) => String(value ?? "-"),
+      goalRuntimeFilePath: (_goal, fileName) => `runtime/${fileName}`,
+    });
+
+    feature.renderGoalReviewGovernancePanel({
+      id: "goal_commander",
+    }, {
+      workflowPendingCount: 0,
+      workflowOverdueCount: 0,
+      checkpointWorkflowPendingCount: 0,
+      checkpointWorkflowOverdueCount: 0,
+      reviewers: [],
+      templates: [],
+      notifications: [],
+      notificationDispatches: [],
+      notificationDispatchCounts: { total: 0, byChannel: {}, byStatus: {} },
+      actionableReviews: [],
+      actionableCheckpoints: [],
+      bridgeGovernanceSummary: null,
+      commanderFocus: {
+        goalId: "goal_commander",
+        nodeId: "node_govern",
+        runId: "run_govern_1",
+        planId: "plan_govern_1",
+        nodeTitle: "Govern Node",
+        governanceMode: "commander",
+        executionMode: "multi_agent_parallel",
+        commanderAgentId: "commander-main",
+        reviewStatus: "accepted",
+        finalApprovalMode: "user_required",
+        reworkRevisionCount: 1,
+        lastReworkReason: "Need final regression confirmation before close",
+        lastReworkAt: "2026-03-20T18:05:00.000Z",
+        reworkContext: {
+          quickSummary: "Need final regression confirmation before close",
+          historySummary: "Rework Revision 1 | current=Need final regression confirmation before close",
+          persistedReason: "Rework Revision 1 || current=Need final regression confirmation before close",
+        },
+        reworkTargetAgentIds: ["reviewer", "qa"],
+        fanInSummary: "Commander review fan-in is complete and ready for user approval.",
+        managerActionHint: "进入 validating，并等待用户最终审批验收后再收口。",
+        reasons: ["两路 delegation 已成功返回。", "关键验收证据已汇总。"],
+        checkLines: ["1. [passed] Regression passes | runtime/runs/run_govern_1/review-results/review-node-govern.md"],
+        nextAction: "应进入 validating，并等待用户最终审批验收后再收口。",
+        reviewPath: "runtime/runs/run_govern_1/review-results/review-node-govern.md",
+        commanderPlanPath: "runtime/runs/run_govern_1/commander-plan.md",
+        workOrderPaths: [
+          "runtime/runs/run_govern_1/work-order/coder.md",
+          "runtime/runs/run_govern_1/work-order/reviewer.md",
+        ],
+        delegationResults: [
+          {
+            agentId: "coder",
+            role: "coder",
+            status: "success",
+            summary: "Patch delivered with runtime artifact.",
+            taskId: "run_lane_coder",
+            outputPath: "runtime/runs/run_govern_1/work-order/coder.md",
+          },
+          {
+            agentId: "reviewer",
+            role: "reviewer",
+            status: "success",
+            summary: "Regression review completed.",
+            taskId: "run_lane_reviewer",
+            outputPath: "runtime/runs/run_govern_1/work-order/reviewer.md",
+          },
+        ],
+      },
+    });
+
+    expect(panel.innerHTML).toContain("Commander Review / Fan-in");
+    expect(panel.innerHTML).toContain("Govern Node");
+    expect(panel.innerHTML).toContain("进入 validating，并等待用户最终审批验收后再收口。");
+    expect(panel.innerHTML).toContain("Need final regression confirmation before close");
+    expect(panel.innerHTML).toContain("Rework Context");
+    expect(panel.innerHTML).toContain("Rework Revision 1");
+    expect(panel.innerHTML).toContain("Rework Targets");
+    expect(panel.innerHTML).toContain("reviewer");
+    expect(panel.innerHTML).toContain("打开 review");
+    expect(panel.innerHTML).toContain("打开 commander plan");
+    expect(panel.innerHTML).toContain("打开 work-order");
+    expect(panel.innerHTML).toContain("data-open-task-id=\"run_lane_coder\"");
+    expect(panel.innerHTML).toContain("data-open-source=\"runtime/runs/run_govern_1/review-results/review-node-govern.md\"");
+    expect(panel.innerHTML).toContain("data-open-source=\"runtime/runs/run_govern_1/work-order/reviewer.md\"");
+  });
 });

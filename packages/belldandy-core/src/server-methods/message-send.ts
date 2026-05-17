@@ -69,6 +69,9 @@ type MessageSendMethodContext = Pick<
       inputTokens: number;
       outputTokens: number;
       durationMs: number;
+      inputCostUsd?: number;
+      outputCostUsd?: number;
+      totalCostUsd?: number;
     },
     ws?: WebSocket,
   ) => void;

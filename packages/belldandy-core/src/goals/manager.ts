@@ -19,6 +19,7 @@ import { runGoalReviewScanLearningReview } from "../learning-review-runner.js";
 import { getGoalRegistryEntry, listGoalRegistryEntries, upsertGoalRegistryEntry } from "./registry.js";
 import { scaffoldGoalFiles } from "./scaffold.js";
 import { createGoalConversationId, createGoalNodeConversationId, createGoalRunId } from "./session.js";
+import { GoalRuntimeBindingStore } from "../goal-runtime-binding-store.js";
 import { analyzeGoalCapabilityPlan, getDefaultCapabilityPlanAnalysis } from "./capability-analysis.js";
 import { enrichGoalCapabilityPlanOrchestration } from "./capability-acceptance-gate.js";
 import {
@@ -60,6 +61,7 @@ import type {
   GoalApprovalWorkflowScanItem,
   GoalApprovalWorkflowScanResult,
   GoalCapabilityPlan,
+  GoalCapabilityPlanSubAgent,
   GoalExperienceSuggestResult,
   GoalCheckpointEscalateInput,
   GoalReviewDeliveryChannel,
@@ -136,8 +138,16 @@ type GoalCheckpointMutationResult = GoalTaskMutationResult & {
 export class GoalManager {
   private eventSink?: (event: GoalUpdateEvent) => void | Promise<void>;
   private readonly goalMutationLocks = new Map<string, Promise<void>>();
+  private readonly bindingStore: GoalRuntimeBindingStore;
 
-  constructor(private readonly stateDir = resolveStateDir(process.env)) {}
+  constructor(
+    private readonly stateDir = resolveStateDir(process.env),
+    options?: {
+      bindingStore?: GoalRuntimeBindingStore;
+    },
+  ) {
+    this.bindingStore = options?.bindingStore ?? new GoalRuntimeBindingStore(stateDir);
+  }
 
   setEventSink(sink?: (event: GoalUpdateEvent) => void | Promise<void>): void {
     this.eventSink = sink;
@@ -216,6 +226,12 @@ export class GoalManager {
         resumedAt: now,
         pausedAt: undefined,
       });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        conversationId,
+        nodeId,
+        runId,
+        status: updatedGoal.status,
+      });
       if (replay?.checkpointId) {
         await appendGoalProgressEntry(updatedGoal, {
           kind: "checkpoint_replay_started",
@@ -257,6 +273,14 @@ export class GoalManager {
       await this.persistGoalHeaderState(goal, updatedGoal, {
         pausedAt: now,
       });
+      if (goal.activeConversationId) {
+        await this.syncGoalSessionBinding(updatedGoal, {
+          conversationId: goal.activeConversationId,
+          nodeId: goal.activeNodeId ?? goal.lastNodeId,
+          runId: goal.lastRunId,
+          status: updatedGoal.status,
+        });
+      }
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
         reason: "goal_paused",
@@ -344,6 +368,11 @@ export class GoalManager {
         summary: result.node.summary,
         runId: result.node.lastRunId,
       });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
+      });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
         reason: "task_node_claimed",
@@ -374,6 +403,11 @@ export class GoalManager {
         summary: result.node.summary,
         runId: result.node.lastRunId,
       });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
+      });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
         reason: "task_node_pending_review",
@@ -403,6 +437,11 @@ export class GoalManager {
         status: result.node.status,
         summary: result.node.summary,
         runId: result.node.lastRunId,
+      });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
       });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
@@ -440,6 +479,11 @@ export class GoalManager {
         summary: result.node.summary,
         runId: result.node.lastRunId,
       });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
+      });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
         reason: "task_node_completed",
@@ -470,6 +514,11 @@ export class GoalManager {
         summary: result.node.summary,
         note: result.node.blockReason,
         runId: result.node.lastRunId,
+      });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
       });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
@@ -502,6 +551,11 @@ export class GoalManager {
         note: result.node.blockReason,
         runId: result.node.lastRunId,
       });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
+      });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
         reason: "task_node_failed",
@@ -532,6 +586,11 @@ export class GoalManager {
         note: result.node.blockReason,
         runId: result.node.lastRunId,
       });
+      await this.syncGoalSessionBinding(updatedGoal, {
+        nodeId: result.node.id,
+        runId: result.node.lastRunId,
+        status: updatedGoal.status,
+      });
       await this.refreshHandoffAfterMutation(updatedGoal);
       await this.emitGoalUpdate(updatedGoal, {
         reason: "task_node_skipped",
@@ -555,7 +614,7 @@ export class GoalManager {
   async getReviewGovernanceSummary(goalId: string): Promise<GoalReviewGovernanceSummary> {
     const goal = await this.requireGoal(goalId);
     const now = new Date().toISOString();
-    const [governanceConfig, reviews, publishRecords, notifications, notificationDispatches, crossGoal, checkpoints] = await Promise.all([
+    const [governanceConfig, reviews, publishRecords, notifications, notificationDispatches, crossGoal, checkpoints, graph, plans] = await Promise.all([
       readReviewGovernanceConfig(this.stateDir),
       this.syncSuggestionReviews(goal),
       readGoalPublishRecords(goal),
@@ -563,6 +622,8 @@ export class GoalManager {
       readGoalReviewNotificationDispatches(goal),
       this.generateCrossGoalFlowPatterns(),
       readGoalCheckpoints(goal),
+      readGoalTaskGraph(goal),
+      readGoalCapabilityPlans(goal),
     ]);
     const reviewStatusCounts = this.buildSuggestionReviewStatusCounts(reviews.items);
     const reviewTypeCounts = this.buildSuggestionReviewTypeCounts(reviews.items);
@@ -615,6 +676,12 @@ export class GoalManager {
     ]
       .map((item) => item.trim())
       .filter(Boolean);
+    const commanderFocus = this.buildCommanderFocusSummary(goal, graph, plans);
+    if (commanderFocus?.managerActionHint) {
+      recommendations.unshift(`Commander 建议：${commanderFocus.managerActionHint}`);
+    } else if (commanderFocus?.nextAction) {
+      recommendations.unshift(`Commander 下一步：${commanderFocus.nextAction}`);
+    }
     return {
       goal,
       generatedAt: new Date().toISOString(),
@@ -642,6 +709,7 @@ export class GoalManager {
       actionableCheckpoints: actionableCheckpoints.slice(0, 8),
       checkpointWorkflowPendingCount,
       checkpointWorkflowOverdueCount,
+      commanderFocus,
       summary: [
         `reviews=${reviews.items.length}`,
         `pending=${reviewStatusCounts.pending_review}`,
@@ -657,6 +725,71 @@ export class GoalManager {
         `cross_goal_matches=${relatedCrossGoalPatterns.length}`,
       ].join(" | "),
       recommendations,
+    };
+  }
+
+  private buildCommanderFocusSummary(
+    goal: LongTermGoal,
+    graph: GoalTaskGraph,
+    plans: GoalCapabilityPlanState,
+  ): GoalReviewGovernanceSummary["commanderFocus"] | undefined {
+    const preferredNodeIds = [goal.activeNodeId, goal.lastNodeId]
+      .map((item) => item?.trim())
+      .filter((item): item is string => Boolean(item));
+    const focusPlan = preferredNodeIds
+      .map((nodeId) => this.resolveCapabilityPlanForNode(plans, nodeId))
+      .find((item) => item?.governanceMode === "commander")
+      ?? plans.items
+        .filter((item) => item.governanceMode === "commander")
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (!focusPlan) {
+      return undefined;
+    }
+    const focusNode = graph.nodes.find((item) => item.id === focusPlan.nodeId);
+    const gate = focusPlan.orchestration?.acceptanceGate;
+    const reviewStatus = gate?.status ?? "pending";
+    const finalApprovalMode = focusPlan.orchestration?.finalApprovalMode ?? "user_required";
+    const nextAction = reviewStatus === "accepted"
+      ? finalApprovalMode === "agent_auto_complete"
+        ? "可由 Agent 自动收口到 done，或先进入 validating 再补充经验沉淀。"
+        : "应进入 validating，并等待用户最终审批验收后再收口。"
+      : reviewStatus === "rejected"
+        ? "应根据失败分工或收口原因下发返工单。"
+        : "继续等待子分工回传或补齐 fan-in 证据。";
+    const checkLines = gate?.contractSpecificChecks?.length
+      ? gate.contractSpecificChecks.map((item, index) => `${index + 1}. [${item.status}] ${item.label}${item.evidence ? ` | ${item.evidence}` : ""}`)
+      : [];
+    return {
+      goalId: goal.id,
+      nodeId: focusPlan.nodeId,
+      runId: focusPlan.runId,
+      planId: focusPlan.id,
+      nodeTitle: focusNode?.title ?? focusPlan.nodeId,
+      governanceMode: focusPlan.governanceMode,
+      executionMode: focusPlan.executionMode,
+      commanderAgentId: focusPlan.commanderAgentId ?? focusPlan.orchestration?.coordinationPlan?.managerAgentId,
+      reviewStatus,
+      finalApprovalMode,
+      reworkRevisionCount: focusPlan.orchestration?.reworkRevisionCount ?? 0,
+      lastReworkReason: focusPlan.orchestration?.lastReworkReason,
+      lastReworkAt: focusPlan.orchestration?.lastReworkAt,
+      reworkContext: focusPlan.orchestration?.reworkContext,
+      fanInSummary: gate?.summary,
+      managerActionHint: gate?.managerActionHint,
+      reasons: gate?.reasons ?? [],
+      delegationResults: (focusPlan.orchestration?.delegationResults ?? []).map((item) => ({
+        agentId: item.agentId,
+        role: item.role,
+        status: item.status,
+        summary: item.summary,
+        taskId: item.taskId,
+        outputPath: item.outputPath,
+      })),
+      checkLines,
+      nextAction,
+      reviewPath: this.getCommanderReviewPath(goal, focusPlan),
+      commanderPlanPath: this.getCommanderPlanPath(goal, focusPlan),
+      workOrderPaths: focusPlan.subAgents.map((subAgent) => this.getCommanderWorkOrderPath(goal, focusPlan, subAgent)),
     };
   }
 
@@ -1020,13 +1153,26 @@ export class GoalManager {
         : this.resolveCapabilityPlanForNode(plans, nodeId);
       const now = new Date().toISOString();
       const status = input.status ?? existing?.status ?? "planned";
+      const governanceMode = input.governanceMode ?? existing?.governanceMode ?? "direct";
+      const riskLevel = input.riskLevel ?? existing?.riskLevel ?? "low";
       const subAgents = input.subAgents ?? existing?.subAgents ?? [];
+      const checkpoint = input.checkpoint ?? existing?.checkpoint ?? {
+        required: false,
+        reasons: [],
+        approvalMode: "none",
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none",
+      };
       const orchestration = enrichGoalCapabilityPlanOrchestration({
         status,
         executionMode: input.executionMode,
         subAgents,
         orchestration: input.orchestration ?? existing?.orchestration,
       });
+      const defaultFinalApprovalMode = governanceMode === "commander"
+        ? riskLevel === "low" && !checkpoint.required ? "agent_auto_complete" : "user_required"
+        : undefined;
       const nextPlanBase: GoalCapabilityPlan = {
         id: existing?.id ?? (input.id?.trim() || `plan_${crypto.randomUUID().slice(0, 8)}`),
         goalId: goal.id,
@@ -1034,7 +1180,10 @@ export class GoalManager {
         runId: input.runId?.trim() || existing?.runId || node.lastRunId,
         status,
         executionMode: input.executionMode,
-        riskLevel: input.riskLevel ?? existing?.riskLevel ?? "low",
+        governanceMode,
+        commanderAgentId: input.commanderAgentId?.trim() || existing?.commanderAgentId,
+        preferredAgents: input.preferredAgents?.map((item) => item.trim()).filter(Boolean) ?? existing?.preferredAgents ?? [],
+        riskLevel,
         objective: input.objective.trim(),
         summary: input.summary.trim(),
         queryHints: input.queryHints?.map((item) => item.trim()).filter(Boolean) ?? existing?.queryHints ?? [],
@@ -1044,20 +1193,20 @@ export class GoalManager {
         mcpServers: input.mcpServers ?? existing?.mcpServers ?? [],
         subAgents,
         gaps: input.gaps?.map((item) => item.trim()).filter(Boolean) ?? existing?.gaps ?? [],
-        checkpoint: input.checkpoint ?? existing?.checkpoint ?? {
-          required: false,
-          reasons: [],
-          approvalMode: "none",
-          requiredRequestFields: [],
-          requiredDecisionFields: [],
-          escalationMode: "none",
-        },
+        checkpoint,
         actualUsage: input.actualUsage ?? existing?.actualUsage ?? { methods: [], skills: [], mcpServers: [], toolNames: [] },
         analysis: existing?.analysis ?? getDefaultCapabilityPlanAnalysis(),
         generatedAt: existing?.generatedAt ?? now,
         updatedAt: now,
         orchestratedAt: input.orchestratedAt ?? existing?.orchestratedAt,
-        orchestration,
+        orchestration: orchestration
+          ? {
+            ...orchestration,
+            finalApprovalMode: orchestration.finalApprovalMode ?? defaultFinalApprovalMode,
+          }
+          : defaultFinalApprovalMode
+            ? { finalApprovalMode: defaultFinalApprovalMode }
+            : undefined,
       };
       const nextPlan: GoalCapabilityPlan = {
         ...nextPlanBase,
@@ -1071,6 +1220,7 @@ export class GoalManager {
         ].sort((left, right) => left.nodeId.localeCompare(right.nodeId, "zh-CN") || left.generatedAt.localeCompare(right.generatedAt)),
       };
       await writeGoalCapabilityPlans(goal, nextPlans);
+      await this.persistCommanderGovernanceArtifacts(goal, nextPlan, node);
       const updatedGoal = await this.touchGoal(goal);
       await appendGoalProgressEntry(updatedGoal, {
         kind: nextPlan.status === "orchestrated" ? "node_orchestrated" : "capability_plan_generated",
@@ -1078,9 +1228,9 @@ export class GoalManager {
         nodeId,
         status: nextPlan.status,
         summary: nextPlan.summary,
-        note: nextPlan.executionMode === "multi_agent"
-          ? `execution=multi_agent; subAgents=${nextPlan.subAgents.length}; gaps=${nextPlan.gaps.length}`
-          : `execution=single_agent; methods=${nextPlan.methods.length}; skills=${nextPlan.skills.length}`,
+        note: nextPlan.executionMode === "multi_agent" || nextPlan.executionMode === "multi_agent_parallel" || nextPlan.executionMode === "multi_agent_sequential"
+          ? `execution=${nextPlan.executionMode}; governance=${nextPlan.governanceMode}; subAgents=${nextPlan.subAgents.length}; gaps=${nextPlan.gaps.length}`
+          : `execution=${nextPlan.executionMode}; governance=${nextPlan.governanceMode}; methods=${nextPlan.methods.length}; skills=${nextPlan.skills.length}`,
         runId: nextPlan.runId,
       });
       await this.refreshHandoffAfterMutation(updatedGoal);
@@ -1161,6 +1311,7 @@ export class GoalManager {
       this.readProgressContent(goal),
     ]);
     return generateGoalMethodCandidates({
+      stateDir: this.stateDir,
       goal,
       graph,
       plans: plansState.items,
@@ -1175,6 +1326,7 @@ export class GoalManager {
   ): Promise<GoalSkillCandidateGenerateResult> {
     const plansState = await readGoalCapabilityPlans(goal);
     return generateGoalSkillCandidates({
+      stateDir: this.stateDir,
       goal,
       plans: plansState.items,
       retrospective,
@@ -2712,6 +2864,33 @@ export class GoalManager {
     }
   }
 
+  private async syncGoalSessionBinding(
+    goal: LongTermGoal,
+    input: {
+      conversationId?: string;
+      nodeId?: string;
+      runId?: string;
+      status?: string;
+    },
+  ): Promise<void> {
+    const nodeId = input.nodeId?.trim() || goal.activeNodeId || goal.lastNodeId;
+    const runId = input.runId?.trim() || goal.lastRunId;
+    const conversationId = input.conversationId?.trim()
+      || goal.activeConversationId
+      || (nodeId && runId ? createGoalNodeConversationId(goal.id, nodeId, runId) : undefined)
+      || (!nodeId ? createGoalConversationId(goal.id) : undefined);
+    if (!conversationId) {
+      return;
+    }
+    await this.bindingStore.upsertGoalSession({
+      goalId: goal.id,
+      nodeId,
+      runId,
+      conversationId,
+      status: input.status || goal.status,
+    });
+  }
+
   private resolveCheckpointForDecision(
     checkpoints: GoalCheckpointState,
     nodeId: string,
@@ -2743,6 +2922,231 @@ export class GoalManager {
       .filter((item) => item.nodeId === nodeId)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     return matched[0] ?? null;
+  }
+
+  private getCommanderPlanPath(goal: LongTermGoal, plan: GoalCapabilityPlan): string {
+    return path.join(this.getCommanderRunRoot(goal, plan), "commander-plan.md");
+  }
+
+  private getCommanderReviewPath(goal: LongTermGoal, plan: GoalCapabilityPlan): string {
+    return path.join(this.getCommanderRunRoot(goal, plan), "review-results", `review-${this.normalizeAsciiToken(plan.nodeId, "node")}.md`);
+  }
+
+  private getCommanderWorkOrderPath(goal: LongTermGoal, plan: GoalCapabilityPlan, subAgent: GoalCapabilityPlanSubAgent): string {
+    return path.join(
+      this.getCommanderRunRoot(goal, plan),
+      "work-order",
+      `${this.normalizeAsciiToken(subAgent.agentId, "agent")}.md`,
+    );
+  }
+
+  private getCommanderRunRoot(goal: LongTermGoal, plan: GoalCapabilityPlan): string {
+    const runSegment = this.normalizeAsciiToken(plan.runId, `node-${plan.nodeId}`);
+    return path.join(goal.runtimeRoot, "runs", runSegment);
+  }
+
+  private async atomicWriteText(targetPath: string, content: string): Promise<void> {
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    const tempPath = `${targetPath}.tmp-${crypto.randomUUID().slice(0, 8)}`;
+    await fs.writeFile(tempPath, content, "utf-8");
+    await fs.rename(tempPath, targetPath);
+  }
+
+  private buildCommanderPlanMarkdown(
+    goal: LongTermGoal,
+    node: GoalTaskNode,
+    plan: GoalCapabilityPlan,
+  ): string {
+    const coordinationPlan = plan.orchestration?.coordinationPlan;
+    const rolePolicy = coordinationPlan?.rolePolicy;
+    const finalApprovalMode = plan.orchestration?.finalApprovalMode ?? "user_required";
+    const reworkRevisionCount = plan.orchestration?.reworkRevisionCount ?? 0;
+    const reworkTargets = plan.orchestration?.reworkTargetAgentIds?.length
+      ? plan.orchestration.reworkTargetAgentIds.join(", ")
+      : "(none)";
+    const subAgentLines = plan.subAgents.length > 0
+      ? plan.subAgents.map((item, index) => `${index + 1}. ${item.agentId}${item.role ? ` [${item.role}]` : ""} | ${item.objective}${item.deliverable ? ` | deliverable=${item.deliverable}` : ""}`)
+      : ["(none)"];
+    return [
+      "# Commander Plan",
+      "",
+      `- Goal ID: ${goal.id}`,
+      `- Node ID: ${node.id}`,
+      `- Run ID: ${plan.runId ?? "(none)"}`,
+      `- Plan ID: ${plan.id}`,
+      `- Execution Mode: ${plan.executionMode}`,
+      `- Governance Mode: ${plan.governanceMode}`,
+      `- Commander Agent: ${plan.commanderAgentId ?? coordinationPlan?.managerAgentId ?? "(none)"}`,
+      `- Preferred Agents: ${plan.preferredAgents.length > 0 ? plan.preferredAgents.join(", ") : "(none)"}`,
+      `- Risk Level: ${plan.riskLevel}`,
+      `- Final Approval Default: ${finalApprovalMode}`,
+      `- Rework Revision Count: ${reworkRevisionCount}`,
+      `- Last Rework Reason: ${plan.orchestration?.lastReworkReason ?? "(none)"}`,
+      `- Last Rework At: ${plan.orchestration?.lastReworkAt ?? "(none)"}`,
+      `- Rework Targets: ${reworkTargets}`,
+      "",
+      "## Objective",
+      "",
+      plan.objective,
+      "",
+      "## Summary",
+      "",
+      plan.summary,
+      "",
+      "## Coordination",
+      "",
+      coordinationPlan?.summary ?? "(none)",
+      "",
+      `Role Policy: ${rolePolicy ? `roles=${rolePolicy.selectedRoles.join(", ") || "(none)"} | fanIn=${rolePolicy.fanInStrategy}` : "(none)"}`,
+      "",
+      "## Work Orders",
+      "",
+      ...subAgentLines,
+      "",
+      "## Verification Hints",
+      "",
+      `- Checkpoint: ${plan.checkpoint.required ? `${plan.checkpoint.approvalMode} | ${plan.checkpoint.reasons.join(" | ") || "(none)"}` : "optional"}`,
+      `- Gaps: ${plan.gaps.length > 0 ? plan.gaps.join(" | ") : "(none)"}`,
+      "",
+    ].join("\n");
+  }
+
+  private buildCommanderWorkOrderMarkdown(
+    goal: LongTermGoal,
+    node: GoalTaskNode,
+    plan: GoalCapabilityPlan,
+    subAgent: GoalCapabilityPlanSubAgent,
+  ): string {
+    const outOfScope = plan.subAgents
+      .filter((item) => item.agentId !== subAgent.agentId || item.objective !== subAgent.objective)
+      .map((item) => `${item.agentId}${item.role ? ` [${item.role}]` : ""}: ${item.objective}`);
+    return [
+      "# Work Order",
+      "",
+      `- Goal ID: ${goal.id}`,
+      `- Node ID: ${node.id}`,
+      `- Run ID: ${plan.runId ?? "(none)"}`,
+      `- Plan ID: ${plan.id}`,
+      `- Agent ID: ${subAgent.agentId}`,
+      `- Role: ${subAgent.role ?? "default"}`,
+      `- Commander Agent: ${plan.commanderAgentId ?? "(none)"}`,
+      `- Final Approval Default: ${plan.orchestration?.finalApprovalMode ?? "user_required"}`,
+      `- Rework Revision Count: ${plan.orchestration?.reworkRevisionCount ?? 0}`,
+      `- Rework Targets: ${plan.orchestration?.reworkTargetAgentIds?.join(", ") || "(none)"}`,
+      "",
+      "## Scope",
+      "",
+      subAgent.objective,
+      "",
+      "## Deliverable",
+      "",
+      subAgent.deliverable ?? subAgent.objective,
+      "",
+      "## Out Of Scope",
+      "",
+      ...(outOfScope.length > 0 ? outOfScope.map((item) => `- ${item}`) : ["- Follow other work orders for remaining scopes."]),
+      "",
+      "## Rework Context",
+      "",
+      `- Last Rework Reason: ${plan.orchestration?.lastReworkReason ?? "(none)"}`,
+      `- Last Rework At: ${plan.orchestration?.lastReworkAt ?? "(none)"}`,
+      "",
+      "## Verification Hints",
+      "",
+      `- Node Summary: ${plan.summary}`,
+      `- Checkpoint: ${plan.checkpoint.required ? `${plan.checkpoint.approvalMode} | ${plan.checkpoint.reasons.join(" | ") || "(none)"}` : "optional"}`,
+      `- Methods: ${plan.methods.length > 0 ? plan.methods.map((item) => item.file).join(", ") : "(none)"}`,
+      `- Skills: ${plan.skills.length > 0 ? plan.skills.map((item) => item.name).join(", ") : "(none)"}`,
+      `- MCP: ${plan.mcpServers.length > 0 ? plan.mcpServers.map((item) => item.serverId).join(", ") : "(none)"}`,
+      `- Gaps: ${plan.gaps.length > 0 ? plan.gaps.join(" | ") : "(none)"}`,
+      "",
+    ].join("\n");
+  }
+
+  private buildCommanderReviewMarkdown(
+    goal: LongTermGoal,
+    node: GoalTaskNode,
+    plan: GoalCapabilityPlan,
+  ): string {
+    const gate = plan.orchestration?.acceptanceGate;
+    const delegationResults = plan.orchestration?.delegationResults ?? [];
+    const reviewStatus = gate?.status ?? "pending";
+    const finalApprovalMode = plan.orchestration?.finalApprovalMode ?? "user_required";
+    const reworkTargets = plan.orchestration?.reworkTargetAgentIds?.length
+      ? plan.orchestration.reworkTargetAgentIds.join(", ")
+      : "(none)";
+    const nextAction = reviewStatus === "accepted"
+      ? finalApprovalMode === "agent_auto_complete"
+        ? "可由 Agent 自动收口到 done，或先进入 validating 再补充经验沉淀。"
+        : "应进入 validating，并等待用户最终审批验收后再收口。"
+      : reviewStatus === "rejected"
+        ? "应根据失败分工或收口原因下发返工单。"
+        : "继续等待子分工回传或补齐 fan-in 证据。";
+    const resultLines = delegationResults.length > 0
+      ? delegationResults.map((item, index) => `${index + 1}. ${item.agentId}${item.role ? ` [${item.role}]` : ""} | ${item.status} | ${item.summary}${item.taskId ? ` | task=${item.taskId}` : ""}`)
+      : ["(none)"];
+    const checkLines = gate?.contractSpecificChecks?.length
+      ? gate.contractSpecificChecks.map((item, index) => `${index + 1}. [${item.status}] ${item.id} | ${item.label}${item.evidence ? ` | ${item.evidence}` : ""}`)
+      : ["(none)"];
+    return [
+      "# Commander Review",
+      "",
+      `- Goal ID: ${goal.id}`,
+      `- Node ID: ${node.id}`,
+      `- Run ID: ${plan.runId ?? "(none)"}`,
+      `- Plan ID: ${plan.id}`,
+      `- Governance Mode: ${plan.governanceMode}`,
+      `- Commander Agent: ${plan.commanderAgentId ?? "(none)"}`,
+      `- Review Status: ${reviewStatus}`,
+      `- Final Approval Default: ${finalApprovalMode}`,
+      `- Rework Revision Count: ${plan.orchestration?.reworkRevisionCount ?? 0}`,
+      `- Rework Targets: ${reworkTargets}`,
+      "",
+      "## Fan-in Summary",
+      "",
+      gate?.summary ?? "Commander review is waiting for orchestration evidence.",
+      "",
+      "## Delegation Results",
+      "",
+      ...resultLines,
+      "",
+      "## Acceptance Checks",
+      "",
+      ...checkLines,
+      "",
+      "## Next Action",
+      "",
+      `- ${nextAction}`,
+      `- Last Rework Reason: ${plan.orchestration?.lastReworkReason ?? "(none)"}`,
+      `- Last Rework At: ${plan.orchestration?.lastReworkAt ?? "(none)"}`,
+      ...(gate?.managerActionHint ? [`- ${gate.managerActionHint}`] : []),
+      ...(gate?.reasons?.length ? gate.reasons.map((item) => `- ${item}`) : []),
+      "",
+    ].join("\n");
+  }
+
+  private async persistCommanderGovernanceArtifacts(
+    goal: LongTermGoal,
+    plan: GoalCapabilityPlan,
+    node: GoalTaskNode,
+  ): Promise<void> {
+    if (plan.governanceMode !== "commander") {
+      return;
+    }
+    const commanderPlanPath = this.getCommanderPlanPath(goal, plan);
+    await this.atomicWriteText(commanderPlanPath, this.buildCommanderPlanMarkdown(goal, node, plan));
+    const targetedAgents = new Set((plan.orchestration?.reworkTargetAgentIds ?? []).filter(Boolean));
+    for (const subAgent of plan.subAgents) {
+      if (targetedAgents.size > 0 && !targetedAgents.has(subAgent.agentId)) {
+        continue;
+      }
+      const workOrderPath = this.getCommanderWorkOrderPath(goal, plan, subAgent);
+      await this.atomicWriteText(workOrderPath, this.buildCommanderWorkOrderMarkdown(goal, node, plan, subAgent));
+    }
+    if (plan.status === "orchestrated") {
+      const commanderReviewPath = this.getCommanderReviewPath(goal, plan);
+      await this.atomicWriteText(commanderReviewPath, this.buildCommanderReviewMarkdown(goal, node, plan));
+    }
   }
 
   private buildSuggestionReviewItem(

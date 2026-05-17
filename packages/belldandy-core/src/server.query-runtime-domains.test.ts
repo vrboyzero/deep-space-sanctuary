@@ -360,6 +360,8 @@ test("subtask.list and subtask.get expose persisted task runtime records", async
       sessionId: "sub_task_1",
       status: "done",
       outputPath: expect.any(String),
+      reviewPath: expect.any(String),
+      lessonPath: expect.any(String),
       launchSpec: expect.objectContaining({
         profileId: "coder",
         channel: "goal",
@@ -395,6 +397,10 @@ test("subtask.list and subtask.get expose persisted task runtime records", async
         goalNodeId: "node_bridge_review",
       },
     });
+    expect(getRes.payload?.reviewContent).toContain("# Commander Review - coder @");
+    expect(getRes.payload?.reviewContent).toContain("## 审查发现");
+    expect(getRes.payload?.lessonContent).toContain("# Lessons Learned - coder @");
+    expect(getRes.payload?.lessonContent).toContain("## 可复用信号");
     expect(getRes.payload?.bridgeSubtaskView).toMatchObject({
       kind: "review",
       label: "Bridge review",

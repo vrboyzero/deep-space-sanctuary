@@ -23,6 +23,10 @@ function parseStringArray(value: unknown): string[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
+function isMultiAgentExecutionMode(mode: GoalCapabilityPlanRecord["executionMode"] | undefined): boolean {
+  return mode === "multi_agent" || mode === "multi_agent_parallel" || mode === "multi_agent_sequential";
+}
+
 function buildCheckpointSlaAt(hours: number | undefined): string | undefined {
   if (typeof hours !== "number" || !Number.isFinite(hours) || hours <= 0) return undefined;
   return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
@@ -161,7 +165,11 @@ function inferRolePolicy(plan: GoalCapabilityPlanRecord): GoalCapabilityPlanRole
     selectedRoles,
     selectionReasons: ["由现有 capability plan 的 subAgents 自动推断 coordinator role policy。"],
     verifierRole,
-    fanInStrategy: verifierRole ? "verifier_handoff" : "main_agent_summary",
+    fanInStrategy: plan.governanceMode === "commander"
+      ? "commander_review"
+      : verifierRole
+        ? "verifier_handoff"
+        : "main_agent_summary",
   };
 }
 
@@ -171,10 +179,13 @@ function getCoordinationPlan(plan: GoalCapabilityPlanRecord): GoalCapabilityPlan
   }
   const rolePolicy = inferRolePolicy(plan);
   return {
-    summary: plan.executionMode === "multi_agent"
-      ? `按 ${plan.subAgents.length || 1} 路分工推进，并以 ${rolePolicy.fanInStrategy} 收口。`
-      : `由主 Agent 直接推进，并以 ${rolePolicy.fanInStrategy} 收口。`,
-    plannedDelegationCount: plan.executionMode === "multi_agent" ? plan.subAgents.length : 0,
+    summary: (plan.executionMode === "multi_agent" || plan.executionMode === "multi_agent_parallel" || plan.executionMode === "multi_agent_sequential")
+      ? `按 ${plan.subAgents.length || 1} 路分工推进，并以 ${rolePolicy.fanInStrategy} 收口${plan.governanceMode === "commander" && plan.commanderAgentId ? `；manager=${plan.commanderAgentId}` : ""}。`
+      : `由主 Agent 直接推进，并以 ${rolePolicy.fanInStrategy} 收口${plan.governanceMode === "commander" && plan.commanderAgentId ? `；manager=${plan.commanderAgentId}` : ""}。`,
+    plannedDelegationCount: (plan.executionMode === "multi_agent" || plan.executionMode === "multi_agent_parallel" || plan.executionMode === "multi_agent_sequential")
+      ? plan.subAgents.length
+      : 0,
+    managerAgentId: plan.governanceMode === "commander" ? plan.commanderAgentId : undefined,
     rolePolicy,
   };
 }
@@ -338,7 +349,9 @@ function buildVerifierHandoff(
   if (coordinationPlan.rolePolicy.fanInStrategy !== "verifier_handoff") {
     return {
       status: "not_required",
-      summary: "当前协调计划不要求 verifier 收口。",
+      summary: coordinationPlan.rolePolicy.fanInStrategy === "commander_review"
+        ? "当前协调计划改由 commander_review 收口，不要求 verifier handoff。"
+        : "当前协调计划不要求 verifier 收口。",
       sourceAgentIds,
     };
   }
@@ -724,7 +737,7 @@ export const goalOrchestrateTool: Tool = {
         force_mode: {
           type: "string",
           description: "可选，强制规划模式。",
-          enum: ["single_agent", "multi_agent"],
+          enum: ["single_agent", "multi_agent", "multi_agent_parallel", "multi_agent_sequential", "auto"],
         },
         owner: { type: "string", description: "可选，claim 节点时写入的 owner。" },
         auto_delegate: { type: "boolean", description: "可选，若 plan 判断为 multi_agent，则自动触发最小子代理委托。" },
@@ -756,7 +769,14 @@ export const goalOrchestrateTool: Tool = {
         const generated = await context.goalCapabilities.generateCapabilityPlan(goalId, nodeId, {
           objective: String(args.objective ?? "").trim() || undefined,
           queryHints: parseStringArray(args.query_hints),
-          forceMode: args.force_mode === "multi_agent" ? "multi_agent" : args.force_mode === "single_agent" ? "single_agent" : undefined,
+          forceMode: args.force_mode === "multi_agent"
+            || args.force_mode === "multi_agent_parallel"
+            || args.force_mode === "multi_agent_sequential"
+            || args.force_mode === "auto"
+            ? args.force_mode
+            : args.force_mode === "single_agent"
+              ? "single_agent"
+              : undefined,
           runId: String(args.run_id ?? "").trim() || undefined,
         });
         plan = generated.plan;
@@ -794,7 +814,7 @@ export const goalOrchestrateTool: Tool = {
 
       const coordinationPlan = getCoordinationPlan(plan);
       const autoDelegate = args.auto_delegate === true;
-      const delegation = autoDelegate && plan.executionMode === "multi_agent" && !checkpointOutcome.requested
+      const delegation = autoDelegate && isMultiAgentExecutionMode(plan.executionMode) && !checkpointOutcome.requested
         ? await delegatePlanSubAgents(context.agentCapabilities, context, plan, coordinationPlan, latestNode.title)
         : {
           delegated: false,
@@ -840,6 +860,7 @@ export const goalOrchestrateTool: Tool = {
           }),
           orchestratedAt: new Date().toISOString(),
           orchestration: {
+            ...plan.orchestration,
             claimed,
             delegated: delegation.delegated,
             delegationCount: delegation.delegationCount,

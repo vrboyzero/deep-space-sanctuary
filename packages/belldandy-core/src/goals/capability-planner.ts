@@ -1,5 +1,7 @@
 import type {
   GoalCapabilityExecutionMode,
+  GoalCapabilityGovernanceMode,
+  GoalCapabilityPlanFinalApprovalMode,
   GoalCapabilityPlanCoordinationPlan,
   GoalCapabilityPlanMethod,
   GoalCapabilityPlanMcpServer,
@@ -42,6 +44,9 @@ export type CapabilityPlannerInput = {
   availableAgentIds?: string[];
   availableAgents?: CapabilityPlannerAgentCandidate[];
   forceMode?: GoalCapabilityExecutionMode;
+  forceGovernanceMode?: GoalCapabilityGovernanceMode;
+  preferredAgents?: string[];
+  commanderAgentId?: string;
   runId?: string;
 };
 
@@ -237,9 +242,13 @@ function resolveAgentCandidate(
 function pickExecutionMode(text: string, forceMode?: GoalCapabilityExecutionMode): GoalCapabilityExecutionMode {
   if (forceMode) return forceMode;
   if (/(并行|多代理|multi-agent|sub-agent|delegate|delegat|拆分|批量|大规模|跨模块|跨文件|research|调研)/i.test(text)) {
-    return "multi_agent";
+    return "multi_agent_parallel";
   }
   return "single_agent";
+}
+
+function isMultiAgentMode(mode: GoalCapabilityExecutionMode): boolean {
+  return mode === "multi_agent" || mode === "multi_agent_parallel" || mode === "multi_agent_sequential";
 }
 
 function inferRisk(text: string): {
@@ -306,11 +315,11 @@ function inferRisk(text: string): {
 
 function buildSubAgents(
   text: string,
-  availableAgentIds: string[],
+  preferredAgentIds: string[],
   availableAgents: CapabilityPlannerAgentCandidate[],
   executionMode: GoalCapabilityExecutionMode,
 ): GoalCapabilityPlanSubAgent[] {
-  if (executionMode !== "multi_agent") return [];
+  if (!isMultiAgentMode(executionMode)) return [];
   const plans: GoalCapabilityPlanSubAgent[] = [];
 
   const pushUnique = (
@@ -332,7 +341,7 @@ function buildSubAgents(
   };
 
   if (/(实现|编码|开发|重构|修复|code|refactor|implement|build)/i.test(text)) {
-    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["coder", ...availableAgentIds, "default"]), "coder", text);
+    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["coder", ...preferredAgentIds, "default"]), "coder", text);
     pushUnique(
       resolved,
       "coder",
@@ -342,7 +351,7 @@ function buildSubAgents(
     );
   }
   if (/(调研|文档|方案|research|docs|api|网页|browser|外部)/i.test(text)) {
-    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["researcher", ...availableAgentIds, "default"]), "researcher", text);
+    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["researcher", ...preferredAgentIds, "default"]), "researcher", text);
     pushUnique(
       resolved,
       "researcher",
@@ -352,7 +361,7 @@ function buildSubAgents(
     );
   }
   if (/(验证|测试|回归|qa|test|review|验收)/i.test(text)) {
-    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["qa", "verifier", ...availableAgentIds, "default"]), "verifier", text);
+    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["qa", "verifier", ...preferredAgentIds, "default"]), "verifier", text);
     pushUnique(
       resolved,
       "verifier",
@@ -363,7 +372,7 @@ function buildSubAgents(
   }
 
   if (plans.length === 0) {
-    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["default", ...availableAgentIds]), "default", text);
+    const resolved = resolveAgentCandidate(availableAgents, uniqueStrings(["default", ...preferredAgentIds]), "default", text);
     pushUnique(
       resolved,
       "default",
@@ -376,9 +385,30 @@ function buildSubAgents(
   return plans.slice(0, 3);
 }
 
+function pickGovernanceMode(input: {
+  forceGovernanceMode?: GoalCapabilityGovernanceMode;
+  executionMode: GoalCapabilityExecutionMode;
+  riskLevel: GoalCapabilityRiskLevel;
+  subAgents: GoalCapabilityPlanSubAgent[];
+}): GoalCapabilityGovernanceMode {
+  if (input.forceGovernanceMode && input.forceGovernanceMode !== "auto") {
+    return input.forceGovernanceMode;
+  }
+  if (
+    input.subAgents.length >= 2
+    || input.riskLevel !== "low"
+    || input.executionMode === "multi_agent_parallel"
+    || input.executionMode === "multi_agent_sequential"
+  ) {
+    return "commander";
+  }
+  return "direct";
+}
+
 function buildRolePolicy(
   text: string,
   executionMode: GoalCapabilityExecutionMode,
+  governanceMode: GoalCapabilityGovernanceMode,
   riskLevel: GoalCapabilityRiskLevel,
   subAgents: GoalCapabilityPlanSubAgent[],
 ): GoalCapabilityPlanRolePolicy {
@@ -388,7 +418,7 @@ function buildRolePolicy(
     selectedRoles.push(role);
   };
 
-  if (executionMode === "multi_agent" && subAgents.length > 0) {
+  if (isMultiAgentMode(executionMode) && subAgents.length > 0) {
     for (const item of subAgents) {
       pushRole(item.role ?? "default");
     }
@@ -406,15 +436,22 @@ function buildRolePolicy(
       selectedRoles.length === 1 && selectedRoles[0] === "default"
         ? "当前仅需要默认分工槽位，由主 Agent 或通用子代理承接。"
         : undefined,
+      governanceMode === "commander"
+        ? "该节点采用 commander 治理，由统一管理位负责派发、收口与验收闭环。"
+        : undefined,
       riskLevel === "medium" || riskLevel === "high"
-        ? `节点风险为 ${riskLevel}，结果收口默认要求 verifier handoff。`
+        ? `节点风险为 ${riskLevel}，结果收口需要显式治理与验收。`
         : undefined,
       /(合并|收口|汇总|验收|review|qa|test)/i.test(text)
-        ? "节点文本包含收口/验收信号，编排结果需要保留 verifier handoff 记录。"
+        ? "节点文本包含收口/验收信号，编排结果需要保留明确 fan-in 记录。"
         : undefined,
     ]),
     verifierRole,
-    fanInStrategy: verifierRole ? "verifier_handoff" : "main_agent_summary",
+    fanInStrategy: governanceMode === "commander"
+      ? "commander_review"
+      : verifierRole
+        ? "verifier_handoff"
+        : "main_agent_summary",
   };
 }
 
@@ -457,17 +494,29 @@ function applyVerifierHandoff(
 
 function buildCoordinationPlan(
   executionMode: GoalCapabilityExecutionMode,
+  governanceMode: GoalCapabilityGovernanceMode,
+  commanderAgentId: string | undefined,
   subAgents: GoalCapabilityPlanSubAgent[],
   rolePolicy: GoalCapabilityPlanRolePolicy,
 ): GoalCapabilityPlanCoordinationPlan {
   const catalogBackedCount = subAgents.filter((item) => item.catalogDefault).length;
   return {
-    summary: executionMode === "multi_agent"
-      ? `按 ${subAgents.length || 1} 路分工推进，并以 ${rolePolicy.fanInStrategy} 收口${catalogBackedCount > 0 ? `；其中 ${catalogBackedCount} 路已并入 catalog 默认 launch 建议` : ""}。`
-      : `由主 Agent 直接推进，并以 ${rolePolicy.fanInStrategy} 收口。`,
-    plannedDelegationCount: executionMode === "multi_agent" ? subAgents.length : 0,
+    summary: isMultiAgentMode(executionMode)
+      ? `按 ${subAgents.length || 1} 路分工推进，并以 ${rolePolicy.fanInStrategy} 收口${governanceMode === "commander" && commanderAgentId ? `；manager=${commanderAgentId}` : ""}${catalogBackedCount > 0 ? `；其中 ${catalogBackedCount} 路已并入 catalog 默认 launch 建议` : ""}。`
+      : `由主 Agent 直接推进，并以 ${rolePolicy.fanInStrategy} 收口${governanceMode === "commander" && commanderAgentId ? `；manager=${commanderAgentId}` : ""}。`,
+    plannedDelegationCount: isMultiAgentMode(executionMode) ? subAgents.length : 0,
+    managerAgentId: governanceMode === "commander" ? commanderAgentId : undefined,
     rolePolicy,
   };
+}
+
+function inferCommanderFinalApprovalMode(
+  governanceMode: GoalCapabilityGovernanceMode,
+  riskLevel: GoalCapabilityRiskLevel,
+  checkpointRequired: boolean,
+): GoalCapabilityPlanFinalApprovalMode | undefined {
+  if (governanceMode !== "commander") return undefined;
+  return riskLevel === "low" && !checkpointRequired ? "agent_auto_complete" : "user_required";
 }
 
 export function buildGoalCapabilityPlan(input: CapabilityPlannerInput): GoalCapabilityPlanSaveInput {
@@ -486,21 +535,35 @@ export function buildGoalCapabilityPlan(input: CapabilityPlannerInput): GoalCapa
   const skills = (input.skills ?? []).slice(0, 4);
   const mcpServers = (input.mcpServers ?? []).slice(0, 3);
   const availableAgents = normalizeAgentCandidates(input);
-  const draftSubAgents = buildSubAgents(text, input.availableAgentIds ?? [], availableAgents, executionMode);
-  const rolePolicy = buildRolePolicy(text, executionMode, risk.riskLevel, draftSubAgents);
+  const preferredAgents = uniqueStrings([...(input.preferredAgents ?? []), ...(input.availableAgentIds ?? [])]);
+  const draftSubAgents = buildSubAgents(text, preferredAgents, availableAgents, executionMode);
+  const governanceMode = pickGovernanceMode({
+    forceGovernanceMode: input.forceGovernanceMode,
+    executionMode,
+    riskLevel: risk.riskLevel,
+    subAgents: draftSubAgents,
+  });
+  const commanderAgentId = governanceMode === "commander"
+    ? input.commanderAgentId?.trim() || preferredAgents[0] || draftSubAgents[0]?.agentId || "default"
+    : undefined;
+  const rolePolicy = buildRolePolicy(text, executionMode, governanceMode, risk.riskLevel, draftSubAgents);
   const subAgents = applyVerifierHandoff(draftSubAgents, rolePolicy);
   const checkpoint = enrichCheckpointNote(risk.checkpoint, subAgents);
-  const coordinationPlan = buildCoordinationPlan(executionMode, subAgents, rolePolicy);
+  const coordinationPlan = buildCoordinationPlan(executionMode, governanceMode, commanderAgentId, subAgents, rolePolicy);
+  const finalApprovalMode = inferCommanderFinalApprovalMode(governanceMode, risk.riskLevel, checkpoint.required);
   const catalogMatchedSubAgents = subAgents.filter((item) => /catalog /.test(item.reason ?? ""));
   const catalogGuidance = buildCatalogGuidance(subAgents);
   const reasoning = uniqueStrings([
-    executionMode === "multi_agent"
-      ? "节点包含并行/拆分信号，优先采用 multi_agent 规划。"
+    isMultiAgentMode(executionMode)
+      ? `节点包含并行/拆分信号，优先采用 ${executionMode} 规划。`
       : "节点范围较集中，优先由单主 Agent 推进。",
+    governanceMode === "commander"
+      ? `治理模式采用 commander，由 ${commanderAgentId ?? "default"} 负责统一派发与收口。`
+      : "治理模式采用 direct，由当前主 Agent 直接收口。",
     methods.length > 0 ? `找到 ${methods.length} 个可复用 method，可先按既有流程执行。` : "未找到明显匹配的 method，需要边执行边沉淀。",
     skills.length > 0 ? `找到 ${skills.length} 个相关 skill，可按需加载具体操作指南。` : "未找到明显匹配的 skill，可在执行后补充沉淀。",
     mcpServers.length > 0 ? `检测到 ${mcpServers.length} 个相关 MCP 能力候选。` : "当前没有明显匹配的 MCP 候选，默认优先本地工具链。",
-    subAgents.length > 0 && executionMode === "multi_agent"
+    subAgents.length > 0 && isMultiAgentMode(executionMode)
       ? `建议拆成 ${subAgents.length} 个子代理分工。`
       : undefined,
     catalogMatchedSubAgents.length > 0
@@ -517,22 +580,25 @@ export function buildGoalCapabilityPlan(input: CapabilityPlannerInput): GoalCapa
     /(网页|browser|api|外部|文档|research|调研)/i.test(text) && mcpServers.length === 0
       ? "节点可能需要外部上下文或远程能力，但当前未匹配到可用 MCP 入口。"
       : undefined,
-    executionMode === "multi_agent" && subAgents.every((item) => item.agentId === "default")
+    isMultiAgentMode(executionMode) && subAgents.every((item) => item.agentId === "default")
       ? "当前缺少更专用的子代理 profile，暂时只能用 default 子代理承接分工。"
       : undefined,
-    executionMode === "multi_agent" && subAgents.length > 0 && catalogMatchedSubAgents.length === 0
+    isMultiAgentMode(executionMode) && subAgents.length > 0 && catalogMatchedSubAgents.length === 0
       ? "当前 multi_agent 规划尚未命中明确的 agent catalog 指引，后续可补充 whenToUse/defaultRole。"
       : undefined,
   ]);
 
-  const summary = executionMode === "multi_agent"
-    ? `采用 multi_agent 规划，建议 ${subAgents.length || 1} 路并行推进；methods=${methods.length}，skills=${skills.length}，mcp=${mcpServers.length}。`
-    : `采用 single_agent 规划，主 Agent 先按现有 methods/skills 推进；methods=${methods.length}，skills=${skills.length}，mcp=${mcpServers.length}。`;
+  const summary = isMultiAgentMode(executionMode)
+    ? `采用 ${executionMode} + ${governanceMode} 规划，建议 ${subAgents.length || 1} 路推进；methods=${methods.length}，skills=${skills.length}，mcp=${mcpServers.length}。`
+    : `采用 ${executionMode} + ${governanceMode} 规划，主 Agent 先按现有 methods/skills 推进；methods=${methods.length}，skills=${skills.length}，mcp=${mcpServers.length}。`;
 
   return {
     runId: input.runId,
     status: "planned",
     executionMode,
+    governanceMode,
+    commanderAgentId,
+    preferredAgents,
     riskLevel: risk.riskLevel,
     objective: compactText([input.nodeTitle, input.nodeDescription]) || input.nodeTitle,
     summary,
@@ -557,6 +623,7 @@ export function buildGoalCapabilityPlan(input: CapabilityPlannerInput): GoalCapa
       toolNames: [],
     },
     orchestration: {
+      finalApprovalMode,
       coordinationPlan,
     },
   };

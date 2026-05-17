@@ -15,6 +15,9 @@ export interface CounterResult {
   outputTokens: number;
   totalTokens: number;
   durationMs: number;
+  inputCostUsd?: number;
+  outputCostUsd?: number;
+  totalCostUsd?: number;
 }
 
 interface ActiveCounter {
@@ -22,17 +25,26 @@ interface ActiveCounter {
   startTime: number;
   baseInputTokens: number;
   baseOutputTokens: number;
+  baseInputCostUsd: number;
+  baseOutputCostUsd: number;
 }
 
 export class TokenCounterService {
   private readonly counters = new Map<string, ActiveCounter>();
   private globalInputTokens = 0;
   private globalOutputTokens = 0;
+  private globalInputCostUsd = 0;
+  private globalOutputCostUsd = 0;
 
   /** 每次模型调用后由 ToolEnabledAgent 调用，更新全局累加器 */
-  notifyUsage(inputTokens: number, outputTokens: number): void {
+  notifyUsage(inputTokens: number, outputTokens: number, costs?: {
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+  }): void {
     this.globalInputTokens += inputTokens;
     this.globalOutputTokens += outputTokens;
+    this.globalInputCostUsd += Math.max(0, Number(costs?.inputCostUsd ?? 0));
+    this.globalOutputCostUsd += Math.max(0, Number(costs?.outputCostUsd ?? 0));
   }
 
   /** 启动一个命名计数器，记录当前全局 token 基准 */
@@ -45,6 +57,8 @@ export class TokenCounterService {
       startTime: Date.now(),
       baseInputTokens: this.globalInputTokens,
       baseOutputTokens: this.globalOutputTokens,
+      baseInputCostUsd: this.globalInputCostUsd,
+      baseOutputCostUsd: this.globalOutputCostUsd,
     });
   }
 
@@ -56,6 +70,8 @@ export class TokenCounterService {
     }
     const inputTokens = this.globalInputTokens - counter.baseInputTokens;
     const outputTokens = this.globalOutputTokens - counter.baseOutputTokens;
+    const inputCostUsd = Math.max(0, this.globalInputCostUsd - counter.baseInputCostUsd);
+    const outputCostUsd = Math.max(0, this.globalOutputCostUsd - counter.baseOutputCostUsd);
     this.counters.delete(name);
     return {
       name,
@@ -63,6 +79,9 @@ export class TokenCounterService {
       outputTokens,
       totalTokens: inputTokens + outputTokens,
       durationMs: Date.now() - counter.startTime,
+      ...(inputCostUsd > 0 ? { inputCostUsd } : {}),
+      ...(outputCostUsd > 0 ? { outputCostUsd } : {}),
+      ...(inputCostUsd > 0 || outputCostUsd > 0 ? { totalCostUsd: inputCostUsd + outputCostUsd } : {}),
     };
   }
 
@@ -87,6 +106,8 @@ export class TokenCounterService {
       baseOutputTokens: c.baseOutputTokens,
       savedGlobalInputTokens: this.globalInputTokens,
       savedGlobalOutputTokens: this.globalOutputTokens,
+      savedGlobalInputCostUsd: this.globalInputCostUsd,
+      savedGlobalOutputCostUsd: this.globalOutputCostUsd,
     }));
   }
 
@@ -102,6 +123,8 @@ export class TokenCounterService {
           // 这样 stop() 时：新run累计 - 新base = 新run累计 + 上一run累计 = 跨run总量
           baseInputTokens: s.baseInputTokens - s.savedGlobalInputTokens,
           baseOutputTokens: s.baseOutputTokens - s.savedGlobalOutputTokens,
+          baseInputCostUsd: (s.baseInputCostUsd ?? 0) - (s.savedGlobalInputCostUsd ?? 0),
+          baseOutputCostUsd: (s.baseOutputCostUsd ?? 0) - (s.savedGlobalOutputCostUsd ?? 0),
         });
       }
     }

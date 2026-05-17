@@ -15,6 +15,7 @@
 - 系统始终存在一个隐式的 `default` Agent。
 - 如果 `agents.json` 不存在，或文件无法解析，系统会继续使用隐式 `default`，并忽略额外 Agent。
 - 如果 `agents.json` 中显式声明了 `id: "default"`，则该条配置会**覆盖**内建的隐式 `default` Profile。
+- 系统还会补齐内建的 `commander` / `verifier` worker profile；如果 `agents.json` 中显式声明了同名 `id`，则以你的自定义配置为准，不再注入内建版本。
 - 除 `default` 外，你可以继续声明任意多个 Agent，例如 `coder`、`researcher`、`ops`、`reviewer`。
 - 每条 Agent 记录至少需要 `id` 和 `model`；缺少其一时，该条记录会被跳过。
 - 修改 `agents.json` 后，需要**重启 Gateway / 主服务** 才会重新加载。
@@ -120,6 +121,18 @@
 ```
 
 因此，如果你没有特别需要覆盖 `default`，也可以只声明其他 Agent，把 `default` 留给系统隐式创建。
+
+当前系统还会默认补齐两个常用 worker：
+
+- `commander`
+  - 用于复杂任务拆解、多 Agent 编排、fan-in 验收收口
+  - 默认只开放 `workspace-read / browser / memory / goal-governance / session-orchestration` 等治理与只读能力
+  - 运行时会被硬拦截，无法直接获取 `workspace-write / patch / command-exec` 家族工具
+- `verifier`
+  - 用于回归检查、证据审查与交付前验证
+  - 默认角色为 `verifier`
+
+如果你想改变它们的模型、工作区、记忆模式或工具白名单，直接在 `agents.json` 中声明同名 `id` 即可覆盖内建版本。
 
 ## 4. 工具权限行为
 

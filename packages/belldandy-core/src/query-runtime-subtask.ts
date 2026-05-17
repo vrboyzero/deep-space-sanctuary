@@ -179,23 +179,19 @@ export async function handleSubTaskGetWithQueryRuntime(
       },
     });
 
-    let outputContent: string | undefined;
-    if (item.outputPath) {
-      try {
-        outputContent = await fs.readFile(item.outputPath, "utf-8");
-        queryRuntime.mark("task_output_loaded", {
-          conversationId: item.parentConversationId,
-          detail: {
-            taskId: item.id,
-            outputChars: outputContent.length,
-          },
-        });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
-          throw error;
-        }
-      }
+    const outputContent = await loadSubTaskOutputContent(item);
+    if (typeof outputContent === "string") {
+      queryRuntime.mark("task_output_loaded", {
+        conversationId: item.parentConversationId,
+        detail: {
+          taskId: item.id,
+          outputChars: outputContent.length,
+        },
+      });
     }
+    const scratchContent = await loadOptionalArtifactContent(item.scratchPath);
+    const reviewContent = await loadOptionalArtifactContent(item.reviewPath);
+    const lessonContent = await loadOptionalArtifactContent(item.lessonPath);
 
     const launchExplainability = buildSubTaskLaunchExplainability(item, ctx.agentRegistry);
     const promptSnapshotView = await loadSubTaskPromptSnapshotView(ctx, item, queryRuntime);
@@ -234,6 +230,9 @@ export async function handleSubTaskGetWithQueryRuntime(
         teamSharedState,
         resultEnvelope: buildSubTaskResultEnvelope(item),
         outputContent,
+        scratchContent,
+        reviewContent,
+        lessonContent,
       },
     };
   });
@@ -554,6 +553,20 @@ async function loadSubTaskOutputContent(record: SubTaskRecord): Promise<string |
   } catch (error) {
     if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
       return record.outputPreview || undefined;
+    }
+    throw error;
+  }
+}
+
+async function loadOptionalArtifactContent(artifactPath: string | undefined): Promise<string | undefined> {
+  if (!artifactPath) {
+    return undefined;
+  }
+  try {
+    return await fs.readFile(artifactPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return undefined;
     }
     throw error;
   }

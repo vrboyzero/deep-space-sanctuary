@@ -29,6 +29,7 @@ import { goalCheckpointReopenTool as baseGoalCheckpointReopenTool } from "./goal
 import { goalCheckpointEscalateTool as baseGoalCheckpointEscalateTool } from "./goal-checkpoint-escalate.js";
 import { goalCapabilityPlanTool as baseGoalCapabilityPlanTool } from "./goal-capability-plan.js";
 import { goalOrchestrateTool as baseGoalOrchestrateTool } from "./goal-orchestrate.js";
+import { goalCommanderDecideTool as baseGoalCommanderDecideTool } from "./goal-commander-decide.js";
 import { taskGraphReadTool as baseTaskGraphReadTool } from "./task-graph-read.js";
 import { taskGraphCreateTool as baseTaskGraphCreateTool } from "./task-graph-create.js";
 import { taskGraphUpdateTool as baseTaskGraphUpdateTool } from "./task-graph-update.js";
@@ -228,6 +229,11 @@ export const goalCapabilityPlanTool = withGoalReadContract(
 export const goalOrchestrateTool = withGoalStateContract(
   baseGoalOrchestrateTool,
   "Orchestrate goal execution across task nodes and sub-agents",
+  "high",
+);
+export const goalCommanderDecideTool = withGoalStateContract(
+  baseGoalCommanderDecideTool,
+  "Apply an explicit commander decision to a governed task node",
   "high",
 );
 export const taskGraphReadTool = withGoalReadContract(

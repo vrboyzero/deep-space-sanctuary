@@ -53,6 +53,9 @@ export type CommunityMessageQueryRuntimeContext = {
       inputTokens: number;
       outputTokens: number;
       durationMs: number;
+      inputCostUsd?: number;
+      outputCostUsd?: number;
+      totalCostUsd?: number;
     },
   ) => void;
 };
@@ -77,6 +80,9 @@ export type WebhookReceiveQueryRuntimeContext = {
       inputTokens: number;
       outputTokens: number;
       durationMs: number;
+      inputCostUsd?: number;
+      outputCostUsd?: number;
+      totalCostUsd?: number;
     },
   ) => void;
 };
@@ -337,6 +343,9 @@ export async function handleCommunityMessageWithQueryRuntime(
           inputTokens: runResult.latestUsage.inputTokens,
           outputTokens: runResult.latestUsage.outputTokens,
           durationMs: runResult.durationMs,
+          inputCostUsd: runResult.latestUsage.inputCostUsd,
+          outputCostUsd: runResult.latestUsage.outputCostUsd,
+          totalCostUsd: runResult.latestUsage.totalCostUsd,
         });
         queryRuntime.mark("task_result_recorded", {
           conversationId,
@@ -709,6 +718,9 @@ export async function handleWebhookReceiveWithQueryRuntime(
           inputTokens: runResult.latestUsage.inputTokens,
           outputTokens: runResult.latestUsage.outputTokens,
           durationMs: runResult.durationMs,
+          inputCostUsd: runResult.latestUsage.inputCostUsd,
+          outputCostUsd: runResult.latestUsage.outputCostUsd,
+          totalCostUsd: runResult.latestUsage.totalCostUsd,
         });
         queryRuntime.mark("task_result_recorded", {
           conversationId,

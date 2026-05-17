@@ -23,6 +23,9 @@ import {
   summarizeDelegationProtocol,
   type SubTaskDelegationSummary,
 } from "./subtask-result-envelope.js";
+import { parseGoalSessionKey } from "./goals/session.js";
+import { GoalRuntimeBindingStore, type GoalRuntimeBindingSource } from "./goal-runtime-binding-store.js";
+import { getGoalRegistryEntry } from "./goals/registry.js";
 import { enrichDelegationProtocolTeamWithIdentity } from "./team-identity-governance.js";
 import type { SubTaskWorktreeRuntime, SubTaskWorktreeRuntimeSummary, WorktreeRuntimeStatus } from "./worktree-runtime.js";
 
@@ -171,6 +174,9 @@ export type SubTaskRecord = {
   archivedAt?: number;
   archiveReason?: string;
   outputPath?: string;
+  scratchPath?: string;
+  reviewPath?: string;
+  lessonPath?: string;
   outputPreview?: string;
   error?: string;
   bridgeSessionRuntime?: SubTaskBridgeSessionRuntimeState;
@@ -229,6 +235,15 @@ const OUTPUT_FILENAME = "result.md";
 const THOUGHT_DELTA_PERSIST_DELAY_MS = 32;
 const RENAME_RETRIES = 3;
 const RENAME_RETRY_DELAY_MS = 50;
+const SCRATCH_NOTIFICATION_WINDOW = 6;
+const SCRATCH_PROGRESS_WINDOW = 6;
+
+type RuntimeArtifact = {
+  taskId: string;
+  targetPath: string;
+  oldTargetPath?: string;
+  content: string;
+};
 
 function truncateText(value: string, maxLength = 240): string {
   const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
@@ -238,6 +253,36 @@ function truncateText(value: string, maxLength = 240): string {
 
 function stripUtf8Bom(raw: string): string {
   return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+}
+
+function sanitizeArtifactSegment(value: string | undefined, fallback: string): string {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized || fallback;
+}
+
+function formatScratchList(items: string[], fallback = "- 暂无记录"): string {
+  if (items.length === 0) {
+    return `${fallback}\n`;
+  }
+  return `${items.map((item) => `- ${item}`).join("\n")}\n`;
+}
+
+function formatScratchCheckboxList(items: string[], fallback = "- [ ] 暂无待验证项"): string {
+  if (items.length === 0) {
+    return `${fallback}\n`;
+  }
+  return `${items.map((item) => `- [ ] ${item}`).join("\n")}\n`;
+}
+
+function formatScratchLogBlock(lines: string[], fallback = "_暂无关键日志片段_"): string {
+  if (lines.length === 0) {
+    return `${fallback}\n`;
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function inferNotificationKind(status: Extract<SubTaskStatus, "done" | "error" | "timeout" | "stopped">): SubTaskNotificationKind {
@@ -659,6 +704,9 @@ function cloneRecord(record: SubTaskRecord): SubTaskRecord {
     },
     bridgeSessionRuntime: record.bridgeSessionRuntime ? { ...record.bridgeSessionRuntime } : undefined,
     progress: { ...record.progress },
+    scratchPath: record.scratchPath,
+    reviewPath: record.reviewPath,
+    lessonPath: record.lessonPath,
     steering: record.steering.map((item) => ({ ...item })),
     takeover: record.takeover.map((item) => ({ ...item })),
     resume: record.resume.map((item) => ({ ...item })),
@@ -699,23 +747,83 @@ function mergeLaunchSpecWorktreeRuntime(
   return next;
 }
 
+function resolveGoalBindingFromTaskRecord(record: SubTaskRecord): {
+  source: GoalRuntimeBindingSource;
+  goalId: string;
+  nodeId?: string;
+  runId?: string;
+  taskId: string;
+  agentId?: string;
+  profileId?: string;
+  role?: "default" | "coder" | "researcher" | "verifier";
+  conversationId?: string;
+  parentConversationId?: string;
+  sessionId?: string;
+  planId?: string;
+  status: string;
+  finishedAt?: string;
+} | undefined {
+  const delegation = record.launchSpec.delegation;
+  const bridgeSubtask = record.launchSpec.bridgeSubtask;
+  const parsedSession = parseGoalSessionKey(record.parentConversationId);
+  const goalId = delegation?.goalId?.trim()
+    || bridgeSubtask?.goalId?.trim()
+    || parsedSession?.goalId;
+  if (!goalId) {
+    return undefined;
+  }
+  const nodeId = delegation?.nodeId?.trim()
+    || bridgeSubtask?.goalNodeId?.trim()
+    || (parsedSession?.kind === "goal_node" ? parsedSession.nodeId : undefined);
+  const runId = parsedSession?.kind === "goal_node"
+    ? parsedSession.runId
+    : undefined;
+  const source: GoalRuntimeBindingSource = record.kind === "bridge_session"
+    ? "bridge_session"
+    : delegation?.source === "goal_verifier"
+      ? "goal_verifier"
+      : "goal_subtask";
+  return {
+    source,
+    goalId,
+    nodeId,
+    runId,
+    taskId: record.id,
+    agentId: record.agentId,
+    profileId: record.launchSpec.profileId,
+    role: record.launchSpec.role,
+    conversationId: record.parentConversationId,
+    parentConversationId: record.parentConversationId,
+    sessionId: record.sessionId,
+    planId: delegation?.planId,
+    status: record.status,
+    finishedAt: record.finishedAt ? new Date(record.finishedAt).toISOString() : undefined,
+  };
+}
+
 export class SubTaskRuntimeStore {
+  private readonly stateDir: string;
   private readonly runtimeDir: string;
   private readonly statePath: string;
   private readonly outputsDir: string;
   private readonly logger?: RuntimeLogger;
+  private readonly bindingStore?: GoalRuntimeBindingStore;
   private readonly records = new Map<string, SubTaskRecord>();
   private readonly sessionToTask = new Map<string, string>();
   private readonly listeners = new Set<(event: SubTaskChangeEvent) => void>();
+  private readonly dirtyScratchTaskIds = new Set<string>();
+  private readonly dirtyPostRunArtifactTaskIds = new Set<string>();
   private writeChain = Promise.resolve();
   private loadPromise: Promise<void> | null = null;
   private deferredPersistTimer: NodeJS.Timeout | null = null;
 
-  constructor(stateDir: string, logger?: RuntimeLogger) {
+  constructor(stateDir: string, logger?: RuntimeLogger, bindingStore?: GoalRuntimeBindingStore) {
+    this.stateDir = stateDir;
     this.runtimeDir = path.join(stateDir, "subtasks");
     this.statePath = path.join(this.runtimeDir, "registry.json");
     this.outputsDir = path.join(this.runtimeDir, "outputs");
     this.logger = logger;
+    this.bindingStore = bindingStore;
   }
 
   async load(): Promise<void> {
@@ -782,6 +890,8 @@ export class SubTaskRuntimeStore {
       };
       this.pushNotification(record, "queued", "Task created and waiting for orchestration.");
       this.records.set(record.id, record);
+      this.markScratchDirty(record);
+      await this.syncGoalRuntimeArtifactsForRecord(record);
       this.emitChange("created", record);
       return cloneRecord(record);
     });
@@ -824,6 +934,8 @@ export class SubTaskRuntimeStore {
       };
       this.pushNotification(record, "queued", `Bridge session task created for ${input.bridgeSession.targetId}.${input.bridgeSession.action}.`);
       this.records.set(record.id, record);
+      this.markScratchDirty(record);
+      await this.syncGoalRuntimeArtifactsForRecord(record);
       this.emitChange("created", record);
       return cloneRecord(record);
     });
@@ -868,6 +980,8 @@ export class SubTaskRuntimeStore {
       record.launchSpec.bridgeSession = { ...input.bridgeSession };
       record.launchSpec.bridgeSubtask = input.bridgeSubtask ? { ...input.bridgeSubtask } : undefined;
       record.updatedAt = now;
+      this.markScratchDirty(record);
+      await this.syncGoalRuntimeArtifactsForRecord(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -889,6 +1003,8 @@ export class SubTaskRuntimeStore {
       record.background = input.launchSpec.background;
       record.updatedAt = now;
       record.launchSpec = createLaunchSpecSummary(input.launchSpec, input.runtimeSummary);
+      this.markScratchDirty(record);
+      await this.syncGoalRuntimeArtifactsForRecord(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -906,6 +1022,7 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       record.updatedAt = Date.now();
       record.launchSpec = mergeLaunchSpecWorktreeRuntime(record.launchSpec, input.runtimeSummary);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -926,6 +1043,7 @@ export class SubTaskRuntimeStore {
       };
       record.summary = inferSummary(record, `Queued at position ${position}.`);
       this.pushNotification(record, "queued", `Queued at position ${position}.`);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -948,6 +1066,7 @@ export class SubTaskRuntimeStore {
       };
       record.summary = inferSummary(record, record.progress.message);
       this.pushNotification(record, "stop_requested", reason);
+      this.markScratchDirty(record);
       this.emitChange("stop_requested", record);
       return cloneRecord(record);
     });
@@ -987,6 +1106,9 @@ export class SubTaskRuntimeStore {
       };
       record.summary = inferSummary(record, reason);
       this.pushNotification(record, "stopped", reason);
+      this.markScratchDirty(record);
+      this.markPostRunArtifactsDirty(record);
+      await this.ensurePostRunArtifactPathsForRecord(record);
       this.emitChange("stopped", record);
       return cloneRecord(record);
     });
@@ -1002,6 +1124,9 @@ export class SubTaskRuntimeStore {
       record.archiveReason = reason;
       record.updatedAt = now;
       this.pushNotification(record, "archived", reason);
+      this.markScratchDirty(record);
+      this.markPostRunArtifactsDirty(record);
+      await this.ensurePostRunArtifactPathsForRecord(record);
       this.emitChange("archived", record);
       return cloneRecord(record);
     });
@@ -1048,6 +1173,8 @@ export class SubTaskRuntimeStore {
       record.summary = inferSummary(record, "Task is running.");
       this.sessionToTask.set(sessionId, taskId);
       this.pushNotification(record, "started", `Task started in session ${sessionId}.`);
+      this.markScratchDirty(record);
+      await this.syncGoalRuntimeArtifactsForRecord(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1077,6 +1204,8 @@ export class SubTaskRuntimeStore {
         record.status = "running";
       }
       record.summary = inferSummary(record, snippet);
+      this.pushNotification(record, "progress", snippet);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     }, { persist: "deferred" });
@@ -1141,6 +1270,10 @@ export class SubTaskRuntimeStore {
           ? "Task completed successfully."
           : input.error || "Task finished with an error.",
       );
+      this.markScratchDirty(record);
+      this.markPostRunArtifactsDirty(record);
+      await this.ensurePostRunArtifactPathsForRecord(record);
+      await this.syncGoalRuntimeArtifactsForRecord(record);
       this.emitChange(input.status === "stopped" ? "stopped" : "completed", record);
       return cloneRecord(record);
     });
@@ -1173,6 +1306,7 @@ export class SubTaskRuntimeStore {
         record.steering = record.steering.slice(-MAX_STEERING_RECORDS);
       }
       this.pushNotification(record, "steering_requested", `Steering accepted: ${truncateText(normalizedMessage, 160)}`);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return {
         item: cloneRecord(record),
@@ -1200,6 +1334,7 @@ export class SubTaskRuntimeStore {
       steering.error = undefined;
       record.updatedAt = steering.deliveredAt;
       this.pushNotification(record, "steering_delivered", "Steering delivered to the relaunched subtask session.");
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1216,6 +1351,7 @@ export class SubTaskRuntimeStore {
       steering.error = truncateText(reason, 300);
       record.updatedAt = Date.now();
       this.pushNotification(record, "steering_failed", `Steering failed: ${truncateText(reason, 160)}`);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1247,6 +1383,7 @@ export class SubTaskRuntimeStore {
         record.resume = record.resume.slice(-MAX_RESUME_RECORDS);
       }
       this.pushNotification(record, "resume_requested", `Resume accepted: ${truncateText(normalizedMessage || "Continue from the last recorded state.", 160)}`);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return {
         item: cloneRecord(record),
@@ -1292,6 +1429,7 @@ export class SubTaskRuntimeStore {
         "takeover_requested",
         `${modeLabel} accepted for agent ${normalizedAgentId}: ${truncateText(normalizedMessage || "Relaunch the same subtask under a new agent.", 160)}`,
       );
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return {
         item: cloneRecord(record),
@@ -1327,6 +1465,7 @@ export class SubTaskRuntimeStore {
           ? `Safe-point takeover delivered to agent ${takeover.agentId}.`
           : `Takeover delivered to agent ${takeover.agentId}.`,
       );
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1347,6 +1486,7 @@ export class SubTaskRuntimeStore {
         "takeover_failed",
         `Takeover failed for agent ${takeover.agentId}: ${truncateText(reason, 160)}`,
       );
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1373,6 +1513,7 @@ export class SubTaskRuntimeStore {
       resume.error = undefined;
       record.updatedAt = resume.deliveredAt;
       this.pushNotification(record, "resume_delivered", "Resume delivered to the relaunched subtask session.");
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1389,6 +1530,7 @@ export class SubTaskRuntimeStore {
       resume.error = truncateText(reason, 300);
       record.updatedAt = Date.now();
       this.pushNotification(record, "resume_failed", `Resume failed: ${truncateText(reason, 160)}`);
+      this.markScratchDirty(record);
       this.emitChange("updated", record);
       return cloneRecord(record);
     });
@@ -1430,6 +1572,9 @@ export class SubTaskRuntimeStore {
       summary: record.summary,
       progressText: record.progress.message,
       outputPath: record.outputPath,
+      scratchPath: record.scratchPath,
+      reviewPath: record.reviewPath,
+      lessonPath: record.lessonPath,
       notificationCount: record.notifications.length,
     }));
   }
@@ -1652,6 +1797,9 @@ export class SubTaskRuntimeStore {
       archivedAt: Number.isFinite(Number(value.archivedAt)) ? Number(value.archivedAt) : undefined,
       archiveReason: typeof value.archiveReason === "string" ? value.archiveReason : undefined,
       outputPath: typeof value.outputPath === "string" && value.outputPath.trim() ? value.outputPath : undefined,
+      scratchPath: typeof value.scratchPath === "string" && value.scratchPath.trim() ? value.scratchPath : undefined,
+      reviewPath: typeof value.reviewPath === "string" && value.reviewPath.trim() ? value.reviewPath : undefined,
+      lessonPath: typeof value.lessonPath === "string" && value.lessonPath.trim() ? value.lessonPath : undefined,
       outputPreview: typeof value.outputPreview === "string" ? value.outputPreview : undefined,
       error: typeof value.error === "string" ? value.error : undefined,
       bridgeSessionRuntime: normalizeBridgeSessionRuntimeState(value.bridgeSessionRuntime),
@@ -1756,6 +1904,8 @@ export class SubTaskRuntimeStore {
   }
 
   private async persist(): Promise<void> {
+    const scratchArtifacts = await this.prepareDirtyScratchArtifacts();
+    const postRunArtifacts = await this.prepareDirtyPostRunArtifacts();
     const state: SubTaskRuntimeState = {
       version: STATE_VERSION,
       items: [...this.records.values()]
@@ -1771,11 +1921,410 @@ export class SubTaskRuntimeStore {
             },
           progress: { ...record.progress },
           steering: record.steering.map((item) => ({ ...item })),
+          resume: record.resume.map((item) => ({ ...item })),
           takeover: record.takeover.map((item) => ({ ...item })),
           notifications: record.notifications.map((item) => ({ ...item })),
         })),
     };
     await atomicWriteText(this.statePath, JSON.stringify(state, null, 2));
+    for (const artifact of scratchArtifacts) {
+      if (artifact.oldTargetPath && artifact.oldTargetPath !== artifact.targetPath) {
+        await fs.unlink(artifact.oldTargetPath).catch(() => {});
+      }
+      await atomicWriteText(artifact.targetPath, artifact.content);
+    }
+    for (const artifact of postRunArtifacts) {
+      if (artifact.oldTargetPath && artifact.oldTargetPath !== artifact.targetPath) {
+        await fs.unlink(artifact.oldTargetPath).catch(() => {});
+      }
+      await atomicWriteText(artifact.targetPath, artifact.content);
+    }
+  }
+
+  private markScratchDirty(record: SubTaskRecord): void {
+    this.dirtyScratchTaskIds.add(record.id);
+  }
+
+  private markPostRunArtifactsDirty(record: SubTaskRecord): void {
+    this.dirtyPostRunArtifactTaskIds.add(record.id);
+  }
+
+  private async ensurePostRunArtifactPathsForRecord(record: SubTaskRecord): Promise<void> {
+    record.reviewPath = await this.resolveReviewPathForRecord(record);
+    record.lessonPath = await this.resolveLessonPathForRecord(record);
+  }
+
+  private async syncGoalRuntimeArtifactsForRecord(record: SubTaskRecord): Promise<void> {
+    await this.syncGoalBindingForRecord(record);
+  }
+
+  private async syncGoalBindingForRecord(record: SubTaskRecord): Promise<void> {
+    if (!this.bindingStore) {
+      return;
+    }
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    if (!binding) {
+      return;
+    }
+    await this.bindingStore.upsertSubTaskBinding(binding);
+  }
+
+  private async prepareDirtyScratchArtifacts(): Promise<RuntimeArtifact[]> {
+    if (this.dirtyScratchTaskIds.size === 0) {
+      return [];
+    }
+    const taskIds = [...this.dirtyScratchTaskIds];
+    this.dirtyScratchTaskIds.clear();
+    const artifacts: RuntimeArtifact[] = [];
+    for (const taskId of taskIds) {
+      const record = this.records.get(taskId);
+      if (!record) {
+        continue;
+      }
+      const scratchPath = await this.resolveScratchPathForRecord(record);
+      artifacts.push({
+        taskId,
+        targetPath: scratchPath,
+        oldTargetPath: record.scratchPath && record.scratchPath !== scratchPath ? record.scratchPath : undefined,
+        content: this.buildScratchMarkdown(record, scratchPath),
+      });
+      record.scratchPath = scratchPath;
+    }
+    return artifacts;
+  }
+
+  private async prepareDirtyPostRunArtifacts(): Promise<RuntimeArtifact[]> {
+    if (this.dirtyPostRunArtifactTaskIds.size === 0) {
+      return [];
+    }
+    const taskIds = [...this.dirtyPostRunArtifactTaskIds];
+    this.dirtyPostRunArtifactTaskIds.clear();
+    const artifacts: RuntimeArtifact[] = [];
+    for (const taskId of taskIds) {
+      const record = this.records.get(taskId);
+      if (!record) {
+        continue;
+      }
+      const reviewPath = await this.resolveReviewPathForRecord(record);
+      const lessonPath = await this.resolveLessonPathForRecord(record);
+      artifacts.push({
+        taskId,
+        targetPath: reviewPath,
+        oldTargetPath: record.reviewPath && record.reviewPath !== reviewPath ? record.reviewPath : undefined,
+        content: this.buildReviewMarkdown(record, reviewPath),
+      });
+      artifacts.push({
+        taskId,
+        targetPath: lessonPath,
+        oldTargetPath: record.lessonPath && record.lessonPath !== lessonPath ? record.lessonPath : undefined,
+        content: this.buildLessonMarkdown(record, lessonPath),
+      });
+      record.reviewPath = reviewPath;
+      record.lessonPath = lessonPath;
+    }
+    return artifacts;
+  }
+
+  private async resolveScratchPathForRecord(record: SubTaskRecord): Promise<string> {
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    const agentSegment = sanitizeArtifactSegment(record.agentId, "agent");
+    if (binding?.goalId && binding.runId) {
+      const goal = await getGoalRegistryEntry(this.stateDir, binding.goalId);
+      if (goal?.runtimeRoot?.trim()) {
+        return path.join(goal.runtimeRoot, "runs", binding.runId, "scratch", `scratch-${agentSegment}.md`);
+      }
+    }
+    return path.join(this.stateDir, "tasks", record.id, "scratch", `scratch-${agentSegment}.md`);
+  }
+
+  private async resolveReviewPathForRecord(record: SubTaskRecord): Promise<string> {
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    const taskSegment = sanitizeArtifactSegment(record.id, "task");
+    if (binding?.goalId && binding.runId) {
+      const goal = await getGoalRegistryEntry(this.stateDir, binding.goalId);
+      if (goal?.runtimeRoot?.trim()) {
+        return path.join(goal.runtimeRoot, "runs", binding.runId, "review-results", `review-${taskSegment}.md`);
+      }
+    }
+    return path.join(this.stateDir, "tasks", record.id, "review-results", `review-${taskSegment}.md`);
+  }
+
+  private async resolveLessonPathForRecord(record: SubTaskRecord): Promise<string> {
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    const taskSegment = sanitizeArtifactSegment(record.id, "task");
+    if (binding?.goalId) {
+      const goal = await getGoalRegistryEntry(this.stateDir, binding.goalId);
+      if (goal?.docRoot?.trim()) {
+        return path.join(goal.docRoot, "lessons-learned", `lesson-${taskSegment}.md`);
+      }
+    }
+    return path.join(this.stateDir, "tasks", record.id, "lessons-learned", `lesson-${taskSegment}.md`);
+  }
+
+  private buildScratchMarkdown(record: SubTaskRecord, scratchPath: string): string {
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    const updatedAtIso = new Date(record.updatedAt || record.createdAt || Date.now()).toISOString();
+    const progressMessage = truncateText(record.progress.message || "", 240);
+    const currentHypotheses = [
+      ...record.notifications
+        .filter((item) => item.kind === "progress" && item.message.trim())
+        .slice(-SCRATCH_PROGRESS_WINDOW)
+        .map((item) => truncateText(item.message, 240)),
+    ];
+    if (
+      progressMessage
+      && progressMessage !== "Task is running."
+      && progressMessage !== "Task completed."
+      && progressMessage !== "Task created and waiting to start."
+      && !currentHypotheses.includes(progressMessage)
+    ) {
+      currentHypotheses.push(progressMessage);
+    }
+    if (
+      record.summary
+      && record.summary !== progressMessage
+      && !isTerminalStatus(record.status)
+      && !currentHypotheses.includes(record.summary)
+    ) {
+      currentHypotheses.push(truncateText(record.summary, 240));
+    }
+
+    const verifiedFindings: string[] = [];
+    if (record.status === "done" && record.outputPreview) {
+      verifiedFindings.push(`执行结果：${record.outputPreview}`);
+    }
+    if (record.outputPath) {
+      verifiedFindings.push(`结果文件：${record.outputPath}`);
+    }
+    if (record.launchSpec.worktreePath) {
+      verifiedFindings.push(`运行工作树：${record.launchSpec.worktreePath}`);
+    }
+
+    const ruledOutPaths = [
+      ...record.steering
+        .filter((item) => item.status === "failed" && item.error)
+        .map((item) => `Steering failed: ${truncateText(item.error ?? item.message, 200)}`),
+      ...record.resume
+        .filter((item) => item.status === "failed" && item.error)
+        .map((item) => `Resume failed: ${truncateText(item.error ?? item.message, 200)}`),
+      ...record.takeover
+        .filter((item) => item.status === "failed" && item.error)
+        .map((item) => `Takeover failed (${item.agentId}): ${truncateText(item.error ?? item.message, 200)}`),
+    ];
+
+    const pendingChecks: string[] = [];
+    if (!isTerminalStatus(record.status)) {
+      pendingChecks.push(`继续推进子任务并输出最终结果（当前状态：${record.status}）。`);
+    }
+    pendingChecks.push(
+      ...record.steering
+        .filter((item) => item.status === "accepted")
+        .map((item) => `Steering 待交付：${truncateText(item.message, 200)}`),
+    );
+    pendingChecks.push(
+      ...record.resume
+        .filter((item) => item.status === "accepted")
+        .map((item) => `Resume 待执行：${truncateText(item.message || "Continue from the last recorded state.", 200)}`),
+    );
+    pendingChecks.push(
+      ...record.takeover
+        .filter((item) => item.status === "accepted")
+        .map((item) => `Takeover 待执行：agent=${item.agentId} ${truncateText(item.message || "Relaunch the same subtask under a new agent.", 200)}`),
+    );
+
+    const errorSummary: string[] = [];
+    if (record.error) {
+      errorSummary.push(record.error);
+    }
+    if (record.stopReason) {
+      errorSummary.push(`Stop reason: ${record.stopReason}`);
+    }
+
+    const runtimeNotes = [
+      `scratchPath=${scratchPath}`,
+      `status=${record.status}`,
+      `conversation=${record.parentConversationId}`,
+      record.sessionId ? `session=${record.sessionId}` : undefined,
+      binding?.goalId ? `goalId=${binding.goalId}` : undefined,
+      binding?.nodeId ? `nodeId=${binding.nodeId}` : undefined,
+      binding?.runId ? `runId=${binding.runId}` : undefined,
+      record.launchSpec.profileId ? `profile=${record.launchSpec.profileId}` : undefined,
+      record.launchSpec.permissionMode ? `permissionMode=${record.launchSpec.permissionMode}` : undefined,
+      record.launchSpec.worktreeBranch ? `worktreeBranch=${record.launchSpec.worktreeBranch}` : undefined,
+      record.launchSpec.worktreeStatus ? `worktreeStatus=${record.launchSpec.worktreeStatus}` : undefined,
+      ...record.notifications
+        .slice(-SCRATCH_NOTIFICATION_WINDOW)
+        .map((item) => `[${new Date(item.createdAt).toISOString()}] ${item.kind}: ${item.message}`),
+    ].filter((item): item is string => Boolean(item));
+
+    return [
+      `# Scratch Memory - ${record.agentId} @ ${record.id}`,
+      "",
+      "> 临时任务记忆；只落文件系统 markdown，不进入长期记忆数据库。",
+      "",
+      "## 任务上下文",
+      `- Agent: ${record.agentId}`,
+      `- Task ID: ${record.id}`,
+      `- Status: ${record.status}`,
+      `- Goal ID: ${binding?.goalId ?? "-"}`,
+      `- Node ID: ${binding?.nodeId ?? "-"}`,
+      `- Run ID: ${binding?.runId ?? "-"}`,
+      `- Session ID: ${record.sessionId ?? "-"}`,
+      `- Source Conversation: ${record.parentConversationId}`,
+      "",
+      "## 工作单",
+      record.instruction.trim() || "_暂无工作单内容_",
+      "",
+      "## 当前假设",
+      formatScratchList(currentHypotheses),
+      "## 已验证结论",
+      formatScratchList(verifiedFindings),
+      "## 已排除路径",
+      formatScratchList(ruledOutPaths),
+      "## 待验证项",
+      formatScratchCheckboxList(pendingChecks),
+      "## 错误摘要",
+      formatScratchList(errorSummary),
+      "## 关键日志片段",
+      formatScratchLogBlock(runtimeNotes),
+      "## 更新时间",
+      updatedAtIso,
+      "",
+    ].join("\n");
+  }
+
+  private buildReviewMarkdown(record: SubTaskRecord, reviewPath: string): string {
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    const updatedAtIso = new Date(record.updatedAt || record.createdAt || Date.now()).toISOString();
+    const finishedAtIso = record.finishedAt ? new Date(record.finishedAt).toISOString() : "-";
+    const executionSummary = [
+      `状态：${record.status}`,
+      `摘要：${record.summary || "-"}`,
+      record.outputPreview ? `输出预览：${record.outputPreview}` : undefined,
+      record.error ? `错误：${record.error}` : undefined,
+      record.archiveReason ? `归档原因：${record.archiveReason}` : undefined,
+    ].filter((item): item is string => Boolean(item));
+    const reviewFindings = [
+      record.outputPath ? `已产出结果文件：${record.outputPath}` : undefined,
+      record.scratchPath ? `已记录 scratch：${record.scratchPath}` : undefined,
+      record.launchSpec.worktreePath ? `运行工作树：${record.launchSpec.worktreePath}` : undefined,
+      ...record.steering
+        .filter((item) => item.status === "failed")
+        .map((item) => `Steering 失败：${truncateText(item.error ?? item.message, 220)}`),
+      ...record.resume
+        .filter((item) => item.status === "failed")
+        .map((item) => `Resume 失败：${truncateText(item.error ?? item.message, 220)}`),
+      ...record.takeover
+        .filter((item) => item.status === "failed")
+        .map((item) => `Takeover 失败（${item.agentId}）：${truncateText(item.error ?? item.message, 220)}`),
+    ].filter((item): item is string => Boolean(item));
+    const verificationGaps = [
+      !record.outputPath ? "尚未生成独立输出文件，需要人工确认是否有可交付产物。" : undefined,
+      ...record.steering
+        .filter((item) => item.status === "accepted")
+        .map((item) => `待交付 steering：${truncateText(item.message, 220)}`),
+      ...record.resume
+        .filter((item) => item.status === "accepted")
+        .map((item) => `待执行 resume：${truncateText(item.message || "Continue from the last recorded state.", 220)}`),
+      ...record.takeover
+        .filter((item) => item.status === "accepted")
+        .map((item) => `待执行 takeover：agent=${item.agentId} ${truncateText(item.message || "Relaunch the same subtask under a new agent.", 220)}`),
+      ...((record.launchSpec.delegation?.acceptance?.verificationHints ?? []).map((item) => `建议验证：${item}`)),
+    ].filter((item): item is string => Boolean(item));
+    const nextActions = [
+      record.status === "done"
+        ? "Commander 可基于本 review 决定是否验收通过、继续 fan-in，或提炼经验。"
+        : "Commander 应基于失败/停止原因决定是否返工、换人接管或调整工作单。",
+      record.status !== "done" && record.scratchPath
+        ? `返工前优先阅读 scratch：${record.scratchPath}`
+        : undefined,
+    ].filter((item): item is string => Boolean(item));
+
+    return [
+      `# Commander Review - ${record.agentId} @ ${record.id}`,
+      "",
+      "> 运行期审查记录；只落文件系统 markdown，不进入长期记忆数据库。",
+      "",
+      "## 任务上下文",
+      `- Review Path: ${reviewPath}`,
+      `- Goal ID: ${binding?.goalId ?? "-"}`,
+      `- Node ID: ${binding?.nodeId ?? "-"}`,
+      `- Run ID: ${binding?.runId ?? "-"}`,
+      `- Agent: ${record.agentId}`,
+      `- Task ID: ${record.id}`,
+      `- Source Conversation: ${record.parentConversationId}`,
+      `- Session ID: ${record.sessionId ?? "-"}`,
+      `- Finished At: ${finishedAtIso}`,
+      "",
+      "## 工作单",
+      record.instruction.trim() || "_暂无工作单内容_",
+      "",
+      "## 执行摘要",
+      formatScratchList(executionSummary),
+      "## 审查发现",
+      formatScratchList(reviewFindings),
+      "## 验证缺口",
+      formatScratchCheckboxList(verificationGaps, "- [ ] 暂无额外验证缺口"),
+      "## 下一步建议",
+      formatScratchList(nextActions),
+      "## 更新时间",
+      `${updatedAtIso}\n`,
+    ].join("\n");
+  }
+
+  private buildLessonMarkdown(record: SubTaskRecord, lessonPath: string): string {
+    const binding = resolveGoalBindingFromTaskRecord(record);
+    const updatedAtIso = new Date(record.updatedAt || record.createdAt || Date.now()).toISOString();
+    const reusableSignals = [
+      record.status === "done" && record.outputPreview
+        ? `成功交付模式：${record.outputPreview}`
+        : undefined,
+      record.launchSpec.worktreePath
+        ? `隔离执行环境可用：${record.launchSpec.worktreePath}`
+        : undefined,
+      record.reviewPath ? `对应 review：${record.reviewPath}` : undefined,
+    ].filter((item): item is string => Boolean(item));
+    const pitfalls = [
+      record.error ? `失败/异常信号：${record.error}` : undefined,
+      ...record.steering
+        .filter((item) => item.status === "failed")
+        .map((item) => `Steering 失败后需补充更明确指令：${truncateText(item.error ?? item.message, 220)}`),
+      ...record.resume
+        .filter((item) => item.status === "failed")
+        .map((item) => `Resume 失败时需检查运行态绑定：${truncateText(item.error ?? item.message, 220)}`),
+      ...record.takeover
+        .filter((item) => item.status === "failed")
+        .map((item) => `Takeover 失败时需检查接管 agent 与上下文：${truncateText(item.error ?? item.message, 220)}`),
+    ].filter((item): item is string => Boolean(item));
+    const followUps = [
+      record.scratchPath ? `需要时先复查 scratch：${record.scratchPath}` : undefined,
+      record.outputPath ? `产物归档入口：${record.outputPath}` : undefined,
+      record.status !== "done" ? "本次未达到稳定交付，暂不进入长期记忆晋升链路。" : "若 Commander 认可，可从本记录中提炼可晋升经验摘要。",
+    ].filter((item): item is string => Boolean(item));
+
+    return [
+      `# Lessons Learned - ${record.agentId} @ ${record.id}`,
+      "",
+      "> 任务期经验摘录；仅落文件系统 markdown，由 Commander 决定是否进一步晋升。",
+      "",
+      "## 任务上下文",
+      `- Lesson Path: ${lessonPath}`,
+      `- Goal ID: ${binding?.goalId ?? "-"}`,
+      `- Node ID: ${binding?.nodeId ?? "-"}`,
+      `- Run ID: ${binding?.runId ?? "-"}`,
+      `- Agent: ${record.agentId}`,
+      `- Task ID: ${record.id}`,
+      `- Final Status: ${record.status}`,
+      "",
+      "## 可复用信号",
+      formatScratchList(reusableSignals),
+      "## 需要规避的问题",
+      formatScratchList(pitfalls),
+      "## 后续动作",
+      formatScratchCheckboxList(followUps, "- [ ] 暂无额外后续动作"),
+      "## 更新时间",
+      `${updatedAtIso}\n`,
+    ].join("\n");
   }
 
   private emitChange(kind: SubTaskChangeEvent["kind"], record: SubTaskRecord): void {

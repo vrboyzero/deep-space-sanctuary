@@ -105,6 +105,27 @@ export {
   EXPERIENCE_METHOD_REQUIRED_HEADINGS,
   EXPERIENCE_SKILL_REQUIRED_HEADINGS,
 } from "./experience-publish-rules.js";
+export {
+  buildMemoryExactDedupPreviewReport,
+  buildMemoryExactDedupApplyPlan,
+  ensureMemoryDedupBackupFile,
+  normalizeChunkContentForExactDedup,
+  type MemoryExactDedupApplyOptions,
+  type MemoryExactDedupApplyResult,
+  type MemoryDedupChunkSnapshot,
+  type MemoryExactDedupPreviewGroup,
+  type MemoryExactDedupPreviewItem,
+  type MemoryExactDedupPreviewReport,
+} from "./memory-dedup.js";
+export {
+  buildVirtualCandidateFromPublishedAsset,
+  listPublishedAssets,
+  type PublishedExperienceAssetRecord,
+} from "./published-experience-assets.js";
+export {
+  buildExperienceSynthesisPreview,
+  buildExperienceSynthesisPreviewFromSourceCandidates,
+} from "./experience-synthesis.js";
 export { shouldSkipRetrieval } from "./adaptive-retrieval.js";
 export { isNoise, filterNoise, type NoiseFilterOptions } from "./noise-filter.js";
 export * from "./types.js";

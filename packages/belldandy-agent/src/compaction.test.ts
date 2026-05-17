@@ -246,6 +246,37 @@ describe("compactIncremental", () => {
     expect(result.state.rollingSummary).toBe("retry-summary");
   });
 
+  it("pins recent high-signal messages by expanding the preserved tail before compaction", async () => {
+    const prompts: string[] = [];
+    const summarizer = vi.fn(async (prompt: string) => {
+      prompts.push(prompt);
+      return "pinned-summary";
+    });
+    const messages = [
+      { role: "user" as const, content: "先做常规扫描。" },
+      { role: "assistant" as const, content: "已读取入口模块。" },
+      { role: "user" as const, content: "请重点检查 packages/app/src/bootstrap.ts 的启动错误，并保留补丁思路。" },
+      { role: "assistant" as const, content: "错误是 config.load() 返回 undefined，需要补默认值回退。" },
+      { role: "user" as const, content: "顺便确认 CLI 参数兼容。" },
+      { role: "assistant" as const, content: "收到，我继续处理。" },
+    ];
+
+    const result = await compactIncremental(messages, createEmptyCompactionState(), {
+      keepRecentCount: 2,
+      tokenThreshold: 1,
+      summarizer,
+      force: true,
+    });
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("packages/app/src/bootstrap.ts");
+    expect(prompts[0]).not.toContain("config.load()");
+    expect(result.compacted).toBe(true);
+    expect(result.state.compactedMessageCount).toBe(2);
+    expect(result.messages.some((message) => message.content.includes("packages/app/src/bootstrap.ts"))).toBe(true);
+    expect(result.messages.some((message) => message.content.includes("config.load()"))).toBe(true);
+  });
+
   it("uses a task continuity rolling prompt instead of a generic topic summary prompt", async () => {
     const prompts: string[] = [];
     const summarizer = vi.fn(async (prompt: string) => {
@@ -314,6 +345,43 @@ describe("compactIncremental", () => {
     expect(prompts[1]).toContain("Outstanding Follow-up");
     expect(prompts[1]).toContain("Last Known Working State");
     expect(prompts[1]).toContain("Prefer concrete outcomes over topic descriptions.");
+  });
+
+  it("passes structured rolling-summary context into the summarizer while keeping prompt compatibility", async () => {
+    const calls: Array<{ prompt: string; context: any }> = [];
+    const summarizer = vi.fn(async (prompt: string, context?: any) => {
+      calls.push({ prompt, context });
+      return "rolling-summary-v1";
+    });
+    const messages = [
+      { role: "user" as const, content: "U1" },
+      { role: "assistant" as const, content: "A1" },
+      { role: "user" as const, content: "U2" },
+      { role: "assistant" as const, content: "A2" },
+      { role: "user" as const, content: "U3" },
+      { role: "assistant" as const, content: "A3" },
+    ];
+
+    await compactIncremental(messages, createEmptyCompactionState(), {
+      keepRecentCount: 2,
+      tokenThreshold: 1,
+      summarizer,
+      force: true,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).toContain("## Conversation");
+    expect(calls[0]?.context).toMatchObject({
+      mode: "rolling",
+      prompt: expect.stringContaining("## Conversation"),
+      existingSummary: "",
+      newMessages: [
+        { role: "user", content: "U1" },
+        { role: "assistant", content: "A1" },
+        { role: "user", content: "U2" },
+        { role: "assistant", content: "A2" },
+      ],
+    });
   });
 });
 

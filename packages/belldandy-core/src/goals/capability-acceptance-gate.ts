@@ -112,6 +112,85 @@ export function evaluateGoalCapabilityPlanAcceptanceGate(input: {
   const rolePolicy = orchestration.coordinationPlan?.rolePolicy;
   const verifierHandoff = orchestration.verifierHandoff;
   const verifierResult = orchestration.verifierResult;
+  if (rolePolicy?.fanInStrategy === "commander_review") {
+    const successfulDelegationResults = (orchestration.delegationResults ?? []).filter((item) => item.status === "success");
+    const failedDelegationResults = (orchestration.delegationResults ?? []).filter((item) => item.status === "failed");
+    const pendingDelegationResults = (orchestration.delegationResults ?? []).filter((item) => item.status !== "success" && item.status !== "failed");
+    const requiredSourceAgentIds = uniqueStrings(successfulDelegationResults.map((item) => item.agentId));
+    const rejectedReasons = uniqueStrings([
+      failedDelegationResults.length > 0
+        ? `Commander review detected failed delegated work: ${failedDelegationResults.map((item) => item.agentId).join(", ")}.`
+        : undefined,
+      orchestration.notes?.find((item) => /rework|返工/i.test(item))
+        ? "Commander review notes already marked this run as requiring rework."
+        : undefined,
+    ]);
+    const checks: GoalCapabilityPlanAcceptanceGateCheck[] = [
+      buildCheck({
+        id: "commander_successful_delegations",
+        label: "Commander review sees at least one successful delegated source",
+        enforced: input.executionMode !== "single_agent",
+        passed: input.executionMode === "single_agent" || successfulDelegationResults.length > 0,
+        evidence: successfulDelegationResults.length > 0
+          ? `sources=${successfulDelegationResults.map((item) => item.agentId).join(", ")}`
+          : "sources=0",
+      }),
+      buildCheck({
+        id: "commander_no_failed_delegations",
+        label: "Commander review has no failed delegated source",
+        enforced: true,
+        passed: failedDelegationResults.length === 0,
+        evidence: failedDelegationResults.length > 0
+          ? `failed=${failedDelegationResults.map((item) => item.agentId).join(", ")}`
+          : "failed=0",
+      }),
+      buildCheck({
+        id: "commander_no_pending_delegations",
+        label: "Commander review is not waiting on pending delegated source",
+        enforced: true,
+        passed: pendingDelegationResults.length === 0,
+        evidence: pendingDelegationResults.length > 0
+          ? `pending=${pendingDelegationResults.map((item) => item.agentId).join(", ")}`
+          : "pending=0",
+      }),
+    ];
+    if (rejectedReasons.length > 0) {
+      return {
+        status: "rejected",
+        summary: `Commander review rejected this capability plan: ${rejectedReasons.join(" | ")}`,
+        reasons: rejectedReasons,
+        ...(requiredSourceAgentIds.length > 0 ? { requiredSourceAgentIds } : {}),
+        contractSpecificChecks: checks,
+        rejectionConfidence: failedDelegationResults.length > 0 ? "high" : "medium",
+        managerActionHint: "Issue a rework order or replace the failed lane before closing the commander fan-in.",
+      };
+    }
+    if (pendingDelegationResults.length > 0 || (input.executionMode !== "single_agent" && successfulDelegationResults.length === 0)) {
+      const pendingReasons = uniqueStrings([
+        pendingDelegationResults.length > 0
+          ? `Commander review is still waiting on delegated lanes: ${pendingDelegationResults.map((item) => item.agentId).join(", ")}.`
+          : undefined,
+        input.executionMode !== "single_agent" && successfulDelegationResults.length === 0
+          ? "Commander review has no successful delegated source yet."
+          : undefined,
+      ]);
+      return {
+        status: "pending",
+        summary: `Commander review is still pending: ${pendingReasons.join(" | ")}`,
+        reasons: pendingReasons,
+        contractSpecificChecks: checks,
+        managerActionHint: "Wait for all delegated lanes to report back before closing the commander fan-in.",
+      };
+    }
+    return {
+      status: "accepted",
+      summary: "Commander review fan-in is complete and can be used as the acceptance signal for this capability plan.",
+      reasons: [],
+      ...(requiredSourceAgentIds.length > 0 ? { requiredSourceAgentIds } : {}),
+      contractSpecificChecks: checks,
+      managerActionHint: "Commander review is complete enough to approve this capability plan or move the node into validating/done.",
+    };
+  }
   const requiresVerifierGate = rolePolicy?.fanInStrategy === "verifier_handoff"
     || Boolean(verifierHandoff)
     || Boolean(verifierResult);

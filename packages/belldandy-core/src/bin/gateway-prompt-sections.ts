@@ -12,7 +12,27 @@ export type BuildAgentRuntimePromptSectionsOptions = {
   visibleContracts: readonly ToolContractV2[];
   canDelegate: boolean;
   role?: AgentProfileDefaultRole;
+  profileId?: string;
+  recommendedSkillNames?: readonly string[];
+  methodAssets?: readonly RuntimeMethodAssetSummary[];
+  promptSkillAssets?: readonly RuntimeSkillAssetSummary[];
+  searchableSkillAssets?: readonly RuntimeSkillAssetSummary[];
   identityAuthorityProfile?: IdentityAuthorityProfile;
+};
+
+export type RuntimeMethodAssetSummary = {
+  fileName: string;
+  title?: string;
+  summary?: string;
+  status?: string;
+};
+
+export type RuntimeSkillAssetSummary = {
+  name: string;
+  description: string;
+  priority: "low" | "normal" | "high" | "always";
+  source: string;
+  tags: string[];
 };
 
 export function buildAgentRuntimePromptSections(
@@ -72,6 +92,23 @@ export function buildAgentRuntimePromptSections(
     sections.push(teamSharedStateSection);
   }
 
+  const methodSkillAssetSection = buildMethodSkillAssetSummarySection({
+    recommendedSkillNames: options.recommendedSkillNames,
+    methodAssets: options.methodAssets,
+    promptSkillAssets: options.promptSkillAssets,
+    searchableSkillAssets: options.searchableSkillAssets,
+  });
+  if (methodSkillAssetSection) {
+    sections.push(methodSkillAssetSection);
+  }
+
+  const profileSection = buildProfileExecutionPolicySection({
+    profileId: options.profileId,
+  });
+  if (profileSection) {
+    sections.push(profileSection);
+  }
+
   const roleSection = buildRoleExecutionPolicySection({
     role: options.role,
   });
@@ -80,6 +117,73 @@ export function buildAgentRuntimePromptSections(
   }
 
   return sections;
+}
+
+export function buildMethodSkillAssetSummarySection(input: {
+  recommendedSkillNames?: readonly string[];
+  methodAssets?: readonly RuntimeMethodAssetSummary[];
+  promptSkillAssets?: readonly RuntimeSkillAssetSummary[];
+  searchableSkillAssets?: readonly RuntimeSkillAssetSummary[];
+}): SystemPromptSection | undefined {
+  const recommendedSkillNames = (input.recommendedSkillNames ?? []).filter(Boolean);
+  const methodAssets = input.methodAssets ?? [];
+  const promptSkillAssets = input.promptSkillAssets ?? [];
+  const searchableSkillAssets = input.searchableSkillAssets ?? [];
+
+  if (
+    recommendedSkillNames.length === 0
+    && methodAssets.length === 0
+    && promptSkillAssets.length === 0
+    && searchableSkillAssets.length === 0
+  ) {
+    return undefined;
+  }
+
+  const lines = [
+    "## Method / Skill Asset Summary",
+    "",
+    "Before inventing a new workflow, check whether an existing method or skill already matches the task.",
+    "Use this section as a compact index; open full assets with `method_search` / `method_read` / `skills_search` / `skill_get` only when the summary looks relevant.",
+  ];
+
+  if (recommendedSkillNames.length > 0) {
+    lines.push(`- Profile-preferred skills: ${recommendedSkillNames.join(" | ")}`);
+  }
+
+  if (methodAssets.length > 0) {
+    lines.push("- Method assets:");
+    for (const method of methodAssets) {
+      const parts = [
+        `file=${method.fileName}`,
+        method.title ? `title=${method.title}` : undefined,
+        method.status ? `status=${method.status}` : undefined,
+        method.summary ? `summary=${method.summary}` : undefined,
+      ].filter((part): part is string => Boolean(part));
+      lines.push(`- ${parts.join(" | ")}`);
+    }
+  }
+
+  if (promptSkillAssets.length > 0) {
+    lines.push("- Prompt-injected skills already active:");
+    for (const skill of promptSkillAssets) {
+      lines.push(`- ${skill.name} | ${skill.description}`);
+    }
+  }
+
+  if (searchableSkillAssets.length > 0) {
+    lines.push("- Searchable skills worth checking on demand:");
+    for (const skill of searchableSkillAssets) {
+      lines.push(`- ${skill.name} | ${skill.description}`);
+    }
+  }
+
+  return createGatewaySystemPromptSection({
+    id: "method-skill-asset-summary",
+    label: "method-skill-asset-summary",
+    source: "runtime",
+    priority: 58,
+    text: lines.join("\n"),
+  });
 }
 
 export function buildToolUsePolicySection(): SystemPromptSection {
@@ -295,6 +399,30 @@ export function buildTeamSharedStatePolicySection(input: {
       "- If dependencies remain unresolved, keep that state explicit and hold fan-in instead of implying completion.",
       "- If write ownership overlaps across lanes, surface it as a merge risk before accepting the team output.",
       "- Use the team completion gate as the final manager check before claiming that the team run is done.",
+    ].join("\n"),
+  });
+}
+
+export function buildProfileExecutionPolicySection(input: {
+  profileId?: string;
+}): SystemPromptSection | undefined {
+  if (input.profileId !== "commander") {
+    return undefined;
+  }
+
+  return createGatewaySystemPromptSection({
+    id: "profile-execution-policy",
+    label: "profile-execution-policy",
+    source: "profile",
+    priority: 59,
+    text: [
+      "## Profile Execution Policy (commander)",
+      "",
+      "You are responsible for scope control, delegation, and fan-in acceptance rather than direct implementation.",
+      "- Prefer decomposition, worker selection, acceptance criteria, and result integration over hands-on editing.",
+      "- Reuse method / skill assets before inventing a new execution pattern.",
+      "- If code changes, shell commands, or write actions are needed, delegate them to the appropriate worker lane instead of doing them yourself.",
+      "- If a proposed optimization would weaken memory recall, memory writes, or long-term context quality, adjust the plan or defer it.",
     ].join("\n"),
   });
 }

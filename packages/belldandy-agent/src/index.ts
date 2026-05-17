@@ -242,6 +242,16 @@ export type AgentUsage = {
   cacheReadTokens: number;
   /** 本次 run 的模型调用次数 */
   modelCalls: number;
+  /** 估算的输入成本（USD） */
+  inputCostUsd?: number;
+  /** 估算的输出成本（USD） */
+  outputCostUsd?: number;
+  /** 估算的 cache read 成本（USD） */
+  cacheReadCostUsd?: number;
+  /** 估算的 cache creation 成本（USD） */
+  cacheCreationCostUsd?: number;
+  /** 估算的总成本（USD） */
+  totalCostUsd?: number;
 };
 
 export type AgentStreamItem =
@@ -315,6 +325,7 @@ export {
 // Agent Profile（多 Agent 预备）
 export {
   buildDefaultProfile,
+  buildBuiltinWorkerProfiles,
   isResidentAgentProfile,
   loadAgentProfiles,
   resolveAgentMemoryMode,
@@ -378,6 +389,7 @@ export {
   type CompactionOptions,
   type CompactionResult,
   type CompactionState,
+  type SummarizerContext,
   type SummarizerFn,
 } from "./compaction.js";
 export {

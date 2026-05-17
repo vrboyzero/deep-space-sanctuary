@@ -1278,6 +1278,9 @@ test("message.send emits auto run token result and conversation.meta returns per
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
         modelCalls: 1,
+        inputCostUsd: 0.0012,
+        outputCostUsd: 0.0024,
+        totalCostUsd: 0.0036,
       };
       yield { type: "final" as const, text: `echo:${input.text}` };
       yield { type: "status" as const, status: "done" };
@@ -1320,6 +1323,9 @@ test("message.send emits auto run token result and conversation.meta returns per
       inputTokens: 12,
       outputTokens: 8,
       totalTokens: 20,
+      inputCostUsd: 0.0012,
+      outputCostUsd: 0.0024,
+      totalCostUsd: 0.0036,
       auto: true,
     });
 
@@ -1339,6 +1345,9 @@ test("message.send emits auto run token result and conversation.meta returns per
       inputTokens: 12,
       outputTokens: 8,
       totalTokens: 20,
+      inputCostUsd: 0.0012,
+      outputCostUsd: 0.0024,
+      totalCostUsd: 0.0036,
       auto: true,
     });
     expect(metaRes.payload.continuationState).toMatchObject({

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createExperienceWorkbenchFeature } from "./experience-workbench.js";
@@ -31,7 +33,14 @@ function getRenderedStatValues(container) {
 }
 
 function getCapabilityLaneDraftCounts(container) {
-  return Array.from(container.querySelectorAll(".memory-usage-overview-lane .memory-stat-caption")).map((node) => node.textContent);
+  return Array.from(container.querySelectorAll(".memory-usage-overview-lane"))
+    .filter((lane) => (lane.querySelector(".memory-usage-overview-title")?.textContent || "").includes("Draft"))
+    .map((lane) => lane.querySelector(".memory-stat-caption")?.textContent || "");
+}
+
+function findCapabilityLane(container, title) {
+  return Array.from(container.querySelectorAll(".memory-usage-overview-lane"))
+    .find((lane) => (lane.querySelector(".memory-usage-overview-title")?.textContent || "").includes(title));
 }
 
 async function flushAsyncWork(rounds = 1) {
@@ -129,6 +138,7 @@ function createHarness(options = {}) {
       status: "",
     },
     generateTaskId: "",
+    resynthesizeAssetPath: "",
     requestToken: 0,
     activeAgentId: "default",
     synthesisModal: {
@@ -137,6 +147,7 @@ function createHarness(options = {}) {
       submitting: false,
       error: "",
       seedCandidateId: "",
+      seedAssetPath: "",
       preview: null,
       markSourcesConsumed: true,
     },
@@ -271,6 +282,80 @@ function createHarness(options = {}) {
     };
   };
 
+  const buildSynthesisPreviewPayloadFromAssetPath = (assetPath) => {
+    const normalizedAssetPath = String(assetPath ?? "").trim();
+    if (!normalizedAssetPath) return null;
+    const publishedCandidate = candidates.find((item) => String(item?.publishedPath || "").trim() === normalizedAssetPath) || null;
+    if (!publishedCandidate) return null;
+    const virtualSeedCandidate = {
+      ...publishedCandidate,
+      id: `virtual:${publishedCandidate.type}:${String(publishedCandidate.slug || publishedCandidate.id || "asset").toLowerCase()}`,
+      status: "published",
+      publishedPath: normalizedAssetPath,
+      metadata: {
+        ...(publishedCandidate.metadata || {}),
+        draftOrigin: { kind: "published" },
+      },
+    };
+    const relatedItems = candidates
+      .filter((item) => (
+        item.type === publishedCandidate.type
+        && item.status === "draft"
+      ))
+      .map((item, index) => ({
+        candidateId: item.id,
+        type: item.type,
+        status: item.status,
+        title: item.title,
+        slug: item.slug,
+        summary: item.summary,
+        taskId: item.taskId,
+        sourceTaskId: resolveDisplayTaskId(item),
+        updatedAt: item.updatedAt,
+        score: 0.82 - (index * 0.05),
+        relation: index === 0 ? "same_family" : "similar",
+      }));
+    const sameFamilyCount = relatedItems.filter((item) => item.relation === "same_family").length;
+    const similarCount = relatedItems.filter((item) => item.relation === "similar").length;
+    return {
+      seedCandidate: virtualSeedCandidate,
+      candidateType: virtualSeedCandidate.type,
+      totalCount: 1 + relatedItems.length,
+      taskCount: new Set([virtualSeedCandidate, ...relatedItems].map((item) => String(item?.sourceTaskId || item?.taskId || "").trim()).filter(Boolean)).size,
+      items: relatedItems,
+      sourceCandidateIds: [virtualSeedCandidate.id, ...relatedItems.map((item) => item.candidateId)],
+      selectedSourceCount: 1 + relatedItems.length,
+      sameFamilyCount,
+      similarCount,
+      selectedSameFamilyCount: sameFamilyCount,
+      selectedSimilarCount: similarCount,
+      maxSimilarSourceCount: 5,
+      templateInfo: {
+        id: `${virtualSeedCandidate.type}-synthesis`,
+        path: `docs/experience-templates/${virtualSeedCandidate.type === "skill" ? "skill-synthesis.md" : "method-synthesis.md"}`,
+      },
+    };
+  };
+
+  const resolvePublishedAssets = () => candidates
+    .filter((item) => String(item?.publishedPath || "").trim())
+    .map((item) => ({
+      source: item.type === "skill" ? "skill_asset" : "method_asset",
+      type: item.type,
+      key: item.type === "skill"
+        ? String(item?.slug || item?.title || item?.id || "").trim() || "skill-asset"
+        : path.basename(String(item.publishedPath)),
+      title: item.title,
+      summary: item.summary,
+      publishedPath: String(item.publishedPath),
+      metadata: item.type === "skill"
+        ? {
+          name: String(item?.slug || item?.title || item?.id || "").trim() || undefined,
+          description: item.summary,
+        }
+        : {},
+    }));
+
   const sendReq = vi.fn(async (req) => {
     if (req.method === "experience.candidate.list") {
       const sourceItems = req.params?.filter?.status
@@ -302,7 +387,9 @@ function createHarness(options = {}) {
       }
       if (candidate) {
         candidate.status = "accepted";
-        candidate.publishedPath = `state/${candidate.slug}`;
+        candidate.publishedPath = candidate.type === "skill"
+          ? `state/skills/${candidate.slug}/SKILL.md`
+          : `state/methods/${candidate.slug}.md`;
       }
       return { ok: true, payload: { candidate } };
     }
@@ -333,6 +420,15 @@ function createHarness(options = {}) {
         },
       };
     }
+    if (req.method === "experience.asset.list") {
+      return {
+        ok: true,
+        payload: {
+          items: resolvePublishedAssets(),
+          limit: Number(req.params?.limit) || 200,
+        },
+      };
+    }
     if (req.method === "experience.candidate.cleanup_consumed") {
       const consumedDraftIds = candidates
         .filter((candidate) => (
@@ -357,14 +453,18 @@ function createHarness(options = {}) {
       };
     }
     if (req.method === "experience.candidate.synthesize.preview") {
-      const payload = buildSynthesisPreviewPayload(req.params?.candidateId);
+      const payload = req.params?.assetPath
+        ? buildSynthesisPreviewPayloadFromAssetPath(req.params.assetPath)
+        : buildSynthesisPreviewPayload(req.params?.candidateId);
       if (!payload) {
         return { ok: false, error: { code: "not_found", message: "Candidate not found." } };
       }
       return { ok: true, payload };
     }
     if (req.method === "experience.candidate.synthesize.create") {
-      const seedCandidate = candidates.find((item) => item.id === req.params?.candidateId) || null;
+      const seedCandidate = req.params?.assetPath
+        ? (buildSynthesisPreviewPayloadFromAssetPath(req.params.assetPath)?.seedCandidate ?? null)
+        : (candidates.find((item) => item.id === req.params?.candidateId) || null);
       if (!seedCandidate) {
         return { ok: false, error: { code: "not_found", message: "Candidate not found." } };
       }
@@ -373,7 +473,7 @@ function createHarness(options = {}) {
         : [seedCandidate.id];
       const markSourcesConsumed = req.params?.markSourcesConsumed !== false;
       const sourceCandidates = sourceCandidateIds
-        .map((id) => candidates.find((item) => item.id === id) || null)
+        .map((id) => (id === seedCandidate.id ? seedCandidate : (candidates.find((item) => item.id === id) || null)))
         .filter(Boolean);
       const synthesizedCandidate = {
         id: `${seedCandidate.id}-synthesized`,
@@ -407,6 +507,7 @@ function createHarness(options = {}) {
       if (markSourcesConsumed) {
         sourceCandidates.forEach((candidate) => {
           if (!candidate || candidate.id === synthesizedCandidate.id) return;
+          if (!candidates.some((item) => item.id === candidate.id)) return;
           candidate.metadata = {
             ...(candidate.metadata || {}),
             synthesisConsumed: {
@@ -418,6 +519,9 @@ function createHarness(options = {}) {
           };
         });
       }
+      const consumedSourceCandidateIds = markSourcesConsumed
+        ? sourceCandidateIds.filter((id) => candidates.some((item) => item.id === id))
+        : [];
       candidates.unshift(synthesizedCandidate);
       return {
         ok: true,
@@ -426,8 +530,8 @@ function createHarness(options = {}) {
           created: true,
           sourceCount: sourceCandidates.length,
           sourceCandidateIds,
-          consumedSourceCount: markSourcesConsumed ? sourceCandidates.length : 0,
-          consumedSourceCandidateIds: markSourcesConsumed ? sourceCandidateIds : [],
+          consumedSourceCount: consumedSourceCandidateIds.length,
+          consumedSourceCandidateIds,
           markSourcesConsumed,
           templateInfo: {
             id: `${seedCandidate.type}-synthesis`,
@@ -504,9 +608,10 @@ describe("experience workbench capability acquisition", () => {
 
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Method Draft One");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Skill Draft One");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Published Methods");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Accepted Method");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("ID · draft-method-1");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("ID · draft-skill-1");
-    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).not.toContain("Accepted Method");
     expect(refs.experienceWorkbenchCapabilityPaneEl.classList.contains("hidden")).toBe(false);
   });
 
@@ -585,7 +690,7 @@ describe("experience workbench capability acquisition", () => {
 
     await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
 
-    const [methodLane] = refs.experienceWorkbenchCapabilityOverviewEl.querySelectorAll(".memory-usage-overview-lane");
+    const methodLane = findCapabilityLane(refs.experienceWorkbenchCapabilityOverviewEl, "Method Draft");
     const methodTitles = Array.from(
       methodLane?.querySelectorAll(".memory-usage-overview-key") || [],
     ).map((node) => node.textContent.trim());
@@ -673,7 +778,7 @@ describe("experience workbench capability acquisition", () => {
         confirmed: true,
       });
       await flushAsyncWork(8);
-      expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).not.toContain("Method Draft One");
+      expect(findCapabilityLane(refs.experienceWorkbenchCapabilityOverviewEl, "Method Draft")?.innerHTML || "").not.toContain("Method Draft One");
     } finally {
       confirmSpy.mockRestore();
     }
@@ -933,7 +1038,125 @@ describe("experience workbench capability acquisition", () => {
     expect(refs.experienceSynthesisModalListEl.textContent).toContain("Method Draft Two");
   });
 
-  it("creates a synthesized draft from the modal and renders the synthesized badge", async () => {
+  it("starts resynthesize preview from published assetPath in capability acquisition", async () => {
+    const candidates = [
+      {
+        id: "draft-method-1",
+        taskId: "task-method-1",
+        type: "method",
+        status: "draft",
+        title: "Method Draft One",
+        slug: "method-draft-one",
+        summary: "method summary 1",
+        content: "# Method Draft One",
+        createdAt: "2026-04-20T09:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+        sourceTaskSnapshot: {},
+      },
+      {
+        id: "accepted-method-1",
+        taskId: "task-method-2",
+        type: "method",
+        status: "accepted",
+        title: "Accepted Method",
+        slug: "accepted-method",
+        summary: "accepted summary",
+        content: "# Accepted Method",
+        createdAt: "2026-04-18T08:00:00.000Z",
+        updatedAt: "2026-04-18T09:00:00.000Z",
+        sourceTaskSnapshot: {},
+        publishedPath: "state/methods/accepted-method.md",
+      },
+    ];
+    const { refs, feature, sendReq, experienceState } = createHarness({ candidates });
+
+    await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
+
+    const assetPathInput = refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-experience-resynthesize-asset-path='1']");
+    const previewBtn = refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-experience-resynthesize-preview='1']");
+    expect(assetPathInput).toBeTruthy();
+    expect(previewBtn).toBeTruthy();
+
+    assetPathInput.value = "state/methods/accepted-method.md";
+    assetPathInput.dispatchEvent(new Event("input", { bubbles: true }));
+    previewBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(6);
+
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "experience.candidate.synthesize.preview",
+      params: expect.objectContaining({
+        assetPath: "state/methods/accepted-method.md",
+        agentId: "default",
+      }),
+    }));
+    expect(experienceState.synthesisModal.open).toBe(true);
+    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(false);
+    expect(refs.experienceSynthesisModalSummaryEl.textContent).toContain("Accepted Method");
+  });
+
+  it("renders published asset lanes and lets the user fill or preview directly from a listed asset", async () => {
+    const candidates = [
+      {
+        id: "accepted-method-1",
+        taskId: "task-method-2",
+        type: "method",
+        status: "accepted",
+        title: "Accepted Method",
+        slug: "accepted-method",
+        summary: "accepted summary",
+        content: "# Accepted Method",
+        createdAt: "2026-04-18T08:00:00.000Z",
+        updatedAt: "2026-04-18T09:00:00.000Z",
+        sourceTaskSnapshot: {},
+        publishedPath: "state/methods/accepted-method.md",
+      },
+      {
+        id: "draft-method-1",
+        taskId: "task-method-1",
+        type: "method",
+        status: "draft",
+        title: "Method Draft One",
+        slug: "method-draft-one",
+        summary: "method summary 1",
+        content: "# Method Draft One",
+        createdAt: "2026-04-20T09:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+        sourceTaskSnapshot: {},
+      },
+    ];
+    const { refs, feature, sendReq, experienceState } = createHarness({ candidates });
+
+    await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
+
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("Published Methods");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("Accepted Method");
+
+    refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-experience-published-asset-use='state/methods/accepted-method.md']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(experienceState.resynthesizeAssetPath).toBe("state/methods/accepted-method.md");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("已选中");
+
+    refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-experience-published-asset-preview='state/methods/accepted-method.md']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await flushAsyncWork(6);
+
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "experience.candidate.synthesize.preview",
+      params: expect.objectContaining({
+        assetPath: "state/methods/accepted-method.md",
+        agentId: "default",
+      }),
+    }));
+    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(false);
+  });
+
+  it("creates a synthesized draft from the modal and keeps the accept shortcut available", async () => {
     const candidates = [
       {
         id: "draft-method-1",
@@ -982,7 +1205,8 @@ describe("experience workbench capability acquisition", () => {
         markSourcesConsumed: true,
       }),
     }));
-    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(true);
+    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(false);
+    expect(refs.experienceSynthesisModalSubmitBtn.textContent).toContain("接受并发布新草稿");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Method Draft One Synthesized");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("ID · draft-method-1-synthesized");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).not.toContain("Method Draft One</div>");
@@ -995,6 +1219,72 @@ describe("experience workbench capability acquisition", () => {
       "success",
       2800,
     );
+  });
+
+  it("accepts the created synthesized draft directly from the modal shortcut", async () => {
+    const candidates = [
+      {
+        id: "draft-method-1",
+        taskId: "task-method-1",
+        type: "method",
+        status: "draft",
+        title: "Method Draft One",
+        slug: "method-draft-one",
+        summary: "method summary 1",
+        content: "# Method Draft One",
+        createdAt: "2026-04-20T09:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+        sourceTaskSnapshot: {},
+      },
+      {
+        id: "draft-method-2",
+        taskId: "task-method-2",
+        type: "method",
+        status: "draft",
+        title: "Method Draft Two",
+        slug: "method-draft-two",
+        summary: "method summary 2",
+        content: "# Method Draft Two",
+        createdAt: "2026-04-20T08:00:00.000Z",
+        updatedAt: "2026-04-20T11:00:00.000Z",
+        sourceTaskSnapshot: {},
+      },
+    ];
+    const { refs, feature, sendReq, experienceState } = createHarness({ candidates });
+
+    await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
+
+    refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-capability-synthesize-candidate-id='draft-method-1']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(6);
+
+    refs.experienceSynthesisModalSubmitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(10);
+
+    expect(experienceState.synthesisModal.createdCandidate?.id).toBe("draft-method-1-synthesized");
+    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(false);
+    expect(refs.experienceSynthesisModalSubmitBtn.textContent).toContain("接受并发布新草稿");
+
+    refs.experienceSynthesisModalSubmitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(10);
+
+    const acceptCalls = sendReq.mock.calls
+      .map(([req]) => req)
+      .filter((req) => req.method === "experience.candidate.accept");
+    expect(acceptCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        params: expect.objectContaining({
+          candidateId: "draft-method-1-synthesized",
+          agentId: "default",
+        }),
+      }),
+    ]));
+    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(true);
+    expect(candidates.find((item) => item.id === "draft-method-1-synthesized")?.status).toBe("accepted");
+    expect(candidates.find((item) => item.id === "draft-method-1-synthesized")?.publishedPath).toBe("state/methods/method-draft-one-synthesized.md");
+    expect(findCapabilityLane(refs.experienceWorkbenchCapabilityOverviewEl, "Method Draft")?.innerHTML || "").not.toContain("Method Draft One Synthesized");
+    expect(findCapabilityLane(refs.experienceWorkbenchCapabilityOverviewEl, "Published Methods")?.innerHTML || "").toContain("Method Draft One Synthesized");
   });
 
   it("shows synthesis consumed info in candidate detail", async () => {

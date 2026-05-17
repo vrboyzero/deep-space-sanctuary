@@ -2258,6 +2258,79 @@ test("system.doctor exposes runtime resilience summary and launch explainability
   }
 });
 
+test("system.doctor surfaces a configured compaction route in runtime resilience payload", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-compaction-routing-"));
+  const tracker = new RuntimeResilienceTracker({
+    stateDir,
+    routing: {
+      primary: {
+        profileId: "primary",
+        provider: "openai.com",
+        model: "gpt-5",
+      },
+      fallbacks: [
+        {
+          profileId: "openrouter-mini",
+          provider: "openrouter.ai",
+          model: "openai/gpt-4.1-mini",
+          wireApi: "responses",
+        },
+      ],
+      compaction: {
+        configured: true,
+        sharesPrimaryRoute: false,
+        route: {
+          profileId: "compaction",
+          provider: "openrouter.ai",
+          model: "openai/gpt-4.1-mini",
+          wireApi: "responses",
+        },
+      },
+    },
+  });
+
+  await withEnv({}, async () => {
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      getRuntimeResilienceReport: () => tracker.getReport(),
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+    const frames: any[] = [];
+    const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+    try {
+      await pairWebSocketClient(ws, frames, stateDir);
+      frames.length = 0;
+
+      ws.send(JSON.stringify({ type: "req", id: "doctor-compaction-route", method: "system.doctor", params: {} }));
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === "doctor-compaction-route"));
+      const response = frames.find((f) => f.type === "res" && f.id === "doctor-compaction-route");
+      expect(response.ok).toBe(true);
+
+      expect(response.payload?.runtimeResilience?.routing?.compaction).toMatchObject({
+        configured: true,
+        sharesPrimaryRoute: false,
+        route: {
+          profileId: "compaction",
+          provider: "openrouter.ai",
+          model: "openai/gpt-4.1-mini",
+          wireApi: "responses",
+        },
+      });
+    } finally {
+      ws.close();
+      await closeP;
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+
 test("system.doctor exposes recent query runtime lifecycle traces", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
 

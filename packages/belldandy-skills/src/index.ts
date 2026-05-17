@@ -6,6 +6,7 @@ export type {
   ToolCallRequest,
   ToolCallResult,
   ToolFailureKind,
+  RecentToolResultRecord,
   ToolContext,
   ToolPolicy,
   ToolAuditLog,
@@ -229,7 +230,7 @@ export type {
   DelegationResultToolMetadata,
   DelegationResultToolReview,
 } from "./builtin/session/delegation-contract.js";
-export { conversationListTool, conversationReadTool } from "./builtin/conversation/index.js";
+export { conversationListTool, conversationReadTool, retrieveToolResultTool } from "./builtin/conversation/index.js";
 export {
   methodListTool,
   methodReadTool,
@@ -267,6 +268,7 @@ export {
   goalCheckpointEscalateTool,
   goalCapabilityPlanTool,
   goalOrchestrateTool,
+  goalCommanderDecideTool,
   taskGraphReadTool,
   taskGraphCreateTool,
   taskGraphUpdateTool,

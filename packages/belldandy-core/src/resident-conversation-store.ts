@@ -232,6 +232,16 @@ export class ResidentConversationStore extends ConversationStore {
     return this.withConversationStore(conversationId, (store) => store.getToolDigests(conversationId, limit));
   }
 
+  recordRecentToolResult(...args: Parameters<ConversationStore["recordRecentToolResult"]>): void {
+    const [conversationId, record, limit] = args;
+    this.withConversationStore(conversationId, (store) => store.recordRecentToolResult(conversationId, record, limit));
+  }
+
+  getRecentToolResults(...args: Parameters<ConversationStore["getRecentToolResults"]>): ReturnType<ConversationStore["getRecentToolResults"]> {
+    const [conversationId, options] = args;
+    return this.withConversationStore(conversationId, (store) => store.getRecentToolResults(conversationId, options));
+  }
+
   recordTaskTokenResult(...args: Parameters<ConversationStore["recordTaskTokenResult"]>): void {
     const [conversationId, record, limit] = args;
     this.withConversationStore(conversationId, (store) => store.recordTaskTokenResult(conversationId, record, limit));

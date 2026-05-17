@@ -95,6 +95,20 @@ export type ToolCallResult = {
   metadata?: JsonObject;
 };
 
+export type RecentToolResultRecord = {
+  toolCallId: string;
+  toolName: string;
+  success: boolean;
+  summary: string;
+  content?: string;
+  error?: string;
+  failureKind?: ToolFailureKind;
+  target?: string;
+  args?: JsonObject;
+  createdAt: number;
+  isSynthetic?: boolean;
+};
+
 /** 运行命令策略 */
 export type ToolExecPolicy = {
   /** 快速命令超时（毫秒） */
@@ -171,6 +185,9 @@ export type SessionInfo = {
   summary?: string;
   progressText?: string;
   outputPath?: string;
+  scratchPath?: string;
+  reviewPath?: string;
+  lessonPath?: string;
   notificationCount?: number;
 };
 
@@ -499,7 +516,14 @@ export type GoalCheckpointStateRecord = {
   items: GoalCheckpointRecord[];
 };
 
-export type GoalCapabilityExecutionMode = "single_agent" | "multi_agent";
+export type GoalCapabilityExecutionMode =
+  | "single_agent"
+  | "multi_agent"
+  | "multi_agent_parallel"
+  | "multi_agent_sequential"
+  | "auto";
+
+export type GoalCapabilityGovernanceMode = "direct" | "commander" | "auto";
 
 export type GoalCapabilityPlanStatus = "planned" | "orchestrated";
 
@@ -550,12 +574,13 @@ export type GoalCapabilityPlanRolePolicyRecord = {
   selectedRoles: Array<"default" | "coder" | "researcher" | "verifier">;
   selectionReasons: string[];
   verifierRole?: "verifier";
-  fanInStrategy: "main_agent_summary" | "verifier_handoff";
+  fanInStrategy: "main_agent_summary" | "verifier_handoff" | "commander_review";
 };
 
 export type GoalCapabilityPlanCoordinationPlanRecord = {
   summary: string;
   plannedDelegationCount: number;
+  managerAgentId?: string;
   rolePolicy: GoalCapabilityPlanRolePolicyRecord;
 };
 
@@ -599,14 +624,44 @@ export type GoalCapabilityPlanVerifierResultRecord = {
   generatedAt: string;
 };
 
+export type GoalCapabilityPlanAcceptanceGateCheckRecord = {
+  id: string;
+  label: string;
+  status: "passed" | "failed";
+  enforced: boolean;
+  evidence?: string;
+};
+
+export type GoalCapabilityPlanAcceptanceGateRecord = {
+  status: "pending" | "accepted" | "rejected";
+  summary: string;
+  reasons: string[];
+  requiredSourceAgentIds?: string[];
+  missingSourceAgentIds?: string[];
+  requiredSourceTaskIds?: string[];
+  missingSourceTaskIds?: string[];
+  requiredEvidenceTaskIds?: string[];
+  missingEvidenceTaskIds?: string[];
+  contractSpecificChecks?: GoalCapabilityPlanAcceptanceGateCheckRecord[];
+  rejectionConfidence?: "low" | "medium" | "high";
+  managerActionHint?: string;
+};
+
+export type GoalCapabilityPlanFinalApprovalModeRecord = "user_required" | "agent_auto_complete";
+
 export type GoalCapabilityPlanOrchestrationRecord = {
   claimed?: boolean;
   delegated?: boolean;
   delegationCount?: number;
+  finalApprovalMode?: GoalCapabilityPlanFinalApprovalModeRecord;
+  reworkRevisionCount?: number;
+  lastReworkReason?: string;
+  lastReworkAt?: string;
   coordinationPlan?: GoalCapabilityPlanCoordinationPlanRecord;
   delegationResults?: GoalCapabilityPlanDelegationResultRecord[];
   verifierHandoff?: GoalCapabilityPlanVerifierHandoffRecord;
   verifierResult?: GoalCapabilityPlanVerifierResultRecord;
+  acceptanceGate?: GoalCapabilityPlanAcceptanceGateRecord;
   notes?: string[];
 };
 
@@ -681,6 +736,9 @@ export type GoalCapabilityPlanRecord = {
   runId?: string;
   status: GoalCapabilityPlanStatus;
   executionMode: GoalCapabilityExecutionMode;
+  governanceMode: GoalCapabilityGovernanceMode;
+  commanderAgentId?: string;
+  preferredAgents: string[];
   riskLevel: GoalCapabilityRiskLevel;
   objective: string;
   summary: string;
@@ -1613,6 +1671,9 @@ export type GoalCapabilities = {
     runId?: string;
     status?: GoalCapabilityPlanStatus;
     executionMode: GoalCapabilityExecutionMode;
+    governanceMode?: GoalCapabilityGovernanceMode;
+    commanderAgentId?: string;
+    preferredAgents?: string[];
     riskLevel?: GoalCapabilityRiskLevel;
     objective: string;
     summary: string;
@@ -1783,9 +1844,21 @@ export type RoomContext = {
 /** Token 计数器服务接口（由 belldandy-agent 实现，此处定义以避免循环依赖） */
 export interface ITokenCounterService {
   start(name: string): void;
-  stop(name: string): { name: string; inputTokens: number; outputTokens: number; totalTokens: number; durationMs: number };
+  stop(name: string): {
+    name: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    durationMs: number;
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+    totalCostUsd?: number;
+  };
   list(): string[];
-  notifyUsage(inputTokens: number, outputTokens: number): void;
+  notifyUsage(inputTokens: number, outputTokens: number, costs?: {
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+  }): void;
   cleanup(): string[];
 }
 
@@ -1795,6 +1868,8 @@ export type ToolContext = {
   workspaceRoot: string;
   /** 当前运行时的 stateDir；工具若需跨进程持久化轻量状态，应优先使用这里 */
   stateDir?: string;
+  /** 当前运行时的环境变量读取能力；未提供时工具可自行回退到 process.env */
+  readEnv?: (name: string) => string | undefined;
   /** 当前运行的协作式中断信号；第一版只保证工具在安全点响应 */
   abortSignal?: AbortSignal;
   /** 额外允许的文件操作根目录（如其他盘符下的目录），路径必须落在 workspaceRoot 或其一内 */
@@ -1992,6 +2067,9 @@ export interface ConversationStoreInterface {
       outputTokens: number;
       totalTokens: number;
       durationMs: number;
+      inputCostUsd?: number;
+      outputCostUsd?: number;
+      totalCostUsd?: number;
       createdAt?: number;
       auto?: boolean;
     },
@@ -2006,9 +2084,27 @@ export interface ConversationStoreInterface {
     outputTokens: number;
     totalTokens: number;
     durationMs: number;
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+    totalCostUsd?: number;
     createdAt: number;
     auto?: boolean;
   }>;
+  recordRecentToolResult?(
+    conversationId: string,
+    record: Omit<RecentToolResultRecord, "createdAt"> & { createdAt?: number },
+    limit?: number,
+  ): void;
+  getRecentToolResults?(
+    conversationId: string,
+    options?: {
+      limit?: number;
+      toolCallId?: string;
+      toolName?: string;
+      success?: boolean;
+      query?: string;
+    },
+  ): RecentToolResultRecord[];
 }
 
 

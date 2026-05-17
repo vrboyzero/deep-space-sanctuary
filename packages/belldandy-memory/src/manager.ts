@@ -53,6 +53,7 @@ import {
     validateMethodCandidateDraftForPublish,
 } from "./experience-publish-rules.js";
 import { appendToTodayMemory } from "./memory-files.js";
+import type { MemoryExactDedupApplyOptions, MemoryExactDedupApplyResult, MemoryExactDedupPreviewReport } from "./memory-dedup.js";
 import type { DurableExtractionSkipReasonCode } from "./durable-extraction-policy.js";
 import { resolveStateDir, resolveWorkspaceStateDir } from "@belldandy/protocol";
 import path from "node:path";
@@ -721,6 +722,14 @@ export class MemoryManager {
 
     countChunks(filter?: MemorySearchFilter): number {
         return this.store.countChunks(filter);
+    }
+
+    previewExactDedup(filter?: MemorySearchFilter, options: { maxGroups?: number } = {}): MemoryExactDedupPreviewReport {
+        return this.store.previewExactDedup(filter, options);
+    }
+
+    applyExactDedup(filter: MemorySearchFilter | undefined, options: MemoryExactDedupApplyOptions): MemoryExactDedupApplyResult {
+        return this.store.applyExactDedup(filter, options);
     }
 
     getContextInjectionMemories(options: {

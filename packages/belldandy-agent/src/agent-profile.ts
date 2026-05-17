@@ -155,6 +155,48 @@ const ROLE_DEFAULT_MAX_RISK_LEVEL: Partial<Record<AgentProfileDefaultRole, ToolC
   verifier: "high",
 };
 
+const BUILTIN_WORKER_PROFILES: readonly AgentProfile[] = [
+  {
+    id: "commander",
+    displayName: "Commander",
+    model: "primary",
+    kind: "worker",
+    workspaceBinding: "current",
+    workspaceDir: "commander",
+    memoryMode: "hybrid",
+    whenToUse: [
+      "需要拆解复杂任务并协调多个 Agent 分工",
+      "需要在实现、审查、返工、验收之间做编排与收口",
+    ],
+    defaultRole: "default",
+    defaultPermissionMode: "confirm",
+    defaultAllowedToolFamilies: [
+      "workspace-read",
+      "browser",
+      "memory",
+      "goal-governance",
+      "session-orchestration",
+    ],
+    defaultMaxToolRiskLevel: "high",
+    handoffStyle: "structured",
+  },
+  {
+    id: "verifier",
+    displayName: "Verifier",
+    model: "primary",
+    kind: "worker",
+    workspaceBinding: "current",
+    workspaceDir: "verifier",
+    memoryMode: "hybrid",
+    whenToUse: [
+      "需要独立做验证、回归检查与证据审查",
+      "需要在交付前确认结论有测试或可观察行为支撑",
+    ],
+    defaultRole: "verifier",
+    handoffStyle: "structured",
+  },
+] as const;
+
 /**
  * 构建隐式的 "default" profile（始终存在，映射到环境变量配置）
  */
@@ -167,6 +209,17 @@ export function buildDefaultProfile(): AgentProfile {
     workspaceBinding: "current",
     memoryMode: "hybrid",
   };
+}
+
+export function buildBuiltinWorkerProfiles(): AgentProfile[] {
+  return BUILTIN_WORKER_PROFILES.map((profile) => ({
+    ...profile,
+    whenToUse: profile.whenToUse ? [...profile.whenToUse] : undefined,
+    defaultAllowedToolFamilies: profile.defaultAllowedToolFamilies
+      ? [...profile.defaultAllowedToolFamilies]
+      : undefined,
+    skills: profile.skills ? [...profile.skills] : undefined,
+  }));
 }
 
 export function resolveAgentProfileKind(profile: Pick<AgentProfile, "kind">): AgentProfileKind {

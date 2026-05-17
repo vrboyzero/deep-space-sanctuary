@@ -1,3 +1,6 @@
+import { resolvePinnedConversationTailStart } from "./pinning.js";
+import { estimateTokens } from "./tokenizer.js";
+
 /**
  * 对话压缩（Compaction）模块 — 三层渐进式压缩
  *
@@ -89,7 +92,16 @@ export type CompactionResult = {
 /**
  * 摘要生成函数签名
  */
-export type SummarizerFn = (prompt: string) => Promise<string>;
+export type SummarizerContext = {
+  mode: "rolling" | "archival";
+  prompt: string;
+  existingSummary?: string;
+  newMessages?: Array<{ role: string; content: string }>;
+  rollingSummary?: string;
+  existingArchivalSummary?: string;
+};
+
+export type SummarizerFn = (prompt: string, context?: SummarizerContext) => Promise<string>;
 
 // ─── Token 估算 ─────────────────────────────────────────────────────────
 
@@ -97,18 +109,7 @@ const SAFETY_MARGIN = 1.2;
 const ARCHIVAL_MERGE_THRESHOLD = 6;
 const MAX_PROMPT_TOO_LONG_RETRIES = 2;
 
-/**
- * 简单 token 估算：
- * - 英文/代码：约 4 字符 = 1 token
- * - 中文/日文：约 2 字符 = 1 token
- * - 混合内容取加权平均
- */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  const cjkCount = (text.match(/[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g) || []).length;
-  const nonCjkCount = text.length - cjkCount;
-  return Math.ceil(cjkCount / 2 + nonCjkCount / 4);
-}
+export { estimateTokens } from "./tokenizer.js";
 
 /**
  * 估算消息列表的总 token 数（含安全余量）
@@ -419,7 +420,12 @@ async function summarizeRollingWithBudget(
 
     try {
       return {
-        summary: await options.summarizer(prompt),
+        summary: await options.summarizer(prompt, {
+          mode: "rolling",
+          prompt,
+          existingSummary: attemptSummary,
+          newMessages: remainingMessages,
+        }),
         fallbackUsed: false,
         warningTriggered,
         blockingTriggered,
@@ -497,7 +503,12 @@ async function summarizeArchivalWithBudget(
 
     try {
       return {
-        summary: await options.summarizer(prompt),
+        summary: await options.summarizer(prompt, {
+          mode: "archival",
+          prompt,
+          existingArchivalSummary: attemptArchivalSummary,
+          rollingSummary: attemptRollingSummary,
+        }),
         fallbackUsed: false,
         warningTriggered,
         blockingTriggered,
@@ -594,8 +605,12 @@ export async function compactIncremental(
     };
   }
 
-  // 分割：溢出消息 + 保留消息
-  const splitIndex = messages.length - keepRecent;
+  // 分割：溢出消息 + 保留消息。A2 pinning 仅扩大连续尾部保留范围，不改长期记忆格式。
+  const defaultSplitIndex = messages.length - keepRecent;
+  const pinnedTailStart = resolvePinnedConversationTailStart(messages, keepRecent);
+  const splitIndex = typeof pinnedTailStart === "number"
+    ? Math.min(defaultSplitIndex, Math.max(0, pinnedTailStart))
+    : defaultSplitIndex;
   const overflowMessages = messages.slice(0, splitIndex);
   const recentMessages = messages.slice(splitIndex);
   const overflowFingerprint = createMessagesFingerprint(overflowMessages);

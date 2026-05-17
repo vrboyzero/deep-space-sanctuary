@@ -31,6 +31,7 @@ describe("microcompactMessages", () => {
     expect(result).toMatchObject({
       mutated: true,
       compactedCount: 2,
+      skippedForPrefixStability: false,
     });
     expect(result.reclaimedChars).toBeGreaterThan(0);
     expect(messages[1]).toMatchObject({
@@ -71,6 +72,7 @@ describe("microcompactMessages", () => {
     });
 
     expect(result.mutated).toBe(false);
+    expect(result.skippedForPrefixStability).toBe(false);
     expect(messages[1]).toMatchObject({ content: "matched 2 memories" });
     expect(messages[3]).toMatchObject({ content: "small output" });
   });
@@ -95,9 +97,51 @@ describe("microcompactMessages", () => {
     });
 
     expect(result.mutated).toBe(true);
+    expect(result.skippedForPrefixStability).toBe(false);
     expect(messages[1].content).toContain("[old tool error summary preserved]");
     expect(messages[1].content).toContain("tool=run_command");
     expect(messages[1].content).toContain("error=");
+  });
+
+  it("pins recent high-signal tool outputs so they are not compacted ahead of generic ones", () => {
+    const messages = [
+      {
+        role: "assistant" as const,
+        content: "generic list",
+        tool_calls: [{ id: "call-1", function: { name: "list_files" } }],
+      },
+      { role: "tool" as const, tool_call_id: "call-1", content: "A".repeat(600) },
+      {
+        role: "assistant" as const,
+        content: "inspect error log",
+        tool_calls: [{ id: "call-2", function: { name: "run_command" } }],
+      },
+      {
+        role: "tool" as const,
+        tool_call_id: "call-2",
+        content: "Error: failed to load packages/app/src/bootstrap.ts because config was undefined.\n" + "B".repeat(520),
+      },
+      {
+        role: "assistant" as const,
+        content: "latest fetch",
+        tool_calls: [{ id: "call-3", function: { name: "web_fetch" } }],
+      },
+      { role: "tool" as const, tool_call_id: "call-3", content: "C".repeat(600) },
+    ];
+
+    const result = microcompactMessages(messages, {
+      keepRecentToolMessages: 1,
+    });
+
+    expect(result).toMatchObject({
+      mutated: true,
+      compactedCount: 1,
+      skippedForPrefixStability: false,
+    });
+    expect(messages[1].content).toContain("[old tool output cleared]");
+    expect(messages[3].content).toContain("packages/app/src/bootstrap.ts");
+    expect(messages[3].content).not.toContain("[old tool");
+    expect(messages[5].content).toBe("C".repeat(600));
   });
 
   it("does not compact the same tool output twice once a placeholder has already been written", () => {
@@ -123,7 +167,32 @@ describe("microcompactMessages", () => {
       mutated: false,
       compactedCount: 0,
       reclaimedChars: 0,
+      skippedForPrefixStability: false,
     });
     expect(messages[1].content).toContain("already compacted");
+  });
+
+  it("skips destructive microcompact when prefix stability protection is enabled", () => {
+    const messages = [
+      {
+        role: "assistant" as const,
+        content: "reading file",
+        tool_calls: [{ id: "call-1", function: { name: "file_read" } }],
+      },
+      { role: "tool" as const, tool_call_id: "call-1", content: "A".repeat(600) },
+    ];
+
+    const result = microcompactMessages(messages, {
+      keepRecentToolMessages: 0,
+      preservePrefixStability: true,
+    });
+
+    expect(result).toEqual({
+      mutated: false,
+      compactedCount: 0,
+      reclaimedChars: 0,
+      skippedForPrefixStability: true,
+    });
+    expect(messages[1].content).toBe("A".repeat(600));
   });
 });

@@ -103,6 +103,9 @@ export type MessageSendQueryRuntimeContext = {
         inputTokens: number;
         outputTokens: number;
         durationMs: number;
+        inputCostUsd?: number;
+        outputCostUsd?: number;
+        totalCostUsd?: number;
       },
       ws?: WebSocket,
     ) => void;
@@ -481,6 +484,9 @@ type MessageSendBackgroundInput = {
 type MessageSendLatestUsage = {
   inputTokens: number;
   outputTokens: number;
+  inputCostUsd?: number;
+  outputCostUsd?: number;
+  totalCostUsd?: number;
 };
 
 type MessageSendRunResult = Awaited<ReturnType<typeof runAgentWithLifecycle>>;
@@ -716,6 +722,9 @@ function emitMessageSendTaskResult(input: {
       inputTokens: latestUsage.inputTokens,
       outputTokens: latestUsage.outputTokens,
       durationMs: input.durationMs,
+      inputCostUsd: latestUsage.inputCostUsd,
+      outputCostUsd: latestUsage.outputCostUsd,
+      totalCostUsd: latestUsage.totalCostUsd,
     },
     input.ctx.request.ws,
   );
@@ -744,11 +753,19 @@ function handleMessageSendUsageEvent(input: {
     cacheCreationTokens: number;
     cacheReadTokens: number;
     modelCalls: number;
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+    cacheCreationCostUsd?: number;
+    cacheReadCostUsd?: number;
+    totalCostUsd?: number;
   };
 }): void {
   const latestUsage = {
     inputTokens: Number(input.item.inputTokens ?? 0),
     outputTokens: Number(input.item.outputTokens ?? 0),
+    ...(typeof input.item.inputCostUsd === "number" ? { inputCostUsd: Number(input.item.inputCostUsd) } : {}),
+    ...(typeof input.item.outputCostUsd === "number" ? { outputCostUsd: Number(input.item.outputCostUsd) } : {}),
+    ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: Number(input.item.totalCostUsd) } : {}),
   };
   input.state.run.setLatestUsage(latestUsage);
 
@@ -765,6 +782,11 @@ function handleMessageSendUsageEvent(input: {
       cacheCreationTokens: input.item.cacheCreationTokens,
       cacheReadTokens: input.item.cacheReadTokens,
       modelCalls: input.item.modelCalls,
+      ...(typeof input.item.inputCostUsd === "number" ? { inputCostUsd: input.item.inputCostUsd } : {}),
+      ...(typeof input.item.outputCostUsd === "number" ? { outputCostUsd: input.item.outputCostUsd } : {}),
+      ...(typeof input.item.cacheCreationCostUsd === "number" ? { cacheCreationCostUsd: input.item.cacheCreationCostUsd } : {}),
+      ...(typeof input.item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: input.item.cacheReadCostUsd } : {}),
+      ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: input.item.totalCostUsd } : {}),
     },
   });
 
@@ -814,6 +836,11 @@ function createMessageSendStreamAdapter(input: {
       cacheCreationTokens: number;
       cacheReadTokens: number;
       modelCalls: number;
+      inputCostUsd?: number;
+      outputCostUsd?: number;
+      cacheCreationCostUsd?: number;
+      cacheReadCostUsd?: number;
+      totalCostUsd?: number;
     }) => void;
   };
 } {

@@ -294,7 +294,14 @@ export type GoalCheckpointDecisionInput = {
   runId?: string;
 };
 
-export type GoalCapabilityExecutionMode = "single_agent" | "multi_agent";
+export type GoalCapabilityExecutionMode =
+  | "single_agent"
+  | "multi_agent"
+  | "multi_agent_parallel"
+  | "multi_agent_sequential"
+  | "auto";
+
+export type GoalCapabilityGovernanceMode = "direct" | "commander" | "auto";
 
 export type GoalCapabilityPlanStatus = "planned" | "orchestrated";
 
@@ -345,12 +352,13 @@ export type GoalCapabilityPlanRolePolicy = {
   selectedRoles: Array<"default" | "coder" | "researcher" | "verifier">;
   selectionReasons: string[];
   verifierRole?: "verifier";
-  fanInStrategy: "main_agent_summary" | "verifier_handoff";
+  fanInStrategy: "main_agent_summary" | "verifier_handoff" | "commander_review";
 };
 
 export type GoalCapabilityPlanCoordinationPlan = {
   summary: string;
   plannedDelegationCount: number;
+  managerAgentId?: string;
   rolePolicy: GoalCapabilityPlanRolePolicy;
 };
 
@@ -417,10 +425,22 @@ export type GoalCapabilityPlanAcceptanceGate = {
   managerActionHint?: string;
 };
 
+export type GoalCapabilityPlanFinalApprovalMode = "user_required" | "agent_auto_complete";
+
 export type GoalCapabilityPlanOrchestration = {
   claimed?: boolean;
   delegated?: boolean;
   delegationCount?: number;
+  finalApprovalMode?: GoalCapabilityPlanFinalApprovalMode;
+  reworkRevisionCount?: number;
+  lastReworkReason?: string;
+  lastReworkAt?: string;
+  reworkTargetAgentIds?: string[];
+  reworkContext?: {
+    quickSummary?: string;
+    historySummary?: string;
+    persistedReason?: string;
+  };
   coordinationPlan?: GoalCapabilityPlanCoordinationPlan;
   delegationResults?: GoalCapabilityPlanDelegationResult[];
   verifierHandoff?: GoalCapabilityPlanVerifierHandoff;
@@ -493,6 +513,9 @@ export type GoalCapabilityPlan = {
   runId?: string;
   status: GoalCapabilityPlanStatus;
   executionMode: GoalCapabilityExecutionMode;
+  governanceMode: GoalCapabilityGovernanceMode;
+  commanderAgentId?: string;
+  preferredAgents: string[];
   riskLevel: GoalCapabilityRiskLevel;
   objective: string;
   summary: string;
@@ -522,6 +545,9 @@ export type GoalCapabilityPlanSaveInput = {
   runId?: string;
   status?: GoalCapabilityPlanStatus;
   executionMode: GoalCapabilityExecutionMode;
+  governanceMode?: GoalCapabilityGovernanceMode;
+  commanderAgentId?: string;
+  preferredAgents?: string[];
   riskLevel?: GoalCapabilityRiskLevel;
   objective: string;
   summary: string;
@@ -1265,6 +1291,42 @@ export type GoalReviewGovernanceSummary = {
   actionableCheckpoints: GoalCheckpointItem[];
   checkpointWorkflowPendingCount: number;
   checkpointWorkflowOverdueCount: number;
+  commanderFocus?: {
+    goalId: string;
+    nodeId: string;
+    runId?: string;
+    planId: string;
+    nodeTitle: string;
+    governanceMode: GoalCapabilityGovernanceMode;
+    executionMode: GoalCapabilityExecutionMode;
+    commanderAgentId?: string;
+    reviewStatus: string;
+    finalApprovalMode?: GoalCapabilityPlanFinalApprovalMode;
+    reworkRevisionCount: number;
+    lastReworkReason?: string;
+    lastReworkAt?: string;
+    reworkContext?: {
+      quickSummary?: string;
+      historySummary?: string;
+      persistedReason?: string;
+    };
+    fanInSummary?: string;
+    managerActionHint?: string;
+    reasons: string[];
+    delegationResults: Array<{
+      agentId: string;
+      role?: string;
+      status?: string;
+      summary?: string;
+      taskId?: string;
+      outputPath?: string;
+    }>;
+    checkLines: string[];
+    nextAction: string;
+    reviewPath?: string;
+    commanderPlanPath?: string;
+    workOrderPaths: string[];
+  };
   summary: string;
   recommendations: string[];
 };

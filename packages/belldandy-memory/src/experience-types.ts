@@ -9,10 +9,10 @@ import type {
 } from "./task-types.js";
 
 export type ExperienceCandidateType = "method" | "skill";
-export type ExperienceCandidateStatus = "draft" | "reviewed" | "accepted" | "rejected";
+export type ExperienceCandidateStatus = "draft" | "reviewed" | "accepted" | "rejected" | "published";
 export type ExperienceAssetType = "method" | "skill";
 export type ExperienceUsageVia = "manual" | "search" | "tool" | "auto_suggest";
-export type ExperienceDraftOriginKind = "generated" | "synthesized";
+export type ExperienceDraftOriginKind = "generated" | "synthesized" | "published";
 export type ExperienceSynthesisRelation = "same_family" | "similar";
 
 export interface ExperienceTaskMemoryLink {
@@ -46,6 +46,12 @@ export interface ExperienceCandidateDraftOriginMetadata {
   kind: ExperienceDraftOriginKind;
 }
 
+export interface ExperienceCandidatePublishedOriginMetadata {
+  assetPath: string;
+  assetKey: string;
+  assetSource: "method_asset" | "skill_asset";
+}
+
 export interface ExperienceCandidateSynthesisMetadata {
   seedCandidateId: string;
   sourceCandidateIds: string[];
@@ -64,6 +70,7 @@ export interface ExperienceCandidateSynthesisConsumedMetadata {
 
 export interface ExperienceCandidateMetadata {
   draftOrigin?: ExperienceCandidateDraftOriginMetadata;
+  publishedOrigin?: ExperienceCandidatePublishedOriginMetadata;
   synthesis?: ExperienceCandidateSynthesisMetadata;
   synthesisConsumed?: ExperienceCandidateSynthesisConsumedMetadata;
 }

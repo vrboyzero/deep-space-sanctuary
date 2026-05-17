@@ -11,6 +11,8 @@ export function createGoalsCapabilityPanelFeature({
   formatDateTime,
   onOpenSourcePath,
   onOpenSubtask,
+  onSaveGovernanceSettings,
+  onCommanderDecision,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
   const { goalsDetailEl } = refs;
@@ -23,6 +25,18 @@ export function createGoalsCapabilityPanelFeature({
     if (level === "high") return "高风险";
     if (level === "medium") return "中风险";
     return "低风险";
+  }
+
+  function formatGovernanceMode(mode) {
+    if (mode === "commander") return "Commander";
+    if (mode === "direct") return "Direct";
+    return mode || "未设置";
+  }
+
+  function formatFinalApprovalMode(mode) {
+    if (mode === "user_required") return "用户最终审批";
+    if (mode === "agent_auto_complete") return "Agent 自动收口";
+    return mode || "未设置";
   }
 
   function formatCapabilityStatus(status) {
@@ -151,6 +165,29 @@ export function createGoalsCapabilityPanelFeature({
     `;
   }
 
+  function buildCommanderReworkPrefill(orchestration, acceptanceGate) {
+    const revision = Number.isFinite(orchestration?.reworkRevisionCount) ? Number(orchestration.reworkRevisionCount) : 0;
+    const lastReason = typeof orchestration?.lastReworkReason === "string" ? orchestration.lastReworkReason.trim() : "";
+    const gateHint = typeof acceptanceGate?.managerActionHint === "string" ? acceptanceGate.managerActionHint.trim() : "";
+    const gateSummary = typeof acceptanceGate?.summary === "string" ? acceptanceGate.summary.trim() : "";
+    const gateReasons = Array.isArray(acceptanceGate?.reasons)
+      ? acceptanceGate.reasons.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean)
+      : [];
+    const historyLines = [
+      revision > 0 ? `上一轮返工次数：${revision}` : "",
+      lastReason ? `上一轮返工原因：${lastReason}` : "",
+      gateHint ? `当前 Gate Hint：${gateHint}` : "",
+      gateSummary ? `当前 Gate Summary：${gateSummary}` : "",
+      ...gateReasons.map((item) => `Gate Reason：${item}`),
+    ].filter(Boolean);
+    return {
+      summary: gateHint || gateSummary || lastReason || "",
+      note: historyLines.join("\n"),
+      historyLines,
+      gateOnlySummary: gateHint || gateSummary || "",
+    };
+  }
+
   function renderGoalCapabilityPanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalCapabilityPanel");
     if (!panel) return;
@@ -177,6 +214,71 @@ export function createGoalsCapabilityPanelFeature({
         const taskId = node.getAttribute("data-open-subtask-id");
         if (!taskId) return;
         void onOpenSubtask?.(taskId);
+      });
+    });
+    panel.querySelectorAll("[data-goal-capability-save]").forEach((node) => {
+      node.addEventListener("click", async () => {
+        const goalId = node.getAttribute("data-goal-id");
+        const nodeId = node.getAttribute("data-node-id");
+        if (!goalId || !nodeId) return;
+        const scope = node.closest("[data-goal-governance-form]") || panel;
+        const executionMode = scope.querySelector("[data-goal-capability-field='executionMode']")?.value || "";
+        const governanceMode = scope.querySelector("[data-goal-capability-field='governanceMode']")?.value || "";
+        const commanderAgentId = scope.querySelector("[data-goal-capability-field='commanderAgentId']")?.value || "";
+        const preferredAgentsRaw = scope.querySelector("[data-goal-capability-field='preferredAgents']")?.value || "";
+        const finalApprovalMode = scope.querySelector("[data-goal-capability-field='finalApprovalMode']")?.value || "";
+        await onSaveGovernanceSettings?.(goalId, nodeId, {
+          executionMode,
+          governanceMode,
+          commanderAgentId,
+          preferredAgents: preferredAgentsRaw
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+          finalApprovalMode,
+        });
+      });
+    });
+    panel.querySelectorAll("[data-goal-commander-decision]").forEach((node) => {
+      node.addEventListener("click", async () => {
+        const goalId = node.getAttribute("data-goal-id");
+        const nodeId = node.getAttribute("data-node-id");
+        const decision = node.getAttribute("data-goal-commander-decision");
+        if (!goalId || !nodeId || !decision) return;
+        const scope = node.closest("[data-goal-commander-form]") || panel;
+        const summary = scope.querySelector("[data-goal-capability-field='decisionSummary']")?.value || "";
+        const note = scope.querySelector("[data-goal-capability-field='decisionNote']")?.value || "";
+        const requireUserApproval = scope.querySelector("[data-goal-capability-field='requireUserApproval']")?.value || "";
+        await onCommanderDecision?.(goalId, nodeId, {
+          decision,
+          summary,
+          note,
+          requireUserApproval: requireUserApproval === "agent_auto_complete"
+            ? false
+            : requireUserApproval === "user_required"
+              ? true
+              : undefined,
+        });
+      });
+    });
+    panel.querySelectorAll("[data-goal-commander-prefill]").forEach((node) => {
+      node.addEventListener("click", () => {
+        const mode = node.getAttribute("data-goal-commander-prefill");
+        const scope = node.closest("[data-goal-commander-form]") || panel;
+        const summaryEl = scope.querySelector("[data-goal-capability-field='decisionSummary']");
+        const noteEl = scope.querySelector("[data-goal-capability-field='decisionNote']");
+        if (!summaryEl || !noteEl) return;
+        const historySummary = node.getAttribute("data-prefill-history-summary") || "";
+        const historyNote = node.getAttribute("data-prefill-history-note") || "";
+        const gateSummary = node.getAttribute("data-prefill-gate-summary") || "";
+        if (mode === "history") {
+          if (historySummary) summaryEl.value = historySummary;
+          if (historyNote) noteEl.value = historyNote;
+          return;
+        }
+        if (mode === "gate") {
+          if (gateSummary) summaryEl.value = gateSummary;
+        }
       });
     });
   }
@@ -213,6 +315,7 @@ export function createGoalsCapabilityPanelFeature({
     const orchestration = focusPlan?.orchestration || {};
     const coordinationPlan = orchestration?.coordinationPlan || null;
     const rolePolicy = coordinationPlan?.rolePolicy || null;
+    const acceptanceGate = orchestration?.acceptanceGate || null;
     const delegationResults = Array.isArray(orchestration?.delegationResults) ? orchestration.delegationResults : [];
     const verifierHandoff = orchestration?.verifierHandoff || null;
     const verifierResult = orchestration?.verifierResult || null;
@@ -252,9 +355,22 @@ export function createGoalsCapabilityPanelFeature({
       ? verifierResult.findings.map((item) => `[${formatFindingSeverity(item.severity)}] ${item.summary || ""}`).filter(Boolean)
       : [];
     const orchestrationNotes = Array.isArray(orchestration?.notes) ? orchestration.notes : [];
+    const reworkTargetAgentIds = Array.isArray(orchestration?.reworkTargetAgentIds) ? orchestration.reworkTargetAgentIds : [];
     const subAgentExplainabilityEntries = buildGoalSubAgentExplainabilityEntries(focusPlan, t);
     const verifierExplainabilityEntry = buildGoalVerifierExplainabilityEntry(focusPlan, t);
     const checkpointExplainabilityEntry = buildGoalCheckpointExplainabilityEntry(focusPlan, t);
+    const governanceMeta = [
+      `执行模式：${formatCapabilityMode(focusPlan.executionMode)}`,
+      `治理模式：${formatGovernanceMode(focusPlan.governanceMode)}`,
+      `Commander：${focusPlan.commanderAgentId || coordinationPlan?.managerAgentId || "(none)"}`,
+      `Preferred Agents：${Array.isArray(focusPlan.preferredAgents) && focusPlan.preferredAgents.length ? focusPlan.preferredAgents.join(", ") : "(none)"}`,
+      `Final Approval：${formatFinalApprovalMode(orchestration?.finalApprovalMode)}`,
+      `Rework Revision：${typeof orchestration?.reworkRevisionCount === "number" ? orchestration.reworkRevisionCount : 0}`,
+      orchestration?.lastReworkReason ? `Last Rework：${orchestration.lastReworkReason}` : "",
+      orchestration?.lastReworkAt ? `Rework At：${formatDateTime(orchestration.lastReworkAt)}` : "",
+    ].filter(Boolean);
+    const commanderActionDisabled = focusPlan.governanceMode !== "commander";
+    const reworkPrefill = buildCommanderReworkPrefill(orchestration, acceptanceGate);
 
     panel.innerHTML = `
       <div class="goal-capability-stats">
@@ -310,6 +426,102 @@ export function createGoalsCapabilityPanelFeature({
             ${focusPlan.runId ? `<span>${escapeHtml(focusPlan.runId)}</span>` : ""}
             <span>${escapeHtml(formatDateTime(focusPlan.updatedAt || focusPlan.generatedAt))}</span>
             ${focusPlan.orchestratedAt ? `<span>已编排 ${escapeHtml(formatDateTime(focusPlan.orchestratedAt))}</span>` : ""}
+          </div>
+
+          <div class="goal-capability-columns">
+            <div class="goal-capability-column">
+              <div class="goal-summary-label">治理设置</div>
+              ${renderCapabilityMetaList(
+                governanceMeta,
+                "当前没有额外治理元数据。",
+              )}
+              ${acceptanceGate?.summary ? `<div class="memory-list-item-snippet">${escapeHtml(`Acceptance Gate: ${acceptanceGate.status || "pending"} | ${acceptanceGate.summary}`)}</div>` : ""}
+              ${Array.isArray(acceptanceGate?.reasons) && acceptanceGate.reasons.length ? `
+                <div class="tool-settings-policy-note">
+                  ${acceptanceGate.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
+                </div>
+              ` : ""}
+              ${reworkTargetAgentIds.length ? `
+                <div class="goal-summary-title" style="margin-top:12px;">Rework Targets</div>
+                <div class="memory-detail-badges">
+                  ${reworkTargetAgentIds.map((item) => `<span class="memory-badge">${escapeHtml(item)}</span>`).join("")}
+                </div>
+              ` : ""}
+            </div>
+            <div class="goal-capability-column" data-goal-governance-form="true">
+              <div class="goal-summary-label">Node 级治理覆盖</div>
+              <div class="tool-settings-policy-note">
+                <div>Execution Mode</div>
+                <select class="input" data-goal-capability-field="executionMode">
+                  <option value="single_agent" ${focusPlan.executionMode === "single_agent" ? "selected" : ""}>single_agent</option>
+                  <option value="multi_agent" ${focusPlan.executionMode === "multi_agent" ? "selected" : ""}>multi_agent</option>
+                  <option value="multi_agent_parallel" ${focusPlan.executionMode === "multi_agent_parallel" ? "selected" : ""}>multi_agent_parallel</option>
+                  <option value="multi_agent_sequential" ${focusPlan.executionMode === "multi_agent_sequential" ? "selected" : ""}>multi_agent_sequential</option>
+                </select>
+                <div>Governance Mode</div>
+                <select class="input" data-goal-capability-field="governanceMode">
+                  <option value="direct" ${focusPlan.governanceMode === "direct" ? "selected" : ""}>direct</option>
+                  <option value="commander" ${focusPlan.governanceMode === "commander" ? "selected" : ""}>commander</option>
+                </select>
+                <div>Commander Agent ID</div>
+                <input class="input" data-goal-capability-field="commanderAgentId" value="${escapeHtml(focusPlan.commanderAgentId || "")}" />
+                <div>Preferred Agents</div>
+                <input class="input" data-goal-capability-field="preferredAgents" value="${escapeHtml(Array.isArray(focusPlan.preferredAgents) ? focusPlan.preferredAgents.join(", ") : "")}" />
+                <div>Final Approval Mode</div>
+                <select class="input" data-goal-capability-field="finalApprovalMode">
+                  <option value="user_required" ${orchestration?.finalApprovalMode === "user_required" ? "selected" : ""}>user_required</option>
+                  <option value="agent_auto_complete" ${orchestration?.finalApprovalMode === "agent_auto_complete" ? "selected" : ""}>agent_auto_complete</option>
+                </select>
+              </div>
+              <div class="memory-detail-badges">
+                <button class="button" data-goal-capability-save="true" data-goal-id="${escapeHtml(goal?.id || "")}" data-node-id="${escapeHtml(focusPlan.nodeId || "")}">保存治理设置</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="goal-capability-columns">
+            <div class="goal-capability-column" data-goal-commander-form="true">
+              <div class="goal-summary-label">Commander 最终决策</div>
+              <div class="tool-settings-policy-note">
+                <div>Summary</div>
+                <input class="input" data-goal-capability-field="decisionSummary" value="${escapeHtml(reworkPrefill.summary || acceptanceGate?.summary || "")}" />
+                <div>Note</div>
+                <textarea class="input" rows="5" data-goal-capability-field="decisionNote">${escapeHtml(reworkPrefill.note || orchestration?.lastReworkReason || "")}</textarea>
+                <div>Escalate Approval Mode</div>
+                <select class="input" data-goal-capability-field="requireUserApproval">
+                  <option value="">follow plan default</option>
+                  <option value="user_required">user_required</option>
+                  <option value="agent_auto_complete">agent_auto_complete</option>
+                </select>
+              </div>
+              ${reworkPrefill.historyLines.length ? `
+                <div class="tool-settings-policy-note">
+                  ${reworkPrefill.historyLines.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
+                </div>
+              ` : ""}
+              <div class="memory-detail-badges">
+                <button
+                  class="button goal-inline-action-secondary"
+                  ${commanderActionDisabled ? "disabled" : ""}
+                  data-goal-commander-prefill="history"
+                  data-prefill-history-summary="${escapeHtml(reworkPrefill.summary)}"
+                  data-prefill-history-note="${escapeHtml(reworkPrefill.note)}"
+                  data-prefill-gate-summary="${escapeHtml(reworkPrefill.gateOnlySummary)}"
+                >使用上轮返工上下文</button>
+                <button
+                  class="button goal-inline-action-secondary"
+                  ${commanderActionDisabled ? "disabled" : ""}
+                  data-goal-commander-prefill="gate"
+                  data-prefill-history-summary="${escapeHtml(reworkPrefill.summary)}"
+                  data-prefill-history-note="${escapeHtml(reworkPrefill.note)}"
+                  data-prefill-gate-summary="${escapeHtml(reworkPrefill.gateOnlySummary)}"
+                >使用 gate hint</button>
+                <button class="button goal-inline-action-secondary" ${commanderActionDisabled ? "disabled" : ""} data-goal-commander-decision="accept" data-goal-id="${escapeHtml(goal?.id || "")}" data-node-id="${escapeHtml(focusPlan.nodeId || "")}">接受</button>
+                <button class="button goal-inline-action-secondary" ${commanderActionDisabled ? "disabled" : ""} data-goal-commander-decision="rework" data-goal-id="${escapeHtml(goal?.id || "")}" data-node-id="${escapeHtml(focusPlan.nodeId || "")}">返工</button>
+                <button class="button goal-inline-action-secondary" ${commanderActionDisabled ? "disabled" : ""} data-goal-commander-decision="escalate" data-goal-id="${escapeHtml(goal?.id || "")}" data-node-id="${escapeHtml(focusPlan.nodeId || "")}">升级</button>
+              </div>
+              ${commanderActionDisabled ? `<div class="memory-viewer-empty">当前节点不是 commander 治理模式，Commander 快捷操作不可用。</div>` : ""}
+            </div>
           </div>
 
           <div class="goal-capability-columns">

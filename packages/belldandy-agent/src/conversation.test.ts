@@ -671,6 +671,49 @@ describe("ConversationStore", () => {
         });
     });
 
+    it("should persist and query recent tool results independently from transcript messages", async () => {
+        const store = new ConversationStore();
+        const id = "conv-recent-tool-results";
+
+        store.recordRecentToolResult(id, {
+            toolCallId: "call-1",
+            toolName: "file_read",
+            success: true,
+            summary: "file_read succeeded | target=src/app.ts | result=answer=42",
+            content: "export const answer = 42;\n".repeat(40),
+            target: "src/app.ts",
+            args: { path: "src/app.ts" },
+        });
+        store.recordRecentToolResult(id, {
+            toolCallId: "call-2",
+            toolName: "run_command",
+            success: false,
+            summary: "run_command failed | target=pnpm test | error=spawn EPERM",
+            error: "spawn EPERM while launching pnpm test",
+            failureKind: "environment_error",
+            target: "pnpm test",
+            args: { command: "pnpm test" },
+            isSynthetic: true,
+        });
+
+        expect(store.getRecentToolResults(id, { limit: 5 })).toMatchObject([
+            expect.objectContaining({
+                toolCallId: "call-2",
+                toolName: "run_command",
+                success: false,
+                isSynthetic: true,
+            }),
+            expect.objectContaining({
+                toolCallId: "call-1",
+                toolName: "file_read",
+                success: true,
+                target: "src/app.ts",
+            }),
+        ]);
+        expect(store.getRecentToolResults(id, { toolCallId: "call-1" })).toHaveLength(1);
+        expect(store.getRecentToolResults(id, { toolName: "run_command", success: false, query: "eperm" })).toHaveLength(1);
+    });
+
     it("should emit enriched request compaction hook events", async () => {
         const beforeCompaction = vi.fn(async () => {});
         const afterCompaction = vi.fn(async () => {});

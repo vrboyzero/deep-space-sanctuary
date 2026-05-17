@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeGoalSlug } from "./paths.js";
 import { parseGoalProgressEntries } from "./progress.js";
+import { buildGoalDerivedMethodDraft } from "./experience-draft-template.js";
 import type {
   GoalCapabilityPlan,
   GoalMethodCandidate,
@@ -15,6 +16,7 @@ import type {
 } from "./types.js";
 
 type GoalMethodCandidateInput = {
+  stateDir: string;
   goal: LongTermGoal;
   graph: GoalTaskGraph;
   plans: GoalCapabilityPlan[];
@@ -69,75 +71,6 @@ function buildRationale(node: GoalTaskNode, plan: GoalCapabilityPlan | undefined
   return reasons.length > 0 ? reasons : ["当前节点已形成一版可追踪执行过程，值得作为 method 候选进入人工审阅。"];
 }
 
-function buildDraftContent(goal: LongTermGoal, node: GoalTaskNode, plan: GoalCapabilityPlan | undefined, progressEvents: string[], summary: string): string {
-  const methodLines = plan?.actualUsage.methods.length
-    ? `- Methods: ${plan.actualUsage.methods.join(", ")}`
-    : "- Methods: (none)";
-  const skillLines = plan?.actualUsage.skills.length
-    ? `- Skills: ${plan.actualUsage.skills.join(", ")}`
-    : "- Skills: (none)";
-  const mcpLines = plan?.actualUsage.mcpServers.length
-    ? `- MCP: ${plan.actualUsage.mcpServers.join(", ")}`
-    : "- MCP: (none)";
-  const progressLines = progressEvents.length > 0
-    ? progressEvents.map((item, index) => `${index + 1}. ${item}`)
-    : ["1. 明确节点目标、依赖和验收标准。", "2. 按最小闭环执行并记录关键产物。", "3. 回归验收并补充复盘。"];
-  const acceptanceLines = node.acceptance.length > 0
-    ? node.acceptance.map((item) => `- ${item}`)
-    : ["- (none)"];
-  const artifactLines = node.artifacts.length > 0
-    ? node.artifacts.map((item) => `- ${item}`)
-    : ["- (none)"];
-
-  return [
-    "---",
-    `summary: "${summary.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
-    'status: "draft"',
-    'version: "0.1.0-draft"',
-    `createdAt: "${new Date().toISOString()}"`,
-    `updatedAt: "${new Date().toISOString()}"`,
-    "readWhen:",
-    '  - "遇到相同 goal 内的相似节点时"',
-    "tags:",
-    '  - "goal-derived"',
-    `  - "${goal.id}"`,
-    `  - "${node.id}"`,
-    "---",
-    "",
-    `# ${node.title} 方法候选`,
-    "",
-    "## 来源",
-    `- Goal ID: ${goal.id}`,
-    `- Goal Title: ${goal.title}`,
-    `- Node ID: ${node.id}`,
-    `- Phase: ${node.phase ?? "(none)"}`,
-    `- Node Status: ${node.status}`,
-    `- Checkpoint Status: ${node.checkpointStatus}`,
-    node.lastRunId ? `- Run ID: ${node.lastRunId}` : "",
-    "",
-    "## 目标与背景",
-    summary,
-    "",
-    "## 建议步骤",
-    ...progressLines,
-    "",
-    "## 验收口径",
-    ...acceptanceLines,
-    "",
-    "## 工具与能力",
-    methodLines,
-    skillLines,
-    mcpLines,
-    "",
-    "## 相关产物",
-    ...artifactLines,
-    "",
-    "## 复盘提示",
-    plan?.analysis.summary || "执行类似流程时，优先检查依赖、产物和验收闭环是否齐备。",
-    "",
-  ].filter(Boolean).join("\n");
-}
-
 async function atomicWriteJson(targetPath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const tempPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
@@ -187,11 +120,11 @@ function buildMarkdown(goal: LongTermGoal, candidates: GoalMethodCandidate[], re
 }
 
 export async function generateGoalMethodCandidates(input: GoalMethodCandidateInput): Promise<GoalMethodCandidateGenerateResult> {
-  const { goal, graph, plans, progressContent, retrospective } = input;
+  const { stateDir, goal, graph, plans, progressContent, retrospective } = input;
   const progressEntries = parseGoalProgressEntries(progressContent);
-  const candidates: GoalMethodCandidate[] = graph.nodes
+  const hydrated = await Promise.all(graph.nodes
     .filter((node) => node.status === "done" || node.checkpointStatus === "approved")
-    .map((node) => {
+    .map(async (node) => {
       const plan = plans
         .filter((item) => item.nodeId === node.id)
         .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())[0];
@@ -209,6 +142,14 @@ export async function generateGoalMethodCandidates(input: GoalMethodCandidateInp
         retrospective.markdownPath,
         ...node.artifacts,
       ];
+      const draftContent = await buildGoalDerivedMethodDraft({
+        stateDir,
+        goal,
+        node,
+        plan,
+        progressEvents: nodeProgress,
+        summary,
+      });
       return {
         id: `method_candidate_${node.id}`,
         goalId: goal.id,
@@ -235,10 +176,12 @@ export async function generateGoalMethodCandidates(input: GoalMethodCandidateInp
           progressEvents: nodeProgress,
           references,
         },
-        draftContent: buildDraftContent(goal, node, plan, nodeProgress, summary),
+        draftContent,
         createdAt: new Date().toISOString(),
       };
-    })
+    }));
+
+  const candidates: GoalMethodCandidate[] = hydrated
     .filter((candidate) => candidate.qualityScore >= 50)
     .sort((left, right) => right.qualityScore - left.qualityScore || left.nodeId.localeCompare(right.nodeId));
 

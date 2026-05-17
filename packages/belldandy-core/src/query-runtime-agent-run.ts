@@ -22,6 +22,9 @@ export type QueryRuntimeAgentToolResult = {
 export type QueryRuntimeAgentUsage = {
   inputTokens: number;
   outputTokens: number;
+  inputCostUsd?: number;
+  outputCostUsd?: number;
+  totalCostUsd?: number;
 };
 
 export type QueryRuntimeAgentRunSummary = {
@@ -131,6 +134,9 @@ export async function runAgentWithLifecycle(
         latestUsage = {
           inputTokens: Number(item.inputTokens ?? 0),
           outputTokens: Number(item.outputTokens ?? 0),
+          ...(typeof item.inputCostUsd === "number" ? { inputCostUsd: Number(item.inputCostUsd) } : {}),
+          ...(typeof item.outputCostUsd === "number" ? { outputCostUsd: Number(item.outputCostUsd) } : {}),
+          ...(typeof item.totalCostUsd === "number" ? { totalCostUsd: Number(item.totalCostUsd) } : {}),
         };
         input.onUsage?.(item);
         continue;

@@ -138,6 +138,11 @@ export function formatCapabilityPlan(plan: GoalCapabilityPlanRecord): string {
   const rolePolicy = coordinationPlan?.rolePolicy;
   const verifierHandoff = plan.orchestration?.verifierHandoff;
   const verifierResult = plan.orchestration?.verifierResult;
+  const acceptanceGate = plan.orchestration?.acceptanceGate;
+  const finalApprovalMode = plan.orchestration?.finalApprovalMode;
+  const reworkRevisionCount = plan.orchestration?.reworkRevisionCount;
+  const lastReworkReason = plan.orchestration?.lastReworkReason;
+  const lastReworkAt = plan.orchestration?.lastReworkAt;
   const methodLines = plan.methods.length > 0
     ? plan.methods.map((item, index) => `${index + 1}. ${item.file}${item.title ? ` | ${item.title}` : ""}${item.reason ? ` | ${item.reason}` : ""}`)
     : ["(none)"];
@@ -179,14 +184,19 @@ export function formatCapabilityPlan(plan: GoalCapabilityPlanRecord): string {
     `Node ID: ${plan.nodeId}`,
     `Status: ${plan.status}`,
     `Execution Mode: ${plan.executionMode}`,
+    `Governance Mode: ${plan.governanceMode}`,
+    `Commander Agent: ${plan.commanderAgentId ?? "(none)"}`,
+    `Preferred Agents: ${plan.preferredAgents.length > 0 ? plan.preferredAgents.join(", ") : "(none)"}`,
     `Risk Level: ${plan.riskLevel}`,
     `Objective: ${plan.objective}`,
     `Summary: ${plan.summary}`,
     `Query Hints: ${plan.queryHints.length > 0 ? plan.queryHints.join(" / ") : "(none)"}`,
     `Reasoning: ${plan.reasoning.length > 0 ? plan.reasoning.join(" | ") : "(none)"}`,
-    `Coordinator Plan: ${coordinationPlan ? coordinationPlan.summary : "(none)"}`,
+    `Coordinator Plan: ${coordinationPlan ? `${coordinationPlan.summary}${coordinationPlan.managerAgentId ? ` | manager=${coordinationPlan.managerAgentId}` : ""}` : "(none)"}`,
     `Role Policy: ${rolePolicy ? `roles=${rolePolicy.selectedRoles.join(", ") || "(none)"} | verifier=${rolePolicy.verifierRole ?? "(none)"} | fanIn=${rolePolicy.fanInStrategy}` : "(none)"}`,
     `Role Selection Reasons: ${rolePolicy?.selectionReasons && rolePolicy.selectionReasons.length > 0 ? rolePolicy.selectionReasons.join(" | ") : "(none)"}`,
+    `Final Approval Default: ${finalApprovalMode ?? "(none)"}`,
+    `Rework Revision: ${typeof reworkRevisionCount === "number" ? reworkRevisionCount : 0} | reason=${lastReworkReason ?? "(none)"} | at=${lastReworkAt ?? "(none)"}`,
     `Checkpoint Policy: ${plan.checkpoint.required ? "required" : "optional"} | mode=${plan.checkpoint.approvalMode}${plan.checkpoint.reasons.length > 0 ? ` | ${plan.checkpoint.reasons.join(" | ")}` : ""}`,
     `Checkpoint Requirements: request=${plan.checkpoint.requiredRequestFields.length > 0 ? plan.checkpoint.requiredRequestFields.join(", ") : "(none)"} | decision=${plan.checkpoint.requiredDecisionFields.length > 0 ? plan.checkpoint.requiredDecisionFields.join(", ") : "(none)"}`,
     `Checkpoint Routing: reviewer=${plan.checkpoint.suggestedReviewer ?? "(none)"} | reviewerRole=${plan.checkpoint.suggestedReviewerRole ?? "(none)"} | slaHours=${plan.checkpoint.suggestedSlaHours ?? "(none)"} | escalation=${plan.checkpoint.escalationMode ?? "none"}`,
@@ -198,6 +208,7 @@ export function formatCapabilityPlan(plan: GoalCapabilityPlanRecord): string {
     `Coordinator Results:\n${delegationLines.join("\n")}`,
     `Verifier Handoff: ${verifierHandoff ? `${verifierHandoff.status} | verifier=${verifierHandoff.verifierRole ?? "(none)"} | agent=${verifierHandoff.verifierAgentId ?? "(none)"} | task=${verifierHandoff.verifierTaskId ?? "(none)"} | ${verifierHandoff.summary}` : "(none)"}`,
     `Verifier Result: ${verifierResult ? `${verifierResult.status} | recommendation=${verifierResult.recommendation} | ${verifierResult.summary}` : "(none)"}`,
+    `Acceptance Gate: ${acceptanceGate ? `${acceptanceGate.status} | ${acceptanceGate.summary}` : "(none)"}`,
     `Verifier Findings:\n${verifierFindingLines.join("\n")}`,
     `Source -> Verifier Fan-in:\n${fanInLines.join("\n")}`,
     `Gaps: ${plan.gaps.length > 0 ? plan.gaps.join(" | ") : "(none)"}`,

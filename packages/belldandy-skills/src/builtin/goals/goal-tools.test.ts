@@ -25,6 +25,7 @@ import { goalSuggestionReviewEscalateTool } from "./goal-suggestion-review-escal
 import { goalSuggestionReviewScanTool } from "./goal-suggestion-review-scan.js";
 import { goalSuggestionPublishTool } from "./goal-suggestion-publish.js";
 import { goalOrchestrateTool } from "./goal-orchestrate.js";
+import { goalCommanderDecideTool } from "./goal-commander-decide.js";
 import { taskGraphClaimTool } from "./task-graph-claim.js";
 import { taskGraphCreateTool } from "./task-graph-create.js";
 import { taskGraphFailTool } from "./task-graph-fail.js";
@@ -310,6 +311,72 @@ const baseContext: ToolContext = {
         dependsOn: [],
         acceptance: [],
         artifacts: [],
+        checkpointRequired: false,
+        checkpointStatus: "not_required" as const,
+        createdAt: "2026-03-20T00:00:00.000Z",
+        updatedAt: "2026-03-20T00:00:00.000Z",
+      },
+    })),
+    completeTaskNode: vi.fn(async () => ({
+      goal: {
+        id: "goal_alpha",
+        slug: "alpha",
+        title: "Alpha Goal",
+        status: "completed",
+        goalRoot: "E:/goals/goal_alpha",
+        runtimeRoot: "E:/goals/goal_alpha",
+        docRoot: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha",
+        northstarPath: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha/NORTHSTAR.md",
+        tasksPath: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha/tasks.json",
+        progressPath: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha/progress.md",
+        registryPath: "C:/Users/admin/.star_sanctuary/goals/index.json",
+        pathSource: "default",
+        activeNodeId: "node_root",
+        createdAt: "2026-03-20T00:00:00.000Z",
+        updatedAt: "2026-03-20T00:00:00.000Z",
+      },
+      graph: { version: 2 as const, goalId: "goal_alpha", updatedAt: "2026-03-20T00:00:00.000Z", nodes: [], edges: [] },
+      node: {
+        id: "node_root",
+        title: "Root Node",
+        status: "done" as const,
+        dependsOn: [],
+        acceptance: [],
+        artifacts: [],
+        checkpointRequired: false,
+        checkpointStatus: "not_required" as const,
+        createdAt: "2026-03-20T00:00:00.000Z",
+        updatedAt: "2026-03-20T00:00:00.000Z",
+      },
+    })),
+    blockTaskNode: vi.fn(async (_goalId, _nodeId, input) => ({
+      goal: {
+        id: "goal_alpha",
+        slug: "alpha",
+        title: "Alpha Goal",
+        status: "blocked",
+        goalRoot: "E:/goals/goal_alpha",
+        runtimeRoot: "E:/goals/goal_alpha",
+        docRoot: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha",
+        northstarPath: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha/NORTHSTAR.md",
+        tasksPath: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha/tasks.json",
+        progressPath: "C:/Users/admin/.star_sanctuary/docs/long-tasks/alpha/progress.md",
+        registryPath: "C:/Users/admin/.star_sanctuary/goals/index.json",
+        pathSource: "default",
+        activeNodeId: "node_root",
+        createdAt: "2026-03-20T00:00:00.000Z",
+        updatedAt: "2026-03-20T00:00:00.000Z",
+      },
+      graph: { version: 2 as const, goalId: "goal_alpha", updatedAt: "2026-03-20T00:00:00.000Z", nodes: [], edges: [] },
+      node: {
+        id: "node_root",
+        title: "Root Node",
+        status: "blocked" as const,
+        dependsOn: [],
+        acceptance: [],
+        artifacts: [],
+        summary: input?.summary,
+        blockReason: input?.blockReason,
         checkpointRequired: false,
         checkpointStatus: "not_required" as const,
         createdAt: "2026-03-20T00:00:00.000Z",
@@ -717,6 +784,8 @@ const baseContext: ToolContext = {
       nodeId: "node_root",
       status: "planned" as const,
       executionMode: "multi_agent" as const,
+      governanceMode: "direct" as const,
+      preferredAgents: [],
       riskLevel: "low" as const,
       objective: "Plan Root Node",
       summary: "Need methods and delegation",
@@ -745,13 +814,66 @@ const baseContext: ToolContext = {
       generatedAt: "2026-03-20T00:00:00.000Z",
       updatedAt: "2026-03-20T00:00:00.000Z",
     })),
-    saveCapabilityPlan: vi.fn(async (_goalId, _nodeId, input) => ({
+    saveCapabilityPlan: vi.fn(async (_goalId, _nodeId, input) => {
+      const fanInStrategy = input.orchestration?.coordinationPlan?.rolePolicy?.fanInStrategy;
+      const delegationResults = input.orchestration?.delegationResults ?? [];
+      const acceptanceGate = input.orchestration?.acceptanceGate ?? (
+        fanInStrategy === "commander_review"
+          ? delegationResults.some((item) => item.status === "failed")
+            ? {
+              status: "rejected" as const,
+              summary: "Commander review rejected this capability plan.",
+              reasons: ["failed delegation"],
+              rejectionConfidence: "high" as const,
+              managerActionHint: "Issue a rework order.",
+            }
+            : delegationResults.length > 0 && delegationResults.every((item) => item.status === "success")
+              ? {
+                status: "accepted" as const,
+                summary: "Commander review fan-in is complete.",
+                reasons: [],
+                managerActionHint: "Commander review is complete enough to approve.",
+              }
+              : {
+                status: "pending" as const,
+                summary: "Commander review is still pending.",
+                reasons: ["pending delegation"],
+                managerActionHint: "Wait for delegated lanes.",
+              }
+          : fanInStrategy === "verifier_handoff"
+            ? input.orchestration?.verifierResult?.status === "completed"
+              ? {
+                status: "accepted" as const,
+                summary: "Verifier fan-in gate passed.",
+                reasons: [],
+                managerActionHint: "Verifier result can be used as acceptance signal.",
+              }
+              : input.orchestration?.verifierResult?.status === "failed"
+                ? {
+                  status: "rejected" as const,
+                  summary: "Verifier fan-in gate rejected this capability plan.",
+                  reasons: ["verifier failed"],
+                  rejectionConfidence: "high" as const,
+                  managerActionHint: "Repair verifier path before closing.",
+                }
+                : {
+                  status: "pending" as const,
+                  summary: "Verifier fan-in gate is still pending.",
+                  reasons: ["verifier pending"],
+                  managerActionHint: "Wait for verifier completion.",
+                }
+            : undefined
+      );
+      return {
       id: "plan_1",
       goalId: "goal_alpha",
       nodeId: "node_root",
       runId: input.runId,
       status: input.status ?? "planned",
       executionMode: input.executionMode,
+      governanceMode: input.governanceMode ?? "direct",
+      commanderAgentId: input.commanderAgentId,
+      preferredAgents: input.preferredAgents ?? [],
       riskLevel: input.riskLevel ?? "low",
       objective: input.objective,
       summary: input.summary,
@@ -780,8 +902,14 @@ const baseContext: ToolContext = {
       generatedAt: "2026-03-20T00:00:00.000Z",
       updatedAt: "2026-03-20T00:00:00.000Z",
       orchestratedAt: input.orchestratedAt,
-      orchestration: input.orchestration,
-    })),
+      orchestration: input.orchestration
+        ? {
+          ...input.orchestration,
+          ...(acceptanceGate ? { acceptanceGate } : {}),
+        }
+        : undefined,
+      };
+    }),
     generateCapabilityPlan: vi.fn(async () => ({
       goal: {
         id: "goal_alpha",
@@ -818,6 +946,8 @@ const baseContext: ToolContext = {
         nodeId: "node_root",
         status: "planned" as const,
         executionMode: "multi_agent" as const,
+        governanceMode: "direct" as const,
+        preferredAgents: [],
         riskLevel: "low" as const,
         objective: "Plan Root Node",
         summary: "Need methods and delegation",
@@ -2603,6 +2733,536 @@ describe("goal tools", () => {
       checkpointStatus: "required",
     }));
     expect(spawnParallel).not.toHaveBeenCalled();
+  });
+
+  it("goal_orchestrate should persist commander review acceptance gate for commander fan-in", async () => {
+    const spawnParallel = vi.fn(async (tasks) => tasks.map((task, index) => ({
+      success: true,
+      output: `delegated-${index}`,
+      sessionId: `session_${index}`,
+      taskId: `task_${index}`,
+      outputPath: `E:/project/star-sanctuary/.tmp/task_${index}/result.md`,
+    })));
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "planned" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: ["fan-in", "Root Node"],
+      reasoning: ["Need explicit commander review after delegation"],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [
+        {
+          agentId: "coder",
+          role: "coder" as const,
+          objective: "Implement Root Node",
+        },
+      ],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "尚未记录实际 usage，待执行后再比较计划与实际偏差。",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+    }));
+
+    const context: ToolContext = {
+      ...goalContext,
+      agentCapabilities: {
+        spawnParallel,
+      },
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+      },
+    };
+
+    const result = await goalOrchestrateTool.execute({ node_id: "node_root", auto_delegate: true }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Acceptance Gate: accepted");
+    const saveCalls = (context.goalCapabilities?.saveCapabilityPlan as ReturnType<typeof vi.fn>).mock.calls;
+    expect(saveCalls.some((call) => call[0] === "goal_alpha"
+      && call[1] === "node_root"
+      && call[2]?.governanceMode === "commander"
+      && call[2]?.executionMode === "multi_agent_parallel"
+      && call[2]?.orchestration?.coordinationPlan?.rolePolicy?.fanInStrategy === "commander_review")).toBe(true);
+  });
+
+  it("goal_commander_decide should move accepted commander gate into validating", async () => {
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander_accept",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "orchestrated" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: [],
+      reasoning: [],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "pending",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      orchestration: {
+        finalApprovalMode: "user_required" as const,
+        acceptanceGate: {
+          status: "accepted" as const,
+          summary: "Commander review fan-in is complete.",
+          reasons: [],
+          managerActionHint: "Commander review is complete enough to approve.",
+        },
+      },
+    }));
+    const markTaskNodeValidating = vi.fn(baseContext.goalCapabilities?.markTaskNodeValidating);
+    const saveCapabilityPlan = vi.fn(baseContext.goalCapabilities?.saveCapabilityPlan);
+    const context: ToolContext = {
+      ...goalContext,
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+        saveCapabilityPlan,
+        markTaskNodeValidating,
+      },
+    };
+
+    const result = await goalCommanderDecideTool.execute({ node_id: "node_root", decision: "accept", summary: "fan-in accepted" }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Decision: accept -> validating");
+    expect(result.output).toContain("Acceptance Gate: accepted");
+    expect(markTaskNodeValidating).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      summary: "fan-in accepted",
+    }));
+    expect(saveCapabilityPlan).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      orchestration: expect.objectContaining({
+        notes: expect.arrayContaining([
+          expect.stringContaining("commander decision=accept"),
+        ]),
+      }),
+    }));
+  });
+
+  it("goal_commander_decide should keep commander lane active on rework when auto rework is enabled", async () => {
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander_rework",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "orchestrated" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: [],
+      reasoning: [],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "pending",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      orchestration: {
+        finalApprovalMode: "user_required" as const,
+        reworkRevisionCount: 0,
+        acceptanceGate: {
+          status: "rejected" as const,
+          summary: "Commander review rejected this capability plan.",
+          reasons: ["failed delegation"],
+          rejectionConfidence: "high" as const,
+          managerActionHint: "Issue a rework order.",
+        },
+        delegationResults: [
+          {
+            agentId: "coder",
+            status: "failed" as const,
+            summary: "needs fix",
+          },
+        ],
+      },
+    }));
+    const claimTaskNode = vi.fn(baseContext.goalCapabilities?.claimTaskNode);
+    const saveCapabilityPlan = vi.fn(baseContext.goalCapabilities?.saveCapabilityPlan);
+    const context: ToolContext = {
+      ...goalContext,
+      readEnv: (name) => name === "BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED" ? "true" : undefined,
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+        claimTaskNode,
+        saveCapabilityPlan,
+      },
+    };
+
+    const result = await goalCommanderDecideTool.execute({ node_id: "node_root", decision: "rework", note: "fix failed lane" }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Decision: rework -> in_progress");
+    expect(result.output).toContain("Auto Rework: enabled");
+    expect(result.output).toContain("Rework Revision: 1");
+    expect(result.output).toContain("Rework Targets: coder");
+    expect(claimTaskNode).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      summary: "Commander review rejected this capability plan.",
+    }));
+    expect(saveCapabilityPlan).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      orchestration: expect.objectContaining({
+        reworkTargetAgentIds: ["coder"],
+        reworkContext: expect.objectContaining({
+          quickSummary: "fix failed lane",
+        }),
+      }),
+    }));
+  });
+
+  it("goal_commander_decide should fall back to blocked rework when auto rework is disabled", async () => {
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander_rework_blocked",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "orchestrated" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: [],
+      reasoning: [],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "pending",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      orchestration: {
+        finalApprovalMode: "user_required" as const,
+        reworkRevisionCount: 0,
+        acceptanceGate: {
+          status: "rejected" as const,
+          summary: "Commander review rejected this capability plan.",
+          reasons: ["failed delegation"],
+          rejectionConfidence: "high" as const,
+          managerActionHint: "Issue a rework order.",
+        },
+        delegationResults: [
+          {
+            agentId: "coder",
+            status: "failed" as const,
+            summary: "needs fix",
+          },
+        ],
+      },
+    }));
+    const blockTaskNode = vi.fn(baseContext.goalCapabilities?.blockTaskNode);
+    const claimTaskNode = vi.fn(baseContext.goalCapabilities?.claimTaskNode);
+    const context: ToolContext = {
+      ...goalContext,
+      readEnv: () => undefined,
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+        blockTaskNode,
+        claimTaskNode,
+      },
+    };
+
+    const result = await goalCommanderDecideTool.execute({ node_id: "node_root", decision: "rework", note: "fix failed lane" }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Decision: rework -> blocked");
+    expect(result.output).toContain("Auto Rework: disabled");
+    expect(result.output).toContain("Rework Targets: coder");
+    expect(blockTaskNode).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      blockReason: expect.stringContaining("Rework Revision 1"),
+    }));
+    expect(claimTaskNode).not.toHaveBeenCalled();
+  });
+
+  it("goal_commander_decide should escalate into validating when user final approval is required", async () => {
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander_escalate",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "orchestrated" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: [],
+      reasoning: [],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "pending",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      orchestration: {
+        finalApprovalMode: "user_required" as const,
+        acceptanceGate: {
+          status: "accepted" as const,
+          summary: "Commander review fan-in is complete.",
+          reasons: [],
+          managerActionHint: "Commander review is complete enough to approve.",
+        },
+      },
+    }));
+    const markTaskNodeValidating = vi.fn(baseContext.goalCapabilities?.markTaskNodeValidating);
+    const completeTaskNode = vi.fn(baseContext.goalCapabilities?.completeTaskNode);
+    const context: ToolContext = {
+      ...goalContext,
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+        markTaskNodeValidating,
+        completeTaskNode,
+      },
+    };
+
+    const result = await goalCommanderDecideTool.execute({ node_id: "node_root", decision: "escalate", summary: "need user sign-off" }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Decision: escalate -> validating");
+    expect(result.output).toContain("Final Approval: user_required");
+    expect(markTaskNodeValidating).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      summary: "need user sign-off",
+    }));
+    expect(completeTaskNode).not.toHaveBeenCalled();
+  });
+
+  it("goal_commander_decide should auto complete escalate when plan default disables user final approval", async () => {
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander_escalate_auto",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "orchestrated" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: [],
+      reasoning: [],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "pending",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      orchestration: {
+        finalApprovalMode: "agent_auto_complete" as const,
+        acceptanceGate: {
+          status: "accepted" as const,
+          summary: "Commander review fan-in is complete.",
+          reasons: [],
+          managerActionHint: "Commander review is complete enough to approve.",
+        },
+      },
+    }));
+    const markTaskNodeValidating = vi.fn(baseContext.goalCapabilities?.markTaskNodeValidating);
+    const completeTaskNode = vi.fn(baseContext.goalCapabilities?.completeTaskNode);
+    const context: ToolContext = {
+      ...goalContext,
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+        markTaskNodeValidating,
+        completeTaskNode,
+      },
+    };
+
+    const result = await goalCommanderDecideTool.execute({
+      node_id: "node_root",
+      decision: "escalate",
+      summary: "auto close this run",
+    }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Decision: escalate -> done");
+    expect(result.output).toContain("Final Approval: agent_auto_complete");
+    expect(completeTaskNode).toHaveBeenCalledWith("goal_alpha", "node_root", expect.objectContaining({
+      summary: "auto close this run",
+    }));
+    expect(markTaskNodeValidating).not.toHaveBeenCalled();
+  });
+
+  it("goal_commander_decide should let explicit require_user_approval override the plan default", async () => {
+    const getCapabilityPlan = vi.fn(async () => ({
+      id: "plan_commander_escalate_override",
+      goalId: "goal_alpha",
+      nodeId: "node_root",
+      status: "orchestrated" as const,
+      executionMode: "multi_agent_parallel" as const,
+      governanceMode: "commander" as const,
+      commanderAgentId: "commander",
+      preferredAgents: ["commander", "coder"],
+      riskLevel: "medium" as const,
+      objective: "Implement and fan-in Root Node",
+      summary: "Need commander review after delegation",
+      queryHints: [],
+      reasoning: [],
+      methods: [],
+      skills: [],
+      mcpServers: [],
+      subAgents: [],
+      gaps: [],
+      checkpoint: {
+        required: false,
+        reasons: [],
+        approvalMode: "none" as const,
+        requiredRequestFields: [],
+        requiredDecisionFields: [],
+        escalationMode: "none" as const,
+      },
+      actualUsage: { methods: [], skills: [], mcpServers: [], toolNames: [] },
+      analysis: {
+        status: "pending" as const,
+        summary: "pending",
+        deviations: [],
+        recommendations: [],
+      },
+      generatedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      orchestration: {
+        finalApprovalMode: "agent_auto_complete" as const,
+        acceptanceGate: {
+          status: "accepted" as const,
+          summary: "Commander review fan-in is complete.",
+          reasons: [],
+          managerActionHint: "Commander review is complete enough to approve.",
+        },
+      },
+    }));
+    const markTaskNodeValidating = vi.fn(baseContext.goalCapabilities?.markTaskNodeValidating);
+    const completeTaskNode = vi.fn(baseContext.goalCapabilities?.completeTaskNode);
+    const context: ToolContext = {
+      ...goalContext,
+      goalCapabilities: {
+        ...goalContext.goalCapabilities,
+        getCapabilityPlan,
+        markTaskNodeValidating,
+        completeTaskNode,
+      },
+    };
+
+    const result = await goalCommanderDecideTool.execute({
+      node_id: "node_root",
+      decision: "escalate",
+      summary: "override to user approval",
+      require_user_approval: true,
+    }, context);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Decision: escalate -> validating");
+    expect(markTaskNodeValidating).toHaveBeenCalled();
+    expect(completeTaskNode).not.toHaveBeenCalled();
   });
 
   it("task_graph_pending_review should move node into pending_review", async () => {

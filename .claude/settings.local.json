@@ -101,7 +101,9 @@
       "Bash(corepack pnpm bdd stop:*)",
       "Bash(corepack pnpm bdd start -d)",
       "Bash(corepack pnpm bdd start:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "mcp__filesystem__search_files",
+      "mcp__filesystem__write_file"
     ]
   }
 }

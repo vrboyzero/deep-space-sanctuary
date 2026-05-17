@@ -1,5 +1,7 @@
 import type { GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
+import type { GoalCapabilityPlanFinalApprovalMode } from "../goals/types.js";
 
+import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.js";
 import { buildLearningReviewInput } from "../learning-review-input.js";
 import { buildMindProfileSnapshot } from "../mind-profile-snapshot.js";
 import type { GoalManager } from "../goals/manager.js";
@@ -9,11 +11,16 @@ type GoalsMethodContext = {
   goalManager?: GoalManager;
   stateDir: string;
   residentMemoryManagers?: ScopedMemoryManagerRecord[];
+  readEnv?: (name: string) => string | undefined;
   parseGoalTaskCheckpointStatus: (value: unknown) => "not_required" | "required" | "waiting_user" | "approved" | "rejected" | "expired" | undefined;
   parseGoalTaskCreateStatus: (value: unknown) => "draft" | "ready" | "blocked" | "skipped" | undefined;
 };
 
 const SUGGESTION_TYPES = ["method_candidate", "skill_candidate", "flow_pattern"] as const;
+const GOAL_CAPABILITY_EXECUTION_MODES = ["single_agent", "multi_agent", "multi_agent_parallel", "multi_agent_sequential", "auto"] as const;
+const GOAL_CAPABILITY_GOVERNANCE_MODES = ["direct", "commander", "auto"] as const;
+const GOAL_CAPABILITY_FINAL_APPROVAL_MODES = ["user_required", "agent_auto_complete"] as const;
+const GOAL_COMMANDER_DECISIONS = ["accept", "rework", "escalate"] as const;
 
 export async function handleGoalMethod(
   req: GatewayReqFrame,
@@ -304,6 +311,171 @@ export async function handleGoalMethod(
       }
     }
 
+    case "goal.capability.get": {
+      const goalId = readRequiredString(params, "goalId");
+      const nodeId = readRequiredString(params, "nodeId");
+      if (!goalId || !nodeId) return invalid(req.id, "goalId and nodeId are required");
+      try {
+        const plan = await ctx.goalManager.getCapabilityPlan(goalId, nodeId);
+        if (!plan) return notFound(req.id, "Capability plan not found.");
+        return { type: "res", id: req.id, ok: true, payload: { plan } };
+      } catch (err) {
+        return failure(req.id, "goal_capability_get_failed", err);
+      }
+    }
+
+    case "goal.capability.update": {
+      const goalId = readRequiredString(params, "goalId");
+      const nodeId = readRequiredString(params, "nodeId");
+      if (!goalId || !nodeId) return invalid(req.id, "goalId and nodeId are required");
+      try {
+        const existing = await ctx.goalManager.getCapabilityPlan(goalId, nodeId);
+        if (!existing) return notFound(req.id, "Capability plan not found.");
+        const executionMode = readGoalCapabilityExecutionMode(params.executionMode) ?? existing.executionMode;
+        const governanceMode = readGoalCapabilityGovernanceMode(params.governanceMode) ?? existing.governanceMode;
+        const finalApprovalMode = readGoalCapabilityFinalApprovalMode(params.finalApprovalMode);
+        const orchestration = {
+          ...(existing.orchestration ?? {}),
+          ...(finalApprovalMode ? { finalApprovalMode } : {}),
+        };
+        const plan = await ctx.goalManager.saveCapabilityPlan(goalId, nodeId, {
+          ...existing,
+          executionMode,
+          governanceMode,
+          commanderAgentId: readOptionalString(params, "commanderAgentId") ?? existing.commanderAgentId,
+          preferredAgents: readStringArray(params.preferredAgents) ?? existing.preferredAgents,
+          orchestratedAt: existing.orchestratedAt,
+          orchestration,
+        });
+        return { type: "res", id: req.id, ok: true, payload: { plan } };
+      } catch (err) {
+        return failure(req.id, "goal_capability_update_failed", err);
+      }
+    }
+
+    case "goal.capability.commander_decide": {
+      const goalId = readRequiredString(params, "goalId");
+      const nodeId = readRequiredString(params, "nodeId");
+      const decision = readGoalCommanderDecision(params.decision);
+      if (!goalId || !nodeId || !decision) return invalid(req.id, "goalId, nodeId and valid decision are required");
+      try {
+        const plan = await ctx.goalManager.getCapabilityPlan(goalId, nodeId);
+        if (!plan) return notFound(req.id, "Capability plan not found.");
+        if (plan.governanceMode !== "commander") {
+          return invalid(req.id, `Node ${nodeId} is not using commander governance.`);
+        }
+        const gate = plan.orchestration?.acceptanceGate;
+        if (!gate) {
+          return invalid(req.id, `Node ${nodeId} has no acceptance gate yet.`);
+        }
+        if (decision === "accept" && gate.status !== "accepted") {
+          return invalid(req.id, `Current acceptance gate status is ${gate.status}, cannot accept.`);
+        }
+        const summary = readOptionalString(params, "summary");
+        const note = readOptionalString(params, "note");
+        const runId = readOptionalString(params, "runId");
+        const resolvedFinalApprovalMode = resolveGoalCommanderFinalApprovalMode(
+          typeof params.requireUserApproval === "boolean" ? params.requireUserApproval : undefined,
+          plan.orchestration?.finalApprovalMode,
+        );
+        const nextReworkRevisionCount = decision === "rework"
+          ? (plan.orchestration?.reworkRevisionCount ?? 0) + 1
+          : (plan.orchestration?.reworkRevisionCount ?? 0);
+        const reworkTargetAgentIds = decision === "rework"
+          ? resolveGoalCommanderReworkTargetAgentIds(plan)
+          : (plan.orchestration?.reworkTargetAgentIds ?? []);
+        const reworkContext = decision === "rework"
+          ? buildGoalCommanderReworkContext({
+            summary,
+            note,
+            gateSummary: gate.summary,
+            gateManagerActionHint: gate.managerActionHint,
+            gateReasons: gate.reasons,
+            previousReason: plan.orchestration?.lastReworkReason,
+            previousRevisionCount: plan.orchestration?.reworkRevisionCount,
+            nextRevisionCount: nextReworkRevisionCount,
+          })
+          : null;
+        const commanderRuntimeSwitches = resolveCommanderRuntimeSwitches((name) => {
+          const value = ctx.readEnv?.(name);
+          if (typeof value === "string") {
+            return value;
+          }
+          const fallback = process.env[name];
+          return fallback && fallback.trim() ? fallback.trim() : undefined;
+        });
+        const autoReworkEnabled = commanderRuntimeSwitches.autoReworkEnabled;
+        const now = new Date().toISOString();
+        const savedPlan = await ctx.goalManager.saveCapabilityPlan(goalId, nodeId, {
+          ...plan,
+          runId: runId ?? plan.runId,
+          orchestratedAt: plan.orchestratedAt,
+          orchestration: {
+            ...(plan.orchestration ?? {}),
+            finalApprovalMode: resolvedFinalApprovalMode,
+            reworkRevisionCount: nextReworkRevisionCount > 0 ? nextReworkRevisionCount : plan.orchestration?.reworkRevisionCount,
+            lastReworkReason: decision === "rework"
+              ? (reworkContext?.persistedReason ?? note ?? summary ?? gate.managerActionHint ?? gate.summary)
+              : plan.orchestration?.lastReworkReason,
+            lastReworkAt: decision === "rework" ? now : plan.orchestration?.lastReworkAt,
+            reworkTargetAgentIds: decision === "rework" ? reworkTargetAgentIds : plan.orchestration?.reworkTargetAgentIds,
+            reworkContext: decision === "rework"
+              ? {
+                quickSummary: reworkContext?.quickSummary,
+                historySummary: reworkContext?.historySummary,
+                persistedReason: reworkContext?.persistedReason,
+              }
+              : plan.orchestration?.reworkContext,
+            notes: [
+              ...(plan.orchestration?.notes ?? []),
+              buildGoalCommanderDecisionNote(
+                decision,
+                summary,
+                decision === "rework" ? reworkContext?.persistedReason : note,
+                gate.summary,
+                decision === "escalate" ? resolvedFinalApprovalMode : undefined,
+                decision === "rework" ? nextReworkRevisionCount : undefined,
+              ),
+            ],
+          },
+        });
+
+        const transitionSummary = summary ?? gate.summary;
+        const transitionResult = decision === "accept"
+          ? await ctx.goalManager.markTaskNodeValidating(goalId, nodeId, { summary: transitionSummary, runId })
+          : decision === "rework"
+            ? autoReworkEnabled
+              ? await ctx.goalManager.claimTaskNode(goalId, nodeId, {
+                summary: transitionSummary,
+                runId,
+              })
+              : await ctx.goalManager.blockTaskNode(goalId, nodeId, {
+                summary: transitionSummary,
+                blockReason: reworkContext?.persistedReason ?? note ?? summary ?? gate.managerActionHint ?? gate.summary,
+                runId,
+              })
+            : resolvedFinalApprovalMode === "user_required"
+              ? await ctx.goalManager.markTaskNodeValidating(goalId, nodeId, { summary: transitionSummary, runId })
+              : await ctx.goalManager.completeTaskNode(goalId, nodeId, { summary: transitionSummary, runId });
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          payload: {
+            decision,
+            finalApprovalMode: resolvedFinalApprovalMode,
+            plan: savedPlan,
+            transition: transitionResult,
+            reworkTargetAgentIds,
+            reworkContext,
+            autoReworkEnabled,
+          },
+        };
+      } catch (err) {
+        return failure(req.id, "goal_capability_commander_decide_failed", err);
+      }
+    }
+
     case "goal.checkpoint.request":
     case "goal.checkpoint.approve":
     case "goal.checkpoint.reject":
@@ -476,6 +648,112 @@ function readStringArray(value: unknown): string[] | undefined {
 
 function readFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readGoalCapabilityExecutionMode(value: unknown) {
+  return typeof value === "string" && (GOAL_CAPABILITY_EXECUTION_MODES as readonly string[]).includes(value)
+    ? value as typeof GOAL_CAPABILITY_EXECUTION_MODES[number]
+    : undefined;
+}
+
+function readGoalCapabilityGovernanceMode(value: unknown) {
+  return typeof value === "string" && (GOAL_CAPABILITY_GOVERNANCE_MODES as readonly string[]).includes(value)
+    ? value as typeof GOAL_CAPABILITY_GOVERNANCE_MODES[number]
+    : undefined;
+}
+
+function readGoalCapabilityFinalApprovalMode(value: unknown): GoalCapabilityPlanFinalApprovalMode | undefined {
+  return typeof value === "string" && (GOAL_CAPABILITY_FINAL_APPROVAL_MODES as readonly string[]).includes(value)
+    ? value as GoalCapabilityPlanFinalApprovalMode
+    : undefined;
+}
+
+function readGoalCommanderDecision(value: unknown) {
+  return typeof value === "string" && (GOAL_COMMANDER_DECISIONS as readonly string[]).includes(value)
+    ? value as typeof GOAL_COMMANDER_DECISIONS[number]
+    : undefined;
+}
+
+function resolveGoalCommanderFinalApprovalMode(
+  explicitValue: boolean | undefined,
+  fallback: GoalCapabilityPlanFinalApprovalMode | undefined,
+): GoalCapabilityPlanFinalApprovalMode {
+  if (explicitValue === false) return "agent_auto_complete";
+  if (explicitValue === true) return "user_required";
+  return fallback ?? "user_required";
+}
+
+function buildGoalCommanderDecisionNote(
+  decision: typeof GOAL_COMMANDER_DECISIONS[number],
+  summary?: string,
+  note?: string,
+  gateSummary?: string,
+  approvalMode?: string,
+  revision?: number,
+): string {
+  return [
+    `commander decision=${decision}`,
+    summary ? `summary=${summary}` : "",
+    note ? `note=${note}` : "",
+    gateSummary ? `gate=${gateSummary}` : "",
+    approvalMode ? `approval=${approvalMode}` : "",
+    typeof revision === "number" ? `revision=${revision}` : "",
+  ].filter(Boolean).join(" | ");
+}
+
+function buildGoalCommanderReworkContext(input: {
+  summary?: string;
+  note?: string;
+  gateSummary?: string;
+  gateManagerActionHint?: string;
+  gateReasons?: string[];
+  previousReason?: string;
+  previousRevisionCount?: number;
+  nextRevisionCount: number;
+}): {
+  persistedReason: string;
+  quickSummary: string;
+  historySummary: string;
+} {
+  const lines = [
+    input.summary?.trim() || "",
+    input.note?.trim() || "",
+    input.gateManagerActionHint?.trim() || "",
+    input.gateSummary?.trim() || "",
+    ...(Array.isArray(input.gateReasons) ? input.gateReasons.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean) : []),
+  ].filter(Boolean);
+  const uniqueLines = [...new Set(lines)];
+  const quickSummary = uniqueLines[0] || "Commander rework requested.";
+  const historyParts = [
+    `Rework Revision ${input.nextRevisionCount}`,
+    typeof input.previousRevisionCount === "number" && input.previousRevisionCount > 0
+      ? `previous=${input.previousRevisionCount}`
+      : "",
+    input.previousReason?.trim() ? `last=${input.previousReason.trim()}` : "",
+    uniqueLines.length > 0 ? `current=${uniqueLines.join(" | ")}` : "",
+  ].filter(Boolean);
+  return {
+    persistedReason: historyParts.join(" || "),
+    quickSummary,
+    historySummary: historyParts.join(" | "),
+  };
+}
+
+function resolveGoalCommanderReworkTargetAgentIds(plan: {
+  subAgents?: Array<{ agentId?: string }>;
+  orchestration?: {
+    delegationResults?: Array<{ agentId?: string; status?: string }>;
+  };
+}): string[] {
+  const failedAgentIds = (plan.orchestration?.delegationResults ?? [])
+    .filter((item) => item?.status === "failed" && typeof item.agentId === "string" && item.agentId.trim())
+    .map((item) => item.agentId!.trim());
+  if (failedAgentIds.length > 0) {
+    return [...new Set(failedAgentIds)];
+  }
+  return (plan.subAgents ?? [])
+    .map((item) => typeof item.agentId === "string" ? item.agentId.trim() : "")
+    .filter(Boolean);
 }
 
 function isSuggestionType(value: string): value is typeof SUGGESTION_TYPES[number] {

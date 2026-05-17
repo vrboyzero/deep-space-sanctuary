@@ -80,6 +80,78 @@ export function buildExperienceSynthesisPreview(
   };
 }
 
+export function buildExperienceSynthesisPreviewFromSourceCandidates(
+  seedCandidate: ExperienceCandidate,
+  sourceCandidates: ExperienceCandidate[],
+  options: { limit?: number } = {},
+): ExperienceSynthesisPreviewResult {
+  const limit = Number.isInteger(options.limit) && Number(options.limit) > 0
+    ? Number(options.limit)
+    : 50;
+  const seedComposite = buildCandidateComposite(seedCandidate);
+  const seedTitle = normalizeExperienceText(seedCandidate.title);
+  const seedSlug = normalizeExperienceKey(seedCandidate.slug);
+
+  const items: ExperienceSynthesisPreviewItem[] = [];
+  for (const candidate of Array.isArray(sourceCandidates) ? sourceCandidates : []) {
+    if (
+      !candidate
+      || candidate.type !== seedCandidate.type
+      || candidate.metadata?.synthesisConsumed?.consumed === true
+      || candidate.id === seedCandidate.id
+    ) {
+      continue;
+    }
+    const baseScore = computeSimilarityScore(
+      seedComposite,
+      buildCandidateComposite(candidate),
+      seedTitle,
+      normalizeExperienceText(candidate.title),
+      seedSlug,
+      normalizeExperienceKey(candidate.slug),
+    );
+    const score = Math.min(1, baseScore + computeBusinessSignalScore(seedCandidate, candidate));
+    if (score < SYNTHESIS_SIMILARITY_THRESHOLD) {
+      continue;
+    }
+    items.push({
+      candidateId: candidate.id,
+      type: candidate.type,
+      status: candidate.status,
+      title: candidate.title,
+      slug: candidate.slug,
+      summary: candidate.summary,
+      taskId: candidate.taskId,
+      sourceTaskId: normalizeOptionalString(candidate.sourceTaskSnapshot?.taskId) || undefined,
+      updatedAt: candidate.reviewedAt || candidate.acceptedAt || candidate.rejectedAt || candidate.createdAt,
+      score,
+      relation: score >= SAME_FAMILY_THRESHOLD ? "same_family" : "similar",
+    });
+  }
+  items
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
+    })
+  const limitedItems = items.slice(0, limit);
+
+  const taskIds = new Set<string>();
+  taskIds.add(normalizeOptionalString(seedCandidate.sourceTaskSnapshot?.taskId) || seedCandidate.taskId);
+  for (const item of limitedItems) {
+    taskIds.add(item.sourceTaskId || item.taskId);
+  }
+
+  return {
+    seedCandidateId: seedCandidate.id,
+    candidateType: seedCandidate.type,
+    totalCount: 1 + limitedItems.length,
+    taskCount: taskIds.size,
+    items: limitedItems,
+  };
+}
+
 function buildCandidateComposite(candidate: ExperienceCandidate): string {
   const snapshot = candidate.sourceTaskSnapshot && typeof candidate.sourceTaskSnapshot === "object"
     ? candidate.sourceTaskSnapshot as unknown as Record<string, unknown>

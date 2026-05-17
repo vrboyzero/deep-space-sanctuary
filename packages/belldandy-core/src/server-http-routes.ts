@@ -101,6 +101,9 @@ export type RegisterGatewayHttpRoutesContext = {
     inputTokens: number;
     outputTokens: number;
     durationMs: number;
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+    totalCostUsd?: number;
   }) => void;
   avatarUploadMaxBytes: number;
 };

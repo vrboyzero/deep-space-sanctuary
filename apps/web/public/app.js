@@ -149,6 +149,7 @@ const {
   memoryOutboundAuditFocusAllBtn,
   memoryOutboundAuditFocusThreadsBtn,
   memorySearchInputEl,
+  memoryDedupPreviewBtn,
   memorySearchBtn,
   memoryTaskFiltersEl,
   memoryChunkFiltersEl,
@@ -199,6 +200,15 @@ const {
   experienceSynthesisModalSubmitBtn,
   experienceSynthesisModalConsumeSourcesEl,
   experienceSynthesisModalConsumeSourcesLabelEl,
+  memoryDedupModalEl,
+  memoryDedupModalTitleEl,
+  memoryDedupModalSummaryEl,
+  memoryDedupModalStatusEl,
+  memoryDedupModalWarningEl,
+  memoryDedupModalListEl,
+  memoryDedupModalCloseBtn,
+  memoryDedupModalCancelBtn,
+  memoryDedupModalSubmitBtn,
   goalsSection,
   goalsSummaryEl,
   goalsListEl,
@@ -895,6 +905,11 @@ if (memoryOutboundAuditFocusThreadsBtn) {
 if (memorySearchBtn) {
   memorySearchBtn.addEventListener("click", () => loadMemoryViewer(true));
 }
+if (memoryDedupPreviewBtn) {
+  memoryDedupPreviewBtn.addEventListener("click", () => {
+    void memoryViewerFeature?.openDedupModal?.();
+  });
+}
 if (goalsRefreshBtn) {
   goalsRefreshBtn.addEventListener("click", () => loadGoals(true));
 }
@@ -1445,6 +1460,8 @@ goalsCapabilityPanelFeature = createGoalsCapabilityPanelFeature({
   formatDateTime,
   onOpenSourcePath: (sourcePath) => openSourcePath(sourcePath),
   onOpenSubtask: (taskId) => openSubtaskById(taskId),
+  onSaveGovernanceSettings: (goalId, nodeId, input) => saveGoalCapabilityGovernance(goalId, nodeId, input),
+  onCommanderDecision: (goalId, nodeId, input) => runGoalCommanderDecision(goalId, nodeId, input),
   t: localeController.t,
 });
 
@@ -1479,6 +1496,7 @@ goalsActionsRuntimeFeature = createGoalsActionsRuntimeFeature({
   loadGoalHandoffData: (goal) => loadGoalHandoffData(goal),
   loadGoalReviewGovernanceData: (goal) => loadGoalReviewGovernanceData(goal),
   loadGoalTrackingData: (goal) => loadGoalTrackingData(goal),
+  loadGoalCapabilityData: (goal) => loadGoalCapabilityData(goal),
   getGoalsRuntimeFeature: () => goalsRuntimeFeature,
   getGoalActionActor: () => getGoalActionActor(),
   showNotice,
@@ -1505,6 +1523,8 @@ goalsSpecialistPanelsFeature = createGoalsSpecialistPanelsRuntimeFeature({
   openContinuationAction: (action) => openContinuationAction(action),
   generateGoalHandoff: (goalId) => generateGoalHandoff(goalId),
   runGoalApprovalScan: (goalId, options = {}) => runGoalApprovalScan(goalId, options),
+  saveGoalCapabilityGovernance: (goalId, nodeId, input) => saveGoalCapabilityGovernance(goalId, nodeId, input),
+  runGoalCommanderDecision: (goalId, nodeId, input) => runGoalCommanderDecision(goalId, nodeId, input),
   runGoalSuggestionReviewDecision: (goalId, options = {}) => runGoalSuggestionReviewDecision(goalId, options),
   runGoalSuggestionReviewEscalation: (goalId, options = {}) => runGoalSuggestionReviewEscalation(goalId, options),
   runGoalCheckpointEscalation: (goalId, nodeId, checkpointId) => runGoalCheckpointEscalation(goalId, nodeId, checkpointId),
@@ -1632,6 +1652,7 @@ memoryViewerFeature = createMemoryViewerFeature({
     memoryTaskFiltersEl,
     memoryChunkFiltersEl,
     memorySearchInputEl,
+    memoryDedupPreviewBtn,
     memoryTaskStatusFilterEl,
     memoryTaskSourceFilterEl,
     memoryChunkTypeFilterEl,
@@ -1642,6 +1663,15 @@ memoryViewerFeature = createMemoryViewerFeature({
     memorySharedReviewFocusFilterEl,
     memorySharedReviewTargetFilterEl,
     memorySharedReviewClaimedByFilterEl,
+    memoryDedupModalEl,
+    memoryDedupModalTitleEl,
+    memoryDedupModalSummaryEl,
+    memoryDedupModalStatusEl,
+    memoryDedupModalWarningEl,
+    memoryDedupModalListEl,
+    memoryDedupModalCloseBtn,
+    memoryDedupModalCancelBtn,
+    memoryDedupModalSubmitBtn,
   },
   isConnected: () => Boolean(ws && isReady),
   sendReq,
@@ -3261,6 +3291,14 @@ async function runGoalSuggestionReviewEscalation(goalId, input) {
 
 async function runGoalCheckpointEscalation(goalId, nodeId, checkpointId) {
   return goalsActionsRuntimeFeature?.runGoalCheckpointEscalation(goalId, nodeId, checkpointId);
+}
+
+async function saveGoalCapabilityGovernance(goalId, nodeId, input) {
+  return goalsActionsRuntimeFeature?.saveGoalCapabilityGovernance(goalId, nodeId, input);
+}
+
+async function runGoalCommanderDecision(goalId, nodeId, input) {
+  return goalsActionsRuntimeFeature?.runGoalCommanderDecision(goalId, nodeId, input);
 }
 
 async function submitGoalCheckpointActionForm() {

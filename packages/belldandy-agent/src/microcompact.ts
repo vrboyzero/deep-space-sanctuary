@@ -1,9 +1,13 @@
+import { resolvePinnedToolCompactionLimit } from "./pinning.js";
+
 export type MicrocompactOptions = {
   enabled?: boolean;
   keepRecentToolMessages?: number;
   compactableToolNames?: string[];
   minOutputChars?: number;
   maxDigestChars?: number;
+  /** 为了保持前缀缓存稳定性，禁止原地改写旧 tool message */
+  preservePrefixStability?: boolean;
 };
 
 export type MicrocompactMessage =
@@ -16,6 +20,7 @@ export type MicrocompactResult = {
   mutated: boolean;
   compactedCount: number;
   reclaimedChars: number;
+  skippedForPrefixStability: boolean;
 };
 
 const DEFAULT_KEEP_RECENT_TOOL_MESSAGES = 4;
@@ -66,6 +71,29 @@ function buildCompactedToolContent(toolName: string, content: string, maxDigestC
   ].join("\n");
 }
 
+function shouldCompactToolMessage(input: {
+  messages: MicrocompactMessage[];
+  messageIndex: number;
+  toolCallNameById: Map<string, string>;
+  options?: MicrocompactOptions;
+}): { toolName: string; content: string } | undefined {
+  const message = input.messages[input.messageIndex];
+  if (!message || message.role !== "tool") return undefined;
+  if (typeof message.content !== "string" || !message.content.trim()) return undefined;
+  if (isAlreadyMicrocompacted(message.content)) return undefined;
+
+  const minOutputChars = Math.max(32, Math.floor(input.options?.minOutputChars ?? DEFAULT_MIN_OUTPUT_CHARS));
+  if (message.content.length < minOutputChars) return undefined;
+
+  const toolName = input.toolCallNameById.get(message.tool_call_id) ?? "";
+  if (!isCompactableToolName(toolName, input.options)) return undefined;
+
+  return {
+    toolName,
+    content: message.content,
+  };
+}
+
 export function microcompactMessages(
   messages: MicrocompactMessage[],
   options?: MicrocompactOptions,
@@ -75,11 +103,11 @@ export function microcompactMessages(
       mutated: false,
       compactedCount: 0,
       reclaimedChars: 0,
+      skippedForPrefixStability: false,
     };
   }
 
   const keepRecentToolMessages = Math.max(0, Math.floor(options?.keepRecentToolMessages ?? DEFAULT_KEEP_RECENT_TOOL_MESSAGES));
-  const minOutputChars = Math.max(32, Math.floor(options?.minOutputChars ?? DEFAULT_MIN_OUTPUT_CHARS));
   const maxDigestChars = Math.max(48, Math.floor(options?.maxDigestChars ?? DEFAULT_MAX_DIGEST_CHARS));
   const toolCallNameById = new Map<string, string>();
   const toolMessageIndices: number[] = [];
@@ -102,24 +130,46 @@ export function microcompactMessages(
   }
 
   const compactUntil = Math.max(0, toolMessageIndices.length - keepRecentToolMessages);
+  const effectiveCompactUntil = resolvePinnedToolCompactionLimit({
+    messages,
+    toolMessageIndices,
+    toolCallNameById,
+    keepRecentToolMessages,
+    compactUntil,
+  });
+  if (options?.preservePrefixStability) {
+    const hasCompactionCandidate = Array.from({ length: effectiveCompactUntil }).some((_, index) =>
+      Boolean(shouldCompactToolMessage({
+        messages,
+        messageIndex: toolMessageIndices[index],
+        toolCallNameById,
+        options,
+      })));
+    return {
+      mutated: false,
+      compactedCount: 0,
+      reclaimedChars: 0,
+      skippedForPrefixStability: hasCompactionCandidate,
+    };
+  }
   let compactedCount = 0;
   let reclaimedChars = 0;
 
-  for (let i = 0; i < compactUntil; i++) {
+  for (let i = 0; i < effectiveCompactUntil; i++) {
     const messageIndex = toolMessageIndices[i];
+    const candidate = shouldCompactToolMessage({
+      messages,
+      messageIndex,
+      toolCallNameById,
+      options,
+    });
     const message = messages[messageIndex];
-    if (!message || message.role !== "tool") continue;
-    if (typeof message.content !== "string" || !message.content.trim()) continue;
-    if (message.content.length < minOutputChars) continue;
-    if (isAlreadyMicrocompacted(message.content)) continue;
+    if (!candidate || !message || message.role !== "tool") continue;
 
-    const toolName = toolCallNameById.get(message.tool_call_id) ?? "";
-    if (!isCompactableToolName(toolName, options)) continue;
+    const compacted = buildCompactedToolContent(candidate.toolName, candidate.content, maxDigestChars);
+    if (compacted.length >= candidate.content.length) continue;
 
-    const compacted = buildCompactedToolContent(toolName, message.content, maxDigestChars);
-    if (compacted.length >= message.content.length) continue;
-
-    reclaimedChars += message.content.length - compacted.length;
+    reclaimedChars += candidate.content.length - compacted.length;
     compactedCount += 1;
     message.content = compacted;
   }
@@ -128,5 +178,6 @@ export function microcompactMessages(
     mutated: compactedCount > 0,
     compactedCount,
     reclaimedChars,
+    skippedForPrefixStability: false,
   };
 }

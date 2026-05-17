@@ -896,9 +896,13 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
           BELLDANDY_COMPACTION_BLOCKING_THRESHOLD: "18000",
           BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES: "3",
           BELLDANDY_COMPACTION_MAX_PTL_RETRIES: "2",
+          BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
+          BELLDANDY_COMPACTION_MODEL_ROUTE: "compact-fallback",
           BELLDANDY_COMPACTION_MODEL: "gpt-4o-mini",
           BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
           BELLDANDY_COMPACTION_API_KEY: "compaction-secret",
+          BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
+          BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
           BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
           BELLDANDY_TOOLS_POLICY_FILE: "~/.star_sanctuary/tools-policy.json",
           BELLDANDY_SUB_AGENT_MAX_CONCURRENT: "3",
@@ -952,7 +956,11 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(readRes.payload?.config?.BELLDANDY_PROMPT_EXPERIMENT_DISABLE_SECTIONS).toBe("methodology,context");
     expect(readRes.payload?.config?.BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS).toBe("48");
     expect(readRes.payload?.config?.BELLDANDY_COMPACTION_ENABLED).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION).toBe("0.1");
+    expect(readRes.payload?.config?.BELLDANDY_COMPACTION_MODEL_ROUTE).toBe("compact-fallback");
     expect(readRes.payload?.config?.BELLDANDY_COMPACTION_API_KEY).toBe("[REDACTED]");
+    expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_ITERATION_BUDGET).toBe("8");
+    expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_WARNING_FRACTION).toBe("0.75");
     expect(readRes.payload?.config?.BELLDANDY_DANGEROUS_TOOLS_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_TTS_MODEL).toBe("qwen3-tts-plus");
     expect(readRes.payload?.config?.BELLDANDY_IMAGE_ENABLED).toBe("true");
@@ -970,7 +978,11 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(readRes.payload?.config?.BELLDANDY_ROOM_MEMBERS_CACHE_TTL).toBe("300000");
 
     const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
+    expect(envLocalContent).toContain('BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION="0.1"');
+    expect(envLocalContent).toContain('BELLDANDY_COMPACTION_MODEL_ROUTE="compact-fallback"');
     expect(envLocalContent).toContain('BELLDANDY_COMPACTION_API_KEY="compaction-secret"');
+    expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_ITERATION_BUDGET="8"');
+    expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_WARNING_FRACTION="0.75"');
     expect(envLocalContent).toContain('BELLDANDY_DANGEROUS_TOOLS_ENABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_TTS_MODEL="qwen3-tts-plus"');
     expect(envLocalContent).toContain('BELLDANDY_IMAGE_OPENAI_API_KEY="image-secret"');
@@ -1113,6 +1125,113 @@ test("config.update treats unchanged fields as no-op and still applies governanc
     ws.close();
     await closeP;
     await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(envDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("config.update hot-reloads commander runtime governance defaults and auto rework switch", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const envDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-env-"));
+  const previousCommanderMode = process.env.BELLDANDY_COMMANDER_MODE;
+  const previousCommanderAgentId = process.env.BELLDANDY_COMMANDER_AGENT_ID;
+  const previousExecutionMode = process.env.BELLDANDY_GOAL_EXECUTION_MODE;
+  const previousGovernanceMode = process.env.BELLDANDY_GOAL_GOVERNANCE_MODE;
+  const previousAutoReworkEnabled = process.env.BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED;
+  await fs.promises.writeFile(path.join(envDir, ".env"), "", "utf-8");
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    envDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "config-update-commander-runtime-switches",
+      method: "config.update",
+      params: {
+        updates: {
+          BELLDANDY_COMMANDER_MODE: "on",
+          BELLDANDY_COMMANDER_AGENT_ID: "commander",
+          BELLDANDY_GOAL_EXECUTION_MODE: "multi_agent_parallel",
+          BELLDANDY_GOAL_GOVERNANCE_MODE: "auto",
+          BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED: "true",
+        },
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-commander-runtime-switches"));
+    const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-commander-runtime-switches");
+    expect(updateRes.ok).toBe(true);
+    expect(isConfigFileRestartSuppressed(".env")).toBe(true);
+    expect(isConfigFileRestartSuppressed(".env.local")).toBe(true);
+
+    expect(process.env.BELLDANDY_COMMANDER_MODE).toBe("on");
+    expect(process.env.BELLDANDY_COMMANDER_AGENT_ID).toBe("commander");
+    expect(process.env.BELLDANDY_GOAL_EXECUTION_MODE).toBe("multi_agent_parallel");
+    expect(process.env.BELLDANDY_GOAL_GOVERNANCE_MODE).toBe("auto");
+    expect(process.env.BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED).toBe("true");
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "config-read-commander-runtime-switches",
+      method: "config.read",
+      params: {},
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-read-commander-runtime-switches"));
+    const readRes = frames.find((f) => f.type === "res" && f.id === "config-read-commander-runtime-switches");
+    expect(readRes.ok).toBe(true);
+    expect(readRes.payload?.config?.BELLDANDY_COMMANDER_MODE).toBe("on");
+    expect(readRes.payload?.config?.BELLDANDY_COMMANDER_AGENT_ID).toBe("commander");
+    expect(readRes.payload?.config?.BELLDANDY_GOAL_EXECUTION_MODE).toBe("multi_agent_parallel");
+    expect(readRes.payload?.config?.BELLDANDY_GOAL_GOVERNANCE_MODE).toBe("auto");
+    expect(readRes.payload?.config?.BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED).toBe("true");
+
+    const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
+    expect(envLocalContent).toContain('BELLDANDY_COMMANDER_MODE="on"');
+    expect(envLocalContent).toContain('BELLDANDY_COMMANDER_AGENT_ID="commander"');
+    expect(envLocalContent).toContain('BELLDANDY_GOAL_EXECUTION_MODE="multi_agent_parallel"');
+    expect(envLocalContent).toContain('BELLDANDY_GOAL_GOVERNANCE_MODE="auto"');
+    expect(envLocalContent).toContain('BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED="true"');
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    if (typeof previousCommanderMode === "string") {
+      process.env.BELLDANDY_COMMANDER_MODE = previousCommanderMode;
+    } else {
+      delete process.env.BELLDANDY_COMMANDER_MODE;
+    }
+    if (typeof previousCommanderAgentId === "string") {
+      process.env.BELLDANDY_COMMANDER_AGENT_ID = previousCommanderAgentId;
+    } else {
+      delete process.env.BELLDANDY_COMMANDER_AGENT_ID;
+    }
+    if (typeof previousExecutionMode === "string") {
+      process.env.BELLDANDY_GOAL_EXECUTION_MODE = previousExecutionMode;
+    } else {
+      delete process.env.BELLDANDY_GOAL_EXECUTION_MODE;
+    }
+    if (typeof previousGovernanceMode === "string") {
+      process.env.BELLDANDY_GOAL_GOVERNANCE_MODE = previousGovernanceMode;
+    } else {
+      delete process.env.BELLDANDY_GOAL_GOVERNANCE_MODE;
+    }
+    if (typeof previousAutoReworkEnabled === "string") {
+      process.env.BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED = previousAutoReworkEnabled;
+    } else {
+      delete process.env.BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED;
+    }
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(envDir, { recursive: true, force: true }).catch(() => {});
   }

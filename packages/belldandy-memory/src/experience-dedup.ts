@@ -1,22 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import type {
   ExperienceCandidate,
-  ExperienceCandidateStatus,
   ExperienceCandidateType,
   ExperienceDedupDecision,
   ExperienceDedupMatch,
 } from "./experience-types.js";
+import { listPublishedAssets } from "./published-experience-assets.js";
 import { MemoryStore } from "./store.js";
-
-type ExperienceAssetRecord = {
-  source: "method_asset" | "skill_asset";
-  key: string;
-  title?: string;
-  summary?: string;
-  publishedPath?: string;
-};
 
 export type EvaluateExperienceDedupInput = {
   store: MemoryStore;
@@ -161,108 +150,6 @@ function toCandidateMatch(candidate: ExperienceCandidate, score?: number): Exper
   };
 }
 
-function listPublishedAssets(publishStateDir: string, type: ExperienceCandidateType): ExperienceAssetRecord[] {
-  return type === "method"
-    ? listMethodAssets(publishStateDir)
-    : listSkillAssets(publishStateDir);
-}
-
-function listMethodAssets(publishStateDir: string): ExperienceAssetRecord[] {
-  const methodsDir = path.join(publishStateDir, "methods");
-  if (!fs.existsSync(methodsDir)) {
-    return [];
-  }
-
-  const entries = fs.readdirSync(methodsDir, { withFileTypes: true });
-  const assets: ExperienceAssetRecord[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
-      continue;
-    }
-    const filePath = path.join(methodsDir, entry.name);
-    const parsed = parseMethodAsset(filePath);
-    assets.push({
-      source: "method_asset",
-      key: entry.name,
-      title: parsed.title,
-      summary: parsed.summary,
-      publishedPath: filePath,
-    });
-  }
-  return assets;
-}
-
-function listSkillAssets(publishStateDir: string): ExperienceAssetRecord[] {
-  const skillsDir = path.join(publishStateDir, "skills");
-  if (!fs.existsSync(skillsDir)) {
-    return [];
-  }
-
-  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-  const assets: ExperienceAssetRecord[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const filePath = path.join(skillsDir, entry.name, "SKILL.md");
-    if (!fs.existsSync(filePath)) {
-      continue;
-    }
-    const parsed = parseSkillAsset(filePath);
-    assets.push({
-      source: "skill_asset",
-      key: parsed.name || entry.name,
-      title: parsed.title || parsed.name || entry.name,
-      summary: parsed.description,
-      publishedPath: filePath,
-    });
-  }
-  return assets;
-}
-
-function parseMethodAsset(filePath: string): { title?: string; summary?: string } {
-  const raw = safeReadUtf8(filePath);
-  const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  const summary = frontmatter
-    ? readFrontmatterValue(frontmatter[1], "summary")
-    : undefined;
-  const body = frontmatter ? raw.slice(frontmatter[0].length) : raw;
-  const title = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  return { title, summary };
-}
-
-function parseSkillAsset(filePath: string): { name?: string; title?: string; description?: string } {
-  const raw = safeReadUtf8(filePath);
-  const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  const content = frontmatter ? raw.slice(frontmatter[0].length) : raw;
-  return {
-    name: frontmatter ? readFrontmatterValue(frontmatter[1], "name") : undefined,
-    description: frontmatter ? readFrontmatterValue(frontmatter[1], "description") : undefined,
-    title: content.match(/^#\s+(.+)$/m)?.[1]?.trim(),
-  };
-}
-
-function readFrontmatterValue(frontmatter: string, key: string): string | undefined {
-  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.+)$`, "im");
-  const match = frontmatter.match(pattern);
-  if (!match) {
-    return undefined;
-  }
-  return stripQuotes(match[1]);
-}
-
-function stripQuotes(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/g, "");
-}
-
-function safeReadUtf8(filePath: string): string {
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return "";
-  }
-}
-
 function buildCompositeText(title?: string, key?: string, summary?: string): string {
   return normalizeExperienceText([title, key, summary].filter(Boolean).join(" "));
 }
@@ -367,6 +254,3 @@ function compactText(value: string): string {
   return value.replace(/\s+/g, "");
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

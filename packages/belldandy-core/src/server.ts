@@ -1382,6 +1382,9 @@ function emitAutoRunTaskTokenResult(
     inputTokens: number;
     outputTokens: number;
     durationMs: number;
+    inputCostUsd?: number;
+    outputCostUsd?: number;
+    totalCostUsd?: number;
   },
   ws?: WebSocket,
 ): void {
@@ -1391,6 +1394,9 @@ function emitAutoRunTaskTokenResult(
     outputTokens: Math.max(0, Number(payload.outputTokens ?? 0)),
     totalTokens: Math.max(0, Number(payload.inputTokens ?? 0) + Number(payload.outputTokens ?? 0)),
     durationMs: Math.max(0, Number(payload.durationMs ?? 0)),
+    ...(typeof payload.inputCostUsd === "number" ? { inputCostUsd: Math.max(0, payload.inputCostUsd) } : {}),
+    ...(typeof payload.outputCostUsd === "number" ? { outputCostUsd: Math.max(0, payload.outputCostUsd) } : {}),
+    ...(typeof payload.totalCostUsd === "number" ? { totalCostUsd: Math.max(0, payload.totalCostUsd) } : {}),
     auto: true,
   };
   conversationStore.recordTaskTokenResult(payload.conversationId, result);
@@ -1601,6 +1607,7 @@ async function handleReq(
       "experience.candidate.accept",
       "experience.candidate.reject",
       "experience.candidate.reject_bulk",
+      "experience.asset.list",
       "experience.candidate.synthesize.preview",
       "experience.candidate.synthesize.create",
       "experience.usage.get",
@@ -1622,6 +1629,9 @@ async function handleReq(
     "goal.flow_patterns.generate",
     "goal.flow_patterns.cross_goal",
     "goal.review_governance.summary",
+    "goal.capability.get",
+    "goal.capability.update",
+    "goal.capability.commander_decide",
     "goal.approval.scan",
     "goal.suggestion_review.list",
       "goal.suggestion_review.workflow.set",
@@ -1951,6 +1961,9 @@ async function handleReq(
     case "goal.flow_patterns.generate":
     case "goal.flow_patterns.cross_goal":
     case "goal.review_governance.summary":
+    case "goal.capability.get":
+    case "goal.capability.update":
+    case "goal.capability.commander_decide":
     case "goal.approval.scan":
     case "goal.suggestion_review.list":
     case "goal.suggestion_review.workflow.set":
@@ -1979,6 +1992,7 @@ async function handleReq(
         goalManager: ctx.goalManager,
         stateDir: ctx.stateDir,
         residentMemoryManagers: ctx.residentMemoryManagers,
+        readEnv,
         parseGoalTaskCheckpointStatus,
         parseGoalTaskCreateStatus,
       });
@@ -1987,6 +2001,8 @@ async function handleReq(
     case "memory.get":
     case "memory.recent":
     case "memory.stats":
+    case "memory.dedup.preview":
+    case "memory.dedup.apply":
     case "memory.share.queue":
     case "memory.share.promote":
     case "memory.share.review":
@@ -2006,6 +2022,7 @@ async function handleReq(
     case "experience.candidate.reject":
     case "experience.candidate.reject_bulk":
     case "experience.candidate.cleanup_consumed":
+    case "experience.asset.list":
     case "experience.candidate.synthesize.preview":
     case "experience.candidate.synthesize.create":
     case "experience.usage.get":

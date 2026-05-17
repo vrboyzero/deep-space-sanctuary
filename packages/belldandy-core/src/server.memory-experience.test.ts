@@ -91,6 +91,35 @@ function buildValidSynthesizedMethodContent(title: string, summary: string): str
   ].join("\n");
 }
 
+function buildValidSynthesizedSkillContent(title: string, name: string, description: string): string {
+  return [
+    "---",
+    `name: \"${name}\"`,
+    `description: \"${description}\"`,
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    "## 快速开始",
+    "- 使用前先确认目标任务与输入边界。",
+    "",
+    "## 决策路由",
+    "- 需要复用已发布 skill 时优先从已发布资产开始再合成。",
+    "",
+    "## 输入",
+    "- 输入目标、上下文与现有 skill 线索。",
+    "",
+    "## 输出",
+    "- 输出新的 skill draft，不直接覆盖已发布文件。",
+    "",
+    "## 参考指引",
+    "- 参考已发布 skill、相关 task 复盘与模板约束。",
+    "",
+    "## NEVER",
+    "- 不要直接拼贴旧 skill 内容。",
+  ].join("\n");
+}
+
 test("memory.share.queue supports centralized claim and review across resident agents", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-shared-review-queue-"));
   const registry = new AgentRegistry(() => new MockAgent());
@@ -539,6 +568,75 @@ test("experience.candidate.reject_bulk rejects all draft candidates for a type a
   }
 });
 
+test("experience.asset.list returns published method and skill assets", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-asset-list-"));
+  const methodsDir = path.join(stateDir, "methods");
+  const skillDir = path.join(stateDir, "skills", "published-skill");
+  await fs.promises.mkdir(methodsDir, { recursive: true });
+  await fs.promises.mkdir(skillDir, { recursive: true });
+  await fs.promises.writeFile(path.join(methodsDir, "published-method.md"), [
+    "---",
+    "summary: \"Published method summary\"",
+    "---",
+    "",
+    "# Published Method",
+    "",
+    "Method body",
+  ].join("\n"), "utf-8");
+  await fs.promises.writeFile(path.join(skillDir, "SKILL.md"), [
+    "---",
+    "name: \"published-skill\"",
+    "description: \"Published skill summary\"",
+    "---",
+    "",
+    "# Published Skill",
+    "",
+    "Skill body",
+  ].join("\n"), "utf-8");
+
+  try {
+    const listRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "experience-asset-list",
+      method: "experience.asset.list",
+      params: {
+        agentId: "default",
+        limit: 10,
+      },
+    }, { stateDir });
+
+    expect(listRes).toBeTruthy();
+    if (!listRes || !listRes.ok) {
+      throw new Error("expected successful asset list response");
+    }
+
+    expect(listRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "method_asset",
+        type: "method",
+        key: "published-method.md",
+        title: "Published Method",
+        summary: "Published method summary",
+        publishedPath: path.join(methodsDir, "published-method.md"),
+      }),
+      expect.objectContaining({
+        source: "skill_asset",
+        type: "skill",
+        key: "published-skill",
+        title: "Published Skill",
+        summary: "Published skill summary",
+        publishedPath: path.join(skillDir, "SKILL.md"),
+        metadata: expect.objectContaining({
+          name: "published-skill",
+          description: "Published skill summary",
+        }),
+      }),
+    ]));
+  } finally {
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("experience.candidate.cleanup_consumed deletes only consumed draft candidates", async () => {
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "star-sanctuary-exp-cleanup-"));
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "star-sanctuary-exp-cleanup-state-"));
@@ -788,6 +886,38 @@ test("experience synthesis preview and create log warn details for early invalid
   }
 });
 
+test("experience synthesis preview rejects methods/skills directory assetPath with a clear message", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-asset-dir-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-asset-dir-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-synthesize-preview-asset-dir",
+      method: "experience.candidate.synthesize.preview",
+      params: {
+        assetPath: path.join(stateDir, "methods"),
+        agentId: "default",
+      },
+    }, { stateDir });
+    expect(previewRes?.ok).toBe(false);
+    if (!previewRes || previewRes.ok) {
+      throw new Error("expected preview request to fail");
+    }
+    expect(previewRes.error?.message).toContain("assetPath must point to a published method .md file");
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("experience.candidate.synthesize.preview returns similar draft summary for the seed candidate", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-preview-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-preview-workspace-"));
@@ -866,6 +996,233 @@ test("experience.candidate.synthesize.preview returns similar draft summary for 
         status: "draft",
       }),
     ]));
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("experience.candidate.synthesize.preview supports published asset virtual candidates", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-published-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-published-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  const now = "2026-04-21T00:00:00.000Z";
+  (memoryManager as any).store.createTask({
+    id: "task-published-method-1",
+    conversationId: "conv-task-published-method-1",
+    sessionKey: "session-task-published-method-1",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "Published Method Follow-up",
+    objective: "Reuse published method asset for resynthesis preview",
+    summary: "把已发布方法和近似 draft 一起纳入预览。",
+    reflection: "published reflection",
+    toolCalls: [{ toolName: "web_search", success: true, durationMs: 50 }],
+    artifactPaths: ["docs/example.md"],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const draftCandidate = memoryManager.promoteTaskToMethodCandidate("task-published-method-1");
+  expect(draftCandidate?.candidate.id).toBeTruthy();
+  const acceptedDraft = memoryManager.acceptExperienceCandidate(draftCandidate!.candidate.id);
+  expect(acceptedDraft?.publishedPath).toBeTruthy();
+
+  (memoryManager as any).store.createTask({
+    id: "task-published-method-2",
+    conversationId: "conv-task-published-method-2",
+    sessionKey: "session-task-published-method-2",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "Published Method Similar Draft",
+    objective: "Find similar draft for published preview",
+    summary: "补充同类方法草稿的边界与异常处理。",
+    reflection: "similar reflection",
+    toolCalls: [{ toolName: "web_search", success: true, durationMs: 50 }],
+    artifactPaths: ["docs/example.md"],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const similarDraft = memoryManager.promoteTaskToMethodCandidate("task-published-method-2");
+  expect(similarDraft?.candidate.id).toBeTruthy();
+  await writeExperienceSynthesisTestTemplate(stateDir, "method");
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-synthesize-preview-published",
+      method: "experience.candidate.synthesize.preview",
+      params: {
+        assetPath: acceptedDraft!.publishedPath,
+        agentId: "default",
+      },
+    }, { stateDir });
+    expect(previewRes).toBeTruthy();
+    if (!previewRes || !previewRes.ok) {
+      throw new Error("expected successful synthesize preview response");
+    }
+
+    expect(previewRes.payload?.candidateType).toBe("method");
+    expect(previewRes.payload?.seedCandidate).toMatchObject({
+      status: "published",
+      type: "method",
+      publishedPath: acceptedDraft!.publishedPath,
+      metadata: expect.objectContaining({
+        draftOrigin: { kind: "published" },
+      }),
+    });
+    expect(previewRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        candidateId: similarDraft!.candidate.id,
+        status: "draft",
+        type: "method",
+      }),
+    ]));
+    expect(
+      Array.isArray(previewRes.payload?.sourceCandidateIds)
+      && previewRes.payload.sourceCandidateIds.some((item: string) => item.startsWith("virtual:method:")),
+    ).toBe(true);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("experience.candidate.synthesize.create supports published skill asset virtual seeds", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-published-skill-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-published-skill-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  const now = "2026-04-21T08:00:00.000Z";
+  (memoryManager as any).store.createTask({
+    id: "task-published-skill-1",
+    conversationId: "conv-task-published-skill-1",
+    sessionKey: "session-task-published-skill-1",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "Published Skill Follow-up",
+    objective: "Reuse published skill asset for resynthesis create",
+    summary: "把已发布 skill 作为 virtual seed 再生成新的 draft。",
+    reflection: "published skill reflection",
+    toolCalls: [{ toolName: "memory_search", success: true, durationMs: 30 }],
+    artifactPaths: ["docs/skill.md"],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const draftSkill = memoryManager.promoteTaskToSkillCandidate("task-published-skill-1");
+  expect(draftSkill?.candidate.id).toBeTruthy();
+  const skillRegistry = new SkillRegistry();
+  (memoryManager as any).store.createTask({
+    id: "task-published-skill-2",
+    conversationId: "conv-task-published-skill-2",
+    sessionKey: "session-task-published-skill-2",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "Published Skill Similar Draft",
+    objective: "Reuse published skill asset for resynthesis create",
+    summary: "补充 skill 决策路由、输入输出与边界约束。",
+    reflection: "similar skill reflection",
+    toolCalls: [{ toolName: "memory_search", success: true, durationMs: 30 }],
+    artifactPaths: ["docs/skill.md"],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const similarSkillDraft = memoryManager.promoteTaskToSkillCandidate("task-published-skill-2");
+  expect(similarSkillDraft?.candidate.id).toBeTruthy();
+  await writeExperienceSynthesisTestTemplate(stateDir, "skill");
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const acceptRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-accept-published-skill-seed",
+      method: "experience.candidate.accept",
+      params: {
+        candidateId: draftSkill!.candidate.id,
+        agentId: "default",
+      },
+    }, {
+      stateDir,
+      skillRegistry,
+    });
+    expect(acceptRes).toBeTruthy();
+    if (!acceptRes || !acceptRes.ok) {
+      throw new Error("expected successful skill accept response");
+    }
+
+    const acceptedSkill = memoryManager.getExperienceCandidate(draftSkill!.candidate.id);
+    expect(acceptedSkill?.publishedPath).toBeTruthy();
+
+    const createRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-synthesize-create-published-skill",
+      method: "experience.candidate.synthesize.create",
+      params: {
+        assetPath: acceptedSkill!.publishedPath,
+        sourceCandidateIds: [similarSkillDraft!.candidate.id],
+        markSourcesConsumed: true,
+        agentId: "default",
+      },
+    }, {
+      stateDir,
+      callPrimaryModel: async () => JSON.stringify({
+        title: "Published Skill Unified",
+        summary: "从已发布 skill 继续再合成并产出新的 draft。",
+        content: buildValidSynthesizedSkillContent(
+          "Published Skill Unified",
+          "published-skill-unified",
+          "从已发布 skill 继续再合成并产出新的 draft。",
+        ),
+      }),
+    });
+    expect(createRes).toBeTruthy();
+    if (!createRes || !createRes.ok) {
+      throw new Error("expected successful synthesize create response");
+    }
+
+    expect(createRes.payload?.candidate).toMatchObject({
+      type: "skill",
+      status: "draft",
+      metadata: expect.objectContaining({
+        draftOrigin: { kind: "synthesized" },
+        synthesis: expect.objectContaining({
+          seedCandidateId: expect.stringMatching(/^virtual:skill:/),
+        }),
+      }),
+    });
+    expect(createRes.payload?.sourceCount).toBe(2);
+    expect(createRes.payload?.sourceCandidateIds).toEqual(expect.arrayContaining([
+      similarSkillDraft!.candidate.id,
+      expect.stringMatching(/^virtual:skill:/),
+    ]));
+    expect(createRes.payload?.consumedSourceCount).toBe(1);
+    expect(createRes.payload?.consumedSourceCandidateIds).toEqual([similarSkillDraft!.candidate.id]);
+
+    const consumedDraft = memoryManager.getExperienceCandidate(similarSkillDraft!.candidate.id);
+    expect(consumedDraft?.metadata?.synthesisConsumed?.consumed).toBe(true);
   } finally {
     memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
@@ -1367,6 +1724,188 @@ test("experience.candidate.synthesize.create logs error details when model outpu
   }
 });
 
+test("experience.candidate.synthesize.create retries once with reduced reasoning after output budget exhaustion", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-length-retry-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-length-retry-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  const now = "2026-04-20T00:00:00.000Z";
+  (memoryManager as any).store.createTask({
+    id: "task-synthesize-length-retry-1",
+    conversationId: "conv-task-synthesize-length-retry-1",
+    sessionKey: "session-task-synthesize-length-retry-1",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "Length Retry Draft",
+    objective: "Length Retry Draft objective",
+    summary: "Length Retry Draft summary",
+    reflection: "Length Retry Draft reflection",
+    toolCalls: [{ toolName: "web_search", success: true, durationMs: 40 }],
+    artifactPaths: ["docs/example.md"],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const candidate = memoryManager.promoteTaskToMethodCandidate("task-synthesize-length-retry-1");
+  expect(candidate?.candidate.id).toBeTruthy();
+  await writeExperienceSynthesisTestTemplate(stateDir, "method");
+  registerGlobalMemoryManager(memoryManager);
+
+  const callInputs: Array<{ reasoningEffort?: string; thinking?: Record<string, unknown> }> = [];
+  const warnLogs: Array<{ message: string; data?: unknown }> = [];
+
+  try {
+    const createRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-synthesize-create-length-retry",
+      method: "experience.candidate.synthesize.create",
+      params: {
+        candidateId: candidate!.candidate.id,
+        agentId: "default",
+      },
+    }, {
+      stateDir,
+      primaryModelConfig: {
+        baseUrl: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "reasoning-model",
+        thinking: { type: "enabled", budget_tokens: 4096 },
+        reasoningEffort: "high",
+      },
+      callPrimaryModel: async (input) => {
+        callInputs.push({
+          reasoningEffort: input.reasoningEffort,
+          thinking: input.thinking,
+        });
+        if (callInputs.length === 1) {
+          throw new Error("Experience synthesis model returned empty content. finish_reason=length, reasoning_content=present(1234).");
+        }
+        return JSON.stringify({
+          title: "Length Retry Unified",
+          summary: "首次长度耗尽后自动降推理重试成功。",
+          content: buildValidSynthesizedMethodContent(
+            "Length Retry Unified",
+            "首次长度耗尽后自动降推理重试成功。",
+          ),
+        });
+      },
+      logger: {
+        warn: (message, data) => {
+          warnLogs.push({ message, data });
+        },
+      },
+    });
+    expect(createRes?.ok).toBe(true);
+    if (!createRes || !createRes.ok) {
+      throw new Error("expected synthesize create request to succeed after retry");
+    }
+    expect(callInputs).toHaveLength(2);
+    expect(callInputs[0]).toMatchObject({
+      reasoningEffort: "high",
+      thinking: { type: "enabled", budget_tokens: 4096 },
+    });
+    expect(callInputs[1]?.reasoningEffort).toBe("medium");
+    expect(callInputs[1]?.thinking).toBeUndefined();
+    expect(warnLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        message: "Experience synthesis model exhausted output budget; retrying with reduced reasoning",
+        data: expect.objectContaining({
+          initialReasoningEffort: "high",
+          retryReasoningEffort: "medium",
+          clearedThinking: true,
+        }),
+      }),
+    ]));
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("experience.candidate.synthesize.create returns a recoverable error when the model exhausts output budget", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-length-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-length-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  const now = "2026-04-20T00:00:00.000Z";
+  (memoryManager as any).store.createTask({
+    id: "task-synthesize-length-1",
+    conversationId: "conv-task-synthesize-length-1",
+    sessionKey: "session-task-synthesize-length-1",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "Length Exhausted Draft",
+    objective: "Length Exhausted Draft objective",
+    summary: "Length Exhausted Draft summary",
+    reflection: "Length Exhausted Draft reflection",
+    toolCalls: [{ toolName: "web_search", success: true, durationMs: 40 }],
+    artifactPaths: ["docs/example.md"],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const candidate = memoryManager.promoteTaskToMethodCandidate("task-synthesize-length-1");
+  expect(candidate?.candidate.id).toBeTruthy();
+  await writeExperienceSynthesisTestTemplate(stateDir, "method");
+  registerGlobalMemoryManager(memoryManager);
+  const callInputs: Array<{ reasoningEffort?: string; thinking?: Record<string, unknown> }> = [];
+
+  try {
+    const createRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-synthesize-create-length",
+      method: "experience.candidate.synthesize.create",
+      params: {
+        candidateId: candidate!.candidate.id,
+        agentId: "default",
+      },
+    }, {
+      stateDir,
+      primaryModelConfig: {
+        baseUrl: "https://example.invalid/v1",
+        apiKey: "test-key",
+        model: "reasoning-model",
+        thinking: { type: "enabled", budget_tokens: 4096 },
+        reasoningEffort: "high",
+      },
+      callPrimaryModel: async (input) => {
+        callInputs.push({
+          reasoningEffort: input.reasoningEffort,
+          thinking: input.thinking,
+        });
+        throw new Error("Experience synthesis model returned empty content. finish_reason=length, reasoning_content=present(1234).");
+      },
+    });
+    expect(createRes?.ok).toBe(false);
+    if (!createRes || createRes.ok) {
+      throw new Error("expected synthesize create request to fail");
+    }
+    expect(callInputs).toHaveLength(2);
+    expect(callInputs[0]?.reasoningEffort).toBe("high");
+    expect(callInputs[0]?.thinking).toMatchObject({ type: "enabled", budget_tokens: 4096 });
+    expect(callInputs[1]?.reasoningEffort).toBe("medium");
+    expect(callInputs[1]?.thinking).toBeUndefined();
+    expect(createRes.error?.message).toContain("exhausted its output budget");
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("experience.candidate.synthesize.create accepts chat completion content arrays from reasoning models", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-content-array-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-synthesize-content-array-workspace-"));
@@ -1694,6 +2233,279 @@ test("experience.candidate.check_duplicate previews dedup result before generati
     expect(Array.isArray(previewRes.payload?.similarMatches)).toBe(true);
     expect(similarMatches.some((item) => item.source === "method_asset")).toBe(true);
     expect(memoryManager.listExperienceCandidates(10, { taskId: "task-dedup-1", type: "method" })).toHaveLength(0);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.dedup.preview reports exact duplicate groups without mutating chunk count", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-preview-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-preview-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "dup-a",
+      sourcePath: "memory/dup-a.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "  duplicated memory line\r\nsecond line  ",
+      visibility: "private",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "dup-b",
+      sourcePath: "memory/dup-b.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "duplicated memory line\nsecond line",
+      visibility: "shared",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "unique-c",
+      sourcePath: "memory/unique-c.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "same topic but not exact duplicate",
+      visibility: "private",
+    });
+    registerGlobalMemoryManager(memoryManager);
+
+    const beforeCount = memoryManager.countChunks();
+    const response = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-dedup-preview",
+      method: "memory.dedup.preview",
+      params: {
+        filter: { memoryType: "daily" },
+        maxGroups: 20,
+      },
+    }, { stateDir });
+
+    expect(response).toBeTruthy();
+    if (!response || !response.ok) {
+      throw new Error("expected successful memory.dedup.preview response");
+    }
+
+    const report = response.payload?.report as Record<string, any> | undefined;
+    expect(report?.mode).toBe("dry_run");
+    expect(report?.strategy).toBe("hash_only_exact");
+    expect(report?.totals?.scannedChunks).toBe(3);
+    expect(report?.totals?.duplicateGroups).toBe(1);
+    expect(report?.totals?.removableChunks).toBe(1);
+    expect(Array.isArray(report?.groups)).toBe(true);
+    expect(report?.groups?.[0]?.keep?.id).toBe("dup-a");
+    expect(report?.groups?.[0]?.remove?.map((item: Record<string, unknown>) => item.id)).toEqual(["dup-b"]);
+    expect(memoryManager.countChunks()).toBe(beforeCount);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.dedup.apply backs up the db, removes duplicate chunks, and relinks task memory links", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-apply-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-apply-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "apply-dup-a",
+      sourcePath: "memory/apply-a.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "exact duplicated memory\r\nline two",
+      visibility: "private",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "apply-dup-b",
+      sourcePath: "memory/apply-b.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "exact duplicated memory\nline two",
+      visibility: "shared",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "apply-unique-c",
+      sourcePath: "memory/apply-c.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "unique memory payload",
+      visibility: "private",
+    });
+    (memoryManager as any).store.createTask({
+      id: "task-dedup-apply-1",
+      conversationId: "conv-dedup-apply-1",
+      sessionKey: "session-dedup-apply-1",
+      agentId: "default",
+      source: "chat",
+      status: "success",
+      title: "dedup apply test",
+      objective: "验证 dedup apply 会迁移 task_memory_links",
+      summary: "duplicate cleanup",
+      reflection: "keep links",
+      toolCalls: [],
+      artifactPaths: [],
+      startedAt: "2026-05-17T00:00:00.000Z",
+      finishedAt: "2026-05-17T00:00:00.000Z",
+      createdAt: "2026-05-17T00:00:00.000Z",
+      updatedAt: "2026-05-17T00:00:00.000Z",
+    });
+    (memoryManager as any).store.createTask({
+      id: "task-dedup-apply-2",
+      conversationId: "conv-dedup-apply-2",
+      sessionKey: "session-dedup-apply-2",
+      agentId: "default",
+      source: "chat",
+      status: "success",
+      title: "dedup apply test keeper",
+      objective: "让 keeper 与 remove 的 task link 数持平，按 keeper 规则稳定选中 apply-dup-a",
+      summary: "duplicate cleanup keeper",
+      reflection: "prefer source path order after task link tie",
+      toolCalls: [],
+      artifactPaths: [],
+      startedAt: "2026-05-17T00:00:00.000Z",
+      finishedAt: "2026-05-17T00:00:00.000Z",
+      createdAt: "2026-05-17T00:00:00.000Z",
+      updatedAt: "2026-05-17T00:00:00.000Z",
+    });
+    (memoryManager as any).store.linkTaskMemory("task-dedup-apply-2", "apply-dup-a", "used");
+    (memoryManager as any).store.linkTaskMemory("task-dedup-apply-1", "apply-dup-b", "used");
+    registerGlobalMemoryManager(memoryManager);
+
+    const beforeCount = memoryManager.countChunks();
+    const beforeLinks = memoryManager.getTaskDetail("task-dedup-apply-1")?.memoryLinks ?? [];
+    expect(beforeLinks.some((item) => item.chunkId === "apply-dup-b")).toBe(true);
+
+    const response = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-dedup-apply",
+      method: "memory.dedup.apply",
+      params: {
+        confirmed: true,
+        filter: { memoryType: "daily" },
+        runId: "dedup-apply-test",
+      },
+    }, { stateDir });
+
+    expect(response).toBeTruthy();
+    if (!response || !response.ok) {
+      throw new Error("expected successful memory.dedup.apply response");
+    }
+
+    const result = response.payload?.result as Record<string, any> | undefined;
+    expect(result?.mode).toBe("apply");
+    expect(result?.backupPath).toContain("memory-dedup-backups");
+    expect(result?.totals?.removedChunks).toBe(1);
+    expect(result?.totals?.relinkedTaskMemoryLinks).toBe(1);
+    expect(await fs.promises.stat(String(result?.backupPath))).toBeTruthy();
+    expect(memoryManager.countChunks()).toBe(beforeCount - 1);
+    expect(memoryManager.getMemory("apply-dup-b")).toBeNull();
+    expect(memoryManager.getMemory("apply-dup-a")?.content).toContain("exact duplicated memory");
+    const afterLinks = memoryManager.getTaskDetail("task-dedup-apply-1")?.memoryLinks ?? [];
+    expect(afterLinks.some((item) => item.chunkId === "apply-dup-a")).toBe(true);
+    expect(afterLinks.some((item) => item.chunkId === "apply-dup-b")).toBe(false);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.dedup methods are reachable through gateway websocket dispatch", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-ws-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-ws-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "ws-dup-a",
+      sourcePath: "memory/ws-dup-a.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "websocket dedup preview line\r\nnext line",
+      visibility: "private",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "ws-dup-b",
+      sourcePath: "memory/ws-dup-b.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "websocket dedup preview line\nnext line",
+      visibility: "shared",
+    });
+    registerGlobalMemoryManager(memoryManager);
+
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+    const frames: any[] = [];
+    const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+    try {
+      await pairWebSocketClient(ws, frames, stateDir);
+      frames.length = 0;
+
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "memory-dedup-preview-ws",
+        method: "memory.dedup.preview",
+        params: {
+          agentId: "default",
+          filter: { memoryType: "daily" },
+        },
+      }));
+      await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === "memory-dedup-preview-ws"));
+
+      const previewRes = frames.find((frame) => frame.type === "res" && frame.id === "memory-dedup-preview-ws");
+      expect(previewRes?.ok).toBe(true);
+      expect(previewRes?.error?.message).not.toBe("Unknown method.");
+      expect(previewRes?.payload?.report?.totals?.duplicateGroups).toBe(1);
+      expect(previewRes?.payload?.report?.groups?.[0]?.remove?.map((item: Record<string, unknown>) => item.id)).toEqual(["ws-dup-b"]);
+
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "memory-dedup-apply-ws",
+        method: "memory.dedup.apply",
+        params: {
+          agentId: "default",
+          confirmed: true,
+          filter: { memoryType: "daily" },
+          runId: "memory-dedup-ws",
+        },
+      }));
+      await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === "memory-dedup-apply-ws"));
+
+      const applyRes = frames.find((frame) => frame.type === "res" && frame.id === "memory-dedup-apply-ws");
+      expect(applyRes?.ok).toBe(true);
+      expect(applyRes?.error?.message).not.toBe("Unknown method.");
+      expect(applyRes?.payload?.result?.totals?.removedChunks).toBe(1);
+      expect(applyRes?.payload?.result?.backupPath).toContain("memory-dedup-backups");
+    } finally {
+      ws.close();
+      await closeP;
+      await server.close();
+    }
   } finally {
     memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});

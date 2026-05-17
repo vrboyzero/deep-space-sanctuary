@@ -105,6 +105,88 @@ export function createGoalsGovernancePanelFeature({
     `;
   }
 
+  function renderCommanderFocusSection(summary) {
+    if (!summary || typeof summary !== "object") return "";
+    const delegationResults = Array.isArray(summary.delegationResults) ? summary.delegationResults : [];
+    const checkLines = Array.isArray(summary.checkLines) ? summary.checkLines : [];
+    const reasons = Array.isArray(summary.reasons) ? summary.reasons : [];
+    const workOrderPaths = Array.isArray(summary.workOrderPaths) ? summary.workOrderPaths : [];
+    const reworkTargetAgentIds = Array.isArray(summary.reworkTargetAgentIds) ? summary.reworkTargetAgentIds : [];
+    return `
+      <div class="memory-detail-card" style="margin-bottom:12px;">
+        <div class="goal-summary-title">Commander Review / Fan-in</div>
+        <div class="goal-summary-text">聚合当前 focus commander 节点的 fan-in 摘要、收口建议、delegation lane 结果与 review/work-order 入口。</div>
+        <div class="goal-summary-grid" style="margin-top:10px;">
+          <div class="goal-summary-item"><span class="goal-summary-label">当前节点</span><strong class="goal-summary-value">${escapeHtml(summary.nodeTitle || summary.nodeId || "-")}</strong></div>
+          <div class="goal-summary-item"><span class="goal-summary-label">治理模式</span><strong class="goal-summary-value">${escapeHtml(summary.governanceMode || "-")}</strong></div>
+          <div class="goal-summary-item"><span class="goal-summary-label">执行模式</span><strong class="goal-summary-value">${escapeHtml(summary.executionMode || "-")}</strong></div>
+          <div class="goal-summary-item"><span class="goal-summary-label">Review 状态</span><strong class="goal-summary-value">${escapeHtml(formatGovernanceStatus(summary.reviewStatus || "-"))}</strong></div>
+          <div class="goal-summary-item"><span class="goal-summary-label">Final Approval</span><strong class="goal-summary-value">${escapeHtml(summary.finalApprovalMode || "-")}</strong></div>
+          <div class="goal-summary-item"><span class="goal-summary-label">返工次数</span><strong class="goal-summary-value">${escapeHtml(String(summary.reworkRevisionCount || 0))}</strong></div>
+        </div>
+        <div class="memory-detail-badges" style="margin-top:10px;">
+          ${summary.commanderAgentId ? `<span class="memory-badge">Commander: ${escapeHtml(summary.commanderAgentId)}</span>` : ""}
+          ${summary.planId ? `<span class="memory-badge">Plan: ${escapeHtml(summary.planId)}</span>` : ""}
+          ${summary.runId ? `<span class="memory-badge">Run: ${escapeHtml(summary.runId)}</span>` : ""}
+        </div>
+        ${summary.fanInSummary ? `<div class="memory-detail-text">${escapeHtml(summary.fanInSummary)}</div>` : ""}
+        ${summary.nextAction ? `<div class="memory-detail-text">Next: ${escapeHtml(summary.nextAction)}</div>` : ""}
+        ${summary.managerActionHint ? `<div class="memory-detail-text">Hint: ${escapeHtml(summary.managerActionHint)}</div>` : ""}
+        ${summary.lastReworkReason ? `<div class="memory-detail-text">Last Rework: ${escapeHtml(summary.lastReworkReason)}</div>` : ""}
+        ${summary.lastReworkAt ? `<div class="memory-list-item-meta"><span>Rework At</span><span>${escapeHtml(formatDateTime(summary.lastReworkAt))}</span></div>` : ""}
+        ${summary.reworkContext?.quickSummary || summary.reworkContext?.historySummary ? `
+          <div class="goal-summary-title" style="margin-top:12px;">Rework Context</div>
+          ${summary.reworkContext?.quickSummary ? `<div class="memory-detail-text">Quick: ${escapeHtml(summary.reworkContext.quickSummary)}</div>` : ""}
+          ${summary.reworkContext?.historySummary ? `<div class="memory-detail-text">${escapeHtml(summary.reworkContext.historySummary)}</div>` : ""}
+        ` : ""}
+        ${reworkTargetAgentIds.length ? `
+          <div class="goal-summary-title" style="margin-top:12px;">Rework Targets</div>
+          <div class="memory-detail-badges">
+            ${reworkTargetAgentIds.map((item) => `<span class="memory-badge">${escapeHtml(item)}</span>`).join("")}
+          </div>
+        ` : ""}
+        ${reasons.length ? `
+          <div class="tool-settings-policy-note">
+            ${reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
+          </div>
+        ` : ""}
+        ${checkLines.length ? `
+          <div class="goal-summary-title" style="margin-top:12px;">Acceptance Checks</div>
+          <div class="tool-settings-policy-note">
+            ${checkLines.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
+          </div>
+        ` : ""}
+        ${delegationResults.length ? `
+          <div class="goal-summary-title" style="margin-top:12px;">Delegation Lanes</div>
+          <div class="goal-tracking-list">
+            ${delegationResults.map((item) => `
+              <div class="goal-tracking-item">
+                <div class="goal-tracking-item-head">
+                  <span class="goal-tracking-item-title">${escapeHtml(item.agentId || "-")}${item.role ? ` · ${escapeHtml(item.role)}` : ""}</span>
+                  ${item.status ? `<span class="memory-badge">${escapeHtml(item.status)}</span>` : ""}
+                </div>
+                ${item.summary ? `<div class="memory-list-item-snippet">${escapeHtml(item.summary)}</div>` : ""}
+                <div class="memory-list-item-meta">
+                  ${item.taskId ? `<span>${escapeHtml(item.taskId)}</span>` : ""}
+                  ${item.outputPath ? `<span>${escapeHtml(item.outputPath)}</span>` : ""}
+                </div>
+                <div class="goal-detail-actions">
+                  ${item.taskId ? `<button class="button goal-inline-action-secondary" data-open-task-id="${escapeHtml(item.taskId)}">打开运行任务</button>` : ""}
+                  ${item.outputPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(item.outputPath)}">打开产物</button>` : ""}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        ` : '<div class="memory-viewer-empty" style="margin-top:12px;">当前还没有可展示的 delegation lane 结果。</div>'}
+        <div class="goal-detail-actions" style="margin-top:12px;">
+          ${summary.reviewPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(summary.reviewPath)}">打开 review</button>` : ""}
+          ${summary.commanderPlanPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(summary.commanderPlanPath)}">打开 commander plan</button>` : ""}
+          ${workOrderPaths.map((item) => `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(item)}">打开 work-order</button>`).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderGoalReviewGovernancePanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalGovernancePanel");
     if (!panel) return;
@@ -147,6 +229,7 @@ export function createGoalsGovernancePanelFeature({
         ${compactGovernanceDetailMode ? "" : `<div class="goal-summary-item"><span class="goal-summary-label">模板</span><strong class="goal-summary-value">${escapeHtml(String(data.templates.length))}</strong></div>`}
         ${compactGovernanceDetailMode ? "" : `<div class="goal-summary-item"><span class="goal-summary-label">分发记录</span><strong class="goal-summary-value">${escapeHtml(String(data.notificationDispatchCounts?.total || data.notificationDispatches.length || 0))}</strong></div>`}
       </div>
+      ${compactGovernanceDetailMode ? "" : renderCommanderFocusSection(data.commanderFocus)}
       ${compactGovernanceDetailMode ? "" : renderGoalBridgeGovernanceSection(data.bridgeGovernanceSummary)}
       ${!compactGovernanceDetailMode && data.learningReviewInput ? `
         <div class="memory-detail-card" style="margin-bottom:12px;">

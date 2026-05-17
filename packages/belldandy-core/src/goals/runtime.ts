@@ -448,7 +448,11 @@ function normalizeCapabilityPlanRolePolicy(value: unknown): GoalCapabilityPlanRo
     selectedRoles: selectedRoles.length > 0 ? selectedRoles : ["default"],
     selectionReasons,
     verifierRole: verifierRole === "verifier" ? verifierRole : undefined,
-    fanInStrategy: fanInStrategy === "verifier_handoff" ? "verifier_handoff" : "main_agent_summary",
+    fanInStrategy: fanInStrategy === "verifier_handoff"
+      ? "verifier_handoff"
+      : fanInStrategy === "commander_review"
+        ? "commander_review"
+        : "main_agent_summary",
   };
 }
 
@@ -463,6 +467,7 @@ function normalizeCapabilityPlanCoordinationPlan(value: unknown): GoalCapability
     plannedDelegationCount: typeof source.plannedDelegationCount === "number" && Number.isFinite(source.plannedDelegationCount)
       ? source.plannedDelegationCount
       : 0,
+    managerAgentId: normalizeString(source.managerAgentId),
     rolePolicy,
   };
 }
@@ -620,6 +625,22 @@ function normalizeCapabilityPlanOrchestration(value: unknown): GoalCapabilityPla
     delegated: typeof source.delegated === "boolean" ? source.delegated : undefined,
     delegationCount: typeof source.delegationCount === "number" && Number.isFinite(source.delegationCount)
       ? source.delegationCount
+      : undefined,
+    finalApprovalMode: source.finalApprovalMode === "agent_auto_complete" ? "agent_auto_complete" : source.finalApprovalMode === "user_required" ? "user_required" : undefined,
+    reworkRevisionCount: typeof source.reworkRevisionCount === "number" && Number.isFinite(source.reworkRevisionCount) && source.reworkRevisionCount >= 0
+      ? source.reworkRevisionCount
+      : undefined,
+    lastReworkReason: normalizeString(source.lastReworkReason),
+    lastReworkAt: normalizeString(source.lastReworkAt),
+    reworkTargetAgentIds: Array.isArray(source.reworkTargetAgentIds)
+      ? source.reworkTargetAgentIds.map((item) => normalizeString(item)).filter((item): item is string => Boolean(item))
+      : undefined,
+    reworkContext: source.reworkContext && typeof source.reworkContext === "object" && !Array.isArray(source.reworkContext)
+      ? {
+        quickSummary: normalizeString((source.reworkContext as Record<string, unknown>).quickSummary),
+        historySummary: normalizeString((source.reworkContext as Record<string, unknown>).historySummary),
+        persistedReason: normalizeString((source.reworkContext as Record<string, unknown>).persistedReason),
+      }
       : undefined,
     coordinationPlan: normalizeCapabilityPlanCoordinationPlan(source.coordinationPlan),
     delegationResults: Array.isArray(source.delegationResults)
@@ -1332,7 +1353,17 @@ function normalizeCapabilityPlanItem(value: unknown, index: number, goalId?: str
   const summary = normalizeString(source.summary);
   if (!nodeId || !objective || !summary) return null;
   const now = new Date().toISOString();
-  const executionMode = normalizeString(source.executionMode) === "multi_agent" ? "multi_agent" : "single_agent";
+  const rawExecutionMode = normalizeString(source.executionMode);
+  const executionMode = rawExecutionMode === "multi_agent"
+    || rawExecutionMode === "multi_agent_parallel"
+    || rawExecutionMode === "multi_agent_sequential"
+    || rawExecutionMode === "auto"
+    ? rawExecutionMode
+    : "single_agent";
+  const rawGovernanceMode = normalizeString(source.governanceMode);
+  const governanceMode = rawGovernanceMode === "commander" || rawGovernanceMode === "auto"
+    ? rawGovernanceMode
+    : "direct";
   const status = normalizeString(source.status) === "orchestrated" ? "orchestrated" : "planned";
   const queryHints = Array.isArray(source.queryHints)
     ? source.queryHints.map((item) => normalizeString(item)).filter((item): item is string => Boolean(item))
@@ -1350,6 +1381,11 @@ function normalizeCapabilityPlanItem(value: unknown, index: number, goalId?: str
     runId: normalizeString(source.runId),
     status,
     executionMode,
+    governanceMode,
+    commanderAgentId: normalizeString(source.commanderAgentId),
+    preferredAgents: Array.isArray(source.preferredAgents)
+      ? source.preferredAgents.map((item) => normalizeString(item)).filter((item): item is string => Boolean(item))
+      : [],
     riskLevel: normalizeCapabilityRiskLevel(source.riskLevel),
     objective,
     summary,

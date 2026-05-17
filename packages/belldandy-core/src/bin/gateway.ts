@@ -11,6 +11,12 @@ import { createCachedChannelSttTranscribe } from "./gateway-channel-stt.js";
 import { parseConversationAllowedKinds, readEnv } from "./gateway-config.js";
 import { createGatewayPromptInspectionRuntime } from "./gateway-prompt-inspection-runtime.js";
 import {
+  buildRuntimeSkillAssetSummaries,
+  loadRuntimeMethodAssetSummaries,
+  resolveRecommendedSkillNames,
+} from "./gateway-runtime-assets.js";
+import { isAgentToolAllowed } from "./gateway-agent-governance.js";
+import {
   buildGatewayServerOptions,
 } from "./gateway-server-runtime.js";
 import { loadToolsPolicy, mergePolicy } from "./gateway-tool-policy.js";
@@ -18,12 +24,23 @@ import { startGatewayConfigWatcher } from "./gateway-watch-runtime.js";
 import { buildGoalSessionContextPrelude } from "../goal-session-context.js";
 import { buildGoalSessionRuntimeEventMessage } from "../goal-session-runtime-event.js";
 import { buildMindProfileRuntimePrelude } from "../mind-profile-runtime-prelude.js";
+import { buildPromptFocusRuntimePrelude } from "../prompt-focus-runtime-prelude.js";
+import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.js";
+import { resolveMemoryRuntimeSwitches } from "../memory-runtime-switches.js";
+import { resolveCompactionThreshold, resolveProviderCapabilityFromEnv } from "../provider-capability.js";
+import { resolveCompactionModelRoute } from "../compaction-model-routing.js";
 import { normalizePreferredProviderIds } from "../provider-model-catalog.js";
 import { ResidentConversationStore } from "../resident-conversation-store.js";
 import { buildLearningReviewNudgePrelude } from "../learning-review-nudge.js";
 import { runPostTaskLearningReview } from "../learning-review-runner.js";
 import { notifyConversationToolEvent } from "../query-runtime-side-effects.js";
+import {
+  buildCacheAlignedChatMessages,
+  buildCacheAlignedResponsesInput,
+  buildCacheAlignedSummaryInstruction,
+} from "../compaction-cache-aligned.js";
 import { DreamAutomationRuntime } from "../dream-automation-runtime.js";
+import { GoalRuntimeBindingStore } from "../goal-runtime-binding-store.js";
 import {
   createSubTaskAgentCapabilities,
   createSubTaskResumeController,
@@ -78,6 +95,7 @@ import {
   ConversationStore,
   loadModelFallbacks,
   type ModelProfile,
+  type SummarizerContext,
   type VideoUploadConfig,
   FailoverClient,
   type SummarizerFn,
@@ -85,6 +103,7 @@ import {
   SubAgentOrchestrator,
   loadAgentProfiles,
   buildDefaultProfile,
+  buildBuiltinWorkerProfiles,
   resolveAgentProfileCatalogMetadata,
   resolveModelConfig,
   type AgentProfile,
@@ -101,6 +120,7 @@ import {
   DEFAULT_POLICY,
   type Tool,
   type ToolDiscoveryFamilyDefinition,
+  getToolContract,
   resolveSafeScopesForChannel,
   type ToolContractAccessPolicy,
   createToolSearchTool,
@@ -197,6 +217,7 @@ import {
   goalCheckpointEscalateTool,
   goalCapabilityPlanTool,
   goalOrchestrateTool,
+  goalCommanderDecideTool,
   taskGraphReadTool,
   taskGraphCreateTool,
   taskGraphUpdateTool,
@@ -220,6 +241,7 @@ import {
   delegateParallelTool,
   conversationListTool,
   conversationReadTool,
+  retrieveToolResultTool,
   createCanvasTools,
   getUserUuidTool,
   getMessageSenderInfoTool,
@@ -568,10 +590,35 @@ const maxInputTokens = maxInputTokensRaw ? parseInt(maxInputTokensRaw, 10) || 0 
 const maxOutputTokensRaw = readEnv("BELLDANDY_MAX_OUTPUT_TOKENS");
 // 默认 4096，与硬编码默认值保持一致；用户可调大以避免长输出被截断
 const maxOutputTokens = maxOutputTokensRaw ? parseInt(maxOutputTokensRaw, 10) || 4096 : 4096;
+const toolLoopIterationBudgetRaw = readEnv("BELLDANDY_TOOL_LOOP_ITERATION_BUDGET");
+const toolLoopIterationBudget = (() => {
+  if (!toolLoopIterationBudgetRaw) return 64;
+  const value = parseInt(toolLoopIterationBudgetRaw, 10);
+  if (!Number.isFinite(value)) return 64;
+  return value <= 0 ? 0 : Math.max(1, Math.floor(value));
+})();
+const toolLoopWarningFractionRaw = readEnv("BELLDANDY_TOOL_LOOP_WARNING_FRACTION");
+const toolLoopWarningFraction = (() => {
+  if (!toolLoopWarningFractionRaw) return 0.7;
+  const value = parseFloat(toolLoopWarningFractionRaw);
+  if (!Number.isFinite(value)) return 0.7;
+  return Math.min(1, Math.max(0, value));
+})();
 
 // Compaction 配置
 const compactionEnabled = readEnv("BELLDANDY_COMPACTION_ENABLED") !== "false";
-const compactionTokenThreshold = parseInt(readEnv("BELLDANDY_COMPACTION_THRESHOLD") || "12000", 10);
+const providerCapability = resolveProviderCapabilityFromEnv(readEnv);
+const toolCallRepairLevel = providerCapability.jsonReliability === "low"
+  ? "full"
+  : (providerCapability.jsonReliability === "medium" ? "dedupe" : "off");
+const preservePrimaryPrefixStability = providerCapability.cache === "supported";
+const compactionFallbackTokenThreshold = parseInt(readEnv("BELLDANDY_COMPACTION_THRESHOLD") || "12000", 10);
+const compactionContextWindowFraction = parseFloat(readEnv("BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION") || "0.1") || 0.1;
+const compactionTokenThreshold = resolveCompactionThreshold({
+  fallbackThreshold: compactionFallbackTokenThreshold,
+  contextWindow: providerCapability.contextWindow,
+  contextWindowFraction: compactionContextWindowFraction,
+}).tokenThreshold;
 const compactionTriggerFraction = parseFloat(readEnv("BELLDANDY_COMPACTION_TRIGGER_FRACTION") || "0.75") || 0.75;
 const compactionArchivalThreshold = parseInt(readEnv("BELLDANDY_COMPACTION_ARCHIVAL_THRESHOLD") || "2000", 10);
 const compactionWarningThreshold = parseInt(
@@ -584,6 +631,7 @@ const compactionBlockingThreshold = parseInt(
 );
 const compactionMaxConsecutiveFailures = parseInt(readEnv("BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES") || "3", 10);
 const compactionMaxPromptTooLongRetries = parseInt(readEnv("BELLDANDY_COMPACTION_MAX_PTL_RETRIES") || "2", 10);
+const compactionModelRouteRef = readEnv("BELLDANDY_COMPACTION_MODEL_ROUTE");
 const compactionModel = readEnv("BELLDANDY_COMPACTION_MODEL");
 const compactionBaseUrl = readEnv("BELLDANDY_COMPACTION_BASE_URL");
 const compactionApiKey = readEnv("BELLDANDY_COMPACTION_API_KEY");
@@ -609,10 +657,17 @@ try {
 
 // Agent Profiles (Multi-Agent 预备)
 const agentsConfigFile = path.join(stateDir, "agents.json");
-const agentProfiles = await loadAgentProfiles(agentsConfigFile);
-if (agentProfiles.length > 0) {
-  logger.info("agent-profile", `加载了 ${agentProfiles.length} 个 Agent Profile (from ${agentsConfigFile})`);
+const loadedAgentProfiles = await loadAgentProfiles(agentsConfigFile);
+if (loadedAgentProfiles.length > 0) {
+  logger.info("agent-profile", `加载了 ${loadedAgentProfiles.length} 个 Agent Profile (from ${agentsConfigFile})`);
 }
+const builtinWorkerProfiles = buildBuiltinWorkerProfiles().filter((profile) =>
+  !loadedAgentProfiles.some((item) => item.id === profile.id)
+);
+if (builtinWorkerProfiles.length > 0) {
+  logger.info("agent-profile", `启用 ${builtinWorkerProfiles.length} 个内建 Worker Profile: [${builtinWorkerProfiles.map((profile) => profile.id).join(", ")}]`);
+}
+const agentProfiles = [...loadedAgentProfiles, ...builtinWorkerProfiles];
 
 // MCP
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
@@ -716,9 +771,13 @@ if (!fs.existsSync(agentsDir)) {
 }
 
 // 2. Memory: unified MemoryManager created after sessionsDir init (see section 7.5b)
+const memoryRuntimeSwitches = resolveMemoryRuntimeSwitches(readEnv);
+if (!memoryRuntimeSwitches.masterEnabled) {
+  logger.warn("memory", "BELLDANDY_MEMORY_ENABLED=false — runtime memory features disabled while static workspace prompt injection remains unchanged.");
+}
 
 // 2.5 Init Embedding Provider (configured via env for MemoryManager)
-const embeddingEnabled = readEnv("BELLDANDY_EMBEDDING_ENABLED") === "true";
+const embeddingEnabled = memoryRuntimeSwitches.embeddingEnabled;
 if (embeddingEnabled && !openaiApiKey) {
   logger.warn("memory", "BELLDANDY_EMBEDDING_ENABLED=true but no OpenAI API key, skipping");
 }
@@ -907,6 +966,7 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       goalCheckpointEscalateTool,
       goalCapabilityPlanTool,
       goalOrchestrateTool,
+      goalCommanderDecideTool,
       taskGraphReadTool,
       taskGraphCreateTool,
       taskGraphUpdateTool,
@@ -923,6 +983,7 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       delegateParallelTool,
       conversationListTool,
       conversationReadTool,
+      retrieveToolResultTool,
       ...(agentBridgeEnabled ? [
         bridgeTargetListTool,
         bridgeTargetDiagnoseTool,
@@ -1111,6 +1172,9 @@ const AGENT_META_ALWAYS_ALLOWED_TOOLS = new Set<string>([
   SWITCH_FAQI_TOOL_NAME,
   switchFacetTool.definition.name,
 ]);
+const toolContractsByName = new Map(
+  runtimeToolsToRegister.map((tool) => [tool.definition.name, getToolContract(tool)]),
+);
 
 const toolExecutor = new ToolExecutor({
   tools: runtimeToolsToRegister,
@@ -1131,13 +1195,13 @@ const toolExecutor = new ToolExecutor({
       ? agentId.trim()
       : "default";
     const profile = agentRegistry?.getProfile(resolvedAgentId);
-    const whitelist = profile?.toolWhitelist?.filter((name) => typeof name === "string" && name.trim());
-
-    if (!whitelist || whitelist.length === 0) {
-      return true;
-    }
-
-    return whitelist.includes(toolName);
+    const contract = toolContractsByName.get(toolName);
+    return isAgentToolAllowed({
+      agentId: resolvedAgentId,
+      toolName,
+      contract,
+      profile,
+    });
   },
   isToolAllowedInConversation: (toolName, conversationId) => {
     if (!GOAL_TOOL_NAMES.has(toolName)) {
@@ -1315,6 +1379,10 @@ const {
   promptSkills,
   searchableSkills,
 } = extensionHost;
+const runtimeMethodAssets = await loadRuntimeMethodAssetSummaries(stateDir);
+const runtimePromptSkillAssets = buildRuntimeSkillAssetSummaries(promptSkills, 4);
+const runtimeSearchableSkillAssets = buildRuntimeSkillAssetSummaries(searchableSkills, 6);
+const runtimeAllKnownSkills = skillRegistry.listSkills();
 
 if (toolsEnabled) {
   toolExecutor.registerTool(createToolSettingsControlTool({
@@ -1372,8 +1440,10 @@ const skillInstructions = promptSkills.map(s => ({ name: s.name, instructions: s
 const hasSearchableSkills = searchableSkills.length > 0;
 const defaultPromptProfile = agentProfiles.find((profile) => profile.id === "default") ?? buildDefaultProfile();
 const agentAuthorityProfileCache = new Map<string, IdentityAuthorityProfile | undefined>();
+const agentWorkspaceBindings = new Map<string, string>();
 const defaultIdentityAuthorityProfile = await loadIdentityAuthorityProfile(stateDir);
 agentAuthorityProfileCache.set("default", defaultIdentityAuthorityProfile);
+agentWorkspaceBindings.set("default", "default");
 
 const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
   const visibleContracts = toolExecutor.getContracts(profile.id);
@@ -1385,6 +1455,11 @@ const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
     visibleContracts: visibleToolContracts,
     canDelegate,
     role: catalog.defaultRole,
+    profileId: profile.id,
+    recommendedSkillNames: resolveRecommendedSkillNames(catalog.skills, runtimeAllKnownSkills),
+    methodAssets: runtimeMethodAssets,
+    promptSkillAssets: runtimePromptSkillAssets,
+    searchableSkillAssets: runtimeSearchableSkillAssets,
     identityAuthorityProfile: agentAuthorityProfileCache.get(profile.id),
   });
 };
@@ -1410,7 +1485,7 @@ logger.info("system-prompt", `length=${dynamicSystemPrompt.length} chars${maxSys
 const hookRegistry = new HookRegistry();
 
 // Context Injection: 对话开始时自动注入最近记忆摘要
-const contextInjectionEnabled = readEnv("BELLDANDY_CONTEXT_INJECTION") !== "false"; // 默认启用
+const contextInjectionEnabled = memoryRuntimeSwitches.contextInjectionEnabled;
 const contextInjectionLimit = Math.max(1, parseInt(readEnv("BELLDANDY_CONTEXT_INJECTION_LIMIT") || "5", 10));
 const contextInjectionIncludeSession = readEnv("BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION") === "true";
 const contextInjectionTaskLimit = Math.max(0, parseInt(readEnv("BELLDANDY_CONTEXT_INJECTION_TASK_LIMIT") || "3", 10) || 3);
@@ -1418,7 +1493,7 @@ const contextInjectionAllowedCategories = parseContextInjectionCategories(
   readEnv("BELLDANDY_CONTEXT_INJECTION_ALLOWED_CATEGORIES") || "preference,fact,decision,entity",
 );
 // Auto-Recall: 对话开始时按当前用户输入自动进行语义召回（默认关闭）
-const autoRecallEnabled = readEnv("BELLDANDY_AUTO_RECALL_ENABLED") === "true";
+const autoRecallEnabled = memoryRuntimeSwitches.autoRecallEnabled;
 const autoRecallLimit = Math.max(1, parseInt(readEnv("BELLDANDY_AUTO_RECALL_LIMIT") || "3", 10) || 3);
 const autoRecallMinScoreRaw = Number(readEnv("BELLDANDY_AUTO_RECALL_MIN_SCORE") || "0.3");
 const autoRecallMinScore = Number.isFinite(autoRecallMinScoreRaw) ? autoRecallMinScoreRaw : 0.3;
@@ -1427,6 +1502,11 @@ const mindProfileRuntimeMaxLines = Math.max(1, parseInt(readEnv("BELLDANDY_MIND_
 const mindProfileRuntimeMaxLineLength = Math.max(24, parseInt(readEnv("BELLDANDY_MIND_PROFILE_RUNTIME_MAX_LINE_LENGTH") || "120", 10) || 120);
 const mindProfileRuntimeMaxChars = Math.max(80, parseInt(readEnv("BELLDANDY_MIND_PROFILE_RUNTIME_MAX_CHARS") || "360", 10) || 360);
 const mindProfileRuntimeMinSignalCount = Math.max(1, parseInt(readEnv("BELLDANDY_MIND_PROFILE_RUNTIME_MIN_SIGNAL_COUNT") || "2", 10) || 2);
+const promptFocusEnabled = readEnv("BELLDANDY_PROMPT_FOCUS_ENABLED") !== "false";
+const promptFocusMaxSections = Math.max(1, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MAX_SECTIONS") || "3", 10) || 3);
+const promptFocusMaxChars = Math.max(160, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MAX_CHARS") || "900", 10) || 900);
+const promptFocusMinScore = Math.max(1, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MIN_SCORE") || "4", 10) || 4);
+const promptFocusMaxExcerptChars = Math.max(80, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MAX_EXCERPT_CHARS") || "220", 10) || 220);
 const toolResultTranscriptCharLimit = Math.max(0, parseInt(readEnv("BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT") || "12000", 10) || 12000);
 const taskDedupGuardEnabled = readEnv("BELLDANDY_TASK_DEDUP_GUARD_ENABLED") !== "false";
 const taskDedupWindowMinutes = Math.max(1, parseInt(readEnv("BELLDANDY_TASK_DEDUP_WINDOW_MINUTES") || "20", 10) || 20);
@@ -1524,6 +1604,39 @@ if (mindProfileRuntimeEnabled) {
   logger.info(
     "mind-profile-runtime",
     `enabled (maxLines=${mindProfileRuntimeMaxLines}, maxLineLength=${mindProfileRuntimeMaxLineLength}, maxChars=${mindProfileRuntimeMaxChars}, minSignals=${mindProfileRuntimeMinSignalCount})`,
+  );
+}
+
+if (promptFocusEnabled) {
+  hookRegistry.register({
+    source: "prompt-focus-runtime",
+    hookName: "before_agent_start",
+    priority: 118,
+    handler: async (_event, _ctx) => {
+      try {
+        const resolvedAgentId = _ctx.agentId?.trim() || "default";
+        return await buildPromptFocusRuntimePrelude({
+          stateDir,
+          agentId: resolvedAgentId,
+          workspaceAgentId: agentWorkspaceBindings.get(resolvedAgentId) ?? resolvedAgentId,
+          currentTurnText: _event.userInput?.trim() || _event.prompt?.trim() || undefined,
+          config: {
+            enabled: promptFocusEnabled,
+            maxSections: promptFocusMaxSections,
+            maxChars: promptFocusMaxChars,
+            minScore: promptFocusMinScore,
+            maxExcerptChars: promptFocusMaxExcerptChars,
+          },
+        });
+      } catch (err) {
+        logger.warn("prompt-focus", `Failed to build prompt focus prelude: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    },
+  });
+  logger.info(
+    "prompt-focus",
+    `enabled (maxSections=${promptFocusMaxSections}, maxChars=${promptFocusMaxChars}, minScore=${promptFocusMinScore}, maxExcerptChars=${promptFocusMaxExcerptChars})`,
   );
 }
 
@@ -1710,17 +1823,24 @@ const toRuntimeResilienceRoute = (profile: {
 });
 
 const compactionRoute = (() => {
-  const summarizerBaseUrl = compactionBaseUrl || openaiBaseUrl;
-  const summarizerModel = compactionModel || openaiModel;
-  if (!compactionEnabled || !summarizerBaseUrl || !summarizerModel) {
+  const resolvedRoute = resolveCompactionModelRoute({
+    enabled: compactionEnabled,
+    routeRef: compactionModelRouteRef,
+    explicitBaseUrl: compactionBaseUrl,
+    explicitApiKey: compactionApiKey,
+    explicitModel: compactionModel,
+    primaryModelConfig,
+    modelFallbacks,
+  });
+  if (!resolvedRoute?.enabled) {
     return undefined;
   }
   return toRuntimeResilienceRoute({
     id: "compaction",
-    baseUrl: summarizerBaseUrl,
-    model: summarizerModel,
-    protocol: agentProtocol,
-    wireApi: openaiWireApi,
+    baseUrl: resolvedRoute.baseUrl,
+    model: resolvedRoute.model,
+    protocol: resolvedRoute.protocol,
+    wireApi: resolvedRoute.wireApi,
   });
 })();
 
@@ -1804,6 +1924,7 @@ agentWorkspaceCache.set("default", {
 for (const profile of agentProfiles) {
   if (profile.id === "default") continue;
   const wsDir = profile.workspaceDir ?? profile.id;
+  agentWorkspaceBindings.set(profile.id, wsDir);
   try {
     await ensureAgentWorkspace({ rootDir: stateDir, agentId: wsDir });
     const agentWs = await loadAgentWorkspaceFiles(stateDir, wsDir);
@@ -1891,6 +2012,29 @@ agentRegistry = agentProvider === "openai"
     const resolvedRetryBackoffMs = resolved.retryBackoffMs ?? openaiRetryBackoffMs;
     const resolvedProxyUrl = resolved.proxyUrl ?? openaiProxyUrl;
     const bootstrapProfileCooldowns = getBootstrapProfileCooldowns();
+    const resolvedCompactionTokenThreshold = resolved.source === "primary"
+      ? resolveCompactionThreshold({
+          fallbackThreshold: compactionFallbackTokenThreshold,
+          contextWindow: providerCapability.contextWindow,
+          contextWindowFraction: compactionContextWindowFraction,
+        }).tokenThreshold
+      : compactionFallbackTokenThreshold;
+    const agentCompactionWarningThreshold = parseInt(
+      readEnv("BELLDANDY_COMPACTION_WARNING_THRESHOLD") || String(Math.max(1024, Math.floor(resolvedCompactionTokenThreshold * 0.7))),
+      10,
+    );
+    const agentCompactionBlockingThreshold = parseInt(
+      readEnv("BELLDANDY_COMPACTION_BLOCKING_THRESHOLD") || String(Math.max(agentCompactionWarningThreshold + 1, Math.floor(resolvedCompactionTokenThreshold * 0.9))),
+      10,
+    );
+    const agentCompactionOpts = {
+      ...compactionOpts,
+      tokenThreshold: resolvedCompactionTokenThreshold,
+      warningThreshold: agentCompactionWarningThreshold,
+      blockingThreshold: agentCompactionBlockingThreshold,
+    };
+    const usagePricing = resolved.source === "primary" ? providerCapability.pricing : undefined;
+    const agentMicrocompactOpts = resolved.source === "primary" ? primaryMicrocompactOpts : undefined;
 
     if (profileToolsEnabled) {
       return new ToolEnabledAgent({
@@ -1926,11 +2070,16 @@ agentRegistry = agentProvider === "openai"
         sanitizeResponsesToolSchema,
         ...(profileMaxInputTokens > 0 && { maxInputTokens: profileMaxInputTokens }),
         ...(profileMaxOutputTokens > 0 && { maxOutputTokens: profileMaxOutputTokens }),
-        compaction: compactionOpts,
+        toolLoopIterationBudget,
+        toolLoopWarningFraction,
+        toolCallRepairLevel,
+        compaction: agentCompactionOpts,
+        ...(agentMicrocompactOpts ? { microcompact: agentMicrocompactOpts } : {}),
         summarizer: compactionSummarizer,
-        summarizerModelName: compactionModel || openaiModel,
+        summarizerModelName: compactionRoute?.model || compactionModel || openaiModel,
         compactionRuntimeTracker,
         conversationStore: conversationStore, // 扩展 A：传入 conversationStore 支持跨 run 持久化
+        usagePricing,
       });
     }
     return new OpenAIChatAgent({
@@ -2028,16 +2177,27 @@ fs.mkdirSync(sessionsDir, { recursive: true });
 // 创建 summarizer 函数（基于 FailoverClient，用便宜模型生成摘要）
 let compactionSummarizer: SummarizerFn | undefined;
 if (compactionEnabled) {
-  // 优先使用专用压缩配置，回退到主模型配置
-  const summarizerBaseUrl = compactionBaseUrl || openaiBaseUrl;
-  const summarizerApiKey = compactionApiKey || openaiApiKey;
-  const summarizerModel = compactionModel || openaiModel;
-  if (summarizerBaseUrl && summarizerApiKey && summarizerModel) {
+  const compactionModelRoute = resolveCompactionModelRoute({
+    enabled: compactionEnabled,
+    routeRef: compactionModelRouteRef,
+    explicitBaseUrl: compactionBaseUrl,
+    explicitApiKey: compactionApiKey,
+    explicitModel: compactionModel,
+    primaryModelConfig,
+    modelFallbacks,
+  });
+  if (compactionModelRoute?.enabled) {
+    const summarizerBaseUrl = compactionModelRoute.baseUrl;
+    const summarizerApiKey = compactionModelRoute.apiKey;
+    const summarizerModel = compactionModelRoute.model;
+    const summarizerWireApi = (compactionModelRoute.wireApi ?? openaiWireApi).toLowerCase() === "responses"
+      ? "responses"
+      : "chat_completions";
     const summarizerClient = new FailoverClient({
       primary: { id: "compaction", baseUrl: summarizerBaseUrl, apiKey: summarizerApiKey, model: summarizerModel },
       logger,
     });
-    compactionSummarizer = async (prompt: string): Promise<string> => {
+    compactionSummarizer = async (prompt: string, context?: SummarizerContext): Promise<string> => {
       const { response } = await summarizerClient.fetchWithFailover({
         timeoutMs: 30_000,
         onSummary: (summary) => {
@@ -2050,17 +2210,25 @@ if (compactionEnabled) {
         buildRequest: (profile) => {
           const trimmedBase = profile.baseUrl.replace(/\/+$/, "");
           const base = /\/v\d+$/.test(trimmedBase) ? trimmedBase : `${trimmedBase}/v1`;
-          const isResponsesWireApi = openaiWireApi === "responses";
+          const isResponsesWireApi = summarizerWireApi === "responses";
           const url = isResponsesWireApi ? `${base}/responses` : `${base}/chat/completions`;
+          const useCacheAlignedSummary = providerCapability.cache === "supported" && Boolean(context);
+          const cacheAlignedInstruction = context
+            ? buildCacheAlignedSummaryInstruction(context)
+            : prompt;
           const body = isResponsesWireApi
             ? {
               model: profile.model,
-              input: prompt,
+              input: useCacheAlignedSummary
+                ? buildCacheAlignedResponsesInput(context!, cacheAlignedInstruction)
+                : prompt,
               max_output_tokens: 1024,
             }
             : {
               model: profile.model,
-              messages: [{ role: "user", content: prompt }],
+              messages: useCacheAlignedSummary
+                ? buildCacheAlignedChatMessages(context!, cacheAlignedInstruction)
+                : [{ role: "user", content: prompt }],
               max_tokens: 1024,
               temperature: 0.3,
             };
@@ -2082,7 +2250,7 @@ if (compactionEnabled) {
         throw new Error(`Compaction summarizer failed (HTTP ${response.status}): ${errorText.slice(0, 500)}`);
       }
       const json = await response.json() as any;
-      if (openaiWireApi === "responses") {
+      if (summarizerWireApi === "responses") {
         if (typeof json.output_text === "string") return json.output_text;
         const output = Array.isArray(json.output) ? json.output : [];
         const parts: string[] = [];
@@ -2096,7 +2264,9 @@ if (compactionEnabled) {
       }
       return json.choices?.[0]?.message?.content ?? "";
     };
-    logger.info("compaction", `Summarizer initialized (model: ${summarizerModel}, baseUrl: ${summarizerBaseUrl})`);
+    logger.info("compaction", `Summarizer initialized (model: ${summarizerModel}, baseUrl: ${summarizerBaseUrl}, routeRef: ${compactionModelRoute.routeRef}, source: ${compactionModelRoute.source})`);
+  } else if (compactionModelRoute) {
+    logger.warn("compaction", `Compaction summarizer route disabled: ${compactionModelRoute.reason} (routeRef=${compactionModelRoute.routeRef}, protocol=${compactionModelRoute.protocol ?? "openai"})`);
   }
 }
 
@@ -2111,7 +2281,18 @@ const compactionOpts = {
   maxPromptTooLongRetries: compactionMaxPromptTooLongRetries,
   enabled: compactionEnabled,
 };
+const primaryMicrocompactOpts = preservePrimaryPrefixStability
+  ? {
+      preservePrefixStability: true,
+    }
+  : undefined;
 const compactionRuntimeTracker = new CompactionRuntimeTracker(compactionOpts);
+if (preservePrimaryPrefixStability) {
+  logger.info("compaction", "Enabled prefix-stability microcompact guard for cache-capable primary provider", {
+    cacheSupport: providerCapability.cache,
+    capabilitySource: providerCapability.source,
+  });
+}
 
 const conversationStore = new ResidentConversationStore({
   stateDir,
@@ -2119,7 +2300,7 @@ const conversationStore = new ResidentConversationStore({
   maxHistory: parseInt(readEnv("BELLDANDY_MAX_HISTORY") || "50", 10),
   compaction: compactionOpts,
   summarizer: compactionSummarizer,
-  summarizerModelName: compactionModel || openaiModel,
+  summarizerModelName: compactionRoute?.model || compactionModel || openaiModel,
   compactionRuntimeTracker,
   onBeforeCompaction: async (event, ctx) => {
     logger.debug("compaction", "before compaction", {
@@ -2146,6 +2327,9 @@ toolExecutor.setConversationStore(conversationStore);
 let subTaskRuntimeStore: SubTaskRuntimeStore | undefined;
 let subTaskWorktreeRuntime: SubTaskWorktreeRuntime | undefined;
 let subAgentOrchestrator: SubAgentOrchestrator | undefined;
+const goalRuntimeBindingStore = new GoalRuntimeBindingStore(stateDir, {
+  warn: (message, data) => logger.warn("goal-binding", message, data),
+});
 let resumeSubTask:
   | ((taskId: string, message?: string, options?: { takeoverAgentId?: string }) => Promise<SubTaskRecord | undefined>)
   | undefined;
@@ -2163,7 +2347,7 @@ if (agentRegistry && toolsEnabled) {
     warn: (m, d) => logger.warn("task-runtime", m, d),
     error: (m, d) => logger.error("task-runtime", m, d),
     debug: (m, d) => logger.debug("task-runtime", m, d),
-  });
+  }, goalRuntimeBindingStore);
   await subTaskRuntimeStore.load();
   await reconcileRuntimeLostBridgeSubtasks({
     workspaceRoot: stateDir,
@@ -2410,24 +2594,24 @@ if (embeddingEnabled && !resolvedEmbeddingEnabled) {
 
 
 // L0 摘要层配置
-const summaryEnabled = readEnv("BELLDANDY_MEMORY_SUMMARY_ENABLED") === "true";
+const summaryEnabled = memoryRuntimeSwitches.summaryEnabled;
 const summaryModel = readEnv("BELLDANDY_MEMORY_SUMMARY_MODEL") || openaiModel;
 const summaryBaseUrl = readEnv("BELLDANDY_MEMORY_SUMMARY_BASE_URL") || openaiBaseUrl;
 const summaryApiKey = readEnv("BELLDANDY_MEMORY_SUMMARY_API_KEY") || openaiApiKey;
 
 // M-N3: 会话记忆自动提取配置
-const evolutionEnabled = readEnv("BELLDANDY_MEMORY_EVOLUTION_ENABLED") === "true";
+const evolutionEnabled = memoryRuntimeSwitches.evolutionEnabled;
 const evolutionModel = readEnv("BELLDANDY_MEMORY_EVOLUTION_MODEL") || openaiModel;
 const evolutionBaseUrl = readEnv("BELLDANDY_MEMORY_EVOLUTION_BASE_URL") || openaiBaseUrl;
 const evolutionApiKey = readEnv("BELLDANDY_MEMORY_EVOLUTION_API_KEY") || openaiApiKey;
 const evolutionMinMessages = Number(readEnv("BELLDANDY_MEMORY_EVOLUTION_MIN_MESSAGES")) || 4;
 
 // M-N4: 源路径聚合检索配置
-const deepRetrievalEnabled = readEnv("BELLDANDY_MEMORY_DEEP_RETRIEVAL") === "true";
+const deepRetrievalEnabled = memoryRuntimeSwitches.deepRetrievalEnabled;
 
 // Task 层总结配置
-const taskMemoryEnabled = readEnv("BELLDANDY_TASK_MEMORY_ENABLED") === "true";
-const taskSummaryEnabled = readEnv("BELLDANDY_TASK_SUMMARY_ENABLED") === "true";
+const taskMemoryEnabled = memoryRuntimeSwitches.taskMemoryEnabled;
+const taskSummaryEnabled = memoryRuntimeSwitches.taskSummaryEnabled;
 const taskSummaryModel = readEnv("BELLDANDY_TASK_SUMMARY_MODEL") || openaiModel;
 const taskSummaryBaseUrl = readEnv("BELLDANDY_TASK_SUMMARY_BASE_URL") || openaiBaseUrl;
 const taskSummaryApiKey = readEnv("BELLDANDY_TASK_SUMMARY_API_KEY") || openaiApiKey;
@@ -3064,7 +3248,9 @@ const webhookConfig = loadWebhookConfig(webhookConfigPath, {
 });
 
 const webhookIdempotency = new IdempotencyManager(webhookIdempotencyWindowMs);
-const goalManager = new GoalManager(stateDir);
+const goalManager = new GoalManager(stateDir, {
+  bindingStore: goalRuntimeBindingStore,
+});
 const generateCapabilityPlanForNode = createCapabilityPlanGenerator({
   goalManager,
   methodsDir,
@@ -3072,6 +3258,18 @@ const generateCapabilityPlanForNode = createCapabilityPlanGenerator({
   toolsConfigManager,
   agentRegistry,
   getMcpDiagnostics: getMCPDiagnostics,
+  getDefaultCapabilityPlanInput: () => {
+    const runtimeSwitches = resolveCommanderRuntimeSwitches(readEnv);
+    return {
+      forceMode: runtimeSwitches.defaultGoalExecutionMode,
+      forceGovernanceMode: runtimeSwitches.commanderMode === "on"
+        ? "commander"
+        : runtimeSwitches.commanderMode === "off"
+        ? "direct"
+        : runtimeSwitches.defaultGoalGovernanceMode,
+      commanderAgentId: runtimeSwitches.defaultCommanderAgentId,
+    };
+  },
 });
 
 toolExecutor.setGoalCapabilities({

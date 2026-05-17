@@ -15,6 +15,7 @@ export function createGoalsActionsRuntimeFeature({
   loadGoalHandoffData,
   loadGoalReviewGovernanceData,
   loadGoalTrackingData,
+  loadGoalCapabilityData,
   getGoalsRuntimeFeature,
   getGoalActionActor,
   showNotice,
@@ -178,6 +179,72 @@ export function createGoalsActionsRuntimeFeature({
       void loadGoalReviewGovernanceData(goal);
       void loadGoalTrackingData(goal);
     }
+  }
+
+  async function saveGoalCapabilityGovernance(goalId, nodeId, input) {
+    if (!isConnected()) {
+      showNotice("无法保存治理设置", "未连接到服务器。", "error");
+      return null;
+    }
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "goal.capability.update",
+      params: {
+        goalId,
+        nodeId,
+        executionMode: input.executionMode || undefined,
+        governanceMode: input.governanceMode || undefined,
+        commanderAgentId: input.commanderAgentId || undefined,
+        preferredAgents: Array.isArray(input.preferredAgents) ? input.preferredAgents : undefined,
+        finalApprovalMode: input.finalApprovalMode || undefined,
+      },
+    });
+    if (!res?.ok) {
+      showNotice("治理设置保存失败", res?.error?.message || "goal.capability.update 调用失败。", "error");
+      return null;
+    }
+    showNotice("治理设置已保存", "当前节点的 capability governance 已更新。", "success");
+    const goal = getGoalById(goalId);
+    if (goal) {
+      void loadGoalCapabilityData?.(goal);
+      void loadGoalTrackingData(goal);
+      void loadGoalReviewGovernanceData(goal);
+    }
+    return res.payload?.plan || null;
+  }
+
+  async function runGoalCommanderDecision(goalId, nodeId, input) {
+    if (!isConnected()) {
+      showNotice("无法执行 commander 决策", "未连接到服务器。", "error");
+      return null;
+    }
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "goal.capability.commander_decide",
+      params: {
+        goalId,
+        nodeId,
+        decision: input.decision,
+        summary: input.summary || undefined,
+        note: input.note || undefined,
+        requireUserApproval: typeof input.requireUserApproval === "boolean" ? input.requireUserApproval : undefined,
+      },
+    });
+    if (!res?.ok) {
+      showNotice("Commander 决策失败", res?.error?.message || "goal.capability.commander_decide 调用失败。", "error");
+      return null;
+    }
+    const decision = input.decision || "decision";
+    showNotice("Commander 决策已提交", `${decision} 已写入 capability governance。`, "success");
+    const goal = getGoalById(goalId);
+    if (goal) {
+      void loadGoalCapabilityData?.(goal);
+      void loadGoalTrackingData(goal);
+      void loadGoalReviewGovernanceData(goal);
+    }
+    return res.payload || null;
   }
 
   async function submitGoalCreateForm() {
@@ -429,6 +496,8 @@ export function createGoalsActionsRuntimeFeature({
     runGoalSuggestionReviewDecision,
     runGoalSuggestionReviewEscalation,
     runGoalCheckpointEscalation,
+    saveGoalCapabilityGovernance,
+    runGoalCommanderDecision,
     submitGoalCreateForm,
     resumeGoal,
     pauseGoal,

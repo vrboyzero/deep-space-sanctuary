@@ -377,6 +377,7 @@
                   </div>
                 </div>
                 <div class="memory-toolbar-actions">
+                  <button id="memoryDedupPreviewBtn" class="button hidden">重复预检</button>
                   <button id="memorySearchBtn" class="button" data-i18n="memory.search">查询</button>
                 </div>
               </div>
@@ -999,6 +1000,16 @@
             <div class="form-help" data-i18n="settings.compactionMaxPtlRetriesHelp">因 prompt 过长失败时，最多允许裁剪重试多少次。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgCompactionContextWindowFraction" data-i18n="settings.compactionContextWindowFractionLabel">Compaction Context Window Fraction</label>
+            <input id="cfgCompactionContextWindowFraction" class="input" placeholder="0.1" />
+            <div class="form-help" data-i18n="settings.compactionContextWindowFractionHelp">已知主模型 context window 时，用该比例推导 compaction 阈值；未知时仍回退固定阈值。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCompactionModelRoute" data-i18n="settings.compactionModelRouteLabel">Compaction Model Route</label>
+            <input id="cfgCompactionModelRoute" class="input" placeholder="primary / fallback-name / manual:gpt-4o-mini" />
+            <div class="form-help" data-i18n="settings.compactionModelRouteHelp">控制 compaction 摘要链路走 primary、指定 fallback，或 `manual:&lt;model&gt;`。留空时按默认 primary 路由。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgCompactionModel" data-i18n="settings.compactionModelLabel">Compaction Model</label>
             <input id="cfgCompactionModel" class="input" placeholder="gpt-4o-mini" />
             <div class="form-help" data-i18n="settings.compactionModelHelp">压缩摘要专用模型。留空时回退到主模型名称。</div>
@@ -1532,6 +1543,16 @@
             <label class="form-label" data-i18n="settings.maxOutputTokensLabel">Max Output Tokens</label>
             <input id="cfgMaxOutputTokens" class="input" inputmode="numeric" placeholder="4096" />
             <div class="form-help" data-i18n="settings.maxOutputTokensHelp">单次模型调用最大输出 token，建议在长工具调用场景中适当调大。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.toolLoopIterationBudgetLabel">Tool Loop Iteration Budget</label>
+            <input id="cfgToolLoopIterationBudget" class="input" inputmode="numeric" placeholder="8" />
+            <div class="form-help" data-i18n="settings.toolLoopIterationBudgetHelp">单次工具循环最多允许多少轮模型调用。接近上限时会注入收敛提示，超限后会先尝试强制压缩再阻断。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.toolLoopWarningFractionLabel">Tool Loop Warning Fraction</label>
+            <input id="cfgToolLoopWarningFraction" class="input" placeholder="0.75" />
+            <div class="form-help" data-i18n="settings.toolLoopWarningFractionHelp">达到预算的多少比例后开始向下一轮 prompt 注入 warning delta。留空时使用服务端默认值。</div>
           </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.agentToolControlLabel">Agent Tool Control</label>
@@ -2284,6 +2305,53 @@
             </select>
             <div class="form-help">控制记忆查看、经验能力、长期任务等治理审阅类页面右下详情区的显示密度。`compact` 只显示重要级信息，`full` 显示完整信息。无需重启</div>
           </div>
+          <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div>
+              <div class="settings-subsection-title">Commander / Goal Governance</div>
+              <div class="form-help">控制长期任务 capability plan 的默认执行拓扑、治理模式和默认 commander。Node 级别仍可在 Goal 详情页覆盖。</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCommanderMode">Commander Mode</label>
+            <select id="cfgCommanderMode" class="input">
+              <option value="auto">auto</option>
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select>
+            <div class="form-help">全局 Commander 默认策略。`auto` 表示按 capability planner 启发式判断，`on` 强制启用 commander，`off` 强制 direct。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCommanderAgentId">Commander Agent ID</label>
+            <input id="cfgCommanderAgentId" class="input" placeholder="commander" />
+            <div class="form-help">长期任务默认使用的 commander Agent ID。未命中时回退到 capability plan 当前默认选择。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgGoalExecutionMode">Goal Execution Mode</label>
+            <select id="cfgGoalExecutionMode" class="input">
+              <option value="auto">auto</option>
+              <option value="single_agent">single_agent</option>
+              <option value="multi_agent">multi_agent</option>
+              <option value="multi_agent_parallel">multi_agent_parallel</option>
+              <option value="multi_agent_sequential">multi_agent_sequential</option>
+            </select>
+            <div class="form-help">长期任务 capability plan 的默认执行拓扑。仅作为默认值，Node 级 capability plan 仍可覆盖。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgGoalGovernanceMode">Goal Governance Mode</label>
+            <select id="cfgGoalGovernanceMode" class="input">
+              <option value="auto">auto</option>
+              <option value="direct">direct</option>
+              <option value="commander">commander</option>
+            </select>
+            <div class="form-help">长期任务 capability plan 的默认治理模式。`auto` 交给 planner 启发式，`direct` / `commander` 则强制默认治理路线。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCommanderAutoReworkEnabled">
+              <input id="cfgCommanderAutoReworkEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span>Commander 自动重复返工</span>
+            </label>
+            <div class="form-help">控制 `goal.capability.commander_decide` / `goal_commander_decide` 在 `rework` 时是否自动续发失败 lanes，并保持节点留在 commander 治理执行链路。关闭后退回旧语义：把节点打回 `blocked`。无需重启</div>
+          </div>
           <div class="form-group">
             <label class="form-label" for="cfgExperienceDraftGenerateNoticeEnabled">
               <input id="cfgExperienceDraftGenerateNoticeEnabled" type="checkbox" style="margin-right: 8px;" checked />
@@ -2703,6 +2771,25 @@
       <div class="modal-footer">
         <button id="experienceSynthesisModalCancel" class="button" data-i18n="common.cancel">取消</button>
         <button id="experienceSynthesisModalSubmit" class="button" style="background: var(--button-primary-bg); color: var(--button-primary-text);">合成</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="memoryDedupModal" class="modal-overlay hidden">
+    <div class="modal memory-dedup-modal">
+      <div class="modal-header">
+        <span id="memoryDedupModalTitle">记忆重复预检</span>
+        <button id="memoryDedupModalClose" class="settings-btn" title="关闭">✕</button>
+      </div>
+      <div class="modal-body memory-dedup-modal-body">
+        <div id="memoryDedupModalSummary" class="experience-synthesis-modal-summary"></div>
+        <div id="memoryDedupModalStatus" class="experience-synthesis-modal-status hidden"></div>
+        <div id="memoryDedupModalWarning" class="tool-settings-policy-note hidden"></div>
+        <div id="memoryDedupModalList" class="experience-synthesis-modal-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="memoryDedupModalCancel" class="button" data-i18n="common.cancel">取消</button>
+        <button id="memoryDedupModalSubmit" class="button" style="background: var(--button-primary-bg); color: var(--button-primary-text);">确认清理</button>
       </div>
     </div>
   </div>

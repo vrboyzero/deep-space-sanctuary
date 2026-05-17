@@ -12,6 +12,7 @@ export type AgentPromptDeltaType =
   | "user-prelude"
   | "runtime-identity"
   | "runtime-identity-authority"
+  | "iteration-budget-warning"
   | "attachment"
   | "audio-transcript"
   | "tool-selection-policy"
@@ -279,6 +280,7 @@ function normalizePromptSnapshotDeltaType(value: unknown): AgentPromptDeltaType 
     case "user-prelude":
     case "runtime-identity":
     case "runtime-identity-authority":
+    case "iteration-budget-warning":
     case "attachment":
     case "audio-transcript":
     case "tool-selection-policy":

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSubtaskArtifactEntries,
   buildBridgeGovernanceSummaryLines,
   buildSubtaskExecutionExplainabilityLines,
   buildTeamSharedStateSummaryLines,
@@ -98,6 +99,36 @@ describe("subtasks overview linkage helpers", () => {
     });
 
     expect(lines).toContain("prompt snapshot: missing for session=sub_task_missing");
+  });
+
+  it("builds runtime artifact entries for scratch, review, and lessons learned", () => {
+    const entries = buildSubtaskArtifactEntries({
+      scratchPath: "runtime/scratch-coder.md",
+      reviewPath: "runtime/review-task_1.md",
+      lessonPath: "docs/lesson-task_1.md",
+    }, {
+      scratchContent: "# Scratch",
+      reviewContent: "# Review",
+      lessonContent: "# Lesson",
+    });
+
+    expect(entries).toEqual([
+      expect.objectContaining({
+        kind: "scratch",
+        path: "runtime/scratch-coder.md",
+        content: "# Scratch",
+      }),
+      expect.objectContaining({
+        kind: "review",
+        path: "runtime/review-task_1.md",
+        content: "# Review",
+      }),
+      expect.objectContaining({
+        kind: "lesson",
+        path: "docs/lesson-task_1.md",
+        content: "# Lesson",
+      }),
+    ]);
   });
 
   it("formats bridge governance runtime state and close reason for orphaned sessions", () => {

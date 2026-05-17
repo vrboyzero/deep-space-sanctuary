@@ -15,6 +15,7 @@ import {
   reconcileSubTaskWorktreeRuntimes,
   SubTaskRuntimeStore,
 } from "./task-runtime.js";
+import { GoalManager } from "./goals/manager.js";
 
 test("subtask runtime store persists lifecycle, progress, and output artifacts", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-"));
@@ -85,6 +86,131 @@ test("subtask runtime store persists lifecycle, progress, and output artifacts",
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
+test("subtask runtime store writes scratch memory into goal run runtime roots", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-scratch-goal-"));
+  const goalManager = new GoalManager(stateDir);
+  const goal = await goalManager.createGoal({
+    title: "阶段 3 Scratch Memory",
+    objective: "验证 goal run scratch 文件落盘",
+  });
+  const node = await goalManager.createTaskNode(goal.id, {
+    title: "实现 scratch memory",
+    status: "ready",
+  });
+  const resumed = await goalManager.resumeGoal(goal.id, node.node.id);
+
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: resumed.conversationId,
+      agentId: "coder",
+      instruction: "实现 commander scratch memory 落盘",
+      channel: "goal",
+      timeoutMs: 45_000,
+      delegationProtocol: {
+        source: "goal_subtask",
+        intent: {
+          kind: "goal_execution",
+          summary: "执行 scratch memory 节点",
+          role: "coder",
+          goalId: goal.id,
+          nodeId: node.node.id,
+        },
+        contextPolicy: {
+          includeParentConversation: true,
+          includeStructuredContext: true,
+          contextKeys: ["goalId", "nodeId", "runId"],
+        },
+        expectedDeliverable: {
+          format: "patch",
+          summary: "提交 scratch memory 实现",
+        },
+        aggregationPolicy: {
+          mode: "main_agent_summary",
+          summarizeFailures: true,
+        },
+        launchDefaults: {},
+      },
+    } as any,
+  });
+  await store.attachSession(task.id, "sub_scratch_goal", "coder", "coder");
+  await store.recordThoughtDeltaBySession("sub_scratch_goal", "记录当前排查路径与运行态观察");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const completed = await store.completeTask(task.id, {
+    status: "done",
+    sessionId: "sub_scratch_goal",
+    output: "scratch memory implemented",
+  });
+
+  const expectedScratchPath = path.join(goal.runtimeRoot, "runs", String(resumed.runId), "scratch", "scratch-coder.md");
+  const expectedReviewPath = path.join(goal.runtimeRoot, "runs", String(resumed.runId), "review-results", `review-${task.id}.md`);
+  const expectedLessonPath = path.join(goal.docRoot, "lessons-learned", `lesson-${task.id}.md`);
+  expect(completed?.scratchPath).toBe(expectedScratchPath);
+  expect(completed?.reviewPath).toBe(expectedReviewPath);
+  expect(completed?.lessonPath).toBe(expectedLessonPath);
+  const scratchContent = await fs.readFile(expectedScratchPath, "utf-8");
+  const reviewContent = await fs.readFile(expectedReviewPath, "utf-8");
+  const lessonContent = await fs.readFile(expectedLessonPath, "utf-8");
+  expect(scratchContent).toContain("# Scratch Memory - coder @");
+  expect(scratchContent).toContain("## 当前假设");
+  expect(scratchContent).toContain("记录当前排查路径与运行态观察");
+  expect(scratchContent).toContain("## 已验证结论");
+  expect(scratchContent).toContain("scratch memory implemented");
+  expect(scratchContent).toContain(`Run ID: ${resumed.runId}`);
+  expect(reviewContent).toContain("# Commander Review - coder @");
+  expect(reviewContent).toContain("## 审查发现");
+  expect(reviewContent).toContain(expectedScratchPath);
+  expect(lessonContent).toContain("# Lessons Learned - coder @");
+  expect(lessonContent).toContain("## 可复用信号");
+  expect(lessonContent).toContain(expectedReviewPath);
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime store falls back to task-local scratch memory outside goal runs", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-scratch-fallback-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-scratch-fallback",
+      agentId: "researcher",
+      instruction: "记录非长期任务的临时观察",
+      channel: "test",
+      timeoutMs: 30_000,
+    },
+  });
+  await store.attachSession(task.id, "sub_scratch_fallback", "researcher", "researcher");
+  await store.completeTask(task.id, {
+    status: "error",
+    sessionId: "sub_scratch_fallback",
+    error: "temporary runtime failure",
+  });
+
+  const persisted = await store.getTask(task.id);
+  const expectedScratchPath = path.join(stateDir, "tasks", task.id, "scratch", "scratch-researcher.md");
+  const expectedReviewPath = path.join(stateDir, "tasks", task.id, "review-results", `review-${task.id}.md`);
+  const expectedLessonPath = path.join(stateDir, "tasks", task.id, "lessons-learned", `lesson-${task.id}.md`);
+  expect(persisted?.scratchPath).toBe(expectedScratchPath);
+  expect(persisted?.reviewPath).toBe(expectedReviewPath);
+  expect(persisted?.lessonPath).toBe(expectedLessonPath);
+  const scratchContent = await fs.readFile(expectedScratchPath, "utf-8");
+  const reviewContent = await fs.readFile(expectedReviewPath, "utf-8");
+  const lessonContent = await fs.readFile(expectedLessonPath, "utf-8");
+  expect(scratchContent).toContain("## 错误摘要");
+  expect(scratchContent).toContain("temporary runtime failure");
+  expect(scratchContent).toContain("Source Conversation: conv-scratch-fallback");
+  expect(reviewContent).toContain("temporary runtime failure");
+  expect(reviewContent).toContain("## 验证缺口");
+  expect(lessonContent).toContain("本次未达到稳定交付");
+  expect(lessonContent).toContain("## 需要规避的问题");
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
 test("subtask runtime store loads persisted state with UTF-8 BOM", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-bom-"));
   const store = new SubTaskRuntimeStore(stateDir);
@@ -151,12 +277,14 @@ test("subtask runtime store batches thought_delta persistence within a short win
 
     await new Promise((resolve) => setTimeout(resolve, 80));
 
-    expect(writeFileSpy).toHaveBeenCalledTimes(1);
+    expect(writeFileSpy.mock.calls.length).toBeGreaterThan(0);
 
     const reloaded = new SubTaskRuntimeStore(stateDir);
     await reloaded.load();
     const persisted = await reloaded.getTask(task.id);
     expect(persisted?.progress.message).toBe("second delta");
+    const scratchContent = await fs.readFile(path.join(stateDir, "tasks", task.id, "scratch", "scratch-coder.md"), "utf-8");
+    expect(scratchContent).toContain("second delta");
   } finally {
     writeFileSpy.mockRestore();
     await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});

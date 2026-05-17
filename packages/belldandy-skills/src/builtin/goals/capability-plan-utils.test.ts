@@ -61,6 +61,9 @@ describe("capability-plan-utils", () => {
       runId: "run_1",
       status: "planned",
       executionMode: "multi_agent",
+      governanceMode: "commander",
+      commanderAgentId: "commander-1",
+      preferredAgents: ["commander-1", "coder"],
       riskLevel: "high",
       objective: "Deploy Root Node",
       summary: "Need gated execution",
@@ -105,6 +108,10 @@ describe("capability-plan-utils", () => {
         claimed: true,
         delegated: false,
         delegationCount: 0,
+        finalApprovalMode: "user_required",
+        reworkRevisionCount: 2,
+        lastReworkReason: "Need fix before close",
+        lastReworkAt: "2026-03-20T12:00:00.000Z",
         coordinationPlan: {
           summary: "按 1 路分工推进，并以 verifier_handoff 收口。",
           plannedDelegationCount: 1,
@@ -145,6 +152,9 @@ describe("capability-plan-utils", () => {
       runId: "run_2",
       status: "orchestrated",
       executionMode: "multi_agent",
+      governanceMode: "commander",
+      commanderAgentId: "commander-1",
+      preferredAgents: ["commander-1", "coder"],
       riskLevel: "high",
       checkpoint: {
         required: true,
@@ -160,6 +170,10 @@ describe("capability-plan-utils", () => {
         claimed: true,
         delegated: false,
         delegationCount: 0,
+        finalApprovalMode: "user_required",
+        reworkRevisionCount: 2,
+        lastReworkReason: "Need fix before close",
+        lastReworkAt: "2026-03-20T12:00:00.000Z",
         coordinationPlan: {
           rolePolicy: {
             fanInStrategy: "verifier_handoff",

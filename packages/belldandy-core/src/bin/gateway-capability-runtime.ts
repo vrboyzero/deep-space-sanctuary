@@ -11,6 +11,7 @@ import type { SkillRegistry } from "@belldandy/skills";
 import { searchEnabledSkills } from "../extension-runtime.js";
 import { buildGoalCapabilityPlan } from "../goals/capability-planner.js";
 import type { GoalManager } from "../goals/manager.js";
+import type { GoalCapabilityExecutionMode, GoalCapabilityGovernanceMode } from "../goals/types.js";
 import type { ToolsConfigManager } from "../tools-config.js";
 
 type GoalLike = {
@@ -31,7 +32,10 @@ type CapabilityPlanInput = {
   runId?: string;
   objective?: string;
   queryHints?: string[];
-  forceMode?: "single_agent" | "multi_agent";
+  forceMode?: GoalCapabilityExecutionMode;
+  forceGovernanceMode?: GoalCapabilityGovernanceMode;
+  preferredAgents?: string[];
+  commanderAgentId?: string;
 };
 
 type GatewayMcpDiagnostics = {
@@ -50,6 +54,7 @@ type CreateCapabilityPlanGeneratorInput = {
   toolsConfigManager: ToolsConfigManager;
   agentRegistry?: AgentRegistry;
   getMcpDiagnostics: () => GatewayMcpDiagnostics;
+  getDefaultCapabilityPlanInput?: () => CapabilityPlanInput;
 };
 
 function normalizeCapabilityHint(value: string): string {
@@ -201,6 +206,7 @@ export function createCapabilityPlanGenerator(input: CreateCapabilityPlanGenerat
     const mcpServers = searchCapabilityMcpServers(input, queryHints);
     const availableAgentProfiles = input.agentRegistry?.list() ?? [buildDefaultProfile()];
     const availableAgentIds = availableAgentProfiles.map((profile) => profile.id);
+    const defaultCapabilityInput = input.getDefaultCapabilityPlanInput?.() ?? {};
     const planInput = buildGoalCapabilityPlan({
       goalTitle: goal.title,
       goalObjective: capabilityInput.objective?.trim() || goal.objective,
@@ -219,7 +225,10 @@ export function createCapabilityPlanGenerator(input: CreateCapabilityPlanGenerat
         kind: resolveAgentProfileMetadata(profile).kind,
         catalog: resolveAgentProfileMetadata(profile).catalog,
       })),
-      forceMode: capabilityInput.forceMode,
+      forceMode: capabilityInput.forceMode ?? defaultCapabilityInput.forceMode,
+      forceGovernanceMode: capabilityInput.forceGovernanceMode ?? defaultCapabilityInput.forceGovernanceMode,
+      preferredAgents: capabilityInput.preferredAgents ?? defaultCapabilityInput.preferredAgents,
+      commanderAgentId: capabilityInput.commanderAgentId ?? defaultCapabilityInput.commanderAgentId,
       runId: capabilityInput.runId ?? node.lastRunId,
     });
     const plan = await input.goalManager.saveCapabilityPlan(goalId, nodeId, planInput);

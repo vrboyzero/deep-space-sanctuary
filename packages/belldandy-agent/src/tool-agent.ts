@@ -9,7 +9,7 @@ import {
   type IdentityAuthorityProfile,
   type JsonObject,
 } from "@belldandy/protocol";
-import type { ToolExecutionRuntimeContext, ToolExecutor, ToolCallRequest } from "@belldandy/skills";
+import type { ToolExecutionRuntimeContext, ToolExecutor, ToolCallRequest, ToolFailureKind } from "@belldandy/skills";
 import type { AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
 import type { AfterCompactionEvent, BeforeCompactionEvent, HookAgentContext, HookToolContext, HookToolResultPersistContext } from "./hooks.js";
@@ -31,6 +31,7 @@ import {
   type SystemPromptSection,
 } from "./system-prompt.js";
 import { TokenCounterService } from "./token-counter.js";
+import { calculateUsageCostUsd, type ModelUsagePricing } from "./token-cost.js";
 import type { ConversationStore, ActiveCounterSnapshot } from "./conversation.js";
 import {
   createAgentPromptSnapshot,
@@ -46,6 +47,7 @@ import {
 } from "./runtime-prompt-deltas.js";
 
 type ApiProtocol = "openai" | "anthropic";
+type ToolCallRepairLevel = "off" | "dedupe" | "full";
 const MIN_MULTIMODAL_REQUEST_TIMEOUT_MS = 300_000;
 const LARGE_TEXT_ATTACHMENT_TRIGGER_CHARS = 12_000;
 const HUGE_TEXT_ATTACHMENT_TRIGGER_CHARS = 30_000;
@@ -69,6 +71,10 @@ export type ToolEnabledAgentOptions = {
   toolExecutor: ToolExecutor;
   timeoutMs?: number;
   maxToolCalls?: number;
+  /** 工具循环的模型调用轮次预算（<=0 关闭） */
+  toolLoopIterationBudget?: number;
+  /** 工具循环预算告警阈值（0-1，默认 0.7） */
+  toolLoopWarningFraction?: number;
   systemPrompt?: string;
   systemPromptSections?: SystemPromptSection[];
   /** 简化版钩子接口（向后兼容） */
@@ -102,6 +108,8 @@ export type ToolEnabledAgentOptions = {
   maxRetries?: number;
   /** 同一 profile 重试退避基线（毫秒） */
   retryBackoffMs?: number;
+  /** 工具调用修复级别：off / dedupe / full */
+  toolCallRepairLevel?: ToolCallRepairLevel;
   /** primary profile 专用代理 URL（可选） */
   proxyUrl?: string;
   /** OpenAI-compatible 思考模式配置（primary profile） */
@@ -124,6 +132,8 @@ export type ToolEnabledAgentOptions = {
   compactionRuntimeTracker?: CompactionRuntimeTracker;
   /** 会话存储（用于跨 run 持久化 token 计数器状态） */
   conversationStore?: ConversationStore;
+  /** 模型 usage 价格表（用于估算 USD 成本） */
+  usagePricing?: ModelUsagePricing;
   /** 记录本次 run 实际发给模型的 prompt snapshot */
   onPromptSnapshot?: (snapshot: AgentPromptSnapshot) => void;
   /** 预置到 prompt snapshot 的 system prompt 观测元数据 */
@@ -482,10 +492,113 @@ function readRunStopReason(signal?: AbortSignal): string {
   return "Stopped by user.";
 }
 
+function normalizeToolLoopIterationBudget(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 64;
+  }
+  return value <= 0 ? 0 : Math.max(1, Math.floor(value));
+}
+
+function normalizeToolLoopWarningFraction(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0.7;
+  }
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function normalizeToolCallRepairLevel(value: ToolCallRepairLevel | undefined): ToolCallRepairLevel {
+  switch (value) {
+    case "off":
+    case "dedupe":
+    case "full":
+      return value;
+    default:
+      return "off";
+  }
+}
+
+function buildIterationBudgetWarningDelta(currentIteration: number, budget: number): AgentPromptDelta {
+  return {
+    id: "iteration-budget-warning",
+    deltaType: "iteration-budget-warning",
+    role: "system",
+    source: "tool-agent",
+    text: [
+      "## Iteration Budget Warning",
+      `You are approaching the tool-loop budget (${currentIteration}/${budget}).`,
+      "Prefer concluding, summarizing, or reducing tool usage in the next turn.",
+    ].join("\n"),
+    metadata: {
+      currentIteration,
+      budget,
+    },
+  };
+}
+
+function buildRecentToolResultRecord(input: {
+  toolName: string;
+  args: JsonObject;
+  success: boolean;
+  output?: string;
+  error?: string;
+  failureKind?: ToolFailureKind;
+  toolCallId?: string;
+  isSynthetic?: boolean;
+}) {
+  const digest = buildToolDigestRecord(input);
+  return {
+    toolCallId: input.toolCallId ?? "",
+    toolName: input.toolName,
+    success: input.success,
+    summary: digest.summary,
+    content: input.output,
+    error: input.error,
+    failureKind: input.failureKind,
+    target: digest.target,
+    args: input.args,
+    isSynthetic: input.isSynthetic,
+  };
+}
+
+function recordToolResultArtifacts(input: {
+  conversationStore?: ConversationStore;
+  conversationId: string;
+  toolName: string;
+  args: JsonObject;
+  success: boolean;
+  output?: string;
+  error?: string;
+  failureKind?: ToolFailureKind;
+  toolCallId?: string;
+  isSynthetic?: boolean;
+}): void {
+  if (!input.conversationStore) return;
+  input.conversationStore.recordToolDigest(input.conversationId, buildToolDigestRecord({
+    toolName: input.toolName,
+    args: input.args,
+    success: input.success,
+    output: input.output,
+    error: input.error,
+    toolCallId: input.toolCallId,
+  }));
+  input.conversationStore.recordRecentToolResult(input.conversationId, buildRecentToolResultRecord({
+    toolName: input.toolName,
+    args: input.args,
+    success: input.success,
+    output: input.output,
+    error: input.error,
+    failureKind: input.failureKind,
+    toolCallId: input.toolCallId,
+    isSynthetic: input.isSynthetic,
+  }));
+}
+
 export class ToolEnabledAgent implements BelldandyAgent {
   private conversationRunChains = new Map<string, Promise<void>>();
-  private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema">> &
-    Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema">;
+  private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
+    Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
   private readonly failoverClient: FailoverClient;
 
   constructor(opts: ToolEnabledAgentOptions) {
@@ -493,10 +606,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
       ...opts,
       timeoutMs: opts.timeoutMs ?? 120_000,
       maxToolCalls: opts.maxToolCalls ?? 999999,
+      toolLoopIterationBudget: normalizeToolLoopIterationBudget(opts.toolLoopIterationBudget),
+      toolLoopWarningFraction: normalizeToolLoopWarningFraction(opts.toolLoopWarningFraction),
       wireApi: opts.wireApi ?? "chat_completions",
       sanitizeResponsesToolSchema: opts.sanitizeResponsesToolSchema ?? false,
       maxRetries: opts.maxRetries ?? 0,
       retryBackoffMs: opts.retryBackoffMs ?? 300,
+      toolCallRepairLevel: normalizeToolCallRepairLevel(opts.toolCallRepairLevel),
     };
 
     // 初始化容灾客户端
@@ -812,7 +928,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let totalOutputTokens = 0;
     let totalCacheCreation = 0;
     let totalCacheRead = 0;
+    let totalInputCostUsd = 0;
+    let totalOutputCostUsd = 0;
+    let totalCacheCreationCostUsd = 0;
+    let totalCacheReadCostUsd = 0;
     let modelCallCount = 0;
+    let toolLoopBudgetWarningIssued = false;
+    let lastToolCallFingerprint: string | undefined;
+    let lastToolCallName: string | undefined;
+    let consecutiveDuplicateToolCalls = 0;
 
     // 任务级 token 计数器
     const tokenCounter = new TokenCounterService();
@@ -834,6 +958,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
       cacheCreationTokens: totalCacheCreation,
       cacheReadTokens: totalCacheRead,
       modelCalls: modelCallCount,
+      ...(totalInputCostUsd > 0 ? { inputCostUsd: totalInputCostUsd } : {}),
+      ...(totalOutputCostUsd > 0 ? { outputCostUsd: totalOutputCostUsd } : {}),
+      ...(totalCacheReadCostUsd > 0 ? { cacheReadCostUsd: totalCacheReadCostUsd } : {}),
+      ...(totalCacheCreationCostUsd > 0 ? { cacheCreationCostUsd: totalCacheCreationCostUsd } : {}),
+      ...(totalInputCostUsd > 0 || totalOutputCostUsd > 0 || totalCacheReadCostUsd > 0 || totalCacheCreationCostUsd > 0
+        ? { totalCostUsd: totalInputCostUsd + totalOutputCostUsd + totalCacheReadCostUsd + totalCacheCreationCostUsd }
+        : {}),
     });
 
     // 辅助函数：yield 并收集 items
@@ -852,6 +983,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     const logDebug = (msg: string, data?: unknown) => {
       this.opts.logger?.debug?.("agent", msg, data);
     };
+    const logWarn = (msg: string, data?: unknown) => {
+      this.opts.logger?.warn?.("agent", msg, data);
+    };
     const logError = (msg: string, data?: unknown) => {
       if (this.opts.logger) {
         this.opts.logger.error("agent", msg, data);
@@ -865,6 +999,51 @@ export class ToolEnabledAgent implements BelldandyAgent {
         if (isRunStopRequested(input.abortSignal)) {
           yield* emitStopped();
           return;
+        }
+        const nextModelCallIndex = modelCallCount + 1;
+        const iterationBudget = this.opts.toolLoopIterationBudget;
+        if (iterationBudget > 0) {
+          const warningThreshold = Math.max(1, Math.ceil(iterationBudget * this.opts.toolLoopWarningFraction));
+          if (
+            !toolLoopBudgetWarningIssued
+            && nextModelCallIndex >= warningThreshold
+            && nextModelCallIndex <= iterationBudget
+          ) {
+            toolLoopBudgetWarningIssued = true;
+            pendingToolFollowupDeltas.push(buildIterationBudgetWarningDelta(nextModelCallIndex, iterationBudget));
+            logWarn("[tool-loop-budget] approaching iteration budget", {
+              modelCallIndex: nextModelCallIndex,
+              iterationBudget,
+              warningThreshold,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+          if (nextModelCallIndex > iterationBudget) {
+            try {
+              loopCompactionState = await this.compactInLoop(
+                messages,
+                loopCompactionState,
+                input.conversationId,
+                resolvedAgentId,
+                true,
+              );
+            } catch (err) {
+              logWarn("[tool-loop-budget] forced compaction before budget stop failed", {
+                error: err instanceof Error ? err.message : String(err),
+                modelCallIndex: nextModelCallIndex,
+                iterationBudget,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+            }
+            runSuccess = false;
+            runError = `工具调用迭代预算超限（最大 ${iterationBudget} 轮）。已在阻断前尝试压缩当前上下文，请收敛任务、分解问题，或开启新一轮继续。`;
+            yield* yieldItem(buildUsageItem());
+            yield* yieldItem({ type: "final", text: runError });
+            yield* yieldItem({ type: "status", status: "error" });
+            return;
+          }
         }
         refreshModelPromptState();
         const microcompactCandidate = messages.some((message) => message.role === "tool");
@@ -901,6 +1080,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
             reclaimedChars: microcompactResult.reclaimedChars,
             rebuildTriggered: false,
           }, input.conversationId, resolvedAgentId);
+        } else if (microcompactResult.skippedForPrefixStability) {
+          logDebug("[microcompact] skipped destructive rewrite to preserve prefix stability", {
+            messageCount: messages.length,
+          });
+          this.opts.logger?.info?.("agent", "[microcompact] skipped destructive rewrite to preserve prefix stability", {
+            messageCount: messages.length,
+            agentId: resolvedAgentId,
+            conversationId: input.conversationId,
+          });
         }
 
         // ReAct 循环内压缩检查：当上下文接近上限时，压缩历史消息
@@ -920,7 +1108,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
         const tools = this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
         const toolNames = tools.map((tool) => tool.function.name);
-        const nextModelCallIndex = modelCallCount + 1;
         const modelCallStartedAt = Date.now();
         logDebug("[model-call] dispatch", {
           modelCallIndex: nextModelCallIndex,
@@ -981,10 +1168,29 @@ export class ToolEnabledAgent implements BelldandyAgent {
           totalOutputTokens += u.output_tokens;
           totalCacheCreation += u.cache_creation_input_tokens ?? 0;
           totalCacheRead += u.cache_read_input_tokens ?? 0;
-          tokenCounter.notifyUsage(u.input_tokens, u.output_tokens);
+          const usageCost = calculateUsageCostUsd({
+            inputTokens: u.input_tokens,
+            outputTokens: u.output_tokens,
+            cacheReadTokens: u.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+            pricing: this.opts.usagePricing,
+          });
+          if (usageCost) {
+            totalInputCostUsd += usageCost.inputUsd;
+            totalOutputCostUsd += usageCost.outputUsd;
+            totalCacheReadCostUsd += usageCost.cacheReadUsd;
+            totalCacheCreationCostUsd += usageCost.cacheCreationUsd;
+          }
+          tokenCounter.notifyUsage(u.input_tokens, u.output_tokens, usageCost
+            ? {
+                inputCostUsd: usageCost.inputUsd + usageCost.cacheReadUsd + usageCost.cacheCreationUsd,
+                outputCostUsd: usageCost.outputUsd,
+              }
+            : undefined);
           const parts = [`input=${u.input_tokens}`, `output=${u.output_tokens}`];
           if (u.cache_creation_input_tokens) parts.push(`cache_create=${u.cache_creation_input_tokens}`);
           if (u.cache_read_input_tokens) parts.push(`cache_read=${u.cache_read_input_tokens}`);
+          if (usageCost) parts.push(`usd=${usageCost.totalUsd.toFixed(8)}`);
           logDebug(`[usage] ${parts.join(" ")}`);
         } else if (response.ok) {
           modelCallCount++;
@@ -1071,11 +1277,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
             yield* emitStopped();
             return;
           }
+          const parsedArguments = parseToolCallArguments(tc.function.arguments, this.opts.toolCallRepairLevel);
           const request: ToolCallRequest = {
             id: tc.id,
             name: tc.function.name,
-            arguments: safeParseJson(tc.function.arguments),
+            arguments: parsedArguments.arguments,
           };
+          const requestFingerprint = buildToolCallFingerprint(request.name, parsedArguments.fingerprintArguments);
 
           const toolStartTime = Date.now();
 
@@ -1128,13 +1336,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   },
                   isSynthetic: true,
                 }));
-                this.opts.conversationStore?.recordToolDigest(input.conversationId, buildToolDigestRecord({
+                recordToolResultArtifacts({
+                  conversationStore: this.opts.conversationStore,
+                  conversationId: input.conversationId,
                   toolName: request.name,
                   args: request.arguments,
                   success: false,
                   error: blockedError,
                   toolCallId: tc.id,
-                }));
+                  isSynthetic: true,
+                });
                 pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
                   result: {
                     id: request.id,
@@ -1176,13 +1387,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   },
                   isSynthetic: true,
                 }));
-                this.opts.conversationStore?.recordToolDigest(input.conversationId, buildToolDigestRecord({
+                recordToolResultArtifacts({
+                  conversationStore: this.opts.conversationStore,
+                  conversationId: input.conversationId,
                   toolName: request.name,
                   args: request.arguments,
                   success: true,
                   output: syntheticResult,
                   toolCallId: tc.id,
-                }));
+                  isSynthetic: true,
+                });
                 continue;
               }
               if (hookRes?.params) {
@@ -1219,13 +1433,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 },
                 isSynthetic: true,
               }));
-              this.opts.conversationStore?.recordToolDigest(input.conversationId, buildToolDigestRecord({
+              recordToolResultArtifacts({
+                conversationStore: this.opts.conversationStore,
+                conversationId: input.conversationId,
                 toolName: request.name,
                 args: request.arguments,
                 success: false,
                 error: hookError,
                 toolCallId: tc.id,
-              }));
+                isSynthetic: true,
+              });
               pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
                 result: {
                   id: request.id,
@@ -1281,13 +1498,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   },
                   isSynthetic: true,
                 }));
-                this.opts.conversationStore?.recordToolDigest(input.conversationId, buildToolDigestRecord({
+                recordToolResultArtifacts({
+                  conversationStore: this.opts.conversationStore,
+                  conversationId: input.conversationId,
                   toolName: request.name,
                   args: request.arguments,
                   success: false,
                   error: blockedError,
                   toolCallId: tc.id,
-                }));
+                  isSynthetic: true,
+                });
                 pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
                   result: {
                     id: request.id,
@@ -1334,13 +1554,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 },
                 isSynthetic: true,
               }));
-              this.opts.conversationStore?.recordToolDigest(input.conversationId, buildToolDigestRecord({
+              recordToolResultArtifacts({
+                conversationStore: this.opts.conversationStore,
+                conversationId: input.conversationId,
                 toolName: request.name,
                 args: request.arguments,
                 success: false,
                 error: hookError,
                 toolCallId: tc.id,
-              }));
+                isSynthetic: true,
+              });
               pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
                 result: {
                   id: request.id,
@@ -1353,6 +1576,93 @@ export class ToolEnabledAgent implements BelldandyAgent {
               }));
               continue;
             }
+          }
+
+          if (parsedArguments.repaired) {
+            logWarn("[tool-call-repair] repaired truncated tool arguments", {
+              toolName: request.name,
+              toolCallId: request.id,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+          }
+
+          if (
+            this.opts.toolCallRepairLevel !== "off"
+            && lastToolCallFingerprint
+            && requestFingerprint === lastToolCallFingerprint
+          ) {
+            consecutiveDuplicateToolCalls += 1;
+            const duplicateError = `工具调用已被拦截：检测到连续重复的相同调用（${request.name}）。请基于上一轮工具结果继续，而不是重复调用同一工具。`;
+            yield* yieldItem({
+              type: "tool_call",
+              id: request.id,
+              name: request.name,
+              arguments: request.arguments,
+            });
+            yield* yieldItem({
+              type: "tool_result",
+              id: request.id,
+              name: request.name,
+              success: false,
+              output: "",
+              error: duplicateError,
+              failureKind: "business_logic_error",
+              metadata: {
+                repairAction: "duplicate_tool_call_suppressed",
+                duplicateCount: consecutiveDuplicateToolCalls,
+                previousToolName: lastToolCallName,
+              },
+            });
+            messages.push(buildToolTranscriptMessageForHistory({
+              toolCallId: tc.id,
+              toolName: request.name,
+              output: "",
+              error: duplicateError,
+              success: false,
+              hookRunner: this.opts.hookRunner,
+              persistCtx: {
+                agentId: resolvedAgentId,
+                sessionKey: input.conversationId,
+                toolName: request.name,
+                toolCallId: tc.id,
+              },
+              isSynthetic: true,
+            }));
+            recordToolResultArtifacts({
+              conversationStore: this.opts.conversationStore,
+              conversationId: input.conversationId,
+              toolName: request.name,
+              args: request.arguments,
+              success: false,
+              error: duplicateError,
+              failureKind: "business_logic_error",
+              toolCallId: tc.id,
+              isSynthetic: true,
+            });
+            pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
+              result: {
+                id: request.id,
+                name: request.name,
+                success: false,
+                output: "",
+                error: duplicateError,
+                failureKind: "business_logic_error",
+                metadata: {
+                  repairAction: "duplicate_tool_call_suppressed",
+                  duplicateCount: consecutiveDuplicateToolCalls,
+                },
+              },
+              requestArguments: request.arguments,
+            }));
+            logWarn("[tool-call-repair] suppressed duplicate tool call", {
+              toolName: request.name,
+              toolCallId: request.id,
+              duplicateCount: consecutiveDuplicateToolCalls,
+              conversationId: input.conversationId,
+              agentId: resolvedAgentId,
+            });
+            continue;
           }
 
           // 广播工具调用事件
@@ -1443,18 +1753,24 @@ export class ToolEnabledAgent implements BelldandyAgent {
               toolCallId: tc.id,
             },
           }));
-          this.opts.conversationStore?.recordToolDigest(input.conversationId, buildToolDigestRecord({
+          recordToolResultArtifacts({
+            conversationStore: this.opts.conversationStore,
+            conversationId: input.conversationId,
             toolName: result.name,
             args: request.arguments,
             success: result.success,
             output: result.output,
             error: result.error,
+            failureKind: result.failureKind,
             toolCallId: tc.id,
-          }));
+          });
           pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
             result,
             requestArguments: request.arguments,
           }));
+          lastToolCallFingerprint = requestFingerprint;
+          lastToolCallName = request.name;
+          consecutiveDuplicateToolCalls = 0;
           if (isRunStopRequested(input.abortSignal)) {
             yield* emitStopped();
             return;
@@ -1792,6 +2108,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     state: CompactionState,
     conversationId?: string,
     agentId?: string,
+    force?: boolean,
   ): Promise<CompactionState> {
     // 提取可压缩的 user/assistant 消息（跳过 system 和 tool 消息）
     const systemMsg = messages[0]?.role === "system" ? messages[0] : null;
@@ -1840,6 +2157,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     const result = await compactIncremental(historyMessages, state, {
       ...this.opts.compaction,
       summarizer: this.opts.summarizer,
+      force,
     });
     this.opts.compactionRuntimeTracker?.recordResult(result, {
       source: "loop",
@@ -2458,13 +2776,132 @@ function extractResponsesToolCalls(json: JsonObject): OpenAIToolCall[] {
   return toolCalls;
 }
 
-function safeParseJson(str: string): JsonObject {
+type ParsedToolCallArguments = {
+  arguments: JsonObject;
+  repaired: boolean;
+  raw: string;
+  fingerprintArguments: JsonObject;
+};
+
+function parseToolCallArguments(str: string, repairLevel: ToolCallRepairLevel): ParsedToolCallArguments {
+  const raw = typeof str === "string" ? str : "";
+  const direct = tryParseJsonObject(raw);
+  if (direct) {
+    return {
+      arguments: direct,
+      repaired: false,
+      raw,
+      fingerprintArguments: direct,
+    };
+  }
+  if (repairLevel === "full") {
+    const repairedRaw = repairIncompleteJsonObjectCandidate(raw);
+    if (repairedRaw) {
+      const repaired = tryParseJsonObject(repairedRaw);
+      if (repaired) {
+        return {
+          arguments: repaired,
+          repaired: true,
+          raw: repairedRaw,
+          fingerprintArguments: repaired,
+        };
+      }
+    }
+  }
+  return {
+    arguments: {},
+    repaired: false,
+    raw,
+    fingerprintArguments: {},
+  };
+}
+
+function tryParseJsonObject(str: string): JsonObject | null {
+  if (typeof str !== "string" || !str.trim()) {
+    return null;
+  }
   try {
     const parsed = JSON.parse(str);
-    return typeof parsed === "object" && parsed !== null ? parsed : {};
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as JsonObject
+      : null;
   } catch {
-    return {};
+    return null;
   }
+}
+
+function repairIncompleteJsonObjectCandidate(value: string): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed.startsWith("{")) {
+    return null;
+  }
+  const repairPlan = analyzeJsonClosure(trimmed);
+  if (repairPlan.depth <= 0 && !repairPlan.inString) {
+    return null;
+  }
+  const repaired = `${trimmed}${repairPlan.inString ? "\"" : ""}${"]".repeat(repairPlan.bracketDepth)}${"}".repeat(repairPlan.braceDepth)}`;
+  try {
+    JSON.parse(repaired);
+    return repaired;
+  } catch {
+    return null;
+  }
+}
+
+function analyzeJsonClosure(value: string): {
+  depth: number;
+  braceDepth: number;
+  bracketDepth: number;
+  inString: boolean;
+} {
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (const char of value) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "{") braceDepth += 1;
+    else if (char === "}" && braceDepth > 0) braceDepth -= 1;
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]" && bracketDepth > 0) bracketDepth -= 1;
+  }
+
+  return {
+    depth: braceDepth + bracketDepth + (inString ? 1 : 0),
+    braceDepth,
+    bracketDepth,
+    inString,
+  };
+}
+
+function buildToolCallFingerprint(toolName: string, args: JsonObject): string {
+  return `${toolName}::${stableStringify(args)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 async function safeReadText(res: Response): Promise<string> {

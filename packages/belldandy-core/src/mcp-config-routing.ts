@@ -140,8 +140,8 @@ function inspectStarweaverRouting(
 ) {
   const local = servers.find((server) => server.id === "starweaver") ?? null;
   const central = servers.find((server) => server.id === "starweaver-central") ?? null;
-  const localActive = Boolean(local) && local.enabled !== false && local.autoConnect !== false;
-  const centralActive = Boolean(central) && central.enabled !== false && central.autoConnect !== false;
+  const localActive = local !== null && local.enabled !== false && local.autoConnect !== false;
+  const centralActive = central !== null && central.enabled !== false && central.autoConnect !== false;
   const placeholderKey = central?.authHeaderPlaceholder === true;
   const centralUnreachable = centralActive && runtimeProbe?.reachable === false;
 
