@@ -867,6 +867,13 @@
             <div class="form-help" data-i18n="settings.injectMemoryHelp">决定是否把 `MEMORY.md` 注入到 System Prompt。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgPromptFocusEnabled">
+              <input id="cfgPromptFocusEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span>Prompt Focus Runtime Prelude</span>
+            </label>
+            <div class="form-help">控制运行时是否从当前工作区 `AGENTS.md` 中提取最相关片段，作为额外 prompt focus prelude 注入。关闭后退回普通 system prompt 组装链路。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" data-i18n="settings.maxSystemPromptCharsLabel">Max System Prompt Chars</label>
             <input id="cfgMaxSystemPromptChars" class="input" placeholder="0 / 6000 / 20000" />
             <div class="form-help" data-i18n="settings.maxSystemPromptCharsHelp">限制 System Prompt 最大字符数。设为 `0` 或留空表示不限制。</div>

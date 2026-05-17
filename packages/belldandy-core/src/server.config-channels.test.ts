@@ -506,6 +506,7 @@ test("config.update accepts system governance env settings and keeps extra works
           BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/tools,D:/projects",
           BELLDANDY_WEB_ROOT: "apps/web/public",
           BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE: "full",
+          BELLDANDY_PROMPT_FOCUS_ENABLED: "false",
           BELLDANDY_LOG_LEVEL: "info",
           BELLDANDY_LOG_CONSOLE: "true",
           BELLDANDY_LOG_FILE: "true",
@@ -538,6 +539,7 @@ test("config.update accepts system governance env settings and keeps extra works
     expect(readRes.payload?.config?.BELLDANDY_AUTO_TASK_TOKEN_ENABLED).toBe("false");
     expect(readRes.payload?.config?.BELLDANDY_EXTRA_WORKSPACE_ROOTS).toBe("E:/tools,D:/projects");
     expect(readRes.payload?.config?.BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE).toBe("full");
+    expect(readRes.payload?.config?.BELLDANDY_PROMPT_FOCUS_ENABLED).toBe("false");
     expect(readRes.payload?.config?.BELLDANDY_LOG_DIR).toBe("~/.star_sanctuary/logs");
     expect(readRes.payload?.config?.BELLDANDY_DREAM_OBSIDIAN_ROOT_DIR).toBe("Dream");
     expect(readRes.payload?.config?.BELLDANDY_COMMONS_OBSIDIAN_ROOT_DIR).toBe("Commons");
@@ -548,6 +550,7 @@ test("config.update accepts system governance env settings and keeps extra works
     expect(envLocalContent).toContain('BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY="gro_secret_key"');
     expect(envLocalContent).toContain('BELLDANDY_STATE_DIR_WINDOWS="C:/Users/admin/.star_sanctuary"');
     expect(envLocalContent).toContain('BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE="full"');
+    expect(envLocalContent).toContain('BELLDANDY_PROMPT_FOCUS_ENABLED="false"');
     expect(envLocalContent).toContain('BELLDANDY_COMMONS_OBSIDIAN_ROOT_DIR="Commons"');
   } finally {
     ws.close();

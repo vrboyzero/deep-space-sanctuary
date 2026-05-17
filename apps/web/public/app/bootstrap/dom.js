@@ -429,6 +429,7 @@ export const APP_DOM_REFS = {
   cfgInjectAgents: byId("cfgInjectAgents"),
   cfgInjectSoul: byId("cfgInjectSoul"),
   cfgInjectMemory: byId("cfgInjectMemory"),
+  cfgPromptFocusEnabled: byId("cfgPromptFocusEnabled"),
   cfgMaxSystemPromptChars: byId("cfgMaxSystemPromptChars"),
   cfgMaxHistory: byId("cfgMaxHistory"),
   pairingPendingList: byId("pairingPendingList"),

@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "修复了重启后环境变量不生效的问题，修复了自动统计任务时间与token开关无效的问题"
+git commit -m "把新增的环境变量补进了.env.example和设置窗口中，用户可以直观的看到这些配置了。"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

@@ -373,6 +373,7 @@ function createSettingsRefs(overrides = {}) {
     cfgInjectAgents: overrides.cfgInjectAgents || createCheckbox(false),
     cfgInjectSoul: overrides.cfgInjectSoul || createCheckbox(false),
     cfgInjectMemory: overrides.cfgInjectMemory || createCheckbox(false),
+    cfgPromptFocusEnabled: overrides.cfgPromptFocusEnabled || createCheckbox(true),
     cfgMaxSystemPromptChars: overrides.cfgMaxSystemPromptChars || createInput(""),
     cfgMaxHistory: overrides.cfgMaxHistory || createInput(""),
     cfgConversationKindMain: overrides.cfgConversationKindMain || createCheckbox(false),
@@ -771,6 +772,7 @@ describe("settings controller", () => {
       BELLDANDY_WORKSPACE_DIR: "./workspace",
       BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/tools,D:/projects",
       BELLDANDY_WEB_ROOT: "apps/web/public",
+      BELLDANDY_PROMPT_FOCUS_ENABLED: "false",
       BELLDANDY_LOG_LEVEL: "info",
       BELLDANDY_LOG_CONSOLE: "true",
       BELLDANDY_LOG_FILE: "true",
@@ -954,6 +956,7 @@ describe("settings controller", () => {
     expect(refs.cfgWorkspaceDir.value).toBe("./workspace");
     expect(refs.cfgExtraWorkspaceRoots.value).toBe("E:/tools,D:/projects");
     expect(refs.cfgWebRoot.value).toBe("apps/web/public");
+    expect(refs.cfgPromptFocusEnabled.checked).toBe(false);
     expect(refs.cfgLogLevel.value).toBe("info");
     expect(refs.cfgLogConsole.checked).toBe(true);
     expect(refs.cfgLogFile.checked).toBe(true);
@@ -1235,6 +1238,7 @@ describe("settings controller", () => {
       cfgWorkspaceDir: createInput(" ./workspace "),
       cfgExtraWorkspaceRoots: createInput(" E:/tools,D:/projects "),
       cfgWebRoot: createInput(" apps/web/public "),
+      cfgPromptFocusEnabled: createCheckbox(false),
       cfgLogLevel: createInput(" info "),
       cfgLogConsole: createCheckbox(true),
       cfgLogFile: createCheckbox(true),
@@ -1478,6 +1482,7 @@ describe("settings controller", () => {
       BELLDANDY_WORKSPACE_DIR: "./workspace",
       BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/tools,D:/projects",
       BELLDANDY_WEB_ROOT: "apps/web/public",
+      BELLDANDY_PROMPT_FOCUS_ENABLED: "false",
       BELLDANDY_LOG_LEVEL: "info",
       BELLDANDY_LOG_CONSOLE: "true",
       BELLDANDY_LOG_FILE: "true",

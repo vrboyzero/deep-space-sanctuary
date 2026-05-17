@@ -232,6 +232,7 @@ export function createSettingsController({
     cfgInjectAgents,
     cfgInjectSoul,
     cfgInjectMemory,
+    cfgPromptFocusEnabled,
     cfgMaxSystemPromptChars,
     cfgMaxHistory,
     pairingPendingList,
@@ -947,6 +948,7 @@ export function createSettingsController({
     cfgInjectAgents.checked = c["BELLDANDY_INJECT_AGENTS"] === "true";
     cfgInjectSoul.checked = c["BELLDANDY_INJECT_SOUL"] === "true";
     cfgInjectMemory.checked = c["BELLDANDY_INJECT_MEMORY"] === "true";
+    if (cfgPromptFocusEnabled) cfgPromptFocusEnabled.checked = c["BELLDANDY_PROMPT_FOCUS_ENABLED"] !== "false";
     cfgMaxSystemPromptChars.value = c["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] || "";
     cfgMaxHistory.value = c["BELLDANDY_MAX_HISTORY"] || "";
     loadConversationAllowedKinds(c["BELLDANDY_CONVERSATION_ALLOWED_KINDS"]);
@@ -1754,6 +1756,7 @@ export function createSettingsController({
     updates["BELLDANDY_INJECT_AGENTS"] = cfgInjectAgents.checked ? "true" : "false";
     updates["BELLDANDY_INJECT_SOUL"] = cfgInjectSoul.checked ? "true" : "false";
     updates["BELLDANDY_INJECT_MEMORY"] = cfgInjectMemory.checked ? "true" : "false";
+    if (cfgPromptFocusEnabled) updates["BELLDANDY_PROMPT_FOCUS_ENABLED"] = cfgPromptFocusEnabled.checked ? "true" : "false";
     updates["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] = cfgMaxSystemPromptChars.value.trim();
     updates["BELLDANDY_MAX_HISTORY"] = cfgMaxHistory.value.trim();
     updates["BELLDANDY_CONVERSATION_ALLOWED_KINDS"] = serializeConversationAllowedKinds();
