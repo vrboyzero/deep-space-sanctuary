@@ -114,29 +114,35 @@ describe("buildAgentRuntimePromptSections", () => {
       methodAssets: [
         {
           fileName: "multi-agent-review.md",
+          path: "methods/multi-agent-review.md",
           title: "多 Agent 审查流程",
           status: "active",
           summary: "适合需要 coder + verifier 收口的复杂任务。",
         },
       ],
+      methodAssetTotalCount: 48,
       promptSkillAssets: [
         {
           name: "team-fan-in",
           description: "帮助 manager 组织 fan-in 验收。",
           priority: "high",
           source: "bundled",
+          path: "bundled:team-fan-in",
           tags: ["team"],
         },
       ],
+      promptSkillAssetTotalCount: 3,
       searchableSkillAssets: [
         {
           name: "memory-guard",
           description: "在优化方案里检查记忆能力是否退化。",
           priority: "normal",
           source: "user",
+          path: "skills/memory-guard/SKILL.md",
           tags: ["memory"],
         },
       ],
+      searchableSkillAssetTotalCount: 37,
     });
 
     expect(sections.map((section) => section.id)).toContain("method-skill-asset-summary");
@@ -146,9 +152,15 @@ describe("buildAgentRuntimePromptSections", () => {
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
       .toContain("file=multi-agent-review.md");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("path=methods/multi-agent-review.md");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
       .toContain("Prompt-injected skills already active");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("memory-guard | 在优化方案里检查记忆能力是否退化。");
+      .toContain("memory-guard | 在优化方案里检查记忆能力是否退化。 | path=skills/memory-guard/SKILL.md");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Inventory counts: methods=48 | prompt_skills=3 | searchable_skills=37");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Do not assume the grouped lists are exhaustive");
     expect(sections.find((section) => section.id === "profile-execution-policy")?.text)
       .toContain("scope control, delegation, and fan-in acceptance");
     expect(sections.find((section) => section.id === "profile-execution-policy")?.text)

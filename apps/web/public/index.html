@@ -867,6 +867,13 @@
             <div class="form-help" data-i18n="settings.injectMemoryHelp">决定是否把 `MEMORY.md` 注入到 System Prompt。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgInjectMethodSkillList">
+              <input id="cfgInjectMethodSkillList" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.injectMethodSkillListLabel">Inject Method / Skill Summary</span>
+            </label>
+            <div class="form-help" data-i18n="settings.injectMethodSkillListHelp">决定是否把 Methods / Skills 的运行时摘要索引注入到 System Prompt。关闭后，Agent 仍可通过工具搜索，但启动时不会看到摘要目录。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgPromptFocusEnabled">
               <input id="cfgPromptFocusEnabled" type="checkbox" style="margin-right: 8px;" />
               <span>Prompt Focus Runtime Prelude</span>
@@ -1670,25 +1677,29 @@
 
           <div class="settings-subsection-header" style="margin-top: 16px;">
             <div>
-              <div class="settings-subsection-title">Sub Agents</div>
-              <div class="form-help">子代理并发、排队、超时和嵌套深度预算。</div>
+              <div class="settings-subsection-title" data-i18n="settings.subAgentsSectionTitle">Sub Agents</div>
+              <div class="form-help" data-i18n="settings.subAgentsSectionHelp">子代理并发、排队、超时和嵌套深度预算。</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgSubAgentMaxConcurrent">Sub Agent Max Concurrent</label>
-            <input id="cfgSubAgentMaxConcurrent" class="input" placeholder="3" />
+            <label class="form-label" for="cfgSubAgentMaxConcurrent" data-i18n="settings.subAgentMaxConcurrentLabel">Sub Agent Max Concurrent</label>
+            <input id="cfgSubAgentMaxConcurrent" class="input" data-i18n-placeholder="settings.subAgentMaxConcurrentPlaceholder" placeholder="3" />
+            <div class="form-help" data-i18n="settings.subAgentMaxConcurrentHelp">允许同时运行的子代理数量上限。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgSubAgentMaxQueueSize">Sub Agent Max Queue Size</label>
-            <input id="cfgSubAgentMaxQueueSize" class="input" placeholder="10" />
+            <label class="form-label" for="cfgSubAgentMaxQueueSize" data-i18n="settings.subAgentMaxQueueSizeLabel">Sub Agent Max Queue Size</label>
+            <input id="cfgSubAgentMaxQueueSize" class="input" data-i18n-placeholder="settings.subAgentMaxQueueSizePlaceholder" placeholder="10" />
+            <div class="form-help" data-i18n="settings.subAgentMaxQueueSizeHelp">等待执行的子代理任务队列上限。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgSubAgentTimeoutMs">Sub Agent Timeout (ms)</label>
-            <input id="cfgSubAgentTimeoutMs" class="input" placeholder="120000" />
+            <label class="form-label" for="cfgSubAgentTimeoutMs" data-i18n="settings.subAgentTimeoutMsLabel">Sub Agent Timeout (ms)</label>
+            <input id="cfgSubAgentTimeoutMs" class="input" data-i18n-placeholder="settings.subAgentTimeoutMsPlaceholder" placeholder="120000" />
+            <div class="form-help" data-i18n="settings.subAgentTimeoutMsHelp">单个子代理任务的默认超时时间，单位毫秒。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgSubAgentMaxDepth">Sub Agent Max Depth</label>
-            <input id="cfgSubAgentMaxDepth" class="input" placeholder="2" />
+            <label class="form-label" for="cfgSubAgentMaxDepth" data-i18n="settings.subAgentMaxDepthLabel">Sub Agent Max Depth</label>
+            <input id="cfgSubAgentMaxDepth" class="input" data-i18n-placeholder="settings.subAgentMaxDepthPlaceholder" placeholder="2" />
+            <div class="form-help" data-i18n="settings.subAgentMaxDepthHelp">子代理继续派生子代理时允许的最大嵌套层级。</div>
           </div>
 
           <hr class="theme-divider">
@@ -1749,6 +1760,11 @@
             <div class="form-help" data-i18n="settings.imageUnderstandApiKeyHelp">图片识别专用 Key。Dedicated key for image understanding.</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgImageUnderstandProvider" data-i18n="settings.imageUnderstandProviderLabel">Image Understand Provider</label>
+            <input id="cfgImageUnderstandProvider" class="input" data-i18n-placeholder="settings.imageUnderstandProviderPlaceholder" placeholder="openai" />
+            <div class="form-help" data-i18n="settings.imageUnderstandProviderHelp">图片识别 provider。通常填 `openai`。无需重启</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgImageUnderstandBaseUrl" data-i18n="settings.imageUnderstandBaseUrlLabel">Image Understand Base URL</label>
             <input id="cfgImageUnderstandBaseUrl" class="input" placeholder="https://api.openai.com/v1" />
             <div class="form-help" data-i18n="settings.imageUnderstandBaseUrlHelp">图片识别接口地址。Endpoint for image understanding.</div>
@@ -1762,6 +1778,16 @@
             <label class="form-label" for="cfgImageUnderstandTimeoutMs" data-i18n="settings.imageUnderstandTimeoutMsLabel">Image Understand Timeout (ms)</label>
             <input id="cfgImageUnderstandTimeoutMs" class="input" placeholder="60000" />
             <div class="form-help" data-i18n="settings.imageUnderstandTimeoutMsHelp">图片识别超时。Request timeout for image understanding.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgImageUnderstandMaxInputMb" data-i18n="settings.imageUnderstandMaxInputMbLabel">Image Understand Max Input (MB)</label>
+            <input id="cfgImageUnderstandMaxInputMb" class="input" data-i18n-placeholder="settings.imageUnderstandMaxInputMbPlaceholder" placeholder="20" />
+            <div class="form-help" data-i18n="settings.imageUnderstandMaxInputMbHelp">图片识别允许处理的最大输入体积，单位 MB。无需重启</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgImageUnderstandPrompt" data-i18n="settings.imageUnderstandPromptLabel">Image Understand Prompt</label>
+            <textarea id="cfgImageUnderstandPrompt" class="textarea" rows="4" data-i18n-placeholder="settings.imageUnderstandPromptPlaceholder" placeholder="Describe the image in detail..."></textarea>
+            <div class="form-help" data-i18n="settings.imageUnderstandPromptHelp">覆盖默认图片识别提示词。无需重启</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgImageUnderstandAutoOnAttachment">
@@ -1804,6 +1830,11 @@
             <div class="form-help" data-i18n="settings.videoUnderstandApiKeyHelp">视频识别专用 Key。Dedicated key for video understanding.</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgVideoUnderstandProvider" data-i18n="settings.videoUnderstandProviderLabel">Video Understand Provider</label>
+            <input id="cfgVideoUnderstandProvider" class="input" data-i18n-placeholder="settings.videoUnderstandProviderPlaceholder" placeholder="openai" />
+            <div class="form-help" data-i18n="settings.videoUnderstandProviderHelp">视频识别 provider。通常填 `openai`。无需重启</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgVideoUnderstandBaseUrl" data-i18n="settings.videoUnderstandBaseUrlLabel">Video Understand Base URL</label>
             <input id="cfgVideoUnderstandBaseUrl" class="input" placeholder="https://api.moonshot.cn/v1" />
             <div class="form-help" data-i18n="settings.videoUnderstandBaseUrlHelp">视频识别接口地址。Endpoint for video understanding.</div>
@@ -1831,6 +1862,16 @@
             <label class="form-label" for="cfgVideoUnderstandFps" data-i18n="settings.videoUnderstandFpsLabel">Video Understand FPS</label>
             <input id="cfgVideoUnderstandFps" class="input" placeholder="2.0 / 3 / 4" />
             <div class="form-help" data-i18n="settings.videoUnderstandFpsHelp">原生视频理解抽帧密度；留空使用服务端默认值，DashScope 文档默认 2.0。数值越大抽帧越密，成本通常也越高。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgVideoUnderstandMaxInputMb" data-i18n="settings.videoUnderstandMaxInputMbLabel">Video Understand Max Input (MB)</label>
+            <input id="cfgVideoUnderstandMaxInputMb" class="input" data-i18n-placeholder="settings.videoUnderstandMaxInputMbPlaceholder" placeholder="64" />
+            <div class="form-help" data-i18n="settings.videoUnderstandMaxInputMbHelp">视频识别允许处理的最大输入体积，单位 MB。无需重启</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgVideoUnderstandPrompt" data-i18n="settings.videoUnderstandPromptLabel">Video Understand Prompt</label>
+            <textarea id="cfgVideoUnderstandPrompt" class="textarea" rows="4" data-i18n-placeholder="settings.videoUnderstandPromptPlaceholder" placeholder="Summarize the video and key timeline events..."></textarea>
+            <div class="form-help" data-i18n="settings.videoUnderstandPromptHelp">覆盖默认视频识别提示词。无需重启</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgVideoUnderstandAutoOnAttachment">
@@ -1970,17 +2011,19 @@
 
           <div class="settings-subsection-header">
             <div>
-              <div class="settings-subsection-title">Room Context</div>
-              <div class="form-help">群聊成员列表注入阈值与缓存时间，影响身份上下文和 token 消耗。</div>
+              <div class="settings-subsection-title" data-i18n="settings.roomContextSectionTitle">Room Context</div>
+              <div class="form-help" data-i18n="settings.roomContextSectionHelp">群聊成员列表注入阈值与缓存时间，影响身份上下文和 token 消耗。</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgRoomInjectThreshold">Room Inject Threshold</label>
-            <input id="cfgRoomInjectThreshold" class="input" placeholder="10" />
+            <label class="form-label" for="cfgRoomInjectThreshold" data-i18n="settings.roomInjectThresholdLabel">Room Inject Threshold</label>
+            <input id="cfgRoomInjectThreshold" class="input" data-i18n-placeholder="settings.roomInjectThresholdPlaceholder" placeholder="10" />
+            <div class="form-help" data-i18n="settings.roomInjectThresholdHelp">达到多少成员数后，群聊上下文会开始注入成员列表摘要。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgRoomMembersCacheTtl">Room Members Cache TTL (ms)</label>
-            <input id="cfgRoomMembersCacheTtl" class="input" placeholder="300000" />
+            <label class="form-label" for="cfgRoomMembersCacheTtl" data-i18n="settings.roomMembersCacheTtlLabel">Room Members Cache TTL (ms)</label>
+            <input id="cfgRoomMembersCacheTtl" class="input" data-i18n-placeholder="settings.roomMembersCacheTtlPlaceholder" placeholder="300000" />
+            <div class="form-help" data-i18n="settings.roomMembersCacheTtlHelp">群成员缓存有效期，单位毫秒，用于减少重复拉取成员列表。</div>
           </div>
         </section>
 
@@ -2018,12 +2061,12 @@
             </div>
             <div class="form-group">
               <label class="form-label" data-i18n="settings.discordBotTokenLabel">Discord Bot Token</label>
-              <input id="cfgDiscordBotToken" class="input" type="password" placeholder="your-discord-bot-token" />
+              <input id="cfgDiscordBotToken" class="input" type="password" data-i18n-placeholder="settings.discordBotTokenPlaceholder" placeholder="your-discord-bot-token" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgDiscordDefaultChannelId">Discord Default Channel ID</label>
-              <input id="cfgDiscordDefaultChannelId" class="input" placeholder="123456789012345678" />
-              <div class="form-help">仅在需要把主动消息默认投递到固定 Discord 频道时设置。</div>
+              <label class="form-label" for="cfgDiscordDefaultChannelId" data-i18n="settings.discordDefaultChannelIdLabel">Discord Default Channel ID</label>
+              <input id="cfgDiscordDefaultChannelId" class="input" data-i18n-placeholder="settings.discordDefaultChannelIdPlaceholder" placeholder="123456789012345678" />
+              <div class="form-help" data-i18n="settings.discordDefaultChannelIdHelp">仅在需要把主动消息默认投递到固定 Discord 频道时设置。</div>
             </div>
 
             <hr class="theme-divider">
@@ -2068,6 +2111,18 @@
               </label>
               <div class="form-help" data-i18n="settings.qqSandboxHelp">控制 QQ 机器人是否运行在沙箱环境。</div>
             </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgQqEventSampleCaptureEnabled">
+                <input id="cfgQqEventSampleCaptureEnabled" type="checkbox" style="margin-right: 8px;" />
+                <span data-i18n="settings.qqEventSampleCaptureEnabledLabel">QQ Event Sample Capture</span>
+              </label>
+              <div class="form-help" data-i18n="settings.qqEventSampleCaptureEnabledHelp">抓取 QQ 原始事件样本到本地，便于排查问题。保存后需重启</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgQqEventSampleCaptureDir" data-i18n="settings.qqEventSampleCaptureDirLabel">QQ Event Sample Capture Dir</label>
+              <input id="cfgQqEventSampleCaptureDir" class="input" data-i18n-placeholder="settings.qqEventSampleCaptureDirPlaceholder" placeholder="H:\\.star_sanctuary\\storage\\qq-event-samples" />
+              <div class="form-help" data-i18n="settings.qqEventSampleCaptureDirHelp">QQ 事件样本保存目录。留空时使用服务端默认目录。保存后需重启</div>
+            </div>
 
             <hr class="theme-divider">
 
@@ -2088,138 +2143,141 @@
 
             <div class="settings-subsection-header" style="margin-top: 16px;">
               <div>
-                <div class="settings-subsection-title">Email Outbound</div>
-                <div class="form-help">邮件外发细项。用于 SMTP 发信账号、发件人身份和是否要求二次确认。</div>
+                <div class="settings-subsection-title" data-i18n="settings.emailOutboundSectionTitle">Email Outbound</div>
+                <div class="form-help" data-i18n="settings.emailOutboundSectionHelp">邮件外发细项。用于 SMTP 发信账号、发件人身份和是否要求二次确认。</div>
               </div>
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailOutboundRequireConfirmation">
                 <input id="cfgEmailOutboundRequireConfirmation" type="checkbox" style="margin-right: 8px;" />
-                <span>Require Email Confirmation</span>
+                <span data-i18n="settings.emailOutboundRequireConfirmationLabel">Require Email Confirmation</span>
               </label>
-              <div class="form-help">对应 `BELLDANDY_EMAIL_OUTBOUND_REQUIRE_CONFIRMATION`，建议在生产环境保持开启。</div>
+              <div class="form-help" data-i18n="settings.emailOutboundRequireConfirmationHelp">对应 `BELLDANDY_EMAIL_OUTBOUND_REQUIRE_CONFIRMATION`，建议在生产环境保持开启。</div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailDefaultProvider">Email Default Provider</label>
-              <input id="cfgEmailDefaultProvider" class="input" placeholder="smtp" />
+              <label class="form-label" for="cfgEmailDefaultProvider" data-i18n="settings.emailDefaultProviderLabel">Email Default Provider</label>
+              <input id="cfgEmailDefaultProvider" class="input" data-i18n-placeholder="settings.emailDefaultProviderPlaceholder" placeholder="smtp" />
+              <div class="form-help" data-i18n="settings.emailDefaultProviderHelp">默认邮件 provider 标识；当前主要使用 `smtp`。</div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpAccountId">SMTP Account ID</label>
-              <input id="cfgEmailSmtpAccountId" class="input" placeholder="default" />
+              <label class="form-label" for="cfgEmailSmtpAccountId" data-i18n="settings.emailSmtpAccountIdLabel">SMTP Account ID</label>
+              <input id="cfgEmailSmtpAccountId" class="input" data-i18n-placeholder="settings.emailSmtpAccountIdPlaceholder" placeholder="default" />
+              <div class="form-help" data-i18n="settings.emailSmtpAccountIdHelp">SMTP 账号标识，供发送链路与账号配置对应。</div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpHost">SMTP Host</label>
-              <input id="cfgEmailSmtpHost" class="input" placeholder="smtp.example.com" />
+              <label class="form-label" for="cfgEmailSmtpHost" data-i18n="settings.emailSmtpHostLabel">SMTP Host</label>
+              <input id="cfgEmailSmtpHost" class="input" data-i18n-placeholder="settings.emailSmtpHostPlaceholder" placeholder="smtp.example.com" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpPort">SMTP Port</label>
-              <input id="cfgEmailSmtpPort" class="input" placeholder="587" />
+              <label class="form-label" for="cfgEmailSmtpPort" data-i18n="settings.emailSmtpPortLabel">SMTP Port</label>
+              <input id="cfgEmailSmtpPort" class="input" data-i18n-placeholder="settings.emailSmtpPortPlaceholder" placeholder="587" />
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailSmtpSecure">
                 <input id="cfgEmailSmtpSecure" type="checkbox" style="margin-right: 8px;" />
-                <span>SMTP Secure</span>
+                <span data-i18n="settings.emailSmtpSecureLabel">SMTP Secure</span>
               </label>
-              <div class="form-help">`true` 时走 SMTPS/TLS，常见为 `465`；`false` 时常见为 `587`。</div>
+              <div class="form-help" data-i18n="settings.emailSmtpSecureHelp">`true` 时走 SMTPS/TLS，常见为 `465`；`false` 时常见为 `587`。</div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpUser">SMTP User</label>
-              <input id="cfgEmailSmtpUser" class="input" placeholder="mailer@example.com" />
+              <label class="form-label" for="cfgEmailSmtpUser" data-i18n="settings.emailSmtpUserLabel">SMTP User</label>
+              <input id="cfgEmailSmtpUser" class="input" data-i18n-placeholder="settings.emailSmtpUserPlaceholder" placeholder="mailer@example.com" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpPass">SMTP Password</label>
-              <input id="cfgEmailSmtpPass" class="input" type="password" placeholder="app-password" />
+              <label class="form-label" for="cfgEmailSmtpPass" data-i18n="settings.emailSmtpPassLabel">SMTP Password</label>
+              <input id="cfgEmailSmtpPass" class="input" type="password" data-i18n-placeholder="settings.emailSmtpPassPlaceholder" placeholder="app-password" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpFromAddress">SMTP From Address</label>
-              <input id="cfgEmailSmtpFromAddress" class="input" placeholder="mailer@example.com" />
+              <label class="form-label" for="cfgEmailSmtpFromAddress" data-i18n="settings.emailSmtpFromAddressLabel">SMTP From Address</label>
+              <input id="cfgEmailSmtpFromAddress" class="input" data-i18n-placeholder="settings.emailSmtpFromAddressPlaceholder" placeholder="mailer@example.com" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailSmtpFromName">SMTP From Name</label>
-              <input id="cfgEmailSmtpFromName" class="input" placeholder="Belldandy" />
+              <label class="form-label" for="cfgEmailSmtpFromName" data-i18n="settings.emailSmtpFromNameLabel">SMTP From Name</label>
+              <input id="cfgEmailSmtpFromName" class="input" data-i18n-placeholder="settings.emailSmtpFromNamePlaceholder" placeholder="Belldandy" />
             </div>
 
             <div class="settings-subsection-header" style="margin-top: 16px;">
               <div>
-                <div class="settings-subsection-title">Email Inbound</div>
-                <div class="form-help">邮件收信细项。用于 IMAP 轮询、线程接管与默认投递 Agent。</div>
+                <div class="settings-subsection-title" data-i18n="settings.emailInboundSectionTitle">Email Inbound</div>
+                <div class="form-help" data-i18n="settings.emailInboundSectionHelp">邮件收信细项。用于 IMAP 轮询、线程接管与默认投递 Agent。</div>
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailInboundAgentId">Inbound Agent ID</label>
-              <input id="cfgEmailInboundAgentId" class="input" placeholder="default" />
+              <label class="form-label" for="cfgEmailInboundAgentId" data-i18n="settings.emailInboundAgentIdLabel">Inbound Agent ID</label>
+              <input id="cfgEmailInboundAgentId" class="input" data-i18n-placeholder="settings.emailInboundAgentIdPlaceholder" placeholder="default" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapAccountId">IMAP Account ID</label>
-              <input id="cfgEmailImapAccountId" class="input" placeholder="default" />
+              <label class="form-label" for="cfgEmailImapAccountId" data-i18n="settings.emailImapAccountIdLabel">IMAP Account ID</label>
+              <input id="cfgEmailImapAccountId" class="input" data-i18n-placeholder="settings.emailImapAccountIdPlaceholder" placeholder="default" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapHost">IMAP Host</label>
-              <input id="cfgEmailImapHost" class="input" placeholder="imap.example.com" />
+              <label class="form-label" for="cfgEmailImapHost" data-i18n="settings.emailImapHostLabel">IMAP Host</label>
+              <input id="cfgEmailImapHost" class="input" data-i18n-placeholder="settings.emailImapHostPlaceholder" placeholder="imap.example.com" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapPort">IMAP Port</label>
-              <input id="cfgEmailImapPort" class="input" placeholder="993" />
+              <label class="form-label" for="cfgEmailImapPort" data-i18n="settings.emailImapPortLabel">IMAP Port</label>
+              <input id="cfgEmailImapPort" class="input" data-i18n-placeholder="settings.emailImapPortPlaceholder" placeholder="993" />
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailImapSecure">
                 <input id="cfgEmailImapSecure" type="checkbox" style="margin-right: 8px;" />
-                <span>IMAP Secure</span>
+                <span data-i18n="settings.emailImapSecureLabel">IMAP Secure</span>
               </label>
-              <div class="form-help">通常收信建议保持开启。</div>
+              <div class="form-help" data-i18n="settings.emailImapSecureHelp">通常收信建议保持开启。</div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapUser">IMAP User</label>
-              <input id="cfgEmailImapUser" class="input" placeholder="mailer@example.com" />
+              <label class="form-label" for="cfgEmailImapUser" data-i18n="settings.emailImapUserLabel">IMAP User</label>
+              <input id="cfgEmailImapUser" class="input" data-i18n-placeholder="settings.emailImapUserPlaceholder" placeholder="mailer@example.com" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapPass">IMAP Password</label>
-              <input id="cfgEmailImapPass" class="input" type="password" placeholder="app-password" />
+              <label class="form-label" for="cfgEmailImapPass" data-i18n="settings.emailImapPassLabel">IMAP Password</label>
+              <input id="cfgEmailImapPass" class="input" type="password" data-i18n-placeholder="settings.emailImapPassPlaceholder" placeholder="app-password" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapMailbox">IMAP Mailbox</label>
-              <input id="cfgEmailImapMailbox" class="input" placeholder="INBOX" />
+              <label class="form-label" for="cfgEmailImapMailbox" data-i18n="settings.emailImapMailboxLabel">IMAP Mailbox</label>
+              <input id="cfgEmailImapMailbox" class="input" data-i18n-placeholder="settings.emailImapMailboxPlaceholder" placeholder="INBOX" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapPollIntervalMs">IMAP Poll Interval (ms)</label>
-              <input id="cfgEmailImapPollIntervalMs" class="input" placeholder="60000" />
+              <label class="form-label" for="cfgEmailImapPollIntervalMs" data-i18n="settings.emailImapPollIntervalMsLabel">IMAP Poll Interval (ms)</label>
+              <input id="cfgEmailImapPollIntervalMs" class="input" data-i18n-placeholder="settings.emailImapPollIntervalMsPlaceholder" placeholder="60000" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapConnectTimeoutMs">IMAP Connect Timeout (ms)</label>
-              <input id="cfgEmailImapConnectTimeoutMs" class="input" placeholder="10000" />
+              <label class="form-label" for="cfgEmailImapConnectTimeoutMs" data-i18n="settings.emailImapConnectTimeoutMsLabel">IMAP Connect Timeout (ms)</label>
+              <input id="cfgEmailImapConnectTimeoutMs" class="input" data-i18n-placeholder="settings.emailImapConnectTimeoutMsPlaceholder" placeholder="10000" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapSocketTimeoutMs">IMAP Socket Timeout (ms)</label>
-              <input id="cfgEmailImapSocketTimeoutMs" class="input" placeholder="20000" />
+              <label class="form-label" for="cfgEmailImapSocketTimeoutMs" data-i18n="settings.emailImapSocketTimeoutMsLabel">IMAP Socket Timeout (ms)</label>
+              <input id="cfgEmailImapSocketTimeoutMs" class="input" data-i18n-placeholder="settings.emailImapSocketTimeoutMsPlaceholder" placeholder="20000" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapBootstrapMode">IMAP Bootstrap Mode</label>
-              <input id="cfgEmailImapBootstrapMode" class="input" placeholder="latest / all" />
+              <label class="form-label" for="cfgEmailImapBootstrapMode" data-i18n="settings.emailImapBootstrapModeLabel">IMAP Bootstrap Mode</label>
+              <input id="cfgEmailImapBootstrapMode" class="input" data-i18n-placeholder="settings.emailImapBootstrapModePlaceholder" placeholder="latest / all" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgEmailImapRecentWindowLimit">IMAP Recent Window Limit</label>
-              <input id="cfgEmailImapRecentWindowLimit" class="input" placeholder="50" />
+              <label class="form-label" for="cfgEmailImapRecentWindowLimit" data-i18n="settings.emailImapRecentWindowLimitLabel">IMAP Recent Window Limit</label>
+              <input id="cfgEmailImapRecentWindowLimit" class="input" data-i18n-placeholder="settings.emailImapRecentWindowLimitPlaceholder" placeholder="50" />
             </div>
 
             <div class="settings-subsection-header" style="margin-top: 16px;">
               <div>
-                <div class="settings-subsection-title">Channel Router</div>
-                <div class="form-help">按规则做 mention gating / agent 路由。规则正文仍在独立 JSON 文件中维护。</div>
+                <div class="settings-subsection-title" data-i18n="settings.channelRouterSectionTitle">Channel Router</div>
+                <div class="form-help" data-i18n="settings.channelRouterSectionHelp">按规则做 mention gating / agent 路由。规则正文仍在独立 JSON 文件中维护。</div>
               </div>
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgChannelRouterEnabled">
                 <input id="cfgChannelRouterEnabled" type="checkbox" style="margin-right: 8px;" />
-                <span>Enable Channel Router</span>
+                <span data-i18n="settings.channelRouterEnabledLabel">Enable Channel Router</span>
               </label>
+              <div class="form-help" data-i18n="settings.channelRouterEnabledHelp">启用渠道路由规则；保存后需重启 Gateway 生效。</div>
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgChannelRouterConfigPath">Router Config Path</label>
-              <input id="cfgChannelRouterConfigPath" class="input" placeholder="~/.star_sanctuary/channels-routing.json" />
+              <label class="form-label" for="cfgChannelRouterConfigPath" data-i18n="settings.channelRouterConfigPathLabel">Router Config Path</label>
+              <input id="cfgChannelRouterConfigPath" class="input" data-i18n-placeholder="settings.channelRouterConfigPathPlaceholder" placeholder="~/.star_sanctuary/channels-routing.json" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="cfgChannelRouterDefaultAgentId">Router Default Agent ID</label>
-              <input id="cfgChannelRouterDefaultAgentId" class="input" placeholder="default" />
+              <label class="form-label" for="cfgChannelRouterDefaultAgentId" data-i18n="settings.channelRouterDefaultAgentIdLabel">Router Default Agent ID</label>
+              <input id="cfgChannelRouterDefaultAgentId" class="input" data-i18n-placeholder="settings.channelRouterDefaultAgentIdPlaceholder" placeholder="default" />
             </div>
 
             <hr class="theme-divider">
@@ -2276,33 +2334,33 @@
 
           <div class="settings-subsection-header settings-featured-header" style="margin-top: 16px;">
             <div>
-              <div class="settings-subsection-title">State Dir / Paths</div>
-              <div class="form-help">运行态、工作区和静态资源路径。`Extra Workspace Roots` 仍会写入共享 `.env`。</div>
+              <div class="settings-subsection-title" data-i18n="settings.statePathsSectionTitle">State Dir / Paths</div>
+              <div class="form-help" data-i18n="settings.statePathsSectionHelp">运行态、工作区和静态资源路径。`Extra Workspace Roots` 仍会写入共享 `.env`。</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgStateDir">State Dir</label>
-            <input id="cfgStateDir" class="input" placeholder="~/.star_sanctuary" />
+            <label class="form-label" for="cfgStateDir" data-i18n="settings.stateDirLabel">State Dir</label>
+            <input id="cfgStateDir" class="input" data-i18n-placeholder="settings.stateDirPlaceholder" placeholder="~/.star_sanctuary" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgStateDirWindows">State Dir Windows</label>
-            <input id="cfgStateDirWindows" class="input" placeholder="C:\\Users\\your-name\\.star_sanctuary" />
+            <label class="form-label" for="cfgStateDirWindows" data-i18n="settings.stateDirWindowsLabel">State Dir Windows</label>
+            <input id="cfgStateDirWindows" class="input" data-i18n-placeholder="settings.stateDirWindowsPlaceholder" placeholder="C:\\Users\\your-name\\.star_sanctuary" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgStateDirWsl">State Dir WSL</label>
-            <input id="cfgStateDirWsl" class="input" placeholder="~/.star_sanctuary" />
+            <label class="form-label" for="cfgStateDirWsl" data-i18n="settings.stateDirWslLabel">State Dir WSL</label>
+            <input id="cfgStateDirWsl" class="input" data-i18n-placeholder="settings.stateDirWslPlaceholder" placeholder="~/.star_sanctuary" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWorkspaceDir">Workspace Dir</label>
-            <input id="cfgWorkspaceDir" class="input" placeholder="./workspace" />
+            <label class="form-label" for="cfgWorkspaceDir" data-i18n="settings.workspaceDirLabel">Workspace Dir</label>
+            <input id="cfgWorkspaceDir" class="input" data-i18n-placeholder="settings.workspaceDirPlaceholder" placeholder="./workspace" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgExtraWorkspaceRoots">Extra Workspace Roots</label>
-            <input id="cfgExtraWorkspaceRoots" class="input" placeholder="E:\\tools,D:\\projects" />
+            <label class="form-label" for="cfgExtraWorkspaceRoots" data-i18n="settings.extraWorkspaceRootsLabel">Extra Workspace Roots</label>
+            <input id="cfgExtraWorkspaceRoots" class="input" data-i18n-placeholder="settings.extraWorkspaceRootsPlaceholder" placeholder="E:\\tools,D:\\projects" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebRoot">Web Root</label>
-            <input id="cfgWebRoot" class="input" placeholder="apps/web/public" />
+            <label class="form-label" for="cfgWebRoot" data-i18n="settings.webRootLabel">Web Root</label>
+            <input id="cfgWebRoot" class="input" data-i18n-placeholder="settings.webRootPlaceholder" placeholder="apps/web/public" />
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgGovernanceDetailMode">Governance Detail Mode</label>
@@ -2362,9 +2420,9 @@
           <div class="form-group">
             <label class="form-label" for="cfgExperienceDraftGenerateNoticeEnabled">
               <input id="cfgExperienceDraftGenerateNoticeEnabled" type="checkbox" style="margin-right: 8px;" checked />
-              <span>Method / Skill Draft 生成提示</span>
+              <span data-i18n="settings.experienceDraftGenerateNoticeEnabledLabel">Method / Skill Draft Draft Notice</span>
             </label>
-            <div class="form-help">控制手动生成与自动生成的 Method Draft / Skill Draft 是否在聊天页右下角弹出提示。无需重启</div>
+            <div class="form-help" data-i18n="settings.experienceDraftGenerateNoticeEnabledHelp">控制手动生成与自动生成的 Method Draft / Skill Draft 是否在聊天页右下角弹出提示。无需重启</div>
           </div>
 
           <hr class="theme-divider">
@@ -2382,7 +2440,7 @@
           <div class="form-group">
             <label class="form-label" data-i18n="settings.gatewayPortLabel">Gateway Compose Port</label>
             <input id="cfgGatewayPort" class="input" placeholder="28889" />
-            <div class="form-help" data-i18n="settings.gatewayPortHelp">Docker Compose 场景使用的网关端口变量。</div>
+            <div class="form-help" data-i18n="settings.gatewayPortHelp">仅供 Docker / Compose 端口映射使用，不会改变当前本地 Gateway 进程的监听端口。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgUpdateCheckEnabled">
@@ -2392,12 +2450,12 @@
             <div class="form-help" data-i18n="settings.updateCheckEnabledHelp">仅做新版本日志提示，不会自动升级。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgUpdateCheckTimeoutMs">Update Check Timeout (ms)</label>
-            <input id="cfgUpdateCheckTimeoutMs" class="input" placeholder="3000" />
+            <label class="form-label" for="cfgUpdateCheckTimeoutMs" data-i18n="settings.updateCheckTimeoutMsLabel">Update Check Timeout (ms)</label>
+            <input id="cfgUpdateCheckTimeoutMs" class="input" data-i18n-placeholder="settings.updateCheckTimeoutMsPlaceholder" placeholder="3000" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgUpdateCheckApiUrl">Update Check API URL</label>
-            <input id="cfgUpdateCheckApiUrl" class="input" placeholder="https://api.github.com/repos/vrboyzero/star-sanctuary/releases/latest" />
+            <label class="form-label" for="cfgUpdateCheckApiUrl" data-i18n="settings.updateCheckApiUrlLabel">Update Check API URL</label>
+            <input id="cfgUpdateCheckApiUrl" class="input" data-i18n-placeholder="settings.updateCheckApiUrlPlaceholder" placeholder="https://api.github.com/repos/vrboyzero/star-sanctuary/releases/latest" />
           </div>
 
           <hr class="theme-divider">
@@ -2457,204 +2515,204 @@
 
           <div class="settings-subsection-header">
             <div>
-              <div class="settings-subsection-title">Webhook Guard</div>
-              <div class="form-help">Webhook 入口预鉴权、限流和并发保护。无需重启</div>
+              <div class="settings-subsection-title" data-i18n="settings.webhookGuardSectionTitle">Webhook Guard</div>
+              <div class="form-help" data-i18n="settings.webhookGuardSectionHelp">Webhook 入口预鉴权、限流和并发保护。无需重启</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookPreauthMaxBytes">Webhook Preauth Max Bytes</label>
-            <input id="cfgWebhookPreauthMaxBytes" class="input" placeholder="65536" />
-            <div class="form-help">预鉴权阶段允许读取的最大请求体字节数。无需重启</div>
+            <label class="form-label" for="cfgWebhookPreauthMaxBytes" data-i18n="settings.webhookPreauthMaxBytesLabel">Webhook Preauth Max Bytes</label>
+            <input id="cfgWebhookPreauthMaxBytes" class="input" data-i18n-placeholder="settings.webhookPreauthMaxBytesPlaceholder" placeholder="65536" />
+            <div class="form-help" data-i18n="settings.webhookPreauthMaxBytesHelp">预鉴权阶段允许读取的最大请求体字节数。无需重启</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookPreauthTimeoutMs">Webhook Preauth Timeout (ms)</label>
-            <input id="cfgWebhookPreauthTimeoutMs" class="input" placeholder="5000" />
-            <div class="form-help">预鉴权阶段读取请求体的超时时间，单位毫秒。无需重启</div>
+            <label class="form-label" for="cfgWebhookPreauthTimeoutMs" data-i18n="settings.webhookPreauthTimeoutMsLabel">Webhook Preauth Timeout (ms)</label>
+            <input id="cfgWebhookPreauthTimeoutMs" class="input" data-i18n-placeholder="settings.webhookPreauthTimeoutMsPlaceholder" placeholder="5000" />
+            <div class="form-help" data-i18n="settings.webhookPreauthTimeoutMsHelp">预鉴权阶段读取请求体的超时时间，单位毫秒。无需重启</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookRateLimitWindowMs">Webhook Rate Limit Window (ms)</label>
-            <input id="cfgWebhookRateLimitWindowMs" class="input" placeholder="60000" />
-            <div class="form-help">Webhook 入口固定窗口限流时间窗，单位毫秒。无需重启</div>
+            <label class="form-label" for="cfgWebhookRateLimitWindowMs" data-i18n="settings.webhookRateLimitWindowMsLabel">Webhook Rate Limit Window (ms)</label>
+            <input id="cfgWebhookRateLimitWindowMs" class="input" data-i18n-placeholder="settings.webhookRateLimitWindowMsPlaceholder" placeholder="60000" />
+            <div class="form-help" data-i18n="settings.webhookRateLimitWindowMsHelp">Webhook 入口固定窗口限流时间窗，单位毫秒。无需重启</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookRateLimitMaxRequests">Webhook Rate Limit Max Requests</label>
-            <input id="cfgWebhookRateLimitMaxRequests" class="input" placeholder="120" />
-            <div class="form-help">单个 guard key 在一个时间窗内允许的最大请求数。无需重启</div>
+            <label class="form-label" for="cfgWebhookRateLimitMaxRequests" data-i18n="settings.webhookRateLimitMaxRequestsLabel">Webhook Rate Limit Max Requests</label>
+            <input id="cfgWebhookRateLimitMaxRequests" class="input" data-i18n-placeholder="settings.webhookRateLimitMaxRequestsPlaceholder" placeholder="120" />
+            <div class="form-help" data-i18n="settings.webhookRateLimitMaxRequestsHelp">单个 guard key 在一个时间窗内允许的最大请求数。无需重启</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookRateLimitMaxTrackedKeys">Webhook Rate Limit Max Tracked Keys</label>
-            <input id="cfgWebhookRateLimitMaxTrackedKeys" class="input" placeholder="4096" />
-            <div class="form-help">内存里最多追踪多少个限流 key。无需重启</div>
+            <label class="form-label" for="cfgWebhookRateLimitMaxTrackedKeys" data-i18n="settings.webhookRateLimitMaxTrackedKeysLabel">Webhook Rate Limit Max Tracked Keys</label>
+            <input id="cfgWebhookRateLimitMaxTrackedKeys" class="input" data-i18n-placeholder="settings.webhookRateLimitMaxTrackedKeysPlaceholder" placeholder="4096" />
+            <div class="form-help" data-i18n="settings.webhookRateLimitMaxTrackedKeysHelp">内存里最多追踪多少个限流 key。无需重启</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookMaxInFlightPerKey">Webhook Max In Flight Per Key</label>
-            <input id="cfgWebhookMaxInFlightPerKey" class="input" placeholder="8" />
-            <div class="form-help">同一个 guard key 允许同时处理的最大并发请求数。无需重启</div>
+            <label class="form-label" for="cfgWebhookMaxInFlightPerKey" data-i18n="settings.webhookMaxInFlightPerKeyLabel">Webhook Max In Flight Per Key</label>
+            <input id="cfgWebhookMaxInFlightPerKey" class="input" data-i18n-placeholder="settings.webhookMaxInFlightPerKeyPlaceholder" placeholder="8" />
+            <div class="form-help" data-i18n="settings.webhookMaxInFlightPerKeyHelp">同一个 guard key 允许同时处理的最大并发请求数。无需重启</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookMaxInFlightTrackedKeys">Webhook Max In Flight Tracked Keys</label>
-            <input id="cfgWebhookMaxInFlightTrackedKeys" class="input" placeholder="4096" />
-            <div class="form-help">内存里最多追踪多少个 in-flight key。无需重启</div>
+            <label class="form-label" for="cfgWebhookMaxInFlightTrackedKeys" data-i18n="settings.webhookMaxInFlightTrackedKeysLabel">Webhook Max In Flight Tracked Keys</label>
+            <input id="cfgWebhookMaxInFlightTrackedKeys" class="input" data-i18n-placeholder="settings.webhookMaxInFlightTrackedKeysPlaceholder" placeholder="4096" />
+            <div class="form-help" data-i18n="settings.webhookMaxInFlightTrackedKeysHelp">内存里最多追踪多少个 in-flight key。无需重启</div>
           </div>
 
           <div class="settings-subsection-header" style="margin-top: 16px;">
             <div>
-              <div class="settings-subsection-title">Token Upload</div>
-              <div class="form-help">任务 token 增量上传和任务结束统计附带项。</div>
+              <div class="settings-subsection-title" data-i18n="settings.tokenUploadSectionTitle">Token Upload</div>
+              <div class="form-help" data-i18n="settings.tokenUploadSectionHelp">任务 token 增量上传和任务结束统计附带项。</div>
             </div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTokenUsageUploadEnabled">
               <input id="cfgTokenUsageUploadEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Enable Token Usage Upload</span>
+              <span data-i18n="settings.tokenUsageUploadEnabledLabel">Enable Token Usage Upload</span>
             </label>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgTokenUsageUploadUrl">Token Usage Upload URL</label>
-            <input id="cfgTokenUsageUploadUrl" class="input" placeholder="http://127.0.0.1:3001/api/internal/token-usage" />
+            <label class="form-label" for="cfgTokenUsageUploadUrl" data-i18n="settings.tokenUsageUploadUrlLabel">Token Usage Upload URL</label>
+            <input id="cfgTokenUsageUploadUrl" class="input" data-i18n-placeholder="settings.tokenUsageUploadUrlPlaceholder" placeholder="http://127.0.0.1:3001/api/internal/token-usage" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgTokenUsageUploadApiKey">Token Usage Upload API Key</label>
-            <input id="cfgTokenUsageUploadApiKey" class="input" type="password" placeholder="gro_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+            <label class="form-label" for="cfgTokenUsageUploadApiKey" data-i18n="settings.tokenUsageUploadApiKeyLabel">Token Usage Upload API Key</label>
+            <input id="cfgTokenUsageUploadApiKey" class="input" type="password" data-i18n-placeholder="settings.tokenUsageUploadApiKeyPlaceholder" placeholder="gro_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgTokenUsageUploadTimeoutMs">Token Usage Upload Timeout (ms)</label>
-            <input id="cfgTokenUsageUploadTimeoutMs" class="input" placeholder="3000" />
+            <label class="form-label" for="cfgTokenUsageUploadTimeoutMs" data-i18n="settings.tokenUsageUploadTimeoutMsLabel">Token Usage Upload Timeout (ms)</label>
+            <input id="cfgTokenUsageUploadTimeoutMs" class="input" data-i18n-placeholder="settings.tokenUsageUploadTimeoutMsPlaceholder" placeholder="3000" />
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTokenUsageStrictUuid">
               <input id="cfgTokenUsageStrictUuid" type="checkbox" style="margin-right: 8px;" />
-              <span>Strict UUID Upload</span>
+              <span data-i18n="settings.tokenUsageStrictUuidLabel">Strict UUID Upload</span>
             </label>
-            <div class="form-help">接收端开启严格 UUID 校验时建议同步开启。</div>
+            <div class="form-help" data-i18n="settings.tokenUsageStrictUuidHelp">接收端开启严格 UUID 校验时建议同步开启。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgAutoTaskTimeEnabled">
               <input id="cfgAutoTaskTimeEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Append Auto Task Time</span>
+              <span data-i18n="settings.autoTaskTimeEnabledLabel">Append Auto Task Time</span>
             </label>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgAutoTaskTokenEnabled">
               <input id="cfgAutoTaskTokenEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Append Auto Task Token</span>
+              <span data-i18n="settings.autoTaskTokenEnabledLabel">Append Auto Task Token</span>
             </label>
           </div>
 
           <div class="settings-subsection-header" style="margin-top: 16px;">
             <div>
-              <div class="settings-subsection-title">Webhook Runtime</div>
-              <div class="form-help">Webhook 路由配置文件和幂等窗口。</div>
+              <div class="settings-subsection-title" data-i18n="settings.webhookRuntimeSectionTitle">Webhook Runtime</div>
+              <div class="form-help" data-i18n="settings.webhookRuntimeSectionHelp">Webhook 路由配置文件和幂等窗口。</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookConfigPath">Webhook Config Path</label>
-            <input id="cfgWebhookConfigPath" class="input" placeholder="~/.star_sanctuary/webhooks.json" />
+            <label class="form-label" for="cfgWebhookConfigPath" data-i18n="settings.webhookConfigPathLabel">Webhook Config Path</label>
+            <input id="cfgWebhookConfigPath" class="input" data-i18n-placeholder="settings.webhookConfigPathPlaceholder" placeholder="~/.star_sanctuary/webhooks.json" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgWebhookIdempotencyWindowMs">Webhook Idempotency Window (ms)</label>
-            <input id="cfgWebhookIdempotencyWindowMs" class="input" placeholder="600000" />
+            <label class="form-label" for="cfgWebhookIdempotencyWindowMs" data-i18n="settings.webhookIdempotencyWindowMsLabel">Webhook Idempotency Window (ms)</label>
+            <input id="cfgWebhookIdempotencyWindowMs" class="input" data-i18n-placeholder="settings.webhookIdempotencyWindowMsPlaceholder" placeholder="600000" />
           </div>
 
           <div class="settings-subsection-header" style="margin-top: 16px;">
             <div>
-              <div class="settings-subsection-title">Logging</div>
-              <div class="form-help">日志级别、输出目标和轮转策略。</div>
+              <div class="settings-subsection-title" data-i18n="settings.loggingSectionTitle">Logging</div>
+              <div class="form-help" data-i18n="settings.loggingSectionHelp">日志级别、输出目标和轮转策略。</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgLogLevel">Log Level</label>
-            <input id="cfgLogLevel" class="input" placeholder="info" />
+            <label class="form-label" for="cfgLogLevel" data-i18n="settings.logLevelLabel">Log Level</label>
+            <input id="cfgLogLevel" class="input" data-i18n-placeholder="settings.logLevelPlaceholder" placeholder="info" />
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgLogConsole">
               <input id="cfgLogConsole" type="checkbox" style="margin-right: 8px;" />
-              <span>Log To Console</span>
+              <span data-i18n="settings.logConsoleLabel">Log To Console</span>
             </label>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgLogFile">
               <input id="cfgLogFile" type="checkbox" style="margin-right: 8px;" />
-              <span>Log To File</span>
+              <span data-i18n="settings.logFileLabel">Log To File</span>
             </label>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgLogDir">Log Dir</label>
-            <input id="cfgLogDir" class="input" placeholder="~/.star_sanctuary/logs" />
+            <label class="form-label" for="cfgLogDir" data-i18n="settings.logDirLabel">Log Dir</label>
+            <input id="cfgLogDir" class="input" data-i18n-placeholder="settings.logDirPlaceholder" placeholder="~/.star_sanctuary/logs" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgLogMaxSize">Log Max Size</label>
-            <input id="cfgLogMaxSize" class="input" placeholder="10MB" />
+            <label class="form-label" for="cfgLogMaxSize" data-i18n="settings.logMaxSizeLabel">Log Max Size</label>
+            <input id="cfgLogMaxSize" class="input" data-i18n-placeholder="settings.logMaxSizePlaceholder" placeholder="10MB" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgLogRetentionDays">Log Retention Days</label>
-            <input id="cfgLogRetentionDays" class="input" placeholder="7" />
+            <label class="form-label" for="cfgLogRetentionDays" data-i18n="settings.logRetentionDaysLabel">Log Retention Days</label>
+            <input id="cfgLogRetentionDays" class="input" data-i18n-placeholder="settings.logRetentionDaysPlaceholder" placeholder="7" />
           </div>
 
           <div class="settings-subsection-header" style="margin-top: 16px;">
             <div>
-              <div class="settings-subsection-title">Dream / Obsidian</div>
-              <div class="form-help">Dream 自动任务和 Obsidian 镜像输出。</div>
+              <div class="settings-subsection-title" data-i18n="settings.dreamObsidianSectionTitle">Dream / Obsidian</div>
+              <div class="form-help" data-i18n="settings.dreamObsidianSectionHelp">Dream 自动任务和 Obsidian 镜像输出。</div>
             </div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDreamAutoHeartbeatEnabled">
               <input id="cfgDreamAutoHeartbeatEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Dream Auto Heartbeat</span>
+              <span data-i18n="settings.dreamAutoHeartbeatEnabledLabel">Dream Auto Heartbeat</span>
             </label>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDreamAutoCronEnabled">
               <input id="cfgDreamAutoCronEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Dream Auto Cron</span>
+              <span data-i18n="settings.dreamAutoCronEnabledLabel">Dream Auto Cron</span>
             </label>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgDreamOpenAIThinking">Dream Thinking</label>
-            <input id="cfgDreamOpenAIThinking" class="input" placeholder='disabled / {"type":"enabled"}' />
-            <div class="form-help">Dream 独立推理开关。留空时按运行时默认策略决定；常用值为 <code>disabled</code>。</div>
+            <label class="form-label" for="cfgDreamOpenAIThinking" data-i18n="settings.dreamOpenAIThinkingLabel">Dream Thinking</label>
+            <input id="cfgDreamOpenAIThinking" class="input" data-i18n-placeholder="settings.dreamOpenAIThinkingPlaceholder" placeholder='disabled / {"type":"enabled"}' />
+            <div class="form-help" data-i18n="settings.dreamOpenAIThinkingHelp">Dream 独立推理开关。留空时按运行时默认策略决定；常用值为 <code>disabled</code>。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgDreamOpenAIReasoningEffort">Dream Reasoning Effort</label>
-            <input id="cfgDreamOpenAIReasoningEffort" class="input" placeholder="high / max" />
-            <div class="form-help">仅在 Dream 单独开启 thinking 时通常才需要设置；留空表示不单独指定。</div>
+            <label class="form-label" for="cfgDreamOpenAIReasoningEffort" data-i18n="settings.dreamOpenAIReasoningEffortLabel">Dream Reasoning Effort</label>
+            <input id="cfgDreamOpenAIReasoningEffort" class="input" data-i18n-placeholder="settings.dreamOpenAIReasoningEffortPlaceholder" placeholder="high / max" />
+            <div class="form-help" data-i18n="settings.dreamOpenAIReasoningEffortHelp">仅在 Dream 单独开启 thinking 时通常才需要设置；留空表示不单独指定。</div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgDreamOpenAITimeoutMs">Dream Request Timeout (ms)</label>
-            <input id="cfgDreamOpenAITimeoutMs" class="input" placeholder="120000" />
+            <label class="form-label" for="cfgDreamOpenAITimeoutMs" data-i18n="settings.dreamOpenAITimeoutMsLabel">Dream Request Timeout (ms)</label>
+            <input id="cfgDreamOpenAITimeoutMs" class="input" data-i18n-placeholder="settings.dreamOpenAITimeoutMsPlaceholder" placeholder="120000" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgDreamOpenAIMaxTokens">Dream Initial Max Tokens</label>
-            <input id="cfgDreamOpenAIMaxTokens" class="input" placeholder="1000" />
-            <div class="form-help">首次请求的输出 token 预算；如果 reasoning 吃满预算，运行时会自动放大后重试一次。</div>
+            <label class="form-label" for="cfgDreamOpenAIMaxTokens" data-i18n="settings.dreamOpenAIMaxTokensLabel">Dream Initial Max Tokens</label>
+            <input id="cfgDreamOpenAIMaxTokens" class="input" data-i18n-placeholder="settings.dreamOpenAIMaxTokensPlaceholder" placeholder="1000" />
+            <div class="form-help" data-i18n="settings.dreamOpenAIMaxTokensHelp">首次请求的输出 token 预算；如果 reasoning 吃满预算，运行时会自动放大后重试一次。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDreamObsidianEnabled">
               <input id="cfgDreamObsidianEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Dream Obsidian Enabled</span>
+              <span data-i18n="settings.dreamObsidianEnabledLabel">Dream Obsidian Enabled</span>
             </label>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgDreamObsidianVaultPath">Dream Obsidian Vault Path</label>
-            <input id="cfgDreamObsidianVaultPath" class="input" placeholder="C:\\Users\\admin\\Documents\\Obsidian Vault" />
+            <label class="form-label" for="cfgDreamObsidianVaultPath" data-i18n="settings.dreamObsidianVaultPathLabel">Dream Obsidian Vault Path</label>
+            <input id="cfgDreamObsidianVaultPath" class="input" data-i18n-placeholder="settings.dreamObsidianVaultPathPlaceholder" placeholder="C:\\Users\\admin\\Documents\\Obsidian Vault" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgDreamObsidianRootDir">Dream Obsidian Root Dir</label>
-            <input id="cfgDreamObsidianRootDir" class="input" placeholder="Star Sanctuary" />
+            <label class="form-label" for="cfgDreamObsidianRootDir" data-i18n="settings.dreamObsidianRootDirLabel">Dream Obsidian Root Dir</label>
+            <input id="cfgDreamObsidianRootDir" class="input" data-i18n-placeholder="settings.dreamObsidianRootDirPlaceholder" placeholder="Star Sanctuary" />
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCommonsObsidianEnabled">
               <input id="cfgCommonsObsidianEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Commons Obsidian Enabled</span>
+              <span data-i18n="settings.commonsObsidianEnabledLabel">Commons Obsidian Enabled</span>
             </label>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgCommonsObsidianVaultPath">Commons Obsidian Vault Path</label>
-            <input id="cfgCommonsObsidianVaultPath" class="input" placeholder="C:\\Users\\admin\\Documents\\Obsidian Vault" />
+            <label class="form-label" for="cfgCommonsObsidianVaultPath" data-i18n="settings.commonsObsidianVaultPathLabel">Commons Obsidian Vault Path</label>
+            <input id="cfgCommonsObsidianVaultPath" class="input" data-i18n-placeholder="settings.commonsObsidianVaultPathPlaceholder" placeholder="C:\\Users\\admin\\Documents\\Obsidian Vault" />
           </div>
           <div class="form-group">
-            <label class="form-label" for="cfgCommonsObsidianRootDir">Commons Obsidian Root Dir</label>
-            <input id="cfgCommonsObsidianRootDir" class="input" placeholder="Star Sanctuary" />
+            <label class="form-label" for="cfgCommonsObsidianRootDir" data-i18n="settings.commonsObsidianRootDirLabel">Commons Obsidian Root Dir</label>
+            <input id="cfgCommonsObsidianRootDir" class="input" data-i18n-placeholder="settings.commonsObsidianRootDirPlaceholder" placeholder="Star Sanctuary" />
           </div>
 
         </section>

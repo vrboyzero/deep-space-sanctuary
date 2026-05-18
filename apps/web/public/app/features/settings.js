@@ -191,20 +191,26 @@ export function createSettingsController({
     cfgImageTimeoutMs,
     cfgImageUnderstandEnabled,
     cfgImageUnderstandApiKey,
+    cfgImageUnderstandProvider,
     cfgImageUnderstandBaseUrl,
     cfgImageUnderstandModel,
     cfgImageUnderstandTimeoutMs,
+    cfgImageUnderstandMaxInputMb,
+    cfgImageUnderstandPrompt,
     cfgImageUnderstandAutoOnAttachment,
     cfgBrowserScreenshotAutoUnderstand,
     cfgCameraSnapAutoUnderstand,
     cfgScreenCaptureAutoUnderstand,
     cfgVideoUnderstandEnabled,
     cfgVideoUnderstandApiKey,
+    cfgVideoUnderstandProvider,
     cfgVideoUnderstandBaseUrl,
     cfgVideoUnderstandModel,
     cfgVideoUnderstandTimeoutMs,
     cfgVideoUnderstandTransport,
     cfgVideoUnderstandFps,
+    cfgVideoUnderstandMaxInputMb,
+    cfgVideoUnderstandPrompt,
     cfgVideoUnderstandAutoOnAttachment,
     cfgVideoUnderstandAutoAttachmentMaxTimelineItems,
     cfgVideoUnderstandAutoAttachmentSummaryCharLimit,
@@ -232,6 +238,7 @@ export function createSettingsController({
     cfgInjectAgents,
     cfgInjectSoul,
     cfgInjectMemory,
+    cfgInjectMethodSkillList,
     cfgPromptFocusEnabled,
     cfgMaxSystemPromptChars,
     cfgMaxHistory,
@@ -301,6 +308,8 @@ export function createSettingsController({
     cfgQqAppSecret,
     cfgQqAgentId,
     cfgQqSandbox,
+    cfgQqEventSampleCaptureEnabled,
+    cfgQqEventSampleCaptureDir,
     cfgDiscordEnabled,
     cfgDiscordBotToken,
     cfgDiscordDefaultChannelId,
@@ -412,20 +421,26 @@ export function createSettingsController({
     "cfgImageTimeoutMs",
     "cfgImageUnderstandEnabled",
     "cfgImageUnderstandApiKey",
+    "cfgImageUnderstandProvider",
     "cfgImageUnderstandBaseUrl",
     "cfgImageUnderstandModel",
     "cfgImageUnderstandTimeoutMs",
+    "cfgImageUnderstandMaxInputMb",
+    "cfgImageUnderstandPrompt",
     "cfgImageUnderstandAutoOnAttachment",
     "cfgBrowserScreenshotAutoUnderstand",
     "cfgCameraSnapAutoUnderstand",
     "cfgScreenCaptureAutoUnderstand",
     "cfgVideoUnderstandEnabled",
     "cfgVideoUnderstandApiKey",
+    "cfgVideoUnderstandProvider",
     "cfgVideoUnderstandBaseUrl",
     "cfgVideoUnderstandModel",
     "cfgVideoUnderstandTimeoutMs",
     "cfgVideoUnderstandTransport",
     "cfgVideoUnderstandFps",
+    "cfgVideoUnderstandMaxInputMb",
+    "cfgVideoUnderstandPrompt",
     "cfgVideoUnderstandAutoOnAttachment",
     "cfgVideoUnderstandAutoAttachmentMaxTimelineItems",
     "cfgVideoUnderstandAutoAttachmentSummaryCharLimit",
@@ -905,20 +920,26 @@ export function createSettingsController({
     if (cfgImageTimeoutMs) cfgImageTimeoutMs.value = c["BELLDANDY_IMAGE_TIMEOUT_MS"] || "";
     if (cfgImageUnderstandEnabled) cfgImageUnderstandEnabled.checked = c["BELLDANDY_IMAGE_UNDERSTAND_ENABLED"] === "true";
     if (cfgImageUnderstandApiKey) cfgImageUnderstandApiKey.value = c["BELLDANDY_IMAGE_UNDERSTAND_OPENAI_API_KEY"] || "";
+    if (cfgImageUnderstandProvider) cfgImageUnderstandProvider.value = c["BELLDANDY_IMAGE_UNDERSTAND_PROVIDER"] || "openai";
     if (cfgImageUnderstandBaseUrl) cfgImageUnderstandBaseUrl.value = c["BELLDANDY_IMAGE_UNDERSTAND_OPENAI_BASE_URL"] || "";
     if (cfgImageUnderstandModel) cfgImageUnderstandModel.value = c["BELLDANDY_IMAGE_UNDERSTAND_MODEL"] || "";
     if (cfgImageUnderstandTimeoutMs) cfgImageUnderstandTimeoutMs.value = c["BELLDANDY_IMAGE_UNDERSTAND_TIMEOUT_MS"] || "";
+    if (cfgImageUnderstandMaxInputMb) cfgImageUnderstandMaxInputMb.value = c["BELLDANDY_IMAGE_UNDERSTAND_MAX_INPUT_MB"] || "";
+    if (cfgImageUnderstandPrompt) cfgImageUnderstandPrompt.value = c["BELLDANDY_IMAGE_UNDERSTAND_PROMPT"] || "";
     if (cfgImageUnderstandAutoOnAttachment) cfgImageUnderstandAutoOnAttachment.checked = c["BELLDANDY_IMAGE_UNDERSTAND_AUTO_ON_ATTACHMENT"] !== "false";
     if (cfgBrowserScreenshotAutoUnderstand) cfgBrowserScreenshotAutoUnderstand.checked = c["BELLDANDY_BROWSER_SCREENSHOT_AUTO_UNDERSTAND"] !== "false";
     if (cfgCameraSnapAutoUnderstand) cfgCameraSnapAutoUnderstand.checked = c["BELLDANDY_CAMERA_SNAP_AUTO_UNDERSTAND"] !== "false";
     if (cfgScreenCaptureAutoUnderstand) cfgScreenCaptureAutoUnderstand.checked = c["BELLDANDY_SCREEN_CAPTURE_AUTO_UNDERSTAND"] !== "false";
     if (cfgVideoUnderstandEnabled) cfgVideoUnderstandEnabled.checked = c["BELLDANDY_VIDEO_UNDERSTAND_ENABLED"] === "true";
     if (cfgVideoUnderstandApiKey) cfgVideoUnderstandApiKey.value = c["BELLDANDY_VIDEO_UNDERSTAND_OPENAI_API_KEY"] || "";
+    if (cfgVideoUnderstandProvider) cfgVideoUnderstandProvider.value = c["BELLDANDY_VIDEO_UNDERSTAND_PROVIDER"] || "openai";
     if (cfgVideoUnderstandBaseUrl) cfgVideoUnderstandBaseUrl.value = c["BELLDANDY_VIDEO_UNDERSTAND_OPENAI_BASE_URL"] || "";
     if (cfgVideoUnderstandModel) cfgVideoUnderstandModel.value = c["BELLDANDY_VIDEO_UNDERSTAND_MODEL"] || "";
     if (cfgVideoUnderstandTimeoutMs) cfgVideoUnderstandTimeoutMs.value = c["BELLDANDY_VIDEO_UNDERSTAND_TIMEOUT_MS"] || "";
     if (cfgVideoUnderstandTransport) cfgVideoUnderstandTransport.value = c["BELLDANDY_VIDEO_UNDERSTAND_TRANSPORT"] || "auto";
     if (cfgVideoUnderstandFps) cfgVideoUnderstandFps.value = c["BELLDANDY_VIDEO_UNDERSTAND_FPS"] || "";
+    if (cfgVideoUnderstandMaxInputMb) cfgVideoUnderstandMaxInputMb.value = c["BELLDANDY_VIDEO_UNDERSTAND_MAX_INPUT_MB"] || "";
+    if (cfgVideoUnderstandPrompt) cfgVideoUnderstandPrompt.value = c["BELLDANDY_VIDEO_UNDERSTAND_PROMPT"] || "";
     if (cfgVideoUnderstandAutoOnAttachment) cfgVideoUnderstandAutoOnAttachment.checked = c["BELLDANDY_VIDEO_UNDERSTAND_AUTO_ON_ATTACHMENT"] !== "false";
     if (cfgVideoUnderstandAutoAttachmentMaxTimelineItems) cfgVideoUnderstandAutoAttachmentMaxTimelineItems.value = c["BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_MAX_TIMELINE_ITEMS"] || "";
     if (cfgVideoUnderstandAutoAttachmentSummaryCharLimit) cfgVideoUnderstandAutoAttachmentSummaryCharLimit.value = c["BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_SUMMARY_CHAR_LIMIT"] || "";
@@ -948,6 +969,7 @@ export function createSettingsController({
     cfgInjectAgents.checked = c["BELLDANDY_INJECT_AGENTS"] === "true";
     cfgInjectSoul.checked = c["BELLDANDY_INJECT_SOUL"] === "true";
     cfgInjectMemory.checked = c["BELLDANDY_INJECT_MEMORY"] === "true";
+    if (cfgInjectMethodSkillList) cfgInjectMethodSkillList.checked = c["BELLDANDY_INJECT_METHOD_SKILL_LIST"] !== "false";
     if (cfgPromptFocusEnabled) cfgPromptFocusEnabled.checked = c["BELLDANDY_PROMPT_FOCUS_ENABLED"] !== "false";
     cfgMaxSystemPromptChars.value = c["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] || "";
     cfgMaxHistory.value = c["BELLDANDY_MAX_HISTORY"] || "";
@@ -1011,6 +1033,8 @@ export function createSettingsController({
     if (cfgQqAppSecret) cfgQqAppSecret.value = c["BELLDANDY_QQ_APP_SECRET"] || "";
     if (cfgQqAgentId) cfgQqAgentId.value = c["BELLDANDY_QQ_AGENT_ID"] || "";
     if (cfgQqSandbox) cfgQqSandbox.checked = c["BELLDANDY_QQ_SANDBOX"] !== "false";
+    if (cfgQqEventSampleCaptureEnabled) cfgQqEventSampleCaptureEnabled.checked = c["BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_ENABLED"] === "true";
+    if (cfgQqEventSampleCaptureDir) cfgQqEventSampleCaptureDir.value = c["BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_DIR"] || "";
     if (cfgDiscordEnabled) cfgDiscordEnabled.checked = c["BELLDANDY_DISCORD_ENABLED"] === "true";
     if (cfgDiscordBotToken) cfgDiscordBotToken.value = c["BELLDANDY_DISCORD_BOT_TOKEN"] || "";
     if (cfgDiscordDefaultChannelId) cfgDiscordDefaultChannelId.value = c["BELLDANDY_DISCORD_DEFAULT_CHANNEL_ID"] || "";
@@ -1708,19 +1732,25 @@ export function createSettingsController({
     if (cfgImageOutputFormat) updates["BELLDANDY_IMAGE_OUTPUT_FORMAT"] = cfgImageOutputFormat.value.trim();
     if (cfgImageTimeoutMs) updates["BELLDANDY_IMAGE_TIMEOUT_MS"] = cfgImageTimeoutMs.value.trim();
     if (cfgImageUnderstandEnabled) updates["BELLDANDY_IMAGE_UNDERSTAND_ENABLED"] = cfgImageUnderstandEnabled.checked ? "true" : "false";
+    if (cfgImageUnderstandProvider) updates["BELLDANDY_IMAGE_UNDERSTAND_PROVIDER"] = cfgImageUnderstandProvider.value.trim() || "openai";
     if (cfgImageUnderstandBaseUrl) updates["BELLDANDY_IMAGE_UNDERSTAND_OPENAI_BASE_URL"] = cfgImageUnderstandBaseUrl.value.trim();
     if (cfgImageUnderstandModel) updates["BELLDANDY_IMAGE_UNDERSTAND_MODEL"] = cfgImageUnderstandModel.value.trim();
     if (cfgImageUnderstandTimeoutMs) updates["BELLDANDY_IMAGE_UNDERSTAND_TIMEOUT_MS"] = cfgImageUnderstandTimeoutMs.value.trim();
+    if (cfgImageUnderstandMaxInputMb) updates["BELLDANDY_IMAGE_UNDERSTAND_MAX_INPUT_MB"] = cfgImageUnderstandMaxInputMb.value.trim();
+    if (cfgImageUnderstandPrompt) updates["BELLDANDY_IMAGE_UNDERSTAND_PROMPT"] = cfgImageUnderstandPrompt.value.trim();
     if (cfgImageUnderstandAutoOnAttachment) updates["BELLDANDY_IMAGE_UNDERSTAND_AUTO_ON_ATTACHMENT"] = cfgImageUnderstandAutoOnAttachment.checked ? "true" : "false";
     if (cfgBrowserScreenshotAutoUnderstand) updates["BELLDANDY_BROWSER_SCREENSHOT_AUTO_UNDERSTAND"] = cfgBrowserScreenshotAutoUnderstand.checked ? "true" : "false";
     if (cfgCameraSnapAutoUnderstand) updates["BELLDANDY_CAMERA_SNAP_AUTO_UNDERSTAND"] = cfgCameraSnapAutoUnderstand.checked ? "true" : "false";
     if (cfgScreenCaptureAutoUnderstand) updates["BELLDANDY_SCREEN_CAPTURE_AUTO_UNDERSTAND"] = cfgScreenCaptureAutoUnderstand.checked ? "true" : "false";
     if (cfgVideoUnderstandEnabled) updates["BELLDANDY_VIDEO_UNDERSTAND_ENABLED"] = cfgVideoUnderstandEnabled.checked ? "true" : "false";
+    if (cfgVideoUnderstandProvider) updates["BELLDANDY_VIDEO_UNDERSTAND_PROVIDER"] = cfgVideoUnderstandProvider.value.trim() || "openai";
     if (cfgVideoUnderstandBaseUrl) updates["BELLDANDY_VIDEO_UNDERSTAND_OPENAI_BASE_URL"] = cfgVideoUnderstandBaseUrl.value.trim();
     if (cfgVideoUnderstandModel) updates["BELLDANDY_VIDEO_UNDERSTAND_MODEL"] = cfgVideoUnderstandModel.value.trim();
     if (cfgVideoUnderstandTimeoutMs) updates["BELLDANDY_VIDEO_UNDERSTAND_TIMEOUT_MS"] = cfgVideoUnderstandTimeoutMs.value.trim();
     if (cfgVideoUnderstandTransport) updates["BELLDANDY_VIDEO_UNDERSTAND_TRANSPORT"] = cfgVideoUnderstandTransport.value.trim() || "auto";
     if (cfgVideoUnderstandFps) updates["BELLDANDY_VIDEO_UNDERSTAND_FPS"] = cfgVideoUnderstandFps.value.trim();
+    if (cfgVideoUnderstandMaxInputMb) updates["BELLDANDY_VIDEO_UNDERSTAND_MAX_INPUT_MB"] = cfgVideoUnderstandMaxInputMb.value.trim();
+    if (cfgVideoUnderstandPrompt) updates["BELLDANDY_VIDEO_UNDERSTAND_PROMPT"] = cfgVideoUnderstandPrompt.value.trim();
     if (cfgVideoUnderstandAutoOnAttachment) updates["BELLDANDY_VIDEO_UNDERSTAND_AUTO_ON_ATTACHMENT"] = cfgVideoUnderstandAutoOnAttachment.checked ? "true" : "false";
     if (cfgVideoUnderstandAutoAttachmentMaxTimelineItems) updates["BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_MAX_TIMELINE_ITEMS"] = cfgVideoUnderstandAutoAttachmentMaxTimelineItems.value.trim();
     if (cfgVideoUnderstandAutoAttachmentSummaryCharLimit) updates["BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_SUMMARY_CHAR_LIMIT"] = cfgVideoUnderstandAutoAttachmentSummaryCharLimit.value.trim();
@@ -1756,6 +1786,7 @@ export function createSettingsController({
     updates["BELLDANDY_INJECT_AGENTS"] = cfgInjectAgents.checked ? "true" : "false";
     updates["BELLDANDY_INJECT_SOUL"] = cfgInjectSoul.checked ? "true" : "false";
     updates["BELLDANDY_INJECT_MEMORY"] = cfgInjectMemory.checked ? "true" : "false";
+    if (cfgInjectMethodSkillList) updates["BELLDANDY_INJECT_METHOD_SKILL_LIST"] = cfgInjectMethodSkillList.checked ? "true" : "false";
     if (cfgPromptFocusEnabled) updates["BELLDANDY_PROMPT_FOCUS_ENABLED"] = cfgPromptFocusEnabled.checked ? "true" : "false";
     updates["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] = cfgMaxSystemPromptChars.value.trim();
     updates["BELLDANDY_MAX_HISTORY"] = cfgMaxHistory.value.trim();
@@ -1818,6 +1849,8 @@ export function createSettingsController({
     assignSecretUpdate(updates, "BELLDANDY_QQ_APP_SECRET", cfgQqAppSecret);
     if (cfgQqAgentId) updates["BELLDANDY_QQ_AGENT_ID"] = cfgQqAgentId.value.trim();
     if (cfgQqSandbox) updates["BELLDANDY_QQ_SANDBOX"] = cfgQqSandbox.checked ? "true" : "false";
+    if (cfgQqEventSampleCaptureEnabled) updates["BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_ENABLED"] = cfgQqEventSampleCaptureEnabled.checked ? "true" : "false";
+    if (cfgQqEventSampleCaptureDir) updates["BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_DIR"] = cfgQqEventSampleCaptureDir.value.trim();
     if (cfgDiscordEnabled) updates["BELLDANDY_DISCORD_ENABLED"] = cfgDiscordEnabled.checked ? "true" : "false";
     assignSecretUpdate(updates, "BELLDANDY_DISCORD_BOT_TOKEN", cfgDiscordBotToken);
     if (cfgDiscordDefaultChannelId) updates["BELLDANDY_DISCORD_DEFAULT_CHANNEL_ID"] = cfgDiscordDefaultChannelId.value.trim();

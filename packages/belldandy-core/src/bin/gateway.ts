@@ -11,6 +11,7 @@ import { createCachedChannelSttTranscribe } from "./gateway-channel-stt.js";
 import { parseConversationAllowedKinds, readEnv } from "./gateway-config.js";
 import { createGatewayPromptInspectionRuntime } from "./gateway-prompt-inspection-runtime.js";
 import {
+  DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT,
   buildRuntimeSkillAssetSummaries,
   loadRuntimeMethodAssetSummaries,
   resolveRecommendedSkillNames,
@@ -561,6 +562,7 @@ const agentProtocol = readEnv("BELLDANDY_AGENT_PROTOCOL") as "openai" | "anthrop
 const injectAgents = (readEnv("BELLDANDY_INJECT_AGENTS") ?? "true") !== "false";
 const injectSoul = (readEnv("BELLDANDY_INJECT_SOUL") ?? "true") !== "false";
 const injectMemory = (readEnv("BELLDANDY_INJECT_MEMORY") ?? "true") !== "false";
+const injectMethodSkillList = (readEnv("BELLDANDY_INJECT_METHOD_SKILL_LIST") ?? "true") !== "false";
 const maxSystemPromptCharsRaw = readEnv("BELLDANDY_MAX_SYSTEM_PROMPT_CHARS");
 const maxSystemPromptChars = maxSystemPromptCharsRaw ? parseInt(maxSystemPromptCharsRaw, 10) || 0 : 0;
 const promptExperimentConfig = parsePromptExperimentConfig({
@@ -1379,9 +1381,16 @@ const {
   promptSkills,
   searchableSkills,
 } = extensionHost;
-const runtimeMethodAssets = await loadRuntimeMethodAssetSummaries(stateDir);
-const runtimePromptSkillAssets = buildRuntimeSkillAssetSummaries(promptSkills, 4);
-const runtimeSearchableSkillAssets = buildRuntimeSkillAssetSummaries(searchableSkills, 6);
+const runtimeMethodAssetResult = injectMethodSkillList
+  ? await loadRuntimeMethodAssetSummaries(stateDir, DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT)
+  : { summaries: [], totalCount: 0 };
+const runtimeMethodAssets = runtimeMethodAssetResult.summaries;
+const runtimePromptSkillAssets = injectMethodSkillList
+  ? await buildRuntimeSkillAssetSummaries(promptSkills, DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT)
+  : [];
+const runtimeSearchableSkillAssets = injectMethodSkillList
+  ? await buildRuntimeSkillAssetSummaries(searchableSkills, DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT)
+  : [];
 const runtimeAllKnownSkills = skillRegistry.listSkills();
 
 if (toolsEnabled) {
@@ -1460,6 +1469,9 @@ const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
     methodAssets: runtimeMethodAssets,
     promptSkillAssets: runtimePromptSkillAssets,
     searchableSkillAssets: runtimeSearchableSkillAssets,
+    methodAssetTotalCount: runtimeMethodAssetResult.totalCount,
+    promptSkillAssetTotalCount: injectMethodSkillList ? promptSkills.length : 0,
+    searchableSkillAssetTotalCount: injectMethodSkillList ? searchableSkills.length : 0,
     identityAuthorityProfile: agentAuthorityProfileCache.get(profile.id),
   });
 };

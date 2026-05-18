@@ -332,20 +332,26 @@ function createSettingsRefs(overrides = {}) {
     cfgImageTimeoutMs: overrides.cfgImageTimeoutMs || createInput(""),
     cfgImageUnderstandEnabled: overrides.cfgImageUnderstandEnabled || createCheckbox(false),
     cfgImageUnderstandApiKey: overrides.cfgImageUnderstandApiKey || createInput(""),
+    cfgImageUnderstandProvider: overrides.cfgImageUnderstandProvider || createInput("openai"),
     cfgImageUnderstandBaseUrl: overrides.cfgImageUnderstandBaseUrl || createInput(""),
     cfgImageUnderstandModel: overrides.cfgImageUnderstandModel || createInput(""),
     cfgImageUnderstandTimeoutMs: overrides.cfgImageUnderstandTimeoutMs || createInput(""),
+    cfgImageUnderstandMaxInputMb: overrides.cfgImageUnderstandMaxInputMb || createInput(""),
+    cfgImageUnderstandPrompt: overrides.cfgImageUnderstandPrompt || createInput(""),
     cfgImageUnderstandAutoOnAttachment: overrides.cfgImageUnderstandAutoOnAttachment || createCheckbox(true),
     cfgBrowserScreenshotAutoUnderstand: overrides.cfgBrowserScreenshotAutoUnderstand || createCheckbox(true),
     cfgCameraSnapAutoUnderstand: overrides.cfgCameraSnapAutoUnderstand || createCheckbox(true),
     cfgScreenCaptureAutoUnderstand: overrides.cfgScreenCaptureAutoUnderstand || createCheckbox(true),
     cfgVideoUnderstandEnabled: overrides.cfgVideoUnderstandEnabled || createCheckbox(false),
     cfgVideoUnderstandApiKey: overrides.cfgVideoUnderstandApiKey || createInput(""),
+    cfgVideoUnderstandProvider: overrides.cfgVideoUnderstandProvider || createInput("openai"),
     cfgVideoUnderstandBaseUrl: overrides.cfgVideoUnderstandBaseUrl || createInput(""),
     cfgVideoUnderstandModel: overrides.cfgVideoUnderstandModel || createInput(""),
     cfgVideoUnderstandTimeoutMs: overrides.cfgVideoUnderstandTimeoutMs || createInput(""),
     cfgVideoUnderstandTransport: overrides.cfgVideoUnderstandTransport || createInput("auto"),
     cfgVideoUnderstandFps: overrides.cfgVideoUnderstandFps || createInput(""),
+    cfgVideoUnderstandMaxInputMb: overrides.cfgVideoUnderstandMaxInputMb || createInput(""),
+    cfgVideoUnderstandPrompt: overrides.cfgVideoUnderstandPrompt || createInput(""),
     cfgVideoUnderstandAutoOnAttachment: overrides.cfgVideoUnderstandAutoOnAttachment || createCheckbox(true),
     cfgVideoUnderstandAutoAttachmentMaxTimelineItems: overrides.cfgVideoUnderstandAutoAttachmentMaxTimelineItems || createInput(""),
     cfgVideoUnderstandAutoAttachmentSummaryCharLimit: overrides.cfgVideoUnderstandAutoAttachmentSummaryCharLimit || createInput(""),
@@ -437,6 +443,8 @@ function createSettingsRefs(overrides = {}) {
     cfgQqAppSecret: overrides.cfgQqAppSecret || createInput(""),
     cfgQqAgentId: overrides.cfgQqAgentId || createInput(""),
     cfgQqSandbox: overrides.cfgQqSandbox || createCheckbox(false),
+    cfgQqEventSampleCaptureEnabled: overrides.cfgQqEventSampleCaptureEnabled || createCheckbox(false),
+    cfgQqEventSampleCaptureDir: overrides.cfgQqEventSampleCaptureDir || createInput(""),
     cfgCommunityApiEnabled: overrides.cfgCommunityApiEnabled || createCheckbox(false),
     cfgCommunityApiToken: overrides.cfgCommunityApiToken || createInput(""),
     cfgDiscordEnabled: overrides.cfgDiscordEnabled || createCheckbox(false),
@@ -1213,6 +1221,8 @@ describe("settings controller", () => {
       cfgQqAppSecret: createInput("qq-secret"),
       cfgQqAgentId: createInput("researcher"),
       cfgQqSandbox: createCheckbox(false),
+      cfgQqEventSampleCaptureEnabled: createCheckbox(true),
+      cfgQqEventSampleCaptureDir: createInput(" H:\\.star_sanctuary\\storage\\qq-event-samples "),
       cfgDiscordEnabled: createCheckbox(true),
       cfgDiscordBotToken: createInput("discord-secret"),
       cfgDiscordDefaultChannelId: createInput(" 123456789012345678 "),
@@ -1559,20 +1569,26 @@ describe("settings controller", () => {
       BELLDANDY_IMAGE_TIMEOUT_MS: "60000",
       BELLDANDY_IMAGE_UNDERSTAND_ENABLED: "true",
       BELLDANDY_IMAGE_UNDERSTAND_OPENAI_API_KEY: "[REDACTED]",
+      BELLDANDY_IMAGE_UNDERSTAND_PROVIDER: "openai",
       BELLDANDY_IMAGE_UNDERSTAND_OPENAI_BASE_URL: "https://vision.example.com/v1",
       BELLDANDY_IMAGE_UNDERSTAND_MODEL: "gpt-4.1-mini",
       BELLDANDY_IMAGE_UNDERSTAND_TIMEOUT_MS: "45000",
+      BELLDANDY_IMAGE_UNDERSTAND_MAX_INPUT_MB: "20",
+      BELLDANDY_IMAGE_UNDERSTAND_PROMPT: "Describe the image precisely",
       BELLDANDY_IMAGE_UNDERSTAND_AUTO_ON_ATTACHMENT: "false",
       BELLDANDY_BROWSER_SCREENSHOT_AUTO_UNDERSTAND: "false",
       BELLDANDY_CAMERA_SNAP_AUTO_UNDERSTAND: "true",
       BELLDANDY_SCREEN_CAPTURE_AUTO_UNDERSTAND: "false",
       BELLDANDY_VIDEO_UNDERSTAND_ENABLED: "true",
       BELLDANDY_VIDEO_UNDERSTAND_OPENAI_API_KEY: "[REDACTED]",
+      BELLDANDY_VIDEO_UNDERSTAND_PROVIDER: "openai",
       BELLDANDY_VIDEO_UNDERSTAND_OPENAI_BASE_URL: "https://video.example.com/v1",
       BELLDANDY_VIDEO_UNDERSTAND_MODEL: "kimi-k2.5",
       BELLDANDY_VIDEO_UNDERSTAND_TIMEOUT_MS: "90000",
       BELLDANDY_VIDEO_UNDERSTAND_TRANSPORT: "inline_data_url",
       BELLDANDY_VIDEO_UNDERSTAND_FPS: "3",
+      BELLDANDY_VIDEO_UNDERSTAND_MAX_INPUT_MB: "64",
+      BELLDANDY_VIDEO_UNDERSTAND_PROMPT: "Summarize key events",
       BELLDANDY_VIDEO_UNDERSTAND_AUTO_ON_ATTACHMENT: "true",
       BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_MAX_TIMELINE_ITEMS: "7",
       BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_SUMMARY_CHAR_LIMIT: "1200",
@@ -1584,6 +1600,8 @@ describe("settings controller", () => {
       BELLDANDY_STT_GROQ_API_KEY: "[REDACTED]",
       BELLDANDY_STT_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
       BELLDANDY_QQ_STT_FALLBACK_PROVIDERS: "openai,dashscope",
+      BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_ENABLED: "true",
+      BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_DIR: "H:\\.star_sanctuary\\storage\\qq-event-samples",
       BELLDANDY_ROOM_INJECT_THRESHOLD: "10",
       BELLDANDY_ROOM_MEMBERS_CACHE_TTL: "300000",
     });
@@ -1607,20 +1625,26 @@ describe("settings controller", () => {
     expect(refs.cfgImageApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgImageUnderstandEnabled.checked).toBe(true);
     expect(refs.cfgImageUnderstandApiKey.value).toBe("[REDACTED]");
+    expect(refs.cfgImageUnderstandProvider.value).toBe("openai");
     expect(refs.cfgImageUnderstandBaseUrl.value).toBe("https://vision.example.com/v1");
     expect(refs.cfgImageUnderstandModel.value).toBe("gpt-4.1-mini");
     expect(refs.cfgImageUnderstandTimeoutMs.value).toBe("45000");
+    expect(refs.cfgImageUnderstandMaxInputMb.value).toBe("20");
+    expect(refs.cfgImageUnderstandPrompt.value).toBe("Describe the image precisely");
     expect(refs.cfgImageUnderstandAutoOnAttachment.checked).toBe(false);
     expect(refs.cfgBrowserScreenshotAutoUnderstand.checked).toBe(false);
     expect(refs.cfgCameraSnapAutoUnderstand.checked).toBe(true);
     expect(refs.cfgScreenCaptureAutoUnderstand.checked).toBe(false);
     expect(refs.cfgVideoUnderstandEnabled.checked).toBe(true);
     expect(refs.cfgVideoUnderstandApiKey.value).toBe("[REDACTED]");
+    expect(refs.cfgVideoUnderstandProvider.value).toBe("openai");
     expect(refs.cfgVideoUnderstandBaseUrl.value).toBe("https://video.example.com/v1");
     expect(refs.cfgVideoUnderstandModel.value).toBe("kimi-k2.5");
     expect(refs.cfgVideoUnderstandTimeoutMs.value).toBe("90000");
     expect(refs.cfgVideoUnderstandTransport.value).toBe("inline_data_url");
     expect(refs.cfgVideoUnderstandFps.value).toBe("3");
+    expect(refs.cfgVideoUnderstandMaxInputMb.value).toBe("64");
+    expect(refs.cfgVideoUnderstandPrompt.value).toBe("Summarize key events");
     expect(refs.cfgVideoUnderstandAutoOnAttachment.checked).toBe(true);
     expect(refs.cfgVideoUnderstandAutoAttachmentMaxTimelineItems.value).toBe("7");
     expect(refs.cfgVideoUnderstandAutoAttachmentSummaryCharLimit.value).toBe("1200");
@@ -1630,6 +1654,8 @@ describe("settings controller", () => {
     expect(refs.cfgSttOpenAiBaseUrl.value).toBe("https://audio.example.com/v1");
     expect(refs.cfgSttGroqApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgQqSttFallbackProviders.value).toBe("openai,dashscope");
+    expect(refs.cfgQqEventSampleCaptureEnabled.checked).toBe(true);
+    expect(refs.cfgQqEventSampleCaptureDir.value).toBe("H:\\.star_sanctuary\\storage\\qq-event-samples");
     expect(refs.cfgRoomInjectThreshold.value).toBe("10");
     expect(refs.cfgRoomMembersCacheTtl.value).toBe("300000");
   });
@@ -2006,20 +2032,26 @@ describe("settings controller", () => {
       cfgImageTimeoutMs: createInput("60000"),
       cfgImageUnderstandEnabled: createCheckbox(true),
       cfgImageUnderstandApiKey: createInput("vision-secret"),
+      cfgImageUnderstandProvider: createInput(" openai "),
       cfgImageUnderstandBaseUrl: createInput(" https://vision.example.com/v1 "),
       cfgImageUnderstandModel: createInput(" gpt-4.1-mini "),
       cfgImageUnderstandTimeoutMs: createInput("45000"),
+      cfgImageUnderstandMaxInputMb: createInput(" 20 "),
+      cfgImageUnderstandPrompt: createInput(" Describe the image precisely "),
       cfgImageUnderstandAutoOnAttachment: createCheckbox(false),
       cfgBrowserScreenshotAutoUnderstand: createCheckbox(false),
       cfgCameraSnapAutoUnderstand: createCheckbox(true),
       cfgScreenCaptureAutoUnderstand: createCheckbox(false),
       cfgVideoUnderstandEnabled: createCheckbox(true),
       cfgVideoUnderstandApiKey: createInput("video-secret"),
+      cfgVideoUnderstandProvider: createInput(" openai "),
       cfgVideoUnderstandBaseUrl: createInput(" https://video.example.com/v1 "),
       cfgVideoUnderstandModel: createInput(" kimi-k2.5 "),
       cfgVideoUnderstandTimeoutMs: createInput("90000"),
       cfgVideoUnderstandTransport: createInput(" inline_data_url "),
       cfgVideoUnderstandFps: createInput(" 3 "),
+      cfgVideoUnderstandMaxInputMb: createInput(" 64 "),
+      cfgVideoUnderstandPrompt: createInput(" Summarize key events "),
       cfgVideoUnderstandAutoOnAttachment: createCheckbox(true),
       cfgVideoUnderstandAutoAttachmentMaxTimelineItems: createInput(" 7 "),
       cfgVideoUnderstandAutoAttachmentSummaryCharLimit: createInput(" 1200 "),
@@ -2031,6 +2063,8 @@ describe("settings controller", () => {
       cfgSttGroqApiKey: createInput("gsk-secret"),
       cfgSttGroqBaseUrl: createInput(" https://api.groq.com/openai/v1 "),
       cfgQqSttFallbackProviders: createInput(" openai,dashscope "),
+      cfgQqEventSampleCaptureEnabled: createCheckbox(true),
+      cfgQqEventSampleCaptureDir: createInput(" H:\\.star_sanctuary\\storage\\qq-event-samples "),
       cfgRoomInjectThreshold: createInput("10"),
       cfgRoomMembersCacheTtl: createInput("300000"),
     });
@@ -2094,20 +2128,26 @@ describe("settings controller", () => {
       BELLDANDY_IMAGE_TIMEOUT_MS: "60000",
       BELLDANDY_IMAGE_UNDERSTAND_ENABLED: "true",
       BELLDANDY_IMAGE_UNDERSTAND_OPENAI_API_KEY: "vision-secret",
+      BELLDANDY_IMAGE_UNDERSTAND_PROVIDER: "openai",
       BELLDANDY_IMAGE_UNDERSTAND_OPENAI_BASE_URL: "https://vision.example.com/v1",
       BELLDANDY_IMAGE_UNDERSTAND_MODEL: "gpt-4.1-mini",
       BELLDANDY_IMAGE_UNDERSTAND_TIMEOUT_MS: "45000",
+      BELLDANDY_IMAGE_UNDERSTAND_MAX_INPUT_MB: "20",
+      BELLDANDY_IMAGE_UNDERSTAND_PROMPT: "Describe the image precisely",
       BELLDANDY_IMAGE_UNDERSTAND_AUTO_ON_ATTACHMENT: "false",
       BELLDANDY_BROWSER_SCREENSHOT_AUTO_UNDERSTAND: "false",
       BELLDANDY_CAMERA_SNAP_AUTO_UNDERSTAND: "true",
       BELLDANDY_SCREEN_CAPTURE_AUTO_UNDERSTAND: "false",
       BELLDANDY_VIDEO_UNDERSTAND_ENABLED: "true",
       BELLDANDY_VIDEO_UNDERSTAND_OPENAI_API_KEY: "video-secret",
+      BELLDANDY_VIDEO_UNDERSTAND_PROVIDER: "openai",
       BELLDANDY_VIDEO_UNDERSTAND_OPENAI_BASE_URL: "https://video.example.com/v1",
       BELLDANDY_VIDEO_UNDERSTAND_MODEL: "kimi-k2.5",
       BELLDANDY_VIDEO_UNDERSTAND_TIMEOUT_MS: "90000",
       BELLDANDY_VIDEO_UNDERSTAND_TRANSPORT: "inline_data_url",
       BELLDANDY_VIDEO_UNDERSTAND_FPS: "3",
+      BELLDANDY_VIDEO_UNDERSTAND_MAX_INPUT_MB: "64",
+      BELLDANDY_VIDEO_UNDERSTAND_PROMPT: "Summarize key events",
       BELLDANDY_VIDEO_UNDERSTAND_AUTO_ON_ATTACHMENT: "true",
       BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_MAX_TIMELINE_ITEMS: "7",
       BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_SUMMARY_CHAR_LIMIT: "1200",
@@ -2119,6 +2159,8 @@ describe("settings controller", () => {
       BELLDANDY_STT_GROQ_API_KEY: "gsk-secret",
       BELLDANDY_STT_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
       BELLDANDY_QQ_STT_FALLBACK_PROVIDERS: "openai,dashscope",
+      BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_ENABLED: "true",
+      BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_DIR: "H:\\.star_sanctuary\\storage\\qq-event-samples",
       BELLDANDY_ROOM_INJECT_THRESHOLD: "10",
       BELLDANDY_ROOM_MEMBERS_CACHE_TTL: "300000",
     });

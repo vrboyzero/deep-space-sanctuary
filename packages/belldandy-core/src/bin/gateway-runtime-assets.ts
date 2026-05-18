@@ -18,6 +18,13 @@ const SKILL_PRIORITY_ORDER: Record<SkillDefinition["priority"], number> = {
   low: 3,
 };
 
+export const DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT = 20;
+
+export type RuntimeMethodAssetSummaryLoadResult = {
+  summaries: RuntimeMethodAssetSummary[];
+  totalCount: number;
+};
+
 function compareByLocale(left: string, right: string): number {
   return left.localeCompare(right, "zh-CN");
 }
@@ -29,35 +36,89 @@ function summarizeSkillSource(skill: SkillDefinition): string {
   return skill.source.type;
 }
 
+function compareByUpdatedAtDesc(
+  left: { updatedAt?: number; name: string },
+  right: { updatedAt?: number; name: string },
+): number {
+  const leftUpdatedAt = left.updatedAt ?? 0;
+  const rightUpdatedAt = right.updatedAt ?? 0;
+  if (rightUpdatedAt !== leftUpdatedAt) {
+    return rightUpdatedAt - leftUpdatedAt;
+  }
+  return compareByLocale(left.name, right.name);
+}
+
+function resolveSkillPath(skill: SkillDefinition): string {
+  if (skill.source.type === "user") {
+    return path.join(skill.source.path, skill.name, "SKILL.md");
+  }
+  if (skill.source.type === "plugin") {
+    return `plugin:${skill.source.pluginId}/skills/${skill.name}/SKILL.md`;
+  }
+  return `bundled:${skill.name}`;
+}
+
+async function readSkillUpdatedAt(skill: SkillDefinition): Promise<number | undefined> {
+  if (skill.source.type !== "user") {
+    return undefined;
+  }
+  try {
+    const stat = await fs.stat(resolveSkillPath(skill));
+    return stat.mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadRuntimeMethodAssetSummaries(
   stateDir: string,
-  maxItems = 4,
-): Promise<RuntimeMethodAssetSummary[]> {
+  maxItems = DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT,
+): Promise<RuntimeMethodAssetSummaryLoadResult> {
   const methodsDir = path.join(stateDir, "methods");
   try {
     const files = await fs.readdir(methodsDir, { withFileTypes: true });
-    const mdFiles = files
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-      .map((entry) => entry.name)
-      .sort(compareByLocale)
+    const mdFiles = await Promise.all(
+      files
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+        .map(async (entry) => {
+          const filePath = path.join(methodsDir, entry.name);
+          const stat = await fs.stat(filePath);
+          return {
+            name: entry.name,
+            path: filePath,
+            updatedAt: stat.mtimeMs,
+          };
+        }),
+    );
+
+    const selectedFiles = mdFiles
+      .sort((left, right) => compareByUpdatedAtDesc(left, right))
       .slice(0, Math.max(0, maxItems));
 
-    const summaries = await Promise.all(mdFiles.map(async (fileName) => {
-      const raw = await fs.readFile(path.join(methodsDir, fileName), "utf-8");
+    const summaries = await Promise.all(selectedFiles.map(async (file) => {
+      const raw = await fs.readFile(file.path, "utf-8");
       const parsed = parseMethodContent(raw);
       return {
-        fileName,
+        fileName: file.name,
+        path: path.join("methods", file.name).replaceAll("\\", "/"),
         title: parsed.title,
         summary: parsed.metadata.summary,
         status: parsed.metadata.status,
+        updatedAt: file.updatedAt,
       } satisfies RuntimeMethodAssetSummary;
     }));
 
-    return summaries;
+    return {
+      summaries,
+      totalCount: mdFiles.length,
+    };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
     if (err?.code === "ENOENT") {
-      return [];
+      return {
+        summaries: [],
+        totalCount: 0,
+      };
     }
     throw error;
   }
@@ -65,24 +126,35 @@ export async function loadRuntimeMethodAssetSummaries(
 
 export function buildRuntimeSkillAssetSummaries(
   skills: readonly SkillDefinition[],
-  maxItems = 6,
-): RuntimeSkillAssetSummary[] {
-  return [...skills]
+  maxItems = DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT,
+): Promise<RuntimeSkillAssetSummary[]> {
+  return Promise.all(
+    skills.map(async (skill) => ({
+      skill,
+      path: resolveSkillPath(skill),
+      updatedAt: await readSkillUpdatedAt(skill),
+    })),
+  ).then((items) => items
     .sort((left, right) => {
-      const priorityDelta = SKILL_PRIORITY_ORDER[left.priority] - SKILL_PRIORITY_ORDER[right.priority];
+      const priorityDelta = SKILL_PRIORITY_ORDER[left.skill.priority] - SKILL_PRIORITY_ORDER[right.skill.priority];
       if (priorityDelta !== 0) {
         return priorityDelta;
       }
-      return compareByLocale(left.name, right.name);
+      return compareByUpdatedAtDesc(
+        { updatedAt: left.updatedAt, name: left.skill.name },
+        { updatedAt: right.updatedAt, name: right.skill.name },
+      );
     })
     .slice(0, Math.max(0, maxItems))
-    .map((skill) => ({
+    .map(({ skill, path: skillPath, updatedAt }) => ({
       name: skill.name,
       description: skill.description,
       priority: skill.priority,
       source: summarizeSkillSource(skill),
+      path: skillPath.replaceAll("\\", "/"),
       tags: skill.tags ? [...skill.tags] : [],
-    }));
+      updatedAt,
+    })));
 }
 
 export function resolveRecommendedSkillNames(

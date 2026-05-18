@@ -17,14 +17,19 @@ export type BuildAgentRuntimePromptSectionsOptions = {
   methodAssets?: readonly RuntimeMethodAssetSummary[];
   promptSkillAssets?: readonly RuntimeSkillAssetSummary[];
   searchableSkillAssets?: readonly RuntimeSkillAssetSummary[];
+  methodAssetTotalCount?: number;
+  promptSkillAssetTotalCount?: number;
+  searchableSkillAssetTotalCount?: number;
   identityAuthorityProfile?: IdentityAuthorityProfile;
 };
 
 export type RuntimeMethodAssetSummary = {
   fileName: string;
+  path: string;
   title?: string;
   summary?: string;
   status?: string;
+  updatedAt?: number;
 };
 
 export type RuntimeSkillAssetSummary = {
@@ -32,7 +37,9 @@ export type RuntimeSkillAssetSummary = {
   description: string;
   priority: "low" | "normal" | "high" | "always";
   source: string;
+  path: string;
   tags: string[];
+  updatedAt?: number;
 };
 
 export function buildAgentRuntimePromptSections(
@@ -97,6 +104,9 @@ export function buildAgentRuntimePromptSections(
     methodAssets: options.methodAssets,
     promptSkillAssets: options.promptSkillAssets,
     searchableSkillAssets: options.searchableSkillAssets,
+    methodAssetTotalCount: options.methodAssetTotalCount,
+    promptSkillAssetTotalCount: options.promptSkillAssetTotalCount,
+    searchableSkillAssetTotalCount: options.searchableSkillAssetTotalCount,
   });
   if (methodSkillAssetSection) {
     sections.push(methodSkillAssetSection);
@@ -124,11 +134,25 @@ export function buildMethodSkillAssetSummarySection(input: {
   methodAssets?: readonly RuntimeMethodAssetSummary[];
   promptSkillAssets?: readonly RuntimeSkillAssetSummary[];
   searchableSkillAssets?: readonly RuntimeSkillAssetSummary[];
+  methodAssetTotalCount?: number;
+  promptSkillAssetTotalCount?: number;
+  searchableSkillAssetTotalCount?: number;
 }): SystemPromptSection | undefined {
   const recommendedSkillNames = (input.recommendedSkillNames ?? []).filter(Boolean);
   const methodAssets = input.methodAssets ?? [];
   const promptSkillAssets = input.promptSkillAssets ?? [];
   const searchableSkillAssets = input.searchableSkillAssets ?? [];
+  const methodAssetTotalCount = Math.max(methodAssets.length, input.methodAssetTotalCount ?? methodAssets.length);
+  const promptSkillAssetTotalCount = Math.max(
+    promptSkillAssets.length,
+    input.promptSkillAssetTotalCount ?? promptSkillAssets.length,
+  );
+  const searchableSkillAssetTotalCount = Math.max(
+    searchableSkillAssets.length,
+    input.searchableSkillAssetTotalCount ?? searchableSkillAssets.length,
+  );
+  const shownAssetCount = methodAssets.length + promptSkillAssets.length + searchableSkillAssets.length;
+  const totalAssetCount = methodAssetTotalCount + promptSkillAssetTotalCount + searchableSkillAssetTotalCount;
 
   if (
     recommendedSkillNames.length === 0
@@ -144,6 +168,8 @@ export function buildMethodSkillAssetSummarySection(input: {
     "",
     "Before inventing a new workflow, check whether an existing method or skill already matches the task.",
     "Use this section as a compact index; open full assets with `method_search` / `method_read` / `skills_search` / `skill_get` only when the summary looks relevant.",
+    `- Inventory counts: methods=${methodAssetTotalCount} | prompt_skills=${promptSkillAssetTotalCount} | searchable_skills=${searchableSkillAssetTotalCount}`,
+    `- This section shows ${shownAssetCount} of ${totalAssetCount} known assets, grouped by type below. Do not assume the grouped lists are exhaustive.`,
   ];
 
   if (recommendedSkillNames.length > 0) {
@@ -155,6 +181,7 @@ export function buildMethodSkillAssetSummarySection(input: {
     for (const method of methodAssets) {
       const parts = [
         `file=${method.fileName}`,
+        `path=${method.path}`,
         method.title ? `title=${method.title}` : undefined,
         method.status ? `status=${method.status}` : undefined,
         method.summary ? `summary=${method.summary}` : undefined,
@@ -166,14 +193,14 @@ export function buildMethodSkillAssetSummarySection(input: {
   if (promptSkillAssets.length > 0) {
     lines.push("- Prompt-injected skills already active:");
     for (const skill of promptSkillAssets) {
-      lines.push(`- ${skill.name} | ${skill.description}`);
+      lines.push(`- ${skill.name} | ${skill.description} | path=${skill.path}`);
     }
   }
 
   if (searchableSkillAssets.length > 0) {
     lines.push("- Searchable skills worth checking on demand:");
     for (const skill of searchableSkillAssets) {
-      lines.push(`- ${skill.name} | ${skill.description}`);
+      lines.push(`- ${skill.name} | ${skill.description} | path=${skill.path}`);
     }
   }
 
