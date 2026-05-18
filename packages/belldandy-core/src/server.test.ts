@@ -1489,6 +1489,15 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
         cacheMissTokens: 10,
         modelCalls: 1,
         cacheSupport: "supported" as const,
+        usageCalibration: {
+          estimatedPromptTokens: 7,
+          actualInputTokens: 10,
+          modelCalls: 1,
+          averageInputTokensPerCall: 10,
+          deltaTokens: 3,
+          deltaRatio: 0.4286,
+          status: "under_estimated" as const,
+        },
       };
       yield { type: "final" as const, text: "ok" };
       yield { type: "status" as const, status: "done" };
@@ -1577,6 +1586,11 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
       routeMode: "deepseek_virtual",
       degraded: false,
       reason: "auto_promoted_to_pro",
+    });
+    expect(usageEvent?.payload?.usageCalibration).toMatchObject({
+      estimatedPromptTokens: 7,
+      averageInputTokensPerCall: 10,
+      status: "under_estimated",
     });
   } finally {
     ws.close();

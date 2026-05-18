@@ -429,6 +429,9 @@ function mergePromptSnapshotInputMeta(
     ...(runMeta ? { ...runMeta } : {}),
   };
   delete merged.promptDeltas;
+  delete merged.tokenBreakdown;
+  delete merged.promptTokenBreakdown;
+  delete merged.truncationReason;
   return merged as JsonObject;
 }
 

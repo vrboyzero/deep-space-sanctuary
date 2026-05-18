@@ -1250,3 +1250,110 @@ test("message.send emits tools.config.updated when agent changes tool settings",
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("message.send trims duplicated delegation metadata from tool_result events while keeping lightweight fields", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield { type: "status", status: "running" as const };
+      yield {
+        type: "tool_result" as const,
+        id: "tool-result-projection-1",
+        name: "image_generate",
+        success: true,
+        output: "<img src=\"/generated/images/demo.png\" alt=\"Generated Image\">",
+        metadata: {
+          webPath: "/generated/images/demo.png",
+          currentFaqi: "safe-dev",
+          facetName: "coder",
+          targetLabel: "root",
+          delegationResults: [{
+            agentId: "worker-1",
+            status: "success",
+            summary: "已有总结",
+            acceptanceGate: {
+              accepted: false,
+              summary: "deliverable missing required sections",
+              rejectionConfidence: "high",
+            },
+          }],
+          followUpStrategy: {
+            summary: "已有后续策略总结",
+            recommendedRuntimeAction: "resume_parallel",
+            highPriorityLabels: ["worker-1"],
+            verifierHandoffLabels: ["verifier-1"],
+          },
+        },
+      };
+      yield { type: "final" as const, text: "ok" };
+      yield { type: "status", status: "done" as const };
+    },
+  };
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-send-tool-result-metadata-projection",
+      method: "message.send",
+      params: {
+        text: "run projection test",
+        conversationId: "conv-tool-result-metadata-projection",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "message-send-tool-result-metadata-projection" && f.ok === true));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "tool_result"));
+
+    const toolResultEvent = frames.find((f) => f.type === "event" && f.event === "tool_result");
+    expect(toolResultEvent?.payload?.metadata).toEqual({
+      webPath: "/generated/images/demo.png",
+      currentFaqi: "safe-dev",
+      facetName: "coder",
+      targetLabel: "root",
+    });
+    expect(toolResultEvent?.payload?.metadata?.delegationResults).toBeUndefined();
+    expect(toolResultEvent?.payload?.metadata?.followUpStrategy).toBeUndefined();
+
+    ws.send(JSON.stringify({ type: "req", id: "system-doctor-tool-result-metadata-projection", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-tool-result-metadata-projection"));
+    const doctorRes = frames.find((f) => f.type === "res" && f.id === "system-doctor-tool-result-metadata-projection");
+    const traces = doctorRes.payload?.queryRuntime?.traces ?? [];
+    const runtimeTrace = traces.find((item: any) => item.traceId === "message-send-tool-result-metadata-projection");
+    const toolResultStage = runtimeTrace?.stages?.find((item: any) => item.stage === "tool_result_emitted");
+    expect(toolResultStage?.detail).toMatchObject({
+      toolName: "image_generate",
+      success: true,
+      acceptanceGateStatus: "rejected",
+      acceptanceGateConfidence: "high",
+      followUpRuntimeAction: "resume_parallel",
+      followUpHighPriorityLabels: "worker-1",
+      verifierHandoffSuggested: true,
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});

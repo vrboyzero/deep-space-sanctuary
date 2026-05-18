@@ -585,6 +585,15 @@ type MessageSendLatestUsage = {
   cacheReadCostUsd?: number;
   cacheSavingsUsd?: number;
   totalCostUsd?: number;
+  usageCalibration?: {
+    estimatedPromptTokens: number;
+    actualInputTokens: number;
+    modelCalls: number;
+    averageInputTokensPerCall: number;
+    deltaTokens: number;
+    deltaRatio: number;
+    status?: "aligned" | "under_estimated" | "over_estimated";
+  };
 };
 
 type MessageSendRunResult = Awaited<ReturnType<typeof runAgentWithLifecycle>>;
@@ -801,6 +810,18 @@ function readFirstDelegationAcceptanceGate(metadata: unknown): Record<string, un
   return undefined;
 }
 
+function sanitizeToolResultEventMetadata(metadata: unknown): Record<string, unknown> | undefined {
+  if (!isJsonObjectRecord(metadata)) {
+    return undefined;
+  }
+  const {
+    delegationResults: _delegationResults,
+    followUpStrategy: _followUpStrategy,
+    ...rest
+  } = metadata;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
 function emitMessageSendTaskResult(input: {
   ctx: MessageSendQueryRuntimeContext;
   queryRuntime: QueryRuntime<"message.send">;
@@ -831,6 +852,7 @@ function emitMessageSendTaskResult(input: {
     detail: {
       inputTokens: latestUsage.inputTokens,
       outputTokens: latestUsage.outputTokens,
+      ...(latestUsage.usageCalibration ? { usageCalibration: latestUsage.usageCalibration } : {}),
     },
   });
   input.state.run.markTaskResultEmitted();
@@ -888,6 +910,15 @@ function handleMessageSendUsageEvent(input: {
     cacheReadCostUsd?: number;
     cacheSavingsUsd?: number;
     totalCostUsd?: number;
+    usageCalibration?: {
+      estimatedPromptTokens: number;
+      actualInputTokens: number;
+      modelCalls: number;
+      averageInputTokensPerCall: number;
+      deltaTokens: number;
+      deltaRatio: number;
+      status?: "aligned" | "under_estimated" | "over_estimated";
+    };
   };
 }): void {
   const latestUsage = {
@@ -918,6 +949,9 @@ function handleMessageSendUsageEvent(input: {
     ...(typeof input.item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: Number(input.item.cacheReadCostUsd) } : {}),
     ...(typeof input.item.cacheSavingsUsd === "number" ? { cacheSavingsUsd: Number(input.item.cacheSavingsUsd) } : {}),
     ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: Number(input.item.totalCostUsd) } : {}),
+    ...(input.item.usageCalibration && typeof input.item.usageCalibration === "object"
+      ? { usageCalibration: input.item.usageCalibration }
+      : {}),
   };
   input.state.run.setLatestUsage(latestUsage);
 
@@ -957,6 +991,9 @@ function handleMessageSendUsageEvent(input: {
       ...(typeof input.item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: input.item.cacheReadCostUsd } : {}),
       ...(typeof input.item.cacheSavingsUsd === "number" ? { cacheSavingsUsd: input.item.cacheSavingsUsd } : {}),
       ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: input.item.totalCostUsd } : {}),
+      ...(input.item.usageCalibration && typeof input.item.usageCalibration === "object"
+        ? { usageCalibration: input.item.usageCalibration }
+        : {}),
     },
   });
 
@@ -1038,6 +1075,15 @@ function createMessageSendStreamAdapter(input: {
       cacheReadCostUsd?: number;
       cacheSavingsUsd?: number;
       totalCostUsd?: number;
+      usageCalibration?: {
+        estimatedPromptTokens: number;
+        actualInputTokens: number;
+        modelCalls: number;
+        averageInputTokensPerCall: number;
+        deltaTokens: number;
+        deltaRatio: number;
+        status?: "aligned" | "under_estimated" | "over_estimated";
+      };
     }) => void;
   };
 } {
@@ -1106,7 +1152,7 @@ function createMessageSendStreamAdapter(input: {
             output: typeof item.output === "string" && item.output.length > 500 ? item.output.slice(0, 500) + "\u2026" : item.output,
             ...(item.error ? { error: item.error } : {}),
             ...(item.failureKind ? { failureKind: item.failureKind } : {}),
-            ...(isJsonObjectRecord(item.metadata) ? { metadata: item.metadata } : {}),
+            ...(sanitizeToolResultEventMetadata(item.metadata) ? { metadata: sanitizeToolResultEventMetadata(item.metadata) } : {}),
           },
         });
       },
@@ -1387,6 +1433,7 @@ async function finalizeMessageSendSuccess(input: {
       conversationId: input.conversationId,
       detail: {
         receivedFinal: false,
+        ...(runResult.latestUsage?.usageCalibration ? { usageCalibration: runResult.latestUsage.usageCalibration } : {}),
       },
     });
     return;
@@ -1448,6 +1495,7 @@ async function finalizeMessageSendSuccess(input: {
       terminalDetail: {
         receivedFinal: input.state.run.hasReceivedFinal(),
         response: "assistant_finalized",
+        ...(runResult.latestUsage?.usageCalibration ? { usageCalibration: runResult.latestUsage.usageCalibration } : {}),
       },
       statusBeforeFinal: "done",
       agentId: input.requestedAgentId ?? "default",

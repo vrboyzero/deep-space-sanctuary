@@ -87,6 +87,13 @@ function formatKeyCountSummary(value) {
   return entries.map(([key, count]) => `${key}:${count}`).join(", ");
 }
 
+function formatUsageCalibrationSummary(usageCalibration) {
+  if (!usageCalibration || typeof usageCalibration !== "object") {
+    return "";
+  }
+  return `estimated=${formatNumber(usageCalibration.estimatedPromptTokens)}, avg actual input/call=${formatNumber(usageCalibration.averageInputTokensPerCall)}, delta=${Math.round((Number(usageCalibration.deltaRatio) || 0) * 100)}%, status=${usageCalibration.status || "-"}`;
+}
+
 function formatDreamTriggerModeStats(value) {
   const entries = Object.entries(value || {}).filter(([, stats]) => stats && typeof stats === "object");
   if (entries.length === 0) {
@@ -278,6 +285,26 @@ function buildPromptObservabilityCard(payload, t) {
         reason: summary.cacheFamilyAffinity.reason || "-",
       },
       `Cache family affinity: ${summary.cacheFamilyAffinity.status || "-"}; reason=${summary.cacheFamilyAffinity.reason || "-"}`,
+    ));
+  }
+  const calibrationTrace = Array.isArray(payload?.queryRuntime?.traces)
+    ? payload.queryRuntime.traces.find((item) => item?.method === "message.send")
+    : null;
+  const calibrationStage = Array.isArray(calibrationTrace?.stages)
+    ? [...calibrationTrace.stages].reverse().find((stage) => stage?.detail?.usageCalibration && typeof stage.detail.usageCalibration === "object")
+    : null;
+  const usageCalibration = calibrationStage?.detail?.usageCalibration;
+  if (usageCalibration && typeof usageCalibration === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptUsageCalibration",
+      {
+        estimated: formatNumber(usageCalibration.estimatedPromptTokens),
+        actual: formatNumber(usageCalibration.averageInputTokensPerCall),
+        deltaPercent: `${Math.round((Number(usageCalibration.deltaRatio) || 0) * 100)}%`,
+        status: usageCalibration.status || "-",
+      },
+      `Token estimate calibration: estimated=${formatNumber(usageCalibration.estimatedPromptTokens)}, avg actual input/call=${formatNumber(usageCalibration.averageInputTokensPerCall)}, delta=${Math.round((Number(usageCalibration.deltaRatio) || 0) * 100)}%, status=${usageCalibration.status || "-"}`,
     ));
   }
   notes.push(...residentStateBindingLines);
@@ -1495,8 +1522,6 @@ function buildDelegationCard(payload, t) {
   for (const item of items.slice(0, 6)) {
     const parts = [
       item.status ? `status=${item.status}` : "",
-      item.source ? `source=${item.source}` : "",
-      item.aggregationMode ? `aggregation=${item.aggregationMode}` : "",
       item.expectedDeliverableFormat ? `deliverable=${item.expectedDeliverableFormat}` : "",
       item.expectedDeliverableSummary ? `deliverable-summary=${item.expectedDeliverableSummary}` : "",
       item.intentSummary ? `intent=${item.intentSummary}` : "",
@@ -3281,6 +3306,73 @@ function buildAgentStopRuntimeCard(payload, t) {
   };
 }
 
+function buildQueryRuntimeCard(payload, t) {
+  const traces = Array.isArray(payload?.queryRuntime?.traces) ? payload.queryRuntime.traces : [];
+  if (traces.length <= 0) {
+    return undefined;
+  }
+
+  const messageSendTrace = [...traces].reverse().find((item) => item?.method === "message.send");
+  if (!messageSendTrace) {
+    return undefined;
+  }
+
+  const stages = Array.isArray(messageSendTrace.stages) ? messageSendTrace.stages : [];
+  const latestStage = stages.length > 0 ? stages[stages.length - 1] : null;
+  const latestUsageCalibrationStage = [...stages].reverse().find((stage) => stage?.detail?.usageCalibration && typeof stage.detail.usageCalibration === "object") || null;
+  const latestUsageCalibration = latestUsageCalibrationStage?.detail?.usageCalibration;
+
+  const badges = [
+    tr(
+      t,
+      "settings.doctorQueryRuntimeTraceCount",
+      { count: formatNumber(traces.length) },
+      `${formatNumber(traces.length)} traces`,
+    ),
+    tr(
+      t,
+      "settings.doctorQueryRuntimeLatestMethod",
+      { method: messageSendTrace.method || "message.send" },
+      `latest ${messageSendTrace.method || "message.send"}`,
+    ),
+  ];
+
+  const notes = [];
+  if (messageSendTrace.traceId || latestStage?.stage) {
+    notes.push(tr(
+      t,
+      "settings.doctorQueryRuntimeLatestStage",
+      {
+        traceId: messageSendTrace.traceId || "-",
+        stage: latestStage?.stage || "-",
+      },
+      `trace=${messageSendTrace.traceId || "-"}, latest stage=${latestStage?.stage || "-"}`,
+    ));
+  }
+  if (latestUsageCalibration) {
+    notes.push(tr(
+      t,
+      "settings.doctorQueryRuntimeUsageCalibration",
+      {
+        stage: latestUsageCalibrationStage?.stage || "-",
+        summary: formatUsageCalibrationSummary(latestUsageCalibration),
+      },
+      `usage calibration @ ${latestUsageCalibrationStage?.stage || "-"}: ${formatUsageCalibrationSummary(latestUsageCalibration)}`,
+    ));
+  }
+
+  if (notes.length <= 0) {
+    return undefined;
+  }
+
+  return {
+    title: tr(t, "settings.doctorQueryRuntimeTitle", {}, "Query Runtime"),
+    badges,
+    notes,
+    status: "pass",
+  };
+}
+
 function resolveRuntimeResilienceDiagnostics(payload, runtime) {
   const launchView = payload?.promptObservability?.launchExplainability?.runtimeResilience;
   if (
@@ -3662,6 +3754,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildAssistantModeRuntimeCard(payload, t),
     buildConfigSourceCard(payload, t),
     buildPromptObservabilityCard(payload, t),
+    buildQueryRuntimeCard(payload, t),
     buildToolBehaviorCard(payload, t),
     buildToolContractV2Card(payload, t),
     buildResidentAgentsCard(payload, t),
@@ -3740,6 +3833,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${toolCard.title}:`);
     lines.push(...toolCard.badges.map((badge) => `- ${badge}`));
     lines.push(...toolCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const queryRuntimeCard = buildQueryRuntimeCard(payload, t);
+  if (queryRuntimeCard) {
+    lines.push(``);
+    lines.push(`${queryRuntimeCard.title}:`);
+    lines.push(...queryRuntimeCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...queryRuntimeCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const toolContractV2Card = buildToolContractV2Card(payload, t);

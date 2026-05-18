@@ -48,6 +48,15 @@ export type QueryRuntimeAgentUsage = {
   cacheReadCostUsd?: number;
   cacheSavingsUsd?: number;
   totalCostUsd?: number;
+  usageCalibration?: {
+    estimatedPromptTokens: number;
+    actualInputTokens: number;
+    modelCalls: number;
+    averageInputTokensPerCall: number;
+    deltaTokens: number;
+    deltaRatio: number;
+    status?: "aligned" | "under_estimated" | "over_estimated";
+  };
 };
 
 export type QueryRuntimeAgentRunSummary = {
@@ -176,6 +185,9 @@ export async function runAgentWithLifecycle(
           ...(typeof item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: Number(item.cacheReadCostUsd) } : {}),
           ...(typeof item.cacheSavingsUsd === "number" ? { cacheSavingsUsd: Number(item.cacheSavingsUsd) } : {}),
           ...(typeof item.totalCostUsd === "number" ? { totalCostUsd: Number(item.totalCostUsd) } : {}),
+          ...(item.usageCalibration && typeof item.usageCalibration === "object"
+            ? { usageCalibration: item.usageCalibration }
+            : {}),
         };
         input.onUsage?.(item);
         continue;

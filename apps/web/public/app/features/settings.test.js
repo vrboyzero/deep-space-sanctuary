@@ -462,6 +462,8 @@ function createSettingsRefs(overrides = {}) {
     cfgTokenUsageUploadApiKey: overrides.cfgTokenUsageUploadApiKey || createInput(""),
     cfgTokenUsageUploadTimeoutMs: overrides.cfgTokenUsageUploadTimeoutMs || createInput(""),
     cfgTokenUsageStrictUuid: overrides.cfgTokenUsageStrictUuid || createCheckbox(false),
+    cfgWebchatCostBudgetUsd: overrides.cfgWebchatCostBudgetUsd || createInput(""),
+    cfgWebchatCostBudgetWarnFraction: overrides.cfgWebchatCostBudgetWarnFraction || createInput(""),
     cfgAutoTaskTimeEnabled: overrides.cfgAutoTaskTimeEnabled || createCheckbox(false),
     cfgAutoTaskTokenEnabled: overrides.cfgAutoTaskTokenEnabled || createCheckbox(false),
     cfgWebhookConfigPath: overrides.cfgWebhookConfigPath || createInput(""),
@@ -770,6 +772,8 @@ describe("settings controller", () => {
       BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY: "[REDACTED]",
       BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS: "3000",
       BELLDANDY_TOKEN_USAGE_STRICT_UUID: "true",
+      BELLDANDY_WEBCHAT_COST_BUDGET_USD: "0.05",
+      BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION: "0.8",
       BELLDANDY_AUTO_TASK_TIME_ENABLED: "true",
       BELLDANDY_AUTO_TASK_TOKEN_ENABLED: "false",
       BELLDANDY_WEBHOOK_CONFIG_PATH: "~/.star_sanctuary/webhooks.json",
@@ -954,6 +958,8 @@ describe("settings controller", () => {
     expect(refs.cfgTokenUsageUploadApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgTokenUsageUploadTimeoutMs.value).toBe("3000");
     expect(refs.cfgTokenUsageStrictUuid.checked).toBe(true);
+    expect(refs.cfgWebchatCostBudgetUsd.value).toBe("0.05");
+    expect(refs.cfgWebchatCostBudgetWarnFraction.value).toBe("0.8");
     expect(refs.cfgAutoTaskTimeEnabled.checked).toBe(true);
     expect(refs.cfgAutoTaskTokenEnabled.checked).toBe(false);
     expect(refs.cfgWebhookConfigPath.value).toBe("~/.star_sanctuary/webhooks.json");
@@ -1238,6 +1244,8 @@ describe("settings controller", () => {
       cfgTokenUsageUploadApiKey: createInput("gro_token_key"),
       cfgTokenUsageUploadTimeoutMs: createInput("3000"),
       cfgTokenUsageStrictUuid: createCheckbox(true),
+      cfgWebchatCostBudgetUsd: createInput(" 0.05 "),
+      cfgWebchatCostBudgetWarnFraction: createInput(" 0.8 "),
       cfgAutoTaskTimeEnabled: createCheckbox(true),
       cfgAutoTaskTokenEnabled: createCheckbox(false),
       cfgWebhookConfigPath: createInput(" ~/.star_sanctuary/webhooks.json "),
@@ -2065,6 +2073,8 @@ describe("settings controller", () => {
       cfgQqSttFallbackProviders: createInput(" openai,dashscope "),
       cfgQqEventSampleCaptureEnabled: createCheckbox(true),
       cfgQqEventSampleCaptureDir: createInput(" H:\\.star_sanctuary\\storage\\qq-event-samples "),
+      cfgWebchatCostBudgetUsd: createInput(" 0.05 "),
+      cfgWebchatCostBudgetWarnFraction: createInput(" 0.8 "),
       cfgRoomInjectThreshold: createInput("10"),
       cfgRoomMembersCacheTtl: createInput("300000"),
     });
@@ -2086,6 +2096,10 @@ describe("settings controller", () => {
 
     await controller.saveConfig();
     vi.runAllTimers();
+
+    const configUpdateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
+    expect(configUpdateCall?.[0]?.params?.updates?.BELLDANDY_WEBCHAT_COST_BUDGET_USD).toBe("0.05");
+    expect(configUpdateCall?.[0]?.params?.updates?.BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION).toBe("0.8");
 
     const updateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
     expect(updateCall?.[0]?.params?.updates).toMatchObject({

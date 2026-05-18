@@ -1062,7 +1062,7 @@ registerCapability("openai", {
 | P3 | 先把缓存命中稳定性与轻量落盘协同打牢 | A1 深化 + 轻量“缓存落盘协同层”：prefix drift 归因、prompt/tool/block 稳定排序、`prefix warm state` 本地元数据、warm-up aware 轻量调度、hit-aware 诊断、cache family affinity 约束；只对 `cacheSupport=supported` provider 启用 |
 | P4 | 再把 DeepSeek 档位路由跑顺 | B2：`auto / flash / pro` 作为单次择一的档位路由、flash 默认、pro 升级、摘要/强制总结固定 flash；支持 `flash/pro` 独立 key 配置；路由策略建立在 P3 的前缀稳定与轻量协同基础上；其他模型保持现有路由或显式降级 |
 | P5 | 减少无效 token 消耗 | B3 + B1：修复管线深化、机械瘦身、工具结果与参数 token-aware 收缩；优先保留 provider-neutral 逻辑，并避免破坏缓存敏感 provider 的前缀稳定性 |
-| P6 | 做预算与估算校准 | C3 + C1：预算 warning 体验面、token 估算精度增强；避免把 DeepSeek 专用预算逻辑硬编码成全局假设 |
+| P6 | 做预算与估算校准 | C3 + C1：以“轻量 warning + 只读校准观测”为收口边界；避免把 DeepSeek 专用预算逻辑或 provider-specific 计费假设硬编码成全局系统 |
 
 ### 7.5 当前阶段进度（持续更新）
 
@@ -1086,7 +1086,30 @@ registerCapability("openai", {
 | 2026-05-18 | 临时计划 / 启动阶段观测补完 | 进行中 | 已把“服务 ready 但 WebChat 首连滞后”的临时分析与处理计划插入 P5 前；后端已补首个 WS 连接、首个认证成功 WS、`invalid token` 首次关闭、首个静态页面请求、首个 `/app.js` 请求等只读打点，前端也已补浏览器控制台启动 marks 与 `navigation.timing.snapshot`。最新多组真实样本进一步确认：`browser open returned` 通常仅 `131ms` 左右，但 `first static web request` 可能延后 `14s-28s`，随后 `/app.js`、WS 建连、`hello-ok` 都只再花几百毫秒。结合浏览器控制台 `[WebChat startup]` 可见：一旦页面真正开始执行，我们自己的 `app.js -> connect -> ws -> hello-ok` 仅需约 `0.5s`。 | 当前主怀疑已从 Gateway/缓存逻辑收缩到“浏览器导航/扩展注入/页面真正起页前”的阶段；后续继续收集样本即可，暂不阻塞 P5 主线。 |
 | 2026-05-18 | P5 / 第二步（recent tool result 内容投影收缩） | 已完成 | 已继续沿“先投影、后摘要”的方向收紧 `tool_result_persist` 之后的高冗余字段，但仍保持 provider-neutral、且不碰主 transcript：1. `recentToolResults.content/error` 从较大的全量截断改为更小的预览型存储；2. 新增 `contentPreview/errorPreview`、`contentChars/errorChars`、`contentTruncated/errorTruncated` 元数据，保留检索/诊断价值；3. `retrieve_tool_result` 会明确显示该条记录当前是 preview 还是完整内容，避免误导模型把预览当成完整结果；4. 主会话 `tool` transcript、真实工具执行返回、以及 `retrieve_tool_result` 工具契约仍保持不变。 | 下一步继续审计 `tool_result_persist` 之后还会进入 follow-up prompt delta / diagnostics 的高冗余 metadata，优先压缩 delegation 相关大对象在可读展示面与恢复面的展开方式，但仍不碰主会话历史与 provider-specific 行为。 |
 | 2026-05-18 | P5 / 第三步（delegation delta metadata 投影收缩） | 已完成 | 已继续沿 provider-neutral、最小行为改动的路线，收缩 `runtime-prompt-deltas` 中 delegation follow-up 的 metadata 面膨胀：1. `tool-failure-recovery` / `tool-post-verification` 不再把完整 `delegationResults + followUpStrategy.items + template/verifierTemplate + team roster` 大对象整份挂入 `delta.metadata.delegationResult`；2. 改为仅保留恢复/诊断真正需要的轻量投影，包括 `resultCount/acceptedCount/gateRejectedCount/workerSuccessCount`、主判定 `primaryResult.acceptanceGate`、`followUpStrategy` 的结论级标签与 `itemsPreview`、以及 team 的 `memberCount/laneIds/rosterPreview`；3. prompt 文本内容、真实工具执行结果、主 transcript、`recentToolResults` 恢复能力与 provider-specific 行为均未改动；4. 定向测试也已切到校验“关键 verdict 仍在，但 metadata 不再携带整份长对象”。 | 下一步继续审计 query-runtime / diagnostics 展示面是否还有直接透传或重复展开的高冗余字段；若有，再沿“先投影、后摘要”继续收缩，但仍避免触碰主会话历史和 provider-specific 逻辑。 |
-| 2026-05-18 | P5 / 第四步（query-runtime / diagnostics 去重首轮） | 进行中 | 已先补两条最保守的去重护栏：1. `OpenAIChatAgent` / `ToolEnabledAgent` 在创建 prompt snapshot 时，不再把已经结构化放进 `snapshot.deltas` 的同一批 `promptDeltas` 再重复塞进 `snapshot.inputMeta.promptDeltas`，减少 query-runtime / prompt snapshot / diagnostics 链上的双写冗余；2. WebChat `prompt-snapshot-detail` 已切为优先消费轻量投影里的 `followUpStrategy.itemsPreview + itemCount`，不再依赖旧的完整 `items` 大对象，保证前面 P5 第三步的 metadata 收缩后，展示面仍可读。 | 下一步继续审计 prompt snapshot 持久化 artifact、doctor / query-runtime 详情面里是否还有“同一结论被 summary + raw metadata 重复带出”的字段；优先收 delegation / tool-result 相关展示，但仍不碰主 transcript 和 provider-specific 行为。 |
+| 2026-05-18 | P5 / 第四步（query-runtime / diagnostics 去重首轮） | 已完成 | 已沿“先投影、后摘要”的路线完成首轮 query-runtime / diagnostics 去重收口，仍保持 provider-neutral、且不碰主 transcript：1. `OpenAIChatAgent` / `ToolEnabledAgent` 在创建 prompt snapshot 时，不再把已经结构化放进 `snapshot.deltas` 的 `promptDeltas`、以及已由 `summary` 承载结论的 `tokenBreakdown / promptTokenBreakdown / truncationReason` 再重复塞进 `snapshot.inputMeta`，减少 prompt snapshot artifact、query-runtime 与 diagnostics 链上的双写冗余；2. WebChat `prompt-snapshot-detail` 已切为优先消费轻量投影里的 `followUpStrategy.itemsPreview + itemCount`，并对 `runtime/high/verifier_handoff` 结论做 summary 去重，不再依赖旧的完整 `items` 大对象；3. doctor 的 delegation observability 已去掉与 summary/badges 重复的 `source=...`、`aggregation=...` notes；4. `message.send -> tool_result` WebSocket event 现仅保留前端明确依赖的轻量 metadata，不再透传 `delegationResults` / `followUpStrategy` raw 大对象，同时 `query-runtime trace` 里的扁平 verdict 仍保持可读；5. `subtask` 详情里的 `Team Shared State` 已去掉重复复述顶部 grid / completion summary 的 explainability note，仅保留真正新增信息的 overlap 与 lane 明细。 | `P5` 当前主线可先收口；若后续仍要继续深挖，可低优先级再审 `subtask roster` 内 `lane.acceptanceGateSummary` 与 `lane.summary` 是否存在稳定重复，但这不再阻塞本阶段完成。 |
+| 2026-05-18 | P6 / 第一步（C3 预算 warning MVP） | 已完成 | 已按“先审计、再最小落地”的方式完成 `P6` 首步：1. 确认后端 `token.usage` 已具备 `totalCostUsd`、`cacheSavingsUsd` 等成本字段，无需新增采集链路；2. WebChat 设置页新增 `BELLDANDY_WEBCHAT_COST_BUDGET_USD` 与 `BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION` 两个轻量配置，并纳入热更新白名单；3. 前端新增独立 `cost-budget` helper，在会话内累计 `totalCostUsd`、按阈值触发一次性 warning；4. 顶部 token observability 现可展示 `COST current / budget (ratio)`，未配置预算时完全静默降级；5. 已补定向测试覆盖预算配置解析、observability 文本与设置读写链路。当前实现明确只做前端会话级 warning，不做 hard stop、不做 provider-specific 预算逻辑、也不把它表述为完整成本校准体系。 | 下一步再进入 `P6` 第二步时，可低风险地补 `C1` 向的 usage 校准与估算偏差观测；优先做只读校准，不急着引入更重的预算阻断或复杂定价分叉。 |
+| 2026-05-18 | P6 / 第二步（C1 只读 usage 校准观测） | 已完成 | 已按“只读观测、最小侵入”的边界完成 usage calibration 首轮落地，并补完最后一层 query-runtime 可读展示后正式收口：1. 在 `ToolEnabledAgent` 的 `usage` 汇总里新增 provider usage 与本地 prompt estimate 的校准观测，结构化输出 `estimatedPromptTokens / actualInputTokens / modelCalls / averageInputTokensPerCall / deltaTokens / deltaRatio / status`；2. `query-runtime-agent-run`、`message.send` 的 `latestUsage` 与 `token.usage` WebSocket payload 已透传同一只读字段，便于后续做统一诊断；3. WebChat 顶部 token observability 已新增 `CAL estimated -> actual (delta, status)` 文本，明确展示“估算值 vs 每次调用平均实际输入”而不是伪装成单次真值；4. doctor 的 prompt observability 会从 `queryRuntime.traces` 中读取同一 `usageCalibration` 结论补校准 note，同时 full detail 现新增轻量 `Query Runtime` 卡，直接展示最近一次 `message.send` 的最新 stage 与 calibration 摘要；5. 全程未引入预算控制、未改 provider-specific 定价/路由、未改 prompt snapshot artifact 持久化结构，也未把多轮累计 usage 误写成单次 provider 真值系统。 | `P6` 当前已可正式收口。若后续还要继续，只建议作为低优先级扩展项处理：1. 在 query-runtime/detail 中补更细的 stage 对比或更直观的 calibration explainability；2. 增加 session 级 usage/calibration trend 摘要；3. 视真实需求再评估是否补更细的成本审计或 provider/fallback 分摊观测。当前不建议进入 hard stop、provider-specific budget policy、账单级对账或复杂计费校准。 |
+
+#### P6 收口结论（2026-05-18）
+
+`P6` 到当前阶段按“轻量 warning + 只读校准观测”收口：
+
+1. `C3` 已做到会话级成本 warning 与现有 observability 接面，且未引入阻断或自动降级。
+2. `C1` 已做到 estimate vs usage 的统一结构化透传，并在 token 面板、doctor prompt 卡、query-runtime detail 三处形成最小可读闭环。
+3. 当前实现明确不是财务级成本系统，也不是 provider 真值账单面板；它的目标是帮助定位“估算偏差”和“成本大致落点”，而不是替代供应商账单。
+
+#### P6 后续可考虑扩展项（低优先级 / defer）
+
+- 在 query-runtime detail 里补更细的 stage-by-stage calibration explainability，例如区分 `task_result_recorded`、`completed`、`assistant_finalized` 的最终结论来源。
+- 增加 session 级 trend 摘要，例如最近 N 次 `message.send` 的 estimate drift 分布、aligned / under_estimated / over_estimated 计数。
+- 若后续真实运营需要，再评估更细的成本审计观测，例如 fallback / auxiliary summary 的成本归因、缓存节省与主成本的并排展示。
+
+#### P6 当前明确不纳入范围
+
+- 预算 hard stop、拒绝发送、自动切换到便宜模型
+- provider-specific 预算策略、账单级对账、精确财务核算
+- 把多轮累计 usage 伪装成单次 provider prompt 真值
+- 为校准观测反向改主 transcript、prompt snapshot artifact 或 provider 行为
 
 ### 7.5.1 临时插入计划：启动阶段观测补完（位于 P5 前）
 

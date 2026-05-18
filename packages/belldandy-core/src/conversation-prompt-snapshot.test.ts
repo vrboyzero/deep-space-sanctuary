@@ -5,6 +5,7 @@ import path from "node:path";
 import { expect, test } from "vitest";
 
 import {
+  buildConversationPromptSnapshotArtifact,
   getConversationPromptSnapshotArtifactPath,
   getConversationPromptSnapshotSystemPromptBlobRoot,
   getConversationPromptSnapshotDirectory,
@@ -397,6 +398,34 @@ test("persistConversationPromptSnapshot keeps first system message inline when c
   } finally {
     await fs.rm(stateDir, { recursive: true, force: true });
   }
+});
+
+test("buildConversationPromptSnapshotArtifact drops duplicated token breakdown fields from input meta", () => {
+  const artifact = buildConversationPromptSnapshotArtifact({
+    snapshot: {
+      agentId: "coder",
+      conversationId: "agent:coder:main",
+      runId: "run-dedup",
+      createdAt: 123,
+      systemPrompt: "system prompt body",
+      messages: [{ role: "system", content: "system prompt body" }],
+      hookSystemPromptUsed: false,
+      inputMeta: {
+        tokenBreakdown: { systemPromptEstimatedTokens: 999 },
+        promptTokenBreakdown: { systemPromptEstimatedTokens: 888 },
+        truncationReason: { code: "max_chars_limit" },
+        residentProfile: {
+          memoryMode: "hybrid",
+        },
+      },
+    },
+  });
+
+  const rendered = renderConversationPromptSnapshotText(artifact);
+  expect(rendered).toContain("Resident Metadata");
+  expect(rendered).not.toContain("\"promptTokenBreakdown\"");
+  expect(rendered).not.toContain("\"tokenBreakdown\"");
+  expect(rendered).not.toContain("\"truncationReason\"");
 });
 
 

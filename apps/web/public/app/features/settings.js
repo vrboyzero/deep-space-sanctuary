@@ -332,6 +332,8 @@ export function createSettingsController({
     cfgTokenUsageUploadApiKey,
     cfgTokenUsageUploadTimeoutMs,
     cfgTokenUsageStrictUuid,
+    cfgWebchatCostBudgetUsd,
+    cfgWebchatCostBudgetWarnFraction,
     cfgAutoTaskTimeEnabled,
     cfgAutoTaskTokenEnabled,
     cfgWebhookConfigPath,
@@ -432,6 +434,8 @@ export function createSettingsController({
     "cfgBrowserScreenshotAutoUnderstand",
     "cfgCameraSnapAutoUnderstand",
     "cfgScreenCaptureAutoUnderstand",
+    "cfgWebchatCostBudgetUsd",
+    "cfgWebchatCostBudgetWarnFraction",
     "cfgVideoUnderstandEnabled",
     "cfgVideoUnderstandApiKey",
     "cfgVideoUnderstandProvider",
@@ -1052,6 +1056,8 @@ export function createSettingsController({
     if (cfgTokenUsageUploadApiKey) cfgTokenUsageUploadApiKey.value = c["BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY"] || c["BELLDANDY_TOKEN_USAGE_UPLOAD_TOKEN"] || "";
     if (cfgTokenUsageUploadTimeoutMs) cfgTokenUsageUploadTimeoutMs.value = c["BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS"] || "";
     if (cfgTokenUsageStrictUuid) cfgTokenUsageStrictUuid.checked = c["BELLDANDY_TOKEN_USAGE_STRICT_UUID"] === "true";
+    if (cfgWebchatCostBudgetUsd) cfgWebchatCostBudgetUsd.value = c["BELLDANDY_WEBCHAT_COST_BUDGET_USD"] || "";
+    if (cfgWebchatCostBudgetWarnFraction) cfgWebchatCostBudgetWarnFraction.value = c["BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION"] || "";
     if (cfgAutoTaskTimeEnabled) cfgAutoTaskTimeEnabled.checked = c["BELLDANDY_AUTO_TASK_TIME_ENABLED"] === "true";
     if (cfgAutoTaskTokenEnabled) cfgAutoTaskTokenEnabled.checked = c["BELLDANDY_AUTO_TASK_TOKEN_ENABLED"] === "true";
     if (cfgWebhookConfigPath) cfgWebhookConfigPath.value = c["BELLDANDY_WEBHOOK_CONFIG_PATH"] || "";
@@ -1869,6 +1875,8 @@ export function createSettingsController({
     assignSecretUpdate(updates, "BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY", cfgTokenUsageUploadApiKey);
     if (cfgTokenUsageUploadTimeoutMs) updates["BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS"] = cfgTokenUsageUploadTimeoutMs.value.trim();
     if (cfgTokenUsageStrictUuid) updates["BELLDANDY_TOKEN_USAGE_STRICT_UUID"] = cfgTokenUsageStrictUuid.checked ? "true" : "false";
+    if (cfgWebchatCostBudgetUsd) updates["BELLDANDY_WEBCHAT_COST_BUDGET_USD"] = cfgWebchatCostBudgetUsd.value.trim();
+    if (cfgWebchatCostBudgetWarnFraction) updates["BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION"] = cfgWebchatCostBudgetWarnFraction.value.trim();
     if (cfgAutoTaskTimeEnabled) updates["BELLDANDY_AUTO_TASK_TIME_ENABLED"] = cfgAutoTaskTimeEnabled.checked ? "true" : "false";
     if (cfgAutoTaskTokenEnabled) updates["BELLDANDY_AUTO_TASK_TOKEN_ENABLED"] = cfgAutoTaskTokenEnabled.checked ? "true" : "false";
     if (cfgWebhookConfigPath) updates["BELLDANDY_WEBHOOK_CONFIG_PATH"] = cfgWebhookConfigPath.value.trim();

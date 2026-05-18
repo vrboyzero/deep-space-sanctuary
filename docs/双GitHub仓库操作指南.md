@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "推进 token消耗优化方案v2.md 的开发内容"
+git commit -m "推进 token消耗优化方案v2.md ，完成P1到P6的主要功能开发"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

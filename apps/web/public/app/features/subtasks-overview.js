@@ -403,7 +403,6 @@ function renderTeamSharedStateSection(teamSharedState, escapeHtml, t) {
   const completionGate = teamSharedState.completionGate && typeof teamSharedState.completionGate === "object"
     ? teamSharedState.completionGate
     : null;
-  const summaryLines = buildTeamSharedStateSummaryLines(teamSharedState, t);
   return `
     <section class="memory-detail-card">
       <span class="memory-detail-label">${escapeHtml(t("subtasks.detailTeamSharedState", {}, "Team Shared State"))}</span>
@@ -421,7 +420,6 @@ function renderTeamSharedStateSection(teamSharedState, escapeHtml, t) {
         ${renderDetailCard(t("subtasks.detailTeamBlockerLanes", {}, "Blocker Lanes"), formatJoinedValues(completionGate?.blockerLaneIds), escapeHtml)}
       </div>
       <div class="memory-detail-text">${escapeHtml(teamSharedState.fanInSummary || completionGate?.summary || "-")}</div>
-      ${summaryLines.length ? renderExplainabilityNote(summaryLines, escapeHtml) : ""}
       ${Array.isArray(completionGate?.overlappingWriteScopes) && completionGate.overlappingWriteScopes.length ? `
         <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailTeamOverlap", {}, "Overlapping Write Scope"))}</strong></div>
         <div class="tool-settings-policy-note">

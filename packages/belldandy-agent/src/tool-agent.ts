@@ -362,6 +362,39 @@ function estimateSystemPromptTokens(messages: Message[]): number {
   return total;
 }
 
+function buildUsageCalibration(input: {
+  estimatedPromptTokens: number;
+  actualInputTokens: number;
+  modelCalls: number;
+}): AgentUsage["usageCalibration"] | undefined {
+  const estimatedPromptTokens = Math.max(0, Number(input.estimatedPromptTokens ?? 0));
+  const actualInputTokens = Math.max(0, Number(input.actualInputTokens ?? 0));
+  const modelCalls = Math.max(0, Number(input.modelCalls ?? 0));
+  if (estimatedPromptTokens <= 0 || actualInputTokens <= 0 || modelCalls <= 0) {
+    return undefined;
+  }
+
+  const averageInputTokensPerCall = actualInputTokens / modelCalls;
+  const deltaTokens = averageInputTokensPerCall - estimatedPromptTokens;
+  const deltaRatio = estimatedPromptTokens > 0 ? deltaTokens / estimatedPromptTokens : 0;
+  const absDeltaRatio = Math.abs(deltaRatio);
+  const status = absDeltaRatio <= 0.15
+    ? "aligned"
+    : deltaRatio > 0
+      ? "under_estimated"
+      : "over_estimated";
+
+  return {
+    estimatedPromptTokens,
+    actualInputTokens,
+    modelCalls,
+    averageInputTokensPerCall,
+    deltaTokens,
+    deltaRatio,
+    status,
+  };
+}
+
 function stringifyTranscriptContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "undefined") return "";
@@ -1059,41 +1092,51 @@ export class ToolEnabledAgent implements BelldandyAgent {
       tokenCounter.restoreFromSnapshots(snapshots);
     }
 
-    const buildUsageItem = (): AgentUsage => ({
-      type: "usage",
-      systemPromptTokens: estimateSystemPromptTokens(messages),
-      contextTokens: estimateContextTokensFromMessages(messages, { includeSystem: false }),
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      cacheCreationTokens: totalCacheCreation,
-      cacheReadTokens: totalCacheRead,
-      ...(totalCacheHit > 0 ? { cacheHitTokens: totalCacheHit } : {}),
-      ...(totalCacheMiss > 0 ? { cacheMissTokens: totalCacheMiss } : {}),
-      modelCalls: modelCallCount,
-      ...(this.opts.cacheSupport ? { cacheSupport: this.opts.cacheSupport } : {}),
-      ...(typeof this.opts.systemPromptMetadata?.systemPromptFingerprint === "string"
-        ? { systemPromptFingerprint: this.opts.systemPromptMetadata.systemPromptFingerprint }
-        : {}),
-      ...(typeof this.opts.systemPromptMetadata?.structureSignature === "string"
-        ? { structureSignature: this.opts.systemPromptMetadata.structureSignature }
-        : {}),
-      ...(this.opts.systemPromptMetadata?.warmupCoordination
-        && typeof this.opts.systemPromptMetadata.warmupCoordination === "object"
-        ? { warmupCoordination: this.opts.systemPromptMetadata.warmupCoordination }
-        : {}),
-      ...(this.opts.systemPromptMetadata?.cacheFamilyAffinity
-        && typeof this.opts.systemPromptMetadata.cacheFamilyAffinity === "object"
-        ? { cacheFamilyAffinity: this.opts.systemPromptMetadata.cacheFamilyAffinity }
-        : {}),
-      ...(totalInputCostUsd > 0 ? { inputCostUsd: totalInputCostUsd } : {}),
-      ...(totalOutputCostUsd > 0 ? { outputCostUsd: totalOutputCostUsd } : {}),
-      ...(totalCacheReadCostUsd > 0 ? { cacheReadCostUsd: totalCacheReadCostUsd } : {}),
-      ...(totalCacheCreationCostUsd > 0 ? { cacheCreationCostUsd: totalCacheCreationCostUsd } : {}),
-      ...(totalCacheSavingsUsd > 0 ? { cacheSavingsUsd: totalCacheSavingsUsd } : {}),
-      ...(totalInputCostUsd > 0 || totalOutputCostUsd > 0 || totalCacheReadCostUsd > 0 || totalCacheCreationCostUsd > 0
-        ? { totalCostUsd: totalInputCostUsd + totalOutputCostUsd + totalCacheReadCostUsd + totalCacheCreationCostUsd }
-        : {}),
-    });
+    const buildUsageItem = (): AgentUsage => {
+      const systemPromptTokens = estimateSystemPromptTokens(messages);
+      const contextTokens = estimateContextTokensFromMessages(messages, { includeSystem: false });
+      const usageCalibration = buildUsageCalibration({
+        estimatedPromptTokens: systemPromptTokens + contextTokens,
+        actualInputTokens: totalInputTokens,
+        modelCalls: modelCallCount,
+      });
+      return {
+        type: "usage",
+        systemPromptTokens,
+        contextTokens,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cacheCreationTokens: totalCacheCreation,
+        cacheReadTokens: totalCacheRead,
+        ...(totalCacheHit > 0 ? { cacheHitTokens: totalCacheHit } : {}),
+        ...(totalCacheMiss > 0 ? { cacheMissTokens: totalCacheMiss } : {}),
+        modelCalls: modelCallCount,
+        ...(this.opts.cacheSupport ? { cacheSupport: this.opts.cacheSupport } : {}),
+        ...(typeof this.opts.systemPromptMetadata?.systemPromptFingerprint === "string"
+          ? { systemPromptFingerprint: this.opts.systemPromptMetadata.systemPromptFingerprint }
+          : {}),
+        ...(typeof this.opts.systemPromptMetadata?.structureSignature === "string"
+          ? { structureSignature: this.opts.systemPromptMetadata.structureSignature }
+          : {}),
+        ...(this.opts.systemPromptMetadata?.warmupCoordination
+          && typeof this.opts.systemPromptMetadata.warmupCoordination === "object"
+          ? { warmupCoordination: this.opts.systemPromptMetadata.warmupCoordination }
+          : {}),
+        ...(this.opts.systemPromptMetadata?.cacheFamilyAffinity
+          && typeof this.opts.systemPromptMetadata.cacheFamilyAffinity === "object"
+          ? { cacheFamilyAffinity: this.opts.systemPromptMetadata.cacheFamilyAffinity }
+          : {}),
+        ...(totalInputCostUsd > 0 ? { inputCostUsd: totalInputCostUsd } : {}),
+        ...(totalOutputCostUsd > 0 ? { outputCostUsd: totalOutputCostUsd } : {}),
+        ...(totalCacheReadCostUsd > 0 ? { cacheReadCostUsd: totalCacheReadCostUsd } : {}),
+        ...(totalCacheCreationCostUsd > 0 ? { cacheCreationCostUsd: totalCacheCreationCostUsd } : {}),
+        ...(totalCacheSavingsUsd > 0 ? { cacheSavingsUsd: totalCacheSavingsUsd } : {}),
+        ...(totalInputCostUsd > 0 || totalOutputCostUsd > 0 || totalCacheReadCostUsd > 0 || totalCacheCreationCostUsd > 0
+          ? { totalCostUsd: totalInputCostUsd + totalOutputCostUsd + totalCacheReadCostUsd + totalCacheCreationCostUsd }
+          : {}),
+        ...(usageCalibration ? { usageCalibration } : {}),
+      };
+    };
 
     // 辅助函数：yield 并收集 items
     const yieldItem = async function* (item: AgentStreamItem) {
@@ -2457,6 +2500,9 @@ function mergePromptSnapshotInputMeta(
     ...(runMeta ? { ...runMeta } : {}),
   };
   delete merged.promptDeltas;
+  delete merged.tokenBreakdown;
+  delete merged.promptTokenBreakdown;
+  delete merged.truncationReason;
   return merged as JsonObject;
 }
 

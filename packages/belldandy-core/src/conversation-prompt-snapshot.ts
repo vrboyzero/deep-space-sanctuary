@@ -198,7 +198,9 @@ export function buildConversationPromptSnapshotArtifact(input: {
           })),
         }
         : {}),
-      ...(input.snapshot.inputMeta ? { inputMeta: { ...input.snapshot.inputMeta } } : {}),
+      ...(sanitizeConversationPromptSnapshotInputMeta(input.snapshot.inputMeta)
+        ? { inputMeta: sanitizeConversationPromptSnapshotInputMeta(input.snapshot.inputMeta) }
+        : {}),
       hookSystemPromptUsed: input.snapshot.hookSystemPromptUsed === true,
       ...(input.snapshot.prependContext ? { prependContext: input.snapshot.prependContext } : {}),
     },
@@ -663,7 +665,9 @@ function toPersistedConversationPromptSnapshotArtifact(input: {
           })),
         }
         : {}),
-      ...(input.artifact.snapshot.inputMeta ? { inputMeta: { ...input.artifact.snapshot.inputMeta } } : {}),
+      ...(sanitizeConversationPromptSnapshotInputMeta(input.artifact.snapshot.inputMeta)
+        ? { inputMeta: sanitizeConversationPromptSnapshotInputMeta(input.artifact.snapshot.inputMeta) }
+        : {}),
       hookSystemPromptUsed: input.artifact.snapshot.hookSystemPromptUsed === true,
       ...(input.artifact.snapshot.prependContext ? { prependContext: input.artifact.snapshot.prependContext } : {}),
     },
@@ -711,11 +715,25 @@ async function expandPersistedConversationPromptSnapshotArtifact(input: {
           })),
         }
         : {}),
-      ...(input.artifact.snapshot.inputMeta ? { inputMeta: { ...input.artifact.snapshot.inputMeta } } : {}),
+      ...(sanitizeConversationPromptSnapshotInputMeta(input.artifact.snapshot.inputMeta)
+        ? { inputMeta: sanitizeConversationPromptSnapshotInputMeta(input.artifact.snapshot.inputMeta) }
+        : {}),
       hookSystemPromptUsed: input.artifact.snapshot.hookSystemPromptUsed === true,
       ...(input.artifact.snapshot.prependContext ? { prependContext: input.artifact.snapshot.prependContext } : {}),
     },
   };
+}
+
+function sanitizeConversationPromptSnapshotInputMeta(inputMeta?: JsonObject): JsonObject | undefined {
+  if (!isRecord(inputMeta)) {
+    return undefined;
+  }
+  const sanitized: Record<string, unknown> = { ...inputMeta };
+  delete sanitized.promptDeltas;
+  delete sanitized.tokenBreakdown;
+  delete sanitized.promptTokenBreakdown;
+  delete sanitized.truncationReason;
+  return Object.keys(sanitized).length > 0 ? sanitized as JsonObject : undefined;
 }
 
 async function loadConversationPromptSystemPromptBlob(input: {

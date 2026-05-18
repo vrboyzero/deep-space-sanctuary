@@ -279,6 +279,16 @@ export type AgentUsage = {
   cacheSavingsUsd?: number;
   /** 估算的总成本（USD） */
   totalCostUsd?: number;
+  /** 估算值与 provider usage 的只读校准观测 */
+  usageCalibration?: {
+    estimatedPromptTokens: number;
+    actualInputTokens: number;
+    modelCalls: number;
+    averageInputTokensPerCall: number;
+    deltaTokens: number;
+    deltaRatio: number;
+    status?: "aligned" | "under_estimated" | "over_estimated";
+  };
 };
 
 export type AgentStreamItem =

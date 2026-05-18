@@ -66,6 +66,7 @@ import { createSubtasksRuntimeFeature } from "./app/features/subtasks-runtime.js
 import { createLocaleController } from "./app/features/locale.js";
 import { initPromptController } from "./app/features/prompt.js";
 import { createPanelVisibilityFeature } from "./app/features/panel-visibility.js";
+import { createCostBudgetTracker, readCostBudgetConfig } from "./app/features/cost-budget.js";
 import { updateTokenUsageObservability } from "./app/features/token-usage-observability.js";
 import { createThemeController } from "./app/features/theme.js";
 import { createVoiceFeature } from "./app/features/voice.js";
@@ -1145,6 +1146,7 @@ function handleHelloOk(frame) {
   chatUiFeature?.refreshAvatar("me", userAvatar);
 
   sessionTotalTokens = 0;
+  costBudgetTracker.reset();
   taskTokenHistoryByConversation.clear();
   Object.values(tokenUsageValueEls).forEach((el) => {
     if (el) el.textContent = "--";
@@ -2960,6 +2962,7 @@ function renderTaskTokenHistory() {
 }
 
 let sessionTotalTokens = 0;
+const costBudgetTracker = createCostBudgetTracker();
 
 function updateTokenUsage(payload) {
   if (!payload) return;
@@ -2975,7 +2978,31 @@ function updateTokenUsage(payload) {
   // 会话累计：每次收到 usage 事件，累加 input + output
   sessionTotalTokens += (payload.inputTokens || 0) + (payload.outputTokens || 0);
   set("tuAll", sessionTotalTokens);
-  updateTokenUsageObservability(tokenUsageObservabilityEl, payload, localeController.t.bind(localeController));
+  const sessionTotalCostUsd = costBudgetTracker.consumeUsage(payload);
+  void loadServerConfig().then((config) => {
+    const costBudgetConfig = readCostBudgetConfig(config);
+    const ratio = costBudgetConfig.budgetUsd > 0 ? sessionTotalCostUsd / costBudgetConfig.budgetUsd : null;
+    updateTokenUsageObservability(
+      tokenUsageObservabilityEl,
+      {
+        ...payload,
+        sessionTotalCostUsd,
+        costBudgetUsd: costBudgetConfig.budgetUsd,
+        costBudgetRatio: ratio,
+      },
+      localeController.t.bind(localeController),
+    );
+    const warning = costBudgetTracker.evaluateWarning(costBudgetConfig);
+    if (warning.shouldWarn) {
+      const percent = Math.max(0, Math.round((warning.ratio || 0) * 100));
+      showNotice(
+        localeController.t("settings.webchatCostBudgetUsdLabel", {}, "WebChat 成本预算（USD）"),
+        `当前会话累计成本 $${warning.sessionTotalCostUsd.toFixed(6)}，已达到预算 $${warning.budgetUsd.toFixed(6)} 的 ${percent}%。`,
+        "warning",
+        5200,
+      );
+    }
+  });
   // 移除 updating 动画
   if (tokenUsageEl) tokenUsageEl.classList.remove("updating");
 }

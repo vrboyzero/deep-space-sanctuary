@@ -10,6 +10,19 @@ function formatUsd(value) {
   return `$${num.toFixed(6)}`;
 }
 
+function formatPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  return `${Math.max(0, Math.round(num * 100))}%`;
+}
+
+function formatSignedPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  const rounded = Math.round(num * 100);
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
+}
+
 function trimFingerprint(value) {
   if (typeof value !== "string") return "";
   const normalized = value.trim();
@@ -96,6 +109,33 @@ export function buildTokenUsageObservabilityText(payload, t = (_key, _params, fa
       "header.tokenAuxSummaryVerdict",
       { strategy, reason, enabled },
       `AUX ${strategy} / ${reason} / enabled=${enabled}`,
+    ));
+  }
+  if (payload.usageCalibration && typeof payload.usageCalibration === "object") {
+    segments.push(t(
+      "header.tokenUsageCalibration",
+      {
+        estimated: formatNumber(payload.usageCalibration.estimatedPromptTokens),
+        actual: formatNumber(payload.usageCalibration.averageInputTokensPerCall),
+        delta: formatSignedPercent(payload.usageCalibration.deltaRatio),
+        status: payload.usageCalibration.status || "-",
+      },
+      `CAL ${formatNumber(payload.usageCalibration.estimatedPromptTokens)} -> ${formatNumber(payload.usageCalibration.averageInputTokensPerCall)} (${formatSignedPercent(payload.usageCalibration.deltaRatio)}, ${payload.usageCalibration.status || "-"})`,
+    ));
+  }
+  if (typeof payload.sessionTotalCostUsd === "number") {
+    const budgetUsd = typeof payload.costBudgetUsd === "number" ? payload.costBudgetUsd : null;
+    const ratio = budgetUsd && budgetUsd > 0
+      ? payload.sessionTotalCostUsd / budgetUsd
+      : payload.costBudgetRatio;
+    segments.push(t(
+      "header.tokenCostBudget",
+      {
+        cost: formatUsd(payload.sessionTotalCostUsd),
+        budget: budgetUsd ? formatUsd(budgetUsd) : "--",
+        ratio: formatPercent(ratio),
+      },
+      `COST ${formatUsd(payload.sessionTotalCostUsd)} / ${budgetUsd ? formatUsd(budgetUsd) : "--"} (${formatPercent(ratio)})`,
     ));
   }
   return segments.join(" | ");

@@ -2648,6 +2648,16 @@
             <div class="form-help" data-i18n="settings.tokenUsageStrictUuidHelp">接收端开启严格 UUID 校验时建议同步开启。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgWebchatCostBudgetUsd" data-i18n="settings.webchatCostBudgetUsdLabel">WebChat Cost Budget (USD)</label>
+            <input id="cfgWebchatCostBudgetUsd" class="input" data-i18n-placeholder="settings.webchatCostBudgetUsdPlaceholder" placeholder="0.05" />
+            <div class="form-help" data-i18n="settings.webchatCostBudgetUsdHelp">按会话累计成本做轻量 warning；留空表示关闭。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWebchatCostBudgetWarnFraction" data-i18n="settings.webchatCostBudgetWarnFractionLabel">WebChat Cost Budget Warning Fraction</label>
+            <input id="cfgWebchatCostBudgetWarnFraction" class="input" data-i18n-placeholder="settings.webchatCostBudgetWarnFractionPlaceholder" placeholder="0.8" />
+            <div class="form-help" data-i18n="settings.webchatCostBudgetWarnFractionHelp">到达预算占比时提示 warning，默认 0.8。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgAutoTaskTimeEnabled">
               <input id="cfgAutoTaskTimeEnabled" type="checkbox" style="margin-right: 8px;" />
               <span data-i18n="settings.autoTaskTimeEnabledLabel">Append Auto Task Time</span>

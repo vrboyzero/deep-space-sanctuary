@@ -530,6 +530,8 @@ export const APP_DOM_REFS = {
   cfgTokenUsageUploadApiKey: byId("cfgTokenUsageUploadApiKey"),
   cfgTokenUsageUploadTimeoutMs: byId("cfgTokenUsageUploadTimeoutMs"),
   cfgTokenUsageStrictUuid: byId("cfgTokenUsageStrictUuid"),
+  cfgWebchatCostBudgetUsd: byId("cfgWebchatCostBudgetUsd"),
+  cfgWebchatCostBudgetWarnFraction: byId("cfgWebchatCostBudgetWarnFraction"),
   cfgAutoTaskTimeEnabled: byId("cfgAutoTaskTimeEnabled"),
   cfgAutoTaskTokenEnabled: byId("cfgAutoTaskTokenEnabled"),
   cfgWebhookConfigPath: byId("cfgWebhookConfigPath"),

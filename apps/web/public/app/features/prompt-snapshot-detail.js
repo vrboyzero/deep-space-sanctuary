@@ -120,18 +120,17 @@ function collectFollowUpStrategySummaries(snapshotArtifact) {
       : null;
     if (!followUpStrategy) continue;
 
-    const summary = normalizeInlineString(followUpStrategy.summary);
-    if (summary) {
-      pushSummary(`${deltaType}: ${summary}`);
-    }
-
     const detailParts = [];
+    const summary = normalizeInlineString(followUpStrategy.summary);
     const recommendedRuntimeAction = normalizeInlineString(followUpStrategy.recommendedRuntimeAction);
     const highPriorityLabels = normalizeStringArray(followUpStrategy.highPriorityLabels);
     const verifierHandoffLabels = normalizeStringArray(followUpStrategy.verifierHandoffLabels);
     if (recommendedRuntimeAction) detailParts.push(`runtime=${recommendedRuntimeAction}`);
     if (highPriorityLabels.length) detailParts.push(`high=${highPriorityLabels.join(" | ")}`);
     if (verifierHandoffLabels.length) detailParts.push(`verifier_handoff=${verifierHandoffLabels.join(" | ")}`);
+    if (summary && !detailParts.length) {
+      pushSummary(`${deltaType}: ${summary}`);
+    }
     if (detailParts.length) {
       pushSummary(`${deltaType}: ${detailParts.join("; ")}`);
     }

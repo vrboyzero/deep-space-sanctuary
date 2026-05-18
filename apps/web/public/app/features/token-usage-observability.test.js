@@ -26,6 +26,17 @@ describe("token usage observability", () => {
         enabled: true,
         reason: "deepseek_primary_with_flash_candidate",
       },
+      usageCalibration: {
+        estimatedPromptTokens: 1800,
+        actualInputTokens: 2100,
+        modelCalls: 2,
+        averageInputTokensPerCall: 1050,
+        deltaTokens: -750,
+        deltaRatio: -0.4167,
+        status: "over_estimated",
+      },
+      sessionTotalCostUsd: 0.0123,
+      costBudgetUsd: 0.05,
     });
 
     expect(text).toContain("CACHE supported");
@@ -36,6 +47,8 @@ describe("token usage observability", () => {
     expect(text).toContain("AFF aligned");
     expect(text).toContain("ROUTE flash / auto_kept_on_flash");
     expect(text).toContain("AUX deepseek_flash_preferred / deepseek_primary_with_flash_candidate / enabled=yes");
+    expect(text).toContain("CAL 1,800 -> 1,050 (-42%, over_estimated)");
+    expect(text).toContain("COST $0.012300 / $0.050000 (25%)");
   });
 
   it("returns an empty string when no observability fields are present", () => {

@@ -103,6 +103,29 @@ describe("doctor observability formatting", () => {
           },
         },
       },
+      queryRuntime: {
+        traces: [
+          {
+            method: "message.send",
+            stages: [
+              {
+                stage: "completed",
+                detail: {
+                  usageCalibration: {
+                    estimatedPromptTokens: 1800,
+                    actualInputTokens: 2100,
+                    modelCalls: 2,
+                    averageInputTokensPerCall: 1050,
+                    deltaTokens: -750,
+                    deltaRatio: -0.4167,
+                    status: "over_estimated",
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
       toolBehaviorObservability: {
         visibilityContext: {
           launchExplainability: {
@@ -1262,6 +1285,27 @@ describe("doctor observability formatting", () => {
         totalsSummary: "observed=3, degraded=1, failed=0, retry=1, switch=1, cooldown=0",
       },
       queryRuntime: {
+        traces: [
+          {
+            method: "message.send",
+            stages: [
+              {
+                stage: "completed",
+                detail: {
+                  usageCalibration: {
+                    estimatedPromptTokens: 1800,
+                    actualInputTokens: 2100,
+                    modelCalls: 2,
+                    averageInputTokensPerCall: 1050,
+                    deltaTokens: -750,
+                    deltaRatio: -0.4167,
+                    status: "over_estimated",
+                  },
+                },
+              },
+            ],
+          },
+        ],
         stopDiagnostics: {
           available: true,
           totalRequests: 2,
@@ -1501,7 +1545,7 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("Delegation Protocol");
     expect(lines.join("\n")).toContain("1/2 protocol-backed");
     expect(lines.join("\n")).toContain("aggregation main_agent_summary:1");
-    expect(lines.join("\n")).toContain("subtask-1: status=running, source=goal_subtask, aggregation=main_agent_summary, deliverable=patch, deliverable-summary=返回治理摘要, intent=整理工具治理摘要");
+    expect(lines.join("\n")).toContain("subtask-1: status=running, deliverable=patch, deliverable-summary=返回治理摘要, intent=整理工具治理摘要");
     expect(lines.join("\n")).toContain("Assistant Mode");
     expect(lines.join("\n")).toContain("mode on / explicit");
     expect(lines.join("\n")).toContain("status running");
@@ -1627,6 +1671,11 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("running_after_stop 1 / completed_after_stop 0 / failed_after_stop 0 / not_found 0 / run_mismatch 0");
     expect(lines.join("\n")).toContain("conv-1 / run-1: outcome=running_after_stop, reason=Stopped by user., message=running/tool_result_emitted");
     expect(lines.join("\n")).toContain("conv-2 / run-2: outcome=stopped, reason=Stopped by user., message=completed/completed / response=stopped");
+    expect(lines.join("\n")).toContain("Query Runtime");
+    expect(lines.join("\n")).toContain("1 traces");
+    expect(lines.join("\n")).toContain("latest message.send");
+    expect(lines.join("\n")).toContain("trace=-, latest stage=completed");
+    expect(lines.join("\n")).toContain("usage calibration @ completed: estimated=1800, avg actual input/call=1050, delta=-42%, status=over_estimated");
     expect(lines.join("\n")).toContain("Runtime Resilience");
     expect(lines.join("\n")).toContain("primary openai.com/gpt-4.1");
     expect(lines.join("\n")).toContain("1 fallbacks");
@@ -1655,6 +1704,29 @@ describe("doctor observability rendering", () => {
             systemPromptEstimatedTokens: 32,
           },
         },
+      },
+      queryRuntime: {
+        traces: [
+          {
+            method: "message.send",
+            stages: [
+              {
+                stage: "completed",
+                detail: {
+                  usageCalibration: {
+                    estimatedPromptTokens: 1800,
+                    actualInputTokens: 2100,
+                    modelCalls: 2,
+                    averageInputTokensPerCall: 1050,
+                    deltaTokens: -750,
+                    deltaRatio: -0.4167,
+                    status: "over_estimated",
+                  },
+                },
+              },
+            ],
+          },
+        ],
       },
       toolBehaviorObservability: {
         counts: {
@@ -1844,5 +1916,42 @@ describe("doctor observability rendering", () => {
     const firstBadge = externalOutboundCard.querySelector(".badge");
     expect(firstBadge?.className).toContain("pass");
     expect(firstBadge?.className).not.toContain("warn");
+  });
+
+  it("renders usage calibration note inside the prompt doctor card", () => {
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, createRenderPayload());
+    flushAnimationFrames(callbacks);
+
+    expect(container.textContent || "").toContain("estimated=1800");
+    expect(container.textContent || "").toContain("avg actual input/call=1050");
+  });
+
+  it("renders query runtime calibration summary in doctor cards", () => {
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, createRenderPayload());
+    flushAnimationFrames(callbacks);
+
+    expect(container.textContent || "").toContain("Query Runtime");
+    expect(container.textContent || "").toContain("latest stage=completed");
+    expect(container.textContent || "").toContain("usage calibration @ completed: estimated=1800, avg actual input/call=1050, delta=-42%, status=over_estimated");
   });
 });
