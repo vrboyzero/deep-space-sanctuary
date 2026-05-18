@@ -87,8 +87,16 @@ export function resolveTokenEstimateProfile(input?: {
 }
 
 export function estimateTokens(text: string, options?: TokenEstimateOptions): number {
-  if (!text) return 0;
-  const trimmed = text.trim();
+  const normalizedText = typeof text === "string"
+    ? text
+    : (() => {
+      if (Array.isArray(text)) {
+        return text.map((item) => estimateTokensInputToString(item)).filter(Boolean).join("");
+      }
+      return estimateTokensInputToString(text);
+    })();
+  if (!normalizedText) return 0;
+  const trimmed = normalizedText.trim();
   if (!trimmed) return 0;
 
   const profileId = resolveTokenEstimateProfile(options);
@@ -135,4 +143,33 @@ export function estimateTokens(text: string, options?: TokenEstimateOptions): nu
   }
 
   return Math.max(1, Math.ceil(estimate));
+}
+
+function estimateTokensInputToString(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => estimateTokensInputToString(item)).filter(Boolean).join("");
+  }
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["text", "summary", "content", "output_text", "reasoning_content", "value"]) {
+    const extracted = estimateTokensInputToString(record[key]);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  for (const key of ["parts", "items", "segments"]) {
+    const extracted = estimateTokensInputToString(record[key]);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return "";
 }

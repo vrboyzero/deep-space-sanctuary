@@ -25,7 +25,7 @@ describe("prompt observability", () => {
     })).toMatchObject({
       charLength: 11,
       estimatedChars: 11,
-      estimatedTokens: 3,
+      estimatedTokens: 2,
     });
 
     expect(withDeltaPromptMetrics({
@@ -36,7 +36,7 @@ describe("prompt observability", () => {
     })).toMatchObject({
       charLength: 4,
       estimatedChars: 4,
-      estimatedTokens: 2,
+      estimatedTokens: 4,
     });
 
     expect(withProviderNativeSystemBlockPromptMetrics({
@@ -68,13 +68,13 @@ describe("prompt observability", () => {
       providerNativeSystemBlocks: [{ text: "abcd" }],
     })).toMatchObject({
       systemPromptEstimatedChars: 11,
-      systemPromptEstimatedTokens: 3,
+      systemPromptEstimatedTokens: 2,
       sectionEstimatedChars: 11,
-      sectionEstimatedTokens: 3,
+      sectionEstimatedTokens: 2,
       droppedSectionEstimatedChars: 4,
       droppedSectionEstimatedTokens: 1,
       deltaEstimatedChars: 4,
-      deltaEstimatedTokens: 2,
+      deltaEstimatedTokens: 4,
       providerNativeSystemBlockEstimatedChars: 4,
       providerNativeSystemBlockEstimatedTokens: 1,
     });
@@ -154,6 +154,42 @@ describe("prompt observability", () => {
       truncated: true,
       maxChars: 8,
       metadata: {
+        cacheSupport: "supported",
+        capabilitySource: "provider-model-catalog",
+        providerCacheEligible: true,
+        systemPromptFingerprint: "abc123fingerprint",
+        prefixDrift: {
+          status: "drifted",
+          changed: true,
+          reasons: ["system_prompt_fingerprint_changed", "section_id_order_changed"],
+          previousFingerprint: "prev123",
+          currentFingerprint: "abc123fingerprint",
+        },
+        prefixWarmState: {
+          eligible: true,
+          status: "warming",
+          samePrefixAsPrevious: true,
+          previousAgeMs: 1200,
+          reason: "matching_prefix_recently_seen_may_still_be_warming",
+        },
+        orderingGuard: {
+          status: "risk",
+          reasons: ["dynamic_runtime_sections_present", "tool_contract_list_injected"],
+        },
+        structureSignature: "sig-123",
+        cacheFamilyAffinity: {
+          status: "aligned",
+          familyKey: "family-1",
+          previousFamilyKey: "family-1",
+          reason: "same_cache_family_as_previous",
+        },
+        warmupCoordination: {
+          eligible: true,
+          status: "warming",
+          recommendation: "delay_if_possible",
+          reason: "matching_prefix_recent_but_ordering_risk_present",
+          previousAgeMs: 1200,
+        },
         promptExperiments: {
           disabledSectionIdsApplied: ["methodology"],
         },
@@ -174,10 +210,46 @@ describe("prompt observability", () => {
         finalChars: 11,
       },
       tokenBreakdown: {
-        systemPromptEstimatedTokens: 3,
+        systemPromptEstimatedTokens: 2,
         droppedSectionEstimatedTokens: 1,
-        deltaEstimatedTokens: 2,
+        deltaEstimatedTokens: 4,
         providerNativeSystemBlockEstimatedTokens: 1,
+      },
+      cacheSupport: "supported",
+      capabilitySource: "provider-model-catalog",
+      providerCacheEligible: true,
+      systemPromptFingerprint: "abc123fingerprint",
+      prefixDrift: {
+        status: "drifted",
+        changed: true,
+        reasons: ["system_prompt_fingerprint_changed", "section_id_order_changed"],
+        previousFingerprint: "prev123",
+        currentFingerprint: "abc123fingerprint",
+      },
+      prefixWarmState: {
+        eligible: true,
+        status: "warming",
+        samePrefixAsPrevious: true,
+        previousAgeMs: 1200,
+        reason: "matching_prefix_recently_seen_may_still_be_warming",
+      },
+      orderingGuard: {
+        status: "risk",
+        reasons: ["dynamic_runtime_sections_present", "tool_contract_list_injected"],
+      },
+      structureSignature: "sig-123",
+      cacheFamilyAffinity: {
+        status: "aligned",
+        familyKey: "family-1",
+        previousFamilyKey: "family-1",
+        reason: "same_cache_family_as_previous",
+      },
+      warmupCoordination: {
+        eligible: true,
+        status: "warming",
+        recommendation: "delay_if_possible",
+        reason: "matching_prefix_recent_but_ordering_risk_present",
+        previousAgeMs: 1200,
       },
       truncationReason: {
         code: "max_chars_limit",
@@ -243,7 +315,7 @@ describe("prompt observability", () => {
     });
 
     expect(runSummary.tokenBreakdown).toMatchObject({
-      systemPromptEstimatedTokens: 3,
+      systemPromptEstimatedTokens: 2,
       sectionEstimatedTokens: 0,
     });
 
@@ -269,7 +341,7 @@ describe("prompt observability", () => {
     });
 
     expect(agentSummary.tokenBreakdown).toMatchObject({
-      systemPromptEstimatedTokens: 3,
+      systemPromptEstimatedTokens: 2,
       sectionEstimatedTokens: 0,
     });
   });
@@ -306,7 +378,7 @@ describe("prompt observability", () => {
     expect(renderPromptObservabilityText(view)).toContain("Prompt Observability");
     expect(renderPromptObservabilityText(view)).toContain("sectionCount: 1");
     expect(renderPromptObservabilityText(view)).toContain("droppedSectionCount: 1");
-    expect(renderPromptObservabilityText(view)).toContain("systemPromptEstimatedTokens: 3");
+    expect(renderPromptObservabilityText(view)).toContain("systemPromptEstimatedTokens: 2");
     expect(renderPromptObservabilityText(view)).toContain("includesHookSystemPrompt: yes");
     expect(renderPromptObservabilityText(view)).toContain("truncationReasonCode: max_chars_limit");
   });

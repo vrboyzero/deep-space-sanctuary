@@ -510,6 +510,29 @@ export type SystemDoctorResult = {
         providerNativeSystemBlockEstimatedChars: number;
         providerNativeSystemBlockEstimatedTokens: number;
       };
+      cacheSupport?: string;
+      capabilitySource?: string;
+      providerCacheEligible?: boolean;
+      systemPromptFingerprint?: string;
+      structureSignature?: string;
+      prefixDrift?: {
+        status?: "first_snapshot" | "stable" | "drifted";
+        changed?: boolean;
+        reasons?: string[];
+        previousFingerprint?: string;
+        currentFingerprint?: string;
+      };
+      prefixWarmState?: {
+        eligible?: boolean;
+        status?: "cold" | "warming" | "warm_candidate" | "drifted" | "unsupported";
+        samePrefixAsPrevious?: boolean;
+        previousAgeMs?: number;
+        reason?: string;
+      };
+      orderingGuard?: {
+        status?: "stable" | "risk";
+        reasons?: string[];
+      };
       truncationReason?: {
         code: string;
         maxChars?: number;

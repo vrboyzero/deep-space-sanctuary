@@ -162,7 +162,9 @@ export function buildToolFailureRecoveryPromptDelta(input: {
     metadata: {
       toolName: input.toolName,
       failureClass,
-      ...(delegationResultMetadata ? { delegationResult: delegationResultMetadata as any } : {}),
+      ...(buildDelegationResultMetadataProjection(delegationResultMetadata)
+        ? { delegationResult: buildDelegationResultMetadataProjection(delegationResultMetadata) as any }
+        : {}),
     },
   };
 }
@@ -196,7 +198,9 @@ export function buildToolPostVerificationPromptDelta(input: {
         toolName: input.toolName,
         riskLevel: resolvedContract?.riskLevel,
         reviewMode: "delegation-result",
-        ...(delegationResultMetadata ? { delegationResult: delegationResultMetadata as any } : {}),
+        ...(buildDelegationResultMetadataProjection(delegationResultMetadata)
+          ? { delegationResult: buildDelegationResultMetadataProjection(delegationResultMetadata) as any }
+          : {}),
       },
     };
   }
@@ -860,13 +864,13 @@ function buildDelegationResultReviewText(
       const prefix = task.label ? `- ${task.label}:` : "- Delegated task:";
       lines.push(prefix);
       if (task.scopeSummary) {
-        lines.push(`  Owned scope: ${task.scopeSummary}`);
+        lines.push(`  Owned scope: ${summarizeInlineText(task.scopeSummary, 120)}`);
       }
       if (task.outOfScope) {
         lines.push(`  Out of scope: ${task.outOfScope}`);
       }
       if (task.doneDefinition) {
-        lines.push(`  Done definition: ${task.doneDefinition}`);
+        lines.push(`  Done definition: ${summarizeInlineText(task.doneDefinition, 120)}`);
       }
       if (task.verificationHints) {
         lines.push(`  Verification hints: ${task.verificationHints}`);
@@ -889,14 +893,14 @@ function buildDelegationResultReviewText(
       lines.push(`  Confidence: ${gate.rejectionConfidence}`);
     }
     if (gate.summary) {
-      lines.push(`  Summary: ${gate.summary}`);
+      lines.push(`  Summary: ${summarizeInlineText(gate.summary, 120)}`);
     }
-    const gateReasons = summarizeCompactList(gate.reasons, 3);
+    const gateReasons = summarizeCompactList(gate.reasons, 3, 120);
     if (gateReasons) {
       lines.push(`  Reasons: ${gateReasons}`);
     }
     if (gate.managerActionHint) {
-      lines.push(`  Manager action: ${gate.managerActionHint}`);
+      lines.push(`  Manager action: ${summarizeInlineText(gate.managerActionHint, 120)}`);
     }
   }
 
@@ -917,7 +921,7 @@ function buildDelegationResultReviewText(
       `- Team ID: ${team.id}`,
     );
     if (team.sharedGoal?.trim()) {
-      lines.push(`- Shared goal: ${team.sharedGoal.trim()}`);
+      lines.push(`- Shared goal: ${summarizeInlineText(team.sharedGoal.trim(), 120)}`);
     }
     if (team.managerAgentId?.trim()) {
       lines.push(`- Manager agent: ${team.managerAgentId.trim()}`);
@@ -927,7 +931,7 @@ function buildDelegationResultReviewText(
       .map((member) => {
         const details = [
           member.role ? `role=${member.role}` : undefined,
-          member.scopeSummary ? `owns=${member.scopeSummary}` : undefined,
+          member.scopeSummary ? `owns=${summarizeInlineText(member.scopeSummary, 96)}` : undefined,
           member.dependsOn?.length ? `depends_on=${member.dependsOn.join(", ")}` : undefined,
           member.handoffTo?.length ? `handoff_to=${member.handoffTo.join(", ")}` : undefined,
         ].filter(Boolean);
@@ -945,7 +949,7 @@ function buildDelegationResultReviewText(
       "",
       "## Suggested Follow-Up Strategy",
       "",
-      `Summary: ${followUpStrategy.summary}`,
+      `Summary: ${summarizeInlineText(followUpStrategy.summary, 120)}`,
     );
     if (followUpStrategy.recommendedRuntimeAction) {
       lines.push(`- Recommended runtime action: ${followUpStrategy.recommendedRuntimeAction}`);
@@ -974,7 +978,7 @@ function buildDelegationResultReviewText(
 
     for (const item of followUpStrategy.items.slice(0, 3)) {
       lines.push(`- ${item.label}: ${item.action}`);
-      lines.push(`  Reason: ${item.reason}`);
+      lines.push(`  Reason: ${summarizeInlineText(item.reason, 120)}`);
       if (item.recommendedRuntimeAction) {
         const runtimeActionSuffix = item.priority ? ` [${item.priority}]` : "";
         lines.push(`  Runtime action: ${item.recommendedRuntimeAction}${runtimeActionSuffix}`);
@@ -994,7 +998,7 @@ function buildDelegationResultReviewText(
     }
   }
 
-  return lines.join("\n");
+  return capPromptDeltaText(lines.join("\n"), 4200);
 }
 
 function shouldInjectDelegationFailureReview(
@@ -1022,19 +1026,27 @@ function readPrimaryRejectedDelegationResult(
     ?? metadata.delegationResults[0];
 }
 
-function summarizeCompactList(values: readonly string[] | undefined, maxItems: number): string | undefined {
+function summarizeCompactList(
+  values: readonly string[] | undefined,
+  maxItems: number,
+  maxItemLength: number = 160,
+): string | undefined {
   if (!Array.isArray(values) || values.length === 0) {
     return undefined;
   }
 
-  const selected = values
-    .map((value) => value.trim())
+  const normalized = values
+    .map((value) => summarizeInlineText(value, maxItemLength))
     .filter(Boolean)
     .slice(0, Math.max(1, maxItems));
+  const omittedCount = Math.max(0, values.length - normalized.length);
+  const selected = normalized as string[];
   if (selected.length === 0) {
     return undefined;
   }
-  return selected.join(" | ");
+  return omittedCount > 0
+    ? `${selected.join(" | ")} (+${omittedCount} more)`
+    : selected.join(" | ");
 }
 
 function readDelegationTaskContracts(
@@ -1155,13 +1167,119 @@ function summarizeDelegationDeliverableContract(value: {
     parts.push(value.format);
   }
   if (value.summary) {
-    parts.push(value.summary);
+    const summary = summarizeInlineText(value.summary, 160);
+    if (summary) {
+      parts.push(summary);
+    }
   }
   const requiredSections = summarizeCompactList(value.requiredSections, 4);
   if (requiredSections) {
     parts.push(`sections: ${requiredSections}`);
   }
   return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
+function buildDelegationResultMetadataProjection(
+  metadata: DelegationResultToolMetadata | undefined,
+): Record<string, unknown> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const primaryResult = readPrimaryRejectedDelegationResult(metadata);
+  const team = metadata.team;
+  const followUpStrategy = metadata.followUpStrategy;
+
+  return {
+    resultCount: metadata.delegationResults.length,
+    ...(typeof metadata.acceptedCount === "number" ? { acceptedCount: metadata.acceptedCount } : {}),
+    ...(typeof metadata.gateRejectedCount === "number" ? { gateRejectedCount: metadata.gateRejectedCount } : {}),
+    ...(typeof metadata.workerSuccessCount === "number" ? { workerSuccessCount: metadata.workerSuccessCount } : {}),
+    ...(primaryResult ? { primaryResult: buildDelegationPrimaryResultProjection(primaryResult) } : {}),
+    ...(followUpStrategy ? { followUpStrategy: buildDelegationFollowUpStrategyProjection(followUpStrategy) } : {}),
+    ...(team ? { team: buildDelegationTeamProjection(team) } : {}),
+  };
+}
+
+function buildDelegationPrimaryResultProjection(
+  result: DelegationResultToolMetadata["delegationResults"][number],
+): Record<string, unknown> {
+  return {
+    accepted: result.accepted,
+    workerSuccess: result.workerSuccess,
+    ...(result.label ? { label: result.label } : {}),
+    ...(result.laneId ? { laneId: result.laneId } : {}),
+    ...(result.scopeSummary ? { scopeSummary: summarizeInlineText(result.scopeSummary, 120) } : {}),
+    ...(result.dependsOn?.length ? { dependsOn: result.dependsOn.slice(0, 4) } : {}),
+    ...(result.handoffTo?.length ? { handoffTo: result.handoffTo.slice(0, 4) } : {}),
+    ...(result.acceptanceGate ? { acceptanceGate: buildDelegationGateProjection(result.acceptanceGate) } : {}),
+  };
+}
+
+function buildDelegationGateProjection(
+  gate: NonNullable<DelegationResultToolMetadata["delegationResults"][number]["acceptanceGate"]>,
+): Record<string, unknown> {
+  return {
+    enforced: gate.enforced,
+    accepted: gate.accepted,
+    summary: summarizeInlineText(gate.summary, 160),
+    acceptanceCheckStatus: gate.acceptanceCheckStatus,
+    ...(gate.rejectionConfidence ? { rejectionConfidence: gate.rejectionConfidence } : {}),
+    ...(gate.deliverableFormat ? { deliverableFormat: gate.deliverableFormat } : {}),
+    ...(gate.requiredSections?.length ? { requiredSections: gate.requiredSections.slice(0, 4) } : {}),
+    ...(gate.missingRequiredSections?.length ? { missingRequiredSections: gate.missingRequiredSections.slice(0, 4) } : {}),
+    ...(gate.reasons?.length ? { reasons: gate.reasons.slice(0, 3).map((reason) => summarizeInlineText(reason, 120) ?? reason) } : {}),
+    ...(gate.managerActionHint ? { managerActionHint: summarizeInlineText(gate.managerActionHint, 160) } : {}),
+  };
+}
+
+function buildDelegationFollowUpStrategyProjection(
+  strategy: NonNullable<DelegationResultToolMetadata["followUpStrategy"]>,
+): Record<string, unknown> {
+  return {
+    mode: strategy.mode,
+    summary: summarizeInlineText(strategy.summary, 160),
+    itemCount: strategy.items.length,
+    ...(strategy.recommendedRuntimeAction ? { recommendedRuntimeAction: strategy.recommendedRuntimeAction } : {}),
+    ...(strategy.acceptedLabels?.length ? { acceptedLabels: strategy.acceptedLabels.slice(0, 4) } : {}),
+    ...(strategy.retryLabels?.length ? { retryLabels: strategy.retryLabels.slice(0, 4) } : {}),
+    ...(strategy.blockerLabels?.length ? { blockerLabels: strategy.blockerLabels.slice(0, 4) } : {}),
+    ...(strategy.highPriorityLabels?.length ? { highPriorityLabels: strategy.highPriorityLabels.slice(0, 4) } : {}),
+    ...(strategy.verifierHandoffLabels?.length ? { verifierHandoffLabels: strategy.verifierHandoffLabels.slice(0, 4) } : {}),
+    ...(strategy.items.length > 0
+      ? {
+        itemsPreview: strategy.items.slice(0, 3).map((item) => ({
+          label: item.label,
+          action: item.action,
+          reason: summarizeInlineText(item.reason, 120),
+          ...(item.recommendedRuntimeAction ? { recommendedRuntimeAction: item.recommendedRuntimeAction } : {}),
+          ...(item.priority ? { priority: item.priority } : {}),
+        })),
+      }
+      : {}),
+  };
+}
+
+function buildDelegationTeamProjection(
+  team: NonNullable<DelegationResultToolMetadata["team"]>,
+): Record<string, unknown> {
+  return {
+    id: team.id,
+    mode: team.mode,
+    memberCount: team.memberRoster.length,
+    ...(team.managerAgentId ? { managerAgentId: team.managerAgentId } : {}),
+    ...(team.currentLaneId ? { currentLaneId: team.currentLaneId } : {}),
+    ...(team.sharedGoal ? { sharedGoal: summarizeInlineText(team.sharedGoal, 160) } : {}),
+    laneIds: team.memberRoster.slice(0, 6).map((member) => member.laneId),
+    rosterPreview: team.memberRoster.slice(0, 4).map((member) => ({
+      laneId: member.laneId,
+      ...(member.agentId ? { agentId: member.agentId } : {}),
+      ...(member.role ? { role: member.role } : {}),
+      ...(member.scopeSummary ? { scopeSummary: summarizeInlineText(member.scopeSummary, 96) } : {}),
+      ...(member.dependsOn?.length ? { dependsOn: member.dependsOn.slice(0, 3) } : {}),
+      ...(member.handoffTo?.length ? { handoffTo: member.handoffTo.slice(0, 3) } : {}),
+    })),
+  };
 }
 
 function normalizeInlineString(value: unknown): string | undefined {
@@ -1628,6 +1746,15 @@ function summarizeInlineText(value?: string, maxLength: number = 200): string | 
   return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
+function capPromptDeltaText(text: string, maxChars: number): string {
+  if (!Number.isFinite(maxChars) || maxChars <= 0 || text.length <= maxChars) {
+    return text;
+  }
+  const suffix = `\n...[prompt delta trimmed, original=${text.length} chars]`;
+  const budget = Math.max(0, maxChars - suffix.length);
+  return `${text.slice(0, budget)}${suffix}`;
+}
+
 function summarizeFollowUpTemplate(
   template: NonNullable<NonNullable<DelegationResultToolMetadata["followUpStrategy"]>["items"][number]["template"]> | undefined,
 ): string | undefined {
@@ -1640,10 +1767,10 @@ function summarizeFollowUpTemplate(
     template.instruction ? `instruction=${summarizeInlineText(template.instruction, 120)}` : undefined,
     template.deliverableContract?.format ? `deliverable_format=${template.deliverableContract.format}` : undefined,
     template.deliverableContract?.requiredSections?.length
-      ? `required_sections=${template.deliverableContract.requiredSections.join(" | ")}`
+      ? `required_sections=${summarizeCompactList(template.deliverableContract.requiredSections, 3)}`
       : undefined,
     template.acceptance?.verificationHints?.length
-      ? `verification_hints=${template.acceptance.verificationHints.join(" | ")}`
+      ? `verification_hints=${summarizeCompactList(template.acceptance.verificationHints, 3)}`
       : undefined,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join("; ") : undefined;
@@ -1666,10 +1793,10 @@ function summarizeVerifierHandoffTemplate(
   return [
     "delegate_task",
     "agent_id=verifier",
-    `instruction=${instruction}`,
+    `instruction=${summarizeInlineText(instruction, 120)}`,
     "deliverable_format=verification_report",
-    `required_sections=${requiredSections.join(" | ")}`,
-    `verification_hints=${item.template.acceptance.verificationHints.join(" | ")}`,
+    `required_sections=${summarizeCompactList(requiredSections, 3)}`,
+    `verification_hints=${summarizeCompactList(item.template.acceptance.verificationHints, 3)}`,
   ].join("; ");
 }
 

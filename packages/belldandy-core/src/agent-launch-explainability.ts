@@ -100,6 +100,11 @@ export type AgentLaunchExplainability = {
     latestReasonSummary: string | null;
     overallReasonSummary: string | null;
     totalsSummary: string | null;
+    compactionAuxSummaryVerdict: {
+      strategy: string | null;
+      enabled: boolean | null;
+      reason: string | null;
+    } | null;
   } | null;
 };
 
@@ -223,6 +228,15 @@ function buildRuntimeResilienceView(source: RuntimeResilienceDoctorReport | unde
     latestReasonSummary: diagnostics.latestReasonSummary,
     overallReasonSummary: diagnostics.overallReasonSummary,
     totalsSummary: diagnostics.totalsSummary,
+    compactionAuxSummaryVerdict: source.routing.compaction?.auxSummaryVerdict
+      ? {
+        strategy: normalizeOptionalString(source.routing.compaction.auxSummaryVerdict.strategy),
+        enabled: typeof source.routing.compaction.auxSummaryVerdict.enabled === "boolean"
+          ? source.routing.compaction.auxSummaryVerdict.enabled
+          : null,
+        reason: normalizeOptionalString(source.routing.compaction.auxSummaryVerdict.reason),
+      }
+      : null,
   };
   if (
     !view.alertLevel
@@ -242,6 +256,7 @@ function buildRuntimeResilienceView(source: RuntimeResilienceDoctorReport | unde
     && !view.latestReasonSummary
     && !view.overallReasonSummary
     && !view.totalsSummary
+    && !view.compactionAuxSummaryVerdict
   ) {
     return null;
   }

@@ -136,7 +136,9 @@ function collectFollowUpStrategySummaries(snapshotArtifact) {
       pushSummary(`${deltaType}: ${detailParts.join("; ")}`);
     }
 
-    const items = Array.isArray(followUpStrategy.items) ? followUpStrategy.items : [];
+    const items = Array.isArray(followUpStrategy.items)
+      ? followUpStrategy.items
+      : (Array.isArray(followUpStrategy.itemsPreview) ? followUpStrategy.itemsPreview : []);
     for (const item of items.slice(0, 3)) {
       if (!item || typeof item !== "object") continue;
       const label = normalizeInlineString(item.label);
@@ -148,7 +150,12 @@ function collectFollowUpStrategySummaries(snapshotArtifact) {
       pushSummary(itemSummary);
     }
 
-    if (items.length > 3) {
+    const itemCount = Number.isFinite(Number(followUpStrategy.itemCount))
+      ? Math.max(0, Number(followUpStrategy.itemCount))
+      : items.length;
+    if (itemCount > items.length) {
+      pushSummary(`${deltaType}: +${itemCount - items.length} more follow-up items`);
+    } else if (items.length > 3) {
       pushSummary(`${deltaType}: +${items.length - 3} more follow-up items`);
     }
   }

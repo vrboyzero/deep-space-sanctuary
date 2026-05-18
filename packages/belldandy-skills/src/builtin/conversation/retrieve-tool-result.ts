@@ -37,6 +37,23 @@ function renderContent(record: RecentToolResultRecord, mode: ToolResultViewMode,
   return `...${source.slice(Math.max(0, source.length - (chars - 3)))}`;
 }
 
+function renderContentMeta(record: RecentToolResultRecord): string {
+  const chars = record.success ? record.contentChars : (record.errorChars ?? record.contentChars);
+  const truncated = record.success ? record.contentTruncated : (record.errorTruncated ?? record.contentTruncated);
+  const preview = record.success ? record.contentPreview : (record.errorPreview ?? record.contentPreview);
+  const details = [];
+  if (typeof chars === "number" && Number.isFinite(chars) && chars > 0) {
+    details.push(`chars=${chars}`);
+  }
+  if (truncated) {
+    details.push("stored=preview");
+  }
+  if (preview && truncated) {
+    details.push("recover=truncated");
+  }
+  return details.length > 0 ? details.join(" ") : "-";
+}
+
 function renderRecords(records: RecentToolResultRecord[], mode: ToolResultViewMode, chars: number): string {
   if (records.length === 0) {
     return "No recent tool results matched the current filters.";
@@ -50,6 +67,7 @@ function renderRecords(records: RecentToolResultRecord[], mode: ToolResultViewMo
       `  failure_kind=${record.failureKind || "-"} target=${record.target || "-"}`,
       `  summary=${truncateText(record.summary, 280)}`,
       `  args=${formatArgs(record)}`,
+      `  content_meta=${renderContentMeta(record)}`,
       `  content=${renderContent(record, mode, chars)}`,
     ].join("\n")),
   ].join("\n");

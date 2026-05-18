@@ -87,6 +87,51 @@ export type CompactionResult = {
   blockingTriggered: boolean;
   /** 模型摘要失败原因（仅模型路径失败时存在） */
   failureReason?: string;
+  /** 摘要链路观测（命中回执 / cache-aligned / fallback 阶段） */
+  summarizerObservability?: {
+    mode?: "rolling" | "archival";
+    cacheAlignedRequested?: boolean;
+    cacheSupport?: "supported" | "unsupported" | "unknown";
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
+    cacheSavingsUsd?: number;
+    usedWireApi?: "chat_completions" | "responses";
+    compareAvailable?: boolean;
+    comparison?: {
+      mode?: "cache_aligned_vs_plain";
+      plainRequestMessageCount?: number;
+      cacheAlignedRequestMessageCount?: number;
+      plainPromptCharsEstimate?: number;
+      cacheAlignedReplayCharsEstimate?: number;
+      cacheAlignedInstructionChars?: number;
+      replayOverheadChars?: number;
+    };
+    strategy?: {
+      kind?: "cache_aligned" | "plain";
+      providerCacheMode?: "supported" | "unsupported" | "unknown";
+      selectionReason?: string;
+      degradePath?: string;
+      providerModelNotes?: string;
+      fallbackPolicy?: string;
+      fallbackTriggered?: boolean;
+      fallbackSummary?: string;
+    };
+    warmupCoordination?: {
+      eligible?: boolean;
+      status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+      recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+      reason?: string;
+      previousAgeMs?: number;
+    };
+    cacheFamilyAffinity?: {
+      status?: "unknown" | "aligned" | "mismatch";
+      familyKey?: string;
+      previousFamilyKey?: string;
+      reason?: string;
+    };
+    fallbackStage?: "request" | "response_parse" | "compaction_budget" | "prompt_too_long" | "model_failure";
+    failureReason?: string;
+  };
 };
 
 /**
@@ -101,7 +146,16 @@ export type SummarizerContext = {
   existingArchivalSummary?: string;
 };
 
-export type SummarizerFn = (prompt: string, context?: SummarizerContext) => Promise<string>;
+export type SummarizerFn = (
+  prompt: string,
+  context?: SummarizerContext,
+) => Promise<
+  | string
+  | {
+    summary: string;
+    observability?: CompactionResult["summarizerObservability"];
+  }
+>;
 
 // ─── Token 估算 ─────────────────────────────────────────────────────────
 
@@ -190,6 +244,58 @@ function precompressMessages(
     role: m.role,
     content: m.content.length > 500 ? compressToolContent(m.content) : m.content,
   }));
+}
+
+function mergeSummarizerObservability(
+  base: CompactionResult["summarizerObservability"] | undefined,
+  override: CompactionResult["summarizerObservability"] | undefined,
+): CompactionResult["summarizerObservability"] | undefined {
+  if (!base && !override) return undefined;
+  if (!base) return override ? { ...override } : undefined;
+  if (!override) return { ...base };
+  return {
+    ...base,
+    ...override,
+    comparison: {
+      ...(base.comparison ?? {}),
+      ...(override.comparison ?? {}),
+    },
+    strategy: {
+      ...(base.strategy ?? {}),
+      ...(override.strategy ?? {}),
+    },
+  };
+}
+
+function coerceSummaryText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => coerceSummaryText(item)).filter(Boolean).join("");
+  }
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  const directKeys = ["summary", "text", "output_text", "content", "reasoning_content", "value"];
+  for (const key of directKeys) {
+    const extracted = coerceSummaryText(record[key]);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  const nestedCollections = ["parts", "items", "segments"];
+  for (const key of nestedCollections) {
+    const extracted = coerceSummaryText(record[key]);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return "";
 }
 
 // ─── 摘要 Prompt 构建 ───────────────────────────────────────────────────
@@ -372,6 +478,7 @@ type SummarizationAttemptResult = {
   blockingTriggered: boolean;
   promptTooLongRetries: number;
   failureReason?: string;
+  summarizerObservability?: CompactionResult["summarizerObservability"];
 };
 
 async function summarizeRollingWithBudget(
@@ -396,6 +503,15 @@ async function summarizeRollingWithBudget(
       warningTriggered,
       blockingTriggered,
       promptTooLongRetries,
+      summarizerObservability: {
+        mode: "rolling",
+        strategy: {
+          fallbackTriggered: true,
+          fallbackSummary: "summarizer_unavailable",
+        },
+        fallbackStage: "model_failure",
+        failureReason: "summarizer_unavailable",
+      },
     };
   }
 
@@ -415,21 +531,43 @@ async function summarizeRollingWithBudget(
         warningTriggered,
         blockingTriggered,
         promptTooLongRetries,
+        summarizerObservability: {
+          mode: "rolling",
+          strategy: {
+            fallbackTriggered: true,
+            fallbackSummary: "compaction_budget_guard",
+          },
+          fallbackStage: "compaction_budget",
+        },
       };
     }
 
     try {
+      const response = await options.summarizer(prompt, {
+        mode: "rolling",
+        prompt,
+        existingSummary: attemptSummary,
+        newMessages: remainingMessages,
+      });
+      const summaryText = typeof response === "string"
+        ? response
+        : coerceSummaryText(response?.summary);
       return {
-        summary: await options.summarizer(prompt, {
-          mode: "rolling",
-          prompt,
-          existingSummary: attemptSummary,
-          newMessages: remainingMessages,
-        }),
+        summary: summaryText,
         fallbackUsed: false,
         warningTriggered,
         blockingTriggered,
         promptTooLongRetries,
+        summarizerObservability: typeof response === "object" && response
+          ? {
+            mode: "rolling",
+            ...(response.observability && typeof response.observability === "object"
+              ? response.observability
+              : {}),
+          }
+          : {
+            mode: "rolling",
+          },
       };
     } catch (error) {
       if (
@@ -445,6 +583,10 @@ async function summarizeRollingWithBudget(
         continue;
       }
       failureReason = error instanceof Error ? error.message : String(error);
+      const inheritedObservability =
+        error && typeof error === "object" && "compactionObservability" in error
+          ? ((error as { compactionObservability?: CompactionResult["summarizerObservability"] }).compactionObservability)
+          : undefined;
       return {
         summary: mergeSummaryWithFallback(attemptSummary, remainingMessages),
         fallbackUsed: true,
@@ -452,6 +594,15 @@ async function summarizeRollingWithBudget(
         blockingTriggered,
         promptTooLongRetries,
         failureReason,
+        summarizerObservability: mergeSummarizerObservability(inheritedObservability, {
+          mode: "rolling",
+          strategy: {
+            fallbackTriggered: true,
+            fallbackSummary: isPromptTooLongError(error) ? "prompt_too_long_guard" : "model_failure_fallback",
+          },
+          fallbackStage: isPromptTooLongError(error) ? "prompt_too_long" : "model_failure",
+          failureReason,
+        }),
       };
     }
   }
@@ -479,6 +630,15 @@ async function summarizeArchivalWithBudget(
       warningTriggered,
       blockingTriggered,
       promptTooLongRetries,
+      summarizerObservability: {
+        mode: "archival",
+        strategy: {
+          fallbackTriggered: true,
+          fallbackSummary: "summarizer_unavailable",
+        },
+        fallbackStage: "model_failure",
+        failureReason: "summarizer_unavailable",
+      },
     };
   }
 
@@ -498,21 +658,43 @@ async function summarizeArchivalWithBudget(
         warningTriggered,
         blockingTriggered,
         promptTooLongRetries,
+        summarizerObservability: {
+          mode: "archival",
+          strategy: {
+            fallbackTriggered: true,
+            fallbackSummary: "compaction_budget_guard",
+          },
+          fallbackStage: "compaction_budget",
+        },
       };
     }
 
     try {
+      const response = await options.summarizer(prompt, {
+        mode: "archival",
+        prompt,
+        existingArchivalSummary: attemptArchivalSummary,
+        rollingSummary: attemptRollingSummary,
+      });
+      const summaryText = typeof response === "string"
+        ? response
+        : coerceSummaryText(response?.summary);
       return {
-        summary: await options.summarizer(prompt, {
-          mode: "archival",
-          prompt,
-          existingArchivalSummary: attemptArchivalSummary,
-          rollingSummary: attemptRollingSummary,
-        }),
+        summary: summaryText,
         fallbackUsed: false,
         warningTriggered,
         blockingTriggered,
         promptTooLongRetries,
+        summarizerObservability: typeof response === "object" && response
+          ? {
+            mode: "archival",
+            ...(response.observability && typeof response.observability === "object"
+              ? response.observability
+              : {}),
+          }
+          : {
+            mode: "archival",
+          },
       };
     } catch (error) {
       if (
@@ -528,6 +710,10 @@ async function summarizeArchivalWithBudget(
         continue;
       }
       failureReason = error instanceof Error ? error.message : String(error);
+      const inheritedObservability =
+        error && typeof error === "object" && "compactionObservability" in error
+          ? ((error as { compactionObservability?: CompactionResult["summarizerObservability"] }).compactionObservability)
+          : undefined;
       return {
         summary: buildFallbackArchival(attemptArchivalSummary, attemptRollingSummary),
         fallbackUsed: true,
@@ -535,6 +721,15 @@ async function summarizeArchivalWithBudget(
         blockingTriggered,
         promptTooLongRetries,
         failureReason,
+        summarizerObservability: mergeSummarizerObservability(inheritedObservability, {
+          mode: "archival",
+          strategy: {
+            fallbackTriggered: true,
+            fallbackSummary: isPromptTooLongError(error) ? "prompt_too_long_guard" : "model_failure_fallback",
+          },
+          fallbackStage: isPromptTooLongError(error) ? "prompt_too_long" : "model_failure",
+          failureReason,
+        }),
       };
     }
   }
@@ -662,6 +857,7 @@ export async function compactIncremental(
   let blockingTriggered = false;
   let promptTooLongRetries = 0;
   let failureReason: string | undefined;
+  let summarizerObservability: CompactionResult["summarizerObservability"];
 
   // ── Tier 2: 更新 Rolling Summary ──
   const rollingSummaryResult = await summarizeRollingWithBudget(rebuildState.rollingSummary, compressed, {
@@ -670,12 +866,13 @@ export async function compactIncremental(
     blockingThreshold,
     maxPromptTooLongRetries,
   });
-  let newRollingSummary = rollingSummaryResult.summary;
+  let newRollingSummary = coerceSummaryText(rollingSummaryResult.summary);
   fallbackUsed = rollingSummaryResult.fallbackUsed;
   warningTriggered = rollingSummaryResult.warningTriggered;
   blockingTriggered = rollingSummaryResult.blockingTriggered;
   promptTooLongRetries = rollingSummaryResult.promptTooLongRetries;
   failureReason = rollingSummaryResult.failureReason;
+  summarizerObservability = rollingSummaryResult.summarizerObservability;
 
   // ── Tier 1: 检查是否需要归档压缩 ──
   let newArchivalSummary = rebuildState.archivalSummary;
@@ -693,12 +890,13 @@ export async function compactIncremental(
       blockingThreshold,
       maxPromptTooLongRetries,
     });
-    newArchivalSummary = archivalSummaryResult.summary;
+    newArchivalSummary = coerceSummaryText(archivalSummaryResult.summary);
     fallbackUsed = fallbackUsed || archivalSummaryResult.fallbackUsed;
     warningTriggered = warningTriggered || archivalSummaryResult.warningTriggered;
     blockingTriggered = blockingTriggered || archivalSummaryResult.blockingTriggered;
     promptTooLongRetries += archivalSummaryResult.promptTooLongRetries;
     failureReason = archivalSummaryResult.failureReason ?? failureReason;
+    summarizerObservability = archivalSummaryResult.summarizerObservability ?? summarizerObservability;
     // 归档后清空 Rolling Summary
     newRollingSummary = "";
     rollingSummaryMergeCount = 0;
@@ -733,6 +931,7 @@ export async function compactIncremental(
     warningTriggered,
     blockingTriggered,
     failureReason,
+    ...(summarizerObservability ? { summarizerObservability } : {}),
   };
 }
 

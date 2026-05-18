@@ -42,6 +42,11 @@ type CreateGatewayWebSocketRuntimeOptions = {
   log: GatewayWebSocketLog;
   onActivity?: () => void;
   isConfigured?: () => boolean;
+  startupObservability?: {
+    onFirstWebSocketConnection?: (input: { timestampMs: number; remoteAddress?: string | null }) => void;
+    onFirstAuthenticatedWebSocket?: (input: { timestampMs: number; clientId: string }) => void;
+    onInvalidTokenClose?: (input: { timestampMs: number; reason?: string | null; remoteAddress?: string | null }) => void;
+  };
   onRequest: (
     ws: WebSocket,
     frame: GatewayReqFrame,
@@ -222,6 +227,8 @@ const DEFAULT_EVENTS = [
 export function createGatewayWebSocketRuntime(
   options: CreateGatewayWebSocketRuntimeOptions,
 ): GatewayWebSocketRuntime {
+  let firstConnectionObserved = false;
+  let firstAuthenticatedObserved = false;
   const wss = new WebSocketServer({
     server: options.server,
     verifyClient: (info: { origin?: string; req: IncomingMessage; secure: boolean }) => {
@@ -232,6 +239,13 @@ export function createGatewayWebSocketRuntime(
   wss.on("connection", (ws, req) => {
     const ip = req.socket.remoteAddress;
     options.log.info("ws", `New connection from ${ip}`);
+    if (!firstConnectionObserved) {
+      firstConnectionObserved = true;
+      options.startupObservability?.onFirstWebSocketConnection?.({
+        timestampMs: Date.now(),
+        remoteAddress: ip,
+      });
+    }
 
     ws.on("error", (err) => {
       options.log.error("ws", `Error (${ip}): ${err.message}`);
@@ -279,6 +293,13 @@ export function createGatewayWebSocketRuntime(
         }
         const accepted = acceptConnect(frame, options.auth);
         if (!accepted.ok) {
+          if (accepted.message === "invalid token") {
+            options.startupObservability?.onInvalidTokenClose?.({
+              timestampMs: Date.now(),
+              reason: accepted.message,
+              remoteAddress: ip,
+            });
+          }
           safeClose(ws, 4403, accepted.message);
           return;
         }
@@ -287,6 +308,13 @@ export function createGatewayWebSocketRuntime(
         state.role = accepted.role;
         state.clientId = normalizeClientId(frame.clientId) ?? state.sessionId;
         state.userUuid = frame.userUuid;
+        if (!firstAuthenticatedObserved) {
+          firstAuthenticatedObserved = true;
+          options.startupObservability?.onFirstAuthenticatedWebSocket?.({
+            timestampMs: Date.now(),
+            clientId: state.clientId,
+          });
+        }
         options.log.debug("ws", "WebSocket connected", {
           clientId: state.clientId,
           hasUserUuid: Boolean(state.userUuid),

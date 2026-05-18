@@ -5,6 +5,7 @@ import {
   buildModelCatalogGroups,
   formatModelOptionLabel,
   formatModelProviderGroupLabel,
+  createChatNetworkFeature,
   PENDING_AGENT_SELECTION_KEY,
   modelMatchesCatalogFilter,
   normalizeRequestFrame,
@@ -214,5 +215,116 @@ describe("chat network transient setup token recovery", () => {
       authMode: "token",
       authValue: "setup-123456",
     })).toBe(false);
+  });
+});
+
+describe("chat network startup observability", () => {
+  it("emits startup marks while still creating the websocket connection", () => {
+    const previousStartup = globalThis.__SS_WEBCHAT_STARTUP__;
+    const previousLocation = globalThis.location;
+    const marks = [];
+    const previousWebSocket = globalThis.WebSocket;
+    const socket = {
+      readyState: 0,
+      addEventListener: () => {},
+      close: () => {},
+    };
+    class FakeWebSocket {
+      constructor(url) {
+        this.url = url;
+        return socket;
+      }
+    }
+
+    Object.defineProperty(globalThis, "__SS_WEBCHAT_STARTUP__", {
+      configurable: true,
+      value: {
+        mark: (stage, extra) => {
+          marks.push({ stage, extra });
+        },
+      },
+    });
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: FakeWebSocket,
+    });
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: {
+        protocol: "http:",
+        host: "127.0.0.1:28889",
+      },
+    });
+
+    try {
+      let currentSocket = null;
+      const feature = createChatNetworkFeature({
+        refs: {
+          statusEl: null,
+          sendBtn: null,
+          authModeEl: { value: "none" },
+          authValueEl: { value: "" },
+          workspaceRootsEl: { value: "" },
+          userUuidEl: { value: "" },
+          agentSelectEl: null,
+          modelPickerEl: null,
+          modelFilterEl: null,
+          modelSelectEl: null,
+        },
+        keys: {
+          storeKey: "store",
+          sessionAuthTokenKey: "session-token",
+          workspaceRootsKey: "roots",
+          uuidKey: "uuid",
+          agentIdKey: "agent",
+          modelIdKey: "model",
+          clientId: "client-1",
+        },
+        getTransientUrlToken: () => "",
+        getSocket: () => currentSocket,
+        setSocket: (value) => {
+          currentSocket = value;
+        },
+        getReady: () => false,
+        setReady: () => {},
+        persistConnectionFields: () => {},
+        setStatus: () => {},
+        safeJsonParse: JSON.parse,
+        makeId: () => "req-1",
+      });
+
+      feature.connect();
+
+      expect(currentSocket).toBe(socket);
+      expect(marks.map((item) => item.stage)).toEqual([
+        "chat-network.connect.called",
+        "chat-network.websocket.create",
+      ]);
+    } finally {
+      if (previousStartup === undefined) {
+        delete globalThis.__SS_WEBCHAT_STARTUP__;
+      } else {
+        Object.defineProperty(globalThis, "__SS_WEBCHAT_STARTUP__", {
+          configurable: true,
+          value: previousStartup,
+        });
+      }
+      if (previousWebSocket === undefined) {
+        delete globalThis.WebSocket;
+      } else {
+        Object.defineProperty(globalThis, "WebSocket", {
+          configurable: true,
+          value: previousWebSocket,
+        });
+      }
+      if (previousLocation === undefined) {
+        delete globalThis.location;
+      } else {
+        Object.defineProperty(globalThis, "location", {
+          configurable: true,
+          value: previousLocation,
+        });
+      }
+    }
   });
 });

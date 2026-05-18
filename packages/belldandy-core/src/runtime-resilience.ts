@@ -22,6 +22,11 @@ export type RuntimeResilienceDoctorReport = {
       configured: boolean;
       sharesPrimaryRoute: boolean;
       route?: RuntimeResilienceRoute;
+      auxSummaryVerdict?: {
+        strategy: "deepseek_flash_preferred" | "configured_route" | "manual_override" | "default_primary";
+        enabled: boolean;
+        reason: string;
+      };
     };
   };
   totals: {
@@ -103,6 +108,15 @@ function cloneReport(report: RuntimeResilienceDoctorReport): RuntimeResilienceDo
             configured: report.routing.compaction.configured,
             sharesPrimaryRoute: report.routing.compaction.sharesPrimaryRoute,
             ...(report.routing.compaction.route ? { route: cloneRoute(report.routing.compaction.route) } : {}),
+            ...(report.routing.compaction.auxSummaryVerdict
+              ? {
+                auxSummaryVerdict: {
+                  strategy: report.routing.compaction.auxSummaryVerdict.strategy,
+                  enabled: report.routing.compaction.auxSummaryVerdict.enabled,
+                  reason: report.routing.compaction.auxSummaryVerdict.reason,
+                },
+              }
+              : {}),
           },
         }
         : {}),
@@ -165,6 +179,15 @@ function createReport(input: RuntimeResilienceDoctorReport["routing"]): RuntimeR
             configured: input.compaction.configured,
             sharesPrimaryRoute: input.compaction.sharesPrimaryRoute,
             ...(input.compaction.route ? { route: cloneRoute(input.compaction.route) } : {}),
+            ...(input.compaction.auxSummaryVerdict
+              ? {
+                auxSummaryVerdict: {
+                  strategy: input.compaction.auxSummaryVerdict.strategy,
+                  enabled: input.compaction.auxSummaryVerdict.enabled,
+                  reason: input.compaction.auxSummaryVerdict.reason,
+                },
+              }
+              : {}),
           },
         }
         : {}),
@@ -227,6 +250,25 @@ function normalizeReport(value: unknown): RuntimeResilienceDoctorReport | undefi
           ...(normalizeRoute((compactionRaw as Record<string, unknown>).route)
             ? { route: normalizeRoute((compactionRaw as Record<string, unknown>).route) }
             : {}),
+          ...(() => {
+            const verdict = (compactionRaw as Record<string, unknown>).auxSummaryVerdict;
+            if (!verdict || typeof verdict !== "object" || Array.isArray(verdict)) {
+              return {};
+            }
+            const verdictRecord = verdict as Record<string, unknown>;
+            const strategy = normalizeString(verdictRecord.strategy);
+            const reason = normalizeString(verdictRecord.reason);
+            if (!strategy || !reason) {
+              return {};
+            }
+            return {
+              auxSummaryVerdict: {
+                strategy: strategy as "deepseek_flash_preferred" | "configured_route" | "manual_override" | "default_primary",
+                enabled: verdictRecord.enabled === true,
+                reason,
+              },
+            };
+          })(),
         },
       }
       : {}),

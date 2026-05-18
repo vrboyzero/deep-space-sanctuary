@@ -266,6 +266,7 @@ export function createSettingsController({
     cfgCompactionMaxPtlRetries,
     cfgCompactionContextWindowFraction,
     cfgCompactionModelRoute,
+    cfgDeepseekRoutePolicyEnabled,
     cfgCompactionModel,
     cfgCompactionBaseUrl,
     cfgCompactionApiKey,
@@ -993,6 +994,7 @@ export function createSettingsController({
     if (cfgCompactionMaxPtlRetries) cfgCompactionMaxPtlRetries.value = c["BELLDANDY_COMPACTION_MAX_PTL_RETRIES"] || "";
     if (cfgCompactionContextWindowFraction) cfgCompactionContextWindowFraction.value = c["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] || "";
     if (cfgCompactionModelRoute) cfgCompactionModelRoute.value = c["BELLDANDY_COMPACTION_MODEL_ROUTE"] || "";
+    if (cfgDeepseekRoutePolicyEnabled) cfgDeepseekRoutePolicyEnabled.checked = c["BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED"] !== "false";
     if (cfgCompactionModel) cfgCompactionModel.value = c["BELLDANDY_COMPACTION_MODEL"] || "";
     if (cfgCompactionBaseUrl) cfgCompactionBaseUrl.value = c["BELLDANDY_COMPACTION_BASE_URL"] || "";
     if (cfgCompactionApiKey) cfgCompactionApiKey.value = c["BELLDANDY_COMPACTION_API_KEY"] || "";
@@ -1810,6 +1812,7 @@ export function createSettingsController({
     if (cfgCompactionMaxPtlRetries) updates["BELLDANDY_COMPACTION_MAX_PTL_RETRIES"] = cfgCompactionMaxPtlRetries.value.trim();
     if (cfgCompactionContextWindowFraction) updates["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] = cfgCompactionContextWindowFraction.value.trim();
     if (cfgCompactionModelRoute) updates["BELLDANDY_COMPACTION_MODEL_ROUTE"] = cfgCompactionModelRoute.value.trim();
+    if (cfgDeepseekRoutePolicyEnabled) updates["BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED"] = cfgDeepseekRoutePolicyEnabled.checked ? "true" : "false";
     if (cfgCompactionModel) updates["BELLDANDY_COMPACTION_MODEL"] = cfgCompactionModel.value.trim();
     if (cfgCompactionBaseUrl) updates["BELLDANDY_COMPACTION_BASE_URL"] = cfgCompactionBaseUrl.value.trim();
     if (cfgCommunityApiEnabled) updates["BELLDANDY_COMMUNITY_API_ENABLED"] = cfgCommunityApiEnabled.checked ? "true" : "false";

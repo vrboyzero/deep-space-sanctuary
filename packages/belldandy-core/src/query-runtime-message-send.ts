@@ -27,6 +27,8 @@ import type { ToolControlConfirmationStore } from "./tool-control-confirmation-s
 import type { TranscribeOptions, TranscribeResult } from "@belldandy/skills";
 import type { MediaCapability } from "./media-capability-registry.js";
 import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
+import type { ConversationPromptSnapshotArtifact } from "./conversation-prompt-snapshot.js";
+import { resolveDeepSeekTierRoute } from "./deepseek-tier-routing.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -56,6 +58,27 @@ export type MessageSendQueryRuntimeContext = {
     conversationRunRegistry: ConversationRunRegistry;
     runtimeObserver?: QueryRuntimeObserver<"message.send">;
     residentAgentRuntime?: ResidentAgentRuntimeRegistry;
+    getConversationPromptSnapshot?: (input: {
+      conversationId: string;
+      runId?: string;
+    }) => Promise<ConversationPromptSnapshotArtifact | undefined>;
+    primaryModelConfig?: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+      protocol?: string;
+      wireApi?: string;
+    };
+    modelFallbacks?: Array<{
+      id?: string;
+      displayName?: string;
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+      protocol?: string;
+      wireApi?: string;
+    }>;
+    deepSeekRoutePolicyEnabled?: boolean;
   };
   toolControl: {
     confirmationStore?: ToolControlConfirmationStore;
@@ -155,16 +178,31 @@ export async function handleMessageSendWithQueryRuntime(
     const requestedAgentId = request.params.agentId;
     const requestedModelId = request.params.modelId;
     const autoStopPreviousRun = request.params.autoStopPreviousRun === true;
-    const createOpts = requestedModelId ? { modelOverride: requestedModelId } : undefined;
     const conversationId = request.params.conversationId ?? crypto.randomUUID();
     const runId = crypto.randomUUID();
     const effectiveUserUuid = request.params.userUuid ?? request.userUuid;
+    const previousPromptSnapshot = runtimeDeps.getConversationPromptSnapshot
+      ? await runtimeDeps.getConversationPromptSnapshot({ conversationId })
+      : undefined;
+    const modelRouteDecision = resolveDeepSeekTierRoute({
+      requestedModelId,
+      primaryModelConfig: runtimeDeps.primaryModelConfig,
+      modelFallbacks: runtimeDeps.modelFallbacks,
+      previousPromptSnapshot,
+      policyEnabled: runtimeDeps.deepSeekRoutePolicyEnabled,
+    });
+    const effectiveModelId = modelRouteDecision.resolvedModelId ?? requestedModelId;
+    const createOpts = effectiveModelId ? { modelOverride: effectiveModelId } : undefined;
 
     queryRuntime.mark("request_validated", {
       conversationId,
       detail: {
         requestedAgentId: requestedAgentId ?? "default",
         requestedModelId: requestedModelId ?? "default",
+        effectiveModelId: effectiveModelId ?? "default",
+        deepseekRouteMode: modelRouteDecision.routeMode,
+        deepseekRouteReason: modelRouteDecision.reason,
+        deepseekRouteDegraded: modelRouteDecision.degraded,
         runId,
         hasAttachments: Array.isArray(request.params.attachments) && request.params.attachments.length > 0,
       },
@@ -182,6 +220,9 @@ export async function handleMessageSendWithQueryRuntime(
       detail: {
         requestedAgentId: requestedAgentId ?? "default",
         requestedModelId: requestedModelId ?? "default",
+        effectiveModelId: effectiveModelId ?? "default",
+        deepseekRouteMode: modelRouteDecision.routeMode,
+        deepseekRouteReason: modelRouteDecision.reason,
         runId,
       },
     });
@@ -343,6 +384,14 @@ export async function handleMessageSendWithQueryRuntime(
       senderInfo: request.params.senderInfo,
       clientContext: request.params.clientContext,
       from: request.params.from,
+      routeDecision: {
+        requestedRoute: requestedModelId,
+        effectiveModelId,
+        selectedTier: modelRouteDecision.selectedTier,
+        routeMode: modelRouteDecision.routeMode,
+        degraded: modelRouteDecision.degraded,
+        reason: modelRouteDecision.reason,
+      },
     });
 
     return {
@@ -479,13 +528,62 @@ type MessageSendBackgroundInput = {
   senderInfo?: unknown;
   clientContext?: MessageSendParams["clientContext"];
   from?: string;
+  routeDecision?: {
+    requestedRoute?: string;
+    effectiveModelId?: string;
+    selectedTier?: "flash" | "pro";
+    routeMode?: "passthrough" | "deepseek_virtual";
+    degraded?: boolean;
+    reason?: string;
+  };
+  auxSummaryVerdict?: {
+    strategy?: string;
+    enabled?: boolean;
+    reason?: string;
+  };
 };
 
 type MessageSendLatestUsage = {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  cacheSupport?: "supported" | "unsupported" | "unknown";
+  systemPromptFingerprint?: string;
+  structureSignature?: string;
+  warmupCoordination?: {
+    eligible?: boolean;
+    status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+    recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+    reason?: string;
+    previousAgeMs?: number;
+  };
+  cacheFamilyAffinity?: {
+    status?: "unknown" | "aligned" | "mismatch";
+    familyKey?: string;
+    previousFamilyKey?: string;
+    reason?: string;
+  };
+  deepseekRoute?: {
+    requestedRoute?: string;
+    effectiveModelId?: string;
+    selectedTier?: "flash" | "pro";
+    routeMode?: "passthrough" | "deepseek_virtual";
+    degraded?: boolean;
+    reason?: string;
+  };
+  auxSummaryVerdict?: {
+    strategy?: string;
+    enabled?: boolean;
+    reason?: string;
+  };
   inputCostUsd?: number;
   outputCostUsd?: number;
+  cacheCreationCostUsd?: number;
+  cacheReadCostUsd?: number;
+  cacheSavingsUsd?: number;
   totalCostUsd?: number;
 };
 
@@ -745,6 +843,19 @@ function handleMessageSendUsageEvent(input: {
   effectiveUserUuid?: string;
   from?: string;
   state: MessageSendBackgroundRunState;
+  routeDecision?: {
+    requestedRoute?: string;
+    effectiveModelId?: string;
+    selectedTier?: "flash" | "pro";
+    routeMode?: "passthrough" | "deepseek_virtual";
+    degraded?: boolean;
+    reason?: string;
+  };
+  auxSummaryVerdict?: {
+    strategy?: string;
+    enabled?: boolean;
+    reason?: string;
+  };
   item: {
     systemPromptTokens: number;
     contextTokens: number;
@@ -752,19 +863,60 @@ function handleMessageSendUsageEvent(input: {
     outputTokens: number;
     cacheCreationTokens: number;
     cacheReadTokens: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
     modelCalls: number;
+    cacheSupport?: "supported" | "unsupported" | "unknown";
+    systemPromptFingerprint?: string;
+    structureSignature?: string;
+    warmupCoordination?: {
+      eligible?: boolean;
+      status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+      recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+      reason?: string;
+      previousAgeMs?: number;
+    };
+    cacheFamilyAffinity?: {
+      status?: "unknown" | "aligned" | "mismatch";
+      familyKey?: string;
+      previousFamilyKey?: string;
+      reason?: string;
+    };
     inputCostUsd?: number;
     outputCostUsd?: number;
     cacheCreationCostUsd?: number;
     cacheReadCostUsd?: number;
+    cacheSavingsUsd?: number;
     totalCostUsd?: number;
   };
 }): void {
   const latestUsage = {
     inputTokens: Number(input.item.inputTokens ?? 0),
     outputTokens: Number(input.item.outputTokens ?? 0),
+    ...(typeof input.item.cacheCreationTokens === "number" ? { cacheCreationTokens: Number(input.item.cacheCreationTokens) } : {}),
+    ...(typeof input.item.cacheReadTokens === "number" ? { cacheReadTokens: Number(input.item.cacheReadTokens) } : {}),
+    ...(typeof input.item.cacheHitTokens === "number" ? { cacheHitTokens: Number(input.item.cacheHitTokens) } : {}),
+    ...(typeof input.item.cacheMissTokens === "number" ? { cacheMissTokens: Number(input.item.cacheMissTokens) } : {}),
+    ...(typeof input.item.cacheSupport === "string" ? { cacheSupport: input.item.cacheSupport } : {}),
+    ...(typeof input.item.systemPromptFingerprint === "string" ? { systemPromptFingerprint: input.item.systemPromptFingerprint } : {}),
+    ...(typeof input.item.structureSignature === "string" ? { structureSignature: input.item.structureSignature } : {}),
+    ...(input.item.warmupCoordination && typeof input.item.warmupCoordination === "object"
+      ? { warmupCoordination: input.item.warmupCoordination }
+      : {}),
+    ...(input.item.cacheFamilyAffinity && typeof input.item.cacheFamilyAffinity === "object"
+      ? { cacheFamilyAffinity: input.item.cacheFamilyAffinity }
+      : {}),
+    ...(input.routeDecision && typeof input.routeDecision === "object"
+      ? { deepseekRoute: input.routeDecision }
+      : {}),
+    ...(input.auxSummaryVerdict && typeof input.auxSummaryVerdict === "object"
+      ? { auxSummaryVerdict: input.auxSummaryVerdict }
+      : {}),
     ...(typeof input.item.inputCostUsd === "number" ? { inputCostUsd: Number(input.item.inputCostUsd) } : {}),
     ...(typeof input.item.outputCostUsd === "number" ? { outputCostUsd: Number(input.item.outputCostUsd) } : {}),
+    ...(typeof input.item.cacheCreationCostUsd === "number" ? { cacheCreationCostUsd: Number(input.item.cacheCreationCostUsd) } : {}),
+    ...(typeof input.item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: Number(input.item.cacheReadCostUsd) } : {}),
+    ...(typeof input.item.cacheSavingsUsd === "number" ? { cacheSavingsUsd: Number(input.item.cacheSavingsUsd) } : {}),
     ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: Number(input.item.totalCostUsd) } : {}),
   };
   input.state.run.setLatestUsage(latestUsage);
@@ -781,11 +933,29 @@ function handleMessageSendUsageEvent(input: {
       outputTokens: input.item.outputTokens,
       cacheCreationTokens: input.item.cacheCreationTokens,
       cacheReadTokens: input.item.cacheReadTokens,
+      ...(typeof input.item.cacheHitTokens === "number" ? { cacheHitTokens: input.item.cacheHitTokens } : {}),
+      ...(typeof input.item.cacheMissTokens === "number" ? { cacheMissTokens: input.item.cacheMissTokens } : {}),
       modelCalls: input.item.modelCalls,
+      ...(typeof input.item.cacheSupport === "string" ? { cacheSupport: input.item.cacheSupport } : {}),
+      ...(typeof input.item.systemPromptFingerprint === "string" ? { systemPromptFingerprint: input.item.systemPromptFingerprint } : {}),
+      ...(typeof input.item.structureSignature === "string" ? { structureSignature: input.item.structureSignature } : {}),
+      ...(input.item.warmupCoordination && typeof input.item.warmupCoordination === "object"
+        ? { warmupCoordination: input.item.warmupCoordination }
+        : {}),
+      ...(input.item.cacheFamilyAffinity && typeof input.item.cacheFamilyAffinity === "object"
+        ? { cacheFamilyAffinity: input.item.cacheFamilyAffinity }
+        : {}),
+      ...(input.routeDecision && typeof input.routeDecision === "object"
+        ? { deepseekRoute: input.routeDecision }
+        : {}),
+      ...(input.auxSummaryVerdict && typeof input.auxSummaryVerdict === "object"
+        ? { auxSummaryVerdict: input.auxSummaryVerdict }
+        : {}),
       ...(typeof input.item.inputCostUsd === "number" ? { inputCostUsd: input.item.inputCostUsd } : {}),
       ...(typeof input.item.outputCostUsd === "number" ? { outputCostUsd: input.item.outputCostUsd } : {}),
       ...(typeof input.item.cacheCreationCostUsd === "number" ? { cacheCreationCostUsd: input.item.cacheCreationCostUsd } : {}),
       ...(typeof input.item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: input.item.cacheReadCostUsd } : {}),
+      ...(typeof input.item.cacheSavingsUsd === "number" ? { cacheSavingsUsd: input.item.cacheSavingsUsd } : {}),
       ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: input.item.totalCostUsd } : {}),
     },
   });
@@ -821,6 +991,14 @@ function createMessageSendStreamAdapter(input: {
   from?: string;
   isTts: boolean;
   state: MessageSendBackgroundRunState;
+  routeDecision?: {
+    requestedRoute?: string;
+    effectiveModelId?: string;
+    selectedTier?: "flash" | "pro";
+    routeMode?: "passthrough" | "deepseek_virtual";
+    degraded?: boolean;
+    reason?: string;
+  };
 }): {
   handlers: {
     onStatus: (item: { status: string }) => void;
@@ -835,11 +1013,30 @@ function createMessageSendStreamAdapter(input: {
       outputTokens: number;
       cacheCreationTokens: number;
       cacheReadTokens: number;
+      cacheHitTokens?: number;
+      cacheMissTokens?: number;
       modelCalls: number;
+      cacheSupport?: "supported" | "unsupported" | "unknown";
+      systemPromptFingerprint?: string;
+      structureSignature?: string;
+      warmupCoordination?: {
+        eligible?: boolean;
+        status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+        recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+        reason?: string;
+        previousAgeMs?: number;
+      };
+      cacheFamilyAffinity?: {
+        status?: "unknown" | "aligned" | "mismatch";
+        familyKey?: string;
+        previousFamilyKey?: string;
+        reason?: string;
+      };
       inputCostUsd?: number;
       outputCostUsd?: number;
       cacheCreationCostUsd?: number;
       cacheReadCostUsd?: number;
+      cacheSavingsUsd?: number;
       totalCostUsd?: number;
     }) => void;
   };
@@ -949,6 +1146,7 @@ function createMessageSendStreamAdapter(input: {
           effectiveUserUuid: input.effectiveUserUuid,
           from: input.from,
           state: input.state,
+          routeDecision: input.routeDecision,
           item,
         });
       },
@@ -1377,6 +1575,7 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
       from: input.from,
       isTts,
       state,
+      routeDecision: input.routeDecision,
     });
     const runResult = await runAgentWithLifecycle(input.agent, {
       conversationId: input.conversationId,

@@ -38,4 +38,14 @@ describe("tokenizer", () => {
     expect(estimateTokens(text, { model: "deepseek-v4-pro" }))
       .toBeGreaterThanOrEqual(estimateTokens(text, { model: "gpt-5.4" }));
   });
+
+  it("coerces object-shaped text payloads without throwing", () => {
+    const value = {
+      content: [
+        { text: "object summary" },
+      ],
+    } as unknown as string;
+
+    expect(estimateTokens(value)).toBeGreaterThan(0);
+  });
 });

@@ -754,6 +754,13 @@ export default defineCommand({
       ctx.log(`  fallbacks: ${runtimeResilience.routing.fallbacks.length}`);
       if (runtimeResilience.routing.compaction?.configured) {
         ctx.log(`  compaction: ${runtimeResilience.routing.compaction.route?.provider ?? "-"} / ${runtimeResilience.routing.compaction.route?.model ?? "-"}`);
+        if (runtimeResilience.routing.compaction.auxSummaryVerdict) {
+          ctx.log(
+            `  compaction aux verdict: ${runtimeResilience.routing.compaction.auxSummaryVerdict.strategy ?? "-"}`
+            + ` / ${runtimeResilience.routing.compaction.auxSummaryVerdict.reason ?? "-"}`
+            + ` / enabled=${runtimeResilience.routing.compaction.auxSummaryVerdict.enabled ? "yes" : "no"}`,
+          );
+        }
       }
       ctx.log(`  headline: ${runtimeResilience.summary.headline}`);
       ctx.log(`  totals: ${runtimeDiagnostics.totalsSummary}`);

@@ -240,8 +240,33 @@ export type AgentUsage = {
   cacheCreationTokens: number;
   /** Anthropic cache 读取 tokens */
   cacheReadTokens: number;
+  /** DeepSeek / OpenAI-compatible prompt cache hit tokens */
+  cacheHitTokens?: number;
+  /** DeepSeek / OpenAI-compatible prompt cache miss tokens */
+  cacheMissTokens?: number;
   /** 本次 run 的模型调用次数 */
   modelCalls: number;
+  /** provider cache capability */
+  cacheSupport?: "supported" | "unsupported" | "unknown";
+  /** system prompt prefix fingerprint for cache observability */
+  systemPromptFingerprint?: string;
+  /** prompt structure signature for cache coordination */
+  structureSignature?: string;
+  /** prompt prefix warm-up aware coordination verdict */
+  warmupCoordination?: {
+    eligible?: boolean;
+    status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+    recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+    reason?: string;
+    previousAgeMs?: number;
+  };
+  /** provider/model/cache family affinity verdict */
+  cacheFamilyAffinity?: {
+    status?: "unknown" | "aligned" | "mismatch";
+    familyKey?: string;
+    previousFamilyKey?: string;
+    reason?: string;
+  };
   /** 估算的输入成本（USD） */
   inputCostUsd?: number;
   /** 估算的输出成本（USD） */
@@ -250,6 +275,8 @@ export type AgentUsage = {
   cacheReadCostUsd?: number;
   /** 估算的 cache creation 成本（USD） */
   cacheCreationCostUsd?: number;
+  /** 估算的 cache savings（USD） */
+  cacheSavingsUsd?: number;
   /** 估算的总成本（USD） */
   totalCostUsd?: number;
 };

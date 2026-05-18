@@ -97,6 +97,7 @@ function formatDelegationReason(value, t) {
 function formatRuntimeResilience(value, t) {
   const item = normalizeObject(value);
   if (!item) return "";
+  const compactionAuxVerdict = normalizeObject(item.compactionAuxSummaryVerdict);
   const parts = [
     normalizeString(item.alertLevel) ? `alert=${normalizeString(item.alertLevel)}/${normalizeString(item.alertCode) || "-"}` : "",
     normalizeString(item.alertMessage) ? `alert_note=${normalizeString(item.alertMessage)}` : "",
@@ -113,6 +114,13 @@ function formatRuntimeResilience(value, t) {
     normalizeString(item.overallReasonSummary) ? `reasons=${normalizeString(item.overallReasonSummary)}` : "",
     normalizeString(item.totalsSummary) ? `totals=${normalizeString(item.totalsSummary)}` : "",
     normalizeString(item.compactionRoute) ? `compaction=${normalizeString(item.compactionRoute)}` : "",
+    compactionAuxVerdict
+      ? `compaction_aux=${compactJoin([
+        normalizeString(compactionAuxVerdict.strategy),
+        normalizeString(compactionAuxVerdict.reason),
+        typeof compactionAuxVerdict.enabled === "boolean" ? `enabled=${compactionAuxVerdict.enabled ? "yes" : "no"}` : "",
+      ].filter(Boolean))}`
+      : "",
     normalizeString(item.latestHeadline) ? `note=${normalizeString(item.latestHeadline)}` : "",
   ];
   if (!parts.some(Boolean)) return "";

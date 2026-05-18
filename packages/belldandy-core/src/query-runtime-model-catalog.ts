@@ -12,6 +12,7 @@ export type QueryRuntimeModelCatalogContext = {
   modelFallbacks?: ModelProfile[];
   currentDefault?: string;
   preferredProviderIds?: string[];
+  deepSeekRoutePolicyEnabled?: boolean;
   runtimeObserver?: QueryRuntimeObserver<ModelCatalogQueryRuntimeMethod>;
 };
 
@@ -38,6 +39,7 @@ export async function handleModelCatalogListWithQueryRuntime(
       modelFallbacks: ctx.modelFallbacks,
       currentDefault: ctx.currentDefault,
       preferredProviderIds: ctx.preferredProviderIds,
+      deepSeekRoutePolicyEnabled: ctx.deepSeekRoutePolicyEnabled,
     });
 
     queryRuntime.mark("response_built", {

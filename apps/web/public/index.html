@@ -7,6 +7,30 @@
   <title data-i18n="app.documentTitle">Star Sanctuary WebChat</title>
   <script>
     (() => {
+      const perfNow = () =>
+        typeof window.performance?.now === "function" ? window.performance.now() : Date.now();
+      const startup = window.__SS_WEBCHAT_STARTUP__ = window.__SS_WEBCHAT_STARTUP__ || {
+        navigationStartMs: Date.now(),
+        parseStartedAtMs: perfNow(),
+        marks: [],
+      };
+      const mark = (stage, extra = {}) => {
+        const entry = {
+          stage,
+          atMs: perfNow(),
+          ...extra,
+        };
+        startup.marks.push(entry);
+        try {
+          console.info("[WebChat startup]", stage, entry);
+        } catch {
+          // ignore console failures
+        }
+        return entry;
+      };
+      startup.mark = mark;
+      mark("index.inline-bootstrap.start");
+
       const THEME_STORAGE_KEY = "ss-webchat-theme";
       const LOCALE_STORAGE_KEY = "ss-webchat-locale";
       const FALLBACK_THEME = "dark";
@@ -40,6 +64,35 @@
         document.documentElement.dataset.theme = FALLBACK_THEME;
         document.documentElement.style.colorScheme = FALLBACK_THEME;
       }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        mark("dom.content.loaded");
+      }, { once: true });
+      window.addEventListener("pageshow", (event) => {
+        const navEntry = typeof window.performance?.getEntriesByType === "function"
+          ? window.performance.getEntriesByType("navigation")?.[0]
+          : null;
+        mark("navigation.timing.snapshot", {
+          navigationType: typeof navEntry?.type === "string" ? navEntry.type : "",
+          domInteractiveMs: typeof navEntry?.domInteractive === "number" ? Math.round(navEntry.domInteractive) : null,
+          domContentLoadedEndMs: typeof navEntry?.domContentLoadedEventEnd === "number"
+            ? Math.round(navEntry.domContentLoadedEventEnd)
+            : null,
+          loadEventEndMs: typeof navEntry?.loadEventEnd === "number" ? Math.round(navEntry.loadEventEnd) : null,
+          durationMs: typeof navEntry?.duration === "number" ? Math.round(navEntry.duration) : null,
+          redirectCount: typeof navEntry?.redirectCount === "number" ? navEntry.redirectCount : null,
+          transferSize: typeof navEntry?.transferSize === "number" ? navEntry.transferSize : null,
+          decodedBodySize: typeof navEntry?.decodedBodySize === "number" ? navEntry.decodedBodySize : null,
+          nextHopProtocol: typeof navEntry?.nextHopProtocol === "string" ? navEntry.nextHopProtocol : "",
+          activationStartMs: typeof navEntry?.activationStart === "number" ? Math.round(navEntry.activationStart) : null,
+          persisted: event?.persisted === true,
+          referrer: typeof document.referrer === "string" ? document.referrer : "",
+        });
+      }, { once: true });
+      window.addEventListener("load", () => {
+        mark("window.load");
+      }, { once: true });
+      mark("index.inline-bootstrap.end");
     })();
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -87,6 +140,7 @@
           <span class="token-metric token-metric-calls"><span class="token-label">CALLS</span><span class="token-val" id="tuCalls">--</span></span>
           <span class="token-sep">|</span>
           <span class="token-metric token-metric-all"><span class="token-label">ALL</span><span class="token-val token-val-all" id="tuAll">--</span></span>
+          <div class="token-usage-observability is-empty" id="tokenUsageObservability" data-i18n="header.tokenObservabilityEmpty">暂无缓存观测</div>
         </div>
         <div class="task-token-usage" id="taskTokenUsage" title="任务 Token 用量" style="display: none;">
           <span class="token-label">TASK</span><span class="token-val" id="taskName">--</span>
@@ -1022,6 +1076,13 @@
             <label class="form-label" for="cfgCompactionModelRoute" data-i18n="settings.compactionModelRouteLabel">Compaction Model Route</label>
             <input id="cfgCompactionModelRoute" class="input" placeholder="primary / fallback-name / manual:gpt-4o-mini" />
             <div class="form-help" data-i18n="settings.compactionModelRouteHelp">控制 compaction 摘要链路走 primary、指定 fallback，或 `manual:&lt;model&gt;`。留空时按默认 primary 路由。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgDeepseekRoutePolicyEnabled">
+              <input id="cfgDeepseekRoutePolicyEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.deepseekRoutePolicyEnabledLabel">Enable DeepSeek Route Policy</span>
+            </label>
+            <div class="form-help" data-i18n="settings.deepseekRoutePolicyEnabledHelp">控制 `deepseek:auto/flash/pro` 虚拟路由与 DeepSeek 辅助摘要优先 flash 策略。关闭后保留真实模型与显式 compaction route，不再启用这层自动策略。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCompactionModel" data-i18n="settings.compactionModelLabel">Compaction Model</label>

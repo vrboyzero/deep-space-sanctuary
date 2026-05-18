@@ -3,6 +3,25 @@ function buildWebSocketUrl() {
   return `${proto}//${location.host}`;
 }
 
+function readStartupObservability() {
+  if (typeof globalThis !== "object" || !globalThis) return null;
+  return globalThis.__SS_WEBCHAT_STARTUP__ ?? null;
+}
+
+function markStartupObservability(stage, extra = {}) {
+  const startup = readStartupObservability();
+  const markFn = typeof startup?.mark === "function" ? startup.mark : null;
+  if (markFn) {
+    return markFn(stage, extra);
+  }
+  try {
+    console.info("[WebChat startup]", stage, extra);
+  } catch {
+    // ignore console failures
+  }
+  return null;
+}
+
 function ensureDisconnectHint(statusEl, message) {
   if (!statusEl?.parentElement) return;
   const existingHint = document.getElementById("status-hint");
@@ -632,6 +651,13 @@ export function createChatNetworkFeature({
   }
 
   function connect() {
+    const url = buildWebSocketUrl();
+    markStartupObservability("chat-network.connect.called", {
+      url,
+      authMode: authModeEl?.value || "none",
+      hasAuthValue: Boolean(authValueEl?.value?.trim?.()),
+      hasUserUuid: Boolean(userUuidEl?.value?.trim?.()),
+    });
     persistConnectionFields({
       storeKey,
       workspaceRootsKey,
@@ -645,7 +671,8 @@ export function createChatNetworkFeature({
 
     teardown();
 
-    const socket = new WebSocket(buildWebSocketUrl());
+    markStartupObservability("chat-network.websocket.create", { url });
+    const socket = new WebSocket(url);
     setSocket(socket);
     setReady(false);
     onConnectionStateChanged?.({ connected: false, ready: false });
@@ -656,10 +683,20 @@ export function createChatNetworkFeature({
     setLocalizedStatus("status.connecting", {}, "connecting");
 
     socket.addEventListener("open", () => {
+      markStartupObservability("chat-network.websocket.open", { url });
       setLocalizedStatus("status.awaitingChallenge", {}, "connected (awaiting challenge)");
     });
 
+    socket.addEventListener("error", () => {
+      markStartupObservability("chat-network.websocket.error", { url });
+    });
+
     socket.addEventListener("close", (event) => {
+      markStartupObservability("chat-network.websocket.close", {
+        url,
+        code: Number(event?.code) || 0,
+        reason: typeof event?.reason === "string" ? event.reason : "",
+      });
       setReady(false);
       onConnectionStateChanged?.({ connected: false, ready: false });
       if (sendBtn) {
@@ -699,11 +736,16 @@ export function createChatNetworkFeature({
       if (!frame || typeof frame !== "object") return;
 
       if (frame.type === "connect.challenge") {
+        markStartupObservability("chat-network.connect.challenge", { url });
         sendConnect();
         return;
       }
 
       if (frame.type === "hello-ok") {
+        markStartupObservability("chat-network.hello.ok", {
+          url,
+          clientId: frame.clientId || "",
+        });
         setReady(true);
         onConnectionStateChanged?.({ connected: true, ready: true });
         if (sendBtn) {

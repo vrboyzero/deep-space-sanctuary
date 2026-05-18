@@ -28,7 +28,7 @@ import { buildMindProfileRuntimePrelude } from "../mind-profile-runtime-prelude.
 import { buildPromptFocusRuntimePrelude } from "../prompt-focus-runtime-prelude.js";
 import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.js";
 import { resolveMemoryRuntimeSwitches } from "../memory-runtime-switches.js";
-import { resolveCompactionThreshold, resolveProviderCapabilityFromEnv } from "../provider-capability.js";
+import { calculateUsageCostUsd, resolveCompactionThreshold, resolveProviderCapabilityFromEnv } from "../provider-capability.js";
 import { resolveCompactionModelRoute } from "../compaction-model-routing.js";
 import { normalizePreferredProviderIds } from "../provider-model-catalog.js";
 import { ResidentConversationStore } from "../resident-conversation-store.js";
@@ -634,6 +634,7 @@ const compactionBlockingThreshold = parseInt(
 const compactionMaxConsecutiveFailures = parseInt(readEnv("BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES") || "3", 10);
 const compactionMaxPromptTooLongRetries = parseInt(readEnv("BELLDANDY_COMPACTION_MAX_PTL_RETRIES") || "2", 10);
 const compactionModelRouteRef = readEnv("BELLDANDY_COMPACTION_MODEL_ROUTE");
+const deepSeekRoutePolicyEnabled = String(readEnv("BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED") ?? "true").trim().toLowerCase() !== "false";
 const compactionModel = readEnv("BELLDANDY_COMPACTION_MODEL");
 const compactionBaseUrl = readEnv("BELLDANDY_COMPACTION_BASE_URL");
 const compactionApiKey = readEnv("BELLDANDY_COMPACTION_API_KEY");
@@ -1820,6 +1821,25 @@ const readProviderLabel = (baseUrl: string): string => {
   }
 };
 
+function extractCompactionChatCompletionText(
+  content: unknown,
+): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    if (typeof (part as { text?: unknown }).text === "string") {
+      parts.push((part as { text: string }).text);
+    }
+  }
+  return parts.join("");
+}
+
 const toRuntimeResilienceRoute = (profile: {
   id?: string;
   baseUrl: string;
@@ -1834,27 +1854,26 @@ const toRuntimeResilienceRoute = (profile: {
   ...(profile.wireApi ? { wireApi: profile.wireApi } : {}),
 });
 
-const compactionRoute = (() => {
-  const resolvedRoute = resolveCompactionModelRoute({
-    enabled: compactionEnabled,
-    routeRef: compactionModelRouteRef,
-    explicitBaseUrl: compactionBaseUrl,
-    explicitApiKey: compactionApiKey,
-    explicitModel: compactionModel,
-    primaryModelConfig,
-    modelFallbacks,
-  });
-  if (!resolvedRoute?.enabled) {
-    return undefined;
-  }
-  return toRuntimeResilienceRoute({
-    id: "compaction",
-    baseUrl: resolvedRoute.baseUrl,
-    model: resolvedRoute.model,
-    protocol: resolvedRoute.protocol,
-    wireApi: resolvedRoute.wireApi,
-  });
-})();
+const compactionRouteResolution = resolveCompactionModelRoute({
+  enabled: compactionEnabled,
+  routeRef: compactionModelRouteRef,
+  explicitBaseUrl: compactionBaseUrl,
+  explicitApiKey: compactionApiKey,
+  explicitModel: compactionModel,
+  primaryModelConfig,
+  modelFallbacks,
+  deepSeekRoutePolicyEnabled,
+});
+
+const compactionRoute = compactionRouteResolution?.enabled
+  ? toRuntimeResilienceRoute({
+      id: "compaction",
+      baseUrl: compactionRouteResolution.baseUrl,
+      model: compactionRouteResolution.model,
+      protocol: compactionRouteResolution.protocol,
+      wireApi: compactionRouteResolution.wireApi,
+    })
+  : undefined;
 
 const runtimeResilienceTracker = new RuntimeResilienceTracker({
   stateDir,
@@ -1874,6 +1893,9 @@ const runtimeResilienceTracker = new RuntimeResilienceTracker({
           sharesPrimaryRoute: compactionRoute.provider === readProviderLabel(primaryModelConfig.baseUrl)
             && compactionRoute.model === primaryModelConfig.model,
           route: compactionRoute,
+          ...(compactionRouteResolution?.auxSummaryVerdict
+            ? { auxSummaryVerdict: compactionRouteResolution.auxSummaryVerdict }
+            : {}),
         },
       }
       : {
@@ -1919,6 +1941,8 @@ const gatewayPromptInspectionRuntime = createGatewayPromptInspectionRuntime({
   dynamicSystemPromptBuild,
   toolExecutor,
   promptExperimentConfig,
+  providerCacheSupport: providerCapability.cache,
+  providerCapabilitySource: providerCapability.source,
   isTtsEnabled: () => {
     const ttsEnv = process.env.BELLDANDY_TTS_ENABLED;
     if (ttsEnv === "false") return false;
@@ -2092,6 +2116,7 @@ agentRegistry = agentProvider === "openai"
         compactionRuntimeTracker,
         conversationStore: conversationStore, // 扩展 A：传入 conversationStore 支持跨 run 持久化
         usagePricing,
+        cacheSupport: providerCapability.cache,
       });
     }
     return new OpenAIChatAgent({
@@ -2197,6 +2222,7 @@ if (compactionEnabled) {
     explicitModel: compactionModel,
     primaryModelConfig,
     modelFallbacks,
+    deepSeekRoutePolicyEnabled,
   });
   if (compactionModelRoute?.enabled) {
     const summarizerBaseUrl = compactionModelRoute.baseUrl;
@@ -2209,72 +2235,309 @@ if (compactionEnabled) {
       primary: { id: "compaction", baseUrl: summarizerBaseUrl, apiKey: summarizerApiKey, model: summarizerModel },
       logger,
     });
-    compactionSummarizer = async (prompt: string, context?: SummarizerContext): Promise<string> => {
-      const { response } = await summarizerClient.fetchWithFailover({
-        timeoutMs: 30_000,
-        onSummary: (summary) => {
-          runtimeResilienceTracker.record({
-            source: "compaction",
-            phase: "compaction",
-            summary,
-          });
-        },
-        buildRequest: (profile) => {
-          const trimmedBase = profile.baseUrl.replace(/\/+$/, "");
-          const base = /\/v\d+$/.test(trimmedBase) ? trimmedBase : `${trimmedBase}/v1`;
-          const isResponsesWireApi = summarizerWireApi === "responses";
-          const url = isResponsesWireApi ? `${base}/responses` : `${base}/chat/completions`;
-          const useCacheAlignedSummary = providerCapability.cache === "supported" && Boolean(context);
-          const cacheAlignedInstruction = context
-            ? buildCacheAlignedSummaryInstruction(context)
-            : prompt;
-          const body = isResponsesWireApi
-            ? {
-              model: profile.model,
-              input: useCacheAlignedSummary
-                ? buildCacheAlignedResponsesInput(context!, cacheAlignedInstruction)
-                : prompt,
-              max_output_tokens: 1024,
-            }
-            : {
-              model: profile.model,
-              messages: useCacheAlignedSummary
-                ? buildCacheAlignedChatMessages(context!, cacheAlignedInstruction)
-                : [{ role: "user", content: prompt }],
-              max_tokens: 1024,
-              temperature: 0.3,
-            };
+    compactionSummarizer = async (prompt: string, context?: SummarizerContext): Promise<{
+      summary: string;
+      observability?: {
+        mode?: "rolling" | "archival";
+        cacheAlignedRequested?: boolean;
+        cacheSupport?: "supported" | "unsupported" | "unknown";
+        cacheHitTokens?: number;
+        cacheMissTokens?: number;
+        cacheSavingsUsd?: number;
+        usedWireApi?: "chat_completions" | "responses";
+        compareAvailable?: boolean;
+        comparison?: {
+          mode?: "cache_aligned_vs_plain";
+          plainRequestMessageCount?: number;
+          cacheAlignedRequestMessageCount?: number;
+          plainPromptCharsEstimate?: number;
+          cacheAlignedReplayCharsEstimate?: number;
+          cacheAlignedInstructionChars?: number;
+          replayOverheadChars?: number;
+        };
+        strategy?: {
+          kind?: "cache_aligned" | "plain";
+          providerCacheMode?: "supported" | "unsupported" | "unknown";
+          selectionReason?: string;
+          degradePath?: string;
+          providerModelNotes?: string;
+          fallbackPolicy?: string;
+          fallbackTriggered?: boolean;
+          fallbackSummary?: string;
+        };
+        warmupCoordination?: {
+          eligible?: boolean;
+          status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+          recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+          reason?: string;
+        };
+        cacheFamilyAffinity?: {
+          status?: "unknown" | "aligned" | "mismatch";
+          familyKey?: string;
+          previousFamilyKey?: string;
+          reason?: string;
+        };
+        fallbackStage?: "request" | "response_parse" | "compaction_budget" | "prompt_too_long" | "model_failure";
+        failureReason?: string;
+      };
+    }> => {
+      const useCacheAlignedSummary = providerCapability.cache === "supported" && Boolean(context);
+      const plainRequestMessageCount = context ? 1 : 1;
+      const cacheAlignedInstruction = context
+        ? buildCacheAlignedSummaryInstruction(context)
+        : prompt;
+      const cacheAlignedChatMessages = context
+        ? buildCacheAlignedChatMessages(context, cacheAlignedInstruction)
+        : [{ role: "user", content: prompt }];
+      const plainPromptCharsEstimate = prompt.length;
+      const cacheAlignedReplayCharsEstimate = context
+        ? cacheAlignedChatMessages
+          .slice(0, -1)
+          .reduce((sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0), 0)
+        : 0;
+      const cacheAlignedInstructionChars = context ? cacheAlignedInstruction.length : 0;
+      const replayOverheadChars = Math.max(0, (cacheAlignedReplayCharsEstimate + cacheAlignedInstructionChars) - plainPromptCharsEstimate);
+      const strategyKind = useCacheAlignedSummary ? "cache_aligned" : "plain";
+      const strategySelectionReason = useCacheAlignedSummary
+        ? "provider_cache_supported_with_context"
+        : context
+          ? `provider_cache_${providerCapability.cache}`
+          : "missing_cache_alignment_context";
+      const strategyDegradePath = useCacheAlignedSummary
+        ? "cache_aligned_then_compaction_fallback"
+        : providerCapability.cache === "supported"
+          ? "plain_without_context_then_compaction_fallback"
+          : providerCapability.cache === "unsupported"
+            ? "provider_plain_only_then_compaction_fallback"
+            : "unknown_provider_mode_then_compaction_fallback";
+      const familyKeySource = [
+        summarizerModel,
+        context?.mode ?? "unknown",
+        useCacheAlignedSummary ? "cache_aligned" : "plain",
+        context?.existingSummary?.trim() ? "existing_summary" : "",
+        context?.rollingSummary?.trim() ? "rolling_summary" : "",
+        context?.existingArchivalSummary?.trim() ? "existing_archival" : "",
+        Array.isArray(context?.newMessages) ? `new_messages:${context?.newMessages.length ?? 0}` : "",
+      ].filter(Boolean).join("|");
+      const cacheFamilyKey = providerCapability.cache === "supported" && familyKeySource
+        ? crypto.createHash("sha256").update(familyKeySource).digest("hex").slice(0, 16)
+        : undefined;
+      const warmupCoordination = (() => {
+        if (providerCapability.cache !== "supported") {
           return {
-            url,
-            init: {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${profile.apiKey}`,
+            eligible: false,
+            status: "unsupported" as const,
+            recommendation: "proceed" as const,
+            reason: "provider_cache_not_supported",
+          };
+        }
+        if (!context) {
+          return {
+            eligible: true,
+            status: "cold" as const,
+            recommendation: "proceed_with_caution" as const,
+            reason: "missing_cache_alignment_context",
+          };
+        }
+        if (!useCacheAlignedSummary) {
+          return {
+            eligible: true,
+            status: "cold" as const,
+            recommendation: "proceed_with_caution" as const,
+            reason: "cache_alignment_not_selected",
+          };
+        }
+        return {
+          eligible: true,
+          status: "warm_candidate" as const,
+          recommendation: "proceed" as const,
+          reason: "cache_aligned_summary_selected",
+        };
+      })();
+      const cacheFamilyAffinity = (() => {
+        if (providerCapability.cache !== "supported") {
+          return {
+            status: "unknown" as const,
+            reason: "provider_cache_not_supported",
+          };
+        }
+        if (!cacheFamilyKey) {
+          return {
+            status: "unknown" as const,
+            reason: "cache_family_key_unavailable",
+          };
+        }
+        return {
+          status: "aligned" as const,
+          familyKey: cacheFamilyKey,
+          reason: useCacheAlignedSummary
+            ? "cache_aligned_summary_family_selected"
+            : "plain_summary_family_selected",
+        };
+      })();
+      const providerModelNotes = [
+        `cache=${providerCapability.cache}`,
+        `json=${providerCapability.jsonReliability}`,
+        `route=${compactionModelRoute.routeRef}`,
+      ].join(", ");
+      const baseObservability = {
+        mode: context?.mode,
+        cacheAlignedRequested: useCacheAlignedSummary,
+        cacheSupport: providerCapability.cache,
+        compareAvailable: Boolean(context),
+        usedWireApi: summarizerWireApi,
+        comparison: {
+          mode: "cache_aligned_vs_plain" as const,
+          plainRequestMessageCount,
+          cacheAlignedRequestMessageCount: cacheAlignedChatMessages.length,
+          plainPromptCharsEstimate,
+          cacheAlignedReplayCharsEstimate,
+          cacheAlignedInstructionChars,
+          replayOverheadChars,
+        },
+        strategy: {
+          kind: strategyKind as "cache_aligned" | "plain",
+          providerCacheMode: providerCapability.cache,
+          selectionReason: strategySelectionReason,
+          degradePath: strategyDegradePath,
+          providerModelNotes,
+          fallbackPolicy: "fallback_summary_on_request_or_parse_or_budget_failure",
+          fallbackTriggered: false,
+          fallbackSummary: "primary_compaction_response",
+        },
+        warmupCoordination,
+        cacheFamilyAffinity,
+      } as const;
+      try {
+        const { response } = await summarizerClient.fetchWithFailover({
+          timeoutMs: 30_000,
+          onSummary: (summary) => {
+            runtimeResilienceTracker.record({
+              source: "compaction",
+              phase: "compaction",
+              summary,
+            });
+          },
+          buildRequest: (profile) => {
+            const trimmedBase = profile.baseUrl.replace(/\/+$/, "");
+            const base = /\/v\d+$/.test(trimmedBase) ? trimmedBase : `${trimmedBase}/v1`;
+            const isResponsesWireApi = summarizerWireApi === "responses";
+            const url = isResponsesWireApi ? `${base}/responses` : `${base}/chat/completions`;
+            const body = isResponsesWireApi
+              ? {
+                model: profile.model,
+                input: useCacheAlignedSummary
+                  ? buildCacheAlignedResponsesInput(context!, cacheAlignedInstruction)
+                  : prompt,
+                max_output_tokens: 1024,
+              }
+              : {
+                model: profile.model,
+                messages: useCacheAlignedSummary
+                  ? buildCacheAlignedChatMessages(context!, cacheAlignedInstruction)
+                  : [{ role: "user", content: prompt }],
+                max_tokens: 1024,
+                temperature: 0.3,
+              };
+            return {
+              url,
+              init: {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${profile.apiKey}`,
+                },
+                body: JSON.stringify(body),
               },
-              body: JSON.stringify(body),
+            };
+          },
+        });
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "");
+          const error = new Error(`Compaction summarizer failed (HTTP ${response.status}): ${errorText.slice(0, 500)}`) as Error & {
+            compactionObservability?: Record<string, unknown>;
+          };
+          error.compactionObservability = {
+            ...baseObservability,
+            fallbackStage: "request",
+            failureReason: error.message,
+            strategy: {
+              ...baseObservability.strategy,
+              fallbackTriggered: true,
+              fallbackSummary: "request_failed",
             },
           };
-        },
-      });
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(`Compaction summarizer failed (HTTP ${response.status}): ${errorText.slice(0, 500)}`);
-      }
-      const json = await response.json() as any;
-      if (summarizerWireApi === "responses") {
-        if (typeof json.output_text === "string") return json.output_text;
-        const output = Array.isArray(json.output) ? json.output : [];
-        const parts: string[] = [];
-        for (const item of output) {
-          if (item?.type !== "message" || !Array.isArray(item.content)) continue;
-          for (const part of item.content) {
-            if (typeof part?.text === "string") parts.push(part.text);
-          }
+          throw error;
         }
-        return parts.join("");
+        const json = await response.json() as any;
+        const rawUsage = json?.usage && typeof json.usage === "object" ? json.usage : undefined;
+        const cacheHitTokens = typeof rawUsage?.prompt_cache_hit_tokens === "number"
+          ? rawUsage.prompt_cache_hit_tokens
+          : undefined;
+        const cacheMissTokens = typeof rawUsage?.prompt_cache_miss_tokens === "number"
+          ? rawUsage.prompt_cache_miss_tokens
+          : undefined;
+        const cacheCost = rawUsage
+          ? calculateUsageCostUsd({
+            input_tokens: 0,
+            output_tokens: 0,
+            prompt_cache_hit_tokens: cacheHitTokens ?? 0,
+            prompt_cache_miss_tokens: cacheMissTokens ?? 0,
+          }, providerCapability.pricing)
+          : undefined;
+        const successObservability = {
+          ...baseObservability,
+          ...(typeof cacheHitTokens === "number" ? { cacheHitTokens } : {}),
+          ...(typeof cacheMissTokens === "number" ? { cacheMissTokens } : {}),
+          ...(typeof cacheCost?.cacheSavingsUsd === "number" ? { cacheSavingsUsd: cacheCost.cacheSavingsUsd } : {}),
+          strategy: {
+            ...baseObservability.strategy,
+            fallbackTriggered: false,
+            fallbackSummary: "primary_compaction_response",
+          },
+        } as const;
+        if (summarizerWireApi === "responses") {
+          if (typeof json.output_text === "string") {
+            return {
+              summary: json.output_text,
+              observability: successObservability,
+            };
+          }
+          const output = Array.isArray(json.output) ? json.output : [];
+          const parts: string[] = [];
+          for (const item of output) {
+            if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+            for (const part of item.content) {
+              if (typeof part?.text === "string") parts.push(part.text);
+            }
+          }
+          return {
+            summary: parts.join(""),
+            observability: successObservability,
+          };
+        }
+        return {
+          summary: extractCompactionChatCompletionText(json.choices?.[0]?.message?.content),
+          observability: successObservability,
+        };
+      } catch (error) {
+        if (error && typeof error === "object" && "compactionObservability" in error) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        const wrappedError = new Error(message) as Error & { compactionObservability?: Record<string, unknown> };
+        wrappedError.compactionObservability = {
+          ...baseObservability,
+          fallbackStage: "response_parse",
+          failureReason: message,
+          strategy: {
+            ...baseObservability.strategy,
+            fallbackTriggered: true,
+            fallbackSummary: "response_parse_failed",
+          },
+        };
+        throw wrappedError;
       }
-      return json.choices?.[0]?.message?.content ?? "";
     };
     logger.info("compaction", `Summarizer initialized (model: ${summarizerModel}, baseUrl: ${summarizerBaseUrl}, routeRef: ${compactionModelRoute.routeRef}, source: ${compactionModelRoute.source})`);
   } else if (compactionModelRoute) {
@@ -3461,6 +3724,29 @@ const {
   recordChannelSecurityApprovalRequest,
 } = channelRuntime;
 
+const startupConnectivityObservability: {
+  gatewayReadyAtMs?: number;
+  firstStaticWebRequestAtMs?: number;
+  firstStaticWebRequestPath?: string | null;
+  firstStaticWebRequestMethod?: string | null;
+  firstStaticWebRequestUserAgent?: string | null;
+  firstStaticWebRequestReferer?: string | null;
+  firstBootstrapAssetRequestAtMs?: number;
+  firstBootstrapAssetRequestPath?: string | null;
+  firstBootstrapAssetRequestMethod?: string | null;
+  firstBootstrapAssetRequestUserAgent?: string | null;
+  firstBootstrapAssetRequestReferer?: string | null;
+  firstWebSocketConnectionAtMs?: number;
+  firstWebSocketConnectionRemoteAddress?: string | null;
+  firstAuthenticatedWebSocketAtMs?: number;
+  firstAuthenticatedWebSocketClientId?: string;
+  invalidTokenCloseCount: number;
+  firstInvalidTokenCloseAtMs?: number;
+  firstInvalidTokenCloseReason?: string | null;
+} = {
+  invalidTokenCloseCount: 0,
+};
+
 const serverOptions = buildGatewayServerOptions({
   port,
   host,
@@ -3559,6 +3845,74 @@ const serverOptions = buildGatewayServerOptions({
   webhookConfig,
   webhookIdempotency,
 });
+serverOptions.startupObservability = {
+  onFirstStaticWebRequest: ({ timestampMs, method, path, userAgent, referer }) => {
+    if (startupConnectivityObservability.firstStaticWebRequestAtMs) return;
+    startupConnectivityObservability.firstStaticWebRequestAtMs = timestampMs;
+    startupConnectivityObservability.firstStaticWebRequestMethod = method;
+    startupConnectivityObservability.firstStaticWebRequestPath = path;
+    startupConnectivityObservability.firstStaticWebRequestUserAgent = userAgent ?? null;
+    startupConnectivityObservability.firstStaticWebRequestReferer = referer ?? null;
+    const readyAtMs = startupConnectivityObservability.gatewayReadyAtMs ?? timestampMs;
+    logger.info(
+      "launcher",
+      `Startup observability: first static web request after ${timestampMs - readyAtMs}ms`
+        + ` (method=${method}, path=${path})`
+        + (userAgent ? ` (ua=${userAgent})` : "")
+        + (referer ? ` (referer=${referer})` : ""),
+    );
+  },
+  onFirstBootstrapAssetRequest: ({ timestampMs, method, path, userAgent, referer }) => {
+    if (startupConnectivityObservability.firstBootstrapAssetRequestAtMs) return;
+    startupConnectivityObservability.firstBootstrapAssetRequestAtMs = timestampMs;
+    startupConnectivityObservability.firstBootstrapAssetRequestMethod = method;
+    startupConnectivityObservability.firstBootstrapAssetRequestPath = path;
+    startupConnectivityObservability.firstBootstrapAssetRequestUserAgent = userAgent ?? null;
+    startupConnectivityObservability.firstBootstrapAssetRequestReferer = referer ?? null;
+    const readyAtMs = startupConnectivityObservability.gatewayReadyAtMs ?? timestampMs;
+    logger.info(
+      "launcher",
+      `Startup observability: first bootstrap asset request after ${timestampMs - readyAtMs}ms`
+        + ` (method=${method}, path=${path})`
+        + (userAgent ? ` (ua=${userAgent})` : "")
+        + (referer ? ` (referer=${referer})` : ""),
+    );
+  },
+  onFirstWebSocketConnection: ({ timestampMs, remoteAddress }) => {
+    if (startupConnectivityObservability.firstWebSocketConnectionAtMs) return;
+    startupConnectivityObservability.firstWebSocketConnectionAtMs = timestampMs;
+    startupConnectivityObservability.firstWebSocketConnectionRemoteAddress = remoteAddress ?? null;
+    const readyAtMs = startupConnectivityObservability.gatewayReadyAtMs ?? timestampMs;
+    logger.info(
+      "launcher",
+      `Startup observability: first websocket connection after ${timestampMs - readyAtMs}ms`
+        + (remoteAddress ? ` (remote=${remoteAddress})` : ""),
+    );
+  },
+  onFirstAuthenticatedWebSocket: ({ timestampMs, clientId }) => {
+    if (startupConnectivityObservability.firstAuthenticatedWebSocketAtMs) return;
+    startupConnectivityObservability.firstAuthenticatedWebSocketAtMs = timestampMs;
+    startupConnectivityObservability.firstAuthenticatedWebSocketClientId = clientId;
+    const readyAtMs = startupConnectivityObservability.gatewayReadyAtMs ?? timestampMs;
+    logger.info(
+      "launcher",
+      `Startup observability: first authenticated websocket after ${timestampMs - readyAtMs}ms (clientId=${clientId})`,
+    );
+  },
+  onInvalidTokenClose: ({ timestampMs, reason }) => {
+    startupConnectivityObservability.invalidTokenCloseCount += 1;
+    if (!startupConnectivityObservability.firstInvalidTokenCloseAtMs) {
+      startupConnectivityObservability.firstInvalidTokenCloseAtMs = timestampMs;
+      startupConnectivityObservability.firstInvalidTokenCloseReason = reason ?? null;
+      const readyAtMs = startupConnectivityObservability.gatewayReadyAtMs ?? timestampMs;
+      logger.warn(
+        "launcher",
+        `Startup observability: invalid-token websocket close after ${timestampMs - readyAtMs}ms`
+          + (reason ? ` (reason=${reason})` : ""),
+      );
+    }
+  },
+};
 const server = await startGatewayServer(serverOptions);
 requestMemoryEvolutionExtraction = server.requestDurableExtractionFromDigest;
 const dreamAutomationRuntime = new DreamAutomationRuntime({
@@ -3627,6 +3981,7 @@ logger.info("gateway", `Belldandy Gateway running: http://${server.host}:${serve
 logger.info("gateway", `Belldandy Version: v${BELLDANDY_VERSION}`);
 logger.info("gateway", `WebChat: http://${server.host}:${server.port}/`);
 logger.info("gateway", `WS: ws://${server.host}:${server.port}`);
+startupConnectivityObservability.gatewayReadyAtMs = Date.now();
 void checkForUpdates({
   currentVersion: BELLDANDY_VERSION,
   logger,
@@ -3665,13 +4020,16 @@ if (autoOpenBrowser) {
   });
 
   logger.info("launcher", `Opening browser at ${targetUrl}...`);
+  const autoOpenStartedAtMs = Date.now();
   // Dynamic import to avoid issues if 'open' is optional or ESM
   try {
     const { default: open } = await import("open");
     await open(targetUrl);
+    logger.info("launcher", `Startup observability: browser open returned after ${Date.now() - autoOpenStartedAtMs}ms`);
   } catch (err) {
     logger.error("launcher", "Failed to auto-open browser", err);
     logger.info("launcher", `Please open manually: ${targetUrl}`);
+    logger.warn("launcher", `Startup observability: browser open failed after ${Date.now() - autoOpenStartedAtMs}ms`);
   }
 }
 

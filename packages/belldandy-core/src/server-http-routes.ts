@@ -47,6 +47,7 @@ export type RegisterGatewayHttpRoutesContext = {
     enabled: boolean;
     token?: string;
   };
+  startupObservability?: GatewayServerOptions["startupObservability"];
   auth: GatewayServerOptions["auth"];
   agentFactory?: () => BelldandyAgent;
   agentRegistry?: AgentRegistry;
@@ -117,6 +118,33 @@ export type RegisterGatewayHttpRoutesContext = {
 };
 
 export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesContext): Promise<void> {
+  const startupStaticPaths = new Set(["/", "/index.html", "/app.js", "/config.js"]);
+  let firstStaticWebRequestObserved = false;
+  let firstBootstrapAssetRequestObserved = false;
+  ctx.app.use((req, _res, next) => {
+    if (!firstStaticWebRequestObserved && req.method === "GET" && startupStaticPaths.has(req.path)) {
+      firstStaticWebRequestObserved = true;
+      ctx.startupObservability?.onFirstStaticWebRequest?.({
+        timestampMs: Date.now(),
+        method: req.method,
+        path: req.path,
+        userAgent: req.get("user-agent") ?? null,
+        referer: req.get("referer") ?? null,
+      });
+    }
+    if (!firstBootstrapAssetRequestObserved && req.method === "GET" && req.path === "/app.js") {
+      firstBootstrapAssetRequestObserved = true;
+      ctx.startupObservability?.onFirstBootstrapAssetRequest?.({
+        timestampMs: Date.now(),
+        method: req.method,
+        path: req.path,
+        userAgent: req.get("user-agent") ?? null,
+        referer: req.get("referer") ?? null,
+      });
+    }
+    next();
+  });
+
   if (ctx.generatedDir) {
     try {
       await fsp.mkdir(ctx.generatedDir, { recursive: true });

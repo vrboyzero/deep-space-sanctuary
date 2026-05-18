@@ -382,6 +382,10 @@ describe("before_agent_start system prompt overrides", () => {
         text: "[Attachment: notes.md]",
       }),
     ]));
+    expect(snapshots[0].inputMeta).toMatchObject({
+      runId: "run-runtime-deltas",
+    });
+    expect((snapshots[0].inputMeta as any)?.promptDeltas).toBeUndefined();
     expect(snapshots[0].providerNativeSystemBlocks).toEqual([
       expect.objectContaining({
         blockType: "static-capability",
@@ -1164,6 +1168,111 @@ describe("compaction observability hooks", () => {
     expect(recent[0]?.content).toContain("export const answer = 42");
   });
 
+  it("stores token-aware projected tool args in recent tool results without changing execution args", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-args-1",
+              type: "function",
+              function: {
+                name: "run_command",
+                arguments: JSON.stringify({
+                  command: "pnpm test --filter extremely-long-package-name --reporter verbose ".repeat(8),
+                  cwd: "E:/project/star-sanctuary",
+                  files: Array.from({ length: 10 }, (_, index) => `packages/module-${index}/src/file-${index}.ts`),
+                  options: {
+                    mode: "full",
+                    note: "N".repeat(300),
+                    nested: {
+                      one: {
+                        two: {
+                          three: "deep-value",
+                        },
+                      },
+                    },
+                  },
+                }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+
+    const execute = vi.fn(async () => ({
+      id: "call-args-1",
+      name: "run_command",
+      success: true,
+      output: "ok",
+      durationMs: 0,
+    }));
+    const conversationStore = new ConversationStore();
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "run_command",
+            description: "run command",
+            parameters: {
+              type: "object",
+              properties: {
+                command: { type: "string" },
+                cwd: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-recent-tool-args-projection",
+      text: "run command",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]?.arguments).toMatchObject({
+      cwd: "E:/project/star-sanctuary",
+      options: {
+        mode: "full",
+      },
+    });
+
+    const recent = conversationStore.getRecentToolResults("conv-recent-tool-args-projection", {
+      toolCallId: "call-args-1",
+    });
+    expect(recent).toHaveLength(1);
+    expect(recent[0]?.args).toMatchObject({
+      cwd: "E:/project/star-sanctuary",
+    });
+    expect(String((recent[0]?.args as any)?.command ?? "")).toContain("...");
+    expect((recent[0]?.args as any)?.files).toEqual(expect.arrayContaining([
+      "packages/module-0/src/file-0.ts",
+      "packages/module-5/src/file-5.ts",
+      "[+1 more items]",
+    ]));
+    expect((recent[0]?.args as any)?.options?.note).toContain("...");
+    expect((recent[0]?.args as any)?.options?.nested?.one).toBe("[object keys=1]");
+  });
+
   it("skips loop compaction when the shared circuit breaker is open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => createJsonResponse({
       choices: [{
@@ -1536,7 +1645,120 @@ describe("ToolEnabledAgent hook timeouts", () => {
     );
   });
 
-  it("suppresses consecutive duplicate tool calls when repair pipeline is enabled", async () => {
+  it("suppresses consecutive duplicate tool calls when there is no previous successful result to reuse", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-1",
+              type: "function",
+              function: {
+                name: "echo",
+                arguments: "{\"value\":\"same\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-2",
+              type: "function",
+              function: {
+                name: "echo",
+                arguments: "{\"value\":\"same\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "recovered",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+    const execute = vi.fn(async () => ({
+      id: "call-1",
+      name: "echo",
+      success: false,
+      output: "",
+      error: "tool failed",
+      failureKind: "business_logic_error" as const,
+      durationMs: 0,
+    }));
+    const loggerWarn = vi.fn();
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolCallRepairLevel: "dedupe",
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "echo",
+            description: "echo",
+            parameters: {
+              type: "object",
+              properties: {
+                value: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+      logger: {
+        warn: loggerWarn,
+        error: vi.fn(),
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-tool-call-dedupe",
+      text: "use tool",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual({
+      type: "tool_result",
+      id: "call-2",
+      name: "echo",
+      success: false,
+      output: "",
+      error: expect.stringContaining("连续重复的相同调用"),
+      failureKind: "business_logic_error",
+      metadata: expect.objectContaining({
+        repairAction: "duplicate_tool_call_suppressed",
+        duplicateCount: 1,
+      }),
+    });
+    expect(items).toContainEqual({ type: "final", text: "recovered" });
+    expect(loggerWarn).toHaveBeenCalledWith(
+      "agent",
+      "[tool-call-repair] suppressed duplicate tool call",
+      expect.objectContaining({
+        toolName: "echo",
+        toolCallId: "call-2",
+        duplicateCount: 1,
+        conversationId: "conv-tool-call-dedupe",
+        agentId: "tool-agent",
+      }),
+    );
+  });
+
+  it("reuses the previous successful tool result for consecutive duplicate tool calls", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(createJsonResponse({
         choices: [{
@@ -1614,7 +1836,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
     });
 
     const items = await collectItems(agent.run({
-      conversationId: "conv-tool-call-dedupe",
+      conversationId: "conv-tool-call-reuse",
       text: "use tool",
     }));
 
@@ -1624,24 +1846,23 @@ describe("ToolEnabledAgent hook timeouts", () => {
       type: "tool_result",
       id: "call-2",
       name: "echo",
-      success: false,
-      output: "",
-      error: expect.stringContaining("连续重复的相同调用"),
-      failureKind: "business_logic_error",
+      success: true,
+      output: "tool-output",
       metadata: expect.objectContaining({
-        repairAction: "duplicate_tool_call_suppressed",
-        duplicateCount: 1,
+        repairAction: "duplicate_tool_call_reused_recent_result",
+        previousToolCallId: "call-1",
       }),
     });
     expect(items).toContainEqual({ type: "final", text: "recovered" });
     expect(loggerWarn).toHaveBeenCalledWith(
       "agent",
-      "[tool-call-repair] suppressed duplicate tool call",
+      "[tool-call-repair] reused recent successful duplicate tool result",
       expect.objectContaining({
         toolName: "echo",
         toolCallId: "call-2",
+        previousToolCallId: "call-1",
         duplicateCount: 1,
-        conversationId: "conv-tool-call-dedupe",
+        conversationId: "conv-tool-call-reuse",
         agentId: "tool-agent",
       }),
     );
@@ -2130,15 +2351,14 @@ describe("ToolEnabledAgent hook timeouts", () => {
         deltaType: "tool-failure-recovery",
         metadata: expect.objectContaining({
           delegationResult: expect.objectContaining({
-            delegationResults: [
-              expect.objectContaining({
-                acceptanceGate: expect.objectContaining({
-                  accepted: false,
-                  deliverableFormat: "verification_report",
-                  rejectionConfidence: "high",
-                }),
+            resultCount: 1,
+            primaryResult: expect.objectContaining({
+              acceptanceGate: expect.objectContaining({
+                accepted: false,
+                deliverableFormat: "verification_report",
+                rejectionConfidence: "high",
               }),
-            ],
+            }),
           }),
         }),
       }),
@@ -2147,16 +2367,16 @@ describe("ToolEnabledAgent hook timeouts", () => {
         metadata: expect.objectContaining({
           reviewMode: "delegation-result",
           delegationResult: expect.objectContaining({
-            delegationResults: [
-              expect.objectContaining({
-                acceptanceGate: expect.objectContaining({
-                  managerActionHint: "reject this handoff and re-delegate with explicit section requirements or a clearer deliverable contract.",
-                }),
+            resultCount: 1,
+            primaryResult: expect.objectContaining({
+              acceptanceGate: expect.objectContaining({
+                managerActionHint: "reject this handoff and re-delegate with explicit section requirements or a clearer deliverable contract.",
               }),
-            ],
+            }),
             followUpStrategy: expect.objectContaining({
               mode: "single",
               recommendedRuntimeAction: "retry_delegation",
+              itemCount: 1,
               retryLabels: ["Agent verifier"],
               highPriorityLabels: ["Agent verifier"],
               verifierHandoffLabels: ["Agent verifier"],
@@ -2689,6 +2909,56 @@ describe("ToolEnabledAgent hook timeouts", () => {
       type: "status",
       status: "stopped",
     });
+  });
+
+  it("surfaces prompt cache observability for openai-compatible usage", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "cache observed",
+          },
+        }],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 25,
+          prompt_cache_hit_tokens: 80,
+          prompt_cache_miss_tokens: 20,
+        },
+      }));
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "test-key",
+      model: "deepseek-v4-flash",
+      toolExecutor: createToolExecutor(),
+      cacheSupport: "supported",
+      usagePricing: {
+        inputUsdPer1M: 2,
+        outputUsdPer1M: 8,
+        cacheReadUsdPer1M: 0.5,
+      },
+      systemPromptMetadata: {
+        systemPromptFingerprint: "fp-deepseek-1",
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-cache-observability",
+      text: "hello",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 100,
+      outputTokens: 25,
+      cacheHitTokens: 80,
+      cacheMissTokens: 20,
+      cacheSupport: "supported",
+      systemPromptFingerprint: "fp-deepseek-1",
+      cacheSavingsUsd: 0.00012,
+    }));
   });
 });
 

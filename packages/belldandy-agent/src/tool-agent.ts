@@ -47,6 +47,7 @@ import {
 } from "./runtime-prompt-deltas.js";
 
 type ApiProtocol = "openai" | "anthropic";
+type CacheSupport = "supported" | "unsupported" | "unknown";
 type ToolCallRepairLevel = "off" | "dedupe" | "full";
 const MIN_MULTIMODAL_REQUEST_TIMEOUT_MS = 300_000;
 const LARGE_TEXT_ATTACHMENT_TRIGGER_CHARS = 12_000;
@@ -134,6 +135,8 @@ export type ToolEnabledAgentOptions = {
   conversationStore?: ConversationStore;
   /** 模型 usage 价格表（用于估算 USD 成本） */
   usagePricing?: ModelUsagePricing;
+  /** provider cache capability（用于观测） */
+  cacheSupport?: CacheSupport;
   /** 记录本次 run 实际发给模型的 prompt snapshot */
   onPromptSnapshot?: (snapshot: AgentPromptSnapshot) => void;
   /** 预置到 prompt snapshot 的 system prompt 观测元数据 */
@@ -390,6 +393,72 @@ function inferToolDigestTarget(args: JsonObject): string | undefined {
   return undefined;
 }
 
+const RECENT_TOOL_RESULT_ARG_STRING_LIMIT = 160;
+const RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT = 6;
+const RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT = 12;
+const RECENT_TOOL_RESULT_ARG_DEPTH_LIMIT = 3;
+
+function compactRecentToolArgString(value: string, limit: number = RECENT_TOOL_RESULT_ARG_STRING_LIMIT): string {
+  const normalized = value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return normalized;
+  }
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, limit - 3))}...`;
+}
+
+function projectRecentToolResultArgsValue(value: unknown, depth: number): unknown {
+  if (typeof value === "string") {
+    return compactRecentToolArgString(value);
+  }
+  if (
+    typeof value === "number"
+    || typeof value === "boolean"
+    || value === null
+    || typeof value === "undefined"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const projectedItems = value
+      .slice(0, RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT)
+      .map((item) => projectRecentToolResultArgsValue(item, depth + 1));
+    if (value.length > RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT) {
+      projectedItems.push(`[+${value.length - RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT} more items]`);
+    }
+    return projectedItems;
+  }
+  if (!value || typeof value !== "object") {
+    return compactRecentToolArgString(String(value));
+  }
+  if (depth >= RECENT_TOOL_RESULT_ARG_DEPTH_LIMIT) {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return `[object keys=${keys.length}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const projected: JsonObject = {};
+  for (const [key, entryValue] of entries.slice(0, RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT)) {
+    projected[key] = projectRecentToolResultArgsValue(entryValue, depth + 1) as JsonObject[keyof JsonObject];
+  }
+  if (entries.length > RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT) {
+    projected.__truncatedKeys = entries.length - RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT;
+  }
+  return projected;
+}
+
+function projectRecentToolResultArgs(args: JsonObject): JsonObject {
+  const projected = projectRecentToolResultArgsValue(args, 0);
+  return projected && typeof projected === "object" && !Array.isArray(projected)
+    ? projected as JsonObject
+    : {};
+}
+
 function buildToolDigestRecord(input: {
   toolName: string;
   args: JsonObject;
@@ -557,9 +626,16 @@ function buildRecentToolResultRecord(input: {
     error: input.error,
     failureKind: input.failureKind,
     target: digest.target,
-    args: input.args,
+    args: projectRecentToolResultArgs(input.args),
     isSynthetic: input.isSynthetic,
   };
+}
+
+function cloneJsonObject<T extends JsonObject | undefined>(value: T): T {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function recordToolResultArtifacts(input: {
@@ -593,6 +669,28 @@ function recordToolResultArtifacts(input: {
     toolCallId: input.toolCallId,
     isSynthetic: input.isSynthetic,
   }));
+}
+
+function buildRecoveredDuplicateToolResult(input: {
+  duplicateToolCallId: string;
+  toolName: string;
+  previousToolCallId?: string;
+  output: string;
+  args: JsonObject;
+}) {
+  return {
+    id: input.duplicateToolCallId,
+    name: input.toolName,
+    success: true,
+    output: input.output,
+    metadata: {
+      repairAction: "duplicate_tool_call_reused_recent_result",
+      previousToolCallId: input.previousToolCallId,
+      recoveredFrom: input.previousToolCallId || "recent_success",
+      reusedSummary: compactToolDigestText(input.output, 220),
+      reusedArgs: cloneJsonObject(input.args),
+    } as JsonObject,
+  };
 }
 
 export class ToolEnabledAgent implements BelldandyAgent {
@@ -928,15 +1026,27 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let totalOutputTokens = 0;
     let totalCacheCreation = 0;
     let totalCacheRead = 0;
+    let totalCacheHit = 0;
+    let totalCacheMiss = 0;
     let totalInputCostUsd = 0;
     let totalOutputCostUsd = 0;
     let totalCacheCreationCostUsd = 0;
     let totalCacheReadCostUsd = 0;
+    let totalCacheSavingsUsd = 0;
     let modelCallCount = 0;
     let toolLoopBudgetWarningIssued = false;
     let lastToolCallFingerprint: string | undefined;
     let lastToolCallName: string | undefined;
     let consecutiveDuplicateToolCalls = 0;
+    let lastSuccessfulToolResult:
+      | {
+        fingerprint: string;
+        toolName: string;
+        toolCallId?: string;
+        output: string;
+        args: JsonObject;
+      }
+      | undefined;
 
     // 任务级 token 计数器
     const tokenCounter = new TokenCounterService();
@@ -957,11 +1067,29 @@ export class ToolEnabledAgent implements BelldandyAgent {
       outputTokens: totalOutputTokens,
       cacheCreationTokens: totalCacheCreation,
       cacheReadTokens: totalCacheRead,
+      ...(totalCacheHit > 0 ? { cacheHitTokens: totalCacheHit } : {}),
+      ...(totalCacheMiss > 0 ? { cacheMissTokens: totalCacheMiss } : {}),
       modelCalls: modelCallCount,
+      ...(this.opts.cacheSupport ? { cacheSupport: this.opts.cacheSupport } : {}),
+      ...(typeof this.opts.systemPromptMetadata?.systemPromptFingerprint === "string"
+        ? { systemPromptFingerprint: this.opts.systemPromptMetadata.systemPromptFingerprint }
+        : {}),
+      ...(typeof this.opts.systemPromptMetadata?.structureSignature === "string"
+        ? { structureSignature: this.opts.systemPromptMetadata.structureSignature }
+        : {}),
+      ...(this.opts.systemPromptMetadata?.warmupCoordination
+        && typeof this.opts.systemPromptMetadata.warmupCoordination === "object"
+        ? { warmupCoordination: this.opts.systemPromptMetadata.warmupCoordination }
+        : {}),
+      ...(this.opts.systemPromptMetadata?.cacheFamilyAffinity
+        && typeof this.opts.systemPromptMetadata.cacheFamilyAffinity === "object"
+        ? { cacheFamilyAffinity: this.opts.systemPromptMetadata.cacheFamilyAffinity }
+        : {}),
       ...(totalInputCostUsd > 0 ? { inputCostUsd: totalInputCostUsd } : {}),
       ...(totalOutputCostUsd > 0 ? { outputCostUsd: totalOutputCostUsd } : {}),
       ...(totalCacheReadCostUsd > 0 ? { cacheReadCostUsd: totalCacheReadCostUsd } : {}),
       ...(totalCacheCreationCostUsd > 0 ? { cacheCreationCostUsd: totalCacheCreationCostUsd } : {}),
+      ...(totalCacheSavingsUsd > 0 ? { cacheSavingsUsd: totalCacheSavingsUsd } : {}),
       ...(totalInputCostUsd > 0 || totalOutputCostUsd > 0 || totalCacheReadCostUsd > 0 || totalCacheCreationCostUsd > 0
         ? { totalCostUsd: totalInputCostUsd + totalOutputCostUsd + totalCacheReadCostUsd + totalCacheCreationCostUsd }
         : {}),
@@ -1168,11 +1296,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
           totalOutputTokens += u.output_tokens;
           totalCacheCreation += u.cache_creation_input_tokens ?? 0;
           totalCacheRead += u.cache_read_input_tokens ?? 0;
+          totalCacheHit += u.prompt_cache_hit_tokens ?? 0;
+          totalCacheMiss += u.prompt_cache_miss_tokens ?? 0;
           const usageCost = calculateUsageCostUsd({
             inputTokens: u.input_tokens,
             outputTokens: u.output_tokens,
             cacheReadTokens: u.cache_read_input_tokens ?? 0,
             cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+            cacheHitTokens: u.prompt_cache_hit_tokens ?? 0,
             pricing: this.opts.usagePricing,
           });
           if (usageCost) {
@@ -1180,6 +1311,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             totalOutputCostUsd += usageCost.outputUsd;
             totalCacheReadCostUsd += usageCost.cacheReadUsd;
             totalCacheCreationCostUsd += usageCost.cacheCreationUsd;
+            totalCacheSavingsUsd += usageCost.cacheSavingsUsd;
           }
           tokenCounter.notifyUsage(u.input_tokens, u.output_tokens, usageCost
             ? {
@@ -1190,6 +1322,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const parts = [`input=${u.input_tokens}`, `output=${u.output_tokens}`];
           if (u.cache_creation_input_tokens) parts.push(`cache_create=${u.cache_creation_input_tokens}`);
           if (u.cache_read_input_tokens) parts.push(`cache_read=${u.cache_read_input_tokens}`);
+          if (u.prompt_cache_hit_tokens) parts.push(`cache_hit=${u.prompt_cache_hit_tokens}`);
+          if (u.prompt_cache_miss_tokens) parts.push(`cache_miss=${u.prompt_cache_miss_tokens}`);
           if (usageCost) parts.push(`usd=${usageCost.totalUsd.toFixed(8)}`);
           logDebug(`[usage] ${parts.join(" ")}`);
         } else if (response.ok) {
@@ -1593,6 +1727,62 @@ export class ToolEnabledAgent implements BelldandyAgent {
             && requestFingerprint === lastToolCallFingerprint
           ) {
             consecutiveDuplicateToolCalls += 1;
+            if (lastSuccessfulToolResult && lastSuccessfulToolResult.fingerprint === requestFingerprint) {
+              const reusedResult = buildRecoveredDuplicateToolResult({
+                duplicateToolCallId: request.id,
+                toolName: request.name,
+                previousToolCallId: lastSuccessfulToolResult.toolCallId,
+                output: lastSuccessfulToolResult.output,
+                args: lastSuccessfulToolResult.args,
+              });
+              yield* yieldItem({
+                type: "tool_call",
+                id: request.id,
+                name: request.name,
+                arguments: request.arguments,
+              });
+              yield* yieldItem({
+                type: "tool_result",
+                ...reusedResult,
+              });
+              messages.push(buildToolTranscriptMessageForHistory({
+                toolCallId: tc.id,
+                toolName: request.name,
+                output: reusedResult.output,
+                success: true,
+                hookRunner: this.opts.hookRunner,
+                persistCtx: {
+                  agentId: resolvedAgentId,
+                  sessionKey: input.conversationId,
+                  toolName: request.name,
+                  toolCallId: tc.id,
+                },
+                isSynthetic: true,
+              }));
+              recordToolResultArtifacts({
+                conversationStore: this.opts.conversationStore,
+                conversationId: input.conversationId,
+                toolName: request.name,
+                args: request.arguments,
+                success: true,
+                output: reusedResult.output,
+                toolCallId: tc.id,
+                isSynthetic: true,
+              });
+              pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
+                result: reusedResult,
+                requestArguments: request.arguments,
+              }));
+              logWarn("[tool-call-repair] reused recent successful duplicate tool result", {
+                toolName: request.name,
+                toolCallId: request.id,
+                previousToolCallId: lastSuccessfulToolResult.toolCallId,
+                duplicateCount: consecutiveDuplicateToolCalls,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
             const duplicateError = `工具调用已被拦截：检测到连续重复的相同调用（${request.name}）。请基于上一轮工具结果继续，而不是重复调用同一工具。`;
             yield* yieldItem({
               type: "tool_call",
@@ -1771,6 +1961,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
           lastToolCallFingerprint = requestFingerprint;
           lastToolCallName = request.name;
           consecutiveDuplicateToolCalls = 0;
+          if (result.success) {
+            lastSuccessfulToolResult = {
+              fingerprint: requestFingerprint,
+              toolName: request.name,
+              toolCallId: tc.id,
+              output: result.output,
+              args: cloneJsonObject(request.arguments) ?? {},
+            };
+          }
           if (isRunStopRequested(input.abortSignal)) {
             yield* emitStopped();
             return;
@@ -2037,6 +2236,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const usage: AnthropicUsage | undefined = rawUsage ? {
           input_tokens: rawUsage.input_tokens ?? rawUsage.prompt_tokens ?? 0,
           output_tokens: rawUsage.output_tokens ?? rawUsage.completion_tokens ?? 0,
+          cache_creation_input_tokens: rawUsage.cache_creation_input_tokens ?? 0,
+          cache_read_input_tokens: rawUsage.cache_read_input_tokens ?? 0,
+          prompt_cache_hit_tokens: rawUsage.prompt_cache_hit_tokens ?? 0,
+          prompt_cache_miss_tokens: rawUsage.prompt_cache_miss_tokens ?? 0,
         } : undefined;
         logModelPhase("[model-call] response_extracted", {
           parser: "responses",
@@ -2072,6 +2275,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const usage: AnthropicUsage | undefined = rawUsage ? {
         input_tokens: rawUsage.prompt_tokens ?? rawUsage.input_tokens ?? 0,
         output_tokens: rawUsage.completion_tokens ?? rawUsage.output_tokens ?? 0,
+        cache_creation_input_tokens: rawUsage.cache_creation_input_tokens ?? 0,
+        cache_read_input_tokens: rawUsage.cache_read_input_tokens ?? 0,
+        prompt_cache_hit_tokens: rawUsage.prompt_cache_hit_tokens ?? 0,
+        prompt_cache_miss_tokens: rawUsage.prompt_cache_miss_tokens ?? 0,
       } : undefined;
       logModelPhase("[model-call] response_extracted", {
         parser: "chat_completions",
@@ -2245,10 +2452,12 @@ function mergePromptSnapshotInputMeta(
   if (!systemPromptMetadata && !runMeta) {
     return undefined;
   }
-  return {
+  const merged: Record<string, unknown> = {
     ...(systemPromptMetadata ? { ...systemPromptMetadata } : {}),
     ...(runMeta ? { ...runMeta } : {}),
   };
+  delete merged.promptDeltas;
+  return merged as JsonObject;
 }
 
 /** 估算 messages 数组的总 token 数（用于循环内压缩判断） */

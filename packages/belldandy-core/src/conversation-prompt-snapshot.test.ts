@@ -399,6 +399,7 @@ test("persistConversationPromptSnapshot keeps first system message inline when c
   }
 });
 
+
 test("loadConversationPromptSnapshotArtifact expands older schema v2 message content without contentRef", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-snapshot-v2-legacy-"));
   const conversationId = "conv-v2-legacy";

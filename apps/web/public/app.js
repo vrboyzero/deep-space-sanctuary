@@ -66,6 +66,7 @@ import { createSubtasksRuntimeFeature } from "./app/features/subtasks-runtime.js
 import { createLocaleController } from "./app/features/locale.js";
 import { initPromptController } from "./app/features/prompt.js";
 import { createPanelVisibilityFeature } from "./app/features/panel-visibility.js";
+import { updateTokenUsageObservability } from "./app/features/token-usage-observability.js";
 import { createThemeController } from "./app/features/theme.js";
 import { createVoiceFeature } from "./app/features/voice.js";
 import { GOVERNANCE_DETAIL_MODE_CHANGED_EVENT } from "./app/features/governance-detail-mode.js";
@@ -266,6 +267,7 @@ const {
   sessionDigestModalContentEl,
   sessionDigestModalCloseBtn,
   tokenUsageEl,
+  tokenUsageObservabilityEl,
   toggleContentPanelBtn,
   toggleControlPanelBtn,
   toggleAgentPanelBtn,
@@ -408,6 +410,21 @@ const webchatDebugEnabled = (() => {
   const flag = new URLSearchParams(window.location.search).get("debug");
   return flag === "1" || flag === "true";
 })();
+
+const webchatStartup = window.__SS_WEBCHAT_STARTUP__ || null;
+
+function markWebchatStartup(stage, extra = {}) {
+  const markFn = typeof webchatStartup?.mark === "function" ? webchatStartup.mark : null;
+  if (markFn) {
+    return markFn(stage, extra);
+  }
+  try {
+    console.info("[WebChat startup]", stage, extra);
+  } catch {
+    // ignore console failures
+  }
+  return null;
+}
 
 const promptController = initPromptController({
   promptEl,
@@ -633,6 +650,10 @@ function debugLog(...args) {
   console.debug(...args);
 }
 
+markWebchatStartup("app.module.evaluated", {
+  debugEnabled: webchatDebugEnabled,
+});
+
 const appShellFeature = createAppShellFeature({
   refs: {
     switchRootBtn,
@@ -854,6 +875,9 @@ if (urlToken) {
 
 setStatus(localeController.t("status.disconnected", {}, "disconnected"));
 attachmentsFeature.renderAttachmentsPreview();
+markWebchatStartup("app.bootstrap.ready", {
+  hasTransientUrlToken: Boolean(transientUrlToken),
+});
 
 connectBtn.addEventListener("click", () => connect());
 sendBtn.addEventListener("click", () => handleComposerPrimaryAction());
@@ -1125,6 +1149,7 @@ function handleHelloOk(frame) {
   Object.values(tokenUsageValueEls).forEach((el) => {
     if (el) el.textContent = "--";
   });
+  updateTokenUsageObservability(tokenUsageObservabilityEl, null, localeController.t.bind(localeController));
   renderTaskTokenHistory();
   if (activeConversationId) {
     void loadConversationMeta(activeConversationId);
@@ -2693,6 +2718,7 @@ chatEventsFeature = createChatEventsFeature({
   t: localeController.t,
 });
 
+markWebchatStartup("app.auto-connect.schedule");
 connect();
 
 function handleEvent(event, payload) {
@@ -2949,6 +2975,7 @@ function updateTokenUsage(payload) {
   // 会话累计：每次收到 usage 事件，累加 input + output
   sessionTotalTokens += (payload.inputTokens || 0) + (payload.outputTokens || 0);
   set("tuAll", sessionTotalTokens);
+  updateTokenUsageObservability(tokenUsageObservabilityEl, payload, localeController.t.bind(localeController));
   // 移除 updating 动画
   if (tokenUsageEl) tokenUsageEl.classList.remove("updating");
 }

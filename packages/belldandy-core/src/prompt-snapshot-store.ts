@@ -76,6 +76,23 @@ export class PromptSnapshotStore {
     return this.findLatestFromIndex(this.order);
   }
 
+  getPrevious(input: {
+    conversationId: string;
+    runId?: string;
+    agentId?: string;
+  }): PromptSnapshotRecord | undefined {
+    const conversationId = normalizeOptionalString(input.conversationId);
+    const runId = normalizeOptionalString(input.runId);
+    const agentId = normalizeOptionalString(input.agentId);
+    if (!conversationId) {
+      return undefined;
+    }
+    return this.findPreviousFromIndex(this.keysByConversation.get(conversationId), {
+      runId,
+      agentId,
+    });
+  }
+
   private buildKey(snapshot: AgentPromptSnapshot): string {
     if (snapshot.runId) {
       return buildPromptSnapshotRunKey(snapshot.conversationId, snapshot.runId);
@@ -96,6 +113,35 @@ export class PromptSnapshotStore {
         continue;
       }
       if (agentId && record.agentId !== agentId) {
+        continue;
+      }
+      return clonePromptSnapshot(record);
+    }
+
+    return undefined;
+  }
+
+  private findPreviousFromIndex(
+    keys: string[] | undefined,
+    input: {
+      runId?: string;
+      agentId?: string;
+    },
+  ): PromptSnapshotRecord | undefined {
+    if (!keys || keys.length === 0) {
+      return undefined;
+    }
+
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index];
+      const record = this.records.get(key);
+      if (!record) {
+        continue;
+      }
+      if (input.runId && record.runId === input.runId) {
+        continue;
+      }
+      if (input.agentId && record.agentId !== input.agentId) {
         continue;
       }
       return clonePromptSnapshot(record);

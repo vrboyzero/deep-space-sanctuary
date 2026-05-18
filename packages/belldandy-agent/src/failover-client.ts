@@ -149,6 +149,22 @@ export type FailoverLogger = {
     error(module: string, msg: string, data?: unknown): void;
 };
 
+function normalizeProfileDedupString(value: string | undefined): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+}
+
+function buildProfileDedupKey(profile: Pick<ModelProfile, "baseUrl" | "apiKey" | "model" | "wireApi" | "protocol">): string {
+    return [
+        normalizeProfileDedupString(profile.baseUrl)?.replace(/\/+$/, "").toLowerCase() ?? "",
+        normalizeProfileDedupString(profile.apiKey) ?? "",
+        normalizeProfileDedupString(profile.model)?.toLowerCase() ?? "",
+        normalizeProfileDedupString(profile.wireApi)?.toLowerCase() ?? "",
+        normalizeProfileDedupString(profile.protocol)?.toLowerCase() ?? "",
+    ].join("::");
+}
+
 function stripUtf8Bom(raw: string): string {
     return raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
 }
@@ -332,8 +348,18 @@ export class FailoverClient {
             ...f,
             id: f.id ?? `fallback-${i}`,
         }));
+        const seenProfileKeys = new Set<string>();
+        const dedupedProfiles: ModelProfile[] = [];
+        for (const profile of [primary, ...fallbacks]) {
+            const dedupKey = buildProfileDedupKey(profile);
+            if (seenProfileKeys.has(dedupKey)) {
+                continue;
+            }
+            seenProfileKeys.add(dedupKey);
+            dedupedProfiles.push(profile);
+        }
 
-        this.profiles = [primary, ...fallbacks];
+        this.profiles = dedupedProfiles;
         this.cooldown = new CooldownManager(params.cooldownMs ?? 60_000);
         this.logger = params.logger;
 

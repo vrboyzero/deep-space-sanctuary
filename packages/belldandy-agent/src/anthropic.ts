@@ -55,6 +55,8 @@ export type AnthropicUsage = {
   output_tokens: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
 };
 
 /** Anthropic response content block */

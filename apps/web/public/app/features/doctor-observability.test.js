@@ -58,6 +58,32 @@ describe("doctor observability formatting", () => {
           scope: "run",
           agentId: "default",
           conversationId: "conv-1",
+          cacheSupport: "supported",
+          providerCacheEligible: true,
+          systemPromptFingerprint: "abc123fingerprint",
+          structureSignature: "sig-123",
+          prefixDrift: {
+            status: "drifted",
+            reasons: ["system_prompt_fingerprint_changed", "section_id_order_changed"],
+          },
+          prefixWarmState: {
+            status: "warming",
+            reason: "matching_prefix_recently_seen_may_still_be_warming",
+            previousAgeMs: 1200,
+          },
+          orderingGuard: {
+            status: "risk",
+            reasons: ["dynamic_runtime_sections_present", "tool_contract_list_injected"],
+          },
+          warmupCoordination: {
+            status: "warming",
+            recommendation: "delay_if_possible",
+            reason: "matching_prefix_recent_but_ordering_risk_present",
+          },
+          cacheFamilyAffinity: {
+            status: "aligned",
+            reason: "same_cache_family_as_previous",
+          },
           counts: {
             sectionCount: 12,
             deltaCount: 2,
@@ -476,6 +502,66 @@ describe("doctor observability formatting", () => {
         },
       },
       memoryRuntime: {
+        compactionRuntime: {
+          totals: {
+            attempts: 3,
+            compacted: 2,
+            fallbacks: 1,
+            failures: 1,
+            warningHits: 0,
+            blockingHits: 0,
+            promptTooLongRetries: 1,
+            skippedByCircuitBreaker: 0,
+            circuitOpened: 0,
+          },
+          circuitBreaker: {
+            open: false,
+            consecutiveFailures: 0,
+            remainingSkips: 0,
+          },
+          lastResult: {
+            source: "request",
+            compacted: true,
+            fallbackUsed: true,
+            warningTriggered: false,
+            blockingTriggered: false,
+            promptTooLongRetries: 1,
+            failureReason: "compaction backend unavailable",
+            savedTokenCount: 72,
+            updatedAt: 1710000000000,
+            summarizerObservability: {
+              mode: "rolling",
+              cacheAlignedRequested: true,
+              cacheSupport: "supported",
+              cacheHitTokens: 640,
+              cacheMissTokens: 32,
+              cacheSavingsUsd: 0.000123,
+              usedWireApi: "chat_completions",
+              compareAvailable: true,
+              comparison: {
+                mode: "cache_aligned_vs_plain",
+                plainRequestMessageCount: 1,
+                cacheAlignedRequestMessageCount: 4,
+                plainPromptCharsEstimate: 1200,
+                cacheAlignedReplayCharsEstimate: 980,
+                cacheAlignedInstructionChars: 180,
+                replayOverheadChars: 0,
+              },
+              strategy: {
+                kind: "cache_aligned",
+                providerCacheMode: "supported",
+                selectionReason: "provider_cache_supported_with_context",
+                degradePath: "cache_aligned_then_compaction_fallback",
+                providerModelNotes: "cache=supported, json=medium, route=deepseek-flash",
+                fallbackPolicy: "fallback_summary_on_request_or_parse_or_budget_failure",
+                fallbackTriggered: true,
+                fallbackSummary: "model_failure_fallback",
+              },
+              fallbackStage: "model_failure",
+              failureReason: "compaction backend unavailable",
+            },
+          },
+        },
         sharedMemory: {
           enabled: true,
           available: true,
@@ -1211,10 +1297,10 @@ describe("doctor observability formatting", () => {
           ],
         },
       },
-      runtimeResilience: {
-        version: 1,
-        updatedAt: 1712736000000,
-        routing: {
+        runtimeResilience: {
+          version: 1,
+          updatedAt: 1712736000000,
+          routing: {
           primary: {
             profileId: "primary",
             provider: "openai.com",
@@ -1227,16 +1313,21 @@ describe("doctor observability formatting", () => {
               model: "kimi-k2",
             },
           ],
-          compaction: {
-            configured: true,
-            sharesPrimaryRoute: false,
-            route: {
-              profileId: "compaction",
-              provider: "openai.com",
-              model: "gpt-4.1-mini",
+            compaction: {
+              configured: true,
+              sharesPrimaryRoute: false,
+              route: {
+                profileId: "compaction",
+                provider: "openai.com",
+                model: "gpt-4.1-mini",
+              },
+              auxSummaryVerdict: {
+                strategy: "deepseek_flash_preferred",
+                enabled: true,
+                reason: "deepseek_primary_with_flash_candidate",
+              },
             },
           },
-        },
         totals: {
           observedRuns: 3,
           degradedRuns: 1,
@@ -1340,6 +1431,13 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("recovery hint: 5xx instability dominates; keep fallback ready and verify provider health before trusting the primary route.");
     expect(lines.join("\n")).toContain("alert warn/recent_degrade");
     expect(lines.join("\n")).toContain("Latest runtime required retry/fallback to recover.");
+    expect(lines.join("\n")).toContain("Prompt fingerprint: abc123fingerprint");
+    expect(lines.join("\n")).toContain("Structure signature: sig-123");
+    expect(lines.join("\n")).toContain("Prefix drift: drifted (system_prompt_fingerprint_changed, section_id_order_changed)");
+    expect(lines.join("\n")).toContain("Prefix warm state: warming; reason=matching_prefix_recently_seen_may_still_be_warming; ageMs=1200");
+    expect(lines.join("\n")).toContain("Ordering guard: risk (dynamic_runtime_sections_present, tool_contract_list_injected)");
+    expect(lines.join("\n")).toContain("Warm-up coordination: warming; recommendation=delay_if_possible; reason=matching_prefix_recent_but_ordering_risk_present");
+    expect(lines.join("\n")).toContain("Cache family affinity: aligned; reason=same_cache_family_as_previous");
     expect(lines.join("\n")).toContain("runtime resilience: alert=warn/recent_degrade");
     expect(lines.join("\n")).toContain("reason_focus=server_error");
     expect(lines.join("\n")).toContain("reason_cluster=server_error + timeout");
@@ -1375,6 +1473,27 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("index path: E:/vaults/main/Star Sanctuary/Commons/INDEX.md");
     expect(lines.join("\n")).toContain("timeline: attempt=2026-04-19T13:09:00.000Z, success=2026-04-19T13:10:00.000Z, failure=-");
     expect(lines.join("\n")).toContain("Shared Governance");
+    expect(lines.join("\n")).toContain("Compaction Runtime");
+    expect(lines.join("\n")).toContain("3 attempts / fallback 1 / failures 1");
+    expect(lines.join("\n")).toContain("summary mode: rolling");
+    expect(lines.join("\n")).toContain("cache aligned: yes");
+    expect(lines.join("\n")).toContain("cache usage: hit=640, miss=32");
+    expect(lines.join("\n")).toContain("cache savings: $0.000123");
+    expect(lines.join("\n")).toContain("wire api: chat_completions");
+    expect(lines.join("\n")).toContain("provider strategy: cache_aligned");
+    expect(lines.join("\n")).toContain("provider cache mode: supported");
+    expect(lines.join("\n")).toContain("selection reason: provider_cache_supported_with_context");
+    expect(lines.join("\n")).toContain("degrade path: cache_aligned_then_compaction_fallback");
+    expect(lines.join("\n")).toContain("fallback policy: fallback_summary_on_request_or_parse_or_budget_failure");
+    expect(lines.join("\n")).toContain("fallback triggered: yes");
+    expect(lines.join("\n")).toContain("fallback summary: model_failure_fallback");
+    expect(lines.join("\n")).toContain("provider notes: cache=supported, json=medium, route=deepseek-flash");
+    expect(lines.join("\n")).toContain("aux summary verdict: deepseek_flash_preferred / deepseek_primary_with_flash_candidate / enabled=yes");
+    expect(lines.join("\n")).toContain("comparison available: yes");
+    expect(lines.join("\n")).toContain("comparison: plain≈1200 chars, replay≈980 chars, instruction≈180 chars, overhead≈0 chars");
+    expect(lines.join("\n")).toContain("comparison messages: plain=1, cache-aligned=4");
+    expect(lines.join("\n")).toContain("fallback stage: model_failure");
+    expect(lines.join("\n")).toContain("failure reason: compaction backend unavailable");
     expect(lines.join("\n")).toContain("1 个 shared reader");
     expect(lines.join("\n")).toContain("1 pending approval(s)");
     expect(lines.join("\n")).toContain("1 claimed pending item(s)");
@@ -1513,6 +1632,7 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("1 fallbacks");
     expect(lines.join("\n")).toContain("latest success");
     expect(lines.join("\n")).toContain("compaction route openai.com/gpt-4.1-mini");
+    expect(lines.join("\n")).toContain("compaction aux verdict deepseek_flash_preferred / deepseek_primary_with_flash_candidate / enabled=yes");
   });
 });
 

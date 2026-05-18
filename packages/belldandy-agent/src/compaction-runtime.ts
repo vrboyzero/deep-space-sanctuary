@@ -46,6 +46,50 @@ export type CompactionRuntimeReport = {
     failureReason?: string;
     savedTokenCount: number;
     updatedAt: number;
+    summarizerObservability?: {
+      mode?: "rolling" | "archival";
+      cacheAlignedRequested?: boolean;
+      cacheSupport?: "supported" | "unsupported" | "unknown";
+      cacheHitTokens?: number;
+      cacheMissTokens?: number;
+      cacheSavingsUsd?: number;
+      usedWireApi?: "chat_completions" | "responses";
+      compareAvailable?: boolean;
+      comparison?: {
+        mode?: "cache_aligned_vs_plain";
+        plainRequestMessageCount?: number;
+        cacheAlignedRequestMessageCount?: number;
+        plainPromptCharsEstimate?: number;
+        cacheAlignedReplayCharsEstimate?: number;
+        cacheAlignedInstructionChars?: number;
+        replayOverheadChars?: number;
+      };
+      strategy?: {
+        kind?: "cache_aligned" | "plain";
+        providerCacheMode?: "supported" | "unsupported" | "unknown";
+        selectionReason?: string;
+        degradePath?: string;
+        providerModelNotes?: string;
+        fallbackPolicy?: string;
+        fallbackTriggered?: boolean;
+        fallbackSummary?: string;
+      };
+      warmupCoordination?: {
+        eligible?: boolean;
+        status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+        recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+        reason?: string;
+        previousAgeMs?: number;
+      };
+      cacheFamilyAffinity?: {
+        status?: "unknown" | "aligned" | "mismatch";
+        familyKey?: string;
+        previousFamilyKey?: string;
+        reason?: string;
+      };
+      fallbackStage?: "request" | "response_parse" | "compaction_budget" | "prompt_too_long" | "model_failure";
+      failureReason?: string;
+    };
   };
 };
 
@@ -122,6 +166,9 @@ export class CompactionRuntimeTracker {
       failureReason: "skipped_by_circuit_breaker",
       savedTokenCount: 0,
       updatedAt: Date.now(),
+      ...(this.lastResult?.summarizerObservability
+        ? { summarizerObservability: { ...this.lastResult.summarizerObservability } }
+        : {}),
     };
 
     return {
@@ -172,6 +219,7 @@ export class CompactionRuntimeTracker {
       failureReason: result.failureReason,
       savedTokenCount: Math.max(0, result.originalTokens - result.compactedTokens),
       updatedAt: Date.now(),
+      ...(result.summarizerObservability ? { summarizerObservability: { ...result.summarizerObservability } } : {}),
     };
   }
 

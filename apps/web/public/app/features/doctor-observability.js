@@ -166,6 +166,23 @@ function buildPromptObservabilityCard(payload, t) {
     ),
   ];
 
+  if (typeof summary.cacheSupport === "string" && summary.cacheSupport.trim()) {
+    badges.push(tr(
+      t,
+      "settings.doctorPromptCacheSupport",
+      { value: summary.cacheSupport },
+      `cache ${summary.cacheSupport}`,
+    ));
+  }
+  if (typeof summary.providerCacheEligible === "boolean") {
+    badges.push(tr(
+      t,
+      "settings.doctorPromptCacheEligible",
+      { value: summary.providerCacheEligible ? "yes" : "no" },
+      `cache eligible ${summary.providerCacheEligible ? "yes" : "no"}`,
+    ));
+  }
+
   const notes = [scopeText];
   if (summary.truncationReason?.code) {
     notes.push(tr(
@@ -184,6 +201,83 @@ function buildPromptObservabilityCard(payload, t) {
       "settings.doctorPromptStable",
       {},
       "当前 prompt 没有因为长度限制而裁剪。",
+    ));
+  }
+  if (typeof summary.systemPromptFingerprint === "string" && summary.systemPromptFingerprint.trim()) {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptFingerprint",
+      { value: summary.systemPromptFingerprint },
+      `Prompt fingerprint: ${summary.systemPromptFingerprint}`,
+    ));
+  }
+  if (typeof summary.structureSignature === "string" && summary.structureSignature.trim()) {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptStructureSignature",
+      { value: summary.structureSignature },
+      `Structure signature: ${summary.structureSignature}`,
+    ));
+  }
+  if (summary.prefixDrift && typeof summary.prefixDrift === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptPrefixDrift",
+      {
+        status: summary.prefixDrift.status || "-",
+        reasons: Array.isArray(summary.prefixDrift.reasons) && summary.prefixDrift.reasons.length > 0
+          ? summary.prefixDrift.reasons.join(", ")
+          : "-",
+      },
+      `Prefix drift: ${summary.prefixDrift.status || "-"} (${Array.isArray(summary.prefixDrift.reasons) && summary.prefixDrift.reasons.length > 0 ? summary.prefixDrift.reasons.join(", ") : "-"})`,
+    ));
+  }
+  if (summary.prefixWarmState && typeof summary.prefixWarmState === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptPrefixWarmState",
+      {
+        status: summary.prefixWarmState.status || "-",
+        reason: summary.prefixWarmState.reason || "-",
+        ageMs: formatNumber(summary.prefixWarmState.previousAgeMs),
+      },
+      `Prefix warm state: ${summary.prefixWarmState.status || "-"}; reason=${summary.prefixWarmState.reason || "-"}; ageMs=${formatNumber(summary.prefixWarmState.previousAgeMs)}`,
+    ));
+  }
+  if (summary.orderingGuard && typeof summary.orderingGuard === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptOrderingGuard",
+      {
+        status: summary.orderingGuard.status || "-",
+        reasons: Array.isArray(summary.orderingGuard.reasons) && summary.orderingGuard.reasons.length > 0
+          ? summary.orderingGuard.reasons.join(", ")
+          : "-",
+      },
+      `Ordering guard: ${summary.orderingGuard.status || "-"} (${Array.isArray(summary.orderingGuard.reasons) && summary.orderingGuard.reasons.length > 0 ? summary.orderingGuard.reasons.join(", ") : "-"})`,
+    ));
+  }
+  if (summary.warmupCoordination && typeof summary.warmupCoordination === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptWarmupCoordination",
+      {
+        status: summary.warmupCoordination.status || "-",
+        recommendation: summary.warmupCoordination.recommendation || "-",
+        reason: summary.warmupCoordination.reason || "-",
+      },
+      `Warm-up coordination: ${summary.warmupCoordination.status || "-"}; recommendation=${summary.warmupCoordination.recommendation || "-"}; reason=${summary.warmupCoordination.reason || "-"}`,
+    ));
+  }
+  if (summary.cacheFamilyAffinity && typeof summary.cacheFamilyAffinity === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptCacheFamilyAffinity",
+      {
+        status: summary.cacheFamilyAffinity.status || "-",
+        reason: summary.cacheFamilyAffinity.reason || "-",
+      },
+      `Cache family affinity: ${summary.cacheFamilyAffinity.status || "-"}; reason=${summary.cacheFamilyAffinity.reason || "-"}`,
     ));
   }
   notes.push(...residentStateBindingLines);
@@ -1107,6 +1201,236 @@ function buildSharedGovernanceCard(payload, t) {
     badges,
     notes,
     status: available ? "pass" : enabled ? "warn" : "warn",
+  };
+}
+
+function buildCompactionRuntimeCard(payload, t) {
+  const runtime = payload?.memoryRuntime?.compactionRuntime;
+  const compactionRouting = payload?.runtimeResilience?.routing?.compaction;
+  if (!runtime?.totals) {
+    return undefined;
+  }
+
+  const last = runtime.lastResult;
+  const obs = last?.summarizerObservability;
+  const badges = [
+    tr(
+      t,
+      "settings.doctorCompactionRuntimeAttempts",
+      {
+        attempts: formatNumber(runtime.totals.attempts),
+        fallbacks: formatNumber(runtime.totals.fallbacks),
+        failures: formatNumber(runtime.totals.failures),
+      },
+      `${formatNumber(runtime.totals.attempts)} attempts / fallback ${formatNumber(runtime.totals.fallbacks)} / failures ${formatNumber(runtime.totals.failures)}`,
+    ),
+    tr(
+      t,
+      "settings.doctorCompactionRuntimeRetries",
+      {
+        retries: formatNumber(runtime.totals.promptTooLongRetries),
+        warnings: formatNumber(runtime.totals.warningHits),
+        blocking: formatNumber(runtime.totals.blockingHits),
+      },
+      `PTL retries ${formatNumber(runtime.totals.promptTooLongRetries)} / warnings ${formatNumber(runtime.totals.warningHits)} / blocking ${formatNumber(runtime.totals.blockingHits)}`,
+    ),
+  ];
+
+  const notes = [];
+  if (runtime.circuitBreaker?.open) {
+    notes.push(tr(
+      t,
+      "settings.doctorCompactionRuntimeCircuit",
+      { count: formatNumber(runtime.circuitBreaker.remainingSkips) },
+      `Circuit open, remaining skips ${formatNumber(runtime.circuitBreaker.remainingSkips)}`,
+    ));
+  }
+  if (compactionRouting?.auxSummaryVerdict) {
+    notes.push(tr(
+      t,
+      "settings.doctorCompactionRuntimeAuxVerdict",
+      {
+        strategy: compactionRouting.auxSummaryVerdict.strategy || "-",
+        reason: compactionRouting.auxSummaryVerdict.reason || "-",
+        enabled: compactionRouting.auxSummaryVerdict.enabled ? "yes" : "no",
+      },
+      `aux summary verdict: ${compactionRouting.auxSummaryVerdict.strategy || "-"} / ${compactionRouting.auxSummaryVerdict.reason || "-"} / enabled=${compactionRouting.auxSummaryVerdict.enabled ? "yes" : "no"}`,
+    ));
+  }
+  if (obs) {
+    notes.push(tr(
+      t,
+      "settings.doctorCompactionRuntimeSummaryMode",
+      { value: obs.mode || "-" },
+      `summary mode: ${obs.mode || "-"}`,
+    ));
+    notes.push(tr(
+      t,
+      "settings.doctorCompactionRuntimeCacheAligned",
+      { value: obs.cacheAlignedRequested ? "yes" : "no" },
+      `cache aligned: ${obs.cacheAlignedRequested ? "yes" : "no"}`,
+    ));
+    if (typeof obs.cacheSupport === "string" && obs.cacheSupport.trim()) {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeCacheSupport",
+        { value: obs.cacheSupport },
+        `cache support: ${obs.cacheSupport}`,
+      ));
+    }
+    if (typeof obs.cacheHitTokens === "number" || typeof obs.cacheMissTokens === "number") {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeCacheUsage",
+        {
+          hit: formatNumber(obs.cacheHitTokens),
+          miss: formatNumber(obs.cacheMissTokens),
+        },
+        `cache usage: hit=${formatNumber(obs.cacheHitTokens)}, miss=${formatNumber(obs.cacheMissTokens)}`,
+      ));
+    }
+    if (typeof obs.cacheSavingsUsd === "number") {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeCacheSavings",
+        { value: obs.cacheSavingsUsd.toFixed(6) },
+        `cache savings: $${obs.cacheSavingsUsd.toFixed(6)}`,
+      ));
+    }
+    if (typeof obs.usedWireApi === "string" && obs.usedWireApi.trim()) {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeWireApi",
+        { value: obs.usedWireApi },
+        `wire api: ${obs.usedWireApi}`,
+      ));
+    }
+    if (obs.strategy && typeof obs.strategy === "object") {
+      if (typeof obs.strategy.kind === "string" && obs.strategy.kind.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeStrategy",
+          { value: obs.strategy.kind },
+          `provider strategy: ${obs.strategy.kind}`,
+        ));
+      }
+      if (typeof obs.strategy.providerCacheMode === "string" && obs.strategy.providerCacheMode.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeProviderMode",
+          { value: obs.strategy.providerCacheMode },
+          `provider cache mode: ${obs.strategy.providerCacheMode}`,
+        ));
+      }
+      if (typeof obs.strategy.selectionReason === "string" && obs.strategy.selectionReason.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeSelectionReason",
+          { value: obs.strategy.selectionReason },
+          `selection reason: ${obs.strategy.selectionReason}`,
+        ));
+      }
+      if (typeof obs.strategy.degradePath === "string" && obs.strategy.degradePath.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeDegradePath",
+          { value: obs.strategy.degradePath },
+          `degrade path: ${obs.strategy.degradePath}`,
+        ));
+      }
+      if (typeof obs.strategy.fallbackPolicy === "string" && obs.strategy.fallbackPolicy.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeFallbackPolicy",
+          { value: obs.strategy.fallbackPolicy },
+          `fallback policy: ${obs.strategy.fallbackPolicy}`,
+        ));
+      }
+      if (typeof obs.strategy.fallbackTriggered === "boolean") {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeFallbackTriggered",
+          { value: obs.strategy.fallbackTriggered ? "yes" : "no" },
+          `fallback triggered: ${obs.strategy.fallbackTriggered ? "yes" : "no"}`,
+        ));
+      }
+      if (typeof obs.strategy.fallbackSummary === "string" && obs.strategy.fallbackSummary.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeFallbackSummary",
+          { value: obs.strategy.fallbackSummary },
+          `fallback summary: ${obs.strategy.fallbackSummary}`,
+        ));
+      }
+      if (typeof obs.strategy.providerModelNotes === "string" && obs.strategy.providerModelNotes.trim()) {
+        notes.push(tr(
+          t,
+          "settings.doctorCompactionRuntimeProviderNotes",
+          { value: obs.strategy.providerModelNotes },
+          `provider notes: ${obs.strategy.providerModelNotes}`,
+        ));
+      }
+    }
+    if (typeof obs.compareAvailable === "boolean") {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeComparisonAvailable",
+        { value: obs.compareAvailable ? "yes" : "no" },
+        `comparison available: ${obs.compareAvailable ? "yes" : "no"}`,
+      ));
+    }
+    if (obs.comparison && typeof obs.comparison === "object") {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeComparison",
+        {
+          plainChars: formatNumber(obs.comparison.plainPromptCharsEstimate),
+          replayChars: formatNumber(obs.comparison.cacheAlignedReplayCharsEstimate),
+          instructionChars: formatNumber(obs.comparison.cacheAlignedInstructionChars),
+          overheadChars: formatNumber(obs.comparison.replayOverheadChars),
+        },
+        `comparison: plain≈${formatNumber(obs.comparison.plainPromptCharsEstimate)} chars, replay≈${formatNumber(obs.comparison.cacheAlignedReplayCharsEstimate)} chars, instruction≈${formatNumber(obs.comparison.cacheAlignedInstructionChars)} chars, overhead≈${formatNumber(obs.comparison.replayOverheadChars)} chars`,
+      ));
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeComparisonMessages",
+        {
+          plainCount: formatNumber(obs.comparison.plainRequestMessageCount),
+          cacheAlignedCount: formatNumber(obs.comparison.cacheAlignedRequestMessageCount),
+        },
+        `comparison messages: plain=${formatNumber(obs.comparison.plainRequestMessageCount)}, cache-aligned=${formatNumber(obs.comparison.cacheAlignedRequestMessageCount)}`,
+      ));
+    }
+    if (typeof obs.fallbackStage === "string" && obs.fallbackStage.trim()) {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeFallbackStage",
+        { value: obs.fallbackStage },
+        `fallback stage: ${obs.fallbackStage}`,
+      ));
+    }
+    if (typeof obs.failureReason === "string" && obs.failureReason.trim()) {
+      notes.push(tr(
+        t,
+        "settings.doctorCompactionRuntimeFailureReason",
+        { value: obs.failureReason },
+        `failure reason: ${obs.failureReason}`,
+      ));
+    }
+  } else if (typeof last?.failureReason === "string" && last.failureReason.trim()) {
+    notes.push(tr(
+      t,
+      "settings.doctorCompactionRuntimeFailureReason",
+      { value: last.failureReason },
+      `failure reason: ${last.failureReason}`,
+    ));
+  }
+
+  return {
+    title: tr(t, "settings.doctorCompactionRuntimeTitle", {}, "Compaction Runtime"),
+    badges,
+    notes,
+    status: runtime.circuitBreaker?.open || runtime.totals.failures > 0 ? "warn" : "pass",
   };
 }
 
@@ -2766,6 +3090,18 @@ function buildRuntimeResilienceCard(payload, t) {
       },
       `compaction route ${runtime.routing.compaction.route ? `${runtime.routing.compaction.route.provider}/${runtime.routing.compaction.route.model}` : "-"}`,
     ));
+    if (runtime.routing.compaction.auxSummaryVerdict) {
+      notes.push(tr(
+        t,
+        "settings.doctorRuntimeResilienceCompactionVerdict",
+        {
+          strategy: runtime.routing.compaction.auxSummaryVerdict.strategy || "-",
+          reason: runtime.routing.compaction.auxSummaryVerdict.reason || "-",
+          enabled: runtime.routing.compaction.auxSummaryVerdict.enabled ? "yes" : "no",
+        },
+        `compaction aux verdict ${runtime.routing.compaction.auxSummaryVerdict.strategy || "-"} / ${runtime.routing.compaction.auxSummaryVerdict.reason || "-"} / enabled=${runtime.routing.compaction.auxSummaryVerdict.enabled ? "yes" : "no"}`,
+      ));
+    }
   }
   if (latest?.headline) {
     notes.push(latest.headline);
@@ -3335,6 +3671,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildDreamCommonsCard(payload, t),
     buildSkillFreshnessCard(payload, t),
     buildSharedGovernanceCard(payload, t),
+    buildCompactionRuntimeCard(payload, t),
     buildDelegationCard(payload, t),
     buildCronRuntimeCard(payload, t),
     buildBackgroundContinuationRuntimeCard(payload, t),
@@ -3467,6 +3804,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${sharedGovernanceCard.title}:`);
     lines.push(...sharedGovernanceCard.badges.map((badge) => `- ${badge}`));
     lines.push(...sharedGovernanceCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const compactionRuntimeCard = buildCompactionRuntimeCard(payload, t);
+  if (compactionRuntimeCard) {
+    lines.push(``);
+    lines.push(`${compactionRuntimeCard.title}:`);
+    lines.push(...compactionRuntimeCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...compactionRuntimeCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const delegationCard = buildDelegationCard(payload, t);

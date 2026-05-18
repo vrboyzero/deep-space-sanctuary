@@ -1025,6 +1025,15 @@ export async function handleSystemDoctorMethod(
       message: `${runtimeResilienceDiagnostics.alertCode}: ${runtimeResilienceDiagnostics.alertMessage}`,
     });
   }
+  if (runtimeResilience?.routing.compaction?.auxSummaryVerdict) {
+    const verdict = runtimeResilience.routing.compaction.auxSummaryVerdict;
+    checks.push({
+      id: "runtime_resilience_compaction_aux_verdict",
+      name: "Runtime Resilience Compaction Aux Verdict",
+      status: verdict.enabled ? "pass" : "warn",
+      message: `${verdict.strategy} / ${verdict.reason} / enabled=${verdict.enabled ? "yes" : "no"}`,
+    });
+  }
   checks.push({
     id: "query_runtime_trace",
     name: "Query Runtime Trace",

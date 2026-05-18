@@ -278,14 +278,16 @@ describe("tool result prompt deltas", () => {
     expect(deltas[0]?.text).toContain("High-priority follow-up items: Agent verifier");
     expect(deltas[0]?.metadata).toMatchObject({
       delegationResult: {
-        delegationResults: [
-          {
-            acceptanceGate: {
-              accepted: false,
-              rejectionConfidence: "high",
-            },
+        resultCount: 1,
+        acceptedCount: 0,
+        gateRejectedCount: 1,
+        primaryResult: {
+          accepted: false,
+          acceptanceGate: {
+            accepted: false,
+            rejectionConfidence: "high",
           },
-        ],
+        },
       },
     });
     expect(deltas[1]?.text).toContain("## Delegation Result Review");
@@ -300,17 +302,17 @@ describe("tool result prompt deltas", () => {
     expect(deltas[1]?.text).toContain("Optional verifier handoff: delegate_task; agent_id=verifier");
     expect(deltas[1]?.metadata).toMatchObject({
       delegationResult: {
-        delegationResults: [
-          {
-            acceptanceGate: {
-              deliverableFormat: "verification_report",
-              accepted: false,
-            },
+        resultCount: 1,
+        primaryResult: {
+          acceptanceGate: {
+            deliverableFormat: "verification_report",
+            accepted: false,
           },
-        ],
+        },
         followUpStrategy: {
           mode: "single",
           recommendedRuntimeAction: "retry_delegation",
+          itemCount: 1,
           retryLabels: ["Agent verifier"],
           highPriorityLabels: ["Agent verifier"],
           verifierHandoffLabels: ["Agent verifier"],
@@ -556,5 +558,114 @@ describe("tool result prompt deltas", () => {
         retryLaneIds: ["lane_2"],
       },
     });
+  });
+
+  it("mechanically trims oversized delegation arguments and follow-up templates before injecting review deltas", () => {
+    const hugeInstruction = `Review patch ${"A".repeat(900)}`;
+    const hugeReason = `Missing evidence ${"B".repeat(900)}`;
+    const hugeSection = `Section-${"C".repeat(180)}`;
+
+    const delta = buildToolPostVerificationPromptDelta({
+      toolCallId: "call-7",
+      toolName: "delegate_task",
+      requestArguments: {
+        ownership: {
+          scope_summary: `Scope ${"D".repeat(700)}`,
+          out_of_scope: [
+            `Out ${"E".repeat(260)}`,
+            `Also out ${"F".repeat(260)}`,
+            `Third out ${"G".repeat(260)}`,
+            `Fourth out ${"H".repeat(260)}`,
+          ],
+        },
+        acceptance: {
+          done_definition: `Done ${"I".repeat(700)}`,
+          verification_hints: [
+            `Hint ${"J".repeat(220)}`,
+            `Hint ${"K".repeat(220)}`,
+            `Hint ${"L".repeat(220)}`,
+            `Hint ${"M".repeat(220)}`,
+          ],
+        },
+        deliverable_contract: {
+          format: "verification_report",
+          required_sections: [hugeSection, `${hugeSection}-2`, `${hugeSection}-3`, `${hugeSection}-4`, `${hugeSection}-5`],
+        },
+      },
+      resultMetadata: {
+        delegationResults: [{
+          label: "Agent verifier",
+          workerSuccess: true,
+          accepted: false,
+          acceptanceGate: {
+            enforced: true,
+            accepted: false,
+            summary: hugeReason,
+            reasons: [hugeReason, `${hugeReason}-2`, `${hugeReason}-3`, `${hugeReason}-4`],
+            acceptanceCheckStatus: "missing",
+            rejectionConfidence: "high",
+            managerActionHint: hugeReason,
+          },
+        }],
+        followUpStrategy: {
+          mode: "single",
+          summary: hugeReason,
+          recommendedRuntimeAction: "retry_delegation",
+          retryLabels: ["Agent verifier"],
+          highPriorityLabels: ["Agent verifier"],
+          verifierHandoffLabels: ["Agent verifier"],
+          items: [{
+            label: "Agent verifier",
+            action: "retry",
+            reason: hugeReason,
+            recommendedRuntimeAction: "retry_delegation",
+            priority: "high",
+            template: {
+              toolName: "delegate_task",
+              agentId: "verifier",
+              instruction: hugeInstruction,
+              acceptance: {
+                verificationHints: [
+                  `Template hint ${"N".repeat(240)}`,
+                  `Template hint ${"O".repeat(240)}`,
+                  `Template hint ${"P".repeat(240)}`,
+                  `Template hint ${"Q".repeat(240)}`,
+                ],
+              },
+              deliverableContract: {
+                format: "verification_report",
+                requiredSections: [hugeSection, `${hugeSection}-2`, `${hugeSection}-3`, `${hugeSection}-4`, `${hugeSection}-5`],
+              },
+            },
+            verifierTemplate: {
+              toolName: "delegate_task",
+              agentId: "verifier",
+              instruction: hugeInstruction,
+              acceptance: {
+                verificationHints: [
+                  `Verifier hint ${"R".repeat(240)}`,
+                  `Verifier hint ${"S".repeat(240)}`,
+                  `Verifier hint ${"T".repeat(240)}`,
+                  `Verifier hint ${"U".repeat(240)}`,
+                ],
+              },
+              deliverableContract: {
+                format: "verification_report",
+                requiredSections: [hugeSection, `${hugeSection}-2`, `${hugeSection}-3`, `${hugeSection}-4`, `${hugeSection}-5`],
+              },
+            },
+          }],
+        },
+      },
+    });
+
+    expect(delta).toBeDefined();
+    expect(delta?.text).toContain("## Delegation Result Review");
+    expect(delta?.text).toContain("(+1 more)");
+    expect(delta?.text).toContain("...");
+    expect(delta?.text.length).toBeLessThan(4500);
+    expect(delta?.text).not.toContain("A".repeat(500));
+    expect(delta?.text).not.toContain("B".repeat(500));
+    expect(delta?.text).not.toContain("C".repeat(500));
   });
 });

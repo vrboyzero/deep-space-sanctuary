@@ -108,6 +108,10 @@ describe("OpenAIChatAgent prompt snapshot", () => {
         },
       ],
     });
+    expect(snapshots[0].inputMeta).toMatchObject({
+      runId: "run-openai-snapshot",
+    });
+    expect((snapshots[0].inputMeta as any)?.promptDeltas).toBeUndefined();
   });
 
   it("maps caller aborts to stopped without emitting a final message", async () => {

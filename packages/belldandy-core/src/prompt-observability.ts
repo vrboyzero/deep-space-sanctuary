@@ -78,6 +78,42 @@ export type PromptObservabilitySummary = {
     finalChars: number;
   };
   tokenBreakdown: PromptTokenBreakdown;
+  cacheSupport?: string;
+  capabilitySource?: string;
+  providerCacheEligible?: boolean;
+  systemPromptFingerprint?: string;
+  prefixDrift?: {
+    status?: "first_snapshot" | "stable" | "drifted";
+    changed?: boolean;
+    reasons?: string[];
+    previousFingerprint?: string;
+    currentFingerprint?: string;
+  };
+  prefixWarmState?: {
+    eligible?: boolean;
+    status?: "cold" | "warming" | "warm_candidate" | "drifted" | "unsupported";
+    samePrefixAsPrevious?: boolean;
+    previousAgeMs?: number;
+    reason?: string;
+  };
+  orderingGuard?: {
+    status?: "stable" | "risk";
+    reasons?: string[];
+  };
+  structureSignature?: string;
+  cacheFamilyAffinity?: {
+    status?: "unknown" | "aligned" | "mismatch";
+    familyKey?: string;
+    previousFamilyKey?: string;
+    reason?: string;
+  };
+  warmupCoordination?: {
+    eligible?: boolean;
+    status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+    recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+    reason?: string;
+    previousAgeMs?: number;
+  };
   truncationReason?: PromptTruncationReason;
   experiments?: Record<string, unknown>;
 };
@@ -193,6 +229,78 @@ export function buildPromptObservabilitySummary(
       finalChars: inspection.finalChars,
     },
     tokenBreakdown,
+    ...(typeof metadata?.cacheSupport === "string" ? { cacheSupport: metadata.cacheSupport } : {}),
+    ...(typeof metadata?.capabilitySource === "string" ? { capabilitySource: metadata.capabilitySource } : {}),
+    ...(typeof metadata?.providerCacheEligible === "boolean" ? { providerCacheEligible: metadata.providerCacheEligible } : {}),
+    ...(typeof metadata?.systemPromptFingerprint === "string" ? { systemPromptFingerprint: metadata.systemPromptFingerprint } : {}),
+    ...(isRecord(metadata?.prefixDrift)
+      ? {
+        prefixDrift: {
+          ...(typeof metadata.prefixDrift.status === "string" ? { status: metadata.prefixDrift.status } : {}),
+          ...(typeof metadata.prefixDrift.changed === "boolean" ? { changed: metadata.prefixDrift.changed } : {}),
+          ...(Array.isArray(metadata.prefixDrift.reasons) ? { reasons: metadata.prefixDrift.reasons.filter((item) => typeof item === "string") } : {}),
+          ...(typeof metadata.prefixDrift.previousFingerprint === "string"
+            ? { previousFingerprint: metadata.prefixDrift.previousFingerprint }
+            : {}),
+          ...(typeof metadata.prefixDrift.currentFingerprint === "string"
+            ? { currentFingerprint: metadata.prefixDrift.currentFingerprint }
+            : {}),
+        },
+      }
+      : {}),
+    ...(isRecord(metadata?.prefixWarmState)
+      ? {
+        prefixWarmState: {
+          ...(typeof metadata.prefixWarmState.eligible === "boolean" ? { eligible: metadata.prefixWarmState.eligible } : {}),
+          ...(typeof metadata.prefixWarmState.status === "string" ? { status: metadata.prefixWarmState.status } : {}),
+          ...(typeof metadata.prefixWarmState.samePrefixAsPrevious === "boolean"
+            ? { samePrefixAsPrevious: metadata.prefixWarmState.samePrefixAsPrevious }
+            : {}),
+          ...(typeof metadata.prefixWarmState.previousAgeMs === "number"
+            ? { previousAgeMs: metadata.prefixWarmState.previousAgeMs }
+            : {}),
+          ...(typeof metadata.prefixWarmState.reason === "string" ? { reason: metadata.prefixWarmState.reason } : {}),
+        },
+      }
+      : {}),
+    ...(isRecord(metadata?.orderingGuard)
+      ? {
+        orderingGuard: {
+          ...(typeof metadata.orderingGuard.status === "string" ? { status: metadata.orderingGuard.status } : {}),
+          ...(Array.isArray(metadata.orderingGuard.reasons)
+            ? { reasons: metadata.orderingGuard.reasons.filter((item) => typeof item === "string") }
+            : {}),
+        },
+      }
+      : {}),
+    ...(typeof metadata?.structureSignature === "string" ? { structureSignature: metadata.structureSignature } : {}),
+    ...(isRecord(metadata?.cacheFamilyAffinity)
+      ? {
+        cacheFamilyAffinity: {
+          ...(typeof metadata.cacheFamilyAffinity.status === "string" ? { status: metadata.cacheFamilyAffinity.status } : {}),
+          ...(typeof metadata.cacheFamilyAffinity.familyKey === "string" ? { familyKey: metadata.cacheFamilyAffinity.familyKey } : {}),
+          ...(typeof metadata.cacheFamilyAffinity.previousFamilyKey === "string"
+            ? { previousFamilyKey: metadata.cacheFamilyAffinity.previousFamilyKey }
+            : {}),
+          ...(typeof metadata.cacheFamilyAffinity.reason === "string" ? { reason: metadata.cacheFamilyAffinity.reason } : {}),
+        },
+      }
+      : {}),
+    ...(isRecord(metadata?.warmupCoordination)
+      ? {
+        warmupCoordination: {
+          ...(typeof metadata.warmupCoordination.eligible === "boolean" ? { eligible: metadata.warmupCoordination.eligible } : {}),
+          ...(typeof metadata.warmupCoordination.status === "string" ? { status: metadata.warmupCoordination.status } : {}),
+          ...(typeof metadata.warmupCoordination.recommendation === "string"
+            ? { recommendation: metadata.warmupCoordination.recommendation }
+            : {}),
+          ...(typeof metadata.warmupCoordination.reason === "string" ? { reason: metadata.warmupCoordination.reason } : {}),
+          ...(typeof metadata.warmupCoordination.previousAgeMs === "number"
+            ? { previousAgeMs: metadata.warmupCoordination.previousAgeMs }
+            : {}),
+        },
+      }
+      : {}),
     ...(truncationReason ? { truncationReason } : {}),
     ...(metadata?.promptExperiments && isRecord(metadata.promptExperiments)
       ? { experiments: metadata.promptExperiments }

@@ -22,8 +22,31 @@ export type QueryRuntimeAgentToolResult = {
 export type QueryRuntimeAgentUsage = {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  cacheSupport?: "supported" | "unsupported" | "unknown";
+  systemPromptFingerprint?: string;
+  structureSignature?: string;
+  warmupCoordination?: {
+    eligible?: boolean;
+    status?: "unsupported" | "cold" | "warming" | "warm_candidate" | "drifted";
+    recommendation?: "proceed" | "proceed_with_caution" | "delay_if_possible";
+    reason?: string;
+    previousAgeMs?: number;
+  };
+  cacheFamilyAffinity?: {
+    status?: "unknown" | "aligned" | "mismatch";
+    familyKey?: string;
+    previousFamilyKey?: string;
+    reason?: string;
+  };
   inputCostUsd?: number;
   outputCostUsd?: number;
+  cacheCreationCostUsd?: number;
+  cacheReadCostUsd?: number;
+  cacheSavingsUsd?: number;
   totalCostUsd?: number;
 };
 
@@ -134,8 +157,24 @@ export async function runAgentWithLifecycle(
         latestUsage = {
           inputTokens: Number(item.inputTokens ?? 0),
           outputTokens: Number(item.outputTokens ?? 0),
+          ...(typeof item.cacheCreationTokens === "number" ? { cacheCreationTokens: Number(item.cacheCreationTokens) } : {}),
+          ...(typeof item.cacheReadTokens === "number" ? { cacheReadTokens: Number(item.cacheReadTokens) } : {}),
+          ...(typeof item.cacheHitTokens === "number" ? { cacheHitTokens: Number(item.cacheHitTokens) } : {}),
+          ...(typeof item.cacheMissTokens === "number" ? { cacheMissTokens: Number(item.cacheMissTokens) } : {}),
+          ...(typeof item.cacheSupport === "string" ? { cacheSupport: item.cacheSupport } : {}),
+          ...(typeof item.systemPromptFingerprint === "string" ? { systemPromptFingerprint: item.systemPromptFingerprint } : {}),
+          ...(typeof item.structureSignature === "string" ? { structureSignature: item.structureSignature } : {}),
+          ...(item.warmupCoordination && typeof item.warmupCoordination === "object"
+            ? { warmupCoordination: item.warmupCoordination }
+            : {}),
+          ...(item.cacheFamilyAffinity && typeof item.cacheFamilyAffinity === "object"
+            ? { cacheFamilyAffinity: item.cacheFamilyAffinity }
+            : {}),
           ...(typeof item.inputCostUsd === "number" ? { inputCostUsd: Number(item.inputCostUsd) } : {}),
           ...(typeof item.outputCostUsd === "number" ? { outputCostUsd: Number(item.outputCostUsd) } : {}),
+          ...(typeof item.cacheCreationCostUsd === "number" ? { cacheCreationCostUsd: Number(item.cacheCreationCostUsd) } : {}),
+          ...(typeof item.cacheReadCostUsd === "number" ? { cacheReadCostUsd: Number(item.cacheReadCostUsd) } : {}),
+          ...(typeof item.cacheSavingsUsd === "number" ? { cacheSavingsUsd: Number(item.cacheSavingsUsd) } : {}),
           ...(typeof item.totalCostUsd === "number" ? { totalCostUsd: Number(item.totalCostUsd) } : {}),
         };
         input.onUsage?.(item);

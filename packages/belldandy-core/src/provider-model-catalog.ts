@@ -4,6 +4,7 @@ import {
   inferProviderId,
   inferProviderMediaCapabilities,
 } from "./media-capability-registry.js";
+import { buildDeepSeekVirtualRouteEntries } from "./deepseek-tier-routing.js";
 
 export type PrimaryModelCatalogConfig = {
   baseUrl: string;
@@ -26,7 +27,7 @@ export type ModelCatalogEntry = {
   model: string;
   providerId: string;
   providerLabel: string;
-  source: "primary" | "named";
+  source: "primary" | "named" | "virtual";
   authStatus: "ready" | "missing";
   protocol?: string;
   wireApi?: string;
@@ -231,6 +232,7 @@ export function buildProviderModelCatalog(input: {
   modelFallbacks?: ModelProfile[];
   currentDefault?: string;
   preferredProviderIds?: string[];
+  deepSeekRoutePolicyEnabled?: boolean;
 }): ProviderModelCatalogSnapshot {
   const currentDefault = typeof input.currentDefault === "string" && input.currentDefault.trim()
     ? input.currentDefault.trim()
@@ -292,6 +294,12 @@ export function buildProviderModelCatalog(input: {
       isDefault: fallbackId === currentDefault,
     }));
   }
+
+  models.push(...buildDeepSeekVirtualRouteEntries({
+    primaryModelConfig: input.primaryModelConfig,
+    modelFallbacks: input.modelFallbacks,
+    policyEnabled: input.deepSeekRoutePolicyEnabled,
+  }));
 
   return {
     providers: [...providers.values()],

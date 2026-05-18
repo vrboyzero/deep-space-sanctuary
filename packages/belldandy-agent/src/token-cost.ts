@@ -10,6 +10,7 @@ export type UsageCostBreakdown = {
   outputUsd: number;
   cacheReadUsd: number;
   cacheCreationUsd: number;
+  cacheSavingsUsd: number;
   totalUsd: number;
 };
 
@@ -22,6 +23,7 @@ export function calculateUsageCostUsd(input: {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  cacheHitTokens?: number;
   pricing?: ModelUsagePricing;
 }): UsageCostBreakdown | undefined {
   if (!input.pricing) return undefined;
@@ -33,12 +35,16 @@ export function calculateUsageCostUsd(input: {
   const cacheCreationUsd = input.pricing.cacheCreationUsdPer1M
     ? (Math.max(0, input.cacheCreationTokens ?? 0) / 1_000_000) * input.pricing.cacheCreationUsdPer1M
     : 0;
+  const cacheSavingsUsd = input.pricing.cacheReadUsdPer1M
+    ? (Math.max(0, input.cacheHitTokens ?? 0) / 1_000_000) * Math.max(0, input.pricing.inputUsdPer1M - input.pricing.cacheReadUsdPer1M)
+    : 0;
   const totalUsd = inputUsd + outputUsd + cacheReadUsd + cacheCreationUsd;
   return {
     inputUsd: roundUsd(inputUsd),
     outputUsd: roundUsd(outputUsd),
     cacheReadUsd: roundUsd(cacheReadUsd),
     cacheCreationUsd: roundUsd(cacheCreationUsd),
+    cacheSavingsUsd: roundUsd(cacheSavingsUsd),
     totalUsd: roundUsd(totalUsd),
   };
 }

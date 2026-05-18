@@ -424,10 +424,12 @@ function mergePromptSnapshotInputMeta(
   if (!systemPromptMetadata && !runMeta) {
     return undefined;
   }
-  return {
+  const merged: Record<string, unknown> = {
     ...(systemPromptMetadata ? { ...systemPromptMetadata } : {}),
     ...(runMeta ? { ...runMeta } : {}),
   };
+  delete merged.promptDeltas;
+  return merged as JsonObject;
 }
 
 

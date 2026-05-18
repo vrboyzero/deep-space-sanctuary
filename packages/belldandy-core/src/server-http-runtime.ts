@@ -44,6 +44,7 @@ type GatewayHttpRuntimeContextInput = {
     | "webhookConfig"
     | "webhookIdempotency"
     | "onChannelSecurityApprovalRequired"
+    | "startupObservability"
   >;
   getGovernanceDetailMode?: () => "compact" | "full";
   setGovernanceDetailMode?: (value: string | undefined) => void;
@@ -93,6 +94,7 @@ export function buildGatewayHttpRoutesContext(
     webhookConfig: input.options.webhookConfig,
     webhookIdempotency: input.options.webhookIdempotency,
     onChannelSecurityApprovalRequired: input.options.onChannelSecurityApprovalRequired,
+    startupObservability: input.options.startupObservability,
     ...runtimeSettings,
     log: input.log,
     getConversationStore: input.getConversationStore,

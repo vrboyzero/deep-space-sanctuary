@@ -35,6 +35,7 @@ type MessageSendMethodContext = Pick<
   | "modelFallbacks"
   | "conversationStore"
   | "conversationRunRegistry"
+  | "getConversationPromptSnapshot"
   | "durableExtractionRuntime"
   | "requestDurableExtraction"
   | "memoryUsageAccounting"
@@ -170,6 +171,10 @@ export async function handleMessageSendMethod(
         conversationRunRegistry: ctx.conversationRunRegistry,
         runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"message.send">(),
         residentAgentRuntime: ctx.residentAgentRuntime,
+        getConversationPromptSnapshot: ctx.getConversationPromptSnapshot,
+        primaryModelConfig: ctx.primaryModelConfig,
+        modelFallbacks: ctx.modelFallbacks,
+        deepSeekRoutePolicyEnabled: String(process.env.BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED ?? "true").trim().toLowerCase() !== "false",
       },
       toolControl: {
         confirmationStore: ctx.toolControlConfirmationStore,

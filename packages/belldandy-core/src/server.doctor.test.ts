@@ -2022,13 +2022,44 @@ test("system.doctor exposes compaction runtime circuit and retry stats", async (
     deltaMessageCount: 2,
     fallbackUsed: true,
     rebuildTriggered: false,
-    promptTooLongRetries: 0,
-    warningTriggered: false,
-    blockingTriggered: false,
-    failureReason: "compaction backend unavailable",
-  }, {
-    source: "request",
-    participatesInCircuitBreaker: true,
+      promptTooLongRetries: 0,
+      warningTriggered: false,
+      blockingTriggered: false,
+      failureReason: "compaction backend unavailable",
+      summarizerObservability: {
+        mode: "rolling",
+        cacheAlignedRequested: true,
+        cacheSupport: "supported",
+        cacheHitTokens: 640,
+        cacheMissTokens: 32,
+        cacheSavingsUsd: 0.000123,
+        usedWireApi: "chat_completions",
+        compareAvailable: true,
+        comparison: {
+          mode: "cache_aligned_vs_plain",
+          plainRequestMessageCount: 1,
+          cacheAlignedRequestMessageCount: 4,
+          plainPromptCharsEstimate: 1200,
+          cacheAlignedReplayCharsEstimate: 980,
+          cacheAlignedInstructionChars: 180,
+          replayOverheadChars: 0,
+        },
+        strategy: {
+          kind: "cache_aligned",
+          providerCacheMode: "supported",
+          selectionReason: "provider_cache_supported_with_context",
+          degradePath: "cache_aligned_then_compaction_fallback",
+          providerModelNotes: "cache=supported, json=medium, route=deepseek-flash",
+          fallbackPolicy: "fallback_summary_on_request_or_parse_or_budget_failure",
+          fallbackTriggered: true,
+          fallbackSummary: "model_failure_fallback",
+        },
+        fallbackStage: "model_failure",
+        failureReason: "compaction backend unavailable",
+      },
+    }, {
+      source: "request",
+      participatesInCircuitBreaker: true,
   });
   tracker.shouldSkip("request");
 
@@ -2052,17 +2083,50 @@ test("system.doctor exposes compaction runtime circuit and retry stats", async (
     const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-compaction-runtime");
 
     expect(response.ok).toBe(true);
-    expect(response.payload?.memoryRuntime?.compactionRuntime).toMatchObject({
-      totals: {
-        attempts: expect.any(Number),
-        failures: 1,
-        skippedByCircuitBreaker: expect.any(Number),
+      expect(response.payload?.memoryRuntime?.compactionRuntime).toMatchObject({
+        totals: {
+          attempts: expect.any(Number),
+          failures: 1,
+          skippedByCircuitBreaker: expect.any(Number),
       },
-      circuitBreaker: {
-        open: expect.any(Boolean),
-        lastFailureReason: "compaction backend unavailable",
-      },
-    });
+        circuitBreaker: {
+          open: expect.any(Boolean),
+          lastFailureReason: "compaction backend unavailable",
+        },
+        lastResult: {
+          summarizerObservability: {
+            mode: "rolling",
+            cacheAlignedRequested: true,
+            cacheSupport: "supported",
+            cacheHitTokens: 640,
+            cacheMissTokens: 32,
+            cacheSavingsUsd: 0.000123,
+            usedWireApi: "chat_completions",
+            compareAvailable: true,
+            comparison: {
+              mode: "cache_aligned_vs_plain",
+              plainRequestMessageCount: 1,
+              cacheAlignedRequestMessageCount: 4,
+              plainPromptCharsEstimate: 1200,
+              cacheAlignedReplayCharsEstimate: 980,
+              cacheAlignedInstructionChars: 180,
+              replayOverheadChars: 0,
+            },
+            strategy: {
+              kind: "cache_aligned",
+              providerCacheMode: "supported",
+              selectionReason: "provider_cache_supported_with_context",
+              degradePath: "cache_aligned_then_compaction_fallback",
+              providerModelNotes: "cache=supported, json=medium, route=deepseek-flash",
+              fallbackPolicy: "fallback_summary_on_request_or_parse_or_budget_failure",
+              fallbackTriggered: true,
+              fallbackSummary: "model_failure_fallback",
+            },
+            fallbackStage: "model_failure",
+            failureReason: "compaction backend unavailable",
+          },
+        },
+      });
     expect(response.payload?.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "compaction_runtime",
@@ -2285,6 +2349,11 @@ test("system.doctor surfaces a configured compaction route in runtime resilience
           model: "openai/gpt-4.1-mini",
           wireApi: "responses",
         },
+        auxSummaryVerdict: {
+          strategy: "deepseek_flash_preferred",
+          enabled: true,
+          reason: "deepseek_primary_with_flash_candidate",
+        },
       },
     },
   });
@@ -2321,7 +2390,19 @@ test("system.doctor surfaces a configured compaction route in runtime resilience
           model: "openai/gpt-4.1-mini",
           wireApi: "responses",
         },
+        auxSummaryVerdict: {
+          strategy: "deepseek_flash_preferred",
+          enabled: true,
+          reason: "deepseek_primary_with_flash_candidate",
+        },
       });
+      expect(response.payload?.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "runtime_resilience_compaction_aux_verdict",
+          status: "pass",
+          message: "deepseek_flash_preferred / deepseek_primary_with_flash_candidate / enabled=yes",
+        }),
+      ]));
     } finally {
       ws.close();
       await closeP;

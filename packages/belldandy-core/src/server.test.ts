@@ -115,6 +115,80 @@ test("gateway handshake and message.send streams chat", async () => {
   await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
+test("startup observability captures static page, bootstrap asset and websocket startup milestones", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-startup-observability-"));
+  const firstStaticRequest = vi.fn();
+  const firstBootstrapAssetRequest = vi.fn();
+  const firstConnection = vi.fn();
+  const firstAuthenticated = vi.fn();
+  const invalidToken = vi.fn();
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    startupObservability: {
+      onFirstStaticWebRequest: firstStaticRequest,
+      onFirstBootstrapAssetRequest: firstBootstrapAssetRequest,
+      onFirstWebSocketConnection: firstConnection,
+      onFirstAuthenticatedWebSocket: firstAuthenticated,
+      onInvalidTokenClose: invalidToken,
+    },
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => {
+    frames.push(JSON.parse(data.toString("utf-8")));
+  });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        "user-agent": "vitest-startup-observability",
+      },
+    });
+    expect(response.status).toBe(200);
+
+    const appJsResponse = await fetch(`http://127.0.0.1:${server.port}/app.js`, {
+      headers: {
+        "user-agent": "vitest-startup-observability",
+        referer: `http://127.0.0.1:${server.port}/`,
+      },
+    });
+    expect(appJsResponse.status).toBe(200);
+
+    await waitFor(() => frames.some((f) => f.type === "connect.challenge"));
+    ws.send(JSON.stringify({ type: "connect", role: "web", auth: { mode: "none" }, clientId: "startup-observe-client" }));
+    await waitFor(() => frames.some((f) => f.type === "hello-ok"));
+
+    expect(firstStaticRequest).toHaveBeenCalledTimes(1);
+    expect(firstStaticRequest.mock.calls[0]?.[0]).toMatchObject({
+      method: "GET",
+      path: "/",
+      userAgent: "vitest-startup-observability",
+    });
+    expect(firstBootstrapAssetRequest).toHaveBeenCalledTimes(1);
+    expect(firstBootstrapAssetRequest.mock.calls[0]?.[0]).toMatchObject({
+      method: "GET",
+      path: "/app.js",
+      userAgent: "vitest-startup-observability",
+    });
+    expect(firstConnection).toHaveBeenCalledTimes(1);
+    expect(firstAuthenticated).toHaveBeenCalledTimes(1);
+    expect(invalidToken).not.toHaveBeenCalled();
+    expect(firstAuthenticated.mock.calls[0]?.[0]).toMatchObject({
+      clientId: "startup-observe-client",
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("server.close force closes lingering raw sockets", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-close-"));
   const server = await startGatewayServer({
@@ -1199,6 +1273,381 @@ test("message.send forwards modelId to AgentRegistry.create as modelOverride", a
 
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === reqId && f.ok === true));
     expect(capturedOverrides).toContain("kimi-k2.5");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => { });
+  }
+});
+
+test("message.send resolves deepseek:auto to flash when warmup verdict is not promotable", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const capturedOverrides: Array<string | undefined> = [];
+  const registry = new AgentRegistry((_profile, opts): BelldandyAgent => {
+    capturedOverrides.push(opts?.modelOverride);
+    return new MockAgent();
+  });
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  await persistConversationPromptSnapshot({
+    stateDir,
+    snapshot: {
+      agentId: "default",
+      conversationId: "agent:default:main",
+      runId: "run-prev-flash",
+      createdAt: Date.now() - 2_000,
+      systemPrompt: "system",
+      messages: [],
+      inputMeta: {
+        structureSignature: "sig-stable",
+        orderingGuard: { status: "risk", reasons: ["tool_contract_list_changed"] },
+        warmupCoordination: {
+          eligible: true,
+          status: "warm_candidate",
+          recommendation: "proceed",
+          reason: "test_previous_snapshot",
+        },
+        cacheFamilyAffinity: {
+          status: "aligned",
+          familyKey: "family-a",
+          previousFamilyKey: "family-a",
+          reason: "same_cache_family_as_previous",
+        },
+      },
+    },
+    retention: { defaultMaxRunsPerConversation: 4, heartbeatMaxRuns: 2, emailThreadMaxRuns: 2, maxAgeDays: 7 },
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    modelFallbacks: [
+      {
+        id: "deepseek-flash-main",
+        displayName: "DeepSeek Flash",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-flash",
+        model: "deepseek-v4-flash",
+      },
+      {
+        id: "deepseek-pro-main",
+        displayName: "DeepSeek Pro",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-pro",
+        model: "deepseek-v4-pro",
+      },
+    ],
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    const reqId = "deepseek-auto-flash";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: reqId,
+      method: "message.send",
+      params: {
+        conversationId: "agent:default:main",
+        text: "hello",
+        modelId: "deepseek:auto",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === reqId && f.ok === true));
+    expect(capturedOverrides).toContain("deepseek-flash-main");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => { });
+  }
+});
+
+test("message.send resolves deepseek:auto to pro when warmup verdict is promotable", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const capturedOverrides: Array<string | undefined> = [];
+  const registry = new AgentRegistry((_profile, opts): BelldandyAgent => {
+    capturedOverrides.push(opts?.modelOverride);
+    return new MockAgent();
+  });
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  await persistConversationPromptSnapshot({
+    stateDir,
+    snapshot: {
+      agentId: "default",
+      conversationId: "agent:default:main",
+      runId: "run-prev-pro",
+      createdAt: Date.now() - 2_000,
+      systemPrompt: "system",
+      messages: [],
+      inputMeta: {
+        structureSignature: "sig-stable",
+        orderingGuard: { status: "stable", reasons: [] },
+        warmupCoordination: {
+          eligible: true,
+          status: "warm_candidate",
+          recommendation: "proceed",
+          reason: "test_previous_snapshot",
+        },
+        cacheFamilyAffinity: {
+          status: "aligned",
+          familyKey: "family-a",
+          previousFamilyKey: "family-a",
+          reason: "same_cache_family_as_previous",
+        },
+      },
+    },
+    retention: { defaultMaxRunsPerConversation: 4, heartbeatMaxRuns: 2, emailThreadMaxRuns: 2, maxAgeDays: 7 },
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    modelFallbacks: [
+      {
+        id: "deepseek-flash-main",
+        displayName: "DeepSeek Flash",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-flash",
+        model: "deepseek-v4-flash",
+      },
+      {
+        id: "deepseek-pro-main",
+        displayName: "DeepSeek Pro",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-pro",
+        model: "deepseek-v4-pro",
+      },
+    ],
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    const reqId = "deepseek-auto-pro";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: reqId,
+      method: "message.send",
+      params: {
+        conversationId: "agent:default:main",
+        text: "hello",
+        modelId: "deepseek:auto",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === reqId && f.ok === true));
+    expect(capturedOverrides).toContain("deepseek-pro-main");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => { });
+  }
+});
+
+test("message.send token.usage includes deepseek route verdict for auto tier routing", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield {
+        type: "usage" as const,
+        systemPromptTokens: 3,
+        contextTokens: 4,
+        inputTokens: 10,
+        outputTokens: 6,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        cacheHitTokens: 0,
+        cacheMissTokens: 10,
+        modelCalls: 1,
+        cacheSupport: "supported" as const,
+      };
+      yield { type: "final" as const, text: "ok" };
+      yield { type: "status" as const, status: "done" };
+    },
+  };
+
+  await persistConversationPromptSnapshot({
+    stateDir,
+    snapshot: {
+      agentId: "default",
+      conversationId: "agent:default:main",
+      runId: "run-prev-token-route",
+      createdAt: Date.now() - 2_000,
+      systemPrompt: "system",
+      messages: [],
+      inputMeta: {
+        structureSignature: "sig-stable",
+        orderingGuard: { status: "stable", reasons: [] },
+        warmupCoordination: {
+          eligible: true,
+          status: "warm_candidate",
+          recommendation: "proceed",
+          reason: "test_previous_snapshot",
+        },
+        cacheFamilyAffinity: {
+          status: "aligned",
+          familyKey: "family-a",
+          previousFamilyKey: "family-a",
+          reason: "same_cache_family_as_previous",
+        },
+      },
+    },
+    retention: { defaultMaxRunsPerConversation: 4, heartbeatMaxRuns: 2, emailThreadMaxRuns: 2, maxAgeDays: 7 },
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => agent,
+    modelFallbacks: [
+      {
+        id: "deepseek-flash-main",
+        displayName: "DeepSeek Flash",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-flash",
+        model: "deepseek-v4-flash",
+      },
+      {
+        id: "deepseek-pro-main",
+        displayName: "DeepSeek Pro",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-pro",
+        model: "deepseek-v4-pro",
+      },
+    ],
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    const reqId = "deepseek-auto-token-usage";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: reqId,
+      method: "message.send",
+      params: {
+        conversationId: "agent:default:main",
+        text: "hello",
+        modelId: "deepseek:auto",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "token.usage"));
+    const usageEvent = frames.find((f) => f.type === "event" && f.event === "token.usage");
+    expect(usageEvent?.payload?.deepseekRoute).toMatchObject({
+      requestedRoute: "deepseek:auto",
+      effectiveModelId: "deepseek-pro-main",
+      selectedTier: "pro",
+      routeMode: "deepseek_virtual",
+      degraded: false,
+      reason: "auto_promoted_to_pro",
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => { });
+  }
+});
+
+test("message.send keeps deepseek:auto as passthrough when DeepSeek route policy is disabled", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const capturedOverrides: Array<string | undefined> = [];
+  const registry = new AgentRegistry((_profile, opts): BelldandyAgent => {
+    capturedOverrides.push(opts?.modelOverride);
+    return new MockAgent();
+  });
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    modelFallbacks: [
+      {
+        id: "deepseek-flash-main",
+        displayName: "DeepSeek Flash",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-flash",
+        model: "deepseek-v4-flash",
+      },
+      {
+        id: "deepseek-pro-main",
+        displayName: "DeepSeek Pro",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-pro",
+        model: "deepseek-v4-pro",
+      },
+    ],
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await withEnv({ BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED: "false" }, async () => {
+      await pairWebSocketClient(ws, frames, stateDir);
+
+      const reqId = "deepseek-auto-policy-disabled";
+      ws.send(JSON.stringify({
+        type: "req",
+        id: reqId,
+        method: "message.send",
+        params: {
+          conversationId: "agent:default:main",
+          text: "hello",
+          modelId: "deepseek:auto",
+        },
+      }));
+
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === reqId && f.ok === true));
+      expect(capturedOverrides).not.toContain("deepseek-flash-main");
+      expect(capturedOverrides).not.toContain("deepseek-pro-main");
+    });
   } finally {
     ws.close();
     await closeP;

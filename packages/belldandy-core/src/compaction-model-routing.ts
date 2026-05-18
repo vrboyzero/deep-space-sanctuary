@@ -1,4 +1,5 @@
 import { resolveModelConfig, type ModelProfile } from "@belldandy/agent";
+import { findDeepSeekRouteCandidates } from "./deepseek-tier-routing.js";
 
 type PrimaryModelConfig = {
   baseUrl: string;
@@ -19,6 +20,11 @@ export type CompactionModelRoute = {
   protocol?: string;
   wireApi?: string;
   supportsOpenAICompat: boolean;
+  auxSummaryVerdict?: {
+    strategy: "deepseek_flash_preferred" | "configured_route" | "manual_override" | "default_primary";
+    enabled: boolean;
+    reason: string;
+  };
 };
 
 export function resolveCompactionModelRoute(input: {
@@ -29,6 +35,7 @@ export function resolveCompactionModelRoute(input: {
   explicitModel?: string;
   primaryModelConfig: PrimaryModelConfig;
   modelFallbacks: ModelProfile[];
+  deepSeekRoutePolicyEnabled?: boolean;
 }): CompactionModelRoute | undefined {
   if (!input.enabled) return undefined;
 
@@ -36,8 +43,30 @@ export function resolveCompactionModelRoute(input: {
   const explicitApiKey = input.explicitApiKey?.trim() ?? "";
   const explicitModel = input.explicitModel?.trim() ?? "";
   const routeRef = input.routeRef?.trim() ?? "";
+  const hasExplicitManualOverride = Boolean(explicitBaseUrl || explicitApiKey || explicitModel);
+  const hasExplicitRouteRef = Boolean(routeRef);
 
-  const resolved = explicitBaseUrl || explicitApiKey || explicitModel
+  const deepSeekAuxFlashRoute = (() => {
+    if (input.deepSeekRoutePolicyEnabled === false) {
+      return undefined;
+    }
+    if (hasExplicitManualOverride || hasExplicitRouteRef) {
+      return undefined;
+    }
+    const candidates = findDeepSeekRouteCandidates({
+      primaryModelConfig: input.primaryModelConfig,
+      modelFallbacks: input.modelFallbacks,
+    });
+    const primaryModel = input.primaryModelConfig.model.trim().toLowerCase();
+    const primaryBaseUrl = input.primaryModelConfig.baseUrl.trim().toLowerCase();
+    const primaryLooksDeepSeek = primaryModel.includes("deepseek") || primaryBaseUrl.includes("deepseek");
+    if (!primaryLooksDeepSeek) {
+      return undefined;
+    }
+    return candidates.flash;
+  })();
+
+  const resolved = hasExplicitManualOverride
     ? {
         baseUrl: explicitBaseUrl || input.primaryModelConfig.baseUrl,
         apiKey: explicitApiKey || input.primaryModelConfig.apiKey,
@@ -46,12 +75,16 @@ export function resolveCompactionModelRoute(input: {
         wireApi: input.primaryModelConfig.wireApi,
         source: "manual" as const,
       }
+    : deepSeekAuxFlashRoute
+      ? resolveModelConfig(deepSeekAuxFlashRoute.id, input.primaryModelConfig, input.modelFallbacks)
     : resolveModelConfig(routeRef || "primary", input.primaryModelConfig, input.modelFallbacks);
 
   const protocol = resolved.protocol ?? "openai";
   const supportsOpenAICompat = protocol !== "anthropic";
-  const normalizedRouteRef = explicitBaseUrl || explicitApiKey || explicitModel
+  const normalizedRouteRef = hasExplicitManualOverride
     ? (routeRef || explicitModel || "manual")
+    : deepSeekAuxFlashRoute
+      ? deepSeekAuxFlashRoute.id
     : (routeRef || "primary");
 
   if (!resolved.baseUrl || !resolved.apiKey) {
@@ -66,6 +99,23 @@ export function resolveCompactionModelRoute(input: {
       protocol: resolved.protocol,
       wireApi: resolved.wireApi,
       supportsOpenAICompat,
+      auxSummaryVerdict: {
+        strategy: hasExplicitManualOverride
+          ? "manual_override"
+          : hasExplicitRouteRef
+            ? "configured_route"
+            : deepSeekAuxFlashRoute
+              ? "deepseek_flash_preferred"
+              : "default_primary",
+        enabled: Boolean(deepSeekAuxFlashRoute) || !hasExplicitManualOverride,
+        reason: hasExplicitManualOverride
+          ? "manual_compaction_override"
+          : hasExplicitRouteRef
+            ? "explicit_compaction_route"
+            : deepSeekAuxFlashRoute
+              ? "deepseek_primary_with_flash_candidate"
+              : "default_compaction_route",
+      },
     };
   }
 
@@ -81,6 +131,23 @@ export function resolveCompactionModelRoute(input: {
       protocol: resolved.protocol,
       wireApi: resolved.wireApi,
       supportsOpenAICompat,
+      auxSummaryVerdict: {
+        strategy: hasExplicitManualOverride
+          ? "manual_override"
+          : hasExplicitRouteRef
+            ? "configured_route"
+            : deepSeekAuxFlashRoute
+              ? "deepseek_flash_preferred"
+              : "default_primary",
+        enabled: Boolean(deepSeekAuxFlashRoute) || !hasExplicitManualOverride,
+        reason: hasExplicitManualOverride
+          ? "manual_compaction_override"
+          : hasExplicitRouteRef
+            ? "explicit_compaction_route"
+            : deepSeekAuxFlashRoute
+              ? "deepseek_primary_with_flash_candidate"
+              : "default_compaction_route",
+      },
     };
   }
 
@@ -96,6 +163,23 @@ export function resolveCompactionModelRoute(input: {
       protocol: resolved.protocol,
       wireApi: resolved.wireApi,
       supportsOpenAICompat,
+      auxSummaryVerdict: {
+        strategy: hasExplicitManualOverride
+          ? "manual_override"
+          : hasExplicitRouteRef
+            ? "configured_route"
+            : deepSeekAuxFlashRoute
+              ? "deepseek_flash_preferred"
+              : "default_primary",
+        enabled: Boolean(deepSeekAuxFlashRoute) || !hasExplicitManualOverride,
+        reason: hasExplicitManualOverride
+          ? "manual_compaction_override"
+          : hasExplicitRouteRef
+            ? "explicit_compaction_route"
+            : deepSeekAuxFlashRoute
+              ? "deepseek_primary_with_flash_candidate"
+              : "default_compaction_route",
+      },
     };
   }
 
@@ -109,5 +193,22 @@ export function resolveCompactionModelRoute(input: {
     protocol: resolved.protocol,
     wireApi: resolved.wireApi,
     supportsOpenAICompat,
+    auxSummaryVerdict: {
+      strategy: hasExplicitManualOverride
+        ? "manual_override"
+        : hasExplicitRouteRef
+          ? "configured_route"
+          : deepSeekAuxFlashRoute
+            ? "deepseek_flash_preferred"
+            : "default_primary",
+      enabled: Boolean(deepSeekAuxFlashRoute) || !hasExplicitManualOverride,
+      reason: hasExplicitManualOverride
+        ? "manual_compaction_override"
+        : hasExplicitRouteRef
+          ? "explicit_compaction_route"
+          : deepSeekAuxFlashRoute
+            ? "deepseek_primary_with_flash_candidate"
+            : "default_compaction_route",
+    },
   };
 }

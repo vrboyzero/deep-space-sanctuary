@@ -44,6 +44,236 @@ Rust 实现的终端 UI 编码智能体，面向 DeepSeek V4 的 1M token 上下
 - 没有缓存命中率监控
 - OpenAI 协议完全没有缓存标记注入
 
+#### 维度 1 补充审计：当前已实现能力 vs 关键缺口（2026-05-18）
+
+为避免把“缓存观测”误当成“缓存优化已完成”，这里单独整理当前代码里**已经落地、确实有助于缓存命中率提升的能力**，以及**仍未实现的关键缺口**。
+
+##### 已实现的缓存命中提升能力
+
+1. **缓存敏感 provider 下的前缀稳定保护（已落地）**  
+   当前已在 `microcompact` 链路加入前缀稳定保护：当主 provider 被判定为缓存敏感时，不再允许 `microcompact` 原地改写旧的 tool message，而是直接跳过这类破坏性压缩。  
+   代码依据：
+   - `packages/belldandy-agent/src/microcompact.ts`
+   - `packages/belldandy-agent/src/tool-agent.ts`
+   - `packages/belldandy-core/src/bin/gateway.ts`
+   
+   **作用效果**：中到高。它不能主动提高命中率上限，但能显著减少“本可命中却被本地历史改写打碎”的情况。  
+   **风险**：低。主要代价是部分场景下 token 体积更大，需靠后续摘要或其他压缩手段兜底。
+
+2. **cache-aligned 摘要请求构造（已落地）**  
+   当前 compaction summarizer 在缓存可用且上下文充足时，会优先走“重放已有上下文前缀 + 追加摘要指令”的请求构造，而不是总把摘要请求压平成单段普通 prompt。  
+   代码依据：
+   - `packages/belldandy-core/src/compaction-cache-aligned.ts`
+   - `packages/belldandy-core/src/bin/gateway.ts`
+   
+   **作用效果**：中到高。对长摘要链路尤其重要，能让“摘要调用本身”也更接近前缀缓存友好型请求。  
+   **风险**：中。链路更复杂，若 provider 差异处理不稳，可能出现“结构复杂度上升但收益不稳定”的情况。
+
+3. **Anthropic 显式 prompt caching 标记（已落地）**  
+   对 Anthropic 协议，system prompt 与最后一个 tool 定义已支持 `cache_control: { type: "ephemeral" }` 注入。  
+   代码依据：
+   - `packages/belldandy-agent/src/anthropic.ts`
+   
+   **作用效果**：对 Anthropic 有效，对 DeepSeek 不是同一路机制，但属于已落地的缓存友好能力。  
+   **风险**：低。
+
+4. **ProviderCapability 缓存能力分流（已落地）**  
+   当前已具备 `cacheSupport`、`jsonReliability`、`contextWindow`、pricing 等能力字段，并以此作为缓存策略和摘要策略的启停条件。  
+   代码依据：
+   - `packages/belldandy-core/src/provider-capability.ts`
+   
+   **作用效果**：间接。它本身不直接提升命中率，但避免把 DeepSeek 定向缓存策略错误施加到其他 provider 上。  
+   **风险**：低到中。当前仍以 env 配置为主，自动识别能力有限。
+
+5. **缓存命中与前缀指纹观测链路（已落地）**  
+   当前已能记录并展示：
+   - `prompt_cache_hit_tokens`
+   - `prompt_cache_miss_tokens`
+   - `cacheSavingsUsd`
+   - `systemPromptFingerprint`
+   - cache-aligned 摘要策略与 fallback 信息
+   
+   代码依据：
+   - `packages/belldandy-agent/src/tool-agent.ts`
+   - `packages/belldandy-core/src/bin/gateway-prompt-inspection-runtime.ts`
+   - `packages/belldandy-core/src/prompt-observability.ts`
+   - `apps/web/public/app/features/doctor-observability.js`
+   
+   **作用效果**：不直接提升命中率，但对后续判断“哪些修改真正提高了命中率”是必要基础。  
+   **风险**：低。
+
+##### 仍未实现的关键缺口（按优先级）
+
+| 优先级 | 缺口 | 当前状态 | 可行性 | 风险 | 预期作用效果 |
+|------|------|------|------|------|------|
+| P0 | 全链路 append-only 历史策略 | 仅拦住了 `microcompact` 的破坏性改写，整体消息历史仍非严格 append-only | 中 | 中 | 高 |
+| P1 | 完整的前缀漂移治理 | 已有 `systemPromptFingerprint`，但还没把漂移来源收敛成治理动作 | 高 | 低到中 | 高 |
+| P2 | 工具定义 / system block 的稳定排序与稳定编排 | 已能观测 block / cache-eligible 信息，但没有硬保证输出顺序稳定 | 中 | 中 | 高 |
+| P3 | cache-aligned 摘要的真实策略闭环 | 已有请求构造与观测，但尚未基于真实收益自动收敛 | 高 | 中 | 中到高 |
+| P4 | provider/model 能力自动识别 | 目前主要依赖 env 声明，自动推断能力不足 | 高 | 低 | 中 |
+| P5 | 缓存友好的工具压缩替代方案 | 当前更多是“为保护缓存而跳过压缩”，缺少兼顾压缩与前缀稳定的新路径 | 中 | 中到高 | 中到高 |
+
+##### 缺口逐项判断
+
+1. **P0 全链路 append-only 历史策略**  
+   这是当前最重要、也最结构性的缺口。现在只是对 `microcompact` 增加了护栏，但其他历史消息组织与 compaction 路径仍可能让旧前缀被重排、重写或重构。  
+   **可行性**：中。现有 `tool-agent`、`conversation`、`compaction` 分层已经存在，具备逐步改造条件。  
+   **风险**：中。会触碰消息生命周期、摘要回填、历史恢复、持久化兼容。  
+   **作用效果**：高。它最接近“长期稳定提高缓存命中率”的基础设施，而不是局部补丁。
+
+2. **P1 完整的前缀漂移治理**  
+   当前已能拿到 `systemPromptFingerprint`，但还不能很好回答“到底是哪一段 system、哪一个 tool、哪一类动态 section 导致前缀漂移”。  
+   **可行性**：高。现有 prompt inspection 运行时已经有 section / provider-native block 粒度数据，可以顺势补 drift diff 与来源归因。  
+   **风险**：低到中。主要是观测归因逻辑和展示，不会大改主执行路径。  
+   **作用效果**：高。它虽然不直接修改请求，但能快速找出命中率上不去的真实原因。
+
+3. **P2 工具定义 / system block 的稳定排序与稳定编排**  
+   DeepSeek KV Cache 依赖前缀字节稳定。只要 tool 列表顺序、system block 拼接顺序、可选 section 注入顺序发生抖动，就会直接损伤命中率。  
+   **可行性**：中。需要梳理工具注册、prompt section 生成、provider-native block 转换的确定性输出。  
+   **风险**：中。容易与已有动态实验开关、条件注入逻辑发生耦合。  
+   **作用效果**：高。对“把命中率从偶发变成稳定”非常关键。
+
+4. **P3 cache-aligned 摘要的真实策略闭环**  
+   当前已经能发 cache-aligned 摘要请求，也能观测命中与 fallback，但还没有把这些结果进一步收敛为“什么时候该默认 cache-aligned、什么时候该退回 plain”的策略判断。  
+   **可行性**：高。现有观测字段已经比较完整。  
+   **风险**：中。不同 provider、不同 route、不同摘要模式的收益差异可能很大。  
+   **作用效果**：中到高。主要作用于 compaction / 摘要支线，对长上下文成本控制价值明显。
+
+5. **P4 provider/model 能力自动识别**  
+   目前 `ProviderCapability` 主要从 env 读取能力，工程上可用，但容易出现“模型本身支持缓存，配置侧却没正确声明”的情况。  
+   **可行性**：高。可以从 `models.json`、provider id、baseUrl、model 名称推断，再允许用户覆盖。  
+   **风险**：低。  
+   **作用效果**：中。不会直接提高命中率，但会减少策略误配和漏开。
+
+6. **P5 缓存友好的工具压缩替代方案**  
+   现在的保守策略更接近“为了不破坏缓存，先别动旧 tool message”。这能保护命中，但会保留更大的上下文体积。后续需要一种既能减小 token 体积、又不破坏前缀稳定的新压缩方案。  
+   **可行性**：中。  
+   **风险**：中到高。设计不好会变成“缓存也没保住，信息也丢了”。  
+   **作用效果**：中到高。对工具调用密集型会话尤其重要。
+
+##### 推荐推进顺序
+
+1. **先做 P1：前缀漂移治理**  
+   先把“为什么命中没起来”定位清楚，再决定后续结构改造力度。
+
+2. **再做 P2：稳定排序与稳定编排**  
+   把 drift 观测转化成硬约束，减少 system/tools 前缀抖动。
+
+3. **然后做 P0：append-only 历史策略**  
+   这是价值最高但改动最大的结构性项，建议拆阶段推进，而不是一轮内大改。
+
+4. **再收敛 P3：cache-aligned 摘要策略闭环**  
+   用真实 hit/miss 与收益数据决定默认策略，而不是凭感觉扩面。
+
+5. **最后补 P4 / P5**  
+   两者都重要，但优先级低于前面的核心命中率抓手。
+
+##### 是否需要“缓存落盘协同层”的正式判断
+
+先明确边界：对于 DeepSeek KV Cache，这里讨论的“缓存落盘”并不是指项目本地自己维护一套 KV cache 实体。按照 DeepSeek 官方文档，真正的缓存写入、命中判定、生命周期管理与回收都发生在服务端；客户端能影响的是**请求前缀是否稳定、请求间隔是否合理、是否给服务端足够机会完成缓存构建并在后续请求命中**。
+
+因此，当前项目**不建议做“重型缓存落盘管理系统”**，但**建议做“轻量缓存落盘协同层”**。
+
+###### 不建议做：重型缓存落盘管理系统
+
+这里指的是：
+- 在本地维护一套 KV cache 实体或镜像；
+- 在本地决定缓存单元的落盘、过期与清理；
+- 试图用客户端状态替代 provider 服务端的缓存生命周期管理。
+
+**判断理由**：
+1. **从能力边界看，没有必要也无法真正接管**  
+   DeepSeek KV Cache 的真实缓存对象、构建时机、失效规则和清理行为都由服务端决定，客户端无法精确接管。
+
+2. **会引入很高的伪确定性风险**  
+   即使本地认为“缓存应该已经落盘”，下一轮请求是否命中仍然取决于服务端的实际状态与其尽力而为的缓存策略。
+
+3. **会显著增加运行时复杂度**  
+   一旦把本地缓存状态做成“拟真缓存系统”，后续会牵涉 TTL、失效、跨 key / baseUrl / model 隔离、诊断解释等复杂问题。
+
+###### 建议做：轻量缓存落盘协同层
+
+这里指的是：
+- 记录与缓存构建相关的本地元数据；
+- 识别“当前前缀是否可能已完成服务端缓存构建”；
+- 针对摘要、多轮长上下文等链路做命中感知调度与诊断；
+- 明确哪些场景只是“缓存尚未稳定”，而不是“缓存能力无效”。
+
+**可带来的作用与好处**：
+
+1. **减少“发得太快 / 改得太碎”导致的命中损失**  
+   官方文档明确指出缓存构建存在秒级延迟；轻量协同层可以帮助区分“前缀本身不稳定”和“请求发出时机不利于命中”。
+
+2. **提高多轮稳定会话、摘要链路、长前缀问答的命中一致性**  
+   特别是固定 system prompt、大段共享前缀、尾部少量增量追加的场景。
+
+3. **让缓存问题可解释、可诊断**  
+   例如区分：
+   - system / tools / section 顺序漂移；
+   - route / model / key / baseUrl 变化；
+   - 历史被破坏性改写；
+   - 缓存可能仍处于服务端构建窗口。
+
+4. **减少错误优化动作**  
+   当前系统后续若继续扩展 compaction、tool result 压缩或动态 prompt 组装，没有协同层就容易在不知情的情况下反复破坏前缀稳定性。
+
+###### 建议的轻量实现边界
+
+推荐只做以下轻量能力，而不是扩展成重型缓存管理系统：
+
+1. **prefix warm state 本地元数据**  
+   记录：
+   - `systemPromptFingerprint`
+   - `provider/model/baseUrl/apiKey` 组合标识
+   - 最近一次长前缀请求时间
+   - 最近几轮 `hit/miss` 情况
+
+2. **warm-up aware 调度**  
+   对明确想吃缓存的链路（如 cache-aligned 摘要、长上下文连续问答），避免在首个长前缀请求刚结束时就立刻发送“必须命中”的第二枪；必要时允许轻量等待或延后到下一轮。
+
+3. **hit-aware 诊断与提示**  
+   当连续几轮 `miss` 时，优先提示：
+   - 是否 system/tools 顺序变化；
+   - 是否更换 route/model/key/baseUrl；
+   - 是否旧历史被改写；
+   - 是否当前仍可能处于服务端缓存构建窗口。
+
+4. **cache family affinity 约束**  
+   对同一会话尽量固定：
+   - model
+   - baseUrl
+   - apiKey
+   - prompt section 顺序
+   - tools 顺序
+
+###### 代价与坏处
+
+1. **增加实现复杂度**  
+   尤其一旦把“等待落盘”“自动重试”“自动预热”做得过重，普通请求路径会被拖复杂。
+
+2. **可能引入额外延迟**  
+   为了提高命中而做轻量等待，会增加部分首轮或摘要支线的响应时间。
+
+3. **可能误伤非 DeepSeek / 无缓存模型**  
+   如果不走 capability gating，就会把复杂性施加给根本拿不到收益的 provider。
+
+4. **容易过度绑定当前 provider**  
+   如果把这套逻辑写死在主运行时里，会提高后续多 provider 维护成本。
+
+###### 正式建议
+
+**结论**：
+
+- **不建议做**：重型“缓存落盘管理系统”
+- **建议做**：轻量“缓存落盘协同层”
+
+对当前项目最合理的策略是：
+
+1. 保留现有的前缀稳定保护与 `cache-aligned` 摘要链路；
+2. 在此基础上补一层“落盘协同元数据 + 命中感知诊断”；
+3. 仅对 `cacheSupport=supported` 的 provider/model 启用；
+4. 首阶段不做自动重试与重型调度改写，先以观测、诊断、轻量延后策略为主。
+
 ---
 
 ### 维度 2：本地 Token 计数 / 估算
@@ -675,27 +905,67 @@ registerCapability("openai", {
 
 ---
 
-## 五、实施路线图建议（含提供商适配）
+## 五、实施路线图建议（含 DeepSeek 优先版）
 
 ```
-阶段 1（立即，1-3 天）：A3 + A4 + ProviderCapability 基础设施
-  → 成本追踪 + 百分比阈值 + 能力注册表
-  → 先建基础设施，让后续所有适配有据可依
+阶段 1（立即，1-3 天）：A1 观测补完 + A3 缓存节省量化
+  → 前缀指纹 / hit-miss 观测 / cache savings USD / diagnostics 可见性
+  → 先把 DeepSeek 缓存收益“量出来”，否则后续优化无法判断真收益
 
-阶段 2（短期，3-5 天）：A1 + A2
-  → 缓存稳定性（按能力切换）+ 智能固定
-  → DeepSeek 用户立即受益
+阶段 2（短期，3-5 天）：B4 补强 + A2 微调
+  → cache-aligned 摘要链路补命中回执与失败回退
+  → pinning 规则围绕错误 / 补丁 / memory_* / 关键路径再精修
 
-阶段 3（中期，1-3 周）：B1 + B3 + B4
-  → 工具结果分级压缩 + 修复管线（按 jsonReliability 启用）
-    + 缓存对齐摘要（按 cache 能力启用）
+阶段 3（短期到中期，4-7 天）：B2 DeepSeek 档位路由深化
+  → 明确 `auto / flash / pro` 是“按场景择一”的档位路由
+  → flash 默认、pro 升级、摘要/强制总结固定 flash
+  → 支持 `deepseek-v4-flash` / `deepseek-v4-pro` 独立 `baseUrl + apiKey + model` 配置；单 Key 仅兼容，不作为设计目标
+  → 先覆盖 compaction / forced summary / checkpoint recap 等高频低风险支线
 
-阶段 4（中期，1-3 周）：B2 + C1 + C3
-  → 分层路由 + 精确 tokenizer + 迭代预算警告
+阶段 4（中期，1-2 周）：B3 + B1
+  → 修复管线深化（truncation / duplicate 之后再看 scavenge）
+  → 机械瘦身优先、内容感知压缩其次、恢复工具保持闭环
 
-阶段 5（长期）：C2 + C4
-  → 审计日志 + 蒸馏指标
+阶段 5（中期，1-2 周）：C3 + C1
+  → 预算警告体验补完 + tokenizer 精度增强 / usage 校准
+  → 把“知道该省”变成“运行时能持续守住”
+
+阶段 6（长期）：C2 + C4
+  → 审计日志、子智能体蒸馏指标
 ```
+
+### 5.1 本轮推荐实施边界
+
+- **纳入本轮主线**：A1、A3、B4、B2 的 DeepSeek 定向增强。
+- **作为第二梯队**：B3、B1。
+- **暂不作为主线阻塞**：C1、C2、C4。
+
+### 5.1.1 实施总原则：DeepSeek 优先，但默认对其他模型安全
+
+本轮方案虽然在优先级上明显偏向 `deepseek-v4-flash / deepseek-v4-pro`，但实现时必须坚持以下约束：
+
+1. **默认不破坏其他模型的现有可用性**  
+   新能力如果不能证明对其他 provider / model 是无害的，就不能直接作为全局默认行为替换原逻辑。
+
+2. **优先能力探测，其次显式降级，最后才做隔离**  
+   理想情况是同一套代码通过 capability 判断自动适配；如果做不到，就应在运行时显式降级；只有在降级也不足以保证安全时，才单独隔离 DeepSeek 专属路径。
+
+3. **DeepSeek 专项优化必须有退出路径**  
+   包括 cache-aligned 摘要、flash/pro 自动路由、前缀稳定保护等，都要允许按 provider、model 或 route 关闭，不应把全局运行时绑死在 DeepSeek 假设上。
+
+4. **通用链路与 DeepSeek 增强链路要区分“主逻辑”和“加速层”**  
+   通用链路负责“正确性与兼容性”；DeepSeek 增强链路负责“命中缓存、降低成本、提高收益”。前者不能依赖后者存在。
+
+### 5.2 为什么要这样调整顺序
+
+原版路线图更偏“通用 provider 能力补齐”。如果明确当前主力模型是 `deepseek-v4-flash` 与 `deepseek-v4-pro`，那么收益最大的不是先把所有通用能力做满，而是先把以下链路做扎实：
+
+1. 能否稳定命中 DeepSeek 前缀缓存；
+2. 能否看见命中率与缓存节省金额；
+3. 能否把大多数轮次留在 flash，只把困难轮次抬到 pro；
+4. 能否让摘要、强制总结、预算保护这些辅助调用固定走 flash。
+
+也就是说，**DeepSeek 主战场下，A1/B4/B2 的实际优先级应明显高于原版排序。**
 
 ---
 
@@ -712,6 +982,41 @@ registerCapability("openai", {
 5. **过度优化陷阱**：压缩过于激进可能导致关键信息丢失、模型反复追问或做错误决策，反而增加总 token 消耗。所有压缩策略都应有"不可压缩"保留机制和可配置退路。
 
 6. **ProviderCapability 注册滞后风险**：硬编码的能力表需要随新模型发布而更新。新增模型（如 GPT-5、Claude 4 等）如果不能通过 URL 自动识别，将回退到保守默认值（`cache: "none"`, `contextWindow: 128000`），可能错过优化机会。建议通过 `models.json` 的 `capabilities` 字段让用户可自行覆盖。
+
+7. **DeepSeek KV Cache 不是“模糊相似命中”**：根据 DeepSeek 官方 KV Cache 文档，命中依赖请求前缀与已缓存前缀单元的稳定匹配，实际观测要看 `usage.prompt_cache_hit_tokens` / `usage.prompt_cache_miss_tokens`。这意味着：
+   - 不能只靠“尽量少改 prompt”来判断是否命中，必须补命中率观测；
+   - 动态 system 片段、工具列表顺序变化、历史消息原地改写，都会让缓存收益迅速蒸发；
+   - cache-aligned 摘要路径只有在“重放前缀 + 追加摘要指令”真正复用到已缓存前缀时才成立，不能只看请求结构相似。
+
+8. **DeepSeek 专项优化误伤其他模型的风险**：  
+   `auto / flash / pro` 路由、cache-aligned 摘要、前缀稳定保护等设计，如果被错误地推广为“所有模型统一行为”，可能会带来：
+   - OpenAI / Anthropic / 其他 OpenAI-compatible 模型的不必要复杂度；
+   - 无缓存模型上的额外请求拼装成本，但拿不到对应收益；
+   - 某些 provider 上摘要质量下降、行为漂移或诊断复杂度上升。  
+   因此这类能力必须坚持“capability-gated by default”，必要时允许 provider/model 级禁用。
+
+### 6.1 基于 DeepSeek KV Cache 与 Reasonix 的补充判断（2026-05-18）
+
+结合 DeepSeek 官方 KV Cache 文档与 `tmp/DeepSeek-Reasonix-main` 的实现，当前可以确认几个会直接影响 Star Sanctuary 后续优先级的事实：
+
+1. **缓存收益的核心不是“开关”，而是“前缀单元稳定性”**  
+   Reasonix 把 system prompt、tool specs、few-shots 固定到 `ImmutablePrefix`，并用 fingerprint 检测任何漂移；这比单纯加一个 `cache=true` 概念更接近 DeepSeek 的真实缓存机制。
+
+2. **Append-only 历史比“原地改写旧消息”更重要**  
+   Reasonix 的 `AppendOnlyLog` 只有极少数 compaction/recovery 路径允许重写。对 DeepSeek 来说，这不是架构洁癖，而是直接关系到下一轮 `prompt_cache_hit_tokens` 能否维持。
+
+3. **cache-aligned 摘要路径值得优先做“观测补完”而不是盲目扩展**  
+   当前仓库已经有 cache-aligned compaction summarizer MVP，但还缺 hit/miss 观测、是否真正比普通摘要便宜的回执统计。对 DeepSeek 用户来说，这个缺口比“再加更多摘要模式”更急。
+
+4. **flash/pro 档位路由在 DeepSeek 双模型场景下的收益显著高于通用多 provider 场景**  
+   Reasonix 的默认思路是：大多数轮次停在 `deepseek-v4-flash`，困难轮次再升级到 `deepseek-v4-pro`，而总结、强制摘要、checkpoint recap 继续钉死 flash。  
+   对当前项目来说，这意味着 B2 不该只理解成“抽象模型路由能力”，而应该理解成“DeepSeek V4 两个档位之间的单次择一路由成本主战场”，不是默认一次请求同时打两个模型。
+
+5. **机械瘦身应早于更激进的 LLM 压缩**  
+   Reasonix 在工具结果和工具参数上先做 token-aware shrink，再决定是否需要更贵的摘要。当前仓库虽然已有 microcompact 和 `retrieve_tool_result`，但在 DeepSeek 1M 上下文场景下，仍缺少更系统的“先机械瘦身、后摘要”的层次化策略。
+
+6. **DeepSeek 优先不等于 DeepSeek 绑架全局架构**  
+   当前项目仍需服务其他 provider / model 用户。因此更合理的做法是：把 DeepSeek 特性做成 capability-gated acceleration layer，而不是把整个通用运行时改写成“默认围绕 DeepSeek 假设运转”。
 
 ---
 
@@ -738,14 +1043,194 @@ registerCapability("openai", {
 
 | 顺序 | 项目 | 原因 |
 |------|------|------|
-| 1 | A3 USD 成本追踪补全 | 现在已经有成本字段骨架，补缓存节省量化、fallback 定价和前端可见性，收益最快落地。 |
-| 2 | B3 工具调用修复继续深化 | 直接减少 400 / 重复调用 / 丢调用造成的无效 token 消耗，收益直接且不依赖太多 UI。 |
-| 3 | C3 预算警告体验补完 | runtime 已完成，补 settings / diagnostics 成本最低，能立刻提升可调试性。 |
-| 4 | A1 缓存稳定性观测补完 | 主体机制已在，继续补缓存指纹与命中率监控后，才能真正评估缓存收益。 |
-| 5 | B1 工具结果压缩深化 | 当前已有恢复闭环，但继续深入前要先明确 memory 工具护栏与恢复边界。 |
-| 6 | B2 分层模型路由深化 | 这是高价值但更容易误伤摘要质量的项，建议永远拆子项推进，不要一次铺到所有摘要链路。 |
-| 7 | C1 tokenizer 精度增强 | 值得做，但更像“长期校准层”，不如前面几项那样直接减少明显浪费。 |
-| 8 | C2 / C4 | 都有长期价值，但短期收益低于上面几项。 |
+| 1 | A1 缓存稳定性观测补完 | 当前最缺的不是“再多一个缓存策略”，而是确认 DeepSeek 真实 hit/miss 的可观测性。没有 fingerprint、hit ratio、prefix drift 观测，就无法判断当前 cache-aligned 与前缀保护到底值不值钱。 |
+| 2 | A3 USD 成本追踪补全（重点补 cache savings） | DeepSeek KV Cache 的价值必须用金额体现出来。优先补 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 对应的节省金额、会话累计成本、前端/diagnostics 展示。 |
+| 3 | B4 缓存对齐摘要路径补强 | 这是 DeepSeek 专项高收益项。当前已有 MVP，但还缺“是否真的命中缓存、是否真的比普通摘要便宜”的证据与退路控制。应优先补观测、回退和策略细分，而不是先扩更多摘要模式。 |
+| 4 | B2 分层模型路由深化（DeepSeek 档位路由优先） | 当前环境明确有 `deepseek-v4-flash` 与 `deepseek-v4-pro`。最值得先做的是把 `auto / flash / pro` 定型为“按场景择一”的档位路由，并把 compaction / forced summary / recap 这类辅助调用优先固定到 flash。 |
+| 5 | B3 工具调用修复继续深化 | 现在已有 JSON truncation repair + duplicate suppression，继续深化能直接减少 400、重复工具调用和无效重试，对 `flash/pro` 两个档位都有效。 |
+| 6 | B1 工具结果压缩深化 | 当前已有恢复闭环，但下一步应优先走“机械瘦身先于 LLM 摘要”的方向，尤其是 token-aware truncate、JSON 长字符串 shrink、工具参数瘦身。 |
+| 7 | C3 预算警告体验补完 | runtime 价值已经存在，但更偏可见性与治理体验增强；对 DeepSeek 成本主战场的直接收益低于前六项。 |
+| 8 | C1 tokenizer 精度增强 | 重要，但属于“校准层”。在 hit/miss 与 flash/pro 路由还没完全打透前，它带来的边际收益低于前面的直接降本项。 |
+| 9 | C2 / C4 | 长期价值明确，但不属于当前 `deepseek-v4-flash / pro` 成本优化的第一批关键路径。 |
+
+### 7.2 基于当前实现的实施计划（压缩版）
+
+| 阶段 | 目标 | 主要交付 |
+|------|------|------|
+| P1 | 把缓存收益量化出来 | A1 + A3：prefix fingerprint、prompt cache hit/miss 统计、cache savings USD、diagnostics/日志展示；默认只在支持对应 usage 字段的 provider 上启用完整观测 |
+| P2 | 把缓存对齐摘要做成可验证能力 | B4：命中回执、普通摘要 vs cache-aligned 摘要对比、失败回退、provider 细分策略；无缓存能力 provider 自动走普通摘要路径 |
+| P3 | 先把缓存命中稳定性与轻量落盘协同打牢 | A1 深化 + 轻量“缓存落盘协同层”：prefix drift 归因、prompt/tool/block 稳定排序、`prefix warm state` 本地元数据、warm-up aware 轻量调度、hit-aware 诊断、cache family affinity 约束；只对 `cacheSupport=supported` provider 启用 |
+| P4 | 再把 DeepSeek 档位路由跑顺 | B2：`auto / flash / pro` 作为单次择一的档位路由、flash 默认、pro 升级、摘要/强制总结固定 flash；支持 `flash/pro` 独立 key 配置；路由策略建立在 P3 的前缀稳定与轻量协同基础上；其他模型保持现有路由或显式降级 |
+| P5 | 减少无效 token 消耗 | B3 + B1：修复管线深化、机械瘦身、工具结果与参数 token-aware 收缩；优先保留 provider-neutral 逻辑，并避免破坏缓存敏感 provider 的前缀稳定性 |
+| P6 | 做预算与估算校准 | C3 + C1：预算 warning 体验面、token 估算精度增强；避免把 DeepSeek 专用预算逻辑硬编码成全局假设 |
+
+### 7.5 当前阶段进度（持续更新）
+
+| 日期 | 阶段 | 状态 | 已完成 | 下一步 |
+|------|------|------|------|------|
+| 2026-05-18 | P1 / 第一步 | 已完成 | 已补后端最保守观测链路：`prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 透传、`cacheSavingsUsd` 估算、`cacheSupport`、`systemPromptFingerprint`、prompt metadata 能力注入、`token.usage` 与 query runtime 可见；默认对非缓存模型安全降级。 | 继续做 P1 第二步，把新增观测字段接进 WebChat token 面板与现有 diagnostics 可读展示。 |
+| 2026-05-18 | P1 / 第二步 | 已完成 | 已把新增观测字段接进现有展示层：WebChat 顶部 token 面板新增缓存观测摘要（`cacheSupport`、`cacheHitTokens`、`cacheMissTokens`、`cacheSavingsUsd`、`systemPromptFingerprint`）；doctor 的 Prompt 摘要卡片新增缓存能力、cache eligible 与 prompt fingerprint 展示；`prompt-observability` summary 已透出这些字段；对无缓存能力或无相关 usage 的模型保持空态/自动降级，不报错。 | 进入 P2，优先补 cache-aligned 摘要链路的命中回执、普通摘要 vs cache-aligned 摘要对比与失败回退观测。 |
+| 2026-05-18 | P2 / 第一步 | 已完成 | 已为 `cache-aligned` 摘要链路补上最小可验证观测：`compactionSummarizer` 会回传 `cacheAlignedRequested`、`cacheSupport`、`cacheHitTokens`、`cacheMissTokens`、`cacheSavingsUsd`、`usedWireApi`；`compaction` / `compaction runtime tracker` 会保留 fallback stage 与 failure reason；doctor 新增 `Compaction Runtime` 卡片，可直接看到最近一次摘要请求是否走 cache-aligned、是否拿到 hit/miss 回执、节省金额以及失败回退阶段。`circuit breaker` 跳过事件现在会保留上一轮真实摘要观测，不再把诊断冲掉。 | 继续做 P2 第二步，补“普通摘要 vs cache-aligned 摘要”的对比观测与 provider 细分策略/失败回退策略面。 |
+| 2026-05-18 | P2 / 第二步 | 已完成 | 已补“普通摘要 vs cache-aligned 摘要”的对比观测与 provider/回退策略面，仍保持只读诊断、不改真实摘要策略：`compactionSummarizer` 现会回传 `comparison`（plain prompt chars、cache-aligned replay chars、instruction chars、message count、replay overhead）与 `strategy`（`kind`、`providerCacheMode`、`selectionReason`、`degradePath`、`providerModelNotes`、`fallbackPolicy`、`fallbackTriggered`、`fallbackSummary`）；`compaction` 在预算阻断、summarizer 不可用、模型失败、prompt-too-long 等 fallback 场景会保留并合并这批策略观测；doctor 的 `Compaction Runtime` 卡片已新增 provider strategy、comparison available、plain vs replay 对比、fallback policy / fallback summary 等可读展示；对非 DeepSeek / 非缓存模型仍安全降级为空态或 plain strategy。 | 原计划是直接进入 P3 档位路由，但结合本轮对缓存命中率提升与“缓存落盘协同层”的梳理，当前建议先重整 P3：优先补前缀漂移治理、稳定排序/编排、`prefix warm state` 与 hit-aware 诊断，再进入档位路由。 |
+| 2026-05-18 | P3 / 方案重整 | 已完成 | 已完成对“缓存命中提升能力”“关键缺口”“是否需要缓存落盘协同层”的代码与方案审计，并明确：不做重型本地缓存管理系统，改做轻量缓存落盘协同层；P3 需从“直接推进档位路由”调整为“先补缓存命中稳定性与轻量落盘协同，再推进档位路由”。此前进行的 `deepseek-v4-flash / pro` 样本观测与路由准备工作保留，作为后续 P4 路由策略收敛依据。 | 进入新的 P3 第一步：补 prefix drift 归因、prompt/tool/block 稳定排序与 `prefix warm state` 元数据设计，优先做 capability-gated 的轻量实现，不先碰重型自动重试或全局调度改写。 |
+| 2026-05-18 | P3 / 第一步（MVP） | 已完成 | 已补 prompt observability 的 `prefix drift` 与 `prefix warm state` 基础能力：基于同会话上一份 prompt snapshot 计算前缀是否稳定、漂移原因、是否处于 warm candidate / warming 状态，并接入现有 doctor prompt 卡片展示；实现保持 capability-gated、只做观测与归因，不改实际模型调度与请求节奏。 | 进入新的 P3 第二步：继续补稳定排序/稳定编排护栏与更细粒度的 drift 归因（section / provider-native block / tool 维度），再评估是否把 warm state 延伸到 token/runtime 面板。 |
+| 2026-05-18 | P3 / 第二步 | 已完成 | 已补“稳定排序/稳定编排护栏 + 更细粒度 drift 归因”的只读实现：prompt snapshot metadata 现会稳定落盘 `sectionIds`、`providerNativeBlockIds`、`providerNativeSystemBlockTypes`、`providerNativeCacheEligibleBlockIds`、`toolBehaviorIncluded`、`structureSignature`；run prompt inspection 现基于上一轮真实 metadata 做细粒度漂移归因，新增 `provider_native_cache_eligible_blocks_changed`、`tool_contract_list_changed`、`prompt_structure_signature_changed` 等 reason，并补 `orderingGuard`（risk/stable）诊断；doctor Prompt 摘要卡片新增 `structureSignature` 与 `orderingGuard` 展示。实现仍保持 capability-gated、只做观测与诊断，不改真实模型路由、等待、重试或 prompt 文本顺序。 | 进入新的 P3 第三步：基于这批更可信的 drift / ordering / warm state 观测，评估是否把轻量 warm-up aware 协同与 cache family affinity 约束接入 token/runtime 面板与后续 P4 DeepSeek 档位路由前置判定。 |
+| 2026-05-18 | P3 / 第三步 | 已完成 | 已把更可信的 `drift / ordering / warm state` 观测接到“轻量 warm-up aware 协同”和“cache family affinity 判定”上，但仍保持只读 verdict，不改真实调度：1. run prompt inspection metadata 新增 `warmupCoordination` 与 `cacheFamilyAffinity`，作为后续 DeepSeek 档位路由前置判定；2. `AgentUsage` / `query-runtime` / `message.send token.usage` 已透传 `structureSignature`、`warmupCoordination`、`cacheFamilyAffinity`；3. doctor prompt 卡片与 token usage observability 已展示这批新字段；4. compaction summarizer observability 也补入轻量 `warmupCoordination` / `cacheFamilyAffinity` verdict，用于区分“provider 不支持 / 无 cache-aligned context / 已选择 cache-aligned family”等情况。当前实现明确只做 capability-gated 诊断与协同信号，不做真实等待、自动重试、自动预热或 route lock。 | 下一步进入新的 P4 准备面：在不影响其他 provider 的前提下，把这批 verdict 作为 DeepSeek `auto / flash / pro` 单次择一路由的前置条件与降级依据，再决定是否需要最小化的 warm-up aware 延迟或 retry。 |
+| 2026-05-18 | P4 / 第一步（主对话单次择一路由） | 已完成 | 已把 `P3` verdict 真正接入主对话 `message.send` 的 DeepSeek 单次择一路由，但仍保持最保守边界：1. 新增 core 层 `deepseek-tier-routing`，只在识别到明确的 DeepSeek `flash/pro` 候选时启用；2. `models.list` 现会按能力合成 `deepseek:auto` / `deepseek:flash` / `deepseek:pro` 虚拟模型项，非 DeepSeek 或候选不完整时不展示；3. `message.send` 在创建 Agent 前会读取上一轮 prompt snapshot verdict，将 `deepseek:auto` 解析为单次 `flash` 或 `pro`，把 `warmupCoordination` / `cacheFamilyAffinity` / `orderingGuard` / `structureSignature` 作为升级或降级依据；4. 显式 `deepseek:flash` / `deepseek:pro` 会优先映射到真实 routeRef，候选缺失时安全降级；5. 非 DeepSeek provider、普通模型 id、`manual:*` 路径保持原样，不改现有逻辑。 | 继续做新的 P4 第二步：把同一套 verdict 与 route reason 接入 token/diagnostics 可读展示，并评估是否要把摘要/强制总结等辅助调用固定到 `flash`。 |
+| 2026-05-18 | P4 / 第二步（route verdict 展示） | 已完成 | 已把主对话单次择一路由的 route verdict 接进现有可读展示面，但仍保持只读、不改策略：1. `message.send token.usage` 现会附带 `deepseekRoute`（`requestedRoute`、`effectiveModelId`、`selectedTier`、`routeMode`、`degraded`、`reason`）；2. WebChat 顶部 token observability 摘要新增 `ROUTE tier / reason` 展示，可直接看到本轮 `auto` 最终落在 `flash` 还是 `pro`；3. 已补对应前端与后端测试，确认 `deepseek:auto` 在真实 usage 回执上能把 route verdict 一并发给前端。当前实现仍不改辅助摘要、forced summary、checkpoint recap 的真实模型路由。 | 继续做新的 P4 第三步：审计并收敛 compaction / forced summary / checkpoint recap 等辅助调用的实际路由入口，评估如何 capability-gated 地优先固定到 `flash`，同时保证非 DeepSeek provider 自动降级回现有路径。 |
+| 2026-05-18 | P4 / 第三步（辅助摘要 flash 固定） | 已完成 | 已完成入口审计并落最小实现：1. `compaction` 与 `forceCompact` 确认共用 `gateway.ts` 装配的 `compactionSummarizer`，真实路由决策集中在 `resolveCompactionModelRoute(...)`；2. `work/checkpoint recap` 当前确认走 `buildTaskRecapArtifacts(...)` 的本地结构化生成链路，不属于模型摘要路由面，因此本步不混入改造；3. 已在 `compaction-model-routing` 增加 capability-gated 的 DeepSeek 辅助摘要优先 `flash` 逻辑，但仅在“主模型本身是 DeepSeek、存在明确 flash 候选、且用户未显式配置 compaction route / manual override”时生效；4. 非 DeepSeek provider、DeepSeek 候选不完整、以及显式 `BELLDANDY_COMPACTION_*` 配置场景全部保持原逻辑不变。 | 下一步可进入新的 P4 / 第四步：如果需要，再把这条“aux summary fixed to flash” 的最终 route verdict 接进 diagnostics/doctor 可读展示，或继续评估是否给 DeepSeek 路由补一个总开关。 |
+| 2026-05-18 | P4 / 第四步（aux summary verdict 展示） | 已完成 | 已把 `aux summary fixed to flash` 的最终 route verdict 结构化接进 diagnostics/doctor，但仍保持只读、不改真实摘要行为：1. `resolveCompactionModelRoute(...)` 现会输出结构化 `auxSummaryVerdict`（`strategy`、`reason`、`enabled`），不再只混在 provider notes 文本里；2. `RuntimeResilienceTracker.routing.compaction` 已持久化这条 verdict，`gateway.ts` 会把辅助摘要最终 route 决策透传到 runtime resilience；3. doctor 的 `Runtime Resilience` 与 `Compaction Runtime` 两张卡都已新增 verdict 展示，可同时看到“当前配置层判定”和“最近一次摘要执行关联 verdict”；4. 对非 DeepSeek provider、显式 compaction route、manual override 等场景仍按原逻辑输出对应 verdict，不强制 flash。 | 下一步可继续评估是否需要补 DeepSeek 路由总开关，或把同一批 compaction verdict 扩展到更多 explainability 面板；在此之前，P4 当前主路径已具备可观测、可解释的最小闭环。 |
+| 2026-05-18 | P4 / 第五步（总开关 + explainability 扩展） | 已完成 | 已补最小可控的 DeepSeek 路由总开关与额外 explainability 展示：1. 新增 `BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED`，并接入 `.env.example`、WebChat 设置页、配置保存白名单与后端 gating；关闭后会停用 `deepseek:auto/flash/pro` 虚拟路由与 DeepSeek `aux summary fixed to flash` 自动策略，但不影响真实模型 id、显式 fallback、显式 compaction route 或 manual override；2. `models.list` / `message.send` / `compaction-model-routing` 三处已统一受该开关约束，避免出现“下拉还能选、实际不生效”的漂移；3. `auxSummaryVerdict` 已从 doctor 卡片继续扩展到 WebChat 顶部 token observability、launch explainability 的 runtime resilience、以及 CLI doctor 文本摘要；4. 已补对应定向测试，确认开关关闭后的降级边界与新展示字段都可工作。 | 下一步可从 P5 开始，优先审计“修复回合 + 工具结果”里的无效 token 消耗入口；若仍留在 P4 收尾，则可再评估是否要把同一批 route/aux verdict 扩到更多 launch/query explainability 明细面板。 |
+| 2026-05-18 | P4 收尾 / failover 去重护栏 | 已完成 | 已在 `FailoverClient` 构造阶段补最小去重护栏：当 DeepSeek 档位路由或其他 route override 把某个真实 profile 提升为当前 primary 时，会自动按 `baseUrl + apiKey + model + wireApi + protocol` 去重与其实际同路由的 fallback，避免容灾链路里出现重复尝试、重复日志与少量无效 token 消耗；已补对应定向测试覆盖“primary 与 fallback 指向同一真实路由”的场景。 | 正式进入 P5，先从 provider-neutral 的“重复工具调用 / 工具结果上下文浪费”入口做最保守的小改动。 |
+| 2026-05-18 | P5 / 第一步（机械瘦身 + 参数投影收缩） | 已完成 | 已先在 `runtime-prompt-deltas` 落最保守的 provider-neutral 机械瘦身：仅压缩工具调用后的 follow-up system delta，不改主 transcript、不改工具执行结果；重点覆盖 delegation review 里的 `requestArguments`、`scopeSummary`、`doneDefinition`、`acceptanceGate`、`followUpStrategy`、`template/verifierTemplate` 等长字段，并对最终 prompt delta 增加统一字符上限。随后继续补了参数 token-aware 收缩的第二个最小入口：`recentToolResults.args` 改为“仅用于恢复/展示层”的轻量投影，保留关键诊断字段，对长字符串、长数组、深对象与超多 key 做截断/计数标记，但不改真实工具执行参数、也不改 `retrieve_tool_result` 接口契约。 | 继续做 P5 下一步时，可优先审计 `tool_result_persist` 之后仍会进入后续 prompt/观测面的高冗余字段，沿“先投影、后摘要”的方式继续收缩；暂不碰主会话历史语义与 provider-specific 行为。 |
+| 2026-05-18 | 临时计划 / 启动阶段观测补完 | 进行中 | 已把“服务 ready 但 WebChat 首连滞后”的临时分析与处理计划插入 P5 前；后端已补首个 WS 连接、首个认证成功 WS、`invalid token` 首次关闭、首个静态页面请求、首个 `/app.js` 请求等只读打点，前端也已补浏览器控制台启动 marks 与 `navigation.timing.snapshot`。最新多组真实样本进一步确认：`browser open returned` 通常仅 `131ms` 左右，但 `first static web request` 可能延后 `14s-28s`，随后 `/app.js`、WS 建连、`hello-ok` 都只再花几百毫秒。结合浏览器控制台 `[WebChat startup]` 可见：一旦页面真正开始执行，我们自己的 `app.js -> connect -> ws -> hello-ok` 仅需约 `0.5s`。 | 当前主怀疑已从 Gateway/缓存逻辑收缩到“浏览器导航/扩展注入/页面真正起页前”的阶段；后续继续收集样本即可，暂不阻塞 P5 主线。 |
+| 2026-05-18 | P5 / 第二步（recent tool result 内容投影收缩） | 已完成 | 已继续沿“先投影、后摘要”的方向收紧 `tool_result_persist` 之后的高冗余字段，但仍保持 provider-neutral、且不碰主 transcript：1. `recentToolResults.content/error` 从较大的全量截断改为更小的预览型存储；2. 新增 `contentPreview/errorPreview`、`contentChars/errorChars`、`contentTruncated/errorTruncated` 元数据，保留检索/诊断价值；3. `retrieve_tool_result` 会明确显示该条记录当前是 preview 还是完整内容，避免误导模型把预览当成完整结果；4. 主会话 `tool` transcript、真实工具执行返回、以及 `retrieve_tool_result` 工具契约仍保持不变。 | 下一步继续审计 `tool_result_persist` 之后还会进入 follow-up prompt delta / diagnostics 的高冗余 metadata，优先压缩 delegation 相关大对象在可读展示面与恢复面的展开方式，但仍不碰主会话历史与 provider-specific 行为。 |
+| 2026-05-18 | P5 / 第三步（delegation delta metadata 投影收缩） | 已完成 | 已继续沿 provider-neutral、最小行为改动的路线，收缩 `runtime-prompt-deltas` 中 delegation follow-up 的 metadata 面膨胀：1. `tool-failure-recovery` / `tool-post-verification` 不再把完整 `delegationResults + followUpStrategy.items + template/verifierTemplate + team roster` 大对象整份挂入 `delta.metadata.delegationResult`；2. 改为仅保留恢复/诊断真正需要的轻量投影，包括 `resultCount/acceptedCount/gateRejectedCount/workerSuccessCount`、主判定 `primaryResult.acceptanceGate`、`followUpStrategy` 的结论级标签与 `itemsPreview`、以及 team 的 `memberCount/laneIds/rosterPreview`；3. prompt 文本内容、真实工具执行结果、主 transcript、`recentToolResults` 恢复能力与 provider-specific 行为均未改动；4. 定向测试也已切到校验“关键 verdict 仍在，但 metadata 不再携带整份长对象”。 | 下一步继续审计 query-runtime / diagnostics 展示面是否还有直接透传或重复展开的高冗余字段；若有，再沿“先投影、后摘要”继续收缩，但仍避免触碰主会话历史和 provider-specific 逻辑。 |
+| 2026-05-18 | P5 / 第四步（query-runtime / diagnostics 去重首轮） | 进行中 | 已先补两条最保守的去重护栏：1. `OpenAIChatAgent` / `ToolEnabledAgent` 在创建 prompt snapshot 时，不再把已经结构化放进 `snapshot.deltas` 的同一批 `promptDeltas` 再重复塞进 `snapshot.inputMeta.promptDeltas`，减少 query-runtime / prompt snapshot / diagnostics 链上的双写冗余；2. WebChat `prompt-snapshot-detail` 已切为优先消费轻量投影里的 `followUpStrategy.itemsPreview + itemCount`，不再依赖旧的完整 `items` 大对象，保证前面 P5 第三步的 metadata 收缩后，展示面仍可读。 | 下一步继续审计 prompt snapshot 持久化 artifact、doctor / query-runtime 详情面里是否还有“同一结论被 summary + raw metadata 重复带出”的字段；优先收 delegation / tool-result 相关展示，但仍不碰主 transcript 和 provider-specific 行为。 |
+
+### 7.5.1 临时插入计划：启动阶段观测补完（位于 P5 前）
+
+#### 背景结论（2026-05-18）
+
+本轮真实启动日志显示，当前“启动很慢”的体感问题，并不主要来自 Gateway 本体初始化，而是来自“Gateway 已 ready 后，到浏览器里的 WebChat 首次真正开始请求页面并连上 WS”之间的空窗。
+
+第一轮关键时间线：
+
+- `09:51:26.319`：`Belldandy Gateway running: http://127.0.0.1:28889`
+- `09:51:26.322`：`Opening browser at http://127.0.0.1:28889/?token=setup-...`
+- `09:51:54.749`：首次 `ws New connection from 127.0.0.1`
+- `09:51:54.766`：一次 `4403 invalid token`
+- `09:51:55.262`：真正 `WebSocket connected`
+
+据此可判断：
+
+1. **Gateway 主进程并未卡在最后一步**  
+   服务在 `09:51:26` 左右就已经 ready，并开始对外提供 `WebChat` / `WS`。
+
+2. **主要滞后发生在浏览器侧首连阶段**  
+   “服务 ready”到“WebChat 成功建立首个有效 WS 连接”之间存在约 `28-29s` 的空窗。
+
+3. **一次旧 token / 旧页面抢连是伴随现象，但不是主耗时来源**  
+   `4403 invalid token` 到后续成功连接只隔了不到 `1s`；它更像旧标签页/旧 token 的一次抢连或自动重连，不足以解释整段滞后。
+
+4. **更可疑的主因在浏览器打开与页面首连链路**  
+   包括但不限于：
+   - 默认浏览器冷启动慢；
+   - 系统将 URL 转交给已有浏览器进程时调度慢；
+   - 已开旧标签页先恢复、再由新页面接管；
+   - 浏览器页面加载完成到真正发起 WS 连接之间缺少可见观测。
+
+第二轮关键时间线（补静态首请求观测后）：
+
+- `11:05:01.4xx` 左右：Gateway 已进入 ready 后阶段
+- `11:05:28.137`：`first static web request after 26965ms (path=/)`
+- `11:05:28.431`：`first websocket connection after 27259ms`
+- `11:05:28.560`：`first authenticated websocket after 27388ms`
+
+新增样本进一步说明：
+
+1. **长空窗主要发生在“浏览器真正发出第一个页面请求之前”**  
+   本轮 `first static web request` 本身就晚了约 `27s`。
+
+2. **页面一旦开始请求，WS 建连非常快**  
+   `/` 到首个 WS 连接仅相差约 `294ms`，WS 连接到认证完成再相差约 `129ms`。
+
+3. **当前更像浏览器启动 / 已有进程接管 / 页签恢复慢，而不是前端 JS 或后端 WS 慢**  
+   现有观测已经足以把问题从“Gateway 末段卡住”收缩到“浏览器真正起页之前”。
+
+#### 临时计划目标
+
+在不改现有启动行为的前提下，先补齐一组最保守、只读、低风险的启动阶段观测，让后续日志能明确区分：
+
+- 服务什么时候 ready；
+- 自动打开浏览器花了多久；
+- 首个静态页面请求花了多久；
+- `/app.js` 首次请求花了多久；
+- 首个 WS 连接花了多久；
+- 首个认证成功的 WebChat 连接花了多久；
+- 首次是否经历过无效 token / 旧会话抢连。
+
+#### 计划内容
+
+1. **补 Gateway 启动阶段耗时日志**  
+   在 `gateway.ts` 增加：
+   - `auto-open begin/end`
+   - `auto-open elapsedMs`
+   - 启动观测汇总输出
+
+2. **补页面首请求与 WebSocket 首连耗时日志**  
+   在 `server-http-routes.ts` / `server-websocket-runtime.ts` / `server.ts` 增加：
+   - 首个 `/` 请求时间
+   - 首个 `/app.js` 请求时间
+   - 首个 WS 连接时间
+   - 首个握手成功时间
+   - 旧 token / invalid token 次数统计
+
+3. **先只做观测，不改启动策略**  
+   本步不改变：
+   - `open(targetUrl)` 的现有行为；
+   - auth / setup token 流程；
+   - 前端自动重连逻辑；
+   - channel / warmup / memory 初始化顺序。
+
+#### 风险、边界与完成标准
+
+- **风险等级**：低  
+  仅补日志与内部计时状态，不改用户可见行为与模型链路。
+
+- **明确不包含**：
+  - 不在本步禁用 auto-open；
+  - 不在本步修改 WebChat token 重连策略；
+  - 不在本步重排 Gateway 初始化顺序；
+  - 不在本步做浏览器侧性能优化。
+
+- **完成标准**：
+  下一次启动日志中，能够直接看到：
+  - `gateway ready -> auto-open end` 耗时
+  - `gateway ready -> first static web request` 耗时
+  - `gateway ready -> first /app.js request` 耗时
+  - `gateway ready -> first ws connection` 耗时
+  - `gateway ready -> first authenticated websocket` 耗时
+  - 是否出现过 `invalid token` 抢连
+
+- **后续决策条件**：
+  只有在这批观测确认瓶颈确实落在浏览器自动打开、旧 token 抢连或前端首连阶段后，才进入下一轮启动体验优化。
+
+### 7.3 推荐的首批落地顺序（更具体）
+
+1. **先做观测，不先做大重构**  
+   先让当前系统能稳定输出：`prompt_cache_hit_tokens`、`prompt_cache_miss_tokens`、缓存节省金额、cache-aligned 摘要是否命中。
+
+2. **再做 cache-aligned 摘要链路补强**  
+   只有当观测证明摘要链路确实有明显 cache hit 收益时，才继续围绕它扩展更多模式。
+
+3. **再把 flash/pro 档位路由变成明确产品能力**  
+   对当前用户场景，`auto / flash / pro` 比“抽象多 provider 路由系统”更有现实价值；这里的目标是按场景在两个档位之间择一，而不是做单 Key 双模型并发或联动调用。
+
+4. **最后再继续深化修复与压缩**  
+   B3/B1 仍然重要，但它们的收益会在前面三步稳定后更容易被准确衡量。
+
+### 7.4 兼容性与降级策略（必须明确）
+
+为避免 DeepSeek 定向优化误伤其他模型用户，实施时建议明确以下策略：
+
+1. **Capability Gating 优先**  
+   新能力优先由 provider/model capability 驱动启用，例如：
+   - `cache-aligned summarization` 仅在声明前缀缓存能力时启用；
+   - `auto / flash / pro` 仅在存在明确的 DeepSeek V4 `flash/pro` 档位配置时启用完整策略，且优先支持独立 key；
+   - `cache savings USD` 仅在 usage 能区分 hit/miss 时显示完整节省金额。
+
+2. **无能力时自动降级而不是报错**  
+   例如：
+   - 无前缀缓存能力：退回普通摘要；
+   - 无 `flash/pro` 档位配置：退回当前单模型路由；
+   - 无 hit/miss usage：只显示总成本，不显示缓存节省。
+
+3. **必要时按 provider / model 隔离**  
+   如果某项策略在其他 provider 上存在明显副作用，应允许在 provider/model 级独立关闭，而不是继续强行复用同一路径。
+
+4. **用户体验上保持“可解释但不扰民”**  
+   对非 DeepSeek 用户，不应频繁暴露无意义的缓存状态提示；只有当该模型真实支持相应能力时，才展示对应观测与配置。
 
 ---
 

@@ -101,7 +101,13 @@ export type RecentToolResultRecord = {
   success: boolean;
   summary: string;
   content?: string;
+  contentPreview?: string;
+  contentChars?: number;
+  contentTruncated?: boolean;
   error?: string;
+  errorPreview?: string;
+  errorChars?: number;
+  errorTruncated?: boolean;
   failureKind?: ToolFailureKind;
   target?: string;
   args?: JsonObject;

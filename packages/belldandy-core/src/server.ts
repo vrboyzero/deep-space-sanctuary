@@ -239,6 +239,26 @@ export type GatewayServerOptions = {
   extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle">;
   /** 可选：检查当前是否已配置好 AI 模型（用于 hello-ok 中告知前端是否需要引导配置）*/
   isConfigured?: () => boolean;
+  /** 启动阶段观测钩子（只读） */
+  startupObservability?: {
+    onFirstStaticWebRequest?: (input: {
+      timestampMs: number;
+      method: string;
+      path: string;
+      userAgent?: string | null;
+      referer?: string | null;
+    }) => void;
+    onFirstBootstrapAssetRequest?: (input: {
+      timestampMs: number;
+      method: string;
+      path: string;
+      userAgent?: string | null;
+      referer?: string | null;
+    }) => void;
+    onFirstWebSocketConnection?: (input: { timestampMs: number; remoteAddress?: string | null }) => void;
+    onFirstAuthenticatedWebSocket?: (input: { timestampMs: number; clientId: string }) => void;
+    onInvalidTokenClose?: (input: { timestampMs: number; reason?: string | null; remoteAddress?: string | null }) => void;
+  };
   /** 技能注册表（用于获取已加载技能列表） */
   skillRegistry?: SkillRegistry;
   /** Prompt dump / inspect 能力 */
@@ -738,6 +758,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       webhookConfig: opts.webhookConfig,
       webhookIdempotency: opts.webhookIdempotency,
       onChannelSecurityApprovalRequired: opts.onChannelSecurityApprovalRequired,
+      startupObservability: opts.startupObservability,
     },
     getConversationStore: () => conversationStore,
     getQueryRuntimeTraceStore: () => queryRuntimeTraceStore,
@@ -1241,6 +1262,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     log,
     onActivity: opts.onActivity,
     isConfigured: opts.isConfigured,
+    startupObservability: opts.startupObservability,
     onRequest: handleWebSocketRequest,
   });
   broadcastEvent = websocketRuntime.broadcast;
@@ -1818,6 +1840,7 @@ async function handleReq(
         modelFallbacks: ctx.modelFallbacks,
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
+        getConversationPromptSnapshot: ctx.getConversationPromptSnapshot,
         durableExtractionRuntime: ctx.durableExtractionRuntime,
         requestDurableExtraction: ctx.requestDurableExtraction,
         memoryUsageAccounting: ctx.memoryUsageAccounting,

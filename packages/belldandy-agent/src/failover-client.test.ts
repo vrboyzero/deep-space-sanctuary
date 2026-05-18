@@ -165,6 +165,39 @@ describe("FailoverClient", () => {
     });
   });
 
+  it("deduplicates fallback profiles that point to the same effective route as primary", () => {
+    const client = new FailoverClient({
+      primary: createProfile({
+        id: "deepseek-pro-main",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-deepseek",
+        model: "deepseek-v4-pro",
+        wireApi: "chat_completions",
+      }),
+      fallbacks: [
+        createProfile({
+          id: "deepseek-pro-duplicate",
+          baseUrl: "https://api.deepseek.com/v1/",
+          apiKey: "sk-deepseek",
+          model: "deepseek-v4-pro",
+          wireApi: "chat_completions",
+        }),
+        createProfile({
+          id: "deepseek-flash-main",
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: "sk-deepseek",
+          model: "deepseek-v4-flash",
+          wireApi: "chat_completions",
+        }),
+      ],
+    });
+
+    expect(client.getProfiles().map((item) => item.id)).toEqual([
+      "deepseek-pro-main",
+      "deepseek-flash-main",
+    ]);
+  });
+
   it("treats unsupported-model errors as cross-profile fallback without same-profile retry", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

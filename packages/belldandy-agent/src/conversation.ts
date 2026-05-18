@@ -304,9 +304,9 @@ const SESSION_MEMORY_SUMMARY_CHAR_LIMIT = 4000;
 const COMPACT_BOUNDARY_STATE_VERSION = 1;
 const DEFAULT_COMPACT_BOUNDARY_LIMIT = 20;
 const DEFAULT_RECENT_TOOL_RESULT_LIMIT = 24;
-const RECENT_TOOL_RESULT_CONTENT_CHAR_LIMIT = 12_000;
+const RECENT_TOOL_RESULT_CONTENT_CHAR_LIMIT = 2_400;
 const RECENT_TOOL_RESULT_SUMMARY_CHAR_LIMIT = 280;
-const RECENT_TOOL_RESULT_ERROR_CHAR_LIMIT = 2_000;
+const RECENT_TOOL_RESULT_ERROR_CHAR_LIMIT = 800;
 const RECENT_TOOL_RESULT_TARGET_CHAR_LIMIT = 240;
 let conversationMessageIdCounter = 0;
 let compactBoundaryIdCounter = 0;
@@ -360,20 +360,114 @@ function compactRecentToolResultText(value: unknown, limit: number): string | un
     return `${normalized.slice(0, Math.max(0, limit - 3))}...`;
 }
 
+function buildRecentToolResultTextProjection(value: unknown, limit: number): {
+    full?: string;
+    preview?: string;
+    chars?: number;
+    truncated?: boolean;
+} {
+    if (typeof value !== "string") {
+        return {};
+    }
+    const normalized = value.trim();
+    if (!normalized) {
+        return {};
+    }
+    const chars = normalized.length;
+    const preview = compactRecentToolResultText(normalized, limit);
+    const truncated = chars > limit;
+    return {
+        ...(preview ? { full: preview } : {}),
+        ...(preview ? { preview } : {}),
+        ...(chars > 0 ? { chars } : {}),
+        ...(truncated ? { truncated: true } : {}),
+    };
+}
+
+const RECENT_TOOL_RESULT_ARG_STRING_LIMIT = 160;
+const RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT = 6;
+const RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT = 12;
+const RECENT_TOOL_RESULT_ARG_DEPTH_LIMIT = 3;
+
+function projectRecentToolResultArgString(value: string, limit: number = RECENT_TOOL_RESULT_ARG_STRING_LIMIT): string {
+    const normalized = value
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!normalized) return normalized;
+    if (normalized.length <= limit) return normalized;
+    return `${normalized.slice(0, Math.max(0, limit - 3))}...`;
+}
+
+function projectRecentToolResultArgsValue(value: unknown, depth: number): unknown {
+    if (typeof value === "string") {
+        return projectRecentToolResultArgString(value);
+    }
+    if (
+        typeof value === "number"
+        || typeof value === "boolean"
+        || value === null
+        || typeof value === "undefined"
+    ) {
+        return value;
+    }
+    if (Array.isArray(value)) {
+        const projectedItems = value
+            .slice(0, RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT)
+            .map((item) => projectRecentToolResultArgsValue(item, depth + 1));
+        if (value.length > RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT) {
+            projectedItems.push(`[+${value.length - RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT} more items]`);
+        }
+        return projectedItems;
+    }
+    if (!value || typeof value !== "object") {
+        return projectRecentToolResultArgString(String(value));
+    }
+    if (depth >= RECENT_TOOL_RESULT_ARG_DEPTH_LIMIT) {
+        const keys = Object.keys(value as Record<string, unknown>);
+        return `[object keys=${keys.length}]`;
+    }
+
+    const entries = Object.entries(value as Record<string, unknown>);
+    const projected: Record<string, unknown> = {};
+    for (const [key, entryValue] of entries.slice(0, RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT)) {
+        projected[key] = projectRecentToolResultArgsValue(entryValue, depth + 1);
+    }
+    if (entries.length > RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT) {
+        projected.__truncatedKeys = entries.length - RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT;
+    }
+    return projected;
+}
+
+function normalizeRecentToolResultArgs(value: unknown): RecentToolResultRecord["args"] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return undefined;
+    }
+    return projectRecentToolResultArgsValue(value, 0) as RecentToolResultRecord["args"];
+}
+
 function normalizeRecentToolResultRecord(
     record: Omit<StoredRecentToolResultRecord, "createdAt"> & { createdAt?: number },
     createdAt: number,
 ): StoredRecentToolResultRecord {
+    const contentProjection = buildRecentToolResultTextProjection(record.content, RECENT_TOOL_RESULT_CONTENT_CHAR_LIMIT);
+    const errorProjection = buildRecentToolResultTextProjection(record.error, RECENT_TOOL_RESULT_ERROR_CHAR_LIMIT);
     return {
         toolCallId: String(record.toolCallId ?? "").trim(),
         toolName: String(record.toolName ?? "").trim(),
         success: Boolean(record.success),
         summary: compactRecentToolResultText(record.summary, RECENT_TOOL_RESULT_SUMMARY_CHAR_LIMIT) ?? "",
-        content: compactRecentToolResultText(record.content, RECENT_TOOL_RESULT_CONTENT_CHAR_LIMIT),
-        error: compactRecentToolResultText(record.error, RECENT_TOOL_RESULT_ERROR_CHAR_LIMIT),
+        ...(contentProjection.full ? { content: contentProjection.full } : {}),
+        ...(contentProjection.preview ? { contentPreview: contentProjection.preview } : {}),
+        ...(typeof contentProjection.chars === "number" ? { contentChars: contentProjection.chars } : {}),
+        ...(contentProjection.truncated ? { contentTruncated: true } : {}),
+        ...(errorProjection.full ? { error: errorProjection.full } : {}),
+        ...(errorProjection.preview ? { errorPreview: errorProjection.preview } : {}),
+        ...(typeof errorProjection.chars === "number" ? { errorChars: errorProjection.chars } : {}),
+        ...(errorProjection.truncated ? { errorTruncated: true } : {}),
         failureKind: record.failureKind,
         target: compactRecentToolResultText(record.target, RECENT_TOOL_RESULT_TARGET_CHAR_LIMIT),
-        args: record.args,
+        args: normalizeRecentToolResultArgs(record.args),
         createdAt,
         isSynthetic: record.isSynthetic === true ? true : undefined,
     };
@@ -397,7 +491,13 @@ function normalizeRecentToolResultRecords(records: unknown): StoredRecentToolRes
                 success: Boolean(record.success),
                 summary: record.summary,
                 content: record.content,
+                contentPreview: record.contentPreview,
+                contentChars: record.contentChars,
+                contentTruncated: record.contentTruncated,
                 error: record.error,
+                errorPreview: record.errorPreview,
+                errorChars: record.errorChars,
+                errorTruncated: record.errorTruncated,
                 failureKind: record.failureKind,
                 target: record.target,
                 args: record.args,
@@ -487,6 +587,35 @@ function renderSessionMemorySummary(memory: Omit<StoredSessionMemory, "lastSumma
         for (const item of memory.errorsAndFixes) lines.push(`- ${item}`);
     }
     return truncateSummaryText(lines.join("\n").trim());
+}
+
+function coerceConversationText(value: unknown): string {
+    if (typeof value === "string") {
+        return value;
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => coerceConversationText(item))
+            .filter((item) => item.length > 0)
+            .join("");
+    }
+    if (!value || typeof value !== "object") {
+        return "";
+    }
+    const record = value as Record<string, unknown>;
+    for (const key of ["text", "content", "summary", "output_text", "reasoning_content", "value"]) {
+        const extracted = coerceConversationText(record[key]);
+        if (extracted) {
+            return extracted;
+        }
+    }
+    for (const key of ["parts", "items", "segments"]) {
+        const extracted = coerceConversationText(record[key]);
+        if (extracted) {
+            return extracted;
+        }
+    }
+    return "";
 }
 
 function coerceStoredSessionMemory(value: Partial<StoredSessionMemory> | undefined): StoredSessionMemory {
@@ -1371,12 +1500,13 @@ export class ConversationStore {
     }
 
     private sanitizeHistoryContent(content: string): string {
-        return content
+        const normalized = coerceConversationText(content);
+        return normalized
           .replace(/<audio[^>]*>.*?<\/audio>/gi, "")
           .replace(/\[Audio was generated and played\]/gi, "")
           .replace(/\[Download\]\([^)]*\/generated\/[^)]*\)/gi, "")
           .replace(/\n{3,}/g, "\n\n")
-          .trim() || content;
+          .trim() || normalized;
     }
 
     private buildHistoryView(conv?: Conversation): ConversationHistoryView {
@@ -2196,7 +2326,12 @@ export class ConversationStore {
             );
             try {
                 const response = await this.summarizer(prompt);
-                const parsed = parseSessionMemoryResponse(response);
+                const responseText = typeof response === "string"
+                    ? response
+                    : typeof response?.summary === "string"
+                        ? response.summary
+                        : "";
+                const parsed = parseSessionMemoryResponse(responseText);
                 if (parsed) {
                     const merged = coerceStoredSessionMemory({
                         ...existing,
@@ -2218,10 +2353,10 @@ export class ConversationStore {
                         ...merged,
                         summary: truncateSummaryText(merged.summary || renderSessionMemorySummary(merged)),
                     };
-                } else if (response.trim()) {
+                } else if (responseText.trim()) {
                     nextMemory = coerceStoredSessionMemory({
                         ...nextMemory,
-                        summary: response.trim(),
+                        summary: responseText.trim(),
                         lastSummarizedMessageCount: history.length,
                         lastSummarizedToolCursor: toolDigests.length,
                         updatedAt: Date.now(),

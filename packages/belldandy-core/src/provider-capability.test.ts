@@ -64,6 +64,7 @@ describe("provider capability", () => {
       output_tokens: 500,
       cache_read_input_tokens: 250,
       cache_creation_input_tokens: 400,
+      prompt_cache_hit_tokens: 800,
     }, {
       inputUsdPer1M: 2,
       outputUsdPer1M: 8,
@@ -75,6 +76,7 @@ describe("provider capability", () => {
       outputUsd: 0.004,
       cacheReadUsd: 0.000125,
       cacheCreationUsd: 0.0004,
+      cacheSavingsUsd: 0.0012,
       totalUsd: 0.006525,
     });
   });

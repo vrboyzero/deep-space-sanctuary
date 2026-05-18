@@ -24,6 +24,8 @@ export type ModelUsageLike = {
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
 };
 
 export type UsageCostBreakdown = {
@@ -31,6 +33,7 @@ export type UsageCostBreakdown = {
   outputUsd: number;
   cacheReadUsd: number;
   cacheCreationUsd: number;
+  cacheSavingsUsd: number;
   totalUsd: number;
 };
 
@@ -137,12 +140,16 @@ export function calculateUsageCostUsd(
   const cacheCreationUsd = pricing.cacheCreationUsdPer1M
     ? ((usage.cache_creation_input_tokens ?? 0) / 1_000_000) * pricing.cacheCreationUsdPer1M
     : 0;
+  const cacheSavingsUsd = pricing.cacheReadUsdPer1M
+    ? ((usage.prompt_cache_hit_tokens ?? 0) / 1_000_000) * Math.max(0, pricing.inputUsdPer1M - pricing.cacheReadUsdPer1M)
+    : 0;
   const totalUsd = inputUsd + outputUsd + cacheReadUsd + cacheCreationUsd;
   return {
     inputUsd: roundUsd(inputUsd),
     outputUsd: roundUsd(outputUsd),
     cacheReadUsd: roundUsd(cacheReadUsd),
     cacheCreationUsd: roundUsd(cacheCreationUsd),
+    cacheSavingsUsd: roundUsd(cacheSavingsUsd),
     totalUsd: roundUsd(totalUsd),
   };
 }

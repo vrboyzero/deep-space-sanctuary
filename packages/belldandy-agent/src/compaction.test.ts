@@ -383,6 +383,68 @@ describe("compactIncremental", () => {
       ],
     });
   });
+
+  it("captures summarizer observability returned by cache-aligned summary workers", async () => {
+    const summarizer = vi.fn(async () => ({
+      summary: "rolling-summary-v1",
+      observability: {
+        mode: "rolling" as const,
+        cacheAlignedRequested: true,
+        cacheSupport: "supported" as const,
+        cacheHitTokens: 1200,
+        cacheMissTokens: 80,
+        cacheSavingsUsd: 0.000456,
+        usedWireApi: "chat_completions" as const,
+        warmupCoordination: {
+          eligible: true,
+          status: "warm_candidate" as const,
+          recommendation: "proceed" as const,
+          reason: "cache_aligned_summary_selected",
+        },
+        cacheFamilyAffinity: {
+          status: "aligned" as const,
+          familyKey: "family-compaction-1",
+          reason: "cache_aligned_summary_family_selected",
+        },
+      },
+    }));
+    const messages = [
+      { role: "user" as const, content: "U1" },
+      { role: "assistant" as const, content: "A1" },
+      { role: "user" as const, content: "U2" },
+      { role: "assistant" as const, content: "A2" },
+      { role: "user" as const, content: "U3" },
+      { role: "assistant" as const, content: "A3" },
+    ];
+
+    const result = await compactIncremental(messages, createEmptyCompactionState(), {
+      keepRecentCount: 2,
+      tokenThreshold: 1,
+      summarizer,
+      force: true,
+    });
+
+    expect(result.summarizerObservability).toMatchObject({
+      mode: "rolling",
+      cacheAlignedRequested: true,
+      cacheSupport: "supported",
+      cacheHitTokens: 1200,
+      cacheMissTokens: 80,
+      cacheSavingsUsd: 0.000456,
+      usedWireApi: "chat_completions",
+      warmupCoordination: {
+        eligible: true,
+        status: "warm_candidate",
+        recommendation: "proceed",
+        reason: "cache_aligned_summary_selected",
+      },
+      cacheFamilyAffinity: {
+        status: "aligned",
+        familyKey: "family-compaction-1",
+        reason: "cache_aligned_summary_family_selected",
+      },
+    });
+  });
 });
 
 describe("normalizeCompactionState", () => {

@@ -839,6 +839,7 @@ body.control-panel-hidden .main-content {
 .token-usage {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -853,6 +854,18 @@ body.control-panel-hidden .main-content {
   transition: opacity 0.3s;
   cursor: pointer;
   user-select: none;
+}
+
+.token-usage-observability {
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.3;
+  opacity: 0.9;
+}
+
+.token-usage-observability.is-empty {
+  opacity: 0.68;
 }
 
 .token-usage:hover {
@@ -877,6 +890,10 @@ body.control-panel-hidden .main-content {
 
 .token-usage.is-collapsed .token-metric:not(.token-metric-in),
 .token-usage.is-collapsed .token-sep {
+  display: none;
+}
+
+.token-usage.is-collapsed .token-usage-observability {
   display: none;
 }
 

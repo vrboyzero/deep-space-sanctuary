@@ -671,6 +671,34 @@ describe("ConversationStore", () => {
         });
     });
 
+    it("should accept object-shaped summarizer responses when refreshing session memory", async () => {
+        const store = new ConversationStore({
+            summarizer: async () => ({
+                summary: JSON.stringify({
+                    summary: "object-summary",
+                    currentGoal: "验证对象返回",
+                    nextStep: "继续观测",
+                }),
+            }),
+        });
+        const id = "conv-session-memory-object-response";
+
+        store.addMessage(id, "user", "第一条长消息，用来刷新 session memory");
+        store.addMessage(id, "assistant", "收到，我来整理。");
+
+        const refreshed = await store.refreshSessionMemory(id, { force: true, threshold: 1 });
+        const memory = await store.getSessionMemory(id);
+
+        expect(refreshed.updated).toBe(true);
+        expect(memory).toMatchObject({
+            conversationId: id,
+            summary: "object-summary",
+            currentGoal: "验证对象返回",
+            nextStep: "继续观测",
+            lastSummarizedMessageCount: 2,
+        });
+    });
+
     it("should persist and query recent tool results independently from transcript messages", async () => {
         const store = new ConversationStore();
         const id = "conv-recent-tool-results";
@@ -712,6 +740,102 @@ describe("ConversationStore", () => {
         ]);
         expect(store.getRecentToolResults(id, { toolCallId: "call-1" })).toHaveLength(1);
         expect(store.getRecentToolResults(id, { toolName: "run_command", success: false, query: "eperm" })).toHaveLength(1);
+    });
+
+    it("should normalize oversized recent tool args without dropping key diagnostic fields", async () => {
+        const store = new ConversationStore();
+        const id = "conv-recent-tool-result-args-projection";
+
+        store.recordRecentToolResult(id, {
+            toolCallId: "call-args-1",
+            toolName: "delegate_task",
+            success: true,
+            summary: "delegate_task succeeded",
+            content: "ok",
+            target: "verifier",
+            args: {
+                agent_id: "verifier",
+                instruction: "Review this patch carefully. ".repeat(40),
+                files: Array.from({ length: 9 }, (_, index) => `src/module-${index}.ts`),
+                acceptance: {
+                    done_definition: "State whether the patch is ready.",
+                    verification_hints: ["Check findings", "Check missing tests", "Check regressions"],
+                    nested: {
+                        layer1: {
+                            layer2: {
+                                layer3: "too deep",
+                            },
+                        },
+                    },
+                },
+                extra_0: "a",
+                extra_1: "b",
+                extra_2: "c",
+                extra_3: "d",
+                extra_4: "e",
+                extra_5: "f",
+                extra_6: "g",
+                extra_7: "h",
+                extra_8: "i",
+                extra_9: "j",
+                extra_10: "k",
+                extra_11: "l",
+                extra_12: "m",
+            },
+        });
+
+        const recent = store.getRecentToolResults(id, { toolCallId: "call-args-1" });
+        expect(recent).toHaveLength(1);
+        expect(recent[0]?.args).toMatchObject({
+            agent_id: "verifier",
+        });
+        expect(String((recent[0]?.args as any)?.instruction ?? "")).not.toBe("Review this patch carefully. ".repeat(40).trim());
+        expect(String((recent[0]?.args as any)?.instruction ?? "")).toHaveLength(160);
+        expect((recent[0]?.args as any)?.files).toEqual(expect.arrayContaining([
+            "src/module-0.ts",
+            "[+3 more items]",
+        ]));
+        expect((recent[0]?.args as any)?.acceptance?.nested?.layer1).toBe("[object keys=1]");
+        expect((recent[0]?.args as any)?.__truncatedKeys).toBe(5);
+    });
+
+    it("should keep only preview-sized recent tool content while preserving truncation metadata", async () => {
+        const store = new ConversationStore();
+        const id = "conv-recent-tool-result-content-projection";
+        const longContent = "export const answer = 42;\n".repeat(800);
+        const longError = "spawn EPERM while launching pnpm test\n".repeat(80);
+
+        store.recordRecentToolResult(id, {
+            toolCallId: "call-content-1",
+            toolName: "file_read",
+            success: true,
+            summary: "file_read succeeded",
+            content: longContent,
+            target: "src/app.ts",
+            args: { path: "src/app.ts" },
+        });
+        store.recordRecentToolResult(id, {
+            toolCallId: "call-content-2",
+            toolName: "run_command",
+            success: false,
+            summary: "run_command failed",
+            error: longError,
+            failureKind: "environment_error",
+            target: "pnpm test",
+            args: { command: "pnpm test" },
+        });
+
+        const successRecord = store.getRecentToolResults(id, { toolCallId: "call-content-1" })[0];
+        expect(successRecord?.contentChars).toBe(longContent.trim().length);
+        expect(successRecord?.contentTruncated).toBe(true);
+        expect(successRecord?.contentPreview).toBe(successRecord?.content);
+        expect(String(successRecord?.content ?? "").length).toBeLessThanOrEqual(2400);
+
+        const errorRecord = store.getRecentToolResults(id, { toolCallId: "call-content-2" })[0];
+        expect(errorRecord?.errorChars).toBe(longError.trim().length);
+        expect(errorRecord?.errorTruncated).toBe(true);
+        expect(errorRecord?.errorPreview).toBe(errorRecord?.error);
+        expect(String(errorRecord?.error ?? "").length).toBeLessThanOrEqual(800);
     });
 
     it("should emit enriched request compaction hook events", async () => {
@@ -833,6 +957,40 @@ describe("ConversationStore", () => {
         expect(restoredState.rollingSummary).toBe("rolling-summary-v1");
         expect(restoredState.compactedMessageCount).toBe(2);
         expect(restoredState.lastCompactedAt).toBeGreaterThan(0);
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("should coerce object-shaped compaction summaries before token estimation", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const store = new ConversationStore({
+            dataDir,
+            compaction: {
+                enabled: true,
+                tokenThreshold: 10,
+                keepRecentCount: 1,
+            },
+            summarizer: async () => ({
+                summary: {
+                    content: [
+                        { text: "rolling-summary-v-object" },
+                    ],
+                } as unknown as string,
+            }),
+        });
+        const id = "conv-compaction-object-summary";
+
+        store.addMessage(id, "user", "A".repeat(80));
+        store.addMessage(id, "assistant", "B".repeat(80));
+        store.addMessage(id, "user", "C".repeat(80));
+
+        const result = await store.forceCompact(id);
+
+        expect(result.compacted).toBe(true);
+        const reloaded = new ConversationStore({ dataDir });
+        const restoredState = await (reloaded as any).getCompactionStateAsync(id);
+        expect(restoredState.rollingSummary).toBe("rolling-summary-v-object");
 
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
