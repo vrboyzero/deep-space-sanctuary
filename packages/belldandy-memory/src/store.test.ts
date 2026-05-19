@@ -176,4 +176,186 @@ describe("MemoryStore", () => {
     expect(updated?.workRecap?.updatedAt).toBe(updated?.updatedAt);
     expect(updated?.resumeContext?.updatedAt).toBe(updated?.updatedAt);
   });
+
+  it("creates memory tree phase-1 tables on initialization", () => {
+    const db = (store as any).db;
+    const rows = db.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('memory_sources', 'memory_scores', 'memory_tree_nodes', 'memory_tree_edges', 'memory_clean_reports')
+      ORDER BY name ASC
+    `).all() as Array<{ name: string }>;
+
+    expect(rows.map((row) => row.name)).toEqual([
+      "memory_clean_reports",
+      "memory_scores",
+      "memory_sources",
+      "memory_tree_edges",
+      "memory_tree_nodes",
+    ]);
+    expect(store.getMeta("memory_tree_schema_version")).toBe("p9-phase1-v1");
+    expect(store.getMeta("memory_tree_score_version")).toBe("v1_rule_only");
+  });
+
+  it("upserts memory sources and scores idempotently", () => {
+    store.upsertMemorySources([
+      {
+        id: "builtin:memory:daily-notes",
+        sourceKind: "memory_notes",
+        sourceClass: "raw",
+        scope: "private",
+        sourcePath: "memory",
+        sourceRef: "**/*.md",
+        itemCount: 3,
+        metadata: {
+          recordType: "inventory_preview",
+        },
+      },
+    ]);
+
+    store.upsertMemorySources([
+      {
+        id: "builtin:memory:daily-notes",
+        sourceKind: "memory_notes",
+        sourceClass: "raw",
+        scope: "private",
+        sourcePath: "memory",
+        sourceRef: "**/*.md",
+        itemCount: 5,
+        metadata: {
+          recordType: "inventory_preview",
+          refreshed: true,
+        },
+      },
+    ]);
+
+    const sources = store.listMemorySources(10, { sourceKind: "memory_notes" });
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({
+      id: "builtin:memory:daily-notes",
+      itemCount: 5,
+      metadata: expect.objectContaining({
+        refreshed: true,
+      }),
+    });
+
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:chunk-1",
+        targetType: "chunk",
+        targetId: "chunk-1",
+        sourceId: "builtin:memory:daily-notes",
+        scoreTotal: 0.61,
+        recencyScore: 0.8,
+        sourceWeightScore: 0.7,
+        interactionScore: 0.5,
+        taskOutcomeScore: 0.4,
+        scoreVersion: "v1_rule_only",
+        rationale: { step: 1 },
+      },
+    ]);
+
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:chunk-1",
+        targetType: "chunk",
+        targetId: "chunk-1",
+        sourceId: "builtin:memory:daily-notes",
+        scoreTotal: 0.92,
+        recencyScore: 1,
+        sourceWeightScore: 0.8,
+        interactionScore: 0.9,
+        taskOutcomeScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { step: 2 },
+      },
+    ]);
+
+    const scores = store.listMemoryScores(10, {
+      targetType: "chunk",
+      targetId: "chunk-1",
+      scoreVersion: "v1_rule_only",
+    });
+    expect(scores).toHaveLength(1);
+    expect(scores[0]).toMatchObject({
+      id: "score:v1_rule_only:chunk:chunk-1",
+      scoreTotal: 0.92,
+      rationale: expect.objectContaining({
+        step: 2,
+      }),
+    });
+  });
+
+  it("stores memory clean reports and task tree nodes with edges", () => {
+    store.upsertMemoryCleanReports([
+      {
+        id: "report:inventory:1",
+        reportType: "inventory",
+        scope: "private",
+        status: "ready",
+        inputVersion: "v1",
+        summary: { sourceKinds: 10 },
+        details: { items: [{ id: "builtin:memory:daily-notes" }] },
+        createdBy: "test",
+      },
+    ]);
+
+    const report = store.getMemoryCleanReport("report:inventory:1");
+    expect(report).toMatchObject({
+      id: "report:inventory:1",
+      reportType: "inventory",
+      summary: expect.objectContaining({
+        sourceKinds: 10,
+      }),
+    });
+    expect(store.listMemoryCleanReports(10, { reportType: "inventory" })).toHaveLength(1);
+
+    store.upsertMemoryTreeNodes([
+      {
+        id: "task:node-1",
+        level: 1,
+        kind: "task",
+        scope: "private",
+        title: "Node 1",
+        summary: "Task node summary",
+        summaryVersion: "p10-task-node-v1",
+        metadata: {
+          taskId: "task-1",
+        },
+      },
+    ]);
+    store.upsertMemoryTreeEdges([
+      {
+        id: "edge:task:node-1:chunk-1",
+        parentNodeId: "task:node-1",
+        childType: "chunk",
+        childId: "chunk-1",
+        relation: "contains",
+        position: 0,
+        metadata: {
+          relation: "used",
+        },
+      },
+    ]);
+
+    const nodes = store.listMemoryTreeNodes(10, { kind: "task" });
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({
+      id: "task:node-1",
+      summaryVersion: "p10-task-node-v1",
+      metadata: expect.objectContaining({
+        taskId: "task-1",
+      }),
+    });
+
+    const edges = store.listMemoryTreeEdges({ parentNodeId: "task:node-1" });
+    expect(edges).toEqual([
+      expect.objectContaining({
+        id: "edge:task:node-1:chunk-1",
+        childId: "chunk-1",
+        relation: "contains",
+      }),
+    ]);
+  });
 });

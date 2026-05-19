@@ -538,7 +538,7 @@ export async function buildPromptFocusRuntimePrelude(input: {
 
   let semanticQueryVector: number[] | null | undefined;
   let semanticChunkVectors: Array<number[] | null> | undefined;
-  if (input.config.semanticEnabled !== false && input.semanticEmbedder?.embedQuery && input.semanticEmbedder?.embedPassages) {
+  if (input.config.semanticEnabled !== false && input.semanticEmbedder) {
     semanticQueryVector = await input.semanticEmbedder.embedQuery(currentTurnText);
     semanticChunkVectors = await ensurePromptFocusSemanticVectors({
       index,

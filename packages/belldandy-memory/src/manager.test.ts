@@ -124,6 +124,192 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("rebuilds memory tree sources and chunk scores within memory.sqlite", async () => {
+    const stateMemoryDir = path.join(stateDir, "memory");
+    const stateMemoryPath = path.join(stateMemoryDir, "2026-05-19.md");
+    const externalDocPath = path.join(docsDir, "external-plan.md");
+    await fs.mkdir(stateMemoryDir, { recursive: true });
+    await fs.writeFile(stateMemoryPath, "# Daily Memory\nmemory tree source registry\n", "utf-8");
+    await fs.writeFile(externalDocPath, "# External Plan\nchunk score input\n", "utf-8");
+
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      additionalRoots: [stateMemoryDir],
+    });
+
+    manager.upsertMemoryChunk({
+      id: "tree-source-daily-1",
+      sourcePath: stateMemoryPath,
+      sourceType: "file",
+      memoryType: "daily",
+      content: "daily memory mentions task prompt and memory path docs/guide.md",
+      visibility: "shared",
+    });
+    manager.upsertMemoryChunk({
+      id: "tree-source-external-1",
+      sourcePath: externalDocPath,
+      sourceType: "file",
+      memoryType: "other",
+      content: "external workspace plan with agent task tool references",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+    };
+    store.createTask({
+      id: "task-tree-score-1",
+      conversationId: "conv-tree-score-1",
+      sessionKey: "conv-tree-score-1",
+      source: "chat",
+      status: "success",
+      title: "整理 P9 source registry",
+      startedAt: "2026-05-19T12:00:00.000Z",
+      finishedAt: "2026-05-19T12:05:00.000Z",
+      createdAt: "2026-05-19T12:00:00.000Z",
+      updatedAt: "2026-05-19T12:05:00.000Z",
+    });
+    store.linkTaskMemory("task-tree-score-1", "tree-source-daily-1", "used");
+
+    const sourceResult = await manager.rebuildMemoryTreeSources();
+    expect(sourceResult).toMatchObject({
+      inventorySources: expect.any(Number),
+      dynamicSources: 1,
+    });
+
+    const sources = manager.listMemoryTreeSources(50);
+    expect(sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "builtin:memory:daily-notes",
+        sourceKind: "memory_notes",
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: externalDocPath,
+      }),
+    ]));
+
+    const scoreResult = manager.rebuildMemoryTreeScores();
+    expect(scoreResult).toMatchObject({
+      scoreVersion: "v1_rule_only",
+      totalScores: 2,
+    });
+
+    const scores = manager.listMemoryTreeScores(10, { targetType: "chunk" });
+    expect(scores).toHaveLength(2);
+    expect(scores.find((item) => item.targetId === "tree-source-daily-1")).toMatchObject({
+      sourceId: "builtin:memory:daily-notes",
+      taskOutcomeScore: 1,
+      interactionScore: expect.any(Number),
+      rationale: expect.objectContaining({
+        sourceKind: "memory_notes",
+        sourceClassWeight: expect.any(Number),
+      }),
+    });
+  });
+
+  it("persists P10 reports and rebuilds L1 task nodes with chunk edges", async () => {
+    const stateMemoryDir = path.join(stateDir, "memory");
+    const stateMemoryPath = path.join(stateMemoryDir, "2026-05-20.md");
+    await fs.mkdir(stateMemoryDir, { recursive: true });
+    await fs.writeFile(stateMemoryPath, "# Daily Memory\np10 report\n", "utf-8");
+
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      additionalRoots: [stateMemoryDir],
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "p10-report-a",
+      sourcePath: stateMemoryPath,
+      sourceType: "file",
+      memoryType: "daily",
+      content: "duplicate content for p10 report\nline two",
+      visibility: "shared",
+    });
+    manager.upsertMemoryChunk({
+      id: "p10-report-b",
+      sourcePath: path.join(docsDir, "report-duplicate.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "duplicate content for p10 report\r\nline two",
+    });
+
+    const inventoryPreview = await manager.previewSourceInventory();
+    const inventoryRecord = manager.persistMemoryTreeInventoryReport(inventoryPreview, {
+      createdBy: "test",
+    });
+    expect(inventoryRecord.reportType).toBe("inventory");
+
+    const dedupPreview = manager.previewExactDedup(undefined, { maxGroups: 10 });
+    const dedupRecord = manager.persistMemoryTreeDedupPreviewReport(dedupPreview, {
+      maxGroups: 10,
+      createdBy: "test",
+    });
+    expect(dedupRecord.reportType).toBe("dedup_preview");
+
+    const exported = await manager.exportMemoryTreeReportMarkdown(dedupRecord.id);
+    expect(exported.markdownPath.endsWith(".md")).toBe(true);
+    expect(path.basename(exported.markdownPath)).not.toContain(":");
+    const exportedContent = await fs.readFile(exported.markdownPath, "utf-8");
+    expect(exportedContent).toContain("# Memory Tree Report");
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+    };
+    store.createTask({
+      id: "task-tree-node-1",
+      conversationId: "conv-tree-node-1",
+      sessionKey: "conv-tree-node-1",
+      source: "chat",
+      status: "partial",
+      title: "整理 P10 task node",
+      summary: "当前停在 report export 与 node edge 回链。",
+      startedAt: "2026-05-19T14:00:00.000Z",
+      finishedAt: "2026-05-19T14:10:00.000Z",
+      createdAt: "2026-05-19T14:00:00.000Z",
+      updatedAt: "2026-05-19T14:10:00.000Z",
+    });
+    store.linkTaskMemory("task-tree-node-1", "p10-report-a", "used");
+
+    const nodeResult = manager.rebuildMemoryTreeNodes({ limit: 20 });
+    expect(nodeResult).toMatchObject({
+      kind: "task",
+      totalNodes: 1,
+      totalEdges: 1,
+    });
+
+    const reports = manager.listMemoryTreeReports(10);
+    expect(reports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reportType: "inventory" }),
+      expect.objectContaining({ reportType: "dedup_preview" }),
+      expect.objectContaining({ reportType: "tree_build_preview" }),
+    ]));
+
+    const nodes = manager.listMemoryTreeNodes(10, { kind: "task" });
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({
+      id: "task:task-tree-node-1",
+      summaryVersion: "p10-task-node-v1",
+      metadata: expect.objectContaining({
+        taskId: "task-tree-node-1",
+        linkedChunkCount: 1,
+      }),
+    });
+
+    const edges = manager.listMemoryTreeEdges({ parentNodeId: "task:task-tree-node-1" });
+    expect(edges).toEqual([
+      expect.objectContaining({
+        childId: "p10-report-a",
+        relation: "contains",
+      }),
+    ]);
+  });
+
   it("keeps explicit search available while implicit recall still skips greetings", async () => {
     const filePath = path.join(docsDir, "hello.md");
     await fs.writeFile(filePath, "# Greeting\nhello memory marker\n", "utf-8");

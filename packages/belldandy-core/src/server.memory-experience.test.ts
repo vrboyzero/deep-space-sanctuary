@@ -2705,6 +2705,418 @@ test("memory.dedup.preview reports exact duplicate groups without mutating chunk
   }
 });
 
+test("memory.inventory.preview returns readonly builtin and configured source inventory", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-inventory-preview-"));
+  const externalDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-inventory-preview-external-"));
+  const workspaceRoot = path.join(stateDir, "sessions");
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    await fs.promises.mkdir(workspaceRoot, { recursive: true });
+    await fs.promises.mkdir(path.join(stateDir, "memory"), { recursive: true });
+    await fs.promises.writeFile(path.join(workspaceRoot, "conv-1.jsonl"), "{\"role\":\"user\",\"content\":\"hello\"}\n", "utf-8");
+    await fs.promises.writeFile(path.join(workspaceRoot, "conv-1.digest.json"), "{\"digestGeneration\":1}\n", "utf-8");
+    await fs.promises.writeFile(path.join(stateDir, "MEMORY.md"), "# Core Memory\n", "utf-8");
+    await fs.promises.writeFile(path.join(externalDir, "kb.md"), "# External KB\n", "utf-8");
+
+    (memoryManager as any).store.createTask({
+      id: "task-inventory-preview-1",
+      conversationId: "conv-1",
+      sessionKey: "conv-1",
+      source: "chat",
+      status: "success",
+      title: "预览 source inventory",
+      startedAt: "2026-05-19T11:00:00.000Z",
+      finishedAt: "2026-05-19T11:05:00.000Z",
+      createdAt: "2026-05-19T11:00:00.000Z",
+      updatedAt: "2026-05-19T11:05:00.000Z",
+    });
+    registerGlobalMemoryManager(memoryManager);
+
+    const response = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-inventory-preview",
+      method: "memory.inventory.preview",
+      params: {
+        configuredSources: [
+          {
+            label: "Obsidian Vault",
+            sourceClass: "curated",
+            rootPath: externalDir,
+            recursive: true,
+            fileExtensions: [".md"],
+          },
+        ],
+      },
+    }, { stateDir });
+
+    expect(response).toBeTruthy();
+    if (!response || !response.ok) {
+      throw new Error("expected successful memory.inventory.preview response");
+    }
+
+    const report = response.payload?.report as Record<string, any> | undefined;
+    expect(report?.version).toBe("p8-readonly-preview-v1");
+    expect(report?.totals?.sourceKinds).toBeGreaterThanOrEqual(10);
+    expect(report?.items?.some((item: Record<string, unknown>) =>
+      item.id === "builtin:sessions:messages"
+      && item.status === "present"
+      && item.sourceClass === "raw")).toBe(true);
+    expect(report?.items?.some((item: Record<string, unknown>) =>
+      item.id === "builtin:db:tasks"
+      && item.storage === "database"
+      && item.stats
+      && typeof item.stats === "object"
+      && (item.stats as Record<string, unknown>).rowCount === 1)).toBe(true);
+    expect(report?.items?.some((item: Record<string, unknown>) =>
+      item.label === "Obsidian Vault"
+      && item.sourceKind === "configured_external"
+      && item.status === "present")).toBe(true);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.tree source and score rebuild methods persist phase-1 registry data", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-phase1-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-phase1-workspace-"));
+  const memoryDir = path.join(stateDir, "memory");
+  const externalPath = path.join(workspaceRoot, "external.md");
+  await fs.promises.mkdir(memoryDir, { recursive: true });
+  await fs.promises.writeFile(path.join(memoryDir, "2026-05-19.md"), "# Daily Memory\nphase1 source\n", "utf-8");
+  await fs.promises.writeFile(externalPath, "# External\nphase1 score\n", "utf-8");
+
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "tree-phase1-daily",
+      sourcePath: path.join(memoryDir, "2026-05-19.md"),
+      sourceType: "file",
+      memoryType: "daily",
+      content: "daily memory mentions docs/path.md and task tool prompt",
+      visibility: "shared",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "tree-phase1-external",
+      sourcePath: externalPath,
+      sourceType: "file",
+      memoryType: "other",
+      content: "external plan for agent tool execution",
+    });
+
+    (memoryManager as any).store.createTask({
+      id: "task-tree-phase1-1",
+      conversationId: "conv-tree-phase1-1",
+      sessionKey: "conv-tree-phase1-1",
+      source: "chat",
+      status: "success",
+      title: "重建 P9 tree source registry",
+      startedAt: "2026-05-19T13:00:00.000Z",
+      finishedAt: "2026-05-19T13:05:00.000Z",
+      createdAt: "2026-05-19T13:00:00.000Z",
+      updatedAt: "2026-05-19T13:05:00.000Z",
+    });
+    (memoryManager as any).store.linkTaskMemory("task-tree-phase1-1", "tree-phase1-daily", "used");
+    registerGlobalMemoryManager(memoryManager);
+
+    const rebuildSourceRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-source-rebuild",
+      method: "memory.tree.source.rebuild",
+      params: {},
+    }, { stateDir });
+    expect(rebuildSourceRes).toBeTruthy();
+    if (!rebuildSourceRes || !rebuildSourceRes.ok) {
+      throw new Error("expected successful memory.tree.source.rebuild response");
+    }
+    expect(rebuildSourceRes.payload?.result).toMatchObject({
+      inventorySources: expect.any(Number),
+      dynamicSources: 1,
+    });
+
+    const listSourceRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-source-list",
+      method: "memory.tree.source.list",
+      params: {
+        limit: 50,
+      },
+    }, { stateDir });
+    expect(listSourceRes).toBeTruthy();
+    if (!listSourceRes || !listSourceRes.ok) {
+      throw new Error("expected successful memory.tree.source.list response");
+    }
+    expect(listSourceRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "builtin:memory:daily-notes",
+        sourceKind: "memory_notes",
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: externalPath,
+      }),
+    ]));
+
+    const rebuildScoreRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-score-rebuild",
+      method: "memory.tree.score.rebuild",
+      params: {},
+    }, { stateDir });
+    expect(rebuildScoreRes).toBeTruthy();
+    if (!rebuildScoreRes || !rebuildScoreRes.ok) {
+      throw new Error("expected successful memory.tree.score.rebuild response");
+    }
+    expect(rebuildScoreRes.payload?.result).toMatchObject({
+      scoreVersion: "v1_rule_only",
+      totalScores: 2,
+    });
+
+    const listScoreRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-score-list",
+      method: "memory.tree.score.list",
+      params: {
+        limit: 10,
+        filter: {
+          targetType: "chunk",
+        },
+      },
+    }, { stateDir });
+    expect(listScoreRes).toBeTruthy();
+    if (!listScoreRes || !listScoreRes.ok) {
+      throw new Error("expected successful memory.tree.score.list response");
+    }
+    expect(listScoreRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetId: "tree-phase1-daily",
+        sourceId: "builtin:memory:daily-notes",
+        scoreVersion: "v1_rule_only",
+      }),
+      expect.objectContaining({
+        targetId: "tree-phase1-external",
+        scoreVersion: "v1_rule_only",
+      }),
+    ]));
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.tree report and node methods persist reports, export markdown, and expose task nodes", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-phase2-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-phase2-workspace-"));
+  const memoryDir = path.join(stateDir, "memory");
+  await fs.promises.mkdir(memoryDir, { recursive: true });
+  await fs.promises.writeFile(path.join(memoryDir, "2026-05-20.md"), "# Daily Memory\nphase2 report\n", "utf-8");
+
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "tree-phase2-a",
+      sourcePath: path.join(memoryDir, "2026-05-20.md"),
+      sourceType: "file",
+      memoryType: "daily",
+      content: "phase2 duplicate report line\nnext line",
+      visibility: "shared",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "tree-phase2-b",
+      sourcePath: path.join(workspaceRoot, "duplicate.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "phase2 duplicate report line\r\nnext line",
+    });
+
+    (memoryManager as any).store.createTask({
+      id: "task-tree-phase2-1",
+      conversationId: "conv-tree-phase2-1",
+      sessionKey: "conv-tree-phase2-1",
+      source: "chat",
+      status: "partial",
+      title: "重建 P10 task node",
+      summary: "当前停在 report export 与 node get。",
+      startedAt: "2026-05-19T15:00:00.000Z",
+      finishedAt: "2026-05-19T15:05:00.000Z",
+      createdAt: "2026-05-19T15:00:00.000Z",
+      updatedAt: "2026-05-19T15:05:00.000Z",
+    });
+    (memoryManager as any).store.linkTaskMemory("task-tree-phase2-1", "tree-phase2-a", "used");
+    registerGlobalMemoryManager(memoryManager);
+
+    const inventoryPreviewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-inventory-preview",
+      method: "memory.tree.report.inventory.preview",
+      params: {},
+    }, { stateDir });
+    expect(inventoryPreviewRes).toBeTruthy();
+    if (!inventoryPreviewRes || !inventoryPreviewRes.ok) {
+      throw new Error("expected successful memory.tree.report.inventory.preview response");
+    }
+    expect(inventoryPreviewRes.payload?.record).toMatchObject({
+      reportType: "inventory",
+      status: "ready",
+    });
+
+    const dedupPreviewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-dedup-preview",
+      method: "memory.tree.report.dedup.preview",
+      params: {
+        maxGroups: 10,
+      },
+    }, { stateDir });
+    expect(dedupPreviewRes).toBeTruthy();
+    if (!dedupPreviewRes || !dedupPreviewRes.ok) {
+      throw new Error("expected successful memory.tree.report.dedup.preview response");
+    }
+    const dedupRecord = dedupPreviewRes.payload?.record as Record<string, any> | undefined;
+    expect(dedupRecord).toMatchObject({
+      reportType: "dedup_preview",
+      status: "ready",
+    });
+    const dedupReportId = String(dedupRecord?.id ?? "");
+    expect(dedupReportId.length).toBeGreaterThan(0);
+
+    const reportListRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-list",
+      method: "memory.tree.report.list",
+      params: {
+        limit: 10,
+      },
+    }, { stateDir });
+    expect(reportListRes).toBeTruthy();
+    if (!reportListRes || !reportListRes.ok) {
+      throw new Error("expected successful memory.tree.report.list response");
+    }
+    expect(reportListRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reportType: "inventory" }),
+      expect.objectContaining({ reportType: "dedup_preview" }),
+    ]));
+
+    const reportGetRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-get",
+      method: "memory.tree.report.get",
+      params: {
+        reportId: dedupReportId,
+      },
+    }, { stateDir });
+    expect(reportGetRes).toBeTruthy();
+    if (!reportGetRes || !reportGetRes.ok) {
+      throw new Error("expected successful memory.tree.report.get response");
+    }
+    expect(reportGetRes.payload?.report).toMatchObject({
+      id: dedupReportId,
+      reportType: "dedup_preview",
+    });
+
+    const exportRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-export",
+      method: "memory.tree.report.export_markdown",
+      params: {
+        reportId: dedupReportId,
+      },
+    }, { stateDir });
+    expect(exportRes).toBeTruthy();
+    if (!exportRes || !exportRes.ok) {
+      throw new Error("expected successful memory.tree.report.export_markdown response");
+    }
+    expect(exportRes.payload?.markdownPath).toContain(path.join("reports", "memory-tree"));
+    expect(path.basename(String(exportRes.payload?.markdownPath ?? ""))).not.toContain(":");
+    const exportedContent = await fs.promises.readFile(String(exportRes.payload?.markdownPath ?? ""), "utf-8");
+    expect(exportedContent).toContain("# Memory Tree Report");
+
+    const nodeRebuildRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-node-rebuild",
+      method: "memory.tree.node.rebuild",
+      params: {
+        limit: 20,
+      },
+    }, { stateDir });
+    expect(nodeRebuildRes).toBeTruthy();
+    if (!nodeRebuildRes || !nodeRebuildRes.ok) {
+      throw new Error("expected successful memory.tree.node.rebuild response");
+    }
+    expect(nodeRebuildRes.payload?.result).toMatchObject({
+      kind: "task",
+      totalNodes: 1,
+      totalEdges: 1,
+    });
+
+    const nodeListRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-node-list",
+      method: "memory.tree.node.list",
+      params: {
+        limit: 10,
+        filter: {
+          kind: "task",
+        },
+      },
+    }, { stateDir });
+    expect(nodeListRes).toBeTruthy();
+    if (!nodeListRes || !nodeListRes.ok) {
+      throw new Error("expected successful memory.tree.node.list response");
+    }
+    expect(nodeListRes.payload?.items).toEqual([
+      expect.objectContaining({
+        id: "task:task-tree-phase2-1",
+        kind: "task",
+      }),
+    ]);
+
+    const nodeGetRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-node-get",
+      method: "memory.tree.node.get",
+      params: {
+        nodeId: "task:task-tree-phase2-1",
+      },
+    }, { stateDir });
+    expect(nodeGetRes).toBeTruthy();
+    if (!nodeGetRes || !nodeGetRes.ok) {
+      throw new Error("expected successful memory.tree.node.get response");
+    }
+    expect(nodeGetRes.payload?.node).toMatchObject({
+      id: "task:task-tree-phase2-1",
+      summaryVersion: "p10-task-node-v1",
+    });
+    expect(nodeGetRes.payload?.edges).toEqual([
+      expect.objectContaining({
+        childId: "tree-phase2-a",
+        relation: "contains",
+      }),
+    ]);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("memory.dedup.apply backs up the db, removes duplicate chunks, and relinks task memory links", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-apply-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-apply-workspace-"));

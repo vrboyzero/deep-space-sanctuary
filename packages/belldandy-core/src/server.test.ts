@@ -8,7 +8,7 @@ import WebSocket from "ws";
 
 import { AgentRegistry, type BelldandyAgent, ConversationStore, MockAgent } from "@belldandy/agent";
 import { CompactionRuntimeTracker as SourceCompactionRuntimeTracker } from "../../belldandy-agent/src/compaction-runtime.js";
-import { MemoryManager, getGlobalMemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
+import { MemoryManager, MemoryStore, getGlobalMemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
 import { upsertKnownMarketplace } from "./extension-marketplace-state.js";
 import { persistConversationPromptSnapshot } from "./conversation-prompt-snapshot.js";
 import { recordConversationArtifactExport } from "./conversation-export-index.js";
@@ -69,6 +69,8 @@ test("gateway handshake and message.send streams chat", async () => {
   expect(hello?.version).toBe(BELLDANDY_VERSION);
   expect(hello?.methods).toContain("pairing.approve");
   expect(hello?.methods).toContain("conversation.run.stop");
+  expect(hello?.methods).toContain("memory.tree.report.inventory.preview");
+  expect(hello?.methods).toContain("memory.tree.node.rebuild");
 
   await waitFor(() => frames.some((f) => f.type === "event" && f.event === "pairing.required"));
   const pairing = frames.find((f) => f.type === "event" && f.event === "pairing.required");
@@ -1163,6 +1165,35 @@ test("resident agent memory managers use isolated sqlite files", async () => {
     await waitFor(() => fs.existsSync(defaultDbPath) && fs.existsSync(coderDbPath));
     expect(fs.existsSync(defaultDbPath)).toBe(true);
     expect(fs.existsSync(coderDbPath)).toBe(true);
+
+    const defaultDb = new MemoryStore(defaultDbPath);
+    const coderDb = new MemoryStore(coderDbPath);
+    try {
+      const readTables = (db: MemoryStore) => ((db as any).db.prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('memory_sources', 'memory_scores', 'memory_tree_nodes', 'memory_tree_edges', 'memory_clean_reports')
+        ORDER BY name ASC
+      `).all() as Array<{ name: string }>);
+      expect(readTables(defaultDb).map((row) => row.name)).toEqual([
+        "memory_clean_reports",
+        "memory_scores",
+        "memory_sources",
+        "memory_tree_edges",
+        "memory_tree_nodes",
+      ]);
+      expect(readTables(coderDb).map((row) => row.name)).toEqual([
+        "memory_clean_reports",
+        "memory_scores",
+        "memory_sources",
+        "memory_tree_edges",
+        "memory_tree_nodes",
+      ]);
+    } finally {
+      defaultDb.close();
+      coderDb.close();
+    }
   } finally {
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }

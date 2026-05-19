@@ -1607,6 +1607,21 @@ async function handleReq(
     "memory.get",
     "memory.recent",
     "memory.stats",
+    "memory.inventory.preview",
+    "memory.tree.report.inventory.preview",
+    "memory.tree.report.dedup.preview",
+    "memory.tree.report.list",
+    "memory.tree.report.get",
+    "memory.tree.report.export_markdown",
+    "memory.tree.node.rebuild",
+    "memory.tree.node.list",
+    "memory.tree.node.get",
+    "memory.tree.source.rebuild",
+    "memory.tree.source.list",
+    "memory.tree.score.rebuild",
+    "memory.tree.score.list",
+    "memory.dedup.preview",
+    "memory.dedup.apply",
     "memory.share.promote",
     "memory.share.claim",
     "memory.share.review",
@@ -2025,6 +2040,19 @@ async function handleReq(
     case "memory.get":
     case "memory.recent":
     case "memory.stats":
+    case "memory.inventory.preview":
+    case "memory.tree.report.inventory.preview":
+    case "memory.tree.report.dedup.preview":
+    case "memory.tree.report.list":
+    case "memory.tree.report.get":
+    case "memory.tree.report.export_markdown":
+    case "memory.tree.node.rebuild":
+    case "memory.tree.node.list":
+    case "memory.tree.node.get":
+    case "memory.tree.source.rebuild":
+    case "memory.tree.source.list":
+    case "memory.tree.score.rebuild":
+    case "memory.tree.score.list":
     case "memory.dedup.preview":
     case "memory.dedup.apply":
     case "memory.share.queue":

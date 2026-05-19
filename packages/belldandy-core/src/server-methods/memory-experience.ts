@@ -20,6 +20,9 @@ import type {
   ExperienceCandidate,
   ExperienceCandidateType,
   ExperienceSynthesisPreviewItem,
+  MemorySourceInventoryClass,
+  MemorySourceInventoryConfiguredSource,
+  MemorySourceInventoryScope,
   PublishedExperienceAssetRecord,
 } from "@belldandy/memory";
 import type { SkillRegistry } from "@belldandy/skills";
@@ -208,6 +211,219 @@ export async function handleMemoryExperienceMethod(
         },
         queryView: buildResidentMemoryQueryView(residentPolicy),
         ...(includeRecentTasks ? { recentTasks: manager.getRecentTasks(5) } : {}),
+      });
+    }
+
+    case "memory.inventory.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const configuredSourcesResult = readConfiguredInventorySources(params);
+      if ("error" in configuredSourcesResult) {
+        return invalid(req.id, configuredSourcesResult.error);
+      }
+
+      const report = await manager.previewSourceInventory({
+        configuredSources: configuredSourcesResult.sources,
+      });
+      return ok(req.id, {
+        report,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.report.inventory.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const configuredSourcesResult = readConfiguredInventorySources(params);
+      if ("error" in configuredSourcesResult) {
+        return invalid(req.id, configuredSourcesResult.error);
+      }
+
+      const report = await manager.previewSourceInventory({
+        configuredSources: configuredSourcesResult.sources,
+      });
+      const record = manager.persistMemoryTreeInventoryReport(report, {
+        configuredSources: configuredSourcesResult.sources,
+        createdBy: "rpc",
+      });
+      return ok(req.id, {
+        report,
+        record,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.report.dedup.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const maxGroups = clampListLimit(params.maxGroups, 50, 500);
+      const report = manager.previewExactDedup(filter as any, { maxGroups });
+      const record = manager.persistMemoryTreeDedupPreviewReport(report, {
+        filter: filter as any,
+        maxGroups,
+        createdBy: "rpc",
+      });
+      return ok(req.id, {
+        report,
+        record,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.report.list": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const limit = clampListLimit(params.limit, 50, 500);
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const items = manager.listMemoryTreeReports(limit, filter as any);
+      return ok(req.id, {
+        items,
+        limit,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.report.get": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const reportId = readRequiredString(params, "reportId");
+      if (!reportId) return invalid(req.id, "reportId is required");
+      const report = manager.getMemoryTreeReport(reportId);
+      if (!report) return notFound(req.id, "Memory tree report not found.");
+      return ok(req.id, {
+        report,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.report.export_markdown": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const reportId = readRequiredString(params, "reportId");
+      if (!reportId) return invalid(req.id, "reportId is required");
+      const result = await manager.exportMemoryTreeReportMarkdown(reportId);
+      return ok(req.id, {
+        ...result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.node.rebuild": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const limit = clampListLimit(params.limit, 100, 500);
+      const result = manager.rebuildMemoryTreeNodes({ limit });
+      return ok(req.id, {
+        result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.node.list": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const limit = clampListLimit(params.limit, 100, 500);
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const items = manager.listMemoryTreeNodes(limit, filter as any);
+      return ok(req.id, {
+        items,
+        limit,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.node.get": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const nodeId = readRequiredString(params, "nodeId");
+      if (!nodeId) return invalid(req.id, "nodeId is required");
+      const node = manager.getMemoryTreeNode(nodeId);
+      if (!node) return notFound(req.id, "Memory tree node not found.");
+      const edges = manager.listMemoryTreeEdges({ parentNodeId: nodeId });
+      return ok(req.id, {
+        node,
+        edges,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.source.rebuild": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const configuredSourcesResult = readConfiguredInventorySources(params);
+      if ("error" in configuredSourcesResult) {
+        return invalid(req.id, configuredSourcesResult.error);
+      }
+
+      const result = await manager.rebuildMemoryTreeSources({
+        configuredSources: configuredSourcesResult.sources,
+      });
+      return ok(req.id, {
+        result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.source.list": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const limit = clampListLimit(params.limit, 100, 500);
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const items = manager.listMemoryTreeSources(limit, filter as any);
+      return ok(req.id, {
+        items,
+        limit,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.score.rebuild": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const result = manager.rebuildMemoryTreeScores();
+      return ok(req.id, {
+        result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.score.list": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const limit = clampListLimit(params.limit, 100, 500);
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const items = manager.listMemoryTreeScores(limit, filter as any);
+      return ok(req.id, {
+        items,
+        limit,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
       });
     }
 
@@ -1388,6 +1604,71 @@ function readOptionalStringArray(params: Record<string, unknown>, key: string): 
   return raw
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter(Boolean);
+}
+
+function readConfiguredInventorySources(
+  params: Record<string, unknown>,
+): { sources: MemorySourceInventoryConfiguredSource[] } | { error: string } {
+  const raw = params.configuredSources;
+  if (raw == null) {
+    return { sources: [] };
+  }
+  if (!Array.isArray(raw)) {
+    return { error: "configuredSources must be an array." };
+  }
+
+  const sources: MemorySourceInventoryConfiguredSource[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const item = raw[index];
+    if (!isObjectRecord(item)) {
+      return { error: `configuredSources[${index}] must be an object.` };
+    }
+    const label = readOptionalString(item, "label");
+    if (!label) {
+      return { error: `configuredSources[${index}].label is required.` };
+    }
+    const sourceClass = readOptionalString(item, "sourceClass");
+    if (!isInventorySourceClass(sourceClass)) {
+      return { error: `configuredSources[${index}].sourceClass must be raw, derived, or curated.` };
+    }
+    const scope = readOptionalString(item, "scope");
+    if (scope && !isInventoryScope(scope)) {
+      return { error: `configuredSources[${index}].scope must be private, shared, or team.` };
+    }
+    const rootPath = readOptionalString(item, "rootPath");
+    const filePath = readOptionalString(item, "filePath");
+    if (!rootPath && !filePath) {
+      return { error: `configuredSources[${index}] must provide rootPath or filePath.` };
+    }
+
+    const normalizedExtensions = Array.isArray(item.fileExtensions)
+      ? item.fileExtensions
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim())
+      : undefined;
+
+    sources.push({
+      ...(readOptionalString(item, "id") ? { id: readOptionalString(item, "id") } : {}),
+      label,
+      sourceClass,
+      ...(scope ? { scope: scope as MemorySourceInventoryScope } : {}),
+      ...(rootPath ? { rootPath } : {}),
+      ...(filePath ? { filePath } : {}),
+      ...(typeof item.recursive === "boolean" ? { recursive: item.recursive } : {}),
+      ...(normalizedExtensions && normalizedExtensions.length > 0 ? { fileExtensions: normalizedExtensions } : {}),
+      ...(readOptionalString(item, "note") ? { note: readOptionalString(item, "note") } : {}),
+    });
+  }
+
+  return { sources };
+}
+
+function isInventorySourceClass(value: string | undefined): value is MemorySourceInventoryClass {
+  return value === "raw" || value === "derived" || value === "curated";
+}
+
+function isInventoryScope(value: string | undefined): value is MemorySourceInventoryScope {
+  return value === "private" || value === "shared" || value === "team";
 }
 
 function readOptionalNonNegativeInteger(params: Record<string, unknown>, key: string): number | undefined {

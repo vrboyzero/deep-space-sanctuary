@@ -19,6 +19,31 @@ import { buildExperienceSynthesisPreview } from "./experience-synthesis.js";
 import { TaskProcessor } from "./task-processor.js";
 import { TaskSummarizer } from "./task-summarizer.js";
 import { shouldAutoPromoteTaskByPolicy } from "./task-auto-promotion-policy.js";
+import {
+    buildMemorySourceInventoryReport,
+    type MemorySourceInventoryClass,
+    type MemorySourceInventoryConfiguredSource,
+    type MemorySourceInventoryItem,
+    type MemorySourceInventoryReport,
+} from "./memory-source-inventory.js";
+import type {
+    MemoryTreeScoreListFilter,
+    MemoryTreeScoreRecord,
+    MemoryTreeScoreRebuildResult,
+    MemoryTreeEdgeListFilter,
+    MemoryTreeEdgeRecord,
+    MemoryTreeNodeListFilter,
+    MemoryTreeNodeRebuildResult,
+    MemoryTreeNodeRecord,
+    MemoryTreeReportListFilter,
+    MemoryTreeReportPersistResult,
+    MemoryTreeReportRecord,
+    MemoryTreeReportStatus,
+    MemoryTreeReportType,
+    MemoryTreeSourceListFilter,
+    MemoryTreeSourceRecord,
+    MemoryTreeSourceRebuildResult,
+} from "./memory-tree-types.js";
 import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
 import type {
     TaskActivityRecord,
@@ -68,6 +93,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
+
+const MEMORY_TREE_SCORE_VERSION = "v1_rule_only";
 
 // ============================================================================
 // Global Registry - Allows sharing MemoryManager across packages
@@ -769,6 +796,361 @@ export class MemoryManager {
 
     countChunks(filter?: MemorySearchFilter): number {
         return this.store.countChunks(filter);
+    }
+
+    async previewSourceInventory(options: {
+        configuredSources?: MemorySourceInventoryConfiguredSource[];
+    } = {}): Promise<MemorySourceInventoryReport> {
+        return await buildMemorySourceInventoryReport({
+            stateDir: this.stateDir,
+            memoryStatus: this.getStatus(),
+            taskStats: this.store.getTaskInventoryStats(),
+            experienceStats: this.store.getExperienceInventoryStats(),
+            configuredSources: options.configuredSources ?? [],
+        });
+    }
+
+    async rebuildMemoryTreeSources(options: {
+        configuredSources?: MemorySourceInventoryConfiguredSource[];
+    } = {}): Promise<MemoryTreeSourceRebuildResult> {
+        const report = await this.previewSourceInventory(options);
+        const rebuiltAt = new Date().toISOString();
+        const inventoryRecords = report.items.map((item) => buildInventoryMemorySourceRecord(item, rebuiltAt));
+        const inventoryIds = new Set(inventoryRecords.map((item) => item.id));
+        const dynamicRecords: MemoryTreeSourceRecord[] = [];
+
+        for (const summary of this.store.listChunkSourceSummaries()) {
+            const matchedInventoryId = this.resolvePreferredMemorySourceId(summary.sourcePath, summary.sourceType, summary.memoryTypes, inventoryRecords);
+            if (matchedInventoryId && inventoryIds.has(matchedInventoryId)) {
+                continue;
+            }
+            const classification = classifyMemoryTreeSource(summary.sourcePath, summary.sourceType, summary.memoryTypes);
+            dynamicRecords.push({
+                id: buildDynamicMemorySourceId(summary.sourcePath, summary.sourceType, summary.agentId),
+                sourceKind: classification.sourceKind,
+                sourceClass: classification.sourceClass,
+                scope: summary.scope,
+                agentId: summary.agentId,
+                sourcePath: summary.sourcePath,
+                sourceRef: summary.sourceType,
+                contentHash: hashMemoryTreePayload({
+                    sourcePath: summary.sourcePath,
+                    sourceType: summary.sourceType,
+                    agentId: summary.agentId ?? null,
+                    itemCount: summary.itemCount,
+                    timeTo: summary.timeTo ?? null,
+                }),
+                timeFrom: summary.timeFrom,
+                timeTo: summary.timeTo,
+                itemCount: summary.itemCount,
+                metadata: {
+                    recordType: "dynamic_chunk_source",
+                    sourceType: summary.sourceType,
+                    memoryTypes: summary.memoryTypes,
+                },
+                createdAt: rebuiltAt,
+                updatedAt: rebuiltAt,
+            });
+        }
+
+        const records = [...inventoryRecords, ...dynamicRecords];
+        this.store.upsertMemorySources(records);
+        this.store.setMeta("memory_tree_sources_last_rebuilt_at", rebuiltAt);
+        return {
+            rebuiltAt,
+            totalSources: records.length,
+            inventorySources: inventoryRecords.length,
+            dynamicSources: dynamicRecords.length,
+        };
+    }
+
+    listMemoryTreeSources(limit = 100, filter?: MemoryTreeSourceListFilter): MemoryTreeSourceRecord[] {
+        return this.store.listMemorySources(limit, filter);
+    }
+
+    rebuildMemoryTreeScores(): MemoryTreeScoreRebuildResult {
+        const rebuiltAt = new Date().toISOString();
+        const sources = this.store.listMemorySources(10_000);
+        const sourceMap = new Map(sources.map((item) => [item.id, item] as const));
+        const records: MemoryTreeScoreRecord[] = this.store.listChunkScoreInputs().map((input) => {
+            const fallbackClassification = classifyMemoryTreeSource(
+                input.sourcePath,
+                input.sourceType,
+                input.memoryType ? [input.memoryType] : undefined,
+            );
+            const sourceId = this.resolvePreferredMemorySourceId(input.sourcePath, input.sourceType, input.memoryType ? [input.memoryType] : undefined, sources)
+                ?? buildDynamicMemorySourceId(input.sourcePath, input.sourceType, input.agentId);
+            const sourceRecord = sourceMap.get(sourceId) ?? {
+                id: sourceId,
+                sourceKind: fallbackClassification.sourceKind,
+                sourceClass: fallbackClassification.sourceClass,
+                scope: input.visibility === "shared" ? "shared" : "private",
+            };
+            const score = buildRuleOnlyChunkScore(input, sourceRecord);
+            return {
+                id: `score:${MEMORY_TREE_SCORE_VERSION}:chunk:${input.chunkId}`,
+                targetType: "chunk",
+                targetId: input.chunkId,
+                sourceId,
+                scoreTotal: score.scoreTotal,
+                recencyScore: score.recencyScore,
+                sourceWeightScore: score.sourceWeightScore,
+                interactionScore: score.interactionScore,
+                taskOutcomeScore: score.taskOutcomeScore,
+                entityDensityScore: score.entityDensityScore,
+                scoreVersion: MEMORY_TREE_SCORE_VERSION,
+                rationale: score.rationale,
+                createdAt: rebuiltAt,
+                updatedAt: rebuiltAt,
+            };
+        });
+        this.store.upsertMemoryScores(records);
+        this.store.setMeta("memory_tree_scores_last_rebuilt_at", rebuiltAt);
+        return {
+            rebuiltAt,
+            scoreVersion: MEMORY_TREE_SCORE_VERSION,
+            totalScores: records.length,
+        };
+    }
+
+    listMemoryTreeScores(limit = 100, filter?: MemoryTreeScoreListFilter): MemoryTreeScoreRecord[] {
+        return this.store.listMemoryScores(limit, filter);
+    }
+
+    recordMemoryTreeReport(input: {
+        reportType: MemoryTreeReportType;
+        summary: Record<string, unknown>;
+        details: Record<string, unknown>;
+        scope?: MemoryTreeSourceRecord["scope"];
+        agentId?: string;
+        status?: MemoryTreeReportStatus;
+        inputVersion?: string;
+        createdBy?: string;
+        exportMarkdownPath?: string;
+        reportId?: string;
+    }): MemoryTreeReportRecord {
+        const persistedAt = new Date().toISOString();
+        const reportId = input.reportId ?? buildMemoryTreeReportId({
+            reportType: input.reportType,
+            inputVersion: input.inputVersion,
+            summary: input.summary,
+            details: input.details,
+            scope: input.scope ?? "private",
+            agentId: input.agentId,
+        });
+        const record: MemoryTreeReportRecord = {
+            id: reportId,
+            reportType: input.reportType,
+            scope: input.scope ?? "private",
+            agentId: input.agentId,
+            status: input.status ?? "ready",
+            inputVersion: input.inputVersion,
+            summary: input.summary,
+            details: input.details,
+            exportMarkdownPath: input.exportMarkdownPath,
+            createdBy: input.createdBy,
+            createdAt: persistedAt,
+            updatedAt: persistedAt,
+        };
+        this.store.upsertMemoryCleanReports([record]);
+        return this.store.getMemoryCleanReport(reportId) ?? record;
+    }
+
+    listMemoryTreeReports(limit = 50, filter?: MemoryTreeReportListFilter): MemoryTreeReportRecord[] {
+        return this.store.listMemoryCleanReports(limit, filter);
+    }
+
+    getMemoryTreeReport(reportId: string): MemoryTreeReportRecord | null {
+        return this.store.getMemoryCleanReport(reportId);
+    }
+
+    async exportMemoryTreeReportMarkdown(reportId: string, destinationPath?: string): Promise<{ report: MemoryTreeReportRecord; markdownPath: string }> {
+        const report = this.store.getMemoryCleanReport(reportId);
+        if (!report) {
+            throw new Error(`Memory tree report not found: ${reportId}`);
+        }
+        const markdownPath = destinationPath ?? path.join(this.stateDir, "reports", "memory-tree", `${sanitizePathSegment(reportId)}.md`);
+        await fs.mkdir(path.dirname(markdownPath), { recursive: true });
+        const content = buildMemoryTreeReportMarkdown(report);
+        await fs.writeFile(markdownPath, content, "utf-8");
+        this.store.upsertMemoryCleanReports([{
+            ...report,
+            exportMarkdownPath: markdownPath,
+            updatedAt: new Date().toISOString(),
+        }]);
+        const next = this.store.getMemoryCleanReport(reportId) ?? { ...report, exportMarkdownPath: markdownPath };
+        return { report: next, markdownPath };
+    }
+
+    persistMemoryTreeInventoryReport(report: MemorySourceInventoryReport, options: { configuredSources?: MemorySourceInventoryConfiguredSource[]; createdBy?: string } = {}): MemoryTreeReportRecord {
+        const summary = {
+            reportVersion: report.version,
+            sourceKinds: report.totals.sourceKinds,
+            presentSourceKinds: report.totals.presentSourceKinds,
+            declaredSourceKinds: report.totals.declaredSourceKinds,
+            missingSourceKinds: report.totals.missingSourceKinds,
+            fileCount: report.totals.fileCount,
+            rowCount: report.totals.rowCount,
+            totalBytes: report.totals.totalBytes,
+            indexedFiles: report.totals.indexedFiles,
+            indexedChunks: report.totals.indexedChunks,
+            byClass: report.totals.byClass,
+            byScope: report.totals.byScope,
+        };
+        const details = {
+            generatedAt: report.generatedAt,
+            stateDir: report.stateDir,
+            items: report.items,
+            configuredSources: options.configuredSources ?? [],
+        };
+        return this.recordMemoryTreeReport({
+            reportType: "inventory",
+            scope: "private",
+            createdBy: options.createdBy ?? "rpc",
+            inputVersion: hashMemoryTreePayload({
+                reportVersion: report.version,
+                totals: summary,
+                configuredSources: options.configuredSources ?? [],
+            }),
+            summary,
+            details,
+        });
+    }
+
+    persistMemoryTreeDedupPreviewReport(report: MemoryExactDedupPreviewReport, options: { filter?: MemorySearchFilter; maxGroups?: number; createdBy?: string } = {}): MemoryTreeReportRecord {
+        const summary = {
+            mode: report.mode,
+            strategy: report.strategy,
+            scannedChunks: report.totals.scannedChunks,
+            duplicateGroups: report.totals.duplicateGroups,
+            removableChunks: report.totals.removableChunks,
+            estimatedRetainedChunks: Math.max(0, report.totals.scannedChunks - report.totals.removableChunks),
+        };
+        const details = {
+            observability: report.observability,
+            sourceIndexingSummary: report.sourceIndexingSummary,
+            groups: report.groups,
+            filter: options.filter ?? null,
+            maxGroups: options.maxGroups ?? null,
+        };
+        return this.recordMemoryTreeReport({
+            reportType: "dedup_preview",
+            scope: "private",
+            createdBy: options.createdBy ?? "rpc",
+            inputVersion: hashMemoryTreePayload({
+                filter: options.filter ?? null,
+                maxGroups: options.maxGroups ?? null,
+                mode: report.mode,
+                strategy: report.strategy,
+                totals: summary,
+            }),
+            summary,
+            details,
+        });
+    }
+
+    rebuildMemoryTreeNodes(options: { limit?: number } = {}): MemoryTreeNodeRebuildResult {
+        const rebuiltAt = new Date().toISOString();
+        const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+            ? Math.max(1, Math.floor(options.limit))
+            : 100;
+        const tasks = this.store.listTasks(limit, { status: ["success", "partial", "failed"] });
+        const nodes: MemoryTreeNodeRecord[] = [];
+        const edges: MemoryTreeEdgeRecord[] = [];
+
+        for (const task of tasks) {
+            const detail = this.getTaskDetail(task.id);
+            if (!detail) {
+                continue;
+            }
+            const linkedChunks = detail.memoryLinks ?? [];
+            const sourceClassMix = buildMemoryTreeSourceClassMix(linkedChunks);
+            nodes.push({
+                id: `task:${task.id}`,
+                level: 1,
+                kind: "task",
+                scope: task.agentId ? "private" : "private",
+                agentId: task.agentId ?? undefined,
+                topicKey: task.conversationId,
+                title: task.title ?? task.objective ?? `Task ${task.id}`,
+                summary: buildMemoryTreeTaskSummary(detail),
+                summaryVersion: "p10-task-node-v1",
+                timeFrom: task.startedAt,
+                timeTo: task.finishedAt ?? task.updatedAt,
+                sourceClassMix,
+                metadata: {
+                    taskId: task.id,
+                    conversationId: task.conversationId,
+                    status: task.status,
+                    linkedChunkCount: linkedChunks.length,
+                    activityCount: detail.activities?.length ?? 0,
+                    usedMethodCount: detail.usedMethods?.length ?? 0,
+                    usedSkillCount: detail.usedSkills?.length ?? 0,
+                },
+                createdAt: rebuiltAt,
+                updatedAt: rebuiltAt,
+            });
+            linkedChunks.forEach((link, index) => {
+                edges.push({
+                    id: `edge:task:${task.id}:chunk:${link.chunkId}:${link.relation}`,
+                    parentNodeId: `task:${task.id}`,
+                    childType: "chunk",
+                    childId: link.chunkId,
+                    relation: "contains",
+                    position: index,
+                    weight: 1,
+                    metadata: {
+                        relation: link.relation,
+                        sourcePath: link.sourcePath,
+                        memoryType: link.memoryType,
+                        visibility: link.visibility,
+                    },
+                    createdAt: rebuiltAt,
+                });
+            });
+        }
+
+        this.store.upsertMemoryTreeNodes(nodes);
+        this.store.upsertMemoryTreeEdges(edges);
+        this.recordMemoryTreeReport({
+            reportType: "tree_build_preview",
+            scope: "private",
+            createdBy: "rpc",
+            inputVersion: hashMemoryTreePayload({
+                taskLimit: limit,
+                taskCount: tasks.length,
+            }),
+            summary: {
+                nodeKind: "task",
+                nodeCount: nodes.length,
+                edgeCount: edges.length,
+                taskLimit: limit,
+            },
+            details: {
+                rebuiltAt,
+                nodes,
+                edges,
+            },
+        });
+        this.store.setMeta("memory_tree_nodes_last_rebuilt_at", rebuiltAt);
+        return {
+            rebuiltAt,
+            totalNodes: nodes.length,
+            totalEdges: edges.length,
+            kind: "task",
+        };
+    }
+
+    listMemoryTreeNodes(limit = 100, filter?: MemoryTreeNodeListFilter): MemoryTreeNodeRecord[] {
+        return this.store.listMemoryTreeNodes(limit, filter);
+    }
+
+    getMemoryTreeNode(nodeId: string): MemoryTreeNodeRecord | null {
+        return this.store.getMemoryTreeNode(nodeId);
+    }
+
+    listMemoryTreeEdges(filter?: MemoryTreeEdgeListFilter): MemoryTreeEdgeRecord[] {
+        return this.store.listMemoryTreeEdges(filter);
     }
 
     previewExactDedup(filter?: MemorySearchFilter, options: { maxGroups?: number } = {}): MemoryExactDedupPreviewReport {
@@ -1914,6 +2296,45 @@ export class MemoryManager {
         ]);
     }
 
+    private resolvePreferredMemorySourceId(
+        sourcePath: string,
+        sourceType: string,
+        memoryTypes: string[] | undefined,
+        records: MemoryTreeSourceRecord[],
+    ): string | undefined {
+        const classification = classifyMemoryTreeSource(sourcePath, sourceType, memoryTypes);
+        if (classification.builtinInventoryId && records.some((item) => item.id === classification.builtinInventoryId)) {
+            return classification.builtinInventoryId;
+        }
+
+        const normalizedCandidates = new Set(
+            this.resolveSourcePathCandidates(sourcePath)
+                .concat(sourcePath)
+                .map(normalizeSourcePathForMatch)
+                .filter(Boolean),
+        );
+        for (const record of records) {
+            if (!record.sourcePath) {
+                continue;
+            }
+            const normalizedRecordPath = normalizeSourcePathForMatch(record.sourcePath);
+            if (!normalizedRecordPath) {
+                continue;
+            }
+            if (normalizedCandidates.has(normalizedRecordPath)) {
+                return record.id;
+            }
+            if (record.id.startsWith("configured:")) {
+                for (const candidate of normalizedCandidates) {
+                    if (candidate === normalizedRecordPath || candidate.startsWith(`${normalizedRecordPath}/`)) {
+                        return record.id;
+                    }
+                }
+            }
+        }
+        return undefined;
+    }
+
     getStatus(): MemoryIndexStatus {
         const basic = this.store.getStatus();
         const vec = this.store.getVectorStatus();
@@ -2883,4 +3304,339 @@ function computeTaskShortcutRecencyBoost(task: TaskExperienceDetail): number {
     if (ageHours <= 24 * 7) return 2;
     if (ageHours <= 24 * 30) return 1;
     return 0;
+}
+
+function buildMemoryTreeReportId(input: {
+    reportType: MemoryTreeReportType;
+    inputVersion?: string;
+    summary: Record<string, unknown>;
+    details: Record<string, unknown>;
+    scope: string;
+    agentId?: string;
+}): string {
+    return `report:${input.reportType}:${hashMemoryTreePayload({
+        reportType: input.reportType,
+        inputVersion: input.inputVersion ?? "",
+        summary: input.summary,
+        details: input.details,
+        scope: input.scope,
+        agentId: input.agentId ?? null,
+    })}`;
+}
+
+function sanitizePathSegment(value: string): string {
+    return value
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+        .replace(/\s+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+function buildMemoryTreeReportMarkdown(report: MemoryTreeReportRecord): string {
+    return [
+        `# Memory Tree Report`,
+        "",
+        `- id: ${report.id}`,
+        `- type: ${report.reportType}`,
+        `- scope: ${report.scope}`,
+        `- status: ${report.status}`,
+        `- inputVersion: ${report.inputVersion ?? ""}`,
+        `- createdAt: ${report.createdAt ?? ""}`,
+        `- updatedAt: ${report.updatedAt ?? ""}`,
+        "",
+        "## Summary",
+        "```json",
+        JSON.stringify(report.summary, null, 2),
+        "```",
+        "",
+        "## Details",
+        "```json",
+        JSON.stringify(report.details, null, 2),
+        "```",
+        "",
+    ].join("\n");
+}
+
+function buildMemoryTreeTaskSummary(task: TaskExperienceDetail): string {
+    return [
+        task.summary?.trim(),
+        task.workRecap?.headline?.trim(),
+        task.resumeContext?.currentStopPoint?.trim(),
+    ].filter((item): item is string => Boolean(item)).slice(0, 2).join(" | ")
+        || task.objective?.trim()
+        || task.title?.trim()
+        || `Task ${task.id}`;
+}
+
+function buildMemoryTreeSourceClassMix(links: Array<{ sourcePath?: string; memoryType?: string }>): Record<string, number> {
+    const mix: Record<string, number> = {};
+    for (const link of links) {
+        const classification = classifyMemoryTreeSource(link.sourcePath ?? "", "file", link.memoryType ? [link.memoryType] : undefined);
+        mix[classification.sourceClass] = (mix[classification.sourceClass] ?? 0) + 1;
+    }
+    return mix;
+}
+
+function buildInventoryMemorySourceRecord(item: MemorySourceInventoryItem, now: string): MemoryTreeSourceRecord {
+    return {
+        id: item.id,
+        sourceKind: item.sourceKind,
+        sourceClass: item.sourceClass,
+        scope: item.scope,
+        sourcePath: item.location.path,
+        sourceRef: item.location.table ?? item.location.pattern,
+        contentHash: hashMemoryTreePayload({
+            id: item.id,
+            sourceKind: item.sourceKind,
+            stats: item.stats,
+            location: item.location,
+            status: item.status,
+        }),
+        timeFrom: undefined,
+        timeTo: item.stats.lastUpdatedAt,
+        itemCount: item.stats.itemCount,
+        metadata: {
+            recordType: "inventory_preview",
+            storage: item.storage,
+            status: item.status,
+            duplicateRisk: item.duplicateRisk,
+            stats: item.stats,
+            location: item.location,
+            notes: item.notes,
+        },
+        createdAt: now,
+        updatedAt: now,
+    };
+}
+
+function buildDynamicMemorySourceId(sourcePath: string, sourceType: string, agentId?: string): string {
+    return `dynamic:${hashMemoryTreePayload({
+        sourcePath,
+        sourceType,
+        agentId: agentId ?? null,
+    })}`;
+}
+
+function hashMemoryTreePayload(payload: unknown): string {
+    return createHash("sha1")
+        .update(JSON.stringify(payload))
+        .digest("hex");
+}
+
+function normalizeSourcePathForMatch(value?: string): string {
+    if (typeof value !== "string") return "";
+    return value.trim().replace(/\\/g, "/").replace(/\/+/g, "/").toLowerCase();
+}
+
+function classifyMemoryTreeSource(
+    sourcePath: string,
+    sourceType: string,
+    memoryTypes?: string[],
+): {
+    sourceKind: string;
+    sourceClass: MemorySourceInventoryClass;
+    builtinInventoryId?: string;
+} {
+    const normalizedPath = normalizeSourcePathForMatch(sourcePath);
+    const basename = path.basename(sourcePath).toLowerCase();
+    const hasMemoryType = (name: string) => Array.isArray(memoryTypes) && memoryTypes.includes(name);
+    if (basename.endsWith(".transcript.jsonl")) {
+        return { sourceKind: "session_transcripts", sourceClass: "derived", builtinInventoryId: "builtin:sessions:transcripts" };
+    }
+    if (basename.endsWith(".meta.json")) {
+        return { sourceKind: "session_meta", sourceClass: "derived", builtinInventoryId: "builtin:sessions:meta" };
+    }
+    if (basename.endsWith(".digest.json")) {
+        return { sourceKind: "session_digest", sourceClass: "derived", builtinInventoryId: "builtin:sessions:digest" };
+    }
+    if (basename.endsWith(".session-memory.json")) {
+        return { sourceKind: "session_memory", sourceClass: "derived", builtinInventoryId: "builtin:sessions:session-memory" };
+    }
+    if (basename.endsWith(".jsonl") || sourceType === "session") {
+        return { sourceKind: "session_messages", sourceClass: "raw", builtinInventoryId: "builtin:sessions:messages" };
+    }
+    if (basename === "memory.md" || hasMemoryType("core")) {
+        return { sourceKind: "memory_core_note", sourceClass: "curated", builtinInventoryId: "builtin:memory:core-note" };
+    }
+    if ((/(^|\/)memory\/.+\.md$/).test(normalizedPath) || hasMemoryType("daily")) {
+        return { sourceKind: "memory_notes", sourceClass: "raw", builtinInventoryId: "builtin:memory:daily-notes" };
+    }
+    if (basename === "dream-runtime.json") {
+        return { sourceKind: "dream_runtime", sourceClass: "derived", builtinInventoryId: "builtin:dream:runtime" };
+    }
+    if (basename === "dream.md") {
+        return { sourceKind: "dream_index", sourceClass: "derived", builtinInventoryId: "builtin:dream:index" };
+    }
+    if ((/(^|\/)dreams\/.+\.md$/).test(normalizedPath)) {
+        return { sourceKind: "dream_notes", sourceClass: "curated", builtinInventoryId: "builtin:dream:notes" };
+    }
+    if (sourceType === "manual") {
+        return { sourceKind: "manual_memory", sourceClass: "raw" };
+    }
+    if (sourceType === "file") {
+        return { sourceKind: "workspace_file", sourceClass: "raw" };
+    }
+    return { sourceKind: "other_source", sourceClass: "derived" };
+}
+
+function buildRuleOnlyChunkScore(
+    input: {
+        chunkId: string;
+        sourcePath: string;
+        sourceType: string;
+        memoryType?: string;
+        visibility?: string;
+        updatedAt?: string;
+        content?: string;
+        taskLinkCount: number;
+        successTaskCount: number;
+        partialTaskCount: number;
+        failedTaskCount: number;
+        runningTaskCount: number;
+    },
+    sourceRecord?: MemoryTreeSourceRecord,
+): {
+    scoreTotal: number;
+    recencyScore: number;
+    sourceWeightScore: number;
+    interactionScore: number;
+    taskOutcomeScore: number;
+    entityDensityScore: number;
+    rationale: Record<string, unknown>;
+} {
+    const recencyScore = computeRecencyScore(input.updatedAt);
+    const sourceKindWeight = computeSourceKindWeight(sourceRecord?.sourceKind);
+    const sourceClassWeight = computeSourceClassWeight(sourceRecord?.sourceClass);
+    const sourceWeightScore = clampScore((sourceKindWeight + sourceClassWeight) / 2);
+    const interactionScore = computeInteractionScore(input.taskLinkCount, input.visibility === "shared");
+    const taskOutcomeScore = computeTaskOutcomeScore(input);
+    const entityDensityScore = computeEntityDensityScore(input.content);
+    const scoreTotal = clampScore(
+        (recencyScore * 0.30)
+        + (sourceWeightScore * 0.25)
+        + (interactionScore * 0.25)
+        + (taskOutcomeScore * 0.15)
+        + (entityDensityScore * 0.05),
+    );
+    return {
+        scoreTotal,
+        recencyScore,
+        sourceWeightScore,
+        interactionScore,
+        taskOutcomeScore,
+        entityDensityScore,
+        rationale: {
+            chunkId: input.chunkId,
+            sourcePath: input.sourcePath,
+            sourceKind: sourceRecord?.sourceKind ?? "unmapped",
+            sourceClass: sourceRecord?.sourceClass ?? "raw",
+            sourceClassWeight,
+            sourceKindWeight,
+            taskLinkCount: input.taskLinkCount,
+            successTaskCount: input.successTaskCount,
+            partialTaskCount: input.partialTaskCount,
+            failedTaskCount: input.failedTaskCount,
+            runningTaskCount: input.runningTaskCount,
+            visibility: input.visibility ?? "private",
+            updatedAt: input.updatedAt,
+            scoreWeights: {
+                recency: 0.30,
+                sourceWeight: 0.25,
+                interaction: 0.25,
+                taskOutcome: 0.15,
+                entityDensity: 0.05,
+            },
+        },
+    };
+}
+
+function computeRecencyScore(updatedAt?: string): number {
+    if (!updatedAt) return 0.35;
+    const timestamp = Date.parse(updatedAt);
+    if (!Number.isFinite(timestamp)) return 0.35;
+    const ageDays = (Date.now() - timestamp) / (1000 * 60 * 60 * 24);
+    if (ageDays <= 1) return 1;
+    if (ageDays <= 7) return 0.9;
+    if (ageDays <= 30) return 0.75;
+    if (ageDays <= 90) return 0.55;
+    if (ageDays <= 180) return 0.4;
+    return 0.25;
+}
+
+function computeSourceKindWeight(sourceKind?: string): number {
+    switch (sourceKind) {
+        case "memory_core_note":
+        case "dream_notes":
+            return 0.9;
+        case "session_messages":
+        case "memory_notes":
+            return 0.75;
+        case "workspace_file":
+        case "manual_memory":
+            return 0.7;
+        case "dream_index":
+        case "dream_runtime":
+        case "session_meta":
+        case "session_digest":
+        case "session_memory":
+        case "session_transcripts":
+            return 0.5;
+        default:
+            return 0.6;
+    }
+}
+
+function computeSourceClassWeight(sourceClass?: MemorySourceInventoryClass): number {
+    switch (sourceClass) {
+        case "curated":
+            return 0.9;
+        case "raw":
+            return 0.75;
+        case "derived":
+            return 0.5;
+        default:
+            return 0.65;
+    }
+}
+
+function computeInteractionScore(taskLinkCount: number, isShared: boolean): number {
+    let base = 0.25;
+    if (taskLinkCount >= 3) {
+        base = 1;
+    } else if (taskLinkCount === 2) {
+        base = 0.8;
+    } else if (taskLinkCount === 1) {
+        base = 0.6;
+    }
+    if (isShared) {
+        base += 0.1;
+    }
+    return clampScore(base);
+}
+
+function computeTaskOutcomeScore(input: {
+    successTaskCount: number;
+    partialTaskCount: number;
+    failedTaskCount: number;
+    runningTaskCount: number;
+}): number {
+    if (input.successTaskCount > 0) return 1;
+    if (input.partialTaskCount > 0) return 0.7;
+    if (input.failedTaskCount > 0) return 0.35;
+    if (input.runningTaskCount > 0) return 0.2;
+    return 0.3;
+}
+
+function computeEntityDensityScore(content?: string): number {
+    if (!content) return 0;
+    const pathHits = (content.match(/[A-Za-z]:\\|\/[\w./-]+|\b[\w.-]+\.(?:ts|tsx|js|jsx|md|json|yml|yaml|sql|py)\b/g) ?? []).length;
+    const codeHits = (content.match(/[`#]/g) ?? []).length;
+    const taskHits = (content.match(/\b(task|agent|goal|memory|chunk|prompt|tool)\b/gi) ?? []).length;
+    const rawScore = Math.min(8, pathHits + Math.ceil(codeHits / 4) + Math.ceil(taskHits / 2));
+    return clampScore(rawScore / 8);
+}
+
+function clampScore(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, Number(value.toFixed(4))));
 }

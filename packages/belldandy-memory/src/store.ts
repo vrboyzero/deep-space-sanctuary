@@ -39,10 +39,26 @@ import type {
 import { buildTaskRecapArtifacts } from "./task-recap.js";
 import { cosineSimilarity, vectorToBuffer, vectorFromBuffer, type EmbeddingVector } from "./embeddings/index.js";
 import { loadSqliteVec } from "./sqlite-vec.js";
+import type {
+  MemoryTreeChunkScoreInput,
+  MemoryTreeEdgeListFilter,
+  MemoryTreeEdgeRecord,
+  MemoryTreeNodeListFilter,
+  MemoryTreeNodeRecord,
+  MemoryTreeReportListFilter,
+  MemoryTreeReportRecord,
+  MemoryTreeScoreListFilter,
+  MemoryTreeScoreRecord,
+  MemoryTreeSourceListFilter,
+  MemoryTreeSourceRecord,
+  MemoryTreeTargetType,
+} from "./memory-tree-types.js";
 
 const KNOWN_MEMORY_CATEGORIES = ["preference", "experience", "fact", "decision", "entity", "other"] as const;
 const TASK_CHANGE_SEQ_META_KEY = "task_change_seq";
 const MEMORY_CHANGE_SEQ_META_KEY = "memory_change_seq";
+const MEMORY_TREE_SCHEMA_VERSION = "p9-phase1-v1";
+const MEMORY_TREE_SCORE_VERSION = "v1_rule_only";
 
 export type TaskSummaryRecord = {
   id: string;
@@ -225,6 +241,115 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_experience_usages_task_asset_unique
   ON experience_usages(task_id, asset_type, asset_key);
 `;
 
+const SCHEMA_MEMORY_TREE = `
+CREATE TABLE IF NOT EXISTS memory_sources (
+  id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  source_class TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  agent_id TEXT DEFAULT NULL,
+  source_path TEXT DEFAULT NULL,
+  source_ref TEXT DEFAULT NULL,
+  content_hash TEXT DEFAULT NULL,
+  time_from TEXT DEFAULT NULL,
+  time_to TEXT DEFAULT NULL,
+  item_count INTEGER DEFAULT NULL,
+  metadata_json TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_sources_kind ON memory_sources(source_kind);
+CREATE INDEX IF NOT EXISTS idx_memory_sources_class ON memory_sources(source_class);
+CREATE INDEX IF NOT EXISTS idx_memory_sources_agent_id ON memory_sources(agent_id);
+CREATE INDEX IF NOT EXISTS idx_memory_sources_path ON memory_sources(source_path);
+CREATE INDEX IF NOT EXISTS idx_memory_sources_ref ON memory_sources(source_ref);
+
+CREATE TABLE IF NOT EXISTS memory_scores (
+  id TEXT PRIMARY KEY,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  source_id TEXT DEFAULT NULL,
+  score_total REAL NOT NULL,
+  recency_score REAL DEFAULT NULL,
+  source_weight_score REAL DEFAULT NULL,
+  interaction_score REAL DEFAULT NULL,
+  task_outcome_score REAL DEFAULT NULL,
+  entity_density_score REAL DEFAULT NULL,
+  llm_importance_score REAL DEFAULT NULL,
+  dedup_confidence REAL DEFAULT NULL,
+  score_version TEXT NOT NULL,
+  rationale_json TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(target_type, target_id, score_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_scores_target ON memory_scores(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_memory_scores_source_id ON memory_scores(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_scores_total ON memory_scores(score_total DESC);
+
+CREATE TABLE IF NOT EXISTS memory_tree_nodes (
+  id TEXT PRIMARY KEY,
+  level INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  agent_id TEXT DEFAULT NULL,
+  topic_key TEXT DEFAULT NULL,
+  title TEXT DEFAULT NULL,
+  summary TEXT NOT NULL,
+  summary_model TEXT DEFAULT NULL,
+  summary_version TEXT DEFAULT NULL,
+  time_from TEXT DEFAULT NULL,
+  time_to TEXT DEFAULT NULL,
+  source_class_mix_json TEXT DEFAULT NULL,
+  metadata_json TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_tree_nodes_level_kind ON memory_tree_nodes(level, kind);
+CREATE INDEX IF NOT EXISTS idx_memory_tree_nodes_agent_id ON memory_tree_nodes(agent_id);
+CREATE INDEX IF NOT EXISTS idx_memory_tree_nodes_topic_key ON memory_tree_nodes(topic_key);
+CREATE INDEX IF NOT EXISTS idx_memory_tree_nodes_time_from ON memory_tree_nodes(time_from);
+
+CREATE TABLE IF NOT EXISTS memory_tree_edges (
+  id TEXT PRIMARY KEY,
+  parent_node_id TEXT NOT NULL,
+  child_type TEXT NOT NULL,
+  child_id TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  position INTEGER DEFAULT NULL,
+  weight REAL DEFAULT NULL,
+  metadata_json TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(parent_node_id, child_type, child_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_tree_edges_parent ON memory_tree_edges(parent_node_id);
+CREATE INDEX IF NOT EXISTS idx_memory_tree_edges_child ON memory_tree_edges(child_type, child_id);
+
+CREATE TABLE IF NOT EXISTS memory_clean_reports (
+  id TEXT PRIMARY KEY,
+  report_type TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  agent_id TEXT DEFAULT NULL,
+  status TEXT NOT NULL,
+  input_version TEXT DEFAULT NULL,
+  summary_json TEXT NOT NULL,
+  details_json TEXT NOT NULL,
+  export_markdown_path TEXT DEFAULT NULL,
+  created_by TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_clean_reports_type ON memory_clean_reports(report_type);
+CREATE INDEX IF NOT EXISTS idx_memory_clean_reports_agent_id ON memory_clean_reports(agent_id);
+CREATE INDEX IF NOT EXISTS idx_memory_clean_reports_status ON memory_clean_reports(status);
+CREATE INDEX IF NOT EXISTS idx_memory_clean_reports_created_at ON memory_clean_reports(created_at DESC);
+`;
+
 // FTS5 全文索引（better-sqlite3 默认编译 FTS5）
 const SCHEMA_FTS5 = `
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -337,6 +462,7 @@ export class MemoryStore {
     this.db.exec(SCHEMA_TASKS);
     this.db.exec(SCHEMA_TASK_ACTIVITIES);
     this.db.exec(SCHEMA_EXPERIENCE);
+    this.db.exec(SCHEMA_MEMORY_TREE);
 
     // Phase M-1: 元数据列迁移（对已有列 ALTER TABLE ADD COLUMN 会报 duplicate，安全忽略）
     for (const sql of SCHEMA_METADATA_COLUMNS) {
@@ -365,6 +491,8 @@ export class MemoryStore {
       try { this.db.exec(sql); } catch { /* column already exists */ }
     }
     this.db.exec(SCHEMA_METADATA_INDEXES);
+    this.setMeta("memory_tree_schema_version", MEMORY_TREE_SCHEMA_VERSION);
+    this.setMeta("memory_tree_score_version", MEMORY_TREE_SCORE_VERSION);
     this.backfillMetadataColumns();
 
     // 从现有 chunks_vec 表读取维度（如果存在）
@@ -876,6 +1004,29 @@ export class MemoryStore {
     return rows.map(rowToTaskRecord);
   }
 
+  getTaskInventoryStats(): {
+    taskCount: number;
+    taskActivityCount: number;
+    lastTaskUpdatedAt?: string;
+    lastActivityAt?: string;
+  } {
+    this.ensureOpen();
+    const taskRow = this.db.prepare(`
+      SELECT COUNT(*) AS count, MAX(updated_at) AS last_updated_at
+      FROM tasks
+    `).get() as Record<string, unknown> | undefined;
+    const activityRow = this.db.prepare(`
+      SELECT COUNT(*) AS count, MAX(recorded_at) AS last_activity_at
+      FROM task_activities
+    `).get() as Record<string, unknown> | undefined;
+    return {
+      taskCount: optionalNumber(taskRow?.count) ?? 0,
+      taskActivityCount: optionalNumber(activityRow?.count) ?? 0,
+      lastTaskUpdatedAt: optionalString(taskRow?.last_updated_at),
+      lastActivityAt: optionalString(activityRow?.last_activity_at),
+    };
+  }
+
   listTaskActivities(taskId: string, limit = 200): TaskActivityRecord[] {
     this.ensureOpen();
     const stmt = this.db.prepare(`
@@ -1073,6 +1224,453 @@ export class MemoryStore {
       accepted: optionalNumber(row?.accepted) ?? 0,
       rejected: optionalNumber(row?.rejected) ?? 0,
     };
+  }
+
+  getExperienceInventoryStats(): {
+    candidateCount: number;
+    draftCandidateCount: number;
+    acceptedCandidateCount: number;
+    rejectedCandidateCount: number;
+    usageCount: number;
+    lastCandidateCreatedAt?: string;
+    lastUsageCreatedAt?: string;
+  } {
+    this.ensureOpen();
+    const candidateRow = this.db.prepare(`
+      SELECT
+        COUNT(*) AS candidate_count,
+        SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
+        SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS accepted_count,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count,
+        MAX(created_at) AS last_candidate_created_at
+      FROM experience_candidates
+    `).get() as Record<string, unknown> | undefined;
+    const usageRow = this.db.prepare(`
+      SELECT COUNT(*) AS usage_count, MAX(created_at) AS last_usage_created_at
+      FROM experience_usages
+    `).get() as Record<string, unknown> | undefined;
+    return {
+      candidateCount: optionalNumber(candidateRow?.candidate_count) ?? 0,
+      draftCandidateCount: optionalNumber(candidateRow?.draft_count) ?? 0,
+      acceptedCandidateCount: optionalNumber(candidateRow?.accepted_count) ?? 0,
+      rejectedCandidateCount: optionalNumber(candidateRow?.rejected_count) ?? 0,
+      usageCount: optionalNumber(usageRow?.usage_count) ?? 0,
+      lastCandidateCreatedAt: optionalString(candidateRow?.last_candidate_created_at),
+      lastUsageCreatedAt: optionalString(usageRow?.last_usage_created_at),
+    };
+  }
+
+  upsertMemorySources(records: MemoryTreeSourceRecord[]): void {
+    this.ensureOpen();
+    if (!Array.isArray(records) || records.length <= 0) {
+      return;
+    }
+    const stmt = this.db.prepare(`
+      INSERT INTO memory_sources (
+        id, source_kind, source_class, scope, agent_id, source_path, source_ref,
+        content_hash, time_from, time_to, item_count, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        source_kind = excluded.source_kind,
+        source_class = excluded.source_class,
+        scope = excluded.scope,
+        agent_id = excluded.agent_id,
+        source_path = excluded.source_path,
+        source_ref = excluded.source_ref,
+        content_hash = excluded.content_hash,
+        time_from = excluded.time_from,
+        time_to = excluded.time_to,
+        item_count = excluded.item_count,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `);
+    const tx = this.db.transaction((items: MemoryTreeSourceRecord[]) => {
+      const now = new Date().toISOString();
+      for (const item of items) {
+        const createdAt = item.createdAt ?? now;
+        const updatedAt = item.updatedAt ?? now;
+        stmt.run(
+          item.id,
+          item.sourceKind,
+          item.sourceClass,
+          item.scope,
+          item.agentId ?? null,
+          item.sourcePath ?? null,
+          item.sourceRef ?? null,
+          item.contentHash ?? null,
+          item.timeFrom ?? null,
+          item.timeTo ?? null,
+          typeof item.itemCount === "number" ? Math.max(0, Math.floor(item.itemCount)) : null,
+          item.metadata ? JSON.stringify(item.metadata) : null,
+          createdAt,
+          updatedAt,
+        );
+      }
+    });
+    tx(records);
+  }
+
+  listMemorySources(limit = 100, filter?: MemoryTreeSourceListFilter): MemoryTreeSourceRecord[] {
+    this.ensureOpen();
+    const { clause, params } = this.buildMemorySourceFilterClause(filter);
+    const stmt = this.db.prepare(`
+      SELECT *
+      FROM memory_sources
+      WHERE 1 = 1${clause}
+      ORDER BY updated_at DESC, id ASC
+      LIMIT ?
+    `);
+    const rows = stmt.all(...params, limit) as Record<string, unknown>[];
+    return rows.map(rowToMemorySourceRecord);
+  }
+
+  upsertMemoryScores(records: MemoryTreeScoreRecord[]): void {
+    this.ensureOpen();
+    if (!Array.isArray(records) || records.length <= 0) {
+      return;
+    }
+    const stmt = this.db.prepare(`
+      INSERT INTO memory_scores (
+        id, target_type, target_id, source_id, score_total, recency_score,
+        source_weight_score, interaction_score, task_outcome_score,
+        entity_density_score, llm_importance_score, dedup_confidence,
+        score_version, rationale_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        target_type = excluded.target_type,
+        target_id = excluded.target_id,
+        source_id = excluded.source_id,
+        score_total = excluded.score_total,
+        recency_score = excluded.recency_score,
+        source_weight_score = excluded.source_weight_score,
+        interaction_score = excluded.interaction_score,
+        task_outcome_score = excluded.task_outcome_score,
+        entity_density_score = excluded.entity_density_score,
+        llm_importance_score = excluded.llm_importance_score,
+        dedup_confidence = excluded.dedup_confidence,
+        score_version = excluded.score_version,
+        rationale_json = excluded.rationale_json,
+        updated_at = excluded.updated_at
+    `);
+    const tx = this.db.transaction((items: MemoryTreeScoreRecord[]) => {
+      const now = new Date().toISOString();
+      for (const item of items) {
+        const createdAt = item.createdAt ?? now;
+        const updatedAt = item.updatedAt ?? now;
+        stmt.run(
+          item.id,
+          item.targetType,
+          item.targetId,
+          item.sourceId ?? null,
+          item.scoreTotal,
+          item.recencyScore ?? null,
+          item.sourceWeightScore ?? null,
+          item.interactionScore ?? null,
+          item.taskOutcomeScore ?? null,
+          item.entityDensityScore ?? null,
+          item.llmImportanceScore ?? null,
+          item.dedupConfidence ?? null,
+          item.scoreVersion,
+          item.rationale ? JSON.stringify(item.rationale) : null,
+          createdAt,
+          updatedAt,
+        );
+      }
+    });
+    tx(records);
+  }
+
+  listMemoryScores(limit = 100, filter?: MemoryTreeScoreListFilter): MemoryTreeScoreRecord[] {
+    this.ensureOpen();
+    const { clause, params } = this.buildMemoryScoreFilterClause(filter);
+    const stmt = this.db.prepare(`
+      SELECT *
+      FROM memory_scores
+      WHERE 1 = 1${clause}
+      ORDER BY score_total DESC, updated_at DESC, id ASC
+      LIMIT ?
+    `);
+    const rows = stmt.all(...params, limit) as Record<string, unknown>[];
+    return rows.map(rowToMemoryScoreRecord);
+  }
+
+  upsertMemoryCleanReports(records: MemoryTreeReportRecord[]): void {
+    this.ensureOpen();
+    if (!Array.isArray(records) || records.length <= 0) {
+      return;
+    }
+    const stmt = this.db.prepare(`
+      INSERT INTO memory_clean_reports (
+        id, report_type, scope, agent_id, status, input_version,
+        summary_json, details_json, export_markdown_path, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        report_type = excluded.report_type,
+        scope = excluded.scope,
+        agent_id = excluded.agent_id,
+        status = excluded.status,
+        input_version = excluded.input_version,
+        summary_json = excluded.summary_json,
+        details_json = excluded.details_json,
+        export_markdown_path = excluded.export_markdown_path,
+        created_by = excluded.created_by,
+        updated_at = excluded.updated_at
+    `);
+    const tx = this.db.transaction((items: MemoryTreeReportRecord[]) => {
+      const now = new Date().toISOString();
+      for (const item of items) {
+        stmt.run(
+          item.id,
+          item.reportType,
+          item.scope,
+          item.agentId ?? null,
+          item.status,
+          item.inputVersion ?? null,
+          JSON.stringify(item.summary ?? {}),
+          JSON.stringify(item.details ?? {}),
+          item.exportMarkdownPath ?? null,
+          item.createdBy ?? null,
+          item.createdAt ?? now,
+          item.updatedAt ?? now,
+        );
+      }
+    });
+    tx(records);
+  }
+
+  listMemoryCleanReports(limit = 50, filter?: MemoryTreeReportListFilter): MemoryTreeReportRecord[] {
+    this.ensureOpen();
+    const { clause, params } = this.buildMemoryReportFilterClause(filter);
+    const stmt = this.db.prepare(`
+      SELECT *
+      FROM memory_clean_reports
+      WHERE 1 = 1${clause}
+      ORDER BY created_at DESC, id ASC
+      LIMIT ?
+    `);
+    const rows = stmt.all(...params, limit) as Record<string, unknown>[];
+    return rows.map(rowToMemoryReportRecord);
+  }
+
+  getMemoryCleanReport(reportId: string): MemoryTreeReportRecord | null {
+    this.ensureOpen();
+    const row = this.db.prepare(`
+      SELECT *
+      FROM memory_clean_reports
+      WHERE id = ?
+      LIMIT 1
+    `).get(reportId) as Record<string, unknown> | undefined;
+    return row ? rowToMemoryReportRecord(row) : null;
+  }
+
+  upsertMemoryTreeNodes(records: MemoryTreeNodeRecord[]): void {
+    this.ensureOpen();
+    if (!Array.isArray(records) || records.length <= 0) {
+      return;
+    }
+    const stmt = this.db.prepare(`
+      INSERT INTO memory_tree_nodes (
+        id, level, kind, scope, agent_id, topic_key, title, summary,
+        summary_model, summary_version, time_from, time_to,
+        source_class_mix_json, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        level = excluded.level,
+        kind = excluded.kind,
+        scope = excluded.scope,
+        agent_id = excluded.agent_id,
+        topic_key = excluded.topic_key,
+        title = excluded.title,
+        summary = excluded.summary,
+        summary_model = excluded.summary_model,
+        summary_version = excluded.summary_version,
+        time_from = excluded.time_from,
+        time_to = excluded.time_to,
+        source_class_mix_json = excluded.source_class_mix_json,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `);
+    const tx = this.db.transaction((items: MemoryTreeNodeRecord[]) => {
+      const now = new Date().toISOString();
+      for (const item of items) {
+        stmt.run(
+          item.id,
+          Math.max(1, Math.floor(item.level)),
+          item.kind,
+          item.scope,
+          item.agentId ?? null,
+          item.topicKey ?? null,
+          item.title ?? null,
+          item.summary,
+          item.summaryModel ?? null,
+          item.summaryVersion ?? null,
+          item.timeFrom ?? null,
+          item.timeTo ?? null,
+          item.sourceClassMix ? JSON.stringify(item.sourceClassMix) : null,
+          item.metadata ? JSON.stringify(item.metadata) : null,
+          item.createdAt ?? now,
+          item.updatedAt ?? now,
+        );
+      }
+    });
+    tx(records);
+  }
+
+  listMemoryTreeNodes(limit = 100, filter?: MemoryTreeNodeListFilter): MemoryTreeNodeRecord[] {
+    this.ensureOpen();
+    const { clause, params } = this.buildMemoryNodeFilterClause(filter);
+    const stmt = this.db.prepare(`
+      SELECT *
+      FROM memory_tree_nodes
+      WHERE 1 = 1${clause}
+      ORDER BY level ASC, COALESCE(time_to, time_from, updated_at) DESC, id ASC
+      LIMIT ?
+    `);
+    const rows = stmt.all(...params, limit) as Record<string, unknown>[];
+    return rows.map(rowToMemoryNodeRecord);
+  }
+
+  getMemoryTreeNode(nodeId: string): MemoryTreeNodeRecord | null {
+    this.ensureOpen();
+    const row = this.db.prepare(`
+      SELECT *
+      FROM memory_tree_nodes
+      WHERE id = ?
+      LIMIT 1
+    `).get(nodeId) as Record<string, unknown> | undefined;
+    return row ? rowToMemoryNodeRecord(row) : null;
+  }
+
+  upsertMemoryTreeEdges(records: MemoryTreeEdgeRecord[]): void {
+    this.ensureOpen();
+    if (!Array.isArray(records) || records.length <= 0) {
+      return;
+    }
+    const stmt = this.db.prepare(`
+      INSERT INTO memory_tree_edges (
+        id, parent_node_id, child_type, child_id, relation, position, weight, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        parent_node_id = excluded.parent_node_id,
+        child_type = excluded.child_type,
+        child_id = excluded.child_id,
+        relation = excluded.relation,
+        position = excluded.position,
+        weight = excluded.weight,
+        metadata_json = excluded.metadata_json
+    `);
+    const tx = this.db.transaction((items: MemoryTreeEdgeRecord[]) => {
+      const now = new Date().toISOString();
+      for (const item of items) {
+        stmt.run(
+          item.id,
+          item.parentNodeId,
+          item.childType,
+          item.childId,
+          item.relation,
+          typeof item.position === "number" ? Math.floor(item.position) : null,
+          item.weight ?? null,
+          item.metadata ? JSON.stringify(item.metadata) : null,
+          item.createdAt ?? now,
+        );
+      }
+    });
+    tx(records);
+  }
+
+  listMemoryTreeEdges(filter?: MemoryTreeEdgeListFilter): MemoryTreeEdgeRecord[] {
+    this.ensureOpen();
+    const { clause, params } = this.buildMemoryEdgeFilterClause(filter);
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM memory_tree_edges
+      WHERE 1 = 1${clause}
+      ORDER BY parent_node_id ASC, COALESCE(position, 999999) ASC, child_id ASC
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToMemoryEdgeRecord);
+  }
+
+  listChunkSourceSummaries(): Array<{
+    sourcePath: string;
+    sourceType: string;
+    agentId?: string;
+    scope: "private" | "shared";
+    itemCount: number;
+    timeFrom?: string;
+    timeTo?: string;
+    memoryTypes: string[];
+  }> {
+    this.ensureOpen();
+    const rows = this.db.prepare(`
+      SELECT
+        source_path,
+        source_type,
+        agent_id,
+        CASE
+          WHEN SUM(CASE WHEN visibility = 'shared' THEN 1 ELSE 0 END) > 0 THEN 'shared'
+          ELSE 'private'
+        END AS scope,
+        COUNT(*) AS item_count,
+        MIN(created_at) AS time_from,
+        MAX(updated_at) AS time_to,
+        GROUP_CONCAT(DISTINCT memory_type) AS memory_types
+      FROM chunks
+      GROUP BY source_path, source_type, agent_id
+      ORDER BY MAX(updated_at) DESC, source_path ASC
+    `).all() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      sourcePath: String(row.source_path ?? ""),
+      sourceType: String(row.source_type ?? ""),
+      agentId: optionalString(row.agent_id),
+      scope: String(row.scope ?? "private") === "shared" ? "shared" : "private",
+      itemCount: optionalNumber(row.item_count) ?? 0,
+      timeFrom: optionalString(row.time_from),
+      timeTo: optionalString(row.time_to),
+      memoryTypes: String(row.memory_types ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    }));
+  }
+
+  listChunkScoreInputs(): MemoryTreeChunkScoreInput[] {
+    this.ensureOpen();
+    const rows = this.db.prepare(`
+      SELECT
+        c.id AS chunk_id,
+        c.source_path,
+        c.source_type,
+        c.memory_type,
+        c.visibility,
+        c.agent_id,
+        c.updated_at,
+        c.content,
+        COUNT(DISTINCT tml.task_id) AS task_link_count,
+        SUM(CASE WHEN t.status = 'success' THEN 1 ELSE 0 END) AS success_task_count,
+        SUM(CASE WHEN t.status = 'partial' THEN 1 ELSE 0 END) AS partial_task_count,
+        SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END) AS failed_task_count,
+        SUM(CASE WHEN t.status = 'running' THEN 1 ELSE 0 END) AS running_task_count
+      FROM chunks c
+      LEFT JOIN task_memory_links tml ON tml.chunk_id = c.id
+      LEFT JOIN tasks t ON t.id = tml.task_id
+      GROUP BY c.id
+      ORDER BY c.updated_at DESC, c.rowid DESC
+    `).all() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      chunkId: String(row.chunk_id ?? ""),
+      sourcePath: String(row.source_path ?? ""),
+      sourceType: String(row.source_type ?? ""),
+      memoryType: optionalString(row.memory_type),
+      visibility: normalizeVisibility(row.visibility) ?? "private",
+      agentId: optionalString(row.agent_id),
+      updatedAt: optionalString(row.updated_at),
+      content: optionalString(row.content),
+      taskLinkCount: optionalNumber(row.task_link_count) ?? 0,
+      successTaskCount: optionalNumber(row.success_task_count) ?? 0,
+      partialTaskCount: optionalNumber(row.partial_task_count) ?? 0,
+      failedTaskCount: optionalNumber(row.failed_task_count) ?? 0,
+      runningTaskCount: optionalNumber(row.running_task_count) ?? 0,
+    }));
   }
 
   rejectExperienceCandidates(filter?: ExperienceCandidateListFilter): number {
@@ -1808,6 +2406,283 @@ export class MemoryStore {
 
     const clause = conditions.length > 0 ? " AND " + conditions.join(" AND ") : "";
     return { clause, params };
+  }
+
+  private buildMemorySourceFilterClause(filter?: MemoryTreeSourceListFilter): { clause: string; params: unknown[] } {
+    if (!filter) return { clause: "", params: [] };
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (Array.isArray(filter.ids) && filter.ids.length > 0) {
+      const placeholders = filter.ids.map(() => "?").join(", ");
+      conditions.push(`id IN (${placeholders})`);
+      params.push(...filter.ids);
+    }
+
+    if (filter.sourceKind) {
+      if (Array.isArray(filter.sourceKind) && filter.sourceKind.length > 0) {
+        const placeholders = filter.sourceKind.map(() => "?").join(", ");
+        conditions.push(`source_kind IN (${placeholders})`);
+        params.push(...filter.sourceKind);
+      } else if (typeof filter.sourceKind === "string") {
+        conditions.push(`source_kind = ?`);
+        params.push(filter.sourceKind);
+      }
+    }
+
+    if (filter.sourceClass) {
+      if (Array.isArray(filter.sourceClass) && filter.sourceClass.length > 0) {
+        const placeholders = filter.sourceClass.map(() => "?").join(", ");
+        conditions.push(`source_class IN (${placeholders})`);
+        params.push(...filter.sourceClass);
+      } else if (typeof filter.sourceClass === "string") {
+        conditions.push(`source_class = ?`);
+        params.push(filter.sourceClass);
+      }
+    }
+
+    if (filter.scope) {
+      if (Array.isArray(filter.scope) && filter.scope.length > 0) {
+        const placeholders = filter.scope.map(() => "?").join(", ");
+        conditions.push(`scope IN (${placeholders})`);
+        params.push(...filter.scope);
+      } else if (typeof filter.scope === "string") {
+        conditions.push(`scope = ?`);
+        params.push(filter.scope);
+      }
+    }
+
+    if (filter.agentId === null) {
+      conditions.push(`agent_id IS NULL`);
+    } else if (typeof filter.agentId === "string" && filter.agentId.trim()) {
+      conditions.push(`agent_id = ?`);
+      params.push(filter.agentId.trim());
+    }
+
+    if (filter.sourcePath) {
+      conditions.push(`source_path = ?`);
+      params.push(filter.sourcePath);
+    }
+
+    if (filter.sourceRef) {
+      conditions.push(`source_ref = ?`);
+      params.push(filter.sourceRef);
+    }
+
+    return {
+      clause: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
+      params,
+    };
+  }
+
+  private buildMemoryScoreFilterClause(filter?: MemoryTreeScoreListFilter): { clause: string; params: unknown[] } {
+    if (!filter) return { clause: "", params: [] };
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter.targetType) {
+      if (Array.isArray(filter.targetType) && filter.targetType.length > 0) {
+        const placeholders = filter.targetType.map(() => "?").join(", ");
+        conditions.push(`target_type IN (${placeholders})`);
+        params.push(...filter.targetType);
+      } else if (typeof filter.targetType === "string") {
+        conditions.push(`target_type = ?`);
+        params.push(filter.targetType);
+      }
+    }
+
+    if (filter.targetId) {
+      conditions.push(`target_id = ?`);
+      params.push(filter.targetId);
+    }
+
+    if (filter.sourceId) {
+      conditions.push(`source_id = ?`);
+      params.push(filter.sourceId);
+    }
+
+    if (filter.scoreVersion) {
+      if (Array.isArray(filter.scoreVersion) && filter.scoreVersion.length > 0) {
+        const placeholders = filter.scoreVersion.map(() => "?").join(", ");
+        conditions.push(`score_version IN (${placeholders})`);
+        params.push(...filter.scoreVersion);
+      } else if (typeof filter.scoreVersion === "string") {
+        conditions.push(`score_version = ?`);
+        params.push(filter.scoreVersion);
+      }
+    }
+
+    return {
+      clause: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
+      params,
+    };
+  }
+
+  private buildMemoryReportFilterClause(filter?: MemoryTreeReportListFilter): { clause: string; params: unknown[] } {
+    if (!filter) return { clause: "", params: [] };
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (Array.isArray(filter.ids) && filter.ids.length > 0) {
+      const placeholders = filter.ids.map(() => "?").join(", ");
+      conditions.push(`id IN (${placeholders})`);
+      params.push(...filter.ids);
+    }
+
+    if (filter.reportType) {
+      if (Array.isArray(filter.reportType) && filter.reportType.length > 0) {
+        const placeholders = filter.reportType.map(() => "?").join(", ");
+        conditions.push(`report_type IN (${placeholders})`);
+        params.push(...filter.reportType);
+      } else if (typeof filter.reportType === "string") {
+        conditions.push(`report_type = ?`);
+        params.push(filter.reportType);
+      }
+    }
+
+    if (filter.scope) {
+      if (Array.isArray(filter.scope) && filter.scope.length > 0) {
+        const placeholders = filter.scope.map(() => "?").join(", ");
+        conditions.push(`scope IN (${placeholders})`);
+        params.push(...filter.scope);
+      } else if (typeof filter.scope === "string") {
+        conditions.push(`scope = ?`);
+        params.push(filter.scope);
+      }
+    }
+
+    if (filter.agentId === null) {
+      conditions.push(`agent_id IS NULL`);
+    } else if (typeof filter.agentId === "string" && filter.agentId.trim()) {
+      conditions.push(`agent_id = ?`);
+      params.push(filter.agentId.trim());
+    }
+
+    if (filter.status) {
+      if (Array.isArray(filter.status) && filter.status.length > 0) {
+        const placeholders = filter.status.map(() => "?").join(", ");
+        conditions.push(`status IN (${placeholders})`);
+        params.push(...filter.status);
+      } else if (typeof filter.status === "string") {
+        conditions.push(`status = ?`);
+        params.push(filter.status);
+      }
+    }
+
+    return {
+      clause: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
+      params,
+    };
+  }
+
+  private buildMemoryNodeFilterClause(filter?: MemoryTreeNodeListFilter): { clause: string; params: unknown[] } {
+    if (!filter) return { clause: "", params: [] };
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (Array.isArray(filter.ids) && filter.ids.length > 0) {
+      const placeholders = filter.ids.map(() => "?").join(", ");
+      conditions.push(`id IN (${placeholders})`);
+      params.push(...filter.ids);
+    }
+
+    if (filter.level !== undefined) {
+      if (Array.isArray(filter.level) && filter.level.length > 0) {
+        const placeholders = filter.level.map(() => "?").join(", ");
+        conditions.push(`level IN (${placeholders})`);
+        params.push(...filter.level.map((item) => Math.max(1, Math.floor(item))));
+      } else if (typeof filter.level === "number") {
+        conditions.push(`level = ?`);
+        params.push(Math.max(1, Math.floor(filter.level)));
+      }
+    }
+
+    if (filter.kind) {
+      if (Array.isArray(filter.kind) && filter.kind.length > 0) {
+        const placeholders = filter.kind.map(() => "?").join(", ");
+        conditions.push(`kind IN (${placeholders})`);
+        params.push(...filter.kind);
+      } else if (typeof filter.kind === "string") {
+        conditions.push(`kind = ?`);
+        params.push(filter.kind);
+      }
+    }
+
+    if (filter.scope) {
+      if (Array.isArray(filter.scope) && filter.scope.length > 0) {
+        const placeholders = filter.scope.map(() => "?").join(", ");
+        conditions.push(`scope IN (${placeholders})`);
+        params.push(...filter.scope);
+      } else if (typeof filter.scope === "string") {
+        conditions.push(`scope = ?`);
+        params.push(filter.scope);
+      }
+    }
+
+    if (filter.agentId === null) {
+      conditions.push(`agent_id IS NULL`);
+    } else if (typeof filter.agentId === "string" && filter.agentId.trim()) {
+      conditions.push(`agent_id = ?`);
+      params.push(filter.agentId.trim());
+    }
+
+    if (filter.topicKey) {
+      conditions.push(`topic_key = ?`);
+      params.push(filter.topicKey);
+    }
+
+    return {
+      clause: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
+      params,
+    };
+  }
+
+  private buildMemoryEdgeFilterClause(filter?: MemoryTreeEdgeListFilter): { clause: string; params: unknown[] } {
+    if (!filter) return { clause: "", params: [] };
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter.parentNodeId) {
+      conditions.push(`parent_node_id = ?`);
+      params.push(filter.parentNodeId);
+    }
+
+    if (filter.childType) {
+      if (Array.isArray(filter.childType) && filter.childType.length > 0) {
+        const placeholders = filter.childType.map(() => "?").join(", ");
+        conditions.push(`child_type IN (${placeholders})`);
+        params.push(...filter.childType);
+      } else if (typeof filter.childType === "string") {
+        conditions.push(`child_type = ?`);
+        params.push(filter.childType);
+      }
+    }
+
+    if (filter.childId) {
+      conditions.push(`child_id = ?`);
+      params.push(filter.childId);
+    }
+
+    if (filter.relation) {
+      if (Array.isArray(filter.relation) && filter.relation.length > 0) {
+        const placeholders = filter.relation.map(() => "?").join(", ");
+        conditions.push(`relation IN (${placeholders})`);
+        params.push(...filter.relation);
+      } else if (typeof filter.relation === "string") {
+        conditions.push(`relation = ?`);
+        params.push(filter.relation);
+      }
+    }
+
+    return {
+      clause: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
+      params,
+    };
   }
 
   private buildTaskFilterClause(filter?: TaskSearchFilter): { clause: string; params: unknown[] } {
@@ -2746,6 +3621,98 @@ function rowToExperienceUsageStats(row: Record<string, unknown>): ExperienceUsag
     usageCount: optionalNumber(row.usage_count) ?? 0,
     lastUsedAt: optionalString(row.last_used_at),
     lastUsedTaskId: optionalString(row.last_used_task_id),
+  };
+}
+
+function rowToMemorySourceRecord(row: Record<string, unknown>): MemoryTreeSourceRecord {
+  return {
+    id: String(row.id),
+    sourceKind: String(row.source_kind),
+    sourceClass: String(row.source_class) as MemoryTreeSourceRecord["sourceClass"],
+    scope: String(row.scope) as MemoryTreeSourceRecord["scope"],
+    agentId: optionalString(row.agent_id),
+    sourcePath: optionalString(row.source_path),
+    sourceRef: optionalString(row.source_ref),
+    contentHash: optionalString(row.content_hash),
+    timeFrom: optionalString(row.time_from),
+    timeTo: optionalString(row.time_to),
+    itemCount: optionalNumber(row.item_count) ?? undefined,
+    metadata: safeParseJson(asNullableString(row.metadata_json)),
+    createdAt: optionalString(row.created_at),
+    updatedAt: optionalString(row.updated_at),
+  };
+}
+
+function rowToMemoryScoreRecord(row: Record<string, unknown>): MemoryTreeScoreRecord {
+  return {
+    id: String(row.id),
+    targetType: String(row.target_type) as MemoryTreeTargetType,
+    targetId: String(row.target_id),
+    sourceId: optionalString(row.source_id),
+    scoreTotal: optionalNumber(row.score_total) ?? 0,
+    recencyScore: optionalNumber(row.recency_score) ?? undefined,
+    sourceWeightScore: optionalNumber(row.source_weight_score) ?? undefined,
+    interactionScore: optionalNumber(row.interaction_score) ?? undefined,
+    taskOutcomeScore: optionalNumber(row.task_outcome_score) ?? undefined,
+    entityDensityScore: optionalNumber(row.entity_density_score) ?? undefined,
+    llmImportanceScore: optionalNumber(row.llm_importance_score) ?? undefined,
+    dedupConfidence: optionalNumber(row.dedup_confidence) ?? undefined,
+    scoreVersion: String(row.score_version),
+    rationale: safeParseJson(asNullableString(row.rationale_json)),
+    createdAt: optionalString(row.created_at),
+    updatedAt: optionalString(row.updated_at),
+  };
+}
+
+function rowToMemoryReportRecord(row: Record<string, unknown>): MemoryTreeReportRecord {
+  return {
+    id: String(row.id),
+    reportType: String(row.report_type) as MemoryTreeReportRecord["reportType"],
+    scope: String(row.scope) as MemoryTreeReportRecord["scope"],
+    agentId: optionalString(row.agent_id),
+    status: String(row.status) as MemoryTreeReportRecord["status"],
+    inputVersion: optionalString(row.input_version),
+    summary: safeParseJson(asNullableString(row.summary_json)) ?? {},
+    details: safeParseJson(asNullableString(row.details_json)) ?? {},
+    exportMarkdownPath: optionalString(row.export_markdown_path),
+    createdBy: optionalString(row.created_by),
+    createdAt: optionalString(row.created_at),
+    updatedAt: optionalString(row.updated_at),
+  };
+}
+
+function rowToMemoryNodeRecord(row: Record<string, unknown>): MemoryTreeNodeRecord {
+  return {
+    id: String(row.id),
+    level: optionalNumber(row.level) ?? 1,
+    kind: String(row.kind) as MemoryTreeNodeRecord["kind"],
+    scope: String(row.scope) as MemoryTreeNodeRecord["scope"],
+    agentId: optionalString(row.agent_id),
+    topicKey: optionalString(row.topic_key),
+    title: optionalString(row.title),
+    summary: String(row.summary ?? ""),
+    summaryModel: optionalString(row.summary_model),
+    summaryVersion: optionalString(row.summary_version),
+    timeFrom: optionalString(row.time_from),
+    timeTo: optionalString(row.time_to),
+    sourceClassMix: safeParseJson(asNullableString(row.source_class_mix_json)) as Record<string, number> | undefined,
+    metadata: safeParseJson(asNullableString(row.metadata_json)),
+    createdAt: optionalString(row.created_at),
+    updatedAt: optionalString(row.updated_at),
+  };
+}
+
+function rowToMemoryEdgeRecord(row: Record<string, unknown>): MemoryTreeEdgeRecord {
+  return {
+    id: String(row.id),
+    parentNodeId: String(row.parent_node_id),
+    childType: String(row.child_type) as MemoryTreeEdgeRecord["childType"],
+    childId: String(row.child_id),
+    relation: String(row.relation),
+    position: optionalNumber(row.position) ?? undefined,
+    weight: optionalNumber(row.weight) ?? undefined,
+    metadata: safeParseJson(asNullableString(row.metadata_json)),
+    createdAt: optionalString(row.created_at),
   };
 }
 
