@@ -119,7 +119,8 @@ describe("gateway prompt inspection runtime", () => {
       status: "drifted",
       changed: true,
     });
-    expect(inspection.metadata.prefixDrift?.reasons).toEqual(expect.arrayContaining([
+    const prefixDrift = inspection.metadata.prefixDrift as { reasons?: string[] } | undefined;
+    expect(prefixDrift?.reasons).toEqual(expect.arrayContaining([
       "system_prompt_fingerprint_changed",
       "provider_native_cache_eligible_blocks_changed",
       "tool_contract_list_changed",
@@ -190,7 +191,8 @@ describe("gateway prompt inspection runtime", () => {
     expect(inspection.metadata.orderingGuard).toMatchObject({
       status: "risk",
     });
-    expect(inspection.metadata.orderingGuard?.reasons).toEqual(expect.arrayContaining([
+    const orderingGuard = inspection.metadata.orderingGuard as { reasons?: string[] } | undefined;
+    expect(orderingGuard?.reasons).toEqual(expect.arrayContaining([
       "dynamic_runtime_sections_present",
       "provider_native_blocks_depend_on_runtime_composition",
       "tool_contract_list_injected",

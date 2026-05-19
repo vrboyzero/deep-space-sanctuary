@@ -70,6 +70,11 @@ export {
 } from "./system-prompt.js";
 
 export {
+  buildCapabilityRoutingIndexLines,
+  buildCapabilityUsageNotesLines,
+} from "./capability-routing.js";
+
+export {
   type AgentPromptDelta,
   type AgentPromptDeltaRole,
   type AgentPromptDeltaType,

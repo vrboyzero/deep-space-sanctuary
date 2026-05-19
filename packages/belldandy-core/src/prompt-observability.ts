@@ -56,6 +56,8 @@ export type PromptTruncationReason = {
   droppedSectionCount?: number;
   droppedSectionIds?: string[];
   droppedSectionLabels?: string[];
+  truncatedSectionIds?: string[];
+  truncatedSectionLabels?: string[];
   message?: string;
 };
 
@@ -209,6 +211,11 @@ export function buildPromptObservabilitySummary(
   });
   const truncationReason = readPromptTruncationReasonFromMetadata(metadata)
     ?? buildPromptTruncationReasonFromInspection(inspection);
+  const prefixDrift = isRecord(metadata?.prefixDrift) ? metadata.prefixDrift as Record<string, unknown> : undefined;
+  const prefixWarmState = isRecord(metadata?.prefixWarmState) ? metadata.prefixWarmState as Record<string, unknown> : undefined;
+  const orderingGuard = isRecord(metadata?.orderingGuard) ? metadata.orderingGuard as Record<string, unknown> : undefined;
+  const cacheFamilyAffinity = isRecord(metadata?.cacheFamilyAffinity) ? metadata.cacheFamilyAffinity as Record<string, unknown> : undefined;
+  const warmupCoordination = isRecord(metadata?.warmupCoordination) ? metadata.warmupCoordination as Record<string, unknown> : undefined;
 
   return {
     scope: inspection.scope,
@@ -233,70 +240,80 @@ export function buildPromptObservabilitySummary(
     ...(typeof metadata?.capabilitySource === "string" ? { capabilitySource: metadata.capabilitySource } : {}),
     ...(typeof metadata?.providerCacheEligible === "boolean" ? { providerCacheEligible: metadata.providerCacheEligible } : {}),
     ...(typeof metadata?.systemPromptFingerprint === "string" ? { systemPromptFingerprint: metadata.systemPromptFingerprint } : {}),
-    ...(isRecord(metadata?.prefixDrift)
+    ...(prefixDrift
       ? {
         prefixDrift: {
-          ...(typeof metadata.prefixDrift.status === "string" ? { status: metadata.prefixDrift.status } : {}),
-          ...(typeof metadata.prefixDrift.changed === "boolean" ? { changed: metadata.prefixDrift.changed } : {}),
-          ...(Array.isArray(metadata.prefixDrift.reasons) ? { reasons: metadata.prefixDrift.reasons.filter((item) => typeof item === "string") } : {}),
-          ...(typeof metadata.prefixDrift.previousFingerprint === "string"
-            ? { previousFingerprint: metadata.prefixDrift.previousFingerprint }
+          ...(typeof prefixDrift.status === "string"
+            ? { status: prefixDrift.status as NonNullable<PromptObservabilitySummary["prefixDrift"]>["status"] }
             : {}),
-          ...(typeof metadata.prefixDrift.currentFingerprint === "string"
-            ? { currentFingerprint: metadata.prefixDrift.currentFingerprint }
+          ...(typeof prefixDrift.changed === "boolean" ? { changed: prefixDrift.changed } : {}),
+          ...(Array.isArray(prefixDrift.reasons) ? { reasons: prefixDrift.reasons.filter((item) => typeof item === "string") } : {}),
+          ...(typeof prefixDrift.previousFingerprint === "string"
+            ? { previousFingerprint: prefixDrift.previousFingerprint }
+            : {}),
+          ...(typeof prefixDrift.currentFingerprint === "string"
+            ? { currentFingerprint: prefixDrift.currentFingerprint }
             : {}),
         },
       }
       : {}),
-    ...(isRecord(metadata?.prefixWarmState)
+    ...(prefixWarmState
       ? {
         prefixWarmState: {
-          ...(typeof metadata.prefixWarmState.eligible === "boolean" ? { eligible: metadata.prefixWarmState.eligible } : {}),
-          ...(typeof metadata.prefixWarmState.status === "string" ? { status: metadata.prefixWarmState.status } : {}),
-          ...(typeof metadata.prefixWarmState.samePrefixAsPrevious === "boolean"
-            ? { samePrefixAsPrevious: metadata.prefixWarmState.samePrefixAsPrevious }
+          ...(typeof prefixWarmState.eligible === "boolean" ? { eligible: prefixWarmState.eligible } : {}),
+          ...(typeof prefixWarmState.status === "string"
+            ? { status: prefixWarmState.status as NonNullable<PromptObservabilitySummary["prefixWarmState"]>["status"] }
             : {}),
-          ...(typeof metadata.prefixWarmState.previousAgeMs === "number"
-            ? { previousAgeMs: metadata.prefixWarmState.previousAgeMs }
+          ...(typeof prefixWarmState.samePrefixAsPrevious === "boolean"
+            ? { samePrefixAsPrevious: prefixWarmState.samePrefixAsPrevious }
             : {}),
-          ...(typeof metadata.prefixWarmState.reason === "string" ? { reason: metadata.prefixWarmState.reason } : {}),
+          ...(typeof prefixWarmState.previousAgeMs === "number"
+            ? { previousAgeMs: prefixWarmState.previousAgeMs }
+            : {}),
+          ...(typeof prefixWarmState.reason === "string" ? { reason: prefixWarmState.reason } : {}),
         },
       }
       : {}),
-    ...(isRecord(metadata?.orderingGuard)
+    ...(orderingGuard
       ? {
         orderingGuard: {
-          ...(typeof metadata.orderingGuard.status === "string" ? { status: metadata.orderingGuard.status } : {}),
-          ...(Array.isArray(metadata.orderingGuard.reasons)
-            ? { reasons: metadata.orderingGuard.reasons.filter((item) => typeof item === "string") }
+          ...(typeof orderingGuard.status === "string"
+            ? { status: orderingGuard.status as NonNullable<PromptObservabilitySummary["orderingGuard"]>["status"] }
+            : {}),
+          ...(Array.isArray(orderingGuard.reasons)
+            ? { reasons: orderingGuard.reasons.filter((item) => typeof item === "string") }
             : {}),
         },
       }
       : {}),
     ...(typeof metadata?.structureSignature === "string" ? { structureSignature: metadata.structureSignature } : {}),
-    ...(isRecord(metadata?.cacheFamilyAffinity)
+    ...(cacheFamilyAffinity
       ? {
         cacheFamilyAffinity: {
-          ...(typeof metadata.cacheFamilyAffinity.status === "string" ? { status: metadata.cacheFamilyAffinity.status } : {}),
-          ...(typeof metadata.cacheFamilyAffinity.familyKey === "string" ? { familyKey: metadata.cacheFamilyAffinity.familyKey } : {}),
-          ...(typeof metadata.cacheFamilyAffinity.previousFamilyKey === "string"
-            ? { previousFamilyKey: metadata.cacheFamilyAffinity.previousFamilyKey }
+          ...(typeof cacheFamilyAffinity.status === "string"
+            ? { status: cacheFamilyAffinity.status as NonNullable<PromptObservabilitySummary["cacheFamilyAffinity"]>["status"] }
             : {}),
-          ...(typeof metadata.cacheFamilyAffinity.reason === "string" ? { reason: metadata.cacheFamilyAffinity.reason } : {}),
+          ...(typeof cacheFamilyAffinity.familyKey === "string" ? { familyKey: cacheFamilyAffinity.familyKey } : {}),
+          ...(typeof cacheFamilyAffinity.previousFamilyKey === "string"
+            ? { previousFamilyKey: cacheFamilyAffinity.previousFamilyKey }
+            : {}),
+          ...(typeof cacheFamilyAffinity.reason === "string" ? { reason: cacheFamilyAffinity.reason } : {}),
         },
       }
       : {}),
-    ...(isRecord(metadata?.warmupCoordination)
+    ...(warmupCoordination
       ? {
         warmupCoordination: {
-          ...(typeof metadata.warmupCoordination.eligible === "boolean" ? { eligible: metadata.warmupCoordination.eligible } : {}),
-          ...(typeof metadata.warmupCoordination.status === "string" ? { status: metadata.warmupCoordination.status } : {}),
-          ...(typeof metadata.warmupCoordination.recommendation === "string"
-            ? { recommendation: metadata.warmupCoordination.recommendation }
+          ...(typeof warmupCoordination.eligible === "boolean" ? { eligible: warmupCoordination.eligible } : {}),
+          ...(typeof warmupCoordination.status === "string"
+            ? { status: warmupCoordination.status as NonNullable<PromptObservabilitySummary["warmupCoordination"]>["status"] }
             : {}),
-          ...(typeof metadata.warmupCoordination.reason === "string" ? { reason: metadata.warmupCoordination.reason } : {}),
-          ...(typeof metadata.warmupCoordination.previousAgeMs === "number"
-            ? { previousAgeMs: metadata.warmupCoordination.previousAgeMs }
+          ...(typeof warmupCoordination.recommendation === "string"
+            ? { recommendation: warmupCoordination.recommendation as NonNullable<PromptObservabilitySummary["warmupCoordination"]>["recommendation"] }
+            : {}),
+          ...(typeof warmupCoordination.reason === "string" ? { reason: warmupCoordination.reason } : {}),
+          ...(typeof warmupCoordination.previousAgeMs === "number"
+            ? { previousAgeMs: warmupCoordination.previousAgeMs }
             : {}),
         },
       }
@@ -437,6 +454,18 @@ export function renderPromptObservabilityText(
     "truncationDroppedSectionLabels",
     view.truncationReason?.droppedSectionLabels?.join(", "),
   );
+  appendPromptObservabilityLine(
+    lines,
+    indent,
+    "truncationTruncatedSectionIds",
+    view.truncationReason?.truncatedSectionIds?.join(", "),
+  );
+  appendPromptObservabilityLine(
+    lines,
+    indent,
+    "truncationTruncatedSectionLabels",
+    view.truncationReason?.truncatedSectionLabels?.join(", "),
+  );
 
   return lines.join("\n");
 }
@@ -459,6 +488,8 @@ export function readPromptTruncationReasonFromMetadata(
 
   const droppedSectionIds = normalizeStringArray(value.droppedSectionIds);
   const droppedSectionLabels = normalizeStringArray(value.droppedSectionLabels);
+  const truncatedSectionIds = normalizeStringArray(value.truncatedSectionIds);
+  const truncatedSectionLabels = normalizeStringArray(value.truncatedSectionLabels);
   const result: PromptTruncationReason = {
     code,
     ...(typeof value.maxChars === "number" && Number.isFinite(value.maxChars) && value.maxChars > 0
@@ -469,6 +500,8 @@ export function readPromptTruncationReasonFromMetadata(
       : {}),
     ...(droppedSectionIds.length > 0 ? { droppedSectionIds } : {}),
     ...(droppedSectionLabels.length > 0 ? { droppedSectionLabels } : {}),
+    ...(truncatedSectionIds.length > 0 ? { truncatedSectionIds } : {}),
+    ...(truncatedSectionLabels.length > 0 ? { truncatedSectionLabels } : {}),
     ...(typeof value.message === "string" && value.message.trim()
       ? { message: value.message.trim() }
       : {}),

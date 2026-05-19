@@ -11,7 +11,6 @@ describe("applyWebConfigLinks", () => {
     const aliyunOneKeyLink = document.createElement("a");
     const officialHomeLink = document.createElement("a");
     const workshopLink = document.createElement("a");
-
     applyWebConfigLinks(
       {
         recommendApiLink,

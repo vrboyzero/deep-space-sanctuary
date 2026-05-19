@@ -154,6 +154,16 @@ describe("prompt observability", () => {
       truncated: true,
       maxChars: 8,
       metadata: {
+        truncationReason: {
+          code: "max_chars_limit",
+          maxChars: 8,
+          droppedSectionCount: 1,
+          droppedSectionIds: ["methodology"],
+          droppedSectionLabels: ["methodology"],
+          truncatedSectionIds: ["core"],
+          truncatedSectionLabels: ["core"],
+          message: "Dropped methodology and truncated core to fit 8 char limit.",
+        },
         cacheSupport: "supported",
         capabilitySource: "provider-model-catalog",
         providerCacheEligible: true,
@@ -256,6 +266,7 @@ describe("prompt observability", () => {
         maxChars: 8,
         droppedSectionCount: 1,
         droppedSectionIds: ["methodology"],
+        truncatedSectionIds: ["core"],
       },
       experiments: {
         disabledSectionIdsApplied: ["methodology"],
@@ -362,6 +373,18 @@ describe("prompt observability", () => {
       providerNativeSystemBlocks: [{ id: "block-1", text: "abcd" }],
       truncated: true,
       maxChars: 8,
+      metadata: {
+        truncationReason: {
+          code: "max_chars_limit",
+          maxChars: 8,
+          droppedSectionCount: 1,
+          droppedSectionIds: ["methodology"],
+          droppedSectionLabels: ["methodology"],
+          truncatedSectionIds: ["core"],
+          truncatedSectionLabels: ["core"],
+          message: "Dropped methodology and truncated core to fit 8 char limit.",
+        },
+      },
     });
 
     const view = toPromptObservabilityView(summary, {
@@ -381,5 +404,6 @@ describe("prompt observability", () => {
     expect(renderPromptObservabilityText(view)).toContain("systemPromptEstimatedTokens: 2");
     expect(renderPromptObservabilityText(view)).toContain("includesHookSystemPrompt: yes");
     expect(renderPromptObservabilityText(view)).toContain("truncationReasonCode: max_chars_limit");
+    expect(renderPromptObservabilityText(view)).toContain("truncationTruncatedSectionIds: core");
   });
 });

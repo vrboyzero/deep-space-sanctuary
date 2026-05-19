@@ -64,6 +64,7 @@ export function buildToolResultPromptDeltas(input: {
       toolName: input.result.name,
       error: input.result.error,
       failureKind: input.result.failureKind,
+      metadata: input.result.metadata,
     }, contract, delegationResultMetadata);
     if (failureDelta) {
       deltas.push(failureDelta);
@@ -102,9 +103,11 @@ export function buildToolFailureRecoveryPromptDelta(input: {
   toolName: string;
   error?: string;
   failureKind?: ToolFailureKind;
+  metadata?: unknown;
 }, contract?: ToolContractV2, delegationResultMetadata?: DelegationResultToolMetadata): AgentPromptDelta | undefined {
   const resolvedContract = contract ?? getToolContractV2(input.toolName);
   const failureClass = input.failureKind ?? inferToolFailureKindFromError(input.error);
+  const toolRepairMetadata = readToolRepairMetadata(input.metadata);
   const lines = [
     "## Tool Failure Recovery",
     "",
@@ -146,6 +149,13 @@ export function buildToolFailureRecoveryPromptDelta(input: {
   if (verifierHandoffAvailable) {
     lines.push(`- Verifier handoff available for: ${verifierHandoffAvailable}`);
   }
+  if (toolRepairMetadata?.summary) {
+    lines.push(`- Runtime repair hint: ${toolRepairMetadata.summary}`);
+  }
+  const correctionHints = summarizeCompactList(toolRepairMetadata?.correctionHints, 3, 160);
+  if (correctionHints) {
+    lines.push(`- Recommended parameter/tool correction: ${correctionHints}`);
+  }
 
   lines.push(
     "",
@@ -162,11 +172,69 @@ export function buildToolFailureRecoveryPromptDelta(input: {
     metadata: {
       toolName: input.toolName,
       failureClass,
+      ...(toolRepairMetadata
+        ? { repairAction: toolRepairMetadata.repairAction }
+        : {}),
       ...(buildDelegationResultMetadataProjection(delegationResultMetadata)
         ? { delegationResult: buildDelegationResultMetadataProjection(delegationResultMetadata) as any }
         : {}),
     },
   };
+}
+
+function readToolRepairMetadata(metadata: unknown): {
+  repairAction?: string;
+  correctionHints?: string[];
+  summary?: string;
+} | undefined {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const record = metadata as Record<string, unknown>;
+  const repairAction = typeof record.repairAction === "string"
+    ? record.repairAction
+    : undefined;
+  const argumentValidation = record.argumentValidation;
+  const correctionHints = argumentValidation && typeof argumentValidation === "object" && !Array.isArray(argumentValidation)
+    ? ((argumentValidation as Record<string, unknown>).correctionHints)
+    : undefined;
+  const normalizedCorrectionHints = Array.isArray(correctionHints)
+    ? correctionHints
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => summarizeInlineText(item, 160) ?? item)
+    : undefined;
+
+  switch (repairAction) {
+    case "tool_arguments_invalid":
+      return {
+        repairAction,
+        correctionHints: normalizedCorrectionHints,
+        summary: "The tool runtime rejected the current arguments before execution.",
+      };
+    case "duplicate_tool_call_suppressed":
+      return {
+        repairAction,
+        summary: "The runtime blocked an identical retry because nothing materially changed.",
+      };
+    case "near_duplicate_tool_call_suppressed":
+      return {
+        repairAction,
+        summary: "The runtime blocked a near-duplicate retry. Adjust arguments meaningfully before trying again.",
+      };
+    case "cross_tool_thrash_suppressed":
+      return {
+        repairAction,
+        summary: "The runtime detected cross-tool thrashing. Re-evaluate the routing decision before calling another tool.",
+      };
+    default:
+      if (!normalizedCorrectionHints?.length) {
+        return undefined;
+      }
+      return {
+        repairAction,
+        correctionHints: normalizedCorrectionHints,
+      };
+  }
 }
 
 export function buildToolPostVerificationPromptDelta(input: {

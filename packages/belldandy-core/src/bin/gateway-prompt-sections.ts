@@ -13,6 +13,7 @@ export type BuildAgentRuntimePromptSectionsOptions = {
   canDelegate: boolean;
   role?: AgentProfileDefaultRole;
   profileId?: string;
+  recommendedMethodNames?: readonly string[];
   recommendedSkillNames?: readonly string[];
   methodAssets?: readonly RuntimeMethodAssetSummary[];
   promptSkillAssets?: readonly RuntimeSkillAssetSummary[];
@@ -41,6 +42,40 @@ export type RuntimeSkillAssetSummary = {
   tags: string[];
   updatedAt?: number;
 };
+
+function buildRuntimeCapabilityRoutingIndexLines(): string[] {
+  return [
+    "Use the smallest matching entrypoint first; discover before opening full instructions or schemas.",
+    "- SOPs / reusable workflows: use `method_search` (or `method_list`) to find candidates, then `method_read` to open the exact method.",
+    "- Skills / domain instructions: use `skills_search` to discover candidates, then `skill_get` to open the exact skill you decide to adopt.",
+    "- Heavy builtin tools or MCP tools not currently visible: use `tool_search` first, then load/select only the exact schema needed for the next turn.",
+    "- Runtime governance / diagnostics / metadata are queried through RPC surfaces; do not confuse them with native tool-calling paths.",
+  ];
+}
+
+const RUNTIME_ASSET_SAMPLE_LIMIT = 3;
+
+function formatRuntimeMethodAssetSample(method: RuntimeMethodAssetSummary): string {
+  const title = method.title?.trim();
+  const status = method.status?.trim();
+  const base = title ? `\`${method.fileName}\` - ${title}` : `\`${method.fileName}\``;
+  return status ? `${base} [${status}]` : base;
+}
+
+function formatRuntimeSkillAssetSample(skill: RuntimeSkillAssetSummary): string {
+  return `\`${skill.name}\` - ${skill.description}`;
+}
+
+function buildRuntimeAssetSampleLine(
+  label: string,
+  totalCount: number,
+  items: readonly string[],
+): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+  return `- ${label} (showing ${items.length}/${totalCount}): ${items.join(" | ")}`;
+}
 
 export function buildAgentRuntimePromptSections(
   options: BuildAgentRuntimePromptSectionsOptions,
@@ -100,6 +135,7 @@ export function buildAgentRuntimePromptSections(
   }
 
   const methodSkillAssetSection = buildMethodSkillAssetSummarySection({
+    recommendedMethodNames: options.recommendedMethodNames,
     recommendedSkillNames: options.recommendedSkillNames,
     methodAssets: options.methodAssets,
     promptSkillAssets: options.promptSkillAssets,
@@ -130,6 +166,7 @@ export function buildAgentRuntimePromptSections(
 }
 
 export function buildMethodSkillAssetSummarySection(input: {
+  recommendedMethodNames?: readonly string[];
   recommendedSkillNames?: readonly string[];
   methodAssets?: readonly RuntimeMethodAssetSummary[];
   promptSkillAssets?: readonly RuntimeSkillAssetSummary[];
@@ -138,6 +175,7 @@ export function buildMethodSkillAssetSummarySection(input: {
   promptSkillAssetTotalCount?: number;
   searchableSkillAssetTotalCount?: number;
 }): SystemPromptSection | undefined {
+  const recommendedMethodNames = (input.recommendedMethodNames ?? []).filter(Boolean);
   const recommendedSkillNames = (input.recommendedSkillNames ?? []).filter(Boolean);
   const methodAssets = input.methodAssets ?? [];
   const promptSkillAssets = input.promptSkillAssets ?? [];
@@ -151,11 +189,10 @@ export function buildMethodSkillAssetSummarySection(input: {
     searchableSkillAssets.length,
     input.searchableSkillAssetTotalCount ?? searchableSkillAssets.length,
   );
-  const shownAssetCount = methodAssets.length + promptSkillAssets.length + searchableSkillAssets.length;
-  const totalAssetCount = methodAssetTotalCount + promptSkillAssetTotalCount + searchableSkillAssetTotalCount;
 
   if (
-    recommendedSkillNames.length === 0
+    recommendedMethodNames.length === 0
+    && recommendedSkillNames.length === 0
     && methodAssets.length === 0
     && promptSkillAssets.length === 0
     && searchableSkillAssets.length === 0
@@ -167,42 +204,48 @@ export function buildMethodSkillAssetSummarySection(input: {
     "## Method / Skill Asset Summary",
     "",
     "Before inventing a new workflow, check whether an existing method or skill already matches the task.",
-    "Use this section as a compact index; open full assets with `method_search` / `method_read` / `skills_search` / `skill_get` only when the summary looks relevant.",
+    "Use this section as a compact index; keep full reads and exact schema loads on demand.",
+    ...buildRuntimeCapabilityRoutingIndexLines(),
     `- Inventory counts: methods=${methodAssetTotalCount} | prompt_skills=${promptSkillAssetTotalCount} | searchable_skills=${searchableSkillAssetTotalCount}`,
-    `- This section shows ${shownAssetCount} of ${totalAssetCount} known assets, grouped by type below. Do not assume the grouped lists are exhaustive.`,
+    "- Grouped lists below are samples, not exhaustive.",
   ];
+
+  if (recommendedMethodNames.length > 0) {
+    lines.push(`- Profile-preferred methods: ${recommendedMethodNames.join(" | ")}`);
+  }
 
   if (recommendedSkillNames.length > 0) {
     lines.push(`- Profile-preferred skills: ${recommendedSkillNames.join(" | ")}`);
   }
 
-  if (methodAssets.length > 0) {
-    lines.push("- Method assets:");
-    for (const method of methodAssets) {
-      const parts = [
-        `file=${method.fileName}`,
-        `path=${method.path}`,
-        method.title ? `title=${method.title}` : undefined,
-        method.status ? `status=${method.status}` : undefined,
-        method.summary ? `summary=${method.summary}` : undefined,
-      ].filter((part): part is string => Boolean(part));
-      lines.push(`- ${parts.join(" | ")}`);
-    }
+  const methodSampleLine = buildRuntimeAssetSampleLine(
+    "Method candidates",
+    methodAssetTotalCount,
+    methodAssets.slice(0, RUNTIME_ASSET_SAMPLE_LIMIT).map(formatRuntimeMethodAssetSample),
+  );
+  if (methodSampleLine) {
+    lines.push(methodSampleLine);
   }
 
-  if (promptSkillAssets.length > 0) {
-    lines.push("- Prompt-injected skills already active:");
-    for (const skill of promptSkillAssets) {
-      lines.push(`- ${skill.name} | ${skill.description} | path=${skill.path}`);
-    }
+  const promptSkillSampleLine = buildRuntimeAssetSampleLine(
+    "Active prompt skills",
+    promptSkillAssetTotalCount,
+    promptSkillAssets.slice(0, RUNTIME_ASSET_SAMPLE_LIMIT).map(formatRuntimeSkillAssetSample),
+  );
+  if (promptSkillSampleLine) {
+    lines.push(promptSkillSampleLine);
   }
 
-  if (searchableSkillAssets.length > 0) {
-    lines.push("- Searchable skills worth checking on demand:");
-    for (const skill of searchableSkillAssets) {
-      lines.push(`- ${skill.name} | ${skill.description} | path=${skill.path}`);
-    }
+  const searchableSkillSampleLine = buildRuntimeAssetSampleLine(
+    "Searchable skill candidates",
+    searchableSkillAssetTotalCount,
+    searchableSkillAssets.slice(0, RUNTIME_ASSET_SAMPLE_LIMIT).map(formatRuntimeSkillAssetSample),
+  );
+  if (searchableSkillSampleLine) {
+    lines.push(searchableSkillSampleLine);
   }
+
+  lines.push("- On demand: use `method_search` -> `method_read`, `skills_search` -> `skill_get`.");
 
   return createGatewaySystemPromptSection({
     id: "method-skill-asset-summary",

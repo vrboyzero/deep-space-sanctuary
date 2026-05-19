@@ -66,6 +66,7 @@
 - `defaultAllowedToolFamilies`: 默认允许的工具族列表。
 - `defaultMaxToolRiskLevel`: 默认最大工具风险等级，可选值为 `low | medium | high | critical`。
 - `skills`: 推荐注入或优先参考的 skills 列表。
+- `methods`: 推荐优先参考的 methods 列表；按方法文件名标识，例如 `multi-agent-review.md`。
 - `handoffStyle`: 交接风格，可选值为 `summary | structured`。
 - `toolsEnabled`: 是否启用工具；它是 Agent 级覆盖项。
 - `toolWhitelist`: Agent 可用工具白名单；仅这些工具对该 Agent 可见且可执行。
@@ -160,6 +161,8 @@
 - 当某个 Agent 在 `faqis-state.json` 中存在有效的 `currentFaqi` 时，当前实现会优先使用该 FAQI 文件中的工具集合。
 - 当 `currentFaqi` 不存在、为空、指向不存在的 FAQI，或目标 FAQI 解析失败时，系统会回退到这里配置的 `toolWhitelist`。
 - FAQI 文件统一位于 `~/.star_sanctuary/faqis/`，当前选择状态位于 `~/.star_sanctuary/faqis-state.json`。
+- FAQI **只接管工具集合**，不会覆盖或改写 `methods` / `skills`。
+- `methods` / `skills` 仍由 `agents.json` 与 prompt routing / 搜索排序共同决定，它们不是 FAQI 的职责范围。
 
 例如：
 
@@ -275,6 +278,12 @@
       "memoryMode": "hybrid", // 记忆模式保持 hybrid
       "defaultRole": "coder", // 默认角色为 coder，影响默认权限风格
       "systemPromptOverride": "你是一个严谨的代码专家，擅长实现、调试、修复与重构。", // 在系统提示词末尾补充代码人格说明
+      "methods": [
+        "multi-agent-review.md" // 推荐优先参考的方法文件
+      ],
+      "skills": [
+        "orchestration-playbook" // 推荐优先参考的 skill 名称
+      ],
       "toolsEnabled": true, // 允许使用工具
       "toolWhitelist": [
         "file_read", // 读取文件
@@ -301,6 +310,12 @@
       "memoryMode": "hybrid", // 记忆模式保持 hybrid
       "defaultRole": "researcher", // 默认角色为 researcher
       "systemPromptOverride": "你是一个专业的调研助手，擅长搜索、整理、归纳和对比信息。", // 补充调研人格说明
+      "methods": [
+        "research-brief.md" // 推荐优先参考的方法文件
+      ],
+      "skills": [
+        "repo-map" // 推荐优先参考的 skill 名称
+      ],
       "toolsEnabled": true, // 允许使用工具
       "toolWhitelist": [
         "web_fetch", // 抓取网页
@@ -316,9 +331,15 @@
 这个配置的效果是：
 
 - `default` 作为默认入口 Agent，保留通用能力，不对工具做额外白名单限制。
-- `coder` 聚焦代码实现、排障、补丁和日志分析；同时也允许它直接做摄像头列举、拍照和设备记忆管理。
-- `researcher` 聚焦搜索、资料整理、文档查询和总结。
+- `coder` 聚焦代码实现、排障、补丁和日志分析；同时也允许它直接做摄像头列举、拍照和设备记忆管理，并会优先关注配置里的 methods / skills。
+- `researcher` 聚焦搜索、资料整理、文档查询和总结，也可以通过推荐的 methods / skills 做更聚焦的能力发现。
 - 三者都使用 `resident`，因此可以作为常驻 Agent 长期存在，不要求系统只有一个“主 Agent”。
+
+补充说明：
+
+- `methods` / `skills` 是**推荐集与软聚焦信息**，不是硬白名单。
+- 未配置时，Agent 仍然可以搜索全库 methods / skills。
+- FAQI 切换不会覆盖这里声明的 `methods` / `skills`；FAQI 仍只影响工具集合。
 
 ## 7. 与其他配置的关系
 

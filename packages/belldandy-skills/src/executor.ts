@@ -87,6 +87,8 @@ export type ToolExecutorOptions = {
   isToolAllowedForAgent?: (toolName: string, agentId?: string) => boolean;
   /** 可选：运行时判断工具是否允许在指定会话中使用（用于 goal channel 等场景） */
   isToolAllowedInConversation?: (toolName: string, conversationId: string, agentId?: string) => boolean;
+  /** 可选：按 Agent 返回轻量能力偏好目录（仅用于搜索排序等软路由） */
+  getAgentCatalogPreferences?: (agentId?: string) => { methods?: string[]; skills?: string[] } | undefined;
   /** 可选：会话存储（用于缓存等功能） */
   conversationStore?: ConversationStoreInterface;
   /** 可选：当前运行时允许读取的会话类别白名单 */
@@ -232,6 +234,409 @@ type ToolContextSnapshot = {
   exposed: Tool[];
 };
 
+type ToolArgumentValidationIssue = {
+  path: string;
+  code: "missing_required" | "invalid_type" | "invalid_value";
+  message: string;
+  expected?: string;
+  receivedType?: string;
+};
+
+type ToolArgumentPreflightResult = {
+  arguments: JsonObject;
+  corrected: boolean;
+  blocked: boolean;
+  corrections: string[];
+  issues: ToolArgumentValidationIssue[];
+};
+
+const TOOL_SEARCH_ARGUMENT_ALIASES: Record<string, string> = {
+  expandFamily: "expandFamilies",
+  family: "expandFamilies",
+  families: "expandFamilies",
+  load: "select",
+  loadTools: "select",
+  selected: "select",
+  selectedTools: "select",
+  unloadTools: "unload",
+  keep: "shrinkTo",
+  keepLoaded: "shrinkTo",
+  reset: "resetLoaded",
+  topic: "query",
+  intent: "query",
+};
+
+function cloneJsonObject(value: JsonObject): JsonObject {
+  try {
+    return JSON.parse(JSON.stringify(value)) as JsonObject;
+  } catch {
+    return { ...value };
+  }
+}
+
+function describeValueType(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeStringArrayValue(value: unknown): string[] | undefined {
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => normalizeWhitespace(item))
+      .filter(Boolean);
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value
+    .flatMap((item) => typeof item === "string" ? item.split(",") : [])
+    .map((item) => normalizeWhitespace(item))
+    .filter(Boolean);
+}
+
+function applyToolSearchArgumentAliases(args: JsonObject, corrections: string[]): void {
+  for (const [alias, canonical] of Object.entries(TOOL_SEARCH_ARGUMENT_ALIASES)) {
+    if (!(alias in args) || canonical in args) {
+      continue;
+    }
+    args[canonical] = args[alias];
+    delete args[alias];
+    corrections.push(`Mapped \`${alias}\` to \`${canonical}\`.`);
+  }
+}
+
+function normalizeToolSearchArguments(args: JsonObject, corrections: string[]): void {
+  applyToolSearchArgumentAliases(args, corrections);
+
+  for (const key of ["query"] as const) {
+    if (typeof args[key] === "string") {
+      const normalized = normalizeWhitespace(args[key] as string);
+      if (normalized !== args[key]) {
+        args[key] = normalized;
+        corrections.push(`Trimmed whitespace in \`${key}\`.`);
+      }
+    }
+  }
+
+  for (const key of ["expandFamilies", "select", "unload", "shrinkTo"] as const) {
+    if (!(key in args)) {
+      continue;
+    }
+    const normalized = normalizeStringArrayValue(args[key]);
+    if (!normalized) {
+      continue;
+    }
+    const original = args[key];
+    args[key] = normalized;
+    if (!Array.isArray(original)) {
+      corrections.push(`Coerced \`${key}\` from ${describeValueType(original)} to string[].`);
+    } else if (JSON.stringify(original) !== JSON.stringify(normalized)) {
+      corrections.push(`Normalized \`${key}\` entries into trimmed string values.`);
+    }
+  }
+
+  if (typeof args.resetLoaded === "string") {
+    const normalized = normalizeWhitespace(args.resetLoaded).toLowerCase();
+    if (normalized === "true" || normalized === "false") {
+      args.resetLoaded = normalized === "true";
+      corrections.push("Coerced `resetLoaded` from string to boolean.");
+    }
+  }
+
+  if (typeof args.maxResults === "string") {
+    const parsed = Number.parseInt(normalizeWhitespace(args.maxResults), 10);
+    if (Number.isFinite(parsed)) {
+      args.maxResults = parsed;
+      corrections.push("Coerced `maxResults` from string to number.");
+    }
+  }
+}
+
+function normalizeArgumentsBySchema(
+  args: JsonObject,
+  schema: Tool["definition"]["parameters"] | undefined,
+): {
+  corrected: boolean;
+  corrections: string[];
+  issues: ToolArgumentValidationIssue[];
+} {
+  if (!schema || typeof schema !== "object") {
+    return { corrected: false, corrections: [], issues: [] };
+  }
+
+  const corrections: string[] = [];
+  const issues: ToolArgumentValidationIssue[] = [];
+  const properties = schema.properties ?? {};
+
+  for (const [key, property] of Object.entries(properties)) {
+    if (!(key in args)) {
+      continue;
+    }
+    const currentValue = args[key];
+    switch (property.type) {
+      case "string": {
+        if (typeof currentValue === "string") {
+          const normalized = normalizeWhitespace(currentValue);
+          if (normalized !== currentValue) {
+            args[key] = normalized;
+            corrections.push(`Trimmed whitespace in \`${key}\`.`);
+          }
+        } else if (
+          typeof currentValue === "number"
+          || typeof currentValue === "boolean"
+        ) {
+          args[key] = String(currentValue);
+          corrections.push(`Coerced \`${key}\` from ${describeValueType(currentValue)} to string.`);
+        } else {
+          issues.push({
+            path: key,
+            code: "invalid_type",
+            message: `参数 \`${key}\` 必须是 string。`,
+            expected: "string",
+            receivedType: describeValueType(currentValue),
+          });
+        }
+        break;
+      }
+      case "number": {
+        if (typeof currentValue === "number" && Number.isFinite(currentValue)) {
+          break;
+        }
+        if (typeof currentValue === "string") {
+          const parsed = Number(currentValue.trim());
+          if (Number.isFinite(parsed)) {
+            args[key] = parsed;
+            corrections.push(`Coerced \`${key}\` from string to number.`);
+            break;
+          }
+        }
+        issues.push({
+          path: key,
+          code: "invalid_type",
+          message: `参数 \`${key}\` 必须是 number。`,
+          expected: "number",
+          receivedType: describeValueType(currentValue),
+        });
+        break;
+      }
+      case "boolean": {
+        if (typeof currentValue === "boolean") {
+          break;
+        }
+        if (typeof currentValue === "string") {
+          const normalized = currentValue.trim().toLowerCase();
+          if (normalized === "true" || normalized === "false") {
+            args[key] = normalized === "true";
+            corrections.push(`Coerced \`${key}\` from string to boolean.`);
+            break;
+          }
+        }
+        issues.push({
+          path: key,
+          code: "invalid_type",
+          message: `参数 \`${key}\` 必须是 boolean。`,
+          expected: "boolean",
+          receivedType: describeValueType(currentValue),
+        });
+        break;
+      }
+      case "array": {
+        if (Array.isArray(currentValue)) {
+          if (property.items?.type === "string") {
+            const normalized = currentValue
+              .flatMap((item) => typeof item === "string" ? item.split(",") : [])
+              .map((item) => normalizeWhitespace(item))
+              .filter(Boolean);
+            if (JSON.stringify(currentValue) !== JSON.stringify(normalized)) {
+              args[key] = normalized;
+              corrections.push(`Normalized \`${key}\` entries into trimmed string values.`);
+            }
+          }
+          break;
+        }
+        if (property.items?.type === "string") {
+          const normalized = normalizeStringArrayValue(currentValue);
+          if (normalized) {
+            args[key] = normalized;
+            corrections.push(`Coerced \`${key}\` from ${describeValueType(currentValue)} to string[].`);
+            break;
+          }
+        }
+        issues.push({
+          path: key,
+          code: "invalid_type",
+          message: `参数 \`${key}\` 必须是 array。`,
+          expected: "array",
+          receivedType: describeValueType(currentValue),
+        });
+        break;
+      }
+      case "object": {
+        if (
+          currentValue
+          && typeof currentValue === "object"
+          && !Array.isArray(currentValue)
+        ) {
+          break;
+        }
+        if (typeof currentValue === "string") {
+          try {
+            const parsed = JSON.parse(currentValue);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              args[key] = parsed as JsonObject[keyof JsonObject];
+              corrections.push(`Parsed \`${key}\` from JSON string into object.`);
+              break;
+            }
+          } catch {
+            // noop
+          }
+        }
+        issues.push({
+          path: key,
+          code: "invalid_type",
+          message: `参数 \`${key}\` 必须是 object。`,
+          expected: "object",
+          receivedType: describeValueType(currentValue),
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  for (const key of schema.required ?? []) {
+    const value = args[key];
+    if (
+      typeof value === "undefined"
+      || value === null
+      || (typeof value === "string" && !value.trim())
+      || (Array.isArray(value) && value.length === 0)
+    ) {
+      issues.push({
+        path: key,
+        code: "missing_required",
+        message: `缺少必填参数 \`${key}\`。`,
+      });
+    }
+  }
+
+  return {
+    corrected: corrections.length > 0,
+    corrections,
+    issues,
+  };
+}
+
+function buildToolArgumentCorrectionHints(
+  schema: Tool["definition"]["parameters"] | undefined,
+  issues: ToolArgumentValidationIssue[],
+): string[] {
+  const hints = new Set<string>();
+  for (const issue of issues) {
+    const property = schema?.properties?.[issue.path];
+    switch (issue.code) {
+      case "missing_required":
+        hints.add(`补上必填字段 \`${issue.path}\`。`);
+        break;
+      case "invalid_type":
+        if (property?.type === "array" && property.items?.type === "string") {
+          hints.add(`把 \`${issue.path}\` 改成字符串数组，例如 \`{\"${issue.path}\":[\"...\"]}\`。`);
+        } else if (property?.type) {
+          hints.add(`把 \`${issue.path}\` 改成 ${property.type} 类型。`);
+        }
+        break;
+      case "invalid_value":
+        hints.add(`检查 \`${issue.path}\` 的取值是否合法。`);
+        break;
+      default:
+        break;
+    }
+  }
+  return Array.from(hints);
+}
+
+function summarizeArgumentValidationIssues(issues: ToolArgumentValidationIssue[]): string {
+  if (issues.length === 0) {
+    return "参数校验失败。";
+  }
+  if (issues.length === 1) {
+    return issues[0]?.message ?? "参数校验失败。";
+  }
+  return `${issues[0]?.message ?? "参数校验失败。"} 另有 ${issues.length - 1} 个参数问题。`;
+}
+
+function buildToolArgumentPreflightMetadata(
+  tool: Tool,
+  preflight: ToolArgumentPreflightResult,
+): JsonObject | undefined {
+  if (!preflight.corrected && preflight.issues.length === 0) {
+    return undefined;
+  }
+  const correctionHints = buildToolArgumentCorrectionHints(tool.definition.parameters, preflight.issues);
+  return {
+    repairAction: preflight.blocked ? "tool_arguments_invalid" : "tool_arguments_corrected",
+    argumentValidation: {
+      corrected: preflight.corrected,
+      blocked: preflight.blocked,
+      corrections: preflight.corrections,
+      issues: preflight.issues.map((issue) => ({
+        path: issue.path,
+        code: issue.code,
+        message: issue.message,
+        ...(issue.expected ? { expected: issue.expected } : {}),
+        ...(issue.receivedType ? { receivedType: issue.receivedType } : {}),
+      })),
+      correctionHints,
+    },
+  };
+}
+
+function mergeToolResultMetadata(result: ToolCallResult, extraMetadata?: JsonObject): ToolCallResult {
+  if (!extraMetadata) {
+    return result;
+  }
+  const existingMetadata = result.metadata && typeof result.metadata === "object" && !Array.isArray(result.metadata)
+    ? result.metadata
+    : undefined;
+  return {
+    ...result,
+    metadata: existingMetadata
+      ? { ...existingMetadata, ...extraMetadata }
+      : extraMetadata,
+  };
+}
+
+function preflightToolArguments(tool: Tool, args: JsonObject): ToolArgumentPreflightResult {
+  const normalizedArgs = cloneJsonObject(args);
+  const toolSpecificCorrections: string[] = [];
+
+  if (tool.definition.name === "tool_search") {
+    normalizeToolSearchArguments(normalizedArgs, toolSpecificCorrections);
+  }
+
+  const schemaNormalization = normalizeArgumentsBySchema(normalizedArgs, tool.definition.parameters);
+  const corrections = [...toolSpecificCorrections, ...schemaNormalization.corrections];
+  const dedupedCorrections = Array.from(new Set(corrections));
+  const issues = schemaNormalization.issues.filter((issue, index, list) =>
+    list.findIndex((candidate) => candidate.path === issue.path && candidate.code === issue.code) === index,
+  );
+
+  return {
+    arguments: normalizedArgs,
+    corrected: dedupedCorrections.length > 0,
+    blocked: issues.length > 0,
+    corrections: dedupedCorrections,
+    issues,
+  };
+}
+
 export class ToolExecutor {
   private readonly tools: Map<string, Tool>;
   private readonly workspaceRoot: string;
@@ -246,6 +651,7 @@ export class ToolExecutor {
   private readonly isToolDisabled?: (toolName: string) => boolean;
   private readonly isToolAllowedForAgent?: (toolName: string, agentId?: string) => boolean;
   private readonly isToolAllowedInConversation?: (toolName: string, conversationId: string, agentId?: string) => boolean;
+  private readonly getAgentCatalogPreferences?: (agentId?: string) => { methods?: string[]; skills?: string[] } | undefined;
   private readonly contractAccessPolicy?: ToolContractAccessPolicy;
   private conversationStore?: ConversationStoreInterface; // 移除 readonly，允许后期绑定
   private allowedConversationKinds?: ConversationAccessKind[];
@@ -276,6 +682,7 @@ export class ToolExecutor {
     this.isToolDisabled = options.isToolDisabled;
     this.isToolAllowedForAgent = options.isToolAllowedForAgent;
     this.isToolAllowedInConversation = options.isToolAllowedInConversation;
+    this.getAgentCatalogPreferences = options.getAgentCatalogPreferences;
     this.contractAccessPolicy = options.contractAccessPolicy;
     this.deferredToolNames = new Set(options.deferredToolNames ?? []);
     this.conversationStore = options.conversationStore;
@@ -471,9 +878,10 @@ export class ToolExecutor {
       "",
       "Some builtin tool families are intentionally gated to reduce prompt bloat and accidental misselection.",
       "Use the following workflow for heavy builtin families:",
-      "1. Use `tool_search` to inspect the family summary first.",
-      "2. Use `tool_search expandFamilies=[...]` to reveal member tools without loading their schemas yet.",
-      "3. Use `tool_search select=[...]` to load only the exact tool schemas needed for the next turn.",
+      "1. Use `tool_search` or `tool_search {\"query\":\"...\"}` to inspect family summaries first.",
+      "2. If a family matches, use `tool_search {\"expandFamilies\":[\"family_id\"]}` to reveal exact member tools without loading schemas yet.",
+      "3. Once you know the exact tool name, use `tool_search {\"select\":[\"tool_name\"]}` to load only that schema for the next turn.",
+      "4. After the schema is loaded, call that tool directly in the next model turn instead of searching again.",
       "Routing note: do not treat `dream` / 梦境 / memory-runtime work as `canvas` by default. Use the canvas family only for explicit board / node / edge / layout tasks.",
       "",
       "Heavy builtin families:",
@@ -692,6 +1100,28 @@ export class ToolExecutor {
       return result;
     }
 
+    const argumentPreflight = preflightToolArguments(tool, request.arguments);
+    const argumentValidationMetadata = buildToolArgumentPreflightMetadata(tool, argumentPreflight);
+    const effectiveArguments = argumentPreflight.arguments;
+
+    if (argumentPreflight.corrected) {
+      this.logger?.warn?.(
+        `[tool-args] corrected tool arguments for ${request.name}: ${argumentPreflight.corrections.join(" | ")}`,
+      );
+    }
+    if (argumentPreflight.blocked) {
+      const result = buildFailureToolCallResult({
+        id: request.id,
+        name: request.name,
+        start,
+        error: `工具参数未通过预检：${summarizeArgumentValidationIssues(argumentPreflight.issues)}`,
+        failureKind: "input_error",
+        metadata: argumentValidationMetadata,
+      });
+      this.audit(result, conversationId, request.arguments);
+      return result;
+    }
+
     const context: ToolContext = {
       conversationId,
       workspaceRoot: this.workspaceRoot,
@@ -700,6 +1130,7 @@ export class ToolExecutor {
       extraWorkspaceRoots: this.extraWorkspaceRoots.length > 0 ? this.extraWorkspaceRoots : undefined,
       defaultCwd: launchSpec?.cwd,
       agentId,
+      agentCatalogPreferences: this.getAgentCatalogPreferences?.(agentId),
       launchSpec,
       userUuid, // 传递UUID
       senderInfo, // 传递发送者信息
@@ -750,12 +1181,13 @@ export class ToolExecutor {
     }
 
     try {
-      const result = normalizeToolCallResultFailureKind(await tool.execute(request.arguments, context));
+      const result = normalizeToolCallResultFailureKind(await tool.execute(effectiveArguments, context));
       // 确保 id 匹配请求
       result.id = request.id;
       result.durationMs = Date.now() - start;
-      this.audit(result, conversationId, request.arguments);
-      return result;
+      const finalResult = mergeToolResultMetadata(result, argumentValidationMetadata);
+      this.audit(finalResult, conversationId, request.arguments);
+      return finalResult;
     } catch (err) {
       const result = buildFailureToolCallResult({
         id: request.id,
@@ -764,6 +1196,7 @@ export class ToolExecutor {
         error: isAbortError(err)
           ? readAbortReason(abortSignal)
           : (err instanceof Error ? err.message : String(err)),
+        metadata: argumentValidationMetadata,
         ...(isAbortError(err) ? { failureKind: "environment_error" as const } : {}),
       });
       this.audit(result, conversationId, request.arguments);

@@ -71,6 +71,7 @@ function buildCatalogMetadata(profile: AgentProfile) {
       || profile.defaultMaxToolRiskLevel === "critical"
       ? profile.defaultMaxToolRiskLevel
       : ROLE_DEFAULT_MAX_RISK_LEVEL[defaultRole],
+    methods: normalizeStringArray(profile.methods),
     skills: normalizeStringArray(profile.skills),
     handoffStyle: profile.handoffStyle === "structured"
       ? "structured"

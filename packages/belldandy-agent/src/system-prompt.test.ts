@@ -120,8 +120,12 @@ describe("system prompt sections", () => {
       droppedSectionCount: result.droppedSections.length,
       droppedSectionIds: result.droppedSections.map((section) => section.id),
     });
-    expect(result.sections[result.sections.length - 1]?.id).toBe("truncation-notice");
-    expect(result.text).toContain("System prompt truncated");
+    if (result.sections.some((section) => section.id === "truncation-notice")) {
+      expect(result.sections[result.sections.length - 1]?.id).toBe("truncation-notice");
+      expect(result.text).toContain("System prompt truncated");
+    }
+    expect(result.truncationReason?.message).toContain("fit 100 char limit");
+    expect(result.finalChars).toBeLessThanOrEqual(100);
   });
 
   it("applies section priority overrides before truncation", () => {
@@ -298,6 +302,33 @@ describe("system prompt sections", () => {
     expect(blocks[2]?.text).not.toContain("<recent-memory>");
   });
 
+  it("uses unified capability routing language for methods, skills, and deferred tools", () => {
+    const result = buildSystemPromptResult({
+      workspace: {
+        files: [
+          createWorkspaceFile("AGENTS.md", "# agents"),
+          createWorkspaceFile("SOUL.md", "# soul"),
+          createWorkspaceFile("TOOLS.md", "# tools"),
+          createWorkspaceFile("IDENTITY.md", "# identity"),
+          createWorkspaceFile("USER.md", "# user"),
+          createMissingWorkspaceFile("HEARTBEAT.md"),
+          createMissingWorkspaceFile("BOOTSTRAP.md"),
+          createMissingWorkspaceFile("MEMORY.md"),
+        ],
+        ...baseWorkspace,
+      },
+      hasSearchableSkills: true,
+    });
+
+    const text = result.text;
+    expect(text).toContain("## Capability Routing");
+    expect(text).toContain("SOPs / reusable workflows: use `method_search`");
+    expect(text).toContain("Skills / domain instructions: use `skills_search`");
+    expect(text).toContain("Heavy builtin tools or MCP tools not currently visible: use `tool_search` first");
+    expect(text).toContain("Runtime governance / diagnostics / metadata are queried through RPC surfaces");
+    expect(text).toContain("Searching alone does not count as usage.");
+  });
+
   it("inserts runtime sections between workspace tools and memory", () => {
     const result = buildSystemPromptResult({
       workspace: {
@@ -349,5 +380,150 @@ describe("system prompt sections", () => {
     expect(blocks.find((block) => block.blockType === "dynamic-runtime")?.sourceSectionIds).toEqual(
       expect.arrayContaining(["tool-use-policy", "role-execution-policy"]),
     );
+  });
+
+  it("keeps always skills fully injected while degrading high skills to summaries", () => {
+    const result = buildSystemPromptResult({
+      workspace: {
+        files: [
+          createMissingWorkspaceFile("AGENTS.md"),
+          createMissingWorkspaceFile("SOUL.md"),
+          createMissingWorkspaceFile("TOOLS.md"),
+          createMissingWorkspaceFile("IDENTITY.md"),
+          createMissingWorkspaceFile("USER.md"),
+          createMissingWorkspaceFile("HEARTBEAT.md"),
+          createMissingWorkspaceFile("BOOTSTRAP.md"),
+          createMissingWorkspaceFile("MEMORY.md"),
+        ],
+        ...baseWorkspace,
+        hasSoul: false,
+        hasIdentity: false,
+        hasUser: false,
+        hasAgents: false,
+        hasTools: false,
+      },
+      skillInstructions: [
+        {
+          name: "always-skill",
+          priority: "always",
+          description: "keep this fully visible",
+          instructions: "Always instructions: follow every step exactly.",
+        },
+        {
+          name: "high-skill",
+          priority: "high",
+          description: "only summary should stay resident",
+          instructions: "High instructions that should not remain as full resident text.",
+        },
+      ],
+      hasSearchableSkills: false,
+    });
+
+    const text = result.text;
+    expect(text).toContain("## [always-skill]");
+    expect(text).toContain("Always instructions: follow every step exactly.");
+    expect(text).toContain("## High-Priority Skill Summaries");
+    expect(text).toContain("`high-skill` - only summary should stay resident");
+    expect(text).not.toContain("High instructions that should not remain as full resident text.");
+    expect(text).toContain("Open the exact one with `skill_get` once you decide to adopt it.");
+  });
+
+  it("promotes routing sections ahead of low-priority runtime sections when maxChars mode is enabled", () => {
+    const result = buildSystemPromptResult({
+      workspace: {
+        files: [
+          createMissingWorkspaceFile("AGENTS.md"),
+          createMissingWorkspaceFile("SOUL.md"),
+          createMissingWorkspaceFile("TOOLS.md"),
+          createMissingWorkspaceFile("IDENTITY.md"),
+          createMissingWorkspaceFile("USER.md"),
+          createMissingWorkspaceFile("HEARTBEAT.md"),
+          createMissingWorkspaceFile("BOOTSTRAP.md"),
+          createMissingWorkspaceFile("MEMORY.md"),
+        ],
+        ...baseWorkspace,
+        hasSoul: false,
+        hasIdentity: false,
+        hasUser: false,
+        hasAgents: false,
+        hasTools: false,
+      },
+      hasSearchableSkills: true,
+      currentTime: "2026-04-03T00:00:00.000Z",
+      userTimezone: "Asia/Shanghai",
+      maxChars: 5000,
+      extraSystemPrompt: "X".repeat(200),
+      runtimeSections: [
+        {
+          id: "tool-use-policy",
+          label: "tool-use-policy",
+          source: "runtime",
+          priority: 55,
+          text: "## Tool Use Operating Policy",
+        },
+        {
+          id: "team-operating-model",
+          label: "team-operating-model",
+          source: "runtime",
+          priority: 57,
+          text: "## Team Operating Model",
+        },
+        {
+          id: "method-skill-asset-summary",
+          label: "method-skill-asset-summary",
+          source: "runtime",
+          priority: 58,
+          text: "## Method / Skill Asset Summary",
+        },
+        {
+          id: "role-execution-policy",
+          label: "role-execution-policy",
+          source: "profile",
+          priority: 59,
+          text: "## Role Execution Policy",
+        },
+      ],
+    });
+
+    const sectionIds = result.sections.map((section) => section.id);
+    expect(sectionIds.indexOf("tool-use-policy")).toBeLessThan(sectionIds.indexOf("team-operating-model"));
+    expect(sectionIds.indexOf("method-skill-asset-summary")).toBeLessThan(sectionIds.indexOf("team-operating-model"));
+    expect(sectionIds.indexOf("skills")).toBeLessThan(sectionIds.indexOf("role-execution-policy"));
+    expect(sectionIds.indexOf("methodology")).toBeLessThan(sectionIds.indexOf("role-execution-policy"));
+    expect(sectionIds.indexOf("context")).toBeLessThan(sectionIds.indexOf("role-execution-policy"));
+  });
+
+  it("hard-caps even a single oversized kept section to the requested maxChars budget", () => {
+    const result = buildSystemPromptResult({
+      workspace: {
+        files: [
+          createMissingWorkspaceFile("AGENTS.md"),
+          createMissingWorkspaceFile("SOUL.md"),
+          createMissingWorkspaceFile("TOOLS.md"),
+          createMissingWorkspaceFile("IDENTITY.md"),
+          createMissingWorkspaceFile("USER.md"),
+          createMissingWorkspaceFile("HEARTBEAT.md"),
+          createMissingWorkspaceFile("BOOTSTRAP.md"),
+          createMissingWorkspaceFile("MEMORY.md"),
+        ],
+        ...baseWorkspace,
+        hasSoul: false,
+        hasIdentity: false,
+        hasUser: false,
+        hasAgents: false,
+        hasTools: false,
+      },
+      maxChars: 40,
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.finalChars).toBeLessThanOrEqual(40);
+    expect(result.truncationReason).toMatchObject({
+      code: "max_chars_limit",
+      maxChars: 40,
+      droppedSectionCount: expect.any(Number),
+      truncatedSectionIds: ["core"],
+    });
+    expect(result.text.length).toBeLessThanOrEqual(40);
   });
 });

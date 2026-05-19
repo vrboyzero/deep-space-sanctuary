@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -14,6 +15,7 @@ import {
   DEFAULT_METHOD_SKILL_ASSET_SUMMARY_LIMIT,
   buildRuntimeSkillAssetSummaries,
   loadRuntimeMethodAssetSummaries,
+  resolveRecommendedMethodNames,
   resolveRecommendedSkillNames,
 } from "./gateway-runtime-assets.js";
 import { isAgentToolAllowed } from "./gateway-agent-governance.js";
@@ -1212,6 +1214,20 @@ const toolExecutor = new ToolExecutor({
     }
     return Boolean(parseGoalSessionKey(conversationId));
   },
+  getAgentCatalogPreferences: (agentId) => {
+    const resolvedAgentId = typeof agentId === "string" && agentId.trim()
+      ? agentId.trim()
+      : "default";
+    const profile = agentRegistry?.getProfile(resolvedAgentId);
+    if (!profile) {
+      return undefined;
+    }
+    const catalog = resolveAgentProfileCatalogMetadata(profile);
+    return {
+      methods: catalog.methods,
+      skills: catalog.skills,
+    };
+  },
   broadcast: (event, payload) => {
     serverBroadcast?.({ type: "event", event, payload });
   },
@@ -1446,7 +1462,17 @@ const workspace = await loadWorkspaceFiles(stateDir);
 logger.info("workspace", `SOUL=${workspace.hasSoul}, IDENTITY=${workspace.hasIdentity}, USER=${workspace.hasUser}, BOOTSTRAP=${workspace.hasBootstrap}`);
 
 // 7. Build dynamic system prompt
-const skillInstructions = promptSkills.map(s => ({ name: s.name, instructions: s.instructions }));
+const skillInstructions: Array<{
+  name: string;
+  instructions: string;
+  priority: "high" | "always";
+  description?: string;
+}> = promptSkills.map((skill) => ({
+  name: skill.name,
+  instructions: skill.instructions,
+  priority: skill.priority === "always" ? "always" : "high",
+  description: skill.description,
+}));
 const hasSearchableSkills = searchableSkills.length > 0;
 const defaultPromptProfile = agentProfiles.find((profile) => profile.id === "default") ?? buildDefaultProfile();
 const agentAuthorityProfileCache = new Map<string, IdentityAuthorityProfile | undefined>();
@@ -1466,6 +1492,7 @@ const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
     canDelegate,
     role: catalog.defaultRole,
     profileId: profile.id,
+    recommendedMethodNames: resolveRecommendedMethodNames(catalog.methods, runtimeMethodAssets),
     recommendedSkillNames: resolveRecommendedSkillNames(catalog.skills, runtimeAllKnownSkills),
     methodAssets: runtimeMethodAssets,
     promptSkillAssets: runtimePromptSkillAssets,

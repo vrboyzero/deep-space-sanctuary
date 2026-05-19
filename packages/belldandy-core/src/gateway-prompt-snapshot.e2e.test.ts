@@ -337,6 +337,135 @@ test("gateway applies prompt section disable experiments to agent inspect", asyn
   }
 }, 60000);
 
+test("gateway enforces hard max system prompt cap and exposes dropped sections in inspect and snapshot", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-hard-cap-e2e-"));
+  const conversationId = "conv-prompt-hard-cap-e2e";
+  const maxChars = 40;
+  const fakeOpenAI = await startFakeOpenAIServer();
+  let gateway: GatewayProcessHandle | undefined;
+  let wsHandle: GatewayWebSocketHandle | undefined;
+
+  try {
+    gateway = await startGatewayProcess({
+      stateDir,
+      openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+      promptMarker: "PROMPT_HARD_CAP_E2E_MARKER",
+      extraEnv: {
+        BELLDANDY_MAX_SYSTEM_PROMPT_CHARS: String(maxChars),
+      },
+    });
+    wsHandle = await connectGatewayWebSocket(gateway.port);
+
+    const sendBeforePairingReqId = "message-send-hard-cap-before-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendBeforePairingReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: "hard cap snapshot validation",
+      },
+    }));
+    await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+    const sendReqId = "message-send-hard-cap-after-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: "hard cap snapshot validation",
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === sendReqId && frame.ok === true));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "event" && frame.event === "chat.final" && frame.payload?.conversationId === conversationId));
+    await waitFor(() => fakeOpenAI.requests.length > 0);
+
+    const sendRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === sendReqId && frame.ok === true);
+    const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+    expect(runId).toBeTruthy();
+
+    const persisted = await waitFor(async () => {
+      return loadConversationPromptSnapshotArtifact({
+        stateDir,
+        conversationId,
+        runId,
+      });
+    }, 10000);
+    expect(persisted.summary.truncationReason).toMatchObject({
+      code: "max_chars_limit",
+      maxChars,
+    });
+    expect(persisted.snapshot.systemPrompt.length).toBeLessThanOrEqual(maxChars);
+    expect(
+      (persisted.summary.truncationReason?.droppedSectionIds?.length ?? 0)
+      + (persisted.summary.truncationReason?.truncatedSectionIds?.length ?? 0),
+    ).toBeGreaterThan(0);
+
+    const inspectReqId = "agents-prompt-inspect-hard-cap-after-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: inspectReqId,
+      method: "agents.prompt.inspect",
+      params: {
+        conversationId,
+        runId,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === inspectReqId && frame.ok === true));
+
+    const inspectRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === inspectReqId);
+    expect(inspectRes?.payload?.finalChars).toBeLessThanOrEqual(maxChars);
+    expect(inspectRes?.payload?.metadata?.truncationReason).toMatchObject({
+      code: "max_chars_limit",
+      maxChars,
+    });
+    const inspectSectionIds = inspectRes?.payload?.sections?.map((section: any) => section.id) ?? [];
+    const inspectDroppedIds = inspectRes?.payload?.metadata?.truncationReason?.droppedSectionIds ?? [];
+    for (const droppedSectionId of inspectDroppedIds) {
+      expect(inspectSectionIds).not.toContain(droppedSectionId);
+    }
+    if (inspectDroppedIds.length > 0) {
+      expect(inspectRes?.payload?.droppedSections?.map((section: any) => section.id)).toEqual(
+        expect.arrayContaining(inspectDroppedIds),
+      );
+    }
+
+    const rpcReqId = "conversation-prompt-snapshot-hard-cap-get";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: rpcReqId,
+      method: "conversation.prompt_snapshot.get",
+      params: {
+        conversationId,
+        runId,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === rpcReqId && frame.ok === true));
+
+    const rpcRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === rpcReqId);
+    expect(rpcRes?.payload?.snapshot?.summary).toMatchObject({
+      systemPromptChars: expect.any(Number),
+      truncationReason: {
+        code: "max_chars_limit",
+        maxChars,
+      },
+    });
+    expect(rpcRes?.payload?.snapshot?.summary?.systemPromptChars).toBeLessThanOrEqual(maxChars);
+    expect(rpcRes?.payload?.snapshot?.snapshot?.systemPrompt.length).toBeLessThanOrEqual(maxChars);
+  } finally {
+    if (wsHandle) {
+      await wsHandle.close().catch(() => {});
+    }
+    if (gateway) {
+      await stopGatewayProcess(gateway).catch(() => {});
+    }
+    await fakeOpenAI.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 60000);
+
 test("gateway injects work overview and resume details into non-mock continuation prompts", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-resume-context-e2e-"));
   const conversationId = "conv-real-resume-current";

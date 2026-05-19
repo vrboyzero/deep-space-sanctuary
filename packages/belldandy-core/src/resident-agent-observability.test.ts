@@ -58,6 +58,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
     model: "primary",
     memoryMode: "hybrid",
     whenToUse: ["收口治理主线", "需要统筹多 agent"],
+    methods: ["multi-agent-review.md"],
     skills: ["orchestrate-review", "resident-observability"],
   });
   registry.register({
@@ -69,6 +70,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
     memoryMode: "shared",
     defaultRole: "coder",
     defaultPermissionMode: "confirm",
+    methods: ["repo-debug.md"],
     skills: ["repo-map"],
     handoffStyle: "structured",
   });
@@ -209,6 +211,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
           "mode:hybrid",
           "write:private",
           "handoff:summary",
+          "methods:1",
           "skills:2",
           "digest:idle",
           "review:1",
@@ -218,6 +221,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
         ]),
         catalog: expect.objectContaining({
           handoffStyle: "summary",
+          methods: ["multi-agent-review.md"],
           skills: ["orchestrate-review", "resident-observability"],
           whenToUse: ["收口治理主线", "需要统筹多 agent"],
         }),
@@ -225,6 +229,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
           catalogDefault: expect.objectContaining({
             role: "default",
             handoffStyle: "summary",
+            methods: ["multi-agent-review.md"],
             skills: ["orchestrate-review", "resident-observability"],
             whenToUse: ["收口治理主线", "需要统筹多 agent"],
           }),
@@ -247,6 +252,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
         catalog: expect.objectContaining({
           defaultRole: "coder",
           defaultPermissionMode: "confirm",
+          methods: ["repo-debug.md"],
           skills: ["repo-map"],
           handoffStyle: "structured",
         }),
@@ -255,6 +261,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
             role: "coder",
             permissionMode: "confirm",
             handoffStyle: "structured",
+            methods: ["repo-debug.md"],
             skills: ["repo-map"],
           }),
           effectiveLaunch: expect.objectContaining({
@@ -286,6 +293,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
         id: "default",
         catalog: expect.objectContaining({
           handoffStyle: "summary",
+          methods: ["multi-agent-review.md"],
           skills: ["orchestrate-review", "resident-observability"],
         }),
         recentSubtaskDigest: expect.objectContaining({
@@ -303,6 +311,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
           defaultRole: "coder",
           defaultPermissionMode: "confirm",
           handoffStyle: "structured",
+          methods: ["repo-debug.md"],
           skills: ["repo-map"],
         }),
       }),

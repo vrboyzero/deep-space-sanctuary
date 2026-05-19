@@ -214,6 +214,49 @@ tags:
         expect(secondIndex).toBeGreaterThan(firstIndex);
     });
 
+    it("soft-boosts preferred methods without restricting full search", async () => {
+        await methodCreateTool.execute({
+            filename: "Review-Code-Checklist.md",
+            content: `---
+summary: "适用于自动化审查"
+---
+
+# Review Checklist
+
+## Purpose
+用于自动化审查`,
+        }, context);
+
+        await methodCreateTool.execute({
+            filename: "Refactor-Code-Checklist.md",
+            content: `---
+summary: "适用于自动化审查"
+---
+
+# Refactor Checklist
+
+## Purpose
+也用于自动化审查`,
+        }, context);
+
+        const preferredContext: ToolContext = {
+            ...context,
+            agentCatalogPreferences: {
+                methods: ["Refactor-Code-Checklist.md"],
+            },
+        };
+
+        const search = await methodSearchTool.execute({ keyword: "自动化审查" }, preferredContext);
+        expect(search.success).toBe(true);
+        expect(search.output).toContain("推荐：preferred");
+
+        const preferredIndex = search.output.indexOf("Refactor-Code-Checklist.md");
+        const regularIndex = search.output.indexOf("Review-Code-Checklist.md");
+        expect(preferredIndex).toBeGreaterThanOrEqual(0);
+        expect(regularIndex).toBeGreaterThanOrEqual(0);
+        expect(preferredIndex).toBeLessThan(regularIndex);
+    });
+
     it("returns not-found message when search misses", async () => {
         const search = await methodSearchTool.execute({ keyword: "不存在的关键词" }, context);
         expect(search.success).toBe(true);

@@ -86,12 +86,12 @@ export function resolveTokenEstimateProfile(input?: {
   return "generic";
 }
 
-export function estimateTokens(text: string, options?: TokenEstimateOptions): number {
+export function estimateTokens(text: unknown, options?: TokenEstimateOptions): number {
   const normalizedText = typeof text === "string"
     ? text
     : (() => {
       if (Array.isArray(text)) {
-        return text.map((item) => estimateTokensInputToString(item)).filter(Boolean).join("");
+        return text.map((item: unknown) => estimateTokensInputToString(item)).filter(Boolean).join("");
       }
       return estimateTokensInputToString(text);
     })();

@@ -92,6 +92,8 @@ const runtimeAwareTool: Tool = withToolContract({
         defaultCwd: context.defaultCwd,
         toolSet: context.launchSpec?.toolSet ?? [],
         permissionMode: context.launchSpec?.permissionMode,
+        methods: context.agentCatalogPreferences?.methods ?? [],
+        skills: context.agentCatalogPreferences?.skills ?? [],
       }),
       durationMs: 0,
     };
@@ -406,6 +408,33 @@ describe("ToolExecutor", () => {
       defaultCwd: "/tmp/test/subdir",
       toolSet: ["runtime_aware"],
       permissionMode: "confirm",
+      methods: [],
+      skills: [],
+    });
+  });
+
+  it("should inject lightweight agent catalog preferences into tool context", async () => {
+    const executor = new ToolExecutor({
+      tools: [runtimeAwareTool],
+      workspaceRoot: "/tmp/test",
+      getAgentCatalogPreferences: (agentId) => agentId === "coder"
+        ? { methods: ["Review-Checklist.md"], skills: ["repo-map"] }
+        : undefined,
+    });
+
+    const result = await executor.execute(
+      { id: "req-tool-pref", name: "runtime_aware", arguments: {} },
+      "conv-1",
+      "coder",
+    );
+
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.output)).toEqual({
+      defaultCwd: undefined,
+      toolSet: [],
+      permissionMode: undefined,
+      methods: ["Review-Checklist.md"],
+      skills: ["repo-map"],
     });
   });
 
@@ -526,6 +555,84 @@ describe("ToolExecutor", () => {
     expect(results).toHaveLength(2);
     expect(results[0].output).toBe("Echo: A");
     expect(results[1].output).toBe("Echo: B");
+  });
+
+  it("should preflight-correct simple argument types before execution", async () => {
+    const executor = new ToolExecutor({
+      tools: [echoTool],
+      workspaceRoot: "/tmp/test",
+    });
+
+    const result = await executor.execute(
+      { id: "req-preflight-correct", name: "echo", arguments: { message: 123 as any } },
+      "conv-1",
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("Echo: 123");
+    expect(result.metadata).toMatchObject({
+      repairAction: "tool_arguments_corrected",
+      argumentValidation: {
+        corrected: true,
+        blocked: false,
+        corrections: expect.arrayContaining([
+          expect.stringContaining("message"),
+        ]),
+      },
+    });
+  });
+
+  it("should block execution when required arguments are still missing after preflight", async () => {
+    const executeSpy = vi.fn(async (args): Promise<ToolCallResult> => ({
+      id: "",
+      name: "echo_required",
+      success: true,
+      output: `Echo: ${String(args.message ?? "")}`,
+      durationMs: 0,
+    }));
+    const requiredTool: Tool = {
+      definition: {
+        name: "echo_required",
+        description: "返回必填消息",
+        parameters: {
+          type: "object",
+          properties: {
+            message: { type: "string", description: "要返回的消息" },
+          },
+          required: ["message"],
+        },
+      },
+      execute: executeSpy,
+    };
+    const executor = new ToolExecutor({
+      tools: [requiredTool],
+      workspaceRoot: "/tmp/test",
+    });
+
+    const result = await executor.execute(
+      { id: "req-preflight-block", name: "echo_required", arguments: { message: "   " } },
+      "conv-1",
+    );
+
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.failureKind).toBe("input_error");
+    expect(result.error).toContain("缺少必填参数 `message`");
+    expect(result.metadata).toMatchObject({
+      repairAction: "tool_arguments_invalid",
+      argumentValidation: {
+        blocked: true,
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: "message",
+            code: "missing_required",
+          }),
+        ]),
+        correctionHints: expect.arrayContaining([
+          expect.stringContaining("message"),
+        ]),
+      },
+    });
   });
 
   it("should reject tool execution outside agent whitelist", async () => {
@@ -1179,6 +1286,75 @@ describe("ToolExecutor", () => {
     }, "conv-ops");
     expect(resetResult.output).toContain("Reset loaded deferred tools");
     expect(executor.getLoadedDeferredToolList("conv-ops")).toEqual([]);
+  });
+
+  it("tool_search should preflight-correct alias and scalar arguments into canonical forms", async () => {
+    const deferredTool: Tool = {
+      definition: {
+        name: "goal_checkpoint_request",
+        description: "Request a goal checkpoint",
+        shortDescription: "Request a checkpoint",
+        parameters: {
+          type: "object",
+          properties: {
+            goalId: { type: "string", description: "goal id" },
+          },
+          required: ["goalId"],
+        },
+      },
+      async execute(args): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "goal_checkpoint_request",
+          success: true,
+          output: String(args.goalId ?? ""),
+          durationMs: 0,
+        };
+      },
+    };
+
+    const executor = new ToolExecutor({
+      tools: [echoTool, deferredTool],
+      workspaceRoot: "/tmp/test",
+      deferredToolNames: ["goal_checkpoint_request"],
+    });
+    executor.registerTool(createToolSearchTool({
+      getDiscoveryEntries: (conversationId?: string, agentId?: string, expandedFamilyIds?: string[]) =>
+        executor.getDiscoveryEntries(agentId, conversationId, undefined, { expandedFamilyIds }),
+      getLoadedDeferredToolList: (conversationId: string) => executor.getLoadedDeferredToolList(conversationId),
+      loadDeferredTools: (conversationId: string, toolNames: string[]) => executor.loadDeferredTools(conversationId, toolNames),
+      unloadDeferredTools: (conversationId: string, toolNames: string[]) => executor.unloadDeferredTools(conversationId, toolNames),
+      clearLoadedDeferredTools: (conversationId: string) => executor.clearLoadedDeferredTools(conversationId),
+      shrinkLoadedDeferredTools: (conversationId: string, toolNames: string[]) => executor.shrinkLoadedDeferredTools(conversationId, toolNames),
+    }));
+
+    const result = await executor.execute({
+      id: "req-tool-search-correct",
+      name: "tool_search",
+      arguments: {
+        family: "goals",
+        load: "goal_checkpoint_request",
+        resetLoaded: "true" as any,
+        maxResults: "5" as any,
+      },
+    }, "conv-ops");
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Expanded families for this search");
+    expect(result.output).toContain("Loaded tools for the next model turn only");
+    expect(result.metadata).toMatchObject({
+      repairAction: "tool_arguments_corrected",
+      argumentValidation: {
+        corrected: true,
+        blocked: false,
+        corrections: expect.arrayContaining([
+          expect.stringContaining("family"),
+          expect.stringContaining("load"),
+          expect.stringContaining("resetLoaded"),
+          expect.stringContaining("maxResults"),
+        ]),
+      },
+    });
   });
 
   it("should auto-prune oversized legacy deferred selections using recent tool digests first", () => {

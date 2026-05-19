@@ -110,6 +110,7 @@ describe("buildAgentRuntimePromptSections", () => {
       canDelegate: true,
       role: "default",
       profileId: "commander",
+      recommendedMethodNames: ["multi-agent-review.md"],
       recommendedSkillNames: ["orchestration-playbook"],
       methodAssets: [
         {
@@ -148,19 +149,31 @@ describe("buildAgentRuntimePromptSections", () => {
     expect(sections.map((section) => section.id)).toContain("method-skill-asset-summary");
     expect(sections.map((section) => section.id)).toContain("profile-execution-policy");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Profile-preferred methods: multi-agent-review.md");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
       .toContain("Profile-preferred skills: orchestration-playbook");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("file=multi-agent-review.md");
+      .toContain("SOPs / reusable workflows: use `method_search`");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("path=methods/multi-agent-review.md");
+      .toContain("Skills / domain instructions: use `skills_search`");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("Prompt-injected skills already active");
+      .toContain("Heavy builtin tools or MCP tools not currently visible: use `tool_search` first");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("memory-guard | 在优化方案里检查记忆能力是否退化。 | path=skills/memory-guard/SKILL.md");
+      .toContain("Method candidates (showing 1/48): `multi-agent-review.md` - 多 Agent 审查流程 [active]");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Active prompt skills (showing 1/3): `team-fan-in` - 帮助 manager 组织 fan-in 验收。");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("Searchable skill candidates (showing 1/37): `memory-guard` - 在优化方案里检查记忆能力是否退化。");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .toContain("On demand: use `method_search` -> `method_read`, `skills_search` -> `skill_get`.");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
       .toContain("Inventory counts: methods=48 | prompt_skills=3 | searchable_skills=37");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("Do not assume the grouped lists are exhaustive");
+      .toContain("Grouped lists below are samples, not exhaustive.");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .not.toContain("path=methods/multi-agent-review.md");
+    expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
+      .not.toContain("path=skills/memory-guard/SKILL.md");
     expect(sections.find((section) => section.id === "profile-execution-policy")?.text)
       .toContain("scope control, delegation, and fan-in acceptance");
     expect(sections.find((section) => section.id === "profile-execution-policy")?.text)

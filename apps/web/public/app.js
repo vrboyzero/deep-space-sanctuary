@@ -54,6 +54,7 @@ import { createGoalsStateRuntimeFeature } from "./app/features/goals-state-runti
 import { createGoalsReadonlyPanelsFeature } from "./app/features/goals-readonly-panels.js";
 import { createGoalsRuntimeFeature } from "./app/features/goals-runtime.js";
 import { createGoalsTrackingPanelFeature } from "./app/features/goals-tracking-panel.js";
+import { createHeaderNavigationFeature } from "./app/features/header-navigation.js";
 import { createMemoryDetailRenderFeature } from "./app/features/memory-detail-render.js";
 import { createMemoryRuntimeFeature } from "./app/features/memory-runtime.js";
 import { createMemoryViewerFeature } from "./app/features/memory-viewer.js";
@@ -71,6 +72,7 @@ import { updateTokenUsageObservability } from "./app/features/token-usage-observ
 import { createThemeController } from "./app/features/theme.js";
 import { createVoiceFeature } from "./app/features/voice.js";
 import { GOVERNANCE_DETAIL_MODE_CHANGED_EVENT } from "./app/features/governance-detail-mode.js";
+import { consumeSessionAuthHandoff, createSessionAuthHandoffUrl } from "./app/features/session-auth-handoff.js";
 import { applyWebConfigLinks } from "./app/features/web-config-links.js";
 import { createWorkspaceFeature } from "./app/features/workspace.js";
 import { LOCALE_DICTIONARIES, LOCALE_META } from "./app/i18n/index.js";
@@ -94,10 +96,12 @@ const {
   modelSelectEl,
   agentSelectEl,
   themeToggleBtn,
+  openWebChatTabLink,
   sidebarEl,
   sidebarTitleEl,
   fileTreeEl,
   refreshTreeBtn,
+  goGoalsPageBtn,
   goChatPageBtn,
   chatSection,
   editorSection,
@@ -685,10 +689,20 @@ const appShellFeature = createAppShellFeature({
 const showNotice = (...args) => appShellFeature.showNotice(...args);
 const switchMode = (...args) => appShellFeature.switchMode(...args);
 const updateSidebarModeButtons = (...args) => appShellFeature.updateSidebarModeButtons(...args);
-
-goChatPageBtn?.addEventListener("click", () => {
-  switchMode("chat");
-  promptEl?.focus();
+createHeaderNavigationFeature({
+  refs: {
+    openWebChatTabLink,
+    goGoalsPageBtn,
+    goChatPageBtn,
+  },
+  switchMode,
+  loadGoals: (forceReload = false) => loadGoals(forceReload),
+  focusPrompt: () => promptEl?.focus(),
+  buildMultiPageUrl: () => createSessionAuthHandoffUrl({
+    currentUrl: window.location.href,
+    authMode: authModeEl?.value || "",
+    authValue: authValueEl?.value || "",
+  }),
 });
 
 sessionNavigationFeature = createSessionNavigationFeature({
@@ -832,6 +846,13 @@ workspaceFeature.handleSidebarVisibilityChange?.(panelVisibilityFeature.getState
 
 restoreAuthFields({ storeKey: STORE_KEY, authModeEl, authValueEl });
 restoreSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
+const handedOffAuth = consumeSessionAuthHandoff();
+if (handedOffAuth?.mode === "token" && handedOffAuth.value) {
+  authModeEl.value = "token";
+  authValueEl.value = handedOffAuth.value;
+  transientUrlToken = handedOffAuth.value;
+  persistSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
+}
 restoreWorkspaceRootsField({ workspaceRootsKey: WORKSPACE_ROOTS_KEY, workspaceRootsEl });
 restoreUuidField({ uuidKey: UUID_KEY, userUuidEl });
 
@@ -2620,6 +2641,7 @@ applyWebConfigLinks(
     recommendApiLink,
     aliyunOneKeyLink,
     officialHomeLink,
+    openWebChatTabLink,
     workshopLink,
   },
   window.BELLDANDY_WEB_CONFIG,

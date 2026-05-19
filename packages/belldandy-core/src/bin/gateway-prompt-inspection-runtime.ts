@@ -22,6 +22,7 @@ import { PromptSnapshotStore } from "../prompt-snapshot-store.js";
 import {
   applyPromptExperimentsToSections,
   buildPromptTokenBreakdown,
+  readPromptTruncationReasonFromMetadata,
   withDeltaPromptMetrics,
   withProviderNativeSystemBlockPromptMetrics,
   withSectionPromptMetrics,
@@ -683,6 +684,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
         residentStateBinding,
         includesTtsMode: isTtsEnabled(),
         hasProfileOverride: Boolean(profile.systemPromptOverride),
+        ...(typeof baseBuild.maxChars === "number" ? { systemPromptMaxChars: baseBuild.maxChars } : {}),
         baseFinalChars: baseBuild.finalChars,
         baseSectionCount: baseBuild.sections.length,
         finalSectionCount: promptExperimentResult.sections.length,
@@ -948,6 +950,17 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       previousExists: Boolean(previousSnapshot),
     });
     const residentPromptMetadata = readResidentPromptMetadata(isRecord(snapshot.inputMeta) ? snapshot.inputMeta : undefined);
+    const snapshotTruncationReason = isRecord(snapshot.inputMeta)
+      ? readPromptTruncationReasonFromMetadata(snapshot.inputMeta as Record<string, unknown>)
+      : undefined;
+    if (
+      droppedSections.length === 0
+      && snapshotTruncationReason?.droppedSectionIds?.length
+      && baseInspection?.droppedSections?.length
+    ) {
+      const droppedSectionIdSet = new Set(snapshotTruncationReason.droppedSectionIds);
+      droppedSections = baseInspection.droppedSections.filter((section) => droppedSectionIdSet.has(section.id));
+    }
 
     return {
       scope: "run",
@@ -958,8 +971,8 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       runId: snapshot.runId,
       createdAt: snapshot.createdAt,
       text: snapshot.systemPrompt,
-      truncated,
-      maxChars,
+      truncated: snapshotTruncationReason ? true : truncated,
+      maxChars: snapshotTruncationReason?.maxChars ?? maxChars,
       totalChars: snapshot.systemPrompt.length,
       finalChars: snapshot.systemPrompt.length,
       sections: measuredSections,
@@ -1002,6 +1015,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
         warmupCoordination,
         cacheFamilyAffinity,
         tokenBreakdown,
+        ...(snapshotTruncationReason ? { truncationReason: snapshotTruncationReason } : {}),
         inputMeta: snapshot.inputMeta ? { ...snapshot.inputMeta } : undefined,
       },
     };

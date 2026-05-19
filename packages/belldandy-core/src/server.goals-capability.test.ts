@@ -58,21 +58,25 @@ test("goal capability update and commander decide use goal manager governance me
     nodeId: "node_1",
     updatedAt: "2026-05-17T11:00:00.000Z",
   }));
+  const claimTaskNode = vi.fn(async () => ({ node: { id: "node_1", status: "in_progress" } }));
+  const markTaskNodeValidating = vi.fn(async () => ({ node: { id: "node_1", status: "validating" } }));
+  const completeTaskNode = vi.fn(async () => ({ node: { id: "node_1", status: "done" } }));
+  const blockTaskNode = vi.fn(async () => ({ node: { id: "node_1", status: "blocked" } }));
   const ctx = {
     goalManager: {
       getCapabilityPlan: vi.fn(async () => existingPlan),
       saveCapabilityPlan,
-      claimTaskNode: vi.fn(async () => ({ node: { id: "node_1", status: "in_progress" } })),
-      markTaskNodeValidating: vi.fn(async () => ({ node: { id: "node_1", status: "validating" } })),
-      completeTaskNode: vi.fn(async () => ({ node: { id: "node_1", status: "done" } })),
-      blockTaskNode: vi.fn(async () => ({ node: { id: "node_1", status: "blocked" } })),
+      claimTaskNode,
+      markTaskNodeValidating,
+      completeTaskNode,
+      blockTaskNode,
     },
     stateDir: "state",
     residentMemoryManagers: [],
     readEnv: (name: string) => name === "BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED" ? "true" : undefined,
     parseGoalTaskCheckpointStatus: () => undefined,
     parseGoalTaskCreateStatus: () => undefined,
-  };
+  } as unknown as Parameters<typeof handleGoalMethod>[1];
 
   const updateRes = await handleGoalMethod({
     type: "req",
@@ -110,7 +114,7 @@ test("goal capability update and commander decide use goal manager governance me
   }, ctx);
 
   expect(decideRes?.ok).toBe(true);
-  expect(ctx.goalManager.completeTaskNode).toHaveBeenCalledWith("goal_1", "node_1", expect.objectContaining({
+  expect(completeTaskNode).toHaveBeenCalledWith("goal_1", "node_1", expect.objectContaining({
     summary: "Auto close",
   }));
 
@@ -127,11 +131,14 @@ test("goal capability update and commander decide use goal manager governance me
   }, ctx);
 
   expect(reworkRes?.ok).toBe(true);
-  expect(reworkRes?.payload?.reworkContext).toMatchObject({
+  const reworkOkRes = reworkRes as Extract<NonNullable<typeof reworkRes>, { ok: true }>;
+  expect(reworkOkRes.payload).toBeTruthy();
+  const reworkPayload = reworkOkRes.payload as NonNullable<typeof reworkOkRes.payload>;
+  expect(reworkPayload.reworkContext).toMatchObject({
     quickSummary: "Need stronger regression evidence",
   });
-  expect(reworkRes?.payload?.reworkTargetAgentIds).toEqual(["reviewer"]);
-  expect(reworkRes?.payload?.autoReworkEnabled).toBe(true);
+  expect(reworkPayload.reworkTargetAgentIds).toEqual(["reviewer"]);
+  expect(reworkPayload.autoReworkEnabled).toBe(true);
   expect(saveCapabilityPlan).toHaveBeenCalledWith("goal_1", "node_1", expect.objectContaining({
     orchestration: expect.objectContaining({
       reworkRevisionCount: 2,
@@ -139,10 +146,10 @@ test("goal capability update and commander decide use goal manager governance me
       reworkTargetAgentIds: ["reviewer"],
     }),
   }));
-  expect(ctx.goalManager.claimTaskNode).toHaveBeenCalledWith("goal_1", "node_1", expect.objectContaining({
+  expect(claimTaskNode).toHaveBeenCalledWith("goal_1", "node_1", expect.objectContaining({
     summary: "Need stronger regression evidence",
   }));
-  expect(ctx.goalManager.blockTaskNode).not.toHaveBeenCalled();
+  expect(blockTaskNode).not.toHaveBeenCalled();
 });
 
 test("goal capability commander decide falls back to blocked rework when auto rework switch is disabled", async () => {
@@ -201,21 +208,25 @@ test("goal capability commander decide falls back to blocked rework when auto re
     nodeId: "node_2",
     updatedAt: "2026-05-17T11:00:00.000Z",
   }));
+  const claimTaskNode = vi.fn(async () => ({ node: { id: "node_2", status: "in_progress" } }));
+  const markTaskNodeValidating = vi.fn(async () => ({ node: { id: "node_2", status: "validating" } }));
+  const completeTaskNode = vi.fn(async () => ({ node: { id: "node_2", status: "done" } }));
+  const blockTaskNode = vi.fn(async () => ({ node: { id: "node_2", status: "blocked" } }));
   const ctx = {
     goalManager: {
       getCapabilityPlan: vi.fn(async () => existingPlan),
       saveCapabilityPlan,
-      claimTaskNode: vi.fn(async () => ({ node: { id: "node_2", status: "in_progress" } })),
-      markTaskNodeValidating: vi.fn(async () => ({ node: { id: "node_2", status: "validating" } })),
-      completeTaskNode: vi.fn(async () => ({ node: { id: "node_2", status: "done" } })),
-      blockTaskNode: vi.fn(async () => ({ node: { id: "node_2", status: "blocked" } })),
+      claimTaskNode,
+      markTaskNodeValidating,
+      completeTaskNode,
+      blockTaskNode,
     },
     stateDir: "state",
     residentMemoryManagers: [],
     readEnv: () => undefined,
     parseGoalTaskCheckpointStatus: () => undefined,
     parseGoalTaskCreateStatus: () => undefined,
-  };
+  } as unknown as Parameters<typeof handleGoalMethod>[1];
 
   const reworkRes = await handleGoalMethod({
     type: "req",
@@ -230,11 +241,14 @@ test("goal capability commander decide falls back to blocked rework when auto re
   }, ctx);
 
   expect(reworkRes?.ok).toBe(true);
-  expect(reworkRes?.payload?.autoReworkEnabled).toBe(false);
-  expect(reworkRes?.payload?.reworkTargetAgentIds).toEqual(["coder"]);
-  expect(ctx.goalManager.blockTaskNode).toHaveBeenCalledWith("goal_2", "node_2", expect.objectContaining({
+  const reworkOkRes = reworkRes as Extract<NonNullable<typeof reworkRes>, { ok: true }>;
+  expect(reworkOkRes.payload).toBeTruthy();
+  const reworkPayload = reworkOkRes.payload as NonNullable<typeof reworkOkRes.payload>;
+  expect(reworkPayload.autoReworkEnabled).toBe(false);
+  expect(reworkPayload.reworkTargetAgentIds).toEqual(["coder"]);
+  expect(blockTaskNode).toHaveBeenCalledWith("goal_2", "node_2", expect.objectContaining({
     summary: "Fan-in rejected",
     blockReason: expect.stringContaining("Rework Revision 1"),
   }));
-  expect(ctx.goalManager.claimTaskNode).not.toHaveBeenCalled();
+  expect(claimTaskNode).not.toHaveBeenCalled();
 });

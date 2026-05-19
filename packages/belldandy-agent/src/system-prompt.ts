@@ -10,6 +10,7 @@ import {
     MEMORY_FILENAME,
     getWorkspaceDocumentBody,
 } from "./workspace.js";
+import { buildCapabilityRoutingIndexLines, buildCapabilityUsageNotesLines } from "./capability-routing.js";
 
 /**
  * System Prompt 构建参数
@@ -32,7 +33,12 @@ export type SystemPromptParams = {
     /** 最大字符数限制，超过则按优先级截断低优先级段落（0 或 undefined 表示不限制） */
     maxChars?: number;
     /** 需要直接注入 system prompt 的 skill 指令列表（high/always priority） */
-    skillInstructions?: Array<{ name: string; instructions: string }>;
+    skillInstructions?: Array<{
+        name: string;
+        instructions: string;
+        priority?: "high" | "always";
+        description?: string;
+    }>;
     /** 是否有更多按需 skills 可通过 skills_search 搜索 */
     hasSearchableSkills?: boolean;
     /** 是否支持UUID验证（告知Agent当前环境是否支持UUID） */
@@ -84,6 +90,8 @@ export type SystemPromptBuildResult = {
         droppedSectionCount: number;
         droppedSectionIds: string[];
         droppedSectionLabels: string[];
+        truncatedSectionIds?: string[];
+        truncatedSectionLabels?: string[];
         message: string;
     };
     maxChars?: number;
@@ -147,6 +155,173 @@ function applySectionPriorityOverrides(
             ? overrides[section.id]!
             : section.priority,
     }));
+}
+
+function buildMaxCharsPriorityProtectionOverrides(maxChars: number): Record<string, number> | undefined {
+    if (!maxChars || maxChars <= 0) {
+        return undefined;
+    }
+
+    return {
+        core: 0,
+        "workspace-agents": 10,
+        "workspace-soul": 20,
+        "tool-use-policy": 55,
+        "tool-contract-governance": 56,
+        "method-skill-asset-summary": 57,
+        skills: 58,
+        methodology: 59,
+        context: 60,
+        "team-operating-model": 91,
+        "team-topology-and-ownership": 92,
+        "team-identity-governance-policy": 93,
+        "delegation-operating-policy": 94,
+        "manager-fanout-fanin-policy": 95,
+        "team-shared-state-policy": 96,
+        "profile-execution-policy": 97,
+        "role-execution-policy": 98,
+        extra: 100,
+        "workspace-dir": 120,
+    };
+}
+
+function mergeSectionPriorityOverrides(
+    base?: Record<string, number>,
+    overrides?: Record<string, number>,
+): Record<string, number> | undefined {
+    if (!base && !overrides) {
+        return undefined;
+    }
+    return {
+        ...(base ?? {}),
+        ...(overrides ?? {}),
+    };
+}
+
+function formatHighPrioritySkillSummary(skill: {
+    name: string;
+    description?: string;
+}): string {
+    const description = skill.description?.trim();
+    return description
+        ? `- \`${skill.name}\` - ${description}`
+        : `- \`${skill.name}\` - summary only; use \`skill_get\` to open the full instructions when needed.`;
+}
+
+function renderSectionsLength(sections: SystemPromptSection[]): number {
+    return renderSystemPromptSections(sections).length;
+}
+
+function buildTruncationNoticeCandidates(input: {
+    maxChars: number;
+    droppedSections: SystemPromptSection[];
+}): string[] {
+    const labels = input.droppedSections.map((section) => section.label);
+    const count = input.droppedSections.length;
+    return [
+        `\n[System prompt truncated: dropped ${labels.join(", ")} to fit ${input.maxChars} char limit]\n`,
+        `\n[System prompt truncated: dropped ${count} section${count === 1 ? "" : "s"} to fit ${input.maxChars} char limit]\n`,
+        `\n[System prompt truncated to fit ${input.maxChars} char limit]\n`,
+        "\n[System prompt truncated]\n",
+        "",
+    ];
+}
+
+function createTruncationNoticeSection(text: string): SystemPromptSection {
+    return createSection({
+        id: "truncation-notice",
+        label: "truncation-notice",
+        source: "meta",
+        priority: 999,
+        text,
+    });
+}
+
+function resolveTruncationNoticeText(input: {
+    keptSections: SystemPromptSection[];
+    droppedSections: SystemPromptSection[];
+    maxChars: number;
+}): string {
+    if (input.droppedSections.length === 0) {
+        return "";
+    }
+    for (const candidate of buildTruncationNoticeCandidates({
+        maxChars: input.maxChars,
+        droppedSections: input.droppedSections,
+    })) {
+        if (!candidate) {
+            return "";
+        }
+        const withNotice = [...input.keptSections, createTruncationNoticeSection(candidate)];
+        if (renderSectionsLength(withNotice) <= input.maxChars) {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+function hardTruncateSectionText(text: string, maxChars: number): string {
+    if (maxChars <= 0) {
+        return "";
+    }
+    if (text.length <= maxChars) {
+        return text;
+    }
+    const suffix = "\n...[section truncated]";
+    if (maxChars <= suffix.length) {
+        return suffix.slice(0, maxChars);
+    }
+    return `${text.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`;
+}
+
+function fitSectionTextWithinBudget(
+    sections: SystemPromptSection[],
+    targetIndex: number,
+    maxChars: number,
+): string {
+    const target = sections[targetIndex];
+    if (!target) {
+        return "";
+    }
+    if (renderSectionsLength(sections) <= maxChars) {
+        return target.text;
+    }
+
+    let low = 0;
+    let high = target.text.length;
+    let best = "";
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const candidateText = hardTruncateSectionText(target.text, mid);
+        const candidateSections = sections.map((section, index) => (
+            index === targetIndex
+                ? { ...section, text: candidateText }
+                : section
+        ));
+        if (renderSectionsLength(candidateSections) <= maxChars) {
+            best = candidateText;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return best;
+}
+
+function buildTruncationReasonMessage(input: {
+    maxChars: number;
+    droppedSections: SystemPromptSection[];
+    truncatedSections: SystemPromptSection[];
+}): string {
+    const droppedLabels = input.droppedSections.map((section) => section.label);
+    const truncatedLabels = input.truncatedSections.map((section) => section.label);
+    if (droppedLabels.length > 0 && truncatedLabels.length > 0) {
+        return `Dropped ${droppedLabels.join(", ")} and truncated ${truncatedLabels.join(", ")} to fit ${input.maxChars} char limit.`;
+    }
+    if (droppedLabels.length > 0) {
+        return `Dropped ${droppedLabels.join(", ")} to fit ${input.maxChars} char limit.`;
+    }
+    return `Truncated ${truncatedLabels.join(", ")} to fit ${input.maxChars} char limit.`;
 }
 
 function sortSectionsByPriority(
@@ -490,32 +665,43 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
 
     // P7: Skills（技能指令注入）
     if (params.skillInstructions && params.skillInstructions.length > 0) {
-        const SKILL_CHAR_LIMIT = 4000;
         const skillLines: string[] = ["# Active Skills", ""];
+        const alwaysSkills = params.skillInstructions.filter((skill) => skill.priority === "always");
+        const highSkills = params.skillInstructions.filter((skill) => skill.priority !== "always");
+        let hasRenderedSkillContent = false;
 
-        let totalChars = 0;
-        let injectedFull = false;
-        for (const skill of params.skillInstructions) {
-            if (totalChars + skill.instructions.length <= SKILL_CHAR_LIMIT) {
-                skillLines.push(`## [${skill.name}]`, "", skill.instructions.trim(), "");
-                totalChars += skill.instructions.length;
-                injectedFull = true;
-            } else {
-                // 超过阈值，降级为摘要
-                skillLines.push(`- **${skill.name}**: (use skills_search to view full instructions)`);
-            }
+        for (const skill of alwaysSkills) {
+            const instructions = skill.instructions.trim();
+            if (!instructions) continue;
+            skillLines.push(`## [${skill.name}]`, "", instructions, "");
+            hasRenderedSkillContent = true;
         }
 
-        if (params.hasSearchableSkills) {
+        if (highSkills.length > 0) {
+            if (hasRenderedSkillContent) {
+                skillLines.push("");
+            }
             skillLines.push(
+                "## High-Priority Skill Summaries",
                 "",
-                "你有更多专业技能存储在技能库中。当遇到不熟悉的领域时，请使用 skills_search 工具搜索可用技能；当你决定采用某个 skill 时，优先调用 skill_get 精确打开。",
-                "注意：仅搜索不算已使用；skill_get 会在当前 task 存在时自动记录 skill usage。若通过其他入口实际采用了 method 或 skill，再调用 experience_usage_record 补记。若误记了 usage，可用 experience_usage_revoke 撤销当前 task 的记录。",
+                "These skills remain visible as summaries. Open the exact one with `skill_get` once you decide to adopt it.",
+                "",
+                ...highSkills.map((skill) => formatHighPrioritySkillSummary(skill)),
+                "",
+            );
+            hasRenderedSkillContent = true;
+        }
+
+        if (params.hasSearchableSkills || highSkills.length > 0) {
+            skillLines.push(
+                ...buildCapabilityRoutingIndexLines(),
+                "",
+                ...buildCapabilityUsageNotesLines(),
                 "",
             );
         }
 
-        if (injectedFull || params.hasSearchableSkills) {
+        if (hasRenderedSkillContent || params.hasSearchableSkills) {
             sections.push(createSection({
                 id: "skills",
                 label: "skills",
@@ -533,8 +719,9 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
             text: [
                 "# Skills",
                 "",
-                "你有专业技能存储在技能库中。当遇到不熟悉的领域时，请使用 skills_search 工具搜索可用技能；当你决定采用某个 skill 时，优先调用 skill_get 精确打开。",
-                "注意：仅搜索不算已使用；skill_get 会在当前 task 存在时自动记录 skill usage。若通过其他入口实际采用了 method 或 skill，再调用 experience_usage_record 补记。若误记了 usage，可用 experience_usage_revoke 撤销当前 task 的记录。",
+                ...buildCapabilityRoutingIndexLines(),
+                "",
+                ...buildCapabilityUsageNotesLines(),
                 "",
             ].join("\n"),
         }));
@@ -624,14 +811,13 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
             `This is your "Procedural Memory" - a library of Standard Operating Procedures (SOPs).`,
             "",
             "## Execution Protocol",
-            "1. **Check First**: Before doing anything other than ordinary conversation, ALWAYS check for existing methods.",
-            "   - Use `method_list` or `method_search` to find relevant docs.",
-            "   - Use `method_read` to load the SOP.",
-            "   - Use `skills_search` to discover skills, and `skill_get` to load the exact skill you decide to adopt.",
-            "   - **Follow the method strictly** if found.",
-            "   - `method_read` and `skill_get` will auto-record usage when the current conversation already has a task.",
-            "   - If you adopted a method or skill through some other non-standard path, call `experience_usage_record` to record the usage manually.",
-            "   - If a usage was recorded by mistake, use `experience_usage_revoke` to revoke it on the current task.",
+            "1. **Check First**: Before doing anything other than ordinary conversation, check whether an existing method or skill already matches the task.",
+            "- Methods: use `method_search` / `method_list`, then `method_read` for the exact SOP.",
+            "- Skills: use `skills_search`, then `skill_get` for the exact skill you decide to adopt.",
+            "- Hidden heavy tools or MCP tools: use `tool_search` first, then load/select the exact schema needed for the next turn.",
+            "- Runtime governance / diagnostics / metadata are queried through RPC surfaces, not native tool-calling paths.",
+            "- `method_read` and `skill_get` auto-record usage when the current conversation already has a task.",
+            "**Follow the exact method or skill once you decide to adopt it.**",
             "",
             "2. **Knowledge Distillation**: After completing a task, REFLECT: 'Did I learn a reusable pattern?'",
             "   - If yes -> Use `method_create` to save/update the Method.",
@@ -655,47 +841,83 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
     }
 
     const orderedSections = sortSectionsByPriority(
-        applySectionPriorityOverrides(sections, params.sectionPriorityOverrides),
+        applySectionPriorityOverrides(
+            sections,
+            mergeSectionPriorityOverrides(
+                buildMaxCharsPriorityProtectionOverrides(maxChars),
+                params.sectionPriorityOverrides,
+            ),
+        ),
     );
 
     // 截断逻辑：从末尾开始丢弃低优先级段落
     const droppedSections: SystemPromptSection[] = [];
+    const truncatedSections: SystemPromptSection[] = [];
     const keptSections = [...orderedSections];
     let truncationReason: SystemPromptBuildResult["truncationReason"];
     if (maxChars) {
-        let total = keptSections.reduce((sum, s) => sum + s.text.length, 0);
-        // 从最低优先级（末尾）开始丢弃，但始终保留 P0（core）
-        while (total > maxChars && keptSections.length > 1) {
+        // 从最低优先级（末尾）开始丢弃，但始终保留至少一个 section
+        while (renderSectionsLength(keptSections) > maxChars && keptSections.length > 1) {
             const removed = keptSections.pop()!;
-            total -= removed.text.length;
             droppedSections.unshift(removed);
         }
-        if (droppedSections.length > 0) {
+
+        const noticeText = resolveTruncationNoticeText({
+            keptSections,
+            droppedSections,
+            maxChars,
+        });
+        if (noticeText) {
+            keptSections.push(createTruncationNoticeSection(noticeText));
+        }
+
+        if (renderSectionsLength(keptSections) > maxChars) {
+            const truncationTargetIndex = keptSections.findIndex((section) => section.id !== "truncation-notice");
+            if (truncationTargetIndex >= 0) {
+                const truncationTarget = keptSections[truncationTargetIndex]!;
+                const truncatedText = fitSectionTextWithinBudget(keptSections, truncationTargetIndex, maxChars);
+                if (truncatedText !== truncationTarget.text) {
+                    keptSections[truncationTargetIndex] = {
+                        ...truncationTarget,
+                        text: truncatedText,
+                    };
+                    truncatedSections.push({
+                        ...truncationTarget,
+                        text: truncatedText,
+                    });
+                }
+            }
+        }
+
+        if (droppedSections.length > 0 || truncatedSections.length > 0) {
             truncationReason = {
                 code: "max_chars_limit",
                 maxChars,
                 droppedSectionCount: droppedSections.length,
                 droppedSectionIds: droppedSections.map((section) => section.id),
                 droppedSectionLabels: droppedSections.map((section) => section.label),
-                message: `Dropped ${droppedSections.map((section) => section.label).join(", ")} to fit ${maxChars} char limit.`,
+                ...(truncatedSections.length > 0
+                    ? {
+                        truncatedSectionIds: truncatedSections.map((section) => section.id),
+                        truncatedSectionLabels: truncatedSections.map((section) => section.label),
+                    }
+                    : {}),
+                message: buildTruncationReasonMessage({
+                    maxChars,
+                    droppedSections,
+                    truncatedSections,
+                }),
             };
-            keptSections.push(createSection({
-                id: "truncation-notice",
-                label: "truncation-notice",
-                source: "meta",
-                priority: 999,
-                text: `\n[System prompt truncated: dropped ${droppedSections.map((section) => section.label).join(", ")} to fit ${maxChars} char limit]\n`,
-            }));
         }
     }
 
-    const totalChars = orderedSections.reduce((sum, section) => sum + section.text.length, 0);
+    const totalChars = renderSectionsLength(orderedSections);
     const text = renderSystemPromptSections(keptSections);
     return {
         text,
         sections: keptSections,
         droppedSections,
-        truncated: droppedSections.length > 0,
+        truncated: droppedSections.length > 0 || truncatedSections.length > 0,
         ...(truncationReason ? { truncationReason } : {}),
         maxChars: maxChars || undefined,
         totalChars,

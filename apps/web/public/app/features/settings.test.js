@@ -1538,6 +1538,7 @@ describe("settings controller", () => {
 
   it("loads final cleanup prompt and multimedia settings", async () => {
     const loadServerConfig = vi.fn().mockResolvedValue({
+      BELLDANDY_MAX_SYSTEM_PROMPT_CHARS: "70000",
       BELLDANDY_PROMPT_EXPERIMENT_DISABLE_SECTIONS: "methodology,context",
       BELLDANDY_PROMPT_EXPERIMENT_SECTION_PRIORITY_OVERRIDES: "methodology:5,extra:150",
       BELLDANDY_PROMPT_EXPERIMENT_DISABLE_TOOL_CONTRACTS: "apply_patch,run_command",
@@ -1617,6 +1618,7 @@ describe("settings controller", () => {
 
     await controller.loadConfig();
 
+    expect(refs.cfgMaxSystemPromptChars.value).toBe("70000");
     expect(refs.cfgPromptExperimentDisableSections.value).toBe("methodology,context");
     expect(refs.cfgPromptSnapshotRetentionDays.value).toBe("7");
     expect(refs.cfgCompactionEnabled.checked).toBe(true);
@@ -2001,6 +2003,7 @@ describe("settings controller", () => {
 
   it("saves final cleanup prompt and multimedia settings", async () => {
     const refs = createSettingsRefs({
+      cfgMaxSystemPromptChars: createInput(" 70000 "),
       cfgPromptExperimentDisableSections: createInput(" methodology,context "),
       cfgPromptExperimentSectionPriorityOverrides: createInput(" methodology:5,extra:150 "),
       cfgPromptExperimentDisableToolContracts: createInput(" apply_patch,run_command "),
@@ -2103,6 +2106,7 @@ describe("settings controller", () => {
 
     const updateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
     expect(updateCall?.[0]?.params?.updates).toMatchObject({
+      BELLDANDY_MAX_SYSTEM_PROMPT_CHARS: "70000",
       BELLDANDY_PROMPT_EXPERIMENT_DISABLE_SECTIONS: "methodology,context",
       BELLDANDY_PROMPT_EXPERIMENT_SECTION_PRIORITY_OVERRIDES: "methodology:5,extra:150",
       BELLDANDY_PROMPT_EXPERIMENT_DISABLE_TOOL_CONTRACTS: "apply_patch,run_command",

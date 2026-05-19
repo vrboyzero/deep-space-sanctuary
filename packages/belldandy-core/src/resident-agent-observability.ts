@@ -320,6 +320,9 @@ function buildAgentObservabilityBadges(
   if (agent.catalog?.handoffStyle) {
     badges.push(`handoff:${agent.catalog.handoffStyle}`);
   }
+  if ((agent.catalog?.methods?.length ?? 0) > 0) {
+    badges.push(`methods:${agent.catalog?.methods?.length ?? 0}`);
+  }
   if ((agent.catalog?.skills?.length ?? 0) > 0) {
     badges.push(`skills:${agent.catalog?.skills?.length ?? 0}`);
   }
@@ -376,6 +379,9 @@ function buildAgentObservabilityHeadline(
   }
   if (agent.catalog?.handoffStyle) {
     pieces.push(`handoff=${agent.catalog.handoffStyle}`);
+  }
+  if ((agent.catalog?.methods?.length ?? 0) > 0) {
+    pieces.push(`methods=${agent.catalog?.methods?.length ?? 0}`);
   }
   if ((agent.catalog?.skills?.length ?? 0) > 0) {
     pieces.push(`skills=${agent.catalog?.skills?.length ?? 0}`);

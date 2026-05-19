@@ -171,3 +171,18 @@ export function resolveRecommendedSkillNames(
     .filter((item) => item.length > 0 && availableNames.has(item))
     .slice(0, Math.max(0, maxItems));
 }
+
+export function resolveRecommendedMethodNames(
+  preferredMethods: readonly string[] | undefined,
+  availableMethods: readonly RuntimeMethodAssetSummary[],
+  maxItems = 4,
+): string[] {
+  if (!preferredMethods || preferredMethods.length === 0) {
+    return [];
+  }
+  const availableNames = new Set(availableMethods.map((method) => method.fileName));
+  return preferredMethods
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && availableNames.has(item))
+    .slice(0, Math.max(0, maxItems));
+}

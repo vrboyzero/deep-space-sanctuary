@@ -68,6 +68,52 @@ function formatEntries(entries: ToolDiscoveryEntry[]): string {
   }).join("\n");
 }
 
+function collectDiscoveryNextStepHints(input: {
+  matches: ToolDiscoveryEntry[];
+  expandedFamilies: string[];
+  loaded: string[];
+  select: string[];
+  query: string;
+}): string[] {
+  const hints: string[] = [];
+  const familyMatches = input.matches.filter((entry): entry is Extract<ToolDiscoveryEntry, { kind: "family" }> => entry.kind === "family");
+  const toolMatches = input.matches.filter((entry): entry is Extract<ToolDiscoveryEntry, { kind: "tool" }> => entry.kind === "tool");
+
+  if (input.select.length > 0 && input.loaded.length > 0) {
+    hints.push("Exact deferred schemas are already queued for the next model turn. Call those tools directly next.");
+  }
+
+  if (familyMatches.length > 0) {
+    const unexpandedFamilies = familyMatches
+      .filter((entry) => entry.gateMode === "hidden-until-expanded" && !input.expandedFamilies.includes(entry.id))
+      .slice(0, 3)
+      .map((entry) => entry.id);
+    if (unexpandedFamilies.length > 0) {
+      hints.push(`If you need an exact tool, expand the matching family first: tool_search {"expandFamilies":["${unexpandedFamilies[0]}"]}.`);
+    }
+  }
+
+  const deferredToolMatches = toolMatches.filter((entry) => entry.loadingMode === "deferred" && !entry.loaded);
+  if (deferredToolMatches.length > 0) {
+    hints.push(`After choosing one deferred tool, load only that exact schema: tool_search {"select":["${deferredToolMatches[0].name}"]}.`);
+  }
+
+  const loadedToolMatches = toolMatches.filter((entry) => entry.loaded);
+  if (loadedToolMatches.length > 0) {
+    hints.push(`Already loaded and ready to call now: ${loadedToolMatches.slice(0, 3).map((entry) => entry.name).join(", ")}.`);
+  }
+
+  if (input.query && hints.length === 0 && toolMatches.length === 0 && familyMatches.length === 0) {
+    hints.push("Try a broader query, or inspect heavy families first with `tool_search` and then expand the most relevant family.");
+  }
+
+  if (input.query && hints.length === 0) {
+    hints.push("Pick one exact tool from Matches and avoid loading multiple deferred schemas unless the task truly needs them.");
+  }
+
+  return hints;
+}
+
 function getEntrySortKey(entry: ToolDiscoveryEntry): string {
   return entry.kind === "family" ? entry.id : entry.name;
 }
@@ -176,6 +222,13 @@ export function createToolSearchTool(options: ToolSearchOptions): Tool {
           .slice(0, maxResults);
 
       const sections: string[] = [];
+      const nextStepHints = collectDiscoveryNextStepHints({
+        matches,
+        expandedFamilies,
+        loaded: currentLoaded,
+        select,
+        query,
+      });
       if (expandedFamilies.length > 0) {
         sections.push(`Expanded families for this search:\n${expandedFamilies.map((name) => `- ${name}`).join("\n")}`);
       }
@@ -192,6 +245,9 @@ export function createToolSearchTool(options: ToolSearchOptions): Tool {
         sections.push(`Loaded tools for the next model turn only:\n${loaded.map((name) => `- ${name}`).join("\n")}`);
       }
       sections.push(`Currently queued deferred tools for the next model turn:\n${currentLoaded.length > 0 ? currentLoaded.map((name) => `- ${name}`).join("\n") : "- (none)"}`);
+      if (nextStepHints.length > 0) {
+        sections.push(`Recommended next step:\n${nextStepHints.map((item) => `- ${item}`).join("\n")}`);
+      }
       sections.push(`Matches:\n${formatEntries(matches)}`);
 
       return {

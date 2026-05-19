@@ -928,7 +928,7 @@ describe("GoalManager", () => {
       status: "orchestrated",
       subAgents: [
         { agentId: "coder", role: "coder", objective: "Ship patch" },
-        { agentId: "reviewer", role: "reviewer", objective: "Review patch" },
+        { agentId: "reviewer", role: "verifier", objective: "Review patch" },
       ],
       orchestration: {
         finalApprovalMode: "user_required",
@@ -943,14 +943,14 @@ describe("GoalManager", () => {
           plannedDelegationCount: 2,
           managerAgentId: "commander",
           rolePolicy: {
-            selectedRoles: ["coder", "reviewer"],
+            selectedRoles: ["coder", "verifier"],
             selectionReasons: ["commander mode"],
             fanInStrategy: "commander_review",
           },
         },
         delegationResults: [
           { agentId: "coder", role: "coder", status: "success", summary: "Patch delivered", taskId: "task_coder" },
-          { agentId: "reviewer", role: "reviewer", status: "failed", summary: "Review failed", taskId: "task_reviewer" },
+          { agentId: "reviewer", role: "verifier", status: "failed", summary: "Review failed", taskId: "task_reviewer" },
         ],
       },
     });
@@ -3057,7 +3057,7 @@ describe("GoalManager", () => {
       summary: "Stable governance path",
       subAgents: [
         { agentId: "coder", role: "coder", objective: "Prepare implementation evidence", deliverable: "patch diff" },
-        { agentId: "reviewer", role: "reviewer", objective: "Summarize regression and review evidence", deliverable: "review note" },
+        { agentId: "reviewer", role: "verifier", objective: "Summarize regression and review evidence", deliverable: "review note" },
       ],
       actualUsage: {
         methods: ["Review-Checklist.md"],
@@ -3085,7 +3085,7 @@ describe("GoalManager", () => {
           plannedDelegationCount: 2,
           managerAgentId: "commander-main",
           rolePolicy: {
-            selectedRoles: ["coder", "reviewer"],
+            selectedRoles: ["coder", "verifier"],
             selectionReasons: ["实现与评审分离，便于 fan-in 收口。"],
             fanInStrategy: "commander_review",
           },
@@ -3101,7 +3101,7 @@ describe("GoalManager", () => {
           },
           {
             agentId: "reviewer",
-            role: "reviewer",
+            role: "verifier",
             status: "success",
             summary: "Regression review completed.",
             taskId: "run_lane_reviewer",
@@ -3118,6 +3118,7 @@ describe("GoalManager", () => {
               id: "regression",
               label: "Regression passes",
               status: "passed",
+              enforced: true,
               evidence: "runtime/runs/run_govern_1/review-results/review-node-govern.md",
             },
           ],

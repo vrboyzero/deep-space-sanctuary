@@ -133,6 +133,33 @@ describe("tool result prompt deltas", () => {
     expect(delta?.text).toContain("Failure class: input_error");
   });
 
+  it("surfaces machine-readable argument correction hints in failure recovery guidance", () => {
+    const deltas = buildToolResultPromptDeltas({
+      result: {
+        id: "call-1c",
+        name: "tool_search",
+        success: false,
+        output: "",
+        error: "工具参数未通过预检：缺少必填参数 `query`。",
+        failureKind: "input_error",
+        metadata: {
+          repairAction: "tool_arguments_invalid",
+          argumentValidation: {
+            correctionHints: [
+              "补上必填字段 `query`。",
+              "把 `select` 改成字符串数组，例如 `{\"select\":[\"...\"]}`。",
+            ],
+          },
+        },
+      },
+    });
+
+    expect(deltas[0]).toBeDefined();
+    expect(deltas[0]?.text).toContain("Failure class: input_error");
+    expect(deltas[0]?.text).toContain("补上必填字段 `query`");
+    expect(deltas[0]?.text).toContain("select");
+  });
+
   it("builds a post-verification delta for write-like tools", () => {
     const delta = buildToolPostVerificationPromptDelta({
       toolCallId: "call-2",

@@ -726,6 +726,7 @@ test("agent.catalog.get exposes normalized catalog metadata and runtime defaults
     memoryMode: "isolated",
     whenToUse: ["需要改代码", "需要补测试"],
     defaultRole: "coder",
+    methods: ["Review-Checklist.md", "Refactor-Plan.md"],
     skills: ["repo-map", "review-helper"],
   });
   registry.register({
@@ -777,6 +778,7 @@ test("agent.catalog.get exposes normalized catalog metadata and runtime defaults
             defaultPermissionMode: "confirm",
             defaultAllowedToolFamilies: ["workspace-read", "workspace-write", "patch", "command-exec", "memory", "goal-governance"],
             defaultMaxToolRiskLevel: "high",
+            methods: ["Review-Checklist.md", "Refactor-Plan.md"],
             skills: ["repo-map", "review-helper"],
             handoffStyle: "summary",
           }),
@@ -796,6 +798,7 @@ test("agent.catalog.get exposes normalized catalog metadata and runtime defaults
             defaultPermissionMode: "confirm",
             defaultAllowedToolFamilies: ["workspace-read", "command-exec", "browser", "memory", "goal-governance"],
             defaultMaxToolRiskLevel: "high",
+            methods: [],
             skills: [],
             handoffStyle: "structured",
           }),

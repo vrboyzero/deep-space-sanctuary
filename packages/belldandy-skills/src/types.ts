@@ -663,6 +663,12 @@ export type GoalCapabilityPlanOrchestrationRecord = {
   reworkRevisionCount?: number;
   lastReworkReason?: string;
   lastReworkAt?: string;
+  reworkTargetAgentIds?: string[];
+  reworkContext?: {
+    quickSummary?: string;
+    historySummary?: string;
+    persistedReason?: string;
+  };
   coordinationPlan?: GoalCapabilityPlanCoordinationPlanRecord;
   delegationResults?: GoalCapabilityPlanDelegationResultRecord[];
   verifierHandoff?: GoalCapabilityPlanVerifierHandoffRecord;
@@ -1884,6 +1890,11 @@ export type ToolContext = {
   defaultCwd?: string;
   /** 当前 Agent ID（用于 per-agent workspace 定位，如 switch_facet） */
   agentId?: string;
+  /** 当前 Agent 的轻量能力偏好目录（仅用于软路由，不构成硬限制） */
+  agentCatalogPreferences?: {
+    methods?: string[];
+    skills?: string[];
+  };
   /** 当前运行的 launchSpec 摘要（用于工具级约束/展示） */
   launchSpec?: ToolRuntimeLaunchSpec;
   /** 用户UUID（用于身份权力验证） */

@@ -118,6 +118,38 @@ describe("faqi helpers", () => {
     expect(fallback.toolWhitelist).toEqual(["file_read", "run_command"]);
     expect(fallback.currentFaqi).toBe("missing-dev");
   });
+
+  it("only resolves tool whitelist and does not imply ownership over methods or skills", async () => {
+    const stateDir = await createTempStateDir("belldandy-faqi-scope-");
+    await fs.writeFile(path.join(stateDir, "faqis", "safe-dev.md"), [
+      "## tools",
+      "- file_read",
+      "- apply_patch",
+    ].join("\n"), "utf-8");
+    const loaded = await loadFaqiDefinitions(stateDir);
+    const definitions = indexFaqiDefinitions(loaded.definitions);
+
+    const originalMethods = ["multi-agent-review.md"];
+    const originalSkills = ["orchestration-playbook"];
+
+    const resolved = resolveToolWhitelistFromFaqi({
+      agentId: "coder",
+      state: {
+        agents: {
+          coder: { currentFaqi: "safe-dev" },
+        },
+      },
+      definitions,
+      fallbackToolWhitelist: ["file_read", "run_command"],
+    });
+
+    expect(resolved.source).toBe("faqi");
+    expect(resolved.toolWhitelist).toEqual(["file_read", "apply_patch"]);
+    expect(originalMethods).toEqual(["multi-agent-review.md"]);
+    expect(originalSkills).toEqual(["orchestration-playbook"]);
+    expect(Object.keys(resolved)).not.toContain("methods");
+    expect(Object.keys(resolved)).not.toContain("skills");
+  });
 });
 
 describe("faqi tools", () => {

@@ -17,6 +17,7 @@ type CatalogDefaultLike = {
   maxToolRiskLevel?: LaunchRiskLevel;
   handoffStyle?: HandoffStyle;
   whenToUse?: string[];
+  methods?: string[];
   skills?: string[];
 };
 
@@ -49,6 +50,7 @@ export type AgentLaunchExplainability = {
     maxToolRiskLevel: LaunchRiskLevel | null;
     handoffStyle: HandoffStyle | null;
     whenToUse: string[];
+    methods: string[];
     skills: string[];
   } | null;
   suggestedLaunch?: {
@@ -159,9 +161,10 @@ function buildCatalogDefaultView(source: AgentProfileCatalogMetadata | CatalogDe
   ) as LaunchRiskLevel | null;
   const handoffStyle = normalizeOptionalString(source.handoffStyle) as HandoffStyle | null;
   const whenToUse = normalizeStringArray(source.whenToUse);
+  const methods = normalizeStringArray(source.methods);
   const skills = normalizeStringArray(source.skills);
 
-  if (!role && !permissionMode && !allowedToolFamilies.length && !maxToolRiskLevel && !handoffStyle && !whenToUse.length && !skills.length) {
+  if (!role && !permissionMode && !allowedToolFamilies.length && !maxToolRiskLevel && !handoffStyle && !whenToUse.length && !methods.length && !skills.length) {
     return null;
   }
 
@@ -172,6 +175,7 @@ function buildCatalogDefaultView(source: AgentProfileCatalogMetadata | CatalogDe
     maxToolRiskLevel,
     handoffStyle,
     whenToUse,
+    methods,
     skills,
   };
 }
@@ -288,6 +292,7 @@ export function buildAgentLaunchExplainability(input: {
         maxToolRiskLevel: input.catalogDefaultOverride.maxToolRiskLevel ?? catalog?.defaultMaxToolRiskLevel,
         handoffStyle: input.catalogDefaultOverride.handoffStyle ?? catalog?.handoffStyle,
         whenToUse: input.catalogDefaultOverride.whenToUse ?? catalog?.whenToUse,
+        methods: input.catalogDefaultOverride.methods ?? catalog?.methods,
         skills: input.catalogDefaultOverride.skills ?? catalog?.skills,
       }
       : catalog,

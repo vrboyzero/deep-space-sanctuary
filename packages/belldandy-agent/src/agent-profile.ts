@@ -32,6 +32,7 @@ export type AgentProfileCatalogMetadata = {
   defaultPermissionMode?: AgentProfileDefaultPermissionMode;
   defaultAllowedToolFamilies?: ToolContractFamily[];
   defaultMaxToolRiskLevel?: ToolContractRiskLevel;
+  methods: string[];
   skills: string[];
   handoffStyle: AgentProfileHandoffStyle;
 };
@@ -76,6 +77,8 @@ export type AgentProfile = {
   defaultMaxToolRiskLevel?: ToolContractRiskLevel;
   /** 推荐注入或优先参考的 skills */
   skills?: string[];
+  /** 推荐优先参考的 methods（按方法文件名标识） */
+  methods?: string[];
   /** handoff 风格，供 catalog / inspect / launch default 使用 */
   handoffStyle?: AgentProfileHandoffStyle;
   /** 是否启用工具（覆盖环境变量 BELLDANDY_TOOLS_ENABLED） */
@@ -218,6 +221,7 @@ export function buildBuiltinWorkerProfiles(): AgentProfile[] {
     defaultAllowedToolFamilies: profile.defaultAllowedToolFamilies
       ? [...profile.defaultAllowedToolFamilies]
       : undefined,
+    methods: profile.methods ? [...profile.methods] : undefined,
     skills: profile.skills ? [...profile.skills] : undefined,
   }));
 }
@@ -273,6 +277,7 @@ export function resolveAgentProfileCatalogMetadata(
     | "defaultPermissionMode"
     | "defaultAllowedToolFamilies"
     | "defaultMaxToolRiskLevel"
+    | "methods"
     | "skills"
     | "handoffStyle"
   >,
@@ -294,6 +299,7 @@ export function resolveAgentProfileCatalogMetadata(
       || profile.defaultMaxToolRiskLevel === "critical"
       ? profile.defaultMaxToolRiskLevel
       : ROLE_DEFAULT_MAX_RISK_LEVEL[defaultRole],
+    methods: normalizeStringArray(profile.methods) ?? [],
     skills: normalizeStringArray(profile.skills) ?? [],
     handoffStyle: profile.handoffStyle === "structured"
       ? "structured"
@@ -317,6 +323,7 @@ export function resolveAgentProfileMetadata(
     | "defaultPermissionMode"
     | "defaultAllowedToolFamilies"
     | "defaultMaxToolRiskLevel"
+    | "methods"
     | "skills"
     | "handoffStyle"
   >,
@@ -371,6 +378,7 @@ export async function loadAgentProfiles(filePath: string): Promise<AgentProfile[
         defaultPermissionMode: normalizeEnumValue(obj.defaultPermissionMode, AGENT_PERMISSION_MODES),
         defaultAllowedToolFamilies: normalizeStringArray(obj.defaultAllowedToolFamilies) as ToolContractFamily[] | undefined,
         defaultMaxToolRiskLevel: normalizeEnumValue(obj.defaultMaxToolRiskLevel, ["low", "medium", "high", "critical"] as const),
+        methods: normalizeStringArray(obj.methods),
         skills: normalizeStringArray(obj.skills),
         handoffStyle: normalizeEnumValue(obj.handoffStyle, AGENT_HANDOFF_STYLES),
         toolsEnabled: typeof obj.toolsEnabled === "boolean" ? obj.toolsEnabled : undefined,

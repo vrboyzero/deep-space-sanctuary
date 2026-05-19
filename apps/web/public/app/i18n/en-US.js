@@ -18,9 +18,11 @@ export const enUS = {
   },
   header: {
     officialHome: "Official Site",
+    multiPage: "New WebChat",
     contentPanel: "Content Manager",
     controlPanel: "Control Panel",
     agentPanel: "Agent Info",
+    goalsPage: "Long Tasks",
     chatPage: "Chat Page",
     showContentPanel: "Show content manager",
     hideContentPanel: "Hide content manager",

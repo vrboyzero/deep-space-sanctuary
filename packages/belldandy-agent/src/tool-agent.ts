@@ -165,6 +165,20 @@ type OpenAIToolCall = {
   function: { name: string; arguments: string };
 };
 
+type ToolCallExecutionTrace = {
+  fingerprint: string;
+  toolName: string;
+  args: JsonObject;
+  success?: boolean;
+  failureKind?: ToolFailureKind;
+};
+
+type EffectiveSystemPromptState = {
+  text: string;
+  truncationReason?: JsonObject;
+  bypassProviderNativeSystemBlocks: boolean;
+};
+
 export function estimateToolDefinitionTokens(tool: {
   type: "function";
   function: { name: string; description: string; parameters: object };
@@ -726,6 +740,107 @@ function buildRecoveredDuplicateToolResult(input: {
   };
 }
 
+function buildToolCallSuppressedResult(input: {
+  toolCallId: string;
+  toolName: string;
+  error: string;
+  duplicateCount?: number;
+  metadata: JsonObject;
+}) {
+  return {
+    id: input.toolCallId,
+    name: input.toolName,
+    success: false,
+    output: "",
+    error: input.error,
+    failureKind: "business_logic_error" as const,
+    metadata: {
+      ...(typeof input.duplicateCount === "number" ? { duplicateCount: input.duplicateCount } : {}),
+      ...input.metadata,
+    } as JsonObject,
+  };
+}
+
+function normalizeThrashArgValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value.replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeThrashArgValue(item)).join("|");
+  }
+  if (value && typeof value === "object") {
+    return stableStringify(value);
+  }
+  return "";
+}
+
+function buildToolCallThrashSignature(args: JsonObject): string {
+  const entries = Object.entries(args)
+    .map(([key, value]) => {
+      const normalizedValue = normalizeThrashArgValue(value);
+      if (!normalizedValue) {
+        return "";
+      }
+      return `${key.toLowerCase()}=${normalizedValue}`;
+    })
+    .filter(Boolean)
+    .sort();
+  return entries.join("&");
+}
+
+function isNearDuplicateToolCall(
+  left: ToolCallExecutionTrace | undefined,
+  right: ToolCallExecutionTrace,
+): boolean {
+  if (!left || left.toolName !== right.toolName) {
+    return false;
+  }
+  if (left.fingerprint === right.fingerprint) {
+    return true;
+  }
+  const leftSignature = buildToolCallThrashSignature(left.args);
+  const rightSignature = buildToolCallThrashSignature(right.args);
+  if (!leftSignature || !rightSignature) {
+    return false;
+  }
+  if (leftSignature === rightSignature) {
+    return true;
+  }
+  return leftSignature.includes(rightSignature) || rightSignature.includes(leftSignature);
+}
+
+function detectCrossToolThrash(
+  history: ToolCallExecutionTrace[],
+  current: ToolCallExecutionTrace,
+): { partnerToolName?: string; loopSize?: number } | undefined {
+  if (history.length < 2) {
+    return undefined;
+  }
+  const last = history[history.length - 1];
+  const previous = history[history.length - 2];
+  if (!last || !previous) {
+    return undefined;
+  }
+  if (current.toolName === last.toolName || current.toolName !== previous.toolName) {
+    return undefined;
+  }
+  if (last.toolName === previous.toolName) {
+    return undefined;
+  }
+  const currentSignature = buildToolCallThrashSignature(current.args);
+  const previousSignature = buildToolCallThrashSignature(previous.args);
+  if (!currentSignature || !previousSignature || currentSignature !== previousSignature) {
+    return undefined;
+  }
+  return {
+    partnerToolName: last.toolName,
+    loopSize: 3,
+  };
+}
+
 export class ToolEnabledAgent implements BelldandyAgent {
   private conversationRunChains = new Map<string, Promise<void>>();
   private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
@@ -979,11 +1094,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
       launchSpecPromptDeltas,
       metaPromptDeltas,
     });
+    let currentSystemPromptState = buildEffectiveSystemPromptState({
+      systemPrompt: runSystemPrompt,
+      runtimePromptDeltas: baseRunPromptDeltas,
+      systemPromptMetadata: this.opts.systemPromptMetadata,
+    });
     const messages: Message[] = buildInitialMessages(
-      runSystemPrompt,
+      currentSystemPromptState.text,
       content,
       input.history,
-      baseRunPromptDeltas,
     );
     let pendingToolFollowupDeltas: AgentPromptDelta[] = [];
     let currentRunPromptDeltas = baseRunPromptDeltas.map((delta) => ({ ...delta }));
@@ -1001,7 +1120,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
         metaPromptDeltas,
         transientPromptDeltas: pendingToolFollowupDeltas,
       });
-      setSystemPromptMessage(messages, buildEffectiveSystemPrompt(runSystemPrompt, currentRunPromptDeltas));
+      currentSystemPromptState = buildEffectiveSystemPromptState({
+        systemPrompt: runSystemPrompt,
+        runtimePromptDeltas: currentRunPromptDeltas,
+        systemPromptMetadata: this.opts.systemPromptMetadata,
+      });
+      setSystemPromptMessage(messages, currentSystemPromptState.text);
       providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
         sections: hookSystemPromptUsed ? undefined : this.opts.systemPromptSections,
         deltas: currentRunPromptDeltas,
@@ -1039,7 +1163,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           messages: messagesForSnapshot,
           deltas: snapshotDeltas,
           providerNativeSystemBlocks,
-          inputMeta: mergePromptSnapshotInputMeta(this.opts.systemPromptMetadata, input.meta),
+          inputMeta: mergePromptSnapshotInputMeta(
+            this.opts.systemPromptMetadata,
+            input.meta,
+            currentSystemPromptState.truncationReason,
+          ),
           hookSystemPromptUsed,
           prependContext,
         }),
@@ -1071,6 +1199,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let lastToolCallFingerprint: string | undefined;
     let lastToolCallName: string | undefined;
     let consecutiveDuplicateToolCalls = 0;
+    const recentToolCallTraces: ToolCallExecutionTrace[] = [];
     let lastSuccessfulToolResult:
       | {
         fingerprint: string;
@@ -1307,7 +1436,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           },
           input.abortSignal,
           capturePromptSnapshot,
-          providerNativeSystemBlocks,
+          currentSystemPromptState.bypassProviderNativeSystemBlocks
+            ? undefined
+            : providerNativeSystemBlocks,
         );
         logDebug("[model-call] completed", {
           modelCallIndex: nextModelCallIndex,
@@ -1461,6 +1592,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
             arguments: parsedArguments.arguments,
           };
           const requestFingerprint = buildToolCallFingerprint(request.name, parsedArguments.fingerprintArguments);
+          const currentToolTrace: ToolCallExecutionTrace = {
+            fingerprint: requestFingerprint,
+            toolName: request.name,
+            args: cloneJsonObject(request.arguments) ?? {},
+          };
 
           const toolStartTime = Date.now();
 
@@ -1898,6 +2034,132 @@ export class ToolEnabledAgent implements BelldandyAgent {
             continue;
           }
 
+          if (this.opts.toolCallRepairLevel === "full") {
+            const previousTrace = recentToolCallTraces.at(-1);
+            if (isNearDuplicateToolCall(previousTrace, currentToolTrace)) {
+              const nearDuplicateError = `工具调用已被拦截：检测到近重复调用（${request.name}）。请先根据上一轮结果调整参数或改换策略，不要做几乎相同的重试。`;
+              const nearDuplicateResult = buildToolCallSuppressedResult({
+                toolCallId: request.id,
+                toolName: request.name,
+                error: nearDuplicateError,
+                metadata: {
+                  repairAction: "near_duplicate_tool_call_suppressed",
+                  previousToolName: previousTrace?.toolName,
+                },
+              });
+              yield* yieldItem({
+                type: "tool_call",
+                id: request.id,
+                name: request.name,
+                arguments: request.arguments,
+              });
+              yield* yieldItem({
+                type: "tool_result",
+                ...nearDuplicateResult,
+              });
+              messages.push(buildToolTranscriptMessageForHistory({
+                toolCallId: tc.id,
+                toolName: request.name,
+                output: "",
+                error: nearDuplicateError,
+                success: false,
+                hookRunner: this.opts.hookRunner,
+                persistCtx: {
+                  agentId: resolvedAgentId,
+                  sessionKey: input.conversationId,
+                  toolName: request.name,
+                  toolCallId: tc.id,
+                },
+                isSynthetic: true,
+              }));
+              recordToolResultArtifacts({
+                conversationStore: this.opts.conversationStore,
+                conversationId: input.conversationId,
+                toolName: request.name,
+                args: request.arguments,
+                success: false,
+                error: nearDuplicateError,
+                failureKind: "business_logic_error",
+                toolCallId: tc.id,
+                isSynthetic: true,
+              });
+              pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
+                result: nearDuplicateResult,
+                requestArguments: request.arguments,
+              }));
+              logWarn("[tool-call-repair] suppressed near-duplicate tool call", {
+                toolName: request.name,
+                toolCallId: request.id,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+
+            const thrashLoop = detectCrossToolThrash(recentToolCallTraces, currentToolTrace);
+            if (thrashLoop) {
+              const thrashError = `工具调用已被拦截：检测到跨工具抖动（${request.name} <-> ${thrashLoop.partnerToolName ?? "unknown"}）。请先总结上一轮失败原因，再决定是回到 \`tool_search\` 重新识别，还是明确修改参数后再试。`;
+              const thrashResult = buildToolCallSuppressedResult({
+                toolCallId: request.id,
+                toolName: request.name,
+                error: thrashError,
+                metadata: {
+                  repairAction: "cross_tool_thrash_suppressed",
+                  partnerToolName: thrashLoop.partnerToolName,
+                  loopSize: thrashLoop.loopSize,
+                },
+              });
+              yield* yieldItem({
+                type: "tool_call",
+                id: request.id,
+                name: request.name,
+                arguments: request.arguments,
+              });
+              yield* yieldItem({
+                type: "tool_result",
+                ...thrashResult,
+              });
+              messages.push(buildToolTranscriptMessageForHistory({
+                toolCallId: tc.id,
+                toolName: request.name,
+                output: "",
+                error: thrashError,
+                success: false,
+                hookRunner: this.opts.hookRunner,
+                persistCtx: {
+                  agentId: resolvedAgentId,
+                  sessionKey: input.conversationId,
+                  toolName: request.name,
+                  toolCallId: tc.id,
+                },
+                isSynthetic: true,
+              }));
+              recordToolResultArtifacts({
+                conversationStore: this.opts.conversationStore,
+                conversationId: input.conversationId,
+                toolName: request.name,
+                args: request.arguments,
+                success: false,
+                error: thrashError,
+                failureKind: "business_logic_error",
+                toolCallId: tc.id,
+                isSynthetic: true,
+              });
+              pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
+                result: thrashResult,
+                requestArguments: request.arguments,
+              }));
+              logWarn("[tool-call-repair] suppressed cross-tool thrashing", {
+                toolName: request.name,
+                toolCallId: request.id,
+                partnerToolName: thrashLoop.partnerToolName,
+                conversationId: input.conversationId,
+                agentId: resolvedAgentId,
+              });
+              continue;
+            }
+          }
+
           // 广播工具调用事件
           yield* yieldItem({
             type: "tool_call",
@@ -2012,6 +2274,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
               output: result.output,
               args: cloneJsonObject(request.arguments) ?? {},
             };
+          }
+          recentToolCallTraces.push({
+            fingerprint: requestFingerprint,
+            toolName: request.name,
+            args: cloneJsonObject(request.arguments) ?? {},
+            success: result.success,
+            failureKind: result.failureKind,
+          });
+          if (recentToolCallTraces.length > 6) {
+            recentToolCallTraces.shift();
           }
           if (isRunStopRequested(input.abortSignal)) {
             yield* emitStopped();
@@ -2491,6 +2763,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
 function mergePromptSnapshotInputMeta(
   systemPromptMetadata?: JsonObject,
   runMeta?: JsonObject,
+  trustedTruncationReason?: JsonObject,
 ): JsonObject | undefined {
   if (!systemPromptMetadata && !runMeta) {
     return undefined;
@@ -2503,6 +2776,14 @@ function mergePromptSnapshotInputMeta(
   delete merged.tokenBreakdown;
   delete merged.promptTokenBreakdown;
   delete merged.truncationReason;
+  const resolvedTruncationReason = trustedTruncationReason ?? readTrustedTruncationReason(systemPromptMetadata);
+  if (resolvedTruncationReason) {
+    merged.truncationReason = { ...resolvedTruncationReason };
+  }
+  const systemPromptMaxChars = readTrustedSystemPromptMaxChars(systemPromptMetadata);
+  if (typeof systemPromptMaxChars === "number") {
+    merged.systemPromptMaxChars = systemPromptMaxChars;
+  }
   return merged as JsonObject;
 }
 
@@ -2727,15 +3008,12 @@ function buildInitialMessages(
   systemPrompt: string | undefined,
   userContent: string | Array<any>,
   history?: Array<{ role: "user" | "assistant"; content: string | Array<any> }>,
-  runtimePromptDeltas?: AgentPromptDelta[],
 ): Message[] {
   const messages: Message[] = [];
 
   // Layer 1: System
-  const finalSystemPrompt = buildEffectiveSystemPrompt(systemPrompt, runtimePromptDeltas);
-
-  if (finalSystemPrompt) {
-    messages.push({ role: "system", content: finalSystemPrompt });
+  if (systemPrompt && systemPrompt.trim()) {
+    messages.push({ role: "system", content: systemPrompt.trim() });
   }
 
   // Layer 2: History
@@ -2769,6 +3047,131 @@ function buildEffectiveSystemPrompt(
   return finalSystemPrompt
     ? `${finalSystemPrompt}\n${deltaText}`
     : deltaText;
+}
+
+function buildEffectiveSystemPromptState(input: {
+  systemPrompt?: string;
+  runtimePromptDeltas?: readonly AgentPromptDelta[];
+  systemPromptMetadata?: JsonObject;
+}): EffectiveSystemPromptState {
+  const text = buildEffectiveSystemPrompt(input.systemPrompt, input.runtimePromptDeltas);
+  const maxChars = readTrustedSystemPromptMaxChars(input.systemPromptMetadata);
+  const trustedTruncationReason = readTrustedTruncationReason(input.systemPromptMetadata);
+  if (!maxChars || text.length <= maxChars) {
+    return {
+      text,
+      ...(trustedTruncationReason ? { truncationReason: trustedTruncationReason } : {}),
+      bypassProviderNativeSystemBlocks: false,
+    };
+  }
+
+  const runtimeDeltaText = collectSystemPromptDeltaTexts(input.runtimePromptDeltas).join("\n").trim();
+  let cappedText = text;
+  if (runtimeDeltaText) {
+    if (runtimeDeltaText.length >= maxChars) {
+      cappedText = hardTruncatePromptText(runtimeDeltaText, maxChars);
+    } else {
+      const separatorChars = input.systemPrompt?.trim() ? 1 : 0;
+      const baseBudget = Math.max(0, maxChars - runtimeDeltaText.length - separatorChars);
+      const cappedBase = hardTruncatePromptText(input.systemPrompt?.trim() ?? "", baseBudget);
+      cappedText = cappedBase
+        ? `${cappedBase}\n${runtimeDeltaText}`
+        : runtimeDeltaText;
+    }
+  } else {
+    cappedText = hardTruncatePromptText(text, maxChars);
+  }
+  if (cappedText.length > maxChars) {
+    cappedText = hardTruncatePromptText(cappedText, maxChars);
+  }
+
+  return {
+    text: cappedText,
+    truncationReason: buildEffectiveSystemPromptTruncationReason({
+      existing: trustedTruncationReason,
+      maxChars,
+      runtimeDeltaText,
+    }),
+    bypassProviderNativeSystemBlocks: true,
+  };
+}
+
+function hardTruncatePromptText(text: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return "";
+  }
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const suffix = "\n...[system prompt truncated]";
+  if (maxChars <= suffix.length) {
+    return suffix.slice(0, maxChars);
+  }
+  return `${text.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`;
+}
+
+function readTrustedSystemPromptMaxChars(systemPromptMetadata?: JsonObject): number | undefined {
+  const rawValue = systemPromptMetadata && typeof systemPromptMetadata === "object"
+    ? (systemPromptMetadata as Record<string, unknown>).systemPromptMaxChars
+    : undefined;
+  return typeof rawValue === "number" && Number.isFinite(rawValue) && rawValue > 0
+    ? Math.floor(rawValue)
+    : undefined;
+}
+
+function readTrustedTruncationReason(systemPromptMetadata?: JsonObject): JsonObject | undefined {
+  const rawValue = systemPromptMetadata && typeof systemPromptMetadata === "object"
+    ? (systemPromptMetadata as Record<string, unknown>).truncationReason
+    : undefined;
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return undefined;
+  }
+  return { ...(rawValue as Record<string, unknown>) } as JsonObject;
+}
+
+function readTrustedStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim());
+}
+
+function buildEffectiveSystemPromptTruncationReason(input: {
+  existing?: JsonObject;
+  maxChars: number;
+  runtimeDeltaText: string;
+}): JsonObject {
+  const existing = input.existing && typeof input.existing === "object"
+    ? { ...(input.existing as Record<string, unknown>) }
+    : {};
+  const droppedSectionIds = readTrustedStringArray(existing.droppedSectionIds);
+  const droppedSectionLabels = readTrustedStringArray(existing.droppedSectionLabels);
+  const truncatedSectionIds = Array.from(new Set([
+    ...readTrustedStringArray(existing.truncatedSectionIds),
+    "final-system-prompt",
+  ]));
+  const truncatedSectionLabels = Array.from(new Set([
+    ...readTrustedStringArray(existing.truncatedSectionLabels),
+    "final-system-prompt",
+  ]));
+  const reasonMessage = input.runtimeDeltaText
+    ? `Preserved runtime system deltas and truncated the remaining system prompt to fit ${input.maxChars} char limit.`
+    : `Truncated final system prompt to fit ${input.maxChars} char limit.`;
+
+  return {
+    code: "max_chars_limit",
+    maxChars: input.maxChars,
+    droppedSectionCount: typeof existing.droppedSectionCount === "number"
+      ? existing.droppedSectionCount
+      : droppedSectionIds.length,
+    ...(droppedSectionIds.length > 0 ? { droppedSectionIds } : {}),
+    ...(droppedSectionLabels.length > 0 ? { droppedSectionLabels } : {}),
+    truncatedSectionIds,
+    truncatedSectionLabels,
+    message: reasonMessage,
+  } as JsonObject;
 }
 
 function setSystemPromptMessage(messages: Message[], content: string): void {

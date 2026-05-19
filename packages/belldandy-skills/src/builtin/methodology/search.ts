@@ -8,12 +8,15 @@ type SearchMatch = {
     file: string;
     title?: string;
     score: number;
+    preferred: boolean;
     matchedIn: string[];
     snippet: string;
     status?: string;
     tags: string[];
     readWhen: string[];
 };
+
+const PREFERRED_METHOD_SCORE_BONUS = 90;
 
 function countOccurrences(text: string, term: string): number {
     if (!text || !term) return 0;
@@ -137,6 +140,7 @@ function scoreMethod(file: string, parsed: ParsedMethod, terms: string[]): Searc
         file,
         title: parsed.title,
         score,
+        preferred: false,
         matchedIn: Array.from(matchedIn),
         snippet: extractSnippet(snippetSource, terms),
         status: parsed.metadata.status,
@@ -145,12 +149,37 @@ function scoreMethod(file: string, parsed: ParsedMethod, terms: string[]): Searc
     };
 }
 
+function normalizePreferredMethodSet(methods: readonly string[] | undefined): Set<string> {
+    return new Set(
+        (methods ?? [])
+            .map((item) => item.trim().toLowerCase())
+            .filter(Boolean),
+    );
+}
+
+function applyPreferredMethodBoost(match: SearchMatch, preferredMethods: ReadonlySet<string>): SearchMatch {
+    const preferred = preferredMethods.has(match.file.trim().toLowerCase());
+    if (!preferred) {
+        return match;
+    }
+    const matchedIn = match.matchedIn.includes("preferred")
+        ? match.matchedIn
+        : [...match.matchedIn, "preferred"];
+    return {
+        ...match,
+        preferred: true,
+        score: match.score + PREFERRED_METHOD_SCORE_BONUS,
+        matchedIn,
+    };
+}
+
 function formatSearchResult(match: SearchMatch, index: number): string {
     const titlePart = match.title ? ` | 标题：${match.title}` : "";
     const statusPart = match.status ? ` | 状态：${match.status}` : "";
     const tagsPart = match.tags.length > 0 ? ` | 标签：${match.tags.join(", ")}` : "";
+    const preferredPart = match.preferred ? " | 推荐：preferred" : "";
     return [
-        `${index + 1}. [${match.file}]${titlePart}${statusPart}${tagsPart}`,
+        `${index + 1}. [${match.file}]${titlePart}${statusPart}${tagsPart}${preferredPart}`,
         `   命中：${match.matchedIn.join(", ")} | 评分：${match.score}`,
         `   使用时机：${match.readWhen.length > 0 ? match.readWhen.join(" / ") : "未标注"}`,
         `   摘要：${match.snippet}`,
@@ -183,6 +212,7 @@ export const methodSearchTool: Tool = {
             const mdFiles = files.filter(f => f.endsWith('.md'));
 
             const terms = buildSearchTerms(keyword);
+            const preferredMethods = normalizePreferredMethodSet(context.agentCatalogPreferences?.methods);
             const results: SearchMatch[] = [];
 
             for (const file of mdFiles) {
@@ -190,13 +220,16 @@ export const methodSearchTool: Tool = {
                 const parsed = parseMethodContent(content);
                 const scored = scoreMethod(file, parsed, terms);
                 if (scored) {
-                    results.push(scored);
+                    results.push(applyPreferredMethodBoost(scored, preferredMethods));
                 }
             }
 
             results.sort((left, right) => {
                 if (right.score !== left.score) {
                     return right.score - left.score;
+                }
+                if (left.preferred !== right.preferred) {
+                    return left.preferred ? -1 : 1;
                 }
                 return left.file.localeCompare(right.file, "zh-CN");
             });

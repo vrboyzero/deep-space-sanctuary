@@ -14,6 +14,11 @@ import { buildProviderNativeSystemBlocks, type SystemPromptSection } from "./sys
 
 export type OpenAIWireApi = "chat_completions" | "responses";
 
+type EffectiveSystemPromptState = {
+  text: string;
+  truncationReason?: JsonObject;
+};
+
 export type OpenAIChatAgentOptions = {
   baseUrl: string;
   apiKey: string;
@@ -200,12 +205,16 @@ export class OpenAIChatAgent implements BelldandyAgent {
         }
       }
 
-      const messages = buildMessages(this.opts.systemPrompt, content, input.history);
+      const systemPromptState = buildEffectiveSystemPromptState({
+        systemPrompt: this.opts.systemPrompt,
+        systemPromptMetadata: this.opts.systemPromptMetadata,
+      });
+      const messages = buildMessages(systemPromptState.text, content, input.history);
       const promptDeltas = readPromptSnapshotDeltas(input.meta);
       const providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
         sections: this.opts.systemPromptSections,
         deltas: promptDeltas,
-        fallbackText: this.opts.systemPrompt,
+        fallbackText: systemPromptState.text,
       });
       this.opts.onPromptSnapshot?.(createAgentPromptSnapshot({
         agentId: input.agentId,
@@ -214,7 +223,11 @@ export class OpenAIChatAgent implements BelldandyAgent {
         messages,
         deltas: promptDeltas,
         providerNativeSystemBlocks,
-        inputMeta: mergePromptSnapshotInputMeta(this.opts.systemPromptMetadata, input.meta),
+        inputMeta: mergePromptSnapshotInputMeta(
+          this.opts.systemPromptMetadata,
+          input.meta,
+          systemPromptState.truncationReason,
+        ),
       }));
       const textAttachmentChars = readTextAttachmentChars(input.meta);
       const minimumAdaptiveTimeoutMs = resolveMinimumAdaptiveTimeoutMs(messages, textAttachmentChars);
@@ -420,6 +433,7 @@ export class OpenAIChatAgent implements BelldandyAgent {
 function mergePromptSnapshotInputMeta(
   systemPromptMetadata?: JsonObject,
   runMeta?: JsonObject,
+  trustedTruncationReason?: JsonObject,
 ): JsonObject | undefined {
   if (!systemPromptMetadata && !runMeta) {
     return undefined;
@@ -432,7 +446,110 @@ function mergePromptSnapshotInputMeta(
   delete merged.tokenBreakdown;
   delete merged.promptTokenBreakdown;
   delete merged.truncationReason;
+  const resolvedTruncationReason = trustedTruncationReason ?? readTrustedTruncationReason(systemPromptMetadata);
+  if (resolvedTruncationReason) {
+    merged.truncationReason = { ...resolvedTruncationReason };
+  }
+  const systemPromptMaxChars = readTrustedSystemPromptMaxChars(systemPromptMetadata);
+  if (typeof systemPromptMaxChars === "number") {
+    merged.systemPromptMaxChars = systemPromptMaxChars;
+  }
   return merged as JsonObject;
+}
+
+function buildEffectiveSystemPromptState(input: {
+  systemPrompt?: string;
+  systemPromptMetadata?: JsonObject;
+}): EffectiveSystemPromptState {
+  const text = input.systemPrompt?.trim() ?? "";
+  const maxChars = readTrustedSystemPromptMaxChars(input.systemPromptMetadata);
+  const trustedTruncationReason = readTrustedTruncationReason(input.systemPromptMetadata);
+  if (!maxChars || text.length <= maxChars) {
+    return {
+      text,
+      ...(trustedTruncationReason ? { truncationReason: trustedTruncationReason } : {}),
+    };
+  }
+  return {
+    text: hardTruncatePromptText(text, maxChars),
+    truncationReason: buildEffectiveSystemPromptTruncationReason({
+      existing: trustedTruncationReason,
+      maxChars,
+    }),
+  };
+}
+
+function hardTruncatePromptText(text: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return "";
+  }
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const suffix = "\n...[system prompt truncated]";
+  if (maxChars <= suffix.length) {
+    return suffix.slice(0, maxChars);
+  }
+  return `${text.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`;
+}
+
+function readTrustedStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim());
+}
+
+function buildEffectiveSystemPromptTruncationReason(input: {
+  existing?: JsonObject;
+  maxChars: number;
+}): JsonObject {
+  const existing = input.existing && typeof input.existing === "object"
+    ? { ...(input.existing as Record<string, unknown>) }
+    : {};
+  const droppedSectionIds = readTrustedStringArray(existing.droppedSectionIds);
+  const droppedSectionLabels = readTrustedStringArray(existing.droppedSectionLabels);
+  const truncatedSectionIds = Array.from(new Set([
+    ...readTrustedStringArray(existing.truncatedSectionIds),
+    "final-system-prompt",
+  ]));
+  const truncatedSectionLabels = Array.from(new Set([
+    ...readTrustedStringArray(existing.truncatedSectionLabels),
+    "final-system-prompt",
+  ]));
+  return {
+    code: "max_chars_limit",
+    maxChars: input.maxChars,
+    droppedSectionCount: typeof existing.droppedSectionCount === "number"
+      ? existing.droppedSectionCount
+      : droppedSectionIds.length,
+    ...(droppedSectionIds.length > 0 ? { droppedSectionIds } : {}),
+    ...(droppedSectionLabels.length > 0 ? { droppedSectionLabels } : {}),
+    truncatedSectionIds,
+    truncatedSectionLabels,
+    message: `Truncated final system prompt to fit ${input.maxChars} char limit.`,
+  } as JsonObject;
+}
+
+function readTrustedTruncationReason(systemPromptMetadata?: JsonObject): JsonObject | undefined {
+  const rawValue = systemPromptMetadata && typeof systemPromptMetadata === "object"
+    ? (systemPromptMetadata as Record<string, unknown>).truncationReason
+    : undefined;
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return undefined;
+  }
+  return { ...(rawValue as Record<string, unknown>) } as JsonObject;
+}
+
+function readTrustedSystemPromptMaxChars(systemPromptMetadata?: JsonObject): number | undefined {
+  const rawValue = systemPromptMetadata && typeof systemPromptMetadata === "object"
+    ? (systemPromptMetadata as Record<string, unknown>).systemPromptMaxChars
+    : undefined;
+  return typeof rawValue === "number" && Number.isFinite(rawValue) && rawValue > 0
+    ? Math.floor(rawValue)
+    : undefined;
 }
 
 

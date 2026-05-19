@@ -1249,7 +1249,8 @@ describe("compaction observability hooks", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]?.[0]?.arguments).toMatchObject({
+    const executeCalls = execute.mock.calls as Array<Array<{ arguments?: Record<string, unknown> }>>;
+    expect(executeCalls[0]?.[0]?.arguments).toMatchObject({
       cwd: "E:/project/star-sanctuary",
       options: {
         mode: "full",
@@ -1863,6 +1864,259 @@ describe("ToolEnabledAgent hook timeouts", () => {
         previousToolCallId: "call-1",
         duplicateCount: 1,
         conversationId: "conv-tool-call-reuse",
+        agentId: "tool-agent",
+      }),
+    );
+  });
+
+  it("suppresses near-duplicate tool calls when full repair is enabled", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-1",
+              type: "function",
+              function: {
+                name: "echo",
+                arguments: "{\"value\":\"hello world\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-2",
+              type: "function",
+              function: {
+                name: "echo",
+                arguments: "{\"value\":\"hello   world\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "recovered",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+    const execute = vi.fn(async () => ({
+      id: "call-1",
+      name: "echo",
+      success: false,
+      output: "",
+      error: "first failed",
+      failureKind: "business_logic_error" as const,
+      durationMs: 0,
+    }));
+    const loggerWarn = vi.fn();
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolCallRepairLevel: "full",
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "echo",
+            description: "echo",
+            parameters: {
+              type: "object",
+              properties: {
+                value: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+      logger: {
+        warn: loggerWarn,
+        error: vi.fn(),
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-tool-call-near-duplicate",
+      text: "use tool",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual({
+      type: "tool_result",
+      id: "call-2",
+      name: "echo",
+      success: false,
+      output: "",
+      error: expect.stringContaining("近重复调用"),
+      failureKind: "business_logic_error",
+      metadata: expect.objectContaining({
+        repairAction: "near_duplicate_tool_call_suppressed",
+      }),
+    });
+    expect(loggerWarn).toHaveBeenCalledWith(
+      "agent",
+      "[tool-call-repair] suppressed near-duplicate tool call",
+      expect.objectContaining({
+        toolName: "echo",
+        toolCallId: "call-2",
+        conversationId: "conv-tool-call-near-duplicate",
+        agentId: "tool-agent",
+      }),
+    );
+  });
+
+  it("suppresses cross-tool thrashing when the model bounces back to the previous tool with the same sub-problem", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-1",
+              type: "function",
+              function: {
+                name: "tool_search",
+                arguments: "{\"query\":\"goal checkpoint\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-2",
+              type: "function",
+              function: {
+                name: "goal_checkpoint_request",
+                arguments: "{\"query\":\"goal checkpoint\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-3",
+              type: "function",
+              function: {
+                name: "tool_search",
+                arguments: "{\"query\":\"goal checkpoint\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "recovered",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+    const execute = vi.fn(async (request: any) => ({
+      id: request.id ?? "",
+      name: request.name,
+      success: false,
+      output: "",
+      error: "not enough progress",
+      failureKind: "business_logic_error" as const,
+      durationMs: 0,
+    }));
+    const loggerWarn = vi.fn();
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolCallRepairLevel: "full",
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [
+          {
+            type: "function" as const,
+            function: {
+              name: "tool_search",
+              description: "search",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string" },
+                },
+              },
+            },
+          },
+          {
+            type: "function" as const,
+            function: {
+              name: "goal_checkpoint_request",
+              description: "goal checkpoint",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string" },
+                },
+              },
+            },
+          },
+        ],
+        execute,
+      }),
+      logger: {
+        warn: loggerWarn,
+        error: vi.fn(),
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-cross-tool-thrash",
+      text: "use tool",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(items).toContainEqual({
+      type: "tool_result",
+      id: "call-3",
+      name: "tool_search",
+      success: false,
+      output: "",
+      error: expect.stringContaining("跨工具抖动"),
+      failureKind: "business_logic_error",
+      metadata: expect.objectContaining({
+        repairAction: "cross_tool_thrash_suppressed",
+        partnerToolName: "goal_checkpoint_request",
+      }),
+    });
+    expect(loggerWarn).toHaveBeenCalledWith(
+      "agent",
+      "[tool-call-repair] suppressed cross-tool thrashing",
+      expect.objectContaining({
+        toolName: "tool_search",
+        toolCallId: "call-3",
+        partnerToolName: "goal_checkpoint_request",
+        conversationId: "conv-cross-tool-thrash",
         agentId: "tool-agent",
       }),
     );
