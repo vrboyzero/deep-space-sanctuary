@@ -11,6 +11,7 @@ import type {
 export type ExperienceCandidateType = "method" | "skill";
 export type ExperienceCandidateStatus = "draft" | "reviewed" | "accepted" | "rejected" | "published";
 export type ExperienceAssetType = "method" | "skill";
+export type ExperiencePublishedAssetSource = "method_asset" | "skill_asset";
 export type ExperienceUsageVia = "manual" | "search" | "tool" | "auto_suggest";
 export type ExperienceDraftOriginKind = "generated" | "synthesized" | "published";
 export type ExperienceSynthesisRelation = "same_family" | "similar";
@@ -49,7 +50,7 @@ export interface ExperienceCandidateDraftOriginMetadata {
 export interface ExperienceCandidatePublishedOriginMetadata {
   assetPath: string;
   assetKey: string;
-  assetSource: "method_asset" | "skill_asset";
+  assetSource: ExperiencePublishedAssetSource;
 }
 
 export interface ExperienceCandidateSynthesisMetadata {
@@ -59,6 +60,9 @@ export interface ExperienceCandidateSynthesisMetadata {
   createdBy: "main_model";
   templateId?: string;
   templatePath?: string;
+  seedPublishedPath?: string;
+  seedPublishedAssetKey?: string;
+  seedPublishedAssetSource?: ExperiencePublishedAssetSource;
 }
 
 export interface ExperienceCandidateSynthesisConsumedMetadata {

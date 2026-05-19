@@ -686,10 +686,24 @@ describe("memory viewer shared review filters", () => {
                 removableChunks: 1,
                 affectedTaskLinkCount: 2,
               },
+              observability: {
+                beforeChunkCount: 5,
+                estimatedAfterChunkCount: 4,
+                pageCount: 12,
+                freelistCount: 3,
+              },
+              sourceIndexingSummary: {
+                reindexableSourcePathCount: 1,
+                nonReindexableSourcePathCount: 1,
+              },
               groups: [
                 {
                   normalizedHash: "abc",
                   preview: "same content",
+                  sourceIndexing: {
+                    reindexableSourcePathCount: 1,
+                    nonReindexableSourcePathCount: 1,
+                  },
                   keep: {
                     id: "chunk-a",
                     sourcePath: "memory/a.md",
@@ -697,15 +711,23 @@ describe("memory viewer shared review filters", () => {
                     startLine: 1,
                     endLine: 4,
                     taskLinkCount: 1,
+                    sourceIndexing: {
+                      reindexable: true,
+                      scope: "state_memory_root",
+                    },
                   },
                   remove: [
                     {
                       id: "chunk-b",
-                      sourcePath: "memory/b.md",
+                      sourcePath: "artifacts/export.md",
                       memoryType: "daily",
                       startLine: 1,
                       endLine: 4,
                       taskLinkCount: 2,
+                      sourceIndexing: {
+                        reindexable: false,
+                        scope: "external",
+                      },
                     },
                   ],
                 },
@@ -725,6 +747,14 @@ describe("memory viewer shared review filters", () => {
                 duplicateGroups: 1,
                 removedChunks: 1,
                 relinkedTaskMemoryLinks: 2,
+              },
+              observability: {
+                beforeChunkCount: 5,
+                afterChunkCount: 4,
+                beforePageCount: 12,
+                afterPageCount: 12,
+                beforeFreelistCount: 3,
+                afterFreelistCount: 5,
               },
               groups: [
                 {
@@ -773,6 +803,11 @@ describe("memory viewer shared review filters", () => {
     }));
     expect(refs.memoryDedupModalEl.classList.contains("hidden")).toBe(false);
     expect(refs.memoryDedupModalSubmitBtn.disabled).toBe(false);
+    expect(refs.memoryDedupModalSummaryEl.textContent).toContain("page_count");
+    expect(refs.memoryDedupModalSummaryEl.textContent).toContain("freelist_count");
+    expect(refs.memoryDedupModalSummaryEl.textContent).toContain("1 个可索引源文件 / 1 个旁路源");
+    expect(refs.memoryDedupModalListEl.textContent).toContain("可索引源：memory/");
+    expect(refs.memoryDedupModalListEl.textContent).toContain("非默认索引源");
 
     await feature.applyDedupFromModal();
     expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
@@ -788,5 +823,8 @@ describe("memory viewer shared review filters", () => {
       }),
     }));
     expect(refs.memoryDedupModalSubmitBtn.textContent).toContain("清理已完成");
+    expect(refs.memoryDedupModalSummaryEl.textContent).toContain("5 -> 4");
+    expect(refs.memoryDedupModalSummaryEl.textContent).toContain("3 -> 5");
+    expect(refs.memoryDedupModalWarningEl.textContent).toContain("SQLite 在 DELETE 后不会立即缩小文件体积");
   });
 });

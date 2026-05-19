@@ -146,6 +146,7 @@ export function createSettingsController({
     cfgTeamSharedMemoryEnabled,
     cfgSharedReviewClaimTimeoutMs,
     cfgTaskMemoryEnabled,
+    cfgTaskStatsWhenMemoryDisabled,
     cfgTaskSummaryEnabled,
     cfgTaskSummaryModel,
     cfgTaskSummaryBaseUrl,
@@ -240,6 +241,8 @@ export function createSettingsController({
     cfgInjectMemory,
     cfgInjectMethodSkillList,
     cfgPromptFocusEnabled,
+    cfgPromptFocusSemanticEnabled,
+    cfgPromptFocusSemanticMinScore,
     cfgMaxSystemPromptChars,
     cfgMaxHistory,
     pairingPendingList,
@@ -880,6 +883,7 @@ export function createSettingsController({
     if (cfgTeamSharedMemoryEnabled) cfgTeamSharedMemoryEnabled.checked = c["BELLDANDY_TEAM_SHARED_MEMORY_ENABLED"] === "true";
     if (cfgSharedReviewClaimTimeoutMs) cfgSharedReviewClaimTimeoutMs.value = c["BELLDANDY_SHARED_REVIEW_CLAIM_TIMEOUT_MS"] || "";
     if (cfgTaskMemoryEnabled) cfgTaskMemoryEnabled.checked = c["BELLDANDY_TASK_MEMORY_ENABLED"] === "true";
+    if (cfgTaskStatsWhenMemoryDisabled) cfgTaskStatsWhenMemoryDisabled.checked = c["BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED"] === "true";
     if (cfgTaskSummaryEnabled) cfgTaskSummaryEnabled.checked = c["BELLDANDY_TASK_SUMMARY_ENABLED"] === "true";
     if (cfgTaskSummaryModel) cfgTaskSummaryModel.value = c["BELLDANDY_TASK_SUMMARY_MODEL"] || "";
     if (cfgTaskSummaryBaseUrl) cfgTaskSummaryBaseUrl.value = c["BELLDANDY_TASK_SUMMARY_BASE_URL"] || "";
@@ -976,6 +980,8 @@ export function createSettingsController({
     cfgInjectMemory.checked = c["BELLDANDY_INJECT_MEMORY"] === "true";
     if (cfgInjectMethodSkillList) cfgInjectMethodSkillList.checked = c["BELLDANDY_INJECT_METHOD_SKILL_LIST"] !== "false";
     if (cfgPromptFocusEnabled) cfgPromptFocusEnabled.checked = c["BELLDANDY_PROMPT_FOCUS_ENABLED"] !== "false";
+    if (cfgPromptFocusSemanticEnabled) cfgPromptFocusSemanticEnabled.checked = c["BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED"] !== "false";
+    if (cfgPromptFocusSemanticMinScore) cfgPromptFocusSemanticMinScore.value = c["BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE"] || "";
     cfgMaxSystemPromptChars.value = c["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] || "";
     cfgMaxHistory.value = c["BELLDANDY_MAX_HISTORY"] || "";
     loadConversationAllowedKinds(c["BELLDANDY_CONVERSATION_ALLOWED_KINDS"]);
@@ -1698,6 +1704,7 @@ export function createSettingsController({
     if (cfgTeamSharedMemoryEnabled) updates["BELLDANDY_TEAM_SHARED_MEMORY_ENABLED"] = cfgTeamSharedMemoryEnabled.checked ? "true" : "false";
     if (cfgSharedReviewClaimTimeoutMs) updates["BELLDANDY_SHARED_REVIEW_CLAIM_TIMEOUT_MS"] = cfgSharedReviewClaimTimeoutMs.value.trim();
     if (cfgTaskMemoryEnabled) updates["BELLDANDY_TASK_MEMORY_ENABLED"] = cfgTaskMemoryEnabled.checked ? "true" : "false";
+    if (cfgTaskStatsWhenMemoryDisabled) updates["BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED"] = cfgTaskStatsWhenMemoryDisabled.checked ? "true" : "false";
     if (cfgTaskSummaryEnabled) updates["BELLDANDY_TASK_SUMMARY_ENABLED"] = cfgTaskSummaryEnabled.checked ? "true" : "false";
     if (cfgTaskSummaryModel) updates["BELLDANDY_TASK_SUMMARY_MODEL"] = cfgTaskSummaryModel.value.trim();
     if (cfgTaskSummaryBaseUrl) updates["BELLDANDY_TASK_SUMMARY_BASE_URL"] = cfgTaskSummaryBaseUrl.value.trim();
@@ -1796,6 +1803,8 @@ export function createSettingsController({
     updates["BELLDANDY_INJECT_MEMORY"] = cfgInjectMemory.checked ? "true" : "false";
     if (cfgInjectMethodSkillList) updates["BELLDANDY_INJECT_METHOD_SKILL_LIST"] = cfgInjectMethodSkillList.checked ? "true" : "false";
     if (cfgPromptFocusEnabled) updates["BELLDANDY_PROMPT_FOCUS_ENABLED"] = cfgPromptFocusEnabled.checked ? "true" : "false";
+    if (cfgPromptFocusSemanticEnabled) updates["BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED"] = cfgPromptFocusSemanticEnabled.checked ? "true" : "false";
+    if (cfgPromptFocusSemanticMinScore) updates["BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE"] = cfgPromptFocusSemanticMinScore.value.trim();
     updates["BELLDANDY_MAX_SYSTEM_PROMPT_CHARS"] = cfgMaxSystemPromptChars.value.trim();
     updates["BELLDANDY_MAX_HISTORY"] = cfgMaxHistory.value.trim();
     updates["BELLDANDY_CONVERSATION_ALLOWED_KINDS"] = serializeConversationAllowedKinds();

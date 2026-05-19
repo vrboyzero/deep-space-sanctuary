@@ -20,6 +20,7 @@ import type {
   ExperienceCandidate,
   ExperienceCandidateType,
   ExperienceSynthesisPreviewItem,
+  PublishedExperienceAssetRecord,
 } from "@belldandy/memory";
 import type { SkillRegistry } from "@belldandy/skills";
 import { publishSkillCandidate } from "@belldandy/skills";
@@ -715,12 +716,31 @@ export async function handleMemoryExperienceMethod(
       });
     }
 
+    case "experience.asset.read": {
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      const assetPath = readRequiredString(params, "assetPath");
+      if (!assetPath) return invalid(req.id, "assetPath is required");
+      const assetPathValidationError = getPublishedAssetPathValidationError(ctx.stateDir, assetPath);
+      if (assetPathValidationError) {
+        return invalid(req.id, assetPathValidationError);
+      }
+      const asset = findPublishedAssetRecordByPath(ctx.stateDir, assetPath);
+      if (!asset) {
+        return notFound(req.id, "Published asset not found.");
+      }
+      return ok(req.id, {
+        asset: toPublishedExperienceAssetDetailPayloadItem(asset),
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
     case "experience.candidate.accept": {
       const manager = resolveScopedMemoryManager(params);
       if (!manager) return notAvailable(req.id);
 
       const candidateId = readRequiredString(params, "candidateId");
       const confirmed = readOptionalBoolean(params, "confirmed") === true;
+      const publishTargetPath = readOptionalString(params, "publishTargetPath");
       if (!candidateId) return invalid(req.id, "candidateId is required");
 
       const existing = manager.getExperienceCandidate(candidateId);
@@ -736,6 +756,15 @@ export async function handleMemoryExperienceMethod(
           },
         };
       }
+      const publishTargetValidationError = publishTargetPath
+        ? getPublishedAssetPublishTargetValidationError(ctx.stateDir, existing.type, publishTargetPath)
+        : "";
+      if (publishTargetValidationError) {
+        return invalid(req.id, publishTargetValidationError);
+      }
+      const overwriteAsset = publishTargetPath
+        ? findPublishedAssetRecordByPath(ctx.stateDir, publishTargetPath)
+        : null;
       if (isExperiencePublishConfirmationRequired(existing.type) && !confirmed) {
         return confirmationRequired(req.id, `${existing.type} publish requires user confirmation.`);
       }
@@ -743,10 +772,18 @@ export async function handleMemoryExperienceMethod(
       try {
         let publishedPath: string | undefined;
         if (existing.type === "skill") {
-          publishedPath = await publishSkillCandidate(existing, ctx.stateDir, ctx.skillRegistry);
+          publishedPath = await publishSkillCandidate(existing, ctx.stateDir, ctx.skillRegistry, publishTargetPath
+            ? {
+              publishedPath: publishTargetPath,
+              skillName: overwriteAsset?.metadata?.name || overwriteAsset?.key,
+            }
+            : {});
         }
 
-        const candidate = manager.acceptExperienceCandidate(candidateId, publishedPath ? { publishedPath } : {});
+        const candidate = manager.acceptExperienceCandidate(candidateId, {
+          ...(publishTargetPath ? { publishedPath: publishTargetPath } : {}),
+          ...(publishedPath ? { publishedPath } : {}),
+        });
         if (!candidate) return notFound(req.id, "Experience candidate not found.");
         return ok(req.id, { candidate });
       } catch (error) {
@@ -1136,6 +1173,9 @@ export async function handleMemoryExperienceMethod(
               createdBy: "main_model",
               templateId: template.id,
               templatePath: template.path ?? undefined,
+              seedPublishedPath: seedCandidate.metadata?.publishedOrigin?.assetPath,
+              seedPublishedAssetKey: seedCandidate.metadata?.publishedOrigin?.assetKey,
+              seedPublishedAssetSource: seedCandidate.metadata?.publishedOrigin?.assetSource,
             },
           },
         });
@@ -1607,6 +1647,13 @@ function toPublishedExperienceAssetPayloadItem(item: {
   };
 }
 
+function toPublishedExperienceAssetDetailPayloadItem(item: PublishedExperienceAssetRecord): Record<string, unknown> {
+  return {
+    ...toPublishedExperienceAssetPayloadItem(item),
+    content: item.content,
+  };
+}
+
 function normalizePublishedAssetType(value: string): ExperienceCandidateType | undefined {
   const normalized = value.trim().toLowerCase();
   if (normalized === "method" || normalized === "skill") {
@@ -1631,10 +1678,17 @@ function resolveVirtualPublishedSeedCandidate(
   stateDir: string,
   assetPath: string,
 ): ExperienceCandidate | null {
+  const matched = findPublishedAssetRecordByPath(stateDir, assetPath);
+  return matched ? buildVirtualCandidateFromPublishedAsset({ asset: matched }) : null;
+}
+
+function findPublishedAssetRecordByPath(
+  stateDir: string,
+  assetPath: string,
+): PublishedExperienceAssetRecord | null {
   const normalizedAssetPath = path.resolve(assetPath);
   const assets = listPublishedAssets(stateDir);
-  const matched = assets.find((item) => path.resolve(item.publishedPath) === normalizedAssetPath);
-  return matched ? buildVirtualCandidateFromPublishedAsset({ asset: matched }) : null;
+  return assets.find((item) => path.resolve(item.publishedPath) === normalizedAssetPath) || null;
 }
 
 function getPublishedAssetPathValidationError(stateDir: string, assetPath: string): string {
@@ -1643,6 +1697,48 @@ function getPublishedAssetPathValidationError(stateDir: string, assetPath: strin
   const skillsDir = path.resolve(path.join(stateDir, "skills"));
   if (normalizedAssetPath === methodsDir || normalizedAssetPath === skillsDir) {
     return "assetPath must point to a published method .md file or skill SKILL.md file, not the methods/skills directory.";
+  }
+  const relativeToMethods = path.relative(methodsDir, normalizedAssetPath);
+  if (!relativeToMethods.startsWith("..") && !path.isAbsolute(relativeToMethods)) {
+    if (path.extname(normalizedAssetPath).toLowerCase() !== ".md") {
+      return "assetPath must point to a published method .md file.";
+    }
+    return "";
+  }
+  const relativeToSkills = path.relative(skillsDir, normalizedAssetPath);
+  if (!relativeToSkills.startsWith("..") && !path.isAbsolute(relativeToSkills)) {
+    if (path.basename(normalizedAssetPath).toUpperCase() !== "SKILL.MD") {
+      return "assetPath must point to a published skill SKILL.md file.";
+    }
+    return "";
+  }
+  return "assetPath must point to a published method .md file or skill SKILL.md file.";
+}
+
+function getPublishedAssetPublishTargetValidationError(
+  stateDir: string,
+  candidateType: ExperienceCandidateType,
+  publishTargetPath: string,
+): string {
+  const normalizedTargetPath = path.resolve(publishTargetPath);
+  const methodsDir = path.resolve(path.join(stateDir, "methods"));
+  const skillsDir = path.resolve(path.join(stateDir, "skills"));
+  if (candidateType === "method") {
+    const relative = path.relative(methodsDir, normalizedTargetPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      return "publishTargetPath for a method candidate must stay under stateDir/methods.";
+    }
+    if (path.extname(normalizedTargetPath).toLowerCase() !== ".md") {
+      return "publishTargetPath for a method candidate must point to a .md file.";
+    }
+    return "";
+  }
+  const relative = path.relative(skillsDir, normalizedTargetPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return "publishTargetPath for a skill candidate must stay under stateDir/skills.";
+  }
+  if (path.basename(normalizedTargetPath).toUpperCase() !== "SKILL.MD") {
+    return "publishTargetPath for a skill candidate must point to SKILL.md.";
   }
   return "";
 }

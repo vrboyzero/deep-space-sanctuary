@@ -12,12 +12,18 @@ export async function publishSkillCandidate(
   candidate: ExperienceCandidate,
   stateDir: string,
   registry?: SkillRegistry | null,
+  options: {
+    publishedPath?: string;
+    skillName?: string;
+  } = {},
 ): Promise<string> {
   const skillsDir = getUserSkillsDir(stateDir);
   await fs.mkdir(skillsDir, { recursive: true });
 
-  const prepared = prepareSkillCandidateForPublish(candidate);
-  const filePath = await resolveSkillPublishPath(skillsDir, candidate, prepared.dirName);
+  const prepared = prepareSkillCandidateForPublish(candidate, options.skillName);
+  const filePath = options.publishedPath
+    ? options.publishedPath
+    : await resolveSkillPublishPath(skillsDir, candidate, prepared.dirName);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, prepared.content, "utf-8");
 
@@ -51,7 +57,10 @@ async function resolveSkillPublishPath(skillsDir: string, candidate: ExperienceC
   return path.join(skillsDir, `${baseDirName}-${candidateToken}-${Date.now()}`, "SKILL.md");
 }
 
-function prepareSkillCandidateForPublish(candidate: ExperienceCandidate): { dirName: string; content: string } {
+function prepareSkillCandidateForPublish(
+  candidate: ExperienceCandidate,
+  explicitSkillName?: string,
+): { dirName: string; content: string } {
   const issues = validateSkillCandidateDraftForPublish(candidate.content);
   if (issues.length > 0) {
     throw new Error(`Skill candidate publish validation failed: ${issues.join("；")}`);
@@ -60,6 +69,7 @@ function prepareSkillCandidateForPublish(candidate: ExperienceCandidate): { dirN
   const parsed = parseSkillMd(candidate.content, { type: "user", path: "candidate" });
   const title = readFirstMarkdownTitle(candidate.content);
   const canonicalName = buildCanonicalSkillName({
+    explicitName: explicitSkillName,
     name: parsed.name,
     title,
     slug: candidate.slug,
@@ -101,12 +111,14 @@ function rewriteSkillName(content: string, canonicalName: string): string {
 }
 
 function buildCanonicalSkillName(input: {
+  explicitName?: string;
   name?: string;
   title?: string;
   slug?: string;
   fallback: string;
 }): string {
   const candidates = [
+    input.explicitName,
     input.name,
     String(input.slug ?? "").replace(/^skill-/i, ""),
     input.title,

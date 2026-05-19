@@ -72,6 +72,58 @@ describe("MemoryManager guardrails", () => {
     expect(await manager.linkTaskMemoriesFromSource("conv-state-link", "memory/2026-03-17.md", "used")).toBeGreaterThan(0);
   });
 
+  it("annotates exact dedup preview with observability and reindexable source hints", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+      additionalRoots: [path.join(stateDir, "memory")],
+      additionalFiles: [path.join(stateDir, "MEMORY.md")],
+    });
+
+    manager.upsertMemoryChunk({
+      id: "dedup-indexable",
+      sourcePath: "memory/2026-05-19.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "same memory chunk\nsecond line",
+    });
+    manager.upsertMemoryChunk({
+      id: "dedup-external",
+      sourcePath: "artifacts/export.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "same memory chunk\r\nsecond line",
+    });
+
+    const report = manager.previewExactDedup({ memoryType: "daily" }, { maxGroups: 10 });
+
+    expect(report.observability).toMatchObject({
+      beforeChunkCount: 2,
+      estimatedAfterChunkCount: 1,
+    });
+    expect(typeof report.observability?.pageCount).toBe("number");
+    expect(typeof report.observability?.freelistCount).toBe("number");
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]?.keep.sourceIndexing?.reindexable).toBe(true);
+    expect(report.groups[0]?.keep.sourceIndexing?.scope).toBe("state_memory_root");
+    expect(report.groups[0]?.remove[0]?.sourceIndexing).toMatchObject({
+      reindexable: false,
+      scope: "external",
+    });
+    expect(report.groups[0]?.sourceIndexing).toMatchObject({
+      reindexableSourcePathCount: 1,
+      nonReindexableSourcePathCount: 1,
+      anyAffectedSourcePathReindexable: true,
+      allAffectedSourcePathsReindexable: false,
+    });
+    expect(report.sourceIndexingSummary).toMatchObject({
+      reindexableSourcePathCount: 1,
+      nonReindexableSourcePathCount: 1,
+      duplicateGroupsWithReindexableSources: 1,
+      duplicateGroupsWithOnlyNonReindexableSources: 0,
+    });
+  });
+
   it("keeps explicit search available while implicit recall still skips greetings", async () => {
     const filePath = path.join(docsDir, "hello.md");
     await fs.writeFile(filePath, "# Greeting\nhello memory marker\n", "utf-8");

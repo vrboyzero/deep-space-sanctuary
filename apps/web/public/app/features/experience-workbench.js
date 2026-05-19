@@ -23,7 +23,12 @@ function normalizeText(value) {
 
 function normalizeWorkbenchTab(value) {
   const normalized = normalizeText(value);
-  if (normalized === "candidates" || normalized === "capability-acquisition" || normalized === "usage-overview") {
+  if (
+    normalized === "candidates"
+    || normalized === "capability-acquisition"
+    || normalized === "assets"
+    || normalized === "usage-overview"
+  ) {
     return normalized;
   }
   return "capability-acquisition";
@@ -45,6 +50,17 @@ function compareCandidateByUpdatedAtDesc(left, right) {
     return rightTime - leftTime;
   }
   return String(left?.id || "").localeCompare(String(right?.id || ""));
+}
+
+function comparePublishedAssetByTypeAndTitle(left, right) {
+  const leftType = normalizeCandidateType(left?.type);
+  const rightType = normalizeCandidateType(right?.type);
+  if (leftType !== rightType) {
+    return leftType.localeCompare(rightType);
+  }
+  const leftLabel = normalizeText(left?.title) || normalizeText(left?.key) || normalizeText(left?.publishedPath);
+  const rightLabel = normalizeText(right?.title) || normalizeText(right?.key) || normalizeText(right?.publishedPath);
+  return leftLabel.localeCompare(rightLabel);
 }
 
 function countExperienceStats(items) {
@@ -158,10 +174,14 @@ export function createExperienceWorkbenchFeature({
     experienceWorkbenchStatsEl,
     experienceWorkbenchTabCandidatesBtn,
     experienceWorkbenchTabCapabilityAcquisitionBtn,
+    experienceWorkbenchTabAssetsBtn,
     experienceWorkbenchTabUsageOverviewBtn,
     experienceWorkbenchCandidatesPaneEl,
     experienceWorkbenchCapabilityPaneEl,
     experienceWorkbenchCapabilityOverviewEl,
+    experienceWorkbenchAssetsPaneEl,
+    experienceWorkbenchAssetsListEl,
+    experienceWorkbenchAssetsDetailEl,
     experienceWorkbenchUsagePaneEl,
     experienceWorkbenchUsageOverviewEl,
     experienceWorkbenchQueryEl,
@@ -216,23 +236,47 @@ export function createExperienceWorkbenchFeature({
     return state.synthesisModal;
   }
 
-  function getPublishedAssetsByType() {
+  function ensurePublishedAssetState() {
     const state = getExperienceWorkbenchState();
-    const safeItems = Array.isArray(state.publishedAssets) ? [...state.publishedAssets] : [];
-    safeItems.sort((left, right) => {
-      const leftType = normalizeCandidateType(left?.type);
-      const rightType = normalizeCandidateType(right?.type);
-      if (leftType !== rightType) {
-        return leftType.localeCompare(rightType);
-      }
-      const leftTitle = normalizeText(left?.title) || normalizeText(left?.key) || normalizeText(left?.publishedPath);
-      const rightTitle = normalizeText(right?.title) || normalizeText(right?.key) || normalizeText(right?.publishedPath);
-      return leftTitle.localeCompare(rightTitle);
-    });
+    if (typeof state.selectedAssetPath !== "string") {
+      state.selectedAssetPath = "";
+    }
+    if (!state.selectedAsset || typeof state.selectedAsset !== "object") {
+      state.selectedAsset = null;
+    }
+    if (typeof state.selectedAssetLoading !== "boolean") {
+      state.selectedAssetLoading = false;
+    }
+    if (typeof state.selectedAssetError !== "string") {
+      state.selectedAssetError = "";
+    }
+    return state;
+  }
+
+  function getPublishedAssetsByType() {
+    const safeItems = getPublishedAssetItems();
     return {
       methods: safeItems.filter((item) => normalizeCandidateType(item?.type) === "method"),
       skills: safeItems.filter((item) => normalizeCandidateType(item?.type) === "skill"),
     };
+  }
+
+  function getPublishedAssetItems() {
+    const state = getExperienceWorkbenchState();
+    const safeItems = Array.isArray(state.publishedAssets) ? [...state.publishedAssets] : [];
+    safeItems.sort(comparePublishedAssetByTypeAndTitle);
+    return safeItems;
+  }
+
+  function getSelectedPublishedAssetPath() {
+    ensurePublishedAssetState();
+    return normalizeText(getExperienceWorkbenchState().selectedAssetPath);
+  }
+
+  function findPublishedAssetInState(assetPath) {
+    const normalizedAssetPath = normalizeText(assetPath);
+    if (!normalizedAssetPath) return null;
+    return getPublishedAssetItems().find((item) => normalizeText(item?.publishedPath) === normalizedAssetPath) || null;
   }
 
   function getActiveAgentId() {
@@ -374,6 +418,9 @@ export function createExperienceWorkbenchFeature({
     if (experienceWorkbenchTabCapabilityAcquisitionBtn) {
       experienceWorkbenchTabCapabilityAcquisitionBtn.classList.toggle("active", activeTab === "capability-acquisition");
     }
+    if (experienceWorkbenchTabAssetsBtn) {
+      experienceWorkbenchTabAssetsBtn.classList.toggle("active", activeTab === "assets");
+    }
     if (experienceWorkbenchTabUsageOverviewBtn) {
       experienceWorkbenchTabUsageOverviewBtn.classList.toggle("active", activeTab === "usage-overview");
     }
@@ -382,6 +429,9 @@ export function createExperienceWorkbenchFeature({
     }
     if (experienceWorkbenchCapabilityPaneEl) {
       experienceWorkbenchCapabilityPaneEl.classList.toggle("hidden", activeTab !== "capability-acquisition");
+    }
+    if (experienceWorkbenchAssetsPaneEl) {
+      experienceWorkbenchAssetsPaneEl.classList.toggle("hidden", activeTab !== "assets");
     }
     if (experienceWorkbenchUsagePaneEl) {
       experienceWorkbenchUsagePaneEl.classList.toggle("hidden", activeTab !== "usage-overview");
@@ -845,82 +895,6 @@ export function createExperienceWorkbenchFeature({
     `;
   }
 
-  function renderExperienceWorkbenchPublishedAssetLane(title, items, laneType) {
-    const safeItems = Array.isArray(items) ? items : [];
-    const normalizedLaneType = normalizeCandidateType(laneType);
-    const pendingActionKey = getPendingActionKey();
-    const selectedAssetPath = normalizeText(getExperienceWorkbenchState().resynthesizeAssetPath || "");
-    const laneHead = `
-      <div class="memory-usage-overview-head">
-        <div class="experience-capability-lane-head-main">
-          <span class="memory-usage-overview-title">${escapeHtml(title)}</span>
-          <span class="memory-stat-caption">${escapeHtml(t("experience.publishedAssetCount", { count: String(safeItems.length) }, `Published ${safeItems.length}`))}</span>
-        </div>
-      </div>
-    `;
-    if (!safeItems.length) {
-      return `
-        <div class="memory-usage-overview-lane">
-          ${laneHead}
-          <div class="memory-usage-overview-empty">${escapeHtml(t("experience.publishedAssetLaneEmpty", {}, "暂无已发布资产"))}</div>
-        </div>
-      `;
-    }
-    return `
-      <div class="memory-usage-overview-lane">
-        ${laneHead}
-        <div class="memory-usage-overview-list">
-          ${safeItems.map((item) => {
-            const publishedPath = normalizeText(item?.publishedPath);
-            const isSelected = publishedPath && publishedPath === selectedAssetPath;
-            const previewBusy = pendingActionKey === `synthesize-preview:asset:${publishedPath}`
-              || pendingActionKey === `synthesize-create:asset:${publishedPath}`;
-            const rowDisabled = Boolean(pendingActionKey) && !previewBusy;
-            const summary = normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet.");
-            return `
-              <div class="memory-usage-overview-row experience-capability-row ${isSelected ? "experience-candidate-synthesized" : ""}">
-                <div class="memory-usage-overview-row-main experience-capability-row-main">
-                  <div class="memory-usage-overview-key">${escapeHtml(item?.title || item?.key || publishedPath || t("memory.candidateUntitled", {}, "Untitled Candidate"))}</div>
-                  <div class="memory-usage-overview-meta">
-                    <span>${escapeHtml(formatCandidateTypeLabel(normalizedLaneType))}</span>
-                    ${publishedPath ? `<span>${escapeHtml(summarizePathLabel(publishedPath))}</span>` : ""}
-                    ${isSelected ? `<span>${escapeHtml(t("experience.publishedAssetSelected", {}, "已选中"))}</span>` : ""}
-                  </div>
-                  <div class="memory-detail-badges">
-                    <span class="memory-badge">${escapeHtml(formatCandidateTypeLabel(normalizedLaneType))}</span>
-                    <span class="memory-badge memory-badge-shared">${escapeHtml(t("experience.listPublishedBadge", {}, "Published"))}</span>
-                  </div>
-                  <div class="experience-capability-summary">${escapeHtml(summary)}</div>
-                </div>
-                <div class="experience-capability-actions">
-                  <button
-                    class="memory-usage-action-btn"
-                    data-experience-published-asset-use="${escapeHtml(publishedPath)}"
-                    ${publishedPath && !rowDisabled ? "" : "disabled"}
-                  >${escapeHtml(isSelected
-                    ? t("experience.publishedAssetUseSelected", {}, "已填入")
-                    : t("experience.publishedAssetUse", {}, "填入路径"))}</button>
-                  <button
-                    class="memory-usage-action-btn"
-                    data-experience-published-asset-preview="${escapeHtml(publishedPath)}"
-                    ${publishedPath && !rowDisabled ? "" : "disabled"}
-                  >${escapeHtml(previewBusy
-                    ? t("experience.resynthesizePreviewBusy", {}, "预览中…")
-                    : t("experience.publishedAssetPreview", {}, "预览再合成"))}</button>
-                  <button
-                    class="memory-usage-action-btn"
-                    data-experience-published-asset-open-source="${escapeHtml(publishedPath)}"
-                    ${publishedPath && !rowDisabled ? "" : "disabled"}
-                  >${escapeHtml(t("experience.publishedAssetOpen", {}, "打开文件"))}</button>
-                </div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      </div>
-    `;
-  }
-
   function bindExperienceWorkbenchCapabilityActions() {
     if (!experienceWorkbenchCapabilityOverviewEl) return;
     experienceWorkbenchCapabilityOverviewEl.querySelectorAll("[data-experience-resynthesize-asset-path]").forEach((node) => {
@@ -942,26 +916,6 @@ export function createExperienceWorkbenchFeature({
         if (!publishedPath) return;
         state.resynthesizeAssetPath = publishedPath;
         renderExperienceWorkbenchCapabilityOverviewPanel();
-      });
-    });
-    experienceWorkbenchCapabilityOverviewEl.querySelectorAll("[data-experience-published-asset-use]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const state = getExperienceWorkbenchState();
-        state.resynthesizeAssetPath = node.getAttribute("data-experience-published-asset-use") || "";
-        renderExperienceWorkbenchCapabilityOverviewPanel();
-      });
-    });
-    experienceWorkbenchCapabilityOverviewEl.querySelectorAll("[data-experience-published-asset-preview]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const assetPath = node.getAttribute("data-experience-published-asset-preview");
-        await openExperienceSynthesisModalByAssetPath(assetPath);
-      });
-    });
-    experienceWorkbenchCapabilityOverviewEl.querySelectorAll("[data-experience-published-asset-open-source]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const sourcePath = node.getAttribute("data-experience-published-asset-open-source");
-        if (!sourcePath) return;
-        await openSourcePath?.(sourcePath);
       });
     });
     experienceWorkbenchCapabilityOverviewEl.querySelectorAll("[data-capability-open-candidate-id]").forEach((node) => {
@@ -1004,7 +958,6 @@ export function createExperienceWorkbenchFeature({
     if (!experienceWorkbenchCapabilityOverviewEl) return;
     const state = getExperienceWorkbenchState();
     const { methods, skills } = getCapabilityDraftItemsByType();
-    const { methods: publishedMethods, skills: publishedSkills } = getPublishedAssetsByType();
 
     const caption = state.draftItemsError
       ? state.draftItemsError
@@ -1047,22 +1000,148 @@ export function createExperienceWorkbenchFeature({
           >${escapeHtml(t("experience.resynthesizeFillSelected", {}, "从当前候选填充"))}</button>
         </div>
         <div class="memory-usage-overview-grid">
-          ${state.publishedAssetsError
-            ? `<div class="memory-viewer-empty">${escapeHtml(state.publishedAssetsError)}</div>`
-            : state.publishedAssetsLoading
-              ? `<div class="memory-viewer-empty">${escapeHtml(t("experience.publishedAssetLoading", {}, "正在读取已发布资产…"))}</div>`
-              : `
-                ${renderExperienceWorkbenchPublishedAssetLane(t("experience.publishedMethodLane", {}, "Published Methods"), publishedMethods, "method")}
-                ${renderExperienceWorkbenchPublishedAssetLane(t("experience.publishedSkillLane", {}, "Published Skills"), publishedSkills, "skill")}
-              `}
-        </div>
-        <div class="memory-usage-overview-grid">
           ${renderExperienceWorkbenchCapabilityLane(t("experience.capabilityMethodLane", {}, "Method Draft"), methods, "method")}
           ${renderExperienceWorkbenchCapabilityLane(t("experience.capabilitySkillLane", {}, "Skill Draft"), skills, "skill")}
         </div>
       </div>
     `;
     bindExperienceWorkbenchCapabilityActions();
+  }
+
+  function renderExperienceWorkbenchPublishedAssetLane(container, title, items, laneType, options = {}) {
+    if (!container) return;
+    const safeItems = Array.isArray(items) ? items : [];
+    const normalizedLaneType = normalizeCandidateType(laneType);
+    const pendingActionKey = getPendingActionKey();
+    const selectedAssetPath = getSelectedPublishedAssetPath();
+    const laneHead = `
+      <div class="memory-usage-overview-head">
+        <div class="experience-capability-lane-head-main">
+          <span class="memory-usage-overview-title">${escapeHtml(title)}</span>
+          <span class="memory-stat-caption">${escapeHtml(t("experience.publishedAssetCount", { count: String(safeItems.length) }, `Published ${safeItems.length}`))}</span>
+        </div>
+      </div>
+    `;
+    const laneBody = options.message
+      ? `<div class="memory-usage-overview-empty">${escapeHtml(options.message)}</div>`
+      : !safeItems.length
+        ? `<div class="memory-usage-overview-empty">${escapeHtml(t("experience.publishedAssetLaneEmpty", {}, "暂无已发布资产"))}</div>`
+        : `
+          <div class="memory-usage-overview-list">
+            ${safeItems.map((item) => {
+              const publishedPath = normalizeText(item?.publishedPath);
+              const isSelected = publishedPath
+                && (publishedPath === selectedAssetPath || publishedPath === normalizeText(getExperienceWorkbenchState().resynthesizeAssetPath));
+              const previewBusy = pendingActionKey === `synthesize-preview:asset:${publishedPath}`
+                || pendingActionKey === `synthesize-create:asset:${publishedPath}`;
+              const rowDisabled = Boolean(pendingActionKey) && !previewBusy;
+              const titleText = item?.title || item?.key || publishedPath || t("memory.candidateUntitled", {}, "Untitled Candidate");
+              const summary = normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet.");
+              const metadataName = normalizeText(item?.metadata?.name);
+              const metadataDescription = normalizeText(item?.metadata?.description);
+              return `
+                <div class="experience-asset-card ${isSelected ? "experience-candidate-synthesized" : ""}" data-experience-asset-path="${escapeHtml(publishedPath)}">
+                  <div class="experience-capability-row-main">
+                    <div class="memory-usage-overview-key">${escapeHtml(titleText)}</div>
+                    <div class="memory-usage-overview-meta">
+                      <span>${escapeHtml(formatCandidateTypeLabel(normalizedLaneType))}</span>
+                      <span>${escapeHtml(summarizePathLabel(publishedPath))}</span>
+                      ${isSelected ? `<span>${escapeHtml(t("experience.publishedAssetSelected", {}, "已选中"))}</span>` : ""}
+                    </div>
+                    <div class="memory-detail-badges">
+                      <span class="memory-badge">${escapeHtml(formatCandidateTypeLabel(normalizedLaneType))}</span>
+                      <span class="memory-badge memory-badge-shared">${escapeHtml(t("experience.listPublishedBadge", {}, "Published"))}</span>
+                      ${metadataName ? `<span class="memory-badge">${escapeHtml(metadataName)}</span>` : ""}
+                    </div>
+                    <div class="memory-inline-item-path">${escapeHtml(publishedPath)}</div>
+                    <div class="experience-capability-summary">${escapeHtml(metadataDescription || summary)}</div>
+                  </div>
+                  <div class="experience-capability-actions">
+                    <button
+                      class="memory-usage-action-btn"
+                      data-experience-published-asset-preview="${escapeHtml(publishedPath)}"
+                      ${publishedPath && !rowDisabled ? "" : "disabled"}
+                    >${escapeHtml(previewBusy
+                      ? t("experience.resynthesizePreviewBusy", {}, "预览中…")
+                      : t("experience.publishedAssetPreview", {}, "预览再合成"))}</button>
+                    <button
+                      class="memory-usage-action-btn"
+                      data-experience-published-asset-open-source="${escapeHtml(publishedPath)}"
+                      ${publishedPath && !rowDisabled ? "" : "disabled"}
+                    >${escapeHtml(t("experience.publishedAssetOpen", {}, "打开文件"))}</button>
+                  </div>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        `;
+
+    container.innerHTML = `
+      <div class="memory-usage-overview-lane">
+        ${laneHead}
+        ${laneBody}
+      </div>
+    `;
+  }
+
+  function bindExperienceWorkbenchAssetsActions(container) {
+    if (!container) return;
+    container.querySelectorAll("[data-experience-asset-path]").forEach((node) => {
+      node.addEventListener("click", (event) => {
+        if (event.target instanceof Element && event.target.closest("button")) {
+          return;
+        }
+        const state = ensurePublishedAssetState();
+        state.selectedAssetPath = node.getAttribute("data-experience-asset-path") || "";
+        renderExperienceWorkbenchAssetsPanel();
+      });
+    });
+    container.querySelectorAll("[data-experience-published-asset-preview]").forEach((node) => {
+      node.addEventListener("click", async () => {
+        const assetPath = node.getAttribute("data-experience-published-asset-preview");
+        const state = ensurePublishedAssetState();
+        state.selectedAssetPath = assetPath || "";
+        renderExperienceWorkbenchAssetsPanel();
+        await openExperienceSynthesisModalByAssetPath(assetPath);
+      });
+    });
+    container.querySelectorAll("[data-experience-published-asset-open-source]").forEach((node) => {
+      node.addEventListener("click", async () => {
+        const sourcePath = node.getAttribute("data-experience-published-asset-open-source");
+        if (!sourcePath) return;
+        const state = ensurePublishedAssetState();
+        state.selectedAssetPath = sourcePath;
+        renderExperienceWorkbenchAssetsPanel();
+        await openSourcePath?.(sourcePath);
+      });
+    });
+  }
+
+  function renderExperienceWorkbenchAssetsPanel() {
+    const state = ensurePublishedAssetState();
+    const { methods, skills } = getPublishedAssetsByType();
+    state.selectedAsset = null;
+    state.selectedAssetLoading = false;
+    state.selectedAssetError = "";
+    const loadingMessage = t("experience.assetsLoading", {}, "正在读取已发布资产…");
+    const errorMessage = state.publishedAssetsError || "";
+    const message = state.publishedAssetsLoading ? loadingMessage : errorMessage;
+    renderExperienceWorkbenchPublishedAssetLane(
+      experienceWorkbenchAssetsListEl,
+      t("experience.publishedMethodLane", {}, "Published Methods"),
+      methods,
+      "method",
+      message ? { message } : {},
+    );
+    renderExperienceWorkbenchPublishedAssetLane(
+      experienceWorkbenchAssetsDetailEl,
+      t("experience.publishedSkillLane", {}, "Published Skills"),
+      skills,
+      "skill",
+      message ? { message } : {},
+    );
+    bindExperienceWorkbenchAssetsActions(experienceWorkbenchAssetsListEl);
+    bindExperienceWorkbenchAssetsActions(experienceWorkbenchAssetsDetailEl);
   }
 
   function renderExperienceWorkbenchUsageOverviewPanel() {
@@ -1155,6 +1234,7 @@ export function createExperienceWorkbenchFeature({
     const normalizedCandidateId = normalizeText(candidateId);
     const normalizedDecision = decision === "accept" || decision === "reject" ? decision : "";
     if (!normalizedCandidateId || !normalizedDecision) return null;
+    const publishTargetPath = normalizeText(options.publishTargetPath);
     return sendReq({
       type: "req",
       id: makeId(),
@@ -1163,6 +1243,7 @@ export function createExperienceWorkbenchFeature({
         candidateId: normalizedCandidateId,
         agentId: getActiveAgentId(),
         ...(options.confirmed === true ? { confirmed: true } : {}),
+        ...(publishTargetPath ? { publishTargetPath } : {}),
       },
     });
   }
@@ -1192,6 +1273,20 @@ export function createExperienceWorkbenchFeature({
       params: {
         agentId: requestContext.agentId,
         limit,
+      },
+    });
+  }
+
+  async function requestPublishedExperienceAssetRead(requestContext, assetPath) {
+    const normalizedAssetPath = normalizeText(assetPath);
+    if (!normalizedAssetPath) return null;
+    return sendReq({
+      type: "req",
+      id: makeId(),
+      method: "experience.asset.read",
+      params: {
+        agentId: requestContext.agentId,
+        assetPath: normalizedAssetPath,
       },
     });
   }
@@ -1254,6 +1349,21 @@ export function createExperienceWorkbenchFeature({
       "experience.reviewAcceptConfirmMessage",
       { type: typeLabel, title },
       `Confirm accepting and publishing this ${typeLabel} candidate?\n\n${title}`,
+    );
+  }
+
+  function buildExperienceOverwriteConfirmMessage(candidate, publishTargetPath) {
+    const safeCandidate = candidate && typeof candidate === "object" ? candidate : {};
+    const title = normalizeText(safeCandidate.title)
+      || normalizeText(safeCandidate.slug)
+      || normalizeText(safeCandidate.id)
+      || t("memory.candidateUntitled", {}, "Untitled Candidate");
+    const typeLabel = formatCandidateTypeLabel(safeCandidate.type);
+    const pathLabel = summarizePathLabel(publishTargetPath || "");
+    return t(
+      "experience.reviewOverwriteConfirmMessage",
+      { type: typeLabel, title, path: pathLabel },
+      `确认接受并用这个 ${typeLabel} 候选覆盖原文件？\n\n${title}\n${pathLabel}`,
     );
   }
 
@@ -1388,6 +1498,10 @@ export function createExperienceWorkbenchFeature({
       || normalizeText(seedCandidate?.id)
       || t("memory.candidateUntitled", {}, "Untitled Candidate");
     const seedDisplayTaskId = resolveExperienceDisplayTaskId(seedCandidate);
+    const overwriteTargetPath = normalizeText(modalState.seedAssetPath);
+    const seedContent = normalizeText(seedCandidate?.content);
+    const createdContent = normalizeText(createdCandidate?.content);
+    const showOverwriteCompare = Boolean(createdCandidateId && overwriteTargetPath && seedContent && createdContent);
     const previewItems = Array.isArray(preview?.items) ? preview.items : [];
     const derivedSameFamilyCount = previewItems.filter((item) => normalizeText(item?.relation).toLowerCase() === "same_family").length;
     const derivedSimilarCount = Math.max(0, previewItems.length - derivedSameFamilyCount);
@@ -1488,6 +1602,12 @@ export function createExperienceWorkbenchFeature({
           <div class="memory-detail-text">${escapeHtml(createdCandidateTitle || createdCandidateId)}</div>
         </div>
       ` : ""}
+      ${showOverwriteCompare ? `
+        <div class="memory-detail-card">
+          <span class="memory-detail-label">${escapeHtml(t("experience.synthesizeModalOverwriteTargetLabel", {}, "覆盖目标"))}</span>
+          <div class="memory-detail-text">${escapeHtml(summarizePathLabel(overwriteTargetPath))}</div>
+        </div>
+      ` : ""}
     `;
 
     if (experienceSynthesisModalConsumeSourcesEl) {
@@ -1511,6 +1631,28 @@ export function createExperienceWorkbenchFeature({
       experienceSynthesisModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("experience.synthesizeModalEmpty", {}, "没有可用于合成的近似草稿。"))}</div>`;
     } else {
       const rows = [];
+      if (showOverwriteCompare) {
+        rows.push(`
+          <div class="memory-detail-card">
+            <div class="goal-summary-header">
+              <div>
+                <div class="goal-summary-title">${escapeHtml(t("experience.overwriteCompareTitle", {}, "覆盖前对比"))}</div>
+                <div class="goal-summary-text">${escapeHtml(t("experience.overwriteCompareSummary", {}, "左侧为当前已发布资产，右侧为本次新合成草稿。确认无误后再执行覆盖。"))}</div>
+              </div>
+            </div>
+            <div class="memory-detail-grid">
+              <div class="memory-detail-card">
+                <span class="memory-detail-label">${escapeHtml(t("experience.overwriteCompareCurrent", {}, "当前已发布资产"))}</span>
+                <pre class="memory-detail-pre">${escapeHtml(seedContent)}</pre>
+              </div>
+              <div class="memory-detail-card">
+                <span class="memory-detail-label">${escapeHtml(t("experience.overwriteCompareNext", {}, "新合成草稿"))}</span>
+                <pre class="memory-detail-pre">${escapeHtml(createdContent)}</pre>
+              </div>
+            </div>
+          </div>
+        `);
+      }
       if (seedCandidate) {
         rows.push(`
           <div class="experience-synthesis-row experience-candidate-synthesized" data-synthesis-preview-candidate-id="${escapeHtml(String(seedCandidate.id || ""))}">
@@ -1553,8 +1695,12 @@ export function createExperienceWorkbenchFeature({
 
     experienceSynthesisModalSubmitBtn.textContent = createdCandidateId
       ? (modalState.submitting
-        ? t("experience.synthesizeAcceptCreatedBusy", {}, "接受并发布中…")
-        : t("experience.synthesizeAcceptCreated", {}, "接受并发布新草稿"))
+        ? (showOverwriteCompare
+          ? t("experience.synthesizeOverwriteCreatedBusy", {}, "覆盖发布中…")
+          : t("experience.synthesizeAcceptCreatedBusy", {}, "接受并发布中…"))
+        : (showOverwriteCompare
+          ? t("experience.synthesizeOverwriteCreated", {}, "接受并覆盖原文件")
+          : t("experience.synthesizeAcceptCreated", {}, "接受并发布新草稿")))
       : (modalState.submitting
         ? (isSkill
           ? t("experience.synthesizeSubmitBusySkill", {}, "合成 Skill 中…")
@@ -1711,6 +1857,9 @@ export function createExperienceWorkbenchFeature({
   async function submitExperienceSynthesis() {
     const modalState = getSynthesisModalState();
     const preview = modalState.preview && typeof modalState.preview === "object" ? modalState.preview : null;
+    const createdCandidateRecord = modalState.createdCandidate && typeof modalState.createdCandidate === "object"
+      ? modalState.createdCandidate
+      : null;
     const createdCandidateId = normalizeText(modalState.createdCandidate?.id);
     const candidateId = normalizeText(modalState.seedCandidateId);
     const assetPath = normalizeText(modalState.seedAssetPath);
@@ -1728,7 +1877,12 @@ export function createExperienceWorkbenchFeature({
       syncGenerateControls();
       renderExperienceSynthesisModal();
       try {
-        const acceptedCandidate = await reviewExperienceCandidate(createdCandidateId, "accept");
+        const acceptedCandidate = await reviewExperienceCandidate(createdCandidateId, "accept", assetPath
+          ? {
+            publishTargetPath: assetPath,
+            confirmMessage: buildExperienceOverwriteConfirmMessage(createdCandidateRecord, assetPath),
+          }
+          : {});
         if (acceptedCandidate) {
           closeExperienceSynthesisModal({ force: true });
           return acceptedCandidate;
@@ -1917,6 +2071,49 @@ export function createExperienceWorkbenchFeature({
     bindExperienceWorkbenchDetailActions();
   }
 
+  async function loadPublishedExperienceAssetDetail(assetPath, requestContext = null) {
+    const state = ensurePublishedAssetState();
+    const normalizedAssetPath = normalizeText(assetPath);
+    if (!normalizedAssetPath) {
+      state.selectedAssetPath = "";
+      state.selectedAsset = null;
+      state.selectedAssetLoading = false;
+      state.selectedAssetError = "";
+      renderExperienceWorkbenchAssetsPanel();
+      return;
+    }
+
+    state.selectedAssetPath = normalizedAssetPath;
+    state.selectedAsset = null;
+    state.selectedAssetLoading = true;
+    state.selectedAssetError = "";
+    if (getActiveTab() !== "assets") {
+      setActiveTab("assets");
+      syncExperienceWorkbenchTabUi();
+    }
+    renderExperienceWorkbenchAssetsPanel();
+
+    const activeRequest = requestContext ?? {
+      requestToken: Number(state.requestToken || 0),
+      agentId: String(state.activeAgentId || getActiveAgentId()).trim() || "default",
+    };
+    const res = await requestPublishedExperienceAssetRead(activeRequest, normalizedAssetPath);
+    if (!isRequestCurrent(activeRequest)) {
+      return;
+    }
+
+    state.selectedAssetLoading = false;
+    if (!res || !res.ok) {
+      state.selectedAsset = null;
+      state.selectedAssetError = res?.error?.message || t("experience.assetsDetailLoadFailed", {}, "已发布资产详情加载失败。");
+      renderExperienceWorkbenchAssetsPanel();
+      return;
+    }
+    state.selectedAsset = res.payload?.asset ?? null;
+    state.selectedAssetError = "";
+    renderExperienceWorkbenchAssetsPanel();
+  }
+
   async function loadExperienceCandidateDetail(candidateId, requestContext = null) {
     const state = getExperienceWorkbenchState();
     const normalizedCandidateId = typeof candidateId === "string" ? candidateId.trim() : "";
@@ -1959,15 +2156,33 @@ export function createExperienceWorkbenchFeature({
 
   async function syncExperienceWorkbenchUi(options = {}) {
     const state = getExperienceWorkbenchState();
+    ensurePublishedAssetState();
     const preferFirst = options.preferFirst !== false;
     const loadDetailIfNeeded = options.loadDetailIfNeeded === true;
     const filteredItems = getFilteredExperienceItems();
+    const activeTab = getActiveTab();
     state.stats = mergeExperienceStats(state.stats, countExperienceStats(state.items));
     renderExperienceWorkbenchStats(state.stats);
     syncExperienceWorkbenchTabUi();
     syncCleanupConsumedButton();
     renderExperienceWorkbenchCapabilityOverviewPanel();
+    renderExperienceWorkbenchAssetsPanel();
     renderExperienceSynthesisModal();
+
+    if (activeTab === "assets") {
+      const assetItems = getPublishedAssetItems();
+      const selectedAssetVisible = assetItems.some((item) => normalizeText(item?.publishedPath) === getSelectedPublishedAssetPath());
+      if (!selectedAssetVisible) {
+        state.selectedAssetPath = preferFirst && assetItems[0]?.publishedPath
+          ? normalizeText(assetItems[0].publishedPath)
+          : "";
+        state.selectedAsset = null;
+        state.selectedAssetLoading = false;
+        state.selectedAssetError = "";
+      }
+      renderExperienceWorkbenchAssetsPanel();
+      return;
+    }
 
     const selectedVisible = filteredItems.some((item) => String(item?.id || "") === String(state.selectedId || ""));
     if (!selectedVisible) {
@@ -2001,24 +2216,31 @@ export function createExperienceWorkbenchFeature({
     syncFilterUi();
     syncExperienceWorkbenchTabUi();
     const state = getExperienceWorkbenchState();
+    ensurePublishedAssetState();
     state.activeAgentId = getActiveAgentId();
     if (!isConnected?.()) {
+      const disconnectedMessage = t("experience.disconnected", {}, "Connect to the server to view experience candidates.");
       state.items = [];
       state.draftItems = [];
       state.draftItemsLoading = false;
       state.draftItemsError = "";
       state.publishedAssets = [];
       state.publishedAssetsLoading = false;
-      state.publishedAssetsError = "";
+      state.publishedAssetsError = disconnectedMessage;
+      state.selectedAssetPath = "";
+      state.selectedAsset = null;
+      state.selectedAssetLoading = false;
+      state.selectedAssetError = "";
       state.stats = null;
       state.selectedId = null;
       state.selectedCandidate = null;
       closeExperienceSynthesisModal();
       renderExperienceWorkbenchStats(null);
-      renderExperienceWorkbenchListEmpty(t("experience.disconnected", {}, "Connect to the server to view experience candidates."));
-      renderExperienceWorkbenchDetailEmpty(t("experience.disconnected", {}, "Connect to the server to view experience candidates."));
-      renderExperienceWorkbenchCapabilityOverviewEmpty(t("experience.disconnected", {}, "Connect to the server to view experience candidates."));
-      renderExperienceWorkbenchUsageOverviewEmpty(t("experience.disconnected", {}, "Connect to the server to view experience candidates."));
+      renderExperienceWorkbenchListEmpty(disconnectedMessage);
+      renderExperienceWorkbenchDetailEmpty(disconnectedMessage);
+      renderExperienceWorkbenchCapabilityOverviewEmpty(disconnectedMessage);
+      renderExperienceWorkbenchAssetsPanel();
+      renderExperienceWorkbenchUsageOverviewEmpty(disconnectedMessage);
       syncCleanupConsumedButton();
       return;
     }
@@ -2059,21 +2281,27 @@ export function createExperienceWorkbenchFeature({
       return;
     }
     if (!res || !res.ok) {
+      const loadFailedMessage = res?.error?.message || t("experience.loadFailed", {}, "Failed to load experience candidates.");
       state.items = [];
       state.draftItems = [];
       state.draftItemsLoading = false;
-      state.draftItemsError = res?.error?.message || t("experience.loadFailed", {}, "Failed to load experience candidates.");
+      state.draftItemsError = loadFailedMessage;
       state.publishedAssets = [];
       state.publishedAssetsLoading = false;
-      state.publishedAssetsError = "";
+      state.publishedAssetsError = loadFailedMessage;
+      state.selectedAssetPath = "";
+      state.selectedAsset = null;
+      state.selectedAssetLoading = false;
+      state.selectedAssetError = "";
       state.stats = null;
       state.selectedId = null;
       state.selectedCandidate = null;
       renderExperienceWorkbenchStats(null);
-      renderExperienceWorkbenchListEmpty(res?.error?.message || t("experience.loadFailed", {}, "Failed to load experience candidates."));
-      renderExperienceWorkbenchDetailEmpty(res?.error?.message || t("experience.loadFailed", {}, "Failed to load experience candidates."));
+      renderExperienceWorkbenchListEmpty(loadFailedMessage);
+      renderExperienceWorkbenchDetailEmpty(loadFailedMessage);
       renderExperienceWorkbenchCapabilityOverviewEmpty(state.draftItemsError);
-      renderExperienceWorkbenchUsageOverviewEmpty(res?.error?.message || t("experience.loadFailed", {}, "Failed to load experience candidates."));
+      renderExperienceWorkbenchAssetsPanel();
+      renderExperienceWorkbenchUsageOverviewEmpty(loadFailedMessage);
       syncCleanupConsumedButton();
       return;
     }
@@ -2092,6 +2320,12 @@ export function createExperienceWorkbenchFeature({
     state.publishedAssetsError = publishedAssetsRes?.ok
       ? ""
       : publishedAssetsRes?.error?.message || t("experience.publishedAssetLoadFailed", {}, "Failed to load published assets.");
+    if (!findPublishedAssetInState(state.selectedAssetPath)) {
+      state.selectedAssetPath = "";
+      state.selectedAsset = null;
+      state.selectedAssetLoading = false;
+      state.selectedAssetError = "";
+    }
     syncCleanupConsumedButton();
     const filteredItems = getFilteredExperienceItems();
     const hasExistingSelection = state.selectedId && filteredItems.some((item) => String(item?.id || "") === String(state.selectedId));
@@ -2116,9 +2350,10 @@ export function createExperienceWorkbenchFeature({
     }
   }
 
-  async function reviewExperienceCandidate(candidateId, decision) {
+  async function reviewExperienceCandidate(candidateId, decision, options = {}) {
     const normalizedCandidateId = typeof candidateId === "string" ? candidateId.trim() : "";
     const normalizedDecision = decision === "accept" || decision === "reject" ? decision : "";
+    const publishTargetPath = normalizeText(options.publishTargetPath);
     if (!normalizedCandidateId || !normalizedDecision) return null;
     if (!isConnected?.()) {
       showNotice(
@@ -2142,18 +2377,32 @@ export function createExperienceWorkbenchFeature({
 
     let reviewedCandidate = null;
     try {
-      let res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision);
-      if (
-        normalizedDecision === "accept"
-        && res
-        && !res.ok
-        && res.error?.code === "confirmation_required"
-      ) {
+      let res;
+      if (normalizedDecision === "accept" && publishTargetPath) {
         const confirmed = typeof window === "object" && typeof window.confirm === "function"
-          ? window.confirm(buildExperiencePublishConfirmMessage(currentCandidate))
+          ? window.confirm(options.confirmMessage || buildExperienceOverwriteConfirmMessage(currentCandidate, publishTargetPath))
           : true;
-        if (confirmed) {
-          res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision, { confirmed: true });
+        if (!confirmed) {
+          return null;
+        }
+        res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision, {
+          confirmed: true,
+          publishTargetPath,
+        });
+      } else {
+        res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision);
+        if (
+          normalizedDecision === "accept"
+          && res
+          && !res.ok
+          && res.error?.code === "confirmation_required"
+        ) {
+          const confirmed = typeof window === "object" && typeof window.confirm === "function"
+            ? window.confirm(buildExperiencePublishConfirmMessage(currentCandidate))
+            : true;
+          if (confirmed) {
+            res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision, { confirmed: true });
+          }
         }
       }
       if (!res || !res.ok) {
@@ -2435,6 +2684,13 @@ export function createExperienceWorkbenchFeature({
         renderExperienceWorkbenchCapabilityOverviewPanel();
       });
     }
+    if (experienceWorkbenchTabAssetsBtn) {
+      experienceWorkbenchTabAssetsBtn.addEventListener("click", () => {
+        setActiveTab("assets");
+        syncExperienceWorkbenchTabUi();
+        void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+      });
+    }
     if (experienceWorkbenchTabUsageOverviewBtn) {
       experienceWorkbenchTabUsageOverviewBtn.addEventListener("click", () => {
         setActiveTab("usage-overview");
@@ -2516,6 +2772,10 @@ export function createExperienceWorkbenchFeature({
     state.draftItemsError = "";
     state.selectedId = null;
     state.selectedCandidate = null;
+    state.selectedAssetPath = "";
+    state.selectedAsset = null;
+    state.selectedAssetLoading = false;
+    state.selectedAssetError = "";
     state.stats = null;
     state.activeTab = "capability-acquisition";
     state.resynthesizeAssetPath = "";

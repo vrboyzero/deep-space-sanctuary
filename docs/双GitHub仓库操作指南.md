@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "落实了Agent工具调用强化方案，加强了工具修复、token消耗、Agent识别与控制工具的能力"
+git commit -m "Agent工具调用强化方案第一阶段完成，完成了AGENTS与SOUL的提示词聚焦，完成已有技能与方法的合成页面与接口"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

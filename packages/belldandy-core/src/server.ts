@@ -1630,6 +1630,7 @@ async function handleReq(
       "experience.candidate.reject",
       "experience.candidate.reject_bulk",
       "experience.asset.list",
+      "experience.asset.read",
       "experience.candidate.synthesize.preview",
       "experience.candidate.synthesize.create",
       "experience.usage.get",
@@ -2046,6 +2047,7 @@ async function handleReq(
     case "experience.candidate.reject_bulk":
     case "experience.candidate.cleanup_consumed":
     case "experience.asset.list":
+    case "experience.asset.read":
     case "experience.candidate.synthesize.preview":
     case "experience.candidate.synthesize.create":
     case "experience.usage.get":

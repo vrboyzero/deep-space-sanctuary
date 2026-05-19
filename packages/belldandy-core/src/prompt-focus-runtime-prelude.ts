@@ -16,6 +16,8 @@ export type PromptFocusRuntimePreludeConfig = {
   maxChars: number;
   minScore: number;
   maxExcerptChars: number;
+  semanticEnabled?: boolean;
+  semanticMinScore?: number;
 };
 
 export type PromptFocusChunk = {
@@ -36,6 +38,8 @@ type PromptFocusRuntimePreludeResult = {
 type PromptFocusMatch = {
   chunk: PromptFocusChunk;
   score: number;
+  lexicalScore: number;
+  semanticScore?: number;
   matchedTerms: string[];
 };
 
@@ -48,13 +52,22 @@ type PromptFocusIndex = {
     name: string;
     path: string;
   }>;
+  semanticCacheKey?: string;
+  semanticVectors?: Array<number[] | null>;
 };
 
-const PROMPT_FOCUS_INDEX_VERSION = "workspace-doc-lexical-v1";
+type PromptFocusSemanticEmbedder = {
+  cacheKey?: string;
+  embedQuery: (text: string) => Promise<number[] | null>;
+  embedPassages: (texts: string[]) => Promise<Array<number[] | null>>;
+};
+
+const PROMPT_FOCUS_INDEX_VERSION = "workspace-doc-semantic-v2";
 const PROMPT_FOCUS_INDEX_CACHE = new Map<string, PromptFocusIndex>();
 const MAX_SECTION_CHARS = 720;
 const MAX_QUERY_TERMS = 18;
 const DEFAULT_HEADING_LABEL = "Overview";
+const DEFAULT_PROMPT_FOCUS_SEMANTIC_MIN_SCORE = 0.3;
 
 const STOP_TERMS = new Set([
   "a",
@@ -338,49 +351,65 @@ export function scorePromptFocusChunks(input: {
   currentTurnText?: string;
   chunks: PromptFocusChunk[];
   minScore: number;
+  semanticQueryVector?: number[] | null;
+  semanticChunkVectors?: Array<number[] | null>;
+  semanticMinScore?: number;
 }): PromptFocusMatch[] {
   const normalizedQuery = normalizeSearchText(input.currentTurnText);
   const queryTerms = collectPromptFocusTerms(input.currentTurnText, MAX_QUERY_TERMS);
-  if (!normalizedQuery || queryTerms.length <= 0) {
+  const semanticEnabled = hasUsableVector(input.semanticQueryVector)
+    && Array.isArray(input.semanticChunkVectors)
+    && input.semanticChunkVectors.length === input.chunks.length;
+  if (!normalizedQuery || (queryTerms.length <= 0 && !semanticEnabled)) {
     return [];
   }
 
   const matches: PromptFocusMatch[] = [];
-  for (const chunk of input.chunks) {
+  for (const [index, chunk] of input.chunks.entries()) {
     const headingText = normalizeSearchText(chunk.headingPath.join(" / "));
     const summaryText = normalizeSearchText(chunk.summary);
     const searchText = normalizeSearchText(chunk.searchText);
 
-    let score = 0;
+    let lexicalScore = 0;
     const matchedTerms = new Set<string>();
     if (normalizedQuery.length >= 4 && searchText.includes(normalizedQuery)) {
-      score += 8;
+      lexicalScore += 8;
     }
 
     for (const term of queryTerms) {
       if (headingText.includes(term)) {
-        score += 4;
+        lexicalScore += 4;
         matchedTerms.add(term);
         continue;
       }
       if (summaryText && summaryText.includes(term)) {
-        score += 3;
+        lexicalScore += 3;
         matchedTerms.add(term);
         continue;
       }
       if (searchText.includes(term)) {
-        score += 2;
+        lexicalScore += 2;
         matchedTerms.add(term);
       }
     }
 
-    if (score < input.minScore || matchedTerms.size <= 0) {
+    const semanticScore = semanticEnabled
+      ? computeCosineSimilarity(input.semanticQueryVector, input.semanticChunkVectors?.[index] ?? null)
+      : undefined;
+    const passesLexical = lexicalScore >= input.minScore && matchedTerms.size > 0;
+    const passesSemantic = typeof semanticScore === "number"
+      && semanticScore >= (input.semanticMinScore ?? DEFAULT_PROMPT_FOCUS_SEMANTIC_MIN_SCORE);
+    if (!passesLexical && !passesSemantic) {
       continue;
     }
+
+    const score = lexicalScore + (typeof semanticScore === "number" ? semanticScore * 10 : 0) + (passesLexical && passesSemantic ? 1 : 0);
 
     matches.push({
       chunk,
       score,
+      lexicalScore,
+      semanticScore,
       matchedTerms: [...matchedTerms],
     });
   }
@@ -396,6 +425,61 @@ export function scorePromptFocusChunks(input: {
     const rightHeading = right.chunk.headingPath.join(" / ");
     return `${left.chunk.fileName}:${leftHeading}:${left.chunk.id}`.localeCompare(`${right.chunk.fileName}:${rightHeading}:${right.chunk.id}`);
   });
+}
+
+function hasUsableVector(vector: number[] | null | undefined): vector is number[] {
+  return Array.isArray(vector) && vector.length > 0;
+}
+
+function computeCosineSimilarity(left: number[] | null | undefined, right: number[] | null | undefined): number | undefined {
+  if (!hasUsableVector(left) || !hasUsableVector(right)) {
+    return undefined;
+  }
+  const size = Math.min(left.length, right.length);
+  if (size <= 0) {
+    return undefined;
+  }
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < size; index += 1) {
+    const leftValue = left[index] ?? 0;
+    const rightValue = right[index] ?? 0;
+    dot += leftValue * rightValue;
+    leftNorm += leftValue * leftValue;
+    rightNorm += rightValue * rightValue;
+  }
+  if (leftNorm <= 0 || rightNorm <= 0) {
+    return undefined;
+  }
+  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+}
+
+async function ensurePromptFocusSemanticVectors(input: {
+  index: PromptFocusIndex;
+  semanticEmbedder?: PromptFocusSemanticEmbedder;
+}): Promise<Array<number[] | null> | undefined> {
+  const semanticEmbedder = input.semanticEmbedder;
+  if (!semanticEmbedder?.embedPassages || input.index.chunks.length <= 0) {
+    return undefined;
+  }
+  const semanticCacheKey = semanticEmbedder.cacheKey?.trim() || "semantic";
+  if (
+    input.index.semanticCacheKey === semanticCacheKey
+    && Array.isArray(input.index.semanticVectors)
+    && input.index.semanticVectors.length === input.index.chunks.length
+  ) {
+    return input.index.semanticVectors;
+  }
+
+  const vectors = await semanticEmbedder.embedPassages(input.index.chunks.map((chunk) => chunk.searchText));
+  const normalizedVectors = input.index.chunks.map((_, index) => {
+    const vector = vectors[index];
+    return hasUsableVector(vector) ? vector : null;
+  });
+  input.index.semanticCacheKey = semanticCacheKey;
+  input.index.semanticVectors = normalizedVectors;
+  return normalizedVectors;
 }
 
 function formatPromptFocusLine(match: PromptFocusMatch, maxExcerptChars: number): string {
@@ -430,6 +514,7 @@ export async function buildPromptFocusRuntimePrelude(input: {
   currentTurnText?: string;
   config: PromptFocusRuntimePreludeConfig;
   workspaceLoader?: (rootDir: string, workspaceAgentId: string) => Promise<WorkspaceLoadResult>;
+  semanticEmbedder?: PromptFocusSemanticEmbedder;
 }): Promise<PromptFocusRuntimePreludeResult | undefined> {
   if (!input.config.enabled) {
     return undefined;
@@ -451,10 +536,23 @@ export async function buildPromptFocusRuntimePrelude(input: {
     return undefined;
   }
 
+  let semanticQueryVector: number[] | null | undefined;
+  let semanticChunkVectors: Array<number[] | null> | undefined;
+  if (input.config.semanticEnabled !== false && input.semanticEmbedder?.embedQuery && input.semanticEmbedder?.embedPassages) {
+    semanticQueryVector = await input.semanticEmbedder.embedQuery(currentTurnText);
+    semanticChunkVectors = await ensurePromptFocusSemanticVectors({
+      index,
+      semanticEmbedder: input.semanticEmbedder,
+    });
+  }
+
   const rankedMatches = scorePromptFocusChunks({
     currentTurnText,
     chunks: index.chunks,
     minScore: input.config.minScore,
+    semanticQueryVector,
+    semanticChunkVectors,
+    semanticMinScore: input.config.semanticMinScore,
   });
   if (rankedMatches.length <= 0) {
     return undefined;
@@ -502,9 +600,12 @@ export async function buildPromptFocusRuntimePrelude(input: {
           indexedChunkCount: index.chunkCount,
           indexedFiles: index.files.map((item) => item.name),
           matchedChunkCount: rankedMatches.length,
+          retrievalMode: hasUsableVector(semanticQueryVector) ? "semantic+lexical" : "lexical-only",
           selectedChunkIds: selectedMatches.map((item) => item.chunk.id),
           selectedHeadings: selectedMatches.map((item) => `${item.chunk.fileName} > ${item.chunk.headingPath.join(" / ")}`),
           selectedScores: selectedMatches.map((item) => item.score),
+          selectedLexicalScores: selectedMatches.map((item) => item.lexicalScore),
+          selectedSemanticScores: selectedMatches.map((item) => item.semanticScore ?? null),
           currentTurnPreview: truncateText(currentTurnText, 120) || undefined,
         },
       }),

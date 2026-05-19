@@ -69,7 +69,7 @@ describe("prompt focus runtime prelude", () => {
     expect(result?.prependContext).toContain("简短规划");
     expect(result?.deltas?.[0]?.metadata).toMatchObject({
       blockTag: "prompt-focus-runtime",
-      indexVersion: "workspace-doc-lexical-v1",
+      indexVersion: "workspace-doc-semantic-v2",
       indexedFiles: expect.arrayContaining(["AGENTS.md", "SOUL.md"]),
       matchedChunkCount: expect.any(Number),
     });
@@ -114,6 +114,40 @@ describe("prompt focus runtime prelude", () => {
     });
 
     expect(result).toBeUndefined();
+  });
+
+  it("can recover paraphrased intent through semantic retrieval when lexical overlap is weak", async () => {
+    const stateDir = await createWorkspaceFixture();
+
+    const result = await buildPromptFocusRuntimePrelude({
+      stateDir,
+      agentId: "default",
+      currentTurnText: "before destructive actions, ask for human confirmation and explain rollback",
+      config: {
+        enabled: true,
+        maxSections: 2,
+        maxChars: 600,
+        minScore: 10,
+        maxExcerptChars: 180,
+        semanticEnabled: true,
+        semanticMinScore: 0.7,
+      },
+      semanticEmbedder: {
+        cacheKey: "test-semantic",
+        embedQuery: async () => [1, 0],
+        embedPassages: async (texts) => texts.map((text) => (
+          text.includes("HITL")
+            ? [1, 0]
+            : [0, 1]
+        )),
+      },
+    });
+
+    expect(result?.prependContext).toContain("AGENTS.md > 全局规则 / 执行路由 / HITL");
+    expect(result?.deltas?.[0]?.metadata).toMatchObject({
+      retrievalMode: "semantic+lexical",
+      selectedHeadings: expect.arrayContaining(["AGENTS.md > 全局规则 / 执行路由 / HITL"]),
+    });
   });
 
   it("keeps the static system prompt unchanged and adds runtime delta in snapshots", async () => {

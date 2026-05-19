@@ -53,7 +53,15 @@ import {
     validateMethodCandidateDraftForPublish,
 } from "./experience-publish-rules.js";
 import { appendToTodayMemory } from "./memory-files.js";
-import type { MemoryExactDedupApplyOptions, MemoryExactDedupApplyResult, MemoryExactDedupPreviewReport } from "./memory-dedup.js";
+import type {
+    MemoryDedupGroupSourceIndexSummary,
+    MemoryDedupSourceIndexInfo,
+    MemoryDedupSourceIndexScope,
+    MemoryDedupSourceIndexSummary,
+    MemoryExactDedupApplyOptions,
+    MemoryExactDedupApplyResult,
+    MemoryExactDedupPreviewReport,
+} from "./memory-dedup.js";
 import type { DurableExtractionSkipReasonCode } from "./durable-extraction-policy.js";
 import { resolveStateDir, resolveWorkspaceStateDir } from "@belldandy/protocol";
 import path from "node:path";
@@ -713,6 +721,45 @@ export class MemoryManager {
         return reranked.slice(0, limit);
     }
 
+    async embedRetrievalQuery(text: string): Promise<number[] | null> {
+        const normalized = String(text ?? "").trim();
+        if (!normalized) return null;
+        try {
+            const vector = await (this.embeddingProvider.embedQuery
+                ? this.embeddingProvider.embedQuery(normalized)
+                : this.embeddingProvider.embed(normalized));
+            return Array.isArray(vector) && vector.length > 0 ? vector : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async embedRetrievalPassages(texts: string[]): Promise<Array<number[] | null>> {
+        const normalizedTexts = Array.isArray(texts)
+            ? texts.map((item) => String(item ?? "").trim())
+            : [];
+        if (normalizedTexts.length <= 0) {
+            return [];
+        }
+        try {
+            const vectors = await this.embeddingProvider.embedBatch(normalizedTexts);
+            return normalizedTexts.map((_, index) => {
+                const vector = vectors[index];
+                return Array.isArray(vector) && vector.length > 0 ? vector : null;
+            });
+        } catch {
+            return normalizedTexts.map(() => null);
+        }
+    }
+
+    getEmbeddingRuntimeCacheKey(): string {
+        return [
+            this.embeddingProvider.modelName ?? "unknown",
+            this.embeddingQueryPrefix ?? "",
+            this.embeddingPassagePrefix ?? "",
+        ].join("|");
+    }
+
     /**
      * Get recent memory chunks (by updated_at, no embedding needed)
      */
@@ -725,11 +772,201 @@ export class MemoryManager {
     }
 
     previewExactDedup(filter?: MemorySearchFilter, options: { maxGroups?: number } = {}): MemoryExactDedupPreviewReport {
-        return this.store.previewExactDedup(filter, options);
+        const report = this.store.previewExactDedup(filter, options);
+        const dbStats = this.store.getDatabasePageStats();
+        return this.decorateExactDedupPreviewReport(report, dbStats);
     }
 
     applyExactDedup(filter: MemorySearchFilter | undefined, options: MemoryExactDedupApplyOptions): MemoryExactDedupApplyResult {
-        return this.store.applyExactDedup(filter, options);
+        const beforeDbStats = this.store.getDatabasePageStats();
+        const result = this.store.applyExactDedup(filter, options);
+        const afterDbStats = this.store.getDatabasePageStats();
+        return {
+            ...result,
+            observability: {
+                beforeChunkCount: result.totals.scannedChunks,
+                afterChunkCount: Math.max(0, result.totals.scannedChunks - result.totals.removedChunks),
+                beforePageCount: beforeDbStats.pageCount,
+                afterPageCount: afterDbStats.pageCount,
+                beforeFreelistCount: beforeDbStats.freelistCount,
+                afterFreelistCount: afterDbStats.freelistCount,
+            },
+        };
+    }
+
+    private decorateExactDedupPreviewReport(
+        report: MemoryExactDedupPreviewReport,
+        dbStats: { pageCount: number; freelistCount: number },
+    ): MemoryExactDedupPreviewReport {
+        const sourceInfoCache = new Map<string, MemoryDedupSourceIndexInfo>();
+        const uniqueSourcePaths = new Set<string>();
+        let duplicateGroupsWithReindexableSources = 0;
+        let duplicateGroupsWithOnlyNonReindexableSources = 0;
+
+        const classifySourcePath = (sourcePath: string): MemoryDedupSourceIndexInfo => {
+            const cacheKey = String(sourcePath ?? "").trim();
+            const cached = sourceInfoCache.get(cacheKey);
+            if (cached) {
+                return cached;
+            }
+            const resolved = this.classifyDedupSourcePath(cacheKey);
+            sourceInfoCache.set(cacheKey, resolved);
+            return resolved;
+        };
+
+        const groups = report.groups.map((group) => {
+            const keep = {
+                ...group.keep,
+                sourceIndexing: classifySourcePath(group.keep.sourcePath),
+            };
+            const remove = group.remove.map((item) => ({
+                ...item,
+                sourceIndexing: classifySourcePath(item.sourcePath),
+            }));
+            const groupSourceInfos = group.affectedSourcePaths.map((sourcePath) => {
+                uniqueSourcePaths.add(sourcePath);
+                return classifySourcePath(sourcePath);
+            });
+            const sourceIndexing = summarizeDedupGroupSourceIndexing(groupSourceInfos);
+            if (sourceIndexing.anyAffectedSourcePathReindexable) {
+                duplicateGroupsWithReindexableSources += 1;
+            } else {
+                duplicateGroupsWithOnlyNonReindexableSources += 1;
+            }
+            return {
+                ...group,
+                keep,
+                remove,
+                sourceIndexing,
+            };
+        });
+
+        let reindexableSourcePathCount = 0;
+        let nonReindexableSourcePathCount = 0;
+        for (const sourcePath of uniqueSourcePaths) {
+            const info = classifySourcePath(sourcePath);
+            if (info.reindexable) {
+                reindexableSourcePathCount += 1;
+            } else {
+                nonReindexableSourcePathCount += 1;
+            }
+        }
+
+        const sourceIndexingSummary: MemoryDedupSourceIndexSummary = {
+            reindexableSourcePathCount,
+            nonReindexableSourcePathCount,
+            duplicateGroupsWithReindexableSources,
+            duplicateGroupsWithOnlyNonReindexableSources,
+        };
+
+        return {
+            ...report,
+            groups,
+            observability: {
+                beforeChunkCount: report.totals.scannedChunks,
+                estimatedAfterChunkCount: Math.max(0, report.totals.scannedChunks - report.totals.removableChunks),
+                pageCount: dbStats.pageCount,
+                freelistCount: dbStats.freelistCount,
+            },
+            sourceIndexingSummary,
+        };
+    }
+
+    private classifyDedupSourcePath(sourcePath: string): MemoryDedupSourceIndexInfo {
+        const normalizedSourcePath = String(sourcePath ?? "").trim();
+        if (!normalizedSourcePath) {
+            return {
+                reindexable: false,
+                scope: "external",
+                matchedPath: null,
+            };
+        }
+
+        const stateMemoryFilePath = path.resolve(this.publishStateDir, "MEMORY.md");
+        const stateMemoryRootPath = path.resolve(this.publishStateDir, "memory");
+        const teamMemoryFilePath = path.resolve(this.publishStateDir, "team-memory", "MEMORY.md");
+        const teamMemoryRootPath = path.resolve(this.publishStateDir, "team-memory", "memory");
+
+        if (!path.isAbsolute(normalizedSourcePath)) {
+            const normalizedRelative = normalizedSourcePath.replace(/\\/g, "/").toLowerCase();
+            if (normalizedRelative === "memory.md") {
+                return {
+                    reindexable: true,
+                    scope: "state_memory_file",
+                    matchedPath: stateMemoryFilePath,
+                };
+            }
+            if (normalizedRelative.startsWith("memory/")) {
+                return {
+                    reindexable: true,
+                    scope: "state_memory_root",
+                    matchedPath: stateMemoryRootPath,
+                };
+            }
+            if (normalizedRelative === "team-memory/memory.md") {
+                return {
+                    reindexable: true,
+                    scope: "team_memory_file",
+                    matchedPath: teamMemoryFilePath,
+                };
+            }
+            if (normalizedRelative.startsWith("team-memory/memory/")) {
+                return {
+                    reindexable: true,
+                    scope: "team_memory_root",
+                    matchedPath: teamMemoryRootPath,
+                };
+            }
+        }
+
+        const candidatePaths = path.isAbsolute(normalizedSourcePath)
+            ? [path.resolve(normalizedSourcePath)]
+            : dedupePaths([
+                path.resolve(this.publishStateDir, normalizedSourcePath),
+            ]).map((item) => path.resolve(item));
+        const candidateComparablePaths = candidatePaths.map(toComparablePath);
+
+        for (const filePath of this.additionalFiles.map((item) => path.resolve(item))) {
+            const comparableFilePath = toComparablePath(filePath);
+            if (candidateComparablePaths.includes(comparableFilePath)) {
+                return {
+                    reindexable: true,
+                    scope: deriveIndexedFileScope(filePath, this.publishStateDir, stateMemoryFilePath),
+                    matchedPath: filePath,
+                };
+            }
+        }
+
+        if (path.isAbsolute(normalizedSourcePath)) {
+            const workspaceRootPath = path.resolve(this.workspaceRoot);
+            for (const candidatePath of candidatePaths) {
+                if (isPathWithinRoot(candidatePath, workspaceRootPath)) {
+                    return {
+                        reindexable: true,
+                        scope: "workspace_sessions",
+                        matchedPath: workspaceRootPath,
+                    };
+                }
+            }
+        }
+
+        for (const rootPath of this.additionalRoots.map((item) => path.resolve(item))) {
+            for (const candidatePath of candidatePaths) {
+                if (isPathWithinRoot(candidatePath, rootPath)) {
+                    return {
+                        reindexable: true,
+                        scope: deriveIndexedRootScope(rootPath, this.publishStateDir, stateMemoryRootPath),
+                        matchedPath: rootPath,
+                    };
+                }
+            }
+        }
+
+        return {
+            reindexable: false,
+            scope: "external",
+            matchedPath: null,
+        };
     }
 
     getContextInjectionMemories(options: {
@@ -1365,7 +1602,7 @@ export class MemoryManager {
         if (existing.status !== "draft") return null;
         const now = new Date().toISOString();
         const publishedPath = existing.type === "method"
-            ? this.publishMethodCandidate(existing)
+            ? this.publishMethodCandidate(existing, options.publishedPath)
             : options.publishedPath ?? existing.publishedPath;
         return this.store.updateExperienceCandidate(candidateId, {
             status: "accepted",
@@ -2208,7 +2445,7 @@ candidateType 必须是以下之一：user / feedback / project / reference
         return shouldAutoPromoteTaskByPolicy(task);
     }
 
-    private publishMethodCandidate(candidate: ExperienceCandidate): string {
+    private publishMethodCandidate(candidate: ExperienceCandidate, explicitPublishedPath?: string): string {
         const issues = validateMethodCandidateDraftForPublish(candidate.content);
         if (issues.length > 0) {
             throw new Error(`Method candidate publish validation failed: ${issues.join("；")}`);
@@ -2217,7 +2454,8 @@ candidateType 必须是以下之一：user / feedback / project / reference
         const methodsDir = path.join(this.publishStateDir, "methods");
         mkdirSync(methodsDir, { recursive: true });
 
-        const filePath = this.resolveMethodPublishPath(methodsDir, candidate);
+        const filePath = explicitPublishedPath || this.resolveMethodPublishPath(methodsDir, candidate);
+        mkdirSync(path.dirname(filePath), { recursive: true });
         writeFileSync(filePath, candidate.content, "utf-8");
         return filePath;
     }
@@ -2274,6 +2512,71 @@ function dedupePaths(items: string[]): string[] {
         result.push(normalized);
     }
     return result;
+}
+
+function summarizeDedupGroupSourceIndexing(sourceInfos: MemoryDedupSourceIndexInfo[]): MemoryDedupGroupSourceIndexSummary {
+    const reindexableSourcePathCount = sourceInfos.filter((item) => item.reindexable).length;
+    const nonReindexableSourcePathCount = Math.max(0, sourceInfos.length - reindexableSourcePathCount);
+    return {
+        reindexableSourcePathCount,
+        nonReindexableSourcePathCount,
+        allAffectedSourcePathsReindexable: sourceInfos.length > 0 && nonReindexableSourcePathCount === 0,
+        anyAffectedSourcePathReindexable: reindexableSourcePathCount > 0,
+        scopes: [...new Set(sourceInfos.map((item) => item.scope))],
+    };
+}
+
+function toComparablePath(value: string): string {
+    const normalized = path.resolve(String(value ?? "").trim());
+    return process.platform === "win32"
+        ? normalized.toLowerCase()
+        : normalized;
+}
+
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+    const relative = path.relative(rootPath, candidatePath);
+    return relative === ""
+        || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function deriveIndexedRootScope(
+    rootPath: string,
+    publishStateDir: string,
+    stateMemoryRootPath: string,
+): MemoryDedupSourceIndexScope {
+    const comparableRootPath = toComparablePath(rootPath);
+    const comparableStateMemoryRootPath = toComparablePath(stateMemoryRootPath);
+    if (comparableRootPath === comparableStateMemoryRootPath) {
+        return "state_memory_root";
+    }
+    const teamMemoryRootRelative = path.relative(publishStateDir, rootPath);
+    if (!teamMemoryRootRelative.startsWith("..") && !path.isAbsolute(teamMemoryRootRelative)) {
+        const normalizedRelative = teamMemoryRootRelative.replace(/\\/g, "/").toLowerCase();
+        if (normalizedRelative === "team-memory/memory") {
+            return "team_memory_root";
+        }
+    }
+    return "additional_root";
+}
+
+function deriveIndexedFileScope(
+    filePath: string,
+    publishStateDir: string,
+    stateMemoryFilePath: string,
+): MemoryDedupSourceIndexScope {
+    const comparableFilePath = toComparablePath(filePath);
+    const comparableStateMemoryFilePath = toComparablePath(stateMemoryFilePath);
+    if (comparableFilePath === comparableStateMemoryFilePath) {
+        return "state_memory_file";
+    }
+    const teamMemoryFileRelative = path.relative(publishStateDir, filePath);
+    if (!teamMemoryFileRelative.startsWith("..") && !path.isAbsolute(teamMemoryFileRelative)) {
+        const normalizedRelative = teamMemoryFileRelative.replace(/\\/g, "/").toLowerCase();
+        if (normalizedRelative === "team-memory/memory.md") {
+            return "team_memory_file";
+        }
+    }
+    return "additional_file";
 }
 
 function scoreForContextInjection(item: MemorySearchResult): { score: number; rationale: string[] } {

@@ -3464,6 +3464,10 @@ body.control-panel-hidden .main-content {
 
 .experience-workbench-tabs {
   align-self: flex-start;
+  margin-top: 2px;
+  margin-bottom: 2px;
+  position: relative;
+  z-index: 1;
 }
 
 .experience-workbench-tabs + #experienceWorkbenchCandidatesPane,
@@ -3525,6 +3529,10 @@ body.control-panel-hidden .main-content {
   overflow: hidden;
 }
 
+.experience-assets-body {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .memory-viewer-list,
 .memory-viewer-detail {
   display: flex;
@@ -3536,6 +3544,12 @@ body.control-panel-hidden .main-content {
   background: var(--memory-card-bg);
   border: 1px solid var(--memory-card-border);
   border-radius: 18px;
+}
+
+.experience-assets-column {
+  padding: 16px;
+  gap: 12px;
+  scrollbar-gutter: stable both-edges;
 }
 
 .memory-viewer-empty {
@@ -4543,6 +4557,28 @@ body.control-panel-hidden .main-content {
   min-width: 0;
 }
 
+.experience-asset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--memory-card-bg);
+  border: 1px solid var(--memory-card-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.experience-asset-card.experience-candidate-synthesized {
+  border-color: rgba(0, 243, 255, 0.36);
+  background:
+    linear-gradient(135deg, rgba(0, 243, 255, 0.10), rgba(0, 243, 255, 0.03)),
+    var(--memory-card-bg);
+}
+
+.experience-asset-card .memory-inline-item-path {
+  margin-top: 0;
+}
+
 .experience-resynthesize-bar .memory-usage-action-btn,
 .experience-resynthesize-bar .button {
   flex: 0 0 auto;
@@ -4785,6 +4821,10 @@ body.control-panel-hidden .main-content {
   .experience-workbench-tabs {
     width: 100%;
     overflow-x: auto;
+  }
+
+  .experience-assets-body {
+    grid-template-columns: 1fr;
   }
 
   .memory-category-row {

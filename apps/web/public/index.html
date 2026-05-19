@@ -493,6 +493,7 @@
 
             <div class="memory-viewer-tabs experience-workbench-tabs">
               <button id="experienceWorkbenchTabCapabilityAcquisition" class="memory-tab-btn active" data-i18n="experience.tabCapabilityAcquisition">能力获取</button>
+              <button id="experienceWorkbenchTabAssets" class="memory-tab-btn" data-i18n="experience.tabAssets">已发布资产</button>
               <button id="experienceWorkbenchTabCandidates" class="memory-tab-btn" data-i18n="experience.tabCandidates">经验候选</button>
               <button id="experienceWorkbenchTabUsageOverview" class="memory-tab-btn" data-i18n="experience.tabUsageOverview">经验消费总览</button>
             </div>
@@ -541,6 +542,17 @@
             <div id="experienceWorkbenchCapabilityPane" class="experience-workbench-overview-body hidden">
               <div id="experienceWorkbenchCapabilityOverview" class="experience-workbench-overview-root">
                 <div class="memory-viewer-empty" data-i18n="experience.capabilityWaiting">等待能力获取候选…</div>
+              </div>
+            </div>
+
+            <div id="experienceWorkbenchAssetsPane" class="experience-workbench-overview-body hidden">
+              <div class="memory-viewer-body experience-assets-body">
+                <aside class="memory-viewer-list experience-assets-column" id="experienceWorkbenchAssetsList">
+                  <div class="memory-viewer-empty" data-i18n="experience.assetsWaiting">等待已发布资产…</div>
+                </aside>
+                <section class="memory-viewer-detail experience-assets-column" id="experienceWorkbenchAssetsDetail">
+                  <div class="memory-viewer-empty" data-i18n="experience.assetsDetailSelect">选择左侧已发布资产查看详情。</div>
+                </section>
               </div>
             </div>
 
@@ -932,9 +944,21 @@
           <div class="form-group">
             <label class="form-label" for="cfgPromptFocusEnabled">
               <input id="cfgPromptFocusEnabled" type="checkbox" style="margin-right: 8px;" />
-              <span>Prompt Focus Runtime Prelude</span>
+              <span data-i18n="settings.promptFocusEnabledLabel">Prompt Focus Runtime Prelude</span>
             </label>
-            <div class="form-help">控制运行时是否从当前工作区 `AGENTS.md` 中提取最相关片段，作为额外 prompt focus prelude 注入。关闭后退回普通 system prompt 组装链路。</div>
+            <div class="form-help" data-i18n="settings.promptFocusEnabledHelp">控制运行时是否从当前工作区 `AGENTS.md` / `SOUL.md` 中提取最相关片段，作为额外 prompt focus prelude 注入。关闭后退回普通 system prompt 组装链路。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPromptFocusSemanticEnabled">
+              <input id="cfgPromptFocusSemanticEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.promptFocusSemanticEnabledLabel">启用 Prompt Focus 语义召回</span>
+            </label>
+            <div class="form-help" data-i18n="settings.promptFocusSemanticEnabledHelp">开启后，会优先复用当前 embedding 能力对 `AGENTS.md` / `SOUL.md` 做语义召回；embedding 不可用时自动回退 lexical focus。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.promptFocusSemanticMinScoreLabel">Prompt Focus Semantic Min Score</label>
+            <input id="cfgPromptFocusSemanticMinScore" class="input" placeholder="0.30" />
+            <div class="form-help" data-i18n="settings.promptFocusSemanticMinScoreHelp">语义召回的最低相似度阈值。值越高越保守；无 embedding 时此项不会生效。</div>
           </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.maxSystemPromptCharsLabel">Max System Prompt Chars</label>
@@ -1438,6 +1462,13 @@
               <span data-i18n="settings.taskMemoryEnabledLabel">启用 Task Memory</span>
             </label>
             <div class="form-help" data-i18n="settings.taskMemoryEnabledHelp">让长任务与子任务运行结果沉淀到任务级记忆层。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgTaskStatsWhenMemoryDisabled">
+              <input id="cfgTaskStatsWhenMemoryDisabled" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.taskStatsWhenMemoryDisabledLabel">关闭记忆时保留 Task 统计</span>
+            </label>
+            <div class="form-help" data-i18n="settings.taskStatsWhenMemoryDisabledHelp">当 Memory 总开关关闭时，仍允许保留 task 统计；不会恢复 task summary、experience auto promotion 或 task dedup guard。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTaskSummaryEnabled">

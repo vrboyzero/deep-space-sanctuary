@@ -32,6 +32,31 @@ export type MemoryExactDedupPreviewItem = {
     normalizedHash: string;
     normalizedChars: number;
     preview: string;
+    sourceIndexing?: MemoryDedupSourceIndexInfo;
+};
+
+export type MemoryDedupSourceIndexScope =
+    | "workspace_sessions"
+    | "state_memory_root"
+    | "state_memory_file"
+    | "team_memory_root"
+    | "team_memory_file"
+    | "additional_root"
+    | "additional_file"
+    | "external";
+
+export type MemoryDedupSourceIndexInfo = {
+    reindexable: boolean;
+    scope: MemoryDedupSourceIndexScope;
+    matchedPath?: string | null;
+};
+
+export type MemoryDedupGroupSourceIndexSummary = {
+    reindexableSourcePathCount: number;
+    nonReindexableSourcePathCount: number;
+    allAffectedSourcePathsReindexable: boolean;
+    anyAffectedSourcePathReindexable: boolean;
+    scopes: MemoryDedupSourceIndexScope[];
 };
 
 export type MemoryExactDedupPreviewGroup = {
@@ -43,6 +68,21 @@ export type MemoryExactDedupPreviewGroup = {
     affectedSourcePaths: string[];
     affectedTaskLinkCount: number;
     preview: string;
+    sourceIndexing?: MemoryDedupGroupSourceIndexSummary;
+};
+
+export type MemoryExactDedupPreviewObservability = {
+    beforeChunkCount: number;
+    estimatedAfterChunkCount: number;
+    pageCount: number;
+    freelistCount: number;
+};
+
+export type MemoryDedupSourceIndexSummary = {
+    reindexableSourcePathCount: number;
+    nonReindexableSourcePathCount: number;
+    duplicateGroupsWithReindexableSources: number;
+    duplicateGroupsWithOnlyNonReindexableSources: number;
 };
 
 export type MemoryExactDedupPreviewReport = {
@@ -62,6 +102,8 @@ export type MemoryExactDedupPreviewReport = {
     groupLimit: number;
     truncated: boolean;
     groups: MemoryExactDedupPreviewGroup[];
+    observability?: MemoryExactDedupPreviewObservability;
+    sourceIndexingSummary?: MemoryDedupSourceIndexSummary;
 };
 
 export type MemoryExactDedupApplyOptions = {
@@ -84,6 +126,14 @@ export type MemoryExactDedupApplyResult = {
         removedChunks: number;
         relinkedTaskMemoryLinks: number;
         keptChunks: number;
+    };
+    observability?: {
+        beforeChunkCount: number;
+        afterChunkCount: number;
+        beforePageCount: number;
+        afterPageCount: number;
+        beforeFreelistCount: number;
+        afterFreelistCount: number;
     };
     groups: Array<{
         normalizedHash: string;

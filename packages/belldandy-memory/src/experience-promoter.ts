@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   ExperienceCandidate,
@@ -8,8 +10,15 @@ import type {
   ExperienceSourceTaskSnapshot,
 } from "./experience-types.js";
 import { evaluateExperienceDedup } from "./experience-dedup.js";
-import { buildExperienceCandidateSlug, buildExperienceSkillMachineName } from "./experience-publish-rules.js";
+import {
+  buildExperienceCandidateSlug,
+  buildExperienceSkillMachineName,
+  EXPERIENCE_METHOD_REQUIRED_HEADINGS,
+  EXPERIENCE_SKILL_REQUIRED_HEADINGS,
+} from "./experience-publish-rules.js";
 import { MemoryStore } from "./store.js";
+
+const EXPERIENCE_TEMPLATE_DIRNAME = "experience-templates";
 
 export class ExperiencePromoter {
   constructor(
@@ -66,8 +75,8 @@ export class ExperiencePromoter {
       title,
       slug,
       content: type === "method"
-        ? buildMethodDraft(title, summary, detail, snapshot, now)
-        : buildSkillDraft(title, slug, summary, detail, snapshot),
+        ? buildMethodDraft(this.publishStateDir, title, summary, detail, snapshot, now)
+        : buildSkillDraft(this.publishStateDir, title, slug, summary, detail, snapshot),
       summary,
       qualityScore: scoreCandidate(detail),
       sourceTaskSnapshot: snapshot,
@@ -163,6 +172,21 @@ function buildCandidateSummary(task: ExperienceSourceTaskDetail): string {
 }
 
 function buildMethodDraft(
+  publishStateDir: string,
+  title: string,
+  summary: string,
+  task: ExperienceSourceTaskDetail,
+  snapshot: ExperienceSourceTaskSnapshot,
+  now: string,
+): string {
+  const template = resolveExperienceDraftTemplate(publishStateDir, "method");
+  if (isTemplateUsable(template.skeleton, EXPERIENCE_METHOD_REQUIRED_HEADINGS)) {
+    return buildMethodTemplateDraft(title, summary, task, snapshot, now, template.path);
+  }
+  return buildLegacyMethodDraft(title, summary, task, snapshot, now);
+}
+
+function buildLegacyMethodDraft(
   title: string,
   summary: string,
   task: ExperienceSourceTaskDetail,
@@ -261,6 +285,21 @@ function buildMethodSteps(task: ExperienceSourceTaskDetail): string[] {
 }
 
 function buildSkillDraft(
+  publishStateDir: string,
+  title: string,
+  slug: string,
+  summary: string,
+  task: ExperienceSourceTaskDetail,
+  snapshot: ExperienceSourceTaskSnapshot,
+): string {
+  const template = resolveExperienceDraftTemplate(publishStateDir, "skill");
+  if (isTemplateUsable(template.skeleton, EXPERIENCE_SKILL_REQUIRED_HEADINGS)) {
+    return buildSkillTemplateDraft(title, slug, summary, task, snapshot, template.path);
+  }
+  return buildLegacySkillDraft(title, slug, summary, task, snapshot);
+}
+
+function buildLegacySkillDraft(
   title: string,
   slug: string,
   summary: string,
@@ -337,6 +376,156 @@ function buildSkillDraft(
     `- 如果出现新约束或新工具组合，不要假装本 skill 仍然适用；应回到 candidate 层重新沉淀。`,
   ];
   return lines.join("\n");
+}
+
+function buildMethodTemplateDraft(
+  title: string,
+  summary: string,
+  task: ExperienceSourceTaskDetail,
+  snapshot: ExperienceSourceTaskSnapshot,
+  now: string,
+  templatePath: string | null,
+): string {
+  const toolNames = uniqueStrings(task.toolCalls?.map((item) => item.toolName));
+  const artifacts = uniqueStrings(task.artifactPaths);
+  const memoryRefs = snapshot.memoryLinks ?? [];
+  const headline = firstNonEmpty(task.title, task.objective, task.id);
+  const objective = firstNonEmpty(task.objective, task.title, task.id);
+  const reflection = firstNonEmpty(task.reflection, task.summary, task.outcome, "待补充复盘结论。");
+  const result = firstNonEmpty(task.outcome, task.summary, "至少形成一个可检查的执行结果。");
+  const date = now.slice(0, 10);
+  const references = uniqueStrings([
+    templatePath ?? undefined,
+    ...artifacts,
+    ...memoryRefs.map((item) => item.sourcePath || item.chunkId),
+  ]);
+
+  return [
+    `# ${title}`,
+    "",
+    `> ${firstNonEmpty(summary, "从来源任务中提炼出的执行方法草稿，供人工审阅后发布。")}`,
+    "",
+    "## 0. 元信息",
+    `- 方法定位：从任务 ${task.id} 的执行轨迹中提炼出的可复用方法草稿，优先沉淀目标、工具选择和复盘信号。`,
+    `- 适用对象：需要处理“${objective}”这一类问题，并希望复用已验证闭环的执行者或 reviewer。`,
+    "- 维护建议：后续若出现返工、新约束或新工具组合，应优先更新失败经验、工具选择与成功案例。",
+    "",
+    "## 1. 触发条件",
+    `- 需要重复解决“${objective}”这一类目标，而不是一次性临时请求。`,
+    toolNames.length > 0
+      ? `- 当前仍可复用已验证工具链：${toolNames.join(" / ")}。`
+      : "- 当前任务仍能复用已验证的最小执行闭环。",
+    `- 希望直接沿用已有成功/失败信号，避免重复试错：${truncateText(reflection, 100)}`,
+    "",
+    "## 2. 适用场景",
+    `- 场景摘要：${firstNonEmpty(task.summary, task.objective, task.outcome, "沉淀出可复用、可审阅的方法草稿。")}`,
+    artifacts.length > 0
+      ? `- 典型产物：${artifacts.slice(0, 3).join(" / ")}`
+      : `- 典型产物：${result}`,
+    `- 来源任务：${task.id}${task.conversationId ? ` / ${task.conversationId}` : ""}`,
+    "",
+    "## 3. 执行步骤",
+    ...buildMethodSteps(task),
+    "",
+    "## 4. 工具选择",
+    toolNames.length > 0
+      ? `- 首选工具：${toolNames.join(" / ")}`
+      : "- 首选工具：沿用当前项目中已验证的最小执行路径。",
+    artifacts.length > 0
+      ? `- 替代工具：若首选工具不可用，先以人工方式校对并补齐 ${artifacts.slice(0, 2).join(" / ")} 等关键产物。`
+      : "- 替代工具：若首选工具不可用，先用人工最小闭环完成验证，再补工具化。",
+    toolNames.length > 0
+      ? `- 选择依据：这些工具已在来源任务“${headline}”中成功完成关键步骤，并产出了可回看的结果。`
+      : `- 选择依据：来源任务“${headline}”已证明该类问题可通过最小闭环推进。`,
+    "",
+    "## 5. 失败经验",
+    "- 常见误区：把一次性的 workaround、未回归的结论或缺少证据的操作直接沉淀成通用方法。",
+    `- 失败信号：${truncateText(reflection, 120)}`,
+    "- 规避方式：先补齐验收证据、关键产物和异常分支，再决定是否继续发布或复用。",
+    "",
+    "## 6. 成功案例",
+    `- 案例背景：${headline}`,
+    toolNames.length > 0
+      ? `- 做法摘要：按 ${toolNames.join(" -> ")} 的顺序推进关键子步骤，并持续记录可验证产物。`
+      : "- 做法摘要：按最小闭环推进执行，并在关键节点记录结果与证据。",
+    `- 结果与启示：${result}`,
+    "",
+    "## 7. 相关资源",
+    `- 相关技能：${toolNames.length > 0 ? `待人工补充；可优先回看与 ${toolNames.join(" / ")} 对应的 skill。` : "待人工补充；当前未记录明确 skill 依赖。"}`,
+    "- 相关方法：待人工补充；如果后续出现稳定变体，可拆分为更细的方法资产。",
+    `- 相关文档 / 路径：${references.length > 0 ? references.join(" / ") : "无"}`,
+    "",
+    "## 8. 更新记录",
+    `- ${date}：基于任务 ${task.id} 生成初版草稿。`,
+    "",
+  ].join("\n");
+}
+
+function buildSkillTemplateDraft(
+  title: string,
+  slug: string,
+  summary: string,
+  task: ExperienceSourceTaskDetail,
+  snapshot: ExperienceSourceTaskSnapshot,
+  templatePath: string | null,
+): string {
+  const toolNames = uniqueStrings(task.toolCalls?.map((item) => item.toolName));
+  const artifacts = uniqueStrings(task.artifactPaths);
+  const memoryRefs = snapshot.memoryLinks ?? [];
+  const skillName = buildExperienceSkillMachineName({
+    name: slug,
+    title,
+    fallback: task.id,
+  });
+  const objective = firstNonEmpty(task.objective, task.title, task.id);
+  const result = firstNonEmpty(task.outcome, task.summary, "至少形成一个可检查的执行结果。");
+  const references = uniqueStrings([
+    templatePath ?? undefined,
+    ...artifacts,
+    ...memoryRefs.map((item) => item.sourcePath || item.chunkId),
+  ]);
+
+  return [
+    "---",
+    `name: "${escapeQuoted(skillName)}"`,
+    `description: "${escapeQuoted(firstNonEmpty(summary, buildSkillDescription(task, toolNames)))}"`,
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    "## 快速开始",
+    `- 这个技能适合：处理与“${objective}”相近、需要稳定执行路径的多步骤任务。`,
+    toolNames.length > 0
+      ? `- 使用前提：当前仍可复用 ${toolNames.join(" / ")} 这组已验证工具链。`
+      : "- 使用前提：当前仍能沿用来源任务已验证的最小执行闭环。",
+    "- 典型收益：把来源任务中已经做成的步骤、检查点和边界直接复用到同类任务里。",
+    "",
+    "## 决策路由",
+    `- 应该使用：当前问题与“${objective}”的目标、输入边界和交付物高度相似时。`,
+    "- 不该使用：任务目标、风险边界、核心工具链或产物要求已经明显变化时。",
+    "- 遇到冲突时优先：先复用已有正式 method / skill；若现有资产不覆盖，再回到 candidate 层人工审阅。",
+    "",
+    "## 输入",
+    `- 必要输入：任务目标=${objective}；关键约束=${firstNonEmpty(task.reflection, task.summary, "待人工补充约束信息。")}`,
+    `- 可选输入：${toolNames.length > 0 ? `工具链=${toolNames.join(" / ")}` : "额外工具链信息暂缺"}`,
+    "- 输入质量要求：至少能说明目标产物、主要限制和最小可验证结果，避免只有模糊意图。",
+    "",
+    "## 输出",
+    `- 直接产物：${artifacts.length > 0 ? artifacts.slice(0, 3).join(" / ") : result}`,
+    "- 副产物：关键步骤摘要、验证点、异常分支处理与后续复用建议。",
+    "- 质量门槛：结果必须可检查、可回顾，且不能绕过人工审阅直接视为正式资产。",
+    "",
+    "## 参考指引",
+    `- 推荐流程：${toolNames.length > 0 ? `优先按 ${toolNames.join(" -> ")} 的顺序推进，并同步记录产物与验证结果。` : "优先按来源任务验证过的最小执行路径推进，再补齐关键验证点。"}`,
+    `- 常见变体：${artifacts.length > 0 ? `最终产物可能落在 ${artifacts.slice(0, 3).join(" / ")} 等相近路径。` : "当前未记录固定产物路径，发布前应补充更稳定的交付样式。"}`,
+    `- 关联文件 / 模板 / 文档：${references.length > 0 ? references.join(" / ") : "无"}`,
+    "",
+    "## NEVER",
+    "- 不要：把一次性的临时 workaround 或无验证结论直接固化成通用技能规则。",
+    "- 禁止：绕过人工审阅直接覆盖正式 skill 资产，或忽略现有 method / skill 重复造轮子。",
+    "- 高风险边界：当核心工具组合、输入约束或目标产物已经变化时，不要假装本 candidate 仍然适用。",
+    "",
+  ].join("\n");
 }
 
 function scoreCandidate(task: ExperienceSourceTaskDetail): number {
@@ -526,4 +715,48 @@ function collapseWhitespace(value: string): string {
 
 function escapeQuoted(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function resolveExperienceDraftTemplate(
+  publishStateDir: string,
+  type: ExperienceCandidateType,
+): { path: string | null; skeleton: string | null } {
+  const fileName = type === "skill" ? "skill-synthesis.md" : "method-synthesis.md";
+  const candidatePaths = [
+    path.join(publishStateDir, EXPERIENCE_TEMPLATE_DIRNAME, fileName),
+    path.resolve(process.cwd(), "docs", EXPERIENCE_TEMPLATE_DIRNAME, fileName),
+  ];
+  for (const candidatePath of candidatePaths) {
+    const content = readTextFileIfExists(candidatePath);
+    if (!content.trim()) {
+      continue;
+    }
+    return {
+      path: candidatePath,
+      skeleton: extractExperienceTemplateMarkdownSkeleton(content),
+    };
+  }
+  return {
+    path: null,
+    skeleton: null,
+  };
+}
+
+function readTextFileIfExists(filePath: string): string {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+function extractExperienceTemplateMarkdownSkeleton(templateContent: string): string | null {
+  const matched = String(templateContent ?? "").match(/```(?:md|markdown)\s*([\s\S]*?)```/i);
+  const skeleton = matched?.[1]?.trim();
+  return skeleton ? skeleton : null;
+}
+
+function isTemplateUsable(skeleton: string | null, requiredHeadings: readonly string[]): boolean {
+  if (!skeleton) return false;
+  return requiredHeadings.every((heading) => skeleton.includes(heading));
 }

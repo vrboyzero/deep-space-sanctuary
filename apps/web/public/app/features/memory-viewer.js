@@ -855,7 +855,55 @@ export function createMemoryViewerFeature({
       : "-";
     const taskLinkCount = Number.isFinite(Number(item.taskLinkCount)) ? Number(item.taskLinkCount) : 0;
     const lines = formatLineRange(item.startLine, item.endLine);
-    return `${sourcePath} · ${formatMemoryTypeLabel(item.memoryType)} · ${lines} · links ${formatCount(taskLinkCount)}`;
+    const sourceIndexingLabel = formatDedupSourceIndexingLabel(item.sourceIndexing);
+    return `${sourcePath} · ${formatMemoryTypeLabel(item.memoryType)} · ${lines} · links ${formatCount(taskLinkCount)} · ${sourceIndexingLabel}`;
+  }
+
+  function formatDedupSourceIndexingLabel(sourceIndexing) {
+    const scope = typeof sourceIndexing?.scope === "string" ? sourceIndexing.scope.trim() : "";
+    if (sourceIndexing?.reindexable !== true) {
+      return t("memory.dedupSourceExternal", {}, "非默认索引源");
+    }
+    switch (scope) {
+      case "workspace_sessions":
+        return t("memory.dedupSourceSessions", {}, "可索引源：sessions/");
+      case "state_memory_root":
+        return t("memory.dedupSourceMemoryRoot", {}, "可索引源：memory/");
+      case "state_memory_file":
+        return t("memory.dedupSourceMemoryFile", {}, "可索引源：MEMORY.md");
+      case "team_memory_root":
+        return t("memory.dedupSourceTeamMemoryRoot", {}, "可索引源：team-memory/memory/");
+      case "team_memory_file":
+        return t("memory.dedupSourceTeamMemoryFile", {}, "可索引源：team-memory/MEMORY.md");
+      case "additional_root":
+        return t("memory.dedupSourceAdditionalRoot", {}, "可索引源：额外目录");
+      case "additional_file":
+        return t("memory.dedupSourceAdditionalFile", {}, "可索引源：额外文件");
+      default:
+        return t("memory.dedupSourceIndexed", {}, "可索引源");
+    }
+  }
+
+  function formatDedupSourceIndexingSummary(summary) {
+    if (!summary || typeof summary !== "object") {
+      return t("memory.dedupSourceSummaryEmpty", {}, "暂无来源风险摘要");
+    }
+    return t(
+      "memory.dedupSourceSummary",
+      {
+        reindexable: formatCount(summary.reindexableSourcePathCount),
+        external: formatCount(summary.nonReindexableSourcePathCount),
+      },
+      `${formatCount(summary.reindexableSourcePathCount)} 个可索引源文件 / ${formatCount(summary.nonReindexableSourcePathCount)} 个旁路源`,
+    );
+  }
+
+  function formatDedupCountTransition(beforeValue, afterValue, { estimated = false } = {}) {
+    const beforeText = formatCount(beforeValue);
+    const afterText = formatCount(afterValue);
+    return estimated
+      ? `${beforeText} -> ${afterText} (${t("memory.dedupEstimated", {}, "估计")})`
+      : `${beforeText} -> ${afterText}`;
   }
 
   function renderDedupModal() {
@@ -878,6 +926,11 @@ export function createMemoryViewerFeature({
     const result = modalState.result && typeof modalState.result === "object" ? modalState.result : null;
     const totals = report?.totals && typeof report.totals === "object" ? report.totals : null;
     const applyTotals = result?.totals && typeof result.totals === "object" ? result.totals : null;
+    const previewObservability = report?.observability && typeof report.observability === "object" ? report.observability : null;
+    const applyObservability = result?.observability && typeof result.observability === "object" ? result.observability : null;
+    const sourceIndexingSummary = report?.sourceIndexingSummary && typeof report.sourceIndexingSummary === "object"
+      ? report.sourceIndexingSummary
+      : null;
     const statusText = modalState.loading
       ? t("memory.dedupScanning", {}, "正在扫描重复记忆…")
       : modalState.applying
@@ -903,13 +956,27 @@ export function createMemoryViewerFeature({
                 `预检完成：发现 ${formatCount(totals?.duplicateGroups)} 个重复组，可移除 ${formatCount(totals?.removableChunks)} 条重复 chunk。`,
               )
               : "";
-    const warningText = result?.backupPath
-      ? `已生成备份：${result.backupPath}`
-      : t(
-        "memory.dedupBackupHint",
-        {},
-        "确认清理后会先备份 memory.sqlite，再执行删除。当前确认只影响筛选范围内的 exact duplicate。",
-      );
+    const warningLines = result?.backupPath
+      ? [
+          `已生成备份：${result.backupPath}`,
+          t(
+            "memory.dedupFileSizeHint",
+            {},
+            "说明：SQLite 在 DELETE 后不会立即缩小文件体积，优先观察 chunk / page_count / freelist_count。",
+          ),
+        ]
+      : [
+          t(
+            "memory.dedupBackupHint",
+            {},
+            "确认清理后会先备份 memory.sqlite，再执行删除。当前确认只影响筛选范围内的 exact duplicate。",
+          ),
+          t(
+            "memory.dedupFileSizeHint",
+            {},
+            "说明：SQLite 在 DELETE 后不会立即缩小文件体积，优先观察 chunk / page_count / freelist_count。",
+          ),
+        ];
 
     memoryDedupModalEl.classList.toggle("hidden", !modalState.open);
     memoryDedupModalTitleEl.textContent = result
@@ -921,8 +988,10 @@ export function createMemoryViewerFeature({
         <div class="memory-detail-text">${escapeHtml(report?.filter ? "当前记忆筛选结果" : "全部记忆条目")}</div>
       </div>
       <div class="memory-detail-card">
-        <span class="memory-detail-label">扫描 chunk</span>
-        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.scannedChunks : totals?.scannedChunks))}</div>
+        <span class="memory-detail-label">chunk 变化</span>
+        <div class="memory-detail-text">${escapeHtml(result
+          ? formatDedupCountTransition(applyObservability?.beforeChunkCount, applyObservability?.afterChunkCount)
+          : formatDedupCountTransition(previewObservability?.beforeChunkCount, previewObservability?.estimatedAfterChunkCount, { estimated: true }))}</div>
       </div>
       <div class="memory-detail-card">
         <span class="memory-detail-label">重复组</span>
@@ -936,11 +1005,30 @@ export function createMemoryViewerFeature({
         <span class="memory-detail-label">受影响 task links</span>
         <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.relinkedTaskMemoryLinks : totals?.affectedTaskLinkCount))}</div>
       </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">page_count</span>
+        <div class="memory-detail-text">${escapeHtml(result
+          ? formatDedupCountTransition(applyObservability?.beforePageCount, applyObservability?.afterPageCount)
+          : formatCount(previewObservability?.pageCount))}</div>
+      </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">freelist_count</span>
+        <div class="memory-detail-text">${escapeHtml(result
+          ? formatDedupCountTransition(applyObservability?.beforeFreelistCount, applyObservability?.afterFreelistCount)
+          : formatCount(previewObservability?.freelistCount))}</div>
+      </div>
+      <div class="memory-detail-card">
+        <span class="memory-detail-label">来源风险</span>
+        <div class="memory-detail-text">${escapeHtml(formatDedupSourceIndexingSummary(sourceIndexingSummary))}</div>
+      </div>
     `;
     memoryDedupModalStatusEl.classList.toggle("hidden", !statusText);
     memoryDedupModalStatusEl.textContent = statusText;
-    memoryDedupModalWarningEl.classList.toggle("hidden", !warningText);
-    memoryDedupModalWarningEl.innerHTML = warningText ? `<div>${escapeHtml(warningText)}</div>` : "";
+    memoryDedupModalWarningEl.classList.toggle("hidden", warningLines.length <= 0);
+    memoryDedupModalWarningEl.innerHTML = warningLines
+      .filter((item) => typeof item === "string" && item.trim())
+      .map((item) => `<div>${escapeHtml(item)}</div>`)
+      .join("");
 
     if (modalState.loading) {
       memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewLoading", {}, "正在生成 dry-run 报告…"))}</div>`;
@@ -960,14 +1048,15 @@ export function createMemoryViewerFeature({
     } else if (report && Array.isArray(report.groups) && report.groups.length) {
       memoryDedupModalListEl.innerHTML = report.groups.map((group) => `
         <div class="experience-synthesis-row">
-          <div class="experience-synthesis-row-main">
-            <div class="experience-synthesis-row-title">${escapeHtml(group.preview || group.normalizedHash || "-")}</div>
-            <div class="experience-synthesis-row-meta">
-              <span>keeper</span>
-              <span>${escapeHtml(formatDedupPreviewItem(group.keep))}</span>
+            <div class="experience-synthesis-row-main">
+              <div class="experience-synthesis-row-title">${escapeHtml(group.preview || group.normalizedHash || "-")}</div>
+              <div class="experience-synthesis-row-meta">
+                <span>keeper</span>
+                <span>${escapeHtml(formatDedupPreviewItem(group.keep))}</span>
+                <span>${escapeHtml(formatDedupSourceIndexingSummary(group.sourceIndexing))}</span>
+              </div>
+              <div class="memory-list-item-snippet">${escapeHtml((group.remove || []).map((item) => formatDedupPreviewItem(item)).join(" | "))}</div>
             </div>
-            <div class="memory-list-item-snippet">${escapeHtml((group.remove || []).map((item) => formatDedupPreviewItem(item)).join(" | "))}</div>
-          </div>
         </div>
       `).join("");
     } else if (report) {

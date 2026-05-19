@@ -5,6 +5,112 @@ import path from "node:path";
 
 import { MemoryManager } from "./manager.js";
 
+async function writeExperienceTemplate(
+  stateDir: string,
+  type: "method" | "skill",
+  marker = "",
+): Promise<string> {
+  const templatesDir = path.join(stateDir, "experience-templates");
+  await fs.mkdir(templatesDir, { recursive: true });
+  const fileName = type === "skill" ? "skill-synthesis.md" : "method-synthesis.md";
+  const content = type === "skill"
+    ? [
+      `# custom ${type} template ${marker}`.trim(),
+      "",
+      "```md",
+      "---",
+      'name: "<技能名>"',
+      'description: "<一句话描述>"',
+      "---",
+      "",
+      "# <技能标题>",
+      "",
+      "## 快速开始",
+      "- 这个技能适合：",
+      "- 使用前提：",
+      "- 典型收益：",
+      "",
+      "## 决策路由",
+      "- 应该使用：",
+      "- 不该使用：",
+      "- 遇到冲突时优先：",
+      "",
+      "## 输入",
+      "- 必要输入：",
+      "- 可选输入：",
+      "- 输入质量要求：",
+      "",
+      "## 输出",
+      "- 直接产物：",
+      "- 副产物：",
+      "- 质量门槛：",
+      "",
+      "## 参考指引",
+      "- 推荐流程：",
+      "- 常见变体：",
+      "- 关联文件 / 模板 / 文档：",
+      "",
+      "## NEVER",
+      "- 不要：",
+      "- 禁止：",
+      "- 高风险边界：",
+      "```",
+      "",
+    ].join("\n")
+    : [
+      `# custom ${type} template ${marker}`.trim(),
+      "",
+      "```md",
+      "# <方法标题>",
+      "",
+      "> <一句话摘要>",
+      "",
+      "## 0. 元信息",
+      "- 方法定位：",
+      "- 适用对象：",
+      "- 维护建议：",
+      "",
+      "## 1. 触发条件",
+      "- ",
+      "",
+      "## 2. 适用场景",
+      "- ",
+      "",
+      "## 3. 执行步骤",
+      "1. ",
+      "2. ",
+      "3. ",
+      "",
+      "## 4. 工具选择",
+      "- 首选工具：",
+      "- 替代工具：",
+      "- 选择依据：",
+      "",
+      "## 5. 失败经验",
+      "- 常见误区：",
+      "- 失败信号：",
+      "- 规避方式：",
+      "",
+      "## 6. 成功案例",
+      "- 案例背景：",
+      "- 做法摘要：",
+      "- 结果与启示：",
+      "",
+      "## 7. 相关资源",
+      "- 相关技能：",
+      "- 相关方法：",
+      "- 相关文档 / 路径：",
+      "",
+      "## 8. 更新记录",
+      "- YYYY-MM-DD：初版合成草稿。",
+      "```",
+      "",
+    ].join("\n");
+  const targetPath = path.join(templatesDir, fileName);
+  await fs.writeFile(targetPath, content, "utf-8");
+  return targetPath;
+}
+
 describe("ExperiencePromoter", () => {
   let workspaceRoot: string;
   let manager: MemoryManager;
@@ -54,7 +160,7 @@ describe("ExperiencePromoter", () => {
     expect(created?.candidate.content).toContain("# 实现候选层");
     expect(created?.candidate.content).toContain("## 0. 元信息");
     expect(created?.candidate.content).toContain("## 1. 触发条件");
-    expect(created?.candidate.content).toContain("| 条件 | 说明 | 来源信号 |");
+    expect(created?.candidate.content).toContain("method-synthesis.md");
     expect(created?.candidate.content).toContain("## 3. 执行步骤");
     expect(created?.candidate.content).toContain("## 5. 失败经验");
     expect(created?.candidate.content).toContain("## 8. 更新记录");
@@ -70,7 +176,7 @@ describe("ExperiencePromoter", () => {
     expect(created?.candidate.status).toBe("draft");
     expect(created?.candidate.slug).toBe("skill-task-exp-1");
     expect(created?.candidate.content).toContain('name: "skill-task-exp-1"');
-    expect(created?.candidate.content).toContain('description: "将与 完成 P5-A 的候选层最小闭环 相近的问题收敛为可复用执行路由');
+    expect(created?.candidate.content).toContain("skill-synthesis.md");
     expect(created?.candidate.content).toContain("## 快速开始");
     expect(created?.candidate.content).toContain("## 决策路由");
     expect(created?.candidate.content).toContain("## 输入");
@@ -78,6 +184,17 @@ describe("ExperiencePromoter", () => {
     expect(created?.candidate.content).toContain("## NEVER");
     expect(created?.candidate.content).not.toContain("Conversation:");
     expect(created?.candidate.content).not.toContain("Status:");
+  });
+
+  it("prefers stateDir experience templates over repo defaults for direct promote drafts", async () => {
+    const methodTemplatePath = await writeExperienceTemplate(workspaceRoot, "method", "state-dir-first");
+    const skillTemplatePath = await writeExperienceTemplate(workspaceRoot, "skill", "state-dir-first");
+
+    const methodCandidate = manager.promoteTaskToMethodCandidate("task_exp_1");
+    const skillCandidate = manager.promoteTaskToSkillCandidate("task_exp_1");
+
+    expect(methodCandidate?.candidate.content).toContain(methodTemplatePath);
+    expect(skillCandidate?.candidate.content).toContain(skillTemplatePath);
   });
 
   it("reuses an exact candidate from another task as system-level dedup", () => {
@@ -313,6 +430,54 @@ describe("ExperiencePromoter", () => {
     expect(completedTaskId).toBe(taskId);
     const candidates = manager.listExperienceCandidates(10, { taskId: taskId! });
     expect(candidates).toHaveLength(0);
+  });
+
+  it("falls back to legacy draft structures when synthesis templates are unavailable", async () => {
+    const originalCwd = process.cwd();
+    const isolatedCwd = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-no-template-"));
+    process.chdir(isolatedCwd);
+    try {
+      manager.close();
+      await fs.rm(workspaceRoot, { recursive: true, force: true }).catch(() => { });
+
+      workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-fallback-"));
+      manager = new MemoryManager({
+        workspaceRoot,
+        stateDir: workspaceRoot,
+        taskMemoryEnabled: true,
+      });
+
+      const now = "2026-03-15T00:00:00.000Z";
+      (manager as any).store.createTask({
+        id: "task_exp_fallback",
+        conversationId: "conv_exp_fallback",
+        sessionKey: "session_exp_fallback",
+        source: "chat",
+        status: "success",
+        title: "回退生成草稿",
+        objective: "验证模板缺失时的 direct promote fallback",
+        summary: "模板不可用时仍需要生成旧结构草稿。",
+        reflection: "fallback 不能中断已有 candidate 生成链路。",
+        outcome: "旧草稿结构仍然可生成。",
+        toolCalls: [{ toolName: "memory_search", success: true, durationMs: 50 }],
+        artifactPaths: ["fallback-demo.md"],
+        startedAt: now,
+        finishedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const methodCandidate = manager.promoteTaskToMethodCandidate("task_exp_fallback");
+      const skillCandidate = manager.promoteTaskToSkillCandidate("task_exp_fallback");
+
+      expect(methodCandidate?.candidate.content).toContain("| 属性 | 内容 |");
+      expect(methodCandidate?.candidate.content).not.toContain("method-synthesis.md");
+      expect(skillCandidate?.candidate.content).toContain('priority: normal');
+      expect(skillCandidate?.candidate.content).not.toContain("skill-synthesis.md");
+    } finally {
+      process.chdir(originalCwd);
+      await fs.rm(isolatedCwd, { recursive: true, force: true }).catch(() => { });
+    }
   });
 
   it("publishes accepted method candidates into methods directory", async () => {

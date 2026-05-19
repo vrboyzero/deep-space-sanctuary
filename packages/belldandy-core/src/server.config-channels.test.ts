@@ -383,6 +383,7 @@ test("config.update accepts advanced memory and camera helper env settings", asy
           BELLDANDY_TEAM_SHARED_MEMORY_ENABLED: "true",
           BELLDANDY_SHARED_REVIEW_CLAIM_TIMEOUT_MS: "5400000",
           BELLDANDY_TASK_MEMORY_ENABLED: "true",
+          BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED: "true",
           BELLDANDY_TASK_SUMMARY_ENABLED: "true",
           BELLDANDY_TASK_SUMMARY_MODEL: "moonshot-v1-32k",
           BELLDANDY_TASK_SUMMARY_BASE_URL: "https://task-summary.example.com/v1",
@@ -428,6 +429,7 @@ test("config.update accepts advanced memory and camera helper env settings", asy
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_SUMMARY_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_EVOLUTION_MODEL).toBe("qwen-max");
     expect(readRes.payload?.config?.BELLDANDY_AUTO_RECALL_LIMIT).toBe("5");
+    expect(readRes.payload?.config?.BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_TASK_SUMMARY_MODEL).toBe("moonshot-v1-32k");
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_DEEP_RETRIEVAL).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_EMBEDDING_PASSAGE_PREFIX).toBe("passage: ");
@@ -441,6 +443,7 @@ test("config.update accepts advanced memory and camera helper env settings", asy
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_SUMMARY_MODEL="qwen-plus"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_SUMMARY_API_KEY="summary-dedicated-key"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_EVOLUTION_API_KEY="evolution-dedicated-key"');
+    expect(envLocalContent).toContain('BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_TASK_SUMMARY_API_KEY="task-summary-dedicated-key"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_INDEXER_VERBOSE_WATCH="true"');
     expect(envLocalContent).toContain('BELLDANDY_CAMERA_NATIVE_HELPER_ENV_JSON="{"FOO":"bar"}"');
@@ -507,6 +510,8 @@ test("config.update accepts system governance env settings and keeps extra works
           BELLDANDY_WEB_ROOT: "apps/web/public",
           BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE: "full",
           BELLDANDY_PROMPT_FOCUS_ENABLED: "false",
+          BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED: "true",
+          BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE: "0.35",
           BELLDANDY_LOG_LEVEL: "info",
           BELLDANDY_LOG_CONSOLE: "true",
           BELLDANDY_LOG_FILE: "true",
@@ -540,6 +545,8 @@ test("config.update accepts system governance env settings and keeps extra works
     expect(readRes.payload?.config?.BELLDANDY_EXTRA_WORKSPACE_ROOTS).toBe("E:/tools,D:/projects");
     expect(readRes.payload?.config?.BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE).toBe("full");
     expect(readRes.payload?.config?.BELLDANDY_PROMPT_FOCUS_ENABLED).toBe("false");
+    expect(readRes.payload?.config?.BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE).toBe("0.35");
     expect(readRes.payload?.config?.BELLDANDY_LOG_DIR).toBe("~/.star_sanctuary/logs");
     expect(readRes.payload?.config?.BELLDANDY_DREAM_OBSIDIAN_ROOT_DIR).toBe("Dream");
     expect(readRes.payload?.config?.BELLDANDY_COMMONS_OBSIDIAN_ROOT_DIR).toBe("Commons");
@@ -551,6 +558,8 @@ test("config.update accepts system governance env settings and keeps extra works
     expect(envLocalContent).toContain('BELLDANDY_STATE_DIR_WINDOWS="C:/Users/admin/.star_sanctuary"');
     expect(envLocalContent).toContain('BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE="full"');
     expect(envLocalContent).toContain('BELLDANDY_PROMPT_FOCUS_ENABLED="false"');
+    expect(envLocalContent).toContain('BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED="true"');
+    expect(envLocalContent).toContain('BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE="0.35"');
     expect(envLocalContent).toContain('BELLDANDY_COMMONS_OBSIDIAN_ROOT_DIR="Commons"');
   } finally {
     ws.close();

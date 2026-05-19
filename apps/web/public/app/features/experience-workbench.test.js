@@ -57,10 +57,14 @@ function createHarness(options = {}) {
       <div id="experienceWorkbenchStats"></div>
       <button id="experienceWorkbenchTabCandidates"></button>
       <button id="experienceWorkbenchTabCapabilityAcquisition"></button>
+      <button id="experienceWorkbenchTabAssets"></button>
       <button id="experienceWorkbenchTabUsageOverview"></button>
       <div id="experienceWorkbenchCandidatesPane"></div>
       <div id="experienceWorkbenchCapabilityPane" class="hidden"></div>
       <div id="experienceWorkbenchCapabilityOverview"></div>
+      <div id="experienceWorkbenchAssetsPane" class="hidden"></div>
+      <div id="experienceWorkbenchAssetsList"></div>
+      <div id="experienceWorkbenchAssetsDetail"></div>
       <div id="experienceWorkbenchUsagePane" class="hidden"></div>
       <div id="experienceWorkbenchUsageOverview"></div>
       <input id="experienceWorkbenchQuery" />
@@ -95,10 +99,14 @@ function createHarness(options = {}) {
     experienceWorkbenchStatsEl: document.getElementById("experienceWorkbenchStats"),
     experienceWorkbenchTabCandidatesBtn: document.getElementById("experienceWorkbenchTabCandidates"),
     experienceWorkbenchTabCapabilityAcquisitionBtn: document.getElementById("experienceWorkbenchTabCapabilityAcquisition"),
+    experienceWorkbenchTabAssetsBtn: document.getElementById("experienceWorkbenchTabAssets"),
     experienceWorkbenchTabUsageOverviewBtn: document.getElementById("experienceWorkbenchTabUsageOverview"),
     experienceWorkbenchCandidatesPaneEl: document.getElementById("experienceWorkbenchCandidatesPane"),
     experienceWorkbenchCapabilityPaneEl: document.getElementById("experienceWorkbenchCapabilityPane"),
     experienceWorkbenchCapabilityOverviewEl: document.getElementById("experienceWorkbenchCapabilityOverview"),
+    experienceWorkbenchAssetsPaneEl: document.getElementById("experienceWorkbenchAssetsPane"),
+    experienceWorkbenchAssetsListEl: document.getElementById("experienceWorkbenchAssetsList"),
+    experienceWorkbenchAssetsDetailEl: document.getElementById("experienceWorkbenchAssetsDetail"),
     experienceWorkbenchUsagePaneEl: document.getElementById("experienceWorkbenchUsagePane"),
     experienceWorkbenchUsageOverviewEl: document.getElementById("experienceWorkbenchUsageOverview"),
     experienceWorkbenchQueryEl: document.getElementById("experienceWorkbenchQuery"),
@@ -130,6 +138,10 @@ function createHarness(options = {}) {
     draftItemsError: "",
     selectedId: null,
     selectedCandidate: null,
+    selectedAssetPath: "",
+    selectedAsset: null,
+    selectedAssetLoading: false,
+    selectedAssetError: "",
     stats: null,
     activeTab: "capability-acquisition",
     filters: {
@@ -387,9 +399,9 @@ function createHarness(options = {}) {
       }
       if (candidate) {
         candidate.status = "accepted";
-        candidate.publishedPath = candidate.type === "skill"
+        candidate.publishedPath = req.params?.publishTargetPath || (candidate.type === "skill"
           ? `state/skills/${candidate.slug}/SKILL.md`
-          : `state/methods/${candidate.slug}.md`;
+          : `state/methods/${candidate.slug}.md`);
       }
       return { ok: true, payload: { candidate } };
     }
@@ -426,6 +438,22 @@ function createHarness(options = {}) {
         payload: {
           items: resolvePublishedAssets(),
           limit: Number(req.params?.limit) || 200,
+        },
+      };
+    }
+    if (req.method === "experience.asset.read") {
+      const asset = resolvePublishedAssets().find((item) => item.publishedPath === req.params?.assetPath) || null;
+      if (!asset) {
+        return { ok: false, error: { code: "not_found", message: "Published asset not found." } };
+      }
+      const candidate = candidates.find((item) => String(item?.publishedPath || "") === String(asset.publishedPath)) || null;
+      return {
+        ok: true,
+        payload: {
+          asset: {
+            ...asset,
+            content: candidate?.content || "",
+          },
         },
       };
     }
@@ -501,6 +529,13 @@ function createHarness(options = {}) {
             createdBy: "main_model",
             templateId: `${seedCandidate.type}-synthesis`,
             templatePath: `docs/experience-templates/${seedCandidate.type === "skill" ? "skill-synthesis.md" : "method-synthesis.md"}`,
+            ...(req.params?.assetPath
+              ? {
+                seedPublishedPath: req.params.assetPath,
+                seedPublishedAssetKey: String(seedCandidate?.slug || seedCandidate?.title || seedCandidate?.id || "").trim(),
+                seedPublishedAssetSource: seedCandidate.type === "skill" ? "skill_asset" : "method_asset",
+              }
+              : {}),
           },
         },
       };
@@ -608,8 +643,8 @@ describe("experience workbench capability acquisition", () => {
 
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Method Draft One");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Skill Draft One");
-    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Published Methods");
-    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Accepted Method");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).not.toContain("Published Methods");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).not.toContain("Accepted Method");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("ID · draft-method-1");
     expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("ID · draft-skill-1");
     expect(refs.experienceWorkbenchCapabilityPaneEl.classList.contains("hidden")).toBe(false);
@@ -1096,7 +1131,7 @@ describe("experience workbench capability acquisition", () => {
     expect(refs.experienceSynthesisModalSummaryEl.textContent).toContain("Accepted Method");
   });
 
-  it("renders published asset lanes and lets the user fill or preview directly from a listed asset", async () => {
+  it("switches to the assets tab from capability acquisition and renders published method and skill lanes", async () => {
     const candidates = [
       {
         id: "accepted-method-1",
@@ -1113,6 +1148,20 @@ describe("experience workbench capability acquisition", () => {
         publishedPath: "state/methods/accepted-method.md",
       },
       {
+        id: "accepted-skill-1",
+        taskId: "task-skill-2",
+        type: "skill",
+        status: "accepted",
+        title: "Accepted Skill",
+        slug: "accepted-skill",
+        summary: "accepted skill summary",
+        content: "# Accepted Skill",
+        createdAt: "2026-04-18T08:30:00.000Z",
+        updatedAt: "2026-04-18T09:30:00.000Z",
+        sourceTaskSnapshot: {},
+        publishedPath: "state/skills/accepted-skill/SKILL.md",
+      },
+      {
         id: "draft-method-1",
         taskId: "task-method-1",
         type: "method",
@@ -1126,34 +1175,24 @@ describe("experience workbench capability acquisition", () => {
         sourceTaskSnapshot: {},
       },
     ];
-    const { refs, feature, sendReq, experienceState } = createHarness({ candidates });
+    const { refs, feature, experienceState } = createHarness({ candidates });
 
     await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
 
-    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("Published Methods");
-    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("Accepted Method");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).not.toContain("Published Methods");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).not.toContain("Accepted Method");
 
-    refs.experienceWorkbenchCapabilityOverviewEl
-      .querySelector("[data-experience-published-asset-use='state/methods/accepted-method.md']")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    expect(experienceState.resynthesizeAssetPath).toBe("state/methods/accepted-method.md");
-    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).toContain("已选中");
-
-    refs.experienceWorkbenchCapabilityOverviewEl
-      .querySelector("[data-experience-published-asset-preview='state/methods/accepted-method.md']")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    refs.experienceWorkbenchTabAssetsBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await flushAsyncWork(6);
 
-    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
-      method: "experience.candidate.synthesize.preview",
-      params: expect.objectContaining({
-        assetPath: "state/methods/accepted-method.md",
-        agentId: "default",
-      }),
-    }));
-    expect(refs.experienceSynthesisModalEl.classList.contains("hidden")).toBe(false);
+    expect(experienceState.activeTab).toBe("assets");
+    expect(refs.experienceWorkbenchAssetsPaneEl.classList.contains("hidden")).toBe(false);
+    expect(refs.experienceWorkbenchAssetsListEl.textContent).toContain("Published Methods");
+    expect(refs.experienceWorkbenchAssetsListEl.textContent).toContain("Accepted Method");
+    expect(refs.experienceWorkbenchAssetsListEl.querySelector("[data-experience-published-asset-preview='state/methods/accepted-method.md']")).toBeTruthy();
+    expect(refs.experienceWorkbenchAssetsDetailEl.textContent).toContain("Published Skills");
+    expect(refs.experienceWorkbenchAssetsDetailEl.textContent).toContain("Accepted Skill");
   });
 
   it("creates a synthesized draft from the modal and keeps the accept shortcut available", async () => {
@@ -1284,7 +1323,136 @@ describe("experience workbench capability acquisition", () => {
     expect(candidates.find((item) => item.id === "draft-method-1-synthesized")?.status).toBe("accepted");
     expect(candidates.find((item) => item.id === "draft-method-1-synthesized")?.publishedPath).toBe("state/methods/method-draft-one-synthesized.md");
     expect(findCapabilityLane(refs.experienceWorkbenchCapabilityOverviewEl, "Method Draft")?.innerHTML || "").not.toContain("Method Draft One Synthesized");
-    expect(findCapabilityLane(refs.experienceWorkbenchCapabilityOverviewEl, "Published Methods")?.innerHTML || "").toContain("Method Draft One Synthesized");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).not.toContain("Published Methods");
+    expect(refs.experienceWorkbenchCapabilityOverviewEl.textContent).not.toContain("Method Draft One Synthesized");
+  });
+
+  it("opens the assets tab and allows resynthesis from a published asset card", async () => {
+    const candidates = [
+      {
+        id: "accepted-method-1",
+        taskId: "task-method-2",
+        type: "method",
+        status: "accepted",
+        title: "Accepted Method",
+        slug: "accepted-method",
+        summary: "accepted summary",
+        content: "# Accepted Method\n\nCurrent published body",
+        createdAt: "2026-04-18T08:00:00.000Z",
+        updatedAt: "2026-04-18T09:00:00.000Z",
+        sourceTaskSnapshot: {},
+        publishedPath: "state/methods/accepted-method.md",
+      },
+      {
+        id: "draft-method-1",
+        taskId: "task-method-1",
+        type: "method",
+        status: "draft",
+        title: "Method Draft One",
+        slug: "method-draft-one",
+        summary: "method summary 1",
+        content: "# Method Draft One",
+        createdAt: "2026-04-20T09:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+        sourceTaskSnapshot: {},
+      },
+    ];
+    const { refs, feature, sendReq, experienceState } = createHarness({ candidates });
+
+    await feature.openExperienceWorkbench({ tab: "assets", preferFirst: true });
+    await flushAsyncWork(6);
+
+    expect(experienceState.activeTab).toBe("assets");
+    expect(refs.experienceWorkbenchAssetsPaneEl.classList.contains("hidden")).toBe(false);
+    expect(refs.experienceWorkbenchAssetsListEl.textContent).toContain("Published Methods");
+    expect(refs.experienceWorkbenchAssetsListEl.textContent).toContain("Accepted Method");
+
+    refs.experienceWorkbenchAssetsListEl
+      .querySelector("[data-experience-published-asset-preview='state/methods/accepted-method.md']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(6);
+
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "experience.candidate.synthesize.preview",
+      params: expect.objectContaining({
+        assetPath: "state/methods/accepted-method.md",
+      }),
+    }));
+    expect(sendReq).not.toHaveBeenCalledWith(expect.objectContaining({
+      method: "experience.asset.read",
+    }));
+  });
+
+  it("accepts a synthesized asset-based draft by overwriting the original published file", async () => {
+    const previousConfirm = window.confirm;
+    window.confirm = vi.fn(() => true);
+    try {
+      const candidates = [
+        {
+          id: "accepted-method-1",
+          taskId: "task-method-2",
+          type: "method",
+          status: "accepted",
+          title: "Accepted Method",
+          slug: "accepted-method",
+          summary: "accepted summary",
+          content: "# Accepted Method\n\nCurrent published body",
+          createdAt: "2026-04-18T08:00:00.000Z",
+          updatedAt: "2026-04-18T09:00:00.000Z",
+          sourceTaskSnapshot: {},
+          publishedPath: "state/methods/accepted-method.md",
+        },
+        {
+          id: "draft-method-1",
+          taskId: "task-method-1",
+          type: "method",
+          status: "draft",
+          title: "Method Draft One",
+          slug: "method-draft-one",
+          summary: "method summary 1",
+          content: "# Method Draft One\n\nSynthesized next body",
+          createdAt: "2026-04-20T09:00:00.000Z",
+          updatedAt: "2026-04-20T10:00:00.000Z",
+          sourceTaskSnapshot: {},
+        },
+      ];
+      const { refs, feature, sendReq, experienceState } = createHarness({ candidates });
+
+      await feature.openExperienceWorkbench({ tab: "assets", preferFirst: true });
+      await flushAsyncWork(6);
+
+      refs.experienceWorkbenchAssetsListEl
+        .querySelector("[data-experience-published-asset-preview='state/methods/accepted-method.md']")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork(6);
+
+      refs.experienceSynthesisModalSubmitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork(10);
+
+      expect(experienceState.synthesisModal.createdCandidate?.id).toBe("virtual:method:accepted-method-synthesized");
+      expect(refs.experienceSynthesisModalListEl.textContent).toContain("覆盖前对比");
+      expect(refs.experienceSynthesisModalSubmitBtn.textContent).toContain("接受并覆盖原文件");
+
+      refs.experienceSynthesisModalSubmitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork(10);
+
+      const acceptCalls = sendReq.mock.calls
+        .map(([req]) => req)
+        .filter((req) => req.method === "experience.candidate.accept");
+      expect(acceptCalls).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          params: expect.objectContaining({
+            candidateId: "virtual:method:accepted-method-synthesized",
+            publishTargetPath: "state/methods/accepted-method.md",
+            confirmed: true,
+          }),
+        }),
+      ]));
+      expect(window.confirm).toHaveBeenCalled();
+      expect(candidates.find((item) => item.id === "virtual:method:accepted-method-synthesized")?.publishedPath).toBe("state/methods/accepted-method.md");
+    } finally {
+      window.confirm = previousConfirm;
+    }
   });
 
   it("shows synthesis consumed info in candidate detail", async () => {

@@ -154,6 +154,8 @@ const DEFAULT_METHODS = [
   "experience.candidate.reject",
   "experience.candidate.reject_bulk",
   "experience.candidate.cleanup_consumed",
+  "experience.asset.list",
+  "experience.asset.read",
   "experience.usage.get",
   "experience.usage.list",
   "experience.usage.stats",

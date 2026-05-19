@@ -30,6 +30,7 @@ import { buildMindProfileRuntimePrelude } from "../mind-profile-runtime-prelude.
 import { buildPromptFocusRuntimePrelude } from "../prompt-focus-runtime-prelude.js";
 import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.js";
 import { resolveMemoryRuntimeSwitches } from "../memory-runtime-switches.js";
+import { resolveTaskMemoryCarveOutEffects } from "../task-memory-carve-out.js";
 import { calculateUsageCostUsd, resolveCompactionThreshold, resolveProviderCapabilityFromEnv } from "../provider-capability.js";
 import { resolveCompactionModelRoute } from "../compaction-model-routing.js";
 import { normalizePreferredProviderIds } from "../provider-model-catalog.js";
@@ -1547,8 +1548,11 @@ const promptFocusMaxSections = Math.max(1, parseInt(readEnv("BELLDANDY_PROMPT_FO
 const promptFocusMaxChars = Math.max(160, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MAX_CHARS") || "900", 10) || 900);
 const promptFocusMinScore = Math.max(1, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MIN_SCORE") || "4", 10) || 4);
 const promptFocusMaxExcerptChars = Math.max(80, parseInt(readEnv("BELLDANDY_PROMPT_FOCUS_MAX_EXCERPT_CHARS") || "220", 10) || 220);
+const promptFocusSemanticEnabled = readEnv("BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED") !== "false";
+const promptFocusSemanticMinScoreRaw = Number(readEnv("BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE") || "0.3");
+const promptFocusSemanticMinScore = Number.isFinite(promptFocusSemanticMinScoreRaw) ? promptFocusSemanticMinScoreRaw : 0.3;
 const toolResultTranscriptCharLimit = Math.max(0, parseInt(readEnv("BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT") || "12000", 10) || 12000);
-const taskDedupGuardEnabled = readEnv("BELLDANDY_TASK_DEDUP_GUARD_ENABLED") !== "false";
+const configuredTaskDedupGuardEnabled = readEnv("BELLDANDY_TASK_DEDUP_GUARD_ENABLED") !== "false";
 const taskDedupWindowMinutes = Math.max(1, parseInt(readEnv("BELLDANDY_TASK_DEDUP_WINDOW_MINUTES") || "20", 10) || 20);
 const taskDedupGlobalMode = parseToolDedupGlobalMode(readEnv("BELLDANDY_TASK_DEDUP_MODE"));
 const taskDedupPolicy = parseToolDedupPolicy(readEnv("BELLDANDY_TASK_DEDUP_POLICY"));
@@ -1648,35 +1652,48 @@ if (mindProfileRuntimeEnabled) {
 }
 
 if (promptFocusEnabled) {
-  hookRegistry.register({
-    source: "prompt-focus-runtime",
-    hookName: "before_agent_start",
-    priority: 118,
-    handler: async (_event, _ctx) => {
-      try {
-        const resolvedAgentId = _ctx.agentId?.trim() || "default";
-        return await buildPromptFocusRuntimePrelude({
-          stateDir,
-          agentId: resolvedAgentId,
-          workspaceAgentId: agentWorkspaceBindings.get(resolvedAgentId) ?? resolvedAgentId,
-          currentTurnText: _event.userInput?.trim() || _event.prompt?.trim() || undefined,
-          config: {
-            enabled: promptFocusEnabled,
-            maxSections: promptFocusMaxSections,
-            maxChars: promptFocusMaxChars,
-            minScore: promptFocusMinScore,
-            maxExcerptChars: promptFocusMaxExcerptChars,
-          },
-        });
-      } catch (err) {
-        logger.warn("prompt-focus", `Failed to build prompt focus prelude: ${err instanceof Error ? err.message : String(err)}`);
-        return undefined;
-      }
+    hookRegistry.register({
+      source: "prompt-focus-runtime",
+      hookName: "before_agent_start",
+      priority: 118,
+      handler: async (_event, _ctx) => {
+        try {
+          const resolvedAgentId = _ctx.agentId?.trim() || "default";
+          const mm = getGlobalMemoryManager({
+            agentId: _ctx.agentId,
+            conversationId: _ctx.sessionKey,
+          });
+          return await buildPromptFocusRuntimePrelude({
+            stateDir,
+            agentId: resolvedAgentId,
+            workspaceAgentId: agentWorkspaceBindings.get(resolvedAgentId) ?? resolvedAgentId,
+            currentTurnText: _event.userInput?.trim() || _event.prompt?.trim() || undefined,
+            config: {
+              enabled: promptFocusEnabled,
+              maxSections: promptFocusMaxSections,
+              maxChars: promptFocusMaxChars,
+              minScore: promptFocusMinScore,
+              maxExcerptChars: promptFocusMaxExcerptChars,
+              semanticEnabled: promptFocusSemanticEnabled,
+              semanticMinScore: promptFocusSemanticMinScore,
+            },
+            semanticEmbedder: promptFocusSemanticEnabled && mm
+              ? {
+                cacheKey: mm.getEmbeddingRuntimeCacheKey(),
+                embedQuery: (text) => mm.embedRetrievalQuery(text),
+                embedPassages: (texts) => mm.embedRetrievalPassages(texts),
+              }
+              : undefined,
+          });
+        } catch (err) {
+          logger.warn("prompt-focus", `Failed to build prompt focus prelude: ${err instanceof Error ? err.message : String(err)}`);
+          return undefined;
+        }
     },
   });
   logger.info(
     "prompt-focus",
-    `enabled (maxSections=${promptFocusMaxSections}, maxChars=${promptFocusMaxChars}, minScore=${promptFocusMinScore}, maxExcerptChars=${promptFocusMaxExcerptChars})`,
+    `enabled (maxSections=${promptFocusMaxSections}, maxChars=${promptFocusMaxChars}, minScore=${promptFocusMinScore}, maxExcerptChars=${promptFocusMaxExcerptChars}, semantic=${promptFocusSemanticEnabled}, semanticMinScore=${promptFocusSemanticMinScore})`,
   );
 }
 
@@ -2912,6 +2929,7 @@ const evolutionMinMessages = Number(readEnv("BELLDANDY_MEMORY_EVOLUTION_MIN_MESS
 const deepRetrievalEnabled = memoryRuntimeSwitches.deepRetrievalEnabled;
 
 // Task 层总结配置
+const taskStatsCarveOutEnabled = memoryRuntimeSwitches.taskStatsCarveOutEnabled;
 const taskMemoryEnabled = memoryRuntimeSwitches.taskMemoryEnabled;
 const taskSummaryEnabled = memoryRuntimeSwitches.taskSummaryEnabled;
 const taskSummaryModel = readEnv("BELLDANDY_TASK_SUMMARY_MODEL") || openaiModel;
@@ -2920,13 +2938,24 @@ const taskSummaryApiKey = readEnv("BELLDANDY_TASK_SUMMARY_API_KEY") || openaiApi
 const taskSummaryMinDurationMs = Number(readEnv("BELLDANDY_TASK_SUMMARY_MIN_DURATION_MS")) || 15_000;
 const taskSummaryMinToolCalls = Number(readEnv("BELLDANDY_TASK_SUMMARY_MIN_TOOL_CALLS")) || 2;
 const taskSummaryMinTokenTotal = Number(readEnv("BELLDANDY_TASK_SUMMARY_MIN_TOKEN_TOTAL")) || 2_000;
-const experienceAutoPromotionEnabled = (readEnv("BELLDANDY_EXPERIENCE_AUTO_PROMOTION_ENABLED") ?? "true") !== "false";
-const experienceAutoMethodEnabled = (readEnv("BELLDANDY_EXPERIENCE_AUTO_METHOD_ENABLED") ?? "true") !== "false";
-const experienceAutoSkillEnabled = (readEnv("BELLDANDY_EXPERIENCE_AUTO_SKILL_ENABLED") ?? "true") !== "false";
+const configuredExperienceAutoPromotionEnabled = (readEnv("BELLDANDY_EXPERIENCE_AUTO_PROMOTION_ENABLED") ?? "true") !== "false";
+const configuredExperienceAutoMethodEnabled = (readEnv("BELLDANDY_EXPERIENCE_AUTO_METHOD_ENABLED") ?? "true") !== "false";
+const configuredExperienceAutoSkillEnabled = (readEnv("BELLDANDY_EXPERIENCE_AUTO_SKILL_ENABLED") ?? "true") !== "false";
 const methodGenerationConfirmRequired = parseEnvBoolean(readEnv("BELLDANDY_METHOD_GENERATION_CONFIRM_REQUIRED"));
 const skillGenerationConfirmRequired = parseEnvBoolean(readEnv("BELLDANDY_SKILL_GENERATION_CONFIRM_REQUIRED"));
 const methodPublishConfirmRequired = parseEnvBoolean(readEnv("BELLDANDY_METHOD_PUBLISH_CONFIRM_REQUIRED"));
 const skillPublishConfirmRequired = parseEnvBoolean(readEnv("BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED"));
+const taskMemoryCarveOutEffects = resolveTaskMemoryCarveOutEffects({
+  taskStatsCarveOutEnabled,
+  taskDedupGuardEnabled: configuredTaskDedupGuardEnabled,
+  experienceAutoPromotionEnabled: configuredExperienceAutoPromotionEnabled,
+  experienceAutoMethodEnabled: configuredExperienceAutoMethodEnabled,
+  experienceAutoSkillEnabled: configuredExperienceAutoSkillEnabled,
+});
+const taskDedupGuardEnabled = taskMemoryCarveOutEffects.taskDedupGuardEnabled;
+const experienceAutoPromotionEnabled = taskMemoryCarveOutEffects.experienceAutoPromotionEnabled;
+const experienceAutoMethodEnabled = taskMemoryCarveOutEffects.experienceAutoMethodEnabled;
+const experienceAutoSkillEnabled = taskMemoryCarveOutEffects.experienceAutoSkillEnabled;
 const effectiveExperienceAutoMethodEnabled = experienceAutoMethodEnabled && !methodGenerationConfirmRequired;
 const effectiveExperienceAutoSkillEnabled = experienceAutoSkillEnabled && !skillGenerationConfirmRequired;
 let requestMemoryEvolutionExtraction:
@@ -2998,9 +3027,15 @@ for (const record of [...new Map(scopedMemoryManagers.records.map((item) => [ite
     logger.error("memory", `Failed to start scoped memory indexing for ${record.agentId}: ${err instanceof Error ? err.message : String(err)}`);
   });
 }
+if (taskStatsCarveOutEnabled) {
+  logger.info(
+    "memory",
+    "Task stats carve-out enabled: task capture stays on while memory master switch is off; task summary, task dedup guard, and experience auto promotion remain disabled.",
+  );
+}
 logger.info(
   "memory",
-  `Scoped MemoryManagers initialized (bindings=${scopedMemoryManagers.records.length}, unique=${new Set(scopedMemoryManagers.records.map((item) => item.stateDir)).size}, teamShared=${teamSharedMemoryEnabled}, summary=${summaryEnabled}, evolution=${evolutionEnabled}, taskMemory=${taskMemoryEnabled}, experienceAuto=${experienceAutoPromotionEnabled}, methodAuto=${effectiveExperienceAutoMethodEnabled}, skillAuto=${effectiveExperienceAutoSkillEnabled}, methodGenerateConfirm=${methodGenerationConfirmRequired}, skillGenerateConfirm=${skillGenerationConfirmRequired}, methodPublishConfirm=${methodPublishConfirmRequired}, skillPublishConfirm=${skillPublishConfirmRequired})`,
+  `Scoped MemoryManagers initialized (bindings=${scopedMemoryManagers.records.length}, unique=${new Set(scopedMemoryManagers.records.map((item) => item.stateDir)).size}, teamShared=${teamSharedMemoryEnabled}, summary=${summaryEnabled}, evolution=${evolutionEnabled}, taskMemory=${taskMemoryEnabled}, taskStatsCarveOut=${taskStatsCarveOutEnabled}, experienceAuto=${experienceAutoPromotionEnabled}, methodAuto=${effectiveExperienceAutoMethodEnabled}, skillAuto=${effectiveExperienceAutoSkillEnabled}, methodGenerateConfirm=${methodGenerationConfirmRequired}, skillGenerateConfirm=${skillGenerationConfirmRequired}, methodPublishConfirm=${methodPublishConfirmRequired}, skillPublishConfirm=${skillPublishConfirmRequired})`,
 );
 
 // ========== 后台任务调度：pause/resume + 空闲摘要 ==========
@@ -3345,7 +3380,7 @@ if (taskMemoryEnabled) {
 
   logger.info(
     "task-memory",
-    `Registered task memory hooks (dedupGuard=${taskDedupGuardEnabled}, dedupWindowMinutes=${taskDedupWindowMinutes}, ${summarizeToolDedupPolicy({
+    `Registered task memory hooks (taskStatsCarveOut=${taskStatsCarveOutEnabled}, dedupGuard=${taskDedupGuardEnabled}, dedupWindowMinutes=${taskDedupWindowMinutes}, ${summarizeToolDedupPolicy({
       globalMode: taskDedupGlobalMode,
       policy: taskDedupPolicy,
     })})`,

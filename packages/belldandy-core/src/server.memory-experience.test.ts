@@ -39,8 +39,98 @@ async function writeExperienceSynthesisTestTemplate(stateDir: string, type: "met
   await fs.promises.mkdir(templatesDir, { recursive: true });
   const fileName = type === "skill" ? "skill-synthesis.md" : "method-synthesis.md";
   const content = type === "skill"
-    ? "# Skill Synthesis Template"
-    : "# Method Synthesis Template";
+    ? [
+      "# Skill Synthesis Template",
+      "",
+      "```md",
+      "---",
+      'name: "<skill-name>"',
+      'description: "<one-line description>"',
+      "---",
+      "",
+      "# <Skill Title>",
+      "",
+      "## 快速开始",
+      "- 这个技能适合：",
+      "- 使用前提：",
+      "- 典型收益：",
+      "",
+      "## 决策路由",
+      "- 应该使用：",
+      "- 不该使用：",
+      "- 遇到冲突时优先：",
+      "",
+      "## 输入",
+      "- 必要输入：",
+      "- 可选输入：",
+      "- 输入质量要求：",
+      "",
+      "## 输出",
+      "- 直接产物：",
+      "- 副产物：",
+      "- 质量门槛：",
+      "",
+      "## 参考指引",
+      "- 推荐流程：",
+      "- 常见变体：",
+      "- 关联文件 / 模板 / 文档：",
+      "",
+      "## NEVER",
+      "- 不要：",
+      "- 禁止：",
+      "- 高风险边界：",
+      "```",
+      "",
+    ].join("\n")
+    : [
+      "# Method Synthesis Template",
+      "",
+      "```md",
+      "# <Method Title>",
+      "",
+      "> <One-line summary>",
+      "",
+      "## 0. 元信息",
+      "- 方法定位：",
+      "- 适用对象：",
+      "- 维护建议：",
+      "",
+      "## 1. 触发条件",
+      "- ",
+      "",
+      "## 2. 适用场景",
+      "- ",
+      "",
+      "## 3. 执行步骤",
+      "1. ",
+      "2. ",
+      "3. ",
+      "",
+      "## 4. 工具选择",
+      "- 首选工具：",
+      "- 替代工具：",
+      "- 选择依据：",
+      "",
+      "## 5. 失败经验",
+      "- 常见误区：",
+      "- 失败信号：",
+      "- 规避方式：",
+      "",
+      "## 6. 成功案例",
+      "- 案例背景：",
+      "- 做法摘要：",
+      "- 结果与启示：",
+      "",
+      "## 7. 相关资源",
+      "- 相关技能：",
+      "- 相关方法：",
+      "- 相关文档 / 路径：",
+      "",
+      "## 8. 更新记录",
+      "- YYYY-MM-DD：初版合成草稿。",
+      "```",
+      "",
+    ].join("\n");
   await fs.promises.writeFile(path.join(templatesDir, fileName), content, "utf-8");
 }
 
@@ -317,6 +407,7 @@ test("experience.candidate.generate creates candidates and respects confirmation
   const previousMethodConfirm = process.env.BELLDANDY_METHOD_GENERATION_CONFIRM_REQUIRED;
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-generate-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-generate-workspace-"));
+  await writeExperienceSynthesisTestTemplate(stateDir, "method");
   const memoryManager = new MemoryManager({
     workspaceRoot,
     stateDir,
@@ -375,6 +466,9 @@ test("experience.candidate.generate creates candidates and respects confirmation
     expect(createdRes.payload?.created).toBe(true);
     expect(createdCandidate.type).toBe("method");
     expect(createdCandidate.status).toBe("draft");
+    expect(createdCandidate.content).toContain("## 0. 元信息");
+    expect(createdCandidate.content).toContain("## 3. 执行步骤");
+    expect(createdCandidate.content).toContain("method-synthesis.md");
 
     const reusedRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -562,6 +656,282 @@ test("experience.candidate.reject_bulk rejects all draft candidates for a type a
       rejected: 2,
     });
   } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("experience.asset.read returns published asset detail with content", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-asset-read-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-asset-read-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  const now = "2026-04-20T00:00:00.000Z";
+  (memoryManager as any).store.createTask({
+    id: "task-asset-read-1",
+    conversationId: "conv-asset-read-1",
+    sessionKey: "session-asset-read-1",
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    title: "读取已发布 method 资产",
+    objective: "验证 published asset read 能返回正文",
+    summary: "method 已发布后应能读取资产详情与 content。",
+    reflection: "asset read 用于 overwrite compare。",
+    toolCalls: [{ toolName: "memory_search", success: true, durationMs: 40 }],
+    artifactPaths: [],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const promoted = memoryManager.promoteTaskToMethodCandidate("task-asset-read-1");
+  expect(promoted?.candidate.id).toBeTruthy();
+  const accepted = memoryManager.acceptExperienceCandidate(promoted!.candidate.id);
+  expect(accepted?.publishedPath).toBeTruthy();
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const res = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "asset-read",
+      method: "experience.asset.read",
+      params: {
+        assetPath: accepted!.publishedPath,
+        agentId: "default",
+      },
+    }, { stateDir });
+    expect(res).toBeTruthy();
+    if (!res || !res.ok) {
+      throw new Error("expected successful experience.asset.read response");
+    }
+    expect(res.payload?.asset).toMatchObject({
+      type: "method",
+      publishedPath: accepted!.publishedPath,
+      content: expect.stringContaining("# "),
+    });
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("experience.candidate.accept supports method overwrite publishTargetPath", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-method-overwrite-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-method-overwrite-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  const now = "2026-04-20T00:00:00.000Z";
+  const seedTask = {
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    toolCalls: [{ toolName: "memory_search", success: true, durationMs: 40 }],
+    artifactPaths: [],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+  (memoryManager as any).store.createTask({
+    id: "task-method-overwrite-seed",
+    conversationId: "conv-method-overwrite-seed",
+    sessionKey: "session-method-overwrite-seed",
+    title: "Method 原始资产",
+    objective: "生成初始 method",
+    summary: "先发布一个 method，后续再覆盖。",
+    reflection: "seed",
+    ...seedTask,
+  });
+  const seedCandidate = memoryManager.promoteTaskToMethodCandidate("task-method-overwrite-seed");
+  const acceptedSeed = memoryManager.acceptExperienceCandidate(seedCandidate!.candidate.id);
+  expect(acceptedSeed?.publishedPath).toBeTruthy();
+
+  const overwriteCandidate = memoryManager.createExperienceCandidate({
+    id: "exp_method_overwrite_manual",
+    taskId: "task-method-overwrite-next",
+    type: "method",
+    status: "draft",
+    title: "Method 覆盖稿",
+    slug: "method-overwrite-manual",
+    content: buildValidSynthesizedMethodContent("Method 覆盖稿", "覆盖后的新 method 应写回原路径。"),
+    summary: "覆盖后的新 method 应写回原路径。",
+    sourceTaskSnapshot: {
+      taskId: "task-method-overwrite-next",
+      conversationId: "conv-method-overwrite-next",
+      agentId: "default",
+      source: "chat",
+      status: "success",
+      title: "Method 覆盖稿",
+      objective: "生成覆盖 method",
+      summary: "覆盖后的新 method 应写回原路径。",
+      reflection: "overwrite",
+      toolCalls: [{ toolName: "memory_search", success: true, durationMs: 40 }],
+      startedAt: now,
+      finishedAt: now,
+    },
+    createdAt: now,
+  });
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const res = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-accept-method-overwrite",
+      method: "experience.candidate.accept",
+      params: {
+        candidateId: overwriteCandidate.id,
+        agentId: "default",
+        confirmed: true,
+        publishTargetPath: acceptedSeed!.publishedPath,
+      },
+    }, { stateDir });
+    expect(res).toBeTruthy();
+    if (!res || !res.ok) {
+      throw new Error("expected successful overwrite accept response");
+    }
+    expect(res.payload?.candidate).toMatchObject({
+      status: "accepted",
+      publishedPath: acceptedSeed!.publishedPath,
+    });
+    const publishedContent = await fs.promises.readFile(acceptedSeed!.publishedPath!, "utf-8");
+    expect(publishedContent).toContain(overwriteCandidate.title);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("experience.candidate.accept supports skill overwrite publishTargetPath", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-skill-overwrite-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-experience-skill-overwrite-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+  const skillRegistry = new SkillRegistry();
+  const previousSkillPublishConfirm = process.env.BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED;
+  delete process.env.BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED;
+
+  const now = "2026-04-20T00:00:00.000Z";
+  const seedTask = {
+    agentId: "default",
+    source: "chat",
+    status: "success",
+    toolCalls: [{ toolName: "memory_search", success: true, durationMs: 40 }],
+    artifactPaths: [],
+    startedAt: now,
+    finishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+  (memoryManager as any).store.createTask({
+    id: "task-skill-overwrite-seed",
+    conversationId: "conv-skill-overwrite-seed",
+    sessionKey: "session-skill-overwrite-seed",
+    title: "Skill 原始资产",
+    objective: "生成初始 skill",
+    summary: "先发布一个 skill，后续再覆盖。",
+    reflection: "seed",
+    ...seedTask,
+  });
+  const seedCandidate = memoryManager.promoteTaskToSkillCandidate("task-skill-overwrite-seed");
+  registerGlobalMemoryManager(memoryManager);
+  const acceptSeedRes = await handleMemoryExperienceMethod({
+    type: "req",
+    id: "candidate-accept-skill-seed",
+    method: "experience.candidate.accept",
+    params: {
+      candidateId: seedCandidate!.candidate.id,
+      agentId: "default",
+    },
+  }, {
+    stateDir,
+    skillRegistry,
+  });
+  if (!acceptSeedRes || !acceptSeedRes.ok) {
+    throw new Error(`expected successful skill seed accept response: ${JSON.stringify(acceptSeedRes)}`);
+  }
+  const acceptedSeed = memoryManager.getExperienceCandidate(seedCandidate!.candidate.id);
+  expect(acceptedSeed?.publishedPath).toBeTruthy();
+
+  const overwriteCandidate = memoryManager.createExperienceCandidate({
+    id: "exp_skill_overwrite_manual",
+    taskId: "task-skill-overwrite-next",
+    type: "skill",
+    status: "draft",
+    title: "Skill 覆盖稿",
+    slug: "skill-overwrite-manual",
+    content: buildValidSynthesizedSkillContent(
+      "Skill 覆盖稿",
+      "accepted-skill",
+      "覆盖后的新 skill 应写回原路径并保持可加载。",
+    ),
+    summary: "覆盖后的新 skill 应写回原路径并保持可加载。",
+    sourceTaskSnapshot: {
+      taskId: "task-skill-overwrite-next",
+      conversationId: "conv-skill-overwrite-next",
+      agentId: "default",
+      source: "chat",
+      status: "success",
+      title: "Skill 覆盖稿",
+      objective: "生成覆盖 skill",
+      summary: "覆盖后的新 skill 应写回原路径并保持可加载。",
+      reflection: "overwrite",
+      toolCalls: [{ toolName: "memory_search", success: true, durationMs: 40 }],
+      startedAt: now,
+      finishedAt: now,
+    },
+    createdAt: now,
+  });
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const res = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "candidate-accept-skill-overwrite",
+      method: "experience.candidate.accept",
+      params: {
+        candidateId: overwriteCandidate.id,
+        agentId: "default",
+        confirmed: true,
+        publishTargetPath: acceptedSeed!.publishedPath,
+      },
+    }, {
+      stateDir,
+      skillRegistry,
+    });
+    expect(res).toBeTruthy();
+    if (!res || !res.ok) {
+      throw new Error("expected successful skill overwrite accept response");
+    }
+    expect(res.payload?.candidate).toMatchObject({
+      status: "accepted",
+      publishedPath: acceptedSeed!.publishedPath,
+    });
+    const publishedContent = await fs.promises.readFile(acceptedSeed!.publishedPath!, "utf-8");
+    expect(publishedContent).toContain("name:");
+    const publishedSkillName = /(?:^|\n)name:\s*"([^"\n]+)"/.exec(publishedContent)?.[1];
+    expect(publishedSkillName).toBeTruthy();
+    expect(skillRegistry.getSkill(publishedSkillName!)).toBeTruthy();
+  } finally {
+    if (previousSkillPublishConfirm === undefined) {
+      delete process.env.BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED;
+    } else {
+      process.env.BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED = previousSkillPublishConfirm;
+    }
     memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
@@ -2260,7 +2630,7 @@ test("memory.dedup.preview reports exact duplicate groups without mutating chunk
     });
     memoryManager.upsertMemoryChunk({
       id: "dup-b",
-      sourcePath: "memory/dup-b.md",
+      sourcePath: "artifacts/dup-b.md",
       sourceType: "manual",
       memoryType: "daily",
       content: "duplicated memory line\nsecond line",
@@ -2298,9 +2668,35 @@ test("memory.dedup.preview reports exact duplicate groups without mutating chunk
     expect(report?.totals?.scannedChunks).toBe(3);
     expect(report?.totals?.duplicateGroups).toBe(1);
     expect(report?.totals?.removableChunks).toBe(1);
+    expect(report?.observability).toMatchObject({
+      beforeChunkCount: 3,
+      estimatedAfterChunkCount: 2,
+    });
+    expect(typeof report?.observability?.pageCount).toBe("number");
+    expect(typeof report?.observability?.freelistCount).toBe("number");
+    expect(report?.sourceIndexingSummary).toMatchObject({
+      reindexableSourcePathCount: 1,
+      nonReindexableSourcePathCount: 1,
+      duplicateGroupsWithReindexableSources: 1,
+      duplicateGroupsWithOnlyNonReindexableSources: 0,
+    });
     expect(Array.isArray(report?.groups)).toBe(true);
     expect(report?.groups?.[0]?.keep?.id).toBe("dup-a");
     expect(report?.groups?.[0]?.remove?.map((item: Record<string, unknown>) => item.id)).toEqual(["dup-b"]);
+    expect(report?.groups?.[0]?.keep?.sourceIndexing).toMatchObject({
+      reindexable: true,
+      scope: "state_memory_root",
+    });
+    expect(report?.groups?.[0]?.remove?.[0]?.sourceIndexing).toMatchObject({
+      reindexable: false,
+      scope: "external",
+    });
+    expect(report?.groups?.[0]?.sourceIndexing).toMatchObject({
+      reindexableSourcePathCount: 1,
+      nonReindexableSourcePathCount: 1,
+      anyAffectedSourcePathReindexable: true,
+      allAffectedSourcePathsReindexable: false,
+    });
     expect(memoryManager.countChunks()).toBe(beforeCount);
   } finally {
     memoryManager.close();
@@ -2408,6 +2804,14 @@ test("memory.dedup.apply backs up the db, removes duplicate chunks, and relinks 
     expect(result?.backupPath).toContain("memory-dedup-backups");
     expect(result?.totals?.removedChunks).toBe(1);
     expect(result?.totals?.relinkedTaskMemoryLinks).toBe(1);
+    expect(result?.observability).toMatchObject({
+      beforeChunkCount: 3,
+      afterChunkCount: 2,
+    });
+    expect(typeof result?.observability?.beforePageCount).toBe("number");
+    expect(typeof result?.observability?.afterPageCount).toBe("number");
+    expect(typeof result?.observability?.beforeFreelistCount).toBe("number");
+    expect(typeof result?.observability?.afterFreelistCount).toBe("number");
     expect(await fs.promises.stat(String(result?.backupPath))).toBeTruthy();
     expect(memoryManager.countChunks()).toBe(beforeCount - 1);
     expect(memoryManager.getMemory("apply-dup-b")).toBeNull();

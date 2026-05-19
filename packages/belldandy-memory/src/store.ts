@@ -693,6 +693,23 @@ export class MemoryStore {
     return typeof row?.count === "number" && Number.isFinite(row.count) ? row.count : 0;
   }
 
+  getDatabasePageStats(): {
+    pageCount: number;
+    freelistCount: number;
+  } {
+    this.ensureOpen();
+    const pageCountRow = this.db.prepare(`PRAGMA page_count`).get() as { page_count?: number } | undefined;
+    const freelistCountRow = this.db.prepare(`PRAGMA freelist_count`).get() as { freelist_count?: number } | undefined;
+    return {
+      pageCount: typeof pageCountRow?.page_count === "number" && Number.isFinite(pageCountRow.page_count)
+        ? Math.max(0, Math.floor(pageCountRow.page_count))
+        : 0,
+      freelistCount: typeof freelistCountRow?.freelist_count === "number" && Number.isFinite(freelistCountRow.freelist_count)
+        ? Math.max(0, Math.floor(freelistCountRow.freelist_count))
+        : 0,
+    };
+  }
+
   getChunk(chunkId: string): MemorySearchResult | null {
     this.ensureOpen();
     const stmt = this.db.prepare(`

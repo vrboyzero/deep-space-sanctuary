@@ -288,6 +288,7 @@ function createSettingsRefs(overrides = {}) {
     cfgTeamSharedMemoryEnabled: overrides.cfgTeamSharedMemoryEnabled || createCheckbox(false),
     cfgSharedReviewClaimTimeoutMs: overrides.cfgSharedReviewClaimTimeoutMs || createInput(""),
     cfgTaskMemoryEnabled: overrides.cfgTaskMemoryEnabled || createCheckbox(false),
+    cfgTaskStatsWhenMemoryDisabled: overrides.cfgTaskStatsWhenMemoryDisabled || createCheckbox(false),
     cfgTaskSummaryEnabled: overrides.cfgTaskSummaryEnabled || createCheckbox(false),
     cfgTaskSummaryModel: overrides.cfgTaskSummaryModel || createInput(""),
     cfgTaskSummaryBaseUrl: overrides.cfgTaskSummaryBaseUrl || createInput(""),
@@ -380,6 +381,8 @@ function createSettingsRefs(overrides = {}) {
     cfgInjectSoul: overrides.cfgInjectSoul || createCheckbox(false),
     cfgInjectMemory: overrides.cfgInjectMemory || createCheckbox(false),
     cfgPromptFocusEnabled: overrides.cfgPromptFocusEnabled || createCheckbox(true),
+    cfgPromptFocusSemanticEnabled: overrides.cfgPromptFocusSemanticEnabled || createCheckbox(true),
+    cfgPromptFocusSemanticMinScore: overrides.cfgPromptFocusSemanticMinScore || createInput(""),
     cfgMaxSystemPromptChars: overrides.cfgMaxSystemPromptChars || createInput(""),
     cfgMaxHistory: overrides.cfgMaxHistory || createInput(""),
     cfgConversationKindMain: overrides.cfgConversationKindMain || createCheckbox(false),
@@ -693,6 +696,7 @@ describe("settings controller", () => {
       BELLDANDY_TEAM_SHARED_MEMORY_ENABLED: "true",
       BELLDANDY_SHARED_REVIEW_CLAIM_TIMEOUT_MS: "5400000",
       BELLDANDY_TASK_MEMORY_ENABLED: "true",
+      BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED: "true",
       BELLDANDY_TASK_SUMMARY_ENABLED: "true",
       BELLDANDY_TASK_SUMMARY_MODEL: "moonshot-v1-32k",
       BELLDANDY_TASK_SUMMARY_BASE_URL: "https://task-summary.example.com/v1",
@@ -785,6 +789,8 @@ describe("settings controller", () => {
       BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/tools,D:/projects",
       BELLDANDY_WEB_ROOT: "apps/web/public",
       BELLDANDY_PROMPT_FOCUS_ENABLED: "false",
+      BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED: "true",
+      BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE: "0.35",
       BELLDANDY_LOG_LEVEL: "info",
       BELLDANDY_LOG_CONSOLE: "true",
       BELLDANDY_LOG_FILE: "true",
@@ -898,6 +904,7 @@ describe("settings controller", () => {
     expect(refs.cfgMemoryDurableExtractionWindowMs.value).toBe("3600000");
     expect(refs.cfgTeamSharedMemoryEnabled.checked).toBe(true);
     expect(refs.cfgTaskMemoryEnabled.checked).toBe(true);
+    expect(refs.cfgTaskStatsWhenMemoryDisabled.checked).toBe(true);
     expect(refs.cfgTaskSummaryEnabled.checked).toBe(true);
     expect(refs.cfgTaskSummaryModel.value).toBe("moonshot-v1-32k");
     expect(refs.cfgTaskSummaryBaseUrl.value).toBe("https://task-summary.example.com/v1");
@@ -971,6 +978,8 @@ describe("settings controller", () => {
     expect(refs.cfgExtraWorkspaceRoots.value).toBe("E:/tools,D:/projects");
     expect(refs.cfgWebRoot.value).toBe("apps/web/public");
     expect(refs.cfgPromptFocusEnabled.checked).toBe(false);
+    expect(refs.cfgPromptFocusSemanticEnabled.checked).toBe(true);
+    expect(refs.cfgPromptFocusSemanticMinScore.value).toBe("0.35");
     expect(refs.cfgLogLevel.value).toBe("info");
     expect(refs.cfgLogConsole.checked).toBe(true);
     expect(refs.cfgLogFile.checked).toBe(true);
@@ -1162,6 +1171,7 @@ describe("settings controller", () => {
       cfgTeamSharedMemoryEnabled: createCheckbox(true),
       cfgSharedReviewClaimTimeoutMs: createInput("5400000"),
       cfgTaskMemoryEnabled: createCheckbox(true),
+      cfgTaskStatsWhenMemoryDisabled: createCheckbox(true),
       cfgTaskSummaryEnabled: createCheckbox(true),
       cfgTaskSummaryModel: createInput("moonshot-v1-32k"),
       cfgTaskSummaryBaseUrl: createInput("https://task-summary.example.com/v1"),
@@ -1257,6 +1267,8 @@ describe("settings controller", () => {
       cfgExtraWorkspaceRoots: createInput(" E:/tools,D:/projects "),
       cfgWebRoot: createInput(" apps/web/public "),
       cfgPromptFocusEnabled: createCheckbox(false),
+      cfgPromptFocusSemanticEnabled: createCheckbox(true),
+      cfgPromptFocusSemanticMinScore: createInput(" 0.35 "),
       cfgLogLevel: createInput(" info "),
       cfgLogConsole: createCheckbox(true),
       cfgLogFile: createCheckbox(true),
@@ -1410,6 +1422,7 @@ describe("settings controller", () => {
       BELLDANDY_TEAM_SHARED_MEMORY_ENABLED: "true",
       BELLDANDY_SHARED_REVIEW_CLAIM_TIMEOUT_MS: "5400000",
       BELLDANDY_TASK_MEMORY_ENABLED: "true",
+      BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED: "true",
       BELLDANDY_TASK_SUMMARY_ENABLED: "true",
       BELLDANDY_TASK_SUMMARY_MODEL: "moonshot-v1-32k",
       BELLDANDY_TASK_SUMMARY_BASE_URL: "https://task-summary.example.com/v1",
@@ -1501,6 +1514,8 @@ describe("settings controller", () => {
       BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:/tools,D:/projects",
       BELLDANDY_WEB_ROOT: "apps/web/public",
       BELLDANDY_PROMPT_FOCUS_ENABLED: "false",
+      BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED: "true",
+      BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE: "0.35",
       BELLDANDY_LOG_LEVEL: "info",
       BELLDANDY_LOG_CONSOLE: "true",
       BELLDANDY_LOG_FILE: "true",

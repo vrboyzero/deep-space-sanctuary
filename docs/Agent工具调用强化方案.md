@@ -1258,17 +1258,27 @@ MCP 和 heavy builtin families 现在走：
 
 #### Phase 5：显式设置 system prompt 兜底上限
 
-本期状态：**不做**
+当前状态：**实现已完成；默认阈值策略后置**
 
 范围：
 
 - 运行时配置
 - `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS`
+- section priority 保护
+- inspect / snapshot / dropped sections 观测
 
-动作：
+已完成：
 
-- 在完成前四阶段后，再设置保守上限
-- 如有必要，通过 `sectionPriorityOverrides` 微调裁剪顺序
+- 已接通 `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS`
+- 已在 `maxChars` 模式下保护关键 section priority
+- 已在最终请求前追加 hard cap 兜底
+- 已补 inspect / snapshot / truncationReason 主链路验证
+
+当前策略：
+
+- 默认仍建议 `0` / 不限制，不把固定阈值作为当前默认行为强推
+- 如需部署调优，可再基于 prompt snapshot 选择保守值（如 `70000`）做现场验证
+- 后续若继续调整，重点属于“默认策略调优”，不再属于 Phase 5 的实现阻塞项
 
 完成标准：
 
@@ -1880,7 +1890,7 @@ MCP 和 heavy builtin families 现在走：
 
 ### Phase 5：加 system prompt 兜底上限与优先级保护
 
-本期状态：**不做**
+当前状态：**实现已完成；不再作为未完成开发项**
 
 目标：
 
@@ -1892,13 +1902,13 @@ MCP 和 heavy builtin families 现在走：
 - [system-prompt.ts](E:/project/star-sanctuary/packages/belldandy-agent/src/system-prompt.ts)
 - 运行时配置 / 环境变量
 
-开发项：
+已完成：
 
-1. 确认当前已存在的 `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS` 接线与运行语义
-2. 根据新结构审查各 section priority
-3. 必要时补 `sectionPriorityOverrides`
-4. 确认 truncation notice 能反映真实裁剪内容
-5. 形成一版推荐默认上限
+1. `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS` 已接线到运行时、WebChat 设置页与 prompt inspection / snapshot。
+2. `maxChars` 模式下已自动保护关键路由 section priority，并支持 `sectionPriorityOverrides` 微调。
+3. builder 侧已实现 dropped sections、`truncation-notice` 与单段超长截断。
+4. 最终请求前仍会再做 hard cap，避免 provider 侧收到超长 system prompt。
+5. inspect / snapshot / doctor / e2e 已能观测 `truncationReason`、dropped sections 与最终长度。
 
 最小产出：
 
@@ -1915,6 +1925,11 @@ MCP 和 heavy builtin families 现在走：
 
 - prompt 长度具备硬控制
 - 裁剪顺序符合能力路由优先级
+
+当前后置项：
+
+- 默认阈值是否启用仍按部署策略后置，不作为当前实现阻塞项
+- 如需推荐默认值，可继续基于 prompt snapshot 做现场调优
 
 ### 统一验收清单
 
@@ -1994,6 +2009,11 @@ MCP 和 heavy builtin families 现在走：
 
 - `Phase 4：区分 always 与 high prompt skills 的注入级别`
 - `Phase 5：system prompt 硬上限与 section priority 保护`
+
+说明：
+
+- 上述“不做”是当时的优先顺序约束，用于避免过早把压缩策略与能力路由问题混在一起排查。
+- 其中 `Phase 5` 已在后续轮次完成实现收口，当前不再视为未完成开发项。
 
 原因不是这两项不重要，而是：
 
@@ -2114,11 +2134,11 @@ MCP 和 heavy builtin families 现在走：
 
 #### B. `Phase 5：system prompt 硬上限与 section priority 保护`
 
-本项建议放到下一期，原因：
+该条是当时的后置安排；当前实现已收口，保留的只剩默认阈值调优建议：
 
-- 它属于结构收敛后的兜底控制，不应在结构尚未稳定前就先上硬截断
-- 如果太早启用，很难区分是“路由设计不对”还是“裁剪顺序不对”
-- 更适合在完成本期 4 项后，根据新的 prompt snapshot 再定默认阈值
+- 默认仍建议先保持 `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS=0`
+- 如需上线保守值，可参考 `70000` 起步，再根据 prompt snapshot 下探
+- 这部分属于部署调优，不再作为 Phase 5 的实现阻塞项
 
 #### B.1 `Phase 5` 很短的实施草案
 
@@ -2220,7 +2240,7 @@ MCP 和 heavy builtin families 现在走：
    - 搜索后不进入精确读取
    - 常驻提示虽更短，但路由命中率明显下降
 
-### 16.9 仅保留未完成项短清单
+### 16.9 收口说明与后续保留项
 
 状态更新：
 
@@ -2241,20 +2261,15 @@ MCP 和 heavy builtin families 现在走：
   - `always` skill 改为全文常驻
   - `high` skill 改为摘要常驻
   - `skills_search` / `skill_get` 的发现与精读链路保持可用
-- `Phase 5` 已完成最小实验骨架：
-  - 仅在启用 `maxChars` 时，自动给关键路由 section 加 priority 保护
-  - 当前仍未默认启用阈值，也未定版最终默认策略
+- `Phase 5` 已完成实现收口：
+  - builder 侧已实现 `maxChars` + 关键 section priority 保护
+  - 最终请求前仍会再做一次 hard cap 兜底
+  - inspect / snapshot / doctor 已能观测 `truncationReason` 与 dropped sections
+  - WebChat 设置页与环境变量已接通
+  - 当前默认策略仍建议 `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS=0`；具体阈值按部署调优
 
-除以下项目外，`16.7` 中本期 `1 ~ 11` 项与后续 `Phase 4` 首版均已完成。
+`Phase 5` 不再视为未完成开发项。当前仅保留以下内容作为后续扩展储备：
 
-1. `Phase 5：system prompt 硬上限与 section priority 保护`
-   - 状态：仅完成最小实验骨架，仍未进入默认启用阶段。
-   - 未完成部分：
-     - 真正的 hard cap 语义仍需再收口，当前仍是“按优先级尽量裁到上限附近”
-     - 默认阈值 (`70000` / `64000` 等) 还未通过 prompt snapshot 观察定版
-     - 仍需补更完整的 inspect / snapshot / dropped sections 验证
-   - 当前建议：继续保持实验性使用，不直接作为默认行为打开。
-
-2. `15.1 ~ 15.5` 设计段保留为后续扩展储备
+1. `15.1 ~ 15.5` 设计段保留为后续扩展储备
    - 状态：保留，不单独视为当前待开发项。
    - 说明：这部分主要是设计说明、实现梳理、测试框架与后续扩展入口；只有在下一期正式推进 `Phase 4 / Phase 5` 或新的能力路由重构时，才重新拆成具体开发项。
