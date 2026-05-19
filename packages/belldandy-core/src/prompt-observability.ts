@@ -30,6 +30,22 @@ export type PromptTokenBreakdown = {
   providerNativeSystemBlockEstimatedTokens: number;
 };
 
+export type PromptContextInjectionObservability = {
+  prependContextChars?: number;
+  totalBlockCount?: number;
+  blockTags?: string[];
+  blockLineCounts?: Record<string, number>;
+  autoRecall?: {
+    timedOut?: boolean;
+    candidateCount?: number;
+    keptCount?: number;
+    filteredOutCount?: number;
+    minScore?: number;
+    sourceClassMix?: Record<string, number>;
+    topHitIds?: string[];
+  };
+};
+
 export type PromptInspectionLike = {
   scope?: "agent" | "run";
   agentId: string;
@@ -116,6 +132,7 @@ export type PromptObservabilitySummary = {
     reason?: string;
     previousAgeMs?: number;
   };
+  contextInjection?: PromptContextInjectionObservability;
   truncationReason?: PromptTruncationReason;
   experiments?: Record<string, unknown>;
 };
@@ -131,6 +148,7 @@ export type PromptObservabilityView = {
   counts?: Partial<PromptObservabilitySummary["counts"]>;
   promptSizes?: Partial<PromptObservabilitySummary["promptSizes"]>;
   tokenBreakdown?: Partial<PromptTokenBreakdown>;
+  contextInjection?: PromptContextInjectionObservability;
   truncationReason?: PromptTruncationReason;
   flags?: {
     truncated?: boolean;
@@ -216,6 +234,7 @@ export function buildPromptObservabilitySummary(
   const orderingGuard = isRecord(metadata?.orderingGuard) ? metadata.orderingGuard as Record<string, unknown> : undefined;
   const cacheFamilyAffinity = isRecord(metadata?.cacheFamilyAffinity) ? metadata.cacheFamilyAffinity as Record<string, unknown> : undefined;
   const warmupCoordination = isRecord(metadata?.warmupCoordination) ? metadata.warmupCoordination as Record<string, unknown> : undefined;
+  const contextInjection = readPromptContextInjectionFromMetadata(metadata);
 
   return {
     scope: inspection.scope,
@@ -318,6 +337,7 @@ export function buildPromptObservabilitySummary(
         },
       }
       : {}),
+    ...(contextInjection ? { contextInjection } : {}),
     ...(truncationReason ? { truncationReason } : {}),
     ...(metadata?.promptExperiments && isRecord(metadata.promptExperiments)
       ? { experiments: metadata.promptExperiments }
@@ -344,6 +364,7 @@ export function toPromptObservabilityView(
     counts: { ...summary.counts },
     promptSizes: { ...summary.promptSizes },
     tokenBreakdown: { ...summary.tokenBreakdown },
+    ...(summary.contextInjection ? { contextInjection: { ...summary.contextInjection } } : {}),
     ...(summary.truncationReason ? { truncationReason: { ...summary.truncationReason } } : {}),
     ...(options
       ? {
@@ -395,6 +416,12 @@ export function formatPromptObservabilityHeadline(
   if (typeof view.tokenBreakdown?.providerNativeSystemBlockEstimatedTokens === "number") {
     parts.push(`blockTokens=${view.tokenBreakdown.providerNativeSystemBlockEstimatedTokens}`);
   }
+  if (typeof view.contextInjection?.prependContextChars === "number") {
+    parts.push(`prependChars=${view.contextInjection.prependContextChars}`);
+  }
+  if (typeof view.contextInjection?.autoRecall?.keptCount === "number") {
+    parts.push(`autoRecall=${view.contextInjection.autoRecall.keptCount}`);
+  }
   if (view.truncationReason?.code) {
     parts.push(`truncation=${view.truncationReason.code}`);
   }
@@ -438,6 +465,14 @@ export function renderPromptObservabilityText(
   appendPromptObservabilityLine(lines, indent, "deltaEstimatedTokens", view.tokenBreakdown?.deltaEstimatedTokens);
   appendPromptObservabilityLine(lines, indent, "providerNativeSystemBlockEstimatedChars", view.tokenBreakdown?.providerNativeSystemBlockEstimatedChars);
   appendPromptObservabilityLine(lines, indent, "providerNativeSystemBlockEstimatedTokens", view.tokenBreakdown?.providerNativeSystemBlockEstimatedTokens);
+  appendPromptObservabilityLine(lines, indent, "prependContextChars", view.contextInjection?.prependContextChars);
+  appendPromptObservabilityLine(lines, indent, "contextInjectionBlockCount", view.contextInjection?.totalBlockCount);
+  appendPromptObservabilityLine(lines, indent, "contextInjectionBlockTags", view.contextInjection?.blockTags?.join(", "));
+  appendPromptObservabilityLine(lines, indent, "autoRecallCandidateCount", view.contextInjection?.autoRecall?.candidateCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallKeptCount", view.contextInjection?.autoRecall?.keptCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallFilteredOutCount", view.contextInjection?.autoRecall?.filteredOutCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallMinScore", view.contextInjection?.autoRecall?.minScore);
+  appendPromptObservabilityLine(lines, indent, "autoRecallTopHitIds", view.contextInjection?.autoRecall?.topHitIds?.join(", "));
   appendPromptObservabilityLine(lines, indent, "truncationReasonCode", view.truncationReason?.code);
   appendPromptObservabilityLine(lines, indent, "truncationReasonMessage", view.truncationReason?.message);
   appendPromptObservabilityLine(lines, indent, "truncationMaxChars", view.truncationReason?.maxChars);
@@ -508,6 +543,70 @@ export function readPromptTruncationReasonFromMetadata(
   };
 
   return result;
+}
+
+function readPromptContextInjectionFromMetadata(
+  metadata?: Record<string, unknown>,
+): PromptContextInjectionObservability | undefined {
+  const rawValue = metadata?.contextInjection;
+  if (!isRecord(rawValue)) {
+    return undefined;
+  }
+
+  const value = rawValue as Record<string, unknown>;
+  const result: PromptContextInjectionObservability = {
+    ...(typeof value.prependContextChars === "number" && Number.isFinite(value.prependContextChars)
+      ? { prependContextChars: Math.max(0, Math.trunc(value.prependContextChars)) }
+      : {}),
+    ...(typeof value.totalBlockCount === "number" && Number.isFinite(value.totalBlockCount)
+      ? { totalBlockCount: Math.max(0, Math.trunc(value.totalBlockCount)) }
+      : {}),
+    ...(Array.isArray(value.blockTags)
+      ? { blockTags: value.blockTags.filter((item): item is string => typeof item === "string" && item.trim().length > 0) }
+      : {}),
+    ...(isRecord(value.blockLineCounts)
+      ? {
+        blockLineCounts: Object.fromEntries(
+          Object.entries(value.blockLineCounts)
+            .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
+            .map(([key, item]) => [key, Math.max(0, Math.trunc(item as number))]),
+        ),
+      }
+      : {}),
+  };
+
+  if (isRecord(value.autoRecall)) {
+    const autoRecall = value.autoRecall as Record<string, unknown>;
+    result.autoRecall = {
+      ...(typeof autoRecall.timedOut === "boolean" ? { timedOut: autoRecall.timedOut } : {}),
+      ...(typeof autoRecall.candidateCount === "number" && Number.isFinite(autoRecall.candidateCount)
+        ? { candidateCount: Math.max(0, Math.trunc(autoRecall.candidateCount)) }
+        : {}),
+      ...(typeof autoRecall.keptCount === "number" && Number.isFinite(autoRecall.keptCount)
+        ? { keptCount: Math.max(0, Math.trunc(autoRecall.keptCount)) }
+        : {}),
+      ...(typeof autoRecall.filteredOutCount === "number" && Number.isFinite(autoRecall.filteredOutCount)
+        ? { filteredOutCount: Math.max(0, Math.trunc(autoRecall.filteredOutCount)) }
+        : {}),
+      ...(typeof autoRecall.minScore === "number" && Number.isFinite(autoRecall.minScore)
+        ? { minScore: autoRecall.minScore }
+        : {}),
+      ...(isRecord(autoRecall.sourceClassMix)
+        ? {
+          sourceClassMix: Object.fromEntries(
+            Object.entries(autoRecall.sourceClassMix)
+              .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
+              .map(([key, item]) => [key, Math.max(0, Math.trunc(item as number))]),
+          ),
+        }
+        : {}),
+      ...(Array.isArray(autoRecall.topHitIds)
+        ? { topHitIds: autoRecall.topHitIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0) }
+        : {}),
+    };
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function parsePromptExperimentConfig(input: {

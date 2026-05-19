@@ -1855,6 +1855,81 @@ export function createMemoryViewerFeature({
     );
   }
 
+  function formatMemorySearchSourceMix(sourceClassMix) {
+    const entries = Object.entries(sourceClassMix || {}).filter(([, count]) => Number.isFinite(count) && Number(count) > 0);
+    if (!entries.length) {
+      return "-";
+    }
+    return entries.map(([key, count]) => `${key}:${formatCount(Number(count) || 0)}`).join(", ");
+  }
+
+  function formatMemorySearchStageCount(stage) {
+    const count = typeof stage?.count === "number" && Number.isFinite(stage.count)
+      ? Math.max(0, Math.trunc(stage.count))
+      : 0;
+    return formatCount(count);
+  }
+
+  function formatMemorySearchTopHits(stage) {
+    const hits = Array.isArray(stage?.topHits) ? stage.topHits : [];
+    if (!hits.length) {
+      return "-";
+    }
+    return hits
+      .map((item) => {
+        const id = typeof item?.id === "string" && item.id.trim() ? item.id.trim() : "";
+        const sourceClass = typeof item?.sourceClass === "string" && item.sourceClass.trim() ? item.sourceClass.trim() : "";
+        if (!id) return "";
+        return sourceClass ? `${id} (${sourceClass})` : id;
+      })
+      .filter(Boolean)
+      .join(", ") || "-";
+  }
+
+  function renderMemorySearchDiagnosticsSummary(diagnostics) {
+    if (!diagnostics || typeof diagnostics !== "object") {
+      return "";
+    }
+    const retrievalMode = typeof diagnostics.retrievalMode === "string" && diagnostics.retrievalMode.trim()
+      ? diagnostics.retrievalMode.trim()
+      : "-";
+    const summaryText = t(
+      "memory.searchDiagnosticsSummary",
+      {
+        mode: retrievalMode,
+        raw: formatMemorySearchStageCount(diagnostics.stages?.raw),
+        scoreAware: formatMemorySearchStageCount(diagnostics.stages?.scoreAware),
+        reranked: formatMemorySearchStageCount(diagnostics.stages?.reranked),
+        returned: formatMemorySearchStageCount(diagnostics.stages?.returned),
+      },
+      `mode=${retrievalMode} · raw ${formatMemorySearchStageCount(diagnostics.stages?.raw)} -> score ${formatMemorySearchStageCount(diagnostics.stages?.scoreAware)} -> rerank ${formatMemorySearchStageCount(diagnostics.stages?.reranked)} -> final ${formatMemorySearchStageCount(diagnostics.stages?.returned)}`,
+    );
+    const sourceMixText = t(
+      "memory.searchDiagnosticsSourceMix",
+      { value: formatMemorySearchSourceMix(diagnostics.sourceClassMix) },
+      `source mix: ${formatMemorySearchSourceMix(diagnostics.sourceClassMix)}`,
+    );
+    const topHitsText = t(
+      "memory.searchDiagnosticsTopHits",
+      { value: formatMemorySearchTopHits(diagnostics.stages?.returned) },
+      `top hits: ${formatMemorySearchTopHits(diagnostics.stages?.returned)}`,
+    );
+    return `
+      <div class="memory-detail-card">
+        <div class="memory-detail-title">${escapeHtml(t("memory.searchDiagnosticsTitle", {}, "Search Diagnostics"))}</div>
+        <div class="memory-detail-badges">
+          <span class="memory-badge">${escapeHtml(`raw ${formatMemorySearchStageCount(diagnostics.stages?.raw)}`)}</span>
+          <span class="memory-badge">${escapeHtml(`score ${formatMemorySearchStageCount(diagnostics.stages?.scoreAware)}`)}</span>
+          <span class="memory-badge">${escapeHtml(`rerank ${formatMemorySearchStageCount(diagnostics.stages?.reranked)}`)}</span>
+          <span class="memory-badge">${escapeHtml(`final ${formatMemorySearchStageCount(diagnostics.stages?.returned)}`)}</span>
+        </div>
+        <div class="memory-detail-text">${escapeHtml(summaryText)}</div>
+        <div class="memory-detail-text">${escapeHtml(sourceMixText)}</div>
+        <div class="memory-detail-text">${escapeHtml(topHitsText)}</div>
+      </div>
+    `;
+  }
+
   function syncMemoryViewerHeaderTitle() {
     if (!memoryViewerTitleEl) return;
     const agentName = typeof getSelectedAgentLabel === "function"
@@ -3341,6 +3416,7 @@ export function createMemoryViewerFeature({
     const memoryViewerState = getMemoryViewerState();
     if (!isMemoryViewerRequestCurrent(requestContext)) return;
     if (!res || !res.ok) {
+      memoryViewerState.memorySearchDiagnostics = null;
       renderMemoryViewerListEmpty(t("memory.memoryListLoadFailed", {}, "Failed to load memory list."));
       renderMemoryViewerDetailEmpty(res?.error?.message || t("memory.memoryReadFailed", {}, "Failed to read memory data."));
       return;
@@ -3349,6 +3425,7 @@ export function createMemoryViewerFeature({
     const items = Array.isArray(res.payload?.items) ? res.payload.items : [];
     memoryViewerState.items = items;
     memoryViewerState.memoryQueryView = res.payload?.queryView ?? memoryViewerState.memoryQueryView ?? null;
+    memoryViewerState.memorySearchDiagnostics = query ? (res.payload?.diagnostics ?? null) : null;
     resetStoredListPage("memories");
     renderMemoryViewerStats(memoryViewerState.stats);
 
@@ -3510,12 +3587,16 @@ export function createMemoryViewerFeature({
       const activeCategoryLabel = getActiveMemoryCategoryLabel();
       const distributionCard = renderMemoryCategoryDistribution(stats);
       const queryView = memoryViewerState.memoryQueryView;
+      const searchDiagnostics = memoryViewerState.memorySearchDiagnostics;
       const sharedGovernance = memoryViewerState.sharedGovernance;
       const governanceFilterLabel = formatGovernanceFilterLabel(memoryChunkGovernanceFilterEl?.value);
 
       memoryViewerStatsEl.innerHTML = `
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentResults", {}, "Current Results"))}</span><strong class="memory-stat-value">${formatCount(items.length)}</strong></div>
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statQueryStrategy", {}, "Current Query Strategy"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatResidentQueryModeLabel(queryView))}</strong><div class="memory-stat-caption">${escapeHtml(formatResidentQueryModeSummary(queryView))}</div></div>
+        ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchReturned", {}, "Search Returned"))}</span><strong class="memory-stat-value">${escapeHtml(formatMemorySearchStageCount(searchDiagnostics.stages?.returned))}</strong><div class="memory-stat-caption">${escapeHtml(formatMemorySearchSourceMix(searchDiagnostics.sourceClassMix))}</div></div>` : ""}
+        ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchPipeline", {}, "Search Pipeline"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`${formatMemorySearchStageCount(searchDiagnostics.stages?.raw)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.scoreAware)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.reranked)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.returned)}`)}</strong><div class="memory-stat-caption">${escapeHtml(searchDiagnostics.retrievalMode || "-")}</div></div>` : ""}
+        ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchTopHits", {}, "Search Top Hits"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatMemorySearchTopHits(searchDiagnostics.stages?.returned))}</strong></div>` : ""}
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statGovernanceFilter", {}, "Current Governance Filter"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(governanceFilterLabel)}</strong></div>
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedPendingQueue", {}, "Pending Shared Queue"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.pendingCount)}</strong></div>
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedClaimed", {}, "Claimed Pending"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.claimedCount)}</strong></div>
@@ -3624,7 +3705,8 @@ export function createMemoryViewerFeature({
     const memoryViewerState = getMemoryViewerState();
     const resolveMemoryId = (item) => String(item?.id || "").trim();
     const pagination = resolveMemoryViewerPagination(items, resolveMemoryId, { alignToSelected: true });
-    memoryViewerListEl.innerHTML = pagination.visibleItems.map((item) => {
+    const diagnosticsSummary = renderMemorySearchDiagnosticsSummary(memoryViewerState.memorySearchDiagnostics);
+    memoryViewerListEl.innerHTML = diagnosticsSummary + pagination.visibleItems.map((item) => {
       const title = summarizeSourcePath(item.sourcePath);
       const summary = item.summary || item.snippet || t("memory.emptyNoSummary", {}, "No summary");
       const isActive = item.id === memoryViewerState.selectedId;

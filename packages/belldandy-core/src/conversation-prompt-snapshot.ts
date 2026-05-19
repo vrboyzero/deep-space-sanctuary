@@ -11,6 +11,7 @@ import type {
 import type { JsonObject } from "@belldandy/protocol";
 import {
   buildPromptTokenBreakdown,
+  type PromptContextInjectionObservability,
   readPromptTokenBreakdownFromMetadata,
   readPromptTruncationReasonFromMetadata,
   renderPromptObservabilityText,
@@ -66,6 +67,7 @@ type ConversationPromptSnapshotArtifactSummary = {
   systemPromptChars: number;
   includesHookSystemPrompt: boolean;
   hasPrependContext: boolean;
+  contextInjection?: PromptContextInjectionObservability;
   deltaCount: number;
   deltaChars: number;
   systemPromptEstimatedTokens: number;
@@ -132,6 +134,73 @@ type PersistedConversationPromptSnapshotArtifact =
   | PersistedConversationPromptSnapshotArtifactV1
   | PersistedConversationPromptSnapshotArtifactV2;
 
+function summarizePromptSnapshotContextInjection(
+  deltas: AgentPromptDelta[],
+  prependContextChars: number,
+): PromptContextInjectionObservability | undefined {
+  const contextDeltas = deltas.filter((delta) => delta.source === "context-injection");
+  if (contextDeltas.length === 0 && prependContextChars <= 0) {
+    return undefined;
+  }
+  const blockTags: string[] = [];
+  const blockLineCounts: Record<string, number> = {};
+  let autoRecall: PromptContextInjectionObservability["autoRecall"] | undefined;
+
+  for (const delta of contextDeltas) {
+    const metadata = delta.metadata && typeof delta.metadata === "object"
+      ? delta.metadata as Record<string, unknown>
+      : undefined;
+    const blockTag = typeof metadata?.blockTag === "string" && metadata.blockTag.trim()
+      ? metadata.blockTag.trim()
+      : "";
+    if (blockTag) {
+      blockTags.push(blockTag);
+      const lineCount = typeof metadata?.lineCount === "number" && Number.isFinite(metadata.lineCount)
+        ? Math.max(0, Math.trunc(metadata.lineCount))
+        : 0;
+      blockLineCounts[blockTag] = (blockLineCounts[blockTag] ?? 0) + lineCount;
+    }
+    if (blockTag === "auto-recall" && metadata?.observability && typeof metadata.observability === "object") {
+      const observability = metadata.observability as Record<string, unknown>;
+      autoRecall = {
+        ...(typeof observability.timedOut === "boolean" ? { timedOut: observability.timedOut } : {}),
+        ...(typeof observability.candidateCount === "number" && Number.isFinite(observability.candidateCount)
+          ? { candidateCount: Math.max(0, Math.trunc(observability.candidateCount)) }
+          : {}),
+        ...(typeof observability.keptCount === "number" && Number.isFinite(observability.keptCount)
+          ? { keptCount: Math.max(0, Math.trunc(observability.keptCount)) }
+          : {}),
+        ...(typeof observability.filteredOutCount === "number" && Number.isFinite(observability.filteredOutCount)
+          ? { filteredOutCount: Math.max(0, Math.trunc(observability.filteredOutCount)) }
+          : {}),
+        ...(typeof observability.minScore === "number" && Number.isFinite(observability.minScore)
+          ? { minScore: observability.minScore }
+          : {}),
+        ...(Array.isArray(observability.topHitIds)
+          ? { topHitIds: observability.topHitIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0) }
+          : {}),
+        ...(observability.sourceClassMix && typeof observability.sourceClassMix === "object"
+          ? {
+            sourceClassMix: Object.fromEntries(
+              Object.entries(observability.sourceClassMix as Record<string, unknown>)
+                .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
+                .map(([key, item]) => [key, Math.max(0, Math.trunc(item as number))]),
+            ),
+          }
+          : {}),
+      };
+    }
+  }
+
+  return {
+    prependContextChars,
+    totalBlockCount: contextDeltas.length,
+    blockTags: [...new Set(blockTags)],
+    blockLineCounts,
+    ...(autoRecall ? { autoRecall } : {}),
+  };
+}
+
 export function buildConversationPromptSnapshotArtifact(input: {
   snapshot: AgentPromptSnapshot;
   persistedAt?: number;
@@ -146,6 +215,10 @@ export function buildConversationPromptSnapshotArtifact(input: {
   });
   const truncationReason = readPromptTruncationReasonFromMetadata(
     input.snapshot.inputMeta as Record<string, unknown> | undefined,
+  );
+  const contextInjection = summarizePromptSnapshotContextInjection(
+    input.snapshot.deltas ?? [],
+    input.snapshot.prependContext?.length ?? 0,
   );
 
   return {
@@ -163,6 +236,7 @@ export function buildConversationPromptSnapshotArtifact(input: {
       systemPromptChars: input.snapshot.systemPrompt.length,
       includesHookSystemPrompt: input.snapshot.hookSystemPromptUsed === true,
       hasPrependContext: Boolean(input.snapshot.prependContext),
+      ...(contextInjection ? { contextInjection } : {}),
       deltaCount: input.snapshot.deltas?.length ?? 0,
       deltaChars: input.snapshot.deltas?.reduce((sum, delta) => sum + delta.text.length, 0) ?? 0,
       systemPromptEstimatedTokens: promptTokenBreakdown.systemPromptEstimatedTokens,
@@ -406,6 +480,7 @@ export function renderConversationPromptSnapshotText(
       finalChars: artifact.summary.systemPromptChars,
     },
     tokenBreakdown: artifact.summary.tokenBreakdown,
+    ...(artifact.summary.contextInjection ? { contextInjection: artifact.summary.contextInjection } : {}),
     flags: {
       includesHookSystemPrompt: artifact.summary.includesHookSystemPrompt,
       hasPrependContext: artifact.summary.hasPrependContext,

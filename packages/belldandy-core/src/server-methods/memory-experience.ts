@@ -20,15 +20,19 @@ import type {
   ExperienceCandidate,
   ExperienceCandidateType,
   ExperienceSynthesisPreviewItem,
-  MemorySourceInventoryClass,
   MemorySourceInventoryConfiguredSource,
-  MemorySourceInventoryScope,
   PublishedExperienceAssetRecord,
 } from "@belldandy/memory";
 import type { SkillRegistry } from "@belldandy/skills";
 import { publishSkillCandidate } from "@belldandy/skills";
 
 import { buildLearningReviewInput } from "../learning-review-input.js";
+import {
+  normalizeConfiguredMemorySourcesInput,
+  readConfiguredMemorySourcesStore,
+  resolveConfiguredMemorySourcesPath,
+  writeConfiguredMemorySourcesStore,
+} from "../memory-configured-sources-store.js";
 import { buildMindProfileSnapshot } from "../mind-profile-snapshot.js";
 import type { ScopedMemoryManagerRecord } from "../resident-memory-managers.js";
 import {
@@ -49,7 +53,7 @@ import {
   promoteResidentMemoryToShared,
   resolveResidentSharedMemoryManager,
   reviewResidentSharedMemoryPromotion,
-  searchResidentMemory,
+  searchResidentMemoryWithDiagnostics,
 } from "../resident-shared-memory.js";
 import {
   buildSkillFreshnessSnapshot,
@@ -129,7 +133,7 @@ export async function handleMemoryExperienceMethod(
       const limit = clampListLimit(params.limit, 20);
       const includeContent = params.includeContent !== false;
       const filter = isObjectRecord(params.filter) ? params.filter : undefined;
-      const items = await searchResidentMemory({
+      const searchResult = await searchResidentMemoryWithDiagnostics({
         manager,
         sharedManager,
         residentPolicy,
@@ -139,9 +143,10 @@ export async function handleMemoryExperienceMethod(
         includeContent,
       });
       return ok(req.id, {
-        items: toMemoryListPayloadItems(items, includeContent, residentPolicy),
+        items: toMemoryListPayloadItems(searchResult.items, includeContent, residentPolicy),
         query,
         limit,
+        diagnostics: searchResult.diagnostics,
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
     }
@@ -214,12 +219,48 @@ export async function handleMemoryExperienceMethod(
       });
     }
 
+    case "memory.configured_sources.get": {
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      try {
+        const store = await readConfiguredMemorySourcesStore(ctx.stateDir);
+        return ok(req.id, {
+          path: resolveConfiguredMemorySourcesPath(ctx.stateDir),
+          version: store.version,
+          updatedAt: store.updatedAt ?? null,
+          configuredSources: store.sources,
+          queryView: buildResidentMemoryQueryView(residentPolicy),
+        });
+      } catch (error) {
+        return invalid(req.id, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "memory.configured_sources.update": {
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      const configuredSourcesResult = normalizeConfiguredMemorySourcesInput(params.configuredSources, "configuredSources");
+      if ("error" in configuredSourcesResult) {
+        return invalid(req.id, configuredSourcesResult.error);
+      }
+      try {
+        const store = await writeConfiguredMemorySourcesStore(ctx.stateDir, configuredSourcesResult.sources);
+        return ok(req.id, {
+          path: resolveConfiguredMemorySourcesPath(ctx.stateDir),
+          version: store.version,
+          updatedAt: store.updatedAt ?? null,
+          configuredSources: store.sources,
+          queryView: buildResidentMemoryQueryView(residentPolicy),
+        });
+      } catch (error) {
+        return invalid(req.id, error instanceof Error ? error.message : String(error));
+      }
+    }
+
     case "memory.inventory.preview": {
       const manager = resolveScopedMemoryManager(params);
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
       if (!manager) return notAvailable(req.id);
 
-      const configuredSourcesResult = readConfiguredInventorySources(params);
+      const configuredSourcesResult = await resolveConfiguredInventorySources(params, ctx.stateDir);
       if ("error" in configuredSourcesResult) {
         return invalid(req.id, configuredSourcesResult.error);
       }
@@ -238,7 +279,7 @@ export async function handleMemoryExperienceMethod(
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
       if (!manager) return notAvailable(req.id);
 
-      const configuredSourcesResult = readConfiguredInventorySources(params);
+      const configuredSourcesResult = await resolveConfiguredInventorySources(params, ctx.stateDir);
       if ("error" in configuredSourcesResult) {
         return invalid(req.id, configuredSourcesResult.error);
       }
@@ -255,6 +296,38 @@ export async function handleMemoryExperienceMethod(
         record,
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
+    }
+
+    case "memory.tree.report.external_ingest.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const configuredSourcesResult = await resolveConfiguredInventorySources(params, ctx.stateDir, {
+        singleSourceMessage: "external ingest preview requires exactly one configured source.",
+      });
+      if ("error" in configuredSourcesResult) {
+        return invalid(req.id, configuredSourcesResult.error);
+      }
+      if (!configuredSourcesResult.sources[0]?.rootPath || configuredSourcesResult.sources[0]?.filePath) {
+        return invalid(req.id, "external ingest preview currently supports directory-based configured sources only.");
+      }
+
+      try {
+        const report = await manager.previewConfiguredExternalIngest({
+          configuredSources: configuredSourcesResult.sources,
+        });
+        const record = manager.persistMemoryTreeExternalIngestReport(report, {
+          createdBy: "rpc",
+        });
+        return ok(req.id, {
+          report,
+          record,
+          queryView: buildResidentMemoryQueryView(residentPolicy),
+        });
+      } catch (error) {
+        return invalid(req.id, error instanceof Error ? error.message : String(error));
+      }
     }
 
     case "memory.tree.report.dedup.preview": {
@@ -321,13 +394,85 @@ export async function handleMemoryExperienceMethod(
       });
     }
 
+    case "memory.tree.report.review": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const reportId = readRequiredString(params, "reportId");
+      if (!reportId) return invalid(req.id, "reportId is required");
+      const decision = readRequiredString(params, "decision");
+      if (!isMemoryTreeReportReviewDecision(decision)) {
+        return invalid(req.id, "decision must be approved, rejected, or superseded.");
+      }
+      const reviewedBy = readOptionalString(params, "reviewedBy")
+        ?? readOptionalString(params, "agentId")
+        ?? "rpc";
+      const note = readOptionalString(params, "note");
+      try {
+        const result = manager.reviewMemoryTreeReport(reportId, decision, {
+          reviewedBy,
+          note,
+        });
+        return ok(req.id, {
+          result,
+          report: result.report,
+          queryView: buildResidentMemoryQueryView(residentPolicy),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("not found")) {
+          return notFound(req.id, message);
+        }
+        return invalid(req.id, message);
+      }
+    }
+
+    case "memory.tree.report.apply": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const confirmed = params.confirmed === true;
+      if (!confirmed) {
+        return confirmationRequired(req.id, "memory.tree.report.apply requires explicit confirmed=true because it mutates memory.sqlite.");
+      }
+      const reportId = readRequiredString(params, "reportId");
+      if (!reportId) return invalid(req.id, "reportId is required");
+      const appliedBy = readOptionalString(params, "appliedBy")
+        ?? readOptionalString(params, "agentId")
+        ?? "rpc";
+      const note = readOptionalString(params, "note");
+      try {
+        const result = await manager.applyMemoryTreeReport(reportId, {
+          appliedBy,
+          note,
+        });
+        return ok(req.id, {
+          result,
+          report: result.report,
+          queryView: buildResidentMemoryQueryView(residentPolicy),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("not found")) {
+          return notFound(req.id, message);
+        }
+        return invalid(req.id, message);
+      }
+    }
+
     case "memory.tree.node.rebuild": {
       const manager = resolveScopedMemoryManager(params);
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
       if (!manager) return notAvailable(req.id);
 
       const limit = clampListLimit(params.limit, 100, 500);
-      const result = manager.rebuildMemoryTreeNodes({ limit });
+      const kind = readOptionalString(params, "kind");
+      if (kind && !isMemoryTreeNodeKind(kind)) {
+        return invalid(req.id, "kind must be task, conversation, day, topic, profile, or global.");
+      }
+      const result = manager.rebuildMemoryTreeNodes({ limit, kind: kind as any });
       return ok(req.id, {
         result,
         queryView: buildResidentMemoryQueryView(residentPolicy),
@@ -349,6 +494,30 @@ export async function handleMemoryExperienceMethod(
       });
     }
 
+    case "memory.tree.node.search": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const query = readRequiredString(params, "query");
+      if (!query) return invalid(req.id, "query is required");
+      const limit = clampListLimit(params.limit, 10, 100);
+      const chunkLimitPerNode = clampListLimit(params.chunkLimitPerNode, 5, 50);
+      const filter = isObjectRecord(params.filter) ? params.filter : undefined;
+      const items = manager.searchMemoryTreeNodes(query, {
+        limit,
+        chunkLimitPerNode,
+        filter: filter as any,
+      });
+      return ok(req.id, {
+        items,
+        query,
+        limit,
+        chunkLimitPerNode,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
     case "memory.tree.node.get": {
       const manager = resolveScopedMemoryManager(params);
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
@@ -356,12 +525,13 @@ export async function handleMemoryExperienceMethod(
 
       const nodeId = readRequiredString(params, "nodeId");
       if (!nodeId) return invalid(req.id, "nodeId is required");
-      const node = manager.getMemoryTreeNode(nodeId);
-      if (!node) return notFound(req.id, "Memory tree node not found.");
-      const edges = manager.listMemoryTreeEdges({ parentNodeId: nodeId });
+      const chunkLimit = clampListLimit(params.chunkLimit, 20, 100);
+      const detail = manager.getMemoryTreeNodeDetail(nodeId, { chunkLimit });
+      if (!detail) return notFound(req.id, "Memory tree node not found.");
       return ok(req.id, {
-        node,
-        edges,
+        node: detail.node,
+        edges: detail.edges,
+        chunks: attachResidentMemorySourceViews(detail.chunks, residentPolicy),
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
     }
@@ -371,7 +541,7 @@ export async function handleMemoryExperienceMethod(
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
       if (!manager) return notAvailable(req.id);
 
-      const configuredSourcesResult = readConfiguredInventorySources(params);
+      const configuredSourcesResult = await resolveConfiguredInventorySources(params, ctx.stateDir);
       if ("error" in configuredSourcesResult) {
         return invalid(req.id, configuredSourcesResult.error);
       }
@@ -1606,69 +1776,58 @@ function readOptionalStringArray(params: Record<string, unknown>, key: string): 
     .filter(Boolean);
 }
 
-function readConfiguredInventorySources(
+async function resolveConfiguredInventorySources(
   params: Record<string, unknown>,
-): { sources: MemorySourceInventoryConfiguredSource[] } | { error: string } {
-  const raw = params.configuredSources;
-  if (raw == null) {
-    return { sources: [] };
+  stateDir: string,
+  options: {
+    singleSourceMessage?: string;
+  } = {},
+): Promise<{ sources: MemorySourceInventoryConfiguredSource[] } | { error: string }> {
+  let sources: MemorySourceInventoryConfiguredSource[];
+  if (params.configuredSources != null) {
+    const normalized = normalizeConfiguredMemorySourcesInput(params.configuredSources, "configuredSources");
+    if ("error" in normalized) {
+      return { error: normalized.error };
+    }
+    sources = normalized.sources;
+  } else {
+    try {
+      const store = await readConfiguredMemorySourcesStore(stateDir);
+      sources = store.sources;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   }
-  if (!Array.isArray(raw)) {
-    return { error: "configuredSources must be an array." };
+
+  const configuredSourceId = readOptionalString(params, "configuredSourceId");
+  if (configuredSourceId) {
+    const matched = sources.filter((item) => item.id === configuredSourceId);
+    if (matched.length <= 0) {
+      return { error: `configuredSourceId not found: ${configuredSourceId}` };
+    }
+    sources = matched;
   }
 
-  const sources: MemorySourceInventoryConfiguredSource[] = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    const item = raw[index];
-    if (!isObjectRecord(item)) {
-      return { error: `configuredSources[${index}] must be an object.` };
-    }
-    const label = readOptionalString(item, "label");
-    if (!label) {
-      return { error: `configuredSources[${index}].label is required.` };
-    }
-    const sourceClass = readOptionalString(item, "sourceClass");
-    if (!isInventorySourceClass(sourceClass)) {
-      return { error: `configuredSources[${index}].sourceClass must be raw, derived, or curated.` };
-    }
-    const scope = readOptionalString(item, "scope");
-    if (scope && !isInventoryScope(scope)) {
-      return { error: `configuredSources[${index}].scope must be private, shared, or team.` };
-    }
-    const rootPath = readOptionalString(item, "rootPath");
-    const filePath = readOptionalString(item, "filePath");
-    if (!rootPath && !filePath) {
-      return { error: `configuredSources[${index}] must provide rootPath or filePath.` };
-    }
-
-    const normalizedExtensions = Array.isArray(item.fileExtensions)
-      ? item.fileExtensions
-        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-        .map((entry) => entry.trim())
-      : undefined;
-
-    sources.push({
-      ...(readOptionalString(item, "id") ? { id: readOptionalString(item, "id") } : {}),
-      label,
-      sourceClass,
-      ...(scope ? { scope: scope as MemorySourceInventoryScope } : {}),
-      ...(rootPath ? { rootPath } : {}),
-      ...(filePath ? { filePath } : {}),
-      ...(typeof item.recursive === "boolean" ? { recursive: item.recursive } : {}),
-      ...(normalizedExtensions && normalizedExtensions.length > 0 ? { fileExtensions: normalizedExtensions } : {}),
-      ...(readOptionalString(item, "note") ? { note: readOptionalString(item, "note") } : {}),
-    });
+  if (options.singleSourceMessage && sources.length !== 1) {
+    return { error: options.singleSourceMessage };
   }
 
   return { sources };
 }
 
-function isInventorySourceClass(value: string | undefined): value is MemorySourceInventoryClass {
-  return value === "raw" || value === "derived" || value === "curated";
+function isMemoryTreeReportReviewDecision(value: string | undefined): value is "approved" | "rejected" | "superseded" {
+  return value === "approved"
+    || value === "rejected"
+    || value === "superseded";
 }
 
-function isInventoryScope(value: string | undefined): value is MemorySourceInventoryScope {
-  return value === "private" || value === "shared" || value === "team";
+function isMemoryTreeNodeKind(value: string | undefined): value is "task" | "conversation" | "day" | "topic" | "profile" | "global" {
+  return value === "task"
+    || value === "conversation"
+    || value === "day"
+    || value === "topic"
+    || value === "profile"
+    || value === "global";
 }
 
 function readOptionalNonNegativeInteger(params: Record<string, unknown>, key: string): number | undefined {

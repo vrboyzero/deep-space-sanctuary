@@ -4,6 +4,8 @@ import type { AgentRegistry } from "@belldandy/agent";
 import type {
   MemoryChunk,
   MemoryIndexStatus,
+  MemorySearchDiagnostics,
+  MemorySearchExecution,
   MemoryManager,
   MemorySearchFilter,
   MemorySearchResult,
@@ -14,6 +16,19 @@ import type { ResolvedResidentMemoryPolicy } from "./resident-memory-policy.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
 
 export type ResidentSharedPromotionStatus = "pending" | "approved" | "rejected" | "revoked" | "active";
+
+export type ResidentMemorySearchDiagnostics = {
+  scopeMode: "shared_only" | "private_only" | "unified" | "merged_all";
+  sharedManagerUsed: boolean;
+  branchCount: number;
+  dedupedCount: number;
+  returnedCount: number;
+  branches: Array<{
+    surface: "private" | "shared";
+    diagnostics?: MemorySearchDiagnostics;
+    resultCount: number;
+  }>;
+};
 
 export type ResidentSharedPromotionMetadata = {
   kind: "manual";
@@ -639,6 +654,21 @@ export async function searchResidentMemory(input: {
   filter?: MemorySearchFilter;
   includeContent: boolean;
 }): Promise<MemorySearchResult[]> {
+  return (await searchResidentMemoryWithDiagnostics(input)).items;
+}
+
+export async function searchResidentMemoryWithDiagnostics(input: {
+  manager: MemoryManager;
+  sharedManager?: MemoryManager | null;
+  residentPolicy?: ResolvedResidentMemoryPolicy;
+  query: string;
+  limit: number;
+  filter?: MemorySearchFilter;
+  includeContent: boolean;
+}): Promise<{
+  items: MemorySearchResult[];
+  diagnostics: ResidentMemorySearchDiagnostics;
+}> {
   const { manager, query, limit, filter, includeContent } = input;
   const sharedManager = getSharedReadManager(input);
   const wantsSharedOnly = filter?.scope === "shared";
@@ -647,52 +677,198 @@ export async function searchResidentMemory(input: {
 
   if (wantsSharedOnly) {
     if (sharedManager) {
-      return filterVisibleSharedItems(await sharedManager.search(query, {
+      const shared = await runMemorySearch(sharedManager, query, {
         limit,
         filter: cloneFilterWithScope(filter, "shared"),
         includeContent,
-      }));
+      });
+      const items = filterVisibleSharedItems(shared.items);
+      return {
+        items,
+        diagnostics: {
+          scopeMode: "shared_only",
+          sharedManagerUsed: true,
+          branchCount: 1,
+          dedupedCount: items.length,
+          returnedCount: items.length,
+          branches: [{
+            surface: "shared",
+            diagnostics: shared.diagnostics,
+            resultCount: items.length,
+          }],
+        },
+      };
     }
-    if (!unifiedSurface) return [];
-    return filterVisibleSharedItems(await manager.search(query, {
+    if (!unifiedSurface) {
+      return {
+        items: [],
+        diagnostics: {
+          scopeMode: "shared_only",
+          sharedManagerUsed: false,
+          branchCount: 0,
+          dedupedCount: 0,
+          returnedCount: 0,
+          branches: [],
+        },
+      };
+    }
+    const unified = await runMemorySearch(manager, query, {
       limit,
       filter: cloneFilterWithScope(filter, "shared"),
       includeContent,
-    }));
+    });
+    const items = filterVisibleSharedItems(unified.items);
+    return {
+      items,
+      diagnostics: {
+        scopeMode: "shared_only",
+        sharedManagerUsed: false,
+        branchCount: 1,
+        dedupedCount: items.length,
+        returnedCount: items.length,
+        branches: [{
+          surface: "private",
+          diagnostics: unified.diagnostics,
+          resultCount: items.length,
+        }],
+      },
+    };
   }
 
   if (wantsPrivateOnly) {
-    return manager.search(query, {
+    const privateSearch = await runMemorySearch(manager, query, {
       limit,
       filter: cloneFilterWithScope(filter, "private"),
       includeContent,
     });
+    return {
+      items: privateSearch.items,
+      diagnostics: {
+        scopeMode: "private_only",
+        sharedManagerUsed: false,
+        branchCount: 1,
+        dedupedCount: privateSearch.items.length,
+        returnedCount: privateSearch.items.length,
+        branches: [{
+          surface: "private",
+          diagnostics: privateSearch.diagnostics,
+          resultCount: privateSearch.items.length,
+        }],
+      },
+    };
   }
 
   if (unifiedSurface) {
-    return manager.search(query, {
+    const unified = await runMemorySearch(manager, query, {
       limit,
       filter,
       includeContent,
     });
+    return {
+      items: unified.items,
+      diagnostics: {
+        scopeMode: "unified",
+        sharedManagerUsed: false,
+        branchCount: 1,
+        dedupedCount: unified.items.length,
+        returnedCount: unified.items.length,
+        branches: [{
+          surface: "private",
+          diagnostics: unified.diagnostics,
+          resultCount: unified.items.length,
+        }],
+      },
+    };
   }
 
-  const privateItems = await manager.search(query, {
+  const privateSearch = await runMemorySearch(manager, query, {
     limit,
     filter: cloneFilterWithScope(filter, "private"),
     includeContent,
   });
+  const privateItems = privateSearch.items;
   if (!sharedManager) {
-    return privateItems.slice(0, limit);
+    const items = privateItems.slice(0, limit);
+    return {
+      items,
+      diagnostics: {
+        scopeMode: "merged_all",
+        sharedManagerUsed: false,
+        branchCount: 1,
+        dedupedCount: privateItems.length,
+        returnedCount: items.length,
+        branches: [{
+          surface: "private",
+          diagnostics: privateSearch.diagnostics,
+          resultCount: privateItems.length,
+        }],
+      },
+    };
   }
-  const sharedItems = filterVisibleSharedItems(await sharedManager.search(query, {
+  const sharedSearch = await runMemorySearch(sharedManager, query, {
     limit,
     filter: cloneFilterWithScope(filter, "shared"),
     includeContent,
-  }));
-  return dedupeMemoryResults([...privateItems, ...sharedItems])
+  });
+  const sharedItems = filterVisibleSharedItems(sharedSearch.items);
+  const deduped = dedupeMemoryResults([...privateItems, ...sharedItems]);
+  const items = deduped
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+  return {
+    items,
+    diagnostics: {
+      scopeMode: "merged_all",
+      sharedManagerUsed: true,
+      branchCount: 2,
+      dedupedCount: deduped.length,
+      returnedCount: items.length,
+      branches: [
+        {
+          surface: "private",
+          diagnostics: privateSearch.diagnostics,
+          resultCount: privateItems.length,
+        },
+        {
+          surface: "shared",
+          diagnostics: sharedSearch.diagnostics,
+          resultCount: sharedItems.length,
+        },
+      ],
+    },
+  };
+}
+
+async function runMemorySearch(
+  manager: MemoryManager,
+  query: string,
+  options: {
+    limit: number;
+    filter?: MemorySearchFilter;
+    includeContent: boolean;
+  },
+): Promise<MemorySearchExecution> {
+  if (typeof manager.searchWithDiagnostics === "function") {
+    return manager.searchWithDiagnostics(query, options);
+  }
+  const items = await manager.search(query, options);
+  return {
+    items,
+    diagnostics: {
+      retrievalMode: "explicit",
+      limit: options.limit,
+      skipped: false,
+      deepRetrievalApplied: false,
+      scoreSignalAppliedCount: 0,
+      sourceClassMix: {},
+      stages: {
+        raw: { count: items.length, topHits: [] },
+        scoreAware: { count: items.length, topHits: [] },
+        reranked: { count: items.length, topHits: [] },
+        returned: { count: items.length, topHits: [] },
+      },
+    },
+  };
 }
 
 export function listRecentResidentMemory(input: {

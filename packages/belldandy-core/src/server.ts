@@ -1607,14 +1607,20 @@ async function handleReq(
     "memory.get",
     "memory.recent",
     "memory.stats",
+    "memory.configured_sources.get",
+    "memory.configured_sources.update",
     "memory.inventory.preview",
     "memory.tree.report.inventory.preview",
+    "memory.tree.report.external_ingest.preview",
     "memory.tree.report.dedup.preview",
     "memory.tree.report.list",
     "memory.tree.report.get",
     "memory.tree.report.export_markdown",
+    "memory.tree.report.review",
+    "memory.tree.report.apply",
     "memory.tree.node.rebuild",
     "memory.tree.node.list",
+    "memory.tree.node.search",
     "memory.tree.node.get",
     "memory.tree.source.rebuild",
     "memory.tree.source.list",
@@ -2040,14 +2046,20 @@ async function handleReq(
     case "memory.get":
     case "memory.recent":
     case "memory.stats":
+    case "memory.configured_sources.get":
+    case "memory.configured_sources.update":
     case "memory.inventory.preview":
     case "memory.tree.report.inventory.preview":
+    case "memory.tree.report.external_ingest.preview":
     case "memory.tree.report.dedup.preview":
     case "memory.tree.report.list":
     case "memory.tree.report.get":
     case "memory.tree.report.export_markdown":
+    case "memory.tree.report.review":
+    case "memory.tree.report.apply":
     case "memory.tree.node.rebuild":
     case "memory.tree.node.list":
+    case "memory.tree.node.search":
     case "memory.tree.node.get":
     case "memory.tree.source.rebuild":
     case "memory.tree.source.list":

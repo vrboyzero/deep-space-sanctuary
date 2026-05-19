@@ -209,6 +209,255 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("applies persisted memory tree scores before reranking", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store as {
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    const rawResults = [
+      {
+        id: "p12-low-score",
+        sourcePath: path.join(docsDir, "low-score.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "memory tree rollout plan",
+        summary: "lower governance score",
+        score: 0.82,
+        metadata: {},
+        updatedAt: "2026-05-19T09:00:00.000Z",
+      },
+      {
+        id: "p12-high-score",
+        sourcePath: path.join(stateDir, "MEMORY.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "memory tree rollout plan",
+        summary: "higher governance score",
+        score: 0.79,
+        metadata: {},
+        updatedAt: "2026-05-19T09:00:00.000Z",
+      },
+    ];
+
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p12-low-score",
+        targetType: "chunk",
+        targetId: "p12-low-score",
+        sourceId: "workspace:low-score",
+        scoreTotal: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:p12-high-score",
+        targetType: "chunk",
+        targetId: "p12-high-score",
+        sourceId: "builtin:memory:core",
+        scoreTotal: 0.95,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+    ]);
+
+    const adjusted = (manager as any).applyMemoryTreeScoreSignals(rawResults);
+    const reranked = (manager as any).reranker.rerank(adjusted);
+
+    expect(reranked.map((item: { id: string }) => item.id)).toEqual(["p12-high-score", "p12-low-score"]);
+    expect(reranked[0]?.metadata).toMatchObject({
+      memoryTree: {
+        scoreTotal: 0.95,
+        sourceClass: "curated",
+        scoreVersion: "v1_rule_only",
+      },
+    });
+  });
+
+  it("captures P16-A search diagnostics across raw score-aware rerank and final stages", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store as {
+      searchHybrid: (...args: any[]) => Array<Record<string, unknown>>;
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    const reranker = (manager as any).reranker as {
+      rerank: (items: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    };
+
+    const rawResults = [
+      {
+        id: "p16-low-score",
+        sourcePath: path.join(docsDir, "low-score.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "memory tree rollout plan",
+        summary: "lower governance score",
+        score: 0.82,
+        metadata: {},
+        updatedAt: "2026-05-19T09:00:00.000Z",
+      },
+      {
+        id: "p16-high-score",
+        sourcePath: path.join(stateDir, "MEMORY.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "memory tree rollout plan",
+        summary: "higher governance score",
+        score: 0.79,
+        metadata: {},
+        updatedAt: "2026-05-19T09:00:00.000Z",
+      },
+    ];
+    const originalSearchHybrid = store.searchHybrid.bind(store);
+    const originalRerank = reranker.rerank.bind(reranker);
+    store.searchHybrid = () => rawResults as any;
+    reranker.rerank = (items) => [items[1], items[0]];
+
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p16-low-score",
+        targetType: "chunk",
+        targetId: "p16-low-score",
+        sourceId: "workspace:low-score",
+        scoreTotal: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:p16-high-score",
+        targetType: "chunk",
+        targetId: "p16-high-score",
+        sourceId: "builtin:memory:core",
+        scoreTotal: 0.95,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+    ]);
+
+    try {
+      const execution = await manager.searchWithDiagnostics("memory tree rollout plan", {
+        limit: 1,
+        includeContent: false,
+      });
+
+      expect(execution.items.map((item) => item.id)).toEqual(["p16-high-score"]);
+      expect(execution.diagnostics).toMatchObject({
+        retrievalMode: "explicit",
+        limit: 1,
+        skipped: false,
+        scoreSignalAppliedCount: 2,
+        sourceClassMix: {
+          curated: 1,
+        },
+        stages: {
+          raw: {
+            count: 2,
+            topHits: [
+              expect.objectContaining({ id: "p16-low-score", sourceClass: "unknown" }),
+              expect.objectContaining({ id: "p16-high-score", sourceClass: "unknown" }),
+            ],
+          },
+          scoreAware: {
+            count: 2,
+            topHits: [
+              expect.objectContaining({ id: "p16-low-score", sourceClass: "derived" }),
+              expect.objectContaining({ id: "p16-high-score", sourceClass: "curated" }),
+            ],
+          },
+          reranked: {
+            count: 2,
+            topHits: [
+              expect.objectContaining({ id: "p16-high-score", sourceClass: "curated" }),
+              expect.objectContaining({ id: "p16-low-score", sourceClass: "derived" }),
+            ],
+          },
+          returned: {
+            count: 1,
+            topHits: [
+              expect.objectContaining({ id: "p16-high-score", sourceClass: "curated" }),
+            ],
+          },
+        },
+      });
+    } finally {
+      store.searchHybrid = originalSearchHybrid;
+      reranker.rerank = originalRerank;
+    }
+  });
+
+  it("uses source class signal as a tie-breaker when memory tree scores are equal", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store as {
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    const rawResults = [
+      {
+        id: "p12-derived",
+        sourcePath: path.join(docsDir, "derived.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "topic memory summary",
+        summary: "derived summary",
+        score: 0.75,
+        metadata: {},
+        updatedAt: "2026-05-19T09:00:00.000Z",
+      },
+      {
+        id: "p12-curated",
+        sourcePath: path.join(stateDir, "MEMORY.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "topic memory summary",
+        summary: "curated summary",
+        score: 0.75,
+        metadata: {},
+        updatedAt: "2026-05-19T09:00:00.000Z",
+      },
+    ];
+
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p12-derived",
+        targetType: "chunk",
+        targetId: "p12-derived",
+        sourceId: "workspace:derived",
+        scoreTotal: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:p12-curated",
+        targetType: "chunk",
+        targetId: "p12-curated",
+        sourceId: "builtin:memory:core",
+        scoreTotal: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+    ]);
+
+    const adjusted = (manager as any).applyMemoryTreeScoreSignals(rawResults);
+    const results = (manager as any).reranker.rerank(adjusted);
+
+    expect(results.map((item: { id: string }) => item.id)).toEqual(["p12-curated", "p12-derived"]);
+    expect(results[0]?.metadata).toMatchObject({
+      memoryTree: {
+        sourceClass: "curated",
+      },
+    });
+  });
+
   it("persists P10 reports and rebuilds L1 task nodes with chunk edges", async () => {
     const stateMemoryDir = path.join(stateDir, "memory");
     const stateMemoryPath = path.join(stateMemoryDir, "2026-05-20.md");
@@ -308,6 +557,324 @@ describe("MemoryManager guardrails", () => {
         relation: "contains",
       }),
     ]);
+  });
+
+  it("rebuilds P13 topic nodes and returns chunk provenance for node search", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "p13-topic-low",
+      sourcePath: path.join(docsDir, "viewer-audit-outline.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer-audit",
+      content: "viewer audit baseline notes",
+      metadata: {
+        summary: "baseline viewer audit notes",
+      },
+    });
+    manager.upsertMemoryChunk({
+      id: "p13-topic-high",
+      sourcePath: path.join(docsDir, "viewer-audit-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer-audit",
+      content: "viewer audit final checklist",
+      metadata: {
+        summary: "final viewer audit checklist",
+      },
+    });
+    manager.upsertMemoryChunk({
+      id: "p13-topic-other",
+      sourcePath: path.join(docsDir, "release-gate.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "release-gate",
+      content: "release gate notes",
+    });
+
+    const store = (manager as any).store as {
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p13-topic-low",
+        targetType: "chunk",
+        targetId: "p13-topic-low",
+        scoreTotal: 0.2,
+        sourceWeightScore: 0.1,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+        createdAt: "2026-05-19T16:00:00.000Z",
+        updatedAt: "2026-05-19T16:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:p13-topic-high",
+        targetType: "chunk",
+        targetId: "p13-topic-high",
+        scoreTotal: 0.9,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+        createdAt: "2026-05-19T16:00:00.000Z",
+        updatedAt: "2026-05-19T16:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:p13-topic-other",
+        targetType: "chunk",
+        targetId: "p13-topic-other",
+        scoreTotal: 0.4,
+        sourceWeightScore: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+        createdAt: "2026-05-19T16:00:00.000Z",
+        updatedAt: "2026-05-19T16:00:00.000Z",
+      },
+    ]);
+
+    const rebuild = manager.rebuildMemoryTreeNodes({ limit: 20, kind: "topic" });
+    expect(rebuild).toMatchObject({
+      kind: "topic",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+
+    const searchResults = manager.searchMemoryTreeNodes("viewer audit", {
+      limit: 5,
+      chunkLimitPerNode: 5,
+      filter: {
+        kind: "topic",
+      },
+    });
+    expect(searchResults).toHaveLength(1);
+    expect(searchResults[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "topic",
+        summaryVersion: "p13-topic-node-v1",
+        topicKey: "viewer-audit",
+        metadata: expect.objectContaining({
+          topic: "viewer-audit",
+          totalChunkCount: 2,
+        }),
+      }),
+      matchReasons: expect.arrayContaining(["标题", "topic"]),
+    });
+    expect(searchResults[0]?.chunks.map((item) => item.id)).toEqual([
+      "p13-topic-high",
+      "p13-topic-low",
+    ]);
+    expect(searchResults[0]?.edges.map((item) => item.childId)).toEqual([
+      "p13-topic-high",
+      "p13-topic-low",
+    ]);
+
+    const detail = manager.getMemoryTreeNodeDetail(searchResults[0]!.node.id, { chunkLimit: 5 });
+    expect(detail).toBeTruthy();
+    expect(detail?.chunks.map((item) => item.id)).toEqual([
+      "p13-topic-high",
+      "p13-topic-low",
+    ]);
+  });
+
+  it("reviews and applies P14 dedup reports by archiving duplicate chunks and lowering their scores", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "p14-keep",
+      sourcePath: path.join(stateDir, "memory", "2026-05-19.md"),
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "same duplicate payload\nline two",
+      visibility: "shared",
+    });
+    manager.upsertMemoryChunk({
+      id: "p14-remove",
+      sourcePath: path.join(docsDir, "duplicate-note.md"),
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "same duplicate payload\r\nline two",
+      visibility: "private",
+    });
+
+    const store = (manager as any).store as {
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p14-keep",
+        targetType: "chunk",
+        targetId: "p14-keep",
+        scoreTotal: 0.85,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+        createdAt: "2026-05-19T17:00:00.000Z",
+        updatedAt: "2026-05-19T17:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:p14-remove",
+        targetType: "chunk",
+        targetId: "p14-remove",
+        scoreTotal: 0.8,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+        createdAt: "2026-05-19T17:00:00.000Z",
+        updatedAt: "2026-05-19T17:00:00.000Z",
+      },
+    ]);
+
+    const preview = manager.previewExactDedup({ memoryType: "daily" }, { maxGroups: 10 });
+    const report = manager.persistMemoryTreeDedupPreviewReport(preview, {
+      filter: { memoryType: "daily" },
+      maxGroups: 10,
+      createdBy: "test",
+    });
+    expect(report.status).toBe("ready");
+
+    const reviewed = manager.reviewMemoryTreeReport(report.id, "approved", {
+      reviewedBy: "tester",
+      note: "ready to archive duplicate leaves",
+    });
+    expect(reviewed.previousStatus).toBe("ready");
+    expect(reviewed.report.status).toBe("approved");
+
+    const applied = await manager.applyMemoryTreeReport(report.id, {
+      appliedBy: "tester",
+      note: "metadata and score only",
+    });
+    expect(applied.report.status).toBe("applied");
+    expect(applied.updatedChunkCount).toBe(1);
+    expect(applied.updatedScoreCount).toBe(1);
+    expect(applied.skippedChunkIds).toEqual([]);
+    expect(applied.actions).toEqual([
+      expect.objectContaining({
+        chunkId: "p14-remove",
+        keepChunkId: "p14-keep",
+        archived: true,
+      }),
+    ]);
+
+    const removedChunk = manager.getMemory("p14-remove");
+    expect(removedChunk?.metadata).toMatchObject({
+      memoryTree: {
+        governance: {
+          archived: true,
+          archivedByReportId: report.id,
+          archiveReason: "dedup_preview_remove",
+          keepChunkId: "p14-keep",
+        },
+      },
+    });
+
+    const scores = manager.listMemoryTreeScores(10, {
+      targetType: "chunk",
+    });
+    const removedScore = scores.find((item) => item.targetId === "p14-remove");
+    const keeperScore = scores.find((item) => item.targetId === "p14-keep");
+    expect(removedScore?.scoreTotal).toBe(0.05);
+    expect(removedScore?.rationale).toMatchObject({
+      governance: expect.objectContaining({
+        archivedByReportId: report.id,
+        keepChunkId: "p14-keep",
+        nextScoreTotal: 0.05,
+      }),
+    });
+    expect(keeperScore?.scoreTotal).toBe(0.85);
+  });
+
+  it("previews and applies P15 external Obsidian ingest through report review/apply", async () => {
+    const obsidianDir = path.join(rootDir, "obsidian-vault");
+    const notePath = path.join(obsidianDir, "Projects", "viewer-audit.md");
+    await fs.mkdir(path.dirname(notePath), { recursive: true });
+    await fs.writeFile(notePath, "# Viewer Audit\n\nObsidian ingest should become searchable memory.\n", "utf-8");
+
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    const preview = await manager.previewConfiguredExternalIngest({
+      configuredSources: [
+        {
+          label: "Obsidian Vault",
+          sourceClass: "curated",
+          scope: "private",
+          rootPath: obsidianDir,
+          fileExtensions: [".md"],
+        },
+      ],
+    });
+    expect(preview).toMatchObject({
+      adapter: "obsidian_markdown_directory_v1",
+      sourceId: "configured:obsidian-vault:1",
+      totalFiles: 1,
+      eligibleFiles: 1,
+      skippedFiles: 0,
+    });
+
+    const report = manager.persistMemoryTreeExternalIngestReport(preview, {
+      createdBy: "test",
+    });
+    expect(report.reportType).toBe("external_ingest_preview");
+    expect(report.summary).toMatchObject({
+      sourceId: "configured:obsidian-vault:1",
+      estimatedChunks: expect.any(Number),
+    });
+
+    const reviewed = manager.reviewMemoryTreeReport(report.id, "approved", {
+      reviewedBy: "tester",
+      note: "ready to ingest obsidian markdown",
+    });
+    expect(reviewed.report.status).toBe("approved");
+
+    const applied = await manager.applyMemoryTreeReport(report.id, {
+      appliedBy: "tester",
+      note: "import obsidian markdown",
+    });
+    expect(applied.report.status).toBe("applied");
+    expect(applied.updatedChunkCount).toBeGreaterThan(0);
+    expect(applied.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "external_ingest",
+        sourcePath: notePath,
+        skipped: false,
+      }),
+    ]));
+
+    const importedChunks = manager.getMemoriesBySource(notePath, 20);
+    expect(importedChunks.length).toBeGreaterThan(0);
+    expect(importedChunks[0]?.metadata).toMatchObject({
+      memoryTree: {
+        externalSourceId: "configured:obsidian-vault:1",
+        externalSourceLabel: "Obsidian Vault",
+        ingestedByReportId: report.id,
+      },
+    });
+
+    const sources = manager.listMemoryTreeSources(20, {
+      ids: ["configured:obsidian-vault:1"],
+    });
+    expect(sources).toEqual([
+      expect.objectContaining({
+        id: "configured:obsidian-vault:1",
+        sourceKind: "configured_external",
+        sourcePath: obsidianDir,
+      }),
+    ]);
+
+    const scores = manager.listMemoryTreeScores(20, {
+      sourceId: "configured:obsidian-vault:1",
+    });
+    expect(scores.length).toBeGreaterThan(0);
+    expect(scores.every((item) => item.sourceId === "configured:obsidian-vault:1")).toBe(true);
   });
 
   it("keeps explicit search available while implicit recall still skips greetings", async () => {

@@ -87,6 +87,13 @@ function formatKeyCountSummary(value) {
   return entries.map(([key, count]) => `${key}:${count}`).join(", ");
 }
 
+function formatStringListSummary(values) {
+  const items = Array.isArray(values)
+    ? values.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
+    : [];
+  return items.length ? items.join(", ") : "-";
+}
+
 function formatUsageCalibrationSummary(usageCalibration) {
   if (!usageCalibration || typeof usageCalibration !== "object") {
     return "";
@@ -189,6 +196,25 @@ function buildPromptObservabilityCard(payload, t) {
       `cache eligible ${summary.providerCacheEligible ? "yes" : "no"}`,
     ));
   }
+  if (typeof summary.contextInjection?.prependContextChars === "number") {
+    badges.push(tr(
+      t,
+      "settings.doctorPromptPrependChars",
+      { chars: formatNumber(summary.contextInjection.prependContextChars) },
+      `prepend ${formatNumber(summary.contextInjection.prependContextChars)} chars`,
+    ));
+  }
+  if (typeof summary.contextInjection?.autoRecall?.keptCount === "number") {
+    badges.push(tr(
+      t,
+      "settings.doctorPromptAutoRecallBadge",
+      {
+        kept: formatNumber(summary.contextInjection.autoRecall.keptCount),
+        candidate: formatNumber(summary.contextInjection.autoRecall.candidateCount),
+      },
+      `auto-recall ${formatNumber(summary.contextInjection.autoRecall.keptCount)}/${formatNumber(summary.contextInjection.autoRecall.candidateCount)}`,
+    ));
+  }
 
   const notes = [scopeText];
   if (summary.truncationReason?.code) {
@@ -285,6 +311,33 @@ function buildPromptObservabilityCard(payload, t) {
         reason: summary.cacheFamilyAffinity.reason || "-",
       },
       `Cache family affinity: ${summary.cacheFamilyAffinity.status || "-"}; reason=${summary.cacheFamilyAffinity.reason || "-"}`,
+    ));
+  }
+  if (summary.contextInjection && typeof summary.contextInjection === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptContextInjection",
+      {
+        chars: formatNumber(summary.contextInjection.prependContextChars),
+        blocks: formatNumber(summary.contextInjection.totalBlockCount),
+        tags: formatStringListSummary(summary.contextInjection.blockTags),
+      },
+      `Context injection: prepend=${formatNumber(summary.contextInjection.prependContextChars)} chars; blocks=${formatNumber(summary.contextInjection.totalBlockCount)}; tags=${formatStringListSummary(summary.contextInjection.blockTags)}`,
+    ));
+  }
+  if (summary.contextInjection?.autoRecall && typeof summary.contextInjection.autoRecall === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorPromptAutoRecall",
+      {
+        kept: formatNumber(summary.contextInjection.autoRecall.keptCount),
+        candidate: formatNumber(summary.contextInjection.autoRecall.candidateCount),
+        filtered: formatNumber(summary.contextInjection.autoRecall.filteredOutCount),
+        minScore: typeof summary.contextInjection.autoRecall.minScore === "number" ? String(summary.contextInjection.autoRecall.minScore) : "-",
+        topHits: formatStringListSummary(summary.contextInjection.autoRecall.topHitIds),
+        sourceMix: formatKeyCountSummary(summary.contextInjection.autoRecall.sourceClassMix),
+      },
+      `Auto recall: kept=${formatNumber(summary.contextInjection.autoRecall.keptCount)}/${formatNumber(summary.contextInjection.autoRecall.candidateCount)}; filtered=${formatNumber(summary.contextInjection.autoRecall.filteredOutCount)}; minScore=${typeof summary.contextInjection.autoRecall.minScore === "number" ? String(summary.contextInjection.autoRecall.minScore) : "-"}; topHits=${formatStringListSummary(summary.contextInjection.autoRecall.topHitIds)}; sourceMix=${formatKeyCountSummary(summary.contextInjection.autoRecall.sourceClassMix)}`,
     ));
   }
   const calibrationTrace = Array.isArray(payload?.queryRuntime?.traces)

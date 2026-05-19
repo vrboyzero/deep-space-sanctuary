@@ -19,6 +19,22 @@ describe("prompt snapshot detail rendering", () => {
           tokenBreakdown: {
             systemPromptEstimatedTokens: 88,
           },
+          contextInjection: {
+            prependContextChars: 480,
+            totalBlockCount: 3,
+            blockTags: ["current-turn", "auto-recall"],
+            autoRecall: {
+              candidateCount: 3,
+              keptCount: 2,
+              filteredOutCount: 1,
+              minScore: 0.42,
+              topHitIds: ["mem-curated", "mem-derived"],
+              sourceClassMix: {
+                curated: 1,
+                derived: 1,
+              },
+            },
+          },
         },
         snapshot: {
           systemPrompt: "Follow the repo conventions.",
@@ -134,6 +150,21 @@ describe("prompt snapshot detail rendering", () => {
     expect(html).toContain("catalog default: role=coder");
     expect(html).toContain("effective launch: source=catalog_default, agent=coder");
     expect(html).toContain("Follow the repo conventions.");
+    expect(html).toContain("Prepend Context Chars");
+    expect(html).toContain(">480<");
+    expect(html).toContain("Context Injection Blocks");
+    expect(html).toContain(">3<");
+    expect(html).toContain("Auto Recall");
+    expect(html).toContain(">2/3<");
+    expect(html).toContain("Context Injection Block Tags");
+    expect(html).toContain("current-turn");
+    expect(html).toContain("auto-recall");
+    expect(html).toContain("Auto Recall Summary");
+    expect(html).toContain("kept=2/3");
+    expect(html).toContain("filtered=1");
+    expect(html).toContain("minScore=0.42");
+    expect(html).toContain("topHits=mem-curated, mem-derived");
+    expect(html).toContain("sourceMix=curated:1, derived:1");
     expect(html).toContain("Active Prompt Sections");
     expect(html).toContain("core");
     expect(html).toContain("tool-use-policy");

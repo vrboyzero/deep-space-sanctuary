@@ -2783,6 +2783,336 @@ test("memory.inventory.preview returns readonly builtin and configured source in
   }
 });
 
+test("memory.configured_sources.update persists sources and inventory preview reuses them by default", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-configured-sources-"));
+  const externalDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-configured-sources-external-"));
+  const workspaceRoot = path.join(stateDir, "sessions");
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    await fs.promises.mkdir(workspaceRoot, { recursive: true });
+    await fs.promises.writeFile(path.join(externalDir, "kb.md"), "# External KB\n", "utf-8");
+    registerGlobalMemoryManager(memoryManager);
+
+    const updateRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-configured-sources-update",
+      method: "memory.configured_sources.update",
+      params: {
+        configuredSources: [
+          {
+            label: "Obsidian Vault",
+            sourceClass: "curated",
+            scope: "private",
+            rootPath: externalDir,
+            fileExtensions: [".md"],
+            note: "persisted source",
+          },
+        ],
+      },
+    }, { stateDir });
+
+    expect(updateRes).toBeTruthy();
+    if (!updateRes || !updateRes.ok) {
+      throw new Error("expected successful memory.configured_sources.update response");
+    }
+    expect(updateRes.payload).toMatchObject({
+      version: 1,
+      configuredSources: [
+        expect.objectContaining({
+          id: "configured:obsidian-vault:1",
+          label: "Obsidian Vault",
+          rootPath: externalDir,
+        }),
+      ],
+    });
+
+    const getRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-configured-sources-get",
+      method: "memory.configured_sources.get",
+      params: {},
+    }, { stateDir });
+
+    expect(getRes).toBeTruthy();
+    if (!getRes || !getRes.ok) {
+      throw new Error("expected successful memory.configured_sources.get response");
+    }
+    expect(getRes.payload).toMatchObject({
+      configuredSources: [
+        expect.objectContaining({
+          id: "configured:obsidian-vault:1",
+          label: "Obsidian Vault",
+          sourceClass: "curated",
+        }),
+      ],
+    });
+
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-inventory-preview-from-config",
+      method: "memory.inventory.preview",
+      params: {},
+    }, { stateDir });
+
+    expect(previewRes).toBeTruthy();
+    if (!previewRes || !previewRes.ok) {
+      throw new Error("expected successful memory.inventory.preview response from persisted config");
+    }
+    const report = previewRes.payload?.report as Record<string, any> | undefined;
+    expect(report?.items?.some((item: Record<string, unknown>) =>
+      item.id === "configured:obsidian-vault:1"
+      && item.label === "Obsidian Vault"
+      && item.sourceKind === "configured_external")).toBe(true);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.tree.report.external_ingest.preview can select persisted configured source by configuredSourceId", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-external-ingest-config-"));
+  const externalDirA = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-external-ingest-vault-a-"));
+  const externalDirB = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-external-ingest-vault-b-"));
+  const workspaceRoot = path.join(stateDir, "sessions");
+  const notePath = path.join(externalDirB, "Projects", "viewer-audit.md");
+  await fs.promises.mkdir(path.dirname(notePath), { recursive: true });
+  await fs.promises.writeFile(path.join(externalDirA, "ignore.md"), "# Ignore\n", "utf-8");
+  await fs.promises.writeFile(notePath, "# Viewer Audit\n\nExternal ingest searchable marker.\n", "utf-8");
+
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    await fs.promises.mkdir(workspaceRoot, { recursive: true });
+    registerGlobalMemoryManager(memoryManager);
+
+    const updateRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-configured-sources-update-for-ingest",
+      method: "memory.configured_sources.update",
+      params: {
+        configuredSources: [
+          {
+            id: "configured:ignore-vault:1",
+            label: "Ignore Vault",
+            sourceClass: "raw",
+            scope: "private",
+            rootPath: externalDirA,
+            fileExtensions: [".md"],
+          },
+          {
+            id: "configured:obsidian-vault:2",
+            label: "Obsidian Vault",
+            sourceClass: "curated",
+            scope: "private",
+            rootPath: externalDirB,
+            fileExtensions: [".md"],
+          },
+        ],
+      },
+    }, { stateDir });
+    expect(updateRes && updateRes.ok).toBe(true);
+
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-external-ingest-preview-from-config",
+      method: "memory.tree.report.external_ingest.preview",
+      params: {
+        configuredSourceId: "configured:obsidian-vault:2",
+      },
+    }, { stateDir });
+
+    expect(previewRes).toBeTruthy();
+    if (!previewRes || !previewRes.ok) {
+      throw new Error("expected successful memory.tree.report.external_ingest.preview response from persisted config");
+    }
+    expect(previewRes.payload?.report).toMatchObject({
+      sourceId: "configured:obsidian-vault:2",
+      totalFiles: 1,
+      eligibleFiles: 1,
+      rootPath: externalDirB,
+    });
+    expect(previewRes.payload?.record).toMatchObject({
+      reportType: "external_ingest_preview",
+      status: "ready",
+    });
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(externalDirA, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(externalDirB, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.tree.report.external_ingest.preview drives approved apply and searchable chunks", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-external-ingest-"));
+  const externalDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-external-ingest-vault-"));
+  const workspaceRoot = path.join(stateDir, "sessions");
+  const notePath = path.join(externalDir, "Projects", "viewer-audit.md");
+  await fs.promises.mkdir(path.dirname(notePath), { recursive: true });
+  await fs.promises.writeFile(notePath, "# Viewer Audit\n\nExternal ingest searchable marker.\n", "utf-8");
+
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    await fs.promises.mkdir(workspaceRoot, { recursive: true });
+    registerGlobalMemoryManager(memoryManager);
+
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-external-ingest-preview",
+      method: "memory.tree.report.external_ingest.preview",
+      params: {
+        configuredSources: [
+          {
+            label: "Obsidian Vault",
+            sourceClass: "curated",
+            scope: "private",
+            rootPath: externalDir,
+            fileExtensions: [".md"],
+          },
+        ],
+      },
+    }, { stateDir });
+    expect(previewRes).toBeTruthy();
+    if (!previewRes || !previewRes.ok) {
+      throw new Error("expected successful memory.tree.report.external_ingest.preview response");
+    }
+    expect(previewRes.payload?.report).toMatchObject({
+      adapter: "obsidian_markdown_directory_v1",
+      sourceId: "configured:obsidian-vault:1",
+      totalFiles: 1,
+      eligibleFiles: 1,
+    });
+    expect(previewRes.payload?.record).toMatchObject({
+      reportType: "external_ingest_preview",
+      status: "ready",
+    });
+
+    const reportId = String((previewRes.payload?.record as Record<string, unknown>)?.id || "");
+    expect(reportId).toBeTruthy();
+
+    const reviewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-external-ingest-review",
+      method: "memory.tree.report.review",
+      params: {
+        reportId,
+        decision: "approved",
+      },
+    }, { stateDir });
+    expect(reviewRes).toBeTruthy();
+    if (!reviewRes || !reviewRes.ok) {
+      throw new Error("expected successful memory.tree.report.review response");
+    }
+    expect(reviewRes.payload?.report).toMatchObject({
+      id: reportId,
+      status: "approved",
+    });
+
+    const applyRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-external-ingest-apply",
+      method: "memory.tree.report.apply",
+      params: {
+        reportId,
+        confirmed: true,
+      },
+    }, { stateDir });
+    expect(applyRes).toBeTruthy();
+    if (!applyRes || !applyRes.ok) {
+      throw new Error("expected successful memory.tree.report.apply response");
+    }
+    expect(applyRes.payload?.report).toMatchObject({
+      id: reportId,
+      status: "applied",
+    });
+    expect(applyRes.payload?.result).toMatchObject({
+      updatedChunkCount: expect.any(Number),
+    });
+
+    const searchRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-external-ingest-search",
+      method: "memory.search",
+      params: {
+        query: "searchable marker",
+        includeContent: true,
+      },
+    }, { stateDir });
+    expect(searchRes).toBeTruthy();
+    if (!searchRes || !searchRes.ok) {
+      throw new Error("expected successful memory.search response after external ingest");
+    }
+    expect(searchRes.payload?.diagnostics).toMatchObject({
+      scopeMode: "unified",
+      returnedCount: expect.any(Number),
+      branches: [
+        expect.objectContaining({
+          surface: "private",
+          diagnostics: expect.objectContaining({
+            scoreSignalAppliedCount: expect.any(Number),
+            stages: expect.objectContaining({
+              returned: expect.objectContaining({
+                count: expect.any(Number),
+              }),
+            }),
+          }),
+        }),
+      ],
+    });
+    expect(searchRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourcePath: notePath,
+        metadata: expect.objectContaining({
+          memoryTree: expect.objectContaining({
+            externalSourceId: "configured:obsidian-vault:1",
+          }),
+        }),
+      }),
+    ]));
+
+    const sourceListRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-external-ingest-source-list",
+      method: "memory.tree.source.list",
+      params: {
+        limit: 20,
+        filter: {
+          ids: ["configured:obsidian-vault:1"],
+        },
+      },
+    }, { stateDir });
+    expect(sourceListRes).toBeTruthy();
+    if (!sourceListRes || !sourceListRes.ok) {
+      throw new Error("expected successful memory.tree.source.list response after external ingest");
+    }
+    expect(sourceListRes.payload?.items).toEqual([
+      expect.objectContaining({
+        id: "configured:obsidian-vault:1",
+        sourcePath: externalDir,
+      }),
+    ]);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("memory.tree source and score rebuild methods persist phase-1 registry data", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-phase1-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-phase1-workspace-"));
@@ -3110,6 +3440,324 @@ test("memory.tree report and node methods persist reports, export markdown, and 
         relation: "contains",
       }),
     ]);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.tree.node.search returns P13 topic nodes with chunk provenance", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-topic-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-topic-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "topic-node-low",
+      sourcePath: path.join(workspaceRoot, "viewer-audit-outline.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer-audit",
+      content: "viewer audit baseline notes",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "topic-node-high",
+      sourcePath: path.join(workspaceRoot, "viewer-audit-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer-audit",
+      content: "viewer audit final checklist",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "topic-node-other",
+      sourcePath: path.join(workspaceRoot, "release-gate.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "release-gate",
+      content: "release gate notes",
+    });
+
+    (memoryManager as any).store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:topic-node-low",
+        targetType: "chunk",
+        targetId: "topic-node-low",
+        scoreTotal: 0.2,
+        sourceWeightScore: 0.1,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+        createdAt: "2026-05-19T16:00:00.000Z",
+        updatedAt: "2026-05-19T16:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:topic-node-high",
+        targetType: "chunk",
+        targetId: "topic-node-high",
+        scoreTotal: 0.9,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+        createdAt: "2026-05-19T16:00:00.000Z",
+        updatedAt: "2026-05-19T16:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:topic-node-other",
+        targetType: "chunk",
+        targetId: "topic-node-other",
+        scoreTotal: 0.4,
+        sourceWeightScore: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+        createdAt: "2026-05-19T16:00:00.000Z",
+        updatedAt: "2026-05-19T16:00:00.000Z",
+      },
+    ]);
+    registerGlobalMemoryManager(memoryManager);
+
+    const rebuildRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-topic-node-rebuild",
+      method: "memory.tree.node.rebuild",
+      params: {
+        limit: 20,
+        kind: "topic",
+      },
+    }, { stateDir });
+    expect(rebuildRes).toBeTruthy();
+    if (!rebuildRes || !rebuildRes.ok) {
+      throw new Error("expected successful memory.tree.node.rebuild topic response");
+    }
+    expect(rebuildRes.payload?.result).toMatchObject({
+      kind: "topic",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+
+    const searchRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-topic-node-search",
+      method: "memory.tree.node.search",
+      params: {
+        query: "viewer audit",
+        limit: 5,
+        chunkLimitPerNode: 5,
+        filter: {
+          kind: "topic",
+        },
+      },
+    }, { stateDir });
+    expect(searchRes).toBeTruthy();
+    if (!searchRes || !searchRes.ok) {
+      throw new Error("expected successful memory.tree.node.search response");
+    }
+    const searchPayload = (searchRes.payload ?? {}) as Record<string, any>;
+    const searchItems = Array.isArray(searchPayload.items) ? searchPayload.items : [];
+    expect(searchItems).toHaveLength(1);
+    expect(searchItems[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "topic",
+        summaryVersion: "p13-topic-node-v1",
+        topicKey: "viewer-audit",
+        metadata: expect.objectContaining({
+          topic: "viewer-audit",
+          totalChunkCount: 2,
+        }),
+      }),
+      matchReasons: expect.arrayContaining(["标题", "topic"]),
+    });
+    const searchChunks = Array.isArray(searchItems[0]?.chunks) ? searchItems[0].chunks : [];
+    expect(searchChunks.map((item: Record<string, unknown>) => item.id)).toEqual([
+      "topic-node-high",
+      "topic-node-low",
+    ]);
+
+    const topicNodeId = String(searchItems[0]?.node?.id ?? "");
+    expect(topicNodeId.length).toBeGreaterThan(0);
+
+    const getRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-topic-node-get",
+      method: "memory.tree.node.get",
+      params: {
+        nodeId: topicNodeId,
+        chunkLimit: 5,
+      },
+    }, { stateDir });
+    expect(getRes).toBeTruthy();
+    if (!getRes || !getRes.ok) {
+      throw new Error("expected successful memory.tree.node.get topic response");
+    }
+    const getPayload = (getRes.payload ?? {}) as Record<string, any>;
+    expect(getPayload.node).toMatchObject({
+      id: topicNodeId,
+      summaryVersion: "p13-topic-node-v1",
+    });
+    const getEdges = Array.isArray(getPayload.edges) ? getPayload.edges : [];
+    expect(getEdges.map((item: Record<string, unknown>) => item.childId)).toEqual([
+      "topic-node-high",
+      "topic-node-low",
+    ]);
+    const getChunks = Array.isArray(getPayload.chunks) ? getPayload.chunks : [];
+    expect(getChunks.map((item: Record<string, unknown>) => item.id)).toEqual([
+      "topic-node-high",
+      "topic-node-low",
+    ]);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.tree.report.review and apply close the P14 dedup governance loop", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-report-apply-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-report-apply-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "p14-core-keep",
+      sourcePath: path.join(stateDir, "memory", "2026-05-19.md"),
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "governance duplicate payload\nline two",
+      visibility: "shared",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "p14-core-remove",
+      sourcePath: path.join(workspaceRoot, "duplicate.md"),
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "governance duplicate payload\r\nline two",
+      visibility: "private",
+    });
+
+    (memoryManager as any).store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p14-core-keep",
+        targetType: "chunk",
+        targetId: "p14-core-keep",
+        scoreTotal: 0.85,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+        createdAt: "2026-05-19T17:00:00.000Z",
+        updatedAt: "2026-05-19T17:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:p14-core-remove",
+        targetType: "chunk",
+        targetId: "p14-core-remove",
+        scoreTotal: 0.8,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+        createdAt: "2026-05-19T17:00:00.000Z",
+        updatedAt: "2026-05-19T17:00:00.000Z",
+      },
+    ]);
+    registerGlobalMemoryManager(memoryManager);
+
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-dedup-preview-p14",
+      method: "memory.tree.report.dedup.preview",
+      params: {
+        filter: { memoryType: "daily" },
+        maxGroups: 10,
+      },
+    }, { stateDir });
+    expect(previewRes).toBeTruthy();
+    if (!previewRes || !previewRes.ok) {
+      throw new Error("expected successful memory.tree.report.dedup.preview response");
+    }
+    const previewPayload = (previewRes.payload ?? {}) as Record<string, any>;
+    const previewRecord = (previewPayload.record ?? {}) as Record<string, any>;
+    const reportId = String(previewRecord.id ?? "");
+    expect(reportId.length).toBeGreaterThan(0);
+
+    const reviewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-review-p14",
+      method: "memory.tree.report.review",
+      params: {
+        reportId,
+        decision: "approved",
+        reviewedBy: "tester",
+        note: "approve metadata-only governance apply",
+      },
+    }, { stateDir });
+    expect(reviewRes).toBeTruthy();
+    if (!reviewRes || !reviewRes.ok) {
+      throw new Error(`expected successful memory.tree.report.review response: ${JSON.stringify(reviewRes)}`);
+    }
+    const reviewPayload = (reviewRes.payload ?? {}) as Record<string, any>;
+    expect(reviewPayload.report).toMatchObject({
+      id: reportId,
+      status: "approved",
+    });
+
+    const blockedApplyRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-apply-blocked-p14",
+      method: "memory.tree.report.apply",
+      params: {
+        reportId,
+      },
+    }, { stateDir });
+    expect(blockedApplyRes).toBeTruthy();
+    if (!blockedApplyRes || blockedApplyRes.ok) {
+      throw new Error("expected confirmation_required memory.tree.report.apply response");
+    }
+    expect(blockedApplyRes.error.code).toBe("confirmation_required");
+
+    const applyRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-report-apply-p14",
+      method: "memory.tree.report.apply",
+      params: {
+        reportId,
+        confirmed: true,
+        appliedBy: "tester",
+        note: "apply metadata and score only",
+      },
+    }, { stateDir });
+    expect(applyRes).toBeTruthy();
+    if (!applyRes || !applyRes.ok) {
+      throw new Error(`expected successful memory.tree.report.apply response: ${JSON.stringify(applyRes)}`);
+    }
+    const applyPayload = (applyRes.payload ?? {}) as Record<string, any>;
+    expect(applyPayload.report).toMatchObject({
+      id: reportId,
+      status: "applied",
+    });
+    expect(applyPayload.result).toMatchObject({
+      updatedChunkCount: 1,
+      updatedScoreCount: 1,
+      skippedChunkIds: [],
+    });
+
+    const removedChunk = memoryManager.getMemory("p14-core-remove");
+    expect(removedChunk?.metadata).toMatchObject({
+      memoryTree: {
+        governance: {
+          archived: true,
+          archivedByReportId: reportId,
+          keepChunkId: "p14-core-keep",
+        },
+      },
+    });
+    const scores = memoryManager.listMemoryTreeScores(10, {
+      targetType: "chunk",
+    });
+    expect(scores.find((item) => item.targetId === "p14-core-remove")?.scoreTotal).toBe(0.05);
   } finally {
     memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
@@ -3550,6 +4198,8 @@ test("memory viewer rpc returns task and memory data", async () => {
     messages: [{ type: "usage", inputTokens: 12, outputTokens: 8 }],
   });
   expect(completedTaskId).toBeTruthy();
+  await memoryManager.rebuildMemoryTreeSources();
+  memoryManager.rebuildMemoryTreeScores();
   const methodCandidate = memoryManager.promoteTaskToMethodCandidate(completedTaskId!);
   expect(methodCandidate?.candidate.id).toBeTruthy();
   const acceptedMethodCandidate = memoryManager.acceptExperienceCandidate(methodCandidate!.candidate.id);
@@ -3672,11 +4322,16 @@ test("memory viewer rpc returns task and memory data", async () => {
     expect(memorySearchRes.ok).toBe(true);
     expect(Array.isArray(memorySearchRes.payload.items)).toBe(true);
     expect(memorySearchRes.payload.items.every((item: any) => item.content === undefined)).toBe(true);
+    expect(memorySearchRes.payload.items.some((item: any) => item?.metadata?.memoryTree?.scoreVersion === "v1_rule_only")).toBe(true);
     expect(memorySearchTopicRes.ok).toBe(true);
     expect(memorySearchTopicRes.payload.items.length).toBeGreaterThan(0);
     expect(memorySearchTopicRes.payload.items.every((item: any) => item.sourcePath === "memory/topic-viewer.md")).toBe(true);
     expect(memorySearchTopicRes.payload.items[0].content).toBeUndefined();
     expect(memorySearchTopicRes.payload.items[0].sourceView.scope).toBe("shared");
+    expect(memorySearchTopicRes.payload.items[0].metadata?.memoryTree).toMatchObject({
+      scoreVersion: "v1_rule_only",
+      scoreTotal: expect.any(Number),
+    });
     expect(memoryRecentCategoryRes.ok).toBe(true);
     expect(memoryRecentCategoryRes.payload.items.length).toBeGreaterThan(0);
     expect(memoryRecentCategoryRes.payload.items[0].category).toBe("decision");

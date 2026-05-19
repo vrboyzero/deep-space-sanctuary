@@ -2,7 +2,7 @@ import type {
   MemorySourceInventoryClass,
   MemorySourceInventoryScope,
 } from "./memory-source-inventory.js";
-import type { MemoryVisibility } from "./types.js";
+import type { MemorySearchResult, MemoryVisibility } from "./types.js";
 
 export type MemoryTreeScope = MemorySourceInventoryScope;
 export type MemoryTreeTargetType = "chunk" | "node";
@@ -92,11 +92,18 @@ export type MemoryTreeScoreRebuildResult = {
 export type MemoryTreeReportType =
   | "inventory"
   | "dedup_preview"
+  | "external_ingest_preview"
   | "compression_preview"
   | "tree_build_preview";
 
 export type MemoryTreeReportStatus =
   | "ready"
+  | "approved"
+  | "rejected"
+  | "superseded"
+  | "applied";
+
+export type MemoryTreeReportReviewDecision =
   | "approved"
   | "rejected"
   | "superseded";
@@ -186,9 +193,47 @@ export type MemoryTreeNodeRebuildResult = {
   kind: MemoryTreeNodeKind;
 };
 
+export type MemoryTreeNodeSearchResult = {
+  node: MemoryTreeNodeRecord;
+  score: number;
+  matchReasons: string[];
+  edges: MemoryTreeEdgeRecord[];
+  chunks: MemorySearchResult[];
+};
+
 export type MemoryTreeReportPersistResult = {
   reportId: string;
   reportType: MemoryTreeReportType;
   status: MemoryTreeReportStatus;
   persistedAt: string;
+};
+
+export type MemoryTreeReportReviewResult = {
+  report: MemoryTreeReportRecord;
+  previousStatus: MemoryTreeReportStatus;
+  decision: MemoryTreeReportReviewDecision;
+  reviewedAt: string;
+};
+
+export type MemoryTreeReportApplyAction = {
+  kind?: "dedup_archive" | "external_ingest";
+  chunkId?: string;
+  keepChunkId?: string;
+  normalizedHash?: string;
+  previousScoreTotal?: number;
+  nextScoreTotal?: number;
+  archived?: boolean;
+  sourcePath?: string;
+  importedChunkCount?: number;
+  skipped?: boolean;
+  reason?: string;
+};
+
+export type MemoryTreeReportApplyResult = {
+  report: MemoryTreeReportRecord;
+  appliedAt: string;
+  updatedChunkCount: number;
+  updatedScoreCount: number;
+  skippedChunkIds: string[];
+  actions: MemoryTreeReportApplyAction[];
 };

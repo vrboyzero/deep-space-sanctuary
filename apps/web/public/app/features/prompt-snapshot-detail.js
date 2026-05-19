@@ -52,6 +52,54 @@ function normalizeInlineString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
+function formatKeyCountSummary(value) {
+  const entries = Object.entries(value || {}).filter(([, count]) => Number.isFinite(count) && Number(count) > 0);
+  if (!entries.length) return "-";
+  return entries.map(([key, count]) => `${key}:${count}`).join(", ");
+}
+
+function collectPromptContextInjectionSummaries(summary) {
+  const contextInjection = summary?.contextInjection && typeof summary.contextInjection === "object"
+    ? summary.contextInjection
+    : null;
+  if (!contextInjection) {
+    return {
+      blockTags: [],
+      autoRecall: [],
+    };
+  }
+  const blockTags = normalizeStringArray(contextInjection.blockTags);
+  const autoRecall = [];
+  if (contextInjection.autoRecall && typeof contextInjection.autoRecall === "object") {
+    const keptCount = typeof contextInjection.autoRecall.keptCount === "number" && Number.isFinite(contextInjection.autoRecall.keptCount)
+      ? Math.max(0, Math.trunc(contextInjection.autoRecall.keptCount))
+      : 0;
+    const candidateCount = typeof contextInjection.autoRecall.candidateCount === "number" && Number.isFinite(contextInjection.autoRecall.candidateCount)
+      ? Math.max(0, Math.trunc(contextInjection.autoRecall.candidateCount))
+      : 0;
+    const filteredOutCount = typeof contextInjection.autoRecall.filteredOutCount === "number" && Number.isFinite(contextInjection.autoRecall.filteredOutCount)
+      ? Math.max(0, Math.trunc(contextInjection.autoRecall.filteredOutCount))
+      : 0;
+    autoRecall.push(`kept=${keptCount}/${candidateCount}`);
+    autoRecall.push(`filtered=${filteredOutCount}`);
+    if (typeof contextInjection.autoRecall.minScore === "number" && Number.isFinite(contextInjection.autoRecall.minScore)) {
+      autoRecall.push(`minScore=${contextInjection.autoRecall.minScore}`);
+    }
+    const topHitIds = normalizeStringArray(contextInjection.autoRecall.topHitIds);
+    if (topHitIds.length) {
+      autoRecall.push(`topHits=${topHitIds.join(", ")}`);
+    }
+    const sourceMix = formatKeyCountSummary(contextInjection.autoRecall.sourceClassMix);
+    if (sourceMix !== "-") {
+      autoRecall.push(`sourceMix=${sourceMix}`);
+    }
+  }
+  return {
+    blockTags,
+    autoRecall,
+  };
+}
+
 function collectActiveSectionIds(snapshotArtifact) {
   const blocks = Array.isArray(snapshotArtifact?.providerNativeSystemBlocks)
     ? snapshotArtifact.providerNativeSystemBlocks
@@ -282,6 +330,7 @@ export function renderPromptSnapshotDetail(view, helpers) {
   const followUpStrategySummaries = collectFollowUpStrategySummaries(artifact);
   const teamCoordinationSummaries = collectTeamCoordinationSummaries(artifact);
   const identityAuthoritySummaries = collectIdentityAuthoritySummaries(artifact);
+  const contextInjectionSummaries = collectPromptContextInjectionSummaries(summary);
   const messagePreviews = messages.slice(0, 3).map((message, index) => ({
     index,
     role: typeof message?.role === "string" ? message.role : "unknown",
@@ -300,6 +349,13 @@ export function renderPromptSnapshotDetail(view, helpers) {
         ${renderDetailCard(t("subtasks.detailPromptSnapshotDeltas", {}, "Prompt Deltas"), formatNumber(summary.deltaCount), escapeHtml)}
         ${renderDetailCard(t("subtasks.detailPromptSnapshotBlocks", {}, "Provider Blocks"), formatNumber(summary.providerNativeSystemBlockCount), escapeHtml)}
         ${renderDetailCard(t("subtasks.detailPromptSnapshotTokens", {}, "Estimated Tokens"), formatNumber(summary.tokenBreakdown?.systemPromptEstimatedTokens), escapeHtml)}
+        ${renderDetailCard(t("subtasks.detailPromptSnapshotPrependChars", {}, "Prepend Context Chars"), formatNumber(summary.contextInjection?.prependContextChars), escapeHtml)}
+        ${renderDetailCard(t("subtasks.detailPromptSnapshotInjectionBlocks", {}, "Context Injection Blocks"), formatNumber(summary.contextInjection?.totalBlockCount), escapeHtml)}
+        ${renderDetailCard(
+          t("subtasks.detailPromptSnapshotAutoRecall", {}, "Auto Recall"),
+          `${formatNumber(summary.contextInjection?.autoRecall?.keptCount)}/${formatNumber(summary.contextInjection?.autoRecall?.candidateCount)}`,
+          escapeHtml,
+        )}
       </div>
       ${residentStateBindingLines.length ? `
         <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailPromptSnapshotStateBinding", {}, "State Binding"))}</strong></div>
@@ -309,6 +365,16 @@ export function renderPromptSnapshotDetail(view, helpers) {
         <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailPromptSnapshotExplainability", {}, "Launch Explainability"))}</strong></div>
         ${renderExplainabilityBlock(launchExplainabilityLines, escapeHtml)}
       ` : ""}
+      ${renderSummaryListBlock(
+        t("subtasks.detailPromptSnapshotContextInjectionTags", {}, "Context Injection Block Tags"),
+        contextInjectionSummaries.blockTags,
+        escapeHtml,
+      )}
+      ${renderSummaryListBlock(
+        t("subtasks.detailPromptSnapshotAutoRecallSummary", {}, "Auto Recall Summary"),
+        contextInjectionSummaries.autoRecall,
+        escapeHtml,
+      )}
       ${renderSummaryListBlock(
         t("subtasks.detailPromptSnapshotActiveSections", {}, "Active Prompt Sections"),
         activeSectionIds,

@@ -43,6 +43,7 @@ import type {
   MemoryTreeChunkScoreInput,
   MemoryTreeEdgeListFilter,
   MemoryTreeEdgeRecord,
+  MemoryTreeNodeKind,
   MemoryTreeNodeListFilter,
   MemoryTreeNodeRecord,
   MemoryTreeReportListFilter,
@@ -841,7 +842,7 @@ export class MemoryStore {
   getChunk(chunkId: string): MemorySearchResult | null {
     this.ensureOpen();
     const stmt = this.db.prepare(`
-      SELECT id, source_path, source_type, memory_type, visibility, content, metadata, start_line, end_line, summary, category
+      SELECT id, source_path, source_type, memory_type, visibility, content, metadata, start_line, end_line, summary, category, updated_at
       FROM chunks
       WHERE id = ?
       LIMIT 1
@@ -862,6 +863,7 @@ export class MemoryStore {
       metadata: safeParseJson(row.metadata),
       startLine: row.start_line ?? undefined,
       endLine: row.end_line ?? undefined,
+      updatedAt: optionalString(row.updated_at),
     };
   }
 
@@ -875,6 +877,25 @@ export class MemoryStore {
     const result = stmt.run(visibility, new Date().toISOString(), chunkId);
     if (Number(result.changes) > 0) {
       this.setChunkVisibility(chunkId, visibility);
+      this.incrementNumericMeta(MEMORY_CHANGE_SEQ_META_KEY);
+      return true;
+    }
+    return false;
+  }
+
+  updateChunkMetadata(chunkId: string, metadata: Record<string, unknown>): boolean {
+    this.ensureOpen();
+    const stmt = this.db.prepare(`
+      UPDATE chunks
+      SET metadata = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    const result = stmt.run(
+      JSON.stringify(metadata ?? {}),
+      new Date().toISOString(),
+      chunkId,
+    );
+    if (Number(result.changes) > 0) {
       this.incrementNumericMeta(MEMORY_CHANGE_SEQ_META_KEY);
       return true;
     }
@@ -1394,6 +1415,27 @@ export class MemoryStore {
     return rows.map(rowToMemoryScoreRecord);
   }
 
+  listMemoryScoresByTargetIds(targetType: MemoryTreeTargetType, targetIds: string[]): MemoryTreeScoreRecord[] {
+    this.ensureOpen();
+    const normalizedIds = [...new Set(
+      (Array.isArray(targetIds) ? targetIds : [])
+        .map((item) => String(item ?? "").trim())
+        .filter((item) => item.length > 0),
+    )];
+    if (normalizedIds.length <= 0) {
+      return [];
+    }
+    const placeholders = normalizedIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM memory_scores
+      WHERE target_type = ?
+        AND target_id IN (${placeholders})
+      ORDER BY score_total DESC, updated_at DESC, id ASC
+    `).all(targetType, ...normalizedIds) as Record<string, unknown>[];
+    return rows.map(rowToMemoryScoreRecord);
+  }
+
   upsertMemoryCleanReports(records: MemoryTreeReportRecord[]): void {
     this.ensureOpen();
     if (!Array.isArray(records) || records.length <= 0) {
@@ -1541,6 +1583,31 @@ export class MemoryStore {
     return row ? rowToMemoryNodeRecord(row) : null;
   }
 
+  deleteMemoryTreeNodesByKind(kind: MemoryTreeNodeKind): void {
+    this.ensureOpen();
+    const nodeIds = this.db.prepare(`
+      SELECT id
+      FROM memory_tree_nodes
+      WHERE kind = ?
+    `).all(kind) as Array<{ id: string }>;
+    if (nodeIds.length <= 0) {
+      return;
+    }
+    const placeholders = nodeIds.map(() => "?").join(", ");
+    const ids = nodeIds.map((item) => item.id);
+    const tx = this.db.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM memory_tree_edges
+        WHERE parent_node_id IN (${placeholders})
+      `).run(...ids);
+      this.db.prepare(`
+        DELETE FROM memory_tree_nodes
+        WHERE id IN (${placeholders})
+      `).run(...ids);
+    });
+    tx();
+  }
+
   upsertMemoryTreeEdges(records: MemoryTreeEdgeRecord[]): void {
     this.ensureOpen();
     if (!Array.isArray(records) || records.length <= 0) {
@@ -1621,6 +1688,51 @@ export class MemoryStore {
     return rows.map((row) => ({
       sourcePath: String(row.source_path ?? ""),
       sourceType: String(row.source_type ?? ""),
+      agentId: optionalString(row.agent_id),
+      scope: String(row.scope ?? "private") === "shared" ? "shared" : "private",
+      itemCount: optionalNumber(row.item_count) ?? 0,
+      timeFrom: optionalString(row.time_from),
+      timeTo: optionalString(row.time_to),
+      memoryTypes: String(row.memory_types ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    }));
+  }
+
+  listChunkTopicSummaries(): Array<{
+    topic: string;
+    agentId?: string;
+    scope: "private" | "shared";
+    itemCount: number;
+    timeFrom?: string;
+    timeTo?: string;
+    memoryTypes: string[];
+  }> {
+    this.ensureOpen();
+    const rows = this.db.prepare(`
+      SELECT
+        topic,
+        agent_id,
+        CASE
+          WHEN visibility = 'shared' THEN 'shared'
+          ELSE 'private'
+        END AS scope,
+        COUNT(*) AS item_count,
+        MIN(created_at) AS time_from,
+        MAX(updated_at) AS time_to,
+        GROUP_CONCAT(DISTINCT memory_type) AS memory_types
+      FROM chunks
+      WHERE topic IS NOT NULL
+        AND TRIM(topic) <> ''
+      GROUP BY topic, agent_id, CASE
+        WHEN visibility = 'shared' THEN 'shared'
+        ELSE 'private'
+      END
+      ORDER BY MAX(updated_at) DESC, topic ASC
+    `).all() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      topic: String(row.topic ?? ""),
       agentId: optionalString(row.agent_id),
       scope: String(row.scope ?? "private") === "shared" ? "shared" : "private",
       itemCount: optionalNumber(row.item_count) ?? 0,
@@ -2211,6 +2323,47 @@ export class MemoryStore {
     `);
     const rows = stmt.all(sourcePath, maxPerSource) as any[];
     return rows.map(row => rowToSearchResult(row, 0));
+  }
+
+  getChunksByTopic(
+    topic: string,
+    options: {
+      maxPerTopic?: number;
+      agentId?: string | null;
+      scope?: "private" | "shared";
+    } = {},
+  ): MemorySearchResult[] {
+    this.ensureOpen();
+    const normalizedTopic = String(topic ?? "").trim();
+    if (!normalizedTopic) {
+      return [];
+    }
+    const conditions = ["topic = ?"];
+    const params: unknown[] = [normalizedTopic];
+    if (options.agentId === null) {
+      conditions.push("agent_id IS NULL");
+    } else if (typeof options.agentId === "string" && options.agentId.trim()) {
+      conditions.push("agent_id = ?");
+      params.push(options.agentId.trim());
+    }
+    if (options.scope === "shared") {
+      conditions.push("visibility = 'shared'");
+    } else if (options.scope === "private") {
+      conditions.push("visibility <> 'shared'");
+    }
+    const maxPerTopic = typeof options.maxPerTopic === "number" && Number.isFinite(options.maxPerTopic)
+      ? Math.max(1, Math.floor(options.maxPerTopic))
+      : 20;
+    const stmt = this.db.prepare(`
+      SELECT id, source_path, source_type, memory_type, visibility, start_line, end_line,
+             content, metadata, channel, topic, ts_date, summary, category, updated_at
+      FROM chunks
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY updated_at DESC, rowid DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(...params, maxPerTopic) as any[];
+    return rows.map((row) => rowToSearchResult(row, 0));
   }
 
   close(): void {

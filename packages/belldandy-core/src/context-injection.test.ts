@@ -471,6 +471,128 @@ describe("buildContextInjectionPrelude", () => {
       await fs.rm(rootDir, { recursive: true, force: true }).catch(() => {});
     }
   });
+
+  it("uses real score-aware memory search ordering for auto-recall injection", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-context-auto-recall-"));
+    const stateDir = path.join(rootDir, "state");
+    const workspaceRoot = path.join(rootDir, "workspace");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.mkdir(workspaceRoot, { recursive: true });
+
+    const memoryManager = createRealMemoryManager({
+      workspaceRoot,
+      stateDir,
+    });
+
+    try {
+      memoryManager.upsertMemoryChunk({
+        id: "auto-recall-derived",
+        sourcePath: "memory/derived-summary.md",
+        sourceType: "manual",
+        memoryType: "other",
+        content: "auto recall smoke marker derived summary for gateway retry rollout",
+      });
+      memoryManager.upsertMemoryChunk({
+        id: "auto-recall-curated",
+        sourcePath: "MEMORY.md",
+        sourceType: "manual",
+        memoryType: "other",
+        content: "auto recall smoke marker curated memory for gateway retry rollout",
+      });
+      (memoryManager as any).store.upsertMemoryScores([
+        {
+          id: "score:v1_rule_only:chunk:auto-recall-derived",
+          targetType: "chunk",
+          targetId: "auto-recall-derived",
+          sourceId: "memory:derived",
+          scoreTotal: 0,
+          scoreVersion: "v1_rule_only",
+          rationale: { sourceClass: "derived" },
+        },
+        {
+          id: "score:v1_rule_only:chunk:auto-recall-curated",
+          targetType: "chunk",
+          targetId: "auto-recall-curated",
+          sourceId: "memory:curated",
+          scoreTotal: 1,
+          scoreVersion: "v1_rule_only",
+          rationale: { sourceClass: "curated" },
+        },
+      ]);
+
+      const searchResults = await memoryManager.search("auto recall smoke marker gateway retry rollout", {
+        limit: 5,
+        retrievalMode: "explicit",
+        filter: { agentId: null },
+      });
+
+      expect(searchResults[0]?.id).toBe("auto-recall-curated");
+      expect(searchResults[0]?.metadata?.memoryTree).toMatchObject({
+        scoreVersion: "v1_rule_only",
+        sourceClass: "curated",
+      });
+      expect(searchResults.some((item) => item.id === "auto-recall-derived")).toBe(true);
+
+      const result = await buildContextInjectionPrelude(
+        memoryManager,
+        {
+          prompt: "auto recall smoke marker gateway retry rollout",
+          userInput: "auto recall smoke marker gateway retry rollout",
+          messages: [],
+        },
+        {
+          agentId: "default",
+          sessionKey: "conv-auto-recall-smoke",
+        },
+        {
+          contextInjectionEnabled: false,
+          contextInjectionLimit: 0,
+          contextInjectionIncludeSession: false,
+          contextInjectionTaskLimit: 0,
+          contextInjectionAllowedCategories: ["decision", "fact"],
+          autoRecallEnabled: true,
+          autoRecallLimit: 5,
+          autoRecallMinScore: 0.05,
+          autoRecallTimeoutMs: 50,
+        },
+      );
+
+      expect(result).toBeTruthy();
+      expect(result?.prependContext).toContain("<auto-recall");
+      expect(result?.prependContext).toContain("auto recall smoke marker curated memory");
+      expect(result?.prependContext).toContain("auto recall smoke marker derived summary");
+      expect(result?.deltas?.map((delta) => delta.id)).toContain("auto-recall");
+      const autoRecallDelta = result?.deltas?.find((delta) => delta.id === "auto-recall");
+      expect(autoRecallDelta?.metadata).toMatchObject({
+        blockTag: "auto-recall",
+        observability: {
+          candidateCount: 2,
+          keptCount: 2,
+          filteredOutCount: 0,
+          minScore: 0.05,
+          sourceClassMix: {
+            curated: 1,
+            derived: 1,
+          },
+          topHitIds: ["auto-recall-curated", "auto-recall-derived"],
+          searchDiagnostics: {
+            scoreSignalAppliedCount: 2,
+            stages: {
+              returned: {
+                count: 2,
+              },
+            },
+          },
+        },
+      });
+      expect(result?.prependContext?.indexOf("auto recall smoke marker curated memory")).toBeLessThan(
+        result?.prependContext?.indexOf("auto recall smoke marker derived summary") ?? Number.POSITIVE_INFINITY,
+      );
+    } finally {
+      memoryManager.close();
+      await fs.rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });
 
 function createRealMemoryManager(options: ConstructorParameters<typeof MemoryManager>[0]): MemoryManager {

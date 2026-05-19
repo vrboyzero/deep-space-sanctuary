@@ -736,6 +736,44 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
     }));
   }
 
+  function summarizeContextInjectionMetadata(
+    deltas: Array<AgentPromptDelta & PromptTextMetrics>,
+    prependContextChars: number,
+  ): Record<string, unknown> | undefined {
+    const contextDeltas = deltas.filter((delta) => delta.source === "context-injection");
+    if (contextDeltas.length === 0 && prependContextChars <= 0) {
+      return undefined;
+    }
+    const blockTags: string[] = [];
+    const blockLineCounts: Record<string, number> = {};
+    let autoRecallObservability: Record<string, unknown> | undefined;
+
+    for (const delta of contextDeltas) {
+      const metadata = delta.metadata && typeof delta.metadata === "object" ? delta.metadata as Record<string, unknown> : undefined;
+      const blockTag = typeof metadata?.blockTag === "string" && metadata.blockTag.trim()
+        ? metadata.blockTag.trim()
+        : "";
+      if (blockTag) {
+        blockTags.push(blockTag);
+        const lineCount = typeof metadata?.lineCount === "number" && Number.isFinite(metadata.lineCount)
+          ? Math.max(0, Math.trunc(metadata.lineCount))
+          : 0;
+        blockLineCounts[blockTag] = (blockLineCounts[blockTag] ?? 0) + lineCount;
+      }
+      if (blockTag === "auto-recall" && metadata?.observability && typeof metadata.observability === "object") {
+        autoRecallObservability = metadata.observability as Record<string, unknown>;
+      }
+    }
+
+    return {
+      prependContextChars,
+      totalBlockCount: contextDeltas.length,
+      blockTags: [...new Set(blockTags)],
+      blockLineCounts,
+      ...(autoRecallObservability ? { autoRecall: autoRecallObservability } : {}),
+    };
+  }
+
   function buildRunPromptInspection(snapshot: AgentPromptSnapshot, profile?: AgentProfile): {
     scope: "run";
     agentId: string;
@@ -950,6 +988,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       previousExists: Boolean(previousSnapshot),
     });
     const residentPromptMetadata = readResidentPromptMetadata(isRecord(snapshot.inputMeta) ? snapshot.inputMeta : undefined);
+    const contextInjection = summarizeContextInjectionMetadata(deltas, snapshot.prependContext?.length ?? 0);
     const snapshotTruncationReason = isRecord(snapshot.inputMeta)
       ? readPromptTruncationReasonFromMetadata(snapshot.inputMeta as Record<string, unknown>)
       : undefined;
@@ -1014,6 +1053,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
         prefixWarmState,
         warmupCoordination,
         cacheFamilyAffinity,
+        ...(contextInjection ? { contextInjection } : {}),
         tokenBreakdown,
         ...(snapshotTruncationReason ? { truncationReason: snapshotTruncationReason } : {}),
         inputMeta: snapshot.inputMeta ? { ...snapshot.inputMeta } : undefined,

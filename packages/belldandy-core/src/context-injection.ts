@@ -1,6 +1,6 @@
 import type { AgentPromptDelta, BeforeAgentStartEvent, BeforeAgentStartResult, HookAgentContext } from "@belldandy/agent";
 import { createTaskWorkSurface } from "@belldandy/memory";
-import type { MemoryCategory, TaskWorkShortcutItem } from "@belldandy/memory";
+import type { MemoryCategory, MemorySearchDiagnostics, TaskWorkShortcutItem } from "@belldandy/memory";
 
 import { createContextInjectionDeduper } from "./context-injection-dedupe.js";
 
@@ -50,6 +50,12 @@ type AutoRecallMemoryLike = {
   score: number;
   summary?: string;
   updatedAt?: string;
+};
+
+type AutoRecallSearchExecution = {
+  items: AutoRecallMemoryLike[];
+  diagnostics?: MemorySearchDiagnostics;
+  timedOut?: boolean;
 };
 
 function pad2(value: number): string {
@@ -161,6 +167,17 @@ export type ContextInjectionMemoryProvider = {
       retrievalMode: "implicit";
     },
   ): Promise<AutoRecallMemoryLike[]>;
+  searchWithDiagnostics?(
+    query: string,
+    input: {
+      limit: number;
+      filter: { agentId?: string | null };
+      retrievalMode: "implicit";
+    },
+  ): Promise<{
+    items: AutoRecallMemoryLike[];
+    diagnostics: MemorySearchDiagnostics;
+  }>;
 };
 
 export type ContextInjectionConfig = {
@@ -313,15 +330,24 @@ export async function buildContextInjectionPrelude(
 
   if (config.autoRecallEnabled) {
     if (queryText) {
-      const results = await Promise.race([
-        memoryManager.search(queryText, {
-          limit: config.autoRecallLimit,
-          filter: implicitFilter,
-          retrievalMode: "implicit",
-        }),
-        new Promise<AutoRecallMemoryLike[]>((resolve) => setTimeout(() => resolve([]), config.autoRecallTimeoutMs ?? 2000)),
+      const searchExecution: AutoRecallSearchExecution = await Promise.race([
+        memoryManager.searchWithDiagnostics
+          ? memoryManager.searchWithDiagnostics(queryText, {
+            limit: config.autoRecallLimit,
+            filter: implicitFilter,
+            retrievalMode: "implicit",
+          })
+          : memoryManager.search(queryText, {
+            limit: config.autoRecallLimit,
+            filter: implicitFilter,
+            retrievalMode: "implicit",
+          }).then((items) => ({ items, diagnostics: undefined })),
+        new Promise<AutoRecallSearchExecution>((resolve) => setTimeout(
+          () => resolve({ items: [], timedOut: true }),
+          config.autoRecallTimeoutMs ?? 2000,
+        )),
       ]);
-
+      const results = Array.isArray(searchExecution?.items) ? searchExecution.items : [];
       const filtered = results.filter((item) => item.score >= config.autoRecallMinScore);
       if (filtered.length > 0) {
         const latestUpdatedAt = filtered.reduce((latest, item) => {
@@ -349,11 +375,26 @@ export async function buildContextInjectionPrelude(
         });
         if (lines.length > 0) {
           const block = `<auto-recall hint="以下是与用户当前输入语义相关的历史记忆，仅供参考。无需再次调用 memory_search 除非需要更深入搜索。">\n${lines.join("\n")}\n</auto-recall>`;
+          const searchDiagnostics = searchExecution?.diagnostics;
+          const sourceClassMix = buildAutoRecallSourceClassMix(filtered);
           blocks.push(block);
           deltas.push(createContextPreludeDelta({
             id: "auto-recall",
             text: block,
-            metadata: { blockTag: "auto-recall", lineCount: lines.length },
+            metadata: {
+              blockTag: "auto-recall",
+              lineCount: lines.length,
+              observability: {
+                timedOut: searchExecution?.timedOut === true,
+                candidateCount: results.length,
+                keptCount: filtered.length,
+                filteredOutCount: Math.max(0, results.length - filtered.length),
+                minScore: config.autoRecallMinScore,
+                sourceClassMix,
+                topHitIds: filtered.slice(0, 3).map((item) => item.id).filter(Boolean),
+                ...(searchDiagnostics ? { searchDiagnostics } : {}),
+              },
+            },
           }));
         }
       }
@@ -363,6 +404,29 @@ export async function buildContextInjectionPrelude(
   return blocks.length > 0
     ? { prependContext: blocks.join("\n\n"), deltas }
     : undefined;
+}
+
+function buildAutoRecallSourceClassMix(items: AutoRecallMemoryLike[]): Record<string, number> {
+  const mix: Record<string, number> = {};
+  for (const item of items) {
+    const sourceClass = readAutoRecallSourceClass(item);
+    mix[sourceClass] = (mix[sourceClass] ?? 0) + 1;
+  }
+  return mix;
+}
+
+function readAutoRecallSourceClass(item: AutoRecallMemoryLike): string {
+  const metadata = item && typeof item === "object" && "metadata" in item
+    ? item.metadata
+    : undefined;
+  if (!metadata || typeof metadata !== "object") {
+    return "unknown";
+  }
+  const memoryTree = "memoryTree" in metadata && metadata.memoryTree && typeof metadata.memoryTree === "object"
+    ? metadata.memoryTree as { sourceClass?: unknown }
+    : undefined;
+  const sourceClass = typeof memoryTree?.sourceClass === "string" ? memoryTree.sourceClass.trim() : "";
+  return sourceClass || "unknown";
 }
 
 function buildWorkOverviewLines(

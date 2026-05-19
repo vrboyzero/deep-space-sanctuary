@@ -126,10 +126,16 @@ function createFakeModal() {
 }
 
 function createButton(textContent = "") {
+  const listeners = new Map();
   return {
     textContent,
     disabled: false,
-    addEventListener() {},
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    trigger(type) {
+      listeners.get(type)?.({ target: this });
+    },
   };
 }
 
@@ -245,6 +251,18 @@ function createSettingsRefs(overrides = {}) {
     cfgSubAgentTimeoutMs: overrides.cfgSubAgentTimeoutMs || createInput(""),
     cfgSubAgentMaxDepth: overrides.cfgSubAgentMaxDepth || createInput(""),
     cfgMemoryEnabled: overrides.cfgMemoryEnabled || createCheckbox(true),
+    refreshMemoryConfiguredSourcesBtn: overrides.refreshMemoryConfiguredSourcesBtn || createButton("刷新来源配置"),
+    previewMemoryInventoryBtn: overrides.previewMemoryInventoryBtn || createButton("预览 Inventory"),
+    previewMemoryExternalIngestBtn: overrides.previewMemoryExternalIngestBtn || createButton("预览 External Ingest"),
+    approveMemoryExternalIngestReportBtn: overrides.approveMemoryExternalIngestReportBtn || createButton("批准 Report"),
+    rejectMemoryExternalIngestReportBtn: overrides.rejectMemoryExternalIngestReportBtn || createButton("拒绝 Report"),
+    applyMemoryExternalIngestReportBtn: overrides.applyMemoryExternalIngestReportBtn || createButton("执行 Report"),
+    memoryConfiguredSourcesMeta: overrides.memoryConfiguredSourcesMeta || createDomNode(),
+    memoryConfiguredSourcesActionStatus: overrides.memoryConfiguredSourcesActionStatus || createDomNode(),
+    cfgMemoryConfiguredSourceId: overrides.cfgMemoryConfiguredSourceId || createInput(""),
+    cfgMemoryConfiguredSourcesContent: overrides.cfgMemoryConfiguredSourcesContent || createInput(""),
+    cfgMemoryConfiguredSourcesPreviewContent: overrides.cfgMemoryConfiguredSourcesPreviewContent || createInput(""),
+    cfgMemoryConfiguredSourcesActionNote: overrides.cfgMemoryConfiguredSourcesActionNote || createInput(""),
     cfgCronEnabled: overrides.cfgCronEnabled || createCheckbox(false),
     cfgEmbeddingEnabled: overrides.cfgEmbeddingEnabled || createCheckbox(false),
     cfgEmbeddingProvider: overrides.cfgEmbeddingProvider || createInput("openai"),
@@ -1030,6 +1048,198 @@ describe("settings controller", () => {
     expect(refs.settingsTabButtons[0].classList.contains("active")).toBe(true);
     expect(refs.settingsTabPanels[0].hidden).toBe(false);
     expect(refs.settingsTabPanels[3].hidden).toBe(true);
+  });
+
+  it("loads persisted configured memory sources into the memory settings surface", async () => {
+    const { controller, refs } = createController({
+      loadServerConfig: vi.fn().mockResolvedValue({}),
+      sendReq: vi.fn(async (frame) => {
+        switch (frame.method) {
+          case "models.config.get":
+            return { ok: true, payload: { path: "models.json", content: '{\n  "fallbacks": []\n}\n' } };
+          case "memory.configured_sources.get":
+            return {
+              ok: true,
+              payload: {
+                path: "E:/state/memory-configured-sources.json",
+                configuredSources: [
+                  {
+                    id: "configured:obsidian-vault:1",
+                    label: "Obsidian Vault",
+                    sourceClass: "curated",
+                    scope: "private",
+                    rootPath: "C:/Vault",
+                    fileExtensions: [".md"],
+                  },
+                ],
+              },
+            };
+          case "channel.security.get":
+            return { ok: true, payload: { path: "channel-security.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+          case "channel.reply_chunking.get":
+            return { ok: true, payload: { path: "channel-reply-chunking.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+          case "channel.security.pending.list":
+            return { ok: true, payload: { pending: [] } };
+          case "system.doctor":
+            return { ok: true, payload: { surface: frame.params?.surface || "summary", checks: [] } };
+          default:
+            return { ok: true, payload: {} };
+        }
+      }),
+    });
+
+    await controller.toggle(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(refs.cfgMemoryConfiguredSourcesContent.value).toContain('"id": "configured:obsidian-vault:1"');
+    expect(refs.memoryConfiguredSourcesMeta.textContent).toContain("memory-configured-sources.json");
+  });
+
+  it("saves configured memory sources through settings without forcing restart", async () => {
+    const refs = createSettingsRefs({
+      cfgMemoryConfiguredSourcesContent: createInput('[\n  {\n    "id": "configured:obsidian-vault:1",\n    "label": "Obsidian Vault",\n    "sourceClass": "curated",\n    "scope": "private",\n    "rootPath": "C:/Vault",\n    "fileExtensions": [".md"]\n  }\n]'),
+    });
+    const sendReq = vi.fn(async (frame) => {
+      switch (frame.method) {
+        case "memory.configured_sources.update":
+          return {
+            ok: true,
+            payload: {
+              path: "E:/state/memory-configured-sources.json",
+              configuredSources: frame.params?.configuredSources || [],
+            },
+          };
+        case "config.update":
+          return { ok: true, payload: {} };
+        case "channel.security.get":
+        case "channel.reply_chunking.get":
+          return { ok: true, payload: { path: "ok.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+        case "channel.security.pending.list":
+          return { ok: true, payload: { pending: [] } };
+        default:
+          return { ok: true, payload: {} };
+      }
+    });
+    const { controller } = createController({
+      refs,
+      sendReq,
+      loadServerConfig: vi.fn().mockResolvedValue({}),
+    });
+
+    await controller.loadConfig();
+    await controller.saveConfig();
+
+    expect(sendReq.mock.calls.some(([frame]) => frame.method === "memory.configured_sources.update")).toBe(true);
+    expect(sendReq.mock.calls.some(([frame]) => frame.method === "system.restart")).toBe(false);
+    expect(globalThis.alert).not.toHaveBeenCalled();
+  });
+
+  it("runs external ingest preview from the current configured sources draft", async () => {
+    const refs = createSettingsRefs({
+      cfgMemoryConfiguredSourceId: createInput("configured:obsidian-vault:1"),
+      cfgMemoryConfiguredSourcesContent: createInput('[\n  {\n    "id": "configured:obsidian-vault:1",\n    "label": "Obsidian Vault",\n    "sourceClass": "curated",\n    "scope": "private",\n    "rootPath": "C:/Vault",\n    "fileExtensions": [".md"]\n  }\n]'),
+    });
+    const sendReq = vi.fn(async (frame) => {
+      if (frame.method === "memory.tree.report.external_ingest.preview") {
+        return {
+          ok: true,
+          payload: {
+            report: {
+              sourceId: "configured:obsidian-vault:1",
+              totalFiles: 3,
+              eligibleFiles: 2,
+            },
+            record: {
+              id: "report-1",
+              reportType: "external_ingest_preview",
+              status: "ready",
+            },
+          },
+        };
+      }
+      return { ok: true, payload: {} };
+    });
+    createController({ refs, sendReq });
+
+    refs.previewMemoryExternalIngestBtn.trigger("click");
+    await Promise.resolve();
+
+    const previewCall = sendReq.mock.calls.find(([frame]) => frame.method === "memory.tree.report.external_ingest.preview");
+    expect(previewCall?.[0]?.params).toMatchObject({
+      configuredSourceId: "configured:obsidian-vault:1",
+    });
+    expect(refs.cfgMemoryConfiguredSourcesPreviewContent.value).toContain('"kind": "external_ingest_preview"');
+    expect(refs.cfgMemoryConfiguredSourcesPreviewContent.value).toContain('"sourceId": "configured:obsidian-vault:1"');
+    expect(refs.memoryConfiguredSourcesActionStatus.textContent).toContain("report-1");
+    expect(refs.memoryConfiguredSourcesActionStatus.textContent).toContain("ready");
+  });
+
+  it("reviews and applies configured external ingest reports from the settings panel", async () => {
+    const refs = createSettingsRefs({
+      cfgMemoryConfiguredSourcesPreviewContent: createInput('{\n  "kind": "external_ingest_preview",\n  "record": {\n    "id": "report-1",\n    "status": "ready"\n  },\n  "report": {\n    "sourceId": "configured:obsidian-vault:1"\n  }\n}'),
+      cfgMemoryConfiguredSourcesActionNote: createInput("approve then apply"),
+    });
+    const sendReq = vi.fn(async (frame) => {
+      if (frame.method === "memory.tree.report.review") {
+        return {
+          ok: true,
+          payload: {
+            result: {
+              decision: "approved",
+            },
+            report: {
+              id: "report-1",
+              status: "approved",
+              reportType: "external_ingest_preview",
+            },
+          },
+        };
+      }
+      if (frame.method === "memory.tree.report.apply") {
+        return {
+          ok: true,
+          payload: {
+            result: {
+              updatedChunkCount: 4,
+            },
+            report: {
+              id: "report-1",
+              status: "applied",
+              reportType: "external_ingest_preview",
+            },
+          },
+        };
+      }
+      return { ok: true, payload: {} };
+    });
+    createController({ refs, sendReq });
+
+    refs.approveMemoryExternalIngestReportBtn.trigger("click");
+    await Promise.resolve();
+
+    const reviewCall = sendReq.mock.calls.find(([frame]) => frame.method === "memory.tree.report.review");
+    expect(reviewCall?.[0]?.params).toMatchObject({
+      reportId: "report-1",
+      decision: "approved",
+      reviewedBy: "webchat.settings",
+      note: "approve then apply",
+    });
+    expect(refs.cfgMemoryConfiguredSourcesPreviewContent.value).toContain('"kind": "report_review"');
+    expect(refs.memoryConfiguredSourcesActionStatus.textContent).toContain("approved");
+
+    refs.applyMemoryExternalIngestReportBtn.trigger("click");
+    await Promise.resolve();
+
+    const applyCall = sendReq.mock.calls.find(([frame]) => frame.method === "memory.tree.report.apply");
+    expect(applyCall?.[0]?.params).toMatchObject({
+      reportId: "report-1",
+      confirmed: true,
+      appliedBy: "webchat.settings",
+      note: "approve then apply",
+    });
+    expect(refs.cfgMemoryConfiguredSourcesPreviewContent.value).toContain('"kind": "report_apply"');
+    expect(refs.memoryConfiguredSourcesActionStatus.textContent).toContain("applied");
   });
 
   it("routes channel and pending entrypoints to the correct tabs", async () => {

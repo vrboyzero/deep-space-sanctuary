@@ -105,6 +105,72 @@ describe("resident shared memory", () => {
     expect(mergedStatus.chunks).toBe(2);
   });
 
+  it("keeps score-aware ordering after private/shared hybrid merge", async () => {
+    const privateManager = await createMemoryManager("resident-private-score");
+    const sharedManager = await createMemoryManager("resident-shared-score");
+    const policy = createHybridPolicy("private", "shared");
+
+    privateManager.upsertMemoryChunk({
+      id: "private-score-low",
+      sourcePath: "memory/private-score.md",
+      sourceType: "manual",
+      memoryType: "other",
+      content: "resident score smoke marker for gateway retry rollout",
+      visibility: "private",
+    });
+    sharedManager.upsertMemoryChunk({
+      id: "shared-score-high",
+      sourcePath: "memory/shared-score.md",
+      sourceType: "manual",
+      memoryType: "other",
+      content: "resident score smoke marker for gateway retry rollout",
+      visibility: "shared",
+    });
+
+    (privateManager as any).store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:private-score-low",
+        targetType: "chunk",
+        targetId: "private-score-low",
+        sourceId: "private:derived",
+        scoreTotal: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+      },
+    ]);
+    (sharedManager as any).store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:shared-score-high",
+        targetType: "chunk",
+        targetId: "shared-score-high",
+        sourceId: "shared:curated",
+        scoreTotal: 0.95,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+    ]);
+
+    const results = await searchResidentMemory({
+      manager: privateManager,
+      sharedManager,
+      residentPolicy: policy,
+      query: "resident score smoke marker gateway retry rollout",
+      limit: 10,
+      includeContent: false,
+    });
+
+    expect(results.map((item) => item.id)).toEqual(expect.arrayContaining(["private-score-low", "shared-score-high"]));
+    expect(results[0]).toMatchObject({
+      id: "shared-score-high",
+      metadata: {
+        memoryTree: expect.objectContaining({
+          scoreVersion: "v1_rule_only",
+          sourceClass: "curated",
+        }),
+      },
+    });
+  });
+
   it("keeps shared chunks queryable on a unified non-resident memory surface", async () => {
     const manager = await createMemoryManager("viewer-unified");
 

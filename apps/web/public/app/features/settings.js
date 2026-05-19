@@ -103,6 +103,18 @@ export function createSettingsController({
     cfgSubAgentTimeoutMs,
     cfgSubAgentMaxDepth,
     cfgMemoryEnabled,
+    refreshMemoryConfiguredSourcesBtn,
+    previewMemoryInventoryBtn,
+    previewMemoryExternalIngestBtn,
+    approveMemoryExternalIngestReportBtn,
+    rejectMemoryExternalIngestReportBtn,
+    applyMemoryExternalIngestReportBtn,
+    memoryConfiguredSourcesMeta,
+    memoryConfiguredSourcesActionStatus,
+    cfgMemoryConfiguredSourceId,
+    cfgMemoryConfiguredSourcesContent,
+    cfgMemoryConfiguredSourcesPreviewContent,
+    cfgMemoryConfiguredSourcesActionNote,
     cfgCronEnabled,
     cfgEmbeddingEnabled,
     cfgEmbeddingProvider,
@@ -471,11 +483,16 @@ export function createSettingsController({
     "cfgWebhookRateLimitMaxTrackedKeys",
     "cfgWebhookMaxInFlightPerKey",
     "cfgWebhookMaxInFlightTrackedKeys",
+    "cfgMemoryConfiguredSourceId",
+    "cfgMemoryConfiguredSourcesContent",
+    "cfgMemoryConfiguredSourcesPreviewContent",
   ]);
   let lastLoadedConfig = null;
   let lastLoadedFormState = null;
   let lastLoadedChannelSecurityContent = '{\n  "version": 1,\n  "channels": {}\n}\n';
   let lastLoadedChannelReplyChunkingContent = '{\n  "version": 1,\n  "channels": {}\n}\n';
+  let lastLoadedConfiguredMemorySourcesContent = "[]\n";
+  let lastConfiguredMemoryPreviewPayload = null;
   let doctorRequestVersion = 0;
   const tabButtons = Array.isArray(settingsTabButtons) ? settingsTabButtons.filter(Boolean) : [];
   const tabPanels = Array.isArray(settingsTabPanels) ? settingsTabPanels.filter(Boolean) : [];
@@ -723,6 +740,36 @@ export function createSettingsController({
       void loadChannelSecuritySurface();
     });
   }
+  if (refreshMemoryConfiguredSourcesBtn) {
+    refreshMemoryConfiguredSourcesBtn.addEventListener("click", () => {
+      void loadConfiguredMemorySources();
+    });
+  }
+  if (previewMemoryInventoryBtn) {
+    previewMemoryInventoryBtn.addEventListener("click", () => {
+      void previewConfiguredMemoryInventory();
+    });
+  }
+  if (previewMemoryExternalIngestBtn) {
+    previewMemoryExternalIngestBtn.addEventListener("click", () => {
+      void previewConfiguredMemoryExternalIngest();
+    });
+  }
+  if (approveMemoryExternalIngestReportBtn) {
+    approveMemoryExternalIngestReportBtn.addEventListener("click", () => {
+      void reviewConfiguredMemoryReport("approved");
+    });
+  }
+  if (rejectMemoryExternalIngestReportBtn) {
+    rejectMemoryExternalIngestReportBtn.addEventListener("click", () => {
+      void reviewConfiguredMemoryReport("rejected");
+    });
+  }
+  if (applyMemoryExternalIngestReportBtn) {
+    applyMemoryExternalIngestReportBtn.addEventListener("click", () => {
+      void applyConfiguredMemoryReport();
+    });
+  }
   if (channelSecurityPendingList) {
     channelSecurityPendingList.addEventListener("click", (event) => {
       const target = event.target instanceof HTMLElement ? event.target.closest("button[data-channel-security-action]") : null;
@@ -752,6 +799,7 @@ export function createSettingsController({
         await loadConfig();
         await Promise.all([
           loadModelFallbackConfig(),
+          loadConfiguredMemorySources(),
           loadChannelSecuritySurface(),
           runDoctor(),
         ]);
@@ -1152,6 +1200,372 @@ export function createSettingsController({
         );
       }
     }
+  }
+
+  function stringifyConfiguredMemorySources(sources) {
+    return `${JSON.stringify(Array.isArray(sources) ? sources : [], null, 2)}\n`;
+  }
+
+  function parseConfiguredMemorySourcesContent() {
+    const fallback = [];
+    const content = typeof cfgMemoryConfiguredSourcesContent?.value === "string"
+      ? cfgMemoryConfiguredSourcesContent.value.trim()
+      : "";
+    if (!content) {
+      return { ok: true, sources: fallback };
+    }
+    try {
+      const parsed = JSON.parse(content);
+      if (!Array.isArray(parsed)) {
+        return {
+          ok: false,
+          message: t("settings.memoryConfiguredSourcesInvalidArray", {}, "Configured Sources JSON 必须是数组。"),
+        };
+      }
+      return { ok: true, sources: parsed };
+    } catch (error) {
+      return {
+        ok: false,
+        message: t(
+          "settings.memoryConfiguredSourcesInvalidJson",
+          { message: error instanceof Error ? error.message : String(error) },
+          "Configured Sources JSON 解析失败：{message}",
+        ),
+      };
+    }
+  }
+
+  function setConfiguredMemoryPreviewContent(value) {
+    lastConfiguredMemoryPreviewPayload = value ?? null;
+    if (!cfgMemoryConfiguredSourcesPreviewContent) return;
+    cfgMemoryConfiguredSourcesPreviewContent.value = typeof value === "string"
+      ? value
+      : `${JSON.stringify(value ?? {}, null, 2)}\n`;
+    updateConfiguredMemoryActionStatus(resolveConfiguredMemoryPreviewState(value));
+  }
+
+  function resolveConfiguredMemoryPreviewState(value) {
+    const payload = value && typeof value === "object" ? value : null;
+    const record = payload?.record && typeof payload.record === "object" ? payload.record : null;
+    const report = payload?.report && typeof payload.report === "object" ? payload.report : null;
+    const reportId = typeof record?.id === "string" && record.id.trim()
+      ? record.id.trim()
+      : typeof report?.id === "string" && report.id.trim()
+        ? report.id.trim()
+        : "";
+    const status = typeof record?.status === "string" && record.status.trim()
+      ? record.status.trim()
+      : typeof report?.status === "string" && report.status.trim()
+        ? report.status.trim()
+        : "";
+    return {
+      kind: typeof payload?.kind === "string" ? payload.kind : "",
+      reportId,
+      status,
+    };
+  }
+
+  function updateConfiguredMemoryActionStatus(state, overrideMessage = "") {
+    if (!memoryConfiguredSourcesActionStatus) return;
+    if (overrideMessage) {
+      memoryConfiguredSourcesActionStatus.textContent = overrideMessage;
+      return;
+    }
+    if (state?.reportId) {
+      memoryConfiguredSourcesActionStatus.textContent = t(
+        "settings.memoryConfiguredSourcesActionStatusReady",
+        {
+          reportId: state.reportId,
+          status: state.status || "ready",
+        },
+        `当前 report：${state.reportId}（${state.status || "ready"}）`,
+      );
+      return;
+    }
+    memoryConfiguredSourcesActionStatus.textContent = t(
+      "settings.memoryConfiguredSourcesActionStatusIdle",
+      {},
+      "当前还没有可执行的 ingest report。请先运行 External Ingest Preview。",
+    );
+  }
+
+  function resolveConfiguredMemoryPreviewPayload() {
+    const raw = typeof cfgMemoryConfiguredSourcesPreviewContent?.value === "string"
+      ? cfgMemoryConfiguredSourcesPreviewContent.value.trim()
+      : "";
+    if (!raw) {
+      return {
+        ok: false,
+        message: t(
+          "settings.memoryConfiguredSourcesMissingReport",
+          {},
+          "当前预览里没有可操作的 ingest report。请先运行 External Ingest Preview。",
+        ),
+      };
+    }
+    try {
+      const payload = JSON.parse(raw);
+      lastConfiguredMemoryPreviewPayload = payload;
+      return {
+        ok: true,
+        payload,
+        state: resolveConfiguredMemoryPreviewState(payload),
+      };
+    } catch (error) {
+      const fallbackState = resolveConfiguredMemoryPreviewState(lastConfiguredMemoryPreviewPayload);
+      if (fallbackState?.reportId) {
+        return {
+          ok: true,
+          payload: lastConfiguredMemoryPreviewPayload,
+          state: fallbackState,
+        };
+      }
+      return {
+        ok: false,
+        message: t(
+          "settings.memoryConfiguredSourcesPreviewStateInvalid",
+          { message: error instanceof Error ? error.message : String(error) },
+          "当前预览结果不是有效 JSON：{message}",
+        ),
+      };
+    }
+  }
+
+  function readConfiguredMemoryActionNote() {
+    return typeof cfgMemoryConfiguredSourcesActionNote?.value === "string"
+      ? cfgMemoryConfiguredSourcesActionNote.value.trim()
+      : "";
+  }
+
+  async function loadConfiguredMemorySources() {
+    if (!isConnected()) return;
+    const res = await sendReq({ type: "req", id: makeId(), method: "memory.configured_sources.get" });
+    if (cfgMemoryConfiguredSourcesContent && res?.ok) {
+      const sources = Array.isArray(res.payload?.configuredSources) ? res.payload.configuredSources : [];
+      const content = stringifyConfiguredMemorySources(sources);
+      cfgMemoryConfiguredSourcesContent.value = content;
+      lastLoadedConfiguredMemorySourcesContent = content;
+    }
+    if (memoryConfiguredSourcesMeta) {
+      if (res?.ok) {
+        memoryConfiguredSourcesMeta.textContent = t(
+          "settings.memoryConfiguredSourcesMeta",
+          { path: res.payload?.path || "memory-configured-sources.json" },
+          `配置文件：${res.payload?.path || "memory-configured-sources.json"}`,
+        );
+      } else if (handlePairingRequiredResponse(res)) {
+        memoryConfiguredSourcesMeta.textContent = t(
+          "settings.memoryConfiguredSourcesPairingRequired",
+          {},
+          "当前会话尚未完成 Pairing，完成批准后再读取外来源配置。",
+        );
+      } else {
+        memoryConfiguredSourcesMeta.textContent = t(
+          "settings.memoryConfiguredSourcesLoadFailed",
+          {},
+          "读取外来源配置失败",
+        );
+      }
+    }
+  }
+
+  async function saveConfiguredMemorySources() {
+    if (!cfgMemoryConfiguredSourcesContent) return { ok: true };
+    const parsed = parseConfiguredMemorySourcesContent();
+    if (!parsed.ok) {
+      return { ok: false, message: parsed.message || "Invalid configured sources JSON" };
+    }
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.configured_sources.update",
+      params: {
+        configuredSources: parsed.sources,
+      },
+    });
+    if (!res?.ok) {
+      return {
+        ok: false,
+        message: res?.error?.message || "Failed to save configured memory sources",
+      };
+    }
+    const nextContent = stringifyConfiguredMemorySources(
+      Array.isArray(res.payload?.configuredSources) ? res.payload.configuredSources : parsed.sources,
+    );
+    cfgMemoryConfiguredSourcesContent.value = nextContent;
+    lastLoadedConfiguredMemorySourcesContent = nextContent;
+    if (memoryConfiguredSourcesMeta) {
+      memoryConfiguredSourcesMeta.textContent = t(
+        "settings.memoryConfiguredSourcesMeta",
+        { path: res.payload?.path || "memory-configured-sources.json" },
+        `配置文件：${res.payload?.path || "memory-configured-sources.json"}`,
+      );
+    }
+    return { ok: true };
+  }
+
+  async function previewConfiguredMemoryInventory() {
+    if (!isConnected()) return;
+    const parsed = parseConfiguredMemorySourcesContent();
+    if (!parsed.ok) {
+      alert(parsed.message || t("settings.memoryConfiguredSourcesPreviewFailed", {}, "来源配置预览失败。"));
+      return;
+    }
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.inventory.preview",
+      params: {
+        configuredSources: parsed.sources,
+      },
+    });
+    if (!res?.ok) {
+      alert(t(
+        "settings.memoryConfiguredSourcesInventoryPreviewFailed",
+        { message: res?.error?.message || "Unknown error" },
+        "Inventory preview 失败：{message}",
+      ));
+      return;
+    }
+    setConfiguredMemoryPreviewContent({
+      kind: "inventory_preview",
+      report: res.payload?.report ?? null,
+    });
+  }
+
+  async function previewConfiguredMemoryExternalIngest() {
+    if (!isConnected()) return;
+    const parsed = parseConfiguredMemorySourcesContent();
+    if (!parsed.ok) {
+      alert(parsed.message || t("settings.memoryConfiguredSourcesPreviewFailed", {}, "来源配置预览失败。"));
+      return;
+    }
+    const configuredSourceId = typeof cfgMemoryConfiguredSourceId?.value === "string"
+      ? cfgMemoryConfiguredSourceId.value.trim()
+      : "";
+    const params = {
+      configuredSources: parsed.sources,
+      ...(configuredSourceId ? { configuredSourceId } : {}),
+    };
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.tree.report.external_ingest.preview",
+      params,
+    });
+    if (!res?.ok) {
+      alert(t(
+        "settings.memoryConfiguredSourcesIngestPreviewFailed",
+        { message: res?.error?.message || "Unknown error" },
+        "External ingest preview 失败：{message}",
+      ));
+      return;
+    }
+    setConfiguredMemoryPreviewContent({
+      kind: "external_ingest_preview",
+      report: res.payload?.report ?? null,
+      record: res.payload?.record ?? null,
+    });
+  }
+
+  async function reviewConfiguredMemoryReport(decision) {
+    if (!isConnected()) return;
+    const preview = resolveConfiguredMemoryPreviewPayload();
+    if (!preview.ok) {
+      alert(preview.message);
+      return;
+    }
+    if (!preview.state?.reportId) {
+      const message = t(
+        "settings.memoryConfiguredSourcesMissingReport",
+        {},
+        "当前预览里没有可操作的 ingest report。请先运行 External Ingest Preview。",
+      );
+      updateConfiguredMemoryActionStatus(null, message);
+      alert(message);
+      return;
+    }
+    const note = readConfiguredMemoryActionNote();
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.tree.report.review",
+      params: {
+        reportId: preview.state.reportId,
+        decision,
+        reviewedBy: "webchat.settings",
+        ...(note ? { note } : {}),
+      },
+    });
+    if (!res?.ok) {
+      if (handlePairingRequiredResponse(res)) {
+        updateConfiguredMemoryActionStatus(preview.state);
+        return;
+      }
+      const message = t(
+        "settings.memoryConfiguredSourcesReportReviewFailed",
+        { message: res?.error?.message || "Unknown error" },
+        "Report review 失败：{message}",
+      );
+      updateConfiguredMemoryActionStatus(preview.state, message);
+      alert(message);
+      return;
+    }
+    setConfiguredMemoryPreviewContent({
+      kind: "report_review",
+      report: res.payload?.report ?? null,
+      result: res.payload?.result ?? null,
+    });
+  }
+
+  async function applyConfiguredMemoryReport() {
+    if (!isConnected()) return;
+    const preview = resolveConfiguredMemoryPreviewPayload();
+    if (!preview.ok) {
+      alert(preview.message);
+      return;
+    }
+    if (!preview.state?.reportId) {
+      const message = t(
+        "settings.memoryConfiguredSourcesMissingReport",
+        {},
+        "当前预览里没有可操作的 ingest report。请先运行 External Ingest Preview。",
+      );
+      updateConfiguredMemoryActionStatus(null, message);
+      alert(message);
+      return;
+    }
+    const note = readConfiguredMemoryActionNote();
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "memory.tree.report.apply",
+      params: {
+        reportId: preview.state.reportId,
+        confirmed: true,
+        appliedBy: "webchat.settings",
+        ...(note ? { note } : {}),
+      },
+    });
+    if (!res?.ok) {
+      if (handlePairingRequiredResponse(res)) {
+        updateConfiguredMemoryActionStatus(preview.state);
+        return;
+      }
+      const message = t(
+        "settings.memoryConfiguredSourcesReportApplyFailed",
+        { message: res?.error?.message || "Unknown error" },
+        "Report apply 失败：{message}",
+      );
+      updateConfiguredMemoryActionStatus(preview.state, message);
+      alert(message);
+      return;
+    }
+    setConfiguredMemoryPreviewContent({
+      kind: "report_apply",
+      report: res.payload?.report ?? null,
+      result: res.payload?.result ?? null,
+    });
   }
 
   function escapeHtml(value) {
@@ -1959,6 +2373,20 @@ export function createSettingsController({
         "settings.modelFallbackConfigSaveFailed",
         { message: modelFallbackSave.message || "Unknown error" },
         "Model fallback config save failed: {message}",
+      ));
+      return;
+    }
+
+    const configuredMemorySourcesSave = await saveConfiguredMemorySources();
+    if (!configuredMemorySourcesSave.ok) {
+      if (saveSettingsBtn) {
+        saveSettingsBtn.textContent = t("settings.failed", {}, "Failed");
+        saveSettingsBtn.disabled = false;
+      }
+      alert(t(
+        "settings.memoryConfiguredSourcesSaveFailed",
+        { message: configuredMemorySourcesSave.message || "Unknown error" },
+        "Configured memory sources save failed: {message}",
       ));
       return;
     }

@@ -95,6 +95,22 @@ describe("doctor observability formatting", () => {
           tokenBreakdown: {
             systemPromptEstimatedTokens: 800,
           },
+          contextInjection: {
+            prependContextChars: 480,
+            totalBlockCount: 3,
+            blockTags: ["current-turn", "auto-recall"],
+            autoRecall: {
+              candidateCount: 3,
+              keptCount: 2,
+              filteredOutCount: 1,
+              minScore: 0.42,
+              topHitIds: ["mem-curated", "mem-derived"],
+              sourceClassMix: {
+                curated: 1,
+                derived: 1,
+              },
+            },
+          },
           truncationReason: {
             code: "max_chars_limit",
             droppedSectionCount: 2,
@@ -1475,6 +1491,8 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("recovery hint: 5xx instability dominates; keep fallback ready and verify provider health before trusting the primary route.");
     expect(lines.join("\n")).toContain("alert warn/recent_degrade");
     expect(lines.join("\n")).toContain("Latest runtime required retry/fallback to recover.");
+    expect(lines.join("\n")).toContain("prepend 480 chars");
+    expect(lines.join("\n")).toContain("auto-recall 2/3");
     expect(lines.join("\n")).toContain("Prompt fingerprint: abc123fingerprint");
     expect(lines.join("\n")).toContain("Structure signature: sig-123");
     expect(lines.join("\n")).toContain("Prefix drift: drifted (system_prompt_fingerprint_changed, section_id_order_changed)");
@@ -1482,6 +1500,8 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("Ordering guard: risk (dynamic_runtime_sections_present, tool_contract_list_injected)");
     expect(lines.join("\n")).toContain("Warm-up coordination: warming; recommendation=delay_if_possible; reason=matching_prefix_recent_but_ordering_risk_present");
     expect(lines.join("\n")).toContain("Cache family affinity: aligned; reason=same_cache_family_as_previous");
+    expect(lines.join("\n")).toContain("Context injection: prepend=480 chars; blocks=3; tags=current-turn, auto-recall");
+    expect(lines.join("\n")).toContain("Auto recall: kept=2/3; filtered=1; minScore=0.42; topHits=mem-curated, mem-derived; sourceMix=curated:1, derived:1");
     expect(lines.join("\n")).toContain("runtime resilience: alert=warn/recent_degrade");
     expect(lines.join("\n")).toContain("reason_focus=server_error");
     expect(lines.join("\n")).toContain("reason_cluster=server_error + timeout");

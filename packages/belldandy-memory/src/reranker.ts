@@ -101,7 +101,8 @@ export class ResultReranker {
       // 4. Length normalization（防止长文本靠关键词密度霸榜）
       if (this.lengthNormAnchor > 0 && result.content) {
         const charLen = result.content.length;
-        adjustedScore *= 1 / (1 + Math.log2(Math.max(charLen, 1) / this.lengthNormAnchor));
+        const normalizedLength = Math.max(charLen, this.lengthNormAnchor) / this.lengthNormAnchor;
+        adjustedScore *= 1 / (1 + Math.log2(normalizedLength));
       }
 
       return { ...result, score: adjustedScore };

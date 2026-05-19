@@ -115,7 +115,8 @@ star-sanctuary/
 - `apps/web/public/app.js`: 前端总装配
 - `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示
 - `apps/web/public/app/features/chat-network.js`: WebSocket 请求/响应、模型/Agent 选择
-- `apps/web/public/app/features/settings-runtime.js`: 设置面板
+- `apps/web/public/app/features/settings-runtime.js`: 设置面板运行时桥接
+- `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources 配置/preview）
 - `apps/web/public/app/features/workspace.js`: 文件树和编辑器
 - `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Dream Runtime 卡片）
 
@@ -128,8 +129,9 @@ star-sanctuary/
 
 ### Memory / Task / Experience
 - `packages/belldandy-memory/src/store.ts`: SQLite schema、FTS、task/experience 持久化
-- `packages/belldandy-memory/src/manager.ts`: MemoryManager、global registry、durable extraction 策略
+- `packages/belldandy-memory/src/manager.ts`: MemoryManager、global registry、durable extraction 策略、P12-P15 记忆树治理/来源治理
 - `packages/belldandy-memory/src/indexer.ts`: 索引构建
+- `packages/belldandy-memory/src/external-memory-ingest.ts`: P15 外来源 ingest adapter（首版 Obsidian Markdown 目录 preview/apply）
 - `packages/belldandy-memory/src/task-processor.ts`: 任务沉淀处理
 - `packages/belldandy-memory/src/dream-store.ts` / `dream-input.ts` / `dream-prompt.ts` / `dream-writer.ts` / `dream-runtime.ts` / `dream-obsidian-sync.ts` / `obsidian-sync-paths.ts` / `commons-exporter.ts`: dream 状态层、输入聚合、模型提示、SS 内部写回、Obsidian 私有镜像、Commons Markdown 导出、sync 路径解析
 - `packages/belldandy-core/src/obsidian-commons-runtime.ts`: Commons 导出运行时，负责扫描已审批 shared memory 并写入 Obsidian 公共租界
@@ -197,6 +199,8 @@ star-sanctuary/
 - `packages/star-sanctuary-distribution/src/runtime-extract.ts`: single-exe 解包
 - `packages/belldandy-core/src/gateway-config.ts`: Gateway env/config 读取
 - `packages/belldandy-core/src/tools-config.ts`: 工具配置管理
+- `packages/belldandy-core/src/memory-configured-sources-store.ts`: P15 configured external sources 持久配置文件读写
+- `packages/belldandy-core/src/server-methods/memory-experience.ts`: memory / experience RPC，含 P15 configured sources 与 external ingest preview
 
 ## 5. 快速定位建议
 

@@ -26,18 +26,28 @@ import {
     type MemorySourceInventoryItem,
     type MemorySourceInventoryReport,
 } from "./memory-source-inventory.js";
+import {
+    materializeObsidianMarkdownChunks,
+    previewObsidianMarkdownDirectoryIngest,
+    type ExternalMemoryIngestPreview,
+} from "./external-memory-ingest.js";
 import type {
     MemoryTreeScoreListFilter,
     MemoryTreeScoreRecord,
     MemoryTreeScoreRebuildResult,
     MemoryTreeEdgeListFilter,
     MemoryTreeEdgeRecord,
+    MemoryTreeNodeKind,
     MemoryTreeNodeListFilter,
     MemoryTreeNodeRebuildResult,
     MemoryTreeNodeRecord,
+    MemoryTreeNodeSearchResult,
+    MemoryTreeReportApplyResult,
     MemoryTreeReportListFilter,
     MemoryTreeReportPersistResult,
     MemoryTreeReportRecord,
+    MemoryTreeReportReviewDecision,
+    MemoryTreeReportReviewResult,
     MemoryTreeReportStatus,
     MemoryTreeReportType,
     MemoryTreeSourceListFilter,
@@ -95,6 +105,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 
 const MEMORY_TREE_SCORE_VERSION = "v1_rule_only";
+const MEMORY_TREE_SEARCH_RETRIEVAL_WEIGHT = 0.6;
+const MEMORY_TREE_SEARCH_GOVERNANCE_WEIGHT = 0.4;
 
 // ============================================================================
 // Global Registry - Allows sharing MemoryManager across packages
@@ -394,6 +406,37 @@ function buildDurableExtractionSummary(input: {
     return parts.join("; ");
 }
 
+export type MemorySearchStageTopHit = {
+    id: string;
+    score: number;
+    sourceClass: MemorySourceInventoryClass | "unknown";
+};
+
+export type MemorySearchStageSnapshot = {
+    count: number;
+    topHits: MemorySearchStageTopHit[];
+};
+
+export type MemorySearchDiagnostics = {
+    retrievalMode: "explicit" | "implicit";
+    limit: number;
+    skipped: boolean;
+    skipReason?: string;
+    deepRetrievalApplied: boolean;
+    scoreSignalAppliedCount: number;
+    sourceClassMix: Record<string, number>;
+    stages: {
+        raw: MemorySearchStageSnapshot;
+        scoreAware: MemorySearchStageSnapshot;
+        reranked: MemorySearchStageSnapshot;
+        returned: MemorySearchStageSnapshot;
+    };
+};
+
+export type MemorySearchExecution = {
+    items: MemorySearchResult[];
+    diagnostics: MemorySearchDiagnostics;
+};
 
 export interface MemoryManagerOptions {
     workspaceRoot: string;
@@ -703,6 +746,10 @@ export class MemoryManager {
      * Search memory (Hybrid)
      */
     async search(query: string, limitOrOptions?: number | MemorySearchOptions): Promise<MemorySearchResult[]> {
+        return (await this.searchWithDiagnostics(query, limitOrOptions)).items;
+    }
+
+    async searchWithDiagnostics(query: string, limitOrOptions?: number | MemorySearchOptions): Promise<MemorySearchExecution> {
         // 兼容旧签名 search(query, limit) 和新签名 search(query, options)
         let limit = 5;
         let filter: MemorySearchFilter | undefined;
@@ -720,7 +767,24 @@ export class MemoryManager {
 
         // 0. 自适应检索：仅对隐式召回生效，显式 memory_search / RPC 不应被跳过
         if (retrievalMode === "implicit" && shouldSkipRetrieval(query)) {
-            return [];
+            return {
+                items: [],
+                diagnostics: {
+                    retrievalMode,
+                    limit,
+                    skipped: true,
+                    skipReason: "adaptive_retrieval_guard",
+                    deepRetrievalApplied: false,
+                    scoreSignalAppliedCount: 0,
+                    sourceClassMix: {},
+                    stages: {
+                        raw: buildMemorySearchStageSnapshot([]),
+                        scoreAware: buildMemorySearchStageSnapshot([]),
+                        reranked: buildMemorySearchStageSnapshot([]),
+                        returned: buildMemorySearchStageSnapshot([]),
+                    },
+                },
+            };
         }
 
         // 1. Embed query（使用 embedQuery 以支持 task-aware embedding）
@@ -735,17 +799,41 @@ export class MemoryManager {
 
         // 2. Hybrid search with filter
         const rawResults = this.store.searchHybrid(query, queryVec, { limit: limit * 2, filter, includeContent });
+        const scoreAwareResults = this.applyMemoryTreeScoreSignals(rawResults);
+        const scoreSignalAppliedCount = scoreAwareResults.filter((item) => {
+            const memoryTree = isRecord(item.metadata?.memoryTree) ? item.metadata.memoryTree : undefined;
+            return typeof memoryTree?.scoreVersion === "string" && memoryTree.scoreVersion.trim().length > 0;
+        }).length;
 
         // 3. Rule-based rerank (with MMR diversity if vectors available)
         const getVector = (chunkId: string) => this.store.getChunkVector(chunkId);
-        const reranked = this.reranker.rerank(rawResults, getVector);
+        const reranked = this.reranker.rerank(scoreAwareResults, getVector);
 
         // 4. M-N4: 源路径聚合二次检索（仅当启用且有重复 source 时触发）
+        let items = reranked.slice(0, limit);
+        let deepRetrievalApplied = false;
         if (this.deepRetrievalEnabled) {
-            return this.applyDeepRetrieval(reranked, limit);
+            items = this.applyDeepRetrieval(reranked, limit);
+            deepRetrievalApplied = true;
         }
 
-        return reranked.slice(0, limit);
+        return {
+            items,
+            diagnostics: {
+                retrievalMode,
+                limit,
+                skipped: false,
+                deepRetrievalApplied,
+                scoreSignalAppliedCount,
+                sourceClassMix: buildMemorySearchSourceClassMix(items),
+                stages: {
+                    raw: buildMemorySearchStageSnapshot(rawResults),
+                    scoreAware: buildMemorySearchStageSnapshot(scoreAwareResults),
+                    reranked: buildMemorySearchStageSnapshot(reranked),
+                    returned: buildMemorySearchStageSnapshot(items),
+                },
+            },
+        };
     }
 
     async embedRetrievalQuery(text: string): Promise<number[] | null> {
@@ -779,6 +867,46 @@ export class MemoryManager {
         }
     }
 
+    private applyMemoryTreeScoreSignals(results: MemorySearchResult[]): MemorySearchResult[] {
+        if (!Array.isArray(results) || results.length <= 0) {
+            return [];
+        }
+        const scoreRecords = this.store.listMemoryScoresByTargetIds("chunk", results.map((item) => item.id));
+        if (scoreRecords.length <= 0) {
+            return results;
+        }
+        const scoreMap = new Map(scoreRecords.map((item) => [item.targetId, item] as const));
+        return results.map((result) => {
+            const scoreRecord = scoreMap.get(result.id);
+            if (!scoreRecord) {
+                return result;
+            }
+            const sourceClass = readMemoryTreeScoreSourceClass(scoreRecord);
+            const blendedScore = clampScore(
+                (result.score * MEMORY_TREE_SEARCH_RETRIEVAL_WEIGHT)
+                + (scoreRecord.scoreTotal * MEMORY_TREE_SEARCH_GOVERNANCE_WEIGHT),
+            );
+            const metadata = result.metadata && typeof result.metadata === "object" && !Array.isArray(result.metadata)
+                ? { ...result.metadata }
+                : {};
+            const memoryTree = metadata.memoryTree && typeof metadata.memoryTree === "object" && !Array.isArray(metadata.memoryTree)
+                ? { ...metadata.memoryTree }
+                : {};
+            metadata.memoryTree = {
+                ...memoryTree,
+                scoreTotal: scoreRecord.scoreTotal,
+                sourceClass: sourceClass ?? null,
+                sourceId: scoreRecord.sourceId ?? null,
+                scoreVersion: scoreRecord.scoreVersion,
+            };
+            return {
+                ...result,
+                score: clampScore(blendedScore * computeSearchSourceClassBoost(sourceClass)),
+                metadata,
+            };
+        });
+    }
+
     getEmbeddingRuntimeCacheKey(): string {
         return [
             this.embeddingProvider.modelName ?? "unknown",
@@ -808,6 +936,20 @@ export class MemoryManager {
             experienceStats: this.store.getExperienceInventoryStats(),
             configuredSources: options.configuredSources ?? [],
         });
+    }
+
+    async previewConfiguredExternalIngest(options: {
+        configuredSources?: MemorySourceInventoryConfiguredSource[];
+    } = {}): Promise<ExternalMemoryIngestPreview> {
+        const configuredSources = Array.isArray(options.configuredSources) ? options.configuredSources : [];
+        if (configuredSources.length !== 1) {
+            throw new Error("external ingest preview requires exactly one configured source.");
+        }
+        const [source] = configuredSources;
+        if (!source?.rootPath || source.filePath) {
+            throw new Error("external ingest preview currently supports directory-based configured sources only.");
+        }
+        return await previewObsidianMarkdownDirectoryIngest(source);
     }
 
     async rebuildMemoryTreeSources(options: {
@@ -982,6 +1124,229 @@ export class MemoryManager {
         return { report: next, markdownPath };
     }
 
+    reviewMemoryTreeReport(
+        reportId: string,
+        decision: MemoryTreeReportReviewDecision,
+        options: { reviewedBy?: string; note?: string } = {},
+    ): MemoryTreeReportReviewResult {
+        const current = this.store.getMemoryCleanReport(reportId);
+        if (!current) {
+            throw new Error(`Memory tree report not found: ${reportId}`);
+        }
+        if (!canReviewMemoryTreeReport(current.status, decision)) {
+            throw new Error(`Report status ${current.status} cannot transition to ${decision}.`);
+        }
+        const reviewedAt = new Date().toISOString();
+        const next: MemoryTreeReportRecord = {
+            ...current,
+            status: decision,
+            summary: {
+                ...current.summary,
+                reviewStatus: decision,
+                lastReviewedAt: reviewedAt,
+            },
+            details: appendMemoryTreeReportReviewEvent(current.details, {
+                decision,
+                previousStatus: current.status,
+                reviewedAt,
+                reviewedBy: options.reviewedBy ?? "rpc",
+                note: options.note,
+            }),
+            updatedAt: reviewedAt,
+        };
+        this.store.upsertMemoryCleanReports([next]);
+        return {
+            report: this.store.getMemoryCleanReport(reportId) ?? next,
+            previousStatus: current.status,
+            decision,
+            reviewedAt,
+        };
+    }
+
+    async applyMemoryTreeReport(
+        reportId: string,
+        options: { appliedBy?: string; note?: string } = {},
+    ): Promise<MemoryTreeReportApplyResult> {
+        const current = this.store.getMemoryCleanReport(reportId);
+        if (!current) {
+            throw new Error(`Memory tree report not found: ${reportId}`);
+        }
+        if (current.status !== "approved") {
+            throw new Error(`Only approved reports can be applied. Current status: ${current.status}.`);
+        }
+        if (current.reportType === "dedup_preview") {
+            return this.applyDedupPreviewReport(current, options);
+        }
+        if (current.reportType === "external_ingest_preview") {
+            return await this.applyExternalIngestPreviewReport(current, options);
+        }
+        throw new Error(`Report type ${current.reportType} is not supported for apply.`);
+    }
+
+    private applyDedupPreviewReport(
+        current: MemoryTreeReportRecord,
+        options: { appliedBy?: string; note?: string } = {},
+    ): MemoryTreeReportApplyResult {
+
+        const appliedAt = new Date().toISOString();
+        const operations = resolveMemoryTreeDedupArchiveOperations(current);
+        const existingScores = this.store.listMemoryScoresByTargetIds("chunk", operations.map((item) => item.chunkId));
+        const scoreMap = new Map(existingScores.map((item) => [item.targetId, item] as const));
+        const scoreRecords: MemoryTreeScoreRecord[] = [];
+        const actions: MemoryTreeReportApplyResult["actions"] = [];
+        const skippedChunkIds: string[] = [];
+        let updatedChunkCount = 0;
+
+        for (const operation of operations) {
+            const chunk = this.store.getChunk(operation.chunkId);
+            if (!chunk) {
+                skippedChunkIds.push(operation.chunkId);
+                continue;
+            }
+            const previousScore = scoreMap.get(operation.chunkId);
+            const nextScoreTotal = computeArchivedGovernanceScore(previousScore?.scoreTotal);
+            const nextMetadata = buildArchivedMemoryChunkMetadata(chunk.metadata, {
+                reportId: current.id,
+                archivedAt: appliedAt,
+                keepChunkId: operation.keepChunkId,
+                normalizedHash: operation.normalizedHash,
+            });
+            if (this.store.updateChunkMetadata(operation.chunkId, nextMetadata)) {
+                updatedChunkCount += 1;
+            }
+            scoreRecords.push(buildArchivedMemoryTreeScoreRecord({
+                chunk,
+                existing: previousScore,
+                reportId: current.id,
+                appliedAt,
+                keepChunkId: operation.keepChunkId,
+                normalizedHash: operation.normalizedHash,
+                nextScoreTotal,
+            }));
+            actions.push({
+                kind: "dedup_archive",
+                chunkId: operation.chunkId,
+                keepChunkId: operation.keepChunkId,
+                normalizedHash: operation.normalizedHash,
+                previousScoreTotal: previousScore?.scoreTotal,
+                nextScoreTotal,
+                archived: true,
+            });
+        }
+
+        if (scoreRecords.length > 0) {
+            this.store.upsertMemoryScores(scoreRecords);
+        }
+
+        const next: MemoryTreeReportRecord = {
+            ...current,
+            status: "applied",
+            summary: {
+                ...current.summary,
+                lastAppliedAt: appliedAt,
+                applyMode: "metadata_and_score_only",
+                appliedChunkCount: updatedChunkCount,
+                appliedScoreCount: scoreRecords.length,
+            },
+            details: appendMemoryTreeReportApplyEvent(current.details, {
+                appliedAt,
+                appliedBy: options.appliedBy ?? "rpc",
+                note: options.note,
+                updatedChunkCount,
+                updatedScoreCount: scoreRecords.length,
+                skippedChunkIds,
+                actions,
+            }),
+            updatedAt: appliedAt,
+        };
+        this.store.upsertMemoryCleanReports([next]);
+        return {
+            report: this.store.getMemoryCleanReport(current.id) ?? next,
+            appliedAt,
+            updatedChunkCount,
+            updatedScoreCount: scoreRecords.length,
+            skippedChunkIds,
+            actions,
+        };
+    }
+
+    private async applyExternalIngestPreviewReport(
+        current: MemoryTreeReportRecord,
+        options: { appliedBy?: string; note?: string } = {},
+    ): Promise<MemoryTreeReportApplyResult> {
+        const preview = readExternalIngestPreviewFromReport(current);
+        const appliedAt = new Date().toISOString();
+        const ingestResult = await materializeObsidianMarkdownChunks(preview, {
+            appliedAt,
+            reportId: current.id,
+        });
+
+        for (const item of ingestResult.chunksBySourcePath) {
+            this.store.replaceSourceChunks(item.sourcePath, item.chunks);
+        }
+
+        const sourceRebuild = await this.rebuildMemoryTreeSources({
+            configuredSources: [preview.source],
+        });
+        const scoreRebuild = this.rebuildMemoryTreeScores();
+        const actions: MemoryTreeReportApplyResult["actions"] = [
+            ...ingestResult.chunksBySourcePath.map((item) => ({
+                kind: "external_ingest" as const,
+                sourcePath: item.sourcePath,
+                importedChunkCount: item.chunks.length,
+                skipped: false,
+            })),
+            ...ingestResult.skippedFiles.map((item) => ({
+                kind: "external_ingest" as const,
+                sourcePath: item.path,
+                importedChunkCount: 0,
+                skipped: true,
+                reason: item.reason,
+            })),
+        ];
+
+        const next: MemoryTreeReportRecord = {
+            ...current,
+            status: "applied",
+            summary: {
+                ...current.summary,
+                lastAppliedAt: appliedAt,
+                applyMode: "external_chunk_ingest",
+                importedFileCount: ingestResult.importedFileCount,
+                importedChunkCount: ingestResult.importedChunkCount,
+                sourceRebuildTotalSources: sourceRebuild.totalSources,
+                scoreRebuildTotalScores: scoreRebuild.totalScores,
+            },
+            details: appendMemoryTreeReportApplyEvent(current.details, {
+                appliedAt,
+                appliedBy: options.appliedBy ?? "rpc",
+                note: options.note,
+                updatedChunkCount: ingestResult.importedChunkCount,
+                updatedScoreCount: scoreRebuild.totalScores,
+                skippedChunkIds: [],
+                actions,
+                extra: {
+                    sourceId: ingestResult.sourceId,
+                    importedFileCount: ingestResult.importedFileCount,
+                    importedChunkCount: ingestResult.importedChunkCount,
+                    skippedFiles: ingestResult.skippedFiles,
+                    sourceRebuild,
+                    scoreRebuild,
+                },
+            }),
+            updatedAt: appliedAt,
+        };
+        this.store.upsertMemoryCleanReports([next]);
+        return {
+            report: this.store.getMemoryCleanReport(current.id) ?? next,
+            appliedAt,
+            updatedChunkCount: ingestResult.importedChunkCount,
+            updatedScoreCount: scoreRebuild.totalScores,
+            skippedChunkIds: [],
+            actions,
+        };
+    }
+
     persistMemoryTreeInventoryReport(report: MemorySourceInventoryReport, options: { configuredSources?: MemorySourceInventoryConfiguredSource[]; createdBy?: string } = {}): MemoryTreeReportRecord {
         const summary = {
             reportVersion: report.version,
@@ -1011,6 +1376,58 @@ export class MemoryManager {
                 reportVersion: report.version,
                 totals: summary,
                 configuredSources: options.configuredSources ?? [],
+            }),
+            summary,
+            details,
+        });
+    }
+
+    persistMemoryTreeExternalIngestReport(report: ExternalMemoryIngestPreview, options: { createdBy?: string } = {}): MemoryTreeReportRecord {
+        const summary = {
+            adapter: report.adapter,
+            sourceId: report.sourceId,
+            sourceLabel: report.sourceLabel,
+            sourceClass: report.sourceClass,
+            scope: report.scope,
+            storage: report.storage,
+            totalFiles: report.totalFiles,
+            eligibleFiles: report.eligibleFiles,
+            skippedFiles: report.skippedFiles,
+            estimatedChunks: report.estimatedChunks,
+            estimatedBytes: report.estimatedBytes,
+            lastScannedAt: report.generatedAt,
+            applyMode: "chunk_replace_by_source",
+        };
+        const details = {
+            preview: report,
+            configuredSource: report.source,
+            adapter: report.adapter,
+            rootPath: report.rootPath,
+            fileManifest: report.fileManifest,
+            skipReasons: report.skipReasons,
+            ingestPolicy: {
+                applyMode: "chunk_replace_by_source",
+                sourceType: "external_obsidian_markdown",
+                memoryType: "other",
+                autoRebuildNodes: false,
+            },
+            provenance: {
+                generatedAt: report.generatedAt,
+                sourceId: report.sourceId,
+            },
+        };
+        return this.recordMemoryTreeReport({
+            reportType: "external_ingest_preview",
+            scope: report.scope,
+            createdBy: options.createdBy ?? "rpc",
+            inputVersion: hashMemoryTreePayload({
+                sourceId: report.sourceId,
+                rootPath: report.rootPath,
+                fileManifest: report.fileManifest.map((item) => ({
+                    path: item.path,
+                    contentHash: item.contentHash,
+                    status: item.status,
+                })),
             }),
             summary,
             details,
@@ -1049,11 +1466,56 @@ export class MemoryManager {
         });
     }
 
-    rebuildMemoryTreeNodes(options: { limit?: number } = {}): MemoryTreeNodeRebuildResult {
+    rebuildMemoryTreeNodes(options: { limit?: number; kind?: MemoryTreeNodeKind } = {}): MemoryTreeNodeRebuildResult {
         const rebuiltAt = new Date().toISOString();
         const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
             ? Math.max(1, Math.floor(options.limit))
             : 100;
+        const kind = options.kind ?? "task";
+        const { nodes, edges, inputDetails } = kind === "topic"
+            ? this.buildTopicMemoryTreeNodes(limit, rebuiltAt)
+            : this.buildTaskMemoryTreeNodes(limit, rebuiltAt);
+
+        this.store.deleteMemoryTreeNodesByKind(kind);
+        this.store.upsertMemoryTreeNodes(nodes);
+        this.store.upsertMemoryTreeEdges(edges);
+        this.recordMemoryTreeReport({
+            reportType: "tree_build_preview",
+            scope: "private",
+            createdBy: "rpc",
+            inputVersion: hashMemoryTreePayload({
+                kind,
+                limit,
+                inputDetails,
+            }),
+            summary: {
+                nodeKind: kind,
+                nodeCount: nodes.length,
+                edgeCount: edges.length,
+                limit,
+            },
+            details: {
+                rebuiltAt,
+                kind,
+                nodes,
+                edges,
+                inputDetails,
+            },
+        });
+        this.store.setMeta("memory_tree_nodes_last_rebuilt_at", rebuiltAt);
+        return {
+            rebuiltAt,
+            totalNodes: nodes.length,
+            totalEdges: edges.length,
+            kind,
+        };
+    }
+
+    private buildTaskMemoryTreeNodes(limit: number, rebuiltAt: string): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
         const tasks = this.store.listTasks(limit, { status: ["success", "partial", "failed"] });
         const nodes: MemoryTreeNodeRecord[] = [];
         const edges: MemoryTreeEdgeRecord[] = [];
@@ -1069,7 +1531,7 @@ export class MemoryManager {
                 id: `task:${task.id}`,
                 level: 1,
                 kind: "task",
-                scope: task.agentId ? "private" : "private",
+                scope: "private",
                 agentId: task.agentId ?? undefined,
                 topicKey: task.conversationId,
                 title: task.title ?? task.objective ?? `Task ${task.id}`,
@@ -1110,34 +1572,85 @@ export class MemoryManager {
             });
         }
 
-        this.store.upsertMemoryTreeNodes(nodes);
-        this.store.upsertMemoryTreeEdges(edges);
-        this.recordMemoryTreeReport({
-            reportType: "tree_build_preview",
-            scope: "private",
-            createdBy: "rpc",
-            inputVersion: hashMemoryTreePayload({
+        return {
+            nodes,
+            edges,
+            inputDetails: {
                 taskLimit: limit,
                 taskCount: tasks.length,
-            }),
-            summary: {
-                nodeKind: "task",
-                nodeCount: nodes.length,
-                edgeCount: edges.length,
-                taskLimit: limit,
             },
-            details: {
-                rebuiltAt,
-                nodes,
-                edges,
-            },
-        });
-        this.store.setMeta("memory_tree_nodes_last_rebuilt_at", rebuiltAt);
+        };
+    }
+
+    private buildTopicMemoryTreeNodes(limit: number, rebuiltAt: string): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
+        const summaries = this.store.listChunkTopicSummaries().slice(0, limit);
+        const nodes: MemoryTreeNodeRecord[] = [];
+        const edges: MemoryTreeEdgeRecord[] = [];
+
+        for (const summary of summaries) {
+            const chunks = rankMemoryTreeTopicChunks(
+                this.applyMemoryTreeScoreSignals(this.store.getChunksByTopic(summary.topic, {
+                    maxPerTopic: Math.max(1, Math.min(summary.itemCount, 200)),
+                    agentId: summary.agentId ?? null,
+                    scope: summary.scope,
+                })),
+            );
+            if (chunks.length <= 0) {
+                continue;
+            }
+            const nodeId = buildMemoryTreeTopicNodeId(summary.topic, summary.agentId, summary.scope);
+            nodes.push({
+                id: nodeId,
+                level: 2,
+                kind: "topic",
+                scope: summary.scope,
+                agentId: summary.agentId ?? undefined,
+                topicKey: summary.topic,
+                title: `Topic: ${summary.topic}`,
+                summary: buildMemoryTreeTopicSummary(summary.topic, chunks),
+                summaryVersion: "p13-topic-node-v1",
+                timeFrom: summary.timeFrom,
+                timeTo: summary.timeTo,
+                sourceClassMix: buildMemoryTreeSourceClassMix(chunks),
+                metadata: {
+                    topic: summary.topic,
+                    chunkCount: chunks.length,
+                    totalChunkCount: summary.itemCount,
+                    memoryTypes: summary.memoryTypes,
+                },
+                createdAt: rebuiltAt,
+                updatedAt: rebuiltAt,
+            });
+            chunks.forEach((chunk, index) => {
+                edges.push({
+                    id: `edge:${nodeId}:chunk:${chunk.id}`,
+                    parentNodeId: nodeId,
+                    childType: "chunk",
+                    childId: chunk.id,
+                    relation: "contains",
+                    position: index,
+                    weight: Number.isFinite(chunk.score) ? chunk.score : undefined,
+                    metadata: {
+                        sourcePath: chunk.sourcePath,
+                        memoryType: chunk.memoryType,
+                        visibility: chunk.visibility,
+                    },
+                    createdAt: rebuiltAt,
+                });
+            });
+        }
+
         return {
-            rebuiltAt,
-            totalNodes: nodes.length,
-            totalEdges: edges.length,
-            kind: "task",
+            nodes,
+            edges,
+            inputDetails: {
+                topicLimit: limit,
+                topicCount: summaries.length,
+            },
         };
     }
 
@@ -1149,8 +1662,89 @@ export class MemoryManager {
         return this.store.getMemoryTreeNode(nodeId);
     }
 
+    getMemoryTreeNodeDetail(nodeId: string, options: { chunkLimit?: number } = {}): {
+        node: MemoryTreeNodeRecord;
+        edges: MemoryTreeEdgeRecord[];
+        chunks: MemorySearchResult[];
+    } | null {
+        const node = this.store.getMemoryTreeNode(nodeId);
+        if (!node) {
+            return null;
+        }
+        const edges = this.store.listMemoryTreeEdges({ parentNodeId: nodeId });
+        const chunks = this.resolveMemoryTreeEdgeChunks(edges, options.chunkLimit);
+        return {
+            node,
+            edges,
+            chunks,
+        };
+    }
+
     listMemoryTreeEdges(filter?: MemoryTreeEdgeListFilter): MemoryTreeEdgeRecord[] {
         return this.store.listMemoryTreeEdges(filter);
+    }
+
+    searchMemoryTreeNodes(query: string, options: {
+        limit?: number;
+        filter?: MemoryTreeNodeListFilter;
+        chunkLimitPerNode?: number;
+    } = {}): MemoryTreeNodeSearchResult[] {
+        const normalizedQuery = normalizeMemoryTreeNodeText(query);
+        if (!normalizedQuery) {
+            return [];
+        }
+        const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+            ? Math.max(1, Math.floor(options.limit))
+            : 10;
+        const candidates = this.store.listMemoryTreeNodes(Math.max(limit * 10, 100), options.filter);
+        const ranked = candidates
+            .map((node) => {
+                const match = scoreMemoryTreeNode(node, normalizedQuery);
+                return {
+                    node,
+                    score: match.score,
+                    matchReasons: match.matchReasons,
+                };
+            })
+            .filter((item) => item.score > 0)
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return compareMemoryTreeNodeRecency(a.node, b.node);
+            })
+            .slice(0, limit);
+        return ranked.map((item) => {
+            const detail = this.getMemoryTreeNodeDetail(item.node.id, {
+                chunkLimit: options.chunkLimitPerNode,
+            });
+            return {
+                node: item.node,
+                score: item.score,
+                matchReasons: item.matchReasons,
+                edges: detail?.edges ?? [],
+                chunks: detail?.chunks ?? [],
+            };
+        });
+    }
+
+    private resolveMemoryTreeEdgeChunks(edges: MemoryTreeEdgeRecord[], chunkLimit?: number): MemorySearchResult[] {
+        const limit = typeof chunkLimit === "number" && Number.isFinite(chunkLimit)
+            ? Math.max(1, Math.floor(chunkLimit))
+            : 20;
+        const chunks: MemorySearchResult[] = [];
+        for (const edge of edges) {
+            if (edge.childType !== "chunk") {
+                continue;
+            }
+            const chunk = this.store.getChunk(edge.childId);
+            if (!chunk) {
+                continue;
+            }
+            chunks.push(chunk);
+            if (chunks.length >= limit) {
+                break;
+            }
+        }
+        return chunks;
     }
 
     previewExactDedup(filter?: MemorySearchFilter, options: { maxGroups?: number } = {}): MemoryExactDedupPreviewReport {
@@ -3306,6 +3900,201 @@ function computeTaskShortcutRecencyBoost(task: TaskExperienceDetail): number {
     return 0;
 }
 
+function canReviewMemoryTreeReport(
+    currentStatus: MemoryTreeReportStatus,
+    decision: MemoryTreeReportReviewDecision,
+): boolean {
+    if (currentStatus === "applied") {
+        return false;
+    }
+    switch (decision) {
+        case "approved":
+            return currentStatus === "ready" || currentStatus === "rejected";
+        case "rejected":
+            return currentStatus === "ready" || currentStatus === "approved";
+        case "superseded":
+            return currentStatus !== "superseded";
+        default:
+            return false;
+    }
+}
+
+function appendMemoryTreeReportReviewEvent(
+    details: Record<string, unknown>,
+    event: {
+        decision: MemoryTreeReportReviewDecision;
+        previousStatus: MemoryTreeReportStatus;
+        reviewedAt: string;
+        reviewedBy: string;
+        note?: string;
+    },
+): Record<string, unknown> {
+    const history = Array.isArray(details.reviewHistory) ? [...details.reviewHistory] : [];
+    history.push({
+        decision: event.decision,
+        previousStatus: event.previousStatus,
+        reviewedAt: event.reviewedAt,
+        reviewedBy: event.reviewedBy,
+        note: event.note ?? null,
+    });
+    return {
+        ...details,
+        lastReview: history[history.length - 1],
+        reviewHistory: history,
+    };
+}
+
+function resolveMemoryTreeDedupArchiveOperations(report: MemoryTreeReportRecord): Array<{
+    chunkId: string;
+    keepChunkId: string;
+    normalizedHash?: string;
+}> {
+    const groups = Array.isArray(report.details.groups) ? report.details.groups : [];
+    const operations: Array<{ chunkId: string; keepChunkId: string; normalizedHash?: string }> = [];
+    for (const group of groups) {
+        if (!group || typeof group !== "object") {
+            continue;
+        }
+        const normalizedHash = typeof group.normalizedHash === "string" ? group.normalizedHash : undefined;
+        const keepChunkId = typeof group.keep?.id === "string" ? group.keep.id : undefined;
+        const remove = Array.isArray(group.remove) ? group.remove : [];
+        if (!keepChunkId) {
+            continue;
+        }
+        for (const item of remove) {
+            if (!item || typeof item !== "object" || typeof item.id !== "string") {
+                continue;
+            }
+            operations.push({
+                chunkId: item.id,
+                keepChunkId,
+                normalizedHash,
+            });
+        }
+    }
+    return operations;
+}
+
+function computeArchivedGovernanceScore(previousScoreTotal?: number): number {
+    const previous = typeof previousScoreTotal === "number" && Number.isFinite(previousScoreTotal)
+        ? previousScoreTotal
+        : undefined;
+    if (previous === undefined) {
+        return 0.05;
+    }
+    return roundMemoryTreeScore(Math.max(0, Math.min(previous * 0.25, 0.05)));
+}
+
+function buildArchivedMemoryChunkMetadata(
+    metadata: Record<string, unknown> | undefined,
+    input: {
+        reportId: string;
+        archivedAt: string;
+        keepChunkId: string;
+        normalizedHash?: string;
+    },
+): Record<string, unknown> {
+    const memoryTree = isRecord(metadata?.memoryTree) ? metadata.memoryTree : {};
+    const governance = isRecord(memoryTree.governance) ? memoryTree.governance : {};
+    return {
+        ...(metadata ?? {}),
+        memoryTree: {
+            ...memoryTree,
+            governance: {
+                ...governance,
+                archived: true,
+                archivedAt: input.archivedAt,
+                archivedByReportId: input.reportId,
+                archiveReason: "dedup_preview_remove",
+                keepChunkId: input.keepChunkId,
+                normalizedHash: input.normalizedHash ?? null,
+            },
+        },
+    };
+}
+
+function buildArchivedMemoryTreeScoreRecord(input: {
+    chunk: MemorySearchResult;
+    existing?: MemoryTreeScoreRecord;
+    reportId: string;
+    appliedAt: string;
+    keepChunkId: string;
+    normalizedHash?: string;
+    nextScoreTotal: number;
+}): MemoryTreeScoreRecord {
+    const rationale = isRecord(input.existing?.rationale) ? input.existing.rationale : {};
+    const governance = isRecord(rationale.governance) ? rationale.governance : {};
+    return {
+        id: input.existing?.id ?? `score:${MEMORY_TREE_SCORE_VERSION}:chunk:${input.chunk.id}`,
+        targetType: "chunk",
+        targetId: input.chunk.id,
+        sourceId: input.existing?.sourceId,
+        scoreTotal: input.nextScoreTotal,
+        recencyScore: input.existing?.recencyScore,
+        sourceWeightScore: input.existing?.sourceWeightScore,
+        interactionScore: input.existing?.interactionScore,
+        taskOutcomeScore: input.existing?.taskOutcomeScore,
+        entityDensityScore: input.existing?.entityDensityScore,
+        llmImportanceScore: input.existing?.llmImportanceScore,
+        dedupConfidence: Math.max(input.existing?.dedupConfidence ?? 0, 1),
+        scoreVersion: input.existing?.scoreVersion ?? MEMORY_TREE_SCORE_VERSION,
+        rationale: {
+            ...rationale,
+            governance: {
+                ...governance,
+                archivedByReportId: input.reportId,
+                archivedAt: input.appliedAt,
+                archiveReason: "dedup_preview_remove",
+                keepChunkId: input.keepChunkId,
+                normalizedHash: input.normalizedHash ?? null,
+                previousScoreTotal: input.existing?.scoreTotal ?? null,
+                nextScoreTotal: input.nextScoreTotal,
+            },
+        },
+        createdAt: input.existing?.createdAt ?? input.appliedAt,
+        updatedAt: input.appliedAt,
+    };
+}
+
+function appendMemoryTreeReportApplyEvent(
+    details: Record<string, unknown>,
+    event: {
+        appliedAt: string;
+        appliedBy: string;
+        note?: string;
+        updatedChunkCount: number;
+        updatedScoreCount: number;
+        skippedChunkIds: string[];
+        actions: MemoryTreeReportApplyResult["actions"];
+        extra?: Record<string, unknown>;
+    },
+): Record<string, unknown> {
+    const history = Array.isArray(details.applyHistory) ? [...details.applyHistory] : [];
+    history.push({
+        appliedAt: event.appliedAt,
+        appliedBy: event.appliedBy,
+        note: event.note ?? null,
+        updatedChunkCount: event.updatedChunkCount,
+        updatedScoreCount: event.updatedScoreCount,
+        skippedChunkIds: event.skippedChunkIds,
+        actions: event.actions,
+        ...(event.extra ? { extra: event.extra } : {}),
+    });
+    return {
+        ...details,
+        lastApply: history[history.length - 1],
+        applyHistory: history,
+    };
+}
+
+function roundMemoryTreeScore(value: number): number {
+    return Math.round(value * 10_000) / 10_000;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function buildMemoryTreeReportId(input: {
     reportType: MemoryTreeReportType;
     inputVersion?: string;
@@ -3357,6 +4146,21 @@ function buildMemoryTreeReportMarkdown(report: MemoryTreeReportRecord): string {
     ].join("\n");
 }
 
+function readExternalIngestPreviewFromReport(report: MemoryTreeReportRecord): ExternalMemoryIngestPreview {
+    const preview = isRecord(report.details.preview) ? report.details.preview : null;
+    if (!preview) {
+        throw new Error(`External ingest preview payload is missing in report ${report.id}.`);
+    }
+    const rootPath = typeof preview.rootPath === "string" ? preview.rootPath.trim() : "";
+    const sourceId = typeof preview.sourceId === "string" ? preview.sourceId.trim() : "";
+    const sourceLabel = typeof preview.sourceLabel === "string" ? preview.sourceLabel.trim() : "";
+    const adapter = typeof preview.adapter === "string" ? preview.adapter.trim() : "";
+    if (!rootPath || !sourceId || !sourceLabel || !adapter) {
+        throw new Error(`External ingest preview payload is incomplete in report ${report.id}.`);
+    }
+    return preview as unknown as ExternalMemoryIngestPreview;
+}
+
 function buildMemoryTreeTaskSummary(task: TaskExperienceDetail): string {
     return [
         task.summary?.trim(),
@@ -3375,6 +4179,138 @@ function buildMemoryTreeSourceClassMix(links: Array<{ sourcePath?: string; memor
         mix[classification.sourceClass] = (mix[classification.sourceClass] ?? 0) + 1;
     }
     return mix;
+}
+
+function readSearchResultSourceClass(result: MemorySearchResult): MemorySourceInventoryClass | "unknown" {
+    const memoryTree = isRecord(result.metadata?.memoryTree) ? result.metadata.memoryTree : undefined;
+    const sourceClass = typeof memoryTree?.sourceClass === "string" ? memoryTree.sourceClass.trim() : "";
+    switch (sourceClass) {
+        case "raw":
+        case "derived":
+        case "curated":
+            return sourceClass;
+        default:
+            return "unknown";
+    }
+}
+
+function buildMemorySearchStageSnapshot(results: MemorySearchResult[]): MemorySearchStageSnapshot {
+    return {
+        count: Array.isArray(results) ? results.length : 0,
+        topHits: (Array.isArray(results) ? results : []).slice(0, 3).map((item) => ({
+            id: item.id,
+            score: roundMemoryTreeScore(item.score),
+            sourceClass: readSearchResultSourceClass(item),
+        })),
+    };
+}
+
+function buildMemorySearchSourceClassMix(results: MemorySearchResult[]): Record<string, number> {
+    const mix: Record<string, number> = {};
+    for (const result of results) {
+        const sourceClass = readSearchResultSourceClass(result);
+        mix[sourceClass] = (mix[sourceClass] ?? 0) + 1;
+    }
+    return mix;
+}
+
+function buildMemoryTreeTopicNodeId(topic: string, agentId: string | undefined, scope: string): string {
+    return `topic:${hashMemoryTreePayload({
+        topic,
+        agentId: agentId ?? null,
+        scope,
+    })}`;
+}
+
+function buildMemoryTreeTopicSummary(topic: string, chunks: MemorySearchResult[]): string {
+    const highlights = dedupeStrings(
+        chunks
+            .map((chunk) => sanitizeTaskShortcutText(chunk.summary ?? chunk.snippet))
+            .filter((item): item is string => Boolean(item)),
+    ).slice(0, 2);
+    return [
+        `Topic ${topic}`,
+        ...highlights,
+    ].join(" | ");
+}
+
+function rankMemoryTreeTopicChunks(chunks: MemorySearchResult[]): MemorySearchResult[] {
+    return [...chunks].sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const aUpdatedAt = Date.parse(String(a.updatedAt ?? ""));
+        const bUpdatedAt = Date.parse(String(b.updatedAt ?? ""));
+        if (Number.isFinite(aUpdatedAt) && Number.isFinite(bUpdatedAt) && bUpdatedAt !== aUpdatedAt) {
+            return bUpdatedAt - aUpdatedAt;
+        }
+        return a.id.localeCompare(b.id);
+    });
+}
+
+function scoreMemoryTreeNode(node: MemoryTreeNodeRecord, normalizedQuery: string): { score: number; matchReasons: string[] } {
+    const queryTokens = tokenizeTaskShortcutQuery(normalizedQuery);
+    let score = 0;
+    const reasons = new Set<string>();
+    const fields: Array<{ label: string; values: Array<string | undefined> }> = [
+        { label: "标题", values: [node.title] },
+        { label: "摘要", values: [node.summary] },
+        { label: "topic", values: [node.topicKey] },
+    ];
+    for (const field of fields) {
+        const fieldScore = scoreTaskShortcutField(field.values, normalizedQuery, queryTokens);
+        if (fieldScore <= 0) {
+            continue;
+        }
+        score += fieldScore;
+        reasons.add(field.label);
+    }
+    if (score <= 0) {
+        return {
+            score: 0,
+            matchReasons: [],
+        };
+    }
+    return {
+        score: score + computeMemoryTreeNodeRecencyBoost(node),
+        matchReasons: [...reasons],
+    };
+}
+
+function compareMemoryTreeNodeRecency(a: MemoryTreeNodeRecord, b: MemoryTreeNodeRecord): number {
+    return resolveMemoryTreeNodeTimestamp(b) - resolveMemoryTreeNodeTimestamp(a);
+}
+
+function resolveMemoryTreeNodeTimestamp(node: MemoryTreeNodeRecord): number {
+    const timestamp = Date.parse(node.timeTo ?? node.timeFrom ?? node.updatedAt ?? node.createdAt ?? "");
+    return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function computeMemoryTreeNodeRecencyBoost(node: MemoryTreeNodeRecord): number {
+    const timestamp = resolveMemoryTreeNodeTimestamp(node);
+    if (!Number.isFinite(timestamp)) return 0;
+    const ageHours = (Date.now() - timestamp) / (1000 * 60 * 60);
+    if (ageHours <= 24) return 2;
+    if (ageHours <= 24 * 7) return 1;
+    return 0;
+}
+
+function normalizeMemoryTreeNodeText(value?: string): string | undefined {
+    const sanitized = sanitizeTaskShortcutText(value);
+    if (!sanitized) return undefined;
+    return sanitized.toLowerCase();
+}
+
+function dedupeStrings(values: Array<string | undefined>): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const value of values) {
+        const normalized = sanitizeTaskShortcutText(value);
+        if (!normalized || seen.has(normalized)) {
+            continue;
+        }
+        seen.add(normalized);
+        result.push(normalized);
+    }
+    return result;
 }
 
 function buildInventoryMemorySourceRecord(item: MemorySourceInventoryItem, now: string): MemoryTreeSourceRecord {
@@ -3596,6 +4532,33 @@ function computeSourceClassWeight(sourceClass?: MemorySourceInventoryClass): num
             return 0.5;
         default:
             return 0.65;
+    }
+}
+
+function readMemoryTreeScoreSourceClass(scoreRecord: MemoryTreeScoreRecord): MemorySourceInventoryClass | undefined {
+    const sourceClass = scoreRecord.rationale && typeof scoreRecord.rationale.sourceClass === "string"
+        ? scoreRecord.rationale.sourceClass
+        : undefined;
+    switch (sourceClass) {
+        case "raw":
+        case "derived":
+        case "curated":
+            return sourceClass;
+        default:
+            return undefined;
+    }
+}
+
+function computeSearchSourceClassBoost(sourceClass?: MemorySourceInventoryClass): number {
+    switch (sourceClass) {
+        case "curated":
+            return 1.08;
+        case "raw":
+            return 1.03;
+        case "derived":
+            return 0.94;
+        default:
+            return 1;
     }
 }
 

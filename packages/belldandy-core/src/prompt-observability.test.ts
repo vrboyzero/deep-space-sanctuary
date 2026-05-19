@@ -200,6 +200,27 @@ describe("prompt observability", () => {
           reason: "matching_prefix_recent_but_ordering_risk_present",
           previousAgeMs: 1200,
         },
+        contextInjection: {
+          prependContextChars: 480,
+          totalBlockCount: 3,
+          blockTags: ["current-turn", "recent-memory", "auto-recall"],
+          blockLineCounts: {
+            "current-turn": 1,
+            "recent-memory": 2,
+            "auto-recall": 2,
+          },
+          autoRecall: {
+            candidateCount: 3,
+            keptCount: 2,
+            filteredOutCount: 1,
+            minScore: 0.3,
+            sourceClassMix: {
+              curated: 1,
+              derived: 1,
+            },
+            topHitIds: ["chunk-1", "chunk-2"],
+          },
+        },
         promptExperiments: {
           disabledSectionIdsApplied: ["methodology"],
         },
@@ -260,6 +281,18 @@ describe("prompt observability", () => {
         recommendation: "delay_if_possible",
         reason: "matching_prefix_recent_but_ordering_risk_present",
         previousAgeMs: 1200,
+      },
+      contextInjection: {
+        prependContextChars: 480,
+        totalBlockCount: 3,
+        blockTags: ["current-turn", "recent-memory", "auto-recall"],
+        autoRecall: {
+          candidateCount: 3,
+          keptCount: 2,
+          filteredOutCount: 1,
+          minScore: 0.3,
+          topHitIds: ["chunk-1", "chunk-2"],
+        },
       },
       truncationReason: {
         code: "max_chars_limit",
@@ -384,6 +417,18 @@ describe("prompt observability", () => {
           truncatedSectionLabels: ["core"],
           message: "Dropped methodology and truncated core to fit 8 char limit.",
         },
+        contextInjection: {
+          prependContextChars: 480,
+          totalBlockCount: 3,
+          blockTags: ["current-turn", "recent-memory", "auto-recall"],
+          autoRecall: {
+            candidateCount: 3,
+            keptCount: 2,
+            filteredOutCount: 1,
+            minScore: 0.3,
+            topHitIds: ["chunk-1", "chunk-2"],
+          },
+        },
       },
     });
 
@@ -396,6 +441,8 @@ describe("prompt observability", () => {
     expect(formatPromptObservabilityHeadline(view)).toContain("agent=default");
     expect(formatPromptObservabilityHeadline(view)).toContain("sections=1");
     expect(formatPromptObservabilityHeadline(view)).toContain("blockTokens=1");
+    expect(formatPromptObservabilityHeadline(view)).toContain("prependChars=480");
+    expect(formatPromptObservabilityHeadline(view)).toContain("autoRecall=2");
     expect(formatPromptObservabilityHeadline(view)).toContain("truncation=max_chars_limit");
 
     expect(renderPromptObservabilityText(view)).toContain("Prompt Observability");
@@ -403,6 +450,8 @@ describe("prompt observability", () => {
     expect(renderPromptObservabilityText(view)).toContain("droppedSectionCount: 1");
     expect(renderPromptObservabilityText(view)).toContain("systemPromptEstimatedTokens: 2");
     expect(renderPromptObservabilityText(view)).toContain("includesHookSystemPrompt: yes");
+    expect(renderPromptObservabilityText(view)).toContain("prependContextChars: 480");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallKeptCount: 2");
     expect(renderPromptObservabilityText(view)).toContain("truncationReasonCode: max_chars_limit");
     expect(renderPromptObservabilityText(view)).toContain("truncationTruncatedSectionIds: core");
   });

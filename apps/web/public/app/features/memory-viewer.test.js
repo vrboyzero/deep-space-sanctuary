@@ -522,6 +522,75 @@ describe("memory viewer shared review filters", () => {
     ]);
   });
 
+  it("renders P16 search diagnostics in memory stats and list summaries", () => {
+    const { refs, state, feature } = createDedupHarness();
+    state.tab = "memories";
+    state.stats = {
+      categorized: 7,
+      uncategorized: 2,
+    };
+    state.items = [
+      {
+        id: "mem-curated",
+        sourcePath: "memory/MEMORY.md",
+        summary: "curated memory summary",
+        snippet: "curated memory snippet",
+        memoryType: "other",
+        sourceType: "manual",
+        visibility: "private",
+        sourceView: { scope: "private" },
+        category: "decision",
+        score: 0.94,
+      },
+      {
+        id: "mem-derived",
+        sourcePath: "memory/derived.md",
+        summary: "derived memory summary",
+        snippet: "derived memory snippet",
+        memoryType: "other",
+        sourceType: "manual",
+        visibility: "private",
+        sourceView: { scope: "private" },
+        category: "fact",
+        score: 0.61,
+      },
+    ];
+    state.selectedId = "mem-curated";
+    state.memoryQueryView = { scope: "private" };
+    state.memorySearchDiagnostics = {
+      retrievalMode: "explicit",
+      sourceClassMix: {
+        curated: 1,
+        derived: 1,
+      },
+      stages: {
+        raw: { count: 5 },
+        scoreAware: { count: 4 },
+        reranked: { count: 3 },
+        returned: {
+          count: 2,
+          topHits: [
+            { id: "mem-curated", sourceClass: "curated" },
+            { id: "mem-derived", sourceClass: "derived" },
+          ],
+        },
+      },
+    };
+
+    feature.renderMemoryViewerStats(state.stats);
+    feature.renderMemoryList(state.items);
+
+    expect(refs.memoryViewerStatsEl.textContent).toContain("Search Returned");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("Search Pipeline");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("5 → 4 → 3 → 2");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("curated:1, derived:1");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("mem-curated (curated), mem-derived (derived)");
+    expect(refs.memoryViewerListEl.innerHTML).toContain("Search Diagnostics");
+    expect(refs.memoryViewerListEl.innerHTML).toContain("mode=explicit · raw 5 -&gt; score 4 -&gt; rerank 3 -&gt; final 2");
+    expect(refs.memoryViewerListEl.innerHTML).toContain("source mix: curated:1, derived:1");
+    expect(refs.memoryViewerListEl.innerHTML).toContain("top hits: mem-curated (curated), mem-derived (derived)");
+  });
+
   it("builds collapsed previews for oversized memory detail blocks", () => {
     const preview = buildMemoryDetailCollapsedPreview(
       Array.from({ length: 20 }, (_, index) => `line-${index + 1}`).join("\n"),
