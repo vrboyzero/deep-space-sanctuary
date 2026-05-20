@@ -1,6 +1,6 @@
 # Star Sanctuary 使用手册
 
-最后更新时间：2026-05-17  
+最后更新时间：2026-05-20  
 适用版本：当前仓库主干，workspace version `0.5.3`
 
 Star Sanctuary 是一个 **本地优先的个人 AI 助手与 Agent 工作台**。  
@@ -1126,8 +1126,10 @@ WebChat 的 `🧠 记忆查看` 当前适合做这些事：
 
 - 看最近任务记录
 - 看 durable memory / chunk 命中
+- 看 memory tree node / source / provenance
 - 看 experience candidate
 - 看 shared review backlog
+- 看 external ingest / dedup / vacuum 前后的治理结果
 - 看外发审计记录
 
 它很适合回答两类问题：
@@ -1671,6 +1673,317 @@ BELLDANDY_COMMONS_OBSIDIAN_ROOT_DIR=Star Sanctuary
 普通用户可以先只理解成一句话：
 
 它们的目标是让 Agent 不只是“记得住”，还要“记得稳、记得可审计、记得可治理”。
+
+### 7.5 关闭记忆但保留 Task 统计
+
+这组能力适合开发模式或“我想先关掉整套记忆运行时噪音，但仍想保留任务统计”的场景。
+
+当前推荐配置：
+
+```env
+BELLDANDY_MEMORY_ENABLED=false
+BELLDANDY_TASK_MEMORY_ENABLED=true
+BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED=true
+BELLDANDY_TASK_SUMMARY_ENABLED=false
+```
+
+这组开关当前的实际语义是：
+
+- `BELLDANDY_MEMORY_ENABLED=false`
+  关闭 context injection、auto recall、embedding、memory summary、memory evolution、deep retrieval、node-assisted retrieval 这些记忆运行时能力
+- `BELLDANDY_TASK_MEMORY_ENABLED=true`
+  允许任务记录能力本身存在
+- `BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED=true`
+  在总开关关闭时，仍保留 task stats
+- `BELLDANDY_TASK_SUMMARY_ENABLED=false`
+  保持关闭，避免重新引入额外 LLM 摘要成本
+
+当前这条语义已经接入：
+
+- `⚙️ 设置 -> 记忆`
+- `.env.example`
+- WebChat 设置保存链
+
+如果你想确认这组配置是否真的生效，最直接的做法是：
+
+1. 在 `⚙️ 设置 -> 记忆` 保存后重启 Gateway
+2. 跑一条短任务
+3. 到 `🧠 记忆查看` 里确认还能看到任务记录
+4. 同时确认 auto-recall / 最近记忆注入没有继续工作
+
+### 7.6 Prompt Focus 与 Method / Skill 摘要注入
+
+当前系统提示词相关的两条新能力，已经都可以独立控制：
+
+- Prompt Focus Runtime Prelude
+- Methods / Skills 资产摘要注入
+
+#### A. Prompt Focus 是什么
+
+Prompt Focus 会从当前工作区的 `AGENTS.md` / `SOUL.md` 中提取和本轮任务最相关的片段，作为额外的 runtime prelude 注入到 system prompt 前导区，目的是减少长规则文件被整段忽略的概率。
+
+最常用配置：
+
+```env
+BELLDANDY_PROMPT_FOCUS_ENABLED=true
+BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED=true
+BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE=0.30
+```
+
+理解方式：
+
+- `BELLDANDY_PROMPT_FOCUS_ENABLED`
+  总开关
+- `BELLDANDY_PROMPT_FOCUS_SEMANTIC_ENABLED`
+  开启后优先复用当前 embedding 能力做语义召回；embedding 不可用时自动回退 lexical focus
+- `BELLDANDY_PROMPT_FOCUS_SEMANTIC_MIN_SCORE`
+  语义召回最低阈值，值越高越保守
+
+如果你只是想先验证效果，推荐在：
+
+- `⚙️ 设置 -> 系统`
+
+里先开 `Prompt Focus`，然后做一次长规则文件场景的实际对话，再去 prompt snapshot / doctor observability 看注入变化。
+
+#### B. Methods / Skills 摘要注入是什么
+
+这项能力会在 Gateway 启动时，把当前 methods 目录和已加载 skills 生成一个紧凑摘要目录，注入到 system prompt。这样 Agent 在真正调用读取工具前，先知道“当前实例里大概有哪些能力资产”。
+
+最常用配置：
+
+```env
+BELLDANDY_INJECT_METHOD_SKILL_LIST=true
+BELLDANDY_MAX_SYSTEM_PROMPT_CHARS=0
+```
+
+理解方式：
+
+- `BELLDANDY_INJECT_METHOD_SKILL_LIST=true`
+  注入 `method-skill-asset-summary`
+- `BELLDANDY_INJECT_METHOD_SKILL_LIST=false`
+  完整移除这段 runtime section，而不是只留下空列表
+- `BELLDANDY_MAX_SYSTEM_PROMPT_CHARS`
+  可作为总提示词长度护栏；`0` 或留空表示不限制
+
+如果你觉得 prompt 成本偏高，最实用的收缩顺序通常是：
+
+1. 先评估是否真的需要 Methods / Skills 摘要常驻
+2. 再评估是否关闭 Prompt Focus 语义召回
+3. 最后再考虑整体 system prompt 长度上限
+
+### 7.7 Star Sanctuary 分层记忆树建议方案（当前已落地能力）
+
+需求文档里原本把这条主线写成“建议方案”。截至 2026-05-20，它已经不只是建议，而是有一套可实际使用的首轮闭环。
+
+先说结论：当前已经能用的部分主要包括：
+
+- `topic / task / conversation / day / project / agent` 分层 node
+- `memory.tree.node.rebuild / list / search / get` 闭环
+- `memory.search` 的 node-assisted routing 与 diagnostics
+- configured external ingest 的目录型 / 单文件型 Markdown 接入
+- exact dedup 的 preview / apply
+- `memory.vacuum.preview / apply` 的安全入口
+
+#### A. 推荐的最小环境变量组合
+
+如果你要认真使用分层记忆树、外来源和 node-assisted 检索，推荐至少准备：
+
+```env
+BELLDANDY_MEMORY_ENABLED=true
+BELLDANDY_EMBEDDING_ENABLED=true
+BELLDANDY_EMBEDDING_PROVIDER=openai
+BELLDANDY_EMBEDDING_MODEL=text-embedding-3-small
+BELLDANDY_CONTEXT_INJECTION=true
+BELLDANDY_AUTO_RECALL_ENABLED=true
+BELLDANDY_MEMORY_DEEP_RETRIEVAL=true
+BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL=true
+BELLDANDY_TASK_MEMORY_ENABLED=true
+BELLDANDY_TEAM_SHARED_MEMORY_ENABLED=true
+```
+
+补充理解：
+
+- `BELLDANDY_MEMORY_DEEP_RETRIEVAL`
+  允许沿源路径做更深层的聚合检索
+- `BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL`
+  允许 `memory.search` 优先利用 memory tree node summary 收敛候选，再按需回退到 chunk 级证据
+- `BELLDANDY_TEAM_SHARED_MEMORY_ENABLED`
+  允许把 `team-memory/` 作为共享层接入记忆体系
+
+这几个开关目前都已能通过：
+
+- `.env.local`
+- `.env.example`
+- `⚙️ 设置 -> 记忆`
+
+统一配置。
+
+#### B. 现在有哪些 node 层级
+
+当前已落地的 node 层主要是：
+
+- `topic`
+  适合按主题聚合 chunk
+- `task`
+  适合按任务聚合
+- `conversation`
+  适合按单次会话聚合
+- `day`
+  适合按日回看当天工作
+- `project`
+  适合按长期目标或 `goalId` 聚合
+- `agent`
+  适合按 Agent 视角聚合工作轨迹
+
+你不需要一次性把它理解成图数据库。当前更实用的理解是：
+
+- chunk 是原始证据层
+- node 是阶段结论层
+- `memory.search` 现在可以在部分场景先利用 node，再把最需要的 chunk 补回来
+
+#### C. 外来源 configured sources 现在支持什么
+
+当前已支持两类 configured external source：
+
+1. 目录型 Markdown 源
+2. 单文件 Markdown 源
+
+设置入口在：
+
+- `⚙️ 设置 -> 记忆` 里的 configured sources 区域
+
+目录型最小示例：
+
+```json
+[
+  {
+    "id": "configured:obsidian-vault:1",
+    "label": "Obsidian Vault",
+    "sourceClass": "curated",
+    "scope": "private",
+    "rootPath": "C:/Vault",
+    "fileExtensions": [".md"]
+  }
+]
+```
+
+单文件最小示例：
+
+```json
+[
+  {
+    "id": "configured:playbook-file:1",
+    "label": "Playbook File",
+    "sourceClass": "curated",
+    "scope": "private",
+    "filePath": "C:/Vault/Playbooks/release-playbook.md"
+  }
+]
+```
+
+当前外来源链路推荐按这个顺序使用：
+
+1. 在设置里保存 configured sources JSON
+2. 先做 external ingest preview
+3. 检查 `Preview Result`
+4. 审批 report
+5. 再执行 apply
+
+当前 rescan 也已具备最小 stale 清理能力，也就是：
+
+- 文件更新后会看到 `changed`
+- 文件删除后会看到 `stale`
+- apply 后会把 stale source path 关联的旧 chunk 清理掉，避免继续污染检索
+
+#### D. 记忆治理与运维入口
+
+当前记忆治理里，普通使用最有价值的 3 类能力是：
+
+1. external ingest preview / apply
+2. dedup preview / apply
+3. vacuum preview / apply
+
+实际边界要记住：
+
+- `memory.tree.report.apply`
+  只对已 review / 已确认的 report 生效
+- `memory.dedup.apply`
+  当前只做 exact duplicate 清理，不做模糊去重
+- `memory.vacuum.apply`
+  一定要求 `confirmed=true`，并且会先备份数据库
+
+如果你更习惯脚本化调试，而不是只点 WebChat，下面这个最小 Node 脚本骨架可以直接复用。前提是：
+
+- 当前实例已启动
+- 新脚本客户端已完成 token / Pairing
+- 你在源码仓环境里运行，依赖 `ws` 已存在
+
+```js
+import WebSocket from "ws";
+
+const ws = new WebSocket("ws://127.0.0.1:28889", {
+  origin: "http://127.0.0.1",
+});
+
+ws.on("open", () => {
+  ws.send(JSON.stringify({
+    type: "req",
+    id: "node-rebuild-project",
+    method: "memory.tree.node.rebuild",
+    params: { kind: "project", limit: 20 },
+  }));
+
+  ws.send(JSON.stringify({
+    type: "req",
+    id: "node-search-project",
+    method: "memory.tree.node.search",
+    params: {
+      query: "goal-alpha",
+      limit: 5,
+      chunkLimitPerNode: 5,
+      filter: { kind: "project" },
+    },
+  }));
+
+  ws.send(JSON.stringify({
+    type: "req",
+    id: "vacuum-preview",
+    method: "memory.vacuum.preview",
+    params: { agentId: "default" },
+  }));
+});
+
+ws.on("message", (data) => {
+  console.log(JSON.parse(String(data)));
+});
+```
+
+如果你只想看请求体长什么样，而不想写完整脚本，最常用的 RPC 就是这些：
+
+```json
+{"type":"req","id":"node-get","method":"memory.tree.node.get","params":{"nodeId":"project:goal-alpha","chunkLimit":5}}
+{"type":"req","id":"dedup-preview","method":"memory.dedup.preview","params":{"agentId":"default"}}
+{"type":"req","id":"vacuum-apply","method":"memory.vacuum.apply","params":{"agentId":"default","confirmed":true,"runId":"manual-vacuum-1"}}
+```
+
+#### E. 现在最推荐的实用顺序
+
+如果你想把 7.7 这套能力真正用起来，建议按这个顺序：
+
+1. 先开 embedding、task memory、deep retrieval、node-assisted retrieval
+2. 先用 `memory.search` 和 `🧠 记忆查看` 看当前检索是否正常
+3. 再配置 configured external source，先 preview 再 apply
+4. 累积一段时间后，再做 `memory.dedup.preview`
+5. 确认重复确实明显，再做 `memory.dedup.apply`
+6. 最后再看 `memory.vacuum.preview` 是否建议回收空间
+
+这样做的好处是：
+
+- 先把“可用性”跑通
+- 再做“治理”
+- 最后再做“空间回收”
+
+更不容易把问题混在一起排查。
 
 ---
 

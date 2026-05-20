@@ -9,6 +9,7 @@ export type MemoryRuntimeSwitches = {
   taskMemoryEnabled: boolean;
   taskSummaryEnabled: boolean;
   deepRetrievalEnabled: boolean;
+  nodeAssistedRetrievalEnabled: boolean;
 };
 
 export type EnvReader = (name: string) => string | undefined;
@@ -39,5 +40,6 @@ export function resolveMemoryRuntimeSwitches(readEnv: EnvReader): MemoryRuntimeS
     taskMemoryEnabled: (masterEnabled && taskMemoryRequested) || taskStatsCarveOutEnabled,
     taskSummaryEnabled: masterEnabled && isExplicitlyEnabled(readEnv("BELLDANDY_TASK_SUMMARY_ENABLED")),
     deepRetrievalEnabled: masterEnabled && isExplicitlyEnabled(readEnv("BELLDANDY_MEMORY_DEEP_RETRIEVAL")),
+    nodeAssistedRetrievalEnabled: masterEnabled && isExplicitlyEnabled(readEnv("BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL")),
   };
 }

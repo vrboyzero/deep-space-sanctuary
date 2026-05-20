@@ -112,6 +112,288 @@ describe("buildContextInjectionPrelude", () => {
     expect(result?.deltas?.every((delta) => delta.deltaType === "user-prelude")).toBe(true);
   });
 
+  it("records R5 node/source/injection auto-recall metrics in context delta metadata", async () => {
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => null,
+      findSimilarPastWork: () => [],
+      search: async () => [],
+      searchWithDiagnostics: async () => ({
+        items: [
+          {
+            id: "node-backed-curated",
+            sourcePath: "MEMORY.md",
+            snippet: "node backed curated recall",
+            score: 0.92,
+            updatedAt: "2026-05-20T10:00:00.000Z",
+            metadata: {
+              memoryTree: {
+                sourceClass: "curated",
+                nodeHit: {
+                  kind: "project",
+                },
+              },
+            },
+          },
+          {
+            id: "raw-fallback-chunk",
+            sourcePath: "memory/raw-fallback.md",
+            snippet: "raw fallback recall",
+            score: 0.61,
+            updatedAt: "2026-05-20T09:30:00.000Z",
+            metadata: {
+              memoryTree: {
+                sourceClass: "raw",
+              },
+            },
+          },
+        ] as any,
+        diagnostics: {
+          retrievalMode: "implicit",
+          limit: 5,
+          routingPolicy: "node_assisted",
+          skipped: false,
+          deepRetrievalApplied: false,
+          scoreSignalAppliedCount: 2,
+          sourceClassMix: {
+            curated: 1,
+            raw: 1,
+          },
+          nodeAssisted: {
+            enabled: true,
+            policy: "node_assisted",
+            nodeHitCount: 1,
+            injectedChunkCount: 1,
+            fallbackApplied: true,
+            returnedMix: {
+              nodeBacked: 1,
+              chunkOnly: 1,
+            },
+            topNodeHits: [],
+          },
+          stages: {
+            raw: { count: 2, topHits: [] },
+            scoreAware: { count: 2, topHits: [] },
+            reranked: { count: 2, topHits: [] },
+            returned: { count: 2, topHits: [] },
+          },
+        } as any,
+      }),
+    };
+
+    const result = await buildContextInjectionPrelude(
+      memoryManager,
+      {
+        prompt: "继续处理 goal alpha",
+        userInput: "继续处理 goal alpha",
+        messages: [],
+      },
+      {
+        agentId: "default",
+        sessionKey: "conv-r5-auto-recall",
+      },
+      {
+        contextInjectionEnabled: false,
+        contextInjectionLimit: 0,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 0,
+        contextInjectionAllowedCategories: ["decision", "fact"],
+        autoRecallEnabled: true,
+        autoRecallLimit: 5,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 50,
+      },
+    );
+
+    const autoRecallDelta = result?.deltas?.find((delta) => delta.id === "auto-recall");
+    expect(autoRecallDelta?.metadata).toMatchObject({
+      blockTag: "auto-recall",
+      observability: {
+        candidateCount: 2,
+        keptCount: 2,
+        injectedCount: 2,
+        filteredOutCount: 0,
+        sourceClassMix: {
+          curated: 1,
+          raw: 1,
+        },
+        nodeHitCount: 1,
+        nodeBackedCount: 1,
+        chunkOnlyCount: 1,
+        nodeBackedShare: 0.5,
+        chunkOnlyShare: 0.5,
+        nodeHitRate: 0.5,
+        fallbackApplied: true,
+        fallbackRate: 0.5,
+        usefulHitCount: 1,
+        usefulHitRate: 0.5,
+        charsPerUsefulHit: expect.any(Number),
+        tokensPerUsefulHit: expect.any(Number),
+        sourceNoiseCount: 1,
+        sourceNoiseRatio: 0.5,
+        nodeSummarySavingsChars: expect.any(Number),
+        nodeSummarySavingsTokens: expect.any(Number),
+        nodeSummaryCompressionRatio: expect.any(Number),
+        injectionCharsBySourceClass: {
+          curated: expect.any(Number),
+          raw: expect.any(Number),
+        },
+        injectionTokensBySourceClass: {
+          curated: expect.any(Number),
+          raw: expect.any(Number),
+        },
+      },
+    });
+  });
+
+  it("builds R6 node-first auto-recall summary blocks with curated-first fallback budgets", async () => {
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => null,
+      findSimilarPastWork: () => [],
+      search: async () => [],
+      searchWithDiagnostics: async () => ({
+        items: [
+          {
+            id: "curated-node-backed",
+            sourcePath: "MEMORY.md",
+            snippet: "curated node-backed summary marker",
+            score: 0.96,
+            updatedAt: "2026-05-20T10:00:00.000Z",
+            metadata: {
+              memoryTree: {
+                sourceClass: "curated",
+                nodeHit: { kind: "project" },
+              },
+            },
+          },
+          {
+            id: "derived-node-backed",
+            sourcePath: "memory/derived-plan.md",
+            snippet: "derived node-backed summary marker",
+            score: 0.83,
+            updatedAt: "2026-05-20T09:50:00.000Z",
+            metadata: {
+              memoryTree: {
+                sourceClass: "derived",
+                nodeHit: { kind: "conversation" },
+              },
+            },
+          },
+          {
+            id: "raw-fallback-kept",
+            sourcePath: "memory/raw-fallback.md",
+            snippet: "raw fallback evidence marker",
+            score: 0.62,
+            updatedAt: "2026-05-20T09:40:00.000Z",
+            metadata: {
+              memoryTree: {
+                sourceClass: "raw",
+              },
+            },
+          },
+          {
+            id: "unknown-fallback-dropped",
+            sourcePath: "notes/unknown-fallback.md",
+            snippet: "unknown fallback should be dropped by budget",
+            score: 0.58,
+            updatedAt: "2026-05-20T09:30:00.000Z",
+            metadata: {
+              memoryTree: {
+                sourceClass: "unknown",
+              },
+            },
+          },
+        ] as any,
+        diagnostics: {
+          retrievalMode: "implicit",
+          limit: 5,
+          routingPolicy: "node_assisted",
+          skipped: false,
+          deepRetrievalApplied: false,
+          scoreSignalAppliedCount: 4,
+          sourceClassMix: {
+            curated: 1,
+            derived: 1,
+            raw: 1,
+            unknown: 1,
+          },
+          nodeAssisted: {
+            enabled: true,
+            policy: "node_assisted",
+            nodeHitCount: 2,
+            injectedChunkCount: 2,
+            fallbackApplied: true,
+            returnedMix: {
+              nodeBacked: 2,
+              chunkOnly: 2,
+            },
+            topNodeHits: [],
+          },
+          stages: {
+            raw: { count: 4, topHits: [] },
+            scoreAware: { count: 4, topHits: [] },
+            reranked: { count: 4, topHits: [] },
+            returned: { count: 4, topHits: [] },
+          },
+        } as any,
+      }),
+    };
+
+    const result = await buildContextInjectionPrelude(
+      memoryManager,
+      {
+        prompt: "继续推进 goal alpha",
+        userInput: "继续推进 goal alpha",
+        messages: [],
+      },
+      {
+        agentId: "default",
+        sessionKey: "conv-r6-auto-recall",
+      },
+      {
+        contextInjectionEnabled: false,
+        contextInjectionLimit: 0,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 0,
+        contextInjectionAllowedCategories: ["decision", "fact"],
+        autoRecallEnabled: true,
+        autoRecallLimit: 5,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 50,
+      },
+    );
+
+    expect(result?.prependContext).toContain("<auto-recall-summary");
+    expect(result?.prependContext).toContain("[project, score=0.96] curated node-backed summary marker");
+    expect(result?.prependContext).toContain("[conversation, score=0.83] derived node-backed summary marker");
+    expect(result?.prependContext).toContain("<auto-recall");
+    expect(result?.prependContext).toContain("raw fallback evidence marker");
+    expect(result?.prependContext).not.toContain("unknown fallback should be dropped by budget");
+    expect((result?.prependContext?.indexOf("</auto-recall-summary>") ?? Number.POSITIVE_INFINITY)).toBeLessThan(
+      result?.prependContext?.indexOf("<auto-recall hint=") ?? Number.POSITIVE_INFINITY,
+    );
+
+    const summaryDelta = result?.deltas?.find((delta) => delta.id === "auto-recall-summary");
+    expect(summaryDelta?.metadata).toMatchObject({
+      blockTag: "auto-recall-summary",
+      observability: {
+        injectedCount: 3,
+        topHitIds: ["curated-node-backed", "derived-node-backed", "raw-fallback-kept"],
+        selectionPolicy: "node_summary_curated_first_static_budget_v1",
+        usefulHitCount: 2,
+        usefulHitRate: 0.667,
+        tokensPerUsefulHit: expect.any(Number),
+        nodeSummarySavingsChars: expect.any(Number),
+        nodeSummarySavingsTokens: expect.any(Number),
+      },
+    });
+  });
+
   it("injects work overview as first-level summary", async () => {
     const memoryManager: ContextInjectionMemoryProvider = {
       getContextInjectionMemories: () => [],

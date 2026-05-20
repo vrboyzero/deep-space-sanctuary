@@ -39,10 +39,32 @@ export type PromptContextInjectionObservability = {
     timedOut?: boolean;
     candidateCount?: number;
     keptCount?: number;
+    injectedCount?: number;
     filteredOutCount?: number;
     minScore?: number;
     sourceClassMix?: Record<string, number>;
     topHitIds?: string[];
+    nodeHitCount?: number;
+    nodeBackedCount?: number;
+    chunkOnlyCount?: number;
+    nodeBackedShare?: number;
+    chunkOnlyShare?: number;
+    nodeHitRate?: number;
+    fallbackApplied?: boolean;
+    fallbackRate?: number;
+    usefulHitCount?: number;
+    usefulHitRate?: number;
+    charsPerUsefulHit?: number;
+    tokensPerUsefulHit?: number;
+    sourceNoiseCount?: number;
+    sourceNoiseRatio?: number;
+    nodeSummarySavingsChars?: number;
+    nodeSummarySavingsTokens?: number;
+    nodeSummaryCompressionRatio?: number;
+    injectedChars?: number;
+    injectedTokens?: number;
+    injectionCharsBySourceClass?: Record<string, number>;
+    injectionTokensBySourceClass?: Record<string, number>;
   };
 };
 
@@ -422,6 +444,24 @@ export function formatPromptObservabilityHeadline(
   if (typeof view.contextInjection?.autoRecall?.keptCount === "number") {
     parts.push(`autoRecall=${view.contextInjection.autoRecall.keptCount}`);
   }
+  if (typeof view.contextInjection?.autoRecall?.nodeHitRate === "number") {
+    parts.push(`nodeHit=${formatCompactNumber(view.contextInjection.autoRecall.nodeHitRate)}`);
+  }
+  if (typeof view.contextInjection?.autoRecall?.fallbackRate === "number") {
+    parts.push(`fallback=${formatCompactNumber(view.contextInjection.autoRecall.fallbackRate)}`);
+  }
+  if (typeof view.contextInjection?.autoRecall?.usefulHitRate === "number") {
+    parts.push(`useful=${formatCompactNumber(view.contextInjection.autoRecall.usefulHitRate)}`);
+  }
+  if (typeof view.contextInjection?.autoRecall?.tokensPerUsefulHit === "number") {
+    parts.push(`tok/useful=${formatCompactNumber(view.contextInjection.autoRecall.tokensPerUsefulHit)}`);
+  }
+  if (typeof view.contextInjection?.autoRecall?.sourceNoiseRatio === "number") {
+    parts.push(`noise=${formatCompactNumber(view.contextInjection.autoRecall.sourceNoiseRatio)}`);
+  }
+  if (typeof view.contextInjection?.autoRecall?.nodeSummarySavingsTokens === "number") {
+    parts.push(`summarySaveTok=${formatCompactNumber(view.contextInjection.autoRecall.nodeSummarySavingsTokens)}`);
+  }
   if (view.truncationReason?.code) {
     parts.push(`truncation=${view.truncationReason.code}`);
   }
@@ -470,9 +510,31 @@ export function renderPromptObservabilityText(
   appendPromptObservabilityLine(lines, indent, "contextInjectionBlockTags", view.contextInjection?.blockTags?.join(", "));
   appendPromptObservabilityLine(lines, indent, "autoRecallCandidateCount", view.contextInjection?.autoRecall?.candidateCount);
   appendPromptObservabilityLine(lines, indent, "autoRecallKeptCount", view.contextInjection?.autoRecall?.keptCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallInjectedCount", view.contextInjection?.autoRecall?.injectedCount);
   appendPromptObservabilityLine(lines, indent, "autoRecallFilteredOutCount", view.contextInjection?.autoRecall?.filteredOutCount);
   appendPromptObservabilityLine(lines, indent, "autoRecallMinScore", view.contextInjection?.autoRecall?.minScore);
   appendPromptObservabilityLine(lines, indent, "autoRecallTopHitIds", view.contextInjection?.autoRecall?.topHitIds?.join(", "));
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeHitCount", view.contextInjection?.autoRecall?.nodeHitCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeBackedCount", view.contextInjection?.autoRecall?.nodeBackedCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallChunkOnlyCount", view.contextInjection?.autoRecall?.chunkOnlyCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeBackedShare", view.contextInjection?.autoRecall?.nodeBackedShare);
+  appendPromptObservabilityLine(lines, indent, "autoRecallChunkOnlyShare", view.contextInjection?.autoRecall?.chunkOnlyShare);
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeHitRate", view.contextInjection?.autoRecall?.nodeHitRate);
+  appendPromptObservabilityLine(lines, indent, "autoRecallFallbackApplied", formatOptionalBoolean(view.contextInjection?.autoRecall?.fallbackApplied));
+  appendPromptObservabilityLine(lines, indent, "autoRecallFallbackRate", view.contextInjection?.autoRecall?.fallbackRate);
+  appendPromptObservabilityLine(lines, indent, "autoRecallUsefulHitCount", view.contextInjection?.autoRecall?.usefulHitCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallUsefulHitRate", view.contextInjection?.autoRecall?.usefulHitRate);
+  appendPromptObservabilityLine(lines, indent, "autoRecallCharsPerUsefulHit", view.contextInjection?.autoRecall?.charsPerUsefulHit);
+  appendPromptObservabilityLine(lines, indent, "autoRecallTokensPerUsefulHit", view.contextInjection?.autoRecall?.tokensPerUsefulHit);
+  appendPromptObservabilityLine(lines, indent, "autoRecallSourceNoiseCount", view.contextInjection?.autoRecall?.sourceNoiseCount);
+  appendPromptObservabilityLine(lines, indent, "autoRecallSourceNoiseRatio", view.contextInjection?.autoRecall?.sourceNoiseRatio);
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeSummarySavingsChars", view.contextInjection?.autoRecall?.nodeSummarySavingsChars);
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeSummarySavingsTokens", view.contextInjection?.autoRecall?.nodeSummarySavingsTokens);
+  appendPromptObservabilityLine(lines, indent, "autoRecallNodeSummaryCompressionRatio", view.contextInjection?.autoRecall?.nodeSummaryCompressionRatio);
+  appendPromptObservabilityLine(lines, indent, "autoRecallInjectedChars", view.contextInjection?.autoRecall?.injectedChars);
+  appendPromptObservabilityLine(lines, indent, "autoRecallInjectedTokens", view.contextInjection?.autoRecall?.injectedTokens);
+  appendPromptObservabilityLine(lines, indent, "autoRecallInjectionCharsBySourceClass", formatNumberMap(view.contextInjection?.autoRecall?.injectionCharsBySourceClass));
+  appendPromptObservabilityLine(lines, indent, "autoRecallInjectionTokensBySourceClass", formatNumberMap(view.contextInjection?.autoRecall?.injectionTokensBySourceClass));
   appendPromptObservabilityLine(lines, indent, "truncationReasonCode", view.truncationReason?.code);
   appendPromptObservabilityLine(lines, indent, "truncationReasonMessage", view.truncationReason?.message);
   appendPromptObservabilityLine(lines, indent, "truncationMaxChars", view.truncationReason?.maxChars);
@@ -585,6 +647,9 @@ function readPromptContextInjectionFromMetadata(
       ...(typeof autoRecall.keptCount === "number" && Number.isFinite(autoRecall.keptCount)
         ? { keptCount: Math.max(0, Math.trunc(autoRecall.keptCount)) }
         : {}),
+      ...(typeof autoRecall.injectedCount === "number" && Number.isFinite(autoRecall.injectedCount)
+        ? { injectedCount: Math.max(0, Math.trunc(autoRecall.injectedCount)) }
+        : {}),
       ...(typeof autoRecall.filteredOutCount === "number" && Number.isFinite(autoRecall.filteredOutCount)
         ? { filteredOutCount: Math.max(0, Math.trunc(autoRecall.filteredOutCount)) }
         : {}),
@@ -602,6 +667,67 @@ function readPromptContextInjectionFromMetadata(
         : {}),
       ...(Array.isArray(autoRecall.topHitIds)
         ? { topHitIds: autoRecall.topHitIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0) }
+        : {}),
+      ...(typeof autoRecall.nodeHitCount === "number" && Number.isFinite(autoRecall.nodeHitCount)
+        ? { nodeHitCount: Math.max(0, Math.trunc(autoRecall.nodeHitCount)) }
+        : {}),
+      ...(typeof autoRecall.nodeBackedCount === "number" && Number.isFinite(autoRecall.nodeBackedCount)
+        ? { nodeBackedCount: Math.max(0, Math.trunc(autoRecall.nodeBackedCount)) }
+        : {}),
+      ...(typeof autoRecall.chunkOnlyCount === "number" && Number.isFinite(autoRecall.chunkOnlyCount)
+        ? { chunkOnlyCount: Math.max(0, Math.trunc(autoRecall.chunkOnlyCount)) }
+        : {}),
+      ...(typeof autoRecall.nodeBackedShare === "number" && Number.isFinite(autoRecall.nodeBackedShare)
+        ? { nodeBackedShare: autoRecall.nodeBackedShare }
+        : {}),
+      ...(typeof autoRecall.chunkOnlyShare === "number" && Number.isFinite(autoRecall.chunkOnlyShare)
+        ? { chunkOnlyShare: autoRecall.chunkOnlyShare }
+        : {}),
+      ...(typeof autoRecall.nodeHitRate === "number" && Number.isFinite(autoRecall.nodeHitRate)
+        ? { nodeHitRate: autoRecall.nodeHitRate }
+        : {}),
+      ...(typeof autoRecall.fallbackApplied === "boolean" ? { fallbackApplied: autoRecall.fallbackApplied } : {}),
+      ...(typeof autoRecall.fallbackRate === "number" && Number.isFinite(autoRecall.fallbackRate)
+        ? { fallbackRate: autoRecall.fallbackRate }
+        : {}),
+      ...(typeof autoRecall.usefulHitCount === "number" && Number.isFinite(autoRecall.usefulHitCount)
+        ? { usefulHitCount: Math.max(0, Math.trunc(autoRecall.usefulHitCount)) }
+        : {}),
+      ...(typeof autoRecall.usefulHitRate === "number" && Number.isFinite(autoRecall.usefulHitRate)
+        ? { usefulHitRate: autoRecall.usefulHitRate }
+        : {}),
+      ...(typeof autoRecall.charsPerUsefulHit === "number" && Number.isFinite(autoRecall.charsPerUsefulHit)
+        ? { charsPerUsefulHit: autoRecall.charsPerUsefulHit }
+        : {}),
+      ...(typeof autoRecall.tokensPerUsefulHit === "number" && Number.isFinite(autoRecall.tokensPerUsefulHit)
+        ? { tokensPerUsefulHit: autoRecall.tokensPerUsefulHit }
+        : {}),
+      ...(typeof autoRecall.sourceNoiseCount === "number" && Number.isFinite(autoRecall.sourceNoiseCount)
+        ? { sourceNoiseCount: Math.max(0, Math.trunc(autoRecall.sourceNoiseCount)) }
+        : {}),
+      ...(typeof autoRecall.sourceNoiseRatio === "number" && Number.isFinite(autoRecall.sourceNoiseRatio)
+        ? { sourceNoiseRatio: autoRecall.sourceNoiseRatio }
+        : {}),
+      ...(typeof autoRecall.nodeSummarySavingsChars === "number" && Number.isFinite(autoRecall.nodeSummarySavingsChars)
+        ? { nodeSummarySavingsChars: Math.max(0, Math.trunc(autoRecall.nodeSummarySavingsChars)) }
+        : {}),
+      ...(typeof autoRecall.nodeSummarySavingsTokens === "number" && Number.isFinite(autoRecall.nodeSummarySavingsTokens)
+        ? { nodeSummarySavingsTokens: Math.max(0, Math.trunc(autoRecall.nodeSummarySavingsTokens)) }
+        : {}),
+      ...(typeof autoRecall.nodeSummaryCompressionRatio === "number" && Number.isFinite(autoRecall.nodeSummaryCompressionRatio)
+        ? { nodeSummaryCompressionRatio: autoRecall.nodeSummaryCompressionRatio }
+        : {}),
+      ...(typeof autoRecall.injectedChars === "number" && Number.isFinite(autoRecall.injectedChars)
+        ? { injectedChars: Math.max(0, Math.trunc(autoRecall.injectedChars)) }
+        : {}),
+      ...(typeof autoRecall.injectedTokens === "number" && Number.isFinite(autoRecall.injectedTokens)
+        ? { injectedTokens: Math.max(0, Math.trunc(autoRecall.injectedTokens)) }
+        : {}),
+      ...(isRecord(autoRecall.injectionCharsBySourceClass)
+        ? { injectionCharsBySourceClass: normalizeFiniteNumberMap(autoRecall.injectionCharsBySourceClass) }
+        : {}),
+      ...(isRecord(autoRecall.injectionTokensBySourceClass)
+        ? { injectionTokensBySourceClass: normalizeFiniteNumberMap(autoRecall.injectionTokensBySourceClass) }
         : {}),
     };
   }
@@ -706,6 +832,28 @@ function formatOptionalBoolean(value: boolean | undefined): string | undefined {
     return undefined;
   }
   return value ? "yes" : "no";
+}
+
+function formatCompactNumber(value: number): string {
+  return String(Math.round(value * 1000) / 1000);
+}
+
+function formatNumberMap(value: Record<string, number> | undefined): string | undefined {
+  if (!value || Object.keys(value).length === 0) {
+    return undefined;
+  }
+  return Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right, "en-US"))
+    .map(([key, item]) => `${key}=${formatCompactNumber(item)}`)
+    .join(", ");
+}
+
+function normalizeFiniteNumberMap(value: Record<string, unknown>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
+      .map(([key, item]) => [key, item as number]),
+  );
 }
 
 function buildPromptTruncationReasonFromInspection(

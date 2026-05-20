@@ -375,6 +375,7 @@ export const APP_DOM_REFS = {
   cfgExperienceSynthesisMaxSourceContentChars: byId("cfgExperienceSynthesisMaxSourceContentChars"),
   cfgExperienceSynthesisTotalSourceContentCharBudget: byId("cfgExperienceSynthesisTotalSourceContentCharBudget"),
   cfgMemoryDeepRetrievalEnabled: byId("cfgMemoryDeepRetrievalEnabled"),
+  cfgMemoryNodeAssistedRetrievalEnabled: byId("cfgMemoryNodeAssistedRetrievalEnabled"),
   cfgEmbeddingQueryPrefix: byId("cfgEmbeddingQueryPrefix"),
   cfgEmbeddingPassagePrefix: byId("cfgEmbeddingPassagePrefix"),
   cfgRerankerMinScore: byId("cfgRerankerMinScore"),

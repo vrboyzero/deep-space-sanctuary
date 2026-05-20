@@ -1154,7 +1154,7 @@
             <div class="form-help" data-i18n="settings.memoryConfiguredSourceIdHelp">当存在多个来源时，可填写 source id 只对单个来源执行 external ingest preview。留空时由服务端按来源数量校验。</div>
             <label class="form-label" for="cfgMemoryConfiguredSourcesContent" style="margin-top: 12px;" data-i18n="settings.memoryConfiguredSourcesContentLabel">Configured Sources JSON</label>
             <textarea id="cfgMemoryConfiguredSourcesContent" class="input" rows="10" spellcheck="false" placeholder="[&#10;  {&#10;    &quot;id&quot;: &quot;configured:obsidian-vault:1&quot;,&#10;    &quot;label&quot;: &quot;Obsidian Vault&quot;,&#10;    &quot;sourceClass&quot;: &quot;curated&quot;,&#10;    &quot;scope&quot;: &quot;private&quot;,&#10;    &quot;rootPath&quot;: &quot;C:/Vault&quot;,&#10;    &quot;fileExtensions&quot;: [&quot;.md&quot;]&#10;  }&#10;]"></textarea>
-            <div class="form-help" data-i18n="settings.memoryConfiguredSourcesContentHelp">保存设置时会把这份 JSON 持久化到 `stateDir/memory-configured-sources.json`。首版主要面向 Obsidian Markdown 目录。</div>
+            <div class="form-help" data-i18n="settings.memoryConfiguredSourcesContentHelp">保存设置时会把这份 JSON 持久化到 `stateDir/memory-configured-sources.json`。当前支持 Obsidian Markdown 目录与单个 Markdown 文件。</div>
             <label class="form-label" for="cfgMemoryConfiguredSourcesPreviewContent" style="margin-top: 12px;" data-i18n="settings.memoryConfiguredSourcesPreviewContentLabel">Preview Result</label>
             <textarea id="cfgMemoryConfiguredSourcesPreviewContent" class="input" rows="12" spellcheck="false" readonly placeholder="{&#10;  &quot;kind&quot;: &quot;inventory_preview&quot;,&#10;  &quot;report&quot;: {}&#10;}"></textarea>
             <div class="form-help" data-i18n="settings.memoryConfiguredSourcesPreviewContentHelp">这里会显示最近一次 inventory preview 或 external ingest preview 的 JSON 结果，便于人工检查后再走 report review/apply。</div>
@@ -1618,6 +1618,13 @@
               <span data-i18n="settings.memoryDeepRetrievalEnabledLabel">启用 Deep Retrieval</span>
             </label>
             <div class="form-help" data-i18n="settings.memoryDeepRetrievalEnabledHelp">开启后，可沿源路径做更深层的记忆聚合检索。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgMemoryNodeAssistedRetrievalEnabled">
+              <input id="cfgMemoryNodeAssistedRetrievalEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.memoryNodeAssistedRetrievalEnabledLabel">启用 Node-Assisted Retrieval</span>
+            </label>
+            <div class="form-help" data-i18n="settings.memoryNodeAssistedRetrievalEnabledHelp">开启后，检索会优先参考 memory tree 节点摘要，再按需回落到 chunk 级证据。</div>
           </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.embeddingQueryPrefixLabel">Embedding Query Prefix</label>

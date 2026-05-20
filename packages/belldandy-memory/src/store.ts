@@ -1,3 +1,4 @@
+import fs from "node:fs";
 
 import Database from "better-sqlite3";
 import type { MemoryCategory, MemoryChunk, MemorySearchResult, MemoryIndexStatus, MemoryType, MemorySearchFilter, MemorySharedPromotionStatus, MemoryVisibility } from "./types.js";
@@ -9,6 +10,13 @@ import {
   type MemoryExactDedupApplyResult,
   type MemoryExactDedupPreviewReport,
 } from "./memory-dedup.js";
+import {
+  buildMemoryVacuumWarnings,
+  ensureMemoryVacuumBackupFile,
+  type MemoryVacuumApplyOptions,
+  type MemoryVacuumApplyResult,
+  type MemoryVacuumObservability,
+} from "./memory-vacuum.js";
 import type {
   ResumeContextSnapshot,
   TaskActivityKind,
@@ -836,6 +844,37 @@ export class MemoryStore {
       freelistCount: typeof freelistCountRow?.freelist_count === "number" && Number.isFinite(freelistCountRow.freelist_count)
         ? Math.max(0, Math.floor(freelistCountRow.freelist_count))
         : 0,
+    };
+  }
+
+  getDatabaseVacuumObservability(): MemoryVacuumObservability {
+    this.ensureOpen();
+    const dbPath = this.getDbPath();
+    const pageStats = this.getDatabasePageStats();
+    const pageSizeRow = this.db.prepare(`PRAGMA page_size`).get() as { page_size?: number } | undefined;
+    const journalModeRow = this.db.prepare(`PRAGMA journal_mode`).get() as { journal_mode?: string } | undefined;
+    const pageSize = typeof pageSizeRow?.page_size === "number" && Number.isFinite(pageSizeRow.page_size)
+      ? Math.max(0, Math.floor(pageSizeRow.page_size))
+      : 0;
+    const dbFileBytes = readOptionalFileSizeBytes(dbPath);
+    const walFileBytes = readOptionalFileSizeBytes(dbPath ? `${dbPath}-wal` : "");
+    const shmFileBytes = readOptionalFileSizeBytes(dbPath ? `${dbPath}-shm` : "");
+    const estimatedReclaimableBytes = Math.max(0, pageStats.freelistCount * pageSize);
+    return {
+      chunkCount: this.countChunks(),
+      pageCount: pageStats.pageCount,
+      freelistCount: pageStats.freelistCount,
+      pageSize,
+      journalMode: typeof journalModeRow?.journal_mode === "string" && journalModeRow.journal_mode.trim()
+        ? journalModeRow.journal_mode.trim()
+        : "unknown",
+      dbFileBytes,
+      walFileBytes,
+      shmFileBytes,
+      totalFileBytes: Math.max(0, dbFileBytes + walFileBytes + shmFileBytes),
+      estimatedReclaimableBytes,
+      freelistRatio: roundVacuumRatio(pageStats.freelistCount / Math.max(pageStats.pageCount, 1)),
+      reclaimableRatio: roundVacuumRatio(estimatedReclaimableBytes / Math.max(dbFileBytes, 1)),
     };
   }
 
@@ -2000,6 +2039,39 @@ export class MemoryStore {
         keptChunks: plan.operations.length,
       },
       groups: appliedGroups,
+    };
+  }
+
+  applyMemoryVacuum(options: MemoryVacuumApplyOptions): MemoryVacuumApplyResult {
+    this.ensureOpen();
+    const before = this.getDatabaseVacuumObservability();
+    try {
+      this.db.prepare(`PRAGMA wal_checkpoint(TRUNCATE)`).get();
+    } catch {
+      // Keep going so the actual vacuum failure can surface to the caller.
+    }
+    const backup = ensureMemoryVacuumBackupFile({
+      dbPath: this.getDbPath(),
+      backupRootDir: options.backupRootDir,
+      runId: options.runId,
+    });
+    this.db.exec(`VACUUM`);
+    try {
+      this.db.prepare(`PRAGMA wal_checkpoint(TRUNCATE)`).get();
+    } catch {
+      // Best effort only; final file stats below still reflect the end state.
+    }
+    const after = this.getDatabaseVacuumObservability();
+    const reclaimedBytes = Math.max(0, before.totalFileBytes - after.totalFileBytes);
+    return {
+      mode: "apply",
+      runId: backup.runId,
+      backupPath: backup.backupPath,
+      changed: reclaimedBytes > 0 || after.pageCount !== before.pageCount || after.freelistCount !== before.freelistCount,
+      before,
+      after,
+      reclaimedBytes,
+      warnings: buildMemoryVacuumWarnings(before),
     };
   }
 
@@ -3490,6 +3562,24 @@ export class MemoryStore {
       throw new Error("MemoryStore already closed");
     }
   }
+}
+
+function readOptionalFileSizeBytes(filePath: string): number {
+  if (!filePath) {
+    return 0;
+  }
+  try {
+    return Math.max(0, Math.trunc(fs.statSync(filePath).size));
+  } catch {
+    return 0;
+  }
+}
+
+function roundVacuumRatio(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.round(value * 1000) / 1000;
 }
 
 /** 分词（FTS5 与 LIKE 共用） */

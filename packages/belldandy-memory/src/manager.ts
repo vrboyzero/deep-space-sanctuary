@@ -12,6 +12,7 @@ import type {
     MemoryIndexStatus,
     MemorySearchFilter,
     MemorySearchOptions,
+    MemorySearchRoutingPolicy,
     MemorySearchResult,
 } from "./types.js";
 import { ExperiencePromoter } from "./experience-promoter.js";
@@ -27,7 +28,9 @@ import {
     type MemorySourceInventoryReport,
 } from "./memory-source-inventory.js";
 import {
+    annotateExternalIngestPreviewRescan,
     materializeObsidianMarkdownChunks,
+    previewMarkdownFileIngest,
     previewObsidianMarkdownDirectoryIngest,
     type ExternalMemoryIngestPreview,
 } from "./external-memory-ingest.js";
@@ -97,6 +100,12 @@ import type {
     MemoryExactDedupApplyResult,
     MemoryExactDedupPreviewReport,
 } from "./memory-dedup.js";
+import {
+    buildMemoryVacuumWarnings,
+    type MemoryVacuumApplyOptions,
+    type MemoryVacuumApplyResult,
+    type MemoryVacuumPreviewReport,
+} from "./memory-vacuum.js";
 import type { DurableExtractionSkipReasonCode } from "./durable-extraction-policy.js";
 import { resolveStateDir, resolveWorkspaceStateDir } from "@belldandy/protocol";
 import path from "node:path";
@@ -417,14 +426,39 @@ export type MemorySearchStageSnapshot = {
     topHits: MemorySearchStageTopHit[];
 };
 
+export type MemorySearchNodeAssistedHit = {
+    nodeId: string;
+    kind: MemoryTreeNodeKind;
+    score: number;
+    chunkCount: number;
+    matchReasons: string[];
+};
+
+export type MemorySearchNodeAssistedDiagnostics = {
+    enabled: boolean;
+    policy: MemorySearchRoutingPolicy;
+    nodeHitCount: number;
+    injectedChunkCount: number;
+    fallbackApplied: boolean;
+    returnedMix: {
+        nodeBacked: number;
+        chunkOnly: number;
+    };
+    nodeBackedShare: number;
+    chunkOnlyShare: number;
+    topNodeHits: MemorySearchNodeAssistedHit[];
+};
+
 export type MemorySearchDiagnostics = {
     retrievalMode: "explicit" | "implicit";
     limit: number;
+    routingPolicy: MemorySearchRoutingPolicy;
     skipped: boolean;
     skipReason?: string;
     deepRetrievalApplied: boolean;
     scoreSignalAppliedCount: number;
     sourceClassMix: Record<string, number>;
+    nodeAssisted: MemorySearchNodeAssistedDiagnostics;
     stages: {
         raw: MemorySearchStageSnapshot;
         scoreAware: MemorySearchStageSnapshot;
@@ -475,6 +509,8 @@ export interface MemoryManagerOptions {
     embeddingPassagePrefix?: string;
     /** M-N4: 源路径聚合检索 */
     deepRetrievalEnabled?: boolean;
+    /** R2: node-assisted retrieval routing */
+    nodeAssistedRetrievalEnabled?: boolean;
     /** Task 层总结 */
     taskMemoryEnabled?: boolean;
     taskSummaryEnabled?: boolean;
@@ -583,6 +619,7 @@ export class MemoryManager {
     private embeddingPassagePrefix: string;
     // M-N4: 源路径聚合检索
     private deepRetrievalEnabled: boolean;
+    private nodeAssistedRetrievalEnabled: boolean;
     private taskProcessor: TaskProcessor;
     private experiencePromoter: ExperiencePromoter;
     private experienceAutoPromotionEnabled: boolean;
@@ -682,6 +719,7 @@ export class MemoryManager {
         this.embeddingQueryPrefix = options.embeddingQueryPrefix ?? "";
         this.embeddingPassagePrefix = options.embeddingPassagePrefix ?? "";
         this.deepRetrievalEnabled = options.deepRetrievalEnabled ?? false;
+        this.nodeAssistedRetrievalEnabled = options.nodeAssistedRetrievalEnabled ?? false;
         const taskSummarizer = new TaskSummarizer({
             enabled: options.taskSummaryEnabled ?? false,
             model: options.taskSummaryModel,
@@ -754,6 +792,7 @@ export class MemoryManager {
         let limit = 5;
         let filter: MemorySearchFilter | undefined;
         let retrievalMode: MemorySearchOptions["retrievalMode"] = "explicit";
+        let routingPolicy: MemorySearchRoutingPolicy = this.nodeAssistedRetrievalEnabled ? "node_assisted" : "chunk_only";
         let includeContent = true;
 
         if (typeof limitOrOptions === "number") {
@@ -762,6 +801,7 @@ export class MemoryManager {
             limit = limitOrOptions.limit ?? 5;
             filter = limitOrOptions.filter;
             retrievalMode = limitOrOptions.retrievalMode ?? "explicit";
+            routingPolicy = limitOrOptions.routingPolicy ?? routingPolicy;
             includeContent = limitOrOptions.includeContent !== false;
         }
 
@@ -772,11 +812,13 @@ export class MemoryManager {
                 diagnostics: {
                     retrievalMode,
                     limit,
+                    routingPolicy,
                     skipped: true,
                     skipReason: "adaptive_retrieval_guard",
                     deepRetrievalApplied: false,
                     scoreSignalAppliedCount: 0,
                     sourceClassMix: {},
+                    nodeAssisted: buildDefaultNodeAssistedDiagnostics(routingPolicy),
                     stages: {
                         raw: buildMemorySearchStageSnapshot([]),
                         scoreAware: buildMemorySearchStageSnapshot([]),
@@ -799,7 +841,17 @@ export class MemoryManager {
 
         // 2. Hybrid search with filter
         const rawResults = this.store.searchHybrid(query, queryVec, { limit: limit * 2, filter, includeContent });
-        const scoreAwareResults = this.applyMemoryTreeScoreSignals(rawResults);
+        const nodeAssisted = routingPolicy === "node_assisted"
+            ? this.applyNodeAssistedRetrieval(query, {
+                limit,
+                filter,
+                rawResults,
+            })
+            : {
+                results: rawResults,
+                diagnostics: buildDefaultNodeAssistedDiagnostics(routingPolicy),
+            };
+        const scoreAwareResults = this.applyMemoryTreeScoreSignals(nodeAssisted.results);
         const scoreSignalAppliedCount = scoreAwareResults.filter((item) => {
             const memoryTree = isRecord(item.metadata?.memoryTree) ? item.metadata.memoryTree : undefined;
             return typeof memoryTree?.scoreVersion === "string" && memoryTree.scoreVersion.trim().length > 0;
@@ -822,10 +874,12 @@ export class MemoryManager {
             diagnostics: {
                 retrievalMode,
                 limit,
+                routingPolicy,
                 skipped: false,
                 deepRetrievalApplied,
                 scoreSignalAppliedCount,
                 sourceClassMix: buildMemorySearchSourceClassMix(items),
+                nodeAssisted: finalizeNodeAssistedDiagnostics(nodeAssisted.diagnostics, items),
                 stages: {
                     raw: buildMemorySearchStageSnapshot(rawResults),
                     scoreAware: buildMemorySearchStageSnapshot(scoreAwareResults),
@@ -847,6 +901,77 @@ export class MemoryManager {
         } catch {
             return null;
         }
+    }
+
+    private applyNodeAssistedRetrieval(query: string, input: {
+        limit: number;
+        filter?: MemorySearchFilter;
+        rawResults: MemorySearchResult[];
+    }): {
+        results: MemorySearchResult[];
+        diagnostics: MemorySearchNodeAssistedDiagnostics;
+    } {
+        const nodeResults = this.searchMemoryTreeNodes(query, {
+            limit: Math.max(3, input.limit),
+            chunkLimitPerNode: 1,
+            filter: buildNodeAssistedSearchFilter(input.filter),
+        });
+        if (nodeResults.length <= 0) {
+            return {
+                results: input.rawResults,
+                diagnostics: {
+                    ...buildDefaultNodeAssistedDiagnostics("node_assisted"),
+                    enabled: true,
+                    fallbackApplied: true,
+                },
+            };
+        }
+
+        const rawById = new Map(input.rawResults.map((item) => [item.id, item] as const));
+        const injected = new Map<string, MemorySearchResult>();
+        for (const [nodeIndex, nodeResult] of nodeResults.entries()) {
+            const firstChunk = nodeResult.chunks[0];
+            if (!firstChunk) {
+                continue;
+            }
+            const rawMatch = rawById.get(firstChunk.id);
+            injected.set(
+                firstChunk.id,
+                buildNodeBackedSearchResult({
+                    chunk: rawMatch ?? firstChunk,
+                    node: nodeResult,
+                    nodeIndex,
+                }),
+            );
+        }
+
+        const results = dedupeMemorySearchResults([
+            ...injected.values(),
+            ...input.rawResults,
+        ]);
+        return {
+            results,
+            diagnostics: {
+                enabled: true,
+                policy: "node_assisted",
+                nodeHitCount: nodeResults.length,
+                injectedChunkCount: injected.size,
+                fallbackApplied: injected.size < input.limit,
+                returnedMix: {
+                    nodeBacked: 0,
+                    chunkOnly: 0,
+                },
+                nodeBackedShare: 0,
+                chunkOnlyShare: 0,
+                topNodeHits: nodeResults.slice(0, 3).map((item) => ({
+                    nodeId: item.node.id,
+                    kind: item.node.kind,
+                    score: roundMemoryTreeScore(normalizeNodeAssistedScore(item.score)),
+                    chunkCount: item.chunks.length,
+                    matchReasons: item.matchReasons,
+                })),
+            },
+        };
     }
 
     async embedRetrievalPassages(texts: string[]): Promise<Array<number[] | null>> {
@@ -946,10 +1071,18 @@ export class MemoryManager {
             throw new Error("external ingest preview requires exactly one configured source.");
         }
         const [source] = configuredSources;
-        if (!source?.rootPath || source.filePath) {
-            throw new Error("external ingest preview currently supports directory-based configured sources only.");
+        if (source?.rootPath && source.filePath) {
+            throw new Error("external ingest preview requires configured source to use either rootPath or filePath, but not both.");
         }
-        return await previewObsidianMarkdownDirectoryIngest(source);
+        let preview: ExternalMemoryIngestPreview;
+        if (source?.rootPath) {
+            preview = await previewObsidianMarkdownDirectoryIngest(source);
+        } else if (source?.filePath) {
+            preview = await previewMarkdownFileIngest(source);
+        } else {
+            throw new Error("external ingest preview requires configured source to provide rootPath or filePath.");
+        }
+        return annotateExternalIngestPreviewRescan(preview, this.collectExistingExternalIngestFiles(preview.sourceId));
     }
 
     async rebuildMemoryTreeSources(options: {
@@ -1180,6 +1313,9 @@ export class MemoryManager {
         if (current.reportType === "external_ingest_preview") {
             return await this.applyExternalIngestPreviewReport(current, options);
         }
+        if (current.reportType === "inventory" || current.reportType === "tree_build_preview") {
+            return this.applyReportGovernanceAck(current, options);
+        }
         throw new Error(`Report type ${current.reportType} is not supported for apply.`);
     }
 
@@ -1280,9 +1416,14 @@ export class MemoryManager {
             appliedAt,
             reportId: current.id,
         });
+        const staleFiles = Array.isArray(preview.rescan?.staleFiles) ? preview.rescan.staleFiles : [];
+        let staleChunksRemoved = 0;
 
         for (const item of ingestResult.chunksBySourcePath) {
             this.store.replaceSourceChunks(item.sourcePath, item.chunks);
+        }
+        for (const stale of staleFiles) {
+            staleChunksRemoved += this.store.deleteBySource(stale.path);
         }
 
         const sourceRebuild = await this.rebuildMemoryTreeSources({
@@ -1303,7 +1444,18 @@ export class MemoryManager {
                 skipped: true,
                 reason: item.reason,
             })),
+            ...staleFiles.map((item) => ({
+                kind: "external_ingest" as const,
+                sourcePath: item.path,
+                importedChunkCount: 0,
+                removedChunkCount: item.previousChunkCount,
+                stale: true,
+                skipped: false,
+                reason: item.reason,
+            })),
         ];
+        ingestResult.staleFilesRemoved = staleFiles.length;
+        ingestResult.staleChunksRemoved = staleChunksRemoved;
 
         const next: MemoryTreeReportRecord = {
             ...current,
@@ -1314,6 +1466,8 @@ export class MemoryManager {
                 applyMode: "external_chunk_ingest",
                 importedFileCount: ingestResult.importedFileCount,
                 importedChunkCount: ingestResult.importedChunkCount,
+                staleFileCount: staleFiles.length,
+                staleChunksRemoved,
                 sourceRebuildTotalSources: sourceRebuild.totalSources,
                 scoreRebuildTotalScores: scoreRebuild.totalScores,
             },
@@ -1330,6 +1484,8 @@ export class MemoryManager {
                     importedFileCount: ingestResult.importedFileCount,
                     importedChunkCount: ingestResult.importedChunkCount,
                     skippedFiles: ingestResult.skippedFiles,
+                    staleFiles,
+                    staleChunksRemoved,
                     sourceRebuild,
                     scoreRebuild,
                 },
@@ -1342,6 +1498,53 @@ export class MemoryManager {
             appliedAt,
             updatedChunkCount: ingestResult.importedChunkCount,
             updatedScoreCount: scoreRebuild.totalScores,
+            skippedChunkIds: [],
+            actions,
+        };
+    }
+
+    private applyReportGovernanceAck(
+        current: MemoryTreeReportRecord,
+        options: { appliedBy?: string; note?: string } = {},
+    ): MemoryTreeReportApplyResult {
+        const appliedAt = new Date().toISOString();
+        const governanceState = resolveReportGovernanceState(current.reportType);
+        const actions: MemoryTreeReportApplyResult["actions"] = [{
+            kind: "report_governance_ack",
+            reportType: current.reportType,
+            governanceState,
+        }];
+        const next: MemoryTreeReportRecord = {
+            ...current,
+            status: "applied",
+            summary: {
+                ...current.summary,
+                lastAppliedAt: appliedAt,
+                applyMode: "report_state_only",
+                governanceState,
+            },
+            details: appendMemoryTreeReportApplyEvent(current.details, {
+                appliedAt,
+                appliedBy: options.appliedBy ?? "rpc",
+                note: options.note,
+                updatedChunkCount: 0,
+                updatedScoreCount: 0,
+                skippedChunkIds: [],
+                actions,
+                extra: {
+                    reportType: current.reportType,
+                    governanceState,
+                    applyMode: "report_state_only",
+                },
+            }),
+            updatedAt: appliedAt,
+        };
+        this.store.upsertMemoryCleanReports([next]);
+        return {
+            report: this.store.getMemoryCleanReport(current.id) ?? next,
+            appliedAt,
+            updatedChunkCount: 0,
+            updatedScoreCount: 0,
             skippedChunkIds: [],
             actions,
         };
@@ -1397,6 +1600,12 @@ export class MemoryManager {
             estimatedBytes: report.estimatedBytes,
             lastScannedAt: report.generatedAt,
             applyMode: "chunk_replace_by_source",
+            rescanMode: report.rescan.mode,
+            previousFileCount: report.rescan.previousFileCount,
+            newFileCount: report.rescan.newFileCount,
+            changedFileCount: report.rescan.changedFileCount,
+            unchangedFileCount: report.rescan.unchangedFileCount,
+            staleFileCount: report.rescan.staleFileCount,
         };
         const details = {
             preview: report,
@@ -1405,9 +1614,12 @@ export class MemoryManager {
             rootPath: report.rootPath,
             fileManifest: report.fileManifest,
             skipReasons: report.skipReasons,
+            rescan: report.rescan,
             ingestPolicy: {
                 applyMode: "chunk_replace_by_source",
-                sourceType: "external_obsidian_markdown",
+                sourceType: report.adapter === "markdown_file_v1"
+                    ? "external_markdown_file"
+                    : "external_obsidian_markdown",
                 memoryType: "other",
                 autoRebuildNodes: false,
             },
@@ -1432,6 +1644,35 @@ export class MemoryManager {
             summary,
             details,
         });
+    }
+
+    private collectExistingExternalIngestFiles(sourceId: string): Array<{
+        path: string;
+        relativePath: string;
+        contentHash?: string;
+        chunkCount: number;
+    }> {
+        const existing: Array<{
+            path: string;
+            relativePath: string;
+            contentHash?: string;
+            chunkCount: number;
+        }> = [];
+        for (const summary of this.store.listChunkSourceSummaries()) {
+            const sample = this.store.getChunksBySource(summary.sourcePath, 1)[0];
+            const metadata = isRecord(sample?.metadata) ? sample.metadata : undefined;
+            const memoryTree = isRecord(metadata?.memoryTree) ? metadata.memoryTree : undefined;
+            if (!memoryTree || memoryTree.externalSourceId !== sourceId) {
+                continue;
+            }
+            existing.push({
+                path: summary.sourcePath,
+                relativePath: path.relative(path.dirname(summary.sourcePath), summary.sourcePath).replace(/\\/g, "/") || path.basename(summary.sourcePath),
+                contentHash: typeof metadata?.file_hash === "string" ? metadata.file_hash : undefined,
+                chunkCount: summary.itemCount,
+            });
+        }
+        return existing;
     }
 
     persistMemoryTreeDedupPreviewReport(report: MemoryExactDedupPreviewReport, options: { filter?: MemorySearchFilter; maxGroups?: number; createdBy?: string } = {}): MemoryTreeReportRecord {
@@ -2053,6 +2294,21 @@ export class MemoryManager {
                 afterFreelistCount: afterDbStats.freelistCount,
             },
         };
+    }
+
+    previewMemoryVacuum(): MemoryVacuumPreviewReport {
+        const observability = this.store.getDatabaseVacuumObservability();
+        return {
+            mode: "dry_run",
+            requiresConfirmed: true,
+            recommended: observability.freelistCount > 0 || observability.estimatedReclaimableBytes > 0 || observability.walFileBytes > 0,
+            observability,
+            warnings: buildMemoryVacuumWarnings(observability),
+        };
+    }
+
+    applyMemoryVacuum(options: MemoryVacuumApplyOptions): MemoryVacuumApplyResult {
+        return this.store.applyMemoryVacuum(options);
     }
 
     private decorateExactDedupPreviewReport(
@@ -4372,6 +4628,17 @@ function appendMemoryTreeReportApplyEvent(
     };
 }
 
+function resolveReportGovernanceState(reportType: MemoryTreeReportType): string {
+    switch (reportType) {
+        case "inventory":
+            return "inventory_baseline_confirmed";
+        case "tree_build_preview":
+            return "tree_build_baseline_confirmed";
+        default:
+            return `${reportType}_confirmed`;
+    }
+}
+
 function roundMemoryTreeScore(value: number): number {
     return Math.round(value * 10_000) / 10_000;
 }
@@ -4479,6 +4746,11 @@ function readSearchResultSourceClass(result: MemorySearchResult): MemorySourceIn
     }
 }
 
+function isNodeBackedSearchResult(result: MemorySearchResult): boolean {
+    const memoryTree = isRecord(result.metadata?.memoryTree) ? result.metadata.memoryTree : undefined;
+    return isRecord(memoryTree?.nodeHit);
+}
+
 function buildMemorySearchStageSnapshot(results: MemorySearchResult[]): MemorySearchStageSnapshot {
     return {
         count: Array.isArray(results) ? results.length : 0,
@@ -4497,6 +4769,107 @@ function buildMemorySearchSourceClassMix(results: MemorySearchResult[]): Record<
         mix[sourceClass] = (mix[sourceClass] ?? 0) + 1;
     }
     return mix;
+}
+
+function buildDefaultNodeAssistedDiagnostics(policy: MemorySearchRoutingPolicy): MemorySearchNodeAssistedDiagnostics {
+    return {
+        enabled: policy === "node_assisted",
+        policy,
+        nodeHitCount: 0,
+        injectedChunkCount: 0,
+        fallbackApplied: false,
+        returnedMix: {
+            nodeBacked: 0,
+            chunkOnly: 0,
+        },
+        nodeBackedShare: 0,
+        chunkOnlyShare: 0,
+        topNodeHits: [],
+    };
+}
+
+function finalizeNodeAssistedDiagnostics(
+    diagnostics: MemorySearchNodeAssistedDiagnostics,
+    items: MemorySearchResult[],
+): MemorySearchNodeAssistedDiagnostics {
+    const returnedMix = {
+        nodeBacked: 0,
+        chunkOnly: 0,
+    };
+    for (const item of items) {
+        if (isNodeBackedSearchResult(item)) {
+            returnedMix.nodeBacked += 1;
+        } else {
+            returnedMix.chunkOnly += 1;
+        }
+    }
+    const denominator = Math.max(returnedMix.nodeBacked + returnedMix.chunkOnly, 1);
+    return {
+        ...diagnostics,
+        returnedMix,
+        nodeBackedShare: roundMemoryTreeScore(returnedMix.nodeBacked / denominator),
+        chunkOnlyShare: roundMemoryTreeScore(returnedMix.chunkOnly / denominator),
+    };
+}
+
+function buildNodeAssistedSearchFilter(filter?: MemorySearchFilter): MemoryTreeNodeListFilter {
+    const nodeFilter: MemoryTreeNodeListFilter = {
+        kind: ["project", "conversation", "topic", "day", "agent", "task"],
+    };
+    if (filter?.agentId !== undefined) {
+        nodeFilter.agentId = filter.agentId;
+    }
+    if (filter?.scope === "private" || filter?.scope === "shared") {
+        nodeFilter.scope = filter.scope;
+    }
+    if (typeof filter?.topic === "string" && filter.topic.trim().length > 0) {
+        nodeFilter.kind = "topic";
+        nodeFilter.topicKey = filter.topic.trim();
+    }
+    return nodeFilter;
+}
+
+function buildNodeBackedSearchResult(input: {
+    chunk: MemorySearchResult;
+    node: MemoryTreeNodeSearchResult;
+    nodeIndex: number;
+}): MemorySearchResult {
+    const chunkMetadata = isRecord(input.chunk.metadata) ? input.chunk.metadata : {};
+    const memoryTree = isRecord(chunkMetadata.memoryTree) ? chunkMetadata.memoryTree : {};
+    const baseScore = Math.max(input.chunk.score, normalizeNodeAssistedScore(input.node.score) - (input.nodeIndex * 0.02));
+    return {
+        ...input.chunk,
+        score: clampScore(baseScore),
+        metadata: {
+            ...chunkMetadata,
+            memoryTree: {
+                ...memoryTree,
+                nodeHit: {
+                    nodeId: input.node.node.id,
+                    kind: input.node.node.kind,
+                    score: roundMemoryTreeScore(normalizeNodeAssistedScore(input.node.score)),
+                    matchReasons: input.node.matchReasons,
+                },
+            },
+        },
+    };
+}
+
+function normalizeNodeAssistedScore(score: number): number {
+    return clampScore(0.35 + (Math.min(Math.max(score, 0), 12) / 20));
+}
+
+function dedupeMemorySearchResults(results: MemorySearchResult[]): MemorySearchResult[] {
+    const seen = new Set<string>();
+    const deduped: MemorySearchResult[] = [];
+    for (const item of results) {
+        if (!item?.id || seen.has(item.id)) {
+            continue;
+        }
+        seen.add(item.id);
+        deduped.push(item);
+    }
+    return deduped;
 }
 
 function buildMemoryTreeTopicNodeId(topic: string, agentId: string | undefined, scope: string): string {

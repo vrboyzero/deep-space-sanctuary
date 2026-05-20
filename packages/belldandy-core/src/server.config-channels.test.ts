@@ -134,6 +134,10 @@ test("config.update accepts system and model env settings and redacts auth/video
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-system-model"));
     const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-system-model");
     expect(updateRes.ok).toBe(true);
+    expect(updateRes.payload).toMatchObject({
+      hotReloadApplied: false,
+      restartRequired: true,
+    });
 
     ws.send(JSON.stringify({ type: "req", id: "config-read-system-model", method: "config.read", params: {} }));
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-read-system-model"));
@@ -399,6 +403,7 @@ test("config.update accepts advanced memory and camera helper env settings", asy
           BELLDANDY_METHOD_PUBLISH_CONFIRM_REQUIRED: "true",
           BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED: "true",
           BELLDANDY_MEMORY_DEEP_RETRIEVAL: "true",
+          BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL: "true",
           BELLDANDY_EMBEDDING_QUERY_PREFIX: "query: ",
           BELLDANDY_EMBEDDING_PASSAGE_PREFIX: "passage: ",
           BELLDANDY_RERANKER_MIN_SCORE: "0.2",
@@ -432,6 +437,7 @@ test("config.update accepts advanced memory and camera helper env settings", asy
     expect(readRes.payload?.config?.BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_TASK_SUMMARY_MODEL).toBe("moonshot-v1-32k");
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_DEEP_RETRIEVAL).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_EMBEDDING_PASSAGE_PREFIX).toBe("passage: ");
     expect(readRes.payload?.config?.BELLDANDY_CAMERA_NATIVE_HELPER_ENV_JSON).toBe('{"FOO":"bar"}');
     expect(readRes.payload?.config?.BELLDANDY_CAMERA_NATIVE_HELPER_FFMPEG_COMMAND).toBe("C:/ffmpeg/bin/ffmpeg.exe");
@@ -445,6 +451,7 @@ test("config.update accepts advanced memory and camera helper env settings", asy
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_EVOLUTION_API_KEY="evolution-dedicated-key"');
     expect(envLocalContent).toContain('BELLDANDY_TASK_STATS_WHEN_MEMORY_DISABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_TASK_SUMMARY_API_KEY="task-summary-dedicated-key"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL="true"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_INDEXER_VERBOSE_WATCH="true"');
     expect(envLocalContent).toContain('BELLDANDY_CAMERA_NATIVE_HELPER_ENV_JSON="{"FOO":"bar"}"');
     expect(envLocalContent).toContain('BELLDANDY_CAMERA_NATIVE_HELPER_FFMPEG_ARGS_JSON="["-hide_banner"]"');
@@ -610,6 +617,15 @@ test("config.update hot reloads multimedia and attachment settings without resta
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-hot-reload-batch"));
     const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-hot-reload-batch");
     expect(updateRes.ok).toBe(true);
+    expect(updateRes.payload).toMatchObject({
+      hotReloadApplied: true,
+      restartRequired: false,
+      changedKeys: [
+        "BELLDANDY_ATTACHMENT_MAX_FILE_BYTES",
+        "BELLDANDY_TTS_PROVIDER",
+        "BELLDANDY_EXTERNAL_OUTBOUND_REQUIRE_CONFIRMATION",
+      ],
+    });
 
     expect(process.env.BELLDANDY_ATTACHMENT_MAX_FILE_BYTES).toBe("2048");
     expect(process.env.BELLDANDY_TTS_PROVIDER).toBe("openai");
@@ -1123,6 +1139,11 @@ test("config.update treats unchanged fields as no-op and still applies governanc
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-governance-full-form"));
     const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-governance-full-form");
     expect(updateRes.ok).toBe(true);
+    expect(updateRes.payload).toMatchObject({
+      hotReloadApplied: true,
+      restartRequired: false,
+      changedKeys: ["BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE"],
+    });
     expect(isConfigFileRestartSuppressed(".env.local")).toBe(true);
 
     const configJsRes = await fetch(`http://127.0.0.1:${server.port}/config.js`);
@@ -1185,6 +1206,10 @@ test("config.update hot-reloads commander runtime governance defaults and auto r
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-commander-runtime-switches"));
     const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-commander-runtime-switches");
     expect(updateRes.ok).toBe(true);
+    expect(updateRes.payload).toMatchObject({
+      hotReloadApplied: true,
+      restartRequired: false,
+    });
     expect(isConfigFileRestartSuppressed(".env")).toBe(true);
     expect(isConfigFileRestartSuppressed(".env.local")).toBe(true);
 

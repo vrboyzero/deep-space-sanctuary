@@ -18,6 +18,7 @@ describe("memory runtime switches", () => {
       BELLDANDY_TASK_MEMORY_ENABLED: "true",
       BELLDANDY_TASK_SUMMARY_ENABLED: "true",
       BELLDANDY_MEMORY_DEEP_RETRIEVAL: "true",
+      BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL: "true",
     }));
 
     expect(switches).toEqual({
@@ -31,6 +32,7 @@ describe("memory runtime switches", () => {
       taskMemoryEnabled: true,
       taskSummaryEnabled: true,
       deepRetrievalEnabled: true,
+      nodeAssistedRetrievalEnabled: true,
     });
   });
 
@@ -45,6 +47,7 @@ describe("memory runtime switches", () => {
       BELLDANDY_TASK_MEMORY_ENABLED: "true",
       BELLDANDY_TASK_SUMMARY_ENABLED: "true",
       BELLDANDY_MEMORY_DEEP_RETRIEVAL: "true",
+      BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL: "true",
     }));
 
     expect(switches).toEqual({
@@ -58,6 +61,7 @@ describe("memory runtime switches", () => {
       taskMemoryEnabled: false,
       taskSummaryEnabled: false,
       deepRetrievalEnabled: false,
+      nodeAssistedRetrievalEnabled: false,
     });
   });
 
@@ -73,6 +77,7 @@ describe("memory runtime switches", () => {
       BELLDANDY_MEMORY_SUMMARY_ENABLED: "true",
       BELLDANDY_MEMORY_EVOLUTION_ENABLED: "true",
       BELLDANDY_MEMORY_DEEP_RETRIEVAL: "true",
+      BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL: "true",
     }));
 
     expect(switches).toEqual({
@@ -86,6 +91,7 @@ describe("memory runtime switches", () => {
       taskMemoryEnabled: true,
       taskSummaryEnabled: false,
       deepRetrievalEnabled: false,
+      nodeAssistedRetrievalEnabled: false,
     });
   });
 });

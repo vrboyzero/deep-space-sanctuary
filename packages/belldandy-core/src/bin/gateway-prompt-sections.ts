@@ -11,6 +11,7 @@ export type BuildAgentRuntimePromptSectionsOptions = {
   hasAvailableTools: boolean;
   visibleContracts: readonly ToolContractV2[];
   canDelegate: boolean;
+  includeMethodSkillAssetSummary?: boolean;
   role?: AgentProfileDefaultRole;
   profileId?: string;
   recommendedMethodNames?: readonly string[];
@@ -135,6 +136,7 @@ export function buildAgentRuntimePromptSections(
   }
 
   const methodSkillAssetSection = buildMethodSkillAssetSummarySection({
+    enabled: options.includeMethodSkillAssetSummary !== false,
     recommendedMethodNames: options.recommendedMethodNames,
     recommendedSkillNames: options.recommendedSkillNames,
     methodAssets: options.methodAssets,
@@ -166,6 +168,7 @@ export function buildAgentRuntimePromptSections(
 }
 
 export function buildMethodSkillAssetSummarySection(input: {
+  enabled?: boolean;
   recommendedMethodNames?: readonly string[];
   recommendedSkillNames?: readonly string[];
   methodAssets?: readonly RuntimeMethodAssetSummary[];
@@ -175,6 +178,9 @@ export function buildMethodSkillAssetSummarySection(input: {
   promptSkillAssetTotalCount?: number;
   searchableSkillAssetTotalCount?: number;
 }): SystemPromptSection | undefined {
+  if (input.enabled === false) {
+    return undefined;
+  }
   const recommendedMethodNames = (input.recommendedMethodNames ?? []).filter(Boolean);
   const recommendedSkillNames = (input.recommendedSkillNames ?? []).filter(Boolean);
   const methodAssets = input.methodAssets ?? [];

@@ -1,4 +1,4 @@
-import type { AgentPromptDelta, BeforeAgentStartEvent, BeforeAgentStartResult, HookAgentContext } from "@belldandy/agent";
+import { estimateTokens, type AgentPromptDelta, type BeforeAgentStartEvent, type BeforeAgentStartResult, type HookAgentContext } from "@belldandy/agent";
 import { createTaskWorkSurface } from "@belldandy/memory";
 import type { MemoryCategory, MemorySearchDiagnostics, TaskWorkShortcutItem } from "@belldandy/memory";
 
@@ -57,6 +57,21 @@ type AutoRecallSearchExecution = {
   diagnostics?: MemorySearchDiagnostics;
   timedOut?: boolean;
 };
+
+type AutoRecallSelectionEntry = {
+  item: AutoRecallMemoryLike;
+  sourceClass: string;
+  nodeBacked: boolean;
+  evidenceLine: string | null;
+  summaryLine: string | null;
+};
+
+const AUTO_RECALL_NODE_SUMMARY_MAX_LINES = 2;
+const AUTO_RECALL_NODE_SUMMARY_CHAR_BUDGET = 260;
+const AUTO_RECALL_EVIDENCE_MAX_LINES = 3;
+const AUTO_RECALL_EVIDENCE_CHAR_BUDGET = 320;
+const AUTO_RECALL_RAW_FALLBACK_MAX_LINES = 1;
+const AUTO_RECALL_RAW_FALLBACK_CHAR_BUDGET = 140;
 
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
@@ -355,43 +370,72 @@ export async function buildContextInjectionPrelude(
           if (!Number.isFinite(updatedAt)) return latest;
           return updatedAt > latest ? updatedAt : latest;
         }, Number.NEGATIVE_INFINITY);
-        const lines = filtered.flatMap((item) => {
+        const injectedItems: AutoRecallMemoryLike[] = [];
+        filtered.forEach((item) => {
           if (!deduper.shouldIncludeMemory(item)) {
-            return [];
+            return;
           }
-          const src = item.sourcePath.split(/[/\\]/).pop() ?? item.sourcePath;
-          const snippet = item.snippet.length > 200
-            ? `${item.snippet.slice(0, 200)}...`
-            : item.snippet;
-          const time = formatLocalTimeLabel(item.updatedAt);
-          const latest = Number.isFinite(latestUpdatedAt) && item.updatedAt ? Date.parse(item.updatedAt) === latestUpdatedAt : false;
-          const tagged = buildTaggedLine({
-            time,
-            latest,
-            source: "memory",
-            body: `[${src}, score=${item.score.toFixed(2)}] ${snippet}`,
-          });
-          return tagged ? [tagged] : [];
+          injectedItems.push(item);
         });
-        if (lines.length > 0) {
-          const block = `<auto-recall hint="以下是与用户当前输入语义相关的历史记忆，仅供参考。无需再次调用 memory_search 除非需要更深入搜索。">\n${lines.join("\n")}\n</auto-recall>`;
+        const selectionEntries = buildAutoRecallSelectionEntries(injectedItems, latestUpdatedAt);
+        const nodeSummaryLines = selectAutoRecallNodeSummaryLines(selectionEntries);
+        const evidenceSelection = selectAutoRecallEvidence(selectionEntries);
+        const selectedEntries = [
+          ...selectionEntries.filter((entry) => nodeSummaryLines.selectedIds.has(String(entry.item.id ?? ""))),
+          ...evidenceSelection.entries,
+        ];
+        const sourceClassMix = buildAutoRecallSourceClassMix(selectedEntries.map((entry) => entry.item));
+        const injectionMetrics = buildAutoRecallInjectionMetrics(selectedEntries);
+        const searchDiagnostics = searchExecution?.diagnostics;
+
+        if (nodeSummaryLines.lines.length > 0) {
+          const block = `<auto-recall-summary hint="以下是优先保留的 node-backed 高层结论。先参考这些更短的项目/任务级线索，再决定是否需要展开原始证据。">\n${nodeSummaryLines.lines.join("\n")}\n</auto-recall-summary>`;
+          blocks.push(block);
+          deltas.push(createContextPreludeDelta({
+            id: "auto-recall-summary",
+            text: block,
+            metadata: {
+              blockTag: "auto-recall-summary",
+              lineCount: nodeSummaryLines.lines.length,
+              observability: {
+                timedOut: searchExecution?.timedOut === true,
+                candidateCount: results.length,
+                keptCount: filtered.length,
+                injectedCount: selectedEntries.length,
+                filteredOutCount: Math.max(0, results.length - filtered.length),
+                minScore: config.autoRecallMinScore,
+                sourceClassMix,
+                topHitIds: selectedEntries.map((entry) => entry.item.id).filter(Boolean).slice(0, 3),
+                selectionPolicy: "node_summary_curated_first_static_budget_v1",
+                ...buildAutoRecallRoutingMetrics(searchDiagnostics, selectedEntries.length),
+                ...injectionMetrics,
+                ...(searchDiagnostics ? { searchDiagnostics } : {}),
+              },
+            },
+          }));
+        }
+        if (evidenceSelection.lines.length > 0) {
+          const block = `<auto-recall hint="以下是经过 source mix 与预算约束后的补充证据，仅在高层结论不足以支撑当前任务时再展开参考。">\n${evidenceSelection.lines.join("\n")}\n</auto-recall>`;
           const searchDiagnostics = searchExecution?.diagnostics;
-          const sourceClassMix = buildAutoRecallSourceClassMix(filtered);
           blocks.push(block);
           deltas.push(createContextPreludeDelta({
             id: "auto-recall",
             text: block,
             metadata: {
               blockTag: "auto-recall",
-              lineCount: lines.length,
+              lineCount: evidenceSelection.lines.length,
               observability: {
                 timedOut: searchExecution?.timedOut === true,
                 candidateCount: results.length,
                 keptCount: filtered.length,
+                injectedCount: selectedEntries.length,
                 filteredOutCount: Math.max(0, results.length - filtered.length),
                 minScore: config.autoRecallMinScore,
                 sourceClassMix,
-                topHitIds: filtered.slice(0, 3).map((item) => item.id).filter(Boolean),
+                topHitIds: selectedEntries.map((entry) => entry.item.id).filter(Boolean).slice(0, 3),
+                selectionPolicy: "node_summary_curated_first_static_budget_v1",
+                ...buildAutoRecallRoutingMetrics(searchDiagnostics, selectedEntries.length),
+                ...injectionMetrics,
                 ...(searchDiagnostics ? { searchDiagnostics } : {}),
               },
             },
@@ -415,6 +459,118 @@ function buildAutoRecallSourceClassMix(items: AutoRecallMemoryLike[]): Record<st
   return mix;
 }
 
+function buildAutoRecallSelectionEntries(
+  items: AutoRecallMemoryLike[],
+  latestUpdatedAt: number,
+): AutoRecallSelectionEntry[] {
+  return [...items]
+    .map((item) => ({
+      item,
+      sourceClass: readAutoRecallSourceClass(item),
+      nodeBacked: isAutoRecallNodeBacked(item),
+      evidenceLine: buildAutoRecallEvidenceLine(item, latestUpdatedAt),
+      summaryLine: buildAutoRecallNodeSummaryLine(item, latestUpdatedAt),
+    }))
+    .sort((left, right) => {
+      if (left.nodeBacked !== right.nodeBacked) {
+        return left.nodeBacked ? -1 : 1;
+      }
+      const classDelta = resolveAutoRecallSourcePriority(left.sourceClass) - resolveAutoRecallSourcePriority(right.sourceClass);
+      if (classDelta !== 0) {
+        return classDelta;
+      }
+      if (left.item.score !== right.item.score) {
+        return right.item.score - left.item.score;
+      }
+      return String(left.item.id ?? "").localeCompare(String(right.item.id ?? ""), "en-US");
+    });
+}
+
+function selectAutoRecallNodeSummaryLines(entries: AutoRecallSelectionEntry[]): {
+  lines: string[];
+  selectedIds: Set<string>;
+} {
+  const lines: string[] = [];
+  const selectedIds = new Set<string>();
+  let usedChars = 0;
+  for (const entry of entries) {
+    if (!entry.nodeBacked || !entry.summaryLine) {
+      continue;
+    }
+    if (lines.length >= AUTO_RECALL_NODE_SUMMARY_MAX_LINES) {
+      break;
+    }
+    if (usedChars + entry.summaryLine.length > AUTO_RECALL_NODE_SUMMARY_CHAR_BUDGET) {
+      continue;
+    }
+    lines.push(entry.summaryLine);
+    usedChars += entry.summaryLine.length;
+    if (entry.item.id) {
+      selectedIds.add(entry.item.id);
+    }
+  }
+  return { lines, selectedIds };
+}
+
+function selectAutoRecallEvidence(entries: AutoRecallSelectionEntry[]): {
+  lines: string[];
+  entries: AutoRecallSelectionEntry[];
+} {
+  const lines: string[] = [];
+  const selected: AutoRecallSelectionEntry[] = [];
+  let totalChars = 0;
+  let rawChars = 0;
+  let rawCount = 0;
+  const quotas = new Map<string, number>([
+    ["curated", 2],
+    ["derived", 1],
+    ["raw", 1],
+    ["unknown", 1],
+  ]);
+  for (const entry of entries) {
+    if (entry.nodeBacked || !entry.evidenceLine) {
+      continue;
+    }
+    if (lines.length >= AUTO_RECALL_EVIDENCE_MAX_LINES) {
+      break;
+    }
+    const lineLength = entry.evidenceLine.length;
+    if (totalChars + lineLength > AUTO_RECALL_EVIDENCE_CHAR_BUDGET) {
+      continue;
+    }
+    const quota = quotas.get(entry.sourceClass) ?? 0;
+    if (quota <= 0) {
+      continue;
+    }
+    const isRawFallback = entry.sourceClass === "raw" || entry.sourceClass === "unknown";
+    if (isRawFallback) {
+      if (rawCount >= AUTO_RECALL_RAW_FALLBACK_MAX_LINES || rawChars + lineLength > AUTO_RECALL_RAW_FALLBACK_CHAR_BUDGET) {
+        continue;
+      }
+      rawCount += 1;
+      rawChars += lineLength;
+    }
+    quotas.set(entry.sourceClass, quota - 1);
+    totalChars += lineLength;
+    lines.push(entry.evidenceLine);
+    selected.push(entry);
+  }
+  if (selected.length === 0) {
+    // Keep one legacy chunk-only hit when search results do not yet carry source-class metadata.
+    const legacyFallback = entries.find((entry) => (
+      !entry.nodeBacked
+      && entry.sourceClass === "unknown"
+      && entry.evidenceLine
+      && entry.evidenceLine.length <= AUTO_RECALL_EVIDENCE_CHAR_BUDGET
+    ));
+    if (legacyFallback?.evidenceLine) {
+      lines.push(legacyFallback.evidenceLine);
+      selected.push(legacyFallback);
+    }
+  }
+  return { lines, entries: selected };
+}
+
 function readAutoRecallSourceClass(item: AutoRecallMemoryLike): string {
   const metadata = item && typeof item === "object" && "metadata" in item
     ? item.metadata
@@ -427,6 +583,173 @@ function readAutoRecallSourceClass(item: AutoRecallMemoryLike): string {
     : undefined;
   const sourceClass = typeof memoryTree?.sourceClass === "string" ? memoryTree.sourceClass.trim() : "";
   return sourceClass || "unknown";
+}
+
+function isAutoRecallNodeBacked(item: AutoRecallMemoryLike): boolean {
+  const metadata = item && typeof item === "object" && "metadata" in item
+    ? item.metadata
+    : undefined;
+  if (!metadata || typeof metadata !== "object") {
+    return false;
+  }
+  const memoryTree = "memoryTree" in metadata && metadata.memoryTree && typeof metadata.memoryTree === "object"
+    ? metadata.memoryTree as { nodeHit?: unknown }
+    : undefined;
+  return Boolean(memoryTree?.nodeHit && typeof memoryTree.nodeHit === "object");
+}
+
+function buildAutoRecallRoutingMetrics(
+  diagnostics: MemorySearchDiagnostics | undefined,
+  injectedCount: number,
+): Record<string, unknown> {
+  const nodeAssisted = diagnostics?.nodeAssisted;
+  const nodeBackedCount = typeof nodeAssisted?.returnedMix?.nodeBacked === "number"
+    ? Math.max(0, Math.trunc(nodeAssisted.returnedMix.nodeBacked))
+    : 0;
+  const chunkOnlyCount = typeof nodeAssisted?.returnedMix?.chunkOnly === "number"
+    ? Math.max(0, Math.trunc(nodeAssisted.returnedMix.chunkOnly))
+    : 0;
+  const denominator = injectedCount > 0 ? injectedCount : Math.max(nodeBackedCount + chunkOnlyCount, 1);
+  return {
+    ...(typeof nodeAssisted?.nodeHitCount === "number" && Number.isFinite(nodeAssisted.nodeHitCount)
+      ? { nodeHitCount: Math.max(0, Math.trunc(nodeAssisted.nodeHitCount)) }
+      : {}),
+    nodeBackedCount,
+    chunkOnlyCount,
+    nodeBackedShare: roundObservabilityRatio(nodeBackedCount / denominator),
+    chunkOnlyShare: roundObservabilityRatio(chunkOnlyCount / denominator),
+    nodeHitRate: roundObservabilityRatio(nodeBackedCount / denominator),
+    ...(typeof nodeAssisted?.fallbackApplied === "boolean"
+      ? { fallbackApplied: nodeAssisted.fallbackApplied }
+      : {}),
+    fallbackRate: roundObservabilityRatio(chunkOnlyCount / denominator),
+  };
+}
+
+function buildAutoRecallInjectionMetrics(entries: AutoRecallSelectionEntry[]): Record<string, unknown> {
+  const injectionCharsBySourceClass: Record<string, number> = {};
+  const injectionTokensBySourceClass: Record<string, number> = {};
+  let injectedChars = 0;
+  let injectedTokens = 0;
+  let sourceNoiseCount = 0;
+   let usefulHitCount = 0;
+   let nodeSummarySourceChars = 0;
+   let nodeSummaryChars = 0;
+   let nodeSummarySourceTokens = 0;
+   let nodeSummaryTokens = 0;
+
+  for (const entry of entries) {
+    const sourceClass = entry.sourceClass;
+    const line = entry.nodeBacked
+      ? (entry.summaryLine ?? entry.evidenceLine ?? "")
+      : (entry.evidenceLine ?? "");
+    if (!line) {
+      continue;
+    }
+    const charCount = line.length;
+    const tokenCount = estimateTokens(line);
+    injectionCharsBySourceClass[sourceClass] = (injectionCharsBySourceClass[sourceClass] ?? 0) + charCount;
+    injectionTokensBySourceClass[sourceClass] = (injectionTokensBySourceClass[sourceClass] ?? 0) + tokenCount;
+    injectedChars += charCount;
+    injectedTokens += tokenCount;
+    if (isUsefulAutoRecallEntry(entry)) {
+      usefulHitCount += 1;
+    }
+    if (sourceClass === "raw" || sourceClass === "unknown") {
+      sourceNoiseCount += 1;
+    }
+    if (entry.nodeBacked && entry.summaryLine && entry.evidenceLine) {
+      nodeSummarySourceChars += entry.evidenceLine.length;
+      nodeSummaryChars += entry.summaryLine.length;
+      nodeSummarySourceTokens += estimateTokens(entry.evidenceLine);
+      nodeSummaryTokens += estimateTokens(entry.summaryLine);
+    }
+  }
+
+  const usefulHitDenominator = Math.max(usefulHitCount, 1);
+  const selectedCount = Math.max(entries.length, 1);
+  const nodeSummarySavingsChars = Math.max(0, nodeSummarySourceChars - nodeSummaryChars);
+  const nodeSummarySavingsTokens = Math.max(0, nodeSummarySourceTokens - nodeSummaryTokens);
+  return {
+    injectedChars,
+    injectedTokens,
+    usefulHitCount,
+    usefulHitRate: roundObservabilityRatio(usefulHitCount / selectedCount),
+    charsPerUsefulHit: roundObservabilityRatio(injectedChars / usefulHitDenominator),
+    tokensPerUsefulHit: roundObservabilityRatio(injectedTokens / usefulHitDenominator),
+    sourceNoiseCount,
+    sourceNoiseRatio: roundObservabilityRatio(sourceNoiseCount / selectedCount),
+    nodeSummarySavingsChars,
+    nodeSummarySavingsTokens,
+    nodeSummaryCompressionRatio: roundObservabilityRatio(
+      nodeSummarySourceChars > 0 ? (nodeSummaryChars / nodeSummarySourceChars) : 0,
+    ),
+    injectionCharsBySourceClass,
+    injectionTokensBySourceClass,
+  };
+}
+
+function isUsefulAutoRecallEntry(entry: AutoRecallSelectionEntry): boolean {
+  return entry.nodeBacked || entry.sourceClass === "curated" || entry.sourceClass === "derived";
+}
+
+function buildAutoRecallEvidenceLine(item: AutoRecallMemoryLike, latestUpdatedAt: number): string | null {
+  const src = item.sourcePath.split(/[/\\]/).pop() ?? item.sourcePath;
+  const snippet = item.snippet.length > 200
+    ? `${item.snippet.slice(0, 200)}...`
+    : item.snippet;
+  const time = formatLocalTimeLabel(item.updatedAt);
+  const latest = Number.isFinite(latestUpdatedAt) && item.updatedAt ? Date.parse(item.updatedAt) === latestUpdatedAt : false;
+  return buildTaggedLine({
+    time,
+    latest,
+    source: "memory",
+    body: `[${src}, score=${item.score.toFixed(2)}] ${snippet}`,
+  });
+}
+
+function buildAutoRecallNodeSummaryLine(item: AutoRecallMemoryLike, latestUpdatedAt: number): string | null {
+  const metadata = item && typeof item === "object" && "metadata" in item
+    ? item.metadata
+    : undefined;
+  const memoryTree = metadata && typeof metadata === "object" && "memoryTree" in metadata && metadata.memoryTree && typeof metadata.memoryTree === "object"
+    ? metadata.memoryTree as { nodeHit?: Record<string, unknown> }
+    : undefined;
+  const nodeHit = memoryTree?.nodeHit;
+  if (!nodeHit) {
+    return null;
+  }
+  const nodeKind = typeof nodeHit.kind === "string" && nodeHit.kind.trim() ? nodeHit.kind.trim() : "node";
+  const snippet = item.snippet.length > 160
+    ? `${item.snippet.slice(0, 160)}...`
+    : item.snippet;
+  const time = formatLocalTimeLabel(item.updatedAt);
+  const latest = Number.isFinite(latestUpdatedAt) && item.updatedAt ? Date.parse(item.updatedAt) === latestUpdatedAt : false;
+  return buildTaggedLine({
+    time,
+    latest,
+    source: "node-summary",
+    body: `[${nodeKind}, score=${item.score.toFixed(2)}] ${snippet}`,
+  });
+}
+
+function resolveAutoRecallSourcePriority(sourceClass: string): number {
+  switch (sourceClass) {
+    case "curated":
+      return 0;
+    case "derived":
+      return 1;
+    case "raw":
+      return 2;
+    case "unknown":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function roundObservabilityRatio(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function buildWorkOverviewLines(

@@ -52,6 +52,10 @@ When a task needs an implementation plan, architecture note, rollout plan, or ph
 
 The goal is to prevent plans from expanding without control. If any item is intentionally deferred, say so directly.
 
+## Execution Rhythm
+- The current development environment has strong context compression and handoff continuity. Do not worry about context window exhaustion during normal development, and do not prematurely compress or stop work out of context-limit anxiety alone.
+- For multi-phase implementation work, prefer patient step-by-step execution with explicit progress checkpoints over rushing to over-compress partially completed work.
+
 ## Testing & Validation Guidelines
 Vitest is the primary test runner. Add or update tests for logic changes, especially in `packages/*/src` and `apps/web/public/app/features/`. For small frontend, settings, or doctor changes, prefer this order: pure function tests, then targeted module validation, then minimal browser verification.
 

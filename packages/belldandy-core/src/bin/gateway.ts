@@ -1491,10 +1491,11 @@ const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
     hasAvailableTools: visibleContracts.length > 0,
     visibleContracts: visibleToolContracts,
     canDelegate,
+    includeMethodSkillAssetSummary: injectMethodSkillList,
     role: catalog.defaultRole,
     profileId: profile.id,
-    recommendedMethodNames: resolveRecommendedMethodNames(catalog.methods, runtimeMethodAssets),
-    recommendedSkillNames: resolveRecommendedSkillNames(catalog.skills, runtimeAllKnownSkills),
+    recommendedMethodNames: injectMethodSkillList ? resolveRecommendedMethodNames(catalog.methods, runtimeMethodAssets) : [],
+    recommendedSkillNames: injectMethodSkillList ? resolveRecommendedSkillNames(catalog.skills, runtimeAllKnownSkills) : [],
     methodAssets: runtimeMethodAssets,
     promptSkillAssets: runtimePromptSkillAssets,
     searchableSkillAssets: runtimeSearchableSkillAssets,
@@ -2927,6 +2928,7 @@ const evolutionMinMessages = Number(readEnv("BELLDANDY_MEMORY_EVOLUTION_MIN_MESS
 
 // M-N4: 源路径聚合检索配置
 const deepRetrievalEnabled = memoryRuntimeSwitches.deepRetrievalEnabled;
+const nodeAssistedRetrievalEnabled = memoryRuntimeSwitches.nodeAssistedRetrievalEnabled;
 
 // Task 层总结配置
 const taskStatsCarveOutEnabled = memoryRuntimeSwitches.taskStatsCarveOutEnabled;
@@ -3011,6 +3013,7 @@ const scopedMemoryManagers = createScopedMemoryManagers({
   experienceAutoSkillEnabled: effectiveExperienceAutoSkillEnabled,
   conversationStore,
   deepRetrievalEnabled,
+  nodeAssistedRetrievalEnabled,
   rerankerOptions: {
     ...(rerankerMinScore != null ? { minScore: rerankerMinScore } : {}),
     ...(rerankerLengthNormAnchor != null ? { lengthNormAnchor: rerankerLengthNormAnchor } : {}),

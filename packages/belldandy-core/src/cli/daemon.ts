@@ -153,7 +153,10 @@ export async function startDaemon(stateDir?: string): Promise<{ success: boolean
   const logFd = fs.openSync(logFile, "a");
 
   try {
-    const child = fork(resolveGatewayScript(), [], {
+    // Spawn the CLI in foreground-supervisor mode, then detach that supervisor.
+    // This keeps daemon mode aligned with `bdd start` / `bdd dev`: exit code 100
+    // from `system.restart` will relaunch the gateway instead of stopping it.
+    const child = fork(BDD_SCRIPT, ["start", "--state-dir", resolvedStateDir], {
       detached: true,
       stdio: ["ignore", logFd, logFd, "ipc"],
       execArgv: EXT === ".ts" ? ["--import", "tsx"] : [],

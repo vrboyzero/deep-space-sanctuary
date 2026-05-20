@@ -309,10 +309,6 @@ export async function handleMemoryExperienceMethod(
       if ("error" in configuredSourcesResult) {
         return invalid(req.id, configuredSourcesResult.error);
       }
-      if (!configuredSourcesResult.sources[0]?.rootPath || configuredSourcesResult.sources[0]?.filePath) {
-        return invalid(req.id, "external ingest preview currently supports directory-based configured sources only.");
-      }
-
       try {
         const report = await manager.previewConfiguredExternalIngest({
           configuredSources: configuredSourcesResult.sources,
@@ -628,6 +624,40 @@ export async function handleMemoryExperienceMethod(
       const result = manager.applyExactDedup(filter as any, {
         backupRootDir,
         maxGroups,
+        runId,
+      });
+      return ok(req.id, {
+        result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.vacuum.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const report = manager.previewMemoryVacuum();
+      return ok(req.id, {
+        report,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.vacuum.apply": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const confirmed = params.confirmed === true;
+      if (!confirmed) {
+        return confirmationRequired(req.id, "memory.vacuum.apply requires explicit confirmed=true because it rewrites memory.sqlite.");
+      }
+      const runId = readOptionalString(params, "runId");
+      const backupRootDir = path.join(ctx.stateDir, "artifacts", "memory-vacuum-backups");
+      await fs.mkdir(backupRootDir, { recursive: true });
+      const result = manager.applyMemoryVacuum({
+        backupRootDir,
         runId,
       });
       return ok(req.id, {

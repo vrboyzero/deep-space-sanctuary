@@ -177,6 +177,7 @@ export function createSettingsController({
     cfgExperienceSynthesisMaxSourceContentChars,
     cfgExperienceSynthesisTotalSourceContentCharBudget,
     cfgMemoryDeepRetrievalEnabled,
+    cfgMemoryNodeAssistedRetrievalEnabled,
     cfgEmbeddingQueryPrefix,
     cfgEmbeddingPassagePrefix,
     cfgRerankerMinScore,
@@ -409,84 +410,6 @@ export function createSettingsController({
     "BELLDANDY_IMAGE_UNDERSTAND_OPENAI_API_KEY",
     "BELLDANDY_VIDEO_UNDERSTAND_OPENAI_API_KEY",
   ];
-  const HOT_RELOAD_SETTING_FIELDS = new Set([
-    "cfgGovernanceDetailMode",
-    "cfgCommanderMode",
-    "cfgCommanderAgentId",
-    "cfgGoalExecutionMode",
-    "cfgGoalGovernanceMode",
-    "cfgCommanderAutoReworkEnabled",
-    "cfgExperienceDraftGenerateNoticeEnabled",
-    "cfgAttachmentMaxFileBytes",
-    "cfgAttachmentMaxTotalBytes",
-    "cfgAttachmentTextCharLimit",
-    "cfgAttachmentTextTotalCharLimit",
-    "cfgAudioTranscriptAppendCharLimit",
-    "cfgExternalOutboundRequireConfirmation",
-    "cfgEmailOutboundRequireConfirmation",
-    "cfgTtsEnabled",
-    "cfgTtsProvider",
-    "cfgTtsVoice",
-    "cfgTtsModel",
-    "cfgTtsOpenAIBaseUrl",
-    "cfgTtsOpenAIApiKey",
-    "cfgImageEnabled",
-    "cfgImageProvider",
-    "cfgImageApiKey",
-    "cfgImageBaseUrl",
-    "cfgImageModel",
-    "cfgImageOutputFormat",
-    "cfgImageTimeoutMs",
-    "cfgImageUnderstandEnabled",
-    "cfgImageUnderstandApiKey",
-    "cfgImageUnderstandProvider",
-    "cfgImageUnderstandBaseUrl",
-    "cfgImageUnderstandModel",
-    "cfgImageUnderstandTimeoutMs",
-    "cfgImageUnderstandMaxInputMb",
-    "cfgImageUnderstandPrompt",
-    "cfgImageUnderstandAutoOnAttachment",
-    "cfgBrowserScreenshotAutoUnderstand",
-    "cfgCameraSnapAutoUnderstand",
-    "cfgScreenCaptureAutoUnderstand",
-    "cfgWebchatCostBudgetUsd",
-    "cfgWebchatCostBudgetWarnFraction",
-    "cfgVideoUnderstandEnabled",
-    "cfgVideoUnderstandApiKey",
-    "cfgVideoUnderstandProvider",
-    "cfgVideoUnderstandBaseUrl",
-    "cfgVideoUnderstandModel",
-    "cfgVideoUnderstandTimeoutMs",
-    "cfgVideoUnderstandTransport",
-    "cfgVideoUnderstandFps",
-    "cfgVideoUnderstandMaxInputMb",
-    "cfgVideoUnderstandPrompt",
-    "cfgVideoUnderstandAutoOnAttachment",
-    "cfgVideoUnderstandAutoAttachmentMaxTimelineItems",
-    "cfgVideoUnderstandAutoAttachmentSummaryCharLimit",
-    "cfgSttProvider",
-    "cfgSttModel",
-    "cfgSttOpenAiBaseUrl",
-    "cfgSttOpenAiApiKey",
-    "cfgSttLanguage",
-    "cfgSttGroqApiKey",
-    "cfgSttGroqBaseUrl",
-    "cfgDashScopeApiKey",
-    "cfgVideoFileApiUrl",
-    "cfgVideoFileApiKey",
-    "cfgCommunityApiEnabled",
-    "cfgCommunityApiToken",
-    "cfgWebhookPreauthMaxBytes",
-    "cfgWebhookPreauthTimeoutMs",
-    "cfgWebhookRateLimitWindowMs",
-    "cfgWebhookRateLimitMaxRequests",
-    "cfgWebhookRateLimitMaxTrackedKeys",
-    "cfgWebhookMaxInFlightPerKey",
-    "cfgWebhookMaxInFlightTrackedKeys",
-    "cfgMemoryConfiguredSourceId",
-    "cfgMemoryConfiguredSourcesContent",
-    "cfgMemoryConfiguredSourcesPreviewContent",
-  ]);
   let lastLoadedConfig = null;
   let lastLoadedFormState = null;
   let lastLoadedChannelSecurityContent = '{\n  "version": 1,\n  "channels": {}\n}\n';
@@ -950,6 +873,7 @@ export function createSettingsController({
     if (cfgExperienceSynthesisMaxSourceContentChars) cfgExperienceSynthesisMaxSourceContentChars.value = c["BELLDANDY_EXPERIENCE_SYNTHESIS_MAX_SOURCE_CONTENT_CHARS"] || "";
     if (cfgExperienceSynthesisTotalSourceContentCharBudget) cfgExperienceSynthesisTotalSourceContentCharBudget.value = c["BELLDANDY_EXPERIENCE_SYNTHESIS_TOTAL_SOURCE_CONTENT_CHAR_BUDGET"] || "";
     if (cfgMemoryDeepRetrievalEnabled) cfgMemoryDeepRetrievalEnabled.checked = c["BELLDANDY_MEMORY_DEEP_RETRIEVAL"] === "true";
+    if (cfgMemoryNodeAssistedRetrievalEnabled) cfgMemoryNodeAssistedRetrievalEnabled.checked = c["BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL"] === "true";
     if (cfgEmbeddingQueryPrefix) cfgEmbeddingQueryPrefix.value = c["BELLDANDY_EMBEDDING_QUERY_PREFIX"] || "";
     if (cfgEmbeddingPassagePrefix) cfgEmbeddingPassagePrefix.value = c["BELLDANDY_EMBEDDING_PASSAGE_PREFIX"] || "";
     if (cfgRerankerMinScore) cfgRerankerMinScore.value = c["BELLDANDY_RERANKER_MIN_SCORE"] || "";
@@ -2136,6 +2060,7 @@ export function createSettingsController({
     if (cfgExperienceSynthesisMaxSourceContentChars) updates["BELLDANDY_EXPERIENCE_SYNTHESIS_MAX_SOURCE_CONTENT_CHARS"] = cfgExperienceSynthesisMaxSourceContentChars.value.trim();
     if (cfgExperienceSynthesisTotalSourceContentCharBudget) updates["BELLDANDY_EXPERIENCE_SYNTHESIS_TOTAL_SOURCE_CONTENT_CHAR_BUDGET"] = cfgExperienceSynthesisTotalSourceContentCharBudget.value.trim();
     if (cfgMemoryDeepRetrievalEnabled) updates["BELLDANDY_MEMORY_DEEP_RETRIEVAL"] = cfgMemoryDeepRetrievalEnabled.checked ? "true" : "false";
+    if (cfgMemoryNodeAssistedRetrievalEnabled) updates["BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL"] = cfgMemoryNodeAssistedRetrievalEnabled.checked ? "true" : "false";
     if (cfgEmbeddingQueryPrefix) updates["BELLDANDY_EMBEDDING_QUERY_PREFIX"] = cfgEmbeddingQueryPrefix.value.trim();
     if (cfgEmbeddingPassagePrefix) updates["BELLDANDY_EMBEDDING_PASSAGE_PREFIX"] = cfgEmbeddingPassagePrefix.value.trim();
     if (cfgRerankerMinScore) updates["BELLDANDY_RERANKER_MIN_SCORE"] = cfgRerankerMinScore.value.trim();
@@ -2436,13 +2361,8 @@ export function createSettingsController({
       }
 
       const currentFormState = captureSettingsFormState();
-      const changedFieldNames = Object.keys(currentFormState)
-        .filter((fieldName) => currentFormState[fieldName] !== lastLoadedFormState?.[fieldName]);
       lastLoadedFormState = currentFormState;
-      const shouldSkipAutoRestart = changedFieldNames.length > 0
-        && changedFieldNames.every((fieldName) => HOT_RELOAD_SETTING_FIELDS.has(fieldName));
-
-      if (shouldSkipAutoRestart) {
+      if (res.payload?.restartRequired !== true) {
         if (saveSettingsBtn) {
           saveSettingsBtn.disabled = false;
           setTimeout(() => {

@@ -150,6 +150,91 @@ test("renderConversationPromptSnapshotText includes explainability sidecar when 
   expect(rendered).toContain("effective launch: source=catalog_default, agent=coder");
 });
 
+test("buildConversationPromptSnapshotArtifact summarizes R5 auto-recall observability metrics", () => {
+  const artifact = buildConversationPromptSnapshotArtifact({
+    snapshot: {
+      systemPrompt: "system prompt body",
+      messages: [{ role: "system", content: "system prompt body" }],
+      hookSystemPromptUsed: false,
+      prependContext: "auto recall block",
+      deltas: [{
+        id: "auto-recall",
+        deltaType: "user-prelude",
+        role: "user-prelude",
+        source: "context-injection",
+        text: "<auto-recall>\n- [memory] line a\n- [memory] line b\n</auto-recall>",
+        metadata: {
+          blockTag: "auto-recall",
+          lineCount: 2,
+          observability: {
+            candidateCount: 2,
+            keptCount: 2,
+            injectedCount: 2,
+            filteredOutCount: 0,
+            minScore: 0.3,
+            sourceClassMix: {
+              curated: 1,
+              raw: 1,
+            },
+            nodeHitCount: 1,
+            nodeBackedCount: 1,
+            chunkOnlyCount: 1,
+            nodeBackedShare: 0.5,
+            chunkOnlyShare: 0.5,
+            nodeHitRate: 0.5,
+            fallbackApplied: true,
+            fallbackRate: 0.5,
+            usefulHitCount: 1,
+            usefulHitRate: 0.5,
+            charsPerUsefulHit: 200,
+            tokensPerUsefulHit: 50,
+            sourceNoiseCount: 1,
+            sourceNoiseRatio: 0.5,
+            nodeSummarySavingsChars: 60,
+            nodeSummarySavingsTokens: 15,
+            nodeSummaryCompressionRatio: 0.4,
+            injectionCharsBySourceClass: {
+              curated: 120,
+              raw: 80,
+            },
+            injectionTokensBySourceClass: {
+              curated: 30,
+              raw: 20,
+            },
+          },
+        },
+      }],
+      inputMeta: {},
+    },
+    persistedAt: 456,
+  });
+
+  expect(artifact.summary.contextInjection).toMatchObject({
+    prependContextChars: 17,
+    totalBlockCount: 1,
+    autoRecall: {
+      candidateCount: 2,
+      keptCount: 2,
+      injectedCount: 2,
+      usefulHitCount: 1,
+      usefulHitRate: 0.5,
+      nodeHitRate: 0.5,
+      tokensPerUsefulHit: 50,
+      fallbackRate: 0.5,
+      sourceNoiseRatio: 0.5,
+      nodeSummarySavingsTokens: 15,
+      injectionCharsBySourceClass: {
+        curated: 120,
+        raw: 80,
+      },
+      injectionTokensBySourceClass: {
+        curated: 30,
+        raw: 20,
+      },
+    },
+  });
+});
+
 test("persistConversationPromptSnapshot keeps only the latest persisted runs per regular conversation", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-snapshot-regular-"));
   const conversationId = "agent-default-main";

@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "记忆树功能第二期完成"
+git commit -m "记忆树功能改造完成，完成了一系列功能优化，如工具调用，token消耗，工具、MCP、插件、方法、技能摘要注入"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

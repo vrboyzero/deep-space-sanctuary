@@ -160,7 +160,7 @@ function summarizePromptSnapshotContextInjection(
         : 0;
       blockLineCounts[blockTag] = (blockLineCounts[blockTag] ?? 0) + lineCount;
     }
-    if (blockTag === "auto-recall" && metadata?.observability && typeof metadata.observability === "object") {
+    if ((blockTag === "auto-recall" || blockTag === "auto-recall-summary") && metadata?.observability && typeof metadata.observability === "object") {
       const observability = metadata.observability as Record<string, unknown>;
       autoRecall = {
         ...(typeof observability.timedOut === "boolean" ? { timedOut: observability.timedOut } : {}),
@@ -169,6 +169,9 @@ function summarizePromptSnapshotContextInjection(
           : {}),
         ...(typeof observability.keptCount === "number" && Number.isFinite(observability.keptCount)
           ? { keptCount: Math.max(0, Math.trunc(observability.keptCount)) }
+          : {}),
+        ...(typeof observability.injectedCount === "number" && Number.isFinite(observability.injectedCount)
+          ? { injectedCount: Math.max(0, Math.trunc(observability.injectedCount)) }
           : {}),
         ...(typeof observability.filteredOutCount === "number" && Number.isFinite(observability.filteredOutCount)
           ? { filteredOutCount: Math.max(0, Math.trunc(observability.filteredOutCount)) }
@@ -183,6 +186,79 @@ function summarizePromptSnapshotContextInjection(
           ? {
             sourceClassMix: Object.fromEntries(
               Object.entries(observability.sourceClassMix as Record<string, unknown>)
+                .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
+                .map(([key, item]) => [key, Math.max(0, Math.trunc(item as number))]),
+            ),
+          }
+          : {}),
+        ...(typeof observability.nodeHitCount === "number" && Number.isFinite(observability.nodeHitCount)
+          ? { nodeHitCount: Math.max(0, Math.trunc(observability.nodeHitCount)) }
+          : {}),
+        ...(typeof observability.nodeBackedCount === "number" && Number.isFinite(observability.nodeBackedCount)
+          ? { nodeBackedCount: Math.max(0, Math.trunc(observability.nodeBackedCount)) }
+          : {}),
+        ...(typeof observability.chunkOnlyCount === "number" && Number.isFinite(observability.chunkOnlyCount)
+          ? { chunkOnlyCount: Math.max(0, Math.trunc(observability.chunkOnlyCount)) }
+          : {}),
+        ...(typeof observability.nodeBackedShare === "number" && Number.isFinite(observability.nodeBackedShare)
+          ? { nodeBackedShare: observability.nodeBackedShare }
+          : {}),
+        ...(typeof observability.chunkOnlyShare === "number" && Number.isFinite(observability.chunkOnlyShare)
+          ? { chunkOnlyShare: observability.chunkOnlyShare }
+          : {}),
+        ...(typeof observability.nodeHitRate === "number" && Number.isFinite(observability.nodeHitRate)
+          ? { nodeHitRate: observability.nodeHitRate }
+          : {}),
+        ...(typeof observability.fallbackApplied === "boolean" ? { fallbackApplied: observability.fallbackApplied } : {}),
+        ...(typeof observability.fallbackRate === "number" && Number.isFinite(observability.fallbackRate)
+          ? { fallbackRate: observability.fallbackRate }
+          : {}),
+        ...(typeof observability.usefulHitCount === "number" && Number.isFinite(observability.usefulHitCount)
+          ? { usefulHitCount: Math.max(0, Math.trunc(observability.usefulHitCount)) }
+          : {}),
+        ...(typeof observability.usefulHitRate === "number" && Number.isFinite(observability.usefulHitRate)
+          ? { usefulHitRate: observability.usefulHitRate }
+          : {}),
+        ...(typeof observability.charsPerUsefulHit === "number" && Number.isFinite(observability.charsPerUsefulHit)
+          ? { charsPerUsefulHit: observability.charsPerUsefulHit }
+          : {}),
+        ...(typeof observability.tokensPerUsefulHit === "number" && Number.isFinite(observability.tokensPerUsefulHit)
+          ? { tokensPerUsefulHit: observability.tokensPerUsefulHit }
+          : {}),
+        ...(typeof observability.sourceNoiseCount === "number" && Number.isFinite(observability.sourceNoiseCount)
+          ? { sourceNoiseCount: Math.max(0, Math.trunc(observability.sourceNoiseCount)) }
+          : {}),
+        ...(typeof observability.sourceNoiseRatio === "number" && Number.isFinite(observability.sourceNoiseRatio)
+          ? { sourceNoiseRatio: observability.sourceNoiseRatio }
+          : {}),
+        ...(typeof observability.nodeSummarySavingsChars === "number" && Number.isFinite(observability.nodeSummarySavingsChars)
+          ? { nodeSummarySavingsChars: Math.max(0, Math.trunc(observability.nodeSummarySavingsChars)) }
+          : {}),
+        ...(typeof observability.nodeSummarySavingsTokens === "number" && Number.isFinite(observability.nodeSummarySavingsTokens)
+          ? { nodeSummarySavingsTokens: Math.max(0, Math.trunc(observability.nodeSummarySavingsTokens)) }
+          : {}),
+        ...(typeof observability.nodeSummaryCompressionRatio === "number" && Number.isFinite(observability.nodeSummaryCompressionRatio)
+          ? { nodeSummaryCompressionRatio: observability.nodeSummaryCompressionRatio }
+          : {}),
+        ...(typeof observability.injectedChars === "number" && Number.isFinite(observability.injectedChars)
+          ? { injectedChars: Math.max(0, Math.trunc(observability.injectedChars)) }
+          : {}),
+        ...(typeof observability.injectedTokens === "number" && Number.isFinite(observability.injectedTokens)
+          ? { injectedTokens: Math.max(0, Math.trunc(observability.injectedTokens)) }
+          : {}),
+        ...(observability.injectionCharsBySourceClass && typeof observability.injectionCharsBySourceClass === "object"
+          ? {
+            injectionCharsBySourceClass: Object.fromEntries(
+              Object.entries(observability.injectionCharsBySourceClass as Record<string, unknown>)
+                .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
+                .map(([key, item]) => [key, Math.max(0, Math.trunc(item as number))]),
+            ),
+          }
+          : {}),
+        ...(observability.injectionTokensBySourceClass && typeof observability.injectionTokensBySourceClass === "object"
+          ? {
+            injectionTokensBySourceClass: Object.fromEntries(
+              Object.entries(observability.injectionTokensBySourceClass as Record<string, unknown>)
                 .filter(([, item]) => typeof item === "number" && Number.isFinite(item))
                 .map(([key, item]) => [key, Math.max(0, Math.trunc(item as number))]),
             ),

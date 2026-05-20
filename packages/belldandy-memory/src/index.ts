@@ -11,6 +11,8 @@ export {
   type DurableMemoryGuidance,
   type MemorySearchDiagnostics,
   type MemorySearchExecution,
+  type MemorySearchNodeAssistedDiagnostics,
+  type MemorySearchNodeAssistedHit,
   type MemorySearchStageSnapshot,
   type MemorySearchStageTopHit,
   type DurableMemoryRejectionReasonCode,
@@ -126,6 +128,14 @@ export {
   type MemoryExactDedupPreviewItem,
   type MemoryExactDedupPreviewReport,
 } from "./memory-dedup.js";
+export {
+  buildMemoryVacuumWarnings,
+  ensureMemoryVacuumBackupFile,
+  type MemoryVacuumApplyOptions,
+  type MemoryVacuumApplyResult,
+  type MemoryVacuumObservability,
+  type MemoryVacuumPreviewReport,
+} from "./memory-vacuum.js";
 export {
   buildMemorySourceInventoryReport,
   type BuildMemorySourceInventoryInput,

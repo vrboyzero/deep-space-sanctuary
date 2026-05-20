@@ -93,6 +93,27 @@ function collectPromptContextInjectionSummaries(summary) {
     if (sourceMix !== "-") {
       autoRecall.push(`sourceMix=${sourceMix}`);
     }
+    if (typeof contextInjection.autoRecall.usefulHitCount === "number" && Number.isFinite(contextInjection.autoRecall.usefulHitCount)) {
+      autoRecall.push(`useful=${Math.max(0, Math.trunc(contextInjection.autoRecall.usefulHitCount))}`);
+    }
+    if (typeof contextInjection.autoRecall.usefulHitRate === "number" && Number.isFinite(contextInjection.autoRecall.usefulHitRate)) {
+      autoRecall.push(`usefulRate=${contextInjection.autoRecall.usefulHitRate}`);
+    }
+    if (typeof contextInjection.autoRecall.charsPerUsefulHit === "number" && Number.isFinite(contextInjection.autoRecall.charsPerUsefulHit)) {
+      autoRecall.push(`chars/useful=${contextInjection.autoRecall.charsPerUsefulHit}`);
+    }
+    if (typeof contextInjection.autoRecall.tokensPerUsefulHit === "number" && Number.isFinite(contextInjection.autoRecall.tokensPerUsefulHit)) {
+      autoRecall.push(`tok/useful=${contextInjection.autoRecall.tokensPerUsefulHit}`);
+    }
+    if (typeof contextInjection.autoRecall.nodeSummarySavingsChars === "number" && Number.isFinite(contextInjection.autoRecall.nodeSummarySavingsChars)) {
+      autoRecall.push(`summarySaveChars=${Math.max(0, Math.trunc(contextInjection.autoRecall.nodeSummarySavingsChars))}`);
+    }
+    if (typeof contextInjection.autoRecall.nodeSummarySavingsTokens === "number" && Number.isFinite(contextInjection.autoRecall.nodeSummarySavingsTokens)) {
+      autoRecall.push(`summarySaveTok=${Math.max(0, Math.trunc(contextInjection.autoRecall.nodeSummarySavingsTokens))}`);
+    }
+    if (typeof contextInjection.autoRecall.nodeSummaryCompressionRatio === "number" && Number.isFinite(contextInjection.autoRecall.nodeSummaryCompressionRatio)) {
+      autoRecall.push(`summaryCompression=${contextInjection.autoRecall.nodeSummaryCompressionRatio}`);
+    }
   }
   return {
     blockTags,

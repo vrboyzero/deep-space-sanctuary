@@ -857,10 +857,23 @@ async function runMemorySearch(
     diagnostics: {
       retrievalMode: "explicit",
       limit: options.limit,
+      routingPolicy: "chunk_only",
       skipped: false,
       deepRetrievalApplied: false,
       scoreSignalAppliedCount: 0,
       sourceClassMix: {},
+      nodeAssisted: {
+        enabled: false,
+        policy: "chunk_only",
+        nodeHitCount: 0,
+        injectedChunkCount: 0,
+        fallbackApplied: false,
+        returnedMix: {
+          nodeBacked: 0,
+          chunkOnly: items.length,
+        },
+        topNodeHits: [],
+      },
       stages: {
         raw: { count: items.length, topHits: [] },
         scoreAware: { count: items.length, topHits: [] },

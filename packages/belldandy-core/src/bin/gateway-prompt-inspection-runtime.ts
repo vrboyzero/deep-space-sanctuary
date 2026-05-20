@@ -760,7 +760,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
           : 0;
         blockLineCounts[blockTag] = (blockLineCounts[blockTag] ?? 0) + lineCount;
       }
-      if (blockTag === "auto-recall" && metadata?.observability && typeof metadata.observability === "object") {
+      if ((blockTag === "auto-recall" || blockTag === "auto-recall-summary") && metadata?.observability && typeof metadata.observability === "object") {
         autoRecallObservability = metadata.observability as Record<string, unknown>;
       }
     }

@@ -123,7 +123,7 @@ const SAFE_UPDATE_KEYS = new Set([
   "BELLDANDY_EXPERIENCE_SYNTHESIS_MAX_SIMILAR_SOURCES",
   "BELLDANDY_EXPERIENCE_SYNTHESIS_MAX_SOURCE_CONTENT_CHARS",
   "BELLDANDY_EXPERIENCE_SYNTHESIS_TOTAL_SOURCE_CONTENT_CHAR_BUDGET",
-  "BELLDANDY_MEMORY_DEEP_RETRIEVAL", "BELLDANDY_EMBEDDING_QUERY_PREFIX",
+  "BELLDANDY_MEMORY_DEEP_RETRIEVAL", "BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL", "BELLDANDY_EMBEDDING_QUERY_PREFIX",
   "BELLDANDY_EMBEDDING_PASSAGE_PREFIX", "BELLDANDY_RERANKER_MIN_SCORE",
   "BELLDANDY_RERANKER_LENGTH_NORM_ANCHOR", "BELLDANDY_MEMORY_INDEXER_VERBOSE_WATCH",
   "BELLDANDY_TTS_ENABLED", "BELLDANDY_TTS_PROVIDER", "BELLDANDY_TTS_VOICE", "BELLDANDY_TTS_MODEL",
@@ -288,6 +288,9 @@ export async function handleConfigChannelMethod(
           effectiveUpdates[key] = value;
         }
       }
+      const changedKeys = Object.keys(effectiveUpdates);
+      const hotReloadApplied = areAllConfigKeysHotReload(changedKeys);
+      const restartRequired = changedKeys.length > 0 && !hotReloadApplied;
 
       const mergedConfig = { ...currentConfig, ...effectiveUpdates };
       const effectiveAuthMode = String(
@@ -328,12 +331,21 @@ export async function handleConfigChannelMethod(
         const preferredProviderIds = normalizePreferredProviderIds(effectiveUpdates.BELLDANDY_MODEL_PREFERRED_PROVIDERS);
         ctx.preferredProviderIds.splice(0, ctx.preferredProviderIds.length, ...preferredProviderIds);
       }
-      if (areAllConfigKeysHotReload(Object.keys(effectiveUpdates))) {
+      if (hotReloadApplied) {
         applyProcessEnvUpdates(effectiveUpdates);
       }
       ctx.onConfigUpdated?.(effectiveUpdates);
 
-      return { type: "res", id: req.id, ok: true };
+      return {
+        type: "res",
+        id: req.id,
+        ok: true,
+        payload: {
+          changedKeys,
+          hotReloadApplied,
+          restartRequired,
+        },
+      };
     }
 
     case "channel.reply_chunking.get": {

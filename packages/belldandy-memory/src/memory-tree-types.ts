@@ -218,7 +218,9 @@ export type MemoryTreeReportReviewResult = {
 };
 
 export type MemoryTreeReportApplyAction = {
-  kind?: "dedup_archive" | "external_ingest";
+  kind?: "dedup_archive" | "external_ingest" | "report_governance_ack";
+  reportType?: MemoryTreeReportType;
+  governanceState?: string;
   chunkId?: string;
   keepChunkId?: string;
   normalizedHash?: string;
@@ -227,7 +229,9 @@ export type MemoryTreeReportApplyAction = {
   archived?: boolean;
   sourcePath?: string;
   importedChunkCount?: number;
+  removedChunkCount?: number;
   skipped?: boolean;
+  stale?: boolean;
   reason?: string;
 };
 

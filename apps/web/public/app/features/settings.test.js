@@ -325,6 +325,7 @@ function createSettingsRefs(overrides = {}) {
     cfgExperienceSynthesisMaxSourceContentChars: overrides.cfgExperienceSynthesisMaxSourceContentChars || createInput(""),
     cfgExperienceSynthesisTotalSourceContentCharBudget: overrides.cfgExperienceSynthesisTotalSourceContentCharBudget || createInput(""),
     cfgMemoryDeepRetrievalEnabled: overrides.cfgMemoryDeepRetrievalEnabled || createCheckbox(false),
+    cfgMemoryNodeAssistedRetrievalEnabled: overrides.cfgMemoryNodeAssistedRetrievalEnabled || createCheckbox(false),
     cfgEmbeddingQueryPrefix: overrides.cfgEmbeddingQueryPrefix || createInput(""),
     cfgEmbeddingPassagePrefix: overrides.cfgEmbeddingPassagePrefix || createInput(""),
     cfgRerankerMinScore: overrides.cfgRerankerMinScore || createInput(""),
@@ -732,6 +733,7 @@ describe("settings controller", () => {
       BELLDANDY_EXPERIENCE_SYNTHESIS_MAX_SOURCE_CONTENT_CHARS: "1600",
       BELLDANDY_EXPERIENCE_SYNTHESIS_TOTAL_SOURCE_CONTENT_CHAR_BUDGET: "10000",
       BELLDANDY_MEMORY_DEEP_RETRIEVAL: "true",
+      BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL: "true",
       BELLDANDY_EMBEDDING_QUERY_PREFIX: "query: ",
       BELLDANDY_EMBEDDING_PASSAGE_PREFIX: "passage: ",
       BELLDANDY_RERANKER_MIN_SCORE: "0.2",
@@ -932,6 +934,7 @@ describe("settings controller", () => {
     expect(refs.cfgExperienceSynthesisMaxSourceContentChars.value).toBe("1600");
     expect(refs.cfgExperienceSynthesisTotalSourceContentCharBudget.value).toBe("10000");
     expect(refs.cfgMemoryDeepRetrievalEnabled.checked).toBe(true);
+    expect(refs.cfgMemoryNodeAssistedRetrievalEnabled.checked).toBe(true);
     expect(refs.cfgEmbeddingQueryPrefix.value).toBe("query: ");
     expect(refs.cfgMemoryIndexerVerboseWatch.checked).toBe(true);
     expect(refs.cfgTaskDedupGuardEnabled.checked).toBe(false);
@@ -1400,6 +1403,7 @@ describe("settings controller", () => {
       cfgExperienceSynthesisMaxSourceContentChars: createInput("1600"),
       cfgExperienceSynthesisTotalSourceContentCharBudget: createInput("10000"),
       cfgMemoryDeepRetrievalEnabled: createCheckbox(true),
+      cfgMemoryNodeAssistedRetrievalEnabled: createCheckbox(true),
       cfgEmbeddingQueryPrefix: createInput(" query: "),
       cfgEmbeddingPassagePrefix: createInput(" passage: "),
       cfgRerankerMinScore: createInput("0.2"),
@@ -1512,7 +1516,7 @@ describe("settings controller", () => {
     const sendReq = vi.fn(async (frame) => {
       switch (frame.method) {
         case "config.update":
-          return { ok: true, payload: {} };
+          return { ok: true, payload: { restartRequired: true } };
         case "channel.security.get":
           return { ok: true, payload: { path: "channel-security.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
         case "channel.reply_chunking.get":
@@ -1651,6 +1655,7 @@ describe("settings controller", () => {
       BELLDANDY_EXPERIENCE_SYNTHESIS_MAX_SOURCE_CONTENT_CHARS: "1600",
       BELLDANDY_EXPERIENCE_SYNTHESIS_TOTAL_SOURCE_CONTENT_CHAR_BUDGET: "10000",
       BELLDANDY_MEMORY_DEEP_RETRIEVAL: "true",
+      BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL: "true",
       BELLDANDY_EMBEDDING_QUERY_PREFIX: "query:",
       BELLDANDY_EMBEDDING_PASSAGE_PREFIX: "passage:",
       BELLDANDY_RERANKER_MIN_SCORE: "0.2",
@@ -2085,7 +2090,7 @@ describe("settings controller", () => {
     const sendReq = vi.fn(async (frame) => {
       switch (frame.method) {
         case "config.update":
-          return { ok: true, payload: {} };
+          return { ok: true, payload: { restartRequired: true } };
         case "models.config.update":
           return { ok: true, payload: {} };
         case "channel.security.get":
@@ -2309,7 +2314,7 @@ describe("settings controller", () => {
     const sendReq = vi.fn(async (frame) => {
       switch (frame.method) {
         case "config.update":
-          return { ok: true, payload: {} };
+          return { ok: true, payload: { restartRequired: true } };
         case "channel.security.get":
           return { ok: true, payload: { path: "channel-security.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
         case "channel.reply_chunking.get":

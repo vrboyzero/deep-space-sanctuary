@@ -212,13 +212,39 @@ describe("prompt observability", () => {
           autoRecall: {
             candidateCount: 3,
             keptCount: 2,
+            injectedCount: 2,
             filteredOutCount: 1,
             minScore: 0.3,
             sourceClassMix: {
               curated: 1,
-              derived: 1,
+              raw: 1,
             },
             topHitIds: ["chunk-1", "chunk-2"],
+            nodeHitCount: 1,
+            nodeBackedCount: 1,
+            chunkOnlyCount: 1,
+            nodeBackedShare: 0.5,
+            chunkOnlyShare: 0.5,
+            nodeHitRate: 0.5,
+            fallbackApplied: true,
+            fallbackRate: 0.5,
+            usefulHitCount: 1,
+            usefulHitRate: 0.5,
+            charsPerUsefulHit: 400,
+            tokensPerUsefulHit: 100,
+            sourceNoiseCount: 1,
+            sourceNoiseRatio: 0.5,
+            nodeSummarySavingsChars: 120,
+            nodeSummarySavingsTokens: 30,
+            nodeSummaryCompressionRatio: 0.4,
+            injectionCharsBySourceClass: {
+              curated: 240,
+              raw: 160,
+            },
+            injectionTokensBySourceClass: {
+              curated: 60,
+              raw: 40,
+            },
           },
         },
         promptExperiments: {
@@ -289,9 +315,27 @@ describe("prompt observability", () => {
         autoRecall: {
           candidateCount: 3,
           keptCount: 2,
+          injectedCount: 2,
           filteredOutCount: 1,
           minScore: 0.3,
           topHitIds: ["chunk-1", "chunk-2"],
+          nodeHitCount: 1,
+          nodeBackedCount: 1,
+          chunkOnlyCount: 1,
+          nodeBackedShare: 0.5,
+          chunkOnlyShare: 0.5,
+          nodeHitRate: 0.5,
+          fallbackApplied: true,
+          fallbackRate: 0.5,
+          usefulHitCount: 1,
+          usefulHitRate: 0.5,
+          charsPerUsefulHit: 400,
+          tokensPerUsefulHit: 100,
+          sourceNoiseCount: 1,
+          sourceNoiseRatio: 0.5,
+          nodeSummarySavingsChars: 120,
+          nodeSummarySavingsTokens: 30,
+          nodeSummaryCompressionRatio: 0.4,
         },
       },
       truncationReason: {
@@ -424,9 +468,27 @@ describe("prompt observability", () => {
           autoRecall: {
             candidateCount: 3,
             keptCount: 2,
+            injectedCount: 2,
             filteredOutCount: 1,
             minScore: 0.3,
             topHitIds: ["chunk-1", "chunk-2"],
+            nodeHitCount: 1,
+            nodeBackedCount: 1,
+            chunkOnlyCount: 1,
+            nodeBackedShare: 0.5,
+            chunkOnlyShare: 0.5,
+            nodeHitRate: 0.5,
+            fallbackApplied: true,
+            fallbackRate: 0.5,
+            usefulHitCount: 1,
+            usefulHitRate: 0.5,
+            charsPerUsefulHit: 400,
+            tokensPerUsefulHit: 100,
+            sourceNoiseCount: 1,
+            sourceNoiseRatio: 0.5,
+            nodeSummarySavingsChars: 120,
+            nodeSummarySavingsTokens: 30,
+            nodeSummaryCompressionRatio: 0.4,
           },
         },
       },
@@ -443,6 +505,12 @@ describe("prompt observability", () => {
     expect(formatPromptObservabilityHeadline(view)).toContain("blockTokens=1");
     expect(formatPromptObservabilityHeadline(view)).toContain("prependChars=480");
     expect(formatPromptObservabilityHeadline(view)).toContain("autoRecall=2");
+    expect(formatPromptObservabilityHeadline(view)).toContain("nodeHit=0.5");
+    expect(formatPromptObservabilityHeadline(view)).toContain("fallback=0.5");
+    expect(formatPromptObservabilityHeadline(view)).toContain("useful=0.5");
+    expect(formatPromptObservabilityHeadline(view)).toContain("tok/useful=100");
+    expect(formatPromptObservabilityHeadline(view)).toContain("noise=0.5");
+    expect(formatPromptObservabilityHeadline(view)).toContain("summarySaveTok=30");
     expect(formatPromptObservabilityHeadline(view)).toContain("truncation=max_chars_limit");
 
     expect(renderPromptObservabilityText(view)).toContain("Prompt Observability");
@@ -452,6 +520,13 @@ describe("prompt observability", () => {
     expect(renderPromptObservabilityText(view)).toContain("includesHookSystemPrompt: yes");
     expect(renderPromptObservabilityText(view)).toContain("prependContextChars: 480");
     expect(renderPromptObservabilityText(view)).toContain("autoRecallKeptCount: 2");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallInjectedCount: 2");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallNodeHitRate: 0.5");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallFallbackRate: 0.5");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallUsefulHitRate: 0.5");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallTokensPerUsefulHit: 100");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallSourceNoiseRatio: 0.5");
+    expect(renderPromptObservabilityText(view)).toContain("autoRecallNodeSummarySavingsTokens: 30");
     expect(renderPromptObservabilityText(view)).toContain("truncationReasonCode: max_chars_limit");
     expect(renderPromptObservabilityText(view)).toContain("truncationTruncatedSectionIds: core");
   });

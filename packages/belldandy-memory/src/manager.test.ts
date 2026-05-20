@@ -124,6 +124,62 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("previews and applies safe memory vacuum with backup and page/file observability", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+    });
+
+    for (let index = 0; index < 24; index += 1) {
+      manager.upsertMemoryChunk({
+        id: `vacuum-${index}`,
+        sourcePath: path.join(docsDir, `vacuum-${index}.md`),
+        sourceType: "file",
+        memoryType: "other",
+        content: `vacuum payload ${index}\n${"x".repeat(16384)}`,
+      });
+    }
+
+    const store = (manager as any).store as {
+      deleteBySource: (sourcePath: string) => number;
+      getDbPath: () => string;
+    };
+    for (let index = 0; index < 12; index += 1) {
+      store.deleteBySource(path.join(docsDir, `vacuum-${index}.md`));
+    }
+
+    const preview = manager.previewMemoryVacuum();
+    expect(preview).toMatchObject({
+      mode: "dry_run",
+      requiresConfirmed: true,
+      recommended: true,
+      observability: expect.objectContaining({
+        chunkCount: 12,
+      }),
+    });
+    expect(preview.observability.freelistCount).toBeGreaterThan(0);
+    expect(preview.observability.pageSize).toBeGreaterThan(0);
+    expect(preview.observability.dbFileBytes).toBeGreaterThan(0);
+    expect(preview.observability.estimatedReclaimableBytes).toBeGreaterThan(0);
+
+    const backupRootDir = path.join(stateDir, "artifacts", "memory-vacuum-backups");
+    await fs.mkdir(backupRootDir, { recursive: true });
+    const result = manager.applyMemoryVacuum({
+      backupRootDir,
+      runId: "vacuum-test",
+    });
+
+    expect(result.mode).toBe("apply");
+    expect(result.backupPath).toContain("memory-vacuum-backups");
+    expect(await fs.stat(result.backupPath)).toBeTruthy();
+    expect(result.before.freelistCount).toBeGreaterThan(0);
+    expect(result.after.freelistCount).toBe(0);
+    expect(result.after.pageCount).toBeLessThanOrEqual(result.before.pageCount);
+    expect(result.after.totalFileBytes).toBeLessThanOrEqual(result.before.totalFileBytes);
+    expect(result.changed).toBe(true);
+    expect(store.getDbPath()).toContain("memory.sqlite");
+  });
+
   it("rebuilds memory tree sources and chunk scores within memory.sqlite", async () => {
     const stateMemoryDir = path.join(stateDir, "memory");
     const stateMemoryPath = path.join(stateMemoryDir, "2026-05-19.md");
@@ -891,6 +947,148 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("uses R2 node-assisted routing before chunk fallback and exposes diagnostics", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+      nodeAssistedRetrievalEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "r2-node-high",
+      sourcePath: path.join(docsDir, "goal-alpha-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal alpha final summary and completion checklist",
+    });
+    manager.upsertMemoryChunk({
+      id: "r2-fallback-raw",
+      sourcePath: path.join(docsDir, "fallback-notes.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "fallback raw notes for goal alpha search",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+      searchHybrid: (...args: any[]) => Array<Record<string, unknown>>;
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:r2-node-high",
+        targetType: "chunk",
+        targetId: "r2-node-high",
+        scoreTotal: 0.95,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:r2-fallback-raw",
+        targetType: "chunk",
+        targetId: "r2-fallback-raw",
+        scoreTotal: 0.35,
+        sourceWeightScore: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+      },
+    ]);
+    store.createTask({
+      id: "r2-project-task",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Finish goal alpha",
+      summary: "Deliver the goal alpha final summary.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-20T10:00:00.000Z",
+      finishedAt: "2026-05-20T10:30:00.000Z",
+      createdAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:30:00.000Z",
+    });
+    store.linkTaskMemory("r2-project-task", "r2-node-high", "generated");
+
+    manager.rebuildMemoryTreeNodes({ limit: 10, kind: "project" });
+
+    const originalSearchHybrid = store.searchHybrid.bind(store);
+    store.searchHybrid = () => [
+      {
+        id: "r2-fallback-raw",
+        sourcePath: path.join(docsDir, "fallback-notes.md"),
+        sourceType: "file",
+        memoryType: "other",
+        snippet: "fallback raw notes for goal alpha search",
+        summary: "fallback raw summary",
+        score: 0.74,
+        metadata: {},
+        updatedAt: "2026-05-20T09:00:00.000Z",
+      },
+    ] as any;
+
+    try {
+      const execution = await manager.searchWithDiagnostics("goal-alpha", {
+        limit: 2,
+        includeContent: false,
+        routingPolicy: "node_assisted",
+      });
+
+      expect(execution.items.map((item) => item.id)).toEqual([
+        "r2-node-high",
+        "r2-fallback-raw",
+      ]);
+      expect(execution.items[0]?.metadata?.memoryTree).toMatchObject({
+        nodeHit: {
+          kind: "project",
+        },
+        sourceClass: "curated",
+      });
+      expect(execution.diagnostics).toMatchObject({
+        routingPolicy: "node_assisted",
+        nodeAssisted: {
+          enabled: true,
+          policy: "node_assisted",
+          nodeHitCount: 1,
+          injectedChunkCount: 1,
+          fallbackApplied: true,
+          returnedMix: {
+            nodeBacked: 1,
+            chunkOnly: 1,
+          },
+          nodeBackedShare: 0.5,
+          chunkOnlyShare: 0.5,
+          topNodeHits: [
+            expect.objectContaining({
+              kind: "project",
+              chunkCount: 1,
+            }),
+          ],
+        },
+        stages: {
+          raw: {
+            count: 1,
+            topHits: [
+              expect.objectContaining({ id: "r2-fallback-raw" }),
+            ],
+          },
+          returned: {
+            count: 2,
+            topHits: [
+              expect.objectContaining({ id: "r2-node-high" }),
+              expect.objectContaining({ id: "r2-fallback-raw" }),
+            ],
+          },
+        },
+      });
+    } finally {
+      store.searchHybrid = originalSearchHybrid;
+    }
+  });
+
   it("reviews and applies P14 dedup reports by archiving duplicate chunks and lowering their scores", async () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -1003,8 +1201,11 @@ describe("MemoryManager guardrails", () => {
   it("previews and applies P15 external Obsidian ingest through report review/apply", async () => {
     const obsidianDir = path.join(rootDir, "obsidian-vault");
     const notePath = path.join(obsidianDir, "Projects", "viewer-audit.md");
+    const stalePath = path.join(obsidianDir, "Archive", "retired-note.md");
     await fs.mkdir(path.dirname(notePath), { recursive: true });
+    await fs.mkdir(path.dirname(stalePath), { recursive: true });
     await fs.writeFile(notePath, "# Viewer Audit\n\nObsidian ingest should become searchable memory.\n", "utf-8");
+    await fs.writeFile(stalePath, "# Retired\n\nThis note should be cleaned on rescan.\n", "utf-8");
 
     manager = createManager({
       workspaceRoot: docsDir,
@@ -1026,9 +1227,13 @@ describe("MemoryManager guardrails", () => {
     expect(preview).toMatchObject({
       adapter: "obsidian_markdown_directory_v1",
       sourceId: "configured:obsidian-vault:1",
-      totalFiles: 1,
-      eligibleFiles: 1,
+      totalFiles: 2,
+      eligibleFiles: 2,
       skippedFiles: 0,
+      rescan: {
+        mode: "initial",
+        previousFileCount: 0,
+      },
     });
 
     const report = manager.persistMemoryTreeExternalIngestReport(preview, {
@@ -1086,6 +1291,229 @@ describe("MemoryManager guardrails", () => {
     });
     expect(scores.length).toBeGreaterThan(0);
     expect(scores.every((item) => item.sourceId === "configured:obsidian-vault:1")).toBe(true);
+
+    await fs.writeFile(notePath, "# Viewer Audit\n\nRescanned content should replace the original memory.\n", "utf-8");
+    await fs.rm(stalePath, { force: true });
+
+    const rescanPreview = await manager.previewConfiguredExternalIngest({
+      configuredSources: [
+        {
+          label: "Obsidian Vault",
+          sourceClass: "curated",
+          scope: "private",
+          rootPath: obsidianDir,
+          fileExtensions: [".md"],
+        },
+      ],
+    });
+    expect(rescanPreview).toMatchObject({
+      adapter: "obsidian_markdown_directory_v1",
+      totalFiles: 1,
+      eligibleFiles: 1,
+      rescan: {
+        mode: "rescan",
+        previousFileCount: 2,
+        changedFileCount: 1,
+        unchangedFileCount: 0,
+        staleFileCount: 1,
+      },
+    });
+    expect(rescanPreview.rescan.staleFiles).toEqual([
+      expect.objectContaining({
+        path: stalePath,
+        reason: "missing_from_preview",
+      }),
+    ]);
+
+    const rescanReport = manager.persistMemoryTreeExternalIngestReport(rescanPreview, {
+      createdBy: "test",
+    });
+    manager.reviewMemoryTreeReport(rescanReport.id, "approved", {
+      reviewedBy: "tester",
+      note: "rescan external markdown after stale removal",
+    });
+
+    const rescanned = await manager.applyMemoryTreeReport(rescanReport.id, {
+      appliedBy: "tester",
+      note: "replace changed file and remove stale source chunks",
+    });
+    expect(rescanned.report.status).toBe("applied");
+    expect(rescanned.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "external_ingest",
+        sourcePath: stalePath,
+        stale: true,
+        removedChunkCount: expect.any(Number),
+      }),
+    ]));
+
+    const rescannedChunks = manager.getMemoriesBySource(notePath, 20);
+    expect(rescannedChunks.length).toBeGreaterThan(0);
+    expect(rescannedChunks[0]?.content).toContain("Rescanned content should replace the original memory.");
+    expect(manager.getMemoriesBySource(stalePath, 20)).toEqual([]);
+  });
+
+  it("previews and applies R4 single-file markdown external ingest", async () => {
+    const externalFile = path.join(rootDir, "external-playbook.md");
+    await fs.writeFile(externalFile, "# Playbook\n\nSingle file external ingest marker.\n", "utf-8");
+
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    const preview = await manager.previewConfiguredExternalIngest({
+      configuredSources: [
+        {
+          id: "configured:playbook-file:1",
+          label: "Playbook File",
+          sourceClass: "curated",
+          scope: "private",
+          filePath: externalFile,
+        },
+      ],
+    });
+    expect(preview).toMatchObject({
+      adapter: "markdown_file_v1",
+      sourceId: "configured:playbook-file:1",
+      totalFiles: 1,
+      eligibleFiles: 1,
+      rootPath: path.dirname(externalFile),
+      rescan: {
+        mode: "initial",
+      },
+    });
+
+    const report = manager.persistMemoryTreeExternalIngestReport(preview, {
+      createdBy: "test",
+    });
+    manager.reviewMemoryTreeReport(report.id, "approved", {
+      reviewedBy: "tester",
+      note: "approve single-file markdown ingest",
+    });
+
+    const applied = await manager.applyMemoryTreeReport(report.id, {
+      appliedBy: "tester",
+      note: "import single markdown file",
+    });
+    expect(applied.report.status).toBe("applied");
+    expect(applied.updatedChunkCount).toBeGreaterThan(0);
+
+    const importedChunks = manager.getMemoriesBySource(externalFile, 20);
+    expect(importedChunks.length).toBeGreaterThan(0);
+    expect(importedChunks[0]?.metadata).toMatchObject({
+      memoryTree: {
+        externalSourceId: "configured:playbook-file:1",
+        externalSourceType: "external_markdown_file",
+      },
+    });
+  });
+
+  it("applies inventory and tree build reports as report-only governance state changes", async () => {
+    const stateMemoryDir = path.join(stateDir, "memory");
+    const stateMemoryPath = path.join(stateMemoryDir, "2026-05-21.md");
+    await fs.mkdir(stateMemoryDir, { recursive: true });
+    await fs.writeFile(stateMemoryPath, "# Daily Memory\nr3 governance baseline\n", "utf-8");
+
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      additionalRoots: [stateMemoryDir],
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "r3-tree-report-a",
+      sourcePath: stateMemoryPath,
+      sourceType: "file",
+      memoryType: "daily",
+      content: "inventory and tree build baseline chunk",
+      visibility: "shared",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+    };
+    store.createTask({
+      id: "task-r3-report-1",
+      conversationId: "conv-r3-report-1",
+      sessionKey: "conv-r3-report-1",
+      source: "chat",
+      status: "success",
+      title: "确认 R3 report baseline",
+      summary: "验证 inventory 与 tree_build_preview apply 只写 report 状态。",
+      startedAt: "2026-05-21T10:00:00.000Z",
+      finishedAt: "2026-05-21T10:05:00.000Z",
+      createdAt: "2026-05-21T10:00:00.000Z",
+      updatedAt: "2026-05-21T10:05:00.000Z",
+    });
+    store.linkTaskMemory("task-r3-report-1", "r3-tree-report-a", "used");
+
+    const inventoryPreview = await manager.previewSourceInventory();
+    const inventoryReport = manager.persistMemoryTreeInventoryReport(inventoryPreview, {
+      createdBy: "test",
+    });
+    manager.reviewMemoryTreeReport(inventoryReport.id, "approved", {
+      reviewedBy: "tester",
+      note: "approve inventory governance baseline",
+    });
+
+    const appliedInventory = await manager.applyMemoryTreeReport(inventoryReport.id, {
+      appliedBy: "tester",
+      note: "confirm inventory baseline",
+    });
+    expect(appliedInventory.report.status).toBe("applied");
+    expect(appliedInventory.updatedChunkCount).toBe(0);
+    expect(appliedInventory.updatedScoreCount).toBe(0);
+    expect(appliedInventory.actions).toEqual([
+      expect.objectContaining({
+        kind: "report_governance_ack",
+        reportType: "inventory",
+        governanceState: "inventory_baseline_confirmed",
+      }),
+    ]);
+    expect(appliedInventory.report.summary).toMatchObject({
+      applyMode: "report_state_only",
+      governanceState: "inventory_baseline_confirmed",
+    });
+    expect(appliedInventory.report.details).toMatchObject({
+      lastApply: expect.objectContaining({
+        updatedChunkCount: 0,
+        updatedScoreCount: 0,
+      }),
+    });
+
+    const treeBuildResult = manager.rebuildMemoryTreeNodes({ limit: 10 });
+    expect(treeBuildResult.totalNodes).toBe(1);
+    const treeBuildReport = manager.listMemoryTreeReports(20, {
+      reportType: "tree_build_preview",
+    })[0];
+    expect(treeBuildReport?.reportType).toBe("tree_build_preview");
+    manager.reviewMemoryTreeReport(String(treeBuildReport?.id ?? ""), "approved", {
+      reviewedBy: "tester",
+      note: "approve tree build governance baseline",
+    });
+
+    const appliedTreeBuild = await manager.applyMemoryTreeReport(String(treeBuildReport?.id ?? ""), {
+      appliedBy: "tester",
+      note: "confirm tree build baseline",
+    });
+    expect(appliedTreeBuild.report.status).toBe("applied");
+    expect(appliedTreeBuild.updatedChunkCount).toBe(0);
+    expect(appliedTreeBuild.updatedScoreCount).toBe(0);
+    expect(appliedTreeBuild.actions).toEqual([
+      expect.objectContaining({
+        kind: "report_governance_ack",
+        reportType: "tree_build_preview",
+        governanceState: "tree_build_baseline_confirmed",
+      }),
+    ]);
+    expect(appliedTreeBuild.report.summary).toMatchObject({
+      applyMode: "report_state_only",
+      governanceState: "tree_build_baseline_confirmed",
+    });
   });
 
   it("keeps explicit search available while implicit recall still skips greetings", async () => {

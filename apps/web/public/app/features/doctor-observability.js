@@ -339,6 +339,20 @@ function buildPromptObservabilityCard(payload, t) {
       },
       `Auto recall: kept=${formatNumber(summary.contextInjection.autoRecall.keptCount)}/${formatNumber(summary.contextInjection.autoRecall.candidateCount)}; filtered=${formatNumber(summary.contextInjection.autoRecall.filteredOutCount)}; minScore=${typeof summary.contextInjection.autoRecall.minScore === "number" ? String(summary.contextInjection.autoRecall.minScore) : "-"}; topHits=${formatStringListSummary(summary.contextInjection.autoRecall.topHitIds)}; sourceMix=${formatKeyCountSummary(summary.contextInjection.autoRecall.sourceClassMix)}`,
     ));
+    notes.push(tr(
+      t,
+      "settings.doctorPromptAutoRecallValue",
+      {
+        useful: formatNumber(summary.contextInjection.autoRecall.usefulHitCount),
+        usefulRate: typeof summary.contextInjection.autoRecall.usefulHitRate === "number" ? String(summary.contextInjection.autoRecall.usefulHitRate) : "-",
+        charsPerUseful: typeof summary.contextInjection.autoRecall.charsPerUsefulHit === "number" ? String(summary.contextInjection.autoRecall.charsPerUsefulHit) : "-",
+        tokensPerUseful: typeof summary.contextInjection.autoRecall.tokensPerUsefulHit === "number" ? String(summary.contextInjection.autoRecall.tokensPerUsefulHit) : "-",
+        savedChars: formatNumber(summary.contextInjection.autoRecall.nodeSummarySavingsChars),
+        savedTokens: formatNumber(summary.contextInjection.autoRecall.nodeSummarySavingsTokens),
+        compression: typeof summary.contextInjection.autoRecall.nodeSummaryCompressionRatio === "number" ? String(summary.contextInjection.autoRecall.nodeSummaryCompressionRatio) : "-",
+      },
+      `Auto recall value: useful=${formatNumber(summary.contextInjection.autoRecall.usefulHitCount)}; usefulRate=${typeof summary.contextInjection.autoRecall.usefulHitRate === "number" ? String(summary.contextInjection.autoRecall.usefulHitRate) : "-"}; chars/useful=${typeof summary.contextInjection.autoRecall.charsPerUsefulHit === "number" ? String(summary.contextInjection.autoRecall.charsPerUsefulHit) : "-"}; tok/useful=${typeof summary.contextInjection.autoRecall.tokensPerUsefulHit === "number" ? String(summary.contextInjection.autoRecall.tokensPerUsefulHit) : "-"}; summarySavings=${formatNumber(summary.contextInjection.autoRecall.nodeSummarySavingsChars)} chars / ${formatNumber(summary.contextInjection.autoRecall.nodeSummarySavingsTokens)} tokens; compression=${typeof summary.contextInjection.autoRecall.nodeSummaryCompressionRatio === "number" ? String(summary.contextInjection.autoRecall.nodeSummaryCompressionRatio) : "-"}`,
+    ));
   }
   const calibrationTrace = Array.isArray(payload?.queryRuntime?.traces)
     ? payload.queryRuntime.traces.find((item) => item?.method === "message.send")

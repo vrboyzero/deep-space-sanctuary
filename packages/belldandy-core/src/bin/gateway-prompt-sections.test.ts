@@ -180,6 +180,49 @@ describe("buildAgentRuntimePromptSections", () => {
       .toContain("adjust the plan or defer it");
   });
 
+  it("skips method / skill summary when the independent injection switch is off", () => {
+    const sections = buildAgentRuntimePromptSections({
+      hasAvailableTools: true,
+      visibleContracts: [],
+      canDelegate: true,
+      includeMethodSkillAssetSummary: false,
+      recommendedMethodNames: ["multi-agent-review.md"],
+      recommendedSkillNames: ["orchestration-playbook"],
+      methodAssets: [
+        {
+          fileName: "multi-agent-review.md",
+          path: "methods/multi-agent-review.md",
+          title: "多 Agent 审查流程",
+        },
+      ],
+      promptSkillAssets: [
+        {
+          name: "team-fan-in",
+          description: "帮助 manager 组织 fan-in 验收。",
+          priority: "high",
+          source: "bundled",
+          path: "bundled:team-fan-in",
+          tags: ["team"],
+        },
+      ],
+      searchableSkillAssets: [
+        {
+          name: "memory-guard",
+          description: "在优化方案里检查记忆能力是否退化。",
+          priority: "normal",
+          source: "user",
+          path: "skills/memory-guard/SKILL.md",
+          tags: ["memory"],
+        },
+      ],
+      methodAssetTotalCount: 48,
+      promptSkillAssetTotalCount: 3,
+      searchableSkillAssetTotalCount: 37,
+    });
+
+    expect(sections.map((section) => section.id)).not.toContain("method-skill-asset-summary");
+  });
+
   it("skips delegation and role sections when they do not apply", () => {
     const sections = buildAgentRuntimePromptSections({
       hasAvailableTools: true,

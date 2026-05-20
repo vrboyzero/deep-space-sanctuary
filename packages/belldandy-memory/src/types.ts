@@ -16,6 +16,7 @@ export type MemorySharedPromotionStatus = "pending" | "approved" | "rejected" | 
 
 /** 检索触发模式：显式工具检索 vs 隐式自动召回 */
 export type MemoryRetrievalMode = "explicit" | "implicit";
+export type MemorySearchRoutingPolicy = "chunk_only" | "node_assisted";
 
 export interface MemoryChunk {
   id: string;
@@ -54,6 +55,7 @@ export interface MemorySearchOptions {
   limit?: number;
   filter?: MemorySearchFilter;
   retrievalMode?: MemoryRetrievalMode;
+  routingPolicy?: MemorySearchRoutingPolicy;
   includeContent?: boolean;
 }
 
