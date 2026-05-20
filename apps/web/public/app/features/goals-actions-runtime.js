@@ -398,6 +398,133 @@ export function createGoalsActionsRuntimeFeature({
     );
   }
 
+  async function archiveGoal(goalId) {
+    if (!isConnected()) {
+      showNotice(
+        t("goals.archiveUnavailableTitle", {}, "Unable to archive long task"),
+        t("goals.notConnected", {}, "Not connected to the server."),
+        "error",
+      );
+      return;
+    }
+    const goal = getGoalById(goalId);
+    const confirmed = window.confirm(
+      t("goals.archiveConfirm", { goalName: goal?.title || goalId }, `Archive ${goal?.title || goalId}?`),
+    );
+    if (!confirmed) {
+      return;
+    }
+    const reason = window.prompt(
+      t("goals.archiveReasonPrompt", {}, "Optional archive reason"),
+      "",
+    ) || "";
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "goal.archive",
+      params: {
+        goalId,
+        reason: reason.trim() || undefined,
+      },
+    });
+    if (!res || !res.ok) {
+      showNotice(
+        t("goals.archiveFailedTitle", {}, "Failed to archive long task"),
+        res?.error?.message || t("goals.unknownError", {}, "Unknown error."),
+        "error",
+      );
+      return;
+    }
+    if (isConversationForGoal(getActiveConversationId(), goalId)) {
+      setActiveConversationId(null);
+      renderCanvasGoalContext?.();
+      getChatEventsFeature?.()?.resetStreamingState();
+    }
+    const updatedGoal = res.payload?.goal || goal;
+    await loadGoals(true);
+    showNotice(
+      t("goals.archivedTitle", {}, "Long task archived"),
+      t("goals.archivedMessage", { goalName: updatedGoal?.title || goalId }, `${updatedGoal?.title || goalId} has been archived.`),
+      "info",
+      2400,
+    );
+  }
+
+  async function deleteGoal(goalId) {
+    if (!isConnected()) {
+      showNotice(
+        t("goals.deleteUnavailableTitle", {}, "Unable to delete long task"),
+        t("goals.notConnected", {}, "Not connected to the server."),
+        "error",
+      );
+      return;
+    }
+    const goal = getGoalById(goalId);
+    const confirmed = window.confirm(
+      t(
+        "goals.deleteConfirm",
+        { goalName: goal?.title || goalId, goalId },
+        `Delete archived long task ${goal?.title || goalId} permanently? This cannot be undone.`,
+      ),
+    );
+    if (!confirmed) {
+      return;
+    }
+    const confirmText = window.prompt(
+      t(
+        "goals.deletePrompt",
+        { goalId },
+        `Type ${goalId} to confirm permanent deletion.`,
+      ),
+      "",
+    );
+    if (confirmText === null) {
+      return;
+    }
+    if (confirmText.trim() !== goalId) {
+      showNotice(
+        t("goals.deleteConfirmMismatchTitle", {}, "Deletion confirmation mismatch"),
+        t("goals.deleteConfirmMismatchMessage", { goalId }, `Please type ${goalId} exactly to confirm deletion.`),
+        "error",
+      );
+      return;
+    }
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "goal.delete",
+      params: {
+        goalId,
+        confirmText: confirmText.trim(),
+      },
+    });
+    if (!res || !res.ok) {
+      showNotice(
+        t("goals.deleteFailedTitle", {}, "Failed to delete long task"),
+        res?.error?.message || t("goals.unknownError", {}, "Unknown error."),
+        "error",
+      );
+      return;
+    }
+    if (isConversationForGoal(getActiveConversationId(), goalId)) {
+      setActiveConversationId(null);
+      renderCanvasGoalContext?.();
+      getChatEventsFeature?.()?.resetStreamingState();
+    }
+    await loadGoals(true);
+    const cleanupWarnings = Array.isArray(res.payload?.cleanupWarnings) ? res.payload.cleanupWarnings : [];
+    showNotice(
+      cleanupWarnings.length
+        ? t("goals.deletedWithWarningsTitle", {}, "Long task deleted with cleanup warnings")
+        : t("goals.deletedTitle", {}, "Long task deleted"),
+      cleanupWarnings.length
+        ? `${t("goals.deletedMessage", { goalName: goal?.title || goalId }, `${goal?.title || goalId} has been permanently deleted.`)} ${cleanupWarnings[0]}`
+        : t("goals.deletedMessage", { goalName: goal?.title || goalId }, `${goal?.title || goalId} has been permanently deleted.`),
+      cleanupWarnings.length ? "warning" : "info",
+      cleanupWarnings.length ? 4800 : 2400,
+    );
+  }
+
   async function generateGoalHandoff(goalId) {
     if (!isConnected()) {
       showNotice(
@@ -501,6 +628,8 @@ export function createGoalsActionsRuntimeFeature({
     submitGoalCreateForm,
     resumeGoal,
     pauseGoal,
+    archiveGoal,
+    deleteGoal,
     generateGoalHandoff,
     bindUi,
   };

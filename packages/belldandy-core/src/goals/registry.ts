@@ -115,3 +115,18 @@ export async function listGoalRegistryEntries(stateDir: string): Promise<GoalReg
   });
 }
 
+export async function removeGoalRegistryEntry(stateDir: string, goalId: string): Promise<GoalRegistry> {
+  const registry = await loadGoalRegistry(stateDir);
+  const nextGoals = registry.goals.filter((goal) => goal.id !== goalId);
+  if (nextGoals.length === registry.goals.length) {
+    return registry;
+  }
+  const nextRegistry: GoalRegistry = {
+    version: 1,
+    goals: nextGoals,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveGoalRegistry(stateDir, nextRegistry);
+  return nextRegistry;
+}
+

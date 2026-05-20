@@ -2017,6 +2017,8 @@ async function handleReq(
     case "goal.suggestion_review.scan":
     case "goal.suggestion.publish":
     case "goal.checkpoint.list":
+    case "goal.archive":
+    case "goal.delete":
     case "goal.checkpoint.request":
     case "goal.checkpoint.approve":
     case "goal.checkpoint.reject":

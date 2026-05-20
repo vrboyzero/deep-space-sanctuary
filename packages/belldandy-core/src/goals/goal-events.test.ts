@@ -7,6 +7,14 @@ describe("goal update protocol", () => {
     expect(getGoalUpdateAreas("goal_resumed")).toEqual(["goal", "handoff", "tracking", "progress"]);
   });
 
+  it("maps goal archive reason to the expected refresh areas", () => {
+    expect(getGoalUpdateAreas("goal_archived")).toEqual(["goal", "handoff", "tracking", "progress"]);
+  });
+
+  it("maps goal delete reason to the expected refresh areas", () => {
+    expect(getGoalUpdateAreas("goal_deleted")).toEqual(["goal", "handoff", "tracking", "progress", "capability"]);
+  });
+
   it("maps capability plan save reason to the expected refresh areas", () => {
     expect(getGoalUpdateAreas("capability_plan_saved")).toEqual(["capability", "progress", "handoff"]);
   });
@@ -15,6 +23,8 @@ describe("goal update protocol", () => {
     const reasons: GoalUpdateReason[] = [
       "goal_resumed",
       "goal_paused",
+      "goal_archived",
+      "goal_deleted",
       "task_node_created",
       "task_node_updated",
       "task_node_claimed",

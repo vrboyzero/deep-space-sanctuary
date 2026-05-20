@@ -60,6 +60,7 @@ export const memoryViewerState = {
 export const goalsState = {
   items: [],
   selectedId: null,
+  includeArchived: false,
   loadSeq: 0,
   trackingSeq: 0,
   canvasSeq: 0,

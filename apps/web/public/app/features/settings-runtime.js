@@ -1,3 +1,4 @@
+import { createControlPanelCommanderToggleController } from "./control-panel-commander-toggle.js";
 import { createEmailOutboundController } from "./email-outbound.js";
 import { createExternalOutboundController } from "./external-outbound.js";
 import { createSettingsController } from "./settings.js";
@@ -141,6 +142,17 @@ export function createSettingsRuntimeFeature({
   });
   localeController?.bindSelect?.(cfgLocale);
 
+  const commanderQuickToggleController = createControlPanelCommanderToggleController({
+    refs,
+    isConnected,
+    sendReq,
+    makeId,
+    loadServerConfig,
+    invalidateServerConfigCache,
+    showNotice,
+    t,
+  });
+
   const settingsController = createSettingsController({
     refs,
     isConnected,
@@ -157,6 +169,9 @@ export function createSettingsRuntimeFeature({
     onOpenCommunityConfig,
     onModelCatalogChanged: async () => {
       await chatNetworkFeature?.loadModelList?.();
+    },
+    onConfigSaved: async (config) => {
+      await commanderQuickToggleController.syncFromConfig(config);
     },
     onOpenContinuationAction,
     redactedPlaceholder,
@@ -227,6 +242,8 @@ export function createSettingsRuntimeFeature({
     showNotice,
     t,
   });
+
+  void commanderQuickToggleController.syncFromConfig();
 
   function syncPairingPendingSurface() {
     settingsController.renderPairingPending?.(
@@ -351,6 +368,10 @@ export function createSettingsRuntimeFeature({
   return {
     refreshLocale() {
       toolSettingsController.refreshLocale?.();
+      commanderQuickToggleController.refreshLocale?.();
+    },
+    syncCommanderQuickToggle(config) {
+      return commanderQuickToggleController.syncFromConfig(config);
     },
     openToolSettingsTab(tab) {
       return toolSettingsController.openTab?.(tab);

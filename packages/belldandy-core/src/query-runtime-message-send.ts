@@ -191,7 +191,11 @@ export async function handleMessageSendWithQueryRuntime(
       previousPromptSnapshot,
       policyEnabled: runtimeDeps.deepSeekRoutePolicyEnabled,
     });
-    const effectiveModelId = modelRouteDecision.resolvedModelId ?? requestedModelId;
+    const effectiveModelId = resolveEffectiveMessageSendModelId({
+      requestedModelId,
+      routeDecision: modelRouteDecision,
+      primaryModelConfig: runtimeDeps.primaryModelConfig,
+    });
     const createOpts = effectiveModelId ? { modelOverride: effectiveModelId } : undefined;
 
     queryRuntime.mark("request_validated", {
@@ -473,6 +477,20 @@ export async function handleConversationRunStopWithQueryRuntime(
       },
     };
   });
+}
+
+function resolveEffectiveMessageSendModelId(input: {
+  requestedModelId?: string;
+  routeDecision: ReturnType<typeof resolveDeepSeekTierRoute>;
+  primaryModelConfig?: MessageSendQueryRuntimeContext["runtime"]["primaryModelConfig"];
+}): string | undefined {
+  if (input.routeDecision.resolvedModelId) {
+    return input.routeDecision.resolvedModelId;
+  }
+  if (input.routeDecision.routeMode !== "deepseek_virtual") {
+    return input.requestedModelId;
+  }
+  return input.primaryModelConfig ? "primary" : undefined;
 }
 
 function createAgent(input: {

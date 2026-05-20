@@ -200,3 +200,171 @@ test("goal.resume accepts checkpoint replay metadata and records replay progress
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("goal.archive hides archived goals from the default list and exposes them when includeArchived=true", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const seededGoalManager = new GoalManager(stateDir);
+  const goal = await seededGoalManager.createGoal({
+    title: "Server Archive Goal",
+    objective: "Archive through gateway methods",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    goalManager: seededGoalManager,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "goal-archive",
+      method: "goal.archive",
+      params: {
+        goalId: goal.id,
+        reason: "Archived from WebSocket test",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-archive"));
+    const archiveRes = frames.find((f) => f.type === "res" && f.id === "goal-archive");
+    expect(archiveRes.ok).toBe(true);
+    expect(archiveRes.payload?.goal).toMatchObject({
+      id: goal.id,
+      status: "archived",
+      archiveReason: "Archived from WebSocket test",
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "goal-list-default",
+      method: "goal.list",
+      params: {},
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-list-default"));
+    const defaultListRes = frames.find((f) => f.type === "res" && f.id === "goal-list-default");
+    expect(defaultListRes.ok).toBe(true);
+    expect(defaultListRes.payload?.goals).toEqual([]);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "goal-list-archived",
+      method: "goal.list",
+      params: {
+        includeArchived: true,
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-list-archived"));
+    const archivedListRes = frames.find((f) => f.type === "res" && f.id === "goal-list-archived");
+    expect(archivedListRes.ok).toBe(true);
+    expect(archivedListRes.payload?.goals).toEqual([
+      expect.objectContaining({
+        id: goal.id,
+        status: "archived",
+        archiveReason: "Archived from WebSocket test",
+      }),
+    ]);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("goal.delete removes an archived goal through gateway methods", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const seededGoalManager = new GoalManager(stateDir);
+  const goal = await seededGoalManager.createGoal({
+    title: "Server Delete Goal",
+    objective: "Delete through gateway methods",
+  });
+  await seededGoalManager.archiveGoal(goal.id, {
+    reason: "Archived before delete",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    goalManager: seededGoalManager,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "goal-delete",
+      method: "goal.delete",
+      params: {
+        goalId: goal.id,
+        confirmText: goal.id,
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-delete"));
+    const deleteRes = frames.find((f) => f.type === "res" && f.id === "goal-delete");
+    expect(deleteRes.ok).toBe(true);
+    expect(deleteRes.payload).toMatchObject({
+      goalId: goal.id,
+      goal: {
+        id: goal.id,
+        status: "archived",
+      },
+      cleanupWarnings: [],
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "goal-list-after-delete",
+      method: "goal.list",
+      params: {
+        includeArchived: true,
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-list-after-delete"));
+    const listRes = frames.find((f) => f.type === "res" && f.id === "goal-list-after-delete");
+    expect(listRes.ok).toBe(true);
+    expect(listRes.payload?.goals).toEqual([]);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "goal-get-after-delete",
+      method: "goal.get",
+      params: {
+        goalId: goal.id,
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-get-after-delete"));
+    const getRes = frames.find((f) => f.type === "res" && f.id === "goal-get-after-delete");
+    expect(getRes.ok).toBe(false);
+    expect(getRes.error?.code).toBe("not_found");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTokenUsageObservabilityText } from "./token-usage-observability.js";
+// @vitest-environment jsdom
+
+import {
+  buildTokenUsageObservabilitySegments,
+  buildTokenUsageObservabilityText,
+  syncTokenUsageObservabilityPopover,
+} from "./token-usage-observability.js";
 
 describe("token usage observability", () => {
   it("builds a readable cache observability summary", () => {
@@ -53,5 +59,71 @@ describe("token usage observability", () => {
 
   it("returns an empty string when no observability fields are present", () => {
     expect(buildTokenUsageObservabilityText({})).toBe("");
+  });
+
+  it("exposes observability as readable segments for popover rendering", () => {
+    const segments = buildTokenUsageObservabilitySegments({
+      cacheSupport: "unknown",
+      cacheHitTokens: 33536,
+      cacheMissTokens: 5142,
+      deepseekRoute: {
+        selectedTier: "flash",
+        reason: "auto_kept_on_flash",
+      },
+    });
+
+    expect(segments).toEqual([
+      "CACHE unknown",
+      "HIT 33,536 / MISS 5,142",
+      "ROUTE flash / auto_kept_on_flash",
+    ]);
+  });
+
+  it("can hide cost budget segments for the header popover without changing text formatting support", () => {
+    const payload = {
+      cacheSupport: "unknown",
+      sessionTotalCostUsd: 0.0123,
+      costBudgetUsd: 0.05,
+    };
+
+    expect(buildTokenUsageObservabilitySegments(payload)).toEqual([
+      "CACHE unknown",
+      "COST $0.012300 / $0.050000 (25%)",
+    ]);
+    expect(buildTokenUsageObservabilitySegments(payload, undefined, { includeCostBudget: false })).toEqual([
+      "CACHE unknown",
+    ]);
+    expect(buildTokenUsageObservabilityText(payload)).toContain("COST $0.012300 / $0.050000 (25%)");
+  });
+
+  it("shifts the expanded observability popover back into the viewport", () => {
+    document.body.innerHTML = `
+      <div id="tokenUsage" class="token-usage">
+        <div id="tokenUsageObservability" class="token-usage-observability">demo</div>
+      </div>
+    `;
+    const tokenUsageEl = document.getElementById("tokenUsage");
+    const observabilityEl = document.getElementById("tokenUsageObservability");
+    Object.defineProperty(window, "innerWidth", {
+      value: 1000,
+      configurable: true,
+    });
+    observabilityEl.getBoundingClientRect = () => ({
+      left: -120,
+      right: 780,
+      width: 900,
+      height: 48,
+      top: 0,
+      bottom: 48,
+      x: -120,
+      y: 0,
+      toJSON() {
+        return {};
+      },
+    });
+
+    syncTokenUsageObservabilityPopover(tokenUsageEl, observabilityEl);
+
+    expect(tokenUsageEl.style.getPropertyValue("--token-usage-observability-shift")).toBe("136px");
   });
 });

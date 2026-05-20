@@ -5198,10 +5198,10 @@ function classifyMemoryTreeSource(
     if (basename === "dream-runtime.json") {
         return { sourceKind: "dream_runtime", sourceClass: "derived", builtinInventoryId: "builtin:dream:runtime" };
     }
-    if (basename === "dream.md") {
+    if (basename === "dream.md" || hasMemoryType("dream_index")) {
         return { sourceKind: "dream_index", sourceClass: "derived", builtinInventoryId: "builtin:dream:index" };
     }
-    if ((/(^|\/)dreams\/.+\.md$/).test(normalizedPath)) {
+    if ((/(^|\/)dreams\/.+\.md$/).test(normalizedPath) || hasMemoryType("dream_note")) {
         return { sourceKind: "dream_notes", sourceClass: "curated", builtinInventoryId: "builtin:dream:notes" };
     }
     if (sourceType === "manual") {

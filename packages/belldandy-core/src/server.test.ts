@@ -1634,6 +1634,91 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
   }
 });
 
+test("message.send falls back to primary when deepseek:auto cannot resolve a concrete candidate", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const capturedOverrides: Array<string | undefined> = [];
+  const registry = new AgentRegistry((_profile, opts): BelldandyAgent => {
+    capturedOverrides.push(opts?.modelOverride);
+    return {
+      async *run() {
+        yield {
+          type: "usage" as const,
+          systemPromptTokens: 2,
+          contextTokens: 3,
+          inputTokens: 8,
+          outputTokens: 5,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          cacheHitTokens: 0,
+          cacheMissTokens: 8,
+          modelCalls: 1,
+          cacheSupport: "unknown" as const,
+        };
+        yield { type: "final" as const, text: "ok" };
+        yield { type: "status" as const, status: "done" };
+      },
+    };
+  });
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    primaryModelConfig: {
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-primary",
+      model: "gpt-4.1-mini",
+    },
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    const reqId = "deepseek-auto-primary-fallback";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: reqId,
+      method: "message.send",
+      params: {
+        conversationId: "agent:default:main",
+        text: "hello",
+        modelId: "deepseek:auto",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === reqId && f.ok === true));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "token.usage"));
+    const usageEvent = frames.find((f) => f.type === "event" && f.event === "token.usage");
+
+    expect(capturedOverrides).toContain("primary");
+    expect(capturedOverrides).not.toContain("deepseek:auto");
+    expect(usageEvent?.payload?.deepseekRoute).toMatchObject({
+      requestedRoute: "deepseek:auto",
+      effectiveModelId: "primary",
+      routeMode: "deepseek_virtual",
+      degraded: true,
+      reason: "deepseek_tier_candidates_incomplete",
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => { });
+  }
+});
+
 test("message.send keeps deepseek:auto as passthrough when DeepSeek route policy is disabled", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const capturedOverrides: Array<string | undefined> = [];

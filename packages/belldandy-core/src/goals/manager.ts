@@ -16,7 +16,7 @@ import { generateGoalSkillCandidates } from "./skill-candidates.js";
 import { generateGoalFlowPatterns } from "./flow-patterns.js";
 import { generateCrossGoalFlowPatterns } from "./cross-goal-flow-patterns.js";
 import { runGoalReviewScanLearningReview } from "../learning-review-runner.js";
-import { getGoalRegistryEntry, listGoalRegistryEntries, upsertGoalRegistryEntry } from "./registry.js";
+import { getGoalRegistryEntry, listGoalRegistryEntries, removeGoalRegistryEntry, upsertGoalRegistryEntry } from "./registry.js";
 import { scaffoldGoalFiles } from "./scaffold.js";
 import { createGoalConversationId, createGoalNodeConversationId, createGoalRunId } from "./session.js";
 import { GoalRuntimeBindingStore } from "../goal-runtime-binding-store.js";
@@ -191,8 +191,12 @@ export class GoalManager {
     return goal;
   }
 
-  async listGoals(): Promise<LongTermGoal[]> {
-    return listGoalRegistryEntries(this.stateDir);
+  async listGoals(options: { includeArchived?: boolean } = {}): Promise<LongTermGoal[]> {
+    const goals = await listGoalRegistryEntries(this.stateDir);
+    if (options.includeArchived === true) {
+      return goals;
+    }
+    return goals.filter((goal) => goal.status !== "archived");
   }
 
   async getGoal(goalId: string): Promise<LongTermGoal | null> {
@@ -206,6 +210,9 @@ export class GoalManager {
   ): Promise<{ goal: LongTermGoal; conversationId: string; runId?: string }> {
     return this.withGoalMutationLock(goalId, async () => {
       const goal = await this.requireGoal(goalId);
+      if (goal.status === "archived") {
+        throw new Error(`Goal "${goalId}" is archived and cannot be resumed directly.`);
+      }
       const runId = nodeId ? createGoalRunId() : undefined;
       const conversationId = nodeId
         ? createGoalNodeConversationId(goal.id, nodeId, runId)
@@ -726,6 +733,99 @@ export class GoalManager {
       ].join(" | "),
       recommendations,
     };
+  }
+
+  async archiveGoal(goalId: string, input: { reason?: string } = {}): Promise<LongTermGoal> {
+    return this.withGoalMutationLock(goalId, async () => {
+      const goal = await this.requireGoal(goalId);
+      if (goal.status === "archived") {
+        return goal;
+      }
+      if (goal.status === "executing" || goal.status === "reviewing" || goal.status === "pending_approval") {
+        throw new Error(`Goal "${goalId}" is currently ${goal.status} and cannot be archived.`);
+      }
+
+      const now = new Date().toISOString();
+      const archiveReason = input.reason?.trim() || undefined;
+      const updatedGoal: LongTermGoal = {
+        ...goal,
+        status: "archived",
+        activeConversationId: undefined,
+        activeNodeId: undefined,
+        lastNodeId: goal.activeNodeId ?? goal.lastNodeId,
+        pausedAt: goal.pausedAt ?? now,
+        archivedAt: now,
+        archiveReason,
+        updatedAt: now,
+      };
+      await this.persistGoalHeaderState(goal, updatedGoal, {
+        pausedAt: updatedGoal.pausedAt,
+      });
+      if (goal.activeConversationId) {
+        await this.syncGoalSessionBinding(updatedGoal, {
+          conversationId: goal.activeConversationId,
+          nodeId: goal.activeNodeId ?? goal.lastNodeId,
+          runId: goal.lastRunId,
+          status: updatedGoal.status,
+        });
+      }
+      await appendGoalProgressEntry(updatedGoal, {
+        kind: "goal_archived",
+        title: goal.title || goal.id,
+        status: updatedGoal.status,
+        summary: archiveReason || "Goal archived.",
+        note: archiveReason,
+        runId: updatedGoal.lastRunId,
+      });
+      await this.refreshHandoffAfterMutation(updatedGoal);
+      await this.emitGoalUpdate(updatedGoal, {
+        reason: "goal_archived",
+        nodeId: updatedGoal.lastNodeId,
+        runId: updatedGoal.lastRunId,
+      });
+      return updatedGoal;
+    });
+  }
+
+  async deleteGoal(
+    goalId: string,
+    input: { confirmText?: string } = {},
+  ): Promise<{ goalId: string; goal: LongTermGoal; cleanupWarnings: string[] }> {
+    return this.withGoalMutationLock(goalId, async () => {
+      const goal = await this.requireGoal(goalId);
+      if (goal.status !== "archived") {
+        throw new Error(`Goal "${goalId}" must be archived before it can be deleted.`);
+      }
+      const confirmText = input.confirmText?.trim() || "";
+      if (confirmText !== goal.id) {
+        throw new Error(`Goal deletion confirmation mismatch for "${goalId}".`);
+      }
+
+      const cleanupWarnings: string[] = [];
+      await removeGoalRegistryEntry(this.stateDir, goal.id);
+      try {
+        await this.bindingStore.removeGoalBindings(goal.id);
+      } catch (error) {
+        cleanupWarnings.push(this.formatGoalDeletionWarning("runtime bindings", error));
+      }
+      for (const targetPath of this.resolveGoalDeletionTargets(goal)) {
+        try {
+          await fs.rm(targetPath, { recursive: true, force: true });
+        } catch (error) {
+          cleanupWarnings.push(this.formatGoalDeletionWarning(targetPath, error));
+        }
+      }
+      await this.emitGoalUpdate(goal, {
+        reason: "goal_deleted",
+        nodeId: goal.lastNodeId,
+        runId: goal.lastRunId,
+      });
+      return {
+        goalId: goal.id,
+        goal,
+        cleanupWarnings,
+      };
+    });
   }
 
   private buildCommanderFocusSummary(
@@ -2003,6 +2103,31 @@ export class GoalManager {
       throw new Error(`Goal not found: ${goalId}`);
     }
     return goal;
+  }
+
+  private resolveGoalDeletionTargets(goal: LongTermGoal): string[] {
+    const forbidden = new Set([
+      path.resolve(this.stateDir),
+      path.resolve(path.join(this.stateDir, "goals")),
+      path.resolve(path.join(this.stateDir, "docs")),
+      path.resolve(path.join(this.stateDir, "docs", "long-tasks")),
+    ]);
+    return [...new Set([
+      goal.goalRoot,
+      goal.runtimeRoot,
+      goal.docRoot,
+    ]
+      .map((value) => (typeof value === "string" && value.trim() ? path.resolve(value) : ""))
+      .filter((value): value is string => Boolean(value)))]
+      .filter((targetPath) => !forbidden.has(targetPath))
+      .sort((left, right) => right.length - left.length);
+  }
+
+  private formatGoalDeletionWarning(target: string, error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return `Failed to remove ${target}: ${error.message}`;
+    }
+    return `Failed to remove ${target}.`;
   }
 
   private async withGoalMutationLock<T>(goalId: string, fn: () => Promise<T>): Promise<T> {

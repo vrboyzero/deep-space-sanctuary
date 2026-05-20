@@ -272,6 +272,21 @@ export class GoalRuntimeBindingStore {
     });
   }
 
+  async removeGoalBindings(goalId: string): Promise<number> {
+    await this.load();
+    return this.mutate(async () => {
+      let removed = 0;
+      for (const [bindingId, record] of this.records.entries()) {
+        if (record.goalId !== goalId) {
+          continue;
+        }
+        this.records.delete(bindingId);
+        removed += 1;
+      }
+      return removed;
+    });
+  }
+
   private async mutate<TResult>(updater: () => Promise<TResult>): Promise<TResult> {
     let result!: TResult;
     const execute = this.writeChain.then(async () => {

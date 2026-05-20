@@ -23,6 +23,10 @@ const createEmailOutboundControllerMock = vi.fn(() => ({
   handleConfirmRequired: vi.fn(),
   handleConfirmResolved: vi.fn(),
 }));
+const createControlPanelCommanderToggleControllerMock = vi.fn(() => ({
+  refreshLocale: vi.fn(),
+  syncFromConfig: vi.fn(),
+}));
 
 vi.mock("./settings.js", () => ({
   createSettingsController: (...args) => createSettingsControllerMock(...args),
@@ -38,6 +42,10 @@ vi.mock("./external-outbound.js", () => ({
 
 vi.mock("./email-outbound.js", () => ({
   createEmailOutboundController: (...args) => createEmailOutboundControllerMock(...args),
+}));
+
+vi.mock("./control-panel-commander-toggle.js", () => ({
+  createControlPanelCommanderToggleController: (...args) => createControlPanelCommanderToggleControllerMock(...args),
 }));
 
 import { createSettingsRuntimeFeature } from "./settings-runtime.js";
@@ -68,6 +76,7 @@ describe("settings runtime feature", () => {
     createToolSettingsControllerMock.mockClear();
     createExternalOutboundControllerMock.mockClear();
     createEmailOutboundControllerMock.mockClear();
+    createControlPanelCommanderToggleControllerMock.mockClear();
   });
 
   it("passes assistant mode master switch ref into settings controller", () => {
@@ -127,5 +136,32 @@ describe("settings runtime feature", () => {
     expect(passedRefs.cfgOpenAiWireApi).toBe(refs.cfgOpenAiWireApi);
     expect(passedRefs.cfgOpenAiThinking).toBe(refs.cfgOpenAiThinking);
     expect(passedRefs.cfgOpenAiReasoningEffort).toBe(refs.cfgOpenAiReasoningEffort);
+  });
+
+  it("initializes the control panel commander toggle controller", () => {
+    const refs = createRefs();
+
+    createSettingsRuntimeFeature({
+      refs,
+      isConnected: () => true,
+      sendReq: vi.fn(),
+      makeId: () => "req-1",
+      setStatus: vi.fn(),
+      loadServerConfig: vi.fn(),
+      invalidateServerConfigCache: vi.fn(),
+      syncAttachmentLimitsFromConfig: vi.fn(),
+      localeController: { t: (_key, _params, fallback) => fallback ?? "" },
+      getConnectionAuthMode: () => "token",
+      clientId: "client-1",
+      getSelectedAgentId: () => null,
+      getActiveConversationId: () => null,
+      getSelectedSubtaskId: () => null,
+      isSubtasksViewActive: () => false,
+      escapeHtml: (value) => String(value ?? ""),
+      showNotice: vi.fn(),
+    });
+
+    expect(createControlPanelCommanderToggleControllerMock).toHaveBeenCalledTimes(1);
+    expect(createControlPanelCommanderToggleControllerMock.mock.calls[0][0].refs).toBe(refs);
   });
 });

@@ -122,6 +122,8 @@ export function createGoalsRuntimeFeature({
   escapeHtml,
   onResumeGoal,
   onPauseGoal,
+  onArchiveGoal,
+  onDeleteGoal,
   onOpenSourcePath,
   onOpenTask,
   onOpenGoalTaskViewer,
@@ -444,6 +446,20 @@ export function createGoalsRuntimeFeature({
         const goalId = node.getAttribute("data-goal-pause-detail");
         if (!goalId) return;
         void onPauseGoal(goalId);
+      });
+    });
+    goalsDetailEl.querySelectorAll("[data-goal-archive-detail]").forEach((node) => {
+      node.addEventListener("click", () => {
+        const goalId = node.getAttribute("data-goal-archive-detail");
+        if (!goalId) return;
+        void onArchiveGoal(goalId);
+      });
+    });
+    goalsDetailEl.querySelectorAll("[data-goal-delete-detail]").forEach((node) => {
+      node.addEventListener("click", () => {
+        const goalId = node.getAttribute("data-goal-delete-detail");
+        if (!goalId) return;
+        void onDeleteGoal(goalId);
       });
     });
     goalsDetailEl.querySelectorAll("[data-open-source]").forEach((node) => {

@@ -26,6 +26,7 @@ export function createSettingsController({
   onPairingRequired,
   onOpenCommunityConfig,
   onModelCatalogChanged,
+  onConfigSaved,
   onOpenContinuationAction,
   redactedPlaceholder = "[REDACTED]",
   t = (_key, _params, fallback) => fallback ?? "",
@@ -2362,6 +2363,11 @@ export function createSettingsController({
 
       const currentFormState = captureSettingsFormState();
       lastLoadedFormState = currentFormState;
+      lastLoadedConfig = {
+        ...(lastLoadedConfig || {}),
+        ...updates,
+      };
+      await onConfigSaved?.(lastLoadedConfig, res.payload || null);
       if (res.payload?.restartRequired !== true) {
         if (saveSettingsBtn) {
           saveSettingsBtn.disabled = false;

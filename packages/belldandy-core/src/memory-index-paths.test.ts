@@ -8,8 +8,14 @@ describe("resolveMemoryIndexPaths", () => {
     const result = resolveMemoryIndexPaths(stateDir);
 
     expect(result.sessionsDir).toBe(path.join(stateDir, "sessions"));
-    expect(result.additionalRoots).toEqual([path.join(stateDir, "memory")]);
-    expect(result.additionalFiles).toEqual([path.join(stateDir, "MEMORY.md")]);
+    expect(result.additionalRoots).toEqual([
+      path.join(stateDir, "memory"),
+      path.join(stateDir, "dreams"),
+    ]);
+    expect(result.additionalFiles).toEqual([
+      path.join(stateDir, "MEMORY.md"),
+      path.join(stateDir, "DREAM.md"),
+    ]);
   });
 
   it("can opt into team shared memory indexing without leaving stateDir", () => {
@@ -19,10 +25,12 @@ describe("resolveMemoryIndexPaths", () => {
     expect(result.sessionsDir).toBe(path.join(stateDir, "sessions"));
     expect(result.additionalRoots).toEqual([
       path.join(stateDir, "memory"),
+      path.join(stateDir, "dreams"),
       path.join(stateDir, "team-memory", "memory"),
     ]);
     expect(result.additionalFiles).toEqual([
       path.join(stateDir, "MEMORY.md"),
+      path.join(stateDir, "DREAM.md"),
       path.join(stateDir, "team-memory", "MEMORY.md"),
     ]);
   });
@@ -38,10 +46,12 @@ describe("resolveMemoryIndexPaths", () => {
     expect(result.sessionsDir).toBe(path.join(stateDir, "sessions"));
     expect(result.additionalRoots).toEqual([
       path.join(stateDir, "memory"),
+      path.join(stateDir, "dreams"),
       path.join(teamSharedStateDir, "memory"),
     ]);
     expect(result.additionalFiles).toEqual([
       path.join(stateDir, "MEMORY.md"),
+      path.join(stateDir, "DREAM.md"),
       path.join(teamSharedStateDir, "MEMORY.md"),
     ]);
   });

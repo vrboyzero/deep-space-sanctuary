@@ -77,6 +77,27 @@ describe("MemoryIndexer", () => {
     expect(resolveVerboseWatchEvents(false, { BELLDANDY_MEMORY_INDEXER_VERBOSE_WATCH: "true" } as NodeJS.ProcessEnv)).toBe(false);
   });
 
+  it("classifies DREAM.md and dreams/*.md with dedicated dream memory types", async () => {
+    const dreamIndexPath = path.join(rootDir, "DREAM.md");
+    const dreamsDir = path.join(rootDir, "dreams");
+    const dreamNotePath = path.join(dreamsDir, "2026-05-20-first-contact.md");
+
+    await fs.mkdir(dreamsDir, { recursive: true });
+    await fs.writeFile(dreamIndexPath, "# Dream Index\n\n- recurring symbols", "utf-8");
+    await fs.writeFile(dreamNotePath, "# Dream Note\n\nShe remembered you.", "utf-8");
+
+    await indexer.indexFile(dreamIndexPath);
+    await indexer.indexFile(dreamNotePath);
+
+    const dreamIndexChunks = store.getChunksBySource(dreamIndexPath, 10);
+    const dreamNoteChunks = store.getChunksBySource(dreamNotePath, 10);
+
+    expect(dreamIndexChunks.length).toBeGreaterThan(0);
+    expect(dreamNoteChunks.length).toBeGreaterThan(0);
+    expect(dreamIndexChunks.every((item) => item.memoryType === "dream_index")).toBe(true);
+    expect(dreamNoteChunks.every((item) => item.memoryType === "dream_note")).toBe(true);
+  });
+
   it("coalesces repeated watch upsert events for the same file", async () => {
     vi.useFakeTimers();
     indexer = new MemoryIndexer(store, {

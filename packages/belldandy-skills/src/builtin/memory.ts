@@ -59,6 +59,25 @@ function readEnvBoolean(name: string): boolean {
     return normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on";
 }
 
+function formatMemoryTypeTag(memoryType?: string): string {
+    switch (memoryType) {
+        case "core":
+            return " [Core Memory]";
+        case "daily":
+            return " [Daily Note]";
+        case "session":
+            return " [Session]";
+        case "dream_index":
+            return " [Dream Index]";
+        case "dream_note":
+            return " [Dream Note]";
+        case "other":
+            return " [Other]";
+        default:
+            return "";
+    }
+}
+
 function withMemoryReadContract(
     tool: Tool,
     activityDescription: string,
@@ -111,7 +130,7 @@ function withMemoryWriteContract(
 export const memorySearchTool: Tool = withToolContract({
     definition: {
         name: "memory_search",
-        description: "Search the runtime memory index using hybrid retrieval (semantic vector search + keyword search). The index covers BELLDANDY_STATE_DIR sessions, memory files, and MEMORY.md. Supports optional metadata filtering by memory type, channel, topic, category, and date range. Use detail_level='summary' (default) for quick overview, or 'full' for complete content.",
+        description: "Search the runtime memory index using hybrid retrieval (semantic vector search + keyword search). The index covers BELLDANDY_STATE_DIR sessions, memory files, MEMORY.md, DREAM.md, and dreams/*.md. Supports optional metadata filtering by memory type, channel, topic, category, and date range. Use detail_level='summary' (default) for quick overview, or 'full' for complete content.",
         parameters: {
             type: "object",
             properties: {
@@ -130,7 +149,7 @@ export const memorySearchTool: Tool = withToolContract({
                 },
                 memory_type: {
                     type: "string",
-                    description: "Filter by memory type: 'core' (long-term facts), 'daily' (daily notes), 'session' (conversation history), 'other'. Can be comma-separated for multiple types.",
+                    description: "Filter by memory type: 'core' (long-term facts), 'daily' (daily notes), 'session' (conversation history), 'dream_index' (dream overview), 'dream_note' (individual dream notes), or 'other'. Can be comma-separated for multiple types.",
                 },
                 channel: {
                     type: "string",
@@ -189,9 +208,10 @@ export const memorySearchTool: Tool = withToolContract({
 
             // Format results based on detail_level
             const output = results.map(r => {
+                const memoryTypeTag = formatMemoryTypeTag(r.memoryType);
                 const visibilityTag = r.visibility === "shared" ? " [shared]" : "";
                 const categoryTag = r.category ? ` [${r.category}]` : "";
-                const location = `[${r.sourcePath}:${r.startLine || 0}]${visibilityTag}${categoryTag} (Score: ${r.score.toFixed(3)})`;
+                const location = `[${r.sourcePath}:${r.startLine || 0}]${memoryTypeTag}${visibilityTag}${categoryTag} (Score: ${r.score.toFixed(3)})`;
                 if (detailLevel === "full") {
                     return `${location}\n${r.content ?? r.snippet}`;
                 }

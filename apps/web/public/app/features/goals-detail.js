@@ -138,6 +138,7 @@ export function createGoalsDetailFeature({
     const lastNodeId = typeof goal.lastNodeId === "string" && goal.lastNodeId.trim() ? goal.lastNodeId.trim() : "";
     const lastRunId = typeof goal.lastRunId === "string" && goal.lastRunId.trim() ? goal.lastRunId.trim() : "";
     const activeNodeId = typeof goal.activeNodeId === "string" && goal.activeNodeId.trim() ? goal.activeNodeId.trim() : "";
+    const archived = goal.status === "archived";
     const runtimeSummaryCard = buildGoalRuntimeSummaryCard(goal, {
       activeNodeId,
       lastNodeId,
@@ -162,6 +163,7 @@ export function createGoalsDetailFeature({
             <span class="memory-badge memory-badge-shared">${escapeHtml(formatGoalStatus(goal.status))}</span>
             <span class="memory-badge">${escapeHtml(goal.currentPhase || "-")}</span>
             ${isCurrentConversation ? `<span class="memory-badge memory-badge-shared">${escapeHtml(t("goals.currentChannelBadge", {}, "current channel"))}</span>` : ""}
+            ${archived ? `<span class="memory-badge">${escapeHtml(t("goals.archivedBadge", {}, "archived"))}</span>` : ""}
           </div>
         </div>
 
@@ -188,6 +190,8 @@ export function createGoalsDetailFeature({
           <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("goals.detailLastNode", {}, "Last Active Node"))}</span><div class="memory-detail-text">${escapeHtml(lastNodeId || "-")}</div></div>
           <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("goals.detailLastActiveAt", {}, "Last Active At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(goal.lastActiveAt))}</div></div>
           <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("goals.detailLastPausedAt", {}, "Last Paused At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(goal.pausedAt))}</div></div>
+          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("goals.detailArchivedAt", {}, "Archived At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(goal.archivedAt))}</div></div>
+          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("goals.detailArchiveReason", {}, "Archive Reason"))}</span><div class="memory-detail-text">${escapeHtml(goal.archiveReason || "-")}</div></div>
           ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">长期任务 ID</span><div class="memory-detail-text">${escapeHtml(goal.id)}</div></div>`}
           ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("goals.detailLastRunId", {}, "Last Run ID"))}</span><div class="memory-detail-text">${lastRunId ? `<button class="memory-path-link" data-open-task-id="${escapeHtml(lastRunId)}">${escapeHtml(lastRunId)}</button>` : "-"}</div></div>`}
         </div>
@@ -220,9 +224,11 @@ export function createGoalsDetailFeature({
 
         <div class="goal-detail-actions">
           <button class="button" data-open-goal-tasks="${escapeHtml(goal.id)}">${escapeHtml(t("goals.detailOpenTasks", {}, "View Related Tasks"))}</button>
-          <button class="button" data-goal-resume-detail="${escapeHtml(goal.id)}">${escapeHtml(t("goals.detailResumeAndEnter", {}, "Resume and Enter"))}</button>
-          ${lastNodeId ? `<button class="button" data-goal-resume-last-node="${escapeHtml(goal.id)}" data-goal-last-node-id="${escapeHtml(lastNodeId)}">${escapeHtml(t("goals.detailResumeLastNode", {}, "Resume Last Node"))}</button>` : ""}
-          <button class="button goal-inline-action-secondary" data-goal-pause-detail="${escapeHtml(goal.id)}">${escapeHtml(t("goals.pause", {}, "Pause"))}</button>
+          ${archived ? `<button class="button goal-inline-action-secondary" data-goal-delete-detail="${escapeHtml(goal.id)}">${escapeHtml(t("goals.delete", {}, "Delete"))}</button>` : ""}
+          ${archived ? "" : `<button class="button" data-goal-resume-detail="${escapeHtml(goal.id)}">${escapeHtml(t("goals.detailResumeAndEnter", {}, "Resume and Enter"))}</button>`}
+          ${archived ? "" : (lastNodeId ? `<button class="button" data-goal-resume-last-node="${escapeHtml(goal.id)}" data-goal-last-node-id="${escapeHtml(lastNodeId)}">${escapeHtml(t("goals.detailResumeLastNode", {}, "Resume Last Node"))}</button>` : "")}
+          ${archived ? "" : `<button class="button goal-inline-action-secondary" data-goal-pause-detail="${escapeHtml(goal.id)}">${escapeHtml(t("goals.pause", {}, "Pause"))}</button>`}
+          ${archived ? "" : `<button class="button goal-inline-action-secondary" data-goal-archive-detail="${escapeHtml(goal.id)}">${escapeHtml(t("goals.archive", {}, "Archive"))}</button>`}
         </div>
 
         ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card goal-canvas-card">

@@ -223,6 +223,7 @@ const {
   goalsSummaryEl,
   goalsListEl,
   goalsDetailEl,
+  goalsShowArchivedEl,
   goalsRefreshBtn,
   subtasksSection,
   subtasksSummaryEl,
@@ -963,6 +964,13 @@ if (memoryDedupPreviewBtn) {
 if (goalsRefreshBtn) {
   goalsRefreshBtn.addEventListener("click", () => loadGoals(true));
 }
+if (goalsShowArchivedEl) {
+  goalsShowArchivedEl.checked = goalsState.includeArchived === true;
+  goalsShowArchivedEl.addEventListener("change", () => {
+    goalsState.includeArchived = goalsShowArchivedEl.checked === true;
+    void loadGoals(true);
+  });
+}
 if (subtasksRefreshBtn) {
   subtasksRefreshBtn.addEventListener("click", () => loadSubtasks(true));
 }
@@ -1205,6 +1213,7 @@ function handleHelloOk(frame) {
   void loadServerConfig().then((config) => {
     if (config) {
       syncAttachmentLimitsFromConfig(config);
+      void settingsRuntimeFeature?.syncCommanderQuickToggle?.(config);
     }
   });
   void loadAgentList().then((agents) => {
@@ -1391,6 +1400,7 @@ goalsOverviewFeature = createGoalsOverviewFeature({
   renderCanvasGoalContext,
   onResumeGoal: (goalId) => resumeGoal(goalId),
   onPauseGoal: (goalId) => pauseGoal(goalId),
+  onArchiveGoal: (goalId) => archiveGoal(goalId),
   t: localeController.t,
 });
 
@@ -1622,6 +1632,8 @@ goalsRuntimeFeature = createGoalsRuntimeFeature({
   escapeHtml,
   onResumeGoal: (goalId, options) => resumeGoal(goalId, options),
   onPauseGoal: (goalId) => pauseGoal(goalId),
+  onArchiveGoal: (goalId) => archiveGoal(goalId),
+  onDeleteGoal: (goalId) => deleteGoal(goalId),
   onOpenSourcePath: (sourcePath) => openSourcePath(sourcePath),
   onOpenTask: (taskId) => openTaskFromAudit(taskId),
   onOpenGoalTaskViewer: (goalId) => openGoalTaskViewer(goalId),
@@ -3553,6 +3565,14 @@ async function resumeGoal(goalId, options = {}) {
 
 async function pauseGoal(goalId) {
   return goalsActionsRuntimeFeature?.pauseGoal(goalId);
+}
+
+async function archiveGoal(goalId) {
+  return goalsActionsRuntimeFeature?.archiveGoal(goalId);
+}
+
+async function deleteGoal(goalId) {
+  return goalsActionsRuntimeFeature?.deleteGoal(goalId);
 }
 
 async function generateGoalHandoff(goalId) {

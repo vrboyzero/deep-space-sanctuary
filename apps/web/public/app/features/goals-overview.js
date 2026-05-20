@@ -17,6 +17,7 @@ export function createGoalsOverviewFeature({
   renderCanvasGoalContext,
   onResumeGoal,
   onPauseGoal,
+  onArchiveGoal,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
   const {
@@ -63,7 +64,10 @@ export function createGoalsOverviewFeature({
   function renderGoalList(items) {
     if (!goalsListEl) return;
     if (!Array.isArray(items) || items.length === 0) {
-      goalsListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("goals.emptyNoGoals", {}, "There are no long tasks yet."))}</div>`;
+      const emptyMessage = getGoalsState()?.includeArchived === true
+        ? t("goals.emptyNoGoals", {}, "There are no long tasks yet.")
+        : t("goals.emptyNoVisibleGoals", {}, "No long tasks to display. Archived tasks are hidden by default.");
+      goalsListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(emptyMessage)}</div>`;
       return;
     }
 
@@ -74,11 +78,13 @@ export function createGoalsOverviewFeature({
       const isActive = goal.id === goalsState.selectedId;
       const isCurrentConversation = isConversationForGoal(activeConversationId, goal.id);
       const objective = goal.objective ? String(goal.objective).trim() : "";
+      const archived = goal.status === "archived";
       return `
         <div class="memory-list-item goal-list-item${isActive ? " active" : ""}" data-goal-id="${escapeHtml(goal.id)}">
           <div class="goal-list-item-head">
             <div class="memory-list-item-title">${escapeHtml(goal.title || goal.id)}</div>
             ${isCurrentConversation ? '<span class="memory-badge memory-badge-shared">当前</span>' : ""}
+            ${archived ? `<span class="memory-badge">${escapeHtml(t("goals.archivedBadge", {}, "archived"))}</span>` : ""}
           </div>
           <div class="memory-list-item-meta">
             <span>${escapeHtml(formatGoalStatus(goal.status))}</span>
@@ -91,8 +97,11 @@ export function createGoalsOverviewFeature({
             <span>${escapeHtml(formatGoalPathSource(goal.pathSource))}</span>
           </div>
           <div class="goal-list-item-actions">
-            <button class="button goal-inline-action" data-goal-resume="${escapeHtml(goal.id)}">${escapeHtml(t("goals.resume", {}, "Resume"))}</button>
+            ${archived
+              ? ""
+              : `<button class="button goal-inline-action" data-goal-resume="${escapeHtml(goal.id)}">${escapeHtml(t("goals.resume", {}, "Resume"))}</button>
             <button class="button goal-inline-action goal-inline-action-secondary" data-goal-pause="${escapeHtml(goal.id)}">${escapeHtml(t("goals.pause", {}, "Pause"))}</button>
+            <button class="button goal-inline-action goal-inline-action-secondary" data-goal-archive="${escapeHtml(goal.id)}">${escapeHtml(t("goals.archive", {}, "Archive"))}</button>`}
           </div>
         </div>
       `;
@@ -125,6 +134,15 @@ export function createGoalsOverviewFeature({
         void onPauseGoal(goalId);
       });
     });
+
+    goalsListEl.querySelectorAll("[data-goal-archive]").forEach((node) => {
+      node.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const goalId = node.getAttribute("data-goal-archive");
+        if (!goalId) return;
+        void onArchiveGoal(goalId);
+      });
+    });
   }
 
   async function loadGoals(forceReload = false, preferredGoalId) {
@@ -141,7 +159,14 @@ export function createGoalsOverviewFeature({
 
     const seq = goalsState.loadSeq + 1;
     goalsState.loadSeq = seq;
-    const res = await sendReq({ type: "req", id: makeId(), method: "goal.list" });
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "goal.list",
+      params: {
+        includeArchived: goalsState.includeArchived === true,
+      },
+    });
     if (seq !== goalsState.loadSeq) return;
 
     if (!res || !res.ok || !Array.isArray(res.payload?.goals)) {
@@ -155,7 +180,9 @@ export function createGoalsOverviewFeature({
 
     if (items.length === 0) {
       goalsState.selectedId = null;
-      renderGoalsEmpty(t("goals.emptyNoGoals", {}, "There are no long tasks yet."));
+      renderGoalsEmpty(goalsState.includeArchived === true
+        ? t("goals.emptyNoGoals", {}, "There are no long tasks yet.")
+        : t("goals.emptyNoVisibleGoals", {}, "No long tasks to display. Archived tasks are hidden by default."));
       return;
     }
 

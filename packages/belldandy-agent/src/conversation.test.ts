@@ -517,6 +517,104 @@ describe("ConversationStore", () => {
         });
     });
 
+    it("should keep pending session digest counts correct when maxHistory window rolls forward", async () => {
+        const store = new ConversationStore({
+            maxHistory: 3,
+            summarizer: async () => "rolling-summary-v1",
+        });
+        const id = "conv-session-digest-rolling-window";
+
+        store.addMessage(id, "user", "A");
+        store.addMessage(id, "assistant", "B");
+        store.addMessage(id, "user", "C");
+        await store.refreshSessionDigest(id, { force: true, threshold: 2 });
+
+        const afterFirstRefresh = await store.getSessionMemory(id);
+        expect(afterFirstRefresh.lastSummarizedMessageCount).toBe(3);
+        expect(afterFirstRefresh.lastSummarizedMessageId).toBeTruthy();
+
+        store.addMessage(id, "assistant", "D");
+        store.addMessage(id, "user", "E");
+
+        const digestWhileBoundaryStillVisible = await store.getSessionDigest(id, { threshold: 2 });
+        expect(digestWhileBoundaryStillVisible).toMatchObject({
+            conversationId: id,
+            status: "updated",
+            messageCount: 3,
+            digestedMessageCount: 1,
+            pendingMessageCount: 2,
+            threshold: 2,
+        });
+
+        store.addMessage(id, "assistant", "F");
+        store.addMessage(id, "user", "G");
+
+        const digestAfterBoundaryRolledOut = await store.getSessionDigest(id, { threshold: 2 });
+        expect(digestAfterBoundaryRolledOut).toMatchObject({
+            conversationId: id,
+            status: "updated",
+            messageCount: 3,
+            digestedMessageCount: 0,
+            pendingMessageCount: 3,
+            threshold: 2,
+        });
+
+        const refreshed = await store.refreshSessionDigest(id, { force: true, threshold: 2 });
+        expect(refreshed.updated).toBe(true);
+        expect(refreshed.digest).toMatchObject({
+            conversationId: id,
+            status: "ready",
+            messageCount: 3,
+            digestedMessageCount: 3,
+            pendingMessageCount: 0,
+            threshold: 2,
+        });
+
+        const finalMemory = await store.getSessionMemory(id);
+        expect(finalMemory.lastSummarizedMessageId).toBeTruthy();
+        expect(finalMemory.lastSummarizedMessageId).not.toBe(afterFirstRefresh.lastSummarizedMessageId);
+    });
+
+    it("should re-open pending session digest for legacy records without message ids once history window saturates", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const id = "conv-session-digest-legacy-window";
+
+        const store = new ConversationStore({
+            dataDir,
+            maxHistory: 3,
+            summarizer: async () => "rolling-summary-v1",
+        });
+
+        store.addMessage(id, "user", "A");
+        store.addMessage(id, "assistant", "B");
+        store.addMessage(id, "user", "C");
+        await store.refreshSessionDigest(id, { force: true, threshold: 2 });
+
+        const sessionMemoryPath = path.join(dataDir, `${id}.session-memory.json`);
+        const persistedMemory = JSON.parse(fs.readFileSync(sessionMemoryPath, "utf-8")) as Record<string, unknown>;
+        delete persistedMemory.lastSummarizedMessageId;
+        fs.writeFileSync(sessionMemoryPath, JSON.stringify(persistedMemory, null, 2), "utf-8");
+
+        const reloaded = new ConversationStore({
+            dataDir,
+            maxHistory: 3,
+            summarizer: async () => "rolling-summary-v1",
+        });
+
+        const digest = await reloaded.getSessionDigest(id, { threshold: 2 });
+        expect(digest).toMatchObject({
+            conversationId: id,
+            status: "updated",
+            messageCount: 3,
+            digestedMessageCount: 0,
+            pendingMessageCount: 3,
+            threshold: 2,
+        });
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
     it("should retain persisted digest threshold during automatic refresh", async () => {
         const store = new ConversationStore({
             compaction: {

@@ -17,6 +17,14 @@ export const GOAL_UPDATE_PROTOCOL: Record<GoalUpdateReason, { areas: GoalUpdateA
     areas: ["goal", "handoff", "tracking", "progress"],
     summary: "暂停后 goal 摘要、handoff、tracking、timeline 都需要同步。",
   },
+  goal_archived: {
+    areas: ["goal", "handoff", "tracking", "progress"],
+    summary: "归档后 goal 摘要、handoff、tracking、timeline 都需要同步。",
+  },
+  goal_deleted: {
+    areas: ["goal", "handoff", "tracking", "progress", "capability"],
+    summary: "删除后 goal 列表、detail 以及所有派生面板都需要清空或刷新。",
+  },
   task_node_created: {
     areas: ["goal", "tracking", "progress", "handoff"],
     summary: "新增节点会影响 goal 摘要、tracking、timeline 与 handoff 恢复建议。",

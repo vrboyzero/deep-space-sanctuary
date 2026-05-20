@@ -124,6 +124,8 @@ export type LongTermGoal = {
   updatedAt: string;
   lastActiveAt?: string;
   pausedAt?: string;
+  archivedAt?: string;
+  archiveReason?: string;
 };
 
 export type GoalRegistryEntry = LongTermGoal;
@@ -1448,6 +1450,8 @@ export type GoalUpdateArea = "goal" | "tracking" | "progress" | "handoff" | "cap
 export type GoalUpdateReason =
   | "goal_resumed"
   | "goal_paused"
+  | "goal_archived"
+  | "goal_deleted"
   | "task_node_created"
   | "task_node_updated"
   | "task_node_claimed"

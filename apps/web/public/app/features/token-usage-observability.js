@@ -30,10 +30,57 @@ function trimFingerprint(value) {
   return normalized.length > 16 ? normalized.slice(0, 16) : normalized;
 }
 
-export function buildTokenUsageObservabilityText(payload, t = (_key, _params, fallback) => fallback ?? "") {
-  if (!payload || typeof payload !== "object") {
-    return "";
+const TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR = "--token-usage-observability-shift";
+const TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING = 16;
+
+function writePopoverShift(container, shift) {
+  if (!container?.style) return;
+  container.style.setProperty(TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR, `${Math.round(shift)}px`);
+}
+
+export function syncTokenUsageObservabilityPopover(container, target = container?.querySelector?.(".token-usage-observability")) {
+  if (!container || !target || typeof window === "undefined") return;
+  writePopoverShift(container, 0);
+  if (container.classList.contains("is-collapsed")) {
+    return;
   }
+  const rect = target.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  let shift = 0;
+  if (rect.left < TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING) {
+    shift += TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING - rect.left;
+  }
+  const maxRight = window.innerWidth - TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING;
+  if (rect.right + shift > maxRight) {
+    shift -= rect.right + shift - maxRight;
+  }
+  writePopoverShift(container, shift);
+}
+
+export function scheduleTokenUsageObservabilityPopoverSync(container, target = container?.querySelector?.(".token-usage-observability")) {
+  if (!container || !target) return;
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    syncTokenUsageObservabilityPopover(container, target);
+    return;
+  }
+  if (typeof container.__tokenUsageObservabilityFrame === "number" && container.__tokenUsageObservabilityFrame) {
+    window.cancelAnimationFrame(container.__tokenUsageObservabilityFrame);
+  }
+  container.__tokenUsageObservabilityFrame = window.requestAnimationFrame(() => {
+    container.__tokenUsageObservabilityFrame = 0;
+    syncTokenUsageObservabilityPopover(container, target);
+  });
+}
+
+export function buildTokenUsageObservabilitySegments(
+  payload,
+  t = (_key, _params, fallback) => fallback ?? "",
+  options = {},
+) {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  const { includeCostBudget = true } = options;
   const segments = [];
   if (typeof payload.cacheSupport === "string" && payload.cacheSupport.trim()) {
     segments.push(t(
@@ -123,7 +170,7 @@ export function buildTokenUsageObservabilityText(payload, t = (_key, _params, fa
       `CAL ${formatNumber(payload.usageCalibration.estimatedPromptTokens)} -> ${formatNumber(payload.usageCalibration.averageInputTokensPerCall)} (${formatSignedPercent(payload.usageCalibration.deltaRatio)}, ${payload.usageCalibration.status || "-"})`,
     ));
   }
-  if (typeof payload.sessionTotalCostUsd === "number") {
+  if (includeCostBudget && typeof payload.sessionTotalCostUsd === "number") {
     const budgetUsd = typeof payload.costBudgetUsd === "number" ? payload.costBudgetUsd : null;
     const ratio = budgetUsd && budgetUsd > 0
       ? payload.sessionTotalCostUsd / budgetUsd
@@ -138,12 +185,32 @@ export function buildTokenUsageObservabilityText(payload, t = (_key, _params, fa
       `COST ${formatUsd(payload.sessionTotalCostUsd)} / ${budgetUsd ? formatUsd(budgetUsd) : "--"} (${formatPercent(ratio)})`,
     ));
   }
-  return segments.join(" | ");
+  return segments;
+}
+
+export function buildTokenUsageObservabilityText(payload, t = (_key, _params, fallback) => fallback ?? "") {
+  return buildTokenUsageObservabilitySegments(payload, t).join(" | ");
 }
 
 export function updateTokenUsageObservability(target, payload, t) {
   if (!target) return;
-  const text = buildTokenUsageObservabilityText(payload, t);
-  target.textContent = text || t?.("header.tokenObservabilityEmpty", {}, "No cache observability yet") || "No cache observability yet";
-  target.classList.toggle("is-empty", !text);
+  const segments = buildTokenUsageObservabilitySegments(payload, t, {
+    includeCostBudget: false,
+  });
+  target.replaceChildren();
+  if (segments.length > 0) {
+    for (const segment of segments) {
+      const segmentEl = document.createElement("span");
+      segmentEl.className = "token-usage-observability-segment";
+      segmentEl.textContent = segment;
+      target.append(segmentEl);
+    }
+  } else {
+    const emptyEl = document.createElement("span");
+    emptyEl.className = "token-usage-observability-empty";
+    emptyEl.textContent = t?.("header.tokenObservabilityEmpty", {}, "No cache observability yet") || "No cache observability yet";
+    target.append(emptyEl);
+  }
+  target.classList.toggle("is-empty", segments.length === 0);
+  scheduleTokenUsageObservabilityPopoverSync(target.parentElement, target);
 }

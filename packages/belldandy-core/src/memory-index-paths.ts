@@ -10,8 +10,14 @@ export function resolveMemoryIndexPaths(
   stateDir: string,
   options: { includeTeamSharedMemory?: boolean; teamSharedStateDir?: string } = {},
 ): MemoryIndexPaths {
-  const additionalRoots = [path.join(stateDir, "memory")];
-  const additionalFiles = [path.join(stateDir, "MEMORY.md")];
+  const additionalRoots = [
+    path.join(stateDir, "memory"),
+    path.join(stateDir, "dreams"),
+  ];
+  const additionalFiles = [
+    path.join(stateDir, "MEMORY.md"),
+    path.join(stateDir, "DREAM.md"),
+  ];
 
   if (options.includeTeamSharedMemory === true) {
     const teamSharedStateDir = options.teamSharedStateDir || path.join(stateDir, "team-memory");

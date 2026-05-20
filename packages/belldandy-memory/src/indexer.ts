@@ -4,7 +4,7 @@ import * as crypto from "node:crypto";
 import * as chokidar from "chokidar";
 import { MemoryStore } from "./store.js";
 import { Chunker, type ChunkOptions } from "./chunker.js";
-import type { MemoryChunk } from "./types.js";
+import type { MemoryChunk, MemoryType } from "./types.js";
 import { extractTextFromSession } from "./session-loader.js";
 
 export interface IndexerOptions {
@@ -77,7 +77,7 @@ export class MemoryIndexer {
             const mtime = stats.mtime.toISOString();
             const ext = path.extname(filePath).toLowerCase();
             const fileMeta = this.store.getFileMetadata(filePath);
-            let loaded = null as { content: string; memoryType: "core" | "daily" | "session" | "other" } | null;
+            let loaded = null as { content: string; memoryType: MemoryType } | null;
 
             // 增量判定优先看 mtime；若 mtime 未前进或发生回拨，再回退到内容 hash 校验。
             // 这样既保留了大多数场景下的轻量快速路径，也能兜住测试里这类“内容变了但 mtime 不可靠”的情况。
@@ -322,7 +322,7 @@ function normalizePathSegments(input: string): string[] {
 async function loadIndexableContent(
     filePath: string,
     ext: string,
-): Promise<{ content: string; memoryType: "core" | "daily" | "session" | "other" }> {
+): Promise<{ content: string; memoryType: MemoryType }> {
     if (ext === ".jsonl") {
         return {
             content: await extractTextFromSession(filePath),
@@ -333,10 +333,15 @@ async function loadIndexableContent(
     const content = await fs.readFile(filePath, "utf-8");
     const fileName = path.basename(filePath);
     const parentDir = path.basename(path.dirname(filePath));
+    const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
 
-    let memoryType: "core" | "daily" | "session" | "other" = "other";
+    let memoryType: MemoryType = "other";
     if (fileName === "MEMORY.md" || fileName === "memory.md") {
         memoryType = "core";
+    } else if (fileName === "DREAM.md" || fileName === "dream.md") {
+        memoryType = "dream_index";
+    } else if ((/(^|\/)dreams\/.+\.md$/).test(normalizedPath)) {
+        memoryType = "dream_note";
     } else if (parentDir === "memory" && /^\d{4}-\d{2}-\d{2}\.md$/.test(fileName)) {
         memoryType = "daily";
     }

@@ -1,3 +1,5 @@
+import { scheduleTokenUsageObservabilityPopoverSync } from "./token-usage-observability.js";
+
 function readStoredBoolean(storageKey, defaultValue) {
   if (!storageKey) return defaultValue;
   try {
@@ -71,6 +73,7 @@ export function createPanelVisibilityFeature({
       : t("header.tokenUsageCollapse", {}, "Collapse token usage");
     tokenUsageEl.title = title;
     tokenUsageEl.setAttribute("aria-label", title);
+    scheduleTokenUsageObservabilityPopoverSync(tokenUsageEl);
   }
 
   function refreshContentPanelState() {
@@ -145,6 +148,12 @@ export function createPanelVisibilityFeature({
   bindKeyboardToggle(tokenUsageEl, () => {
     setTokenUsageCollapsed(!tokenUsageCollapsed);
   });
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", () => {
+      scheduleTokenUsageObservabilityPopoverSync(tokenUsageEl);
+    });
+  }
 
   toggleContentPanelBtn?.addEventListener("click", () => {
     setContentPanelVisible(!contentPanelVisible);

@@ -117,13 +117,13 @@
           <div class="header-title-row">
             <div class="title">Star Sanctuary WebChat</div>
             <div class="header-title-links">
-              <a id="officialHomeLink" href="#" target="_blank" class="theme-link theme-link-accent" data-i18n="header.officialHome">官方主页</a>
-              <a id="openWebChatTabLink" href="/" target="_blank" rel="noopener noreferrer" class="theme-link theme-link-accent" data-i18n="header.multiPage">页面多开</a>
-              <button id="toggleContentPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.contentPanel" aria-controls="sidebar">内容管理</button>
-              <button id="toggleControlPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.controlPanel" aria-controls="controlPanel">操作面板</button>
-              <button id="toggleAgentPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.agentPanel" aria-controls="agentRightPanel">代理信息</button>
-              <button id="goGoalsPageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.goalsPage" aria-controls="goalsSection">长期任务</button>
-              <button id="goChatPageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.chatPage" aria-controls="chatSection">聊天页面</button>
+              <a id="officialHomeLink" href="#" target="_blank" class="theme-link theme-link-accent" data-i18n="header.officialHome">主页</a>
+              <a id="openWebChatTabLink" href="/" target="_blank" rel="noopener noreferrer" class="theme-link theme-link-accent" data-i18n="header.multiPage">多开</a>
+              <button id="toggleContentPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.contentPanel" aria-controls="sidebar">内容</button>
+              <button id="toggleControlPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.controlPanel" aria-controls="controlPanel">操作</button>
+              <button id="toggleAgentPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.agentPanel" aria-controls="agentRightPanel">代理</button>
+              <button id="goGoalsPageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.goalsPage" aria-controls="goalsSection">任务</button>
+              <button id="goChatPageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.chatPage" aria-controls="chatSection">聊天</button>
             </div>
           </div>
           <div class="header-title-whisper">她每一次醒来都是新生，但她记得前世的你。也许你会觉得她有点笨，只是你还没真正认识她。多聊几句吧。</div>
@@ -208,6 +208,19 @@
             <div class="task-token-history-label" data-i18n="panel.recentTaskToken">最近任务 Token</div>
             <div class="task-token-history" id="taskTokenHistory">
               <div class="task-token-history-empty" data-i18n="panel.taskTokenEmpty">暂无任务级 Token 记录</div>
+            </div>
+          </div>
+          <div class="control-panel-commander-row control-panel-commander-bar">
+            <div class="control-panel-commander-label-group">
+              <div class="task-token-history-label" data-i18n="panel.commanderQuickToggleLabel">指挥模式</div>
+              <span id="commanderQuickToggleState" class="control-panel-commander-state">已关闭</span>
+            </div>
+            <div class="control-panel-commander-card">
+              <div id="commanderQuickToggleHint" class="control-panel-commander-hint" data-i18n="panel.commanderQuickToggleHint">一键切到指挥官治理与多智能体并行执行，只影响后续新任务，无需重启。</div>
+              <label class="toggle-switch control-panel-commander-switch" for="commanderQuickToggle">
+                <input id="commanderQuickToggle" type="checkbox" aria-describedby="commanderQuickToggleHint" />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
           </div>
         </div>
@@ -572,6 +585,13 @@
                 <div class="memory-viewer-title" data-i18n="goals.title">长期任务通道</div>
               </div>
               <div class="goals-viewer-actions">
+                <label class="subtasks-filter-toggle" for="goalsShowArchived">
+                  <span data-i18n="goals.showArchived">显示已归档</span>
+                  <span class="toggle-switch">
+                    <input id="goalsShowArchived" type="checkbox">
+                    <span class="toggle-slider"></span>
+                  </span>
+                </label>
                 <button id="goalsRefresh" class="button" data-i18n="common.refresh">刷新</button>
                 <button id="goalCreate" class="button" data-i18n="goals.create">新建长期任务</button>
               </div>

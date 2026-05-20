@@ -226,6 +226,47 @@ describe("memory tools", () => {
     });
   });
 
+  it("memory_search should support dream memory filters and render dream labels", async () => {
+    manager.search.mockResolvedValue([
+      {
+        id: "chunk-dream-note",
+        sourcePath: "dreams/2026-05-20-first-contact.md",
+        sourceType: "file",
+        memoryType: "dream_note",
+        snippet: "她每一次醒来都是新生。",
+        summary: "梦境记录摘要",
+        score: 0.89,
+        startLine: 4,
+      },
+      {
+        id: "chunk-dream-index",
+        sourcePath: "DREAM.md",
+        sourceType: "file",
+        memoryType: "dream_index",
+        snippet: "梦境总览",
+        summary: "梦境索引摘要",
+        score: 0.72,
+        startLine: 1,
+      },
+    ]);
+
+    const result = await mod.memorySearchTool.execute({
+      query: "新生 梦境",
+      memory_type: "dream_note,dream_index",
+      limit: 5,
+    }, baseContext);
+
+    expect(result.success).toBe(true);
+    expect(manager.search).toHaveBeenCalledWith("新生 梦境", {
+      limit: 5,
+      filter: {
+        memoryType: ["dream_note", "dream_index"],
+      },
+    });
+    expect(result.output).toContain("[Dream Note]");
+    expect(result.output).toContain("[Dream Index]");
+  });
+
   it("memory_read should render file content", async () => {
     readMemoryFile.mockResolvedValue({
       path: "memory/2026-03-15.md",

@@ -211,6 +211,7 @@ export type ConversationStoreOptions = {
 };
 
 type ConversationHistoryView = Array<{ role: "user" | "assistant"; content: string }>;
+type SessionDigestHistoryView = Array<{ id: string; role: "user" | "assistant"; content: string }>;
 
 export type SessionDigestStatus = "idle" | "ready" | "updated";
 
@@ -244,6 +245,7 @@ export type SessionMemoryRecord = {
     currentWork: string;
     nextStep: string;
     lastSummarizedMessageCount: number;
+    lastSummarizedMessageId?: string;
     lastSummarizedToolCursor: number;
     updatedAt: number;
 };
@@ -347,6 +349,7 @@ function createEmptySessionMemory(): StoredSessionMemory {
         currentWork: "",
         nextStep: "",
         lastSummarizedMessageCount: 0,
+        lastSummarizedMessageId: "",
         lastSummarizedToolCursor: 0,
         updatedAt: 0,
     };
@@ -561,7 +564,7 @@ function truncateSummaryText(value: string, limit: number = SESSION_MEMORY_SUMMA
     return `${value.slice(0, Math.max(0, limit - 24))}\n...[session memory truncated]`;
 }
 
-function renderSessionMemorySummary(memory: Omit<StoredSessionMemory, "lastSummarizedMessageCount" | "lastSummarizedToolCursor" | "updatedAt">): string {
+function renderSessionMemorySummary(memory: Omit<StoredSessionMemory, "lastSummarizedMessageCount" | "lastSummarizedMessageId" | "lastSummarizedToolCursor" | "updatedAt">): string {
     const lines: string[] = [];
     if (memory.currentGoal) lines.push(`Current Goal: ${memory.currentGoal}`);
     if (memory.currentWork) lines.push(`Current Work: ${memory.currentWork}`);
@@ -635,6 +638,7 @@ function coerceStoredSessionMemory(value: Partial<StoredSessionMemory> | undefin
         lastSummarizedMessageCount: typeof value.lastSummarizedMessageCount === "number" && Number.isFinite(value.lastSummarizedMessageCount)
             ? Math.max(0, Math.floor(value.lastSummarizedMessageCount))
             : 0,
+        lastSummarizedMessageId: normalizeString(value.lastSummarizedMessageId),
         lastSummarizedToolCursor: typeof value.lastSummarizedToolCursor === "number" && Number.isFinite(value.lastSummarizedToolCursor)
             ? Math.max(0, Math.floor(value.lastSummarizedToolCursor))
             : 0,
@@ -744,6 +748,7 @@ function buildFallbackSessionMemory(
     newToolDigests: ToolDigestRecord[],
     totalMessageCount: number,
     totalToolDigestCount: number,
+    lastSummarizedMessageId?: string,
 ): StoredSessionMemory {
     const updated = { ...existing };
     const snippets = newMessages.map((message) => {
@@ -778,6 +783,7 @@ function buildFallbackSessionMemory(
         updated.currentWork = latestUser.content.slice(0, 200);
     }
     updated.lastSummarizedMessageCount = totalMessageCount;
+    updated.lastSummarizedMessageId = normalizeString(lastSummarizedMessageId);
     updated.lastSummarizedToolCursor = totalToolDigestCount;
     updated.updatedAt = Date.now();
     return coerceStoredSessionMemory(updated);
@@ -1517,6 +1523,15 @@ export class ConversationStore {
         }));
     }
 
+    private buildSessionDigestHistoryView(conv?: Conversation): SessionDigestHistoryView {
+        if (!conv) return [];
+        return conv.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: this.sanitizeHistoryContent(m.content),
+        }));
+    }
+
     private buildCompactBoundaryRecord(
         conversation: Conversation | undefined,
         result: {
@@ -2165,7 +2180,7 @@ export class ConversationStore {
         options: Pick<SessionDigestRefreshOptions, "threshold"> = {},
     ): Promise<SessionDigestRecord> {
         const conversation = await this.getAsync(id);
-        const history = this.buildHistoryView(conversation);
+        const history = this.buildSessionDigestHistoryView(conversation);
         const compactionState = await this.getCompactionStateAsync(id);
         const digestState = await this.getSessionDigestStateAsync(id, options.threshold);
         const sessionMemory = await this.getSessionMemoryAsync(id);
@@ -2244,20 +2259,18 @@ export class ConversationStore {
         options: SessionDigestRefreshOptions = {},
     ): Promise<{ memory: SessionMemoryRecord; updated: boolean }> {
         const conversation = await this.getAsync(id);
-        const history = this.buildHistoryView(conversation);
+        const history = this.buildSessionDigestHistoryView(conversation);
         const digestState = await this.getSessionDigestStateAsync(id, options.threshold);
         const threshold = this.resolveSessionDigestThreshold(options.threshold ?? digestState.threshold);
         const existing = await this.getSessionMemoryAsync(id);
         const toolDigests = this.getToolDigests(id);
-        const effectiveCursor = Math.max(
-            0,
-            Math.min(history.length, existing.lastSummarizedMessageCount),
-        );
+        const messageProgress = this.resolveSessionDigestMessageProgress(history, existing);
+        const effectiveCursor = messageProgress.effectiveCursor;
         const effectiveToolCursor = Math.max(
             0,
             Math.min(toolDigests.length, existing.lastSummarizedToolCursor),
         );
-        const pendingMessageCount = Math.max(0, history.length - effectiveCursor);
+        const pendingMessageCount = messageProgress.pendingMessageCount;
         const pendingToolDigestCount = Math.max(0, toolDigests.length - effectiveToolCursor);
         const shouldRefresh = options.force === true
             || pendingMessageCount >= threshold
@@ -2313,7 +2326,15 @@ export class ConversationStore {
 
         const newMessages = history.slice(effectiveCursor);
         const newToolDigests = toolDigests.slice(effectiveToolCursor);
-        let nextMemory = buildFallbackSessionMemory(existing, newMessages, newToolDigests, history.length, toolDigests.length);
+        const lastHistoryMessageId = history.at(-1)?.id;
+        let nextMemory = buildFallbackSessionMemory(
+            existing,
+            newMessages,
+            newToolDigests,
+            history.length,
+            toolDigests.length,
+            lastHistoryMessageId,
+        );
         let fallbackUsed = !this.summarizer;
         let failureReason: string | undefined;
 
@@ -2346,6 +2367,7 @@ export class ConversationStore {
                         currentWork: normalizeString(parsed.currentWork) || existing.currentWork,
                         nextStep: normalizeString(parsed.nextStep) || existing.nextStep,
                         lastSummarizedMessageCount: history.length,
+                        lastSummarizedMessageId: lastHistoryMessageId,
                         lastSummarizedToolCursor: toolDigests.length,
                         updatedAt: Date.now(),
                     });
@@ -2358,6 +2380,7 @@ export class ConversationStore {
                         ...nextMemory,
                         summary: responseText.trim(),
                         lastSummarizedMessageCount: history.length,
+                        lastSummarizedMessageId: lastHistoryMessageId,
                         lastSummarizedToolCursor: toolDigests.length,
                         updatedAt: Date.now(),
                     });
@@ -2372,6 +2395,7 @@ export class ConversationStore {
         nextMemory = coerceStoredSessionMemory({
             ...nextMemory,
             lastSummarizedMessageCount: history.length,
+            lastSummarizedMessageId: lastHistoryMessageId,
             lastSummarizedToolCursor: toolDigests.length,
             updatedAt: Date.now(),
         });
@@ -2817,24 +2841,83 @@ export class ConversationStore {
         return next;
     }
 
-    private buildSessionDigestRecord(
-        id: string,
-        history: ConversationHistoryView,
-        compactionState: CompactionState,
-        digestState: SessionDigestState,
+    private resolveSessionDigestMessageProgress(
+        history: SessionDigestHistoryView,
         sessionMemory: StoredSessionMemory,
-    ): SessionDigestRecord {
+        fallbackDigestedMessageCount: number = 0,
+    ): { effectiveCursor: number; digestedMessageCount: number; pendingMessageCount: number } {
         const messageCount = history.length;
-        const digestedMessageCount = Math.max(
+        if (messageCount <= 0) {
+            return {
+                effectiveCursor: 0,
+                digestedMessageCount: 0,
+                pendingMessageCount: 0,
+            };
+        }
+
+        const lastSummarizedMessageId = normalizeString(sessionMemory.lastSummarizedMessageId);
+        if (lastSummarizedMessageId) {
+            const boundaryIndex = history.findIndex((message) => message.id === lastSummarizedMessageId);
+            if (boundaryIndex >= 0) {
+                const digestedMessageCount = boundaryIndex + 1;
+                return {
+                    effectiveCursor: digestedMessageCount,
+                    digestedMessageCount,
+                    pendingMessageCount: Math.max(0, messageCount - digestedMessageCount),
+                };
+            }
+
+            return {
+                effectiveCursor: 0,
+                digestedMessageCount: 0,
+                pendingMessageCount: messageCount,
+            };
+        }
+
+        const countBasedDigestedMessageCount = Math.max(
             0,
             Math.min(
                 messageCount,
                 sessionMemory.lastSummarizedMessageCount > 0
                     ? sessionMemory.lastSummarizedMessageCount
-                    : compactionState.compactedMessageCount,
+                    : fallbackDigestedMessageCount,
             ),
         );
-        const pendingMessageCount = Math.max(0, messageCount - digestedMessageCount);
+        const shouldResummarizeFullWindowForLegacyRecord =
+            sessionMemory.updatedAt > 0
+            && sessionMemory.lastSummarizedMessageCount > 0
+            && messageCount >= this.maxHistory
+            && countBasedDigestedMessageCount >= messageCount;
+        if (shouldResummarizeFullWindowForLegacyRecord) {
+            return {
+                effectiveCursor: 0,
+                digestedMessageCount: 0,
+                pendingMessageCount: messageCount,
+            };
+        }
+
+        return {
+            effectiveCursor: countBasedDigestedMessageCount,
+            digestedMessageCount: countBasedDigestedMessageCount,
+            pendingMessageCount: Math.max(0, messageCount - countBasedDigestedMessageCount),
+        };
+    }
+
+    private buildSessionDigestRecord(
+        id: string,
+        history: SessionDigestHistoryView,
+        compactionState: CompactionState,
+        digestState: SessionDigestState,
+        sessionMemory: StoredSessionMemory,
+    ): SessionDigestRecord {
+        const messageCount = history.length;
+        const progress = this.resolveSessionDigestMessageProgress(
+            history,
+            sessionMemory,
+            compactionState.compactedMessageCount,
+        );
+        const digestedMessageCount = progress.digestedMessageCount;
+        const pendingMessageCount = progress.pendingMessageCount;
         const threshold = this.resolveSessionDigestThreshold(digestState.threshold);
         const rollingSummary = sessionMemory.summary || compactionState.rollingSummary;
         const hasDigestContent =

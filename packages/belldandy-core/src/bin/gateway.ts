@@ -313,6 +313,8 @@ const GOAL_TOOL_NAMES = new Set([
   "goal_list",
   "goal_resume",
   "goal_pause",
+  "goal_archive",
+  "goal_delete",
   "goal_handoff_get",
   "goal_handoff_generate",
   "goal_retrospect_generate",

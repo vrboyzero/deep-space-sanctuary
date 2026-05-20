@@ -54,7 +54,9 @@ export async function handleGoalMethod(
     }
 
     case "goal.list": {
-      const goals = await ctx.goalManager.listGoals();
+      const goals = await ctx.goalManager.listGoals({
+        includeArchived: params.includeArchived === true,
+      });
       return { type: "res", id: req.id, ok: true, payload: { goals } };
     }
 
@@ -308,6 +310,32 @@ export async function handleGoalMethod(
         return { type: "res", id: req.id, ok: true, payload: { checkpoints } };
       } catch (err) {
         return failure(req.id, "goal_checkpoint_list_failed", err);
+      }
+    }
+
+    case "goal.archive": {
+      const goalId = readRequiredString(params, "goalId");
+      if (!goalId) return invalid(req.id, "goalId is required");
+      try {
+        const goal = await ctx.goalManager.archiveGoal(goalId, {
+          reason: readOptionalString(params, "reason"),
+        });
+        return { type: "res", id: req.id, ok: true, payload: { goal } };
+      } catch (err) {
+        return failure(req.id, "goal_archive_failed", err);
+      }
+    }
+
+    case "goal.delete": {
+      const goalId = readRequiredString(params, "goalId");
+      if (!goalId) return invalid(req.id, "goalId is required");
+      try {
+        const result = await ctx.goalManager.deleteGoal(goalId, {
+          confirmText: readOptionalString(params, "confirmText"),
+        });
+        return { type: "res", id: req.id, ok: true, payload: result };
+      } catch (err) {
+        return failure(req.id, "goal_delete_failed", err);
       }
     }
 

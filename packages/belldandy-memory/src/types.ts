@@ -1,5 +1,5 @@
 /** 记忆块 */
-export type MemoryType = "core" | "daily" | "session" | "other";
+export type MemoryType = "core" | "daily" | "session" | "dream_index" | "dream_note" | "other";
 
 /** 内容语义分类（P1-6） */
 export type MemoryCategory = "preference" | "fact" | "decision" | "entity" | "experience" | "other";
