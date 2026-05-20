@@ -42,11 +42,33 @@ async function pairWebSocketClient(ws: WebSocket, frames: any[], stateDir: strin
   await waitFor(() => frames.some((frame) => frame.type === "hello-ok"));
   ws.send(JSON.stringify({ type: "req", id: "pairing-init", method: "message.send", params: { text: "pairing-init" } }));
   await waitFor(() => frames.some((frame) => frame.type === "event" && frame.event === "pairing.required"));
-  const pairingEvents = frames.filter((frame) => frame.type === "event" && frame.event === "pairing.required");
-  const code = String(pairingEvents[pairingEvents.length - 1]?.payload?.code ?? "");
-  expect(code.length).toBeGreaterThan(0);
-  const approved = await approvePairingCode({ code, stateDir });
-  expect(approved.ok).toBe(true);
+  const started = Date.now();
+  while (Date.now() - started < 5000) {
+    const pairingEvents = frames.filter((frame) => frame.type === "event" && frame.event === "pairing.required");
+    const candidateCodes: string[] = [];
+    const seen = new Set<string>();
+
+    for (const frame of pairingEvents.slice().reverse()) {
+      const code = frame?.payload?.code ? String(frame.payload.code) : "";
+      if (!code || seen.has(code)) {
+        continue;
+      }
+      seen.add(code);
+      candidateCodes.push(code);
+    }
+
+    for (const code of candidateCodes) {
+      const approved = await approvePairingCode({ code, stateDir });
+      if (approved.ok) {
+        expect(code.length).toBeGreaterThan(0);
+        return;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  throw new Error("timeout approving pairing code");
 }
 
 test("system.doctor exposes resident memory policy summary", async () => {

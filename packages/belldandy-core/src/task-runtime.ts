@@ -659,9 +659,21 @@ function normalizeDelegationTeamMemberSummary(
 }
 
 async function atomicWriteText(targetPath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const tmpPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tmpPath, content, "utf-8");
+  const targetDir = path.dirname(targetPath);
+  for (let attempt = 0; attempt < RENAME_RETRIES; attempt += 1) {
+    try {
+      await fs.mkdir(targetDir, { recursive: true });
+      await fs.writeFile(tmpPath, content, "utf-8");
+      break;
+    } catch (error) {
+      const fsError = error as NodeJS.ErrnoException;
+      if (fsError.code !== "ENOENT" || attempt >= RENAME_RETRIES - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_DELAY_MS));
+    }
+  }
   let lastErr: NodeJS.ErrnoException | null = null;
   for (let attempt = 0; attempt < RENAME_RETRIES; attempt += 1) {
     try {
@@ -669,6 +681,9 @@ async function atomicWriteText(targetPath: string, content: string): Promise<voi
       return;
     } catch (error) {
       lastErr = error as NodeJS.ErrnoException;
+      if (lastErr.code === "ENOENT") {
+        await fs.mkdir(targetDir, { recursive: true }).catch(() => {});
+      }
       if (attempt < RENAME_RETRIES - 1) {
         await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_DELAY_MS));
       }

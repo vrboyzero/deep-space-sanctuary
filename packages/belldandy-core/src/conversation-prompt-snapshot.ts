@@ -438,6 +438,11 @@ export function normalizeConversationPromptSnapshotArtifact(
     summaryRecord ? { truncationReason: summaryRecord.truncationReason } : undefined,
   ) ?? readPromptTruncationReasonFromMetadata(inputMeta)
     ?? rebuiltArtifact.summary.truncationReason;
+  const normalizedInputMeta = {
+    ...(rebuiltArtifact.snapshot.inputMeta ?? {}),
+    promptTokenBreakdown: tokenBreakdown,
+    ...(truncationReason ? { truncationReason } : {}),
+  };
 
   return {
     schemaVersion: artifact.schemaVersion,
@@ -450,7 +455,10 @@ export function normalizeConversationPromptSnapshotArtifact(
       providerNativeSystemBlockEstimatedTokens: tokenBreakdown.providerNativeSystemBlockEstimatedTokens,
       ...(truncationReason ? { truncationReason } : {}),
     },
-    snapshot: rebuiltArtifact.snapshot,
+    snapshot: {
+      ...rebuiltArtifact.snapshot,
+      inputMeta: normalizedInputMeta,
+    },
   };
 }
 
