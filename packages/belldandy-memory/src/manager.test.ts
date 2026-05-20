@@ -680,6 +680,217 @@ describe("MemoryManager guardrails", () => {
     ]);
   });
 
+  it("rebuilds R1 conversation/day/project/agent nodes with chunk provenance", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "r1-conv-low",
+      sourcePath: path.join(docsDir, "goal-alpha-outline.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal alpha outline and baseline notes",
+    });
+    manager.upsertMemoryChunk({
+      id: "r1-conv-high",
+      sourcePath: path.join(docsDir, "goal-alpha-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal alpha final summary and completion checklist",
+    });
+    manager.upsertMemoryChunk({
+      id: "r1-other",
+      sourcePath: path.join(docsDir, "goal-beta-review.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal beta review notes",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:r1-conv-low",
+        targetType: "chunk",
+        targetId: "r1-conv-low",
+        scoreTotal: 0.2,
+        sourceWeightScore: 0.1,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+        createdAt: "2026-05-20T09:00:00.000Z",
+        updatedAt: "2026-05-20T09:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:r1-conv-high",
+        targetType: "chunk",
+        targetId: "r1-conv-high",
+        scoreTotal: 0.9,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+        createdAt: "2026-05-20T10:00:00.000Z",
+        updatedAt: "2026-05-20T10:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:r1-other",
+        targetType: "chunk",
+        targetId: "r1-other",
+        scoreTotal: 0.5,
+        sourceWeightScore: 0.3,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+        createdAt: "2026-05-21T11:00:00.000Z",
+        updatedAt: "2026-05-21T11:00:00.000Z",
+      },
+    ]);
+
+    store.createTask({
+      id: "r1-task-1",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "partial",
+      title: "Investigate goal alpha",
+      summary: "Outline the current goal alpha state.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-20T09:00:00.000Z",
+      finishedAt: "2026-05-20T09:10:00.000Z",
+      createdAt: "2026-05-20T09:00:00.000Z",
+      updatedAt: "2026-05-20T09:10:00.000Z",
+    });
+    store.createTask({
+      id: "r1-task-2",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Finish goal alpha",
+      summary: "Deliver the goal alpha final summary.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-20T10:00:00.000Z",
+      finishedAt: "2026-05-20T10:30:00.000Z",
+      createdAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:30:00.000Z",
+    });
+    store.createTask({
+      id: "r1-task-3",
+      conversationId: "goal:beta:conv",
+      sessionKey: "goal:beta:conv",
+      agentId: "reviewer",
+      source: "chat",
+      status: "partial",
+      title: "Review goal beta",
+      summary: "Check goal beta regression risk.",
+      metadata: { goalId: "goal-beta" },
+      startedAt: "2026-05-21T11:00:00.000Z",
+      finishedAt: "2026-05-21T11:20:00.000Z",
+      createdAt: "2026-05-21T11:00:00.000Z",
+      updatedAt: "2026-05-21T11:20:00.000Z",
+    });
+    store.linkTaskMemory("r1-task-1", "r1-conv-low", "used");
+    store.linkTaskMemory("r1-task-2", "r1-conv-high", "generated");
+    store.linkTaskMemory("r1-task-3", "r1-other", "used");
+
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "conversation" })).toMatchObject({
+      kind: "conversation",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "day" })).toMatchObject({
+      kind: "day",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "project" })).toMatchObject({
+      kind: "project",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "agent" })).toMatchObject({
+      kind: "agent",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+
+    const conversationNode = manager.listMemoryTreeNodes(10, { kind: "conversation" })
+      .find((item) => item.topicKey === "goal:alpha:conv");
+    expect(conversationNode).toMatchObject({
+      kind: "conversation",
+      summaryVersion: "p17-conversation-node-v1",
+      metadata: expect.objectContaining({
+        conversationId: "goal:alpha:conv",
+        taskCount: 2,
+        linkedChunkCount: 2,
+      }),
+    });
+    const conversationDetail = manager.getMemoryTreeNodeDetail(conversationNode!.id, { chunkLimit: 5 });
+    expect(conversationDetail?.chunks.map((item) => item.id)).toEqual([
+      "r1-conv-high",
+      "r1-conv-low",
+    ]);
+
+    const projectResults = manager.searchMemoryTreeNodes("goal-alpha", {
+      limit: 5,
+      chunkLimitPerNode: 5,
+      filter: { kind: "project" },
+    });
+    const goalAlphaProject = projectResults.find((item) => item.node.topicKey === "goal-alpha");
+    expect(goalAlphaProject).toBeTruthy();
+    expect(goalAlphaProject).toMatchObject({
+      node: expect.objectContaining({
+        kind: "project",
+        summaryVersion: "p17-project-node-v1",
+        topicKey: "goal-alpha",
+        metadata: expect.objectContaining({
+          goalId: "goal-alpha",
+          taskCount: 2,
+        }),
+      }),
+    });
+    expect(goalAlphaProject?.chunks.map((item) => item.id)).toEqual([
+      "r1-conv-high",
+      "r1-conv-low",
+    ]);
+
+    const agentResults = manager.searchMemoryTreeNodes("coder", {
+      limit: 5,
+      chunkLimitPerNode: 5,
+      filter: { kind: "agent" },
+    });
+    expect(agentResults).toHaveLength(1);
+    expect(agentResults[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "agent",
+        summaryVersion: "p17-agent-node-v1",
+        topicKey: "coder",
+        metadata: expect.objectContaining({
+          agentId: "coder",
+          taskCount: 2,
+        }),
+      }),
+    });
+
+    const dayNode = manager.listMemoryTreeNodes(10, { kind: "day" })
+      .find((item) => item.topicKey === "2026-05-20");
+    expect(dayNode).toMatchObject({
+      kind: "day",
+      summaryVersion: "p17-day-node-v1",
+      metadata: expect.objectContaining({
+        day: "2026-05-20",
+        taskCount: 2,
+        conversationCount: 1,
+      }),
+    });
+  });
+
   it("reviews and applies P14 dedup reports by archiving duplicate chunks and lowering their scores", async () => {
     manager = createManager({
       workspaceRoot: docsDir,

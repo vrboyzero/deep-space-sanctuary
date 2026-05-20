@@ -1472,9 +1472,25 @@ export class MemoryManager {
             ? Math.max(1, Math.floor(options.limit))
             : 100;
         const kind = options.kind ?? "task";
-        const { nodes, edges, inputDetails } = kind === "topic"
-            ? this.buildTopicMemoryTreeNodes(limit, rebuiltAt)
-            : this.buildTaskMemoryTreeNodes(limit, rebuiltAt);
+        const { nodes, edges, inputDetails } = (() => {
+            switch (kind) {
+                case "topic":
+                    return this.buildTopicMemoryTreeNodes(limit, rebuiltAt);
+                case "conversation":
+                    return this.buildConversationMemoryTreeNodes(limit, rebuiltAt);
+                case "day":
+                    return this.buildDayMemoryTreeNodes(limit, rebuiltAt);
+                case "project":
+                    return this.buildProjectMemoryTreeNodes(limit, rebuiltAt);
+                case "agent":
+                    return this.buildAgentMemoryTreeNodes(limit, rebuiltAt);
+                case "task":
+                case "profile":
+                case "global":
+                default:
+                    return this.buildTaskMemoryTreeNodes(limit, rebuiltAt);
+            }
+        })();
 
         this.store.deleteMemoryTreeNodesByKind(kind);
         this.store.upsertMemoryTreeNodes(nodes);
@@ -1651,6 +1667,275 @@ export class MemoryManager {
                 topicLimit: limit,
                 topicCount: summaries.length,
             },
+        };
+    }
+
+    private buildConversationMemoryTreeNodes(limit: number, rebuiltAt: string): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
+        return this.buildGroupedTaskMemoryTreeNodes({
+            kind: "conversation",
+            level: 1,
+            limit,
+            rebuiltAt,
+            collectKey: (task) => task.conversationId,
+            buildNodeId: (key) => buildMemoryTreeConversationNodeId(key),
+            buildTitle: (key) => `Conversation: ${key}`,
+            buildSummary: (key, tasks) => buildMemoryTreeAggregateSummary(`Conversation ${key}`, tasks),
+            buildNodeAgentId: (tasks) => resolveUniformTaskAgentId(tasks),
+            buildMetadata: (key, tasks, bundle) => ({
+                conversationId: key,
+                taskCount: tasks.length,
+                linkedChunkCount: bundle.linkedChunkCount,
+                activityCount: bundle.activityCount,
+                statusCounts: buildMemoryTreeTaskStatusCounts(tasks),
+                goalIds: collectTaskGoalIds(tasks),
+                agentIds: collectTaskAgentIds(tasks),
+            }),
+        });
+    }
+
+    private buildDayMemoryTreeNodes(limit: number, rebuiltAt: string): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
+        return this.buildGroupedTaskMemoryTreeNodes({
+            kind: "day",
+            level: 2,
+            limit,
+            rebuiltAt,
+            collectKey: (task) => buildMemoryTreeDayKey(task),
+            buildNodeId: (key) => buildMemoryTreeDayNodeId(key),
+            buildTitle: (key) => `Day: ${key}`,
+            buildSummary: (key, tasks) => buildMemoryTreeAggregateSummary(`Day ${key}`, tasks),
+            buildNodeAgentId: (tasks) => resolveUniformTaskAgentId(tasks),
+            buildMetadata: (key, tasks, bundle) => ({
+                day: key,
+                taskCount: tasks.length,
+                linkedChunkCount: bundle.linkedChunkCount,
+                activityCount: bundle.activityCount,
+                statusCounts: buildMemoryTreeTaskStatusCounts(tasks),
+                conversationCount: collectTaskConversationIds(tasks).length,
+                goalIds: collectTaskGoalIds(tasks),
+                agentIds: collectTaskAgentIds(tasks),
+            }),
+        });
+    }
+
+    private buildProjectMemoryTreeNodes(limit: number, rebuiltAt: string): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
+        return this.buildGroupedTaskMemoryTreeNodes({
+            kind: "project",
+            level: 2,
+            limit,
+            rebuiltAt,
+            collectKey: (task) => extractTaskGoalId(task),
+            buildNodeId: (key) => buildMemoryTreeProjectNodeId(key),
+            buildTitle: (key) => `Project: ${key}`,
+            buildSummary: (key, tasks) => buildMemoryTreeAggregateSummary(`Project ${key}`, tasks),
+            buildNodeAgentId: (tasks) => resolveUniformTaskAgentId(tasks),
+            buildMetadata: (key, tasks, bundle) => ({
+                goalId: key,
+                taskCount: tasks.length,
+                linkedChunkCount: bundle.linkedChunkCount,
+                activityCount: bundle.activityCount,
+                statusCounts: buildMemoryTreeTaskStatusCounts(tasks),
+                conversationCount: collectTaskConversationIds(tasks).length,
+                agentIds: collectTaskAgentIds(tasks),
+                goalSessionCount: tasks.filter((task) => task.metadata?.goalSession === true).length,
+            }),
+        });
+    }
+
+    private buildAgentMemoryTreeNodes(limit: number, rebuiltAt: string): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
+        return this.buildGroupedTaskMemoryTreeNodes({
+            kind: "agent",
+            level: 3,
+            limit,
+            rebuiltAt,
+            collectKey: (task) => task.agentId?.trim() || "default",
+            buildNodeId: (key) => buildMemoryTreeAgentNodeId(key),
+            buildTitle: (key) => `Agent: ${key}`,
+            buildSummary: (key, tasks) => buildMemoryTreeAggregateSummary(`Agent ${key}`, tasks),
+            buildNodeAgentId: (tasks, key) => key,
+            buildMetadata: (key, tasks, bundle) => ({
+                agentId: key,
+                taskCount: tasks.length,
+                linkedChunkCount: bundle.linkedChunkCount,
+                activityCount: bundle.activityCount,
+                statusCounts: buildMemoryTreeTaskStatusCounts(tasks),
+                conversationCount: collectTaskConversationIds(tasks).length,
+                goalIds: collectTaskGoalIds(tasks),
+            }),
+        });
+    }
+
+    private buildGroupedTaskMemoryTreeNodes(input: {
+        kind: "conversation" | "day" | "project" | "agent";
+        level: number;
+        limit: number;
+        rebuiltAt: string;
+        collectKey: (task: TaskExperienceDetail) => string | undefined;
+        buildNodeId: (key: string) => string;
+        buildTitle: (key: string, tasks: TaskExperienceDetail[]) => string;
+        buildSummary: (key: string, tasks: TaskExperienceDetail[]) => string;
+        buildNodeAgentId?: (tasks: TaskExperienceDetail[], key: string) => string | undefined;
+        buildMetadata: (
+            key: string,
+            tasks: TaskExperienceDetail[],
+            bundle: {
+                linkedChunkCount: number;
+                activityCount: number;
+            },
+        ) => Record<string, unknown>;
+    }): {
+        nodes: MemoryTreeNodeRecord[];
+        edges: MemoryTreeEdgeRecord[];
+        inputDetails: Record<string, unknown>;
+    } {
+        const candidateLimit = Math.max(input.limit * 20, 200);
+        const tasks = this.store.listTasks(candidateLimit, { status: ["success", "partial", "failed"] })
+            .map((task) => this.getTaskDetail(task.id))
+            .filter((task): task is TaskExperienceDetail => Boolean(task));
+        const groups = new Map<string, TaskExperienceDetail[]>();
+        for (const task of tasks) {
+            const key = input.collectKey(task)?.trim();
+            if (!key) {
+                continue;
+            }
+            const bucket = groups.get(key);
+            if (bucket) {
+                bucket.push(task);
+            } else {
+                groups.set(key, [task]);
+            }
+        }
+
+        const rankedGroups = [...groups.entries()]
+            .map(([key, groupedTasks]) => ({
+                key,
+                tasks: groupedTasks,
+                latestTimestamp: resolveLatestTaskTimestamp(groupedTasks),
+            }))
+            .sort((a, b) => {
+                if (b.latestTimestamp !== a.latestTimestamp) {
+                    return b.latestTimestamp - a.latestTimestamp;
+                }
+                return a.key.localeCompare(b.key);
+            })
+            .slice(0, input.limit);
+
+        const nodes: MemoryTreeNodeRecord[] = [];
+        const edges: MemoryTreeEdgeRecord[] = [];
+        for (const group of rankedGroups) {
+            const nodeId = input.buildNodeId(group.key);
+            const chunkBundle = this.buildTaskGroupChunkBundle(group.tasks, nodeId, input.rebuiltAt);
+            const timeRange = resolveTaskGroupTimeRange(group.tasks);
+            nodes.push({
+                id: nodeId,
+                level: input.level,
+                kind: input.kind,
+                scope: "private",
+                agentId: input.buildNodeAgentId?.(group.tasks, group.key),
+                topicKey: group.key,
+                title: input.buildTitle(group.key, group.tasks),
+                summary: input.buildSummary(group.key, group.tasks),
+                summaryVersion: `p17-${input.kind}-node-v1`,
+                timeFrom: timeRange.timeFrom,
+                timeTo: timeRange.timeTo,
+                sourceClassMix: chunkBundle.sourceClassMix,
+                metadata: input.buildMetadata(group.key, group.tasks, {
+                    linkedChunkCount: chunkBundle.linkedChunkCount,
+                    activityCount: group.tasks.reduce((total, task) => total + (task.activities?.length ?? 0), 0),
+                }),
+                createdAt: input.rebuiltAt,
+                updatedAt: input.rebuiltAt,
+            });
+            edges.push(...chunkBundle.edges);
+        }
+
+        return {
+            nodes,
+            edges,
+            inputDetails: {
+                taskCandidateLimit: candidateLimit,
+                groupedTaskCount: tasks.length,
+                groupCount: groups.size,
+            },
+        };
+    }
+
+    private buildTaskGroupChunkBundle(
+        tasks: TaskExperienceDetail[],
+        nodeId: string,
+        rebuiltAt: string,
+    ): {
+        edges: MemoryTreeEdgeRecord[];
+        sourceClassMix: Record<string, number>;
+        linkedChunkCount: number;
+    } {
+        const chunkLinks = tasks.flatMap((task) => task.memoryLinks ?? []);
+        const chunkMap = new Map<string, {
+            chunk: MemorySearchResult;
+            taskIds: Set<string>;
+            relations: Set<string>;
+        }>();
+        for (const task of tasks) {
+            for (const link of task.memoryLinks ?? []) {
+                const chunk = this.store.getChunk(link.chunkId);
+                if (!chunk) {
+                    continue;
+                }
+                const existing = chunkMap.get(link.chunkId);
+                if (existing) {
+                    existing.taskIds.add(task.id);
+                    existing.relations.add(link.relation);
+                    continue;
+                }
+                chunkMap.set(link.chunkId, {
+                    chunk,
+                    taskIds: new Set([task.id]),
+                    relations: new Set([link.relation]),
+                });
+            }
+        }
+
+        const rankedChunks = rankMemoryTreeTopicChunks(this.applyMemoryTreeScoreSignals([...chunkMap.values()].map((item) => item.chunk)));
+        const edges = rankedChunks.map((chunk, index) => {
+            const aggregate = chunkMap.get(chunk.id);
+            return {
+                id: `edge:${nodeId}:chunk:${chunk.id}`,
+                parentNodeId: nodeId,
+                childType: "chunk" as const,
+                childId: chunk.id,
+                relation: "contains",
+                position: index,
+                weight: Number.isFinite(chunk.score) ? chunk.score : undefined,
+                metadata: {
+                    sourcePath: chunk.sourcePath,
+                    memoryType: chunk.memoryType,
+                    visibility: chunk.visibility,
+                    taskIds: aggregate ? [...aggregate.taskIds] : [],
+                    linkRelations: aggregate ? [...aggregate.relations] : [],
+                },
+                createdAt: rebuiltAt,
+            };
+        });
+
+        return {
+            edges,
+            sourceClassMix: buildMemoryTreeSourceClassMix(chunkLinks),
+            linkedChunkCount: rankedChunks.length,
         };
     }
 
@@ -4222,6 +4507,30 @@ function buildMemoryTreeTopicNodeId(topic: string, agentId: string | undefined, 
     })}`;
 }
 
+function buildMemoryTreeConversationNodeId(conversationId: string): string {
+    return `conversation:${hashMemoryTreePayload({
+        conversationId,
+    })}`;
+}
+
+function buildMemoryTreeDayNodeId(dayKey: string): string {
+    return `day:${hashMemoryTreePayload({
+        day: dayKey,
+    })}`;
+}
+
+function buildMemoryTreeProjectNodeId(projectKey: string): string {
+    return `project:${hashMemoryTreePayload({
+        project: projectKey,
+    })}`;
+}
+
+function buildMemoryTreeAgentNodeId(agentKey: string): string {
+    return `agent:${hashMemoryTreePayload({
+        agent: agentKey,
+    })}`;
+}
+
 function buildMemoryTreeTopicSummary(topic: string, chunks: MemorySearchResult[]): string {
     const highlights = dedupeStrings(
         chunks
@@ -4230,6 +4539,20 @@ function buildMemoryTreeTopicSummary(topic: string, chunks: MemorySearchResult[]
     ).slice(0, 2);
     return [
         `Topic ${topic}`,
+        ...highlights,
+    ].join(" | ");
+}
+
+function buildMemoryTreeAggregateSummary(label: string, tasks: TaskExperienceDetail[]): string {
+    const highlights = dedupeStrings(tasks.flatMap((task) => [
+        sanitizeTaskShortcutText(task.summary),
+        sanitizeTaskShortcutText(task.workRecap?.headline),
+        sanitizeTaskShortcutText(task.resumeContext?.currentStopPoint),
+        sanitizeTaskShortcutText(task.objective),
+        sanitizeTaskShortcutText(task.title),
+    ])).slice(0, 2);
+    return [
+        label,
         ...highlights,
     ].join(" | ");
 }
@@ -4253,7 +4576,7 @@ function scoreMemoryTreeNode(node: MemoryTreeNodeRecord, normalizedQuery: string
     const fields: Array<{ label: string; values: Array<string | undefined> }> = [
         { label: "标题", values: [node.title] },
         { label: "摘要", values: [node.summary] },
-        { label: "topic", values: [node.topicKey] },
+        { label: resolveMemoryTreeNodeKeyLabel(node.kind), values: [node.topicKey] },
     ];
     for (const field of fields) {
         const fieldScore = scoreTaskShortcutField(field.values, normalizedQuery, queryTokens);
@@ -4297,6 +4620,108 @@ function normalizeMemoryTreeNodeText(value?: string): string | undefined {
     const sanitized = sanitizeTaskShortcutText(value);
     if (!sanitized) return undefined;
     return sanitized.toLowerCase();
+}
+
+function resolveMemoryTreeNodeKeyLabel(kind: MemoryTreeNodeKind): string {
+    switch (kind) {
+        case "conversation":
+            return "conversation";
+        case "day":
+            return "day";
+        case "project":
+            return "project";
+        case "agent":
+            return "agent";
+        case "topic":
+            return "topic";
+        default:
+            return "key";
+    }
+}
+
+function resolveUniformTaskAgentId(tasks: TaskExperienceDetail[]): string | undefined {
+    const agentIds = collectTaskAgentIds(tasks);
+    return agentIds.length === 1 ? agentIds[0] : undefined;
+}
+
+function collectTaskAgentIds(tasks: TaskExperienceDetail[]): string[] {
+    return dedupeStrings(tasks.map((task) => task.agentId?.trim()).filter((item): item is string => Boolean(item)));
+}
+
+function collectTaskConversationIds(tasks: TaskExperienceDetail[]): string[] {
+    return dedupeStrings(tasks.map((task) => task.conversationId?.trim()).filter((item): item is string => Boolean(item)));
+}
+
+function collectTaskGoalIds(tasks: TaskExperienceDetail[]): string[] {
+    return dedupeStrings(tasks.map((task) => extractTaskGoalId(task)).filter((item): item is string => Boolean(item)));
+}
+
+function extractTaskGoalId(task: TaskExperienceDetail): string | undefined {
+    const goalId = isRecord(task.metadata) && typeof task.metadata.goalId === "string"
+        ? task.metadata.goalId.trim()
+        : "";
+    return goalId || undefined;
+}
+
+function buildMemoryTreeTaskStatusCounts(tasks: TaskExperienceDetail[]): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const task of tasks) {
+        const status = task.status?.trim();
+        if (!status) {
+            continue;
+        }
+        counts[status] = (counts[status] ?? 0) + 1;
+    }
+    return counts;
+}
+
+function resolveLatestTaskTimestamp(tasks: TaskExperienceDetail[]): number {
+    return tasks.reduce((latest, task) => {
+        const timestamp = resolveTaskGroupTimestamp(task);
+        return timestamp > latest ? timestamp : latest;
+    }, Number.NEGATIVE_INFINITY);
+}
+
+function resolveTaskGroupTimeRange(tasks: TaskExperienceDetail[]): {
+    timeFrom?: string;
+    timeTo?: string;
+} {
+    let earliestValue: string | undefined;
+    let earliestTimestamp = Number.POSITIVE_INFINITY;
+    let latestValue: string | undefined;
+    let latestTimestamp = Number.NEGATIVE_INFINITY;
+
+    for (const task of tasks) {
+        const fromValue = task.startedAt || task.createdAt || task.updatedAt;
+        const toValue = task.finishedAt || task.updatedAt || task.startedAt || task.createdAt;
+        const fromTimestamp = Date.parse(String(fromValue ?? ""));
+        const toTimestamp = Date.parse(String(toValue ?? ""));
+        if (Number.isFinite(fromTimestamp) && fromTimestamp < earliestTimestamp) {
+            earliestTimestamp = fromTimestamp;
+            earliestValue = fromValue;
+        }
+        if (Number.isFinite(toTimestamp) && toTimestamp > latestTimestamp) {
+            latestTimestamp = toTimestamp;
+            latestValue = toValue;
+        }
+    }
+
+    return {
+        ...(earliestValue ? { timeFrom: earliestValue } : {}),
+        ...(latestValue ? { timeTo: latestValue } : {}),
+    };
+}
+
+function resolveTaskGroupTimestamp(task: TaskExperienceDetail): number {
+    const value = task.finishedAt || task.updatedAt || task.startedAt || task.createdAt;
+    const timestamp = Date.parse(String(value ?? ""));
+    return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function buildMemoryTreeDayKey(task: TaskExperienceDetail): string | undefined {
+    const value = task.finishedAt || task.updatedAt || task.startedAt || task.createdAt;
+    const normalized = typeof value === "string" ? value.trim() : "";
+    return normalized ? normalized.slice(0, 10) : undefined;
 }
 
 function dedupeStrings(values: Array<string | undefined>): string[] {

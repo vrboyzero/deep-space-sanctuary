@@ -3614,6 +3614,222 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
   }
 });
 
+test("memory.tree.node.rebuild/search/get supports R1 project nodes with chunk provenance", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-project-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-project-workspace-"));
+  const scopedAgentId = "project-r1";
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+    agentId: scopedAgentId,
+  });
+
+  try {
+    memoryManager.upsertMemoryChunk({
+      id: "project-node-low",
+      sourcePath: path.join(workspaceRoot, "goal-alpha-outline.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal alpha outline and baseline notes",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "project-node-high",
+      sourcePath: path.join(workspaceRoot, "goal-alpha-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal alpha final summary and completion checklist",
+    });
+    memoryManager.upsertMemoryChunk({
+      id: "project-node-other",
+      sourcePath: path.join(workspaceRoot, "goal-beta-review.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "goal beta review notes",
+    });
+
+    const store = (memoryManager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:project-node-low",
+        targetType: "chunk",
+        targetId: "project-node-low",
+        scoreTotal: 0.2,
+        sourceWeightScore: 0.1,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+        createdAt: "2026-05-20T09:00:00.000Z",
+        updatedAt: "2026-05-20T09:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:project-node-high",
+        targetType: "chunk",
+        targetId: "project-node-high",
+        scoreTotal: 0.9,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+        createdAt: "2026-05-20T10:00:00.000Z",
+        updatedAt: "2026-05-20T10:00:00.000Z",
+      },
+      {
+        id: "score:v1_rule_only:chunk:project-node-other",
+        targetType: "chunk",
+        targetId: "project-node-other",
+        scoreTotal: 0.5,
+        sourceWeightScore: 0.3,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+        createdAt: "2026-05-21T11:00:00.000Z",
+        updatedAt: "2026-05-21T11:00:00.000Z",
+      },
+    ]);
+    store.createTask({
+      id: "project-node-task-1",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "partial",
+      title: "Investigate goal alpha",
+      summary: "Outline the current goal alpha state.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-20T09:00:00.000Z",
+      finishedAt: "2026-05-20T09:10:00.000Z",
+      createdAt: "2026-05-20T09:00:00.000Z",
+      updatedAt: "2026-05-20T09:10:00.000Z",
+    });
+    store.createTask({
+      id: "project-node-task-2",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Finish goal alpha",
+      summary: "Deliver the goal alpha final summary.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-20T10:00:00.000Z",
+      finishedAt: "2026-05-20T10:30:00.000Z",
+      createdAt: "2026-05-20T10:00:00.000Z",
+      updatedAt: "2026-05-20T10:30:00.000Z",
+    });
+    store.createTask({
+      id: "project-node-task-3",
+      conversationId: "goal:beta:conv",
+      sessionKey: "goal:beta:conv",
+      agentId: "reviewer",
+      source: "chat",
+      status: "partial",
+      title: "Review goal beta",
+      summary: "Check goal beta regression risk.",
+      metadata: { goalId: "goal-beta" },
+      startedAt: "2026-05-21T11:00:00.000Z",
+      finishedAt: "2026-05-21T11:20:00.000Z",
+      createdAt: "2026-05-21T11:00:00.000Z",
+      updatedAt: "2026-05-21T11:20:00.000Z",
+    });
+    store.linkTaskMemory("project-node-task-1", "project-node-low", "used");
+    store.linkTaskMemory("project-node-task-2", "project-node-high", "generated");
+    store.linkTaskMemory("project-node-task-3", "project-node-other", "used");
+    registerGlobalMemoryManager(memoryManager, { agentId: scopedAgentId });
+
+    const rebuildRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-project-node-rebuild",
+      method: "memory.tree.node.rebuild",
+      params: {
+        agentId: scopedAgentId,
+        limit: 20,
+        kind: "project",
+      },
+    }, { stateDir });
+    expect(rebuildRes).toBeTruthy();
+    if (!rebuildRes || !rebuildRes.ok) {
+      throw new Error("expected successful memory.tree.node.rebuild project response");
+    }
+    expect(rebuildRes.payload?.result).toMatchObject({
+      kind: "project",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+
+    const searchRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-project-node-search",
+      method: "memory.tree.node.search",
+      params: {
+        agentId: scopedAgentId,
+        query: "goal-alpha",
+        limit: 5,
+        chunkLimitPerNode: 5,
+        filter: {
+          kind: "project",
+        },
+      },
+    }, { stateDir });
+    expect(searchRes).toBeTruthy();
+    if (!searchRes || !searchRes.ok) {
+      throw new Error("expected successful memory.tree.node.search project response");
+    }
+    const searchPayload = (searchRes.payload ?? {}) as Record<string, any>;
+    const searchItems = Array.isArray(searchPayload.items) ? searchPayload.items : [];
+    const goalAlphaProject = searchItems.find((item: Record<string, any>) => item?.node?.topicKey === "goal-alpha");
+    expect(goalAlphaProject).toBeTruthy();
+    expect(goalAlphaProject).toMatchObject({
+      node: expect.objectContaining({
+        kind: "project",
+        summaryVersion: "p17-project-node-v1",
+        topicKey: "goal-alpha",
+        metadata: expect.objectContaining({
+          goalId: "goal-alpha",
+          taskCount: 2,
+        }),
+      }),
+    });
+    expect(goalAlphaProject?.chunks.map((item: Record<string, unknown>) => item.id)).toEqual([
+      "project-node-high",
+      "project-node-low",
+    ]);
+
+    const projectNodeId = String(goalAlphaProject?.node?.id ?? "");
+    expect(projectNodeId.length).toBeGreaterThan(0);
+
+    const getRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-tree-project-node-get",
+      method: "memory.tree.node.get",
+      params: {
+        agentId: scopedAgentId,
+        nodeId: projectNodeId,
+        chunkLimit: 5,
+      },
+    }, { stateDir });
+    expect(getRes).toBeTruthy();
+    if (!getRes || !getRes.ok) {
+      throw new Error("expected successful memory.tree.node.get project response");
+    }
+    const getPayload = (getRes.payload ?? {}) as Record<string, any>;
+    expect(getPayload.node).toMatchObject({
+      id: projectNodeId,
+      summaryVersion: "p17-project-node-v1",
+    });
+    const getChunks = Array.isArray(getPayload.chunks) ? getPayload.chunks : [];
+    expect(getChunks.map((item: Record<string, unknown>) => item.id)).toEqual([
+      "project-node-high",
+      "project-node-low",
+    ]);
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("memory.tree.report.review and apply close the P14 dedup governance loop", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-report-apply-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-tree-report-apply-workspace-"));

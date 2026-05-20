@@ -470,7 +470,7 @@ export async function handleMemoryExperienceMethod(
       const limit = clampListLimit(params.limit, 100, 500);
       const kind = readOptionalString(params, "kind");
       if (kind && !isMemoryTreeNodeKind(kind)) {
-        return invalid(req.id, "kind must be task, conversation, day, topic, profile, or global.");
+        return invalid(req.id, "kind must be task, conversation, day, topic, project, agent, profile, or global.");
       }
       const result = manager.rebuildMemoryTreeNodes({ limit, kind: kind as any });
       return ok(req.id, {
@@ -1821,11 +1821,15 @@ function isMemoryTreeReportReviewDecision(value: string | undefined): value is "
     || value === "superseded";
 }
 
-function isMemoryTreeNodeKind(value: string | undefined): value is "task" | "conversation" | "day" | "topic" | "profile" | "global" {
+function isMemoryTreeNodeKind(
+  value: string | undefined,
+): value is "task" | "conversation" | "day" | "topic" | "project" | "agent" | "profile" | "global" {
   return value === "task"
     || value === "conversation"
     || value === "day"
     || value === "topic"
+    || value === "project"
+    || value === "agent"
     || value === "profile"
     || value === "global";
 }

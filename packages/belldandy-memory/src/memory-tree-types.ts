@@ -136,6 +136,8 @@ export type MemoryTreeNodeKind =
   | "conversation"
   | "day"
   | "topic"
+  | "project"
+  | "agent"
   | "profile"
   | "global";
 
