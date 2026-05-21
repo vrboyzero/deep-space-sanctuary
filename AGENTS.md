@@ -52,6 +52,11 @@ When a task needs an implementation plan, architecture note, rollout plan, or ph
 
 The goal is to prevent plans from expanding without control. If any item is intentionally deferred, say so directly.
 
+当你回写项目文档中的开发进度、阶段状态或本轮完成情况时，如果当前阶段还没有结束，必须同步补一段“后续计划”，并说明：
+- 下一步准备做什么，
+- 为什么先做它，
+- 当前还缺的关键闭环是什么。
+
 ## Execution Rhythm
 - The current development environment has strong context compression and handoff continuity. Do not worry about context window exhaustion during normal development, and do not prematurely compress or stop work out of context-limit anxiety alone.
 - For multi-phase implementation work, prefer patient step-by-step execution with explicit progress checkpoints over rushing to over-compress partially completed work.

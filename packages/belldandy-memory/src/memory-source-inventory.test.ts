@@ -114,20 +114,29 @@ describe("memory source inventory", () => {
         ],
       });
 
-      expect(report.version).toBe("p8-readonly-preview-v1");
+      expect(report.version).toBe("p10-source-registry-family-v1");
       expect(report.totals.sourceKinds).toBeGreaterThanOrEqual(14);
       expect(report.totals.indexedChunks).toBeGreaterThanOrEqual(0);
+      expect(report.totals.sourceFamilyCount).toBeGreaterThan(0);
+      expect(report.totals.highRiskFamilyCount).toBeGreaterThan(0);
+      expect(report.totals.bySearchPolicy.searchable).toBeGreaterThan(0);
+      expect(report.totals.bySearchPolicy["summary-input-only"]).toBeGreaterThan(0);
 
       const byId = new Map(report.items.map((item) => [item.id, item]));
       expect(byId.get("builtin:sessions:messages")).toMatchObject({
         sourceClass: "raw",
         storage: "filesystem",
         status: "present",
+        admission: expect.objectContaining({ searchPolicy: "searchable" }),
+        identity: expect.objectContaining({
+          canonicalSourceKey: "builtin:builtin:sessions:messages",
+        }),
         stats: expect.objectContaining({ fileCount: 1, itemCount: 1 }),
       });
       expect(byId.get("builtin:sessions:digest")).toMatchObject({
         sourceClass: "derived",
         status: "present",
+        admission: expect.objectContaining({ searchPolicy: "summary-input-only" }),
         stats: expect.objectContaining({ fileCount: 1 }),
       });
       expect(byId.get("builtin:memory:core-note")).toMatchObject({
@@ -161,9 +170,28 @@ describe("memory source inventory", () => {
         sourceClass: "curated",
         storage: "external",
         status: "present",
+        admission: expect.objectContaining({ searchPolicy: "inventory-only" }),
         stats: expect.objectContaining({ fileCount: 1 }),
       });
       expect(external?.notes.some((note) => note.includes("只读盘点"))).toBe(true);
+
+      const byFamilyKey = new Map(report.families.map((item) => [item.sourceFamilyKey, item]));
+      const sessionFamilyKey = byId.get("builtin:sessions:messages")?.identity.sourceFamilyKey;
+      const sessionFamily = sessionFamilyKey ? byFamilyKey.get(sessionFamilyKey) : undefined;
+      expect(sessionFamily).toMatchObject({
+        memberCount: 5,
+        sourceClasses: expect.arrayContaining(["raw", "derived"]),
+        duplicateRisk: expect.objectContaining({
+          level: "high",
+        }),
+      });
+      expect(sessionFamily?.members.map((item) => item.id)).toEqual(expect.arrayContaining([
+        "builtin:sessions:messages",
+        "builtin:sessions:transcripts",
+        "builtin:sessions:meta",
+        "builtin:sessions:digest",
+        "builtin:sessions:session-memory",
+      ]));
     } finally {
       memoryManager.close();
     }

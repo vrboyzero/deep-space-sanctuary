@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "增加了指挥模式一键开关，调整了webchat UI上的布局表现，让梦境记忆也进了向量检索，增加了长期任务的归档与删除相关功能"
+git commit -m "feat(memory): 完成记忆树系统统一化流程"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

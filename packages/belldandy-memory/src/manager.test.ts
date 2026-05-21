@@ -5,6 +5,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 
 import { MemoryManager } from "./manager.js";
+import { clearMemoryTreeJobInflightForTest } from "./memory-tree-job-control.js";
+import {
+  recordMemoryTreeJobLedgerFailure,
+  recordMemoryTreeJobLedgerStart,
+} from "./memory-tree-job-ledger.js";
 import { buildTaskRecapArtifacts } from "./task-recap.js";
 import type { TaskActivityRecord, TaskRecord } from "./task-types.js";
 
@@ -27,6 +32,7 @@ describe("MemoryManager guardrails", () => {
 
   afterEach(async () => {
     manager?.close();
+    clearMemoryTreeJobInflightForTest();
     await fs.rm(rootDir, { recursive: true, force: true }).catch(() => { });
   });
 
@@ -263,6 +269,24 @@ describe("MemoryManager guardrails", () => {
         sourceClassWeight: expect.any(Number),
       }),
     });
+
+    const jobReport = manager.getMemoryTreeJobReport({
+      kinds: ["topic", "profile", "global"],
+    });
+    expect(jobReport.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        jobKey: "source_rebuild:source",
+        status: "completed",
+        lastSuccessAt: expect.any(String),
+        triggerSource: "memory.tree.source.rebuild",
+      }),
+      expect.objectContaining({
+        jobKey: "score_rebuild:chunk_scores",
+        status: "completed",
+        lastSuccessAt: expect.any(String),
+        triggerSource: "memory.tree.score.rebuild",
+      }),
+    ]));
   });
 
   it("applies persisted memory tree scores before reranking", async () => {
@@ -416,8 +440,8 @@ describe("MemoryManager guardrails", () => {
           raw: {
             count: 2,
             topHits: [
-              expect.objectContaining({ id: "p16-low-score", sourceClass: "unknown" }),
-              expect.objectContaining({ id: "p16-high-score", sourceClass: "unknown" }),
+              expect.objectContaining({ id: "p16-low-score", sourceClass: "raw" }),
+              expect.objectContaining({ id: "p16-high-score", sourceClass: "curated" }),
             ],
           },
           scoreAware: {
@@ -555,6 +579,17 @@ describe("MemoryManager guardrails", () => {
       createdBy: "test",
     });
     expect(dedupRecord.reportType).toBe("dedup_preview");
+    expect(dedupRecord.summary).toMatchObject({
+      governance: expect.objectContaining({
+        headline: expect.stringContaining("Memory dedup"),
+      }),
+    });
+    expect(dedupRecord.details).toMatchObject({
+      governance: expect.objectContaining({
+        groupCount: expect.any(Number),
+        topSuggestedGroups: expect.any(Array),
+      }),
+    });
 
     const exported = await manager.exportMemoryTreeReportMarkdown(dedupRecord.id);
     expect(exported.markdownPath.endsWith(".md")).toBe(true);
@@ -696,7 +731,7 @@ describe("MemoryManager guardrails", () => {
     expect(rebuild).toMatchObject({
       kind: "topic",
       totalNodes: 2,
-      totalEdges: 3,
+      totalEdges: 6,
     });
 
     const searchResults = manager.searchMemoryTreeNodes("viewer audit", {
@@ -710,7 +745,7 @@ describe("MemoryManager guardrails", () => {
     expect(searchResults[0]).toMatchObject({
       node: expect.objectContaining({
         kind: "topic",
-        summaryVersion: "p13-topic-node-v1",
+        summaryVersion: "p20-topic-node-v1",
         topicKey: "viewer-audit",
         metadata: expect.objectContaining({
           topic: "viewer-audit",
@@ -723,10 +758,20 @@ describe("MemoryManager guardrails", () => {
       "p13-topic-high",
       "p13-topic-low",
     ]);
-    expect(searchResults[0]?.edges.map((item) => item.childId)).toEqual([
+    expect(searchResults[0]?.edges.filter((item) => item.childType === "chunk").map((item) => item.childId)).toEqual([
       "p13-topic-high",
       "p13-topic-low",
     ]);
+    expect(searchResults[0]?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("viewer-audit-outline.md"),
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("viewer-audit-summary.md"),
+      }),
+    ]));
 
     const detail = manager.getMemoryTreeNodeDetail(searchResults[0]!.node.id, { chunkLimit: 5 });
     expect(detail).toBeTruthy();
@@ -734,6 +779,257 @@ describe("MemoryManager guardrails", () => {
       "p13-topic-high",
       "p13-topic-low",
     ]);
+    expect(detail?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+      }),
+    ]));
+  });
+
+  it("stabilizes topic nodes from source stems when explicit topic is missing", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "p20-topic-low",
+      sourcePath: path.join(docsDir, "viewer-audit-outline.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "viewer audit baseline notes",
+    });
+    manager.upsertMemoryChunk({
+      id: "p20-topic-high",
+      sourcePath: path.join(docsDir, "viewer-audit-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "viewer audit final checklist",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p20-topic-low",
+        targetType: "chunk",
+        targetId: "p20-topic-low",
+        scoreTotal: 0.2,
+        sourceWeightScore: 0.1,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:p20-topic-high",
+        targetType: "chunk",
+        targetId: "p20-topic-high",
+        scoreTotal: 0.9,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+    ]);
+    store.createTask({
+      id: "p20-topic-task",
+      conversationId: "viewer-audit-conv",
+      sessionKey: "viewer-audit-conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Finalize viewer audit rollout",
+      summary: "Deliver the viewer audit checklist.",
+      startedAt: "2026-05-20T16:00:00.000Z",
+      finishedAt: "2026-05-20T16:20:00.000Z",
+      createdAt: "2026-05-20T16:00:00.000Z",
+      updatedAt: "2026-05-20T16:20:00.000Z",
+    });
+    store.linkTaskMemory("p20-topic-task", "p20-topic-low", "used");
+    store.linkTaskMemory("p20-topic-task", "p20-topic-high", "generated");
+
+    expect(manager.rebuildMemoryTreeNodes({ limit: 20, kind: "topic" })).toMatchObject({
+      kind: "topic",
+      totalNodes: 1,
+      totalEdges: 4,
+    });
+
+    const searchResults = manager.searchMemoryTreeNodes("viewer audit", {
+      limit: 5,
+      chunkLimitPerNode: 5,
+      filter: { kind: "topic" },
+    });
+    expect(searchResults[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "topic",
+        topicKey: "viewer-audit",
+        summaryVersion: "p20-topic-node-v1",
+        metadata: expect.objectContaining({
+          topic: "viewer-audit",
+          reasons: expect.arrayContaining(["source_stem"]),
+          treePipeline: expect.objectContaining({
+            pipelineVersion: "p21-tree-canonical-v1",
+            canonical: expect.objectContaining({
+              canonicalNodeKey: "tree:topic:private:coder:viewer-audit",
+              nodeFamilyKey: "tree:topic:private:-:viewer-audit",
+            }),
+            ingest: expect.objectContaining({
+              stage: "ingested",
+              evidenceChunkCount: 2,
+            }),
+            lifecycle: expect.objectContaining({
+              state: "buffered",
+              stable: false,
+            }),
+          }),
+        }),
+      }),
+    });
+    expect(searchResults[0]?.chunks.map((item) => item.id)).toEqual([
+      "p20-topic-high",
+      "p20-topic-low",
+    ]);
+    expect(searchResults[0]?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourcePath: expect.stringContaining("viewer-audit-outline.md"),
+      }),
+      expect.objectContaining({
+        sourcePath: expect.stringContaining("viewer-audit-summary.md"),
+      }),
+    ]));
+  });
+
+  it("merges topic alias variants into one canonical topic node", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "p20-alias-high",
+      sourcePath: path.join(docsDir, "viewer-audit-master.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer audit",
+      content: "viewer audit canonical summary",
+    });
+    manager.upsertMemoryChunk({
+      id: "p20-alias-mid",
+      sourcePath: path.join(docsDir, "viewer-audit-detail.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer_audit",
+      content: "viewer audit detail notes",
+    });
+    manager.upsertMemoryChunk({
+      id: "p20-alias-low",
+      sourcePath: path.join(docsDir, "viewer-audit-checklist.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer-audit-checklist",
+      content: "viewer audit checklist draft",
+    });
+
+    const store = (manager as any).store as {
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:p20-alias-high",
+        targetType: "chunk",
+        targetId: "p20-alias-high",
+        scoreTotal: 0.92,
+        sourceWeightScore: 0.7,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:p20-alias-mid",
+        targetType: "chunk",
+        targetId: "p20-alias-mid",
+        scoreTotal: 0.65,
+        sourceWeightScore: 0.45,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:p20-alias-low",
+        targetType: "chunk",
+        targetId: "p20-alias-low",
+        scoreTotal: 0.33,
+        sourceWeightScore: 0.2,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+      },
+    ]);
+
+    expect(manager.rebuildMemoryTreeNodes({ limit: 20, kind: "topic" })).toMatchObject({
+      kind: "topic",
+      totalNodes: 1,
+      totalEdges: 6,
+    });
+
+    const searchResults = manager.searchMemoryTreeNodes("viewer audit", {
+      limit: 5,
+      chunkLimitPerNode: 5,
+      filter: { kind: "topic" },
+    });
+    expect(searchResults[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "topic",
+        topicKey: "viewer-audit",
+        metadata: expect.objectContaining({
+          topic: "viewer-audit-checklist",
+          aliasKeys: expect.arrayContaining(["viewer-audit", "viewer-audit-checklist"]),
+          mergedSourceKeys: expect.arrayContaining(["viewer-audit", "viewer-audit-checklist"]),
+          treePipeline: expect.objectContaining({
+            pipelineVersion: "p21-tree-canonical-v1",
+            canonical: expect.objectContaining({
+              canonicalNodeKey: "tree:topic:private:-:viewer-audit",
+              nodeFamilyKey: "tree:topic:private:-:viewer-audit",
+              sourceCanonicalKeys: expect.arrayContaining([
+                expect.stringContaining("viewer-audit-master.md"),
+                expect.stringContaining("viewer-audit-detail.md"),
+                expect.stringContaining("viewer-audit-checklist.md"),
+              ]),
+              sourceFamilyKeys: expect.arrayContaining([
+                expect.stringContaining("viewer-audit-master.md"),
+                expect.stringContaining("viewer-audit-detail.md"),
+                expect.stringContaining("viewer-audit-checklist.md"),
+              ]),
+            }),
+            ingest: expect.objectContaining({
+              stage: "ingested",
+              evidenceChunkCount: 3,
+              sourceCanonicalCount: 3,
+            }),
+            lifecycle: expect.objectContaining({
+              state: "sealed",
+              stable: true,
+            }),
+          }),
+        }),
+      }),
+    });
+    expect(searchResults[0]?.chunks.map((item) => item.id)).toEqual([
+      "p20-alias-high",
+      "p20-alias-mid",
+      "p20-alias-low",
+    ]);
+    expect(searchResults[0]?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourcePath: expect.stringContaining("viewer-audit-master.md"),
+      }),
+      expect.objectContaining({
+        sourcePath: expect.stringContaining("viewer-audit-detail.md"),
+      }),
+      expect.objectContaining({
+        sourcePath: expect.stringContaining("viewer-audit-checklist.md"),
+      }),
+    ]));
   });
 
   it("rebuilds R1 conversation/day/project/agent nodes with chunk provenance", async () => {
@@ -947,6 +1243,552 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("rebuilds real profile/global nodes instead of falling back to task nodes", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "p18-profile-core",
+      sourcePath: path.join(stateDir, "MEMORY.md"),
+      sourceType: "file",
+      memoryType: "other",
+      category: "decision",
+      content: "Always keep diffs minimal and verify rollback steps before risky changes.",
+    });
+    manager.upsertMemoryChunk({
+      id: "p18-profile-derived",
+      sourcePath: path.join(stateDir, "sessions", "conv-18.session-memory.json"),
+      sourceType: "file",
+      memoryType: "session",
+      category: "experience",
+      content: "goal alpha final summary and reuse checklist for future resumable work.",
+    });
+    manager.upsertMemoryChunk({
+      id: "p18-global-focus",
+      sourcePath: path.join(docsDir, "roadmap.md"),
+      sourceType: "file",
+      memoryType: "other",
+      category: "fact",
+      content: "workspace focus is goal alpha rollout and goal beta regression guard.",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+    };
+    store.createTask({
+      id: "p18-task-1",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Ship goal alpha rollout",
+      summary: "Finalize goal alpha rollout checklist.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-21T09:00:00.000Z",
+      finishedAt: "2026-05-21T09:20:00.000Z",
+      createdAt: "2026-05-21T09:00:00.000Z",
+      updatedAt: "2026-05-21T09:20:00.000Z",
+    });
+    store.createTask({
+      id: "p18-task-2",
+      conversationId: "goal:beta:conv",
+      sessionKey: "goal:beta:conv",
+      agentId: "reviewer",
+      source: "chat",
+      status: "partial",
+      title: "Review goal beta regression guard",
+      summary: "Check goal beta regression guard before release.",
+      metadata: { goalId: "goal-beta" },
+      startedAt: "2026-05-21T10:00:00.000Z",
+      finishedAt: "2026-05-21T10:10:00.000Z",
+      createdAt: "2026-05-21T10:00:00.000Z",
+      updatedAt: "2026-05-21T10:10:00.000Z",
+    });
+    store.linkTaskMemory("p18-task-1", "p18-profile-core", "used");
+    store.linkTaskMemory("p18-task-1", "p18-profile-derived", "generated");
+    store.linkTaskMemory("p18-task-2", "p18-global-focus", "used");
+
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "profile" })).toMatchObject({
+      kind: "profile",
+      totalNodes: 2,
+      totalEdges: 6,
+    });
+    expect(manager.listMemoryTreeSources(20)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "builtin:memory:core-note",
+        sourceKind: "memory_core_note",
+      }),
+      expect.objectContaining({
+        id: "builtin:sessions:session-memory",
+        sourceKind: "session_memory",
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("roadmap.md"),
+      }),
+    ]));
+    const profileNodes = manager.listMemoryTreeNodes(10, { kind: "profile" });
+    expect(profileNodes.map((item) => item.id)).toEqual(["profile:reviewer", "profile:coder"]);
+    const reviewerNode = profileNodes.find((item) => item.id === "profile:reviewer");
+    const coderNode = profileNodes.find((item) => item.id === "profile:coder");
+    expect(coderNode).toMatchObject({
+      kind: "profile",
+      agentId: "coder",
+      summaryVersion: "p18-profile-node-v1",
+      metadata: expect.objectContaining({
+        treePipeline: expect.objectContaining({
+          pipelineVersion: "p21-tree-canonical-v1",
+          canonical: expect.objectContaining({
+            canonicalNodeKey: "tree:profile:private:coder:coder",
+            nodeFamilyKey: "tree:profile:private:-:coder",
+          }),
+          ingest: expect.objectContaining({
+            stage: "ingested",
+            evidenceChunkCount: 2,
+          }),
+          lifecycle: expect.objectContaining({
+            state: "buffered",
+            stable: false,
+          }),
+        }),
+      }),
+    });
+    expect(reviewerNode).toMatchObject({
+      metadata: expect.objectContaining({
+        treePipeline: expect.objectContaining({
+          lifecycle: expect.objectContaining({
+            state: "admitted",
+            stable: false,
+          }),
+        }),
+      }),
+    });
+    expect(coderNode?.summary).toContain("goal-alpha");
+    const coderDetail = manager.getMemoryTreeNodeDetail("profile:coder", { chunkLimit: 5 });
+    expect(coderDetail?.chunks.map((item) => item.id)).toEqual([
+      "p18-profile-core",
+      "p18-profile-derived",
+    ]);
+    expect(coderDetail?.sources).toEqual([
+      expect.objectContaining({
+        id: "builtin:memory:core-note",
+        sourceKind: "memory_core_note",
+      }),
+      expect.objectContaining({
+        id: "builtin:sessions:session-memory",
+        sourceKind: "session_memory",
+      }),
+    ]);
+    expect(coderDetail?.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        childId: "p18-profile-core",
+        metadata: expect.objectContaining({
+          canonicalSourceKey: expect.any(String),
+          sourceFamilyKey: expect.any(String),
+          sourceKind: "memory_core_note",
+          taskIds: expect.arrayContaining(["p18-task-1"]),
+          linkRelations: expect.arrayContaining(["used"]),
+        }),
+      }),
+      expect.objectContaining({
+        childId: "p18-profile-derived",
+        metadata: expect.objectContaining({
+          canonicalSourceKey: expect.any(String),
+          sourceFamilyKey: expect.any(String),
+          sourceKind: "session_memory",
+          taskIds: expect.arrayContaining(["p18-task-1"]),
+          linkRelations: expect.arrayContaining(["generated"]),
+        }),
+      }),
+      expect.objectContaining({
+        childType: "source",
+        childId: "builtin:memory:core-note",
+        metadata: expect.objectContaining({
+          sourceKind: "memory_core_note",
+          evidenceChunkCount: 1,
+        }),
+      }),
+      expect.objectContaining({
+        childType: "source",
+        childId: "builtin:sessions:session-memory",
+        metadata: expect.objectContaining({
+          sourceKind: "session_memory",
+          evidenceChunkCount: 1,
+        }),
+      }),
+    ]));
+
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "global" })).toMatchObject({
+      kind: "global",
+      totalNodes: 1,
+      totalEdges: 6,
+    });
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "project" })).toMatchObject({
+      kind: "project",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "agent" })).toMatchObject({
+      kind: "agent",
+      totalNodes: 2,
+      totalEdges: 3,
+    });
+    const globalNode = manager.listMemoryTreeNodes(10, { kind: "global" })[0];
+    expect(globalNode).toMatchObject({
+      id: "global:workspace",
+      kind: "global",
+      summaryVersion: "p18-global-node-v1",
+      metadata: expect.objectContaining({
+        treePipeline: expect.objectContaining({
+          pipelineVersion: "p21-tree-canonical-v1",
+          canonical: expect.objectContaining({
+            canonicalNodeKey: "tree:global:private:-:workspace",
+            nodeFamilyKey: "tree:global:private:-:workspace",
+          }),
+          ingest: expect.objectContaining({
+            stage: "ingested",
+            evidenceChunkCount: 3,
+          }),
+          lifecycle: expect.objectContaining({
+            state: "sealed",
+            stable: true,
+          }),
+        }),
+      }),
+    });
+    expect(globalNode?.summary).toContain("goal-alpha");
+    expect(globalNode?.summary).toContain("goal-beta");
+    const globalSearch = manager.searchMemoryTreeNodes("goal beta regression guard", {
+      limit: 2,
+      filter: { kind: "global" },
+      chunkLimitPerNode: 5,
+    });
+    expect(globalSearch[0]?.node.id).toBe("global:workspace");
+    expect(globalSearch[0]?.chunks.map((item) => item.id)).toEqual([
+      "p18-profile-core",
+      "p18-profile-derived",
+      "p18-global-focus",
+    ]);
+    expect(globalSearch[0]?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceKind: "memory_core_note",
+      }),
+      expect.objectContaining({
+        sourceKind: "session_memory",
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("roadmap.md"),
+      }),
+    ]));
+    const highLevelGlobalSearch = manager.searchMemoryTreeNodes("global focus goal-alpha", {
+      limit: 3,
+      chunkLimitPerNode: 5,
+    });
+    expect(highLevelGlobalSearch[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "global",
+        id: "global:workspace",
+      }),
+      matchReasons: expect.arrayContaining(["intent:global"]),
+    });
+    const highLevelProfileSearch = manager.searchMemoryTreeNodes("coder profile reuse checklist", {
+      limit: 3,
+      chunkLimitPerNode: 5,
+    });
+    expect(highLevelProfileSearch[0]).toMatchObject({
+      node: expect.objectContaining({
+        kind: "profile",
+        id: "profile:coder",
+      }),
+      matchReasons: expect.arrayContaining(["intent:profile"]),
+    });
+  });
+
+  it("refreshes managed tree lifecycle when memory and task sequences advance", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "lifecycle-core",
+      sourcePath: path.join(stateDir, "MEMORY.md"),
+      sourceType: "file",
+      memoryType: "other",
+      category: "decision",
+      content: "keep rollout notes aligned with current delivery goals.",
+    });
+    manager.upsertMemoryChunk({
+      id: "lifecycle-global",
+      sourcePath: path.join(docsDir, "roadmap.md"),
+      sourceType: "file",
+      memoryType: "other",
+      category: "fact",
+      content: "workspace focus starts from goal alpha rollout.",
+    });
+
+    const store = (manager as any).store as {
+      createTask: (task: Record<string, unknown>) => void;
+      linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
+    };
+    store.createTask({
+      id: "lifecycle-task-1",
+      conversationId: "goal:alpha:conv",
+      sessionKey: "goal:alpha:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Ship goal alpha rollout",
+      summary: "Finalize goal alpha rollout checklist.",
+      metadata: { goalId: "goal-alpha", goalSession: true },
+      startedAt: "2026-05-21T09:00:00.000Z",
+      finishedAt: "2026-05-21T09:20:00.000Z",
+      createdAt: "2026-05-21T09:00:00.000Z",
+      updatedAt: "2026-05-21T09:20:00.000Z",
+    });
+    store.createTask({
+      id: "lifecycle-task-2",
+      conversationId: "goal:beta:conv",
+      sessionKey: "goal:beta:conv",
+      agentId: "reviewer",
+      source: "chat",
+      status: "partial",
+      title: "Review goal beta guard",
+      summary: "Check goal beta regression guard before release.",
+      metadata: { goalId: "goal-beta" },
+      startedAt: "2026-05-21T10:00:00.000Z",
+      finishedAt: "2026-05-21T10:10:00.000Z",
+      createdAt: "2026-05-21T10:00:00.000Z",
+      updatedAt: "2026-05-21T10:10:00.000Z",
+    });
+    store.linkTaskMemory("lifecycle-task-1", "lifecycle-core", "used");
+    store.linkTaskMemory("lifecycle-task-2", "lifecycle-global", "used");
+
+    const initial = await manager.ensureManagedMemoryTreeFresh({
+      kinds: ["profile", "global"],
+      nodeLimit: 10,
+      rebuildSources: false,
+    });
+    expect(initial.rebuiltKinds).toEqual(["profile", "global"]);
+    expect(initial.after.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "profile",
+        dirty: false,
+      }),
+      expect.objectContaining({
+        kind: "global",
+        dirty: false,
+      }),
+    ]));
+
+    const clean = await manager.ensureManagedMemoryTreeFresh({
+      kinds: ["profile", "global"],
+      nodeLimit: 10,
+      rebuildSources: false,
+    });
+    expect(clean.rebuiltKinds).toEqual([]);
+
+    manager.upsertMemoryChunk({
+      id: "lifecycle-new",
+      sourcePath: path.join(docsDir, "goal-gamma-plan.md"),
+      sourceType: "file",
+      memoryType: "other",
+      category: "fact",
+      content: "goal gamma rollout now joins the workspace focus.",
+    });
+    store.createTask({
+      id: "lifecycle-task-3",
+      conversationId: "goal:gamma:conv",
+      sessionKey: "goal:gamma:conv",
+      agentId: "coder",
+      source: "chat",
+      status: "success",
+      title: "Plan goal gamma rollout",
+      summary: "Prepare the first goal gamma rollout plan.",
+      metadata: { goalId: "goal-gamma" },
+      startedAt: "2026-05-21T11:00:00.000Z",
+      finishedAt: "2026-05-21T11:15:00.000Z",
+      createdAt: "2026-05-21T11:00:00.000Z",
+      updatedAt: "2026-05-21T11:15:00.000Z",
+    });
+    store.linkTaskMemory("lifecycle-task-3", "lifecycle-new", "generated");
+
+    const refreshed = await manager.ensureManagedMemoryTreeFresh({
+      kinds: ["profile", "global"],
+      nodeLimit: 10,
+      rebuildSources: false,
+    });
+    expect(refreshed.rebuiltKinds).toEqual(["profile", "global"]);
+    expect(refreshed.before.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "profile",
+        dirty: true,
+        reasons: expect.arrayContaining(["memory_changed", "task_changed"]),
+      }),
+      expect.objectContaining({
+        kind: "global",
+        dirty: true,
+        reasons: expect.arrayContaining(["memory_changed", "task_changed"]),
+      }),
+    ]));
+
+    const coderNode = manager.listMemoryTreeNodes(10, { kind: "profile" }).find((item) => item.id === "profile:coder");
+    const globalNode = manager.listMemoryTreeNodes(10, { kind: "global" })[0];
+    expect(coderNode?.summary).toContain("goal-gamma");
+    expect(globalNode?.summary).toContain("goal-gamma");
+    expect(globalNode?.metadata).toMatchObject({
+      rolledUpSourceCount: 3,
+    });
+  });
+
+  it("skips a second source rebuild while the first one is still running", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "source-single-flight",
+      sourcePath: path.join(docsDir, "single-flight.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "single flight source rebuild guard",
+    });
+
+    const originalPreviewSourceInventory = manager.previewSourceInventory.bind(manager);
+    const previewReport = await originalPreviewSourceInventory();
+    let resolvePreviewGate!: (report: typeof previewReport) => void;
+    const previewGate = new Promise<typeof previewReport>((resolve) => {
+      resolvePreviewGate = resolve;
+    });
+    manager.previewSourceInventory = vi.fn(() => previewGate) as unknown as typeof manager.previewSourceInventory;
+
+    const firstRunPromise = manager.rebuildMemoryTreeSources({
+      triggerSource: "memory.tree.source.rebuild",
+    });
+    const secondRun = await manager.rebuildMemoryTreeSources({
+      triggerSource: "memory.tree.source.rebuild",
+    });
+
+    expect(secondRun).toMatchObject({
+      skipped: true,
+      skipReason: "reentry_blocked",
+      totalSources: 0,
+      inventorySources: 0,
+      dynamicSources: 0,
+    });
+
+    resolvePreviewGate(previewReport);
+    const firstRun = await firstRunPromise;
+    expect(firstRun.skipped).toBeUndefined();
+
+    const jobReport = manager.getMemoryTreeJobReport();
+    expect(jobReport.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        jobKey: "source_rebuild:source",
+        status: "completed",
+        skipCount: 1,
+        lastSkipReason: "reentry_blocked",
+      }),
+    ]));
+  });
+
+  it("skips a profile node rebuild while the node job is already running", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    const store = (manager as any).store as {
+      getMeta: (key: string) => string | null;
+      setMeta: (key: string, value: string) => void;
+    };
+    recordMemoryTreeJobLedgerStart(store, {
+      jobType: "node_rebuild",
+      targetKey: "profile",
+      startedAt: "2026-05-21T12:00:00.000Z",
+      triggerSource: "memory.tree.node.rebuild",
+    });
+
+    const skipped = manager.rebuildMemoryTreeNodes({
+      kind: "profile",
+      triggerSource: "memory.tree.node.rebuild",
+    });
+
+    expect(skipped).toMatchObject({
+      skipped: true,
+      skipReason: "reentry_blocked",
+      kind: "profile",
+      totalNodes: 0,
+      totalEdges: 0,
+    });
+
+    const jobReport = manager.getMemoryTreeJobReport({
+      kinds: ["profile"],
+    });
+    expect(jobReport.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        jobKey: "node_rebuild:profile",
+        skipCount: 1,
+        lastSkipReason: "reentry_blocked",
+        lastSkippedTriggerSource: "memory.tree.node.rebuild",
+      }),
+    ]));
+  });
+
+  it("skips score rebuild during cooldown and records a retry window", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store as {
+      getMeta: (key: string) => string | null;
+      setMeta: (key: string, value: string) => void;
+    };
+    const failedAt = new Date(Date.now() - 1_000).toISOString();
+    recordMemoryTreeJobLedgerFailure(store, {
+      jobType: "score_rebuild",
+      targetKey: "chunk_scores",
+      failedAt,
+      error: new Error("score rebuild failed"),
+      triggerSource: "memory.tree.score.rebuild",
+    });
+
+    const skipped = manager.rebuildMemoryTreeScores({
+      triggerSource: "memory.tree.score.rebuild",
+    });
+
+    expect(skipped).toMatchObject({
+      skipped: true,
+      skipReason: "cooldown_active",
+      scoreVersion: "v1_rule_only",
+      totalScores: 0,
+    });
+
+    const jobReport = manager.getMemoryTreeJobReport();
+    expect(jobReport.headline).toContain("next retry");
+    expect(jobReport.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        jobKey: "score_rebuild:chunk_scores",
+        status: "cooldown",
+        skipCount: 1,
+        lastSkipReason: "cooldown_active",
+        lastFailureError: "score rebuild failed",
+        retryAfterMs: expect.any(Number),
+      }),
+    ]));
+  });
+
   it("uses R2 node-assisted routing before chunk fallback and exposes diagnostics", async () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -1052,7 +1894,15 @@ describe("MemoryManager guardrails", () => {
         nodeAssisted: {
           enabled: true,
           policy: "node_assisted",
-          nodeHitCount: 1,
+          routeClass: "project_status",
+          routeReasons: expect.arrayContaining(["term:project"]),
+          routedKinds: expect.arrayContaining(["global", "project", "topic"]),
+          preferHighLevel: true,
+          chunkLimitPerNode: 3,
+          answerSufficient: true,
+          evidenceExpanded: false,
+          evidenceChunkCount: 0,
+          highLevelOnly: true,
           injectedChunkCount: 1,
           fallbackApplied: true,
           returnedMix: {
@@ -1061,12 +1911,6 @@ describe("MemoryManager guardrails", () => {
           },
           nodeBackedShare: 0.5,
           chunkOnlyShare: 0.5,
-          topNodeHits: [
-            expect.objectContaining({
-              kind: "project",
-              chunkCount: 1,
-            }),
-          ],
         },
         stages: {
           raw: {
@@ -1084,9 +1928,138 @@ describe("MemoryManager guardrails", () => {
           },
         },
       });
+      expect(execution.diagnostics.nodeAssisted?.selectedNodeIds).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^project:/)]),
+      );
+      expect(execution.diagnostics.nodeAssisted?.nodeHitCount ?? 0).toBeGreaterThanOrEqual(1);
+      expect(execution.diagnostics.nodeAssisted?.topNodeHits).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "project",
+            chunkCount: 1,
+          }),
+        ]),
+      );
     } finally {
       store.searchHybrid = originalSearchHybrid;
     }
+  });
+
+  it("expands topic evidence chunks when high-level topic routing is not enough", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      nodeAssistedRetrievalEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "r2-topic-high",
+      sourcePath: path.join(docsDir, "viewer-audit-summary.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer audit",
+      content: "viewer audit final summary and rollout status",
+    });
+    manager.upsertMemoryChunk({
+      id: "r2-topic-mid",
+      sourcePath: path.join(docsDir, "viewer-audit-notes.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer_audit",
+      content: "viewer audit detail notes and evidence trail",
+    });
+    manager.upsertMemoryChunk({
+      id: "r2-topic-low",
+      sourcePath: path.join(docsDir, "viewer-audit-checklist.md"),
+      sourceType: "file",
+      memoryType: "other",
+      topic: "viewer-audit-checklist",
+      content: "viewer audit checklist evidence",
+    });
+
+    const store = (manager as any).store as {
+      upsertMemoryScores: (records: Array<Record<string, unknown>>) => void;
+    };
+    store.upsertMemoryScores([
+      {
+        id: "score:v1_rule_only:chunk:r2-topic-high",
+        targetType: "chunk",
+        targetId: "r2-topic-high",
+        scoreTotal: 0.94,
+        sourceWeightScore: 0.72,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "curated" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:r2-topic-mid",
+        targetType: "chunk",
+        targetId: "r2-topic-mid",
+        scoreTotal: 0.61,
+        sourceWeightScore: 0.4,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "derived" },
+      },
+      {
+        id: "score:v1_rule_only:chunk:r2-topic-low",
+        targetType: "chunk",
+        targetId: "r2-topic-low",
+        scoreTotal: 0.31,
+        sourceWeightScore: 0.18,
+        scoreVersion: "v1_rule_only",
+        rationale: { sourceClass: "raw" },
+      },
+    ]);
+
+    manager.rebuildMemoryTreeNodes({ limit: 20, kind: "topic" });
+
+    const execution = await manager.searchWithDiagnostics("viewer audit details", {
+      limit: 2,
+      includeContent: false,
+      filter: { topic: "viewer-audit" },
+      routingPolicy: "node_assisted",
+    });
+
+    expect(execution.items.map((item) => item.id)).toEqual([
+      "r2-topic-high",
+      "r2-topic-mid",
+    ]);
+    expect(execution.items.map((item) => item.metadata?.memoryTree?.answerStage)).toEqual([
+      "high_level",
+      "evidence",
+    ]);
+    expect(execution.diagnostics).toMatchObject({
+      routingPolicy: "node_assisted",
+      nodeAssisted: {
+        enabled: true,
+        policy: "node_assisted",
+        routeClass: "topic_lookup",
+        routeReasons: expect.arrayContaining(["filter:topic"]),
+        routedKinds: expect.arrayContaining(["topic"]),
+        preferHighLevel: false,
+        chunkLimitPerNode: 3,
+        answerSufficient: false,
+        evidenceExpanded: true,
+        evidenceChunkCount: 2,
+        highLevelOnly: false,
+        selectedNodeIds: expect.arrayContaining([expect.any(String)]),
+        nodeHitCount: 1,
+        injectedChunkCount: 3,
+        fallbackApplied: false,
+      },
+      stages: {
+        raw: {
+          count: 0,
+          topHits: [],
+        },
+        returned: {
+          count: 2,
+          topHits: [
+            expect.objectContaining({ id: "r2-topic-high" }),
+            expect.objectContaining({ id: "r2-topic-mid" }),
+          ],
+        },
+      },
+    });
   });
 
   it("reviews and applies P14 dedup reports by archiving duplicate chunks and lowering their scores", async () => {
@@ -1198,6 +2171,120 @@ describe("MemoryManager guardrails", () => {
     expect(keeperScore?.scoreTotal).toBe(0.85);
   });
 
+  it("applies only archive-suggested dedup groups and skips keep/review groups", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    manager.upsertMemoryChunk({
+      id: "archive-keep",
+      sourcePath: "memory/archive-keep.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "archive-ready duplicate",
+      visibility: "private",
+    });
+    manager.upsertMemoryChunk({
+      id: "archive-remove",
+      sourcePath: "memory/archive-remove.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "archive-ready duplicate",
+      visibility: "private",
+    });
+    manager.upsertMemoryChunk({
+      id: "keep-keep",
+      sourcePath: "external/keep-keep.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "keep this duplicate pair",
+      visibility: "private",
+    });
+    manager.upsertMemoryChunk({
+      id: "keep-remove",
+      sourcePath: "external/keep-remove.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "keep this duplicate pair",
+      visibility: "private",
+    });
+    manager.upsertMemoryChunk({
+      id: "review-keep",
+      sourcePath: "memory/review-keep.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "review this duplicate pair",
+      visibility: "shared",
+    });
+    manager.upsertMemoryChunk({
+      id: "review-remove",
+      sourcePath: "external/review-remove.md",
+      sourceType: "manual",
+      memoryType: "daily",
+      content: "review this duplicate pair",
+      visibility: "private",
+    });
+
+    const preview = manager.previewExactDedup({ memoryType: "daily" }, { maxGroups: 10 });
+    expect(preview.governance).toMatchObject({
+      suggestedArchiveGroupCount: 1,
+      suggestedKeepGroupCount: 1,
+      suggestedReviewGroupCount: 1,
+    });
+
+    const report = manager.persistMemoryTreeDedupPreviewReport(preview, {
+      filter: { memoryType: "daily" },
+      maxGroups: 10,
+      createdBy: "test",
+    });
+    manager.reviewMemoryTreeReport(report.id, "approved", {
+      reviewedBy: "tester",
+      note: "apply only archive candidates",
+    });
+
+    const applied = await manager.applyMemoryTreeReport(report.id, {
+      appliedBy: "tester",
+      note: "respect dedup governance suggestions",
+    });
+    expect(applied.updatedChunkCount).toBe(1);
+    expect(applied.updatedScoreCount).toBe(1);
+    expect(applied.skippedChunkIds).toEqual(expect.arrayContaining([
+      "keep-remove",
+      "review-remove",
+    ]));
+    expect(applied.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "dedup_archive",
+        chunkId: "archive-remove",
+      }),
+      expect.objectContaining({
+        kind: "dedup_skip",
+        chunkId: "keep-remove",
+        reason: "governance_keep",
+        skipped: true,
+      }),
+      expect.objectContaining({
+        kind: "dedup_skip",
+        chunkId: "review-remove",
+        reason: "governance_review",
+        skipped: true,
+      }),
+    ]));
+
+    expect(manager.getMemory("archive-remove")?.metadata).toMatchObject({
+      memoryTree: {
+        governance: {
+          archived: true,
+          archiveReason: "dedup_preview_remove",
+        },
+      },
+    });
+    expect(manager.getMemory("keep-remove")?.metadata?.memoryTree).toBeUndefined();
+    expect(manager.getMemory("review-remove")?.metadata?.memoryTree).toBeUndefined();
+  });
+
   it("previews and applies P15 external Obsidian ingest through report review/apply", async () => {
     const obsidianDir = path.join(rootDir, "obsidian-vault");
     const notePath = path.join(obsidianDir, "Projects", "viewer-audit.md");
@@ -1243,6 +2330,15 @@ describe("MemoryManager guardrails", () => {
     expect(report.summary).toMatchObject({
       sourceId: "configured:obsidian-vault:1",
       estimatedChunks: expect.any(Number),
+      governance: expect.objectContaining({
+        headline: expect.stringContaining("External ingest governance"),
+        reviewSuggestionCount: 0,
+      }),
+    });
+    expect(report.details).toMatchObject({
+      governance: expect.objectContaining({
+        topSuggestions: expect.any(Array),
+      }),
     });
 
     const reviewed = manager.reviewMemoryTreeReport(report.id, "approved", {
@@ -1292,6 +2388,20 @@ describe("MemoryManager guardrails", () => {
     expect(scores.length).toBeGreaterThan(0);
     expect(scores.every((item) => item.sourceId === "configured:obsidian-vault:1")).toBe(true);
 
+    const appliedJobReport = manager.getMemoryTreeJobReport({
+      kinds: ["topic", "profile", "global"],
+    });
+    expect(appliedJobReport.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        jobKey: "source_rebuild:source",
+        triggerSource: "external ingest apply",
+      }),
+      expect.objectContaining({
+        jobKey: "score_rebuild:chunk_scores",
+        triggerSource: "external ingest apply",
+      }),
+    ]));
+
     await fs.writeFile(notePath, "# Viewer Audit\n\nRescanned content should replace the original memory.\n", "utf-8");
     await fs.rm(stalePath, { force: true });
 
@@ -1327,6 +2437,22 @@ describe("MemoryManager guardrails", () => {
 
     const rescanReport = manager.persistMemoryTreeExternalIngestReport(rescanPreview, {
       createdBy: "test",
+    });
+    expect(rescanReport.summary).toMatchObject({
+      governance: expect.objectContaining({
+        keepSuggestionCount: 1,
+        sameSourceRescanFileCount: 1,
+      }),
+    });
+    expect(rescanReport.details).toMatchObject({
+      governance: expect.objectContaining({
+        topSuggestions: [
+          expect.objectContaining({
+            category: "external_rescan_replace",
+            suggestedAction: "keep",
+          }),
+        ],
+      }),
     });
     manager.reviewMemoryTreeReport(rescanReport.id, "approved", {
       reviewedBy: "tester",

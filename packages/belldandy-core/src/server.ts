@@ -1613,11 +1613,16 @@ async function handleReq(
     "memory.tree.report.inventory.preview",
     "memory.tree.report.external_ingest.preview",
     "memory.tree.report.dedup.preview",
+    "memory.tree.report.shared_governance.preview",
     "memory.tree.report.list",
     "memory.tree.report.get",
     "memory.tree.report.export_markdown",
     "memory.tree.report.review",
     "memory.tree.report.apply",
+    "memory.tree.lifecycle.get",
+    "memory.tree.lifecycle.report",
+    "memory.tree.job.report",
+    "memory.tree.lifecycle.ensure",
     "memory.tree.node.rebuild",
     "memory.tree.node.list",
     "memory.tree.node.search",
@@ -2054,11 +2059,16 @@ async function handleReq(
     case "memory.tree.report.inventory.preview":
     case "memory.tree.report.external_ingest.preview":
     case "memory.tree.report.dedup.preview":
+    case "memory.tree.report.shared_governance.preview":
     case "memory.tree.report.list":
     case "memory.tree.report.get":
     case "memory.tree.report.export_markdown":
     case "memory.tree.report.review":
     case "memory.tree.report.apply":
+    case "memory.tree.lifecycle.get":
+    case "memory.tree.lifecycle.report":
+    case "memory.tree.job.report":
+    case "memory.tree.lifecycle.ensure":
     case "memory.tree.node.rebuild":
     case "memory.tree.node.list":
     case "memory.tree.node.search":
@@ -2118,6 +2128,7 @@ async function handleReq(
         residentMemoryManagers: ctx.residentMemoryManagers,
         agentRegistry: ctx.agentRegistry,
         skillRegistry: ctx.skillRegistry,
+        teamSharedMemoryEnabled: process.env.BELLDANDY_TEAM_SHARED_MEMORY_ENABLED === "true",
         primaryModelConfig: ctx.primaryModelConfig,
         logger: {
           debug: (message, data) => ctx.log.debug("memory-experience", message, data),

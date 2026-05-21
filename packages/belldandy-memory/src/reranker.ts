@@ -35,6 +35,8 @@ const DEFAULT_TYPE_WEIGHTS: Record<MemoryType, number> = {
   core: 1.3,
   daily: 1.0,
   session: 0.9,
+  dream_index: 0.85,
+  dream_note: 0.95,
   other: 0.8,
 };
 
@@ -90,7 +92,7 @@ export class ResultReranker {
       }
 
       // 3. Diversity penalty（同源降权）
-      const source = result.sourcePath;
+      const source = readSearchResultDiversityKey(result);
       const seen = sourceCount.get(source) ?? 0;
       if (seen > 0) {
         // 每多出现一次，额外乘以 (1 - penalty)
@@ -207,4 +209,11 @@ export class ResultReranker {
       return 1.0;
     }
   }
+}
+
+function readSearchResultDiversityKey(result: MemorySearchResult): string {
+  const familyKey = typeof (result.metadata as any)?.memoryTree?.sourceFamilyKey === "string"
+    ? String((result.metadata as any).memoryTree.sourceFamilyKey).trim()
+    : "";
+  return familyKey || result.sourcePath;
 }

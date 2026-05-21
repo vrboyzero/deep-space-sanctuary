@@ -70,6 +70,11 @@ test("gateway handshake and message.send streams chat", async () => {
   expect(hello?.methods).toContain("pairing.approve");
   expect(hello?.methods).toContain("conversation.run.stop");
   expect(hello?.methods).toContain("memory.tree.report.inventory.preview");
+  expect(hello?.methods).toContain("memory.tree.report.shared_governance.preview");
+  expect(hello?.methods).toContain("memory.tree.lifecycle.get");
+  expect(hello?.methods).toContain("memory.tree.lifecycle.report");
+  expect(hello?.methods).toContain("memory.tree.job.report");
+  expect(hello?.methods).toContain("memory.tree.lifecycle.ensure");
   expect(hello?.methods).toContain("memory.tree.node.rebuild");
 
   await waitFor(() => frames.some((f) => f.type === "event" && f.event === "pairing.required"));

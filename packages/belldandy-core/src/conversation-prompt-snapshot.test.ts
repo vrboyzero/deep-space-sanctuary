@@ -153,6 +153,8 @@ test("renderConversationPromptSnapshotText includes explainability sidecar when 
 test("buildConversationPromptSnapshotArtifact summarizes R5 auto-recall observability metrics", () => {
   const artifact = buildConversationPromptSnapshotArtifact({
     snapshot: {
+      conversationId: "conversation-r5-auto-recall",
+      createdAt: 123,
       systemPrompt: "system prompt body",
       messages: [{ role: "system", content: "system prompt body" }],
       hookSystemPromptUsed: false,

@@ -29,6 +29,15 @@ type MindProfileMemorySnippetView = {
   text: string;
 };
 
+type MindProfileTreeNodeView = {
+  nodeId: string;
+  kind: "profile" | "global";
+  title?: string;
+  summary: string;
+  chunkCount: number;
+  updatedAt?: string;
+};
+
 export type MindProfileSnapshot = {
   summary: {
     available: boolean;
@@ -72,6 +81,8 @@ export type MindProfileSnapshot = {
   profile: {
     headline: string;
     summaryLines: string[];
+    treeSummaryLines?: string[];
+    treeNodes?: MindProfileTreeNodeView[];
   };
 };
 
@@ -159,6 +170,16 @@ function buildMemorySnippetText(item: { snippet?: string; summary?: string; cont
   return truncateText(toPlainLine(item.summary || item.snippet || item.content), 100);
 }
 
+function buildTreeNodeSummaryLine(node: MindProfileTreeNodeView): string {
+  const label = node.kind === "profile" ? "Profile tree" : "Global tree";
+  const summary = truncateText(toPlainLine(node.summary), 140);
+  if (!summary) {
+    return "";
+  }
+  const evidenceSuffix = node.chunkCount > 0 ? `, evidence=${node.chunkCount}` : "";
+  return `${label}: ${summary}${evidenceSuffix}`;
+}
+
 function buildMemorySummary(options: {
   label: string;
   count: number;
@@ -186,6 +207,72 @@ function resolveSelectedRecord(
     if (matched) return matched;
   }
   return records.find((record) => record.agentId === "default") ?? records[0];
+}
+
+function readNodeChunkCount(metadata: Record<string, unknown> | undefined): number {
+  const candidates = [
+    metadata?.chunkCount,
+    metadata?.totalChunkCount,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+  }
+  return 0;
+}
+
+async function listMindProfileTreeNodes(
+  selectedRecord: ScopedMemoryManagerRecord | undefined,
+  selectedAgentId: string,
+): Promise<MindProfileTreeNodeView[]> {
+  const manager = selectedRecord?.manager;
+  if (!manager) {
+    return [];
+  }
+
+  const readNodes = (): MindProfileTreeNodeView[] => {
+    const nodes = [
+      manager.listMemoryTreeNodes(1, { kind: "profile", agentId: selectedAgentId })[0],
+      manager.listMemoryTreeNodes(1, { kind: "global" })[0],
+    ].filter(Boolean);
+    return nodes.map((node) => ({
+      nodeId: node!.id,
+      kind: node!.kind === "global" ? "global" as const : "profile" as const,
+      title: node!.title,
+      summary: node!.summary,
+      chunkCount: readNodeChunkCount(node!.metadata),
+      updatedAt: node!.updatedAt ?? node!.timeTo ?? node!.timeFrom,
+    })).filter((node) => node.summary.trim().length > 0);
+  };
+
+  const managedKinds: Array<"profile" | "global"> = ["profile", "global"];
+  let treeNodes = readNodes();
+  let shouldEnsure = treeNodes.length < managedKinds.length;
+  try {
+    const lifecycle = manager.getMemoryTreeLifecycleSnapshot({ kinds: managedKinds });
+    shouldEnsure = shouldEnsure || lifecycle.nodes.some((state) => state.dirty || !state.nodePresent);
+  } catch {
+    // snapshot 构建保持 best-effort，生命周期读取失败时继续使用当前可见节点
+  }
+  if (!shouldEnsure) {
+    return treeNodes;
+  }
+
+  try {
+    await manager.ensureManagedMemoryTreeFresh({
+      kinds: managedKinds,
+      nodeLimit: 20,
+      rebuildSources: false,
+      triggerSource: "mind-profile preflight",
+    });
+  } catch {
+    // mind/profile snapshot 不能因为树层重建失败而阻断运行时摘要
+  }
+
+  treeNodes = readNodes();
+  return treeNodes;
 }
 
 export async function buildMindProfileSnapshot(input: {
@@ -216,6 +303,10 @@ export async function buildMindProfileSnapshot(input: {
   const userProfileFileSummary = extractMeaningfulLines(userProfileFileContent, 1)[0];
   const privateMemoryFileSummary = extractMeaningfulLines(privateMemoryFileContent, 1)[0];
   const sharedMemoryFileSummary = extractMeaningfulLines(sharedMemoryFileContent, 1)[0];
+  const treeNodes = await listMindProfileTreeNodes(selectedRecord, selectedAgentId);
+  const treeSummaryLines = treeNodes
+    .map((node) => buildTreeNodeSummaryLine(node))
+    .filter(Boolean);
 
   const privateMemoryCount = selectedRecord?.manager.countChunks({
     agentId: selectedAgentId,
@@ -299,6 +390,7 @@ export async function buildMindProfileSnapshot(input: {
     hasUserProfile
       ? `User profile: ${truncateText(identity.userName || "-", 48)}${identity.userAvatar ? ` / ${truncateText(identity.userAvatar, 24)}` : ""}`
       : undefined,
+    ...treeSummaryLines,
     userProfileFileSummary
       ? `USER.md: ${userProfileFileSummary}`
       : undefined,
@@ -310,7 +402,7 @@ export async function buildMindProfileSnapshot(input: {
     ...sharedSnippets.map((item) => `Shared recent: ${item.text}`),
   ], 6);
 
-  const profileHeadline = summaryLines[0] || "Mind/profile snapshot is currently empty";
+  const profileHeadline = treeSummaryLines[0] || summaryLines[0] || "Mind/profile snapshot is currently empty";
   const headlineParts = [
     hasUserProfile ? "user ready" : "user missing",
     `private ${privateMemoryCount}`,
@@ -379,6 +471,8 @@ export async function buildMindProfileSnapshot(input: {
     profile: {
       headline: profileHeadline,
       summaryLines,
+      treeSummaryLines,
+      treeNodes,
     },
   };
 }

@@ -5,7 +5,7 @@ import type {
 import type { MemorySearchResult, MemoryVisibility } from "./types.js";
 
 export type MemoryTreeScope = MemorySourceInventoryScope;
-export type MemoryTreeTargetType = "chunk" | "node";
+export type MemoryTreeTargetType = "chunk" | "node" | "source";
 
 export type MemoryTreeSourceRecord = {
   id: string;
@@ -81,18 +81,25 @@ export type MemoryTreeSourceRebuildResult = {
   totalSources: number;
   inventorySources: number;
   dynamicSources: number;
+  skipped?: boolean;
+  skipReason?: string;
+  skippedAt?: string;
 };
 
 export type MemoryTreeScoreRebuildResult = {
   rebuiltAt: string;
   scoreVersion: string;
   totalScores: number;
+  skipped?: boolean;
+  skipReason?: string;
+  skippedAt?: string;
 };
 
 export type MemoryTreeReportType =
   | "inventory"
   | "dedup_preview"
   | "external_ingest_preview"
+  | "shared_governance_preview"
   | "compression_preview"
   | "tree_build_preview";
 
@@ -193,6 +200,9 @@ export type MemoryTreeNodeRebuildResult = {
   totalNodes: number;
   totalEdges: number;
   kind: MemoryTreeNodeKind;
+  skipped?: boolean;
+  skipReason?: string;
+  skippedAt?: string;
 };
 
 export type MemoryTreeNodeSearchResult = {
@@ -201,6 +211,14 @@ export type MemoryTreeNodeSearchResult = {
   matchReasons: string[];
   edges: MemoryTreeEdgeRecord[];
   chunks: MemorySearchResult[];
+  sources?: MemoryTreeSourceRecord[];
+};
+
+export type MemoryTreeNodeDetailResult = {
+  node: MemoryTreeNodeRecord;
+  edges: MemoryTreeEdgeRecord[];
+  chunks: MemorySearchResult[];
+  sources: MemoryTreeSourceRecord[];
 };
 
 export type MemoryTreeReportPersistResult = {
@@ -218,7 +236,7 @@ export type MemoryTreeReportReviewResult = {
 };
 
 export type MemoryTreeReportApplyAction = {
-  kind?: "dedup_archive" | "external_ingest" | "report_governance_ack";
+  kind?: "dedup_archive" | "dedup_skip" | "external_ingest" | "report_governance_ack";
   reportType?: MemoryTreeReportType;
   governanceState?: string;
   chunkId?: string;

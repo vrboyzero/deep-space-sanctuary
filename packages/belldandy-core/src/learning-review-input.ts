@@ -65,7 +65,9 @@ export function buildLearningReviewInput(input: {
 
   const summaryLines = dedupeStrings([
     mind?.profile.headline ? `Mind snapshot: ${mind.profile.headline}` : undefined,
-    mind?.profile.summaryLines?.[0] ? `Profile anchor: ${mind.profile.summaryLines[0]}` : undefined,
+    (mind?.profile.treeSummaryLines?.[0] || mind?.profile.summaryLines?.[0])
+      ? `Profile anchor: ${mind?.profile.treeSummaryLines?.[0] || mind?.profile.summaryLines?.[0]}`
+      : undefined,
     mind?.experience.topUsageResidents?.[0]?.headline ? `Experience anchor: ${mind.experience.topUsageResidents[0].headline}` : undefined,
     task
       ? `Task evidence: status=${task.status}, memories=${taskMemoryLinkCount}, tools=${taskToolCallCount}, artifacts=${taskArtifactCount}${task.summary ? `, summary=${truncateText(task.summary, 96)}` : ""}`

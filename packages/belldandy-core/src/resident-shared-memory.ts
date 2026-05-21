@@ -872,6 +872,8 @@ async function runMemorySearch(
           nodeBacked: 0,
           chunkOnly: items.length,
         },
+        nodeBackedShare: 0,
+        chunkOnlyShare: 1,
         topNodeHits: [],
       },
       stages: {

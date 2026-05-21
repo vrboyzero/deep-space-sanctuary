@@ -59,6 +59,26 @@ export type MemoryDedupGroupSourceIndexSummary = {
     scopes: MemoryDedupSourceIndexScope[];
 };
 
+export type MemoryDedupGovernanceSuggestedAction = "review" | "keep" | "archive";
+
+export type MemoryDedupGovernanceRiskLevel = "low" | "medium" | "high";
+
+export type MemoryDedupGovernanceSignal =
+    | "mixed_reindexable"
+    | "shared_visibility"
+    | "task_linked"
+    | "all_reindexable"
+    | "non_reindexable_only"
+    | "indexing_unknown";
+
+export type MemoryExactDedupGovernanceGroup = {
+    suggestedAction: MemoryDedupGovernanceSuggestedAction;
+    riskLevel: MemoryDedupGovernanceRiskLevel;
+    reviewRequired: boolean;
+    rationale: string;
+    signals: MemoryDedupGovernanceSignal[];
+};
+
 export type MemoryExactDedupPreviewGroup = {
     normalizedHash: string;
     normalizedChars: number;
@@ -69,6 +89,7 @@ export type MemoryExactDedupPreviewGroup = {
     affectedTaskLinkCount: number;
     preview: string;
     sourceIndexing?: MemoryDedupGroupSourceIndexSummary;
+    governance?: MemoryExactDedupGovernanceGroup;
 };
 
 export type MemoryExactDedupPreviewObservability = {
@@ -83,6 +104,18 @@ export type MemoryDedupSourceIndexSummary = {
     nonReindexableSourcePathCount: number;
     duplicateGroupsWithReindexableSources: number;
     duplicateGroupsWithOnlyNonReindexableSources: number;
+};
+
+export type MemoryExactDedupGovernanceSummary = {
+    headline: string;
+    groupCount: number;
+    suggestedReviewGroupCount: number;
+    suggestedKeepGroupCount: number;
+    suggestedArchiveGroupCount: number;
+    taskLinkedGroupCount: number;
+    mixedSourceGroupCount: number;
+    nonReindexableOnlyGroupCount: number;
+    topSuggestedGroups: MemoryExactDedupPreviewGroup[];
 };
 
 export type MemoryExactDedupPreviewReport = {
@@ -104,6 +137,7 @@ export type MemoryExactDedupPreviewReport = {
     groups: MemoryExactDedupPreviewGroup[];
     observability?: MemoryExactDedupPreviewObservability;
     sourceIndexingSummary?: MemoryDedupSourceIndexSummary;
+    governance?: MemoryExactDedupGovernanceSummary;
 };
 
 export type MemoryExactDedupApplyOptions = {

@@ -50,8 +50,9 @@ describe("buildLearningReviewInput", () => {
           }],
         },
         profile: {
-          headline: "USER.md: 喜欢简洁状态表与短结论。",
+          headline: "Profile tree: 长期偏好简洁状态表与短结论, evidence=2",
           summaryLines: ["USER.md: 喜欢简洁状态表与短结论。"],
+          treeSummaryLines: ["Profile tree: 长期偏好简洁状态表与短结论, evidence=2"],
         },
       },
       experienceCandidate: {
@@ -100,6 +101,7 @@ describe("buildLearningReviewInput", () => {
       reviewSignalCount: 4,
     });
     expect(result.summaryLines.join("\n")).toContain("Mind snapshot:");
+    expect(result.summaryLines.join("\n")).toContain("Profile anchor: Profile tree:");
     expect(result.summaryLines.join("\n")).toContain("method candidate:");
     expect(result.summaryLines.join("\n")).toContain("Review queue:");
     expect(result.nudges.join("\n")).toContain("存在超 SLA suggestion review");

@@ -1922,6 +1922,179 @@ test("system.doctor exposes team shared memory readiness and deferred sync polic
   });
 });
 
+test("system.doctor aggregates shared governance preview summary with the latest report context", async () => {
+  await withEnv({
+    BELLDANDY_TEAM_SHARED_MEMORY_ENABLED: "true",
+  }, async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-doctor-shared-governance-"));
+    const registry = new AgentRegistry(() => new MockAgent());
+    registry.register({
+      id: "default",
+      displayName: "Belldandy",
+      model: "primary",
+      memoryMode: "hybrid",
+    });
+    registry.register({
+      id: "reviewer",
+      displayName: "Reviewer",
+      model: "primary",
+      workspaceDir: "reviewer",
+      sessionNamespace: "reviewer-main",
+      memoryMode: "isolated",
+    });
+
+    const residentMemoryManagers = createScopedMemoryManagers({
+      stateDir,
+      agentRegistry: registry,
+      modelsDir: path.join(stateDir, "models"),
+      conversationStore: new ConversationStore({
+        dataDir: path.join(stateDir, "sessions"),
+      }),
+      indexerOptions: {
+        watch: false,
+      },
+    }).records;
+    const defaultRecord = residentMemoryManagers.find((record) => record.agentId === "default");
+    expect(defaultRecord).toBeTruthy();
+    if (!defaultRecord) {
+      throw new Error("default resident memory manager is required");
+    }
+
+    const memoryDir = path.join(defaultRecord.stateDir, "memory");
+    const sessionsDir = path.join(defaultRecord.stateDir, "sessions");
+    await fs.promises.mkdir(memoryDir, { recursive: true });
+    await fs.promises.mkdir(sessionsDir, { recursive: true });
+    await fs.promises.writeFile(path.join(memoryDir, "2026-05-21.md"), "# Shared Governance\ncoverage marker\n", "utf-8");
+    await fs.promises.writeFile(path.join(sessionsDir, "doctor.session-memory.json"), JSON.stringify({
+      summary: "doctor coverage marker",
+    }, null, 2), "utf-8");
+    await fs.promises.writeFile(path.join(defaultRecord.stateDir, "dream-runtime.json"), JSON.stringify({
+      status: "idle",
+    }, null, 2), "utf-8");
+    defaultRecord.manager.upsertMemoryChunk({
+      id: "doctor-shared-governance-chunk",
+      sourcePath: path.join(memoryDir, "2026-05-21.md"),
+      sourceType: "file",
+      memoryType: "daily",
+      content: "doctor shared governance preview chunk",
+      visibility: "private",
+    });
+
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentRegistry: registry,
+      residentMemoryManagers,
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+    const frames: any[] = [];
+    const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+    try {
+      await pairWebSocketClient(ws, frames, stateDir);
+
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "doctor-shared-governance-promote",
+        method: "memory.share.promote",
+        params: {
+          agentId: "default",
+          chunkId: "doctor-shared-governance-chunk",
+          reason: "doctor aggregation preview",
+        },
+      }));
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === "doctor-shared-governance-promote"));
+      const promoteRes = frames.find((f) => f.type === "res" && f.id === "doctor-shared-governance-promote");
+      expect(promoteRes?.ok).toBe(true);
+
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "doctor-shared-governance-preview",
+        method: "memory.tree.report.shared_governance.preview",
+        params: {
+          agentId: "default",
+          reviewerAgentId: "reviewer",
+        },
+      }));
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === "doctor-shared-governance-preview"));
+      const previewRes = frames.find((f) => f.type === "res" && f.id === "doctor-shared-governance-preview");
+      expect(previewRes?.ok).toBe(true);
+      const reportId = String(previewRes?.payload?.record?.id ?? "");
+      expect(reportId.length).toBeGreaterThan(0);
+
+      ws.send(JSON.stringify({
+        type: "req",
+        id: "system-doctor-shared-governance",
+        method: "system.doctor",
+        params: {
+          agentId: "default",
+          reviewerAgentId: "reviewer",
+        },
+      }));
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-shared-governance"));
+      const response = frames.find((f) => f.type === "res" && f.id === "system-doctor-shared-governance");
+
+      expect(response?.ok).toBe(true);
+      expect(response?.payload?.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "memory_shared_governance",
+          status: "warn",
+          message: expect.stringContaining("Memory shared governance"),
+        }),
+      ]));
+      expect(response?.payload?.memorySharedGovernance).toMatchObject({
+        headline: expect.stringContaining("Memory shared governance"),
+        summary: expect.objectContaining({
+          memoryMode: "hybrid",
+          writeTarget: "private",
+          pendingCount: 1,
+          actionableCount: 1,
+          uniqueSourcePathCount: 1,
+          reviewSurfaceMode: "report_ledger_first",
+          coverageHeadline: expect.stringContaining("present searchable="),
+          coverageExplanations: expect.arrayContaining([
+            expect.objectContaining({
+              searchPolicy: "searchable",
+              whyThisBucket: expect.any(String),
+            }),
+          ]),
+          latestReport: expect.objectContaining({
+            id: reportId,
+            status: "ready",
+            agentId: "default",
+          }),
+        }),
+        report: expect.objectContaining({
+          boundary: expect.objectContaining({
+            agentId: "default",
+            reviewerAgentId: "reviewer",
+          }),
+          teamSharedMemory: expect.objectContaining({
+            enabled: true,
+          }),
+        }),
+      });
+      expect(response?.payload?.memorySharedGovernance?.report?.coverage?.summaryInputOnlyCount).toBeGreaterThan(0);
+      expect(response?.payload?.memorySharedGovernance?.report?.coverage?.inventoryOnlyCount).toBeGreaterThan(0);
+      expect(response?.payload?.memorySharedGovernance?.report?.coverage?.searchable).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          explanation: expect.any(String),
+        }),
+      ]));
+      expect(response?.payload?.memorySharedGovernance?.summary?.coverageExplanations).toHaveLength(3);
+    } finally {
+      ws.close();
+      await closeP;
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+
 test("system.doctor reports session digest rate-limit state after budget is exceeded", async () => {
   await withEnv({
     BELLDANDY_MEMORY_SESSION_DIGEST_MAX_RUNS: "1",

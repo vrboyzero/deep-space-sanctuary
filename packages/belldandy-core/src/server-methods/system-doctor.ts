@@ -20,6 +20,7 @@ import type { GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
 import {
   DURABLE_EXTRACTION_REQUEST_RATE_LIMIT_REASON_CODE,
   DURABLE_EXTRACTION_REQUEST_RATE_LIMIT_REASON_MESSAGE,
+  buildMemorySourceInventoryDoctorReport,
   getGlobalMemoryManager,
   type DreamRuntime,
   type DurableExtractionRuntime,
@@ -91,8 +92,13 @@ import { buildMindProfileSnapshot } from "../mind-profile-snapshot.js";
 import { buildPromptObservabilitySummary, formatPromptObservabilityHeadline, toPromptObservabilityView } from "../prompt-observability.js";
 import { buildAgentRoster } from "../query-runtime-agent-roster.js";
 import type { QueryRuntimeTraceStore } from "../query-runtime-trace.js";
+import { readConfiguredMemorySourcesStore } from "../memory-configured-sources-store.js";
 import type { ScopedMemoryManagerRecord } from "../resident-memory-managers.js";
 import { buildResidentAgentObservabilitySnapshot } from "../resident-agent-observability.js";
+import {
+  buildResidentSharedGovernanceDoctorReport,
+  buildResidentSharedGovernancePreview,
+} from "../resident-shared-governance-report.js";
 import { ResidentAgentRuntimeRegistry } from "../resident-agent-runtime.js";
 import { resolveResidentStateBindingViewForAgent } from "../resident-state-binding.js";
 import { buildOptionalCapabilitiesDoctorReport } from "../optional-capabilities-doctor.js";
@@ -259,6 +265,15 @@ function formatRateLimitState(rateLimit: RateLimitState): string {
   return base;
 }
 
+async function readConfiguredMemorySourcesForDoctor(stateDir: string) {
+  try {
+    const store = await readConfiguredMemorySourcesStore(stateDir);
+    return store.sources;
+  } catch {
+    return [];
+  }
+}
+
 async function statIfExists(targetPath: string): Promise<fs.Stats | null> {
   try {
     return await fsp.stat(targetPath);
@@ -410,6 +425,13 @@ function extractDreamAgentId(params: Record<string, unknown>): string {
   return extractScopedMemoryAgentId(params) ?? "default";
 }
 
+function extractReviewerMemoryAgentId(params: Record<string, unknown>): string | undefined {
+  if (typeof params.reviewerAgentId === "string" && params.reviewerAgentId.trim()) {
+    return params.reviewerAgentId.trim();
+  }
+  return extractScopedMemoryAgentId(params);
+}
+
 function resolveScopedMemoryManager(params: Record<string, unknown> = {}) {
   const conversationId = typeof params.conversationId === "string" && params.conversationId.trim()
     ? params.conversationId.trim()
@@ -419,6 +441,25 @@ function resolveScopedMemoryManager(params: Record<string, unknown> = {}) {
     agentId,
     conversationId,
   });
+}
+
+function resolveResidentMemoryManagerRecord(
+  agentId: string | undefined,
+  records: ScopedMemoryManagerRecord[] = [],
+): ScopedMemoryManagerRecord | undefined {
+  const normalizedAgentId = typeof agentId === "string" && agentId.trim()
+    ? agentId.trim()
+    : "default";
+  return records.find((item) => item.agentId === normalizedAgentId)
+    ?? records.find((item) => item.agentId === "default");
+}
+
+function resolveScopedResidentMemoryPolicy(
+  params: Record<string, unknown> = {},
+  records: ScopedMemoryManagerRecord[] = [],
+) {
+  return resolveResidentMemoryManagerRecord(extractScopedMemoryAgentId(params), records)?.policy
+    ?? resolveResidentMemoryManagerRecord("default", records)?.policy;
 }
 
 async function buildScopedSkillFreshnessSnapshot(
@@ -696,6 +737,55 @@ export async function handleSystemDoctorMethod(
     ),
     durableExtractionRunRateLimit: ctx.memoryBudgetGuard.getDurableExtractionRunRateLimitState(),
   }));
+  const memoryTreeJobsStage = captureDoctorStage(doctorPerformanceStages, "memory_tree_jobs", () => {
+    const manager = resolveScopedMemoryManager(params);
+    return manager?.getMemoryTreeJobReport({
+      kinds: ["topic", "profile", "global"],
+    });
+  });
+  const memorySourceInventoryStage = captureDoctorStage(doctorPerformanceStages, "memory_source_inventory", async () => {
+    const manager = resolveScopedMemoryManager(params);
+    if (!manager) {
+      return undefined;
+    }
+    const configuredSources = await readConfiguredMemorySourcesForDoctor(ctx.stateDir);
+    const report = await manager.previewSourceInventory({
+      configuredSources,
+    });
+    return buildMemorySourceInventoryDoctorReport(report);
+  });
+  const memorySharedGovernanceStage = captureDoctorStage(doctorPerformanceStages, "memory_shared_governance", async () => {
+    const manager = resolveScopedMemoryManager(params);
+    if (!manager) {
+      return undefined;
+    }
+    const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+    const configuredSources = await readConfiguredMemorySourcesForDoctor(ctx.stateDir);
+    const preview = await buildResidentSharedGovernancePreview({
+      stateDir: ctx.stateDir,
+      manager,
+      residentPolicy,
+      residentRecords: ctx.residentMemoryManagers,
+      agentRegistry: ctx.agentRegistry,
+      reviewerAgentId: extractReviewerMemoryAgentId(params) ?? residentPolicy?.agentId ?? "default",
+      configuredSources,
+      teamSharedMemoryEnabled: process.env.BELLDANDY_TEAM_SHARED_MEMORY_ENABLED === "true",
+    });
+    const latestReport = manager.listMemoryTreeReports(1, {
+      reportType: "shared_governance_preview",
+      ...(residentPolicy?.agentId ? { agentId: residentPolicy.agentId } : {}),
+    })[0] ?? null;
+    return buildResidentSharedGovernanceDoctorReport({
+      preview: preview.report,
+      latestReport,
+    });
+  });
+  const memoryTreeLifecycleStage = captureDoctorStage(doctorPerformanceStages, "memory_tree_lifecycle", () => {
+    const manager = resolveScopedMemoryManager(params);
+    return manager?.getMemoryTreeLifecycleReport({
+      kinds: ["topic", "profile", "global"],
+    });
+  });
   const optionalCapabilitiesStage = captureDoctorStage(doctorPerformanceStages, "optional_capabilities", () => buildOptionalCapabilitiesDoctorReport());
   const cameraRuntimeStage = captureDoctorStage(doctorPerformanceStages, "camera_runtime", () => buildCameraRuntimeDoctorReport({
     context: {
@@ -862,6 +952,10 @@ export async function handleSystemDoctorMethod(
 
   const [
     memoryRuntimeResult,
+    memoryTreeJobsResult,
+    memorySourceInventoryResult,
+    memorySharedGovernanceResult,
+    memoryTreeLifecycleResult,
     optionalCapabilitiesResult,
     cameraRuntimeResult,
     extensionMarketplaceResult,
@@ -875,6 +969,10 @@ export async function handleSystemDoctorMethod(
     mcpRuntimeResult,
   ] = await Promise.all([
     memoryRuntimeStage,
+    memoryTreeJobsStage,
+    memorySourceInventoryStage,
+    memorySharedGovernanceStage,
+    memoryTreeLifecycleStage,
     optionalCapabilitiesStage,
     cameraRuntimeStage,
     extensionMarketplaceStage,
@@ -889,6 +987,10 @@ export async function handleSystemDoctorMethod(
   ]);
 
   const memoryRuntime = unwrapDoctorStageResult(memoryRuntimeResult);
+  const memoryTreeJobs = unwrapDoctorStageResult(memoryTreeJobsResult);
+  const memorySourceInventory = unwrapDoctorStageResult(memorySourceInventoryResult);
+  const memorySharedGovernance = unwrapDoctorStageResult(memorySharedGovernanceResult);
+  const memoryTreeLifecycle = unwrapDoctorStageResult(memoryTreeLifecycleResult);
   const optionalCapabilities = unwrapDoctorStageResult(optionalCapabilitiesResult);
   const cameraRuntime = unwrapDoctorStageResult(cameraRuntimeResult);
   const extensionMarketplace = unwrapDoctorStageResult(extensionMarketplaceResult);
@@ -990,6 +1092,46 @@ export async function handleSystemDoctorMethod(
       ? `enabled at ${memoryRuntime.sharedMemory.scope.relativeRoot} (${memoryRuntime.sharedMemory.scope.fileCount} files), secret guard ready, sync plan ${memoryRuntime.sharedMemory.syncPolicy.status}`
       : `disabled by default, path ${memoryRuntime.sharedMemory.scope.relativeRoot}, secret guard ready, sync plan ${memoryRuntime.sharedMemory.syncPolicy.status}`,
   });
+  if (memoryTreeJobs) {
+    checks.push(...memoryTreeJobs.checks);
+  } else {
+    checks.push({
+      id: "memory_tree_jobs",
+      name: "Memory Tree Jobs",
+      status: "warn",
+      message: "Memory manager unavailable.",
+    });
+  }
+  if (memorySourceInventory) {
+    checks.push(...memorySourceInventory.checks);
+  } else {
+    checks.push({
+      id: "memory_source_inventory",
+      name: "Memory Source Inventory",
+      status: "warn",
+      message: "Memory manager unavailable.",
+    });
+  }
+  if (memorySharedGovernance) {
+    checks.push(...memorySharedGovernance.checks);
+  } else {
+    checks.push({
+      id: "memory_shared_governance",
+      name: "Memory Shared Governance",
+      status: "warn",
+      message: "Memory manager unavailable.",
+    });
+  }
+  if (memoryTreeLifecycle) {
+    checks.push(...memoryTreeLifecycle.checks);
+  } else {
+    checks.push({
+      id: "memory_tree_lifecycle",
+      name: "Memory Tree Lifecycle",
+      status: "warn",
+      message: "Memory manager unavailable.",
+    });
+  }
   checks.push({
     id: "deployment_backends",
     name: "Deployment Backends",
@@ -1624,6 +1766,10 @@ export async function handleSystemDoctorMethod(
       performance: doctorPerformance,
       configSource,
       memoryRuntime,
+      ...(memoryTreeJobs ? { memoryTreeJobs } : {}),
+      ...(memorySourceInventory ? { memorySourceInventory } : {}),
+      ...(memorySharedGovernance ? { memorySharedGovernance } : {}),
+      ...(memoryTreeLifecycle ? { memoryTreeLifecycle } : {}),
       deploymentBackends,
       optionalCapabilities,
       ...(cameraRuntime ? { cameraRuntime } : {}),

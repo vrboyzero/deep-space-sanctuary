@@ -58,8 +58,9 @@ describe("buildMindProfileRuntimeDigest", () => {
         }],
       },
       profile: {
-        headline: "USER.md: 喜欢简洁状态表与直接结论。",
+        headline: "Profile tree: 长期偏好简洁状态表与直接结论, evidence=2",
         summaryLines: ["USER.md: 喜欢简洁状态表与直接结论。"],
+        treeSummaryLines: ["Profile tree: 长期偏好简洁状态表与直接结论, evidence=2"],
       },
     } as any, {
       maxLines: 4,
@@ -73,6 +74,7 @@ describe("buildMindProfileRuntimeDigest", () => {
       signalCount: 4,
     });
     expect(digest.lines.join("\n")).toContain("User anchor:");
+    expect(digest.lines.join("\n")).toContain("Profile anchor: Profile tree:");
     expect(digest.lines.join("\n")).toContain("Durable memory:");
     expect(digest.lines.join("\n")).toContain("Residents:");
     expect(digest.summary.charCount).toBeLessThanOrEqual(260);
@@ -127,8 +129,9 @@ describe("buildMindProfileRuntimeDigest", () => {
         }],
       },
       profile: {
-        headline: "USER.md: 喜欢简明输出。",
+        headline: "Profile tree: 喜欢简明输出, evidence=1",
         summaryLines: ["USER.md: 喜欢简明输出。"],
+        treeSummaryLines: ["Profile tree: 喜欢简明输出, evidence=1"],
       },
     } as any, {
       maxLines: 2,

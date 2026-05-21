@@ -65,6 +65,7 @@ export interface MemorySearchResult {
   sourcePath: string;
   sourceType: string;
   memoryType?: MemoryType;
+  topic?: string;
   category?: MemoryCategory;
   visibility?: MemoryVisibility;
   content?: string;

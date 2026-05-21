@@ -6,7 +6,7 @@ import { afterEach, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
 
 import { AgentRegistry, ConversationStore, MockAgent } from "@belldandy/agent";
-import { MemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
+import { MemoryManager, buildDreamConversationArtifactPath, registerGlobalMemoryManager } from "@belldandy/memory";
 import { SkillRegistry } from "@belldandy/skills";
 
 import { createScopedMemoryManagers } from "./resident-memory-managers.js";
@@ -2680,12 +2680,21 @@ test("memory.dedup.preview reports exact duplicate groups without mutating chunk
       duplicateGroupsWithReindexableSources: 1,
       duplicateGroupsWithOnlyNonReindexableSources: 0,
     });
+    expect(report?.governance).toMatchObject({
+      suggestedReviewGroupCount: 1,
+      suggestedKeepGroupCount: 0,
+      suggestedArchiveGroupCount: 0,
+    });
     expect(Array.isArray(report?.groups)).toBe(true);
     expect(report?.groups?.[0]?.keep?.id).toBe("dup-a");
     expect(report?.groups?.[0]?.remove?.map((item: Record<string, unknown>) => item.id)).toEqual(["dup-b"]);
     expect(report?.groups?.[0]?.keep?.sourceIndexing).toMatchObject({
       reindexable: true,
       scope: "state_memory_root",
+    });
+    expect(report?.groups?.[0]?.governance).toMatchObject({
+      suggestedAction: "review",
+      reviewRequired: true,
     });
     expect(report?.groups?.[0]?.remove?.[0]?.sourceIndexing).toMatchObject({
       reindexable: false,
@@ -2760,8 +2769,14 @@ test("memory.inventory.preview returns readonly builtin and configured source in
     }
 
     const report = response.payload?.report as Record<string, any> | undefined;
-    expect(report?.version).toBe("p8-readonly-preview-v1");
+    const governance = response.payload?.governance as Record<string, any> | undefined;
+    expect(report?.version).toBe("p10-source-registry-family-v1");
     expect(report?.totals?.sourceKinds).toBeGreaterThanOrEqual(10);
+    expect(governance).toMatchObject({
+      headline: expect.stringContaining("Memory source"),
+      suggestedReviewFamilyCount: expect.any(Number),
+      topSuggestedFamilies: expect.any(Array),
+    });
     expect(report?.items?.some((item: Record<string, unknown>) =>
       item.id === "builtin:sessions:messages"
       && item.status === "present"
@@ -2941,9 +2956,19 @@ test("memory.tree.report.external_ingest.preview can select persisted configured
       eligibleFiles: 1,
       rootPath: externalDirB,
     });
+    expect(previewRes.payload?.governance).toMatchObject({
+      headline: expect.stringContaining("External ingest governance"),
+      reviewSuggestionCount: expect.any(Number),
+      topSuggestions: expect.any(Array),
+    });
     expect(previewRes.payload?.record).toMatchObject({
       reportType: "external_ingest_preview",
       status: "ready",
+      summary: expect.objectContaining({
+        governance: expect.objectContaining({
+          headline: expect.stringContaining("External ingest governance"),
+        }),
+      }),
     });
   } finally {
     memoryManager.close();
@@ -3000,6 +3025,10 @@ test("memory.tree.report.external_ingest.preview supports single-file markdown c
       rescan: {
         mode: "initial",
       },
+    });
+    expect(previewRes.payload?.governance).toMatchObject({
+      headline: expect.stringContaining("External ingest governance"),
+      topSuggestions: expect.any(Array),
     });
     expect(previewRes.payload?.record).toMatchObject({
       reportType: "external_ingest_preview",
@@ -3260,7 +3289,9 @@ test("memory.tree.report.external_ingest.preview drives approved apply and searc
         includeContent: true,
       },
     }, { stateDir });
-    expect(updatedSearchRes && updatedSearchRes.ok).toBe(true);
+    if (!updatedSearchRes || !updatedSearchRes.ok) {
+      throw new Error(`expected successful updated memory.search response: ${JSON.stringify(updatedSearchRes)}`);
+    }
     expect(updatedSearchRes.payload?.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         sourcePath: notePath,
@@ -3276,7 +3307,9 @@ test("memory.tree.report.external_ingest.preview drives approved apply and searc
         includeContent: true,
       },
     }, { stateDir });
-    expect(staleSearchRes && staleSearchRes.ok).toBe(true);
+    if (!staleSearchRes || !staleSearchRes.ok) {
+      throw new Error(`expected successful stale memory.search response: ${JSON.stringify(staleSearchRes)}`);
+    }
     expect((staleSearchRes.payload?.items as Array<Record<string, unknown>> | undefined)?.some((item) => item.sourcePath === stalePath)).toBe(false);
   } finally {
     memoryManager.close();
@@ -3478,6 +3511,10 @@ test("memory.tree report and node methods persist reports, export markdown, and 
       reportType: "inventory",
       status: "ready",
     });
+    expect(inventoryPreviewRes.payload?.governance).toMatchObject({
+      headline: expect.stringContaining("Memory source"),
+      topSuggestedFamilies: expect.any(Array),
+    });
 
     const dedupPreviewRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -3495,6 +3532,17 @@ test("memory.tree report and node methods persist reports, export markdown, and 
     expect(dedupRecord).toMatchObject({
       reportType: "dedup_preview",
       status: "ready",
+      summary: expect.objectContaining({
+        governance: expect.objectContaining({
+          headline: expect.stringContaining("Memory dedup"),
+        }),
+      }),
+      details: expect.objectContaining({
+        governance: expect.objectContaining({
+          groupCount: expect.any(Number),
+          topSuggestedGroups: expect.any(Array),
+        }),
+      }),
     });
     const dedupReportId = String(dedupRecord?.id ?? "");
     expect(dedupReportId.length).toBeGreaterThan(0);
@@ -3707,7 +3755,7 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
     expect(rebuildRes.payload?.result).toMatchObject({
       kind: "topic",
       totalNodes: 2,
-      totalEdges: 3,
+      totalEdges: 6,
     });
 
     const searchRes = await handleMemoryExperienceMethod({
@@ -3733,7 +3781,7 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
     expect(searchItems[0]).toMatchObject({
       node: expect.objectContaining({
         kind: "topic",
-        summaryVersion: "p13-topic-node-v1",
+        summaryVersion: "p20-topic-node-v1",
         topicKey: "viewer-audit",
         metadata: expect.objectContaining({
           topic: "viewer-audit",
@@ -3747,6 +3795,17 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
       "topic-node-high",
       "topic-node-low",
     ]);
+    const searchSources = Array.isArray(searchItems[0]?.sources) ? searchItems[0].sources : [];
+    expect(searchSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("viewer-audit-outline.md"),
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("viewer-audit-summary.md"),
+      }),
+    ]));
 
     const topicNodeId = String(searchItems[0]?.node?.id ?? "");
     expect(topicNodeId.length).toBeGreaterThan(0);
@@ -3767,10 +3826,12 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
     const getPayload = (getRes.payload ?? {}) as Record<string, any>;
     expect(getPayload.node).toMatchObject({
       id: topicNodeId,
-      summaryVersion: "p13-topic-node-v1",
+      summaryVersion: "p20-topic-node-v1",
     });
     const getEdges = Array.isArray(getPayload.edges) ? getPayload.edges : [];
-    expect(getEdges.map((item: Record<string, unknown>) => item.childId)).toEqual([
+    expect(getEdges
+      .filter((item: Record<string, unknown>) => item.childType === "chunk")
+      .map((item: Record<string, unknown>) => item.childId)).toEqual([
       "topic-node-high",
       "topic-node-low",
     ]);
@@ -3779,6 +3840,17 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
       "topic-node-high",
       "topic-node-low",
     ]);
+    const getSources = Array.isArray(getPayload.sources) ? getPayload.sources : [];
+    expect(getSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("viewer-audit-outline.md"),
+      }),
+      expect.objectContaining({
+        sourceKind: "workspace_file",
+        sourcePath: expect.stringContaining("viewer-audit-summary.md"),
+      }),
+    ]));
   } finally {
     memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
@@ -3794,7 +3866,6 @@ test("memory.tree.node.rebuild/search/get supports R1 project nodes with chunk p
     workspaceRoot,
     stateDir,
     taskMemoryEnabled: true,
-    agentId: scopedAgentId,
   });
 
   try {
@@ -4114,44 +4185,254 @@ test("memory.search exposes R2 node-assisted diagnostics through resident memory
       if (!searchRes || !searchRes.ok) {
         throw new Error("expected successful memory.search response for R2 node-assisted routing");
       }
-      expect(searchRes.payload?.items?.map((item: Record<string, unknown>) => item.id)).toEqual([
+      const searchPayload = (searchRes.payload ?? {}) as Record<string, any>;
+      expect(searchPayload.items?.map((item: Record<string, unknown>) => item.id)).toEqual([
         "r2-project-high",
         "r2-raw-fallback",
       ]);
-      expect(searchRes.payload?.items?.[0]?.metadata?.memoryTree).toMatchObject({
+      expect(searchPayload.items?.[0]?.metadata?.memoryTree).toMatchObject({
         nodeHit: {
           kind: "project",
         },
       });
-      expect(searchRes.payload?.diagnostics).toMatchObject({
+      expect(searchPayload.diagnostics).toMatchObject({
         scopeMode: "merged_all",
         sharedManagerUsed: true,
         returnedCount: 2,
-        branches: expect.arrayContaining([
+      });
+      const privateBranch = searchPayload.diagnostics?.branches?.find(
+        (branch: Record<string, unknown>) => branch.surface === "private",
+      );
+      expect(privateBranch).toBeTruthy();
+      expect(privateBranch).toMatchObject({
+        surface: "private",
+        diagnostics: expect.objectContaining({
+          routingPolicy: "node_assisted",
+          nodeAssisted: expect.objectContaining({
+            enabled: true,
+            injectedChunkCount: 1,
+            fallbackApplied: true,
+            returnedMix: {
+              nodeBacked: 1,
+              chunkOnly: 1,
+            },
+          }),
+        }),
+      });
+      expect(privateBranch?.diagnostics?.nodeAssisted?.nodeHitCount ?? 0).toBeGreaterThanOrEqual(1);
+      expect(privateBranch?.diagnostics?.nodeAssisted?.selectedNodeIds).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^project:/)]),
+      );
+      expect(privateBranch?.diagnostics?.nodeAssisted?.topNodeHits).toEqual(
+        expect.arrayContaining([
           expect.objectContaining({
-            surface: "private",
-            diagnostics: expect.objectContaining({
-              routingPolicy: "node_assisted",
-              nodeAssisted: expect.objectContaining({
-                enabled: true,
-                nodeHitCount: 1,
-                injectedChunkCount: 1,
-                fallbackApplied: true,
-                returnedMix: {
-                  nodeBacked: 1,
-                  chunkOnly: 1,
-                },
-              }),
-            }),
+            kind: "project",
+            chunkCount: 1,
           }),
         ]),
-      });
+      );
     } finally {
       store.searchHybrid = originalSearchHybrid;
     }
   } finally {
     memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.search returns session-derived resume results through the RPC surface", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-search-session-derived-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-search-session-derived-workspace-"));
+  const sessionsDir = path.join(stateDir, "sessions");
+  await fs.promises.mkdir(sessionsDir, { recursive: true });
+
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    const conversationId = "agent:coder:main";
+    const sessionMemoryPath = buildDreamConversationArtifactPath({
+      sessionsDir,
+      conversationId,
+      suffix: ".session-memory.json",
+    });
+    await fs.promises.writeFile(
+      sessionMemoryPath,
+      JSON.stringify({
+        summary: "Working on the unified retrieval rollout.",
+        currentGoal: "Bring continuation context into memory.search.",
+        currentWork: "Task-derived results are already wired.",
+        nextStep: "Continue viewer lazy loading and add regression validation.",
+        pendingTasks: ["Wire session digest and session memory into retrieval"],
+        updatedAt: Date.parse("2026-05-21T11:20:00.000Z"),
+      }),
+      "utf-8",
+    );
+    const safeConversationId = path.basename(sessionMemoryPath, ".session-memory.json");
+    await fs.promises.writeFile(
+      path.join(sessionsDir, `${safeConversationId}.meta.json`),
+      JSON.stringify({ conversationId }),
+      "utf-8",
+    );
+
+    const searchRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-search-session-derived",
+      method: "memory.search",
+      params: {
+        query: "viewer lazy loading",
+        includeContent: false,
+      },
+    }, { stateDir });
+    expect(searchRes).toBeTruthy();
+    if (!searchRes || !searchRes.ok) {
+      throw new Error("expected successful memory.search response for session-derived retrieval");
+    }
+    expect(searchRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: "session_derived",
+        metadata: expect.objectContaining({
+          derivedRetrieval: expect.objectContaining({
+            conversationId,
+            kind: "session_memory_resume",
+            sourceKind: "session_memory",
+          }),
+          memoryTree: expect.objectContaining({
+            sourceClass: "derived",
+            sourceKind: "session_memory",
+          }),
+        }),
+      }),
+    ]));
+    expect(searchRes.payload?.diagnostics).toMatchObject({
+      branches: expect.arrayContaining([
+        expect.objectContaining({
+          surface: "private",
+          diagnostics: expect.objectContaining({
+            stages: expect.objectContaining({
+              raw: expect.objectContaining({
+                count: expect.any(Number),
+                topHits: expect.arrayContaining([
+                  expect.objectContaining({
+                    sourceClass: "derived",
+                  }),
+                ]),
+              }),
+            }),
+          }),
+        }),
+      ]),
+    });
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("memory.search returns accepted experience-derived results through the RPC surface", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-search-experience-derived-"));
+  const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-search-experience-derived-workspace-"));
+  const memoryManager = new MemoryManager({
+    workspaceRoot,
+    stateDir,
+    taskMemoryEnabled: true,
+  });
+  registerGlobalMemoryManager(memoryManager);
+
+  try {
+    memoryManager.createExperienceCandidate({
+      id: "exp_rpc_viewer_rollout",
+      taskId: "task-rpc-viewer-rollout",
+      type: "method",
+      status: "accepted",
+      title: "Viewer Lazy Loading Rollout",
+      slug: "viewer-lazy-loading-rollout",
+      summary: "Use staged rollout plus regression validation for viewer lazy loading.",
+      content: [
+        "# Viewer Lazy Loading Rollout",
+        "",
+        "## Trigger",
+        "- viewer lazy loading blocks resume flow",
+        "",
+        "## Steps",
+        "1. continue viewer lazy loading wiring",
+        "2. add regression validation",
+      ].join("\n"),
+      qualityScore: 91,
+      sourceTaskSnapshot: {
+        taskId: "task-rpc-viewer-rollout",
+        conversationId: "conv-rpc-viewer-rollout",
+        source: "chat",
+        status: "success",
+        title: "viewer rollout",
+        summary: "完成 viewer lazy loading rollout。",
+        outcome: "viewer lazy loading ready",
+        startedAt: "2026-05-21T09:00:00.000Z",
+        finishedAt: "2026-05-21T10:00:00.000Z",
+      },
+      publishedPath: path.join(stateDir, "methods", "Viewer Lazy Loading Rollout.md"),
+      createdAt: "2026-05-21T10:00:00.000Z",
+      reviewedAt: "2026-05-21T10:10:00.000Z",
+      acceptedAt: "2026-05-21T10:12:00.000Z",
+    });
+
+    const searchRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "memory-search-experience-derived",
+      method: "memory.search",
+      params: {
+        query: "viewer lazy loading",
+        includeContent: false,
+      },
+    }, { stateDir });
+    expect(searchRes).toBeTruthy();
+    if (!searchRes || !searchRes.ok) {
+      throw new Error("expected successful memory.search response for experience-derived retrieval");
+    }
+    expect(searchRes.payload?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "derived-experience:exp_rpc_viewer_rollout",
+        sourceType: "experience_derived",
+        metadata: expect.objectContaining({
+          derivedRetrieval: expect.objectContaining({
+            candidateId: "exp_rpc_viewer_rollout",
+            candidateType: "method",
+            candidateStatus: "accepted",
+          }),
+          memoryTree: expect.objectContaining({
+            sourceClass: "curated",
+            sourceKind: "experience_candidates",
+          }),
+        }),
+      }),
+    ]));
+    expect(searchRes.payload?.diagnostics).toMatchObject({
+      branches: expect.arrayContaining([
+        expect.objectContaining({
+          surface: "private",
+          diagnostics: expect.objectContaining({
+            stages: expect.objectContaining({
+              raw: expect.objectContaining({
+                topHits: expect.arrayContaining([
+                  expect.objectContaining({
+                    sourceClass: "curated",
+                  }),
+                ]),
+              }),
+            }),
+          }),
+        }),
+      ]),
+    });
+  } finally {
+    memoryManager.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
 });
 
@@ -4223,6 +4504,12 @@ test("memory.tree.report.review and apply close the P14 dedup governance loop", 
     const previewRecord = (previewPayload.record ?? {}) as Record<string, any>;
     const reportId = String(previewRecord.id ?? "");
     expect(reportId.length).toBeGreaterThan(0);
+    expect(previewRecord.summary).toMatchObject({
+      governance: expect.objectContaining({
+        suggestedArchiveGroupCount: 1,
+        suggestedReviewGroupCount: 0,
+      }),
+    });
 
     const reviewRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -4498,6 +4785,224 @@ test("memory.tree.report.apply supports R3 report-only governance baselines for 
   }
 });
 
+test("memory.tree.report.shared_governance.preview consolidates boundary, queue, and coverage into the report ledger", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-shared-governance-report-"));
+  const registry = new AgentRegistry(() => new MockAgent());
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+    memoryMode: "hybrid",
+  });
+  registry.register({
+    id: "reviewer",
+    displayName: "Reviewer",
+    model: "primary",
+    workspaceDir: "reviewer",
+    sessionNamespace: "reviewer-main",
+    memoryMode: "isolated",
+  });
+
+  const residentMemoryManagers = createScopedMemoryManagers({
+    stateDir,
+    agentRegistry: registry,
+    modelsDir: path.join(stateDir, "models"),
+    conversationStore: new ConversationStore({
+      dataDir: path.join(stateDir, "sessions"),
+    }),
+    indexerOptions: {
+      watch: false,
+    },
+  }).records;
+  const defaultRecord = residentMemoryManagers.find((record) => record.agentId === "default");
+  expect(defaultRecord).toBeTruthy();
+  if (!defaultRecord) {
+    throw new Error("default resident memory manager is required");
+  }
+
+  const memoryDir = path.join(defaultRecord.stateDir, "memory");
+  const sessionsDir = path.join(defaultRecord.stateDir, "sessions");
+  await fs.promises.mkdir(memoryDir, { recursive: true });
+  await fs.promises.mkdir(sessionsDir, { recursive: true });
+  await fs.promises.writeFile(path.join(memoryDir, "2026-05-21.md"), "# Shared Governance\ncoverage marker\n", "utf-8");
+  await fs.promises.writeFile(path.join(sessionsDir, "shared-governance.session-memory.json"), JSON.stringify({
+    summary: "续做记忆 marker",
+  }, null, 2), "utf-8");
+  await fs.promises.writeFile(path.join(defaultRecord.stateDir, "dream-runtime.json"), JSON.stringify({
+    status: "idle",
+  }, null, 2), "utf-8");
+
+  defaultRecord.manager.upsertMemoryChunk({
+    id: "shared-governance-chunk",
+    sourcePath: path.join(memoryDir, "2026-05-21.md"),
+    sourceType: "file",
+    memoryType: "daily",
+    content: "shared governance preview chunk",
+    visibility: "private",
+  });
+
+  try {
+    const promoteRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "shared-governance-promote",
+      method: "memory.share.promote",
+      params: {
+        agentId: "default",
+        chunkId: "shared-governance-chunk",
+        reason: "phase4 shared governance preview",
+      },
+    }, {
+      stateDir,
+      residentMemoryManagers,
+      agentRegistry: registry,
+      teamSharedMemoryEnabled: true,
+    });
+    expect(promoteRes).toBeTruthy();
+    if (!promoteRes || !promoteRes.ok) {
+      throw new Error(`expected successful memory.share.promote response: ${JSON.stringify(promoteRes)}`);
+    }
+
+    const previewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "shared-governance-preview",
+      method: "memory.tree.report.shared_governance.preview",
+      params: {
+        agentId: "default",
+        reviewerAgentId: "reviewer",
+      },
+    }, {
+      stateDir,
+      residentMemoryManagers,
+      agentRegistry: registry,
+      teamSharedMemoryEnabled: true,
+    });
+    expect(previewRes).toBeTruthy();
+    if (!previewRes || !previewRes.ok) {
+      throw new Error(`expected successful memory.tree.report.shared_governance.preview response: ${JSON.stringify(previewRes)}`);
+    }
+    const previewPayload = previewRes.payload as Record<string, any> | undefined;
+
+    expect(previewPayload?.report).toMatchObject({
+      boundary: {
+        agentId: "default",
+        reviewerAgentId: "reviewer",
+        memoryMode: "hybrid",
+        writeTarget: "private",
+      },
+      promoteReview: {
+        promoteUnits: ["chunk", "source"],
+        reviewUnits: ["chunk", "source"],
+        nodeReviewSupported: false,
+      },
+      sharedQueue: {
+        summary: expect.objectContaining({
+          pendingCount: 1,
+          reviewerActionableCount: 1,
+        }),
+      },
+      teamSharedMemory: expect.objectContaining({
+        enabled: true,
+      }),
+      reviewSurfaceAssessment: expect.objectContaining({
+        mode: "report_ledger_first",
+      }),
+    });
+    expect(previewPayload?.report?.coverage).toMatchObject({
+      searchableCount: expect.any(Number),
+      summaryInputOnlyCount: expect.any(Number),
+      inventoryOnlyCount: expect.any(Number),
+      explanations: expect.arrayContaining([
+        expect.objectContaining({ searchPolicy: "searchable" }),
+        expect.objectContaining({ searchPolicy: "summary-input-only" }),
+        expect.objectContaining({ searchPolicy: "inventory-only" }),
+      ]),
+    });
+    expect(previewPayload?.report?.coverage?.summaryInputOnlyCount).toBeGreaterThan(0);
+    expect(previewPayload?.report?.coverage?.inventoryOnlyCount).toBeGreaterThan(0);
+    expect(previewPayload?.record).toMatchObject({
+      reportType: "shared_governance_preview",
+      scope: "private",
+      agentId: "default",
+    });
+    expect(previewPayload?.governance?.suggestions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        category: "shared_review_queue",
+        action: "review",
+      }),
+      expect.objectContaining({
+        category: "review_surface",
+        action: "keep",
+      }),
+    ]));
+
+    const reportId = String((previewPayload?.record as Record<string, unknown> | undefined)?.id ?? "");
+    expect(reportId.length).toBeGreaterThan(0);
+
+    const reviewRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "shared-governance-review",
+      method: "memory.tree.report.review",
+      params: {
+        reportId,
+        decision: "approved",
+        reviewedBy: "tester",
+      },
+    }, {
+      stateDir,
+      residentMemoryManagers,
+      agentRegistry: registry,
+      teamSharedMemoryEnabled: true,
+    });
+    expect(reviewRes).toBeTruthy();
+    if (!reviewRes || !reviewRes.ok) {
+      throw new Error(`expected successful memory.tree.report.review response: ${JSON.stringify(reviewRes)}`);
+    }
+
+    const applyRes = await handleMemoryExperienceMethod({
+      type: "req",
+      id: "shared-governance-apply",
+      method: "memory.tree.report.apply",
+      params: {
+        reportId,
+        confirmed: true,
+        appliedBy: "tester",
+      },
+    }, {
+      stateDir,
+      residentMemoryManagers,
+      agentRegistry: registry,
+      teamSharedMemoryEnabled: true,
+    });
+    expect(applyRes).toBeTruthy();
+    if (!applyRes || !applyRes.ok) {
+      throw new Error(`expected successful memory.tree.report.apply response: ${JSON.stringify(applyRes)}`);
+    }
+    expect(applyRes.payload?.report).toMatchObject({
+      id: reportId,
+      reportType: "shared_governance_preview",
+      status: "applied",
+      summary: expect.objectContaining({
+        applyMode: "report_state_only",
+        governanceState: "shared_governance_preview_confirmed",
+      }),
+    });
+    expect(applyRes.payload?.result).toMatchObject({
+      updatedChunkCount: 0,
+      updatedScoreCount: 0,
+      skippedChunkIds: [],
+      actions: [
+        expect.objectContaining({
+          kind: "report_governance_ack",
+          reportType: "shared_governance_preview",
+          governanceState: "shared_governance_preview_confirmed",
+        }),
+      ],
+    });
+  } finally {
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("memory.dedup.apply backs up the db, removes duplicate chunks, and relinks task memory links", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-apply-"));
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-dedup-apply-workspace-"));
@@ -4768,8 +5273,10 @@ test("memory.vacuum preview/apply exposes safe sqlite shrink workflow through me
         agentId: "default",
       },
     }, { stateDir });
-    expect(notConfirmed?.ok).toBe(false);
-    expect(notConfirmed?.error?.message).toContain("confirmed=true");
+    if (!notConfirmed || notConfirmed.ok) {
+      throw new Error("expected memory.vacuum.apply without confirmation to fail");
+    }
+    expect(notConfirmed.error.message).toContain("confirmed=true");
 
     const applyResponse = await handleMemoryExperienceMethod({
       type: "req",
@@ -5150,10 +5657,11 @@ test("memory viewer rpc returns task and memory data", async () => {
     expect(memorySearchRes.payload.items.some((item: any) => item?.metadata?.memoryTree?.scoreVersion === "v1_rule_only")).toBe(true);
     expect(memorySearchTopicRes.ok).toBe(true);
     expect(memorySearchTopicRes.payload.items.length).toBeGreaterThan(0);
-    expect(memorySearchTopicRes.payload.items.every((item: any) => item.sourcePath === "memory/topic-viewer.md")).toBe(true);
-    expect(memorySearchTopicRes.payload.items[0].content).toBeUndefined();
-    expect(memorySearchTopicRes.payload.items[0].sourceView.scope).toBe("shared");
-    expect(memorySearchTopicRes.payload.items[0].metadata?.memoryTree).toMatchObject({
+    const topicSearchItem = memorySearchTopicRes.payload.items.find((item: any) => item.sourcePath === "memory/topic-viewer.md");
+    expect(topicSearchItem).toBeTruthy();
+    expect(topicSearchItem.content).toBeUndefined();
+    expect(topicSearchItem.sourceView.scope).toBe("shared");
+    expect(topicSearchItem.metadata?.memoryTree).toMatchObject({
       scoreVersion: "v1_rule_only",
       scoreTotal: expect.any(Number),
     });

@@ -130,6 +130,7 @@ star-sanctuary/
 ### Memory / Task / Experience
 - `packages/belldandy-memory/src/store.ts`: SQLite schema、FTS、task/experience 持久化
 - `packages/belldandy-memory/src/manager.ts`: MemoryManager、global registry、durable extraction 策略、P12-P15 记忆树治理/来源治理
+- `packages/belldandy-memory/src/memory-tree-lifecycle.ts` / `memory-tree-lifecycle-report.ts` / `memory-tree-job-report.ts` / `memory-source-inventory-governance.ts` / `memory-dedup-governance.ts` / `external-memory-ingest-governance.ts`: 记忆树 lifecycle 脏状态、失败冷却账本、作业视图、来源家族治理摘要、chunk/source/external ingest 去重建议分层、report/doctor 可读视图
 - `packages/belldandy-memory/src/indexer.ts`: 索引构建
 - `packages/belldandy-memory/src/external-memory-ingest.ts`: P15 外来源 ingest adapter（首版 Obsidian Markdown 目录 preview/apply）
 - `packages/belldandy-memory/src/task-processor.ts`: 任务沉淀处理
@@ -200,7 +201,9 @@ star-sanctuary/
 - `packages/belldandy-core/src/gateway-config.ts`: Gateway env/config 读取
 - `packages/belldandy-core/src/tools-config.ts`: 工具配置管理
 - `packages/belldandy-core/src/memory-configured-sources-store.ts`: P15 configured external sources 持久配置文件读写
-- `packages/belldandy-core/src/server-methods/memory-experience.ts`: memory / experience RPC，含 P15 configured sources 与 external ingest preview
+- `packages/belldandy-core/src/resident-shared-governance-report.ts`: shared/team 边界、共享审批队列、覆盖率解释视图的统一治理预览构建器
+- `packages/belldandy-core/src/server-methods/memory-experience.ts`: memory / experience RPC，含 P15 configured sources、external ingest preview、memory tree lifecycle / job report
+- `packages/belldandy-core/src/server-methods/system-doctor.ts`: system.doctor 汇总入口，含 memory tree lifecycle / jobs 检查与可读快照
 
 ## 5. 快速定位建议
 

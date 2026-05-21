@@ -117,8 +117,13 @@ export {
   ensureMemoryDedupBackupFile,
   normalizeChunkContentForExactDedup,
   type MemoryDedupGroupSourceIndexSummary,
+  type MemoryDedupGovernanceRiskLevel,
+  type MemoryDedupGovernanceSignal,
+  type MemoryDedupGovernanceSuggestedAction,
   type MemoryExactDedupApplyOptions,
   type MemoryExactDedupApplyResult,
+  type MemoryExactDedupGovernanceGroup,
+  type MemoryExactDedupGovernanceSummary,
   type MemoryDedupChunkSnapshot,
   type MemoryDedupSourceIndexInfo,
   type MemoryDedupSourceIndexScope,
@@ -128,6 +133,11 @@ export {
   type MemoryExactDedupPreviewItem,
   type MemoryExactDedupPreviewReport,
 } from "./memory-dedup.js";
+export {
+  buildMemoryExactDedupGovernanceSummary,
+  buildMemoryExactDedupGroupGovernance,
+  decorateMemoryExactDedupReportWithGovernance,
+} from "./memory-dedup-governance.js";
 export {
   buildMemoryVacuumWarnings,
   ensureMemoryVacuumBackupFile,
@@ -143,6 +153,9 @@ export {
   type MemorySourceInventoryClass,
   type MemorySourceInventoryConfiguredSource,
   type MemorySourceInventoryDuplicateRiskLevel,
+  type MemorySourceInventoryFamily,
+  type MemorySourceInventoryFamilyMember,
+  type MemorySourceInventoryFamilyRiskLevel,
   type MemorySourceInventoryItem,
   type MemorySourceInventoryReport,
   type MemorySourceInventoryScope,
@@ -150,6 +163,62 @@ export {
   type MemorySourceInventoryStorage,
   type MemoryTaskInventoryStats,
 } from "./memory-source-inventory.js";
+export {
+  classifyMemorySource,
+  isMemorySourceSearchPolicy,
+  normalizeSourcePathForRegistryMatch,
+  resolveMemorySourceAdmission,
+  resolveMemorySourceIdentity,
+  type MemorySourceAdmissionPolicy,
+  type MemorySourceDedupPolicy,
+  type MemorySourceIdentity,
+  type MemorySourceRetentionHint,
+  type MemorySourceSearchPolicy,
+} from "./memory-source-registry.js";
+export {
+  buildMemorySourceInventoryDoctorReport,
+  buildMemorySourceInventoryGovernanceSummary,
+  type MemorySourceInventoryDoctorCheck,
+  type MemorySourceInventoryDoctorReport,
+  type MemorySourceInventoryGovernanceCategory,
+  type MemorySourceInventoryGovernanceFamilySummary,
+  type MemorySourceInventoryGovernanceFamilySuggestion,
+  type MemorySourceInventoryGovernanceRiskLevel,
+  type MemorySourceInventoryGovernanceSignal,
+  type MemorySourceInventoryGovernanceSuggestedAction,
+  type MemorySourceInventoryGovernanceSummary,
+} from "./memory-source-inventory-governance.js";
+export {
+  buildExternalMemoryIngestGovernanceSummary,
+  type ExternalMemoryIngestGovernanceIndexedSource,
+  type ExternalMemoryIngestGovernanceRiskLevel,
+  type ExternalMemoryIngestGovernanceSignal,
+  type ExternalMemoryIngestGovernanceSuggestion,
+  type ExternalMemoryIngestGovernanceSuggestionCategory,
+  type ExternalMemoryIngestGovernanceSuggestedAction,
+  type ExternalMemoryIngestGovernanceSummary,
+} from "./external-memory-ingest-governance.js";
+export {
+  buildMemoryTreeJobReport,
+  type MemoryTreeJobDefinition,
+  type MemoryTreeJobImplementationStage,
+  type MemoryTreeJobReport,
+  type MemoryTreeJobReportCheck,
+  type MemoryTreeJobStatus,
+  type MemoryTreeJobType,
+  type MemoryTreeJobView,
+} from "./memory-tree-job-report.js";
+export {
+  clearMemoryTreeJobInflightForTest,
+} from "./memory-tree-job-control.js";
+export {
+  buildMemoryTreeLifecycleReport,
+  type MemoryTreeLifecycleReport,
+  type MemoryTreeLifecycleReportCheck,
+  type MemoryTreeLifecycleReportCheckStatus,
+  type MemoryTreeLifecycleReportTarget,
+  type MemoryTreeLifecycleReportTargetKind,
+} from "./memory-tree-lifecycle-report.js";
 export {
   type MemoryTreeChunkScoreInput,
   type MemoryTreeEdgeListFilter,
@@ -177,6 +246,11 @@ export {
   type MemoryTreeSourceRebuildResult,
   type MemoryTreeTargetType,
 } from "./memory-tree-types.js";
+export {
+  buildMemorySourceCoveragePolicyExplanations,
+  describeMemorySourceCoverageItem,
+  type MemorySourceCoveragePolicyExplanation,
+} from "./memory-source-coverage-explanations.js";
 export {
   buildVirtualCandidateFromPublishedAsset,
   listPublishedAssets,

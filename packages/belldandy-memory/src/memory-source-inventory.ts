@@ -2,12 +2,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { MemoryIndexStatus } from "./types.js";
+import {
+  resolveMemorySourceAdmission,
+  resolveMemorySourceIdentity,
+  type MemorySourceAdmissionPolicy,
+  type MemorySourceIdentity,
+  type MemorySourceSearchPolicy,
+} from "./memory-source-registry.js";
 
 export type MemorySourceInventoryClass = "raw" | "derived" | "curated";
 export type MemorySourceInventoryScope = "private" | "shared" | "team";
 export type MemorySourceInventoryStorage = "filesystem" | "database" | "external";
 export type MemorySourceInventoryStatus = "present" | "missing" | "declared";
 export type MemorySourceInventoryDuplicateRiskLevel = "low" | "medium" | "high";
+export type MemorySourceInventoryFamilyRiskLevel = MemorySourceInventoryDuplicateRiskLevel;
 
 export type MemoryTaskInventoryStats = {
   taskCount: number;
@@ -31,6 +39,7 @@ export type MemorySourceInventoryConfiguredSource = {
   label: string;
   sourceClass: MemorySourceInventoryClass;
   scope?: MemorySourceInventoryScope;
+  searchPolicy?: MemorySourceSearchPolicy;
   rootPath?: string;
   filePath?: string;
   recursive?: boolean;
@@ -57,12 +66,38 @@ export type MemorySourceInventoryItem = {
     totalBytes: number;
     lastUpdatedAt?: string;
   };
+  admission: MemorySourceAdmissionPolicy;
+  identity: MemorySourceIdentity;
   location: {
     path?: string;
     table?: string;
     pattern?: string;
   };
   notes: string[];
+};
+
+export type MemorySourceInventoryFamilyMember = {
+  id: string;
+  label: string;
+  sourceKind: string;
+  sourceClass: MemorySourceInventoryClass;
+  storage: MemorySourceInventoryStorage;
+  status: MemorySourceInventoryStatus;
+  searchPolicy: MemorySourceSearchPolicy;
+};
+
+export type MemorySourceInventoryFamily = {
+  sourceFamilyKey: string;
+  memberCount: number;
+  presentMemberCount: number;
+  sourceKinds: string[];
+  sourceClasses: MemorySourceInventoryClass[];
+  searchPolicies: MemorySourceSearchPolicy[];
+  duplicateRisk: {
+    level: MemorySourceInventoryFamilyRiskLevel;
+    rationale: string;
+  };
+  members: MemorySourceInventoryFamilyMember[];
 };
 
 export type MemorySourceInventoryReport = {
@@ -79,10 +114,15 @@ export type MemorySourceInventoryReport = {
     totalBytes: number;
     indexedFiles: number;
     indexedChunks: number;
+    sourceFamilyCount: number;
+    multiMemberFamilyCount: number;
+    highRiskFamilyCount: number;
     byClass: Record<MemorySourceInventoryClass, number>;
     byScope: Record<MemorySourceInventoryScope, number>;
+    bySearchPolicy: Record<MemorySourceSearchPolicy, number>;
   };
   items: MemorySourceInventoryItem[];
+  families: MemorySourceInventoryFamily[];
 };
 
 export type BuildMemorySourceInventoryInput = {
@@ -104,7 +144,7 @@ type InventoryBuiltinFileSpec = {
   scan: (stateDir: string) => Promise<MemorySourceInventoryItem>;
 };
 
-const INVENTORY_REPORT_VERSION = "p8-readonly-preview-v1";
+const INVENTORY_REPORT_VERSION = "p10-source-registry-family-v1";
 
 const BUILTIN_FILE_SPECS: InventoryBuiltinFileSpec[] = [
   createDirectorySpec({
@@ -271,6 +311,7 @@ export async function buildMemorySourceInventoryReport(
   const items = [...builtinFileItems, ...databaseItems, ...configuredItems].sort((left, right) =>
     left.label.localeCompare(right.label, "zh-CN"),
   );
+  const families = buildInventoryFamilies(items);
 
   const totals = items.reduce<MemorySourceInventoryReport["totals"]>((acc, item) => {
     acc.sourceKinds += 1;
@@ -279,6 +320,7 @@ export async function buildMemorySourceInventoryReport(
     acc.totalBytes += item.stats.totalBytes;
     acc.byClass[item.sourceClass] += item.stats.itemCount;
     acc.byScope[item.scope] += item.stats.itemCount;
+    acc.bySearchPolicy[item.admission.searchPolicy] += item.stats.itemCount;
     if (item.status === "present") acc.presentSourceKinds += 1;
     if (item.status === "declared") acc.declaredSourceKinds += 1;
     if (item.status === "missing") acc.missingSourceKinds += 1;
@@ -293,8 +335,12 @@ export async function buildMemorySourceInventoryReport(
     totalBytes: 0,
     indexedFiles: input.memoryStatus.files ?? 0,
     indexedChunks: input.memoryStatus.chunks ?? 0,
+    sourceFamilyCount: families.length,
+    multiMemberFamilyCount: families.filter((family) => family.memberCount > 1).length,
+    highRiskFamilyCount: families.filter((family) => family.duplicateRisk.level === "high").length,
     byClass: { raw: 0, derived: 0, curated: 0 },
     byScope: { private: 0, shared: 0, team: 0 },
+    bySearchPolicy: { "inventory-only": 0, searchable: 0, "summary-input-only": 0 },
   });
 
   return {
@@ -303,6 +349,7 @@ export async function buildMemorySourceInventoryReport(
     stateDir: input.stateDir,
     totals,
     items,
+    families,
   };
 }
 
@@ -310,7 +357,7 @@ function buildDatabaseItems(input: BuildMemorySourceInventoryInput): MemorySourc
   const taskLastUpdatedAt = maxIso(input.taskStats.lastTaskUpdatedAt, input.taskStats.lastActivityAt);
   const experienceLastUpdatedAt = maxIso(input.experienceStats.lastCandidateCreatedAt, input.experienceStats.lastUsageCreatedAt);
   return [
-    {
+    finalizeInventoryItem({
       id: "builtin:db:tasks",
       label: "任务结构化记录",
       sourceKind: "tasks",
@@ -333,8 +380,8 @@ function buildDatabaseItems(input: BuildMemorySourceInventoryInput): MemorySourc
         table: "tasks",
       },
       notes: ["来自 `memory.sqlite.tasks`。"],
-    },
-    {
+    }),
+    finalizeInventoryItem({
       id: "builtin:db:task-activities",
       label: "任务活动流水",
       sourceKind: "task_activities",
@@ -357,8 +404,8 @@ function buildDatabaseItems(input: BuildMemorySourceInventoryInput): MemorySourc
         table: "task_activities",
       },
       notes: ["来自 `memory.sqlite.task_activities`。"],
-    },
-    {
+    }),
+    finalizeInventoryItem({
       id: "builtin:db:experience-candidates",
       label: "经验候选资产",
       sourceKind: "experience_candidates",
@@ -384,8 +431,8 @@ function buildDatabaseItems(input: BuildMemorySourceInventoryInput): MemorySourc
         "来自 `memory.sqlite.experience_candidates`。",
         `draft=${input.experienceStats.draftCandidateCount}, accepted=${input.experienceStats.acceptedCandidateCount}, rejected=${input.experienceStats.rejectedCandidateCount}`,
       ],
-    },
-    {
+    }),
+    finalizeInventoryItem({
       id: "builtin:db:experience-usages",
       label: "经验消费记录",
       sourceKind: "experience_usages",
@@ -408,7 +455,7 @@ function buildDatabaseItems(input: BuildMemorySourceInventoryInput): MemorySourc
         table: "experience_usages",
       },
       notes: ["来自 `memory.sqlite.experience_usages`。"],
-    },
+    }),
   ];
 }
 
@@ -433,7 +480,7 @@ function createDirectorySpec(input: {
         recursive: input.recursive,
         matcher: input.matcher,
       });
-      return {
+      return finalizeInventoryItem({
         id: input.id,
         label: input.label,
         sourceKind: input.sourceKind,
@@ -454,7 +501,7 @@ function createDirectorySpec(input: {
           pattern: input.pattern,
         },
         notes: input.notes,
-      };
+      });
     },
   };
 }
@@ -474,7 +521,7 @@ function createSingleFileSpec(input: {
     async scan(stateDir: string) {
       const filePath = path.join(stateDir, input.relativePath);
       const stats = await scanSingleFile(filePath);
-      return {
+      return finalizeInventoryItem({
         id: input.id,
         label: input.label,
         sourceKind: input.sourceKind,
@@ -495,7 +542,7 @@ function createSingleFileSpec(input: {
           pattern: path.basename(filePath),
         },
         notes: input.notes,
-      };
+      });
     },
   };
 }
@@ -510,7 +557,7 @@ async function scanConfiguredSource(
   if (typeof source.filePath === "string" && source.filePath.trim()) {
     const filePath = path.resolve(source.filePath.trim());
     const stats = await scanSingleFile(filePath);
-    return {
+    return finalizeInventoryItem({
       id,
       label,
       sourceKind: "configured_external",
@@ -534,7 +581,9 @@ async function scanConfiguredSource(
         pattern: path.basename(filePath),
       },
       notes: [source.note, "configured 外来源：当前阶段只读盘点，不自动入树。"].filter(isTruthy),
-    };
+    }, {
+      configuredSearchPolicy: source.searchPolicy,
+    });
   }
 
   if (typeof source.rootPath === "string" && source.rootPath.trim()) {
@@ -546,7 +595,7 @@ async function scanConfiguredSource(
         return fileExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
       },
     });
-    return {
+    return finalizeInventoryItem({
       id,
       label,
       sourceKind: "configured_external",
@@ -570,10 +619,12 @@ async function scanConfiguredSource(
         pattern: fileExtensions.length > 0 ? `**/*{${fileExtensions.join(",")}}` : "**/*",
       },
       notes: [source.note, "configured 外来源：当前阶段只读盘点，不自动入树。"].filter(isTruthy),
-    };
+    }, {
+      configuredSearchPolicy: source.searchPolicy,
+    });
   }
 
-  return {
+  return finalizeInventoryItem({
     id,
     label,
     sourceKind: "configured_external",
@@ -593,7 +644,120 @@ async function scanConfiguredSource(
     },
     location: {},
     notes: [source.note, "configured 外来源：当前阶段只读盘点，不自动入树。"].filter(isTruthy),
+  }, {
+    configuredSearchPolicy: source.searchPolicy,
+  });
+}
+
+function finalizeInventoryItem(
+  item: Omit<MemorySourceInventoryItem, "admission" | "identity">,
+  options: {
+    configuredSearchPolicy?: MemorySourceSearchPolicy;
+  } = {},
+): MemorySourceInventoryItem {
+  return {
+    ...item,
+    admission: resolveMemorySourceAdmission({
+      sourceKind: item.sourceKind,
+      sourceClass: item.sourceClass,
+      storage: item.storage,
+      configuredSearchPolicy: options.configuredSearchPolicy,
+    }),
+    identity: resolveMemorySourceIdentity({
+      id: item.id,
+      sourceKind: item.sourceKind,
+      sourceClass: item.sourceClass,
+      scope: item.scope,
+      sourcePath: item.location.path,
+      sourceRef: item.location.table ?? item.location.pattern,
+      builtinInventoryId: item.id.startsWith("builtin:") ? item.id : undefined,
+      updatedAt: item.stats.lastUpdatedAt,
+    }),
   };
+}
+
+function buildInventoryFamilies(items: MemorySourceInventoryItem[]): MemorySourceInventoryFamily[] {
+  const familyMap = new Map<string, MemorySourceInventoryFamilyMember[]>();
+  for (const item of items) {
+    const familyKey = item.identity.sourceFamilyKey;
+    const members = familyMap.get(familyKey) ?? [];
+    members.push({
+      id: item.id,
+      label: item.label,
+      sourceKind: item.sourceKind,
+      sourceClass: item.sourceClass,
+      storage: item.storage,
+      status: item.status,
+      searchPolicy: item.admission.searchPolicy,
+    });
+    familyMap.set(familyKey, members);
+  }
+
+  return [...familyMap.entries()]
+    .map(([sourceFamilyKey, members]) => {
+      const memberCount = members.length;
+      const presentMemberCount = members.filter((item) => item.status === "present").length;
+      const sourceKinds = dedupeStrings(members.map((item) => item.sourceKind));
+      const sourceClasses = dedupeSourceClasses(members.map((item) => item.sourceClass));
+      const searchPolicies = dedupeSearchPolicies(members.map((item) => item.searchPolicy));
+      return {
+        sourceFamilyKey,
+        memberCount,
+        presentMemberCount,
+        sourceKinds,
+        sourceClasses,
+        searchPolicies,
+        duplicateRisk: resolveFamilyDuplicateRisk(memberCount, sourceClasses, searchPolicies),
+        members: [...members],
+      };
+    })
+    .sort((left, right) => {
+      if (right.memberCount !== left.memberCount) {
+        return right.memberCount - left.memberCount;
+      }
+      return left.sourceFamilyKey.localeCompare(right.sourceFamilyKey, "zh-CN");
+    });
+}
+
+function resolveFamilyDuplicateRisk(
+  memberCount: number,
+  sourceClasses: MemorySourceInventoryClass[],
+  searchPolicies: MemorySourceSearchPolicy[],
+): MemorySourceInventoryFamily["duplicateRisk"] {
+  if (memberCount <= 1) {
+    return {
+      level: "low",
+      rationale: "这个 family 目前只有一个来源成员，重复压力较低。",
+    };
+  }
+  if (sourceClasses.length > 1) {
+    return {
+      level: "high",
+      rationale: "同一个 family 里同时存在原文与派生层，容易发生重复、覆盖或摘要互相回灌。",
+    };
+  }
+  if (memberCount >= 3 || searchPolicies.includes("summary-input-only")) {
+    return {
+      level: "medium",
+      rationale: "同一个 family 有多个成员，适合继续按版本和用途分层治理。",
+    };
+  }
+  return {
+    level: "medium",
+    rationale: "同一个 family 有多个成员，仍建议持续观察是否出现重复回灌。",
+  };
+}
+
+function dedupeSourceClasses(values: MemorySourceInventoryClass[]): MemorySourceInventoryClass[] {
+  return dedupeStrings(values) as MemorySourceInventoryClass[];
+}
+
+function dedupeSearchPolicies(values: MemorySourceSearchPolicy[]): MemorySourceSearchPolicy[] {
+  return dedupeStrings(values) as MemorySourceSearchPolicy[];
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values.filter((item) => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))];
 }
 
 async function scanSingleFile(filePath: string): Promise<{

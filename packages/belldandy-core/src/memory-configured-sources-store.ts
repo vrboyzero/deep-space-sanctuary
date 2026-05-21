@@ -6,6 +6,7 @@ import type {
   MemorySourceInventoryClass,
   MemorySourceInventoryConfiguredSource,
   MemorySourceInventoryScope,
+  MemorySourceSearchPolicy,
 } from "@belldandy/memory";
 
 const CONFIG_FILENAME = "memory-configured-sources.json";
@@ -127,6 +128,10 @@ export function normalizeConfiguredMemorySourcesInput(
     if (scope && !isInventoryScope(scope)) {
       return { error: `${fieldName}[${index}].scope must be private, shared, or team.` };
     }
+    const searchPolicy = readOptionalString(item, "searchPolicy");
+    if (searchPolicy && !isInventorySearchPolicy(searchPolicy)) {
+      return { error: `${fieldName}[${index}].searchPolicy must be inventory-only, searchable, or summary-input-only.` };
+    }
     const rootPath = readOptionalString(item, "rootPath");
     const filePath = readOptionalString(item, "filePath");
     if (!rootPath && !filePath) {
@@ -144,6 +149,7 @@ export function normalizeConfiguredMemorySourcesInput(
       label,
       sourceClass,
       ...(scope ? { scope: scope as MemorySourceInventoryScope } : {}),
+      ...(searchPolicy ? { searchPolicy: searchPolicy as MemorySourceSearchPolicy } : {}),
       ...(rootPath ? { rootPath } : {}),
       ...(filePath ? { filePath } : {}),
       ...(typeof item.recursive === "boolean" ? { recursive: item.recursive } : {}),
@@ -175,6 +181,10 @@ function isInventorySourceClass(value: string | undefined): value is MemorySourc
 
 function isInventoryScope(value: string | undefined): value is MemorySourceInventoryScope {
   return value === "private" || value === "shared" || value === "team";
+}
+
+function isInventorySearchPolicy(value: string | undefined): value is MemorySourceSearchPolicy {
+  return value === "inventory-only" || value === "searchable" || value === "summary-input-only";
 }
 
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {

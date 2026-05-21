@@ -8,6 +8,7 @@ import {
   listPublishedAssets,
 } from "@belldandy/memory";
 import {
+  buildMemorySourceInventoryGovernanceSummary,
   buildExperienceSynthesisPreviewFromSourceCandidates,
   buildExperienceCandidateSlug,
   createTaskWorkSurface,
@@ -65,12 +66,14 @@ import {
   resolveExperienceSynthesisTemplate,
   resolveExperienceSynthesisTemplateInfo,
 } from "../experience-synthesis-template.js";
+import { buildResidentSharedGovernancePreview } from "../resident-shared-governance-report.js";
 
 type MemoryExperienceMethodContext = {
   stateDir: string;
   agentRegistry?: AgentRegistry;
   skillRegistry?: SkillRegistry;
   residentMemoryManagers?: ScopedMemoryManagerRecord[];
+  teamSharedMemoryEnabled?: boolean;
   primaryModelConfig?: {
     baseUrl: string;
     apiKey: string;
@@ -268,8 +271,10 @@ export async function handleMemoryExperienceMethod(
       const report = await manager.previewSourceInventory({
         configuredSources: configuredSourcesResult.sources,
       });
+      const governance = buildMemorySourceInventoryGovernanceSummary(report);
       return ok(req.id, {
         report,
+        governance,
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
     }
@@ -291,8 +296,10 @@ export async function handleMemoryExperienceMethod(
         configuredSources: configuredSourcesResult.sources,
         createdBy: "rpc",
       });
+      const governance = record.summary?.governance ?? buildMemorySourceInventoryGovernanceSummary(report);
       return ok(req.id, {
         report,
+        governance,
         record,
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
@@ -318,6 +325,7 @@ export async function handleMemoryExperienceMethod(
         });
         return ok(req.id, {
           report,
+          governance: record.summary?.governance ?? null,
           record,
           queryView: buildResidentMemoryQueryView(residentPolicy),
         });
@@ -341,6 +349,45 @@ export async function handleMemoryExperienceMethod(
       });
       return ok(req.id, {
         report,
+        record,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.report.shared_governance.preview": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const configuredSourcesResult = await resolveConfiguredInventorySources(params, ctx.stateDir);
+      if ("error" in configuredSourcesResult) {
+        return invalid(req.id, configuredSourcesResult.error);
+      }
+
+      const reviewerAgentId = extractReviewerMemoryAgentId(params)
+        ?? residentPolicy?.agentId
+        ?? "default";
+      const preview = await buildResidentSharedGovernancePreview({
+        stateDir: ctx.stateDir,
+        manager,
+        residentPolicy,
+        residentRecords: ctx.residentMemoryManagers,
+        agentRegistry: ctx.agentRegistry,
+        reviewerAgentId,
+        configuredSources: configuredSourcesResult.sources,
+        teamSharedMemoryEnabled: ctx.teamSharedMemoryEnabled ?? (process.env.BELLDANDY_TEAM_SHARED_MEMORY_ENABLED === "true"),
+      });
+      const record = manager.recordMemoryTreeReport({
+        reportType: "shared_governance_preview",
+        scope: residentPolicy?.writeTarget === "shared" ? "shared" : "private",
+        agentId: residentPolicy?.agentId,
+        createdBy: "rpc",
+        summary: preview.summary,
+        details: preview.details,
+      });
+      return ok(req.id, {
+        report: preview.report,
+        governance: preview.report.governance,
         record,
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
@@ -458,6 +505,85 @@ export async function handleMemoryExperienceMethod(
       }
     }
 
+    case "memory.tree.lifecycle.get": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const kinds = readManagedMemoryTreeNodeKinds(params, "kinds");
+      if (kinds === null) {
+        return invalid(req.id, "kinds must only contain topic, profile, or global.");
+      }
+      const snapshot = manager.getMemoryTreeLifecycleSnapshot({ kinds: kinds ?? undefined });
+      return ok(req.id, {
+        snapshot,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.lifecycle.report": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const kinds = readManagedMemoryTreeNodeKinds(params, "kinds");
+      if (kinds === null) {
+        return invalid(req.id, "kinds must only contain topic, profile, or global.");
+      }
+      const report = manager.getMemoryTreeLifecycleReport({ kinds: kinds ?? undefined });
+      return ok(req.id, {
+        report,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.job.report": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const kinds = readManagedMemoryTreeNodeKinds(params, "kinds");
+      if (kinds === null) {
+        return invalid(req.id, "kinds must only contain topic, profile, or global.");
+      }
+      const report = manager.getMemoryTreeJobReport({ kinds: kinds ?? undefined });
+      return ok(req.id, {
+        report,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
+    case "memory.tree.lifecycle.ensure": {
+      const manager = resolveScopedMemoryManager(params);
+      const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
+      if (!manager) return notAvailable(req.id);
+
+      const kinds = readManagedMemoryTreeNodeKinds(params, "kinds");
+      if (kinds === null) {
+        return invalid(req.id, "kinds must only contain topic, profile, or global.");
+      }
+      const rebuildSources = readOptionalBoolean(params, "rebuildSources");
+      let configuredSources: MemorySourceInventoryConfiguredSource[] | undefined;
+      if (rebuildSources !== false) {
+        const configuredSourcesResult = await resolveConfiguredInventorySources(params, ctx.stateDir);
+        if ("error" in configuredSourcesResult) {
+          return invalid(req.id, configuredSourcesResult.error);
+        }
+        configuredSources = configuredSourcesResult.sources;
+      }
+      const nodeLimit = clampListLimit(params.nodeLimit, 20, 200);
+      const result = await manager.ensureManagedMemoryTreeFresh({
+        configuredSources,
+        kinds: kinds ?? undefined,
+        nodeLimit,
+        rebuildSources,
+      });
+      return ok(req.id, {
+        result,
+        queryView: buildResidentMemoryQueryView(residentPolicy),
+      });
+    }
+
     case "memory.tree.node.rebuild": {
       const manager = resolveScopedMemoryManager(params);
       const residentPolicy = resolveScopedResidentMemoryPolicy(params, ctx.residentMemoryManagers);
@@ -528,6 +654,7 @@ export async function handleMemoryExperienceMethod(
         node: detail.node,
         edges: detail.edges,
         chunks: attachResidentMemorySourceViews(detail.chunks, residentPolicy),
+        sources: detail.sources,
         queryView: buildResidentMemoryQueryView(residentPolicy),
       });
     }
@@ -1862,6 +1989,31 @@ function isMemoryTreeNodeKind(
     || value === "agent"
     || value === "profile"
     || value === "global";
+}
+
+function isManagedMemoryTreeNodeKind(
+  value: string | undefined,
+): value is "topic" | "profile" | "global" {
+  return value === "topic"
+    || value === "profile"
+    || value === "global";
+}
+
+function readManagedMemoryTreeNodeKinds(
+  params: Record<string, unknown>,
+  key: string,
+): Array<"topic" | "profile" | "global"> | null | undefined {
+  if (!(key in params)) {
+    return undefined;
+  }
+  const values = readOptionalStringArray(params, key);
+  if (values.length <= 0) {
+    return [];
+  }
+  if (values.some((value) => !isManagedMemoryTreeNodeKind(value))) {
+    return null;
+  }
+  return values as Array<"topic" | "profile" | "global">;
 }
 
 function readOptionalNonNegativeInteger(params: Record<string, unknown>, key: string): number | undefined {

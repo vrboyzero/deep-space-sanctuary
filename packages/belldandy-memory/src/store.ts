@@ -881,7 +881,7 @@ export class MemoryStore {
   getChunk(chunkId: string): MemorySearchResult | null {
     this.ensureOpen();
     const stmt = this.db.prepare(`
-      SELECT id, source_path, source_type, memory_type, visibility, content, metadata, start_line, end_line, summary, category, updated_at
+      SELECT id, source_path, source_type, memory_type, visibility, content, metadata, topic, start_line, end_line, summary, category, updated_at
       FROM chunks
       WHERE id = ?
       LIMIT 1
@@ -893,6 +893,7 @@ export class MemoryStore {
       sourcePath: row.source_path,
       sourceType: row.source_type,
       memoryType: row.memory_type,
+      topic: optionalString(row.topic),
       category: normalizeCategory(row.category),
       visibility: row.visibility ?? "private",
       snippet: (row.content ?? "").slice(0, 500),
@@ -3666,6 +3667,7 @@ function rowToSearchResult(row: any, score: number): MemorySearchResult {
     sourcePath: row.source_path,
     sourceType: row.source_type,
     memoryType: row.memory_type as MemoryType,
+    topic: optionalString(row.topic),
     category: normalizeCategory(row.category),
     visibility: (row.visibility ?? "private") as MemoryVisibility,
     content: row.content ?? undefined,

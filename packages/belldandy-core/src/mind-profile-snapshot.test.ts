@@ -141,4 +141,90 @@ describe("buildMindProfileSnapshot", () => {
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
   });
+
+  it("prefers profile/global tree nodes as stable upper-layer anchors when available", async () => {
+    if (!process.env.OPENAI_API_KEY) {
+      process.env.OPENAI_API_KEY = "test-placeholder-key";
+    }
+
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mind-profile-tree-"));
+    const sharedStateDir = path.join(stateDir, "team-memory");
+    const sessionsDir = path.join(stateDir, "sessions");
+    const memoryDir = path.join(stateDir, "memory");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    await fs.mkdir(memoryDir, { recursive: true });
+    await fs.mkdir(path.join(sharedStateDir, "memory"), { recursive: true });
+
+    await fs.writeFile(path.join(stateDir, "USER.md"), "# USER\n喜欢稳定结论先行，再展开证据。\n", "utf-8");
+    await fs.writeFile(path.join(stateDir, "MEMORY.md"), "# MEMORY\n新增主体逻辑优先拆出大文件。\n", "utf-8");
+
+    const manager = new MemoryManager({
+      workspaceRoot: sessionsDir,
+      additionalRoots: [memoryDir],
+      additionalFiles: [path.join(stateDir, "MEMORY.md")],
+      storePath: path.join(stateDir, "memory.sqlite"),
+      modelsDir: path.join(stateDir, "models"),
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    try {
+      (manager as any).store.upsertChunk({
+        id: "profile-tree-1",
+        sourcePath: "MEMORY.md",
+        sourceType: "file",
+        memoryType: "core",
+        content: "偏好先给结论，再补关键证据，且大文件新增主体逻辑优先外移。",
+        agentId: "default",
+        visibility: "private",
+      });
+      (manager as any).store.createTask({
+        id: "profile-tree-task-1",
+        conversationId: "goal:tree:conv",
+        sessionKey: "goal:tree:conv",
+        agentId: "default",
+        source: "chat",
+        status: "success",
+        title: "Stabilize routing evidence policy",
+        summary: "Prefer a high-level answer before expanding evidence.",
+        metadata: { goalId: "goal-tree-routing", goalSession: true },
+        startedAt: "2026-05-21T10:00:00.000Z",
+        finishedAt: "2026-05-21T10:20:00.000Z",
+        createdAt: "2026-05-21T10:00:00.000Z",
+        updatedAt: "2026-05-21T10:20:00.000Z",
+      });
+      (manager as any).store.linkTaskMemory("profile-tree-task-1", "profile-tree-1", "generated");
+
+      const snapshot = await buildMindProfileSnapshot({
+        stateDir,
+        residentMemoryManagers: [{
+          agentId: "default",
+          stateDir,
+          memoryMode: "hybrid",
+          policy: {
+            memoryMode: "hybrid",
+            managerStateDir: stateDir,
+            sharedStateDir,
+            writeTarget: "private",
+            readTargets: ["private", "shared"],
+            includeSharedMemoryReads: true,
+          },
+          manager,
+        } as any],
+      });
+
+      expect(snapshot.profile.headline).toContain("Profile tree:");
+      expect(snapshot.profile.treeSummaryLines).toEqual(expect.arrayContaining([
+        expect.stringContaining("Profile tree:"),
+        expect.stringContaining("Global tree:"),
+      ]));
+      expect(snapshot.profile.treeNodes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "profile" }),
+        expect.objectContaining({ kind: "global" }),
+      ]));
+    } finally {
+      manager.close();
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });
