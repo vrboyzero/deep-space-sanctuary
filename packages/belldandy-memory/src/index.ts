@@ -21,6 +21,7 @@ export {
   type GlobalMemoryManagerScope,
   type TaskWorkShortcutItem,
   registerGlobalMemoryManager,
+  registerGlobalMemoryManagerResolver,
   getGlobalMemoryManager,
   listGlobalMemoryManagers,
   resetGlobalMemoryManagers,

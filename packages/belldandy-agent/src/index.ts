@@ -294,6 +294,30 @@ export type AgentUsage = {
     deltaRatio: number;
     status?: "aligned" | "under_estimated" | "over_estimated";
   };
+  /** 最近一次模型调用返回的 provider 原始 usage 字段 */
+  providerRawUsage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    promptCacheHitTokens?: number;
+    promptCacheMissTokens?: number;
+  };
+  /** 最近一次模型调用发送给 provider 的本地请求形状 */
+  requestShape?: {
+    messageCount: number;
+    systemMessageCount: number;
+    toolSchemaCount: number;
+  };
+  /** 最近一次模型调用发送前的本地 prompt token 估算 */
+  localPromptEstimate?: {
+    systemPromptTokens: number;
+    contextTokens: number;
+    totalPromptTokens: number;
+  };
 };
 
 export type AgentStreamItem =

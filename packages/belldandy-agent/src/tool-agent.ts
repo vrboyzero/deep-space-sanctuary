@@ -65,6 +65,10 @@ const toolDefinitionTokenEstimateCache = new WeakMap<object, {
   tokens: number;
 }>();
 
+type TokenEstimateContext = {
+  model?: string;
+};
+
 export type ToolEnabledAgentOptions = {
   baseUrl: string;
   apiKey: string;
@@ -317,21 +321,21 @@ export function compactReasoningContentForHistory(
   return `${normalized.slice(0, head)}${marker}${normalized.slice(Math.max(head, normalized.length - tail))}`;
 }
 
-function estimateMessageContentTokens(content: unknown): number {
-  return estimateTokens(contentToTokenEstimateString(content) ?? "");
+function estimateMessageContentTokens(content: unknown, tokenEstimateContext?: TokenEstimateContext): number {
+  return estimateTokens(contentToTokenEstimateString(content) ?? "", tokenEstimateContext);
 }
 
-function estimateAssistantHistoryOverhead(message: Message): number {
+function estimateAssistantHistoryOverhead(message: Message, tokenEstimateContext?: TokenEstimateContext): number {
   if (message.role !== "assistant") {
     return 0;
   }
 
   let total = 0;
   if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-    total += estimateTokens(JSON.stringify(message.tool_calls));
+    total += estimateTokens(JSON.stringify(message.tool_calls), tokenEstimateContext);
   }
   if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
-    total += estimateTokens(sanitizeStringForTokenEstimate(message.reasoning_content.trim()));
+    total += estimateTokens(sanitizeStringForTokenEstimate(message.reasoning_content.trim()), tokenEstimateContext);
   }
   return total;
 }
@@ -359,14 +363,15 @@ function readToolExecutionRuntimeContext(meta?: JsonObject): ToolExecutionRuntim
 function estimateContextTokensFromMessages(
   messages: Message[],
   opts?: { includeSystem?: boolean; margin?: number },
+  tokenEstimateContext?: TokenEstimateContext,
 ): number {
   let total = 0;
   for (const message of messages) {
     if (!opts?.includeSystem && message.role === "system") {
       continue;
     }
-    total += estimateMessageContentTokens(message.content) + 4;
-    total += estimateAssistantHistoryOverhead(message);
+    total += estimateMessageContentTokens(message.content, tokenEstimateContext) + 4;
+    total += estimateAssistantHistoryOverhead(message, tokenEstimateContext);
   }
   if (opts?.margin && opts.margin > 0) {
     return Math.ceil(total * opts.margin);
@@ -374,13 +379,13 @@ function estimateContextTokensFromMessages(
   return total;
 }
 
-function estimateSystemPromptTokens(messages: Message[]): number {
+function estimateSystemPromptTokens(messages: Message[], tokenEstimateContext?: TokenEstimateContext): number {
   let total = 0;
   for (const message of messages) {
     if (message.role !== "system") {
       continue;
     }
-    total += estimateMessageContentTokens(message.content);
+    total += estimateMessageContentTokens(message.content, tokenEstimateContext);
   }
   return total;
 }
@@ -1204,6 +1209,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let totalCacheReadCostUsd = 0;
     let totalCacheSavingsUsd = 0;
     let modelCallCount = 0;
+    let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
+    let lastRequestShape: AgentUsage["requestShape"] | undefined;
+    let lastLocalPromptEstimate: AgentUsage["localPromptEstimate"] | undefined;
     let toolLoopBudgetWarningIssued = false;
     let lastToolCallFingerprint: string | undefined;
     let lastToolCallName: string | undefined;
@@ -1222,6 +1230,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     // 任务级 token 计数器
     const tokenCounter = new TokenCounterService();
     this.opts.toolExecutor.setTokenCounter(input.conversationId ?? "", tokenCounter);
+    let currentTokenEstimateModel = this.opts.model;
 
     // 扩展 A：从 ConversationStore 恢复跨 run 的活跃计数器
     const convId = input.conversationId ?? "";
@@ -1231,8 +1240,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     }
 
     const buildUsageItem = (): AgentUsage => {
-      const systemPromptTokens = estimateSystemPromptTokens(messages);
-      const contextTokens = estimateContextTokensFromMessages(messages, { includeSystem: false });
+      const tokenEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
+      const systemPromptTokens = estimateSystemPromptTokens(messages, tokenEstimateContext);
+      const contextTokens = estimateContextTokensFromMessages(messages, { includeSystem: false }, tokenEstimateContext);
       const usageCalibration = buildUsageCalibration({
         estimatedPromptTokens: systemPromptTokens + contextTokens,
         actualInputTokens: totalInputTokens,
@@ -1273,6 +1283,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
           ? { totalCostUsd: totalInputCostUsd + totalOutputCostUsd + totalCacheReadCostUsd + totalCacheCreationCostUsd }
           : {}),
         ...(usageCalibration ? { usageCalibration } : {}),
+        ...(lastProviderRawUsage ? { providerRawUsage: { ...lastProviderRawUsage } } : {}),
+        ...(lastRequestShape ? { requestShape: { ...lastRequestShape } } : {}),
+        ...(lastLocalPromptEstimate ? { localPromptEstimate: { ...lastLocalPromptEstimate } } : {}),
       };
     };
 
@@ -1356,7 +1369,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         refreshModelPromptState();
         const microcompactCandidate = messages.some((message) => message.role === "tool");
-        const microcompactOriginalTokens = microcompactCandidate ? estimateMessagesTotal(messages) : 0;
+        const microcompactEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
+        const microcompactOriginalTokens = microcompactCandidate ? estimateMessagesTotal(messages, microcompactEstimateContext) : 0;
         if (microcompactCandidate) {
           await this.emitBeforeCompaction({
             messageCount: messages.length,
@@ -1367,7 +1381,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         }
         const microcompactResult = microcompactMessages(messages, this.opts.microcompact);
         if (microcompactResult.mutated) {
-          const microcompactCompactedTokens = estimateMessagesTotal(messages);
+          const microcompactCompactedTokens = estimateMessagesTotal(messages, microcompactEstimateContext);
           logDebug("[microcompact] compacted stale tool messages", microcompactResult);
           this.opts.logger?.info?.("agent", "[microcompact] compacted stale tool messages", {
             ...microcompactResult,
@@ -1404,7 +1418,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         const maxInput = this.opts.maxInputTokens;
         if (maxInput && maxInput > 0 && this.opts.compaction?.enabled !== false) {
           const triggerFraction = this.opts.compaction?.triggerFraction ?? 0.75;
-          const currentTokens = estimateMessagesTotal(messages);
+          const currentTokens = estimateMessagesTotal(messages, microcompactEstimateContext);
           if (needsInLoopCompaction(currentTokens, maxInput, triggerFraction)) {
             try {
               loopCompactionState = await this.compactInLoop(messages, loopCompactionState, input.conversationId, resolvedAgentId);
@@ -1417,13 +1431,34 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
         const tools = this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
         const toolNames = tools.map((tool) => tool.function.name);
+        const dispatchTokenEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
+        const dispatchSystemPromptTokens = estimateSystemPromptTokens(messages, dispatchTokenEstimateContext);
+        const dispatchContextTokens = estimateContextTokensFromMessages(
+          messages,
+          { includeSystem: false },
+          dispatchTokenEstimateContext,
+        );
+        lastRequestShape = {
+          messageCount: messages.length,
+          systemMessageCount: messages.filter((message) => message.role === "system").length,
+          toolSchemaCount: tools.length,
+        };
+        lastLocalPromptEstimate = {
+          systemPromptTokens: dispatchSystemPromptTokens,
+          contextTokens: dispatchContextTokens,
+          totalPromptTokens: dispatchSystemPromptTokens + dispatchContextTokens,
+        };
         const modelCallStartedAt = Date.now();
         logDebug("[model-call] dispatch", {
           modelCallIndex: nextModelCallIndex,
           conversationId: input.conversationId,
           agentId: resolvedAgentId,
-          messageCount: messages.length,
-          toolDefinitionCount: tools.length,
+          messageCount: lastRequestShape.messageCount,
+          systemMessageCount: lastRequestShape.systemMessageCount,
+          toolDefinitionCount: lastRequestShape.toolSchemaCount,
+          estimatedSystemPromptTokens: lastLocalPromptEstimate.systemPromptTokens,
+          estimatedContextTokens: lastLocalPromptEstimate.contextTokens,
+          estimatedPromptTokens: lastLocalPromptEstimate.totalPromptTokens,
           toolNamesPreview: toolNames.slice(0, 12),
           hasApplyPatch: toolNames.includes("apply_patch"),
           hasFileRead: toolNames.includes("file_read"),
@@ -1474,6 +1509,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
         // 记录并累加 usage 信息
         if (response.ok && response.usage) {
           const u = response.usage;
+          lastProviderRawUsage = response.rawUsage ? { ...response.rawUsage } : {
+            inputTokens: u.input_tokens,
+            outputTokens: u.output_tokens,
+            cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
+            cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+            promptCacheHitTokens: u.prompt_cache_hit_tokens ?? 0,
+            promptCacheMissTokens: u.prompt_cache_miss_tokens ?? 0,
+          };
           modelCallCount++;
           totalInputTokens += u.input_tokens;
           totalOutputTokens += u.output_tokens;
@@ -2362,11 +2405,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
     abortSignal?: AbortSignal,
     onBeforeRequest?: (messages: Message[]) => void,
     providerNativeSystemBlocks?: ProviderNativeSystemBlock[],
-  ): Promise<{ ok: true; content: string; toolCalls?: OpenAIToolCall[]; reasoning_content?: string; usage?: AnthropicUsage } | { ok: false; error: string }> {
+  ): Promise<{
+    ok: true;
+    content: string;
+    toolCalls?: OpenAIToolCall[];
+    reasoning_content?: string;
+    usage?: AnthropicUsage;
+    rawUsage?: AgentUsage["providerRawUsage"];
+  } | {
+    ok: false;
+    error: string;
+  }> {
     let effectiveTimeoutMs = this.opts.timeoutMs;
     const callStartedAt = Date.now();
     let currentPhase = "preflight";
     let failoverSummary: FailoverExecutionSummary | undefined;
+    let currentTokenEstimateModel = this.opts.model;
     const logModelPhase = (message: string, data?: unknown) => {
       this.opts.logger?.debug?.("agent", message, {
         conversationId: runtimeScope?.conversationId,
@@ -2381,7 +2435,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       // 输入 token 预检：超限时裁剪历史消息
       const maxInput = this.opts.maxInputTokens;
       if (maxInput && maxInput > 0) {
-        trimMessagesToFit(messages, tools, maxInput);
+        trimMessagesToFit(messages, tools, maxInput, currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined);
       }
       onBeforeRequest?.(messages);
 
@@ -2423,6 +2477,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           // 优先使用 profile 自身的 protocol（models.json 配置），再 fallback 到 agent 级别协议
           const profileProtocol = (profile.protocol as ApiProtocol) ?? this.opts.protocol ?? detectProtocol(profile.baseUrl);
           const profileWireApi = resolveWireApiForProfile(profile, this.opts.wireApi);
+          currentTokenEstimateModel = profile.model;
           usedProtocol = profileProtocol;
           usedWireApi = profileWireApi;
 
@@ -2543,7 +2598,20 @@ export class ToolEnabledAgent implements BelldandyAgent {
           usageInputTokens: parsed.usage?.input_tokens ?? 0,
           usageOutputTokens: parsed.usage?.output_tokens ?? 0,
         });
-        return { ok: true, content: parsed.content, toolCalls, usage: parsed.usage };
+        return {
+          ok: true,
+          content: parsed.content,
+          toolCalls,
+          usage: parsed.usage,
+          rawUsage: parsed.usage ? {
+            inputTokens: parsed.usage.input_tokens,
+            outputTokens: parsed.usage.output_tokens,
+            cacheCreationInputTokens: parsed.usage.cache_creation_input_tokens ?? 0,
+            cacheReadInputTokens: parsed.usage.cache_read_input_tokens ?? 0,
+            promptCacheHitTokens: parsed.usage.prompt_cache_hit_tokens ?? 0,
+            promptCacheMissTokens: parsed.usage.prompt_cache_miss_tokens ?? 0,
+          } : undefined,
+        };
       }
 
       // OpenAI 响应解析
@@ -2577,6 +2645,25 @@ export class ToolEnabledAgent implements BelldandyAgent {
           content,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           usage,
+          rawUsage: rawUsage ? {
+            promptTokens: typeof rawUsage.prompt_tokens === "number" ? rawUsage.prompt_tokens : undefined,
+            completionTokens: typeof rawUsage.completion_tokens === "number" ? rawUsage.completion_tokens : undefined,
+            totalTokens: typeof rawUsage.total_tokens === "number" ? rawUsage.total_tokens : undefined,
+            inputTokens: typeof rawUsage.input_tokens === "number" ? rawUsage.input_tokens : undefined,
+            outputTokens: typeof rawUsage.output_tokens === "number" ? rawUsage.output_tokens : undefined,
+            cacheCreationInputTokens: typeof rawUsage.cache_creation_input_tokens === "number"
+              ? rawUsage.cache_creation_input_tokens
+              : undefined,
+            cacheReadInputTokens: typeof rawUsage.cache_read_input_tokens === "number"
+              ? rawUsage.cache_read_input_tokens
+              : undefined,
+            promptCacheHitTokens: typeof rawUsage.prompt_cache_hit_tokens === "number"
+              ? rawUsage.prompt_cache_hit_tokens
+              : undefined,
+            promptCacheMissTokens: typeof rawUsage.prompt_cache_miss_tokens === "number"
+              ? rawUsage.prompt_cache_miss_tokens
+              : undefined,
+          } : undefined,
         };
       }
 
@@ -2613,7 +2700,32 @@ export class ToolEnabledAgent implements BelldandyAgent {
         usageOutputTokens: usage?.output_tokens ?? 0,
       });
 
-      return { ok: true, content, toolCalls, reasoning_content, usage };
+      return {
+        ok: true,
+        content,
+        toolCalls,
+        reasoning_content,
+        usage,
+        rawUsage: rawUsage ? {
+          promptTokens: typeof rawUsage.prompt_tokens === "number" ? rawUsage.prompt_tokens : undefined,
+          completionTokens: typeof rawUsage.completion_tokens === "number" ? rawUsage.completion_tokens : undefined,
+          totalTokens: typeof rawUsage.total_tokens === "number" ? rawUsage.total_tokens : undefined,
+          inputTokens: typeof rawUsage.input_tokens === "number" ? rawUsage.input_tokens : undefined,
+          outputTokens: typeof rawUsage.output_tokens === "number" ? rawUsage.output_tokens : undefined,
+          cacheCreationInputTokens: typeof rawUsage.cache_creation_input_tokens === "number"
+            ? rawUsage.cache_creation_input_tokens
+            : undefined,
+          cacheReadInputTokens: typeof rawUsage.cache_read_input_tokens === "number"
+            ? rawUsage.cache_read_input_tokens
+            : undefined,
+          promptCacheHitTokens: typeof rawUsage.prompt_cache_hit_tokens === "number"
+            ? rawUsage.prompt_cache_hit_tokens
+            : undefined,
+          promptCacheMissTokens: typeof rawUsage.prompt_cache_miss_tokens === "number"
+            ? rawUsage.prompt_cache_miss_tokens
+            : undefined,
+        } : undefined,
+      };
     } catch (err) {
       logModelPhase("[model-call] failed", {
         error: err instanceof Error ? err.message : String(err),
@@ -2797,12 +2909,12 @@ function mergePromptSnapshotInputMeta(
 }
 
 /** 估算 messages 数组的总 token 数（用于循环内压缩判断） */
-function estimateMessagesTotal(messages: Message[]): number {
+function estimateMessagesTotal(messages: Message[], tokenEstimateContext?: TokenEstimateContext): number {
   const MARGIN = 1.2;
   return estimateContextTokensFromMessages(messages, {
     includeSystem: true,
     margin: MARGIN,
-  });
+  }, tokenEstimateContext);
 }
 
 function buildRuntimeIdentityPromptDelta(input: {
@@ -3609,6 +3721,7 @@ function trimMessagesToFit(
   messages: Message[],
   tools: { type: "function"; function: { name: string; description: string; parameters: object } }[] | undefined,
   maxTokens: number,
+  tokenEstimateContext?: TokenEstimateContext,
 ): void {
   const SAFETY_MARGIN = 1.2;
 
@@ -3625,7 +3738,7 @@ function trimMessagesToFit(
     return toolsTokens + estimateContextTokensFromMessages(messages, {
       includeSystem: true,
       margin: SAFETY_MARGIN,
-    });
+    }, tokenEstimateContext);
   };
 
   let total = estimateTotal();

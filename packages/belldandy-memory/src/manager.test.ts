@@ -57,6 +57,21 @@ describe("MemoryManager guardrails", () => {
     expect(recent.some((item) => item.sourcePath === extraDocPath)).toBe(true);
   });
 
+  it("starts lazy indexing only once when first accessed", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+    });
+
+    const indexSpy = vi.spyOn(manager, "indexWorkspace").mockResolvedValue(undefined);
+    const first = manager.startLazyIndexing();
+    const second = manager.startLazyIndexing();
+
+    expect(first).toBe(second);
+    await Promise.all([first, second]);
+    expect(indexSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves relative memory source paths against stateDir roots for task linking", async () => {
     const stateMemoryPath = path.join(stateDir, "MEMORY.md");
     const dailyMemoryPath = path.join(stateDir, "memory", "2026-03-17.md");

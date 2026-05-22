@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 // @vitest-environment jsdom
 
 import {
+  buildTokenUsageDiagnosticsSegments,
   buildTokenUsageObservabilitySegments,
   buildTokenUsageObservabilityText,
   syncTokenUsageObservabilityPopover,
@@ -41,6 +42,21 @@ describe("token usage observability", () => {
         deltaRatio: -0.4167,
         status: "over_estimated",
       },
+      localPromptEstimate: {
+        systemPromptTokens: 41651,
+        contextTokens: 1902,
+        totalPromptTokens: 43553,
+      },
+      requestShape: {
+        messageCount: 23,
+        systemMessageCount: 7,
+        toolSchemaCount: 66,
+      },
+      providerRawUsage: {
+        promptTokens: 35338,
+        completionTokens: 81,
+        totalTokens: 35419,
+      },
       sessionTotalCostUsd: 0.0123,
       costBudgetUsd: 0.05,
     });
@@ -54,11 +70,36 @@ describe("token usage observability", () => {
     expect(text).toContain("ROUTE flash / auto_kept_on_flash");
     expect(text).toContain("AUX deepseek_flash_preferred / deepseek_primary_with_flash_candidate / enabled=yes");
     expect(text).toContain("CAL 1,800 -> 1,050 (-42%, over_estimated)");
+    expect(text).not.toContain("LOCAL ");
+    expect(text).not.toContain("RAW ");
     expect(text).toContain("COST $0.012300 / $0.050000 (25%)");
   });
 
   it("returns an empty string when no observability fields are present", () => {
     expect(buildTokenUsageObservabilityText({})).toBe("");
+  });
+
+  it("formats LOCAL and RAW diagnostics for settings doctor cards", () => {
+    expect(buildTokenUsageDiagnosticsSegments({
+      localPromptEstimate: {
+        systemPromptTokens: 41651,
+        contextTokens: 1902,
+        totalPromptTokens: 43553,
+      },
+      requestShape: {
+        messageCount: 23,
+        systemMessageCount: 7,
+        toolSchemaCount: 66,
+      },
+      providerRawUsage: {
+        promptTokens: 35338,
+        completionTokens: 81,
+        totalTokens: 35419,
+      },
+    })).toEqual([
+      "LOCAL sys=41,651 ctx=1,902 total=43,553 msg=23 sysmsg=7 tools=66",
+      "RAW prompt=35,338 completion=81 total=35,419",
+    ]);
   });
 
   it("exposes observability as readable segments for popover rendering", () => {
@@ -69,6 +110,21 @@ describe("token usage observability", () => {
       deepseekRoute: {
         selectedTier: "flash",
         reason: "auto_kept_on_flash",
+      },
+      localPromptEstimate: {
+        systemPromptTokens: 41651,
+        contextTokens: 1902,
+        totalPromptTokens: 43553,
+      },
+      requestShape: {
+        messageCount: 23,
+        systemMessageCount: 7,
+        toolSchemaCount: 66,
+      },
+      providerRawUsage: {
+        promptTokens: 35338,
+        completionTokens: 81,
+        totalTokens: 35419,
       },
     });
 
@@ -96,7 +152,7 @@ describe("token usage observability", () => {
     expect(buildTokenUsageObservabilityText(payload)).toContain("COST $0.012300 / $0.050000 (25%)");
   });
 
-  it("shifts the expanded observability popover back into the viewport", () => {
+  it("anchors the expanded observability popover to the header and centers it", () => {
     document.body.innerHTML = `
       <div id="tokenUsage" class="token-usage">
         <div id="tokenUsageObservability" class="token-usage-observability">demo</div>
@@ -108,14 +164,14 @@ describe("token usage observability", () => {
       value: 1000,
       configurable: true,
     });
-    observabilityEl.getBoundingClientRect = () => ({
-      left: -120,
-      right: 780,
-      width: 900,
+    tokenUsageEl.getBoundingClientRect = () => ({
+      left: 40,
+      right: 280,
+      width: 240,
       height: 48,
       top: 0,
       bottom: 48,
-      x: -120,
+      x: 40,
       y: 0,
       toJSON() {
         return {};
@@ -124,6 +180,7 @@ describe("token usage observability", () => {
 
     syncTokenUsageObservabilityPopover(tokenUsageEl, observabilityEl);
 
-    expect(tokenUsageEl.style.getPropertyValue("--token-usage-observability-shift")).toBe("136px");
+    expect(observabilityEl.style.getPropertyValue("--token-usage-observability-top")).toBe("56px");
+    expect(observabilityEl.style.getPropertyValue("--token-usage-observability-shift")).toBe("0px");
   });
 });

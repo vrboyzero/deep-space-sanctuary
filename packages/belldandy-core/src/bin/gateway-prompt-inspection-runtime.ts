@@ -468,6 +468,7 @@ export function createGatewayPromptInspectionRuntime({
   promptSnapshotEmailThreadMaxRuns,
   promptSnapshotRetentionDays,
   agentWorkspaceCache,
+  resolveAgentWorkspaceCacheEntry,
   dynamicSystemPromptBuild,
   toolExecutor,
   promptExperimentConfig,
@@ -486,6 +487,10 @@ export function createGatewayPromptInspectionRuntime({
     build: SystemPromptBuildResult;
     authorityProfile?: IdentityAuthorityProfile;
   }>;
+  resolveAgentWorkspaceCacheEntry?: (profile: AgentProfile) => {
+    build: SystemPromptBuildResult;
+    authorityProfile?: IdentityAuthorityProfile;
+  } | undefined;
   dynamicSystemPromptBuild: SystemPromptBuildResult;
   toolExecutor: ToolExecutor;
   promptExperimentConfig?: PromptExperimentConfig;
@@ -514,6 +519,7 @@ export function createGatewayPromptInspectionRuntime({
     deltas?: AgentPromptDelta[];
     snapshot?: AgentPromptSnapshot;
     fallbackText?: string;
+    tokenEstimateModel?: string;
   }): Array<ProviderNativeSystemBlock & PromptTextMetrics> {
     const snapshotBlocks = cloneProviderNativeSystemBlocks(input.snapshot?.providerNativeSystemBlocks);
     const resolvedBlocks = snapshotBlocks && snapshotBlocks.length > 0
@@ -523,7 +529,8 @@ export function createGatewayPromptInspectionRuntime({
         deltas: input.deltas,
         fallbackText: input.fallbackText,
       });
-    return resolvedBlocks.map(withProviderNativeSystemBlockPromptMetrics);
+    const tokenEstimateContext = input.tokenEstimateModel ? { model: input.tokenEstimateModel } : undefined;
+    return resolvedBlocks.map((block) => withProviderNativeSystemBlockPromptMetrics(block, tokenEstimateContext));
   }
 
   function buildEffectiveAgentPromptInspection(profile: AgentProfile): {
@@ -546,7 +553,8 @@ export function createGatewayPromptInspectionRuntime({
     messages?: Array<Record<string, unknown>>;
     metadata: Record<string, unknown>;
   } {
-    const baseBuild = agentWorkspaceCache.get(profile.id)?.build ?? dynamicSystemPromptBuild;
+    const workspaceEntry = agentWorkspaceCache.get(profile.id) ?? resolveAgentWorkspaceCacheEntry?.(profile);
+    const baseBuild = workspaceEntry?.build ?? dynamicSystemPromptBuild;
     const visibleToolContracts = toolExecutor.getContracts(profile.id);
     const registeredToolContractNames = new Set(toolExecutor.getRegisteredToolContracts().map((contract) => contract.name));
     const toolBehaviorContracts = buildToolBehaviorObservability({
@@ -619,9 +627,11 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
 
     const promptExperimentResult = applyPromptExperimentsToSections(sections, promptExperimentConfig);
     const text = renderSystemPromptSections(promptExperimentResult.sections);
+    const tokenEstimateModel = profile.model;
     const providerNativeSystemBlocks = buildPromptInspectionProviderNativeSystemBlocks({
       sections: promptExperimentResult.sections,
       fallbackText: text,
+      tokenEstimateModel,
     });
     const promptStructure = buildPromptStructureMetadata({
       sections: promptExperimentResult.sections,
@@ -633,6 +643,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       sections: promptExperimentResult.sections,
       droppedSections: [...baseBuild.droppedSections, ...promptExperimentResult.droppedSections],
       providerNativeSystemBlocks,
+      model: tokenEstimateModel,
     });
     const systemPromptFingerprint = computeSystemPromptFingerprint({
       text,
@@ -658,8 +669,8 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       maxChars: baseBuild.maxChars,
       totalChars: text.length,
       finalChars: text.length,
-      sections: promptExperimentResult.sections.map(withSectionPromptMetrics),
-      droppedSections: [...baseBuild.droppedSections, ...promptExperimentResult.droppedSections].map(withSectionPromptMetrics),
+      sections: promptExperimentResult.sections.map((section) => withSectionPromptMetrics(section, { model: tokenEstimateModel })),
+      droppedSections: [...baseBuild.droppedSections, ...promptExperimentResult.droppedSections].map((section) => withSectionPromptMetrics(section, { model: tokenEstimateModel })),
       deltas: [],
       providerNativeSystemBlocks,
       metadata: {
@@ -853,14 +864,15 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       }
     }
 
-    const deltas = deltaRecords.map(withDeltaPromptMetrics);
+    const deltas = deltaRecords.map((delta) => withDeltaPromptMetrics(delta, profile?.model ? { model: profile.model } : undefined));
     const providerNativeSystemBlocks = buildPromptInspectionProviderNativeSystemBlocks({
       sections: snapshot.hookSystemPromptUsed ? undefined : sections,
       deltas: deltaRecords,
       snapshot,
       fallbackText: snapshot.systemPrompt,
+      tokenEstimateModel: profile?.model,
     });
-    const measuredSections = sections.map(withSectionPromptMetrics);
+    const measuredSections = sections.map((section) => withSectionPromptMetrics(section, profile?.model ? { model: profile.model } : undefined));
     const toolBehaviorIncluded = isRecord(snapshot.inputMeta?.toolBehaviorObservability)
       ? readStringArray(snapshot.inputMeta.toolBehaviorObservability.included)
       : [];
@@ -875,6 +887,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
       droppedSections,
       deltas,
       providerNativeSystemBlocks,
+      model: profile?.model,
     });
     const currentFingerprint = computeSystemPromptFingerprint({
       text: snapshot.systemPrompt,

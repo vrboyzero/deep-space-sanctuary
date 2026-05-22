@@ -80,6 +80,19 @@ describe("prompt observability", () => {
     });
   });
 
+  it("uses model-aware estimates when a model is provided", () => {
+    const markdown = Array.from({ length: 20 }, (_, index) => `## Section ${index}\n- item ${index}\n`).join("");
+    const generic = buildPromptTokenBreakdown({
+      systemPromptText: markdown,
+    });
+    const deepseek = buildPromptTokenBreakdown({
+      systemPromptText: markdown,
+      model: "deepseek-v4-pro",
+    });
+
+    expect(deepseek.systemPromptEstimatedTokens).toBeGreaterThan(generic.systemPromptEstimatedTokens);
+  });
+
   it("parses and applies the disabled-section experiment", () => {
     const config = parsePromptExperimentConfig({
       disabledSectionIdsRaw: "methodology, context , ,workspace-tools",

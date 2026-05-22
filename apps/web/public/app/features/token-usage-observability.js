@@ -23,6 +23,16 @@ function formatSignedPercent(value) {
   return `${rounded > 0 ? "+" : ""}${rounded}%`;
 }
 
+function formatCountEntry(label, value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${label}=${formatNumber(num)}`;
+}
+
+function joinDefinedEntries(entries) {
+  return entries.filter((entry) => typeof entry === "string" && entry.trim()).join(" ");
+}
+
 function trimFingerprint(value) {
   if (typeof value !== "string") return "";
   const normalized = value.trim();
@@ -31,30 +41,24 @@ function trimFingerprint(value) {
 }
 
 const TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR = "--token-usage-observability-shift";
-const TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING = 16;
+const TOKEN_USAGE_OBSERVABILITY_TOP_VAR = "--token-usage-observability-top";
 
-function writePopoverShift(container, shift) {
-  if (!container?.style) return;
-  container.style.setProperty(TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR, `${Math.round(shift)}px`);
+function writePopoverPlacement(target, top) {
+  if (!target?.style) return;
+  target.style.setProperty(TOKEN_USAGE_OBSERVABILITY_TOP_VAR, `${Math.round(top)}px`);
+  target.style.setProperty(TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR, "0px");
 }
 
 export function syncTokenUsageObservabilityPopover(container, target = container?.querySelector?.(".token-usage-observability")) {
   if (!container || !target || typeof window === "undefined") return;
-  writePopoverShift(container, 0);
+  writePopoverPlacement(target, 0);
   if (container.classList.contains("is-collapsed")) {
     return;
   }
-  const rect = target.getBoundingClientRect();
+  const rect = container.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
-  let shift = 0;
-  if (rect.left < TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING) {
-    shift += TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING - rect.left;
-  }
-  const maxRight = window.innerWidth - TOKEN_USAGE_OBSERVABILITY_VIEWPORT_PADDING;
-  if (rect.right + shift > maxRight) {
-    shift -= rect.right + shift - maxRight;
-  }
-  writePopoverShift(container, shift);
+  const popoverTop = rect.bottom + 8;
+  writePopoverPlacement(target, popoverTop);
 }
 
 export function scheduleTokenUsageObservabilityPopoverSync(container, target = container?.querySelector?.(".token-usage-observability")) {
@@ -184,6 +188,50 @@ export function buildTokenUsageObservabilitySegments(
       },
       `COST ${formatUsd(payload.sessionTotalCostUsd)} / ${budgetUsd ? formatUsd(budgetUsd) : "--"} (${formatPercent(ratio)})`,
     ));
+  }
+  return segments;
+}
+
+export function buildTokenUsageDiagnosticsSegments(payload, t = (_key, _params, fallback) => fallback ?? "") {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  const segments = [];
+  if (payload.localPromptEstimate && typeof payload.localPromptEstimate === "object") {
+    const requestShape = payload.requestShape && typeof payload.requestShape === "object"
+      ? payload.requestShape
+      : {};
+    const details = joinDefinedEntries([
+      formatCountEntry("sys", payload.localPromptEstimate.systemPromptTokens),
+      formatCountEntry("ctx", payload.localPromptEstimate.contextTokens),
+      formatCountEntry("total", payload.localPromptEstimate.totalPromptTokens),
+      formatCountEntry("msg", requestShape.messageCount),
+      formatCountEntry("sysmsg", requestShape.systemMessageCount),
+      formatCountEntry("tools", requestShape.toolSchemaCount),
+    ]);
+    if (details) {
+      segments.push(t(
+        "header.tokenLocalPromptEstimate",
+        { value: details },
+        `LOCAL ${details}`,
+      ));
+    }
+  }
+  if (payload.providerRawUsage && typeof payload.providerRawUsage === "object") {
+    const details = joinDefinedEntries([
+      formatCountEntry("prompt", payload.providerRawUsage.promptTokens),
+      formatCountEntry("completion", payload.providerRawUsage.completionTokens),
+      formatCountEntry("total", payload.providerRawUsage.totalTokens),
+      formatCountEntry("input", payload.providerRawUsage.inputTokens),
+      formatCountEntry("output", payload.providerRawUsage.outputTokens),
+    ]);
+    if (details) {
+      segments.push(t(
+        "header.tokenProviderRawUsage",
+        { value: details },
+        `RAW ${details}`,
+      ));
+    }
   }
   return segments;
 }

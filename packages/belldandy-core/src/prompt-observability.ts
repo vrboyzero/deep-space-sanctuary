@@ -5,6 +5,10 @@ import {
   type SystemPromptSection,
 } from "@belldandy/agent";
 
+type TokenEstimateContext = {
+  model?: string;
+};
+
 export type PromptTextMetrics = {
   charLength: number;
   estimatedChars: number;
@@ -179,41 +183,44 @@ export type PromptObservabilityView = {
   };
 };
 
-export function measurePromptText(text: string): PromptTextMetrics {
+export function measurePromptText(text: string, tokenEstimateContext?: TokenEstimateContext): PromptTextMetrics {
   const charLength = text.length;
   return {
     charLength,
     estimatedChars: charLength,
-    estimatedTokens: estimateTokens(text),
+    estimatedTokens: estimateTokens(text, tokenEstimateContext),
   };
 }
 
 export function withSectionPromptMetrics(
   section: SystemPromptSection,
+  tokenEstimateContext?: TokenEstimateContext,
 ): SystemPromptSection & PromptTextMetrics {
   return {
     ...section,
-    ...measurePromptText(section.text),
+    ...measurePromptText(section.text, tokenEstimateContext),
   };
 }
 
 export function withDeltaPromptMetrics(
   delta: AgentPromptDelta,
+  tokenEstimateContext?: TokenEstimateContext,
 ): AgentPromptDelta & PromptTextMetrics {
   return {
     ...delta,
-    ...measurePromptText(delta.text),
+    ...measurePromptText(delta.text, tokenEstimateContext),
   };
 }
 
 export function withProviderNativeSystemBlockPromptMetrics(
   block: ProviderNativeSystemBlock,
+  tokenEstimateContext?: TokenEstimateContext,
 ): ProviderNativeSystemBlock & PromptTextMetrics {
   return {
     ...block,
     sourceSectionIds: [...block.sourceSectionIds],
     sourceDeltaIds: [...block.sourceDeltaIds],
-    ...measurePromptText(block.text),
+    ...measurePromptText(block.text, tokenEstimateContext),
   };
 }
 
@@ -223,18 +230,20 @@ export function buildPromptTokenBreakdown(input: {
   droppedSections?: Array<{ text: string }>;
   deltas?: Array<{ text: string }>;
   providerNativeSystemBlocks?: Array<{ text: string }>;
+  model?: string;
 }): PromptTokenBreakdown {
+  const tokenEstimateContext = input.model ? { model: input.model } : undefined;
   return {
     systemPromptEstimatedChars: input.systemPromptText?.length ?? 0,
-    systemPromptEstimatedTokens: estimateTokens(input.systemPromptText ?? ""),
+    systemPromptEstimatedTokens: estimateTokens(input.systemPromptText ?? "", tokenEstimateContext),
     sectionEstimatedChars: sumTextChars(input.sections),
-    sectionEstimatedTokens: sumTextTokens(input.sections),
+    sectionEstimatedTokens: sumTextTokens(input.sections, tokenEstimateContext),
     droppedSectionEstimatedChars: sumTextChars(input.droppedSections),
-    droppedSectionEstimatedTokens: sumTextTokens(input.droppedSections),
+    droppedSectionEstimatedTokens: sumTextTokens(input.droppedSections, tokenEstimateContext),
     deltaEstimatedChars: sumTextChars(input.deltas),
-    deltaEstimatedTokens: sumTextTokens(input.deltas),
+    deltaEstimatedTokens: sumTextTokens(input.deltas, tokenEstimateContext),
     providerNativeSystemBlockEstimatedChars: sumTextChars(input.providerNativeSystemBlocks),
-    providerNativeSystemBlockEstimatedTokens: sumTextTokens(input.providerNativeSystemBlocks),
+    providerNativeSystemBlockEstimatedTokens: sumTextTokens(input.providerNativeSystemBlocks, tokenEstimateContext),
   };
 }
 
@@ -248,6 +257,7 @@ export function buildPromptObservabilitySummary(
     droppedSections: inspection.droppedSections,
     deltas: inspection.deltas,
     providerNativeSystemBlocks: inspection.providerNativeSystemBlocks,
+    model: inspection.model,
   });
   const truncationReason = readPromptTruncationReasonFromMetadata(metadata)
     ?? buildPromptTruncationReasonFromInspection(inspection);
@@ -811,8 +821,8 @@ function sumTextChars(items?: Array<{ text: string }>): number {
   return items?.reduce((sum, item) => sum + item.text.length, 0) ?? 0;
 }
 
-function sumTextTokens(items?: Array<{ text: string }>): number {
-  return items?.reduce((sum, item) => sum + estimateTokens(item.text), 0) ?? 0;
+function sumTextTokens(items?: Array<{ text: string }>, tokenEstimateContext?: TokenEstimateContext): number {
+  return items?.reduce((sum, item) => sum + estimateTokens(item.text, tokenEstimateContext), 0) ?? 0;
 }
 
 function appendPromptObservabilityLine(

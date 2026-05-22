@@ -127,6 +127,21 @@ describe("doctor observability formatting", () => {
               {
                 stage: "completed",
                 detail: {
+                  localPromptEstimate: {
+                    systemPromptTokens: 41651,
+                    contextTokens: 1902,
+                    totalPromptTokens: 43553,
+                  },
+                  providerRawUsage: {
+                    promptTokens: 35338,
+                    completionTokens: 81,
+                    totalTokens: 35419,
+                  },
+                  requestShape: {
+                    messageCount: 23,
+                    systemMessageCount: 7,
+                    toolSchemaCount: 66,
+                  },
                   usageCalibration: {
                     estimatedPromptTokens: 1800,
                     actualInputTokens: 2100,
@@ -1308,6 +1323,21 @@ describe("doctor observability formatting", () => {
               {
                 stage: "completed",
                 detail: {
+                  localPromptEstimate: {
+                    systemPromptTokens: 41651,
+                    contextTokens: 1902,
+                    totalPromptTokens: 43553,
+                  },
+                  providerRawUsage: {
+                    promptTokens: 35338,
+                    completionTokens: 81,
+                    totalTokens: 35419,
+                  },
+                  requestShape: {
+                    messageCount: 23,
+                    systemMessageCount: 7,
+                    toolSchemaCount: 66,
+                  },
                   usageCalibration: {
                     estimatedPromptTokens: 1800,
                     actualInputTokens: 2100,
@@ -1733,6 +1763,21 @@ describe("doctor observability rendering", () => {
               {
                 stage: "completed",
                 detail: {
+                  localPromptEstimate: {
+                    systemPromptTokens: 41651,
+                    contextTokens: 1902,
+                    totalPromptTokens: 43553,
+                  },
+                  providerRawUsage: {
+                    promptTokens: 35338,
+                    completionTokens: 81,
+                    totalTokens: 35419,
+                  },
+                  requestShape: {
+                    messageCount: 23,
+                    systemMessageCount: 7,
+                    toolSchemaCount: 66,
+                  },
                   usageCalibration: {
                     estimatedPromptTokens: 1800,
                     actualInputTokens: 2100,
@@ -1954,6 +1999,14 @@ describe("doctor observability rendering", () => {
 
     expect(container.textContent || "").toContain("estimated=1800");
     expect(container.textContent || "").toContain("avg actual input/call=1050");
+  });
+
+  it("renders token usage diagnostics in the settings system checks", () => {
+    const lines = buildDoctorChatSummary(createRenderPayload());
+
+    expect(lines.join("\n")).toContain("Token Usage Diagnostics");
+    expect(lines.join("\n")).toContain("LOCAL sys=41,651 ctx=1,902 total=43,553 msg=23 sysmsg=7 tools=66");
+    expect(lines.join("\n")).toContain("RAW prompt=35,338 completion=81 total=35,419");
   });
 
   it("renders query runtime calibration summary in doctor cards", () => {

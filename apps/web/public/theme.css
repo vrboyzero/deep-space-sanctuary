@@ -106,6 +106,35 @@ html[data-theme="dark"] {
   --theme-toggle-bg: rgba(226, 237, 255, 0.05);
   --theme-toggle-hover-bg: rgba(226, 237, 255, 0.12);
   --theme-toggle-shadow: 0 0 18px rgba(57, 201, 255, 0.18);
+  --token-observability-popover-bg:
+    linear-gradient(
+      180deg,
+      rgba(8, 16, 28, 0.98) 0%,
+      rgba(6, 12, 22, 0.97) 100%
+    );
+  --token-observability-popover-border: color-mix(in srgb, var(--primary) 28%, var(--glass-border));
+  --token-observability-popover-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent),
+    0 18px 36px rgba(0, 0, 0, 0.34);
+  --token-observability-segment-bg: color-mix(in srgb, var(--glass-surface) 78%, transparent);
+  --token-observability-segment-border: color-mix(in srgb, var(--primary) 16%, var(--glass-border));
+  --token-observability-segment-text: var(--text-secondary);
+  --commander-quick-state-border: rgba(126, 182, 247, 0.24);
+  --commander-quick-state-bg: rgba(255, 255, 255, 0.04);
+  --commander-quick-state-text: rgba(236, 245, 255, 0.84);
+  --commander-quick-hint-text: rgba(220, 230, 245, 0.74);
+  --agent-panel-create-bg: rgba(92, 176, 255, 0.18);
+  --agent-panel-create-border: color-mix(in srgb, var(--primary) 24%, var(--glass-border));
+  --agent-panel-create-text: #dff6ff;
+  --agent-panel-create-shadow:
+    inset 0 1px 0 rgba(220, 244, 255, 0.18),
+    0 8px 18px rgba(0, 124, 255, 0.08);
+  --agent-panel-create-hover-bg: rgba(108, 188, 255, 0.26);
+  --agent-panel-create-hover-border: color-mix(in srgb, var(--primary) 36%, var(--glass-border));
+  --agent-panel-create-hover-text: #f4fbff;
+  --agent-panel-create-hover-shadow:
+    inset 0 1px 0 rgba(235, 248, 255, 0.22),
+    0 10px 22px rgba(0, 124, 255, 0.12);
   --body-mesh-primary: rgba(57, 201, 255, 0.055);
   --body-mesh-secondary: rgba(196, 160, 255, 0.03);
   --memory-shell-bg:
@@ -346,6 +375,35 @@ html[data-theme="light"] {
   --theme-toggle-bg: rgba(243, 238, 230, 0.92);
   --theme-toggle-hover-bg: rgba(58, 50, 40, 0.05);
   --theme-toggle-shadow: 0 10px 24px rgba(126, 116, 97, 0.08);
+  --token-observability-popover-bg:
+    linear-gradient(
+      180deg,
+      rgba(244, 239, 231, 0.98) 0%,
+      rgba(239, 234, 226, 0.97) 100%
+    );
+  --token-observability-popover-border: rgba(107, 158, 138, 0.22);
+  --token-observability-popover-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 16px 30px rgba(126, 116, 97, 0.18);
+  --token-observability-segment-bg: rgba(229, 223, 214, 0.9);
+  --token-observability-segment-border: rgba(140, 115, 85, 0.2);
+  --token-observability-segment-text: rgba(50, 43, 35, 0.82);
+  --commander-quick-state-border: rgba(107, 158, 138, 0.24);
+  --commander-quick-state-bg: rgba(90, 154, 126, 0.1);
+  --commander-quick-state-text: rgba(50, 43, 35, 0.9);
+  --commander-quick-hint-text: rgba(50, 43, 35, 0.76);
+  --agent-panel-create-bg: rgba(90, 154, 126, 0.16);
+  --agent-panel-create-border: rgba(107, 158, 138, 0.28);
+  --agent-panel-create-text: rgba(46, 67, 55, 0.96);
+  --agent-panel-create-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 10px 20px rgba(126, 116, 97, 0.12);
+  --agent-panel-create-hover-bg: rgba(90, 154, 126, 0.22);
+  --agent-panel-create-hover-border: rgba(90, 154, 126, 0.38);
+  --agent-panel-create-hover-text: rgba(36, 54, 45, 0.98);
+  --agent-panel-create-hover-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 12px 24px rgba(126, 116, 97, 0.14);
   --body-mesh-primary: rgba(107, 158, 138, 0.08);
   --body-mesh-secondary: rgba(140, 115, 85, 0.05);
   --memory-shell-bg:

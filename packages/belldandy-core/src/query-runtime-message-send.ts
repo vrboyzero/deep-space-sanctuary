@@ -613,6 +613,27 @@ type MessageSendLatestUsage = {
     deltaRatio: number;
     status?: "aligned" | "under_estimated" | "over_estimated";
   };
+  providerRawUsage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    promptCacheHitTokens?: number;
+    promptCacheMissTokens?: number;
+  };
+  requestShape?: {
+    messageCount: number;
+    systemMessageCount: number;
+    toolSchemaCount: number;
+  };
+  localPromptEstimate?: {
+    systemPromptTokens: number;
+    contextTokens: number;
+    totalPromptTokens: number;
+  };
 };
 
 type MessageSendRunResult = Awaited<ReturnType<typeof runAgentWithLifecycle>>;
@@ -939,6 +960,27 @@ function handleMessageSendUsageEvent(input: {
       deltaRatio: number;
       status?: "aligned" | "under_estimated" | "over_estimated";
     };
+    providerRawUsage?: {
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
+      promptCacheHitTokens?: number;
+      promptCacheMissTokens?: number;
+    };
+    requestShape?: {
+      messageCount: number;
+      systemMessageCount: number;
+      toolSchemaCount: number;
+    };
+    localPromptEstimate?: {
+      systemPromptTokens: number;
+      contextTokens: number;
+      totalPromptTokens: number;
+    };
   };
 }): void {
   const latestUsage = {
@@ -971,6 +1013,15 @@ function handleMessageSendUsageEvent(input: {
     ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: Number(input.item.totalCostUsd) } : {}),
     ...(input.item.usageCalibration && typeof input.item.usageCalibration === "object"
       ? { usageCalibration: input.item.usageCalibration }
+      : {}),
+    ...(input.item.providerRawUsage && typeof input.item.providerRawUsage === "object"
+      ? { providerRawUsage: input.item.providerRawUsage }
+      : {}),
+    ...(input.item.requestShape && typeof input.item.requestShape === "object"
+      ? { requestShape: input.item.requestShape }
+      : {}),
+    ...(input.item.localPromptEstimate && typeof input.item.localPromptEstimate === "object"
+      ? { localPromptEstimate: input.item.localPromptEstimate }
       : {}),
   };
   input.state.run.setLatestUsage(latestUsage);
@@ -1013,6 +1064,15 @@ function handleMessageSendUsageEvent(input: {
       ...(typeof input.item.totalCostUsd === "number" ? { totalCostUsd: input.item.totalCostUsd } : {}),
       ...(input.item.usageCalibration && typeof input.item.usageCalibration === "object"
         ? { usageCalibration: input.item.usageCalibration }
+        : {}),
+      ...(input.item.providerRawUsage && typeof input.item.providerRawUsage === "object"
+        ? { providerRawUsage: input.item.providerRawUsage }
+        : {}),
+      ...(input.item.requestShape && typeof input.item.requestShape === "object"
+        ? { requestShape: input.item.requestShape }
+        : {}),
+      ...(input.item.localPromptEstimate && typeof input.item.localPromptEstimate === "object"
+        ? { localPromptEstimate: input.item.localPromptEstimate }
         : {}),
     },
   });
@@ -1103,6 +1163,27 @@ function createMessageSendStreamAdapter(input: {
         deltaTokens: number;
         deltaRatio: number;
         status?: "aligned" | "under_estimated" | "over_estimated";
+      };
+      providerRawUsage?: {
+        promptTokens?: number;
+        completionTokens?: number;
+        totalTokens?: number;
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheCreationInputTokens?: number;
+        cacheReadInputTokens?: number;
+        promptCacheHitTokens?: number;
+        promptCacheMissTokens?: number;
+      };
+      requestShape?: {
+        messageCount: number;
+        systemMessageCount: number;
+        toolSchemaCount: number;
+      };
+      localPromptEstimate?: {
+        systemPromptTokens: number;
+        contextTokens: number;
+        totalPromptTokens: number;
       };
     }) => void;
   };

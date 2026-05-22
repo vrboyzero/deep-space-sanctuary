@@ -195,6 +195,12 @@ const MEMORY_TREE_SEARCH_GOVERNANCE_WEIGHT = 0.4;
 let globalMemoryManager: MemoryManager | null = null;
 const scopedGlobalMemoryManagersByAgent = new Map<string, MemoryManager>();
 const scopedGlobalMemoryManagersByWorkspace = new Map<string, MemoryManager>();
+type GlobalMemoryManagerLazyRegistration = {
+    resolver: () => MemoryManager | null | undefined;
+    options: GlobalMemoryManagerRegistrationOptions;
+};
+const lazyScopedGlobalMemoryManagersByAgent = new Map<string, GlobalMemoryManagerLazyRegistration>();
+const lazyScopedGlobalMemoryManagersByWorkspace = new Map<string, GlobalMemoryManagerLazyRegistration>();
 
 export type GlobalMemoryManagerRegistrationOptions = {
     agentId?: string;
@@ -239,6 +245,13 @@ export function registerGlobalMemoryManager(
     registerGlobalMemoryManagerInternal(manager, options);
 }
 
+export function registerGlobalMemoryManagerResolver(
+    resolver: () => MemoryManager | null | undefined,
+    options: GlobalMemoryManagerRegistrationOptions = {},
+): void {
+    registerGlobalMemoryManagerResolverInternal(resolver, options);
+}
+
 /**
  * Get the globally registered MemoryManager instance.
  * Returns null if no instance has been registered.
@@ -248,15 +261,40 @@ export function getGlobalMemoryManager(scope?: GlobalMemoryManagerScope): Memory
         ?? parseResidentAgentIdFromConversationId(scope?.conversationId);
     if (agentId) {
         const scoped = scopedGlobalMemoryManagersByAgent.get(agentId);
-        if (scoped) return scoped;
+        if (scoped) {
+            void scoped.startLazyIndexing();
+            return scoped;
+        }
+        const lazyScoped = lazyScopedGlobalMemoryManagersByAgent.get(agentId);
+        if (lazyScoped) {
+            const resolved = resolveLazyGlobalMemoryManager(lazyScoped);
+            if (resolved) {
+                void resolved.startLazyIndexing();
+                return resolved;
+            }
+        }
     }
 
     const workspaceRoot = normalizeGlobalMemoryWorkspaceRoot(scope?.workspaceRoot);
     if (workspaceRoot) {
         const scoped = scopedGlobalMemoryManagersByWorkspace.get(workspaceRoot);
-        if (scoped) return scoped;
+        if (scoped) {
+            void scoped.startLazyIndexing();
+            return scoped;
+        }
+        const lazyScoped = lazyScopedGlobalMemoryManagersByWorkspace.get(workspaceRoot);
+        if (lazyScoped) {
+            const resolved = resolveLazyGlobalMemoryManager(lazyScoped);
+            if (resolved) {
+                void resolved.startLazyIndexing();
+                return resolved;
+            }
+        }
     }
 
+    if (globalMemoryManager) {
+        void globalMemoryManager.startLazyIndexing();
+    }
     return globalMemoryManager;
 }
 
@@ -273,12 +311,51 @@ export function resetGlobalMemoryManagers(): void {
     globalMemoryManager = null;
     scopedGlobalMemoryManagersByAgent.clear();
     scopedGlobalMemoryManagersByWorkspace.clear();
+    lazyScopedGlobalMemoryManagersByAgent.clear();
+    lazyScopedGlobalMemoryManagersByWorkspace.clear();
+}
+
+function registerGlobalMemoryManagerResolverInternal(
+    resolver: () => MemoryManager | null | undefined,
+    options: GlobalMemoryManagerRegistrationOptions = {},
+): void {
+    const entry: GlobalMemoryManagerLazyRegistration = { resolver, options };
+    const normalizedAgentId = normalizeGlobalMemoryAgentId(options.agentId);
+    const normalizedWorkspaceRoot = normalizeGlobalMemoryWorkspaceRoot(options.workspaceRoot);
+    if (normalizedAgentId) {
+        lazyScopedGlobalMemoryManagersByAgent.set(normalizedAgentId, entry);
+    }
+    if (normalizedWorkspaceRoot) {
+        lazyScopedGlobalMemoryManagersByWorkspace.set(normalizedWorkspaceRoot, entry);
+    }
+}
+
+function deleteLazyGlobalMemoryManagerRegistration(options: GlobalMemoryManagerRegistrationOptions = {}): void {
+    const normalizedAgentId = normalizeGlobalMemoryAgentId(options.agentId);
+    const normalizedWorkspaceRoot = normalizeGlobalMemoryWorkspaceRoot(options.workspaceRoot);
+    if (normalizedAgentId) {
+        lazyScopedGlobalMemoryManagersByAgent.delete(normalizedAgentId);
+    }
+    if (normalizedWorkspaceRoot) {
+        lazyScopedGlobalMemoryManagersByWorkspace.delete(normalizedWorkspaceRoot);
+    }
+}
+
+function resolveLazyGlobalMemoryManager(entry: GlobalMemoryManagerLazyRegistration): MemoryManager | null {
+    deleteLazyGlobalMemoryManagerRegistration(entry.options);
+    const manager = entry.resolver();
+    if (!manager) {
+        return null;
+    }
+    registerGlobalMemoryManagerInternal(manager, entry.options);
+    return manager;
 }
 
 function registerGlobalMemoryManagerInternal(
     manager: MemoryManager,
     options: GlobalMemoryManagerRegistrationOptions = {},
 ): void {
+    deleteLazyGlobalMemoryManagerRegistration(options);
     const normalizedAgentId = normalizeGlobalMemoryAgentId(options.agentId);
     const normalizedWorkspaceRoot = normalizeGlobalMemoryWorkspaceRoot(options.workspaceRoot);
     const hasScopedRegistration = Boolean(normalizedAgentId || normalizedWorkspaceRoot);
@@ -688,6 +765,7 @@ export class MemoryManager {
     private summaryApiKey: string;
     private summaryBatchSize: number;
     private summaryMinContentLength: number;
+    private lazyIndexingPromise: Promise<void> | null = null;
     // M-N3: 会话记忆自动提取
     private evolutionEnabled: boolean;
     private evolutionModel: string;
@@ -859,6 +937,20 @@ export class MemoryManager {
         // Watch all directories for changes
         const allRoots = dedupePaths([this.workspaceRoot, ...this.additionalRoots, ...this.additionalFiles]);
         await this.indexer.startWatching(allRoots);
+    }
+
+    /**
+     * Start workspace indexing once in the background.
+     * Useful for lazy startup paths where the manager should not block first paint.
+     */
+    startLazyIndexing(): Promise<void> {
+        if (!this.lazyIndexingPromise) {
+            this.lazyIndexingPromise = this.indexWorkspace().catch((err) => {
+                this.lazyIndexingPromise = null;
+                throw err;
+            });
+        }
+        return this.lazyIndexingPromise;
     }
 
     /**
@@ -4080,6 +4172,9 @@ export class MemoryManager {
                     break;
                 }
             }
+
+            // 让出一次事件循环，避免大批量缓存命中时长时间占住首屏请求。
+            await new Promise<void>((resolve) => setImmediate(resolve));
         }
 
         this.logEmbeddingSyncSummary(embeddingStats);

@@ -9,6 +9,7 @@ import {
   sanitizeAssistantToolCallHistoryContent,
   sanitizeResponsesToolDefinitions,
 } from "./tool-agent.js";
+import { estimateTokens } from "./tokenizer.js";
 import { CompactionRuntimeTracker } from "./compaction-runtime.js";
 import { ConversationStore } from "./conversation.js";
 
@@ -3227,6 +3228,46 @@ describe("ToolEnabledAgent hook timeouts", () => {
       systemPromptFingerprint: "fp-deepseek-1",
       cacheSavingsUsd: 0.00012,
     }));
+  });
+
+  it("estimates usage tokens with the active model profile instead of the generic fallback", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "profile aligned",
+          },
+        }],
+        usage: {
+          prompt_tokens: 120,
+          completion_tokens: 12,
+        },
+      }));
+    const systemPrompt = Array.from({ length: 20 }, (_, index) => `## Section ${index}\n- item ${index}\n`).join("");
+    const expectedDeepseek = estimateTokens(systemPrompt, { model: "deepseek-v4-pro" });
+    const expectedOpenAi = estimateTokens(systemPrompt, { model: "gpt-5.4" });
+    expect(expectedDeepseek).toBeGreaterThan(expectedOpenAi);
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "test-key",
+      model: "deepseek-v4-pro",
+      systemPrompt,
+      toolExecutor: createToolExecutor(),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-model-aware-estimate",
+      text: "hello",
+    }));
+    const usageItem = items.find((item) => item.type === "usage");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(usageItem).toMatchObject({
+      type: "usage",
+      systemPromptTokens: expectedDeepseek,
+    });
+    expect(usageItem?.systemPromptTokens).not.toBe(expectedOpenAi);
   });
 });
 

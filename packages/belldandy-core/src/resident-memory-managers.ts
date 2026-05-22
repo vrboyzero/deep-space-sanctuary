@@ -5,6 +5,7 @@ import { buildDefaultProfile, isResidentAgentProfile, type AgentRegistry, type A
 import {
   MemoryManager,
   registerGlobalMemoryManager,
+  registerGlobalMemoryManagerResolver,
   type MemoryManagerOptions,
 } from "@belldandy/memory";
 
@@ -62,7 +63,6 @@ export function createScopedMemoryManagers(options: SharedMemoryManagerOptions):
 } {
   const records: ScopedMemoryManagerRecord[] = [];
   const managersByStateDir = new Map<string, MemoryManager>();
-  const sharedStateDir = resolveResidentSharedStateDir(options.stateDir);
 
   function resolveRegisteredManager(policy: ResolvedResidentMemoryPolicy): MemoryManager {
     const cached = managersByStateDir.get(policy.managerStateDir);
@@ -78,29 +78,29 @@ export function createScopedMemoryManagers(options: SharedMemoryManagerOptions):
     return manager;
   }
 
-  function ensureSharedLayerManager(sharedStateDir: string): MemoryManager {
-    const cached = managersByStateDir.get(sharedStateDir);
-    if (cached) {
-      registerGlobalMemoryManager(cached, {
+  function registerLazySharedLayerManager(sharedStateDir: string): void {
+    registerGlobalMemoryManagerResolver(() => {
+      const cached = managersByStateDir.get(sharedStateDir);
+      if (cached) {
+        return cached;
+      }
+
+      const manager = createMemoryManagerForStateDir(sharedStateDir, {
+        ...options,
+        includeTeamSharedMemory: false,
+      });
+      managersByStateDir.set(sharedStateDir, manager);
+      registerGlobalMemoryManager(manager, {
         workspaceRoot: sharedStateDir,
       });
-      return cached;
-    }
-
-    const manager = createMemoryManagerForStateDir(sharedStateDir, {
-      ...options,
-      includeTeamSharedMemory: false,
-    });
-    managersByStateDir.set(sharedStateDir, manager);
-    registerGlobalMemoryManager(manager, {
+      return manager;
+    }, {
       workspaceRoot: sharedStateDir,
     });
-    return manager;
   }
 
   function registerResidentManager(profile: AgentProfile, isDefault = false): MemoryManager {
     const policy = resolveResidentMemoryPolicy(options.stateDir, profile);
-    ensureSharedLayerManager(policy.sharedStateDir);
     const manager = resolveRegisteredManager(policy);
     registerGlobalMemoryManager(manager, {
       agentId: profile.id,
@@ -117,8 +117,31 @@ export function createScopedMemoryManagers(options: SharedMemoryManagerOptions):
     return manager;
   }
 
-  // 共享层 manager 需要始终可解析，便于 hybrid resident 查询与共享提升写入。
-  ensureSharedLayerManager(sharedStateDir);
+  function registerLazyResidentManager(profile: AgentProfile): void {
+    const policy = resolveResidentMemoryPolicy(options.stateDir, profile);
+    registerLazySharedLayerManager(policy.sharedStateDir);
+    registerGlobalMemoryManagerResolver(() => {
+      const manager = resolveRegisteredManager(policy);
+      registerGlobalMemoryManager(manager, {
+        agentId: profile.id,
+        workspaceRoot: policy.managerStateDir,
+      });
+      records.push({
+        agentId: profile.id,
+        stateDir: policy.managerStateDir,
+        memoryMode: policy.memoryMode,
+        policy,
+        manager,
+      });
+      return manager;
+    }, {
+      agentId: profile.id,
+      workspaceRoot: policy.managerStateDir,
+    });
+  }
+
+  // 共享层 manager / 非 default resident manager 都改为按需创建。
+  registerLazySharedLayerManager(resolveResidentSharedStateDir(options.stateDir));
 
   const configuredDefault = options.agentRegistry?.getProfile("default");
   const defaultProfile = configuredDefault && isResidentAgentProfile(configuredDefault)
@@ -129,7 +152,7 @@ export function createScopedMemoryManagers(options: SharedMemoryManagerOptions):
   for (const profile of options.agentRegistry?.list() ?? []) {
     if (profile.id === "default") continue;
     if (!isResidentAgentProfile(profile)) continue;
-    registerResidentManager(profile);
+    registerLazyResidentManager(profile);
   }
 
   return {

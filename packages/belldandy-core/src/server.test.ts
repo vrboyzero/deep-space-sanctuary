@@ -1537,6 +1537,21 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
           deltaRatio: 0.4286,
           status: "under_estimated" as const,
         },
+        providerRawUsage: {
+          promptTokens: 10,
+          completionTokens: 6,
+          totalTokens: 16,
+        },
+        requestShape: {
+          messageCount: 23,
+          systemMessageCount: 7,
+          toolSchemaCount: 66,
+        },
+        localPromptEstimate: {
+          systemPromptTokens: 41651,
+          contextTokens: 1902,
+          totalPromptTokens: 43553,
+        },
       };
       yield { type: "final" as const, text: "ok" };
       yield { type: "status" as const, status: "done" };
@@ -1630,6 +1645,21 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
       estimatedPromptTokens: 7,
       averageInputTokensPerCall: 10,
       status: "under_estimated",
+    });
+    expect(usageEvent?.payload?.providerRawUsage).toMatchObject({
+      promptTokens: 10,
+      completionTokens: 6,
+      totalTokens: 16,
+    });
+    expect(usageEvent?.payload?.requestShape).toMatchObject({
+      messageCount: 23,
+      systemMessageCount: 7,
+      toolSchemaCount: 66,
+    });
+    expect(usageEvent?.payload?.localPromptEstimate).toMatchObject({
+      systemPromptTokens: 41651,
+      contextTokens: 1902,
+      totalPromptTokens: 43553,
     });
   } finally {
     ws.close();

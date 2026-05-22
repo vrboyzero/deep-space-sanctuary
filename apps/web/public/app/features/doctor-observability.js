@@ -4,6 +4,7 @@ import { buildResidentStateBindingLines } from "./resident-state-binding-lines.j
 import { buildContinuationAction } from "./continuation-targets.js";
 import { buildExternalOutboundDiagnosis } from "./external-outbound-diagnosis.js";
 import { buildAgentWorkSummary } from "./agent-work-summary.js";
+import { buildTokenUsageDiagnosticsSegments } from "./token-usage-observability.js";
 
 function tr(t, key, params, fallback) {
   return typeof t === "function" ? t(key, params ?? {}, fallback) : fallback;
@@ -382,6 +383,68 @@ function buildPromptObservabilityCard(payload, t) {
     badges,
     notes,
     status: summary.truncationReason?.code ? "warn" : "pass",
+  };
+}
+
+function buildTokenUsageDiagnosticsCard(payload, t) {
+  const traces = Array.isArray(payload?.queryRuntime?.traces) ? payload.queryRuntime.traces : [];
+  if (traces.length <= 0) {
+    return undefined;
+  }
+
+  const messageSendTrace = [...traces].reverse().find((item) => item?.method === "message.send");
+  if (!messageSendTrace) {
+    return undefined;
+  }
+
+  const stages = Array.isArray(messageSendTrace.stages) ? messageSendTrace.stages : [];
+  const latestStage = [...stages].reverse().find((stage) => stage?.detail && (
+    stage.detail.localPromptEstimate
+    || stage.detail.providerRawUsage
+    || stage.detail.requestShape
+  )) || null;
+  const detail = latestStage?.detail && typeof latestStage.detail === "object" ? latestStage.detail : null;
+  if (!detail) {
+    return undefined;
+  }
+
+  const diagnosticsSegments = buildTokenUsageDiagnosticsSegments(detail, t);
+  if (diagnosticsSegments.length <= 0) {
+    return undefined;
+  }
+
+  const badges = [
+    tr(
+      t,
+      "settings.doctorTokenUsageTrace",
+      { stage: latestStage?.stage || "-" },
+      `message.send @ ${latestStage?.stage || "-"}`,
+    ),
+  ];
+  if (detail.usageCalibration && typeof detail.usageCalibration === "object") {
+    badges.push(tr(
+      t,
+      "settings.doctorTokenUsageCalibration",
+      { status: detail.usageCalibration.status || "-" },
+      `cal ${detail.usageCalibration.status || "-"}`,
+    ));
+  }
+
+  const notes = [
+    ...diagnosticsSegments,
+  ];
+  notes.push(tr(
+    t,
+    "settings.doctorTokenUsageExplain",
+    {},
+    "LOCAL 是本地按当前请求形状估出来的值，RAW 是 provider 回传的原始 usage；两者口径不同，SYS 高于 INΣ 不一定代表出错。",
+  ));
+
+  return {
+    title: tr(t, "settings.doctorTokenUsageTitle", {}, "Token Usage Diagnostics"),
+    badges,
+    notes,
+    status: detail.usageCalibration?.status === "over_estimated" ? "warn" : "pass",
   };
 }
 
@@ -3821,6 +3884,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildAssistantModeRuntimeCard(payload, t),
     buildConfigSourceCard(payload, t),
     buildPromptObservabilityCard(payload, t),
+    buildTokenUsageDiagnosticsCard(payload, t),
     buildQueryRuntimeCard(payload, t),
     buildToolBehaviorCard(payload, t),
     buildToolContractV2Card(payload, t),
@@ -3892,6 +3956,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${promptCard.title}:`);
     lines.push(...promptCard.badges.map((badge) => `- ${badge}`));
     lines.push(...promptCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const tokenUsageDiagnosticsCard = buildTokenUsageDiagnosticsCard(payload, t);
+  if (tokenUsageDiagnosticsCard) {
+    lines.push(``);
+    lines.push(`${tokenUsageDiagnosticsCard.title}:`);
+    lines.push(...tokenUsageDiagnosticsCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...tokenUsageDiagnosticsCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const toolCard = buildToolBehaviorCard(payload, t);

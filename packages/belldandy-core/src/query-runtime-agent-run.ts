@@ -57,6 +57,27 @@ export type QueryRuntimeAgentUsage = {
     deltaRatio: number;
     status?: "aligned" | "under_estimated" | "over_estimated";
   };
+  providerRawUsage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    promptCacheHitTokens?: number;
+    promptCacheMissTokens?: number;
+  };
+  requestShape?: {
+    messageCount: number;
+    systemMessageCount: number;
+    toolSchemaCount: number;
+  };
+  localPromptEstimate?: {
+    systemPromptTokens: number;
+    contextTokens: number;
+    totalPromptTokens: number;
+  };
 };
 
 export type QueryRuntimeAgentRunSummary = {
@@ -187,6 +208,15 @@ export async function runAgentWithLifecycle(
           ...(typeof item.totalCostUsd === "number" ? { totalCostUsd: Number(item.totalCostUsd) } : {}),
           ...(item.usageCalibration && typeof item.usageCalibration === "object"
             ? { usageCalibration: item.usageCalibration }
+            : {}),
+          ...(item.providerRawUsage && typeof item.providerRawUsage === "object"
+            ? { providerRawUsage: item.providerRawUsage }
+            : {}),
+          ...(item.requestShape && typeof item.requestShape === "object"
+            ? { requestShape: item.requestShape }
+            : {}),
+          ...(item.localPromptEstimate && typeof item.localPromptEstimate === "object"
+            ? { localPromptEstimate: item.localPromptEstimate }
             : {}),
         };
         input.onUsage?.(item);

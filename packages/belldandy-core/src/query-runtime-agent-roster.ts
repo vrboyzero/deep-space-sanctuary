@@ -8,6 +8,7 @@ import {
   type AgentProfileCatalogMetadata,
   type AgentProfile,
 } from "@belldandy/agent";
+import { resolveResidentMemoryPolicy } from "./resident-memory-policy.js";
 import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
 
 function resolveAgentIdentityDir(
@@ -45,6 +46,7 @@ async function buildAgentRosterItem(input: {
   workspaceBinding: "current" | "custom";
   sessionNamespace: string;
   memoryMode: "isolated" | "shared" | "hybrid";
+  memoryPolicy: ReturnType<typeof resolveResidentMemoryPolicy>;
   catalog: AgentProfileCatalogMetadata;
   status: string;
   mainConversationId?: string;
@@ -55,6 +57,7 @@ async function buildAgentRosterItem(input: {
   const identityInfo = identityTarget ? await extractIdentityInfo(identityTarget.dir) : {};
   const runtime = input.residentAgentRuntime.ensureMainConversation(input.profile.id);
   const metadata = resolveAgentProfileMetadata(input.profile);
+  const memoryPolicy = resolveResidentMemoryPolicy(input.stateDir, input.profile);
   return {
     id: input.profile.id,
     kind: metadata.kind,
@@ -65,6 +68,7 @@ async function buildAgentRosterItem(input: {
     workspaceBinding: metadata.workspaceBinding,
     sessionNamespace: metadata.sessionNamespace,
     memoryMode: metadata.memoryMode,
+    memoryPolicy,
     catalog: metadata.catalog,
     status: runtime.status,
     mainConversationId: runtime.mainConversationId,

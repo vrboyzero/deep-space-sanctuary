@@ -90,14 +90,15 @@ import {
   OpenAIChatAgent,
   ToolEnabledAgent,
   type BelldandyAgent,
+  AGENTS_FILENAME,
+  BOOTSTRAP_FILENAME,
   classifyFailoverReason,
   ensureWorkspace,
   loadWorkspaceFiles,
-  ensureAgentWorkspace,
-  loadAgentWorkspaceFiles,
   buildSystemPromptResult,
   ConversationStore,
   loadModelFallbacks,
+  MEMORY_FILENAME,
   type ModelProfile,
   type SummarizerContext,
   type VideoUploadConfig,
@@ -108,10 +109,18 @@ import {
   loadAgentProfiles,
   buildDefaultProfile,
   buildBuiltinWorkerProfiles,
+  HEARTBEAT_FILENAME,
+  IDENTITY_FILENAME,
+  parseWorkspaceDocument,
   resolveAgentProfileCatalogMetadata,
   resolveModelConfig,
+  SOUL_FILENAME,
+  TOOLS_FILENAME,
   type AgentProfile,
   type SystemPromptBuildResult,
+  type WorkspaceFile,
+  type WorkspaceLoadResult,
+  USER_FILENAME,
   HookRegistry,
   createHookRunner,
   type HookRunner,
@@ -1484,6 +1493,89 @@ const defaultIdentityAuthorityProfile = await loadIdentityAuthorityProfile(state
 agentAuthorityProfileCache.set("default", defaultIdentityAuthorityProfile);
 agentWorkspaceBindings.set("default", "default");
 
+const ROOT_WORKSPACE_FILE_NAMES = [
+  AGENTS_FILENAME,
+  SOUL_FILENAME,
+  TOOLS_FILENAME,
+  IDENTITY_FILENAME,
+  USER_FILENAME,
+  HEARTBEAT_FILENAME,
+  BOOTSTRAP_FILENAME,
+  MEMORY_FILENAME,
+] as const;
+
+const AGENT_WORKSPACE_FILE_NAMES = [
+  SOUL_FILENAME,
+  IDENTITY_FILENAME,
+  USER_FILENAME,
+  AGENTS_FILENAME,
+  TOOLS_FILENAME,
+  MEMORY_FILENAME,
+] as const;
+
+function readWorkspaceFileSync(filePath: string, name: WorkspaceFile["name"]): WorkspaceFile {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    return {
+      name,
+      path: filePath,
+      content,
+      document: parseWorkspaceDocument(content),
+      missing: false,
+    };
+  } catch {
+    return {
+      name,
+      path: filePath,
+      missing: true,
+    };
+  }
+}
+
+function loadWorkspaceFilesSync(dir: string): WorkspaceLoadResult {
+  const files = ROOT_WORKSPACE_FILE_NAMES.map((name) => readWorkspaceFileSync(path.join(dir, name), name));
+  return {
+    dir,
+    files,
+    hasSoul: files.some((file) => file.name === SOUL_FILENAME && !file.missing),
+    hasIdentity: files.some((file) => file.name === IDENTITY_FILENAME && !file.missing),
+    hasUser: files.some((file) => file.name === USER_FILENAME && !file.missing),
+    hasBootstrap: files.some((file) => file.name === BOOTSTRAP_FILENAME && !file.missing),
+    hasAgents: files.some((file) => file.name === AGENTS_FILENAME && !file.missing),
+    hasTools: files.some((file) => file.name === TOOLS_FILENAME && !file.missing),
+    hasHeartbeat: files.some((file) => file.name === HEARTBEAT_FILENAME && !file.missing),
+    hasMemory: files.some((file) => file.name === MEMORY_FILENAME && !file.missing),
+  };
+}
+
+function loadAgentWorkspaceFilesSync(rootDir: string, agentId: string): WorkspaceLoadResult {
+  if (!agentId || agentId === "default") {
+    return loadWorkspaceFilesSync(rootDir);
+  }
+
+  const agentDir = path.join(rootDir, "agents", agentId);
+  const files = AGENT_WORKSPACE_FILE_NAMES.map((name) => {
+    const agentFilePath = path.join(agentDir, name);
+    if (fs.existsSync(agentFilePath)) {
+      return readWorkspaceFileSync(agentFilePath, name);
+    }
+    return readWorkspaceFileSync(path.join(rootDir, name), name);
+  });
+
+  return {
+    dir: agentDir,
+    files,
+    hasSoul: files.some((file) => file.name === SOUL_FILENAME && !file.missing),
+    hasIdentity: files.some((file) => file.name === IDENTITY_FILENAME && !file.missing),
+    hasUser: files.some((file) => file.name === USER_FILENAME && !file.missing),
+    hasBootstrap: false,
+    hasAgents: files.some((file) => file.name === AGENTS_FILENAME && !file.missing),
+    hasTools: files.some((file) => file.name === TOOLS_FILENAME && !file.missing),
+    hasHeartbeat: false,
+    hasMemory: files.some((file) => file.name === MEMORY_FILENAME && !file.missing),
+  };
+}
+
 const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
   const visibleContracts = toolExecutor.getContracts(profile.id);
   const visibleToolContracts = visibleContracts.length > 0 ? listToolContractsV2(visibleContracts) : [];
@@ -1954,7 +2046,7 @@ const runtimeResilienceTracker = new RuntimeResilienceTracker({
   },
 });
 
-// 8.1 Pre-load per-agent workspaces (async, before sync factory)
+// 8.1 Resolve per-agent workspaces lazily so WebChat first paint stays on the hot path.
 const agentWorkspaceCache = new Map<string, {
   build: SystemPromptBuildResult;
   authorityProfile?: IdentityAuthorityProfile;
@@ -1985,6 +2077,7 @@ const gatewayPromptInspectionRuntime = createGatewayPromptInspectionRuntime({
   promptSnapshotEmailThreadMaxRuns,
   promptSnapshotRetentionDays,
   agentWorkspaceCache,
+  resolveAgentWorkspaceCacheEntry: ensureAgentWorkspaceCacheEntry,
   dynamicSystemPromptBuild,
   toolExecutor,
   promptExperimentConfig,
@@ -1997,22 +2090,35 @@ const gatewayPromptInspectionRuntime = createGatewayPromptInspectionRuntime({
   },
 });
 
-// Default agent uses the root workspace (already loaded above)
-agentWorkspaceCache.set("default", {
-  build: dynamicSystemPromptBuild,
-  authorityProfile: defaultIdentityAuthorityProfile,
-});
+function ensureAgentWorkspaceCacheEntry(profile: AgentProfile): {
+  build: SystemPromptBuildResult;
+  authorityProfile?: IdentityAuthorityProfile;
+} {
+  const cached = agentWorkspaceCache.get(profile.id);
+  if (cached) {
+    return cached;
+  }
 
-// Non-default agents: ensure workspace dir + load + build system prompt
-for (const profile of agentProfiles) {
-  if (profile.id === "default") continue;
   const wsDir = profile.workspaceDir ?? profile.id;
   agentWorkspaceBindings.set(profile.id, wsDir);
   try {
-    await ensureAgentWorkspace({ rootDir: stateDir, agentId: wsDir });
-    const agentWs = await loadAgentWorkspaceFiles(stateDir, wsDir);
-    const agentAuthorityProfile = await loadIdentityAuthorityProfile(agentWs.dir);
-    agentAuthorityProfileCache.set(profile.id, agentAuthorityProfile);
+    fs.mkdirSync(path.join(stateDir, "agents", wsDir, "facets"), { recursive: true });
+    const agentWs = loadAgentWorkspaceFilesSync(stateDir, wsDir);
+    agentAuthorityProfileCache.set(profile.id, defaultIdentityAuthorityProfile);
+    void loadIdentityAuthorityProfile(agentWs.dir)
+      .then((agentAuthorityProfile) => {
+        if (agentAuthorityProfile) {
+          agentAuthorityProfileCache.set(profile.id, agentAuthorityProfile);
+          const current = agentWorkspaceCache.get(profile.id);
+          if (current) {
+            current.authorityProfile = agentAuthorityProfile;
+          }
+        }
+      })
+      .catch((err) => {
+        logger.warn("agent-workspace", `Failed to load authority profile for agent "${profile.id}", using default: ${err instanceof Error ? err.message : String(err)}`);
+      });
+
     const agentPromptBuild = buildSystemPromptResult({
       workspace: agentWs,
       extraSystemPrompt: openaiSystemPrompt,
@@ -2027,21 +2133,30 @@ for (const profile of agentProfiles) {
       runtimeSections: buildRuntimeSectionsForProfile(profile),
       sectionPriorityOverrides: promptExperimentConfig?.sectionPriorityOverrides,
     });
-    agentWorkspaceCache.set(profile.id, {
+    const entry = {
       build: agentPromptBuild,
-      authorityProfile: agentAuthorityProfile,
-    });
+      authorityProfile: defaultIdentityAuthorityProfile,
+    };
+    agentWorkspaceCache.set(profile.id, entry);
     logger.info("agent-workspace", `Loaded workspace for agent "${profile.id}" (dir: agents/${wsDir}/), prompt=${agentPromptBuild.text.length} chars`);
+    return entry;
   } catch (err) {
-    // Fallback to default workspace if agent workspace fails
     logger.warn("agent-workspace", `Failed to load workspace for agent "${profile.id}", falling back to default: ${err instanceof Error ? err.message : String(err)}`);
     agentAuthorityProfileCache.set(profile.id, defaultIdentityAuthorityProfile);
-    agentWorkspaceCache.set(profile.id, {
+    const entry = {
       build: dynamicSystemPromptBuild,
       authorityProfile: defaultIdentityAuthorityProfile,
-    });
+    };
+    agentWorkspaceCache.set(profile.id, entry);
+    return entry;
   }
 }
+
+// Default agent uses the root workspace (already loaded above)
+agentWorkspaceCache.set("default", {
+  build: dynamicSystemPromptBuild,
+  authorityProfile: defaultIdentityAuthorityProfile,
+});
 
 const resolveIdentityAuthorityProfileForAgent = (agentId: string): IdentityAuthorityProfile | undefined => {
   return agentWorkspaceCache.get(agentId)?.authorityProfile
@@ -2127,7 +2242,7 @@ agentRegistry = agentProvider === "openai"
         systemPrompt: currentSystemPrompt,
         systemPromptSections: promptInspection.sections,
         systemPromptMetadata: promptInspection.metadata as JsonObject,
-        identityAuthorityProfile: agentWorkspaceCache.get(profile.id)?.authorityProfile,
+        identityAuthorityProfile: resolveIdentityAuthorityProfileForAgent(profile.id),
         toolExecutor: toolExecutor,
         logger,
         hookRunner,
@@ -3026,12 +3141,6 @@ const scopedMemoryManagers = createScopedMemoryManagers({
     watch: true,
   },
 });
-// Start async indexing (non-blocking)
-for (const record of [...new Map(scopedMemoryManagers.records.map((item) => [item.stateDir, item])).values()]) {
-  record.manager.indexWorkspace().catch(err => {
-    logger.error("memory", `Failed to start scoped memory indexing for ${record.agentId}: ${err instanceof Error ? err.message : String(err)}`);
-  });
-}
 if (taskStatsCarveOutEnabled) {
   logger.info(
     "memory",
