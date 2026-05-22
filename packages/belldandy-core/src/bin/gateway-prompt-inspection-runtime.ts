@@ -602,7 +602,7 @@ Keep responses concise and natural for spoken delivery.`,
 When the user asks about repository files, inspect the workspace with tools instead of guessing from memory.
 - For locating files or directories, prefer \`list_files\`.
 - For reading a known file, prefer \`file_read\`.
-- For localized edits to existing files, prefer \`apply_patch\` in the same run instead of replying with only a plan or suggested diff.
+- For localized edits to existing files, prefer \`apply_patch\` in the same run instead of replying with only a plan or suggested diff. Use raw patch text only: the first line must be \`*** Begin Patch\`, and do not wrap it in \`apply_patch(...)\` or a code fence.
 - For new files, full-file replacement, or deferred schemas that are not visible yet, use \`tool_search\` first and then load the exact tool needed for the next turn.
 If the user explicitly asked for analysis only, you may stop after inspection without editing.`,
     }));

@@ -1,6 +1,6 @@
 import type { JsonObject } from "@belldandy/protocol";
 import type { DelegationProtocol } from "./delegation-protocol.js";
-import type { ToolContract } from "./tool-contract.js";
+import type { ToolContract, ToolContractChannel } from "./tool-contract.js";
 export type { JsonObject };
 
 /** 工具参数 schema（JSON Schema 子集，兼容 OpenAI function calling） */
@@ -294,6 +294,7 @@ export type ToolRuntimeLaunchSpec = {
 
 export type ToolExecutionRuntimeContext = {
   launchSpec?: ToolRuntimeLaunchSpec;
+  channel?: ToolContractChannel;
   bridgeGovernanceTaskId?: string;
   agentWhitelistMode?: "default" | "governed_bridge_internal";
   /** 执行链协作式中断信号 */

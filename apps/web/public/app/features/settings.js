@@ -97,6 +97,8 @@ export function createSettingsController({
     cfgMaxOutputTokens,
     cfgToolLoopIterationBudget,
     cfgToolLoopWarningFraction,
+    cfgWebAllowPrivilegedSafeScope,
+    cfgPrivilegedWorkspaceWriteChannels,
     cfgDangerousToolsEnabled,
     cfgToolsPolicyFile,
     cfgSubAgentMaxConcurrent,
@@ -806,6 +808,8 @@ export function createSettingsController({
     if (cfgMaxOutputTokens) cfgMaxOutputTokens.value = c["BELLDANDY_MAX_OUTPUT_TOKENS"] || "";
     if (cfgToolLoopIterationBudget) cfgToolLoopIterationBudget.value = c["BELLDANDY_TOOL_LOOP_ITERATION_BUDGET"] || "";
     if (cfgToolLoopWarningFraction) cfgToolLoopWarningFraction.value = c["BELLDANDY_TOOL_LOOP_WARNING_FRACTION"] || "";
+    if (cfgWebAllowPrivilegedSafeScope) cfgWebAllowPrivilegedSafeScope.checked = c["BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE"] === "true";
+    if (cfgPrivilegedWorkspaceWriteChannels) cfgPrivilegedWorkspaceWriteChannels.value = c["BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS"] || "";
     if (cfgDangerousToolsEnabled) cfgDangerousToolsEnabled.checked = c["BELLDANDY_DANGEROUS_TOOLS_ENABLED"] === "true";
     if (cfgToolsPolicyFile) cfgToolsPolicyFile.value = c["BELLDANDY_TOOLS_POLICY_FILE"] || "";
     if (cfgSubAgentMaxConcurrent) cfgSubAgentMaxConcurrent.value = c["BELLDANDY_SUB_AGENT_MAX_CONCURRENT"] || "";
@@ -1997,6 +2001,8 @@ export function createSettingsController({
     if (cfgMaxOutputTokens) updates["BELLDANDY_MAX_OUTPUT_TOKENS"] = cfgMaxOutputTokens.value.trim();
     if (cfgToolLoopIterationBudget) updates["BELLDANDY_TOOL_LOOP_ITERATION_BUDGET"] = cfgToolLoopIterationBudget.value.trim();
     if (cfgToolLoopWarningFraction) updates["BELLDANDY_TOOL_LOOP_WARNING_FRACTION"] = cfgToolLoopWarningFraction.value.trim();
+    if (cfgWebAllowPrivilegedSafeScope) updates["BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE"] = cfgWebAllowPrivilegedSafeScope.checked ? "true" : "false";
+    if (cfgPrivilegedWorkspaceWriteChannels) updates["BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS"] = cfgPrivilegedWorkspaceWriteChannels.value.trim();
     if (cfgDangerousToolsEnabled) updates["BELLDANDY_DANGEROUS_TOOLS_ENABLED"] = cfgDangerousToolsEnabled.checked ? "true" : "false";
     if (cfgToolsPolicyFile) updates["BELLDANDY_TOOLS_POLICY_FILE"] = cfgToolsPolicyFile.value.trim();
     if (cfgSubAgentMaxConcurrent) updates["BELLDANDY_SUB_AGENT_MAX_CONCURRENT"] = cfgSubAgentMaxConcurrent.value.trim();

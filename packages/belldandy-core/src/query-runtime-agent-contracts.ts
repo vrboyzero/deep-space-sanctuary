@@ -1,8 +1,9 @@
 import type { GatewayResFrame } from "@belldandy/protocol";
-import type { ToolExecutor } from "@belldandy/skills";
+import type { ToolContractChannel, ToolExecutionRuntimeContext, ToolExecutor } from "@belldandy/skills";
 import { listToolContractsV2 } from "@belldandy/skills";
 
 import { QueryRuntime, type QueryRuntimeObserver } from "./query-runtime.js";
+import type { SubTaskRuntimeStore } from "./task-runtime.js";
 import {
   buildEmptyToolContractV2Summary,
   buildToolContractV2Observability,
@@ -12,7 +13,9 @@ type AgentContractsQueryRuntimeMethod = "agent.contracts.get";
 
 export type QueryRuntimeAgentContractsContext = {
   requestId: string;
+  requestChannel?: ToolContractChannel;
   toolExecutor?: ToolExecutor;
+  subTaskRuntimeStore?: Pick<SubTaskRuntimeStore, "getTask">;
   runtimeObserver?: QueryRuntimeObserver<AgentContractsQueryRuntimeMethod>;
 };
 
@@ -67,8 +70,18 @@ export async function handleAgentContractsGetWithQueryRuntime(
       },
     });
 
-    const registeredToolNames = ctx.toolExecutor.getRegisteredToolNames();
-    const contracts = listToolContractsV2(ctx.toolExecutor.getRegisteredToolContracts());
+    const visibilityTask = params.taskId && ctx.subTaskRuntimeStore
+      ? await ctx.subTaskRuntimeStore.getTask(params.taskId)
+      : undefined;
+    const visibilityAgentId = params.agentId || visibilityTask?.agentId;
+    const visibilityConversationId = params.conversationId || visibilityTask?.parentConversationId;
+    const runtimeContext = buildToolRuntimeContext(ctx.requestChannel, visibilityTask?.launchSpec);
+    const registeredToolNames = ctx.toolExecutor
+      .getRegisteredToolAvailabilities(visibilityAgentId, visibilityConversationId, runtimeContext)
+      .filter((item) => item.available)
+      .map((item) => item.name);
+    const visibleContracts = ctx.toolExecutor.getContracts(visibilityAgentId, visibilityConversationId, runtimeContext);
+    const contracts = visibleContracts.length > 0 ? listToolContractsV2(visibleContracts) : [];
     const observability = buildToolContractV2Observability({
       contracts,
       registeredToolNames,
@@ -104,4 +117,17 @@ export async function handleAgentContractsGetWithQueryRuntime(
       },
     };
   });
+}
+
+function buildToolRuntimeContext(
+  requestChannel?: ToolContractChannel,
+  launchSpec?: ToolExecutionRuntimeContext["launchSpec"],
+): ToolExecutionRuntimeContext | undefined {
+  if (!requestChannel && !launchSpec) {
+    return undefined;
+  }
+  return {
+    ...(launchSpec ? { launchSpec } : {}),
+    ...(requestChannel ? { channel: requestChannel } : {}),
+  };
 }

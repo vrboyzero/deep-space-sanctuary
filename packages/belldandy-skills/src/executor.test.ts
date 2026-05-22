@@ -3,6 +3,7 @@ import type { Tool, ToolCallRequest, ToolContext, ToolCallResult } from "./types
 import { ToolExecutor, DEFAULT_POLICY } from "./executor.js";
 import { withToolContract } from "./tool-contract.js";
 import { createToolSearchTool } from "./builtin/tool-search.js";
+import { resolveSafeScopesForChannel } from "./security-matrix.js";
 
 // Mock 工具：echo
 const echoTool: Tool = {
@@ -846,6 +847,38 @@ describe("ToolExecutor", () => {
     expect(result.error).toContain("安全矩阵");
   });
 
+  it("should override contract channel evaluation with runtime request channel", async () => {
+    const executor = new ToolExecutor({
+      tools: [echoToolWithContract],
+      workspaceRoot: "/tmp/test",
+      contractAccessPolicy: {
+        channel: "gateway",
+        allowedSafeScopes: resolveSafeScopesForChannel("gateway"),
+      },
+    });
+
+    expect(executor.getDefinitions(undefined, undefined, { channel: "gateway" })).toHaveLength(1);
+    expect(executor.getDefinitions(undefined, undefined, { channel: "web" })).toHaveLength(0);
+    expect(executor.getToolAvailability("echo_contract", undefined, undefined, { channel: "web" })).toMatchObject({
+      available: false,
+      reasonCode: "unsupported-channel",
+      contractReason: "channel",
+    });
+
+    const result = await executor.execute(
+      { id: "req-runtime-web", name: "echo_contract", arguments: { message: "denied" } },
+      "conv-1",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { channel: "web" },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("不允许在当前端使用");
+  });
+
   it("should expose availability reasons for registered tools", () => {
     const goalTool = withToolContract({
       definition: {
@@ -947,6 +980,56 @@ describe("ToolExecutor", () => {
     expect(onTokenCounterSet).toHaveBeenCalledTimes(1);
     expect(onTokenCounterSet).toHaveBeenCalledWith("conv-1", counter);
     expect(executor.getTokenCounter("conv-1")).toBe(counter);
+  });
+
+  it("should preserve multiline string arguments and trim enum values only", async () => {
+    let seenArgs: { content?: string; mode?: string } = {};
+    const multilineTool: Tool = {
+      definition: {
+        name: "multiline_write",
+        description: "preserve multiline content",
+        parameters: {
+          type: "object",
+          properties: {
+            content: { type: "string", description: "content" },
+            mode: { type: "string", description: "mode", enum: ["overwrite", "append"] },
+          },
+          required: ["content"],
+        },
+      },
+      async execute(args): Promise<ToolCallResult> {
+        seenArgs = {
+          content: typeof args.content === "string" ? args.content : undefined,
+          mode: typeof args.mode === "string" ? args.mode : undefined,
+        };
+        return {
+          id: "",
+          name: "multiline_write",
+          success: true,
+          output: typeof args.content === "string" ? args.content : "",
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [multilineTool],
+      workspaceRoot: "/tmp/test",
+    });
+    const multilineContent = "line1\nline2\nline3\n\nline5 after blank";
+
+    const result = await executor.execute({
+      id: "req-multiline",
+      name: "multiline_write",
+      arguments: {
+        content: multilineContent,
+        mode: " overwrite ",
+      },
+    }, "conv-1");
+
+    expect(result.success).toBe(true);
+    expect(seenArgs.content).toBe(multilineContent);
+    expect(seenArgs.mode).toBe("overwrite");
+    expect(result.output).toBe(multilineContent);
   });
 
   it("should hide deferred tools from schema injection until they are loaded", async () => {

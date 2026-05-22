@@ -36,6 +36,7 @@ import {
   type ToolContractDenialReason,
   type ToolContractAccessDecision,
   type ToolContractAccessPolicy,
+  resolveSafeScopesForChannel,
 } from "./security-matrix.js";
 import { isAbortError, readAbortReason } from "./abort-utils.js";
 import {
@@ -284,11 +285,15 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function normalizeTrimmedString(value: string): string {
+  return value.trim();
+}
+
 function normalizeStringArrayValue(value: unknown): string[] | undefined {
   if (typeof value === "string") {
     return value
       .split(",")
-      .map((item) => normalizeWhitespace(item))
+      .map((item) => normalizeTrimmedString(item))
       .filter(Boolean);
   }
   if (!Array.isArray(value)) {
@@ -296,7 +301,7 @@ function normalizeStringArrayValue(value: unknown): string[] | undefined {
   }
   return value
     .flatMap((item) => typeof item === "string" ? item.split(",") : [])
-    .map((item) => normalizeWhitespace(item))
+    .map((item) => normalizeTrimmedString(item))
     .filter(Boolean);
 }
 
@@ -382,10 +387,26 @@ function normalizeArgumentsBySchema(
     switch (property.type) {
       case "string": {
         if (typeof currentValue === "string") {
-          const normalized = normalizeWhitespace(currentValue);
-          if (normalized !== currentValue) {
-            args[key] = normalized;
-            corrections.push(`Trimmed whitespace in \`${key}\`.`);
+          const enumValues = Array.isArray(property.enum)
+            ? property.enum.filter((item): item is string => typeof item === "string")
+            : [];
+          if (enumValues.length > 0) {
+            if (enumValues.includes(currentValue)) {
+              break;
+            }
+            const trimmed = normalizeTrimmedString(currentValue);
+            if (trimmed !== currentValue && enumValues.includes(trimmed)) {
+              args[key] = trimmed;
+              corrections.push(`Trimmed whitespace in \`${key}\`.`);
+              break;
+            }
+            issues.push({
+              path: key,
+              code: "invalid_value",
+              message: `参数 \`${key}\` 的取值不在允许列表中。`,
+              expected: enumValues.join(", "),
+              receivedType: describeValueType(currentValue),
+            });
           }
         } else if (
           typeof currentValue === "number"
@@ -449,14 +470,24 @@ function normalizeArgumentsBySchema(
       case "array": {
         if (Array.isArray(currentValue)) {
           if (property.items?.type === "string") {
-            const normalized = currentValue
-              .flatMap((item) => typeof item === "string" ? item.split(",") : [])
-              .map((item) => normalizeWhitespace(item))
-              .filter(Boolean);
-            if (JSON.stringify(currentValue) !== JSON.stringify(normalized)) {
-              args[key] = normalized;
-              corrections.push(`Normalized \`${key}\` entries into trimmed string values.`);
+            if (currentValue.every((item) => typeof item === "string")) {
+              break;
             }
+            if (currentValue.every((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean")) {
+              const normalized = currentValue.map((item) => typeof item === "string" ? item : String(item));
+              if (JSON.stringify(currentValue) !== JSON.stringify(normalized)) {
+                args[key] = normalized;
+                corrections.push(`Coerced \`${key}\` array entries to strings.`);
+              }
+              break;
+            }
+            issues.push({
+              path: key,
+              code: "invalid_type",
+              message: `参数 \`${key}\` 必须是 string[]。`,
+              expected: "string[]",
+              receivedType: describeValueType(currentValue),
+            });
           }
           break;
         }
@@ -1258,9 +1289,10 @@ export class ToolExecutor {
     const alwaysEnabled = this.alwaysEnabledTools.has(toolName);
     const launchSpec = normalizeRuntimeLaunchSpec(runtimeContext?.launchSpec);
     const bypassAgentWhitelist = shouldBypassAgentWhitelist(toolName, launchSpec, runtimeContext);
+    const contractAccessPolicy = this.resolveContractAccessPolicy(runtimeContext);
 
-    if (this.contractAccessPolicy) {
-      const contractDecision = evaluateToolContractAccess(tool, this.contractAccessPolicy);
+    if (contractAccessPolicy) {
+      const contractDecision = evaluateToolContractAccess(tool, contractAccessPolicy);
       if (!contractDecision.allowed) {
         return {
           ...this.buildAvailabilityState(toolName, alwaysEnabled, false, contractDecision.reason),
@@ -1332,6 +1364,27 @@ export class ToolExecutor {
     return {
       ...this.buildAvailabilityState(toolName, alwaysEnabled, true, "available"),
       allowed: true,
+    };
+  }
+
+  private resolveContractAccessPolicy(
+    runtimeContext?: ToolExecutionRuntimeContext,
+  ): ToolContractAccessPolicy | undefined {
+    const runtimeChannel = runtimeContext?.channel;
+    if (!runtimeChannel) {
+      return this.contractAccessPolicy;
+    }
+
+    const runtimeSafeScopes = new Set(resolveSafeScopesForChannel(runtimeChannel));
+    const basePolicy = this.contractAccessPolicy;
+    const allowedSafeScopes = basePolicy?.allowedSafeScopes
+      ? [...new Set(basePolicy.allowedSafeScopes)].filter((scope) => runtimeSafeScopes.has(scope))
+      : [...runtimeSafeScopes];
+
+    return {
+      ...basePolicy,
+      channel: runtimeChannel,
+      allowedSafeScopes,
     };
   }
 

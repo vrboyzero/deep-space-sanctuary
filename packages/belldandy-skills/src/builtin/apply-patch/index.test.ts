@@ -52,6 +52,56 @@ describe("apply_patch tool", () => {
     await expect(fs.readFile(path.join(tempDir, "TOOLS.md"), "utf-8")).resolves.toBe("hello from root\n");
   });
 
+  it("should unwrap an apply_patch wrapper around raw patch text", async () => {
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "apply_patch(",
+          "*** Begin Patch",
+          "*** Add File: WRAPPED.md",
+          "+wrapped patch",
+          "*** End Patch",
+          ")",
+        ].join("\n"),
+      },
+      {
+        ...baseContext,
+        policy: {
+          ...baseContext.policy,
+          allowedPaths: ["."],
+        },
+      },
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "WRAPPED.md"), "utf-8")).resolves.toBe("wrapped patch\n");
+  });
+
+  it("should unwrap a code fence around raw patch text", async () => {
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "```patch",
+          "*** Begin Patch",
+          "*** Add File: FENCED.md",
+          "+wrapped fence",
+          "*** End Patch",
+          "```",
+        ].join("\n"),
+      },
+      {
+        ...baseContext,
+        policy: {
+          ...baseContext.policy,
+          allowedPaths: ["."],
+        },
+      },
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "FENCED.md"), "utf-8")).resolves.toBe("wrapped fence\n");
+  });
+
   it("should still reject files outside whitelist", async () => {
     const result = await applyPatchTool.execute(
       {
@@ -133,6 +183,48 @@ describe("apply_patch tool", () => {
     } finally {
       await fs.rm(extraRoot, { recursive: true, force: true });
     }
+  });
+
+  it("should reject Add File when the target already exists", async () => {
+    await fs.writeFile(path.join(tempDir, "existing.txt"), "old\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Add File: existing.txt",
+          "+new",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("目标文件已存在");
+    await expect(fs.readFile(path.join(tempDir, "existing.txt"), "utf-8")).resolves.toBe("old\n");
+  });
+
+  it("should preserve CRLF line endings when updating an existing file", async () => {
+    await fs.writeFile(path.join(tempDir, "crlf.txt"), "alpha\r\nbeta\r\n", "utf-8");
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: crlf.txt",
+          "@@",
+          " alpha",
+          "-beta",
+          "+gamma",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      baseContext,
+    );
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(path.join(tempDir, "crlf.txt"), "utf-8")).resolves.toBe("alpha\r\ngamma\r\n");
   });
 
   it("should stop before applying any writes when abortSignal is already aborted", async () => {

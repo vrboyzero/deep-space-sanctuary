@@ -1727,6 +1727,7 @@ async function handleReq(
 
   const queryRuntimeDomainsContext = {
     clientId: ctx.clientId,
+    requestChannel: ctx.requestChannel,
     stateDir: ctx.stateDir,
     agentRegistry: ctx.agentRegistry,
     residentAgentRuntime: ctx.residentAgentRuntime,
@@ -1858,6 +1859,7 @@ async function handleReq(
     case "conversation.run.stop": {
       return handleMessageSendMethod(req, ws, {
         clientId: ctx.clientId,
+        requestChannel: ctx.requestChannel,
         userUuid: ctx.userUuid,
         stateDir: ctx.stateDir,
         log: ctx.log,
@@ -1956,6 +1958,7 @@ async function handleReq(
     case "system.doctor": {
       return handleSystemDoctorMethod(req, {
         stateDir: ctx.stateDir,
+        requestChannel: ctx.requestChannel,
         envDir: ctx.envDir,
         envSource: ctx.envSource,
         agentFactory: ctx.agentFactory,

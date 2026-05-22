@@ -59,9 +59,16 @@ export function resolveSafeScopesForChannel(
   options: {
     include?: Iterable<ToolContractSafeScope>;
     exclude?: Iterable<ToolContractSafeScope>;
+    allowPrivilegedForWeb?: boolean;
   } = {},
 ): ToolContractSafeScope[] {
   const resolved = new Set(DEFAULT_SAFE_SCOPES_BY_CHANNEL[channel]);
+  const allowPrivilegedForWeb = options.allowPrivilegedForWeb
+    ?? process.env.BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE === "true";
+
+  if (channel === "web" && allowPrivilegedForWeb) {
+    resolved.add("privileged");
+  }
 
   if (options.include) {
     for (const scope of options.include) {

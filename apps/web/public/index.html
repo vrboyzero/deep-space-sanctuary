@@ -1721,6 +1721,18 @@
             <input id="cfgToolLoopWarningFraction" class="input" placeholder="0.75" />
             <div class="form-help" data-i18n="settings.toolLoopWarningFractionHelp">达到预算的多少比例后开始向下一轮 prompt 注入 warning delta。留空时使用服务端默认值。</div>
           </div>
+          <div class="form-group settings-priority-toggle">
+            <label class="form-label" for="cfgWebAllowPrivilegedSafeScope">
+              <input id="cfgWebAllowPrivilegedSafeScope" type="checkbox" style="margin-right: 8px;" />
+              <span class="settings-priority-toggle-title" data-i18n="settings.webAllowPrivilegedSafeScopeLabel">允许 WebChat 使用 privileged safe-scope</span>
+            </label>
+            <div class="form-help" data-i18n="settings.webAllowPrivilegedSafeScopeHelp">开启后，WebChat 可参与 privileged 级别的工具安全判定；通常需要和下方的写入 channel 白名单一起使用。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.privilegedWorkspaceWriteChannelsLabel">Privileged Workspace Write Channels</label>
+            <input id="cfgPrivilegedWorkspaceWriteChannels" class="input" data-i18n-placeholder="settings.privilegedWorkspaceWriteChannelsPlaceholder" placeholder="gateway,cli" />
+            <div class="form-help" data-i18n="settings.privilegedWorkspaceWriteChannelsHelp">逗号分隔的写入 channel 白名单。默认 gateway,cli；若要让 WebChat 写入，请同时加入 web 并开启上面的 WebChat privileged safe-scope。</div>
+          </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.agentToolControlLabel">Agent Tool Control</label>
             <select id="cfgAgentToolControlMode" class="input">

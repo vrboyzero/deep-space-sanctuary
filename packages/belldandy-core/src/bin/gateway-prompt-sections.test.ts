@@ -101,6 +101,8 @@ describe("buildAgentRuntimePromptSections", () => {
       .toContain("dream-runtime.json");
     expect(sections.find((section) => section.id === "tool-use-policy")?.text)
       .toContain("prefer `video_understand` with `focus_mode=timestamp_query`");
+    expect(sections.find((section) => section.id === "tool-use-policy")?.text)
+      .toContain("the first line must be `*** Begin Patch`");
   });
 
   it("injects method / skill summary and commander execution policy when available", () => {

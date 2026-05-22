@@ -26,6 +26,7 @@ import {
   type DurableExtractionRuntime,
 } from "@belldandy/memory";
 import type {
+  ToolContractChannel,
   ToolExecutionRuntimeContext,
   ToolExecutor,
   SkillRegistry,
@@ -118,6 +119,7 @@ import type { ObsidianCommonsRuntime } from "../obsidian-commons-runtime.js";
 
 type SystemDoctorMethodContext = {
   stateDir: string;
+  requestChannel?: ToolContractChannel;
   envDir?: string;
   envSource?: EnvDirSource;
   agentFactory: () => unknown;
@@ -1653,9 +1655,7 @@ export async function handleSystemDoctorMethod(
       launchSpec: visibilityTask?.launchSpec,
       runtimeResilience,
     });
-    const runtimeContext: ToolExecutionRuntimeContext | undefined = visibilityTask
-      ? { launchSpec: visibilityTask.launchSpec }
-      : undefined;
+    const runtimeContext = buildToolRuntimeContext(ctx.requestChannel, visibilityTask?.launchSpec);
     bridgeRecoveryDiagnostics = visibilityTask
       ? buildBridgeRecoveryDiagnostics({
           toolExecutor: ctx.toolExecutor,
@@ -1674,7 +1674,7 @@ export async function handleSystemDoctorMethod(
       disabledContractNamesConfigured: readConfiguredPromptExperimentToolContracts(),
     });
     const visibleToolNamesForV2 = visibleContracts.map((contract) => contract.name);
-    const visibleContractV2 = listToolContractsV2(visibleContracts);
+    const visibleContractV2 = visibleContracts.length > 0 ? listToolContractsV2(visibleContracts) : [];
     const contractV2Observability = buildToolContractV2Observability({
       contracts: visibleContractV2,
       registeredToolNames: visibleToolNamesForV2,
@@ -1825,4 +1825,17 @@ export async function handleSystemDoctorMethod(
       doctorResponseInflight.delete(doctorCacheKey);
     }
   }
+}
+
+function buildToolRuntimeContext(
+  requestChannel?: ToolContractChannel,
+  launchSpec?: ToolExecutionRuntimeContext["launchSpec"],
+): ToolExecutionRuntimeContext | undefined {
+  if (!requestChannel && !launchSpec) {
+    return undefined;
+  }
+  return {
+    ...(launchSpec ? { launchSpec } : {}),
+    ...(requestChannel ? { channel: requestChannel } : {}),
+  };
 }

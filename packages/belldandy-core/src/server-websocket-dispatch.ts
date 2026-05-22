@@ -8,7 +8,7 @@ import type {
 import type { GatewayEventFrame, GatewayReqFrame, GatewayResFrame, TokenUsageUploadConfig } from "@belldandy/protocol";
 import type { EnvDirSource } from "@star-sanctuary/distribution";
 import type { PluginRegistry } from "@belldandy/plugins";
-import type { SkillRegistry, ToolExecutor, TranscribeOptions, TranscribeResult } from "@belldandy/skills";
+import type { SkillRegistry, ToolContractChannel, ToolExecutor, TranscribeOptions, TranscribeResult } from "@belldandy/skills";
 import type { WebSocket } from "ws";
 
 import type { BackgroundContinuationRuntimeDoctorReport } from "./background-continuation-runtime.js";
@@ -50,6 +50,7 @@ type GatewayLog = {
 
 export type GatewayWebSocketRequestContext = {
   clientId: string;
+  requestChannel: ToolContractChannel;
   userUuid?: string;
   stateDir: string;
   additionalWorkspaceRoots: string[];
@@ -132,7 +133,7 @@ export type GatewayWebSocketRequestContext = {
 
 type CreateGatewayWebSocketRequestHandlerOptions = Omit<
   GatewayWebSocketRequestContext,
-  "clientId" | "userUuid"
+  "clientId" | "requestChannel" | "userUuid"
 > & {
   handleReq: (
     ws: WebSocket,
@@ -147,6 +148,7 @@ export function buildGatewayWebSocketRequestContext(
 ): GatewayWebSocketRequestContext {
   return {
     clientId: connection.clientId,
+    requestChannel: resolveGatewayWebSocketRequestChannel(connection),
     userUuid: connection.userUuid,
     stateDir: options.stateDir,
     additionalWorkspaceRoots: options.additionalWorkspaceRoots,
@@ -212,6 +214,18 @@ export function buildGatewayWebSocketRequestContext(
     runCronJobNow: options.runCronJobNow,
     runCronRecovery: options.runCronRecovery,
   };
+}
+
+function resolveGatewayWebSocketRequestChannel(
+  connection: GatewayWebSocketConnectionContext,
+): ToolContractChannel {
+  if (connection.role === "cli" || connection.clientId.startsWith("bdd-cli-")) {
+    return "cli";
+  }
+  if (connection.role === "web") {
+    return "web";
+  }
+  return "gateway";
 }
 
 export function createGatewayWebSocketRequestHandler(

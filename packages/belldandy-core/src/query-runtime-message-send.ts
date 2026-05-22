@@ -24,7 +24,7 @@ import {
   sanitizeVisibleAssistantText,
 } from "./task-auto-report.js";
 import type { ToolControlConfirmationStore } from "./tool-control-confirmation-store.js";
-import type { TranscribeOptions, TranscribeResult } from "@belldandy/skills";
+import type { ToolContractChannel, TranscribeOptions, TranscribeResult } from "@belldandy/skills";
 import type { MediaCapability } from "./media-capability-registry.js";
 import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
 import type { ConversationPromptSnapshotArtifact } from "./conversation-prompt-snapshot.js";
@@ -47,6 +47,7 @@ export type MessageSendQueryRuntimeContext = {
     requestId: string;
     params: MessageSendParams;
     clientId: string;
+    requestChannel?: ToolContractChannel;
     userUuid?: string;
     stateDir: string;
   };
@@ -660,6 +661,7 @@ function buildMessageSendAgentRunInput(
     senderInfo: input.senderInfo,
     roomContext: input.normalizedRoomContext,
     meta: {
+      ...(input.ctx.request.requestChannel ? { _toolRequestChannel: input.ctx.request.requestChannel } : {}),
       runId: input.runId,
       currentMessageTime: {
         timestampMs: input.userMessageTimestamp,

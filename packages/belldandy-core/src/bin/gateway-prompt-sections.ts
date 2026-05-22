@@ -275,6 +275,7 @@ export function buildToolUsePolicySection(): SystemPromptSection {
       "1. Confirm the exact subproblem before calling a tool.",
       "2. Prefer the smallest, lowest-risk tool that can answer it.",
       "3. Search/read before write, inspect before patch, verify before delivery.",
+      "3.1 When using `apply_patch`, send raw patch text only: the first line must be `*** Begin Patch`; do not wrap it in `apply_patch(...)`, JSON, or a code fence.",
       "4. Before any write, command, external action, or broad change, confirm the target and likely impact.",
       "5. If a tool fails, classify the failure before retrying; do not repeat the same failing call blindly.",
       "6. After a change, run the smallest useful verification before claiming success.",

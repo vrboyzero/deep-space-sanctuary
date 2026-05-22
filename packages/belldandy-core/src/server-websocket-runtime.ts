@@ -31,6 +31,7 @@ type GatewayWebSocketLog = {
 
 export type GatewayWebSocketConnectionContext = {
   clientId: string;
+  role: BelldandyRole;
   userUuid?: string;
 };
 
@@ -395,6 +396,7 @@ export function createGatewayWebSocketRuntime(
       try {
         const response = await options.onRequest(ws, frame, {
           clientId: state.clientId ?? state.sessionId,
+          role: state.role,
           userUuid: state.userUuid,
         });
         if (response) {

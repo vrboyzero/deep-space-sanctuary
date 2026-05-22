@@ -2,9 +2,11 @@ import path from "node:path";
 
 import { expect } from "vitest";
 import WebSocket from "ws";
+import type { BelldandyRole } from "@belldandy/protocol";
 
 import { listGlobalMemoryManagers, resetGlobalMemoryManagers } from "@belldandy/memory";
-import { type Tool, withToolContract } from "@belldandy/skills";
+import type { Tool, ToolContractChannel } from "@belldandy/skills";
+import { withToolContract } from "@belldandy/skills";
 
 import { approvePairingCode } from "./security/store.js";
 
@@ -12,9 +14,14 @@ export function resolveWebRoot(rootDir = process.cwd()): string {
   return path.join(rootDir, "apps", "web", "public");
 }
 
-export async function pairWebSocketClient(ws: WebSocket, frames: any[], stateDir: string): Promise<void> {
+export async function pairWebSocketClient(
+  ws: WebSocket,
+  frames: any[],
+  stateDir: string,
+  role: BelldandyRole = "web",
+): Promise<void> {
   await waitFor(() => frames.some((f) => f.type === "connect.challenge"));
-  ws.send(JSON.stringify({ type: "connect", role: "web", auth: { mode: "none" } }));
+  ws.send(JSON.stringify({ type: "connect", role, auth: { mode: "none" } }));
   await waitFor(() => frames.some((f) => f.type === "hello-ok"));
   await waitFor(() => frames.some((f) => f.type === "event" && f.event === "pairing.required"));
   await approveLatestPairingCode(frames, stateDir);
@@ -95,7 +102,7 @@ export function createWriteContractedTestTool(name: string): Tool {
     isConcurrencySafe: false,
     needsPermission: true,
     riskLevel: "high",
-    channels: ["gateway"],
+    channels: resolvePrivilegedWorkspaceWriteChannelsForTest(),
     safeScopes: ["privileged"],
     activityDescription: `write tool ${name}`,
     resultSchema: {
@@ -104,6 +111,23 @@ export function createWriteContractedTestTool(name: string): Tool {
     },
     outputPersistencePolicy: "artifact",
   });
+}
+
+function resolvePrivilegedWorkspaceWriteChannelsForTest(env: NodeJS.ProcessEnv = process.env): ToolContractChannel[] {
+  const raw = typeof env.BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS === "string"
+    ? env.BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS.trim()
+    : "";
+  const defaults: ToolContractChannel[] = ["gateway", "cli"];
+  if (!raw) {
+    return [...defaults];
+  }
+
+  const parsed = raw
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item): item is ToolContractChannel => item === "gateway" || item === "web" || item === "cli");
+
+  return parsed.length > 0 ? [...new Set(parsed)] : [...defaults];
 }
 
 export function toBase64(value: string): string {

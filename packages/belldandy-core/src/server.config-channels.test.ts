@@ -279,6 +279,8 @@ test("config.update accepts memory and tool env settings", async () => {
           BELLDANDY_TOOL_GROUPS: "browser,system",
           BELLDANDY_MAX_INPUT_TOKENS: "20000",
           BELLDANDY_MAX_OUTPUT_TOKENS: "8192",
+          BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE: "true",
+          BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS: "gateway,cli,web",
           BELLDANDY_MEMORY_ENABLED: "false",
           BELLDANDY_EMBEDDING_ENABLED: "true",
           BELLDANDY_EMBEDDING_PROVIDER: "local",
@@ -311,6 +313,8 @@ test("config.update accepts memory and tool env settings", async () => {
     expect(readRes.ok).toBe(true);
     expect(readRes.payload?.config?.BELLDANDY_BROWSER_ALLOWED_DOMAINS).toBe("github.com,developer.mozilla.org");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_GROUPS).toBe("browser,system");
+    expect(readRes.payload?.config?.BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS).toBe("gateway,cli,web");
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_ENABLED).toBe("false");
     expect(readRes.payload?.config?.BELLDANDY_EMBEDDING_PROVIDER).toBe("local");
     expect(readRes.payload?.config?.BELLDANDY_CONTEXT_INJECTION_ALLOWED_CATEGORIES).toBe("preference,fact,experience");
@@ -320,6 +324,8 @@ test("config.update accepts memory and tool env settings", async () => {
     const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
     expect(envLocalContent).toContain('BELLDANDY_AGENT_BRIDGE_ENABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_MAX_OUTPUT_TOKENS="8192"');
+    expect(envLocalContent).toContain('BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE="true"');
+    expect(envLocalContent).toContain('BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS="gateway,cli,web"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_ENABLED="false"');
     expect(envLocalContent).toContain('BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION="true"');
     expect(envLocalContent).toContain('BELLDANDY_TASK_DEDUP_MODE="strict"');

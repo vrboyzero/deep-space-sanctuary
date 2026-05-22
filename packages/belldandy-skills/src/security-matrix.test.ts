@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Tool, ToolCallResult } from "./types.js";
 import {
   evaluateToolContractAccess,
@@ -30,6 +30,10 @@ function createTool(name: string): Tool {
 }
 
 describe("security-matrix", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("matches channel and safe-scope filters with one shared helper", () => {
     const matched = matchesSecurityMatrixSubject({
       channels: ["cli", "web"],
@@ -45,6 +49,11 @@ describe("security-matrix", () => {
   it("resolves explicit safe scopes for cli and gateway", () => {
     expect(resolveSafeScopesForChannel("cli")).toContain("privileged");
     expect(resolveSafeScopesForChannel("gateway")).toContain("bridge-safe");
+  });
+
+  it("allows web privileged safe scopes when opt-in is enabled", () => {
+    vi.stubEnv("BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE", "true");
+    expect(resolveSafeScopesForChannel("web")).toContain("privileged");
   });
 
   it("blocks tool contracts by name, channel and safe scope", () => {

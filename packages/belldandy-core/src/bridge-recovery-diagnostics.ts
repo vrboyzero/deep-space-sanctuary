@@ -81,6 +81,7 @@ function buildBridgeRecoveryRuntimeContext(
 ): ToolExecutionRuntimeContext {
   return {
     launchSpec: task.launchSpec,
+    channel: "gateway",
     bridgeGovernanceTaskId: task.id,
     ...(mode ? { agentWhitelistMode: mode } : {}),
   };

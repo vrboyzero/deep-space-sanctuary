@@ -494,6 +494,17 @@ describe("before_agent_start system prompt overrides", () => {
     ]));
   });
 
+  it("defaults the tool-loop iteration budget to unlimited when unset", () => {
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolExecutor: createToolExecutor(),
+    });
+
+    expect((agent as any).opts.toolLoopIterationBudget).toBe(0);
+  });
+
   it("stops before exceeding the tool-loop iteration budget and force-compacts context", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
       choices: [{
@@ -2188,6 +2199,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
             goalNodeId: "node-patch",
           },
         },
+        _toolRequestChannel: "web",
       },
     }));
 
@@ -2206,6 +2218,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
           goalNodeId: "node-patch",
         },
       },
+      channel: "web",
     });
     expect(execute).toHaveBeenCalledWith(
       expect.anything(),
@@ -2227,6 +2240,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
             goalNodeId: "node-patch",
           },
         },
+        channel: "web",
       },
     );
   });

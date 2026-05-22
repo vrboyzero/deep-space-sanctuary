@@ -599,9 +599,9 @@ const maxOutputTokensRaw = readEnv("BELLDANDY_MAX_OUTPUT_TOKENS");
 const maxOutputTokens = maxOutputTokensRaw ? parseInt(maxOutputTokensRaw, 10) || 4096 : 4096;
 const toolLoopIterationBudgetRaw = readEnv("BELLDANDY_TOOL_LOOP_ITERATION_BUDGET");
 const toolLoopIterationBudget = (() => {
-  if (!toolLoopIterationBudgetRaw) return 64;
+  if (!toolLoopIterationBudgetRaw) return 0;
   const value = parseInt(toolLoopIterationBudgetRaw, 10);
-  if (!Number.isFinite(value)) return 64;
+  if (!Number.isFinite(value)) return 0;
   return value <= 0 ? 0 : Math.max(1, Math.floor(value));
 })();
 const toolLoopWarningFractionRaw = readEnv("BELLDANDY_TOOL_LOOP_WARNING_FRACTION");
@@ -1486,7 +1486,7 @@ agentWorkspaceBindings.set("default", "default");
 
 const buildRuntimeSectionsForProfile = (profile: AgentProfile) => {
   const visibleContracts = toolExecutor.getContracts(profile.id);
-  const visibleToolContracts = listToolContractsV2(visibleContracts);
+  const visibleToolContracts = visibleContracts.length > 0 ? listToolContractsV2(visibleContracts) : [];
   const canDelegate = visibleContracts.some((contract) => DELEGATION_TOOL_NAMES.has(contract.name));
   const catalog = resolveAgentProfileCatalogMetadata(profile);
   return buildAgentRuntimePromptSections({

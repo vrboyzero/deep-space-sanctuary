@@ -14,6 +14,7 @@ import {
   cleanupGlobalMemoryManagersForTest,
   createContractedTestTool,
   createTestTool,
+  createWriteContractedTestTool,
   pairWebSocketClient,
   resolveWebRoot,
   waitFor,
@@ -70,7 +71,7 @@ test("tool_settings.confirm rejects pending request without applying config chan
   ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
 
   try {
-    await pairWebSocketClient(ws, frames, stateDir);
+    await pairWebSocketClient(ws, frames, stateDir, "cli");
     frames.length = 0;
 
     ws.send(JSON.stringify({
@@ -130,7 +131,7 @@ test("agent.contracts.get exposes tool contract v2 summary", async () => {
   ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
 
   try {
-    await pairWebSocketClient(ws, frames, stateDir);
+    await pairWebSocketClient(ws, frames, stateDir, "node");
 
     ws.send(JSON.stringify({ type: "req", id: "agent-contracts-get", method: "agent.contracts.get", params: {} }));
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "agent-contracts-get"));
@@ -149,6 +150,104 @@ test("agent.contracts.get exposes tool contract v2 summary", async () => {
       hasGovernanceContract: true,
       hasBehaviorContract: true,
     });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("agent.contracts.get filters gateway-only write contracts for web clients", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const toolsConfigManager = new ToolsConfigManager(stateDir);
+  await toolsConfigManager.load();
+
+  const toolExecutor = new ToolExecutor({
+    tools: [
+      createWriteContractedTestTool("workspace_write"),
+      createTestTool("beta_builtin"),
+    ],
+    workspaceRoot: process.cwd(),
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    toolsConfigManager,
+    toolExecutor,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    ws.send(JSON.stringify({ type: "req", id: "agent-contracts-get-web", method: "agent.contracts.get", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "agent-contracts-get-web"));
+    const res = frames.find((f) => f.type === "res" && f.id === "agent-contracts-get-web");
+
+    expect(res.ok).toBe(true);
+    expect(res.payload?.summary).toMatchObject({
+      totalCount: 0,
+      missingV2Count: 1,
+      missingV2Tools: ["beta_builtin"],
+    });
+    expect(res.payload?.contracts?.workspace_write).toBeUndefined();
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("agent.contracts.get exposes write contracts for cli clients", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const toolsConfigManager = new ToolsConfigManager(stateDir);
+  await toolsConfigManager.load();
+
+  const toolExecutor = new ToolExecutor({
+    tools: [
+      createWriteContractedTestTool("workspace_write"),
+      createTestTool("beta_builtin"),
+    ],
+    workspaceRoot: process.cwd(),
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    toolsConfigManager,
+    toolExecutor,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir, "cli");
+
+    ws.send(JSON.stringify({ type: "req", id: "agent-contracts-get-cli", method: "agent.contracts.get", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "agent-contracts-get-cli"));
+    const res = frames.find((f) => f.type === "res" && f.id === "agent-contracts-get-cli");
+
+    expect(res.ok).toBe(true);
+    expect(res.payload?.summary).toMatchObject({
+      totalCount: 1,
+      missingV2Count: 1,
+      missingV2Tools: ["beta_builtin"],
+    });
+    expect(res.payload?.contracts?.workspace_write).toBeDefined();
   } finally {
     ws.close();
     await closeP;

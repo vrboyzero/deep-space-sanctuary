@@ -153,6 +153,7 @@ function buildRuntimeContext(
 ): ToolExecutionRuntimeContext {
   return {
     launchSpec: buildRuntimeLaunchSpec(record, instruction, agentId, profileId),
+    channel: "gateway",
     bridgeGovernanceTaskId: record.id,
     agentWhitelistMode: "governed_bridge_internal",
   };

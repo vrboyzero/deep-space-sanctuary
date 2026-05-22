@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { runCommandTool } from "./exec.js";
 import type { ToolContext } from "../../types.js";
+import { getToolContract } from "../../tool-contract.js";
 import path from "node:path";
 
 const workspaceRoot = process.platform === "win32"
@@ -34,6 +35,10 @@ const mockContext: ToolContext = {
 const isWindows = process.platform === "win32";
 
 describe("run_command (Platform-aware Safelist)", () => {
+    it("should expose cli in contract channels", () => {
+        expect(getToolContract(runCommandTool)?.channels).toEqual(expect.arrayContaining(["gateway", "web", "cli"]));
+    });
+
     // 通用命令测试（所有平台）
     it("should allow common 'pwd' command on all platforms", async () => {
         const result = await runCommandTool.execute({ command: "pwd" }, mockContext);

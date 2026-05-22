@@ -7,6 +7,7 @@ import { parseSkillMd } from "../skill-loader.js";
 import { withToolContract } from "../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../runtime-policy.js";
 import { buildFailureToolCallResult } from "../failure-kind.js";
+import { resolvePrivilegedWorkspaceWriteChannels } from "./privileged-workspace-write-contract.js";
 
 /** 敏感文件模式（禁止读取） */
 const SENSITIVE_PATTERNS = [
@@ -637,7 +638,7 @@ export const fileWriteTool: Tool = withToolContract({
   isConcurrencySafe: false,
   needsPermission: true,
   riskLevel: "high",
-  channels: ["gateway", "web"],
+  channels: resolvePrivilegedWorkspaceWriteChannels(),
   safeScopes: ["privileged"],
   activityDescription: "Write or edit a file inside the workspace",
   resultSchema: {
@@ -746,7 +747,7 @@ export const fileDeleteTool: Tool = withToolContract({
   isConcurrencySafe: false,
   needsPermission: true,
   riskLevel: "high",
-  channels: ["gateway", "web"],
+  channels: resolvePrivilegedWorkspaceWriteChannels(),
   safeScopes: ["privileged"],
   activityDescription: "Delete a file from the workspace",
   resultSchema: {

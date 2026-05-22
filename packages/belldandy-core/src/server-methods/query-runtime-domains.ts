@@ -1,7 +1,7 @@
 import type { AgentRegistry } from "@belldandy/agent";
 import type { GatewayEventFrame, GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
 import type { PluginRegistry } from "@belldandy/plugins";
-import type { SkillRegistry, ToolExecutor } from "@belldandy/skills";
+import type { SkillRegistry, ToolContractChannel, ToolExecutor } from "@belldandy/skills";
 
 import type { ExternalOutboundAuditStore } from "../external-outbound-audit-store.js";
 import type { ExternalOutboundConfirmationStore } from "../external-outbound-confirmation-store.js";
@@ -61,6 +61,7 @@ type ToolSettingsConfirmParseResult =
 
 type QueryRuntimeDomainsMethodContext = {
   clientId: string;
+  requestChannel?: ToolContractChannel;
   stateDir: string;
   agentRegistry?: AgentRegistry;
   residentAgentRuntime: ResidentAgentRuntimeRegistry;
@@ -119,6 +120,7 @@ function createToolsRuntimeContext(requestId: string, ctx: QueryRuntimeDomainsMe
   return {
     requestId,
     clientId: ctx.clientId,
+    requestChannel: ctx.requestChannel,
     toolExecutor: ctx.toolExecutor,
     toolsConfigManager: ctx.toolsConfigManager,
     toolControlConfirmationStore: ctx.toolControlConfirmationStore,
@@ -333,7 +335,9 @@ export async function handleQueryRuntimeDomainsMethod(
         : undefined;
       return handleAgentContractsGetWithQueryRuntime({
         requestId: req.id,
+        requestChannel: ctx.requestChannel,
         toolExecutor: ctx.toolExecutor,
+        subTaskRuntimeStore: ctx.subTaskRuntimeStore,
         runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"agent.contracts.get">(),
       }, {
         taskId: requestedTaskId,

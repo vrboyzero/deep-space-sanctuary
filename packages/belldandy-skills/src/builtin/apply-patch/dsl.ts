@@ -60,24 +60,55 @@ export function parsePatchText(input: string): { hunks: Hunk[]; patch: string } 
 }
 
 function checkPatchBoundariesLenient(lines: string[]): string[] {
-    const strictError = checkPatchBoundariesStrict(lines);
-    if (!strictError) return lines;
+    let current = lines;
 
-    if (lines.length < 4) {
-        throw new Error(strictError);
+    for (let depth = 0; depth < 4; depth += 1) {
+        const strictError = checkPatchBoundariesStrict(current);
+        if (!strictError) return current;
+
+        const unwrapped = unwrapCommonPatchEnvelope(current);
+        if (!unwrapped) {
+            throw new Error(strictError);
+        }
+        current = unwrapped;
     }
-    const first = lines[0];
-    const last = lines[lines.length - 1]!;
+
+    const finalError = checkPatchBoundariesStrict(current);
+    if (finalError) {
+        throw new Error(finalError);
+    }
+    return current;
+}
+
+function unwrapCommonPatchEnvelope(lines: string[]): string[] | null {
+    if (lines.length < 4) {
+        return null;
+    }
+
+    const first = lines[0]!.trim();
+    const last = lines[lines.length - 1]!.trim();
 
     // 处理常见的 shell heredoc 包裹情况
     if ((first === "<<EOF" || first === "<<'EOF'" || first === '<<"EOF"') && last.endsWith("EOF")) {
-        const inner = lines.slice(1, lines.length - 1);
-        const innerError = checkPatchBoundariesStrict(inner);
-        if (!innerError) return inner;
-        throw new Error(innerError);
+        return lines.slice(1, lines.length - 1);
     }
 
-    throw new Error(strictError);
+    // 处理 Markdown / plain-text 代码围栏包裹情况
+    if ((/^```[a-zA-Z0-9_-]*$/.test(first) || /^~~~[a-zA-Z0-9_-]*$/.test(first)) && (last === "```" || last === "~~~")) {
+        return lines.slice(1, lines.length - 1);
+    }
+
+    // 处理常见的 apply_patch(...) 外壳
+    if (first.startsWith("apply_patch(") && (
+        last === ")" ||
+        last === ");" ||
+        last === "`)" ||
+        last === "`);"
+    )) {
+        return lines.slice(1, lines.length - 1);
+    }
+
+    return null;
 }
 
 function checkPatchBoundariesStrict(lines: string[]): string | null {

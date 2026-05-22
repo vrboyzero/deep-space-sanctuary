@@ -134,6 +134,7 @@ export type {
 // 内置工具
 export { fetchTool } from "./builtin/fetch.js";
 export { fileReadTool, fileWriteTool, fileDeleteTool } from "./builtin/file.js";
+export { resolvePrivilegedWorkspaceWriteChannels } from "./builtin/privileged-workspace-write-contract.js";
 export { listFilesTool } from "./builtin/list-files.js";
 export { applyPatchTool } from "./builtin/apply-patch/index.js";
 export { webSearchTool } from "./builtin/web-search/index.js";

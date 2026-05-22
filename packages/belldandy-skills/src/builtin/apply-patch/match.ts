@@ -189,8 +189,9 @@ export async function applyUpdateChunks(
     const originalContents = await fs.readFile(filePath, "utf8").catch((err) => {
         throw new Error(`Failed to read file to update ${filePath}: ${err}`);
     });
+    const newline = originalContents.includes("\r\n") ? "\r\n" : "\n";
 
-    const originalLines = originalContents.split("\n");
+    const originalLines = originalContents.split(/\r?\n/);
     // 移除文件末尾可能的单一空行（Split 产生的副作用），以便于处理
     if (originalLines.length > 0 && originalLines[originalLines.length - 1] === "") {
         originalLines.pop();
@@ -204,5 +205,5 @@ export async function applyUpdateChunks(
         newLines.push("");
     }
 
-    return newLines.join("\n");
+    return newLines.join(newline);
 }

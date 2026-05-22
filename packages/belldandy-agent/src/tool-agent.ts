@@ -339,11 +339,20 @@ function estimateAssistantHistoryOverhead(message: Message): number {
 function readToolExecutionRuntimeContext(meta?: JsonObject): ToolExecutionRuntimeContext | undefined {
   if (!meta || typeof meta !== "object") return undefined;
   const launchSpec = (meta as Record<string, unknown>)._agentLaunchSpec;
-  if (!launchSpec || typeof launchSpec !== "object" || Array.isArray(launchSpec)) {
+  const requestChannel = (meta as Record<string, unknown>)._toolRequestChannel;
+  const hasLaunchSpec = Boolean(launchSpec) && typeof launchSpec === "object" && !Array.isArray(launchSpec);
+  const channel = requestChannel === "cli"
+    || requestChannel === "web"
+    || requestChannel === "browser-extension"
+    || requestChannel === "gateway"
+    ? requestChannel
+    : undefined;
+  if (!hasLaunchSpec && !channel) {
     return undefined;
   }
   return {
-    launchSpec: launchSpec as ToolExecutionRuntimeContext["launchSpec"],
+    ...(hasLaunchSpec ? { launchSpec: launchSpec as ToolExecutionRuntimeContext["launchSpec"] } : {}),
+    ...(channel ? { channel } : {}),
   };
 }
 
@@ -610,7 +619,7 @@ function readRunStopReason(signal?: AbortSignal): string {
 
 function normalizeToolLoopIterationBudget(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 64;
+    return 0;
   }
   return value <= 0 ? 0 : Math.max(1, Math.floor(value));
 }

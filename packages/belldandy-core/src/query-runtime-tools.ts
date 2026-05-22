@@ -1,7 +1,7 @@
 import type { AgentRegistry } from "@belldandy/agent";
 import type { ToolExecutionRuntimeContext } from "@belldandy/skills";
 import { TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
-import type { ToolExecutor, SkillRegistry } from "@belldandy/skills";
+import type { ToolContractChannel, ToolExecutor, SkillRegistry } from "@belldandy/skills";
 import {
   listToolContractsV2,
 } from "@belldandy/skills";
@@ -48,6 +48,7 @@ type MethodInventoryItem = {
 export type QueryRuntimeToolsContext = {
   requestId: string;
   clientId?: string;
+  requestChannel?: ToolContractChannel;
   toolExecutor?: ToolExecutor;
   toolsConfigManager?: ToolsConfigManager;
   toolControlConfirmationStore?: ToolControlConfirmationStore;
@@ -214,9 +215,7 @@ export async function handleToolsListWithQueryRuntime(
       profileId: visibilityTask?.launchSpec?.profileId,
       launchSpec: visibilityTask?.launchSpec,
     });
-    const runtimeContext: ToolExecutionRuntimeContext | undefined = visibilityTask
-      ? { launchSpec: visibilityTask.launchSpec }
-      : undefined;
+    const runtimeContext = buildToolRuntimeContext(ctx.requestChannel, visibilityTask?.launchSpec);
     const bridgeRecoveryDiagnostics = visibilityTask
       ? buildBridgeRecoveryDiagnostics({
           toolExecutor: ctx.toolExecutor,
@@ -244,13 +243,12 @@ export async function handleToolsListWithQueryRuntime(
         },
       ] as const);
     const contracts = Object.fromEntries(contractEntries);
-    const contractV2Entries = listToolContractsV2(
-      ctx.toolExecutor.getContracts(
-        visibilityAgentId,
-        visibilityConversationId,
-        runtimeContext,
-      ).filter((contract) => contract.name !== TOOL_SETTINGS_CONTROL_NAME),
-    );
+    const visibleContracts = ctx.toolExecutor.getContracts(
+      visibilityAgentId,
+      visibilityConversationId,
+      runtimeContext,
+    ).filter((contract) => contract.name !== TOOL_SETTINGS_CONTROL_NAME);
+    const contractV2Entries = visibleContracts.length > 0 ? listToolContractsV2(visibleContracts) : [];
     const contractV2Observability = buildToolContractV2Observability({
       contracts: contractV2Entries,
       registeredToolNames: allNames,
@@ -261,11 +259,7 @@ export async function handleToolsListWithQueryRuntime(
     };
     const disabledToolContractNamesConfigured = readConfiguredPromptExperimentToolContracts();
     const toolBehaviorObservability = buildToolBehaviorObservability({
-      contracts: ctx.toolExecutor.getContracts(
-        visibilityAgentId,
-        visibilityConversationId,
-        runtimeContext,
-      ),
+      contracts: visibleContracts,
       disabledContractNamesConfigured: disabledToolContractNamesConfigured,
     });
 
@@ -465,6 +459,19 @@ export async function handleToolsListWithQueryRuntime(
       },
     };
   });
+}
+
+function buildToolRuntimeContext(
+  requestChannel?: ToolContractChannel,
+  launchSpec?: ToolExecutionRuntimeContext["launchSpec"],
+): ToolExecutionRuntimeContext | undefined {
+  if (!requestChannel && !launchSpec) {
+    return undefined;
+  }
+  return {
+    ...(launchSpec ? { launchSpec } : {}),
+    ...(requestChannel ? { channel: requestChannel } : {}),
+  };
 }
 
 async function listMethodInventory(stateDir?: string): Promise<MethodInventoryItem[]> {

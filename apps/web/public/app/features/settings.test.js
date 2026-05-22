@@ -244,6 +244,8 @@ function createSettingsRefs(overrides = {}) {
     cfgMaxOutputTokens: overrides.cfgMaxOutputTokens || createInput(""),
     cfgToolLoopIterationBudget: overrides.cfgToolLoopIterationBudget || createInput(""),
     cfgToolLoopWarningFraction: overrides.cfgToolLoopWarningFraction || createInput(""),
+    cfgWebAllowPrivilegedSafeScope: overrides.cfgWebAllowPrivilegedSafeScope || createCheckbox(false),
+    cfgPrivilegedWorkspaceWriteChannels: overrides.cfgPrivilegedWorkspaceWriteChannels || createInput(""),
     cfgDangerousToolsEnabled: overrides.cfgDangerousToolsEnabled || createCheckbox(false),
     cfgToolsPolicyFile: overrides.cfgToolsPolicyFile || createInput(""),
     cfgSubAgentMaxConcurrent: overrides.cfgSubAgentMaxConcurrent || createInput(""),
@@ -1793,6 +1795,8 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_API_KEY: "[REDACTED]",
       BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
       BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
+      BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE: "true",
+      BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS: "gateway,cli,web",
       BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
       BELLDANDY_TOOLS_POLICY_FILE: "~/.star_sanctuary/tools-policy.json",
       BELLDANDY_SUB_AGENT_MAX_CONCURRENT: "3",
@@ -1858,6 +1862,8 @@ describe("settings controller", () => {
     expect(refs.cfgCompactionApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgToolLoopIterationBudget.value).toBe("8");
     expect(refs.cfgToolLoopWarningFraction.value).toBe("0.75");
+    expect(refs.cfgWebAllowPrivilegedSafeScope.checked).toBe(true);
+    expect(refs.cfgPrivilegedWorkspaceWriteChannels.value).toBe("gateway,cli,web");
     expect(refs.cfgDangerousToolsEnabled.checked).toBe(true);
     expect(refs.cfgToolsPolicyFile.value).toBe("~/.star_sanctuary/tools-policy.json");
     expect(refs.cfgSubAgentMaxDepth.value).toBe("2");
@@ -2258,6 +2264,8 @@ describe("settings controller", () => {
       cfgCompactionApiKey: createInput("compaction-secret"),
       cfgToolLoopIterationBudget: createInput(" 8 "),
       cfgToolLoopWarningFraction: createInput(" 0.75 "),
+      cfgWebAllowPrivilegedSafeScope: createCheckbox(true),
+      cfgPrivilegedWorkspaceWriteChannels: createInput(" gateway,cli,web "),
       cfgDangerousToolsEnabled: createCheckbox(true),
       cfgToolsPolicyFile: createInput(" ~/.star_sanctuary/tools-policy.json "),
       cfgSubAgentMaxConcurrent: createInput("3"),
@@ -2361,6 +2369,8 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_API_KEY: "compaction-secret",
       BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
       BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
+      BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE: "true",
+      BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS: "gateway,cli,web",
       BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
       BELLDANDY_TOOLS_POLICY_FILE: "~/.star_sanctuary/tools-policy.json",
       BELLDANDY_SUB_AGENT_MAX_CONCURRENT: "3",

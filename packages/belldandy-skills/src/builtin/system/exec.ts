@@ -1061,7 +1061,7 @@ export const runCommandTool: Tool = withToolContract({
     isConcurrencySafe: false,
     needsPermission: true,
     riskLevel: "critical",
-    channels: ["gateway", "web"],
+    channels: ["gateway", "web", "cli"],
     safeScopes: ["privileged"],
     activityDescription: "Execute a shell command on the host inside allowed workspace boundaries",
     resultSchema: {

@@ -8,6 +8,7 @@ import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
 import { buildFailureToolCallResult } from "../../failure-kind.js";
+import { resolvePrivilegedWorkspaceWriteChannels } from "../privileged-workspace-write-contract.js";
 
 // ============ Helper Functions ============
 
@@ -207,6 +208,13 @@ export const applyPatchTool: Tool = withToolContract({
                 const { absolute, relative } = pathCheck;
 
                 if (hunk.kind === "add") {
+                    const existing = await fs.stat(absolute).catch(() => null);
+                    if (existing?.isFile()) {
+                        throw new Error(`[${relative}] Add File 仅用于新文件；目标文件已存在，请改用 Update File`);
+                    }
+                    if (existing && !existing.isFile()) {
+                        throw new Error(`[${relative}] 目标路径已存在且不是普通文件，无法使用 Add File`);
+                    }
                     operations.push({
                         kind: "add",
                         absolute,
@@ -305,7 +313,7 @@ export const applyPatchTool: Tool = withToolContract({
     isConcurrencySafe: false,
     needsPermission: true,
     riskLevel: "high",
-    channels: ["gateway", "web"],
+    channels: resolvePrivilegedWorkspaceWriteChannels(),
     safeScopes: ["privileged"],
     activityDescription: "Apply a structured patch to one or more workspace files",
     resultSchema: {

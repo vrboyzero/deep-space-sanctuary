@@ -326,6 +326,60 @@ description: 通过额外根目录读取
       expect(content).toBe("line1\nline2\n");
     });
 
+    it("should replace a line range and preserve CRLF line endings", async () => {
+      await fs.writeFile(path.join(tempDir, "replace-crlf.txt"), "line1\r\nline2\r\nline3\r\n", "utf-8");
+
+      const result = await fileWriteTool.execute(
+        {
+          path: "replace-crlf.txt",
+          content: "middle",
+          mode: "replace",
+          startLine: 2,
+          endLine: 2,
+        },
+        baseContext,
+      );
+
+      expect(result.success).toBe(true);
+      await expect(fs.readFile(path.join(tempDir, "replace-crlf.txt"), "utf-8")).resolves.toBe("line1\r\nmiddle\r\nline3\r\n");
+    });
+
+    it("should replace content by regex", async () => {
+      await fs.writeFile(path.join(tempDir, "replace-regex.txt"), "name=old\nname=older\n", "utf-8");
+
+      const result = await fileWriteTool.execute(
+        {
+          path: "replace-regex.txt",
+          content: "name=new",
+          mode: "replace",
+          regex: "^name=.*$",
+          regexFlags: "m",
+        },
+        baseContext,
+      );
+
+      expect(result.success).toBe(true);
+      await expect(fs.readFile(path.join(tempDir, "replace-regex.txt"), "utf-8")).resolves.toBe("name=new\nname=older\n");
+    });
+
+    it("should insert content after the requested line", async () => {
+      await fs.writeFile(path.join(tempDir, "insert.txt"), "alpha\nbeta\ngamma\n", "utf-8");
+
+      const result = await fileWriteTool.execute(
+        {
+          path: "insert.txt",
+          content: "between",
+          mode: "insert",
+          line: 2,
+          position: "after",
+        },
+        baseContext,
+      );
+
+      expect(result.success).toBe(true);
+      await expect(fs.readFile(path.join(tempDir, "insert.txt"), "utf-8")).resolves.toBe("alpha\nbeta\nbetween\ngamma\n");
+    });
+
     it("should create parent directories", async () => {
       const result = await fileWriteTool.execute(
         { path: "new/nested/dir/file.txt", content: "nested!" },

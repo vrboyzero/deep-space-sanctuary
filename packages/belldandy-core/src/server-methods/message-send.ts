@@ -26,6 +26,7 @@ import type { GatewayWebSocketRequestContext } from "../server-websocket-dispatc
 type MessageSendMethodContext = Pick<
   GatewayWebSocketRequestContext,
   | "clientId"
+  | "requestChannel"
   | "userUuid"
   | "stateDir"
   | "log"
@@ -160,6 +161,7 @@ export async function handleMessageSendMethod(
           conversationId: resolvedConversationId,
         },
         clientId: ctx.clientId,
+        requestChannel: ctx.requestChannel,
         userUuid: ctx.userUuid,
         stateDir: ctx.stateDir,
       },

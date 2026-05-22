@@ -297,6 +297,8 @@ export const APP_DOM_REFS = {
   cfgMaxOutputTokens: byId("cfgMaxOutputTokens"),
   cfgToolLoopIterationBudget: byId("cfgToolLoopIterationBudget"),
   cfgToolLoopWarningFraction: byId("cfgToolLoopWarningFraction"),
+  cfgWebAllowPrivilegedSafeScope: byId("cfgWebAllowPrivilegedSafeScope"),
+  cfgPrivilegedWorkspaceWriteChannels: byId("cfgPrivilegedWorkspaceWriteChannels"),
   cfgDangerousToolsEnabled: byId("cfgDangerousToolsEnabled"),
   cfgToolsPolicyFile: byId("cfgToolsPolicyFile"),
   cfgSubAgentMaxConcurrent: byId("cfgSubAgentMaxConcurrent"),
