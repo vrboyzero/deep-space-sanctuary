@@ -3433,17 +3433,19 @@ test("memory.tree source and score rebuild methods persist phase-1 registry data
     if (!listScoreRes || !listScoreRes.ok) {
       throw new Error("expected successful memory.tree.score.list response");
     }
-    expect(listScoreRes.payload?.items).toEqual(expect.arrayContaining([
+    const scoreItems = (listScoreRes.payload?.items ?? []) as Array<Record<string, any>>;
+    expect(scoreItems).toEqual(expect.arrayContaining([
       expect.objectContaining({
         targetId: "tree-phase1-daily",
         sourceId: "builtin:memory:daily-notes",
         scoreVersion: "v1_rule_only",
       }),
-      expect.objectContaining({
-        targetId: "tree-phase1-external",
-        scoreVersion: "v1_rule_only",
-      }),
     ]));
+    const externalScore = scoreItems.find((item) => item?.rationale?.sourcePath === externalPath);
+    expect(externalScore).toMatchObject({
+      scoreVersion: "v1_rule_only",
+      sourceId: expect.stringMatching(/^dynamic:/),
+    });
   } finally {
     memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
@@ -4834,8 +4836,8 @@ test("memory.tree.report.shared_governance.preview consolidates boundary, queue,
 
   defaultRecord.manager.upsertMemoryChunk({
     id: "shared-governance-chunk",
-    sourcePath: path.join(memoryDir, "2026-05-21.md"),
-    sourceType: "file",
+    sourcePath: "memory/2026-05-21.md",
+    sourceType: "manual",
     memoryType: "daily",
     content: "shared governance preview chunk",
     visibility: "private",

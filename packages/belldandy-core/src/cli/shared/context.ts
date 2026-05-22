@@ -4,11 +4,11 @@
  */
 import pc from "picocolors";
 import {
+  loadStateDirBootstrapInfo,
   resolveEnvFilePaths,
   type EnvDirSource,
   type StateDirBootstrapSource,
 } from "@star-sanctuary/distribution";
-import { loadStateDirBootstrapInfo } from "../../../../star-sanctuary-distribution/src/state-dir-bootstrap.js";
 import { resolveStateDir, loadProjectEnvFiles } from "./env-loader.js";
 
 export interface CLIContext {

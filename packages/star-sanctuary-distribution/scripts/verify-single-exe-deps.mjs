@@ -2,6 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
+import {
+  checkHealth,
+  reserveFreePort,
+  resolveStartupWaitSeconds,
+  terminateChild,
+  wait,
+} from "./runtime-process.mjs";
 import { resolveSingleExeVerifyRoots } from "./single-exe-verify-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
@@ -30,19 +37,6 @@ const reportPath = path.join(singleExeRoot, "single-exe-deps-report.json");
 const extractedVerifyStdoutPath = path.join(workspaceRoot, "artifacts", `single-exe-runtime-check${suffix}.stdout.log`);
 const extractedVerifyStderrPath = path.join(workspaceRoot, "artifacts", `single-exe-runtime-check${suffix}.stderr.log`);
 
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function checkHealth() {
-  try {
-    const res = await fetch("http://127.0.0.1:28889/health");
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 async function waitForChildExit(child) {
   return new Promise((resolve) => {
     child.on("exit", (code) => resolve(code ?? 1));
@@ -64,6 +58,8 @@ async function runSingleExeForExtraction() {
   fs.rmSync(stderrPath, { force: true });
   fs.rmSync(singleExeHome, { recursive: true, force: true });
   fs.rmSync(stateDir, { recursive: true, force: true });
+  const port = await reserveFreePort();
+  const relayPort = await reserveFreePort();
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -74,6 +70,8 @@ async function runSingleExeForExtraction() {
       ...process.env,
       STAR_SANCTUARY_SINGLE_EXE_HOME: singleExeHome,
       BELLDANDY_STATE_DIR: stateDir,
+      BELLDANDY_PORT: String(port),
+      BELLDANDY_RELAY_PORT: String(relayPort),
       AUTO_OPEN_BROWSER: "false",
     },
     stdio: ["ignore", stdout, stderr],
@@ -82,22 +80,16 @@ async function runSingleExeForExtraction() {
 
   let healthy = false;
   try {
-    for (let i = 0; i < 90; i += 1) {
+    for (let i = 0; i < resolveStartupWaitSeconds(mode, { slim: 90, full: 180 }); i += 1) {
       await wait(1000);
       if (child.exitCode != null) break;
-      if (await checkHealth()) {
+      if (await checkHealth(`http://127.0.0.1:${port}/health`)) {
         healthy = true;
         break;
       }
     }
   } finally {
-    if (child.exitCode == null) {
-      child.kill("SIGTERM");
-      await wait(1000);
-      if (child.exitCode == null) {
-        child.kill("SIGKILL");
-      }
-    }
+    await terminateChild(child);
     fs.closeSync(stdout);
     fs.closeSync(stderr);
   }

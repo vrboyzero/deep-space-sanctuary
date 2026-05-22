@@ -5,8 +5,8 @@ import path from "node:path";
 import {
   type EnvDirSource,
   type StateDirBootstrapSource,
+  loadStateDirBootstrapInfo,
 } from "@star-sanctuary/distribution";
-import { loadStateDirBootstrapInfo } from "../../../star-sanctuary-distribution/src/state-dir-bootstrap.js";
 import { readMcpRoutingDoctorReport } from "../mcp-config-routing.js";
 
 import type {
@@ -1828,14 +1828,11 @@ export async function handleSystemDoctorMethod(
 }
 
 function buildToolRuntimeContext(
-  requestChannel?: ToolContractChannel,
+  _requestChannel?: ToolContractChannel,
   launchSpec?: ToolExecutionRuntimeContext["launchSpec"],
 ): ToolExecutionRuntimeContext | undefined {
-  if (!requestChannel && !launchSpec) {
-    return undefined;
-  }
   return {
     ...(launchSpec ? { launchSpec } : {}),
-    ...(requestChannel ? { channel: requestChannel } : {}),
+    channel: "gateway",
   };
 }

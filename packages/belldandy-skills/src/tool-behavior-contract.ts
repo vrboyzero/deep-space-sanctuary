@@ -137,7 +137,7 @@ export function getToolBehaviorContract(
 export function listToolBehaviorContracts(
   input?: readonly string[] | readonly Pick<ToolContract, "name">[],
 ): ToolBehaviorContract[] {
-  if (!input || input.length === 0) {
+  if (typeof input === "undefined") {
     return [...TOOL_BEHAVIOR_CONTRACTS];
   }
 

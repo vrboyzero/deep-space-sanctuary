@@ -7,6 +7,7 @@ import WebSocket from "ws";
 
 import { AgentRegistry, ConversationStore, MockAgent } from "@belldandy/agent";
 import { promoteResidentMemoryToShared } from "./resident-shared-memory.js";
+import { resolveResidentSharedMemoryManager } from "./resident-shared-memory.js";
 
 import { createScopedMemoryManagers } from "./resident-memory-managers.js";
 import { startGatewayServer } from "./server.js";
@@ -108,10 +109,12 @@ test("system.doctor exposes resident memory policy summary", async () => {
     },
   }).records;
   const defaultRecord = residentMemoryManagers.find((record) => record.agentId === "default");
-  const defaultSharedRecord = residentMemoryManagers.find((record) => record.memoryMode === "shared");
+  const defaultSharedManager = defaultRecord
+    ? resolveResidentSharedMemoryManager(defaultRecord.policy)
+    : null;
   expect(defaultRecord).toBeTruthy();
-  expect(defaultSharedRecord).toBeTruthy();
-  if (!defaultRecord || !defaultSharedRecord) {
+  expect(defaultSharedManager).toBeTruthy();
+  if (!defaultRecord || !defaultSharedManager) {
     throw new Error("expected resident memory managers to be available");
   }
   (defaultRecord.manager as any).store.createTask({
@@ -141,7 +144,7 @@ test("system.doctor exposes resident memory policy summary", async () => {
   });
   promoteResidentMemoryToShared({
     manager: defaultRecord.manager,
-    sharedManager: defaultSharedRecord.manager,
+    sharedManager: defaultSharedManager,
     residentPolicy: defaultRecord.policy,
     agentId: "default",
     chunkId: "doctor-pending-chunk",

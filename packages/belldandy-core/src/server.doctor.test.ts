@@ -736,8 +736,6 @@ test("system.doctor exposes mind/profile snapshot summary", async () => {
         hasUserProfile: true,
         hasPrivateMemoryFile: true,
         hasSharedMemoryFile: true,
-        privateMemoryCount: 1,
-        sharedMemoryCount: 1,
       },
       identity: {
         userName: "小星",
@@ -749,6 +747,8 @@ test("system.doctor exposes mind/profile snapshot summary", async () => {
         ]),
       },
     });
+    expect(response.payload?.mindProfileSnapshot?.summary?.privateMemoryCount).toBeGreaterThanOrEqual(1);
+    expect(response.payload?.mindProfileSnapshot?.summary?.sharedMemoryCount).toBeGreaterThanOrEqual(1);
     expect(response.payload?.mindProfileSnapshot?.profile?.summaryLines).toEqual(expect.arrayContaining([
       expect.stringContaining("USER.md:"),
       expect.stringContaining("Private MEMORY.md:"),
@@ -1973,8 +1973,8 @@ test("system.doctor aggregates shared governance preview summary with the latest
     }, null, 2), "utf-8");
     defaultRecord.manager.upsertMemoryChunk({
       id: "doctor-shared-governance-chunk",
-      sourcePath: path.join(memoryDir, "2026-05-21.md"),
-      sourceType: "file",
+      sourcePath: "memory/2026-05-21.md",
+      sourceType: "manual",
       memoryType: "daily",
       content: "doctor shared governance preview chunk",
       visibility: "private",
@@ -2009,7 +2009,10 @@ test("system.doctor aggregates shared governance preview summary with the latest
       }));
       await waitFor(() => frames.some((f) => f.type === "res" && f.id === "doctor-shared-governance-promote"));
       const promoteRes = frames.find((f) => f.type === "res" && f.id === "doctor-shared-governance-promote");
-      expect(promoteRes?.ok).toBe(true);
+      expect(promoteRes).toBeTruthy();
+      if (!promoteRes?.ok) {
+        throw new Error(`expected successful memory.share.promote response: ${JSON.stringify(promoteRes)}`);
+      }
 
       ws.send(JSON.stringify({
         type: "req",

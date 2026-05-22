@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "修改了webchat启动空窗期的问题，调整了token监控浮层的显示，修改了一些小问题"
+git commit -m "发布版本前备份"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

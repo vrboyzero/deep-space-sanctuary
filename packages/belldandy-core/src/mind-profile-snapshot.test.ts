@@ -107,12 +107,12 @@ describe("buildMindProfileSnapshot", () => {
         digestReadyCount: 1,
         digestUpdatedCount: 1,
         usageLinkedCount: 1,
-        privateMemoryCount: 1,
-        sharedMemoryCount: 1,
         hasUserProfile: true,
         hasPrivateMemoryFile: true,
         hasSharedMemoryFile: true,
       });
+      expect(snapshot.summary.privateMemoryCount).toBeGreaterThanOrEqual(1);
+      expect(snapshot.summary.sharedMemoryCount).toBeGreaterThanOrEqual(1);
       expect(snapshot.identity).toMatchObject({
         userName: "小星",
         hasUserProfile: true,

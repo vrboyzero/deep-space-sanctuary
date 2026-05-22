@@ -1,8 +1,14 @@
 import fs from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
+import {
+  checkHealth,
+  reserveFreePort,
+  resolveStartupWaitSeconds,
+  terminateChild,
+  wait,
+} from "./runtime-process.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const platform = process.platform;
@@ -21,42 +27,10 @@ const entryScript = path.join(portableRoot, "launcher", "portable-entry.js");
 const stateDir = path.join(workspaceRoot, "artifacts", `portable-state-smoke${suffix}`);
 const stdoutPath = path.join(workspaceRoot, "artifacts", `portable-smoke${suffix}.stdout.log`);
 const stderrPath = path.join(workspaceRoot, "artifacts", `portable-smoke${suffix}.stderr.log`);
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function reserveFreePort() {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("Failed to reserve a loopback port for portable smoke.")));
-        return;
-      }
-      const { port } = address;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
-}
-
-async function checkHealth(port) {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
+const PORTABLE_SMOKE_MAX_WAIT_SECONDS = resolveStartupWaitSeconds(mode, {
+  slim: 20,
+  full: 45,
+});
 
 async function main() {
   if (!fs.existsSync(executablePath) || !fs.existsSync(entryScript)) {
@@ -67,6 +41,7 @@ async function main() {
   fs.rmSync(stderrPath, { force: true });
   fs.rmSync(stateDir, { recursive: true, force: true });
   const port = await reserveFreePort();
+  const relayPort = await reserveFreePort();
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -77,6 +52,7 @@ async function main() {
       ...process.env,
       BELLDANDY_STATE_DIR: stateDir,
       BELLDANDY_PORT: String(port),
+      BELLDANDY_RELAY_PORT: String(relayPort),
       AUTO_OPEN_BROWSER: "false",
     },
     stdio: ["ignore", stdout, stderr],
@@ -85,22 +61,16 @@ async function main() {
 
   let healthy = false;
   try {
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < PORTABLE_SMOKE_MAX_WAIT_SECONDS; i += 1) {
       await wait(1000);
       if (child.exitCode != null) break;
-      if (await checkHealth(port)) {
+      if (await checkHealth(`http://127.0.0.1:${port}/health`)) {
         healthy = true;
         break;
       }
     }
   } finally {
-    if (child.exitCode == null) {
-      child.kill("SIGTERM");
-      await wait(1000);
-      if (child.exitCode == null) {
-        child.kill("SIGKILL");
-      }
-    }
+    await terminateChild(child);
     fs.closeSync(stdout);
     fs.closeSync(stderr);
   }

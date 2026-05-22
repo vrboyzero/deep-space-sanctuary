@@ -462,15 +462,12 @@ export async function handleToolsListWithQueryRuntime(
 }
 
 function buildToolRuntimeContext(
-  requestChannel?: ToolContractChannel,
+  _requestChannel?: ToolContractChannel,
   launchSpec?: ToolExecutionRuntimeContext["launchSpec"],
 ): ToolExecutionRuntimeContext | undefined {
-  if (!requestChannel && !launchSpec) {
-    return undefined;
-  }
   return {
     ...(launchSpec ? { launchSpec } : {}),
-    ...(requestChannel ? { channel: requestChannel } : {}),
+    channel: "gateway",
   };
 }
 

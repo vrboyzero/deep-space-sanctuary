@@ -123,11 +123,12 @@ function buildToolRuntimeContext(
   requestChannel?: ToolContractChannel,
   launchSpec?: ToolExecutionRuntimeContext["launchSpec"],
 ): ToolExecutionRuntimeContext | undefined {
-  if (!requestChannel && !launchSpec) {
+  const channel = launchSpec ? "gateway" : requestChannel;
+  if (!launchSpec && !channel) {
     return undefined;
   }
   return {
     ...(launchSpec ? { launchSpec } : {}),
-    ...(requestChannel ? { channel: requestChannel } : {}),
+    ...(channel ? { channel } : {}),
   };
 }
