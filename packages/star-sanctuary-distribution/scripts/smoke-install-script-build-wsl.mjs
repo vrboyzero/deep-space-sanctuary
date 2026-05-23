@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { assertPathInsideRoots, guardedRemovePath, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const smokeRoot = path.join(workspaceRoot, "artifacts", "install-script-build-wsl-smoke");
 const reportPath = path.join(workspaceRoot, "artifacts", "install-script-build-wsl-smoke-report.json");
 const installShPath = path.join(workspaceRoot, "install.sh");
@@ -47,27 +49,14 @@ async function checkHealth(port) {
   }
 }
 
-function removePath(targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    return;
-  }
-
-  const stat = fs.lstatSync(targetPath);
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    fs.rmSync(targetPath, { recursive: true, force: true });
-    return;
-  }
-
-  fs.rmSync(targetPath, { force: true, recursive: false });
-}
-
-function removePathWithWslFallback(targetPath, distro) {
-  if (!fs.existsSync(targetPath)) {
+function removePathWithWslFallback(targetPath, { allowedRoots, label, distro }) {
+  const resolvedTargetPath = assertPathInsideRoots(targetPath, allowedRoots, label);
+  if (!fs.existsSync(resolvedTargetPath)) {
     return;
   }
 
   try {
-    removePath(targetPath);
+    guardedRemovePath(resolvedTargetPath, { allowedRoots, label });
     return;
   } catch (error) {
     if (!distro || process.platform !== "win32") {
@@ -75,24 +64,13 @@ function removePathWithWslFallback(targetPath, distro) {
     }
   }
 
-  const targetPathWsl = toWslPath(targetPath);
+  const targetPathWsl = toWslPath(resolvedTargetPath);
   const result = spawnSync("wsl.exe", ["-d", distro, "bash", "-lc", `rm -rf ${shellQuote(targetPathWsl)}`], {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0) {
-    throw new Error(`Failed to remove ${targetPath} via WSL fallback.\n${decodeMaybeUtf16(result.stderr)}`);
-  }
-}
-
-function resetDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    return;
-  }
-
-  for (const entry of fs.readdirSync(dirPath)) {
-    removePath(path.join(dirPath, entry));
+    throw new Error(`Failed to remove ${resolvedTargetPath} via WSL fallback.\n${decodeMaybeUtf16(result.stderr)}`);
   }
 }
 
@@ -187,7 +165,10 @@ function shouldCopyToStaging(sourcePath) {
 }
 
 function createLinuxBuildSource(sourceRoot) {
-  resetDir(sourceRoot);
+  resetSandboxDir(sourceRoot, {
+    allowedRoots: [smokeRoot],
+    label: "reset install script build wsl staged source root",
+  });
   for (const entry of STAGED_SOURCE_ENTRIES) {
     const sourcePath = path.join(workspaceRoot, entry);
     if (!fs.existsSync(sourcePath)) {
@@ -227,8 +208,8 @@ async function runCommandToCompletion(params) {
     timeoutMs = 0,
   } = params;
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset install script build wsl stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset install script build wsl stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -279,8 +260,8 @@ async function runStartUntilHealthy(params) {
     stderrPath,
     checkHealthy,
   } = params;
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset install script build wsl start stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset install script build wsl start stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -330,9 +311,16 @@ function parseJsonOrThrow(text, label) {
 async function main() {
   ensureWindowsHost();
   const distro = detectWslDistro();
-  removePathWithWslFallback(smokeRoot, distro);
+  removePathWithWslFallback(smokeRoot, {
+    allowedRoots: [artifactsRoot],
+    label: "reset install script build wsl smoke root",
+    distro,
+  });
   fs.mkdirSync(smokeRoot, { recursive: true });
-  fs.rmSync(reportPath, { force: true });
+  guardedRemovePath(reportPath, {
+    allowedRoots: [artifactsRoot],
+    label: "reset install script build wsl report",
+  });
   const stagedSourceRoot = path.join(smokeRoot, "linux-source-stage");
   const installRoot = path.join(smokeRoot, "linux-install-root");
   const stateDir = path.join(smokeRoot, "linux-install-state");

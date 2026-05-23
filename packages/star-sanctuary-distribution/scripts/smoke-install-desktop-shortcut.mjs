@@ -2,40 +2,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { guardedRemovePath, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const installPs1Path = path.join(workspaceRoot, "install.ps1");
+const tmpRoot = path.join(workspaceRoot, "tmp");
 const smokeRoot = path.join(workspaceRoot, "tmp", "install-desktop-shortcut-smoke");
 const reportPath = path.join(workspaceRoot, "tmp", "install-desktop-shortcut-smoke-report.json");
 
 function ensureWindowsHost() {
   if (process.platform !== "win32") {
     throw new Error("smoke-install-desktop-shortcut currently runs on Windows only.");
-  }
-}
-
-function removePath(targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    return;
-  }
-
-  const stat = fs.lstatSync(targetPath);
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    fs.rmSync(targetPath, { recursive: true, force: true });
-    return;
-  }
-
-  fs.rmSync(targetPath, { recursive: false, force: true });
-}
-
-function resetDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    return;
-  }
-
-  for (const entry of fs.readdirSync(dirPath)) {
-    removePath(path.join(dirPath, entry));
   }
 }
 
@@ -62,8 +39,8 @@ async function runCommandToCompletion(params) {
     timeoutMs = 0,
   } = params;
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset desktop shortcut stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset desktop shortcut stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -127,8 +104,14 @@ function getDesktopDir() {
 
 async function main() {
   ensureWindowsHost();
-  resetDir(smokeRoot);
-  fs.rmSync(reportPath, { force: true });
+  resetSandboxDir(smokeRoot, {
+    allowedRoots: [tmpRoot],
+    label: "reset desktop shortcut smoke root",
+  });
+  guardedRemovePath(reportPath, {
+    allowedRoots: [tmpRoot],
+    label: "reset desktop shortcut report",
+  });
 
   const desktopDir = getDesktopDir();
   const shortcutPath = path.join(desktopDir, "Star Sanctuary.lnk");
@@ -140,7 +123,10 @@ async function main() {
   const hadExistingShortcut = fs.existsSync(shortcutPath);
   if (hadExistingShortcut) {
     fs.copyFileSync(shortcutPath, backupShortcutPath);
-    fs.rmSync(shortcutPath, { force: true });
+    guardedRemovePath(shortcutPath, {
+      allowedRoots: [desktopDir],
+      label: "remove existing desktop shortcut",
+    });
   }
 
   try {
@@ -242,7 +228,10 @@ async function main() {
     console.log(JSON.stringify(report, null, 2));
   } finally {
     if (fs.existsSync(shortcutPath)) {
-      fs.rmSync(shortcutPath, { force: true });
+      guardedRemovePath(shortcutPath, {
+        allowedRoots: [desktopDir],
+        label: "cleanup desktop shortcut smoke artifact",
+      });
     }
     if (hadExistingShortcut && fs.existsSync(backupShortcutPath)) {
       fs.copyFileSync(backupShortcutPath, shortcutPath);

@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { guardedRemovePath, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
+const tmpRoot = path.join(workspaceRoot, "tmp");
 const smokeRoot = path.join(workspaceRoot, "tmp", "install-script-rollback-real-smoke");
 const reportPath = path.join(workspaceRoot, "tmp", "install-script-rollback-real-smoke-report.json");
 const installPs1Path = path.join(workspaceRoot, "install.ps1");
@@ -153,31 +155,6 @@ async function checkHealth(port) {
   }
 }
 
-function removePath(targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    return;
-  }
-
-  const stat = fs.lstatSync(targetPath);
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    fs.rmSync(targetPath, { recursive: true, force: true });
-    return;
-  }
-
-  fs.rmSync(targetPath, { force: true, recursive: false });
-}
-
-function resetDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    return;
-  }
-
-  for (const entry of fs.readdirSync(dirPath)) {
-    removePath(path.join(dirPath, entry));
-  }
-}
-
 function sanitizeEnv(extraEnv = {}) {
   const env = { ...process.env };
   delete env.STAR_SANCTUARY_RUNTIME_DIR;
@@ -224,7 +201,10 @@ function shouldCopyToStaging(sourcePath) {
 }
 
 function createWorkspaceSource(sourceRoot) {
-  fs.rmSync(sourceRoot, { recursive: true, force: true });
+  guardedRemovePath(sourceRoot, {
+    allowedRoots: [smokeRoot],
+    label: "reset install script rollback real staged source root",
+  });
   fs.mkdirSync(sourceRoot, { recursive: true });
 
   for (const entry of STAGED_SOURCE_ENTRIES) {
@@ -247,8 +227,8 @@ function writeJsonFile(filePath, payload) {
 
 async function runCommandToCompletion(params) {
   const { command, args, cwd, env, stdoutPath, stderrPath, shell, timeoutMs = 0 } = params;
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset install script rollback real stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset install script rollback real stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -291,8 +271,8 @@ async function runCommandToCompletion(params) {
 
 async function runStartUntilHealthy(params) {
   const { command, args, cwd, env, port, stdoutPath, stderrPath } = params;
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset install script rollback real start stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset install script rollback real start stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -352,10 +332,10 @@ async function runScenario(scenario, index) {
   const envMarkerLine = `INSTALL_SCRIPT_REAL_ROLLBACK_${scenario.id}=preserved`;
   const stateMarkerPath = path.join(stateDir, "workspace", `${scenario.id}-marker.txt`);
 
-  fs.rmSync(installRoot, { recursive: true, force: true });
-  fs.rmSync(stateDir, { recursive: true, force: true });
-  fs.rmSync(brokenSourceDir, { recursive: true, force: true });
-  fs.rmSync(scenarioCacheRoot, { recursive: true, force: true });
+  guardedRemovePath(installRoot, { allowedRoots: [smokeRoot], label: "reset install script rollback real install root" });
+  guardedRemovePath(stateDir, { allowedRoots: [smokeRoot], label: "reset install script rollback real state dir" });
+  guardedRemovePath(brokenSourceDir, { allowedRoots: [smokeRoot], label: "reset install script rollback real broken source dir" });
+  guardedRemovePath(scenarioCacheRoot, { allowedRoots: [smokeRoot], label: "reset install script rollback real scenario cache root" });
   fs.mkdirSync(scenarioCacheRoot, { recursive: true });
   scenario.prepareBrokenSource(brokenSourceDir);
 
@@ -518,8 +498,14 @@ async function runScenario(scenario, index) {
 
 async function main() {
   ensureWindowsHost();
-  resetDir(smokeRoot);
-  fs.rmSync(reportPath, { force: true });
+  resetSandboxDir(smokeRoot, {
+    allowedRoots: [tmpRoot],
+    label: "reset install script rollback real smoke root",
+  });
+  guardedRemovePath(reportPath, {
+    allowedRoots: [tmpRoot],
+    label: "reset install script rollback real report",
+  });
 
   const scenarios = [];
   for (const [index, scenario] of REAL_FAILURE_SCENARIOS.entries()) {

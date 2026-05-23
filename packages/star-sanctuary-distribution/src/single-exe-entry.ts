@@ -115,6 +115,8 @@ async function main(): Promise<void> {
   const cleanupResult = cleanupSingleExeRuntimeDirs({
     runtimeBaseDir: ensuredRuntime.versionDirInfo.runtimeBaseDir,
     currentVersionRootDir: ensuredRuntime.versionDirInfo.versionRootDir,
+    appHomeDir,
+    productName: ensuredRuntime.versionFile.productName,
   });
   if (cleanupResult.removedVersionDirs.length > 0 || cleanupResult.removedTempDirs.length > 0) {
     console.log(

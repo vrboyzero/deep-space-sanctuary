@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { gzipSync } from "node:zlib";
 import { resolveDistributionMode, resolvePortableArtifactRoot, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
 import { renderSingleExeGuide, renderSingleExeGuideZh } from "./distribution-user-guide.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const require = createRequire(import.meta.url);
@@ -48,17 +49,10 @@ const envExamplePath = path.join(singleExeRoot, ".env.example");
 const NODE_SEA_SENTINEL_FUSE = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 const embeddedNodeRuntimeAssetPath = path.join(buildRoot, "node-runtime.exe.gz");
 const esbuildCliPath = require.resolve("esbuild/bin/esbuild");
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
-}
-
-function removePath(targetPath, options = {}) {
-  fs.rmSync(targetPath, {
-    recursive: true,
-    force: true,
-    ...options,
-  });
 }
 
 function archiveExistingDirectory(targetPath) {
@@ -236,7 +230,10 @@ async function main() {
   assertPortableVersionMatchesWorkspace();
 
   const archivedRoot = archiveExistingDirectory(singleExeRoot);
-  removePath(buildRoot);
+  guardedRemovePath(buildRoot, {
+    allowedRoots: [artifactsRoot],
+    label: "reset single-exe build root",
+  });
   ensureDir(singleExeRoot);
   ensureDir(buildRoot);
 
@@ -254,7 +251,10 @@ async function main() {
     writeSingleExeMetadata(runtimeManifest);
   } catch (error) {
     if (fs.existsSync(singleExeRoot)) {
-      removePath(singleExeRoot);
+      guardedRemovePath(singleExeRoot, {
+        allowedRoots: [artifactsRoot],
+        label: "cleanup failed single-exe artifact root",
+      });
     }
     if (archivedRoot) {
       fs.renameSync(archivedRoot, singleExeRoot);
@@ -263,7 +263,10 @@ async function main() {
   }
 
   if (archivedRoot) {
-    removePath(archivedRoot);
+    guardedRemovePath(archivedRoot, {
+      allowedRoots: [artifactsRoot],
+      label: "cleanup archived single-exe artifact root",
+    });
   }
 
   console.log(`[single-exe] Built Star Sanctuary single-exe at ${executablePath}`);

@@ -11,6 +11,7 @@ import {
   type RuntimeManifest,
   type RuntimeManifestFileEntry,
 } from "./runtime-manifest.js";
+import { assertPathInsideRoots, assertSafeSingleExeRuntimeVersionDirInfo, guardedRemovePath } from "./sandbox-paths.js";
 import { resolveRuntimeVersionDirInfo, type RuntimeVersionDirInfo } from "./runtime-version-dir.js";
 import { getSeaModule, isSeaRuntime } from "./sea.js";
 
@@ -63,8 +64,12 @@ function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function removePath(targetPath: string): void {
-  fs.rmSync(targetPath, { recursive: true, force: true });
+function removeRuntimePath(targetPath: string, allowedRoots: string[], label: string): string {
+  return guardedRemovePath(targetPath, allowedRoots, label);
+}
+
+function assertRuntimePath(targetPath: string, allowedRoots: string[], label: string): string {
+  return assertPathInsideRoots(targetPath, allowedRoots, label);
 }
 
 function sleepSync(ms: number): void {
@@ -227,31 +232,43 @@ function copyRuntimeTree(params: {
   };
 }
 
-function materializeDirectoryLinks(directoryLinks: DeferredDirectoryLink[]): void {
+function materializeDirectoryLinks(directoryLinks: DeferredDirectoryLink[], versionRootDir: string): void {
   const symlinkType: "junction" | "dir" = process.platform === "win32" ? "junction" : "dir";
 
   for (const directoryLink of orderWindowsRuntimeSymlinks(directoryLinks)) {
-    ensureDir(path.dirname(directoryLink.linkPath));
-    removePath(directoryLink.linkPath);
+    const linkPath = assertRuntimePath(directoryLink.linkPath, [versionRootDir], "materialize single-exe runtime directory link");
+    const targetPath = assertRuntimePath(directoryLink.targetPath, [versionRootDir], "use single-exe runtime directory link target");
+    ensureDir(path.dirname(linkPath));
+    removeRuntimePath(linkPath, [versionRootDir], "replace single-exe runtime directory link");
     if (process.platform === "win32") {
-      createWindowsJunctionWithRetry(directoryLink);
+      createWindowsJunctionWithRetry({
+        ...directoryLink,
+        linkPath,
+        targetPath,
+      }, versionRootDir, "retry single-exe runtime directory link");
       continue;
     }
-    fs.symlinkSync(directoryLink.relativeTargetPath, directoryLink.linkPath, symlinkType);
+    fs.symlinkSync(directoryLink.relativeTargetPath, linkPath, symlinkType);
   }
 }
 
-function materializeRuntimeSymlinks(runtimeSymlinks: RuntimeSymlinkEntry[]): void {
+function materializeRuntimeSymlinks(runtimeSymlinks: RuntimeSymlinkEntry[], versionRootDir: string): void {
   const symlinkType: "junction" | "dir" = process.platform === "win32" ? "junction" : "dir";
 
   for (const runtimeSymlink of orderWindowsRuntimeSymlinks(runtimeSymlinks)) {
-    ensureDir(path.dirname(runtimeSymlink.linkPath));
-    removePath(runtimeSymlink.linkPath);
+    const linkPath = assertRuntimePath(runtimeSymlink.linkPath, [versionRootDir], "materialize single-exe runtime symlink");
+    const targetPath = assertRuntimePath(runtimeSymlink.targetPath, [versionRootDir], "use single-exe runtime symlink target");
+    ensureDir(path.dirname(linkPath));
+    removeRuntimePath(linkPath, [versionRootDir], "replace single-exe runtime symlink");
     if (process.platform === "win32") {
-      createWindowsJunctionWithRetry(runtimeSymlink);
+      createWindowsJunctionWithRetry({
+        ...runtimeSymlink,
+        linkPath,
+        targetPath,
+      }, versionRootDir, "retry single-exe runtime symlink");
       continue;
     }
-    fs.symlinkSync(runtimeSymlink.relativeTargetPath, runtimeSymlink.linkPath, symlinkType);
+    fs.symlinkSync(runtimeSymlink.relativeTargetPath, linkPath, symlinkType);
   }
 }
 
@@ -266,7 +283,11 @@ function isRetryableWindowsJunctionError(error: unknown): boolean {
   );
 }
 
-function createWindowsJunctionWithRetry(params: RuntimeSymlinkEntry | DeferredDirectoryLink): void {
+function createWindowsJunctionWithRetry(
+  params: RuntimeSymlinkEntry | DeferredDirectoryLink,
+  versionRootDir: string,
+  label: string,
+): void {
   const { linkPath, targetPath } = params;
   const maxAttempts = 16;
 
@@ -276,12 +297,47 @@ function createWindowsJunctionWithRetry(params: RuntimeSymlinkEntry | DeferredDi
       return;
     } catch (error) {
       if (attempt === maxAttempts || !isRetryableWindowsJunctionError(error)) {
+        if (isRetryableWindowsJunctionError(error) && canFallbackToDirectoryCopy(targetPath)) {
+          materializeDirectoryCopyFallback({
+            linkPath,
+            targetPath,
+            versionRootDir,
+            label,
+          });
+          return;
+        }
         throw error;
       }
-      removePath(linkPath);
+      removeRuntimePath(linkPath, [versionRootDir], label);
       sleepSync(250 * attempt);
     }
   }
+}
+
+function canFallbackToDirectoryCopy(targetPath: string): boolean {
+  if (process.platform !== "win32") return false;
+  try {
+    return fs.statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function materializeDirectoryCopyFallback(params: {
+  linkPath: string;
+  targetPath: string;
+  versionRootDir: string;
+  label: string;
+}): void {
+  const { linkPath, targetPath, versionRootDir, label } = params;
+  removeRuntimePath(linkPath, [versionRootDir], label);
+  ensureDir(path.dirname(linkPath));
+  fs.cpSync(targetPath, linkPath, {
+    recursive: true,
+    force: true,
+    dereference: false,
+  });
+  logSingleExeExtract(`Fell back to directory copy for Windows runtime link: ${linkPath}`);
 }
 
 function logSingleExeExtract(message: string): void {
@@ -432,10 +488,13 @@ function copySeaPayloadToStage(params: {
 
 function rebuildVersionDirWithRollback(params: {
   versionRootDir: string;
+  runtimeBaseDir: string;
   rebuild: () => void;
 }): void {
-  const { versionRootDir, rebuild } = params;
-  const backupDir = `${versionRootDir}.corrupt-${Date.now()}`;
+  const runtimeBaseDir = path.resolve(params.runtimeBaseDir);
+  const versionRootDir = assertRuntimePath(params.versionRootDir, [runtimeBaseDir], "use single-exe runtime version root");
+  const rebuild = params.rebuild;
+  const backupDir = assertRuntimePath(`${versionRootDir}.corrupt-${Date.now()}`, [runtimeBaseDir], "use single-exe runtime backup dir");
   const hadExistingVersionDir = fs.existsSync(versionRootDir);
 
   if (hadExistingVersionDir) {
@@ -443,12 +502,12 @@ function rebuildVersionDirWithRollback(params: {
   }
 
   try {
-    removePath(versionRootDir);
+    removeRuntimePath(versionRootDir, [runtimeBaseDir], "reset single-exe runtime version root");
     rebuild();
   } catch (error) {
     try {
       if (fs.existsSync(versionRootDir)) {
-        removePath(versionRootDir);
+        removeRuntimePath(versionRootDir, [runtimeBaseDir], "cleanup failed single-exe runtime version root");
       }
     } catch {
       // Best effort cleanup before rollback.
@@ -462,7 +521,7 @@ function rebuildVersionDirWithRollback(params: {
 
   if (hadExistingVersionDir && fs.existsSync(backupDir)) {
     try {
-      removePath(backupDir);
+      removeRuntimePath(backupDir, [runtimeBaseDir], "cleanup single-exe runtime backup dir");
     } catch {
       // Best effort cleanup only.
     }
@@ -477,6 +536,10 @@ export function ensureSingleExeRuntime(params: EnsureSingleExeRuntimeParams): En
   const versionDirInfo = resolveRuntimeVersionDirInfo(versionFile, {
     env,
     appHomeDir: params.appHomeDir,
+  });
+  assertSafeSingleExeRuntimeVersionDirInfo(versionDirInfo, {
+    env,
+    productName: versionFile.productName,
   });
 
   ensureDir(versionDirInfo.runtimeBaseDir);
@@ -504,6 +567,7 @@ export function ensureSingleExeRuntime(params: EnsureSingleExeRuntimeParams): En
     let stats: RuntimeCopyStats | undefined;
     rebuildVersionDirWithRollback({
       versionRootDir: versionDirInfo.versionRootDir,
+      runtimeBaseDir: versionDirInfo.runtimeBaseDir,
       rebuild: () => {
         const copyResult = copyPayloadToStage({
           stageDir: versionDirInfo.versionRootDir,
@@ -511,7 +575,7 @@ export function ensureSingleExeRuntime(params: EnsureSingleExeRuntimeParams): En
           finalVersionDirInfo: versionDirInfo,
         });
         stats = copyResult.stats;
-        materializeDirectoryLinks(copyResult.deferredDirectoryLinks);
+        materializeDirectoryLinks(copyResult.deferredDirectoryLinks, versionDirInfo.versionRootDir);
       },
     });
 
@@ -557,6 +621,10 @@ export function ensureSingleExeRuntimeFromSea(
     env,
     appHomeDir: params.appHomeDir,
   });
+  assertSafeSingleExeRuntimeVersionDirInfo(versionDirInfo, {
+    env,
+    productName: versionFile.productName,
+  });
 
   ensureDir(versionDirInfo.runtimeBaseDir);
 
@@ -582,6 +650,7 @@ export function ensureSingleExeRuntimeFromSea(
     let stats: RuntimeCopyStats | undefined;
     rebuildVersionDirWithRollback({
       versionRootDir: versionDirInfo.versionRootDir,
+      runtimeBaseDir: versionDirInfo.runtimeBaseDir,
       rebuild: () => {
         const copyResult = copySeaPayloadToStage({
           stageDir: versionDirInfo.versionRootDir,
@@ -589,7 +658,7 @@ export function ensureSingleExeRuntimeFromSea(
           runtimeManifest,
         });
         stats = copyResult.stats;
-        materializeRuntimeSymlinks(copyResult.runtimeSymlinks);
+        materializeRuntimeSymlinks(copyResult.runtimeSymlinks, versionDirInfo.versionRootDir);
       },
     });
 

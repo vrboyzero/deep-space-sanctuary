@@ -6,6 +6,7 @@ import { gzipSync } from "node:zlib";
 import { resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
 import { resolveDistributionPolicySummary } from "./distribution-policy.mjs";
 import { renderPortableGuide } from "./distribution-user-guide.mjs";
+import { assertPathInsideRoots, guardedRemovePath } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const rootPackageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
@@ -37,6 +38,7 @@ const runtimeManifestPath = path.join(portableRoot, "runtime-manifest.json");
 const PORTABLE_PNPM_MAX_ATTEMPTS = 4;
 const PORTABLE_PNPM_RETRY_DELAY_MS = 1_500;
 const PORTABLE_PNPM_RETRYABLE_CODES = new Set(["EACCES", "EPERM"]);
+const PORTABLE_RENAME_MAX_ATTEMPTS = 12;
 
 const TEST_FILE_MARKERS = [".test.", ".spec."];
 const RUNTIME_PRUNED_EXTENSIONS = new Set([
@@ -148,27 +150,46 @@ function ensureWritableRecursive(targetPath) {
   }
 }
 
-function removePath(targetPath, options = {}) {
-  const rmOptions = {
-    recursive: true,
-    force: true,
-    ...options,
-  };
-
+function removePortableBuildPath(targetPath, { allowedRoots, label } = {}) {
+  const resolvedTargetPath = assertPathInsideRoots(targetPath, allowedRoots ?? [], label ?? "remove portable build path");
   try {
-    fs.rmSync(targetPath, rmOptions);
+    return guardedRemovePath(resolvedTargetPath, {
+      allowedRoots: allowedRoots ?? [],
+      label: label ?? "remove portable build path",
+    });
   } catch (error) {
     if (process.platform !== "win32" || error?.code !== "EPERM") {
       throw error;
     }
-    ensureWritableRecursive(targetPath);
-    fs.rmSync(targetPath, rmOptions);
+    ensureWritableRecursive(resolvedTargetPath);
+    return guardedRemovePath(resolvedTargetPath, {
+      allowedRoots: allowedRoots ?? [],
+      label: label ?? "remove portable build path",
+    });
   }
 }
 
 function sleepSync(ms) {
   if (ms <= 0) return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isRetryablePortableRenameError(error) {
+  return ["EPERM", "EACCES", "EBUSY"].includes(String(error?.code ?? ""));
+}
+
+function renamePortablePathWithRetry(sourcePath, targetPath) {
+  for (let attempt = 1; attempt <= PORTABLE_RENAME_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      fs.renameSync(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || attempt === PORTABLE_RENAME_MAX_ATTEMPTS || !isRetryablePortableRenameError(error)) {
+        throw error;
+      }
+      sleepSync(150 * attempt);
+    }
+  }
 }
 
 function isBrokenSymlink(targetPath) {
@@ -186,7 +207,7 @@ function isBrokenSymlink(targetPath) {
 function archiveExistingDirectory(targetPath) {
   if (!fs.existsSync(targetPath)) return undefined;
   const archivePath = `${targetPath}.previous-${Date.now()}`;
-  fs.renameSync(targetPath, archivePath);
+  renamePortablePathWithRetry(targetPath, archivePath);
   return archivePath;
 }
 
@@ -202,14 +223,25 @@ function isPortableArtifactComplete(targetPath) {
   );
 }
 
-function resetDir(dirPath) {
-  removePath(dirPath);
-  fs.mkdirSync(dirPath, { recursive: true });
+function resetPortableBuildDir(dirPath, { allowedRoots, label } = {}) {
+  const resolvedDirPath = assertPathInsideRoots(dirPath, allowedRoots ?? [], label ?? "reset portable build dir");
+  removePortableBuildPath(resolvedDirPath, {
+    allowedRoots: allowedRoots ?? [],
+    label: label ?? "reset portable build dir",
+  });
+  fs.mkdirSync(resolvedDirPath, { recursive: true });
+  return resolvedDirPath;
 }
 
 function cleanupPortableInstallState() {
-  removePath(path.join(runtimeRoot, "node_modules"));
-  removePath(path.join(runtimeRoot, ".pnpm-store-portable"));
+  removePortableBuildPath(path.join(runtimeRoot, "node_modules"), {
+    allowedRoots: [runtimeRoot],
+    label: "cleanup portable runtime node_modules",
+  });
+  removePortableBuildPath(path.join(runtimeRoot, ".pnpm-store-portable"), {
+    allowedRoots: [runtimeRoot],
+    label: "cleanup portable runtime local pnpm store",
+  });
 }
 
 function isRetryablePortablePnpmError(error) {
@@ -290,6 +322,10 @@ function writePortableRuntimeCheckScript() {
   copyFile(
     path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "portable-runtime-check.mjs"),
     path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "portable-runtime-check.js"),
+  );
+  copyFile(
+    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "sandbox-paths.mjs"),
+    path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "sandbox-paths.mjs"),
   );
 }
 
@@ -405,7 +441,10 @@ function prunePortableRuntimeTree(rootDir) {
 
       if (stat.isSymbolicLink()) {
         if (isBrokenSymlink(entryPath)) {
-          removePath(entryPath, { recursive: false });
+          removePortableBuildPath(entryPath, {
+            allowedRoots: [rootDir],
+            label: "remove broken portable runtime symlink",
+          });
           stats.removedSymlinks += 1;
         }
         continue;
@@ -415,12 +454,18 @@ function prunePortableRuntimeTree(rootDir) {
         const isPnpmTypesPackage = normalizedName.startsWith("@types+")
           && normalizeRelativePath(path.relative(rootDir, currentDir)).endsWith("node_modules/.pnpm");
         if (isPnpmTypesPackage) {
-          removePath(entryPath);
+          removePortableBuildPath(entryPath, {
+            allowedRoots: [rootDir],
+            label: "prune pnpm @types package from portable runtime",
+          });
           stats.removedDirectories += 1;
           continue;
         }
         if (PRUNED_DIRECTORY_NAMES.has(normalizedName)) {
-          removePath(entryPath);
+          removePortableBuildPath(entryPath, {
+            allowedRoots: [rootDir],
+            label: "prune non-runtime directory from portable runtime",
+          });
           stats.removedDirectories += 1;
           continue;
         }
@@ -436,7 +481,10 @@ function prunePortableRuntimeTree(rootDir) {
         || shouldPruneConfigFile(entryName)
         || (isDocFile && shouldPruneDocFile(entryName));
       if (!shouldPrune) continue;
-      removePath(entryPath, { recursive: false });
+      removePortableBuildPath(entryPath, {
+        allowedRoots: [rootDir],
+        label: "prune non-runtime file from portable runtime",
+      });
       stats.removedFiles += 1;
     }
   }
@@ -621,7 +669,10 @@ function writeVersionFile(executableName, runtimeManifest, pruneStats) {
 }
 
 function writePortableRecoveryPayload(runtimeManifest) {
-  resetDir(portableRecoveryPayloadRoot);
+  resetPortableBuildDir(portableRecoveryPayloadRoot, {
+    allowedRoots: [portableRoot],
+    label: "reset portable recovery payload root",
+  });
   copyFile(path.join(portableRoot, "version.json"), path.join(portableRecoveryPayloadRoot, "version.json"));
   copyFile(runtimeManifestPath, path.join(portableRecoveryPayloadRoot, "runtime-manifest.json"));
 
@@ -658,7 +709,10 @@ function copyNodeRuntime() {
 
 function installRuntimeDependencies() {
   ensureDir(portablePnpmStoreDir);
-  removePath(path.join(runtimeRoot, ".pnpm-store-portable"));
+  removePortableBuildPath(path.join(runtimeRoot, ".pnpm-store-portable"), {
+    allowedRoots: [runtimeRoot],
+    label: "reset portable runtime local pnpm store",
+  });
   const sharedArgs = [
     "--store-dir",
     portablePnpmStoreDir,
@@ -700,7 +754,10 @@ function wireSqliteVecPlatformPackage() {
   const sqliteVecPlatformRoot = fs.realpathSync(path.join(runtimeRoot, "node_modules", "sqlite-vec-windows-x64"));
   const sqliteVecPeerDir = path.join(path.dirname(sqliteVecRoot), "sqlite-vec-windows-x64");
 
-  resetDir(sqliteVecPeerDir);
+  resetPortableBuildDir(sqliteVecPeerDir, {
+    allowedRoots: [runtimeRoot],
+    label: "reset sqlite-vec peer package dir",
+  });
   copyDir(sqliteVecPlatformRoot, sqliteVecPeerDir);
 }
 
@@ -728,11 +785,17 @@ function main() {
     if (isPortableArtifactComplete(portableRoot)) {
       archivedPortableRoot = archiveExistingDirectory(portableRoot);
     } else {
-      removePath(portableRoot);
+      removePortableBuildPath(portableRoot, {
+        allowedRoots: [portableArtifactsRoot],
+        label: "remove incomplete portable artifact root",
+      });
     }
   }
   try {
-    resetDir(portableRoot);
+    resetPortableBuildDir(portableRoot, {
+      allowedRoots: [portableArtifactsRoot],
+      label: "reset portable artifact root",
+    });
     ensureDir(portableLauncherRoot);
     ensureDir(runtimeRoot);
     ensureDir(runtimePackagesRoot);
@@ -787,7 +850,10 @@ function main() {
 
     if (archivedPortableRoot) {
       try {
-        removePath(archivedPortableRoot);
+        removePortableBuildPath(archivedPortableRoot, {
+          allowedRoots: [portableArtifactsRoot],
+          label: "cleanup archived portable artifact root",
+        });
       } catch (error) {
         console.warn(`[portable] Failed to remove previous portable artifact: ${archivedPortableRoot} (${String(error)})`);
       }
@@ -798,7 +864,10 @@ function main() {
     );
   } catch (error) {
     try {
-      removePath(portableRoot);
+      removePortableBuildPath(portableRoot, {
+        allowedRoots: [portableArtifactsRoot],
+        label: "cleanup failed portable artifact root",
+      });
     } catch {
       // Best effort cleanup only.
     }

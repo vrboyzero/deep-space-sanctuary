@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
   checkHealth,
   reserveFreePort,
@@ -9,7 +10,7 @@ import {
   terminateChild,
   wait,
 } from "./runtime-process.mjs";
-import { resolveSingleExeVerifyRoots } from "./single-exe-verify-paths.mjs";
+import { assertPathInsideRoots, resolveSingleExeVerifyRoots } from "./single-exe-verify-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const platform = process.platform;
@@ -27,6 +28,7 @@ const verifyRoots = resolveSingleExeVerifyRoots({
   kind: "deps",
   suffix,
 });
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const metadataPath = path.join(singleExeRoot, "single-exe.json");
 const executablePath = path.join(singleExeRoot, "star-sanctuary-single.exe");
 const singleExeHome = verifyRoots.homeDir;
@@ -54,10 +56,16 @@ function ensureArtifactExists(targetPath, label) {
 }
 
 async function runSingleExeForExtraction() {
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
-  fs.rmSync(singleExeHome, { recursive: true, force: true });
-  fs.rmSync(stateDir, { recursive: true, force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [artifactsRoot], label: "reset single-exe deps stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [artifactsRoot], label: "reset single-exe deps stderr log" });
+  guardedRemovePath(assertPathInsideRoots(singleExeHome, [verifyRoots.runRoot], "reset single-exe verify home"), {
+    allowedRoots: [verifyRoots.runRoot],
+    label: "reset single-exe verify home",
+  });
+  guardedRemovePath(assertPathInsideRoots(stateDir, [verifyRoots.runRoot], "reset single-exe verify state dir"), {
+    allowedRoots: [verifyRoots.runRoot],
+    label: "reset single-exe verify state dir",
+  });
   const port = await reserveFreePort();
   const relayPort = await reserveFreePort();
 
@@ -118,9 +126,9 @@ async function runExtractedRuntimeCheck() {
   ensureArtifactExists(runtimeExecutable, "extracted runtime executable");
   ensureArtifactExists(entryScript, "single-exe runtime check entry");
 
-  fs.rmSync(reportPath, { force: true });
-  fs.rmSync(extractedVerifyStdoutPath, { force: true });
-  fs.rmSync(extractedVerifyStderrPath, { force: true });
+  guardedRemovePath(reportPath, { allowedRoots: [singleExeRoot], label: "reset single-exe deps report" });
+  guardedRemovePath(extractedVerifyStdoutPath, { allowedRoots: [artifactsRoot], label: "reset single-exe runtime-check stdout log" });
+  guardedRemovePath(extractedVerifyStderrPath, { allowedRoots: [artifactsRoot], label: "reset single-exe runtime-check stderr log" });
 
   const stdout = fs.openSync(extractedVerifyStdoutPath, "w");
   const stderr = fs.openSync(extractedVerifyStderrPath, "w");

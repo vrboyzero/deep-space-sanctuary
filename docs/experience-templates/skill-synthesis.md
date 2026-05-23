@@ -11,6 +11,7 @@
 - `content` 必须是完整 Markdown，且可通过 skill publish 校验。
 - 不要直接拼贴多个草稿原文；要抽取重复出现的稳定能力、典型输入输出和使用边界。
 - 如果不同草稿的做法冲突，优先保留更通用、更安全、更易复用的能力描述。
+- 如果来源没有明确给出硬前提，不要编造工具、环境变量、MCP 或文件依赖。
 
 `title` 要求：
 - 清晰描述技能本身，不要带“合成”“多草稿汇总”等说明。
@@ -19,12 +20,25 @@
 - 1 到 2 句。
 - 说明该技能做什么、适合何时使用。
 
+项目识别约束：
+- Star Sanctuary 的 skill loader / search 会优先消费 frontmatter 的 `name`、`description`、`tags`、`priority`、`eligibility`。
+- `name` 必须是稳定的机器名，使用 kebab-case，只保留小写字母、数字和 `-`，不要写自然语言标题。
+- `description` 必须同时回答 WHAT + WHEN，最好带 2 到 4 个触发关键词；不要只写“处理各种任务”这类空泛描述。
+- `tags` 建议写 4 到 8 个，优先包含：`draft`、`skill-draft`、`synthesized`，再补领域词、触发词、工具词；只保留搜索有价值的标签。
+- `priority` 默认写 `normal`；只有来源草稿明确显示该技能应高频注入或强制前置时，才提升为 `high` 或 `always`。
+- `eligibility` 只有在来源草稿稳定证明了明确前提时才保留；不确定时省略，避免制造假约束。
+
 `content` 必须严格包含 frontmatter 与以下结构：
 
 ```md
 ---
-name: "<技能名>"
-description: "<一句话描述>"
+name: "<kebab-case-skill-name>"
+description: "<一句话描述：说明做什么、何时使用、触发关键词>"
+tags: ["draft", "skill-draft", "synthesized", "<领域标签>", "<触发词>"]
+priority: normal
+# 仅在来源草稿明确给出硬前提时才保留 eligibility；否则省略。
+# eligibility:
+#   tools: ["<tool-name>"]
 ---
 
 # <技能标题>
@@ -64,4 +78,6 @@ description: "<一句话描述>"
 - 重点描述“可复用能力”，不是一次性任务过程回放。
 - 输入输出要具体，便于后续调用或编排。
 - `NEVER` 必须写清楚禁止事项，避免技能被滥用。
+- `description` 和 `tags` 要能帮助 `skills_search` 命中，不要只写抽象概念。
+- 除非来源草稿稳定指向某种脚本、reference 或硬前提，否则不要为了“看起来完整”而强行补 `eligibility`。
 - 内容应足够完整，可作为审批前的正式技能候选。

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
   checkHealth,
   reserveFreePort,
@@ -22,6 +23,7 @@ const portableRoot = resolvePortableArtifactRoot({
   arch,
   mode,
 });
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const executablePath = path.join(portableRoot, "star-sanctuary.exe");
 const entryScript = path.join(portableRoot, "launcher", "portable-entry.js");
 const stateDir = path.join(workspaceRoot, "artifacts", `portable-state-smoke${suffix}`);
@@ -37,9 +39,9 @@ async function main() {
     throw new Error(`Portable artifact is missing for mode=${mode}. Run 'corepack pnpm build:portable${mode === "full" ? ":full" : ""}' first.`);
   }
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
-  fs.rmSync(stateDir, { recursive: true, force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [artifactsRoot], label: "reset portable smoke stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [artifactsRoot], label: "reset portable smoke stderr log" });
+  guardedRemovePath(stateDir, { allowedRoots: [artifactsRoot], label: "reset portable smoke state dir" });
   const port = await reserveFreePort();
   const relayPort = await reserveFreePort();
 

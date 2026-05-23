@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { assertPathInsideRoots, assertSafeSingleExeRuntimeVersionDirInfo, guardedRemovePath } from "./sandbox-paths.js";
+
 type CleanupResult = {
   removedVersionDirs: string[];
   removedTempDirs: string[];
@@ -23,8 +25,8 @@ const DEFAULT_KEEP_VERSION_COUNT = 2;
 const DEFAULT_TEMP_DIR_MIN_AGE_MS = 5 * 60 * 1000;
 const RUNTIME_ACTIVITY_MARKER_FILE = ".runtime-active.json";
 
-function removePath(targetPath: string): void {
-  fs.rmSync(targetPath, { recursive: true, force: true });
+function removeRuntimePath(targetPath: string, allowedRoots: string[], label: string): string {
+  return guardedRemovePath(targetPath, allowedRoots, label);
 }
 
 function isTempRuntimeDir(entryName: string): boolean {
@@ -99,17 +101,39 @@ export function writeSingleExeRuntimeActivityMarker(params: {
 }
 
 export function removeSingleExeRuntimeActivityMarker(versionRootDir: string): void {
-  removePath(getRuntimeActivityMarkerPath(path.resolve(versionRootDir)));
+  removeRuntimePath(
+    getRuntimeActivityMarkerPath(path.resolve(versionRootDir)),
+    [path.resolve(versionRootDir)],
+    "remove single-exe runtime activity marker",
+  );
 }
 
 export function cleanupSingleExeRuntimeDirs(params: {
   runtimeBaseDir: string;
   currentVersionRootDir: string;
+  appHomeDir: string;
+  productName?: string;
   keepVersionCount?: number;
   tempDirMinAgeMs?: number;
 }): CleanupResult {
+  assertSafeSingleExeRuntimeVersionDirInfo({
+    appHomeDir: params.appHomeDir,
+    runtimeBaseDir: params.runtimeBaseDir,
+    versionKey: path.basename(params.currentVersionRootDir),
+    versionRootDir: params.currentVersionRootDir,
+    runtimeDir: path.join(params.currentVersionRootDir, "runtime"),
+    versionFilePath: path.join(params.currentVersionRootDir, "version.json"),
+    runtimeManifestPath: path.join(params.currentVersionRootDir, "runtime-manifest.json"),
+  }, {
+    productName: params.productName,
+  });
+
   const runtimeBaseDir = path.resolve(params.runtimeBaseDir);
-  const currentVersionRootDir = path.resolve(params.currentVersionRootDir);
+  const currentVersionRootDir = assertPathInsideRoots(
+    params.currentVersionRootDir,
+    [runtimeBaseDir],
+    "use current single-exe runtime version root",
+  );
   const keepVersionCount = Math.max(1, params.keepVersionCount ?? DEFAULT_KEEP_VERSION_COUNT);
   const tempDirMinAgeMs = Math.max(0, params.tempDirMinAgeMs ?? DEFAULT_TEMP_DIR_MIN_AGE_MS);
   const result: CleanupResult = {
@@ -149,7 +173,7 @@ export function cleanupSingleExeRuntimeDirs(params: {
         continue;
       }
       try {
-        removePath(entryPath);
+        removeRuntimePath(entryPath, [runtimeBaseDir], "clean single-exe temp runtime dir");
         result.removedTempDirs.push(entryPath);
       } catch (error) {
         result.skippedPaths.push({
@@ -203,7 +227,7 @@ export function cleanupSingleExeRuntimeDirs(params: {
 
   for (const { entryPath } of removableVersionDirs) {
     try {
-      removePath(entryPath);
+      removeRuntimePath(entryPath, [runtimeBaseDir], "clean stale single-exe runtime version dir");
       result.removedVersionDirs.push(entryPath);
     } catch (error) {
       result.skippedPaths.push({

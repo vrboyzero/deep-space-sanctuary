@@ -9,6 +9,7 @@ import {
   type PortableVersionFile,
   type RuntimeManifest,
 } from "./runtime-manifest.js";
+import { assertPathInsideRoots, guardedRemovePath } from "./sandbox-paths.js";
 
 export type PortableRecoveryPayloadPaths = {
   payloadRoot: string;
@@ -36,16 +37,33 @@ type RuntimeSymlinkEntry = {
   targetPath: string;
 };
 
+const PORTABLE_RENAME_MAX_ATTEMPTS = 12;
+
 function isFileNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function isRetryableWindowsRenameError(error: unknown): boolean {
+  return error instanceof Error
+    && "code" in error
+    && ["EPERM", "EACCES", "EBUSY"].includes(String((error as NodeJS.ErrnoException).code ?? ""));
 }
 
 function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function removePath(targetPath: string): void {
-  fs.rmSync(targetPath, { recursive: true, force: true });
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function removePortablePath(targetPath: string, portableRoot: string, label: string): string {
+  return guardedRemovePath(targetPath, [portableRoot], label);
+}
+
+function assertPortablePath(targetPath: string, portableRoot: string, label: string): string {
+  return assertPathInsideRoots(targetPath, [portableRoot], label);
 }
 
 function hasPortableRecoveryPayload(payloadRoot: string): boolean {
@@ -71,13 +89,15 @@ function resolveManifestSymlinkTargetPath(params: {
     : path.resolve(path.dirname(linkPath), target);
 }
 
-function materializeRuntimeSymlinks(runtimeSymlinks: RuntimeSymlinkEntry[]): void {
+function materializeRuntimeSymlinks(runtimeSymlinks: RuntimeSymlinkEntry[], portableRoot: string): void {
   const symlinkType: "junction" | "dir" = process.platform === "win32" ? "junction" : "dir";
 
   for (const runtimeSymlink of runtimeSymlinks) {
-    ensureDir(path.dirname(runtimeSymlink.linkPath));
-    removePath(runtimeSymlink.linkPath);
-    fs.symlinkSync(runtimeSymlink.targetPath, runtimeSymlink.linkPath, symlinkType);
+    const linkPath = assertPortablePath(runtimeSymlink.linkPath, portableRoot, "materialize portable runtime symlink");
+    const targetPath = assertPortablePath(runtimeSymlink.targetPath, portableRoot, "use portable runtime symlink target");
+    ensureDir(path.dirname(linkPath));
+    removePortablePath(linkPath, portableRoot, "replace portable runtime symlink");
+    fs.symlinkSync(targetPath, linkPath, symlinkType);
   }
 }
 
@@ -141,36 +161,54 @@ function extractPortablePayloadToStage(params: {
   };
 }
 
+function renamePortablePathWithRetry(sourcePath: string, targetPath: string): void {
+  for (let attempt = 1; attempt <= PORTABLE_RENAME_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      fs.renameSync(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || attempt === PORTABLE_RENAME_MAX_ATTEMPTS || !isRetryableWindowsRenameError(error)) {
+        throw error;
+      }
+      sleepSync(150 * attempt);
+    }
+  }
+}
+
 function replacePortableRuntimeAtomically(params: {
   portableRoot: string;
   stageDir: string;
   finalize?: () => void;
 }): void {
-  const { portableRoot, stageDir, finalize } = params;
-  const runtimeDir = path.join(portableRoot, "runtime");
-  const versionFilePath = path.join(portableRoot, "version.json");
-  const runtimeManifestPath = path.join(portableRoot, "runtime-manifest.json");
-  const stageRuntimeDir = path.join(stageDir, "runtime");
-  const stageVersionFilePath = path.join(stageDir, "version.json");
-  const stageRuntimeManifestPath = path.join(stageDir, "runtime-manifest.json");
+  const portableRoot = path.resolve(params.portableRoot);
+  const stageDir = assertPortablePath(params.stageDir, portableRoot, "use portable runtime recovery stage");
+  const finalize = params.finalize;
+  const runtimeDir = assertPortablePath(path.join(portableRoot, "runtime"), portableRoot, "use portable runtime dir");
+  const versionFilePath = assertPortablePath(path.join(portableRoot, "version.json"), portableRoot, "use portable version file");
+  const runtimeManifestPath = assertPortablePath(path.join(portableRoot, "runtime-manifest.json"), portableRoot, "use portable runtime manifest");
+  const stageRuntimeDir = assertPortablePath(path.join(stageDir, "runtime"), portableRoot, "use portable staged runtime dir");
+  const stageVersionFilePath = assertPortablePath(path.join(stageDir, "version.json"), portableRoot, "use portable staged version file");
+  const stageRuntimeManifestPath = assertPortablePath(path.join(stageDir, "runtime-manifest.json"), portableRoot, "use portable staged runtime manifest");
   const backupSuffix = `.corrupt-${Date.now()}`;
-  const backupRuntimeDir = `${runtimeDir}${backupSuffix}`;
-  const backupVersionFilePath = `${versionFilePath}${backupSuffix}`;
-  const backupRuntimeManifestPath = `${runtimeManifestPath}${backupSuffix}`;
+  const backupRuntimeDir = assertPortablePath(`${runtimeDir}${backupSuffix}`, portableRoot, "use portable runtime backup dir");
+  const backupVersionFilePath = assertPortablePath(`${versionFilePath}${backupSuffix}`, portableRoot, "use portable version backup file");
+  const backupRuntimeManifestPath = assertPortablePath(`${runtimeManifestPath}${backupSuffix}`, portableRoot, "use portable runtime manifest backup file");
 
   const movedBackups: string[] = [];
 
   const moveIfExists = (sourcePath: string, targetPath: string): void => {
-    removePath(targetPath);
+    const resolvedSourcePath = assertPortablePath(sourcePath, portableRoot, "move portable runtime source path");
+    const resolvedTargetPath = assertPortablePath(targetPath, portableRoot, "move portable runtime backup path");
+    removePortablePath(resolvedTargetPath, portableRoot, "clear portable backup target");
     try {
-      fs.renameSync(sourcePath, targetPath);
+      renamePortablePathWithRetry(resolvedSourcePath, resolvedTargetPath);
     } catch (error) {
       if (isFileNotFoundError(error)) {
         return;
       }
       throw error;
     }
-    movedBackups.push(targetPath);
+    movedBackups.push(resolvedTargetPath);
   };
 
   moveIfExists(runtimeDir, backupRuntimeDir);
@@ -178,15 +216,15 @@ function replacePortableRuntimeAtomically(params: {
   moveIfExists(runtimeManifestPath, backupRuntimeManifestPath);
 
   try {
-    fs.renameSync(stageRuntimeDir, runtimeDir);
-    fs.renameSync(stageVersionFilePath, versionFilePath);
-    fs.renameSync(stageRuntimeManifestPath, runtimeManifestPath);
+    renamePortablePathWithRetry(stageRuntimeDir, runtimeDir);
+    renamePortablePathWithRetry(stageVersionFilePath, versionFilePath);
+    renamePortablePathWithRetry(stageRuntimeManifestPath, runtimeManifestPath);
     finalize?.();
   } catch (error) {
     try {
-      removePath(runtimeDir);
-      removePath(versionFilePath);
-      removePath(runtimeManifestPath);
+      removePortablePath(runtimeDir, portableRoot, "rollback portable runtime dir");
+      removePortablePath(versionFilePath, portableRoot, "rollback portable version file");
+      removePortablePath(runtimeManifestPath, portableRoot, "rollback portable runtime manifest");
     } catch {
       // Best effort cleanup before rollback.
     }
@@ -196,12 +234,12 @@ function replacePortableRuntimeAtomically(params: {
     moveIfExists(backupRuntimeManifestPath, runtimeManifestPath);
     throw error;
   } finally {
-    removePath(stageDir);
+    removePortablePath(stageDir, portableRoot, "cleanup portable runtime recovery stage");
   }
 
   for (const backupPath of movedBackups) {
     try {
-      removePath(backupPath);
+      removePortablePath(backupPath, portableRoot, "cleanup portable runtime backup");
     } catch {
       // Best effort cleanup only.
     }
@@ -250,12 +288,16 @@ export function ensurePortableRuntime(params: EnsurePortableRuntimeParams): Ensu
     );
   }
 
-  const stageDir = path.join(portableRoot, `.portable-runtime-recovery-${process.pid}-${Date.now()}`);
+  const stageDir = assertPortablePath(
+    path.join(portableRoot, `.portable-runtime-recovery-${process.pid}-${Date.now()}`),
+    portableRoot,
+    "create portable runtime recovery stage",
+  );
   const startedAt = Date.now();
   logPortableRuntime(
     `Recovering runtime at ${runtimeDir} from ${payloadRoot} (reason=${validation.reason ?? "unknown"})`,
   );
-  removePath(stageDir);
+  removePortablePath(stageDir, portableRoot, "reset portable runtime recovery stage");
 
   try {
     const extraction = extractPortablePayloadToStage({
@@ -270,7 +312,7 @@ export function ensurePortableRuntime(params: EnsurePortableRuntimeParams): Ensu
       portableRoot,
       stageDir,
       finalize: () => {
-        materializeRuntimeSymlinks(extraction.runtimeSymlinks);
+        materializeRuntimeSymlinks(extraction.runtimeSymlinks, portableRoot);
       },
     });
 
@@ -278,7 +320,7 @@ export function ensurePortableRuntime(params: EnsurePortableRuntimeParams): Ensu
       `Recovered runtime: files=${extraction.copiedFiles}, symlinks=${extraction.symlinkCount}, durationMs=${Date.now() - startedAt}`,
     );
   } catch (error) {
-    removePath(stageDir);
+    removePortablePath(stageDir, portableRoot, "cleanup failed portable runtime recovery stage");
     throw error;
   }
 

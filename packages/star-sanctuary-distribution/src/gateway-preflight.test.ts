@@ -7,6 +7,7 @@ import {
   preflightGatewayCleanup,
   type GatewayPreflightRunner,
 } from "./gateway-preflight.js";
+import { guardedRemovePath } from "./sandbox-paths.js";
 
 const tempDirs: string[] = [];
 
@@ -14,7 +15,7 @@ afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) continue;
-    fs.rmSync(dir, { recursive: true, force: true });
+    guardedRemovePath(dir, [dir], "cleanup gateway preflight temp dir");
   }
 });
 

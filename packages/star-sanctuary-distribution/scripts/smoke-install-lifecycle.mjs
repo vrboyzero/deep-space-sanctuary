@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { guardedRemovePath, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const smokeRoot = path.join(workspaceRoot, "artifacts", "install-lifecycle-smoke");
 const reportPath = path.join(workspaceRoot, "artifacts", "install-lifecycle-smoke-report.json");
 const builtBddEntryPath = path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
@@ -126,31 +128,6 @@ function writeFile(filePath, content) {
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
-function removePath(targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    return;
-  }
-
-  const stat = fs.lstatSync(targetPath);
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    fs.rmSync(targetPath, { recursive: true, force: true });
-    return;
-  }
-
-  fs.rmSync(targetPath, { recursive: false, force: true });
-}
-
-function resetDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    return;
-  }
-
-  for (const entry of fs.readdirSync(dirPath)) {
-    removePath(path.join(dirPath, entry));
-  }
-}
-
 function canUseBash() {
   if (process.platform === "win32") {
     return false;
@@ -190,15 +167,36 @@ function writeInstallFixture(installRoot, options = {}) {
   } = options;
 
   if (reset) {
-    resetDir(installRoot);
+    resetSandboxDir(installRoot, {
+      allowedRoots: [smokeRoot],
+      label: "reset install lifecycle fixture root",
+    });
   } else {
     fs.mkdirSync(installRoot, { recursive: true });
-    removePath(path.join(installRoot, "current"));
-    removePath(path.join(installRoot, "start.bat"));
-    removePath(path.join(installRoot, "bdd.cmd"));
-    removePath(path.join(installRoot, "start.sh"));
-    removePath(path.join(installRoot, "bdd"));
-    removePath(path.join(installRoot, "install-info.json"));
+    guardedRemovePath(path.join(installRoot, "current"), {
+      allowedRoots: [installRoot],
+      label: "remove install lifecycle fixture current",
+    });
+    guardedRemovePath(path.join(installRoot, "start.bat"), {
+      allowedRoots: [installRoot],
+      label: "remove install lifecycle fixture start.bat",
+    });
+    guardedRemovePath(path.join(installRoot, "bdd.cmd"), {
+      allowedRoots: [installRoot],
+      label: "remove install lifecycle fixture bdd.cmd",
+    });
+    guardedRemovePath(path.join(installRoot, "start.sh"), {
+      allowedRoots: [installRoot],
+      label: "remove install lifecycle fixture start.sh",
+    });
+    guardedRemovePath(path.join(installRoot, "bdd"), {
+      allowedRoots: [installRoot],
+      label: "remove install lifecycle fixture bdd",
+    });
+    guardedRemovePath(path.join(installRoot, "install-info.json"), {
+      allowedRoots: [installRoot],
+      label: "remove install lifecycle fixture install-info",
+    });
   }
 
   fs.symlinkSync(workspaceRoot, path.join(installRoot, "current"), process.platform === "win32" ? "junction" : "dir");
@@ -295,8 +293,8 @@ async function runCommandToCompletion(params) {
     preferNativeUnix,
   } = params;
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset install lifecycle stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset install lifecycle stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -344,8 +342,8 @@ async function runStartUntilHealthy(params) {
     preferNativeUnix,
   } = params;
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [smokeRoot], label: "reset install lifecycle start stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [smokeRoot], label: "reset install lifecycle start stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -508,7 +506,10 @@ async function runScenario(scenario, index) {
   const preferNativeUnix = scenario.cliWrapper === "bdd";
 
   writeInstallFixture(installRoot, { reset: true, tag: "smoke-initial", version: "1.0.0-smoke" });
-  fs.rmSync(stateDir, { recursive: true, force: true });
+  guardedRemovePath(stateDir, {
+    allowedRoots: [smokeRoot],
+    label: "reset install lifecycle state dir",
+  });
   validateWrapperContract(cliWrapperPath, scenario.cliExpectedSnippets);
   validateWrapperContract(startWrapperPath, scenario.startExpectedSnippets);
 
@@ -653,8 +654,14 @@ async function runScenario(scenario, index) {
 
 async function main() {
   ensureBuildExists();
-  resetDir(smokeRoot);
-  fs.rmSync(reportPath, { force: true });
+  resetSandboxDir(smokeRoot, {
+    allowedRoots: [artifactsRoot],
+    label: "reset install lifecycle smoke root",
+  });
+  guardedRemovePath(reportPath, {
+    allowedRoots: [artifactsRoot],
+    label: "reset install lifecycle report",
+  });
 
   const scenarios = [];
   for (const [index, scenario] of SCENARIOS.entries()) {

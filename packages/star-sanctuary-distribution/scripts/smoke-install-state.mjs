@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { guardedRemovePath, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const installSmokeRoot = path.join(workspaceRoot, "artifacts", "install-state-smoke");
 const reportPath = path.join(workspaceRoot, "artifacts", "install-state-smoke-report.json");
 const bddEntryPath = path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
@@ -119,31 +121,6 @@ function writeFile(filePath, content) {
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
-function removePath(targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    return;
-  }
-
-  const stat = fs.lstatSync(targetPath);
-  if (stat.isDirectory() && !stat.isSymbolicLink()) {
-    fs.rmSync(targetPath, { recursive: true, force: true });
-    return;
-  }
-
-  fs.rmSync(targetPath, { force: true, recursive: false });
-}
-
-function resetDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    return;
-  }
-
-  for (const entry of fs.readdirSync(dirPath)) {
-    removePath(path.join(dirPath, entry));
-  }
-}
-
 function canUseBash() {
   if (process.platform === "win32") {
     return false;
@@ -156,7 +133,10 @@ function canUseBash() {
 }
 
 function writeInstallFixture(installRoot) {
-  resetDir(installRoot);
+  resetSandboxDir(installRoot, {
+    allowedRoots: [installSmokeRoot],
+    label: "reset install state fixture root",
+  });
 
   const currentPath = path.join(installRoot, "current");
   fs.symlinkSync(workspaceRoot, currentPath, process.platform === "win32" ? "junction" : "dir");
@@ -262,9 +242,18 @@ async function runScenario(scenario, index, useNativeBash) {
   const relayPort = port + 1;
 
   writeInstallFixture(installRoot);
-  fs.rmSync(stateDir, { recursive: true, force: true });
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stateDir, {
+    allowedRoots: [installSmokeRoot],
+    label: "reset install state scenario state dir",
+  });
+  guardedRemovePath(stdoutPath, {
+    allowedRoots: [installSmokeRoot],
+    label: "reset install state stdout log",
+  });
+  guardedRemovePath(stderrPath, {
+    allowedRoots: [installSmokeRoot],
+    label: "reset install state stderr log",
+  });
 
   const wrapperPath = path.join(installRoot, scenario.fileName);
   validateWrapperContract(wrapperPath, scenario.expectedSnippets);
@@ -338,8 +327,14 @@ async function runScenario(scenario, index, useNativeBash) {
 
 async function main() {
   ensureBuildExists();
-  resetDir(installSmokeRoot);
-  fs.rmSync(reportPath, { force: true });
+  resetSandboxDir(installSmokeRoot, {
+    allowedRoots: [artifactsRoot],
+    label: "reset install state smoke root",
+  });
+  guardedRemovePath(reportPath, {
+    allowedRoots: [artifactsRoot],
+    label: "reset install state report",
+  });
 
   const useNativeBash = canUseBash();
   const scenarios = [];

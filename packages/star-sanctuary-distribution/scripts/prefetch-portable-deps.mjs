@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveDistributionMode } from "./distribution-mode.mjs";
 import { resolveDistributionPolicySummary } from "./distribution-policy.mjs";
+import { resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const rootPackageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
@@ -44,11 +45,6 @@ const distributionPolicy = resolveDistributionPolicySummary({
 });
 
 function ensureDir(dirPath) {
-  fs.mkdirSync(dirPath, { recursive: true });
-}
-
-function resetDir(dirPath) {
-  fs.rmSync(dirPath, { recursive: true, force: true });
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
@@ -121,7 +117,10 @@ function copyWorkspacePackageManifest(packageName) {
 }
 
 function preparePrefetchWorkspace() {
-  resetDir(prefetchRoot);
+  resetSandboxDir(prefetchRoot, {
+    allowedRoots: [portableCacheRoot],
+    label: "reset portable prefetch workspace",
+  });
   ensureDir(runtimePackagesRoot);
   ensureDir(runtimeAppsRoot);
 

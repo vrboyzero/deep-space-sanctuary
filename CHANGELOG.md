@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.4] - 2026-05-23
+
+聚焦收敛 `v0.5.4` 发布中断时暴露的 Windows 分发包恢复问题与删除安全风险，恢复 `release-light`、`Portable Full`、`Single-Exe Full` 的完整发布验证链路。
+
+### Distribution / Runtime
+
+- `Portable` 构建现在会随包携带 `sandbox-paths` 运行时辅助模块，补齐恢复校验脚本依赖，避免 `verify:portable-deps` 再因缺失模块中断
+- `Portable` 运行时替换与生命周期恢复补上 Windows `rename` 重试，降低首次恢复、升级切换与回滚阶段的 `EPERM / EBUSY` 风险
+- `Single-Exe` 嵌入式运行时在 Windows 下恢复 `pnpm` 目录链接时，若 junction 持续被系统拒绝，会退化为复制目标目录内容，修复首次抽取阶段的 `EPERM` 启动失败
+
+### Release Safety / Docs
+
+- `portable-runtime` 与相关 smoke / install / verify 脚本的删除路径已统一收口到 shared guarded delete helper，减少裸删除入口
+- 发布文档新增删除安全固定核对项，并明确以后发版不再把“自动清理产物目录”作为默认步骤；若需清理，改为开发人员人工确认后手动删除
+- `Portable / Single-Exe` 当前继续作为官网手动发布的 Windows 分发包，不进入 GitHub Release 正式附件列表；每次正式发布后需额外整理一份“发布后可删除文件清单”
+
+### Validation
+
+- 本地重新完成当前版本的发布前验证：
+  - `node .\\node_modules\\vitest\\vitest.mjs run packages apps/web/public/app/features --reporter verbose`
+  - `corepack pnpm build`
+  - `corepack pnpm build:release-light -- --version=0.5.4`
+  - `corepack pnpm verify:release-light -- --version=0.5.4`
+  - `corepack pnpm build:portable:full`
+  - `corepack pnpm smoke:portable:full`
+  - `corepack pnpm verify:portable-deps:full`
+  - `corepack pnpm verify:portable-lifecycle:full`
+  - `corepack pnpm build:single-exe:full`
+  - `corepack pnpm smoke:single-exe:full`
+  - `corepack pnpm verify:single-exe-deps:full`
+  - `corepack pnpm verify:single-exe-lifecycle:full`
+
 ## [0.5.3] - 2026-05-04
 
 聚焦收敛 `v0.5.2` 发布后暴露的本地启动鉴权问题，补强 Launcher 自动开页 token 传递，以及 WebChat 会话内 token 持久化与重连恢复，确保正式分发产物首启后能稳定连回本地 Gateway。

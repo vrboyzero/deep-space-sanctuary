@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
   checkHealth,
   reserveFreePort,
@@ -10,7 +11,7 @@ import {
   terminateChild,
   wait,
 } from "./runtime-process.mjs";
-import { resolveSingleExeVerifyRoots } from "./single-exe-verify-paths.mjs";
+import { assertPathInsideRoots, resolveSingleExeVerifyRoots } from "./single-exe-verify-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const platform = process.platform;
@@ -28,6 +29,7 @@ const verifyRoots = resolveSingleExeVerifyRoots({
   kind: "lifecycle",
   suffix,
 });
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const executablePath = path.join(singleExeRoot, "star-sanctuary-single.exe");
 const metadataPath = path.join(singleExeRoot, "single-exe.json");
 const lifecycleHome = verifyRoots.homeDir;
@@ -106,8 +108,8 @@ async function runSingleExe(params) {
   const stdoutPath = path.join(workspaceRoot, "artifacts", `single-exe-lifecycle-${label}${suffix}.stdout.log`);
   const stderrPath = path.join(workspaceRoot, "artifacts", `single-exe-lifecycle-${label}${suffix}.stderr.log`);
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [artifactsRoot], label: `reset single-exe lifecycle ${label} stdout log` });
+  guardedRemovePath(stderrPath, { allowedRoots: [artifactsRoot], label: `reset single-exe lifecycle ${label} stderr log` });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -177,9 +179,15 @@ async function main() {
   const envMarkerPath = path.join(stateDir, ".env.local");
   const stateMarkerPath = path.join(stateDir, "workspace", "marker.txt");
 
-  fs.rmSync(lifecycleHome, { recursive: true, force: true });
-  fs.rmSync(stateDir, { recursive: true, force: true });
-  fs.rmSync(reportPath, { force: true });
+  guardedRemovePath(assertPathInsideRoots(lifecycleHome, [verifyRoots.runRoot], "reset single-exe lifecycle home"), {
+    allowedRoots: [verifyRoots.runRoot],
+    label: "reset single-exe lifecycle home",
+  });
+  guardedRemovePath(assertPathInsideRoots(stateDir, [verifyRoots.runRoot], "reset single-exe lifecycle state dir"), {
+    allowedRoots: [verifyRoots.runRoot],
+    label: "reset single-exe lifecycle state dir",
+  });
+  guardedRemovePath(reportPath, { allowedRoots: [singleExeRoot], label: "reset single-exe lifecycle report" });
 
   fs.mkdirSync(path.dirname(envMarkerPath), { recursive: true });
   fs.mkdirSync(path.dirname(stateMarkerPath), { recursive: true });

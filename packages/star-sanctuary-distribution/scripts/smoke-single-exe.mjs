@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
   checkHealth,
   reserveFreePort,
@@ -9,6 +10,7 @@ import {
   terminateChild,
   wait,
 } from "./runtime-process.mjs";
+import { assertPathInsideRoots, resolveSingleExeVerifyRoots } from "./single-exe-verify-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const platform = process.platform;
@@ -16,6 +18,7 @@ const arch = process.arch;
 const distribution = resolveDistributionMode();
 const { mode } = distribution;
 const suffix = getModeLogSuffix(mode);
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const singleExeRoot = resolveSingleExeArtifactRoot({
   workspaceRoot,
   platform,
@@ -23,8 +26,12 @@ const singleExeRoot = resolveSingleExeArtifactRoot({
   mode,
 });
 const executablePath = path.join(singleExeRoot, "star-sanctuary-single.exe");
-const singleExeHome = path.join(workspaceRoot, "artifacts", `single-exe-home-smoke${suffix}`);
-const stateDir = path.join(workspaceRoot, "artifacts", `single-exe-state-smoke${suffix}`);
+const smokeVerifyRoots = resolveSingleExeVerifyRoots({
+  kind: "smoke",
+  suffix,
+});
+const singleExeHome = smokeVerifyRoots.homeDir;
+const stateDir = smokeVerifyRoots.stateDir;
 const stdoutPath = path.join(workspaceRoot, "artifacts", `single-exe-smoke${suffix}.stdout.log`);
 const stderrPath = path.join(workspaceRoot, "artifacts", `single-exe-smoke${suffix}.stderr.log`);
 const SINGLE_EXE_SMOKE_MAX_WAIT_SECONDS = resolveStartupWaitSeconds(mode, {
@@ -37,10 +44,16 @@ async function main() {
     throw new Error(`Single-exe artifact is missing for mode=${mode}. Run 'corepack pnpm build:single-exe${mode === "full" ? ":full" : ""}' first.`);
   }
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
-  fs.rmSync(singleExeHome, { recursive: true, force: true });
-  fs.rmSync(stateDir, { recursive: true, force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [artifactsRoot], label: "reset single-exe smoke stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [artifactsRoot], label: "reset single-exe smoke stderr log" });
+  guardedRemovePath(assertPathInsideRoots(singleExeHome, [smokeVerifyRoots.runRoot], "reset single-exe smoke home"), {
+    allowedRoots: [smokeVerifyRoots.runRoot],
+    label: "reset single-exe smoke home",
+  });
+  guardedRemovePath(assertPathInsideRoots(stateDir, [smokeVerifyRoots.runRoot], "reset single-exe smoke state dir"), {
+    allowedRoots: [smokeVerifyRoots.runRoot],
+    label: "reset single-exe smoke state dir",
+  });
   const port = await reserveFreePort();
   const relayPort = await reserveFreePort();
 

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const platform = process.platform;
@@ -15,6 +16,7 @@ const portableRoot = resolvePortableArtifactRoot({
   arch,
   mode,
 });
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const executablePath = path.join(portableRoot, "star-sanctuary.exe");
 const entryScript = path.join(
   portableRoot,
@@ -33,9 +35,9 @@ async function main() {
     throw new Error(`Portable artifact is missing for mode=${mode}. Run 'corepack pnpm build:portable${mode === "full" ? ":full" : ""}' first.`);
   }
 
-  fs.rmSync(reportPath, { force: true });
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(reportPath, { allowedRoots: [portableRoot], label: "reset portable deps report" });
+  guardedRemovePath(stdoutPath, { allowedRoots: [artifactsRoot], label: "reset portable deps stdout log" });
+  guardedRemovePath(stderrPath, { allowedRoots: [artifactsRoot], label: "reset portable deps stderr log" });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");

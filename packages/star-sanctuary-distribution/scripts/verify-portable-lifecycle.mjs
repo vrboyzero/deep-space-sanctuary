@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
   checkHealth,
   reserveFreePort,
@@ -23,10 +24,15 @@ const portableRoot = resolvePortableArtifactRoot({
   arch,
   mode,
 });
+const artifactsRoot = path.join(workspaceRoot, "artifacts");
 const executablePath = path.join(portableRoot, "star-sanctuary.exe");
 const entryScript = path.join(portableRoot, "launcher", "portable-entry.js");
 const lifecycleStateDir = path.join(workspaceRoot, "artifacts", `portable-state-lifecycle${suffix}`);
 const reportPath = path.join(portableRoot, "portable-lifecycle-report.json");
+const PORTABLE_LIFECYCLE_RECOVERY_WAIT_SECONDS = resolveStartupWaitSeconds(mode, {
+  slim: 60,
+  full: 90,
+});
 
 function sha256File(filePath) {
   const hash = crypto.createHash("sha256");
@@ -69,8 +75,8 @@ async function runPortable(params) {
   const stdoutPath = path.join(workspaceRoot, "artifacts", `portable-lifecycle-${label}${suffix}.stdout.log`);
   const stderrPath = path.join(workspaceRoot, "artifacts", `portable-lifecycle-${label}${suffix}.stderr.log`);
 
-  fs.rmSync(stdoutPath, { force: true });
-  fs.rmSync(stderrPath, { force: true });
+  guardedRemovePath(stdoutPath, { allowedRoots: [artifactsRoot], label: `reset portable lifecycle ${label} stdout log` });
+  guardedRemovePath(stderrPath, { allowedRoots: [artifactsRoot], label: `reset portable lifecycle ${label} stderr log` });
 
   const stdout = fs.openSync(stdoutPath, "w");
   const stderr = fs.openSync(stderrPath, "w");
@@ -125,8 +131,8 @@ async function runPortable(params) {
 async function main() {
   ensureArtifactExists();
 
-  fs.rmSync(lifecycleStateDir, { recursive: true, force: true });
-  fs.rmSync(reportPath, { force: true });
+  guardedRemovePath(lifecycleStateDir, { allowedRoots: [artifactsRoot], label: "reset portable lifecycle state dir" });
+  guardedRemovePath(reportPath, { allowedRoots: [portableRoot], label: "reset portable lifecycle report" });
 
   const envMarkerPath = path.join(lifecycleStateDir, ".env.local");
   const stateMarkerPath = path.join(lifecycleStateDir, "workspace", "marker.txt");
@@ -138,6 +144,7 @@ async function main() {
   const initialRun = await runPortable({
     label: "initial",
     expectHealthy: true,
+    maxWaitSeconds: PORTABLE_LIFECYCLE_RECOVERY_WAIT_SECONDS,
   });
 
   const reuseRun = await runPortable({
@@ -150,6 +157,7 @@ async function main() {
   const postUpgradeRun = await runPortable({
     label: "upgrade",
     expectHealthy: true,
+    maxWaitSeconds: PORTABLE_LIFECYCLE_RECOVERY_WAIT_SECONDS,
   });
 
   const gatewayPath = path.join(portableRoot, "runtime", "packages", "belldandy-core", "dist", "bin", "gateway.js");
@@ -160,10 +168,7 @@ async function main() {
   const recoveryRun = await runPortable({
     label: "recovery",
     expectHealthy: true,
-    maxWaitSeconds: resolveStartupWaitSeconds(mode, {
-      slim: 60,
-      full: 90,
-    }),
+    maxWaitSeconds: PORTABLE_LIFECYCLE_RECOVERY_WAIT_SECONDS,
   });
   const restoredGatewaySha = sha256File(gatewayPath);
 

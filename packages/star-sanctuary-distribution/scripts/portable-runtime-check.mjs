@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { MemoryStore } from "../../belldandy-memory/dist/index.js";
 import { PtyManager } from "../../belldandy-skills/dist/builtin/system/pty.js";
+import { guardedRemovePath } from "./sandbox-paths.mjs";
 
 function getPortableContext() {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1"));
@@ -158,7 +159,7 @@ async function main() {
     result.launcher.openModule.error = normalizeError(error);
   }
 
-  fs.rmSync(tempDir, { recursive: true, force: true });
+  guardedRemovePath(tempDir, { allowedRoots: [tempDir], label: "cleanup portable runtime check temp dir" });
   const payload = `${JSON.stringify(result, null, 2)}\n`;
   if (process.env.STAR_SANCTUARY_PORTABLE_REPORT_PATH) {
     fs.writeFileSync(process.env.STAR_SANCTUARY_PORTABLE_REPORT_PATH, payload, "utf-8");
