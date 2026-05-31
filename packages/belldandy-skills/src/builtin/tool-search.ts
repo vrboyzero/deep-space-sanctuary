@@ -80,7 +80,7 @@ function collectDiscoveryNextStepHints(input: {
   const toolMatches = input.matches.filter((entry): entry is Extract<ToolDiscoveryEntry, { kind: "tool" }> => entry.kind === "tool");
 
   if (input.select.length > 0 && input.loaded.length > 0) {
-    hints.push("Exact deferred schemas are already queued for the next model turn. Call those tools directly next.");
+    hints.push("Exact deferred schemas are loaded for this conversation. Reuse them directly while they remain visible.");
   }
 
   if (familyMatches.length > 0) {
@@ -95,6 +95,9 @@ function collectDiscoveryNextStepHints(input: {
 
   const deferredToolMatches = toolMatches.filter((entry) => entry.loadingMode === "deferred" && !entry.loaded);
   if (deferredToolMatches.length > 0) {
+    if (familyMatches.length === 0) {
+      hints.push(`The exact deferred tool matches are already identified in Matches. Select one now in the same turn before any other tool call: tool_search {"select":["${deferredToolMatches[0].name}"]}.`);
+    }
     hints.push(`After choosing one deferred tool, load only that exact schema: tool_search {"select":["${deferredToolMatches[0].name}"]}.`);
   }
 
@@ -122,7 +125,7 @@ export function createToolSearchTool(options: ToolSearchOptions): Tool {
   return {
     definition: {
       name: TOOL_SEARCH_NAME,
-      description: "搜索当前可用工具与重型工具簇；可先展开 family，再用 select 把精确 deferred schema 加载进下一轮上下文。",
+      description: "搜索当前可用工具与重型工具簇；可先展开 family，再用 select 只加载需要的精确 deferred schema。",
       shortDescription: "搜索工具并展开重型工具簇",
       parameters: {
         type: "object",
@@ -138,7 +141,7 @@ export function createToolSearchTool(options: ToolSearchOptions): Tool {
           },
           select: {
             type: "array",
-            description: "要立即加载的工具名列表；加载后下一轮可直接调用",
+            description: "要立即加载的工具名列表；加载后在当前会话中可直接调用，直到被卸载、收缩或不再暴露",
             items: { type: "string" },
           },
           unload: {
@@ -242,9 +245,9 @@ export function createToolSearchTool(options: ToolSearchOptions): Tool {
         sections.push(`Unloaded deferred tools:\n${unloaded.map((name) => `- ${name}`).join("\n")}`);
       }
       if (loaded.length > 0) {
-        sections.push(`Loaded tools for the next model turn only:\n${loaded.map((name) => `- ${name}`).join("\n")}`);
+        sections.push(`Loaded deferred tools for this conversation:\n${loaded.map((name) => `- ${name}`).join("\n")}`);
       }
-      sections.push(`Currently queued deferred tools for the next model turn:\n${currentLoaded.length > 0 ? currentLoaded.map((name) => `- ${name}`).join("\n") : "- (none)"}`);
+      sections.push(`Currently loaded deferred tools in this conversation:\n${currentLoaded.length > 0 ? currentLoaded.map((name) => `- ${name}`).join("\n") : "- (none)"}`);
       if (nextStepHints.length > 0) {
         sections.push(`Recommended next step:\n${nextStepHints.map((item) => `- ${item}`).join("\n")}`);
       }

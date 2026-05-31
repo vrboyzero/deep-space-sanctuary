@@ -21,7 +21,7 @@ function createJsonResponse(payload: unknown): Response {
 }
 
 describe("tool reliability baseline", () => {
-  it("routes through tool_search correction, loads a deferred schema, and then calls the loaded tool on the next turn", async () => {
+  it("routes through tool_search correction, loads a deferred schema, and then calls the loaded tool once it is visible", async () => {
     const goalFamily = {
       id: "goals",
       title: "Goals",
@@ -132,7 +132,7 @@ describe("tool reliability baseline", () => {
       id: "call-1",
       name: "tool_search",
       success: true,
-      output: expect.stringContaining("Loaded tools for the next model turn only"),
+      output: expect.stringContaining("Loaded deferred tools for this conversation"),
       metadata: expect.objectContaining({
         repairAction: "tool_arguments_corrected",
       }),

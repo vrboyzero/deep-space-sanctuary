@@ -1286,6 +1286,83 @@ describe("compaction observability hooks", () => {
     expect((recent[0]?.args as any)?.options?.nested?.one).toBe("[object keys=1]");
   });
 
+  it("does not persist failed empty-string argument templates into recent tool results", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-invalid-1",
+              type: "function",
+              function: {
+                name: "wake_signals_peek",
+                arguments: JSON.stringify({
+                  queueId: "",
+                  actorId: "",
+                  sessionId: "",
+                  gameId: "",
+                }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+
+    const conversationStore = new ConversationStore();
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "wake_signals_peek",
+            description: "peek",
+            parameters: {
+              type: "object",
+              properties: {
+                queueId: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute: vi.fn(async () => ({
+          id: "call-invalid-1",
+          name: "wake_signals_peek",
+          success: false,
+          output: "",
+          error: "invalid args",
+          failureKind: "input_error",
+          durationMs: 0,
+        })),
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-invalid-args",
+      text: "peek",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const recent = conversationStore.getRecentToolResults("conv-invalid-args", {
+      toolCallId: "call-invalid-1",
+    });
+    expect(recent).toHaveLength(1);
+    expect(recent[0]?.args).toBeUndefined();
+  });
+
   it("skips loop compaction when the shared circuit breaker is open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => createJsonResponse({
       choices: [{

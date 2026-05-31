@@ -814,7 +814,7 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
             "1. **Check First**: Before doing anything other than ordinary conversation, check whether an existing method or skill already matches the task.",
             "- Methods: use `method_search` / `method_list`, then `method_read` for the exact SOP.",
             "- Skills: use `skills_search`, then `skill_get` for the exact skill you decide to adopt.",
-            "- Hidden heavy tools or MCP tools: use `tool_search` first, then load/select the exact schema needed for the next turn.",
+            "- Hidden heavy tools or MCP tools: use `tool_search` only when the exact schema is not visible, and reuse already loaded schemas directly within the same conversation.",
             "- Runtime governance / diagnostics / metadata are queried through RPC surfaces, not native tool-calling paths.",
             "- `method_read` and `skill_get` auto-record usage when the current conversation already has a task.",
             "**Follow the exact method or skill once you decide to adopt it.**",

@@ -22,6 +22,7 @@ export type AgentPromptDeltaType =
   | "team-completion-gate"
   | "role-execution-policy"
   | "tool-failure-recovery"
+  | "tool-search-follow-up"
   | "tool-post-verification";
 
 export type AgentPromptDeltaRole = "system" | "user-prelude" | "attachment";
@@ -290,6 +291,7 @@ function normalizePromptSnapshotDeltaType(value: unknown): AgentPromptDeltaType 
     case "team-completion-gate":
     case "role-execution-policy":
     case "tool-failure-recovery":
+    case "tool-search-follow-up":
     case "tool-post-verification":
       return value;
     default:

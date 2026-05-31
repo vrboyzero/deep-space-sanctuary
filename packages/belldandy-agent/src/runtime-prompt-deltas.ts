@@ -91,11 +91,67 @@ export function buildToolResultPromptDeltas(input: {
     resultMetadata: input.result.metadata,
   }, contract);
   const deltas: AgentPromptDelta[] = [];
+  const toolSearchFollowUpDelta = buildToolSearchFollowUpPromptDelta({
+    toolCallId: input.result.id,
+    toolName: input.result.name,
+    output: input.result.output,
+  });
+  if (toolSearchFollowUpDelta) {
+    deltas.push(toolSearchFollowUpDelta);
+  }
   if (postVerificationDelta) {
     deltas.push(postVerificationDelta);
   }
   deltas.push(...teamDeltas);
   return deltas;
+}
+
+function buildToolSearchFollowUpPromptDelta(input: {
+  toolCallId?: string;
+  toolName: string;
+  output?: string;
+}): AgentPromptDelta | undefined {
+  if (input.toolName !== "tool_search" || typeof input.output !== "string" || !input.output.trim()) {
+    return undefined;
+  }
+  const loadedTools = extractLoadedDeferredToolNames(input.output);
+  if (loadedTools.length === 0) {
+    return undefined;
+  }
+  const toolList = loadedTools.map((name) => `\`${name}\``).join(", ");
+  return {
+    id: `tool-search-follow-up-${sanitizeDeltaIdSegment(input.toolCallId ?? input.toolName)}`,
+    deltaType: "tool-search-follow-up",
+    role: "system",
+    source: "tool-result",
+    text: [
+      "## Tool Search Follow-up",
+      "",
+      `The exact deferred schemas are already loaded in this conversation: ${toolList}.`,
+      "Call those exact tools directly next. Do not repeat a broad `tool_search` while these schemas remain visible.",
+    ].join("\n"),
+    metadata: {
+      toolName: input.toolName,
+      loadedToolNames: loadedTools,
+    },
+  };
+}
+
+function extractLoadedDeferredToolNames(output: string): string[] {
+  const normalized = output.replace(/\r\n/g, "\n");
+  const match = normalized.match(
+    /Loaded deferred tools for this conversation:\n((?:- .+\n?)+)|Currently loaded deferred tools in this conversation:\n((?:- .+\n?)+)/,
+  );
+  const block = match?.[1] ?? match?.[2] ?? "";
+  if (!block) {
+    return [];
+  }
+  return block
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line && line !== "(none)");
 }
 
 export function buildToolFailureRecoveryPromptDelta(input: {

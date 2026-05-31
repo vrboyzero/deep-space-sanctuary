@@ -159,7 +159,7 @@ describe("buildAgentRuntimePromptSections", () => {
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
       .toContain("Skills / domain instructions: use `skills_search`");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
-      .toContain("Heavy builtin tools or MCP tools not currently visible: use `tool_search` first");
+      .toContain("Heavy builtin tools or MCP tools not currently visible: use `tool_search` first; if the exact schema is already loaded and visible in this conversation, call it directly.");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)
       .toContain("Method candidates (showing 1/48): `multi-agent-review.md` - 多 Agent 审查流程 [active]");
     expect(sections.find((section) => section.id === "method-skill-asset-summary")?.text)

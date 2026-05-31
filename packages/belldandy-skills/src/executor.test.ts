@@ -169,6 +169,52 @@ const execToolWithContract: Tool = withToolContract({
 });
 
 describe("ToolExecutor", () => {
+  it("prefers same-turn select when tool_search already returned exact deferred matches", () => {
+    const goalFamily = {
+      id: "goals",
+      title: "Goals",
+      summary: "Goal governance and checkpoint operations.",
+      gateMode: "hidden-until-expanded" as const,
+      keywords: ["goal", "checkpoint"],
+    };
+    const deferredGoalTool: Tool = {
+      definition: {
+        name: "goal_checkpoint_request",
+        description: "Request a goal checkpoint",
+        shortDescription: "Request a checkpoint",
+        keywords: ["goal", "checkpoint"],
+        discoveryFamily: goalFamily,
+        parameters: {
+          type: "object",
+          properties: {
+            goalId: { type: "string", description: "goal id" },
+          },
+          required: ["goalId"],
+        },
+      },
+      async execute(args): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "goal_checkpoint_request",
+          success: true,
+          output: String(args.goalId ?? ""),
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [echoTool, deferredGoalTool],
+      workspaceRoot: "/tmp/test",
+      deferredToolNames: ["goal_checkpoint_request"],
+    });
+
+    const summary = executor.buildDeferredToolDiscoveryPromptSummary("default", "conv-1");
+
+    expect(summary).toBeDefined();
+    expect(summary).toContain("If the query already returns the exact deferred tool names you need, load them in the same turn");
+    expect(summary).toContain("Only use `tool_search {\"expandFamilies\":[\"family_id\"]}` when you need to open a gated family");
+  });
+
   it("should register and execute tools", async () => {
     const executor = new ToolExecutor({
       tools: [echoTool],
@@ -1086,7 +1132,7 @@ describe("ToolExecutor", () => {
     expect(executor.getDefinitions("default", "conv-1").map((item) => item.function.name)).toEqual(["echo", "write_notes"]);
   });
 
-  it("tool_search should search deferred tools and load selected schemas for the next turn", async () => {
+  it("tool_search should search deferred tools and load selected schemas into the conversation", async () => {
     const deferredTool: Tool = {
       definition: {
         name: "web_search_deep",
@@ -1140,11 +1186,71 @@ describe("ToolExecutor", () => {
     );
 
     expect(searchResult.success).toBe(true);
-    expect(searchResult.output).toContain("Loaded tools for the next model turn only");
+    expect(searchResult.output).toContain("Loaded deferred tools for this conversation");
     expect(searchResult.output).toContain("web_search_deep");
     expect(executor.getDefinitions("default", "conv-1").map((item) => item.function.name)).toContain("web_search_deep");
     await executor.consumeLoadedDeferredToolsForNextTurn("conv-1");
     expect(executor.getDefinitions("default", "conv-1").map((item) => item.function.name)).not.toContain("web_search_deep");
+  });
+
+  it("keeps StarWeaver deferred tools loaded across turns in the same conversation", async () => {
+    const runtimeDescribeTool: Tool = {
+      definition: {
+        name: "mcp_starweaver_central_starweaver_runtime_describe",
+        description: "StarWeaver runtime describe",
+        shortDescription: "runtime describe",
+        parameters: {
+          type: "object",
+          properties: {
+            view: { type: "string", description: "view" },
+          },
+          required: [],
+        },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "mcp_starweaver_central_starweaver_runtime_describe",
+          success: true,
+          output: "{}",
+          durationMs: 0,
+        };
+      },
+    };
+
+    const executor = new ToolExecutor({
+      tools: [echoTool, runtimeDescribeTool],
+      workspaceRoot: "/tmp/test",
+      deferredToolNames: ["mcp_starweaver_central_starweaver_runtime_describe"],
+    });
+    executor.registerTool(createToolSearchTool({
+      getDiscoveryEntries: (conversationId?: string, agentId?: string, expandedFamilyIds?: string[]) =>
+        executor.getDiscoveryEntries(agentId, conversationId, undefined, { expandedFamilyIds }),
+      getLoadedDeferredToolList: (conversationId: string) => executor.getLoadedDeferredToolList(conversationId),
+      loadDeferredTools: (conversationId: string, toolNames: string[]) => executor.loadDeferredTools(conversationId, toolNames),
+      unloadDeferredTools: (conversationId: string, toolNames: string[]) => executor.unloadDeferredTools(conversationId, toolNames),
+      clearLoadedDeferredTools: (conversationId: string) => executor.clearLoadedDeferredTools(conversationId),
+      shrinkLoadedDeferredTools: (conversationId: string, toolNames: string[]) => executor.shrinkLoadedDeferredTools(conversationId, toolNames),
+    }));
+
+    await executor.execute(
+      {
+        id: "req-load-starweaver",
+        name: "tool_search",
+        arguments: {
+          select: ["mcp_starweaver_central_starweaver_runtime_describe"],
+        },
+      },
+      "conv-starweaver",
+    );
+
+    expect(executor.getDefinitions("default", "conv-starweaver").map((item) => item.function.name))
+      .toContain("mcp_starweaver_central_starweaver_runtime_describe");
+
+    await executor.consumeLoadedDeferredToolsForNextTurn("conv-starweaver");
+
+    expect(executor.getDefinitions("default", "conv-starweaver").map((item) => item.function.name))
+      .toContain("mcp_starweaver_central_starweaver_runtime_describe");
   });
 
   it("should hide heavy discovery family members until the family is expanded", () => {
@@ -1283,6 +1389,50 @@ describe("ToolExecutor", () => {
     expect(expandedSearch.output).toContain("Expanded families for this search");
     expect(expandedSearch.output).toContain("goal_checkpoint_request");
     expect(executor.getDefinitions("default", "conv-1").map((item) => item.function.name)).toContain("goal_checkpoint_request");
+  });
+
+  it("tool_search should strongly instruct same-turn select when exact deferred matches are already visible", async () => {
+    const deferredAlpha: Tool = {
+      definition: {
+        name: "alpha_deferred",
+        description: "Alpha deferred tool",
+        shortDescription: "Alpha deferred",
+        keywords: ["alpha", "deferred"],
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return { id: "", name: "alpha_deferred", success: true, output: "alpha", durationMs: 0 };
+      },
+    };
+
+    const executor = new ToolExecutor({
+      tools: [echoTool, deferredAlpha],
+      workspaceRoot: "/tmp/test",
+      deferredToolNames: ["alpha_deferred"],
+    });
+    executor.registerTool(createToolSearchTool({
+      getDiscoveryEntries: (conversationId?: string, agentId?: string, expandedFamilyIds?: string[]) =>
+        executor.getDiscoveryEntries(agentId, conversationId, undefined, { expandedFamilyIds }),
+      getLoadedDeferredToolList: (conversationId: string) => executor.getLoadedDeferredToolList(conversationId),
+      loadDeferredTools: (conversationId: string, toolNames: string[]) => executor.loadDeferredTools(conversationId, toolNames),
+      unloadDeferredTools: (conversationId: string, toolNames: string[]) => executor.unloadDeferredTools(conversationId, toolNames),
+      clearLoadedDeferredTools: (conversationId: string) => executor.clearLoadedDeferredTools(conversationId),
+      shrinkLoadedDeferredTools: (conversationId: string, toolNames: string[]) => executor.shrinkLoadedDeferredTools(conversationId, toolNames),
+    }));
+
+    const searchResult = await executor.execute({
+      id: "req-exact-deferred",
+      name: "tool_search",
+      arguments: { query: "alpha" },
+    }, "conv-exact-deferred");
+
+    expect(searchResult.success).toBe(true);
+    expect(searchResult.output).toContain("The exact deferred tool matches are already identified in Matches. Select one now in the same turn before any other tool call");
+    expect(searchResult.output).toContain('tool_search {"select":["alpha_deferred"]}');
   });
 
   it("tool_search should support unload, shrink, and reset of loaded deferred tools", async () => {
@@ -1424,7 +1574,7 @@ describe("ToolExecutor", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toContain("Expanded families for this search");
-    expect(result.output).toContain("Loaded tools for the next model turn only");
+    expect(result.output).toContain("Loaded deferred tools for this conversation");
     expect(result.metadata).toMatchObject({
       repairAction: "tool_arguments_corrected",
       argumentValidation: {
@@ -1438,6 +1588,97 @@ describe("ToolExecutor", () => {
         ]),
       },
     });
+  });
+
+  it("tool_search should auto-fill select for the fixed StarWeaver smoke exact-query path", async () => {
+    const deferredTools: Tool[] = [
+      {
+        definition: {
+          name: "mcp_starweaver_central_starweaver_runtime_describe",
+          description: "runtime describe",
+          shortDescription: "runtime describe",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+        async execute(): Promise<ToolCallResult> {
+          return { id: "", name: "mcp_starweaver_central_starweaver_runtime_describe", success: true, output: "ok", durationMs: 0 };
+        },
+      },
+      {
+        definition: {
+          name: "mcp_starweaver_central_starweaver_wake_signals_peek",
+          description: "wake signals peek",
+          shortDescription: "wake signals peek",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+        async execute(): Promise<ToolCallResult> {
+          return { id: "", name: "mcp_starweaver_central_starweaver_wake_signals_peek", success: true, output: "ok", durationMs: 0 };
+        },
+      },
+      {
+        definition: {
+          name: "mcp_starweaver_central_starweaver_command_peek",
+          description: "command peek",
+          shortDescription: "command peek",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+        async execute(): Promise<ToolCallResult> {
+          return { id: "", name: "mcp_starweaver_central_starweaver_command_peek", success: true, output: "ok", durationMs: 0 };
+        },
+      },
+      {
+        definition: {
+          name: "mcp_starweaver_central_starweaver_agent_delivery_peek",
+          description: "agent delivery peek",
+          shortDescription: "agent delivery peek",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+        async execute(): Promise<ToolCallResult> {
+          return { id: "", name: "mcp_starweaver_central_starweaver_agent_delivery_peek", success: true, output: "ok", durationMs: 0 };
+        },
+      },
+    ];
+
+    const executor = new ToolExecutor({
+      tools: [echoTool, ...deferredTools],
+      workspaceRoot: "/tmp/test",
+      deferredToolNames: deferredTools.map((tool) => tool.definition.name),
+    });
+    executor.registerTool(createToolSearchTool({
+      getDiscoveryEntries: (conversationId?: string, agentId?: string, expandedFamilyIds?: string[]) =>
+        executor.getDiscoveryEntries(agentId, conversationId, undefined, { expandedFamilyIds }),
+      getLoadedDeferredToolList: (conversationId: string) => executor.getLoadedDeferredToolList(conversationId),
+      loadDeferredTools: (conversationId: string, toolNames: string[]) => executor.loadDeferredTools(conversationId, toolNames),
+      unloadDeferredTools: (conversationId: string, toolNames: string[]) => executor.unloadDeferredTools(conversationId, toolNames),
+      clearLoadedDeferredTools: (conversationId: string) => executor.clearLoadedDeferredTools(conversationId),
+      shrinkLoadedDeferredTools: (conversationId: string, toolNames: string[]) => executor.shrinkLoadedDeferredTools(conversationId, toolNames),
+    }));
+
+    const result = await executor.execute({
+      id: "req-starweaver-smoke-select",
+      name: "tool_search",
+      arguments: {
+        query: "starweaver_runtime_describe starweaver_wake_signals_peek starweaver_command_peek starweaver_agent_delivery_peek",
+      },
+    }, "conv-starweaver-smoke");
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Loaded deferred tools for this conversation");
+    expect(result.metadata).toMatchObject({
+      repairAction: "tool_arguments_corrected",
+      argumentValidation: {
+        corrected: true,
+        blocked: false,
+        corrections: expect.arrayContaining([
+          "Auto-filled `select` for the fixed StarWeaver smoke exact-query path.",
+        ]),
+      },
+    });
+    expect(executor.getLoadedDeferredToolList("conv-starweaver-smoke")).toEqual([
+      "mcp_starweaver_central_starweaver_agent_delivery_peek",
+      "mcp_starweaver_central_starweaver_command_peek",
+      "mcp_starweaver_central_starweaver_runtime_describe",
+      "mcp_starweaver_central_starweaver_wake_signals_peek",
+    ]);
   });
 
   it("should auto-prune oversized legacy deferred selections using recent tool digests first", () => {

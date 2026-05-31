@@ -4,7 +4,7 @@ export function buildCapabilityRoutingIndexLines(): string[] {
     "Use the smallest matching entrypoint first; discover before opening full instructions or schemas.",
     "- SOPs / reusable workflows: use `method_search` (or `method_list`) to find candidates, then `method_read` to open the exact method.",
     "- Skills / domain instructions: use `skills_search` to discover candidates, then `skill_get` to open the exact skill you decide to adopt.",
-    "- Heavy builtin tools or MCP tools not currently visible: use `tool_search` first, then load/select only the exact schema needed for the next turn.",
+    "- Heavy builtin tools or MCP tools not currently visible: use `tool_search` first; if the exact schema is already loaded and visible in this conversation, call it directly.",
     "- Runtime governance / diagnostics / metadata are queried through RPC surfaces; do not confuse them with native tool-calling paths.",
   ];
 }

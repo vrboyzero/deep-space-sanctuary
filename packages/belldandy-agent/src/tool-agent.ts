@@ -473,9 +473,31 @@ function compactRecentToolArgString(value: string, limit: number = RECENT_TOOL_R
   return `${normalized.slice(0, Math.max(0, limit - 3))}...`;
 }
 
+function isMeaningfulRecentToolArgValue(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (value === null || typeof value === "undefined") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => isMeaningfulRecentToolArgValue(item));
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some((item) =>
+      isMeaningfulRecentToolArgValue(item),
+    );
+  }
+  return String(value).trim().length > 0;
+}
+
 function projectRecentToolResultArgsValue(value: unknown, depth: number): unknown {
   if (typeof value === "string") {
-    return compactRecentToolArgString(value);
+    const compacted = compactRecentToolArgString(value);
+    return compacted || undefined;
   }
   if (
     typeof value === "number"
@@ -489,10 +511,11 @@ function projectRecentToolResultArgsValue(value: unknown, depth: number): unknow
     const projectedItems = value
       .slice(0, RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT)
       .map((item) => projectRecentToolResultArgsValue(item, depth + 1));
+    const filteredItems = projectedItems.filter((item) => isMeaningfulRecentToolArgValue(item));
     if (value.length > RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT) {
-      projectedItems.push(`[+${value.length - RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT} more items]`);
+      filteredItems.push(`[+${value.length - RECENT_TOOL_RESULT_ARG_ARRAY_PREVIEW_LIMIT} more items]`);
     }
-    return projectedItems;
+    return filteredItems.length > 0 ? filteredItems : undefined;
   }
   if (!value || typeof value !== "object") {
     return compactRecentToolArgString(String(value));
@@ -505,12 +528,15 @@ function projectRecentToolResultArgsValue(value: unknown, depth: number): unknow
   const entries = Object.entries(value as Record<string, unknown>);
   const projected: JsonObject = {};
   for (const [key, entryValue] of entries.slice(0, RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT)) {
-    projected[key] = projectRecentToolResultArgsValue(entryValue, depth + 1) as JsonObject[keyof JsonObject];
+    const projectedValue = projectRecentToolResultArgsValue(entryValue, depth + 1);
+    if (isMeaningfulRecentToolArgValue(projectedValue)) {
+      projected[key] = projectedValue as JsonObject[keyof JsonObject];
+    }
   }
   if (entries.length > RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT) {
     projected.__truncatedKeys = entries.length - RECENT_TOOL_RESULT_ARG_OBJECT_PREVIEW_LIMIT;
   }
-  return projected;
+  return Object.keys(projected).length > 0 ? projected : undefined;
 }
 
 function projectRecentToolResultArgs(args: JsonObject): JsonObject {
@@ -687,7 +713,7 @@ function buildRecentToolResultRecord(input: {
     error: input.error,
     failureKind: input.failureKind,
     target: digest.target,
-    args: projectRecentToolResultArgs(input.args),
+    args: input.success ? projectRecentToolResultArgs(input.args) : undefined,
     isSynthetic: input.isSynthetic,
   };
 }

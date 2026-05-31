@@ -324,7 +324,7 @@ describe("system prompt sections", () => {
     expect(text).toContain("## Capability Routing");
     expect(text).toContain("SOPs / reusable workflows: use `method_search`");
     expect(text).toContain("Skills / domain instructions: use `skills_search`");
-    expect(text).toContain("Heavy builtin tools or MCP tools not currently visible: use `tool_search` first");
+    expect(text).toContain("Hidden heavy tools or MCP tools: use `tool_search` only when the exact schema is not visible");
     expect(text).toContain("Runtime governance / diagnostics / metadata are queried through RPC surfaces");
     expect(text).toContain("Searching alone does not count as usage.");
   });

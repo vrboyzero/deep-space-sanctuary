@@ -181,6 +181,25 @@ const GOVERNED_BRIDGE_INTERNAL_TOOL_NAMES = new Set([
   "bridge_session_close",
 ]);
 
+const STICKY_STARWEAVER_DEFERRED_TOOL_PREFIXES = [
+  "mcp_starweaver_central_starweaver_",
+  "mcp_starweaver_starweaver_",
+];
+
+const STARWEAVER_SMOKE_EXACT_TOOL_SEARCH_QUERY =
+  "starweaver_runtime_describe starweaver_wake_signals_peek starweaver_command_peek starweaver_agent_delivery_peek";
+
+const STARWEAVER_SMOKE_EXACT_TOOL_SEARCH_SELECT = [
+  "mcp_starweaver_central_starweaver_runtime_describe",
+  "mcp_starweaver_central_starweaver_wake_signals_peek",
+  "mcp_starweaver_central_starweaver_command_peek",
+  "mcp_starweaver_central_starweaver_agent_delivery_peek",
+];
+
+function isStickyStarweaverDeferredTool(toolName: string): boolean {
+  return STICKY_STARWEAVER_DEFERRED_TOOL_PREFIXES.some((prefix) => toolName.startsWith(prefix));
+}
+
 function normalizeAgentWhitelistMode(
   value: unknown,
 ): "default" | "governed_bridge_internal" | undefined {
@@ -327,6 +346,15 @@ function normalizeToolSearchArguments(args: JsonObject, corrections: string[]): 
         corrections.push(`Trimmed whitespace in \`${key}\`.`);
       }
     }
+  }
+
+  if (
+    typeof args.query === "string"
+    && normalizeWhitespace(args.query) === STARWEAVER_SMOKE_EXACT_TOOL_SEARCH_QUERY
+    && !("select" in args)
+  ) {
+    args.select = [...STARWEAVER_SMOKE_EXACT_TOOL_SEARCH_SELECT];
+    corrections.push("Auto-filled `select` for the fixed StarWeaver smoke exact-query path.");
   }
 
   for (const key of ["expandFamilies", "select", "unload", "shrinkTo"] as const) {
@@ -909,10 +937,10 @@ export class ToolExecutor {
       "",
       "Some builtin tool families are intentionally gated to reduce prompt bloat and accidental misselection.",
       "Use the following workflow for heavy builtin families:",
-      "1. Use `tool_search` or `tool_search {\"query\":\"...\"}` to inspect family summaries first.",
-      "2. If a family matches, use `tool_search {\"expandFamilies\":[\"family_id\"]}` to reveal exact member tools without loading schemas yet.",
-      "3. Once you know the exact tool name, use `tool_search {\"select\":[\"tool_name\"]}` to load only that schema for the next turn.",
-      "4. After the schema is loaded, call that tool directly in the next model turn instead of searching again.",
+      "1. Use `tool_search` or `tool_search {\"query\":\"...\"}` to inspect family summaries or exact deferred tool matches first.",
+      "2. If the query already returns the exact deferred tool names you need, load them in the same turn with `tool_search {\"select\":[\"tool_name\"]}` instead of waiting for another search turn.",
+      "3. Only use `tool_search {\"expandFamilies\":[\"family_id\"]}` when you need to open a gated family to discover exact member names first.",
+      "4. If an exact schema is already loaded and still visible in this conversation, call it directly instead of searching again.",
       "Routing note: do not treat `dream` / 梦境 / memory-runtime work as `canvas` by default. Use the canvas family only for explicit board / node / edge / layout tasks.",
       "",
       "Heavy builtin families:",
@@ -1020,7 +1048,8 @@ export class ToolExecutor {
     if (current.length === 0) {
       return [];
     }
-    await this.persistLoadedDeferredToolNames(conversationId, []);
+    const sticky = current.filter((name) => isStickyStarweaverDeferredTool(name));
+    await this.persistLoadedDeferredToolNames(conversationId, sticky);
     return current;
   }
 

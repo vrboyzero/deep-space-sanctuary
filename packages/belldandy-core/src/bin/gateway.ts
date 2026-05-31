@@ -432,6 +432,11 @@ runtimePaths = resolveGatewayRuntimePaths({
 });
 envFiles = resolveEnvFilePaths({ envDir: runtimePaths.envDir });
 
+// Keep downstream runtimes that resolve their own config paths aligned with Gateway's
+// already-resolved runtime directories, especially MCP which reads BELLDANDY_STATE_DIR.
+process.env.BELLDANDY_STATE_DIR = runtimePaths.stateDir;
+process.env.BELLDANDY_ENV_DIR = runtimePaths.envDir;
+
 // --- Configuration ---
 const port = Number(readEnv("BELLDANDY_PORT") ?? "28889");
 const host = readEnv("BELLDANDY_HOST") ?? "127.0.0.1"; // Security: Default to localhost

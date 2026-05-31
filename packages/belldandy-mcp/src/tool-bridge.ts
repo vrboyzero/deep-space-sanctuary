@@ -25,6 +25,26 @@ type ToolCallFn = (
   args: Record<string, unknown>
 ) => Promise<MCPToolCallResult>;
 
+interface RuntimeDescribeSessionCacheEntry {
+  cacheKey: string;
+  result: MCPToolCallResult;
+}
+
+function isStarweaverRuntimeDescribeTool(tool: MCPToolInfo): boolean {
+  return (
+    tool.serverId.startsWith("starweaver") &&
+    tool.name === "starweaver_runtime_describe"
+  );
+}
+
+function toRuntimeScopeCacheKey(args: Record<string, unknown>): string {
+  return [
+    typeof args.actorId === "string" ? args.actorId : "",
+    typeof args.sessionId === "string" ? args.sessionId : "",
+    typeof args.gameId === "string" ? args.gameId : ""
+  ].join("::");
+}
+
 // ============================================================================
 // 工具桥接器类
 // ============================================================================
@@ -43,6 +63,7 @@ export class MCPToolBridge {
   
   /** 已桥接的工具映射: bridgedName -> MCPToolInfo */
   private bridgedTools: Map<string, MCPToolInfo> = new Map();
+  private runtimeDescribeSessionCache: Map<string, RuntimeDescribeSessionCacheEntry> = new Map();
 
   constructor(callToolFn: ToolCallFn, usePrefix: boolean = true) {
     this.callToolFn = callToolFn;
@@ -82,6 +103,7 @@ export class MCPToolBridge {
     for (const name of toRemove) {
       this.bridgedTools.delete(name);
     }
+    this.runtimeDescribeSessionCache.delete(serverId);
     
     mcpLog("MCPToolBridge", `注销了服务器 ${serverId} 的 ${toRemove.length} 个工具`);
   }
@@ -92,6 +114,7 @@ export class MCPToolBridge {
   unregisterAllTools(): void {
     const count = this.bridgedTools.size;
     this.bridgedTools.clear();
+    this.runtimeDescribeSessionCache.clear();
     mcpLog("MCPToolBridge", `注销了全部 ${count} 个工具`);
   }
 
@@ -169,6 +192,25 @@ export class MCPToolBridge {
         error: `工具 "${bridgedName}" 不存在`,
         isError: true,
       };
+    }
+
+    if (isStarweaverRuntimeDescribeTool(tool)) {
+      const cacheKey = toRuntimeScopeCacheKey(args);
+      const cached = this.runtimeDescribeSessionCache.get(tool.serverId);
+      if (cached && cached.cacheKey === cacheKey) {
+        return cached.result;
+      }
+
+      const result = await this.callToolFn(tool.name, tool.serverId, args);
+      if (!result.isError && result.success) {
+        this.runtimeDescribeSessionCache.set(tool.serverId, {
+          cacheKey,
+          result,
+        });
+      } else {
+        this.runtimeDescribeSessionCache.delete(tool.serverId);
+      }
+      return result;
     }
 
     return this.callToolFn(tool.name, tool.serverId, args);

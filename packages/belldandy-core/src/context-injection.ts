@@ -43,6 +43,16 @@ type RecentTaskSummaryLike = {
   matchReasons?: string[];
 };
 
+type RecentToolResultLike = {
+  toolName?: string;
+  target?: string;
+  summary?: string;
+  contentPreview?: string;
+  content?: string;
+  args?: Record<string, unknown>;
+  createdAt?: number;
+};
+
 type AutoRecallMemoryLike = {
   id?: string;
   sourcePath: string;
@@ -169,6 +179,10 @@ export type ContextInjectionMemoryProvider = {
     query?: string;
     filter?: { agentId?: string };
   }): TaskWorkShortcutItem | null;
+  getRecentToolResults?(input: {
+    conversationId?: string;
+    limit: number;
+  }): RecentToolResultLike[];
   findSimilarPastWork?(input: {
     query: string;
     limit: number;
@@ -312,7 +326,11 @@ export async function buildContextInjectionPrelude(
               filter: taskFilter,
             })
             : [];
-          const detailLines = buildResumeDetailLines(resumeContext, similarItems, deduper);
+          const recentToolResults = memoryManager.getRecentToolResults?.({
+            conversationId: ctx.sessionKey,
+            limit: 8,
+          }) ?? [];
+          const detailLines = buildResumeDetailLines(resumeContext, similarItems, deduper, recentToolResults);
           if (detailLines.length > 0) {
             const block = `<resume-details hint="以下是续做模式下的二级展开，仅在当前输入明显是在继续/恢复历史工作时提供。">\n${detailLines.join("\n")}\n</resume-details>`;
             blocks.push(block);
@@ -804,6 +822,7 @@ function buildResumeDetailLines(
   resumeContext: TaskWorkShortcutItem | null,
   similarItems: TaskWorkShortcutItem[],
   deduper: ReturnType<typeof createContextInjectionDeduper>,
+  recentToolResults: RecentToolResultLike[],
 ): string[] {
   const lines: string[] = [];
 
@@ -845,7 +864,94 @@ function buildResumeDetailLines(
     if (tagged) lines.push(tagged);
   }
 
+  const starweaverRecentLine = buildStarweaverRecentToolResultLine(recentToolResults);
+  if (starweaverRecentLine) {
+    lines.push(starweaverRecentLine);
+  }
+
   return lines;
+}
+
+const STARWEAVER_HIGH_SIGNAL_TOOL_NAMES = new Set([
+  "mcp_starweaver_central_starweaver_runtime_describe",
+  "mcp_starweaver_central_starweaver_wake_signals_peek",
+  "mcp_starweaver_central_starweaver_command_peek",
+  "mcp_starweaver_central_starweaver_agent_delivery_peek",
+]);
+
+function buildStarweaverRecentToolResultLine(results: RecentToolResultLike[]): string | null {
+  const match = results.find((item) => STARWEAVER_HIGH_SIGNAL_TOOL_NAMES.has(String(item.toolName ?? "")));
+  if (!match?.toolName) {
+    return null;
+  }
+  const scope = formatStarweaverScope(match.args);
+  const argsTemplate = formatStarweaverArgsTemplate(match.args);
+  const summary = truncateTaskContextPart(
+    readStarweaverToolResultSummary(match),
+    160,
+  );
+  const bodyParts = [
+    `tool=${match.toolName}`,
+    scope,
+    argsTemplate,
+    summary ? `result=${summary}` : "",
+  ].filter(Boolean);
+  if (bodyParts.length === 0) {
+    return null;
+  }
+  return buildTaggedLine({
+    time: typeof match.createdAt === "number" ? formatLocalTimeLabel(match.createdAt) : undefined,
+    source: "resume-tool-result",
+    body: bodyParts.join("; "),
+  });
+}
+
+function formatStarweaverScope(args: Record<string, unknown> | undefined): string {
+  if (!args || typeof args !== "object") {
+    return "";
+  }
+  const actorId = typeof args.actorId === "string" ? args.actorId.trim() : "";
+  const sessionId = typeof args.sessionId === "string" ? args.sessionId.trim() : "";
+  const gameId = typeof args.gameId === "string" ? args.gameId.trim() : "";
+  const parts = [
+    actorId ? `actorId=${actorId}` : "",
+    sessionId ? `sessionId=${sessionId}` : "",
+    gameId ? `gameId=${gameId}` : "",
+  ].filter(Boolean);
+  return parts.join(", ");
+}
+
+function formatStarweaverArgsTemplate(args: Record<string, unknown> | undefined): string {
+  if (!args || typeof args !== "object") {
+    return "";
+  }
+  const preferredKeys = ["queueId", "actorId", "sessionId", "gameId", "limit"];
+  const parts = preferredKeys
+    .map((key) => {
+      const value = args[key];
+      if (typeof value === "string" && value.trim()) {
+        return `${key}=${value.trim()}`;
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return `${key}=${String(value)}`;
+      }
+      return "";
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? `args=${parts.join(", ")}` : "";
+}
+
+function readStarweaverToolResultSummary(item: RecentToolResultLike): string {
+  const preview = typeof item.contentPreview === "string" ? item.contentPreview.trim() : "";
+  if (preview) {
+    return preview.replace(/\s+/g, " ");
+  }
+  const summary = typeof item.summary === "string" ? item.summary.trim() : "";
+  if (summary) {
+    return summary.replace(/\s+/g, " ");
+  }
+  const content = typeof item.content === "string" ? item.content.trim() : "";
+  return content.replace(/\s+/g, " ");
 }
 
 function buildLegacyRecentTaskLines(

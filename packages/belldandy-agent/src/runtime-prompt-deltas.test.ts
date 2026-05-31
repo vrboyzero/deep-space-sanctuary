@@ -173,6 +173,47 @@ describe("tool result prompt deltas", () => {
     expect(delta?.text).toContain("Verify the effect before claiming success");
   });
 
+  it("builds a short follow-up delta after successful tool_search loads exact deferred schemas", () => {
+    const deltas = buildToolResultPromptDeltas({
+      result: {
+        id: "call-tool-search-1",
+        name: "tool_search",
+        success: true,
+        output: [
+          "Loaded deferred tools for this conversation:",
+          "- mcp_starweaver_central_starweaver_runtime_describe",
+          "- mcp_starweaver_central_starweaver_wake_signals_peek",
+          "",
+          "Currently loaded deferred tools in this conversation:",
+          "- mcp_starweaver_central_starweaver_runtime_describe",
+          "- mcp_starweaver_central_starweaver_wake_signals_peek",
+        ].join("\n"),
+      },
+    });
+
+    const followUpDelta = deltas.find((delta) => delta.deltaType === "tool-search-follow-up");
+    expect(followUpDelta).toBeDefined();
+    expect(followUpDelta?.text).toContain("exact deferred schemas are already loaded");
+    expect(followUpDelta?.text).toContain("mcp_starweaver_central_starweaver_runtime_describe");
+    expect(followUpDelta?.text).toContain("Do not repeat a broad `tool_search`");
+  });
+
+  it("does not build tool_search follow-up delta when no deferred schemas are loaded", () => {
+    const deltas = buildToolResultPromptDeltas({
+      result: {
+        id: "call-tool-search-2",
+        name: "tool_search",
+        success: true,
+        output: [
+          "Currently loaded deferred tools in this conversation:",
+          "- (none)",
+        ].join("\n"),
+      },
+    });
+
+    expect(deltas.find((delta) => delta.deltaType === "tool-search-follow-up")).toBeUndefined();
+  });
+
   it("builds a delegation result review delta from structured delegation arguments", () => {
     const delta = buildToolPostVerificationPromptDelta({
       toolCallId: "call-3",

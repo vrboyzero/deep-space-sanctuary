@@ -544,6 +544,18 @@ describe("buildContextInjectionPrelude", () => {
         },
         recentActivityTitles: ["已执行工具 apply_patch", "已变更文件：packages/belldandy-core/src/context-injection.ts"],
       }),
+      getRecentToolResults: () => [
+        {
+          toolName: "mcp_starweaver_central_starweaver_command_peek",
+          contentPreview: "{ \"queue\": null, \"messages\": [] }",
+          args: {
+            actorId: "agent-belldandy",
+            sessionId: "perf-test-20260531",
+            gameId: "star-sanctuary",
+          },
+          createdAt: Date.parse("2026-04-17T10:21:00.000Z"),
+        },
+      ],
       findSimilarPastWork: () => [
         {
           taskId: "task-step-2",
@@ -599,6 +611,10 @@ describe("buildContextInjectionPrelude", () => {
     expect(result?.prependContext).toContain("<resume-details");
     expect(result?.prependContext).toContain("resume-fact");
     expect(result?.prependContext).toContain("resume-activity");
+    expect(result?.prependContext).toContain("resume-tool-result");
+    expect(result?.prependContext).toContain("tool=mcp_starweaver_central_starweaver_command_peek");
+    expect(result?.prependContext).toContain("sessionId=perf-test-20260531");
+    expect(result?.prependContext).toContain("args=actorId=agent-belldandy, sessionId=perf-test-20260531, gameId=star-sanctuary");
     expect(result?.prependContext).toContain("similar-work");
     expect(result?.prependContext).toContain("matched=标题/目标, 当前停点");
     expect(result?.deltas?.map((delta) => delta.id)).toEqual(expect.arrayContaining([
@@ -874,6 +890,161 @@ describe("buildContextInjectionPrelude", () => {
       memoryManager.close();
       await fs.rm(rootDir, { recursive: true, force: true }).catch(() => {});
     }
+  });
+
+  it("does not inject non-StarWeaver recent tool results into resume details", async () => {
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => ({
+        taskId: "task-step-3",
+        conversationId: "conv-step-3",
+        title: "推进 Step 3 的检索短路径",
+        status: "partial",
+        source: "chat",
+        startedAt: "2026-04-17T10:00:00.000Z",
+        updatedAt: "2026-04-17T10:20:00.000Z",
+        toolNames: ["apply_patch"],
+        artifactPaths: ["packages/belldandy-core/src/context-injection.ts"],
+        workRecap: {
+          taskId: "task-step-3",
+          conversationId: "conv-step-3",
+          sessionKey: "conv-context-injection-resume",
+          headline: "已确认 5 条执行事实；当前停在：已接好 manager 与 skill，待补 context injection。",
+          confirmedFacts: ["已新增 recent_work"],
+          derivedFromActivityIds: ["act-step3-1"],
+          updatedAt: "2026-04-17T10:20:00.000Z",
+        },
+        resumeContext: {
+          taskId: "task-step-3",
+          conversationId: "conv-step-3",
+          sessionKey: "conv-context-injection-resume",
+          currentStopPoint: "已接好 manager 与 skill，待补 context injection。",
+          nextStep: "继续补默认注入摘要与展开层级。",
+          derivedFromActivityIds: ["act-step3-1"],
+          updatedAt: "2026-04-17T10:20:00.000Z",
+        },
+        recentActivityTitles: ["已执行工具 apply_patch"],
+      }),
+      getRecentToolResults: () => [
+        {
+          toolName: "apply_patch",
+          contentPreview: "patched file",
+          createdAt: Date.parse("2026-04-17T10:21:00.000Z"),
+        },
+      ],
+      findSimilarPastWork: () => [],
+      search: async () => [],
+    };
+
+    const result = await buildContextInjectionPrelude(
+      memoryManager,
+      {
+        prompt: "继续处理 Step 3，上次做到哪了？",
+        userInput: "继续处理 Step 3，上次做到哪了？",
+        messages: [],
+      },
+      {
+        agentId: "default",
+        sessionKey: "conv-context-injection-resume",
+      },
+      {
+        contextInjectionEnabled: true,
+        contextInjectionLimit: 5,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 3,
+        contextInjectionAllowedCategories: ["decision", "fact"],
+        autoRecallEnabled: false,
+        autoRecallLimit: 5,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 50,
+      },
+    );
+
+    expect(result?.prependContext).toContain("<resume-details");
+    expect(result?.prependContext).not.toContain("resume-tool-result");
+    expect(result?.prependContext).not.toContain("tool=apply_patch");
+  });
+
+  it("does not inject empty StarWeaver argument templates into resume details", async () => {
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => ({
+        taskId: "task-step-3",
+        conversationId: "conv-step-3",
+        title: "推进 Step 3 的检索短路径",
+        status: "partial",
+        source: "chat",
+        startedAt: "2026-04-17T10:00:00.000Z",
+        updatedAt: "2026-04-17T10:20:00.000Z",
+        toolNames: ["apply_patch"],
+        artifactPaths: ["packages/belldandy-core/src/context-injection.ts"],
+        workRecap: {
+          taskId: "task-step-3",
+          conversationId: "conv-step-3",
+          sessionKey: "conv-context-injection-resume",
+          headline: "已确认 5 条执行事实；当前停在：已接好 manager 与 skill，待补 context injection。",
+          confirmedFacts: ["已新增 recent_work"],
+          derivedFromActivityIds: ["act-step3-1"],
+          updatedAt: "2026-04-17T10:20:00.000Z",
+        },
+        resumeContext: {
+          taskId: "task-step-3",
+          conversationId: "conv-step-3",
+          sessionKey: "conv-context-injection-resume",
+          currentStopPoint: "已接好 manager 与 skill，待补 context injection。",
+          nextStep: "继续补默认注入摘要与展开层级。",
+          derivedFromActivityIds: ["act-step3-1"],
+          updatedAt: "2026-04-17T10:20:00.000Z",
+        },
+        recentActivityTitles: ["已执行工具 apply_patch"],
+      }),
+      getRecentToolResults: () => [
+        {
+          toolName: "mcp_starweaver_central_starweaver_wake_signals_peek",
+          contentPreview: "{ \"queue\": null, \"signals\": [] }",
+          args: {
+            queueId: "",
+            actorId: "",
+            sessionId: "",
+            gameId: "",
+          },
+          createdAt: Date.parse("2026-04-17T10:21:00.000Z"),
+        },
+      ],
+      findSimilarPastWork: () => [],
+      search: async () => [],
+    };
+
+    const result = await buildContextInjectionPrelude(
+      memoryManager,
+      {
+        prompt: "继续处理 Step 3，上次做到哪了？",
+        userInput: "继续处理 Step 3，上次做到哪了？",
+        messages: [],
+      },
+      {
+        agentId: "default",
+        sessionKey: "conv-context-injection-resume",
+      },
+      {
+        contextInjectionEnabled: true,
+        contextInjectionLimit: 5,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 3,
+        contextInjectionAllowedCategories: ["decision", "fact"],
+        autoRecallEnabled: false,
+        autoRecallLimit: 5,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 50,
+      },
+    );
+
+    expect(result?.prependContext).toContain("resume-tool-result");
+    expect(result?.prependContext).not.toContain("args=");
   });
 });
 
