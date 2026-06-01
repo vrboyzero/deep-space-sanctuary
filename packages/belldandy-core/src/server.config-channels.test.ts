@@ -1097,6 +1097,66 @@ test("config.update persists assistant external delivery preference", async () =
   }
 });
 
+test("config.update persists starweaver active notify settings", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const envDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-env-"));
+  await fs.promises.writeFile(path.join(envDir, ".env"), "", "utf-8");
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    envDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "config-update-starweaver-active-notify",
+      method: "config.update",
+      params: {
+        updates: {
+          BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "true",
+          BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
+        },
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-starweaver-active-notify"));
+    const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-starweaver-active-notify");
+    expect(updateRes.ok).toBe(true);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "config-read-starweaver-active-notify",
+      method: "config.read",
+      params: {},
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-read-starweaver-active-notify"));
+    const readRes = frames.find((f) => f.type === "res" && f.id === "config-read-starweaver-active-notify");
+    expect(readRes.ok).toBe(true);
+    expect(readRes.payload?.config?.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS).toBe("7000");
+
+    const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
+    expect(envLocalContent).toContain('BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED="true"');
+    expect(envLocalContent).toContain('BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS="7000"');
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(envDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("config.update treats unchanged fields as no-op and still applies governance-only runtime update for full-form submissions", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const envDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-env-"));

@@ -85,6 +85,7 @@ import {
   resolveEmailInboundCheckpointStorePath,
 } from "../email-inbound-checkpoint-store.js";
 import { startImapPollingEmailInboundRuntime } from "../email-inbound-imap-runtime.js";
+import { startStarweaverActiveNotifyRuntime } from "../starweaver-active-notify-runtime.js";
 
 import {
   OpenAIChatAgent,
@@ -860,6 +861,7 @@ let backgroundRecoveryRuntime: BackgroundRecoveryRuntime | undefined;
 let heartbeatRunner: HeartbeatRunnerHandle | undefined;
 let cronSchedulerHandle: CronSchedulerHandle | undefined;
 let emailInboundRuntimeHandle: Awaited<ReturnType<typeof startImapPollingEmailInboundRuntime>> | undefined;
+let starweaverActiveNotifyRuntimeHandle: Awaited<ReturnType<typeof startStarweaverActiveNotifyRuntime>> | undefined;
 
 // 延迟绑定 broadcast：工具注册时 server 尚未创建，执行时才调用
   let serverBroadcast: ((msg: unknown) => void) | undefined;
@@ -4276,6 +4278,13 @@ emailInboundRuntimeHandle = await startImapPollingEmailInboundRuntime({
   auditStore: emailInboundAuditStore,
   reminderStore: emailFollowUpReminderStore,
   broadcastEvent: (frame) => server.broadcast(frame),
+  logger,
+});
+
+starweaverActiveNotifyRuntimeHandle = await startStarweaverActiveNotifyRuntime({
+  toolExecutor,
+  isBusy: () => server.isResidentAgentBusy("default"),
+  autoRunResidentAgent: (input) => server.autoRunResidentAgent(input),
   logger,
 });
 

@@ -1574,6 +1574,10 @@ export async function handleSystemDoctorMethod(
           process.env.BELLDANDY_ASSISTANT_EXTERNAL_DELIVERY_PREFERENCE
             ?? DEFAULT_ASSISTANT_EXTERNAL_DELIVERY_PREFERENCE,
         ),
+        starweaverActiveNotifyEnabled:
+          String(process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED ?? "false").trim().toLowerCase() === "true",
+        starweaverActiveNotifyPollIntervalMs:
+          Number(process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS ?? "5000"),
       });
       return {
         delegationObservability: resolvedDelegationObservability,

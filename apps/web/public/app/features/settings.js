@@ -86,6 +86,8 @@ export function createSettingsController({
     cfgHeartbeat,
     cfgHeartbeatEnabled,
     cfgHeartbeatActiveHours,
+    cfgStarweaverActiveNotifyEnabled,
+    cfgStarweaverActiveNotifyPollIntervalMs,
     cfgBrowserRelayEnabled,
     cfgRelayPort,
     cfgMcpEnabled,
@@ -402,6 +404,8 @@ export function createSettingsController({
     cfgHeartbeatEnabled,
     cfgHeartbeatActiveHours,
     cfgCronEnabled,
+    cfgStarweaverActiveNotifyEnabled,
+    cfgStarweaverActiveNotifyPollIntervalMs,
   };
   const aliyunApiKeyTargets = [
     "DASHSCOPE_API_KEY",
@@ -518,6 +522,8 @@ export function createSettingsController({
     cfgAssistantExternalDeliveryPreference,
     cfgHeartbeat,
     cfgHeartbeatActiveHours,
+    cfgStarweaverActiveNotifyEnabled,
+    cfgStarweaverActiveNotifyPollIntervalMs,
   ]) {
     if (!inputEl || typeof inputEl.addEventListener !== "function") continue;
     inputEl.addEventListener("change", () => {
@@ -1987,6 +1993,8 @@ export function createSettingsController({
       cfgHeartbeatEnabled,
       cfgHeartbeatActiveHours,
       cfgCronEnabled,
+      cfgStarweaverActiveNotifyEnabled,
+      cfgStarweaverActiveNotifyPollIntervalMs,
     }, {
       applyEnabledDefaults: true,
     }));
@@ -2356,6 +2364,10 @@ export function createSettingsController({
       id: makeId(),
       method: "config.update",
       params: { updates },
+    });
+    console.info("[settings] config.update submitted", {
+      starweaverActiveNotifyEnabled: updates["BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED"],
+      starweaverActiveNotifyPollIntervalMs: updates["BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS"],
     });
 
     if (res && res.ok) {

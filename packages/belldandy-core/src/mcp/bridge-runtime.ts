@@ -3,6 +3,10 @@ import type { MCPRuntimeCapabilities } from "@belldandy/skills";
 import { formatMcpToolError } from "./error-format.js";
 
 function formatMcpBridgeResultContent(result: Awaited<ReturnType<MCPManager["callTool"]>>): unknown {
+  if (result.structuredContent !== undefined) {
+    return result.structuredContent;
+  }
+
   if (!result.content || result.content.length === 0) {
     return null;
   }

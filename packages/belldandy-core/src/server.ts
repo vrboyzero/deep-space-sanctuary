@@ -115,6 +115,7 @@ import type { PluginRegistry } from "@belldandy/plugins";
 import type { WebhookConfig, IdempotencyManager } from "./webhook/index.js";
 import type { GoalManager } from "./goals/manager.js";
 import { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
+import { autoRunResidentAgent as executeResidentAutoRun } from "./resident-auto-run.js";
 import { handleAgentsSystemMethod } from "./server-methods/agents-system.js";
 import { handleCronRuntimeMethod } from "./server-methods/cron-runtime.js";
 import { handleModelsConfigMethod } from "./server-methods/models-config.js";
@@ -335,6 +336,19 @@ export type GatewayServer = {
   host: string;
   close: () => Promise<void>;
   broadcast: (frame: GatewayEventFrame) => void;
+  isResidentAgentBusy: (agentId?: string) => boolean;
+  autoRunResidentAgent: (input: {
+    agentId?: string;
+    conversationId?: string;
+    text: string;
+    visibleReminder?: string;
+    skipRun?: boolean;
+    userUuid?: string;
+    requestChannel?: "gateway";
+  }) => Promise<{
+    conversationId: string;
+    runId: string;
+  }>;
   resolveDreamRuntime: (agentId?: string) => DreamRuntime | null;
   resolveDreamDefaultConversationId: (agentId?: string) => string;
   requestDurableExtractionFromDigest: (input: {
@@ -1358,6 +1372,24 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     });
   };
 
+  const autoRunResidentAgent: GatewayServer["autoRunResidentAgent"] = async (input) => {
+    return executeResidentAutoRun({
+      ...input,
+      createAgent: opts.agentFactory ?? (() => new MockAgent()),
+      agentRegistry: opts.agentRegistry,
+      conversationStore,
+      conversationRunRegistry,
+      residentAgentRuntime,
+      broadcast: broadcastEvent,
+      log,
+    });
+  };
+
+  const isResidentAgentBusy: GatewayServer["isResidentAgentBusy"] = (agentId) => {
+    const runtime = residentAgentRuntime.get(agentId);
+    return runtime.status === "running" || runtime.status === "background";
+  };
+
   return {
     port,
     host,
@@ -1391,6 +1423,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       await memoryUsageAccounting.flush();
     },
     broadcast: broadcastEvent,
+    isResidentAgentBusy,
+    autoRunResidentAgent,
     resolveDreamRuntime,
     resolveDreamDefaultConversationId,
     requestDurableExtractionFromDigest,

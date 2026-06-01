@@ -190,6 +190,10 @@ export function getMCPTools(): Tool[] {
         );
       }
 
+      if (result.structuredContent !== undefined) {
+        return result.structuredContent;
+      }
+
       // 提取结果内容
       if (!result.content || result.content.length === 0) {
         return null;

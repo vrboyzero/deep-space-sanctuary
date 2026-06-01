@@ -286,6 +286,8 @@ export const APP_DOM_REFS = {
   cfgHeartbeat: byId("cfgHeartbeat"),
   cfgHeartbeatEnabled: byId("cfgHeartbeatEnabled"),
   cfgHeartbeatActiveHours: byId("cfgHeartbeatActiveHours"),
+  cfgStarweaverActiveNotifyEnabled: byId("cfgStarweaverActiveNotifyEnabled"),
+  cfgStarweaverActiveNotifyPollIntervalMs: byId("cfgStarweaverActiveNotifyPollIntervalMs"),
   cfgBrowserRelayEnabled: byId("cfgBrowserRelayEnabled"),
   cfgRelayPort: byId("cfgRelayPort"),
   cfgMcpEnabled: byId("cfgMcpEnabled"),

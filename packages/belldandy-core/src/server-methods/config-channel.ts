@@ -65,6 +65,8 @@ const SAFE_UPDATE_KEYS = new Set([
   "BELLDANDY_ASSISTANT_MODE_ENABLED",
   "BELLDANDY_HEARTBEAT_ENABLED", "BELLDANDY_HEARTBEAT_INTERVAL",
   "BELLDANDY_HEARTBEAT_ACTIVE_HOURS", "BELLDANDY_AGENT_TIMEOUT_MS",
+  "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED",
+  "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS",
   "BELLDANDY_OPENAI_STREAM", "BELLDANDY_MEMORY_ENABLED",
   "BELLDANDY_AGENT_PROTOCOL",
   "BELLDANDY_VIDEO_FILE_API_URL", "BELLDANDY_VIDEO_FILE_API_KEY",
@@ -289,6 +291,25 @@ export async function handleConfigChannelMethod(
         if (normalizeConfigValue(currentConfig[key]) !== normalizeConfigValue(value)) {
           effectiveUpdates[key] = value;
         }
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(updates, "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED")
+        || Object.prototype.hasOwnProperty.call(updates, "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS")
+      ) {
+        console.info("[config.update] starweaver-active-notify", {
+          received: {
+            enabled: updates.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED,
+            pollIntervalMs: updates.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS,
+          },
+          current: {
+            enabled: currentConfig.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED ?? "",
+            pollIntervalMs: currentConfig.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS ?? "",
+          },
+          effective: {
+            enabled: effectiveUpdates.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED ?? "",
+            pollIntervalMs: effectiveUpdates.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS ?? "",
+          },
+        });
       }
       const changedKeys = Object.keys(effectiveUpdates);
       const hotReloadApplied = areAllConfigKeysHotReload(changedKeys);

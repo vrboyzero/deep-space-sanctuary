@@ -4,6 +4,7 @@ function readString(config, key) {
 
 export const DEFAULT_ASSISTANT_MODE_HEARTBEAT_INTERVAL = "30m";
 export const DEFAULT_ASSISTANT_EXTERNAL_DELIVERY_PREFERENCE = "feishu,qq,community,discord";
+export const DEFAULT_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS = "5000";
 export const ASSISTANT_MODE_PRESET_CUSTOM = "custom";
 export const ASSISTANT_MODE_PRESET_CONSERVATIVE = "conservative";
 export const ASSISTANT_MODE_PRESET_STANDARD = "standard";
@@ -66,6 +67,10 @@ function normalizePresetComparableSettings(settings = {}) {
     heartbeatEnabled: settings.heartbeatEnabled === true,
     heartbeatActiveHours: String(settings.heartbeatActiveHours || "").trim(),
     cronEnabled: settings.cronEnabled === true,
+    starweaverActiveNotifyEnabled: settings.starweaverActiveNotifyEnabled === true,
+    starweaverActiveNotifyPollIntervalMs:
+      String(settings.starweaverActiveNotifyPollIntervalMs || "").trim()
+      || DEFAULT_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS,
   };
 }
 
@@ -91,6 +96,11 @@ export function readAssistantModeSettingsConfig(config = {}) {
     heartbeatEnabled,
     heartbeatActiveHours: readString(config, "BELLDANDY_HEARTBEAT_ACTIVE_HOURS"),
     cronEnabled,
+    starweaverActiveNotifyEnabled:
+      readString(config, "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED") === "true",
+    starweaverActiveNotifyPollIntervalMs:
+      readString(config, "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS")
+      || DEFAULT_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS,
   };
 }
 
@@ -116,6 +126,13 @@ export function applyAssistantModeSettingsConfig(refs, config = {}) {
   }
   if (refs?.cfgCronEnabled) {
     refs.cfgCronEnabled.checked = settings.cronEnabled;
+  }
+  if (refs?.cfgStarweaverActiveNotifyEnabled) {
+    refs.cfgStarweaverActiveNotifyEnabled.checked = settings.starweaverActiveNotifyEnabled;
+  }
+  if (refs?.cfgStarweaverActiveNotifyPollIntervalMs) {
+    refs.cfgStarweaverActiveNotifyPollIntervalMs.value =
+      settings.starweaverActiveNotifyPollIntervalMs;
   }
   return settings;
 }
@@ -146,6 +163,11 @@ export function collectAssistantModeSettingsUpdates(refs, options = {}) {
     BELLDANDY_HEARTBEAT_ENABLED: heartbeatEnabled ? "true" : "false",
     BELLDANDY_HEARTBEAT_ACTIVE_HOURS: refs?.cfgHeartbeatActiveHours?.value?.trim() || "",
     BELLDANDY_CRON_ENABLED: cronEnabled ? "true" : "false",
+    BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED:
+      refs?.cfgStarweaverActiveNotifyEnabled?.checked ? "true" : "false",
+    BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS:
+      refs?.cfgStarweaverActiveNotifyPollIntervalMs?.value?.trim()
+      || DEFAULT_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS,
   };
 }
 
@@ -198,6 +220,13 @@ export function applyAssistantModePreset(refs, presetKey) {
   }
   if (refs?.cfgCronEnabled) {
     refs.cfgCronEnabled.checked = preset.cronEnabled;
+  }
+  if (refs?.cfgStarweaverActiveNotifyEnabled) {
+    refs.cfgStarweaverActiveNotifyEnabled.checked = false;
+  }
+  if (refs?.cfgStarweaverActiveNotifyPollIntervalMs) {
+    refs.cfgStarweaverActiveNotifyPollIntervalMs.value =
+      DEFAULT_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS;
   }
   return readAssistantModeSettingsFromRefs(refs);
 }

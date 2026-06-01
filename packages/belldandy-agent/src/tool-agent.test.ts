@@ -1363,6 +1363,113 @@ describe("compaction observability hooks", () => {
     expect(recent[0]?.args).toBeUndefined();
   });
 
+  it("runs starweaver active notify preflight when enabled and starweaver tools are available", async () => {
+    const previousEnabled = process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED;
+    const previousInterval = process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS;
+    process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED = "true";
+    process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS = "1000";
+
+    try {
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(createJsonResponse({
+          choices: [{
+            message: {
+              content: "done",
+            },
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }));
+
+      const execute = vi.fn(async (request) => {
+        if (request.name === "mcp_starweaver_central_agent_wake_notifications") {
+          return {
+            id: request.id,
+            name: request.name,
+            success: true,
+            output: JSON.stringify({
+              items: [{
+                recommendedPeek: "command_peek",
+                signalKind: "command_available",
+                actorId: "actor.player",
+                sessionId: "session-actor.player",
+                gameId: "star-sanctuary-web-verify",
+              }],
+            }),
+            durationMs: 0,
+          };
+        }
+        if (request.name === "mcp_starweaver_central_starweaver_command_peek") {
+          return {
+            id: request.id,
+            name: request.name,
+            success: true,
+            output: "{\"messages\":[{\"text\":\"请靠近植物。\"}]}",
+            durationMs: 0,
+          };
+        }
+        return {
+          id: request.id,
+          name: request.name,
+          success: true,
+          output: "",
+          durationMs: 0,
+        };
+      });
+
+      const conversationStore = new ConversationStore();
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "test-key",
+        model: "gpt-test",
+        toolExecutor: createToolExecutor({
+          getDefinitions: () => [
+            {
+              type: "function" as const,
+              function: {
+                name: "mcp_starweaver_central_agent_wake_notifications",
+                description: "starweaver notifications",
+                parameters: { type: "object", properties: {} },
+              },
+            },
+            {
+              type: "function" as const,
+              function: {
+                name: "mcp_starweaver_central_starweaver_command_peek",
+                description: "starweaver command peek",
+                parameters: { type: "object", properties: {} },
+              },
+            },
+          ],
+          execute,
+        }),
+        conversationStore,
+      });
+
+      await collectItems(agent.run({
+        conversationId: "conv-starweaver-active-notify",
+        text: "继续",
+      }));
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[0][0].name).toBe("mcp_starweaver_central_agent_wake_notifications");
+      expect(execute.mock.calls[1][0].name).toBe("mcp_starweaver_central_starweaver_command_peek");
+      const history = conversationStore.getHistory("conv-starweaver-active-notify");
+      expect(history.some((item) => item.role === "assistant" && item.content.includes("StarWeaver 有新的主动提示"))).toBe(true);
+    } finally {
+      if (typeof previousEnabled === "string") {
+        process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED = previousEnabled;
+      } else {
+        delete process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED;
+      }
+      if (typeof previousInterval === "string") {
+        process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS = previousInterval;
+      } else {
+        delete process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS;
+      }
+    }
+  });
+
   it("skips loop compaction when the shared circuit breaker is open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => createJsonResponse({
       choices: [{

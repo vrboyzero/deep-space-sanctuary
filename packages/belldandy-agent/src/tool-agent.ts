@@ -177,6 +177,19 @@ type ToolCallExecutionTrace = {
   failureKind?: ToolFailureKind;
 };
 
+type StarweaverActiveNotifySummaryItem = {
+  recommendedPeek?: string;
+  signalKind?: string;
+  actorId?: string;
+  sessionId?: string;
+  gameId?: string;
+};
+
+type StarweaverVisibleNotifyPayload = {
+  notificationItems: StarweaverActiveNotifySummaryItem[];
+  prelude?: string;
+};
+
 type EffectiveSystemPromptState = {
   text: string;
   truncationReason?: JsonObject;
@@ -323,6 +336,85 @@ export function compactReasoningContentForHistory(
 
 function estimateMessageContentTokens(content: unknown, tokenEstimateContext?: TokenEstimateContext): number {
   return estimateTokens(contentToTokenEstimateString(content) ?? "", tokenEstimateContext);
+}
+
+function readEnvFlag(name: string): boolean {
+  return String(process.env[name] ?? "false").trim().toLowerCase() === "true";
+}
+
+function readEnvPositiveInt(name: string, fallback: number): number {
+  const parsed = Number(process.env[name] ?? "");
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function parseStarweaverNotificationItems(output: string): StarweaverActiveNotifySummaryItem[] {
+  const parsed = extractJsonObject(output);
+  if (!parsed) {
+    return [];
+  }
+  const items = Array.isArray(parsed.items) ? parsed.items : [];
+  return items
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      recommendedPeek:
+        typeof item.recommendedPeek === "string" ? item.recommendedPeek : undefined,
+      signalKind: typeof item.signalKind === "string" ? item.signalKind : undefined,
+      actorId: typeof item.actorId === "string" ? item.actorId : undefined,
+      sessionId: typeof item.sessionId === "string" ? item.sessionId : undefined,
+      gameId: typeof item.gameId === "string" ? item.gameId : undefined,
+    }));
+}
+
+function buildStarweaverActiveNotifyPrelude(input: {
+  notificationItems: StarweaverActiveNotifySummaryItem[];
+  peeks: Array<{ toolName: string; output: string }>;
+}): string | undefined {
+  if (input.notificationItems.length === 0 && input.peeks.length === 0) {
+    return undefined;
+  }
+
+  const lines: string[] = [
+    "StarWeaver active notify preflight:",
+  ];
+
+  if (input.notificationItems.length > 0) {
+    lines.push(
+      ...input.notificationItems.slice(0, 3).map((item, index) => {
+        const parts = [
+          `#${index + 1}`,
+          item.signalKind ? `signal=${item.signalKind}` : "",
+          item.recommendedPeek ? `peek=${item.recommendedPeek}` : "",
+          item.actorId ? `actor=${item.actorId}` : "",
+          item.sessionId ? `session=${item.sessionId}` : "",
+          item.gameId ? `game=${item.gameId}` : "",
+        ].filter(Boolean);
+        return `- ${parts.join(" ")}`;
+      }),
+    );
+  }
+
+  if (input.peeks.length > 0) {
+    lines.push(
+      ...input.peeks.map((item) => `- ${item.toolName}: ${item.output}`),
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function estimateAssistantHistoryOverhead(message: Message, tokenEstimateContext?: TokenEstimateContext): number {
@@ -883,6 +975,8 @@ function detectCrossToolThrash(
 
 export class ToolEnabledAgent implements BelldandyAgent {
   private conversationRunChains = new Map<string, Promise<void>>();
+  private starweaverActiveNotifyLastRunAt = new Map<string, number>();
+  private starweaverVisibleNotifyFingerprint = new Map<string, string>();
   private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
     Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
   private readonly failoverClient: FailoverClient;
@@ -1024,6 +1118,147 @@ export class ToolEnabledAgent implements BelldandyAgent {
     };
   }
 
+  private async runStarweaverActiveNotifyPreflight(input: {
+    conversationId: string;
+    agentId: string;
+    runtimeContext?: ToolExecutionRuntimeContext;
+  }): Promise<StarweaverVisibleNotifyPayload | undefined> {
+    if (!readEnvFlag("BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED")) {
+      return undefined;
+    }
+
+    const pollIntervalMs = readEnvPositiveInt(
+      "BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS",
+      5000,
+    );
+    const now = Date.now();
+    const lastRunAt = this.starweaverActiveNotifyLastRunAt.get(input.conversationId) ?? 0;
+    if (now - lastRunAt < pollIntervalMs) {
+      return undefined;
+    }
+
+    const definitions = this.opts.toolExecutor.getDefinitions(
+      input.agentId,
+      input.conversationId,
+      input.runtimeContext,
+    );
+    const toolNames = new Set(definitions.map((item) => item.function.name));
+    const notificationsToolName = "mcp_starweaver_central_agent_wake_notifications";
+    if (!toolNames.has(notificationsToolName)) {
+      return undefined;
+    }
+
+    const executePreflightTool = async (name: string, args: JsonObject = {}) =>
+      this.opts.toolExecutor.execute(
+        {
+          id: `starweaver-active-notify-${name}-${now}`,
+          name,
+          arguments: args,
+        },
+        input.conversationId,
+        input.agentId,
+        undefined,
+        undefined,
+        undefined,
+        input.runtimeContext,
+      );
+
+    const notificationsResult = await executePreflightTool(notificationsToolName, {
+      limit: 3,
+    });
+    if (!notificationsResult.success || !notificationsResult.output) {
+      return undefined;
+    }
+
+    const notificationItems = parseStarweaverNotificationItems(notificationsResult.output);
+    if (notificationItems.length === 0) {
+      this.starweaverActiveNotifyLastRunAt.set(input.conversationId, now);
+      return undefined;
+    }
+
+    const peekOutputs: Array<{ toolName: string; output: string }> = [];
+    for (const item of notificationItems) {
+      const mappedToolName =
+        item.recommendedPeek === "command_peek"
+          ? "mcp_starweaver_central_starweaver_command_peek"
+          : item.recommendedPeek === "agent_delivery_peek"
+            ? "mcp_starweaver_central_starweaver_agent_delivery_peek"
+            : item.recommendedPeek === "events_peek"
+              ? "mcp_starweaver_central_starweaver_events_peek"
+              : item.recommendedPeek === "wake_signals_peek"
+                ? "mcp_starweaver_central_starweaver_wake_signals_peek"
+                : undefined;
+      if (!mappedToolName || !toolNames.has(mappedToolName)) {
+        continue;
+      }
+
+      const peekResult = await executePreflightTool(mappedToolName, {
+        ...(item.actorId ? { actorId: item.actorId } : {}),
+        ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+        ...(item.gameId ? { gameId: item.gameId } : {}),
+      });
+      if (peekResult.success && peekResult.output) {
+        peekOutputs.push({
+          toolName: mappedToolName,
+          output: peekResult.output,
+        });
+      }
+    }
+
+    this.starweaverActiveNotifyLastRunAt.set(input.conversationId, now);
+    return {
+      notificationItems,
+      prelude: buildStarweaverActiveNotifyPrelude({
+        notificationItems,
+        peeks: peekOutputs,
+      }),
+    };
+  }
+
+  private maybeAppendStarweaverVisibleNotify(input: {
+    conversationId: string;
+    agentId: string;
+    payload: StarweaverVisibleNotifyPayload;
+  }): void {
+    const conversationStore = this.opts.conversationStore;
+    if (!conversationStore || input.payload.notificationItems.length === 0) {
+      return;
+    }
+
+    const fingerprint = JSON.stringify(
+      input.payload.notificationItems.map((item) => ({
+        signalKind: item.signalKind || "",
+        recommendedPeek: item.recommendedPeek || "",
+        actorId: item.actorId || "",
+        sessionId: item.sessionId || "",
+        gameId: item.gameId || "",
+      })),
+    );
+    if (this.starweaverVisibleNotifyFingerprint.get(input.conversationId) === fingerprint) {
+      return;
+    }
+
+    const lines = input.payload.notificationItems.slice(0, 3).map((item) => {
+      const signal = item.signalKind || "unknown_signal";
+      const peek = item.recommendedPeek || "manual_check";
+      const scope = [item.actorId, item.sessionId, item.gameId].filter(Boolean).join(" / ");
+      return scope
+        ? `- ${signal} -> ${peek} (${scope})`
+        : `- ${signal} -> ${peek}`;
+    });
+
+    const text = [
+      "StarWeaver 有新的主动提示，已在本轮开始前自动检查。",
+      ...lines,
+    ].join("\n");
+
+    conversationStore.addMessage(input.conversationId, "assistant", text, {
+      agentId: input.agentId,
+      channel: "webchat",
+    });
+    this.starweaverVisibleNotifyFingerprint.set(input.conversationId, fingerprint);
+  }
+
   async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
     const startTime = Date.now();
     const runtimeContext = readToolExecutionRuntimeContext(input.meta);
@@ -1094,6 +1329,33 @@ export class ToolEnabledAgent implements BelldandyAgent {
       if (isRunStopRequested(input.abortSignal)) {
         yield { type: "status", status: "stopped" };
         return;
+      }
+
+      try {
+        const starweaverNotify = await this.runStarweaverActiveNotifyPreflight({
+          conversationId: input.conversationId,
+          agentId: resolvedAgentId,
+          runtimeContext,
+        });
+        if (starweaverNotify?.prelude) {
+          input = applyPrependContextToInput(input, starweaverNotify.prelude);
+          prependContext = prependContext
+            ? `${prependContext}\n\n${starweaverNotify.prelude}`
+            : starweaverNotify.prelude;
+        }
+        if (starweaverNotify) {
+          this.maybeAppendStarweaverVisibleNotify({
+            conversationId: input.conversationId,
+            agentId: resolvedAgentId,
+            payload: starweaverNotify,
+          });
+        }
+      } catch (err) {
+        this.opts.logger?.warn?.("agent", "StarWeaver active notify preflight failed", {
+          conversationId: input.conversationId,
+          agentId: resolvedAgentId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
 
       yield { type: "status", status: "running" };

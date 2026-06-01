@@ -105,6 +105,8 @@ export type AssistantModeRuntimeReport = {
     heartbeatInterval: string;
     activeHours?: string;
     cronEnabled: boolean;
+    starweaverActiveNotifyEnabled: boolean;
+    starweaverActiveNotifyPollIntervalMs: number;
   };
   sources: {
     heartbeat: {
@@ -128,6 +130,10 @@ export type AssistantModeRuntimeReport = {
     residentChannel: true;
     externalDeliveryPreference: ExternalOutboundChannel[];
     confirmationRequired: boolean;
+  };
+  starweaver?: {
+    activeNotifyEnabled: boolean;
+    pollIntervalMs: number;
   };
   resident?: {
     totalCount: number;
@@ -593,6 +599,8 @@ export function buildAssistantModeRuntimeReport(input: {
   externalOutboundRequireConfirmation: boolean;
   externalDeliveryPreference?: ExternalOutboundChannel[];
   recentActionLimit?: number;
+  starweaverActiveNotifyEnabled?: boolean;
+  starweaverActiveNotifyPollIntervalMs?: number;
 }): AssistantModeRuntimeReport {
   const heartbeatInterval = normalizeString(input.heartbeatInterval) ?? "30m";
   const activeHours = normalizeString(input.heartbeatActiveHours);
@@ -609,6 +617,11 @@ export function buildAssistantModeRuntimeReport(input: {
     : enabled;
   const assistantModeMismatch = assistantModeSource === "explicit" && assistantModeEnabled !== enabled;
   const confirmationRequired = input.externalOutboundRuntime?.requireConfirmation ?? input.externalOutboundRequireConfirmation;
+  const starweaverActiveNotifyEnabled = input.starweaverActiveNotifyEnabled === true;
+  const starweaverActiveNotifyPollIntervalMs =
+    Number.isFinite(input.starweaverActiveNotifyPollIntervalMs)
+      ? Math.max(1000, Number(input.starweaverActiveNotifyPollIntervalMs))
+      : 5000;
   const externalDeliveryPreference = parseAssistantExternalDeliveryPreference(
     input.externalDeliveryPreference ?? DEFAULT_ASSISTANT_EXTERNAL_DELIVERY_PREFERENCE,
   );
@@ -687,6 +700,8 @@ export function buildAssistantModeRuntimeReport(input: {
       heartbeatInterval,
       ...(activeHours ? { activeHours } : {}),
       cronEnabled: input.cronEnabled,
+      starweaverActiveNotifyEnabled,
+      starweaverActiveNotifyPollIntervalMs,
     },
     sources: {
       heartbeat: {
@@ -714,6 +729,10 @@ export function buildAssistantModeRuntimeReport(input: {
       residentChannel: true,
       externalDeliveryPreference,
       confirmationRequired,
+    },
+    starweaver: {
+      activeNotifyEnabled: starweaverActiveNotifyEnabled,
+      pollIntervalMs: starweaverActiveNotifyPollIntervalMs,
     },
     ...(input.residentAgents?.summary
       ? {

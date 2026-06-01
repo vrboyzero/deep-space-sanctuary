@@ -1204,6 +1204,189 @@ test("resident agent memory managers use isolated sqlite files", async () => {
   }
 });
 
+test("gateway can auto-run resident agent with a visible reminder", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const registry = new AgentRegistry(() => new MockAgent());
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    agentFactory: () => ({
+      async *run(input) {
+        yield { type: "status" as const, status: "running" };
+        yield { type: "final" as const, text: `echo:${input.text}` };
+        yield { type: "status" as const, status: "done" };
+      },
+    }),
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const started = await server.autoRunResidentAgent({
+      text: "请处理新的 StarWeaver 唤醒信号",
+      visibleReminder: "StarWeaver 提醒：检测到新的唤醒信号，正在主动处理。",
+    });
+
+    expect(started.conversationId).toBe("agent:default:main");
+    expect(started.runId).toBeTruthy();
+
+    const conversationId = "agent:default:main";
+    const safeConversationId = toSafeConversationFileIdForTest(conversationId);
+    const rootFilePath = path.join(stateDir, "sessions", `${safeConversationId}.jsonl`);
+    await waitFor(() => fs.existsSync(rootFilePath));
+
+    await waitFor(() => frames.some((f) =>
+      f.type === "event"
+      && f.event === "chat.final"
+      && f.payload?.conversationId === conversationId
+      && f.payload?.text === "StarWeaver 提醒：检测到新的唤醒信号，正在主动处理。",
+    ));
+    await waitFor(() => frames.some((f) =>
+      f.type === "event"
+      && f.event === "chat.final"
+      && f.payload?.conversationId === conversationId
+      && f.payload?.text === "echo:请处理新的 StarWeaver 唤醒信号",
+    ));
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("resident busy tracks actual resident runs instead of websocket activity", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  let releaseRun: (() => void) | undefined;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => ({
+      async *run(input) {
+        yield { type: "status" as const, status: "running" };
+        await runGate;
+        yield { type: "final" as const, text: `done:${input.text}` };
+        yield { type: "status" as const, status: "done" };
+      },
+    }),
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    expect(server.isResidentAgentBusy("default")).toBe(false);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "resident-busy-run",
+      method: "message.send",
+      params: {
+        text: "busy now",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "resident-busy-run" && f.ok === true));
+    await waitFor(() => server.isResidentAgentBusy("default"));
+
+    releaseRun?.();
+
+    await waitFor(() => frames.some((f) =>
+      f.type === "event"
+      && f.event === "chat.final"
+      && f.payload?.conversationId === "agent:default:main"
+      && f.payload?.text === "done:busy now",
+    ));
+    await waitFor(() => server.isResidentAgentBusy("default") === false);
+  } finally {
+    releaseRun?.();
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("gateway can broadcast visible reminder into resident conversation without starting a run", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const registry = new AgentRegistry(() => new MockAgent());
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "primary",
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentRegistry: registry,
+    agentFactory: () => ({
+      async *run(input) {
+        yield { type: "status" as const, status: "running" };
+        yield { type: "final" as const, text: `echo:${input.text}` };
+        yield { type: "status" as const, status: "done" };
+      },
+    }),
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const started = await server.autoRunResidentAgent({
+      text: "should not run",
+      visibleReminder: "StarWeaver 提醒：仅广播提醒。",
+      skipRun: true,
+    });
+
+    expect(started.conversationId).toBe("agent:default:main");
+    expect(started.runId).toBe("");
+
+    await waitFor(() => frames.some((f) =>
+      f.type === "event"
+      && f.event === "chat.final"
+      && f.payload?.conversationId === "agent:default:main"
+      && f.payload?.text === "StarWeaver 提醒：仅广播提醒。",
+    ));
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("resident agent durable memories write into agent workspace memory directory", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const registry = new AgentRegistry(() => new MockAgent());

@@ -312,6 +312,8 @@ const {
   cfgHeartbeat,
   cfgHeartbeatEnabled,
   cfgHeartbeatActiveHours,
+  cfgStarweaverActiveNotifyEnabled,
+  cfgStarweaverActiveNotifyPollIntervalMs,
   cfgBrowserRelayEnabled,
   cfgRelayPort,
   cfgMcpEnabled,

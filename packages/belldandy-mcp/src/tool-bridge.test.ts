@@ -3,6 +3,45 @@ import { describe, expect, it } from "vitest";
 import { MCPToolBridge } from "./tool-bridge.js";
 
 describe("MCPToolBridge", () => {
+  it("returns structured content when MCP result has no content items", async () => {
+    const bridge = new MCPToolBridge(async () => ({
+      success: true,
+      isError: false,
+      structuredContent: {
+        sessions: [
+          {
+            sessionId: "session-actor.player",
+            gameId: "star-sanctuary-web-verify",
+            actorId: "actor.player"
+          }
+        ]
+      }
+    }));
+
+    bridge.registerTools([
+      {
+        name: "sessions_list",
+        bridgedName: "mcp_starweaver_central_sessions_list",
+        description: "sessions list",
+        inputSchema: { type: "object", properties: {} },
+        serverId: "starweaver-central"
+      }
+    ]);
+
+    const tool = bridge.toBelldandyTools()[0];
+    const result = await tool.execute({});
+
+    expect(result).toEqual({
+      sessions: [
+        {
+          sessionId: "session-actor.player",
+          gameId: "star-sanctuary-web-verify",
+          actorId: "actor.player"
+        }
+      ]
+    });
+  });
+
   it("reuses successful starweaver runtime_describe results within the same runtime scope", async () => {
     let callCount = 0;
     const bridge = new MCPToolBridge(async () => {

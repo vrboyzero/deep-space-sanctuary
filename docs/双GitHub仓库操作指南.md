@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "根据牵星系统优化工具调整代码"
+git commit -m "实现牵星游戏事件与指挥频道对星辰Agent的自动提示"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

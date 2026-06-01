@@ -817,6 +817,18 @@
               <div class="form-help" data-i18n="settings.heartbeatActiveHoursHelp">限定心跳活跃时段，避免深夜打扰。留空则全天可触发。</div>
             </div>
             <div class="form-group">
+              <label class="form-label" for="cfgStarweaverActiveNotifyEnabled">
+                <input id="cfgStarweaverActiveNotifyEnabled" type="checkbox" style="margin-right: 8px;" />
+                <span data-i18n="settings.starweaverActiveNotifyEnabledLabel">启用 StarWeaver 主动提示</span>
+              </label>
+              <div class="form-help" data-i18n="settings.starweaverActiveNotifyEnabledHelp">仅在当前 Agent 进入 StarWeaver/游戏工作态且相关工具可用时，自动检查牵星通知摘要并拉取对应消息面。默认关闭。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-i18n="settings.starweaverActiveNotifyPollIntervalMsLabel">StarWeaver 提示检查间隔（毫秒）</label>
+              <input id="cfgStarweaverActiveNotifyPollIntervalMs" class="input" placeholder="5000" />
+              <div class="form-help" data-i18n="settings.starweaverActiveNotifyPollIntervalMsHelp">控制同一会话内 StarWeaver 主动提示的最短自动检查间隔，避免每轮都重复读取。默认 5000。</div>
+            </div>
+            <div class="form-group">
               <label class="form-label" for="cfgCronEnabled">
                 <input id="cfgCronEnabled" type="checkbox" style="margin-right: 8px;" />
                 <span data-i18n="settings.cronEnabledLabel">Enable Cron Scheduler</span>

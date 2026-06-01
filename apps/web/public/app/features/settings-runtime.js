@@ -50,6 +50,8 @@ export function createSettingsRuntimeFeature({
     cfgHeartbeat,
     cfgHeartbeatEnabled,
     cfgHeartbeatActiveHours,
+    cfgStarweaverActiveNotifyEnabled,
+    cfgStarweaverActiveNotifyPollIntervalMs,
     cfgBrowserRelayEnabled,
     cfgRelayPort,
     cfgMcpEnabled,

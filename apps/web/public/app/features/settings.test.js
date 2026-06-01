@@ -233,6 +233,8 @@ function createSettingsRefs(overrides = {}) {
     cfgHeartbeat: overrides.cfgHeartbeat || createInput(""),
     cfgHeartbeatEnabled: overrides.cfgHeartbeatEnabled || createCheckbox(false),
     cfgHeartbeatActiveHours: overrides.cfgHeartbeatActiveHours || createInput(""),
+    cfgStarweaverActiveNotifyEnabled: overrides.cfgStarweaverActiveNotifyEnabled || createCheckbox(false),
+    cfgStarweaverActiveNotifyPollIntervalMs: overrides.cfgStarweaverActiveNotifyPollIntervalMs || createInput("5000"),
     cfgBrowserRelayEnabled: overrides.cfgBrowserRelayEnabled || createCheckbox(false),
     cfgRelayPort: overrides.cfgRelayPort || createInput(""),
     cfgMcpEnabled: overrides.cfgMcpEnabled || createCheckbox(false),
@@ -2486,6 +2488,38 @@ describe("settings controller", () => {
       BELLDANDY_ASSISTANT_MODE_ENABLED: "false",
       BELLDANDY_HEARTBEAT_ENABLED: "false",
       BELLDANDY_CRON_ENABLED: "false",
+    });
+  });
+
+  it("persists starweaver active notify assistant-mode fields from settings form", async () => {
+    const refs = createSettingsRefs({
+      cfgAssistantModeEnabled: createCheckbox(true),
+      cfgHeartbeatEnabled: createCheckbox(true),
+      cfgCronEnabled: createCheckbox(true),
+      cfgStarweaverActiveNotifyEnabled: createCheckbox(true),
+      cfgStarweaverActiveNotifyPollIntervalMs: createInput("7000"),
+    });
+    const sendReq = vi.fn(async (frame) => {
+      switch (frame.method) {
+        case "config.update":
+          return { ok: true, payload: {} };
+        case "channel.security.get":
+        case "channel.reply_chunking.get":
+          return { ok: true, payload: { path: "ok.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+        case "channel.security.pending.list":
+          return { ok: true, payload: { pending: [] } };
+        default:
+          return { ok: true, payload: {} };
+      }
+    });
+    const { controller } = createController({ refs, sendReq });
+
+    await controller.saveConfig();
+
+    const updateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
+    expect(updateCall?.[0]?.params?.updates).toMatchObject({
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
     });
   });
 

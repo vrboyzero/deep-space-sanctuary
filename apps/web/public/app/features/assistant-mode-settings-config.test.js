@@ -20,6 +20,8 @@ function createRefs() {
     cfgHeartbeatEnabled: { checked: false },
     cfgHeartbeatActiveHours: { value: "" },
     cfgCronEnabled: { checked: false },
+    cfgStarweaverActiveNotifyEnabled: { checked: false },
+    cfgStarweaverActiveNotifyPollIntervalMs: { value: "" },
   };
 }
 
@@ -33,6 +35,8 @@ describe("assistant mode settings config", () => {
       BELLDANDY_HEARTBEAT_ENABLED: "true",
       BELLDANDY_HEARTBEAT_ACTIVE_HOURS: "08:00-23:00",
       BELLDANDY_CRON_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
     })).toEqual({
       assistantModeEnabled: true,
       assistantModeSource: "explicit",
@@ -44,6 +48,8 @@ describe("assistant mode settings config", () => {
       heartbeatEnabled: true,
       heartbeatActiveHours: "08:00-23:00",
       cronEnabled: true,
+      starweaverActiveNotifyEnabled: true,
+      starweaverActiveNotifyPollIntervalMs: "7000",
     });
   });
 
@@ -58,6 +64,8 @@ describe("assistant mode settings config", () => {
       BELLDANDY_HEARTBEAT_ENABLED: "true",
       BELLDANDY_HEARTBEAT_ACTIVE_HOURS: "09:00-18:00",
       BELLDANDY_CRON_ENABLED: "false",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
     });
 
     expect(settings).toEqual({
@@ -71,6 +79,8 @@ describe("assistant mode settings config", () => {
       heartbeatEnabled: true,
       heartbeatActiveHours: "09:00-18:00",
       cronEnabled: false,
+      starweaverActiveNotifyEnabled: true,
+      starweaverActiveNotifyPollIntervalMs: "7000",
     });
     expect(refs).toEqual({
       cfgAssistantModeEnabled: { checked: true },
@@ -80,6 +90,8 @@ describe("assistant mode settings config", () => {
       cfgHeartbeatEnabled: { checked: true },
       cfgHeartbeatActiveHours: { value: "09:00-18:00" },
       cfgCronEnabled: { checked: false },
+      cfgStarweaverActiveNotifyEnabled: { checked: true },
+      cfgStarweaverActiveNotifyPollIntervalMs: { value: "7000" },
     });
   });
 
@@ -92,6 +104,8 @@ describe("assistant mode settings config", () => {
     refs.cfgHeartbeatEnabled.checked = true;
     refs.cfgHeartbeatActiveHours.value = " 08:00-22:00 ";
     refs.cfgCronEnabled.checked = true;
+    refs.cfgStarweaverActiveNotifyEnabled.checked = true;
+    refs.cfgStarweaverActiveNotifyPollIntervalMs.value = " 7000 ";
 
     expect(collectAssistantModeSettingsUpdates(refs)).toEqual({
       BELLDANDY_ASSISTANT_MODE_ENABLED: "true",
@@ -101,6 +115,8 @@ describe("assistant mode settings config", () => {
       BELLDANDY_HEARTBEAT_ENABLED: "true",
       BELLDANDY_HEARTBEAT_ACTIVE_HOURS: "08:00-22:00",
       BELLDANDY_CRON_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
     });
   });
 

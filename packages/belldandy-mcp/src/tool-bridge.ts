@@ -295,6 +295,10 @@ export class MCPToolBridge {
    * 格式化工具结果
    */
   private formatResult(result: MCPToolCallResult): unknown {
+    if (result.structuredContent !== undefined) {
+      return result.structuredContent;
+    }
+
     if (!result.content || result.content.length === 0) {
       return null;
     }
