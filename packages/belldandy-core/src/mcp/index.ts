@@ -103,7 +103,12 @@ function mcpToolToTool(
  * @param logger 可选，统一 Logger。传入后 MCP 模块的日志将写入文件
  * @returns MCP 管理器实例
  */
-export async function initMCPIntegration(logger?: { info: (m: string, msg: string, d?: unknown) => void; warn: (m: string, msg: string, d?: unknown) => void; error: (m: string, msg: string, d?: unknown) => void }): Promise<MCPManager> {
+export async function initMCPIntegration(logger?: {
+  debug?: (m: string, msg: string, d?: unknown) => void;
+  info: (m: string, msg: string, d?: unknown) => void;
+  warn: (m: string, msg: string, d?: unknown) => void;
+  error: (m: string, msg: string, d?: unknown) => void;
+}): Promise<MCPManager> {
   if (logger) {
     setMCPLogger(logger);
   }

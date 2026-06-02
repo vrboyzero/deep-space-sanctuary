@@ -6,6 +6,7 @@
  */
 
 export type MCPLogAdapter = {
+  debug?(module: string, message: string, data?: unknown): void;
   info(module: string, message: string, data?: unknown): void;
   warn(module: string, message: string, data?: unknown): void;
   error(module: string, message: string, data?: unknown): void;
@@ -22,6 +23,14 @@ export function mcpLog(module: string, message: string, data?: unknown): void {
     adapter.info(module, message, data);
   } else {
     console.log(`[${module}] ${message}`, data ?? "");
+  }
+}
+
+export function mcpDebug(module: string, message: string, data?: unknown): void {
+  if (adapter?.debug) {
+    adapter.debug(module, message, data);
+  } else {
+    console.debug(`[${module}] ${message}`, data ?? "");
   }
 }
 

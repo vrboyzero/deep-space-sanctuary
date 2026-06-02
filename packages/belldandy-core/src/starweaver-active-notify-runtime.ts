@@ -208,6 +208,7 @@ export async function startStarweaverActiveNotifyRuntime(input: {
     visibleReminder?: string;
   }) => Promise<{ conversationId: string; runId: string }>;
   logger: {
+    debug?: (module: string, message: string, data?: unknown) => void;
     info: (module: string, message: string, data?: unknown) => void;
     warn: (module: string, message: string, data?: unknown) => void;
     error: (module: string, message: string, data?: unknown) => void;
@@ -226,7 +227,7 @@ export async function startStarweaverActiveNotifyRuntime(input: {
     const busy = input.isBusy();
     if (stopped || running || busy) {
       if (!stopped && !running && busy) {
-        input.logger.info("starweaver-active-notify", "Skipped poll because resident agent is busy.");
+        input.logger.debug?.("starweaver-active-notify", "Skipped poll because resident agent is busy.");
       }
       return;
     }
@@ -261,15 +262,18 @@ export async function startStarweaverActiveNotifyRuntime(input: {
       }
       const output = String(notificationsResult.output);
       const items = parseStarweaverNotificationItems(output);
+      if (items.length <= 0) {
+        input.logger.debug?.("starweaver-active-notify", "Notification poll parsed items.", {
+          itemCount: items.length,
+        });
+        return;
+      }
       input.logger.info("starweaver-active-notify", "Notification poll parsed items.", {
         itemCount: items.length,
       });
-      if (items.length <= 0) {
-        return;
-      }
       const fingerprint = buildNotificationFingerprint(items);
       if (fingerprint === lastFingerprint) {
-        input.logger.info("starweaver-active-notify", "Skipped notification batch because fingerprint is unchanged.", {
+        input.logger.debug?.("starweaver-active-notify", "Skipped notification batch because fingerprint is unchanged.", {
           itemCount: items.length,
         });
         return;

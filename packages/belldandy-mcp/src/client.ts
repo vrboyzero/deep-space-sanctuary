@@ -35,7 +35,7 @@ import {
   isStdioTransport,
   isSSETransport,
 } from "./types.js";
-import { mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
+import { mcpDebug, mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
 
 const FILESYSTEM_SERVER_PACKAGE = "@modelcontextprotocol/server-filesystem";
 const EXTRA_WORKSPACE_ROOTS_ENV_KEY = "BELLDANDY_EXTRA_WORKSPACE_ROOTS";
@@ -453,7 +453,11 @@ export class MCPClient {
     }
 
     try {
-      mcpLog(`mcp:${this.config.id}`, `调用工具: ${toolName}`);
+      const logToolCall =
+        toolName === "agent_wake_notifications" && args.ackMatched !== true
+          ? mcpDebug
+          : mcpLog;
+      logToolCall(`mcp:${this.config.id}`, `调用工具: ${toolName}`);
       const result = await this.executeWithSessionRecovery("call_tool", () =>
         this.client!.callTool({
           name: toolName,
