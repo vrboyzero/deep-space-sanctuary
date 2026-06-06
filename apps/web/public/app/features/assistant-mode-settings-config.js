@@ -221,12 +221,5 @@ export function applyAssistantModePreset(refs, presetKey) {
   if (refs?.cfgCronEnabled) {
     refs.cfgCronEnabled.checked = preset.cronEnabled;
   }
-  if (refs?.cfgStarweaverActiveNotifyEnabled) {
-    refs.cfgStarweaverActiveNotifyEnabled.checked = false;
-  }
-  if (refs?.cfgStarweaverActiveNotifyPollIntervalMs) {
-    refs.cfgStarweaverActiveNotifyPollIntervalMs.value =
-      DEFAULT_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS;
-  }
   return readAssistantModeSettingsFromRefs(refs);
 }

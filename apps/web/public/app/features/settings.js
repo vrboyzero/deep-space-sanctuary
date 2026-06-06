@@ -801,6 +801,8 @@ export function createSettingsController({
       cfgHeartbeatEnabled,
       cfgHeartbeatActiveHours,
       cfgCronEnabled,
+      cfgStarweaverActiveNotifyEnabled,
+      cfgStarweaverActiveNotifyPollIntervalMs,
     }, c);
     applyAssistantModeCopy({ settings: assistantModeSettings });
     if (cfgBrowserRelayEnabled) cfgBrowserRelayEnabled.checked = c["BELLDANDY_BROWSER_RELAY_ENABLED"] === "true";

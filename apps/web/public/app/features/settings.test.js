@@ -670,6 +670,8 @@ describe("settings controller", () => {
       BELLDANDY_HEARTBEAT_INTERVAL: "45m",
       BELLDANDY_HEARTBEAT_ENABLED: "true",
       BELLDANDY_HEARTBEAT_ACTIVE_HOURS: "08:00-23:00",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED: "true",
+      BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
       BELLDANDY_BROWSER_RELAY_ENABLED: "true",
       BELLDANDY_RELAY_PORT: "28892",
       BELLDANDY_MCP_ENABLED: "true",
@@ -884,6 +886,8 @@ describe("settings controller", () => {
     expect(refs.cfgHeartbeat.value).toBe("45m");
     expect(refs.cfgHeartbeatEnabled.checked).toBe(true);
     expect(refs.cfgHeartbeatActiveHours.value).toBe("08:00-23:00");
+    expect(refs.cfgStarweaverActiveNotifyEnabled.checked).toBe(true);
+    expect(refs.cfgStarweaverActiveNotifyPollIntervalMs.value).toBe("7000");
     expect(refs.cfgBrowserRelayEnabled.checked).toBe(true);
     expect(refs.cfgRelayPort.value).toBe("28892");
     expect(refs.cfgMcpEnabled.checked).toBe(true);

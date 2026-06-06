@@ -52,6 +52,8 @@ When a task needs an implementation plan, architecture note, rollout plan, or ph
 
 The goal is to prevent plans from expanding without control. If any item is intentionally deferred, say so directly.
 
+For implementation-plan / proposal / rollout / phased design documents, add a final section named `实施计划进度表` at the end of the document and treat it as the document's only progress-tracking source. Do not scatter progress updates, stage status, or completion notes across multiple sections of the same document; update the final progress table instead.
+
 当你回写项目文档中的开发进度、阶段状态或本轮完成情况时，如果当前阶段还没有结束，必须同步补一段“后续计划”，并说明：
 - 下一步准备做什么，
 - 为什么先做它，

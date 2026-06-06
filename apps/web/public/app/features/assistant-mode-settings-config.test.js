@@ -184,6 +184,8 @@ describe("assistant mode settings config", () => {
 
   it("applies a preset by filling the existing assistant mode fields", () => {
     const refs = createRefs();
+    refs.cfgStarweaverActiveNotifyEnabled.checked = true;
+    refs.cfgStarweaverActiveNotifyPollIntervalMs.value = "7000";
 
     const settings = applyAssistantModePreset(refs, ASSISTANT_MODE_PRESET_STANDARD);
 
@@ -203,5 +205,7 @@ describe("assistant mode settings config", () => {
     expect(refs.cfgHeartbeatEnabled.checked).toBe(true);
     expect(refs.cfgHeartbeatActiveHours.value).toBe("");
     expect(refs.cfgCronEnabled.checked).toBe(true);
+    expect(refs.cfgStarweaverActiveNotifyEnabled.checked).toBe(true);
+    expect(refs.cfgStarweaverActiveNotifyPollIntervalMs.value).toBe("7000");
   });
 });
