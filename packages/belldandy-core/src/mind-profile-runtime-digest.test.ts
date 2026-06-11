@@ -144,4 +144,68 @@ describe("buildMindProfileRuntimeDigest", () => {
     expect(digest.summary.charCount).toBeLessThanOrEqual(90);
     expect(digest.lines.every((line) => line.length <= 48)).toBe(true);
   });
+
+  it("prefers explicit profile state anchors over tree summaries when available", () => {
+    const digest = buildMindProfileRuntimeDigest({
+      summary: {
+        available: true,
+        selectedAgentId: "default",
+        headline: "headline",
+        activeResidentCount: 0,
+        digestReadyCount: 0,
+        digestUpdatedCount: 0,
+        usageLinkedCount: 0,
+        privateMemoryCount: 0,
+        sharedMemoryCount: 0,
+        summaryLineCount: 2,
+        hasUserProfile: true,
+        hasPrivateMemoryFile: false,
+        hasSharedMemoryFile: false,
+      },
+      identity: {
+        userName: "小星",
+        hasUserProfile: true,
+        hasPrivateMemoryFile: false,
+        hasSharedMemoryFile: false,
+      },
+      conversation: {
+        activeResidentCount: 0,
+        digestReadyCount: 0,
+        digestUpdatedCount: 0,
+        topResidents: [],
+      },
+      memory: {
+        privateMemoryCount: 0,
+        sharedMemoryCount: 0,
+        privateSummary: "",
+        sharedSummary: "",
+        recentMemorySnippets: [],
+      },
+      experience: {
+        usageLinkedCount: 0,
+        topUsageResidents: [],
+      },
+      profile: {
+        headline: "Profile state: preferences.response_style = 先给结论，再展开证据",
+        summaryLines: [
+          "Profile state: preferences.response_style = 先给结论，再展开证据",
+          "Profile tree: 喜欢稳定结论先行, evidence=2",
+        ],
+        stateSummaryLines: [
+          "Profile state: preferences.response_style = 先给结论，再展开证据",
+        ],
+        treeSummaryLines: [
+          "Profile tree: 喜欢稳定结论先行, evidence=2",
+        ],
+      },
+    } as any, {
+      maxLines: 4,
+      maxLineLength: 96,
+      maxChars: 260,
+    });
+
+    expect(digest.lines.join("\n")).toContain(
+      "Profile anchor: Profile state: preferences.response_style = 先给结论，再展开证据",
+    );
+  });
 });

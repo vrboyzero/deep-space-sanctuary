@@ -51,7 +51,8 @@ function formatUserAnchor(snapshot: MindProfileSnapshot): string | undefined {
 }
 
 function formatProfileAnchor(snapshot: MindProfileSnapshot): string | undefined {
-  const profileLine = snapshot.profile.treeSummaryLines?.find((item) => normalizeText(item))
+  const profileLine = snapshot.profile.stateSummaryLines?.find((item) => normalizeText(item))
+    ?? snapshot.profile.treeSummaryLines?.find((item) => normalizeText(item))
     ?? snapshot.profile.summaryLines.find((item) => normalizeText(item));
   if (!profileLine) return undefined;
   return `Profile anchor: ${profileLine}`;

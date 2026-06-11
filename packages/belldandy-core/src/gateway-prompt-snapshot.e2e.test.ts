@@ -609,6 +609,178 @@ test("gateway injects work overview and resume details into non-mock continuatio
   }
 }, 60000);
 
+test("gateway exposes canonical profile state through model prompt, persisted snapshot, and inspect surfaces", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-profile-state-e2e-"));
+  const conversationId = "conv-profile-state-runtime";
+  const promptMarker = "PROMPT_PROFILE_STATE_E2E_MARKER";
+  const currentTurnText = "继续这个项目，先给稳定结论。";
+  const fakeOpenAI = await startFakeOpenAIServer();
+  let gateway: GatewayProcessHandle | undefined;
+  let wsHandle: GatewayWebSocketHandle | undefined;
+
+  try {
+    await seedPromptProfileState(stateDir);
+
+    gateway = await startGatewayProcess({
+      stateDir,
+      openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+      promptMarker,
+    });
+    wsHandle = await connectGatewayWebSocket(gateway.port);
+
+    const sendBeforePairingReqId = "message-send-profile-state-before-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendBeforePairingReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: currentTurnText,
+      },
+    }));
+    await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+    const sendReqId = "message-send-profile-state-after-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: currentTurnText,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === sendReqId && frame.ok === true));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "event" && frame.event === "chat.final" && frame.payload?.conversationId === conversationId));
+    await waitFor(() => fakeOpenAI.requests.length > 0);
+
+    const sendRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === sendReqId && frame.ok === true);
+    const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+    expect(runId).toBeTruthy();
+
+    const modelPromptText = extractFakeOpenAIRequestText(fakeOpenAI.requests.at(-1)?.body);
+    expect(modelPromptText).toContain("<mind-profile-runtime");
+    expect(modelPromptText).toContain("<canonical-profile-state>");
+    expect(modelPromptText).toContain("preferences.response_style = 先给稳定结论，再展开说明");
+    expect(modelPromptText).toContain("workstyle.planning_preference = 先列计划，再推进实现");
+
+    const artifactPath = getConversationPromptSnapshotArtifactPath({
+      stateDir,
+      conversationId,
+      runId,
+    });
+    await waitFor(async () => {
+      try {
+        await fs.access(artifactPath);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    const persisted = await loadConversationPromptSnapshotArtifact({
+      stateDir,
+      conversationId,
+      runId,
+    });
+    expect(persisted?.snapshot.prependContext).toContain("<mind-profile-runtime");
+    expect(persisted?.snapshot.prependContext).toContain("<canonical-profile-state>");
+    expect(persisted?.snapshot.prependContext).toContain("preferences.response_style = 先给稳定结论，再展开说明");
+    expect(persisted?.snapshot.prependContext).toContain("workstyle.planning_preference = 先列计划，再推进实现");
+    expect(persisted?.snapshot.deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "mind-profile-runtime",
+        deltaType: "user-prelude",
+        source: "mind-profile-runtime",
+        text: expect.stringContaining("<canonical-profile-state>"),
+        metadata: expect.objectContaining({
+          blockTag: "mind-profile-runtime",
+          activationReason: "profile_state_present",
+          profileStateLineCount: 2,
+          profileStatePaths: [
+            "preferences.response_style",
+            "workstyle.planning_preference",
+          ],
+        }),
+      }),
+    ]));
+
+    const inspectReqId = "agents-prompt-inspect-profile-state-after-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: inspectReqId,
+      method: "agents.prompt.inspect",
+      params: {
+        conversationId,
+        runId,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === inspectReqId && frame.ok === true));
+
+    const inspectRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === inspectReqId);
+    expect(inspectRes?.payload?.metadata).toMatchObject({
+      snapshotScope: "run",
+      hasPrependContext: true,
+      deltaCount: expect.any(Number),
+      deltaTypes: expect.arrayContaining(["user-prelude"]),
+    });
+    expect(inspectRes?.payload?.deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "mind-profile-runtime",
+        deltaType: "user-prelude",
+        source: "mind-profile-runtime",
+        text: expect.stringContaining("preferences.response_style = 先给稳定结论，再展开说明"),
+        metadata: expect.objectContaining({
+          blockTag: "mind-profile-runtime",
+          activationReason: "profile_state_present",
+          profileStateLineCount: 2,
+        }),
+      }),
+    ]));
+
+    const rpcReqId = "conversation-prompt-snapshot-profile-state-get";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: rpcReqId,
+      method: "conversation.prompt_snapshot.get",
+      params: {
+        conversationId,
+        runId,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === rpcReqId && frame.ok === true));
+
+    const rpcRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === rpcReqId);
+    expect(rpcRes?.payload?.snapshot?.summary).toMatchObject({
+      hasPrependContext: true,
+      deltaCount: expect.any(Number),
+    });
+    expect(rpcRes?.payload?.snapshot?.snapshot?.prependContext).toContain("<canonical-profile-state>");
+    expect(rpcRes?.payload?.snapshot?.snapshot?.deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "mind-profile-runtime",
+        metadata: expect.objectContaining({
+          activationReason: "profile_state_present",
+          profileStatePaths: [
+            "preferences.response_style",
+            "workstyle.planning_preference",
+          ],
+        }),
+      }),
+    ]));
+    expect(fakeOpenAI.requests).toHaveLength(1);
+  } finally {
+    if (wsHandle) {
+      await wsHandle.close().catch(() => {});
+    }
+    if (gateway) {
+      await stopGatewayProcess(gateway).catch(() => {});
+    }
+    await fakeOpenAI.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 60000);
+
 test("gateway applies prompt section priority override experiments to agent inspect", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-priority-experiment-e2e-"));
   const fakeOpenAI = await startFakeOpenAIServer();
@@ -1442,6 +1614,35 @@ async function seedResumePromptTasks(stateDir: string): Promise<void> {
           files: ["apps/web/public/app/features/memory-detail-render.js"],
         }),
       ],
+    });
+  } finally {
+    memoryManager.close();
+  }
+}
+
+async function seedPromptProfileState(stateDir: string): Promise<void> {
+  const memoryPolicy = resolveResidentMemoryPolicy(stateDir, buildDefaultProfile());
+  await fs.mkdir(memoryPolicy.managerStateDir, { recursive: true });
+
+  const memoryManager = new MemoryManager({
+    workspaceRoot: memoryPolicy.managerStateDir,
+    stateDir: memoryPolicy.managerStateDir,
+    storePath: path.join(memoryPolicy.managerStateDir, "memory.sqlite"),
+    openaiApiKey: "test-memory-seed-key",
+  });
+
+  try {
+    memoryManager.upsertProfileStateEntry({
+      scope: "user",
+      path: "preferences.response_style",
+      value: "先给稳定结论，再展开说明",
+      createdBy: "test-seed",
+    });
+    memoryManager.upsertProfileStateEntry({
+      scope: "user",
+      path: "workstyle.planning_preference",
+      value: "先列计划，再推进实现",
+      createdBy: "test-seed",
     });
   } finally {
     memoryManager.close();

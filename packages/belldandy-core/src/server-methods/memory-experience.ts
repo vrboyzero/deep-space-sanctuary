@@ -20,6 +20,7 @@ import {
 import type {
   ExperienceCandidate,
   ExperienceCandidateType,
+  MemorySourceInventoryGovernanceSummary,
   ExperienceSynthesisPreviewItem,
   MemorySourceInventoryConfiguredSource,
   PublishedExperienceAssetRecord,
@@ -28,6 +29,17 @@ import type { SkillRegistry } from "@belldandy/skills";
 import { publishSkillCandidate } from "@belldandy/skills";
 
 import { buildLearningReviewInput } from "../learning-review-input.js";
+import { buildMemoryClassConsumerView } from "../memory-class-consumer-view.js";
+import {
+  buildEpisodicTaskFreshnessView,
+  buildGovernanceFreshnessFromInventory,
+  buildMemoryFreshnessView,
+  buildProceduralExperienceFreshnessFromTaskDetail,
+  buildProceduralExperienceFreshnessView,
+  buildProfileSemanticFreshnessView,
+  buildProjectSemanticFreshnessFromInventory,
+  type MemoryFreshnessView,
+} from "../memory-freshness-view.js";
 import {
   normalizeConfiguredMemorySourcesInput,
   readConfiguredMemorySourcesStore,
@@ -272,11 +284,33 @@ export async function handleMemoryExperienceMethod(
         configuredSources: configuredSourcesResult.sources,
       });
       const governance = buildMemorySourceInventoryGovernanceSummary(report);
-      return ok(req.id, {
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: [
+          buildProjectSemanticFreshnessFromInventory({
+            governance,
+            generatedAt: report.generatedAt,
+            note: "当前只观测到 project semantic 的 inventory/tree 派生视图，本批未补 project truth state。",
+          }),
+          buildGovernanceFreshnessFromInventory({
+            governance,
+            generatedAt: report.generatedAt,
+          }),
+        ],
+      });
+      return ok(req.id, withMemoryClassConsumerPayload({
         report,
         governance,
         queryView: buildResidentMemoryQueryView(residentPolicy),
-      });
+      }, {
+        presentClasses: ["governance"],
+        partialClasses: ["project_semantic"],
+        noteByClass: {
+          project_semantic: "Inventory preview observes stable project semantics through source families and tree-facing governance views.",
+          governance: "Inventory preview is a governance-facing read model over memory source lifecycle state.",
+        },
+        includeRegistry: true,
+        registryClasses: ["project_semantic", "governance"],
+      }, memoryFreshness));
     }
 
     case "memory.tree.report.inventory.preview": {
@@ -296,13 +330,37 @@ export async function handleMemoryExperienceMethod(
         configuredSources: configuredSourcesResult.sources,
         createdBy: "rpc",
       });
-      const governance = record.summary?.governance ?? buildMemorySourceInventoryGovernanceSummary(report);
-      return ok(req.id, {
+      const governance = readInventoryGovernanceSummary(record.summary?.governance, report);
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: [
+          buildProjectSemanticFreshnessFromInventory({
+            governance,
+            generatedAt: report.generatedAt,
+            reportRecord: record,
+            note: "当前只观测到 project semantic 的 inventory/tree 派生视图，本批未补 project truth state。",
+          }),
+          buildGovernanceFreshnessFromInventory({
+            governance,
+            generatedAt: report.generatedAt,
+            reportRecord: record,
+          }),
+        ],
+      });
+      return ok(req.id, withMemoryClassConsumerPayload({
         report,
         governance,
         record,
         queryView: buildResidentMemoryQueryView(residentPolicy),
-      });
+      }, {
+        presentClasses: ["governance"],
+        partialClasses: ["project_semantic"],
+        noteByClass: {
+          project_semantic: "Inventory report preview still reaches project semantics through derived governance and tree-facing views.",
+          governance: "Inventory report preview persists a governance artifact for later review and apply.",
+        },
+        includeRegistry: true,
+        registryClasses: ["project_semantic", "governance"],
+      }, memoryFreshness));
     }
 
     case "memory.tree.report.external_ingest.preview": {
@@ -385,12 +443,21 @@ export async function handleMemoryExperienceMethod(
         summary: preview.summary,
         details: preview.details,
       });
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         report: preview.report,
         governance: preview.report.governance,
         record,
         queryView: buildResidentMemoryQueryView(residentPolicy),
-      });
+      }, {
+        presentClasses: ["governance"],
+        partialClasses: ["project_semantic"],
+        noteByClass: {
+          project_semantic: "Shared governance preview can reflect stable project constraints, but not yet through a dedicated project truth payload.",
+          governance: "Shared governance preview is an explicit governance read surface.",
+        },
+        includeRegistry: true,
+        registryClasses: ["project_semantic", "governance"],
+      }));
     }
 
     case "memory.tree.report.list": {
@@ -1001,11 +1068,26 @@ export async function handleMemoryExperienceMethod(
       taskPayload.usedSkills = (Array.isArray(taskPayload.usedSkills) ? taskPayload.usedSkills : []).map((item, index) =>
         attachSkillFreshnessToUsagePayload(item, task.usedSkills?.[index], skillFreshnessSnapshot),
       );
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: [
+          buildEpisodicTaskFreshnessView(task),
+          buildProceduralExperienceFreshnessFromTaskDetail(task, skillFreshnessSnapshot),
+        ],
+      });
 
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         task: taskPayload,
         queryView: buildResidentMemoryQueryView(residentPolicy),
-      });
+      }, {
+        presentClasses: ["episodic_task"],
+        partialClasses: [
+          ...((task.usedMethods?.length ?? 0) + (task.usedSkills?.length ?? 0) > 0 ? ["procedural_experience" as const] : []),
+        ],
+        noteByClass: {
+          episodic_task: "Task detail reads canonical task records plus derived recap, resume, and activity evidence.",
+          procedural_experience: "Task detail can include linked method/skill usage, but it is still primarily an episodic task surface.",
+        },
+      }, memoryFreshness));
     }
 
     case "memory.recent_work": {
@@ -1021,11 +1103,16 @@ export async function handleMemoryExperienceMethod(
         filter: filter as any,
       });
 
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         items,
         query,
         limit,
-      });
+      }, {
+        presentClasses: ["episodic_task"],
+        noteByClass: {
+          episodic_task: "recent_work is a derived episodic task surface built from task recap and recent activity.",
+        },
+      }));
     }
 
     case "memory.resume_context": {
@@ -1043,12 +1130,17 @@ export async function handleMemoryExperienceMethod(
         filter: filter as any,
       });
 
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         item,
         query,
         taskId: taskId || undefined,
         conversationId: conversationId || undefined,
-      });
+      }, {
+        presentClasses: ["episodic_task"],
+        noteByClass: {
+          episodic_task: "resume_context is a derived episodic task surface for stop point and next-step recovery.",
+        },
+      }));
     }
 
     case "memory.similar_past_work": {
@@ -1066,11 +1158,16 @@ export async function handleMemoryExperienceMethod(
         filter: filter as any,
       });
 
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         items,
         query,
         limit,
-      });
+      }, {
+        presentClasses: ["episodic_task"],
+        noteByClass: {
+          episodic_task: "similar_past_work compares derived episodic task evidence across prior tasks.",
+        },
+      }));
     }
 
     case "memory.explain_sources": {
@@ -1091,11 +1188,16 @@ export async function handleMemoryExperienceMethod(
         return notFound(req.id, "Task work source explanation not found.");
       }
 
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         explanation,
         taskId: explanation.taskId,
         conversationId: explanation.conversationId,
-      });
+      }, {
+        presentClasses: ["episodic_task"],
+        noteByClass: {
+          episodic_task: "explain_sources traces episodic task evidence back to recap, resume, and activity source refs.",
+        },
+      }));
     }
 
     case "experience.candidate.get": {
@@ -1109,21 +1211,46 @@ export async function handleMemoryExperienceMethod(
       const candidate = manager.getExperienceCandidate(candidateId);
       if (!candidate) return notFound(req.id, "Experience candidate not found.");
       const skillFreshnessSnapshot = await buildScopedSkillFreshnessSnapshot(ctx.stateDir, manager);
+      const candidateSkillFreshness = findSkillFreshnessForCandidate(skillFreshnessSnapshot, candidate);
+      const mindProfileSnapshot = await buildMindProfileSnapshot({
+        stateDir: ctx.stateDir,
+        residentMemoryManagers: ctx.residentMemoryManagers,
+        agentId: readOptionalString(params, "agentId"),
+      });
+      const learningReviewInput = buildLearningReviewInput({
+        mindProfileSnapshot,
+        experienceCandidate: candidate,
+        experienceCandidateSkillFreshness: candidateSkillFreshness,
+      });
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: [
+          buildProfileSemanticFreshnessView(mindProfileSnapshot),
+          buildProceduralExperienceFreshnessView({
+            candidate,
+            skillFreshness: candidateSkillFreshness,
+          }),
+        ],
+      });
 
-      return ok(req.id, {
+      return ok(req.id, withMemoryClassConsumerPayload({
         candidate: attachSkillFreshnessToCandidatePayload({
           ...toExperienceCandidatePayloadItem(candidate, residentPolicy),
-          learningReviewInput: buildLearningReviewInput({
-            mindProfileSnapshot: await buildMindProfileSnapshot({
-              stateDir: ctx.stateDir,
-              residentMemoryManagers: ctx.residentMemoryManagers,
-              agentId: readOptionalString(params, "agentId"),
-            }),
-            experienceCandidate: candidate,
-          }),
+          learningReviewInput,
         }, candidate, skillFreshnessSnapshot),
         queryView: buildResidentMemoryQueryView(residentPolicy),
-      });
+      }, {
+        presentClasses: ["procedural_experience", ...(mindProfileSnapshot ? ["profile_semantic" as const] : [])],
+        partialClasses: [
+          ...(candidate.sourceTaskSnapshot ? ["episodic_task" as const] : []),
+        ],
+        noteByClass: {
+          profile_semantic: "candidate.get includes a mind/profile snapshot for learning-review seeding.",
+          episodic_task: "candidate.get carries only a source task snapshot, not a full episodic task detail payload.",
+          procedural_experience: "candidate.get is the canonical procedural experience review surface.",
+          project_semantic: "candidate.get still does not inject explicit project semantic state.",
+          governance: "candidate.get exposes learning review input but not a full governance queue summary.",
+        },
+      }, memoryFreshness));
     }
 
     case "experience.candidate.generate": {
@@ -1903,6 +2030,24 @@ export async function handleMemoryExperienceMethod(
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readInventoryGovernanceSummary(
+  value: unknown,
+  report: Parameters<typeof buildMemorySourceInventoryGovernanceSummary>[0],
+): MemorySourceInventoryGovernanceSummary {
+  if (
+    isObjectRecord(value)
+    && typeof value.headline === "string"
+    && typeof value.sourceKinds === "number"
+    && typeof value.presentSourceKinds === "number"
+    && typeof value.sourceFamilyCount === "number"
+    && Array.isArray(value.topHighRiskFamilies)
+    && Array.isArray(value.topSuggestedFamilies)
+  ) {
+    return value as MemorySourceInventoryGovernanceSummary;
+  }
+  return buildMemorySourceInventoryGovernanceSummary(report);
 }
 
 function readRequiredString(params: Record<string, unknown>, key: string): string {
@@ -3163,6 +3308,18 @@ function escapeRegExp(value: string): string {
 
 function ok(id: string, payload: Record<string, unknown>): GatewayResFrame {
   return { type: "res", id, ok: true, payload };
+}
+
+function withMemoryClassConsumerPayload(
+  payload: Record<string, unknown>,
+  input: Parameters<typeof buildMemoryClassConsumerView>[0],
+  memoryFreshness?: MemoryFreshnessView,
+): Record<string, unknown> {
+  return {
+    ...payload,
+    ...buildMemoryClassConsumerView(input),
+    ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
+  };
 }
 
 function invalid(id: string, message: string): GatewayResFrame {

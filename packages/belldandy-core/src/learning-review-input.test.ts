@@ -4,6 +4,7 @@ import { buildLearningReviewInput } from "./learning-review-input.js";
 
 describe("buildLearningReviewInput", () => {
   it("builds compact learning/review guidance from mind snapshot, candidate, and governance summary", () => {
+    const now = new Date().toISOString();
     const result = buildLearningReviewInput({
       mindProfileSnapshot: {
         summary: {
@@ -52,6 +53,12 @@ describe("buildLearningReviewInput", () => {
         profile: {
           headline: "Profile tree: 长期偏好简洁状态表与短结论, evidence=2",
           summaryLines: ["USER.md: 喜欢简洁状态表与短结论。"],
+          stateEntries: [{
+            path: "preferences.response_style",
+            valueText: "简洁状态表与短结论",
+            updatedAt: now,
+            lastConfirmedAt: now,
+          }],
           treeSummaryLines: ["Profile tree: 长期偏好简洁状态表与短结论, evidence=2"],
         },
       },
@@ -73,11 +80,12 @@ describe("buildLearningReviewInput", () => {
           toolCalls: [{ toolName: "memory_search", success: true, durationMs: 10 }],
           artifactPaths: ["docs/a.md"],
           memoryLinks: [{ chunkId: "mem-1", relation: "used" }],
-          startedAt: "2026-04-09T00:00:00.000Z",
+          startedAt: now,
         },
-        createdAt: "2026-04-09T00:00:00.000Z",
+        createdAt: now,
       } as any,
       goalReviewGovernanceSummary: {
+        generatedAt: now,
         reviewStatusCounts: {
           pending_review: 2,
           accepted: 1,
@@ -85,6 +93,7 @@ describe("buildLearningReviewInput", () => {
           deferred: 0,
           needs_revision: 1,
         },
+        workflowPendingCount: 2,
         workflowOverdueCount: 1,
         actionableReviews: [
           { status: "accepted" },
@@ -99,12 +108,55 @@ describe("buildLearningReviewInput", () => {
       memorySignalCount: 4,
       candidateSignalCount: 4,
       reviewSignalCount: 4,
+      availableClassCount: 3,
+      missingClassCount: 2,
     });
     expect(result.summaryLines.join("\n")).toContain("Mind snapshot:");
     expect(result.summaryLines.join("\n")).toContain("Profile anchor: Profile tree:");
     expect(result.summaryLines.join("\n")).toContain("method candidate:");
     expect(result.summaryLines.join("\n")).toContain("Review queue:");
+    expect(result.summaryLines.join("\n")).toContain("Classed signals:");
     expect(result.nudges.join("\n")).toContain("存在超 SLA suggestion review");
     expect(result.nudges.join("\n")).toContain("存在已通过但未发布的 suggestion");
+    expect(result.memoryFreshness.summary).toMatchObject({
+      available: true,
+      itemCount: 3,
+      freshCount: 1,
+      reviewRequiredCount: 2,
+      headline: expect.stringContaining("profile="),
+    });
+    expect(result.memoryFreshness.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        memoryClass: "profile_semantic",
+        status: "fresh",
+        lastConfirmedAt: now,
+      }),
+      expect.objectContaining({
+        memoryClass: "procedural_experience",
+        status: "review_required",
+      }),
+      expect.objectContaining({
+        memoryClass: "governance",
+        status: "review_required",
+      }),
+    ]));
+    expect(result.memoryClassSignals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        memoryClass: "profile_semantic",
+        status: "available",
+      }),
+      expect.objectContaining({
+        memoryClass: "project_semantic",
+        status: "missing",
+      }),
+      expect.objectContaining({
+        memoryClass: "procedural_experience",
+        status: "available",
+      }),
+      expect.objectContaining({
+        memoryClass: "governance",
+        status: "available",
+      }),
+    ]));
   });
 });

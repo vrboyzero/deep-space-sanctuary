@@ -227,4 +227,78 @@ describe("buildMindProfileSnapshot", () => {
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
   });
+
+  it("prefers structured profile state over USER.md when both exist", async () => {
+    if (!process.env.OPENAI_API_KEY) {
+      process.env.OPENAI_API_KEY = "test-placeholder-key";
+    }
+
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mind-profile-state-"));
+    const sharedStateDir = path.join(stateDir, "team-memory");
+    const sessionsDir = path.join(stateDir, "sessions");
+    const memoryDir = path.join(stateDir, "memory");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    await fs.mkdir(memoryDir, { recursive: true });
+    await fs.mkdir(path.join(sharedStateDir, "memory"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(stateDir, "USER.md"),
+      "# USER\n**名字：** 旧档案名\n偏好写在自由文本里，但不一定是最新真值。\n",
+      "utf-8",
+    );
+
+    const manager = new MemoryManager({
+      workspaceRoot: sessionsDir,
+      additionalRoots: [memoryDir],
+      storePath: path.join(stateDir, "memory.sqlite"),
+      modelsDir: path.join(stateDir, "models"),
+      stateDir,
+    });
+
+    try {
+      manager.upsertProfileStateEntry({
+        agentId: "default",
+        scope: "user",
+        path: "identity.name",
+        value: "结构化小星",
+        createdBy: "test",
+      });
+      manager.upsertProfileStateEntry({
+        agentId: "default",
+        scope: "user",
+        path: "preferences.response_style",
+        value: "先给结论，再展开证据",
+        createdBy: "test",
+      });
+
+      const snapshot = await buildMindProfileSnapshot({
+        stateDir,
+        residentMemoryManagers: [{
+          agentId: "default",
+          stateDir,
+          memoryMode: "hybrid",
+          policy: {
+            memoryMode: "hybrid",
+            managerStateDir: stateDir,
+            sharedStateDir,
+            writeTarget: "private",
+            readTargets: ["private", "shared"],
+            includeSharedMemoryReads: true,
+          },
+          manager,
+        } as any],
+      });
+
+      expect(snapshot.identity.userName).toBe("结构化小星");
+      expect(snapshot.profile.headline).toContain("Profile state:");
+      expect(snapshot.profile.stateSummaryLines?.[0]).toContain("Profile state:");
+      const summaryText = snapshot.profile.summaryLines.join("\n");
+      expect(summaryText).toContain("USER.md:");
+      expect(summaryText.indexOf("Profile state:")).toBeGreaterThanOrEqual(0);
+      expect(summaryText.indexOf("Profile state:")).toBeLessThan(summaryText.indexOf("USER.md:"));
+    } finally {
+      manager.close();
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });

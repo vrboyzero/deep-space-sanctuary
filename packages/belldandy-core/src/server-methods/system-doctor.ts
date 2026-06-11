@@ -82,6 +82,14 @@ import {
 import type { EmailInboundAuditStore } from "../email-inbound-audit-store.js";
 import type { EmailFollowUpReminderStore } from "../email-follow-up-reminder-store.js";
 import { buildLearningReviewInput } from "../learning-review-input.js";
+import { buildMemoryClassConsumerView } from "../memory-class-consumer-view.js";
+import {
+  buildGovernanceFreshnessFromInventory,
+  buildMemoryFreshnessView,
+  buildProceduralExperienceFreshnessFromSkillSnapshot,
+  buildProfileSemanticFreshnessView,
+  buildProjectSemanticFreshnessFromInventory,
+} from "../memory-freshness-view.js";
 import { buildLearningReviewNudgeRuntimeReport } from "../learning-review-nudge-runtime.js";
 import type {
   MemoryRuntimeBudgetGuard,
@@ -1324,6 +1332,8 @@ export async function handleSystemDoctorMethod(
   let mindProfileSnapshot: any;
   let learningReviewInput: any;
   let learningReviewNudgeRuntime: any;
+  let memoryClassConsumer: any;
+  let memoryFreshness: any;
   let skillFreshness: any;
   let delegationObservability: any;
   let bridgeRecoveryDiagnostics: any;
@@ -1632,6 +1642,68 @@ export async function handleSystemDoctorMethod(
     }
   }
 
+  memoryClassConsumer = buildMemoryClassConsumerView({
+    presentClasses: [
+      ...(mindProfileSnapshot ? ["profile_semantic" as const] : []),
+      ...(memorySourceInventory || memorySharedGovernance ? ["governance" as const] : []),
+    ],
+    partialClasses: [
+      ...(memoryTreeJobs || memoryTreeLifecycle || memorySourceInventory ? ["project_semantic" as const] : []),
+      ...(skillFreshness?.summary?.available ? ["procedural_experience" as const] : []),
+    ],
+    noteByClass: {
+      profile_semantic: mindProfileSnapshot
+        ? "system.doctor has an explicit mind/profile snapshot anchored by the profile layer."
+        : "system.doctor did not attach a mind/profile snapshot in this run.",
+      project_semantic: memoryTreeJobs || memoryTreeLifecycle || memorySourceInventory
+        ? "system.doctor currently observes project semantic through tree and inventory views, not an explicit project truth payload."
+        : "system.doctor has no project semantic observability signal attached in this run.",
+      episodic_task: "system.doctor is not a task-scoped endpoint, so episodic task signals stay on task-oriented RPC surfaces.",
+      procedural_experience: skillFreshness?.summary?.available
+        ? "system.doctor currently exposes procedural experience mainly through freshness and lifecycle projections."
+        : "system.doctor did not attach a procedural experience projection in this run.",
+      governance: memorySourceInventory || memorySharedGovernance
+        ? "system.doctor exposes governance through inventory, shared governance, and lifecycle observability."
+        : "system.doctor did not attach governance observability in this run.",
+    },
+    includeRegistry: !summaryOnly,
+  });
+  checks.push({
+    id: "memory_class_registry",
+    name: "Memory Class Registry",
+    status: memoryClassConsumer.memoryClassCoverage.availableCount > 0 || memoryClassConsumer.memoryClassCoverage.partialCount > 0
+      ? "pass"
+      : "warn",
+    message: memoryClassConsumer.memoryClassCoverage.headline,
+  });
+  memoryFreshness = buildMemoryFreshnessView({
+    items: [
+      buildProfileSemanticFreshnessView(mindProfileSnapshot),
+      buildProjectSemanticFreshnessFromInventory({
+        governance: memorySourceInventory?.summary,
+        generatedAt: memorySourceInventory?.generatedAt,
+        note: "system.doctor 当前只通过 inventory/tree 观察 project semantic，本批未补 project truth state。",
+      }),
+      buildProceduralExperienceFreshnessFromSkillSnapshot(skillFreshness),
+      buildGovernanceFreshnessFromInventory({
+        governance: memorySourceInventory?.summary,
+        generatedAt: memorySourceInventory?.generatedAt,
+      }),
+    ],
+  });
+  if (memoryFreshness.summary.available) {
+    checks.push({
+      id: "memory_freshness",
+      name: "Memory Freshness",
+      status: memoryFreshness.summary.reviewRequiredCount > 0
+        || memoryFreshness.summary.staleCount > 0
+        || memoryFreshness.summary.supersededCount > 0
+        ? "warn"
+        : "pass",
+      message: memoryFreshness.summary.headline,
+    });
+  }
+
   if (!summaryOnly && ctx.toolExecutor) {
     const toolAgentId = typeof params.toolAgentId === "string" && params.toolAgentId.trim()
       ? params.toolAgentId.trim()
@@ -1797,6 +1869,12 @@ export async function handleSystemDoctorMethod(
       ...(toolContractV2Observability ? { toolContractV2Observability } : {}),
       ...(bridgeRecoveryDiagnostics ? { bridgeRecoveryDiagnostics } : {}),
       ...(residentAgents ? { residentAgents } : {}),
+      ...(memoryClassConsumer ? {
+        memoryClassSignals: memoryClassConsumer.memoryClassSignals,
+        memoryClassCoverage: memoryClassConsumer.memoryClassCoverage,
+        ...(memoryClassConsumer.memoryClassRegistry ? { memoryClassRegistry: memoryClassConsumer.memoryClassRegistry } : {}),
+      } : {}),
+      ...(memoryFreshness?.summary?.available ? { memoryFreshness } : {}),
         ...(mindProfileSnapshot ? { mindProfileSnapshot } : {}),
         ...(learningReviewInput ? { learningReviewInput } : {}),
         ...(dreamRuntime ? { dreamRuntime } : {}),

@@ -1,7 +1,22 @@
 import type { ExperienceCandidate, TaskExperienceDetail } from "@belldandy/memory";
 
 import type { GoalReviewGovernanceSummary } from "./goals/types.js";
+import {
+  buildMemoryClassSignalViews,
+  formatMemoryClassSignalCoverage,
+  type MemoryClassSignalView,
+} from "./memory-class-registry-view.js";
+import {
+  buildEpisodicTaskFreshnessView,
+  buildGovernanceFreshnessFromGoalReview,
+  buildMemoryFreshnessView,
+  buildProceduralExperienceFreshnessView,
+  buildProfileSemanticFreshnessView,
+  formatMemoryFreshnessCoverage,
+  type MemoryFreshnessView,
+} from "./memory-freshness-view.js";
 import type { MindProfileSnapshot } from "./mind-profile-snapshot.js";
+import type { SkillFreshnessAssessment } from "./skill-freshness.js";
 
 export type LearningReviewInput = {
   summary: {
@@ -11,10 +26,14 @@ export type LearningReviewInput = {
     taskSignalCount: number;
     candidateSignalCount: number;
     reviewSignalCount: number;
+    availableClassCount: number;
+    missingClassCount: number;
     nudgeCount: number;
   };
   summaryLines: string[];
   nudges: string[];
+  memoryClassSignals: MemoryClassSignalView[];
+  memoryFreshness: MemoryFreshnessView;
 };
 
 function truncateText(value: string | undefined, maxLength = 140): string {
@@ -40,6 +59,7 @@ export function buildLearningReviewInput(input: {
   mindProfileSnapshot?: MindProfileSnapshot;
   taskExperienceDetail?: TaskExperienceDetail;
   experienceCandidate?: ExperienceCandidate;
+  experienceCandidateSkillFreshness?: SkillFreshnessAssessment;
   goalReviewGovernanceSummary?: GoalReviewGovernanceSummary;
 }): LearningReviewInput {
   const mind = input.mindProfileSnapshot;
@@ -62,6 +82,50 @@ export function buildLearningReviewInput(input: {
   const pendingReviewCount = Number(governance?.reviewStatusCounts?.pending_review) || 0;
   const needsRevisionCount = Number(governance?.reviewStatusCounts?.needs_revision) || 0;
   const overdueReviewCount = Number(governance?.workflowOverdueCount) || 0;
+  const memoryClassSignals = buildMemoryClassSignalViews({
+    presentClasses: [
+      ...(mind ? ["profile_semantic" as const] : []),
+      ...(task ? ["episodic_task" as const] : []),
+      ...(candidate ? ["procedural_experience" as const] : []),
+      ...(governance ? ["governance" as const] : []),
+    ],
+    partialClasses: [
+      ...(!candidate && (Number(mind?.summary.usageLinkedCount) || 0) > 0 ? ["procedural_experience" as const] : []),
+    ],
+    noteByClass: {
+      profile_semantic: mind
+        ? mind.summary.hasUserProfile
+          ? "Mind profile snapshot is anchored by canonical profile state."
+          : "Mind profile snapshot exists, but the explicit user profile anchor is still weak."
+        : "Mind profile snapshot is not attached.",
+      project_semantic: "Current learning/review input still does not attach an explicit project semantic signal.",
+      episodic_task: task
+        ? `Task detail is attached with memories=${taskMemoryLinkCount}, tools=${taskToolCallCount}, artifacts=${taskArtifactCount}.`
+        : "Task detail is not attached.",
+      procedural_experience: candidate
+        ? `${candidate.type} candidate is attached as the current procedural experience signal.`
+        : (Number(mind?.summary.usageLinkedCount) || 0) > 0
+          ? "Only usage-linked experience traces are attached; no explicit candidate is attached yet."
+          : "No procedural experience signal is attached.",
+      governance: governance
+        ? `Governance summary is attached with pending=${pendingReviewCount}, overdue=${overdueReviewCount}.`
+        : "Governance summary is not attached.",
+    },
+  });
+  const availableClassCount = memoryClassSignals.filter((item) => item.status === "available").length;
+  const missingClassCount = memoryClassSignals.filter((item) => item.status === "missing").length;
+  const memoryFreshness = buildMemoryFreshnessView({
+    items: [
+      buildProfileSemanticFreshnessView(mind),
+      buildEpisodicTaskFreshnessView(task),
+      buildProceduralExperienceFreshnessView({
+        candidate,
+        skillFreshness: input.experienceCandidateSkillFreshness,
+        usageLinkedCount: !candidate ? Number(mind?.summary.usageLinkedCount) || 0 : 0,
+      }),
+      buildGovernanceFreshnessFromGoalReview(governance),
+    ],
+  });
 
   const summaryLines = dedupeStrings([
     mind?.profile.headline ? `Mind snapshot: ${mind.profile.headline}` : undefined,
@@ -79,7 +143,13 @@ export function buildLearningReviewInput(input: {
       ? `Review queue: pending=${pendingReviewCount}, overdue=${overdueReviewCount}, accepted-unpublished=${acceptedUnpublishedCount}, needs_revision=${needsRevisionCount}`
       : undefined,
     governance?.recommendations?.[0] ? `Review focus: ${governance.recommendations[0]}` : undefined,
-  ], 6);
+    memoryClassSignals.length > 0
+      ? `Classed signals: ${formatMemoryClassSignalCoverage(memoryClassSignals)}`
+      : undefined,
+    memoryFreshness.summary.available
+      ? `Freshness: ${formatMemoryFreshnessCoverage(memoryFreshness.items)}`
+      : undefined,
+  ], 7);
 
   const nudges = dedupeStrings([
     mind && !mind.identity.hasUserProfile
@@ -150,6 +220,7 @@ export function buildLearningReviewInput(input: {
     taskSignalCount > 0 ? `task=${taskSignalCount}` : "",
     candidateSignalCount > 0 ? `candidate=${candidateSignalCount}` : "",
     reviewSignalCount > 0 ? `review=${reviewSignalCount}` : "",
+    memoryClassSignals.length > 0 ? `classes=${availableClassCount}/${memoryClassSignals.length}` : "",
     `nudges=${nudges.length}`,
   ].filter(Boolean);
 
@@ -161,9 +232,13 @@ export function buildLearningReviewInput(input: {
       taskSignalCount,
       candidateSignalCount,
       reviewSignalCount,
+      availableClassCount,
+      missingClassCount,
       nudgeCount: nudges.length,
     },
     summaryLines,
     nudges,
+    memoryClassSignals,
+    memoryFreshness,
   };
 }

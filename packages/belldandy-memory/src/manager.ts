@@ -31,6 +31,19 @@ import {
     rankMemoryTreeTopicChunks,
 } from "./memory-tree-layer-builders.js";
 import {
+    DURABLE_PROFILE_STATE_PROMPT_BLOCK,
+    buildDurableProfileStatePlan,
+    type DurableProfileStatePatch,
+} from "./durable-profile-state.js";
+import type {
+    DeleteProfileStateEntryInput,
+    ProfileStateEntry,
+    ProfileStateEntryFilter,
+    ProfileStateEvent,
+    ProfileStateEventFilter,
+    UpsertProfileStateEntryInput,
+} from "./profile-state-types.js";
+import {
     buildManagedMemoryTreeNodeCooldownUntilMetaKey,
     buildManagedMemoryTreeNodeFailureCountMetaKey,
     buildManagedMemoryTreeNodeLastErrorMetaKey,
@@ -449,6 +462,8 @@ type ExtractedConversationMemory = {
     category: string;
     candidateType?: DurableMemoryCandidateType;
     reason?: string;
+    profilePath?: string;
+    profileValue?: unknown;
 };
 
 const DURABLE_MEMORY_GUIDANCE: DurableMemoryGuidance = {
@@ -3601,6 +3616,29 @@ export class MemoryManager {
         return this.store.getTaskByConversation(conversationId);
     }
 
+    upsertProfileStateEntry(input: UpsertProfileStateEntryInput): ProfileStateEntry {
+        return this.store.upsertProfileStateEntry(input);
+    }
+
+    getProfileStateEntry(
+        path: string,
+        filter: Omit<ProfileStateEntryFilter, "path" | "pathPrefix" | "ids"> = {},
+    ): ProfileStateEntry | null {
+        return this.store.getProfileStateEntry(path, filter);
+    }
+
+    listProfileStateEntries(limit = 20, filter: ProfileStateEntryFilter = {}): ProfileStateEntry[] {
+        return this.store.listProfileStateEntries(limit, filter);
+    }
+
+    deleteProfileStateEntry(path: string, input: DeleteProfileStateEntryInput = {}): ProfileStateEntry | null {
+        return this.store.deleteProfileStateEntry(path, input);
+    }
+
+    listProfileStateEvents(limit = 50, filter: ProfileStateEventFilter = {}): ProfileStateEvent[] {
+        return this.store.listProfileStateEvents(limit, filter);
+    }
+
     getTaskDetail(taskId: string): TaskExperienceDetail | null {
         const task = this.store.getTask(taskId);
         if (!task) return null;
@@ -4526,6 +4564,13 @@ export class MemoryManager {
                 };
             }
 
+            const profileStatePlan = buildDurableProfileStatePlan({
+                items: filtered.accepted,
+                sourceConversationId,
+                sourceLabel,
+            });
+            const profileStateSync = this.syncDurableProfileStatePatches(profileStatePlan.patches);
+
             // 去重：检查每条记忆是否已存在相似内容
             const newMemories: Array<ExtractedConversationMemory> = [];
             for (const item of filtered.accepted) {
@@ -4538,13 +4583,26 @@ export class MemoryManager {
 
             if (newMemories.length === 0) {
                 this.store.markSessionMemoryExtracted(dedupeKey);
+                const acceptedCandidateTypes = profileStateSync.appliedCount > 0
+                    ? [...new Set(
+                        filtered.accepted
+                            .map((item) => item.candidateType)
+                            .filter((item): item is DurableMemoryCandidateType => Boolean(item)),
+                    )]
+                    : [];
                 return {
                     count: 0,
-                    acceptedCandidateTypes: [],
+                    acceptedCandidateTypes,
                     rejectedCount: filtered.rejected.length,
                     rejectedReasons: [...new Set(filtered.rejected.map((item) => item.code))],
-                    summary: "All durable memory candidates were skipped because similar memories already exist.",
-                    skipReason: "dedupe_skipped",
+                    summary: this.appendDurableProfileStateSummary(
+                        profileStateSync.appliedCount > 0
+                            ? "All durable memory candidates were already covered by similar memories, but profile state was refreshed."
+                            : "All durable memory candidates were skipped because similar memories already exist.",
+                        profileStateSync,
+                        profileStatePlan.rejected.length,
+                    ),
+                    skipReason: profileStateSync.appliedCount > 0 ? undefined : "dedupe_skipped",
                 };
             }
 
@@ -4565,11 +4623,15 @@ export class MemoryManager {
                 acceptedCandidateTypes: [...new Set(newMemories.map((item) => item.candidateType).filter((item): item is DurableMemoryCandidateType => Boolean(item)))],
                 rejectedCount: filtered.rejected.length,
                 rejectedReasons: [...new Set(filtered.rejected.map((item) => item.code))],
-                summary: buildDurableExtractionSummary({
-                    acceptedCount: newMemories.length,
-                    acceptedCandidateTypes: newMemories.map((item) => item.candidateType).filter((item): item is DurableMemoryCandidateType => Boolean(item)),
-                    rejected: filtered.rejected,
-                }),
+                summary: this.appendDurableProfileStateSummary(
+                    buildDurableExtractionSummary({
+                        acceptedCount: newMemories.length,
+                        acceptedCandidateTypes: newMemories.map((item) => item.candidateType).filter((item): item is DurableMemoryCandidateType => Boolean(item)),
+                        rejected: filtered.rejected,
+                    }),
+                    profileStateSync,
+                    profileStatePlan.rejected.length,
+                ),
             };
         } catch (err) {
             console.error(`[MemoryManager] Memory extraction failed for session ${sourceLabel}:`, err);
@@ -4683,6 +4745,64 @@ export class MemoryManager {
         };
     }
 
+    private syncDurableProfileStatePatches(
+        patches: DurableProfileStatePatch[],
+    ): { appliedCount: number; appliedPaths: string[]; skippedConflictCount: number } {
+        const appliedPaths: string[] = [];
+        let skippedConflictCount = 0;
+
+        for (const patch of patches) {
+            const existing = this.store.getProfileStateEntry(patch.path, {
+                scope: "user",
+                status: ["active", "deleted"],
+            });
+            if (existing?.status === "active") {
+                const currentValue = JSON.stringify(existing.value ?? null);
+                const nextValue = JSON.stringify(patch.value ?? null);
+                if (currentValue !== nextValue) {
+                    skippedConflictCount += 1;
+                    continue;
+                }
+            }
+
+            this.store.upsertProfileStateEntry({
+                scope: "user",
+                path: patch.path,
+                value: patch.value,
+                confidence: patch.confidence,
+                reason: patch.reason,
+                sourceRefs: patch.sourceRefs,
+                createdBy: "durable_extraction",
+            });
+            appliedPaths.push(patch.path);
+        }
+
+        return {
+            appliedCount: appliedPaths.length,
+            appliedPaths,
+            skippedConflictCount,
+        };
+    }
+
+    private appendDurableProfileStateSummary(
+        baseSummary: string,
+        sync: { appliedCount: number; appliedPaths: string[]; skippedConflictCount: number },
+        rejectedCount: number,
+    ): string {
+        const parts = [baseSummary];
+        if (sync.appliedCount > 0) {
+            parts.push(`profileUpdates=${sync.appliedCount}`);
+            parts.push(`profilePaths=${sync.appliedPaths.join(",")}`);
+        }
+        if (sync.skippedConflictCount > 0) {
+            parts.push(`profileConflicts=${sync.skippedConflictCount}`);
+        }
+        if (rejectedCount > 0) {
+            parts.push(`profileRejected=${rejectedCount}`);
+        }
+        return parts.join("; ");
+    }
+
     /**
      * 调用 LLM 从对话中提取记忆
      */
@@ -4707,6 +4827,8 @@ export class MemoryManager {
 - 【决策/decision】：用户做出的技术决策、架构选择、方案确定等
 - 【实体/entity】：用户提到的重要人名、项目名、组织名等
 
+${DURABLE_PROFILE_STATE_PROMPT_BLOCK}
+
 仅提取有长期价值的信息，忽略临时性的对话内容。
 不要记下面这些内容：
 - 代码模式、架构片段、函数实现、文件路径、项目目录结构
@@ -4715,7 +4837,7 @@ export class MemoryManager {
 - 已在 AGENTS.md / CLAUDE.md / README / 项目规范中稳定存在的规则
 
 每条记忆用一句话概括。
-返回 JSON 数组，格式：[{"type":"偏好","category":"preference","candidateType":"user","content":"...","reason":"..."}]
+返回 JSON 数组，格式：[{"type":"偏好","category":"preference","candidateType":"user","content":"...","reason":"...","profilePath":"preferences.response_style","profileValue":"先给结论，再展开证据"}]
 category 必须是以下之一：preference / experience / fact / decision / entity
 candidateType 必须是以下之一：user / feedback / project / reference
 如果没有值得记住的内容，返回空数组 []。
@@ -4765,6 +4887,8 @@ candidateType 必须是以下之一：user / feedback / project / reference
                 category: (typeof item.category === "string" ? item.category : "other") as string,
                 candidateType: normalizeDurableMemoryCandidateType(item.candidateType),
                 reason: typeof item.reason === "string" ? item.reason : undefined,
+                profilePath: typeof item.profilePath === "string" ? item.profilePath : undefined,
+                profileValue: item.profileValue,
             }));
         } catch {
             console.warn("[MemoryManager] Failed to parse extraction result:", raw.slice(0, 200));

@@ -3264,6 +3264,113 @@ describe("MemoryManager guardrails", () => {
     extractionSpy.mockRestore();
   });
 
+  it("writes low-risk profile state fields from durable extraction when structured profile hints are present", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      evolutionEnabled: true,
+      evolutionModel: "test-evolution-model",
+      evolutionBaseUrl: "https://example.invalid/v1",
+      evolutionApiKey: "test-evolution-key",
+      evolutionMinMessages: 2,
+    });
+
+    const extractionSpy = vi.spyOn(manager as any, "callLLMForExtraction").mockResolvedValue([
+      {
+        type: "事实",
+        category: "fact",
+        candidateType: "user",
+        content: "用户明确说明自己叫小星。",
+        reason: "显式自我介绍",
+        profilePath: "identity.name",
+        profileValue: "小星",
+      },
+      {
+        type: "偏好",
+        category: "preference",
+        candidateType: "user",
+        content: "用户默认希望先给结论，再展开证据。",
+        reason: "稳定输出偏好",
+        profilePath: "preferences.response_style",
+        profileValue: "先给结论，再展开证据",
+      },
+      {
+        type: "偏好",
+        category: "preference",
+        candidateType: "feedback",
+        content: "用户习惯先列计划，再推进实现。",
+        reason: "稳定工作方式",
+        profilePath: "workstyle.planning_preference",
+        profileValue: "先列计划，再推进实现",
+      },
+    ]);
+
+    const result = await manager.extractMemoriesFromConversation("conv-profile-state-write", [
+      { role: "user", content: "请沉淀我稳定的名字、输出风格和协作方式。" },
+      { role: "assistant", content: "我会提取长期有效的低风险画像字段。" },
+    ]);
+
+    expect(result).toMatchObject({
+      count: 3,
+      acceptedCandidateTypes: ["user", "feedback"],
+    });
+    expect(result.summary).toContain("profileUpdates=3");
+    expect(manager.getProfileStateEntry("identity.name", { scope: "user" })).toMatchObject({
+      value: "小星",
+    });
+    expect(manager.getProfileStateEntry("preferences.response_style", { scope: "user" })).toMatchObject({
+      value: "先给结论，再展开证据",
+    });
+    expect(manager.getProfileStateEntry("workstyle.planning_preference", { scope: "user" })).toMatchObject({
+      value: "先列计划，再推进实现",
+    });
+
+    extractionSpy.mockRestore();
+  });
+
+  it("does not overwrite an existing profile state value when durable extraction produces a conflicting patch", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      evolutionEnabled: true,
+      evolutionModel: "test-evolution-model",
+      evolutionBaseUrl: "https://example.invalid/v1",
+      evolutionApiKey: "test-evolution-key",
+      evolutionMinMessages: 2,
+    });
+    manager.upsertProfileStateEntry({
+      scope: "user",
+      path: "preferences.response_style",
+      value: "先给结论，再展开证据",
+      createdBy: "seed",
+    });
+
+    const extractionSpy = vi.spyOn(manager as any, "callLLMForExtraction").mockResolvedValue([
+      {
+        type: "偏好",
+        category: "preference",
+        candidateType: "user",
+        content: "用户希望解释越详细越好。",
+        reason: "与现有画像冲突",
+        profilePath: "preferences.response_style",
+        profileValue: "先完整展开细节，再给结论",
+      },
+    ]);
+
+    const result = await manager.extractMemoriesFromConversation("conv-profile-state-conflict", [
+      { role: "user", content: "请记住我的偏好。" },
+      { role: "assistant", content: "我会尝试更新 durable profile state。" },
+    ]);
+
+    expect(result.count).toBe(1);
+    expect(result.summary).toContain("profileConflicts=1");
+    expect(manager.getProfileStateEntry("preferences.response_style", { scope: "user" })).toMatchObject({
+      value: "先给结论，再展开证据",
+    });
+
+    extractionSpy.mockRestore();
+  });
+
   it("returns policy_filtered skip reason when all durable candidates are rejected by policy", async () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -3325,7 +3432,7 @@ describe("MemoryManager guardrails", () => {
               content: `<think>
 先判断哪些内容适合 durable memory。
 </think>
-[{"type":"偏好","category":"preference","candidateType":"user","content":"用户默认希望使用简体中文交流。","reason":"长期沟通偏好"}]`,
+[{"type":"偏好","category":"preference","candidateType":"user","content":"用户默认希望使用简体中文交流。","reason":"长期沟通偏好","profilePath":"preferences.communication_style","profileValue":"默认使用简体中文交流"}]`,
             },
           },
         ],
@@ -3344,6 +3451,8 @@ describe("MemoryManager guardrails", () => {
         candidateType: "user",
         content: "用户默认希望使用简体中文交流。",
         reason: "长期沟通偏好",
+        profilePath: "preferences.communication_style",
+        profileValue: "默认使用简体中文交流",
       },
     ]);
 

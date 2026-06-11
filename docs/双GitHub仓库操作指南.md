@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "优化了SOUL.md与AGENTS.md"
+git commit -m "对SS的心智记忆与用户画像功能进行增强优化，P1阶段开发中"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { extractIdentityInfo } from "@belldandy/agent";
+import type { ProfileStateEntry } from "@belldandy/memory";
 
 import type { ResidentAgentDoctorReport } from "./resident-agent-observability.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
@@ -36,6 +37,14 @@ type MindProfileTreeNodeView = {
   summary: string;
   chunkCount: number;
   updatedAt?: string;
+};
+
+type MindProfileStateEntryView = {
+  path: string;
+  valueText: string;
+  confidence?: number;
+  updatedAt?: string;
+  lastConfirmedAt?: string;
 };
 
 export type MindProfileSnapshot = {
@@ -81,6 +90,8 @@ export type MindProfileSnapshot = {
   profile: {
     headline: string;
     summaryLines: string[];
+    stateSummaryLines?: string[];
+    stateEntries?: MindProfileStateEntryView[];
     treeSummaryLines?: string[];
     treeNodes?: MindProfileTreeNodeView[];
   };
@@ -196,6 +207,76 @@ function buildMemorySummary(options: {
   return parts.join(", ");
 }
 
+function isIdentityProfilePath(profilePath: string): boolean {
+  return profilePath === "identity.name" || profilePath === "identity.avatar";
+}
+
+function readProfileStateValueText(value: unknown): string {
+  if (typeof value === "string") {
+    return truncateText(toPlainLine(value), 100);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return truncateText(value.map((item) => toPlainLine(String(item))).filter(Boolean).join(", "), 100);
+  }
+  if (value && typeof value === "object") {
+    try {
+      return truncateText(toPlainLine(JSON.stringify(value)), 100);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function profileStatePathPriority(profilePath: string): number {
+  if (profilePath === "identity.name") return 0;
+  if (profilePath === "identity.avatar") return 1;
+  if (profilePath.startsWith("preferences.")) return 10;
+  if (profilePath.startsWith("workstyle.")) return 20;
+  if (profilePath.startsWith("relationship.")) return 30;
+  return 100;
+}
+
+function buildProfileStateView(entries: ProfileStateEntry[]): {
+  userName?: string;
+  userAvatar?: string;
+  stateEntries: MindProfileStateEntryView[];
+  stateSummaryLines: string[];
+} {
+  const sortedEntries = entries
+    .slice()
+    .sort((left, right) => {
+      const priorityDelta = profileStatePathPriority(left.path) - profileStatePathPriority(right.path);
+      if (priorityDelta !== 0) return priorityDelta;
+      return (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0);
+    });
+  const userName = sortedEntries.find((item) => item.path === "identity.name" && typeof item.value === "string")?.value as string | undefined;
+  const userAvatar = sortedEntries.find((item) => item.path === "identity.avatar" && typeof item.value === "string")?.value as string | undefined;
+  const stateEntries = sortedEntries
+    .map((entry) => ({
+      path: entry.path,
+      valueText: readProfileStateValueText(entry.value),
+      confidence: entry.confidence,
+      updatedAt: entry.updatedAt,
+      lastConfirmedAt: entry.lastConfirmedAt,
+    }))
+    .filter((entry) => entry.valueText);
+  const preferred = stateEntries.filter((entry) => !isIdentityProfilePath(entry.path));
+  const summarySource = preferred.length > 0 ? preferred : stateEntries;
+  const stateSummaryLines = summarySource
+    .slice(0, 3)
+    .map((entry) => `Profile state: ${entry.path} = ${entry.valueText}`);
+  return {
+    userName,
+    userAvatar,
+    stateEntries: stateEntries.slice(0, 6),
+    stateSummaryLines,
+  };
+}
+
 function resolveSelectedRecord(
   residentMemoryManagers: ScopedMemoryManagerRecord[] | undefined,
   agentId?: string,
@@ -275,6 +356,26 @@ async function listMindProfileTreeNodes(
   return treeNodes;
 }
 
+function listProfileStateEntries(
+  selectedRecord: ScopedMemoryManagerRecord | undefined,
+  selectedAgentId: string,
+): ProfileStateEntry[] {
+  const manager = selectedRecord?.manager;
+  if (!manager) {
+    return [];
+  }
+  const scopedEntries = manager.listProfileStateEntries(12, {
+    agentId: selectedAgentId,
+    scope: "user",
+  });
+  if (scopedEntries.length > 0) {
+    return scopedEntries;
+  }
+  return manager.listProfileStateEntries(12, {
+    scope: "user",
+  });
+}
+
 export async function buildMindProfileSnapshot(input: {
   stateDir: string;
   residentAgents?: ResidentAgentDoctorReport;
@@ -300,6 +401,8 @@ export async function buildMindProfileSnapshot(input: {
     pathExists(sharedMemoryFilePath),
   ]);
 
+  const profileStateEntries = listProfileStateEntries(selectedRecord, selectedAgentId);
+  const profileState = buildProfileStateView(profileStateEntries);
   const userProfileFileSummary = extractMeaningfulLines(userProfileFileContent, 1)[0];
   const privateMemoryFileSummary = extractMeaningfulLines(privateMemoryFileContent, 1)[0];
   const sharedMemoryFileSummary = extractMeaningfulLines(sharedMemoryFileContent, 1)[0];
@@ -376,7 +479,14 @@ export async function buildMindProfileSnapshot(input: {
   const digestUpdatedCount = Number(residentSummary?.digestUpdatedCount) || 0;
   const usageLinkedCount = Number(residentSummary?.experienceUsageLinkedCount) || 0;
 
-  const hasUserProfile = Boolean(identity.userName || identity.userAvatar);
+  const effectiveUserName = profileState.userName || identity.userName;
+  const effectiveUserAvatar = profileState.userAvatar || identity.userAvatar;
+  const hasUserProfile = Boolean(
+    effectiveUserName
+    || effectiveUserAvatar
+    || profileState.stateSummaryLines.length > 0
+    || userProfileFileSummary,
+  );
   const conversationHeadline = residentSummary?.headline
     ? `Residents: ${truncateText(residentSummary.headline, 150)}`
     : undefined;
@@ -388,8 +498,9 @@ export async function buildMindProfileSnapshot(input: {
 
   const summaryLines = dedupeStrings([
     hasUserProfile
-      ? `User profile: ${truncateText(identity.userName || "-", 48)}${identity.userAvatar ? ` / ${truncateText(identity.userAvatar, 24)}` : ""}`
+      ? `User profile: ${truncateText(effectiveUserName || "-", 48)}${effectiveUserAvatar ? ` / ${truncateText(effectiveUserAvatar, 24)}` : ""}`
       : undefined,
+    ...profileState.stateSummaryLines,
     ...treeSummaryLines,
     userProfileFileSummary
       ? `USER.md: ${userProfileFileSummary}`
@@ -402,7 +513,10 @@ export async function buildMindProfileSnapshot(input: {
     ...sharedSnippets.map((item) => `Shared recent: ${item.text}`),
   ], 6);
 
-  const profileHeadline = treeSummaryLines[0] || summaryLines[0] || "Mind/profile snapshot is currently empty";
+  const profileHeadline = profileState.stateSummaryLines[0]
+    || treeSummaryLines[0]
+    || summaryLines[0]
+    || "Mind/profile snapshot is currently empty";
   const headlineParts = [
     hasUserProfile ? "user ready" : "user missing",
     `private ${privateMemoryCount}`,
@@ -435,8 +549,8 @@ export async function buildMindProfileSnapshot(input: {
       hasSharedMemoryFile,
     },
     identity: {
-      userName: identity.userName,
-      userAvatar: identity.userAvatar,
+      userName: effectiveUserName,
+      userAvatar: effectiveUserAvatar,
       hasUserProfile,
       hasPrivateMemoryFile,
       hasSharedMemoryFile,
@@ -471,6 +585,8 @@ export async function buildMindProfileSnapshot(input: {
     profile: {
       headline: profileHeadline,
       summaryLines,
+      stateSummaryLines: profileState.stateSummaryLines,
+      stateEntries: profileState.stateEntries,
       treeSummaryLines,
       treeNodes,
     },

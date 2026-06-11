@@ -62,6 +62,23 @@ import type {
   MemoryTreeSourceRecord,
   MemoryTreeTargetType,
 } from "./memory-tree-types.js";
+import {
+  deleteProfileStateEntryInDb,
+  getProfileStateEntryFromDb,
+  installProfileStateSchema,
+  listProfileStateEntriesFromDb,
+  listProfileStateEventsFromDb,
+  upsertProfileStateEntryInDb,
+} from "./profile-state.js";
+import {
+  PROFILE_STATE_SCHEMA_VERSION,
+  type DeleteProfileStateEntryInput,
+  type ProfileStateEntry,
+  type ProfileStateEntryFilter,
+  type ProfileStateEvent,
+  type ProfileStateEventFilter,
+  type UpsertProfileStateEntryInput,
+} from "./profile-state-types.js";
 
 const KNOWN_MEMORY_CATEGORIES = ["preference", "experience", "fact", "decision", "entity", "other"] as const;
 const TASK_CHANGE_SEQ_META_KEY = "task_change_seq";
@@ -472,6 +489,7 @@ export class MemoryStore {
     this.db.exec(SCHEMA_TASK_ACTIVITIES);
     this.db.exec(SCHEMA_EXPERIENCE);
     this.db.exec(SCHEMA_MEMORY_TREE);
+    installProfileStateSchema(this.db);
 
     // Phase M-1: 元数据列迁移（对已有列 ALTER TABLE ADD COLUMN 会报 duplicate，安全忽略）
     for (const sql of SCHEMA_METADATA_COLUMNS) {
@@ -502,6 +520,7 @@ export class MemoryStore {
     this.db.exec(SCHEMA_METADATA_INDEXES);
     this.setMeta("memory_tree_schema_version", MEMORY_TREE_SCHEMA_VERSION);
     this.setMeta("memory_tree_score_version", MEMORY_TREE_SCORE_VERSION);
+    this.setMeta("profile_state_schema_version", PROFILE_STATE_SCHEMA_VERSION);
     this.backfillMetadataColumns();
 
     // 从现有 chunks_vec 表读取维度（如果存在）
@@ -1190,6 +1209,42 @@ export class MemoryStore {
       visibility: row.visibility === "shared" ? "shared" : row.visibility === "private" ? "private" : undefined,
       snippet: row.content ? truncateContent(row.content, 120) : undefined,
     }));
+  }
+
+  upsertProfileStateEntry(input: UpsertProfileStateEntryInput): ProfileStateEntry {
+    this.ensureOpen();
+    const result = upsertProfileStateEntryInDb(this.db, input);
+    if (result.changed) {
+      this.incrementNumericMeta(MEMORY_CHANGE_SEQ_META_KEY);
+    }
+    return result.entry;
+  }
+
+  getProfileStateEntry(
+    path: string,
+    filter: Omit<ProfileStateEntryFilter, "path" | "pathPrefix" | "ids"> = {},
+  ): ProfileStateEntry | null {
+    this.ensureOpen();
+    return getProfileStateEntryFromDb(this.db, path, filter);
+  }
+
+  listProfileStateEntries(limit = 20, filter: ProfileStateEntryFilter = {}): ProfileStateEntry[] {
+    this.ensureOpen();
+    return listProfileStateEntriesFromDb(this.db, limit, filter);
+  }
+
+  deleteProfileStateEntry(path: string, input: DeleteProfileStateEntryInput = {}): ProfileStateEntry | null {
+    this.ensureOpen();
+    const result = deleteProfileStateEntryInDb(this.db, path, input);
+    if (result.changed) {
+      this.incrementNumericMeta(MEMORY_CHANGE_SEQ_META_KEY);
+    }
+    return result.entry;
+  }
+
+  listProfileStateEvents(limit = 50, filter: ProfileStateEventFilter = {}): ProfileStateEvent[] {
+    this.ensureOpen();
+    return listProfileStateEventsFromDb(this.db, limit, filter);
   }
 
   createExperienceCandidate(candidate: ExperienceCandidate): void {

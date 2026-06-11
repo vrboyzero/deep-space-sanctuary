@@ -47,6 +47,18 @@ describe("buildMindProfileRuntimePrelude", () => {
   it("builds runtime prelude for main sessions with stable mind signals", async () => {
     await fs.writeFile(path.join(stateDir, "USER.md"), "# USER\n**名字：** 小星\n偏好简洁结论。\n", "utf-8");
     await fs.writeFile(path.join(stateDir, "MEMORY.md"), "# MEMORY\n优先给短结论与验证口径。\n", "utf-8");
+    manager.upsertProfileStateEntry({
+      scope: "user",
+      path: "preferences.response_style",
+      value: "先给稳定结论，再展开说明",
+      createdBy: "test",
+    });
+    manager.upsertProfileStateEntry({
+      scope: "user",
+      path: "workstyle.planning_preference",
+      value: "先列计划，再推进实现",
+      createdBy: "test",
+    });
     (manager as any).store.upsertChunk({
       id: "private-memory-1",
       sourcePath: "MEMORY.md",
@@ -86,12 +98,64 @@ describe("buildMindProfileRuntimePrelude", () => {
     });
 
     expect(result?.prependContext).toContain("<mind-profile-runtime");
-    expect(result?.prependContext).toContain("User anchor:");
-    expect(result?.prependContext).toContain("Durable memory:");
+    expect(result?.prependContext).toContain("<canonical-profile-state>");
+    expect(result?.prependContext).toContain("preferences.response_style = 先给稳定结论，再展开说明");
+    expect(result?.prependContext).toContain("workstyle.planning_preference = 先列计划，再推进实现");
+    expect(result?.prependContext).toContain("<runtime-summary>");
+    expect(result?.prependContext).toContain("User anchor: 小星");
     expect(result?.deltas?.[0]?.metadata).toMatchObject({
       blockTag: "mind-profile-runtime",
       sessionKind: "main",
       signalCount: expect.any(Number),
+      profileStateLineCount: 2,
+      summaryLineCount: 1,
+      profileStatePaths: [
+        "preferences.response_style",
+        "workstyle.planning_preference",
+      ],
+    });
+  });
+
+  it("injects canonical profile state even when summary signals stay below the normal threshold", async () => {
+    manager.upsertProfileStateEntry({
+      scope: "user",
+      path: "preferences.response_style",
+      value: "先给稳定结论，再展开说明",
+      createdBy: "test",
+    });
+
+    const result = await buildMindProfileRuntimePrelude({
+      stateDir,
+      agentId: "default",
+      sessionKey: "agent:default:main",
+      residentMemoryManagers: [{
+        agentId: "default",
+        stateDir,
+        memoryMode: "hybrid",
+        policy: {
+          memoryMode: "hybrid",
+          managerStateDir: stateDir,
+          sharedStateDir,
+          writeTarget: "private",
+          readTargets: ["private", "shared"],
+          includeSharedMemoryReads: true,
+        },
+        manager,
+      } as any],
+      config: {
+        enabled: true,
+        maxLines: 3,
+        maxLineLength: 96,
+        maxChars: 240,
+        minSignalCount: 2,
+      },
+    });
+
+    expect(result?.prependContext).toContain("<canonical-profile-state>");
+    expect(result?.prependContext).toContain("preferences.response_style = 先给稳定结论，再展开说明");
+    expect(result?.deltas?.[0]?.metadata).toMatchObject({
+      activationReason: "profile_state_present",
+      profileStateLineCount: 1,
     });
   });
 

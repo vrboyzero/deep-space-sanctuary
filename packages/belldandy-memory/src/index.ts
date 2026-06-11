@@ -2,6 +2,33 @@ export { MemoryStore } from "./store.js";
 export { MemoryIndexer } from "./indexer.js";
 export { ResultReranker, type RerankerOptions, type GetVectorFn } from "./reranker.js";
 export {
+  MEMORY_CLASS_VALUES,
+  MEMORY_CLASS_ORDER,
+  MEMORY_TRUTH_MODE_VALUES,
+  getMemoryClassContract,
+  isMemoryClass,
+  isMemoryTruthMode,
+  listMemoryClassContracts,
+  normalizeMemoryClass,
+  normalizeMemoryTruthMode,
+  type MemoryClass,
+  type MemoryClassContract,
+  type MemoryTruthMode,
+} from "./memory-class-contract.js";
+export {
+  MEMORY_CLASS_BINDING_ROLE_VALUES,
+  findMemoryClassBindingsByModulePath,
+  getMemoryClassBindingEntry,
+  isMemoryClassBindingRole,
+  listMemoryClassBindingEntries,
+  listMemoryClassBindings,
+  normalizeMemoryClassModulePath,
+  type MemoryClassBindingFilter,
+  type MemoryClassBindingRegistryEntry,
+  type MemoryClassBindingRole,
+  type MemoryClassModuleBinding,
+} from "./memory-class-bindings.js";
+export {
   MemoryManager,
   type MemoryManagerOptions,
   type ConversationMemoryExtractionSupport,
@@ -267,6 +294,7 @@ export * from "./types.js";
 export * from "./task-types.js";
 export * from "./experience-types.js";
 export * from "./dream-types.js";
+export * from "./profile-state-types.js";
 export * from "./memory-files.js";
 export * from "./team-memory.js";
 export { TaskProcessor, type TaskProcessorOptions } from "./task-processor.js";

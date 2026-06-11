@@ -1150,8 +1150,11 @@ test("conversation.memory.extraction.get and conversation.memory.extract expose 
   const extractionSpy = vi.spyOn(memoryManager as any, "callLLMForExtraction").mockResolvedValue([
     {
       type: "事实",
-      category: "fact",
+      category: "preference",
       content: "Week 8 durable extraction 已经进入独立运行时。",
+      candidateType: "user",
+      profilePath: "preferences.response_style",
+      profileValue: "先给稳定结论，再展开说明",
     },
   ]);
   registerGlobalMemoryManager(memoryManager);
@@ -1207,6 +1210,11 @@ test("conversation.memory.extraction.get and conversation.memory.extract expose 
       lastExtractedMemoryCount: 1,
     });
     expect(extractionSpy).toHaveBeenCalledTimes(1);
+    expect(memoryManager.getProfileStateEntry("preferences.response_style", {
+      scope: "user",
+    })).toMatchObject({
+      value: "先给稳定结论，再展开说明",
+    });
 
     ws.send(JSON.stringify({
       type: "req",
