@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "修改了牵星系统自动提示变量配置无法保存的问题"
+git commit -m "优化了SOUL.md与AGENTS.md"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题
