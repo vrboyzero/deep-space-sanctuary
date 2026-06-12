@@ -1,7 +1,10 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 
 import {
   buildGoalTrackingCapabilityPlanIndex,
+  createGoalsTrackingPanelFeature,
   filterGoalTrackingCheckpointsByNode,
   getGoalTrackingCheckpointExplainabilityLines,
   getGoalTrackingNodeActionTargets,
@@ -82,5 +85,30 @@ describe("goal tracking linkage helpers", () => {
       { id: "cp_1", nodeId: "node_impl" },
       { id: "cp_3", nodeId: "node_impl" },
     ]);
+  });
+
+  it("renders governance freshness headline when tracking payload includes memory freshness", () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalTrackingPanel"></div></div>';
+    const feature = createGoalsTrackingPanelFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      escapeHtml: (value) => String(value),
+      formatDateTime: (value) => value || "",
+      getGoalCheckpointSlaBadge: () => "",
+    });
+
+    feature.renderGoalTrackingPanel({ id: "goal_1" }, {
+      nodes: [],
+      checkpoints: [],
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "当前治理队列存在待收口项",
+        },
+      },
+    });
+
+    expect(document.getElementById("goalTrackingPanel")?.textContent || "").toContain("治理 freshness：当前治理队列存在待收口项");
   });
 });

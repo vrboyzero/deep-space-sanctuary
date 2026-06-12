@@ -36,6 +36,21 @@ export function createGoalsGovernancePanelFeature({
     return suggestionType === "method_candidate" || suggestionType === "skill_candidate";
   }
 
+  function renderGoalGovernanceFreshnessSummary(memoryFreshness) {
+    const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
+      ? memoryFreshness.summary
+      : null;
+    if (!summary?.available || !summary.headline) {
+      return "";
+    }
+    return `
+      <div class="tool-settings-policy-note" style="margin-bottom:12px;">
+        <div><strong>治理 freshness：</strong>${escapeHtml(summary.headline)}</div>
+        <div>review_required=${escapeHtml(String(summary.reviewRequiredCount || 0))} / stale=${escapeHtml(String(summary.staleCount || 0))} / superseded=${escapeHtml(String(summary.supersededCount || 0))}</div>
+      </div>
+    `;
+  }
+
   function formatBridgeRuntimeState(runtimeState) {
     const normalized = typeof runtimeState === "string" ? runtimeState.trim().toLowerCase() : "";
     if (!normalized) return "未知";
@@ -229,6 +244,7 @@ export function createGoalsGovernancePanelFeature({
         ${compactGovernanceDetailMode ? "" : `<div class="goal-summary-item"><span class="goal-summary-label">模板</span><strong class="goal-summary-value">${escapeHtml(String(data.templates.length))}</strong></div>`}
         ${compactGovernanceDetailMode ? "" : `<div class="goal-summary-item"><span class="goal-summary-label">分发记录</span><strong class="goal-summary-value">${escapeHtml(String(data.notificationDispatchCounts?.total || data.notificationDispatches.length || 0))}</strong></div>`}
       </div>
+      ${renderGoalGovernanceFreshnessSummary(data.memoryFreshness)}
       ${compactGovernanceDetailMode ? "" : renderCommanderFocusSection(data.commanderFocus)}
       ${compactGovernanceDetailMode ? "" : renderGoalBridgeGovernanceSection(data.bridgeGovernanceSummary)}
       ${!compactGovernanceDetailMode && data.learningReviewInput ? `

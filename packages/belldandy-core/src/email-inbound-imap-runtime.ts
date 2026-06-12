@@ -455,10 +455,6 @@ class SimpleImapClient {
       const onConnect = () => {
         settleConnect(() => {
           socket.off("error", onInitialError);
-          socket.setTimeout(this.options.socketTimeoutMs);
-          socket.on("timeout", () => {
-            socket.destroy(new Error("IMAP socket timeout"));
-          });
           resolve(socket);
         });
       };
@@ -471,10 +467,17 @@ class SimpleImapClient {
         socket.once("connect", onConnect);
       }
     });
-    await this.readUntil((buffer) => {
-      const greetingEnd = buffer.indexOf(Buffer.from("\r\n", "utf-8"));
-      return greetingEnd >= 0 ? greetingEnd + 2 : -1;
-    }, this.options.connectTimeoutMs);
+    try {
+      await this.readUntil((buffer) => {
+        const greetingEnd = buffer.indexOf(Buffer.from("\r\n", "utf-8"));
+        return greetingEnd >= 0 ? greetingEnd + 2 : -1;
+      }, this.options.connectTimeoutMs);
+    } catch (error) {
+      this.socket?.destroy();
+      this.socket = undefined;
+      this.buffer = Buffer.alloc(0);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {

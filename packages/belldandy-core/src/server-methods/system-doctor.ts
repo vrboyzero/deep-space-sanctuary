@@ -185,6 +185,24 @@ type TimedDoctorStageResult<T> =
 
 type DoctorSurface = "summary" | "full";
 
+type MemoryEvaluationStatus = "pass" | "warn";
+
+type MemoryEvaluationSummary = {
+  available: boolean;
+  status: MemoryEvaluationStatus;
+  headline: string;
+  profileStateFieldCount: number;
+  freshnessReviewRequiredCount: number;
+  freshnessStaleCount: number;
+  governancePendingCount: number;
+  governanceClaimedCount: number;
+  dreamProfilePatchBacklogCount: number;
+  dreamStaleBacklogCount: number;
+  dreamContradictionBacklogCount: number;
+  experienceUsageLinkedResidentCount: number;
+  signals: string[];
+};
+
 const SYSTEM_DOCTOR_SUMMARY_CACHE_TTL_MS = 1500;
 const SYSTEM_DOCTOR_FULL_CACHE_TTL_MS = 5000;
 
@@ -202,6 +220,93 @@ function normalizeDoctorSurface(value: unknown): DoctorSurface {
   return typeof value === "string" && value.trim().toLowerCase() === "summary"
     ? "summary"
     : "full";
+}
+
+function buildMemoryEvaluationSummary(input: {
+  mindProfileSnapshot?: any;
+  memoryFreshness?: any;
+  residentAgents?: any;
+  dreamRuntime?: any;
+}): MemoryEvaluationSummary | undefined {
+  const profileStateFieldCount = Array.isArray(input.mindProfileSnapshot?.profile?.stateEntries)
+    ? input.mindProfileSnapshot.profile.stateEntries.length
+    : 0;
+  const freshnessReviewRequiredCount = Number(input.memoryFreshness?.summary?.reviewRequiredCount) || 0;
+  const freshnessStaleCount = Number(input.memoryFreshness?.summary?.staleCount) || 0;
+  const governancePendingCount = Number(input.residentAgents?.summary?.sharedGovernanceCounts?.pendingCount) || 0;
+  const governanceClaimedCount = Number(input.residentAgents?.summary?.sharedGovernanceCounts?.claimedCount) || 0;
+  const experienceUsageLinkedResidentCount = Number(input.residentAgents?.summary?.experienceUsageLinkedCount) || 0;
+  const latestDreamConsolidation = input.dreamRuntime?.latestRun?.consolidation
+    ?? (Array.isArray(input.dreamRuntime?.state?.recentRuns) ? input.dreamRuntime.state.recentRuns[0]?.consolidation : null);
+  const dreamProfilePatchBacklogCount = Array.isArray(latestDreamConsolidation?.profilePatchCandidates)
+    ? latestDreamConsolidation.profilePatchCandidates.length
+    : 0;
+  const dreamStaleBacklogCount = Array.isArray(latestDreamConsolidation?.staleCandidates)
+    ? latestDreamConsolidation.staleCandidates.length
+    : 0;
+  const dreamContradictionBacklogCount = Array.isArray(latestDreamConsolidation?.contradictionCandidates)
+    ? latestDreamConsolidation.contradictionCandidates.length
+    : 0;
+
+  const available = profileStateFieldCount > 0
+    || freshnessReviewRequiredCount > 0
+    || freshnessStaleCount > 0
+    || governancePendingCount > 0
+    || governanceClaimedCount > 0
+    || dreamProfilePatchBacklogCount > 0
+    || dreamStaleBacklogCount > 0
+    || dreamContradictionBacklogCount > 0
+    || experienceUsageLinkedResidentCount > 0;
+  if (!available) {
+    return undefined;
+  }
+
+  const signals: string[] = [];
+  if (profileStateFieldCount > 0) {
+    signals.push(`profile coverage=${profileStateFieldCount}`);
+  }
+  if (freshnessReviewRequiredCount > 0 || freshnessStaleCount > 0) {
+    signals.push(`freshness review=${freshnessReviewRequiredCount}, stale=${freshnessStaleCount}`);
+  }
+  if (governancePendingCount > 0 || governanceClaimedCount > 0) {
+    signals.push(`shared governance pending=${governancePendingCount}, claimed=${governanceClaimedCount}`);
+  }
+  if (dreamProfilePatchBacklogCount > 0 || dreamStaleBacklogCount > 0 || dreamContradictionBacklogCount > 0) {
+    signals.push(`dream backlog patch=${dreamProfilePatchBacklogCount}, stale=${dreamStaleBacklogCount}, contradiction=${dreamContradictionBacklogCount}`);
+  }
+  if (experienceUsageLinkedResidentCount > 0) {
+    signals.push(`experience-linked residents=${experienceUsageLinkedResidentCount}`);
+  }
+
+  const status: MemoryEvaluationStatus = freshnessReviewRequiredCount > 0
+    || freshnessStaleCount > 0
+    || governancePendingCount > 0
+    || governanceClaimedCount > 0
+    || dreamProfilePatchBacklogCount > 0
+    || dreamStaleBacklogCount > 0
+    || dreamContradictionBacklogCount > 0
+    ? "warn"
+    : "pass";
+
+  const headline = status === "warn"
+    ? `Memory evaluation needs attention: profile=${profileStateFieldCount}, freshness review=${freshnessReviewRequiredCount}, shared pending=${governancePendingCount}, dream patch backlog=${dreamProfilePatchBacklogCount}.`
+    : `Memory evaluation baseline is readable: profile=${profileStateFieldCount}, freshness active, shared queue clear, dream backlog clear.`;
+
+  return {
+    available,
+    status,
+    headline,
+    profileStateFieldCount,
+    freshnessReviewRequiredCount,
+    freshnessStaleCount,
+    governancePendingCount,
+    governanceClaimedCount,
+    dreamProfilePatchBacklogCount,
+    dreamStaleBacklogCount,
+    dreamContradictionBacklogCount,
+    experienceUsageLinkedResidentCount,
+    signals,
+  };
 }
 
 function stabilizeDoctorCacheValue(value: unknown): unknown {
@@ -1334,6 +1439,7 @@ export async function handleSystemDoctorMethod(
   let learningReviewNudgeRuntime: any;
   let memoryClassConsumer: any;
   let memoryFreshness: any;
+  let memoryEvaluation: MemoryEvaluationSummary | undefined;
   let skillFreshness: any;
   let delegationObservability: any;
   let bridgeRecoveryDiagnostics: any;
@@ -1703,6 +1809,20 @@ export async function handleSystemDoctorMethod(
       message: memoryFreshness.summary.headline,
     });
   }
+  memoryEvaluation = buildMemoryEvaluationSummary({
+    mindProfileSnapshot,
+    memoryFreshness,
+    residentAgents,
+    dreamRuntime,
+  });
+  if (memoryEvaluation?.available) {
+    checks.push({
+      id: "memory_evaluation",
+      name: "Memory Evaluation",
+      status: memoryEvaluation.status,
+      message: memoryEvaluation.headline,
+    });
+  }
 
   if (!summaryOnly && ctx.toolExecutor) {
     const toolAgentId = typeof params.toolAgentId === "string" && params.toolAgentId.trim()
@@ -1875,6 +1995,7 @@ export async function handleSystemDoctorMethod(
         ...(memoryClassConsumer.memoryClassRegistry ? { memoryClassRegistry: memoryClassConsumer.memoryClassRegistry } : {}),
       } : {}),
       ...(memoryFreshness?.summary?.available ? { memoryFreshness } : {}),
+      ...(memoryEvaluation?.available ? { memoryEvaluation } : {}),
         ...(mindProfileSnapshot ? { mindProfileSnapshot } : {}),
         ...(learningReviewInput ? { learningReviewInput } : {}),
         ...(dreamRuntime ? { dreamRuntime } : {}),

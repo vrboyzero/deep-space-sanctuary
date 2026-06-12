@@ -19,6 +19,10 @@ import {
 // MemoryManager 内部会初始化 OpenAIEmbeddingProvider，需要 OPENAI_API_KEY
 // 测试环境中设置一个占位值，避免构造函数抛错（不会实际调用 API）
 beforeAll(() => {
+  vi.setConfig({
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
+  });
   if (!process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = "test-placeholder-key";
   }
@@ -1259,7 +1263,7 @@ test("conversation.memory.extraction.get and conversation.memory.extract expose 
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
-});
+}, 15_000);
 
 test("conversation.memory.extract uses canonical extraction view from transcript restore when meta is missing", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));

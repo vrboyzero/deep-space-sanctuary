@@ -111,6 +111,20 @@ export function filterGoalTrackingCheckpointsByNode(checkpoints, nodeId) {
   return (Array.isArray(checkpoints) ? checkpoints : []).filter((item) => normalizeString(item?.nodeId) === normalizedNodeId);
 }
 
+function renderGoalTrackingFreshnessSummary(memoryFreshness, escapeHtml) {
+  const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
+    ? memoryFreshness.summary
+    : null;
+  if (!summary?.available || !summary.headline) {
+    return "";
+  }
+  return `
+    <div class="tool-settings-policy-note">
+      <strong>治理 freshness：</strong>${escapeHtml(summary.headline)}
+    </div>
+  `;
+}
+
 export function createGoalsTrackingPanelFeature({
   refs,
   escapeHtml,
@@ -181,8 +195,10 @@ export function createGoalsTrackingPanelFeature({
     const focusNodeId = normalizeString(payload?.focusNodeId);
     const focusedCheckpoints = filterGoalTrackingCheckpointsByNode(recentCheckpoints, focusNodeId);
     const visibleCheckpoints = focusNodeId ? focusedCheckpoints : recentCheckpoints;
+    const freshnessSummaryHtml = renderGoalTrackingFreshnessSummary(payload?.memoryFreshness, escapeHtml);
 
     panel.innerHTML = `
+      ${freshnessSummaryHtml}
       <div class="goal-tracking-stats">
         <div class="goal-summary-item">
           <span class="goal-summary-label">节点总数</span>

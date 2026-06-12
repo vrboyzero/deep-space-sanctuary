@@ -66,6 +66,14 @@ export {
   type DurableExtractionRunResultEvent,
 } from "./durable-extraction.js";
 export {
+  DURABLE_PROFILE_STATE_PROMPT_BLOCK,
+  buildDurableProfileStatePlan,
+  isAllowedDurableProfileStatePath,
+  type DurableProfileStateCandidate,
+  type DurableProfileStatePatch,
+  type DurableProfileStatePlan,
+} from "./durable-profile-state.js";
+export {
   DURABLE_EXTRACTION_REQUEST_RATE_LIMIT_REASON_CODE,
   DURABLE_EXTRACTION_REQUEST_RATE_LIMIT_REASON_MESSAGE,
   normalizeDurableExtractionRequestSource,

@@ -16,6 +16,7 @@ import type { IdentityAuthorityProfile } from "@belldandy/protocol";
 import type { ToolExecutor } from "@belldandy/skills";
 
 import { persistConversationPromptSnapshot } from "../conversation-prompt-snapshot.js";
+import { readMemoryFreshnessView } from "../memory-freshness-view.js";
 import { resolveResidentMemoryPolicy } from "../resident-memory-policy.js";
 import { resolveResidentStateBindingView } from "../resident-state-binding.js";
 import { PromptSnapshotStore } from "../prompt-snapshot-store.js";
@@ -177,6 +178,26 @@ function readStringArray(input: unknown): string[] {
     return [];
   }
   return input.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function readRunPromptMemoryFreshness(input: {
+  inputMeta?: Record<string, unknown>;
+  deltas: Array<AgentPromptDelta & PromptTextMetrics>;
+}) {
+  const fromInputMeta = readMemoryFreshnessView(input.inputMeta?.memoryFreshness);
+  if (fromInputMeta?.summary.available) {
+    return fromInputMeta;
+  }
+  for (const delta of input.deltas) {
+    if (delta.source !== "mind-profile-runtime" || !isRecord(delta.metadata)) {
+      continue;
+    }
+    const fromDelta = readMemoryFreshnessView(delta.metadata.memoryFreshness);
+    if (fromDelta?.summary.available) {
+      return fromDelta;
+    }
+  }
+  return undefined;
 }
 
 function classifyPrefixDrift(input: {
@@ -1002,6 +1023,10 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
     });
     const residentPromptMetadata = readResidentPromptMetadata(isRecord(snapshot.inputMeta) ? snapshot.inputMeta : undefined);
     const contextInjection = summarizeContextInjectionMetadata(deltas, snapshot.prependContext?.length ?? 0);
+    const memoryFreshness = readRunPromptMemoryFreshness({
+      inputMeta: isRecord(snapshot.inputMeta) ? snapshot.inputMeta : undefined,
+      deltas,
+    });
     const snapshotTruncationReason = isRecord(snapshot.inputMeta)
       ? readPromptTruncationReasonFromMetadata(snapshot.inputMeta as Record<string, unknown>)
       : undefined;
@@ -1067,6 +1092,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
         warmupCoordination,
         cacheFamilyAffinity,
         ...(contextInjection ? { contextInjection } : {}),
+        ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
         tokenBreakdown,
         ...(snapshotTruncationReason ? { truncationReason: snapshotTruncationReason } : {}),
         inputMeta: snapshot.inputMeta ? { ...snapshot.inputMeta } : undefined,

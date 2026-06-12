@@ -81,6 +81,53 @@ describe("goals governance panel", () => {
     expect(panel.innerHTML).toContain("data-open-source=\"logs/review.jsonl\"");
   });
 
+  it("renders top-level governance freshness summary without relying on learningReviewInput", () => {
+    const panel = { innerHTML: "" };
+    const feature = createGoalsGovernancePanelFeature({
+      refs: {
+        goalsDetailEl: {
+          querySelector(selector) {
+            return selector === "#goalGovernancePanel" ? panel : null;
+          },
+        },
+      },
+      escapeHtml: (value) => String(value ?? ""),
+      formatDateTime: (value) => String(value ?? "-"),
+      goalRuntimeFilePath: (_goal, fileName) => `runtime/${fileName}`,
+    });
+
+    feature.renderGoalReviewGovernancePanel({
+      id: "goal_freshness",
+    }, {
+      workflowPendingCount: 1,
+      workflowOverdueCount: 1,
+      checkpointWorkflowPendingCount: 2,
+      checkpointWorkflowOverdueCount: 1,
+      reviewers: [],
+      templates: [],
+      notifications: [],
+      notificationDispatches: [],
+      notificationDispatchCounts: { total: 0, byChannel: {}, byStatus: {} },
+      actionableReviews: [],
+      actionableCheckpoints: [],
+      bridgeGovernanceSummary: null,
+      commanderFocus: null,
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "Governance memory has 2 review-required queues and 1 stale checkpoint.",
+          reviewRequiredCount: 2,
+          staleCount: 1,
+          supersededCount: 0,
+        },
+      },
+    });
+
+    expect(panel.innerHTML).toContain("治理 freshness：");
+    expect(panel.innerHTML).toContain("Governance memory has 2 review-required queues and 1 stale checkpoint.");
+    expect(panel.innerHTML).toContain("review_required=2 / stale=1 / superseded=0");
+  });
+
   it("renders experience workbench jump for method and skill suggestion reviews", () => {
     const panel = { innerHTML: "" };
     const feature = createGoalsGovernancePanelFeature({

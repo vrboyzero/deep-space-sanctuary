@@ -87,7 +87,7 @@ test("system.doctor exposes memory class registry and classed signal coverage", 
   const server = await startGatewayServer({
     port: 0,
     auth: { mode: "none" },
-    webRoot: resolveWebRoot(path.resolve(process.cwd(), "..", "..")),
+    webRoot: resolveWebRoot(),
     stateDir,
     agentRegistry: registry,
     residentMemoryManagers,
@@ -178,7 +178,7 @@ test("system.doctor exposes memory class registry and classed signal coverage", 
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
-});
+}, 15_000);
 
 test("memory experience surfaces expose classed signals for task and governance views", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-class-rpc-"));

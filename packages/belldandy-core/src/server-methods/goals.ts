@@ -3,6 +3,7 @@ import type { GoalCapabilityPlanFinalApprovalMode } from "../goals/types.js";
 
 import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.js";
 import { buildLearningReviewInput } from "../learning-review-input.js";
+import { buildGovernanceFreshnessView, buildMemoryFreshnessView } from "../memory-freshness-view.js";
 import { buildMindProfileSnapshot } from "../mind-profile-snapshot.js";
 import type { GoalManager } from "../goals/manager.js";
 import type { ScopedMemoryManagerRecord } from "../resident-memory-managers.js";
@@ -133,25 +134,17 @@ export async function handleGoalMethod(
       const goalId = readRequiredString(params, "goalId");
       if (!goalId) return invalid(req.id, "goalId is required");
       try {
-        const summary = await ctx.goalManager.getReviewGovernanceSummary(goalId);
-        const mindProfileSnapshot = await buildMindProfileSnapshot({
-          stateDir: ctx.stateDir,
-          residentMemoryManagers: ctx.residentMemoryManagers,
-          agentId: readOptionalString(params, "agentId"),
-        });
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
         return {
           type: "res",
           id: req.id,
           ok: true,
-          payload: {
+          payload: withGoalGovernanceFreshness({
             summary: {
-              ...summary,
-              learningReviewInput: buildLearningReviewInput({
-                mindProfileSnapshot,
-                goalReviewGovernanceSummary: summary,
-              }),
+              ...observability.summary,
+              learningReviewInput: observability.learningReviewInput,
             },
-          },
+          }, observability),
         };
       } catch (err) {
         return failure(req.id, "goal_review_governance_summary_failed", err);
@@ -166,7 +159,10 @@ export async function handleGoalMethod(
           now: readOptionalString(params, "now"),
           autoEscalate: params.autoEscalate === true,
         });
-        return okPayload(req.id, result);
+        return okPayload(req.id, withGoalGovernanceFreshness(
+          result,
+          await buildGoalGovernanceObservabilityFromApprovalScan(ctx, params, result),
+        ));
       } catch (err) {
         return failure(req.id, "goal_approval_scan_failed", err);
       }
@@ -176,8 +172,15 @@ export async function handleGoalMethod(
       const goalId = readRequiredString(params, "goalId");
       if (!goalId) return invalid(req.id, "goalId is required");
       try {
-        const reviews = await ctx.goalManager.listSuggestionReviews(goalId);
-        return { type: "res", id: req.id, ok: true, payload: { reviews } };
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          payload: withGoalGovernanceFreshness({
+            reviews: observability.summary.reviews,
+          }, observability),
+        };
       } catch (err) {
         return failure(req.id, "goal_suggestion_review_list_failed", err);
       }
@@ -218,7 +221,8 @@ export async function handleGoalMethod(
           escalationReviewer: readOptionalString(params, "escalationReviewer"),
           note: readOptionalString(params, "note"),
         });
-        return okPayload(req.id, result);
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
+        return okPayload(req.id, withGoalGovernanceFreshness(result, observability));
       } catch (err) {
         return failure(req.id, "goal_suggestion_review_workflow_set_failed", err);
       }
@@ -241,7 +245,8 @@ export async function handleGoalMethod(
           decidedBy: readOptionalString(params, "decidedBy"),
           note: readOptionalString(params, "note"),
         });
-        return okPayload(req.id, result);
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
+        return okPayload(req.id, withGoalGovernanceFreshness(result, observability));
       } catch (err) {
         return failure(req.id, "goal_suggestion_review_decide_failed", err);
       }
@@ -262,7 +267,8 @@ export async function handleGoalMethod(
           reason: readOptionalString(params, "reason"),
           force: Boolean(params.force),
         });
-        return okPayload(req.id, result);
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
+        return okPayload(req.id, withGoalGovernanceFreshness(result, observability));
       } catch (err) {
         return failure(req.id, "goal_suggestion_review_escalate_failed", err);
       }
@@ -276,7 +282,8 @@ export async function handleGoalMethod(
           now: readOptionalString(params, "now"),
           autoEscalate: Boolean(params.autoEscalate),
         });
-        return okPayload(req.id, result);
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
+        return okPayload(req.id, withGoalGovernanceFreshness(result, observability));
       } catch (err) {
         return failure(req.id, "goal_suggestion_review_scan_failed", err);
       }
@@ -296,7 +303,8 @@ export async function handleGoalMethod(
           decidedBy: readOptionalString(params, "decidedBy"),
           note: readOptionalString(params, "note"),
         });
-        return okPayload(req.id, result);
+        const observability = await buildGoalGovernanceObservability(ctx, params, goalId);
+        return okPayload(req.id, withGoalGovernanceFreshness(result, observability));
       } catch (err) {
         return failure(req.id, "goal_suggestion_publish_failed", err);
       }
@@ -307,7 +315,14 @@ export async function handleGoalMethod(
       if (!goalId) return invalid(req.id, "goalId is required");
       try {
         const checkpoints = await ctx.goalManager.listCheckpoints(goalId);
-        return { type: "res", id: req.id, ok: true, payload: { checkpoints } };
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          payload: withGoalGovernanceFreshness({
+            checkpoints,
+          }, await buildGoalGovernanceObservabilityFromCheckpointState(ctx, params, checkpoints)),
+        };
       } catch (err) {
         return failure(req.id, "goal_checkpoint_list_failed", err);
       }
@@ -538,10 +553,13 @@ export async function handleGoalMethod(
               ? await ctx.goalManager.rejectCheckpoint(goalId, nodeId, payload)
               : req.method === "goal.checkpoint.expire"
                 ? await ctx.goalManager.expireCheckpoint(goalId, nodeId, payload)
-                : req.method === "goal.checkpoint.reopen"
+              : req.method === "goal.checkpoint.reopen"
                   ? await ctx.goalManager.reopenCheckpoint(goalId, nodeId, payload)
                   : await ctx.goalManager.escalateCheckpoint(goalId, nodeId, payload);
-        return okPayload(req.id, result);
+        return okPayload(req.id, withGoalGovernanceFreshness(
+          result,
+          await buildGoalGovernanceObservabilityFromCheckpointState(ctx, params, result.checkpoints),
+        ));
       } catch (err) {
         const code = req.method.replace(/\./g, "_").replace("goal_", "goal_").replace("checkpoint_", "checkpoint_");
         return failure(req.id, `${code}_failed`, err);
@@ -553,7 +571,16 @@ export async function handleGoalMethod(
       if (!goalId) return invalid(req.id, "goalId is required");
       try {
         const graph = await ctx.goalManager.readTaskGraph(goalId);
-        return { type: "res", id: req.id, ok: true, payload: { graph } };
+        const checkpoints = await ctx.goalManager.listCheckpoints(goalId);
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          payload: withGoalGovernanceFreshness({
+            graph,
+            checkpoints,
+          }, await buildGoalGovernanceObservabilityFromCheckpointState(ctx, params, checkpoints)),
+        };
       } catch (err) {
         return failure(req.id, "goal_task_graph_read_failed", err);
       }
@@ -662,6 +689,147 @@ function readRequiredString(params: Record<string, unknown>, key: string): strin
 function readOptionalString(params: Record<string, unknown>, key: string): string | undefined {
   const value = readRequiredString(params, key);
   return value || undefined;
+}
+
+async function buildGoalGovernanceObservability(
+  ctx: GoalsMethodContext,
+  params: Record<string, unknown>,
+  goalId: string,
+): Promise<{
+  summary: Awaited<ReturnType<GoalManager["getReviewGovernanceSummary"]>>;
+  learningReviewInput: ReturnType<typeof buildLearningReviewInput>;
+}> {
+  const summary = await ctx.goalManager!.getReviewGovernanceSummary(goalId);
+  const mindProfileSnapshot = await buildMindProfileSnapshot({
+    stateDir: ctx.stateDir,
+    residentMemoryManagers: ctx.residentMemoryManagers,
+    agentId: readOptionalString(params, "agentId"),
+  });
+  return {
+    summary,
+    learningReviewInput: buildLearningReviewInput({
+      mindProfileSnapshot,
+      goalReviewGovernanceSummary: summary,
+    }),
+  };
+}
+
+async function buildGoalGovernanceObservabilityFromApprovalScan(
+  ctx: GoalsMethodContext,
+  params: Record<string, unknown>,
+  result: Awaited<ReturnType<GoalManager["scanApprovalWorkflows"]>>,
+): Promise<GoalGovernanceObservability> {
+  return buildGoalGovernanceObservabilityFromGovernanceInput(ctx, params, {
+    generatedAt: result.scannedAt,
+    workflowPendingCount: result.reviewResult.scannedCount,
+    workflowOverdueCount: result.reviewResult.overdueCount,
+    needsRevisionCount: result.reviewResult.reviews.items.filter((item) => item.status === "needs_revision").length,
+    acceptedUnpublishedCount: 0,
+    checkpointWorkflowPendingCount: result.checkpointItems.length,
+    checkpointWorkflowOverdueCount: result.checkpointItems.filter((item) => item.overdue).length,
+  });
+}
+
+async function buildGoalGovernanceObservabilityFromCheckpointState(
+  ctx: GoalsMethodContext,
+  params: Record<string, unknown>,
+  checkpoints: {
+    items: Array<{
+      status?: string;
+      createdAt?: string;
+      updatedAt?: string;
+      slaAt?: string;
+      workflow?: {
+        currentStageIndex?: number;
+        stages?: Array<{
+          status?: string;
+          slaAt?: string;
+        }>;
+      };
+    }>;
+  },
+): Promise<GoalGovernanceObservability> {
+  const now = readOptionalString(params, "now") ?? new Date().toISOString();
+  const pendingItems = checkpoints.items.filter((item) => item.status === "required" || item.status === "waiting_user");
+  return buildGoalGovernanceObservabilityFromGovernanceInput(ctx, params, {
+    generatedAt: pendingItems
+      .map((item) => item.updatedAt || item.createdAt)
+      .filter((item): item is string => Boolean(item))
+      .sort()
+      .at(-1),
+    checkpointWorkflowPendingCount: pendingItems.length,
+    checkpointWorkflowOverdueCount: pendingItems.filter((item) => isCheckpointLikeOverdue(item, now)).length,
+  });
+}
+
+type GoalGovernanceObservability = {
+  learningReviewInput: ReturnType<typeof buildLearningReviewInput>;
+};
+
+async function buildGoalGovernanceObservabilityFromGovernanceInput(
+  ctx: GoalsMethodContext,
+  params: Record<string, unknown>,
+  governance: Parameters<typeof buildGovernanceFreshnessView>[0],
+): Promise<GoalGovernanceObservability> {
+  const mindProfileSnapshot = await buildMindProfileSnapshot({
+    stateDir: ctx.stateDir,
+    residentMemoryManagers: ctx.residentMemoryManagers,
+    agentId: readOptionalString(params, "agentId"),
+  });
+  const baseLearningReviewInput = buildLearningReviewInput({
+    mindProfileSnapshot,
+  });
+  const governanceFreshness = buildGovernanceFreshnessView(governance);
+  const mergedItems = [
+    ...baseLearningReviewInput.memoryFreshness.items.filter((item) => item.memoryClass !== "governance"),
+    ...[governanceFreshness].filter(Boolean),
+  ];
+  return {
+    learningReviewInput: {
+      ...baseLearningReviewInput,
+      memoryFreshness: buildMemoryFreshnessView({
+        items: mergedItems,
+      }),
+    },
+  };
+}
+
+function withGoalGovernanceFreshness<TPayload extends Record<string, unknown>>(
+  payload: TPayload,
+  observability: GoalGovernanceObservability,
+): TPayload & {
+  memoryFreshness?: ReturnType<typeof buildLearningReviewInput>["memoryFreshness"];
+} {
+  const memoryFreshness = observability.learningReviewInput.memoryFreshness;
+  if (!memoryFreshness.summary.available) {
+    return payload;
+  }
+  return {
+    ...payload,
+    memoryFreshness,
+  };
+}
+
+function isCheckpointLikeOverdue(
+  checkpoint: {
+    slaAt?: string;
+    workflow?: {
+      currentStageIndex?: number;
+      stages?: Array<{
+        status?: string;
+        slaAt?: string;
+      }>;
+    };
+  },
+  now: string,
+): boolean {
+  const stage = checkpoint.workflow?.stages?.[checkpoint.workflow.currentStageIndex ?? 0];
+  const stageSlaAt = stage?.status === "pending_review" ? stage.slaAt : undefined;
+  const effectiveSlaAt = stageSlaAt ?? checkpoint.slaAt;
+  if (!effectiveSlaAt) {
+    return false;
+  }
+  return Date.parse(now) > Date.parse(effectiveSlaAt);
 }
 
 function readArrayAsStrings(value: unknown): string[] | undefined {

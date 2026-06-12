@@ -3582,6 +3582,19 @@ test("memory.tree report and node methods persist reports, export markdown, and 
       id: dedupReportId,
       reportType: "dedup_preview",
     });
+    expect(reportGetRes.payload?.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+        itemCount: 1,
+        reviewRequiredCount: 1,
+      },
+      items: [
+        expect.objectContaining({
+          memoryClass: "governance",
+          status: "review_required",
+        }),
+      ],
+    });
 
     const exportRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -4533,6 +4546,19 @@ test("memory.tree.report.review and apply close the P14 dedup governance loop", 
       id: reportId,
       status: "approved",
     });
+    expect(reviewPayload.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+        itemCount: 1,
+        freshCount: 1,
+      },
+      items: [
+        expect.objectContaining({
+          memoryClass: "governance",
+          status: "fresh",
+        }),
+      ],
+    });
 
     const blockedApplyRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -4567,6 +4593,19 @@ test("memory.tree.report.review and apply close the P14 dedup governance loop", 
     expect(applyPayload.report).toMatchObject({
       id: reportId,
       status: "applied",
+    });
+    expect(applyPayload.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+        itemCount: 1,
+        freshCount: 1,
+      },
+      items: [
+        expect.objectContaining({
+          memoryClass: "governance",
+          status: "fresh",
+        }),
+      ],
     });
     expect(applyPayload.result).toMatchObject({
       updatedChunkCount: 1,
@@ -4684,6 +4723,23 @@ test("memory.tree.report.apply supports R3 report-only governance baselines for 
         applyMode: "report_state_only",
         governanceState: "inventory_baseline_confirmed",
       }),
+    });
+    expect(inventoryApplyRes.payload?.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+        itemCount: 2,
+        reviewRequiredCount: 2,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "project_semantic",
+          status: "review_required",
+        }),
+        expect.objectContaining({
+          memoryClass: "governance",
+          status: "review_required",
+        }),
+      ]),
     });
     expect(inventoryApplyRes.payload?.result).toMatchObject({
       updatedChunkCount: 0,
@@ -4926,6 +4982,23 @@ test("memory.tree.report.shared_governance.preview consolidates boundary, queue,
       scope: "private",
       agentId: "default",
     });
+    expect(previewPayload?.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+        itemCount: 2,
+        reviewRequiredCount: 1,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "project_semantic",
+          status: "active",
+        }),
+        expect.objectContaining({
+          memoryClass: "governance",
+          status: "review_required",
+        }),
+      ]),
+    });
     expect(previewPayload?.governance?.suggestions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         category: "shared_review_queue",
@@ -4987,6 +5060,24 @@ test("memory.tree.report.shared_governance.preview consolidates boundary, queue,
         applyMode: "report_state_only",
         governanceState: "shared_governance_preview_confirmed",
       }),
+    });
+    expect(applyRes.payload?.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+        itemCount: 2,
+        freshCount: 1,
+        activeCount: 1,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "project_semantic",
+          status: "active",
+        }),
+        expect.objectContaining({
+          memoryClass: "governance",
+          status: "fresh",
+        }),
+      ]),
     });
     expect(applyRes.payload?.result).toMatchObject({
       updatedChunkCount: 0,
@@ -5761,17 +5852,57 @@ test("memory viewer rpc returns task and memory data", async () => {
     expect(Array.isArray(recentWorkRes.payload.items)).toBe(true);
     expect(recentWorkRes.payload.items[0].taskId).toBe(taskId);
     expect(recentWorkRes.payload.items[0].workRecap?.headline).toContain("任务已完成");
+    expect(recentWorkRes.payload.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "episodic_task",
+        }),
+      ]),
+    });
     expect(resumeContextRes.ok).toBe(true);
     expect(resumeContextRes.payload.item.taskId).toBe(taskId);
     expect(resumeContextRes.payload.item.resumeContext?.currentStopPoint).toBe("任务已完成。");
+    expect(resumeContextRes.payload.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "episodic_task",
+        }),
+      ]),
+    });
     expect(similarPastWorkRes.ok).toBe(true);
     expect(similarPastWorkRes.payload.items.some((item: any) => item.taskId === taskId)).toBe(true);
     expect(similarPastWorkRes.payload.items[0].matchReasons?.length).toBeGreaterThan(0);
+    expect(similarPastWorkRes.payload.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "episodic_task",
+        }),
+      ]),
+    });
     expect(explainSourcesRes.ok).toBe(true);
     expect(explainSourcesRes.payload.explanation.taskId).toBe(taskId);
     expect(explainSourcesRes.payload.explanation.sourceRefs.some((item: any) => item.kind === "work_recap")).toBe(true);
     expect(explainSourcesRes.payload.explanation.sourceRefs.some((item: any) => item.kind === "resume_context")).toBe(true);
     expect(explainSourcesRes.payload.explanation.sourceRefs.some((item: any) => item.kind === "activity_worklog")).toBe(true);
+    expect(explainSourcesRes.payload.memoryFreshness).toMatchObject({
+      summary: {
+        available: true,
+      },
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          memoryClass: "episodic_task",
+        }),
+      ]),
+    });
     expect(memoryGetRes.ok).toBe(true);
     expect(memoryGetRes.payload.item.category).toBe("decision");
     expect(memoryGetRes.payload.item.content).toContain("phase4decision");

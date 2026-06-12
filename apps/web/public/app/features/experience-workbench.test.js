@@ -781,6 +781,52 @@ describe("experience workbench capability acquisition", () => {
     expect(refs.experienceWorkbenchCapabilityOverviewEl.innerHTML).toContain("Skill Draft One");
   });
 
+  it("renders top-level memory freshness in candidate detail after candidate.get resolves", async () => {
+    const candidates = [
+      {
+        id: "draft-method-freshness",
+        taskId: "task-method-freshness",
+        type: "method",
+        status: "draft",
+        title: "Method Draft Freshness",
+        slug: "method-draft-freshness",
+        summary: "method summary",
+        content: "# Method Draft Freshness",
+        createdAt: "2026-04-20T09:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+        sourceTaskSnapshot: {},
+        learningReviewInput: {
+          summary: { headline: "Learning headline fallback" },
+          summaryLines: ["method candidate pending review"],
+          nudges: ["Promote after review."],
+        },
+        memoryFreshness: {
+          summary: {
+            available: true,
+            headline: "Procedural experience needs review before publish.",
+            reviewRequiredCount: 1,
+            staleCount: 0,
+            supersededCount: 0,
+          },
+        },
+      },
+    ];
+    const { refs, feature } = createHarness({ candidates });
+
+    await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
+
+    refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-capability-open-candidate-id='draft-method-freshness']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(refs.experienceWorkbenchDetailEl.innerHTML).toContain("Memory Freshness：");
+    expect(refs.experienceWorkbenchDetailEl.innerHTML).toContain("Procedural experience needs review before publish.");
+    expect(refs.experienceWorkbenchDetailEl.innerHTML).toContain("review_required=1 / stale=0 / superseded=0");
+  });
+
   it("retries accept with confirmed flag when publish confirmation is required", async () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     try {

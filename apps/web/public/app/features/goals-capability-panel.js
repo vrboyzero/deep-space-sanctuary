@@ -17,6 +17,21 @@ export function createGoalsCapabilityPanelFeature({
 }) {
   const { goalsDetailEl } = refs;
 
+  function renderCapabilityFreshnessSummary(memoryFreshness) {
+    const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
+      ? memoryFreshness.summary
+      : null;
+    if (!summary?.available || !summary.headline) {
+      return "";
+    }
+    return `
+      <div class="tool-settings-policy-note" style="margin-bottom:12px;">
+        <div><strong>治理 freshness：</strong>${escapeHtml(summary.headline)}</div>
+        <div>review_required=${escapeHtml(String(summary.reviewRequiredCount || 0))} / stale=${escapeHtml(String(summary.staleCount || 0))} / superseded=${escapeHtml(String(summary.supersededCount || 0))}</div>
+      </div>
+    `;
+  }
+
   function formatCapabilityMode(mode) {
     return mode === "multi_agent" ? "多 Agent" : "单 Agent";
   }
@@ -371,8 +386,10 @@ export function createGoalsCapabilityPanelFeature({
     ].filter(Boolean);
     const commanderActionDisabled = focusPlan.governanceMode !== "commander";
     const reworkPrefill = buildCommanderReworkPrefill(orchestration, acceptanceGate);
+    const freshnessSummaryHtml = renderCapabilityFreshnessSummary(payload?.memoryFreshness);
 
     panel.innerHTML = `
+      ${freshnessSummaryHtml}
       <div class="goal-capability-stats">
         <div class="goal-summary-item">
           <span class="goal-summary-label">计划总数</span>

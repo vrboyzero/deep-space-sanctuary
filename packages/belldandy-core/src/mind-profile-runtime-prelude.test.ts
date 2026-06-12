@@ -113,6 +113,17 @@ describe("buildMindProfileRuntimePrelude", () => {
         "preferences.response_style",
         "workstyle.planning_preference",
       ],
+      memoryFreshness: {
+        summary: {
+          available: true,
+          itemCount: 1,
+        },
+        items: [
+          expect.objectContaining({
+            memoryClass: "profile_semantic",
+          }),
+        ],
+      },
     });
   });
 

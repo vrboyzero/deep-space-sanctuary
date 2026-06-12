@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type {
+  DreamConsolidationSummary,
   DreamAutoSignalGateCode,
   DreamAutoSignalSummary,
   DreamAutoStats,
@@ -18,6 +19,7 @@ import type {
   DreamRuntimeState,
   DreamStatus,
 } from "./dream-types.js";
+import type { ProfileStateValue } from "./profile-state-types.js";
 
 const DREAM_RUNTIME_FILENAME = "dream-runtime.json";
 const DREAM_INDEX_FILENAME = "DREAM.md";
@@ -251,7 +253,45 @@ function cloneRun(run: DreamRecord): DreamRecord {
     ...(run.generationMode ? { generationMode: run.generationMode } : {}),
     ...(run.fallbackReason ? { fallbackReason: run.fallbackReason } : {}),
     ...(run.input ? { input: cloneInputMeta(run.input) } : {}),
+    ...(run.consolidation ? { consolidation: cloneConsolidation(run.consolidation) } : {}),
     ...(run.obsidianSync ? { obsidianSync: { ...run.obsidianSync } } : {}),
+  };
+}
+
+function cloneConsolidation(value: DreamConsolidationSummary): DreamConsolidationSummary {
+  return {
+    ...value,
+    profilePatchCandidates: Array.isArray(value.profilePatchCandidates)
+      ? value.profilePatchCandidates.map((item) => ({ ...item }))
+      : [],
+    staleCandidates: Array.isArray(value.staleCandidates)
+      ? value.staleCandidates.map((item) => ({ ...item }))
+      : [],
+    contradictionCandidates: Array.isArray(value.contradictionCandidates)
+      ? value.contradictionCandidates.map((item) => ({ ...item }))
+      : [],
+    ...(value.review
+      ? {
+          review: {
+            ...value.review,
+            ...(Array.isArray(value.review.approvedCandidatePaths)
+              ? { approvedCandidatePaths: [...value.review.approvedCandidatePaths] }
+              : {}),
+          },
+        }
+      : {}),
+    ...(value.apply
+      ? {
+          apply: {
+            ...value.apply,
+            ...(Array.isArray(value.apply.appliedPatches)
+              ? {
+                  appliedPatches: value.apply.appliedPatches.map((item) => ({ ...item })),
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -310,9 +350,133 @@ function normalizeRun(input: unknown): DreamRecord | null {
           },
         }
       : {}),
+    ...(record.consolidation && typeof record.consolidation === "object" && !Array.isArray(record.consolidation)
+      ? { consolidation: normalizeConsolidation(record.consolidation as Record<string, unknown>) }
+      : {}),
     ...(record.obsidianSync && typeof record.obsidianSync === "object" && !Array.isArray(record.obsidianSync)
       ? {
           obsidianSync: normalizeObsidianSync(record.obsidianSync as Record<string, unknown>),
+        }
+      : {}),
+  };
+}
+
+function normalizeConsolidation(value: Record<string, unknown>): DreamConsolidationSummary {
+  const profilePatchCandidates = Array.isArray(value.profilePatchCandidates)
+    ? value.profilePatchCandidates
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+      .map((item): DreamConsolidationSummary["profilePatchCandidates"][number] => ({
+        field: normalizeText(item.field, 120) ?? "profile.field",
+        valueSummary: normalizeText(item.valueSummary, 160) ?? "-",
+        source: item.source === "mind_profile"
+          || item.source === "learning_review"
+          || item.source === "recent_work"
+          || item.source === "durable_memory"
+          ? item.source
+          : "mind_profile",
+        confidence: item.confidence === "high" || item.confidence === "medium" || item.confidence === "low"
+          ? item.confidence
+          : "medium",
+        reason: normalizeText(item.reason, 220) ?? "Dream consolidation profile patch candidate.",
+        ...(normalizeText(item.profilePath, 160) ? { profilePath: normalizeText(item.profilePath, 160) } : {}),
+        ...(item.profileValue !== undefined ? { profileValue: item.profileValue as ProfileStateValue } : {}),
+      }))
+      .slice(0, 8)
+    : [];
+  const staleCandidates = Array.isArray(value.staleCandidates)
+    ? value.staleCandidates
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+      .map((item): DreamConsolidationSummary["staleCandidates"][number] => ({
+        memoryClass: item.memoryClass === "profile_semantic"
+          || item.memoryClass === "episodic_task"
+          || item.memoryClass === "procedural_experience"
+          || item.memoryClass === "governance"
+          ? item.memoryClass
+          : "profile_semantic",
+        reason: normalizeText(item.reason, 220) ?? "Dream consolidation stale candidate.",
+        ...(normalizeText(item.evidence, 220) ? { evidence: normalizeText(item.evidence, 220) } : {}),
+      }))
+      .slice(0, 8)
+    : [];
+  const contradictionCandidates = Array.isArray(value.contradictionCandidates)
+    ? value.contradictionCandidates
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+      .map((item) => ({
+        topic: normalizeText(item.topic, 120) ?? "profile inconsistency",
+        left: normalizeText(item.left, 180) ?? "-",
+        right: normalizeText(item.right, 180) ?? "-",
+        reason: normalizeText(item.reason, 220) ?? "Dream consolidation contradiction candidate.",
+      }))
+      .slice(0, 6)
+    : [];
+  const headline = normalizeText(value.headline, 220)
+    ?? `Dream consolidation surfaced ${profilePatchCandidates.length} profile patch, ${staleCandidates.length} stale, and ${contradictionCandidates.length} contradiction candidates.`;
+  const summary = normalizeText(value.summary, 240) ?? headline;
+  const reviewValue = value.review && typeof value.review === "object" && !Array.isArray(value.review)
+    ? value.review as Record<string, unknown>
+    : null;
+  const applyValue = value.apply && typeof value.apply === "object" && !Array.isArray(value.apply)
+    ? value.apply as Record<string, unknown>
+    : null;
+  return {
+    headline,
+    summary,
+    profilePatchCandidates,
+    staleCandidates,
+    contradictionCandidates,
+    ...(reviewValue
+      ? {
+          review: {
+            status: reviewValue.status === "approved"
+              || reviewValue.status === "rejected"
+              || reviewValue.status === "superseded"
+              ? reviewValue.status
+              : "pending",
+            ...(normalizeIsoTimestamp(reviewValue.reviewedAt) ? { reviewedAt: normalizeIsoTimestamp(reviewValue.reviewedAt) } : {}),
+            ...(normalizeText(reviewValue.reviewedBy, 120) ? { reviewedBy: normalizeText(reviewValue.reviewedBy, 120) } : {}),
+            ...(normalizeText(reviewValue.note, 240) ? { note: normalizeText(reviewValue.note, 240) } : {}),
+            ...(Array.isArray(reviewValue.approvedCandidatePaths)
+              ? {
+                  approvedCandidatePaths: reviewValue.approvedCandidatePaths
+                    .map((item) => normalizeText(item, 160))
+                    .filter((item): item is string => Boolean(item))
+                    .slice(0, 16),
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(applyValue
+      ? {
+          apply: {
+            status: applyValue.status === "applied" ? "applied" : "not_applied",
+            ...(normalizeIsoTimestamp(applyValue.appliedAt) ? { appliedAt: normalizeIsoTimestamp(applyValue.appliedAt) } : {}),
+            ...(normalizeText(applyValue.appliedBy, 120) ? { appliedBy: normalizeText(applyValue.appliedBy, 120) } : {}),
+            ...(normalizeText(applyValue.note, 240) ? { note: normalizeText(applyValue.note, 240) } : {}),
+            ...(typeof applyValue.appliedPatchCount === "number" && Number.isFinite(applyValue.appliedPatchCount)
+              ? { appliedPatchCount: Math.max(0, Math.floor(applyValue.appliedPatchCount)) }
+              : {}),
+            ...(Array.isArray(applyValue.appliedPatches)
+              ? {
+                  appliedPatches: applyValue.appliedPatches
+                    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+                    .map((item): DreamConsolidationSummary["apply"] extends infer T
+                      ? T extends { appliedPatches?: infer P }
+                        ? P extends Array<infer U>
+                          ? U
+                          : never
+                        : never
+                      : never => ({
+                      profilePath: normalizeText(item.profilePath, 160) ?? "profile.path",
+                      profileValue: (item.profileValue ?? null) as ProfileStateValue,
+                      ...(normalizeText(item.entryId, 160) ? { entryId: normalizeText(item.entryId, 160) } : {}),
+                      action: item.action === "create" || item.action === "confirm" ? item.action : "update",
+                      changed: item.changed === true,
+                    }))
+                    .slice(0, 16),
+                }
+              : {}),
+          },
         }
       : {}),
   };
@@ -767,6 +931,26 @@ export class DreamStore {
         ...(failureBackoffUntil ? { failureBackoffUntil } : {}),
         ...(!failureBackoffUntil ? { failureBackoffUntil: undefined } : {}),
         recentRuns,
+      };
+    });
+  }
+
+  async updateRun(runId: string, mutator: (record: DreamRecord) => DreamRecord): Promise<DreamRuntimeState> {
+    const normalizedRunId = normalizeText(runId, 120);
+    if (!normalizedRunId) {
+      throw new Error("dream run id is required");
+    }
+    return this.mutate((current) => {
+      const target = current.recentRuns.find((item) => item.id === normalizedRunId);
+      if (!target) {
+        throw new Error(`Dream run not found: ${normalizedRunId}`);
+      }
+      const nextRecord = cloneRun(mutator(cloneRun(target)));
+      return {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        recentRuns: current.recentRuns.map((item) => item.id === normalizedRunId ? nextRecord : cloneRun(item)),
+        ...(current.lastRunId === normalizedRunId ? { lastRunId: nextRecord.id } : {}),
       };
     });
   }

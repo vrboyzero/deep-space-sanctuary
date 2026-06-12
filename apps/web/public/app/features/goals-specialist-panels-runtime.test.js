@@ -211,4 +211,282 @@ describe("goal tracking runtime helpers", () => {
       preferFirst: true,
     });
   });
+
+  it("loads tracking data from goal.task_graph.read and forwards memory freshness to the tracking panel", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalTrackingPanel"></div></div>';
+    const renderGoalTrackingPanel = vi.fn();
+    const sendReq = vi.fn(async (req) => {
+      if (req.method === "goal.task_graph.read") {
+        return {
+          ok: true,
+          payload: {
+            graph: {
+              nodes: [{
+                id: "node_impl",
+                title: "Implement runtime inspect",
+                status: "running",
+                lastRunId: "run_impl",
+              }],
+            },
+            checkpoints: {
+              items: [{
+                id: "cp_1",
+                nodeId: "node_impl",
+                status: "waiting_user",
+                title: "Checkpoint A",
+                updatedAt: "2026-06-12T12:00:00.000Z",
+                history: [],
+              }],
+            },
+            memoryFreshness: {
+              summary: {
+                available: true,
+                headline: "当前治理队列存在待收口项",
+                reviewRequiredCount: 1,
+              },
+            },
+          },
+        };
+      }
+      if (req.method === "subtask.get") {
+        return { ok: true, payload: { item: {} } };
+      }
+      return { ok: false, error: { message: "unexpected request" } };
+    });
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => ({
+        selectedId: "goal_alpha",
+        trackingSeq: 0,
+        continuationFocusNode: null,
+        trackingCheckpoints: [],
+        capabilityCache: {},
+        capabilityPending: {},
+      }),
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => ({
+        renderGoalTrackingPanelLoading: vi.fn(),
+        renderGoalTrackingPanel,
+        renderGoalTrackingPanelError: vi.fn(),
+      }),
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(async () => null),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: vi.fn(() => null),
+      sendReq,
+      makeId: (() => {
+        let count = 0;
+        return () => `req-${++count}`;
+      })(),
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    await feature.loadGoalTrackingData({
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    });
+
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "goal.task_graph.read",
+      params: { goalId: "goal_alpha" },
+    }));
+    expect(renderGoalTrackingPanel).toHaveBeenCalledWith(expect.objectContaining({
+      id: "goal_alpha",
+    }), expect.objectContaining({
+      checkpoints: expect.arrayContaining([
+        expect.objectContaining({
+          id: "cp_1",
+          nodeId: "node_impl",
+        }),
+      ]),
+      memoryFreshness: expect.objectContaining({
+        summary: expect.objectContaining({
+          available: true,
+          headline: "当前治理队列存在待收口项",
+        }),
+      }),
+    }));
+  });
+
+  it("loads capability data with governance freshness from cached or fetched governance summary", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalCapabilityPanel"></div></div>';
+    const renderGoalCapabilityPanel = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      capabilitySeq: 0,
+      governanceCache: {},
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const sendReq = vi.fn(async (req) => {
+      if (req.method === "goal.review_governance.summary") {
+        return {
+          ok: true,
+          payload: {
+            summary: {
+              workflowPendingCount: 1,
+              workflowOverdueCount: 0,
+              checkpointWorkflowPendingCount: 1,
+              checkpointWorkflowOverdueCount: 0,
+              learningReviewInput: {
+                summary: {
+                  available: true,
+                  headline: "memory=1, candidate=0, review=1, nudges=1",
+                },
+                summaryLines: [],
+                nudges: [],
+              },
+              actionableReviews: [],
+              actionableCheckpoints: [],
+              templates: [],
+              reviewers: [],
+              notifications: { items: [] },
+              notificationDispatches: { items: [] },
+              publishRecords: { items: [] },
+              reviewStatusCounts: {},
+              reviewTypeCounts: {},
+              recommendations: [],
+            },
+            memoryFreshness: {
+              summary: {
+                available: true,
+                headline: "当前治理队列存在待收口项",
+                reviewRequiredCount: 1,
+              },
+            },
+          },
+        };
+      }
+      return { ok: false, error: { message: "unexpected request" } };
+    });
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => ({
+        renderGoalCapabilityPanelLoading: vi.fn(),
+        renderGoalCapabilityPanelError: vi.fn(),
+        renderGoalCapabilityPanel,
+      }),
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(async (filePath) => {
+        if (filePath === "tasks.json") {
+          return {
+            content: JSON.stringify({
+              nodes: [{
+                id: "node_impl",
+                title: "实现节点",
+              }],
+            }),
+          };
+        }
+        if (filePath === "capability-plans.json") {
+          return {
+            content: JSON.stringify({
+              items: [{
+                id: "plan_impl",
+                goalId: "goal_alpha",
+                nodeId: "node_impl",
+                status: "planned",
+                executionMode: "single_agent",
+                governanceMode: "direct",
+                commanderAgentId: "",
+                preferredAgents: [],
+                riskLevel: "low",
+                objective: "Ship implementation",
+                summary: "Plan summary",
+                queryHints: [],
+                reasoning: [],
+                methods: [],
+                skills: [],
+                mcpServers: [],
+                subAgents: [],
+                gaps: [],
+                checkpoint: {
+                  required: false,
+                  reasons: [],
+                  approvalMode: "none",
+                  requiredRequestFields: [],
+                  requiredDecisionFields: [],
+                  escalationMode: "none",
+                },
+                actualUsage: {
+                  methods: [],
+                  skills: [],
+                  mcpServers: [],
+                  toolNames: [],
+                },
+                analysis: {
+                  status: "aligned",
+                  summary: "",
+                  deviations: [],
+                  recommendations: [],
+                },
+                generatedAt: "2026-05-17T10:00:00.000Z",
+                updatedAt: "2026-05-17T10:10:00.000Z",
+                orchestration: {
+                  finalApprovalMode: "user_required",
+                  notes: [],
+                },
+              }],
+            }),
+          };
+        }
+        return null;
+      }),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: JSON.parse,
+      sendReq,
+      makeId: (() => {
+        let count = 0;
+        return () => `req-${++count}`;
+      })(),
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    await feature.loadGoalCapabilityData({
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+      activeNodeId: "node_impl",
+    });
+
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "goal.review_governance.summary",
+      params: { goalId: "goal_alpha" },
+    }));
+    expect(renderGoalCapabilityPanel).toHaveBeenCalledWith(expect.objectContaining({
+      id: "goal_alpha",
+    }), expect.objectContaining({
+      memoryFreshness: expect.objectContaining({
+        summary: expect.objectContaining({
+          available: true,
+          headline: "当前治理队列存在待收口项",
+        }),
+      }),
+    }));
+  });
 });

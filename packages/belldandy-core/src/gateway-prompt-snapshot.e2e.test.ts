@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 
 import { expect, test } from "vitest";
 import WebSocket from "ws";
@@ -18,8 +19,12 @@ import {
 import { resolveResidentMemoryPolicy } from "./resident-memory-policy.js";
 import { approvePairingCode } from "./security/store.js";
 
+const TEST_FILE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(TEST_FILE_DIR, "..", "..", "..");
+const GATEWAY_ENTRY_PATH = path.join(REPO_ROOT, "packages", "belldandy-core", "src", "bin", "gateway.ts");
+
 function resolveWebRoot() {
-  return path.join(process.cwd(), "apps", "web", "public");
+  return path.join(REPO_ROOT, "apps", "web", "public");
 }
 
 test("gateway persists prompt snapshot across restart and reloads it via inspect and rpc", async () => {
@@ -701,6 +706,17 @@ test("gateway exposes canonical profile state through model prompt, persisted sn
             "preferences.response_style",
             "workstyle.planning_preference",
           ],
+          memoryFreshness: expect.objectContaining({
+            summary: expect.objectContaining({
+              available: true,
+              itemCount: 1,
+            }),
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                memoryClass: "profile_semantic",
+              }),
+            ]),
+          }),
         }),
       }),
     ]));
@@ -723,6 +739,17 @@ test("gateway exposes canonical profile state through model prompt, persisted sn
       hasPrependContext: true,
       deltaCount: expect.any(Number),
       deltaTypes: expect.arrayContaining(["user-prelude"]),
+      memoryFreshness: {
+        summary: {
+          available: true,
+          itemCount: 1,
+        },
+        items: [
+          expect.objectContaining({
+            memoryClass: "profile_semantic",
+          }),
+        ],
+      },
     });
     expect(inspectRes?.payload?.deltas).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -734,6 +761,12 @@ test("gateway exposes canonical profile state through model prompt, persisted sn
           blockTag: "mind-profile-runtime",
           activationReason: "profile_state_present",
           profileStateLineCount: 2,
+          memoryFreshness: expect.objectContaining({
+            summary: expect.objectContaining({
+              available: true,
+              itemCount: 1,
+            }),
+          }),
         }),
       }),
     ]));
@@ -765,6 +798,12 @@ test("gateway exposes canonical profile state through model prompt, persisted sn
             "preferences.response_style",
             "workstyle.planning_preference",
           ],
+          memoryFreshness: expect.objectContaining({
+            summary: expect.objectContaining({
+              available: true,
+              itemCount: 1,
+            }),
+          }),
         }),
       }),
     ]));
@@ -1395,8 +1434,8 @@ async function startGatewayProcess(input: {
       && key !== "AUTO_OPEN_BROWSER"
     ),
   );
-  const child = spawn(process.execPath, ["--import", "tsx", "packages/belldandy-core/src/bin/gateway.ts"], {
-    cwd: process.cwd(),
+  const child = spawn(process.execPath, ["--import", "tsx", GATEWAY_ENTRY_PATH], {
+    cwd: REPO_ROOT,
     env: {
       ...inheritedEnv,
       BELLDANDY_STATE_DIR: input.stateDir,

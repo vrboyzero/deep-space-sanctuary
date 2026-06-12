@@ -1,11 +1,21 @@
 import crypto from "node:crypto";
 
 import { syncDreamToObsidian } from "./dream-obsidian-sync.js";
+import { isAllowedDurableProfileStatePath } from "./durable-profile-state.js";
 import { buildDreamRuleSkeleton } from "./dream-input.js";
 import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
 import { buildDreamPromptBundle, parseDreamModelOutput, summarizeDreamModelOutput } from "./dream-prompt.js";
 import { DreamStore, toDreamInputMeta } from "./dream-store.js";
 import type {
+  DreamConsolidationApplyInput,
+  DreamConsolidationApplyState,
+  DreamConsolidationReviewDecision,
+  DreamConsolidationReviewInput,
+  DreamConsolidationReviewState,
+  DreamConsolidationSummary,
+  DreamConsolidationProfilePatchCandidate,
+  DreamConsolidationStaleCandidate,
+  DreamConsolidationContradictionCandidate,
   DreamAutoRunResult,
   DreamAutoSignalGateCode,
   DreamAutoSignalSummary,
@@ -22,6 +32,7 @@ import type {
   DreamRuntimeOptions,
   DreamRuntimeState,
 } from "./dream-types.js";
+import type { ProfileStateValue } from "./profile-state-types.js";
 import { writeDreamArtifacts } from "./dream-writer.js";
 
 function normalizeText(value: unknown): string | undefined {
@@ -335,6 +346,174 @@ function buildFallbackDreamOutput(input: {
   };
 }
 
+function dedupeByKey<T>(items: T[], keyOf: (item: T) => string): T[] {
+  const result: T[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const key = keyOf(item).trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
+function buildDreamConsolidationSummary(input: {
+  snapshot: Awaited<ReturnType<DreamRuntimeOptions["buildInputSnapshot"]>>;
+  draft: DreamModelOutput;
+}): DreamConsolidationSummary | undefined {
+  const { snapshot, draft } = input;
+  const profilePatchCandidates: DreamConsolidationProfilePatchCandidate[] = [];
+  const staleCandidates: DreamConsolidationStaleCandidate[] = [];
+  const contradictionCandidates: DreamConsolidationContradictionCandidate[] = [];
+
+  const stateEntries = Array.isArray(snapshot.mindProfileSnapshot?.profile?.stateEntries)
+    ? snapshot.mindProfileSnapshot.profile.stateEntries
+    : [];
+  for (const entry of stateEntries.slice(0, 4)) {
+    const profilePath = truncateText(entry?.path, 160);
+    const profileValue = truncateText(entry?.valueText, 160);
+    if (!profilePath || !profileValue || !isAllowedDurableProfileStatePath(profilePath)) continue;
+    profilePatchCandidates.push({
+      field: `profile_state.${profilePath}`,
+      valueSummary: profileValue,
+      source: "mind_profile",
+      confidence: typeof entry?.confidence === "number" && entry.confidence >= 0.95
+        ? "high"
+        : typeof entry?.confidence === "number" && entry.confidence < 0.8
+          ? "low"
+          : "medium",
+      reason: "Canonical profile state already exposes this low-risk field in the current dream input snapshot.",
+      profilePath,
+      profileValue,
+    });
+  }
+  const profileHeadline = normalizeText(snapshot.mindProfileSnapshot?.profile?.headline);
+  for (const line of snapshot.mindProfileSnapshot?.profile?.summaryLines?.slice(0, 2) ?? []) {
+    const normalized = normalizeText(line);
+    if (!normalized) continue;
+    profilePatchCandidates.push({
+      field: "profile.summary_line",
+      valueSummary: truncateText(normalized, 140) ?? normalized,
+      source: "mind_profile",
+      confidence: "medium",
+      reason: "Profile summary line is repeatedly surfaced in the current mind/profile snapshot.",
+    });
+  }
+  for (const line of snapshot.learningReviewInput?.summaryLines?.slice(0, 2) ?? []) {
+    const normalized = normalizeText(line);
+    if (!normalized || !/^Mind snapshot:|^Profile anchor:/i.test(normalized)) continue;
+    profilePatchCandidates.push({
+      field: "profile.review_anchor",
+      valueSummary: truncateText(normalized, 140) ?? normalized,
+      source: "learning_review",
+      confidence: "medium",
+      reason: "Learning/review input promotes this line as a current profile anchor.",
+    });
+  }
+
+  const memoryFreshness = snapshot.learningReviewInput?.memoryFreshness as {
+    summary?: { staleCount?: number; reviewRequiredCount?: number; headline?: string };
+    items?: Array<{ memoryClass?: string; status?: string; freshnessHeadline?: string; note?: string }>;
+  } | undefined;
+  for (const item of memoryFreshness?.items ?? []) {
+    const memoryClass = item?.memoryClass;
+    const status = item?.status;
+    if (
+      (memoryClass === "profile_semantic" || memoryClass === "episodic_task" || memoryClass === "procedural_experience" || memoryClass === "governance")
+      && (status === "stale" || status === "review_required" || status === "superseded")
+    ) {
+      staleCandidates.push({
+        memoryClass,
+        reason: item.freshnessHeadline || `${memoryClass} is currently ${status}.`,
+        evidence: normalizeText(item.note),
+      });
+    }
+  }
+
+  const profileLines = [
+    ...(snapshot.mindProfileSnapshot?.profile?.summaryLines ?? []),
+    ...(snapshot.mindProfileSnapshot?.profile?.treeSummaryLines ?? []),
+    ...(snapshot.learningReviewInput?.summaryLines ?? []),
+  ]
+    .map((line) => normalizeText(line))
+    .filter((line): line is string => Boolean(line));
+  const contradictionHints = [
+    ...draft.corrections,
+    ...draft.openQuestions,
+  ]
+    .map((line) => normalizeText(line))
+    .filter((line): line is string => Boolean(line));
+  for (const hint of contradictionHints.slice(0, 3)) {
+    const anchor = profileLines.find((line) => line !== hint) ?? profileHeadline;
+    if (!anchor) continue;
+    contradictionCandidates.push({
+      topic: truncateText(hint.split("：")[0] || hint.split(":")[0] || "profile inconsistency", 60) ?? "profile inconsistency",
+      left: truncateText(anchor, 140) ?? anchor,
+      right: truncateText(hint, 140) ?? hint,
+      reason: "Dream output still marks this area as correction/open question while profile anchors already contain a competing statement.",
+    });
+  }
+
+  const dedupedProfilePatchCandidates = dedupeByKey(profilePatchCandidates, (item) => `${item.field}:${item.valueSummary}`);
+  const dedupedStaleCandidates = dedupeByKey(staleCandidates, (item) => `${item.memoryClass}:${item.reason}`);
+  const dedupedContradictionCandidates = dedupeByKey(contradictionCandidates, (item) => `${item.topic}:${item.left}:${item.right}`);
+  const totalCount = dedupedProfilePatchCandidates.length + dedupedStaleCandidates.length + dedupedContradictionCandidates.length;
+  if (totalCount <= 0) {
+    return undefined;
+  }
+  return {
+    headline: `Dream consolidation surfaced ${dedupedProfilePatchCandidates.length} profile patch, ${dedupedStaleCandidates.length} stale, and ${dedupedContradictionCandidates.length} contradiction candidates.`,
+    summary: truncateText(
+      draft.summary
+        || draft.headline
+        || memoryFreshness?.summary?.headline
+        || "Dream consolidation candidates are available for readonly inspection.",
+      220,
+    ) ?? "Dream consolidation candidates are available for readonly inspection.",
+    profilePatchCandidates: dedupedProfilePatchCandidates.slice(0, 4),
+    staleCandidates: dedupedStaleCandidates.slice(0, 4),
+    contradictionCandidates: dedupedContradictionCandidates.slice(0, 3),
+    review: {
+      status: "pending",
+    },
+    apply: {
+      status: "not_applied",
+      appliedPatchCount: 0,
+      appliedPatches: [],
+    },
+  };
+}
+
+function normalizeCandidatePathList(values: string[] | undefined, consolidation: DreamConsolidationSummary): string[] {
+  const allowed = new Set(
+    consolidation.profilePatchCandidates
+      .map((item) => truncateText(item.profilePath, 160))
+      .filter((item): item is string => Boolean(item)),
+  );
+  const selected = Array.isArray(values) && values.length > 0
+    ? values
+    : [...allowed];
+  return selected
+    .map((item) => truncateText(item, 160))
+    .filter((item): item is string => {
+      if (!item) return false;
+      return allowed.has(item);
+    });
+}
+
+function buildDreamConsolidationSourceRefs(record: DreamRecord, candidate: DreamConsolidationProfilePatchCandidate) {
+  return [
+    {
+      kind: "system" as const,
+      id: record.id,
+      sourcePath: record.dreamPath,
+      note: `Dream consolidation candidate (${candidate.source})`,
+      excerpt: candidate.valueSummary,
+    },
+  ];
+}
+
 async function resolveDreamDraft(input: {
   availability: ReturnType<DreamRuntime["getAvailability"]>;
   agentId: string;
@@ -402,6 +581,7 @@ export class DreamRuntime {
   private readonly temperature: number;
   private readonly obsidianMirror?: DreamObsidianMirrorOptions;
   private readonly buildInputSnapshot: DreamRuntimeOptions["buildInputSnapshot"];
+  private readonly profileStateDelegate?: DreamRuntimeOptions["profileStateDelegate"];
   private readonly logger?: DreamRuntimeOptions["logger"];
   private readonly nowProvider: () => Date;
   private activeRun: Promise<DreamRunResult> | null = null;
@@ -429,6 +609,7 @@ export class DreamRuntime {
         }
       : undefined;
     this.buildInputSnapshot = options.buildInputSnapshot;
+    this.profileStateDelegate = options.profileStateDelegate;
     this.logger = options.logger;
     this.nowProvider = options.now ?? (() => new Date());
   }
@@ -730,6 +911,10 @@ export class DreamRuntime {
       const startedAt = requestedAtDate.toISOString();
       const finishedAt = this.nowProvider().toISOString();
       const summary = summarizeDreamModelOutput(lastDraft);
+      const consolidation = buildDreamConsolidationSummary({
+        snapshot,
+        draft: lastDraft,
+      });
       const previewRecord: DreamRecord = {
         id: runId,
         agentId: this.agentId,
@@ -745,6 +930,7 @@ export class DreamRuntime {
         generationMode: draftResult.generationMode,
         ...(draftResult.fallbackReason ? { fallbackReason: draftResult.fallbackReason } : {}),
         input: toDreamInputMeta(snapshot),
+        ...(consolidation ? { consolidation } : {}),
         obsidianSync: {
           enabled: false,
           stage: "skipped",
@@ -841,6 +1027,126 @@ export class DreamRuntime {
         draft: lastDraft,
       };
     }
+  }
+
+  async reviewConsolidation(
+    runId: string,
+    decision: DreamConsolidationReviewDecision,
+    input: DreamConsolidationReviewInput = {},
+  ): Promise<{ record: DreamRecord; state: DreamRuntimeState }> {
+    if (decision !== "approved" && decision !== "rejected" && decision !== "superseded") {
+      throw new Error("dream consolidation decision must be approved, rejected, or superseded");
+    }
+    const reviewedAt = this.nowProvider().toISOString();
+    const state = await this.store.updateRun(runId, (record) => {
+      if (!record.consolidation) {
+        throw new Error("Dream run has no consolidation suggestions.");
+      }
+      const approvedCandidatePaths = decision === "approved"
+        ? normalizeCandidatePathList(input.approvedCandidatePaths, record.consolidation)
+        : [];
+      const nextReview: DreamConsolidationReviewState = {
+        status: decision,
+        reviewedAt,
+        ...(truncateText(input.reviewedBy, 120) ? { reviewedBy: truncateText(input.reviewedBy, 120) } : {}),
+        ...(truncateText(input.note, 240) ? { note: truncateText(input.note, 240) } : {}),
+        ...(approvedCandidatePaths.length > 0 ? { approvedCandidatePaths } : {}),
+      };
+      return {
+        ...record,
+        consolidation: {
+          ...record.consolidation,
+          review: nextReview,
+          apply: decision === "approved"
+            ? {
+                ...(record.consolidation.apply ?? { status: "not_applied", appliedPatchCount: 0, appliedPatches: [] }),
+                status: record.consolidation.apply?.status === "applied" ? "applied" : "not_applied",
+              }
+            : {
+                status: "not_applied",
+                appliedPatchCount: 0,
+                appliedPatches: [],
+              },
+        },
+      };
+    });
+    const record = state.recentRuns.find((item) => item.id === runId);
+    if (!record) {
+      throw new Error(`Dream run not found: ${runId}`);
+    }
+    return { record, state };
+  }
+
+  async applyConsolidation(
+    runId: string,
+    input: DreamConsolidationApplyInput = {},
+  ): Promise<{ record: DreamRecord; state: DreamRuntimeState; appliedPatchCount: number }> {
+    if (!this.profileStateDelegate) {
+      throw new Error("Dream consolidation apply is unavailable because profile state delegate is missing.");
+    }
+    let appliedPatchCount = 0;
+    const appliedAt = this.nowProvider().toISOString();
+    const state = await this.store.updateRun(runId, (record) => {
+      const consolidation = record.consolidation;
+      if (!consolidation) {
+        throw new Error("Dream run has no consolidation suggestions.");
+      }
+      if (consolidation.review?.status !== "approved") {
+        throw new Error("Dream consolidation must be reviewed and approved before apply.");
+      }
+      const approvedCandidatePaths = normalizeCandidatePathList(consolidation.review.approvedCandidatePaths, consolidation);
+      const candidates = consolidation.profilePatchCandidates.filter((candidate) => {
+        const profilePath = truncateText(candidate.profilePath, 160);
+        return Boolean(profilePath && approvedCandidatePaths.includes(profilePath));
+      });
+      if (candidates.length <= 0) {
+        throw new Error("No approved low-risk profile patch candidates are available to apply.");
+      }
+      const appliedPatches: NonNullable<DreamConsolidationApplyState["appliedPatches"]> = [];
+      for (const candidate of candidates) {
+        const profilePath = truncateText(candidate.profilePath, 160);
+        if (!profilePath || !isAllowedDurableProfileStatePath(profilePath)) continue;
+        const value: ProfileStateValue = candidate.profileValue ?? candidate.valueSummary;
+        const entry = this.profileStateDelegate!.upsertProfileStateEntry({
+          agentId: this.agentId,
+          scope: "user",
+          path: profilePath,
+          value,
+          confidence: candidate.confidence === "high" ? 0.96 : candidate.confidence === "low" ? 0.72 : 0.88,
+          sourceRefs: buildDreamConsolidationSourceRefs(record, candidate),
+          lastConfirmedAt: appliedAt,
+          reason: truncateText(input.note, 240) ?? `Dream consolidation apply for ${profilePath}.`,
+          createdBy: truncateText(input.appliedBy, 120) ?? "dream.apply",
+        });
+        appliedPatches.push({
+          profilePath,
+          profileValue: value,
+          entryId: entry.id,
+          action: entry.createdAt === entry.updatedAt ? "create" : "update",
+          changed: true,
+        });
+      }
+      appliedPatchCount = appliedPatches.length;
+      return {
+        ...record,
+        consolidation: {
+          ...consolidation,
+          apply: {
+            status: "applied",
+            appliedAt,
+            ...(truncateText(input.appliedBy, 120) ? { appliedBy: truncateText(input.appliedBy, 120) } : {}),
+            ...(truncateText(input.note, 240) ? { note: truncateText(input.note, 240) } : {}),
+            appliedPatchCount,
+            appliedPatches,
+          },
+        },
+      };
+    });
+    const record = state.recentRuns.find((item) => item.id === runId);
+    if (!record) {
+      throw new Error(`Dream run not found: ${runId}`);
+    }
+    return { record, state, appliedPatchCount };
   }
 
   private async callModel(system: string, user: string): Promise<string> {

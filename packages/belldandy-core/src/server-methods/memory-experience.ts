@@ -21,6 +21,7 @@ import type {
   ExperienceCandidate,
   ExperienceCandidateType,
   MemorySourceInventoryGovernanceSummary,
+  MemoryTreeReportRecord,
   ExperienceSynthesisPreviewItem,
   MemorySourceInventoryConfiguredSource,
   PublishedExperienceAssetRecord,
@@ -381,11 +382,13 @@ export async function handleMemoryExperienceMethod(
         const record = manager.persistMemoryTreeExternalIngestReport(report, {
           createdBy: "rpc",
         });
+        const memoryFreshness = buildMemoryFreshnessForTreeReport(record);
         return ok(req.id, {
           report,
           governance: record.summary?.governance ?? null,
           record,
           queryView: buildResidentMemoryQueryView(residentPolicy),
+          ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
         });
       } catch (error) {
         return invalid(req.id, error instanceof Error ? error.message : String(error));
@@ -405,10 +408,12 @@ export async function handleMemoryExperienceMethod(
         maxGroups,
         createdBy: "rpc",
       });
+      const memoryFreshness = buildMemoryFreshnessForTreeReport(record);
       return ok(req.id, {
         report,
         record,
         queryView: buildResidentMemoryQueryView(residentPolicy),
+        ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
       });
     }
 
@@ -443,6 +448,7 @@ export async function handleMemoryExperienceMethod(
         summary: preview.summary,
         details: preview.details,
       });
+      const memoryFreshness = buildMemoryFreshnessForTreeReport(record);
       return ok(req.id, withMemoryClassConsumerPayload({
         report: preview.report,
         governance: preview.report.governance,
@@ -457,7 +463,7 @@ export async function handleMemoryExperienceMethod(
         },
         includeRegistry: true,
         registryClasses: ["project_semantic", "governance"],
-      }));
+      }, memoryFreshness));
     }
 
     case "memory.tree.report.list": {
@@ -484,9 +490,11 @@ export async function handleMemoryExperienceMethod(
       if (!reportId) return invalid(req.id, "reportId is required");
       const report = manager.getMemoryTreeReport(reportId);
       if (!report) return notFound(req.id, "Memory tree report not found.");
+      const memoryFreshness = buildMemoryFreshnessForTreeReport(report);
       return ok(req.id, {
         report,
         queryView: buildResidentMemoryQueryView(residentPolicy),
+        ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
       });
     }
 
@@ -524,10 +532,12 @@ export async function handleMemoryExperienceMethod(
           reviewedBy,
           note,
         });
+        const memoryFreshness = buildMemoryFreshnessForTreeReport(result.report);
         return ok(req.id, {
           result,
           report: result.report,
           queryView: buildResidentMemoryQueryView(residentPolicy),
+          ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -558,10 +568,12 @@ export async function handleMemoryExperienceMethod(
           appliedBy,
           note,
         });
+        const memoryFreshness = buildMemoryFreshnessForTreeReport(result.report);
         return ok(req.id, {
           result,
           report: result.report,
           queryView: buildResidentMemoryQueryView(residentPolicy),
+          ...(memoryFreshness?.summary.available ? { memoryFreshness } : {}),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1092,6 +1104,7 @@ export async function handleMemoryExperienceMethod(
 
     case "memory.recent_work": {
       const taskWorkSurface = resolveScopedTaskWorkSurface(params);
+      const manager = resolveScopedMemoryManager(params);
       if (!taskWorkSurface) return notAvailable(req.id);
 
       const query = readOptionalString(params, "query") ?? "";
@@ -1101,6 +1114,12 @@ export async function handleMemoryExperienceMethod(
         query: query || undefined,
         limit,
         filter: filter as any,
+      });
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: items
+          .map((item) => manager?.getTaskDetail(item.taskId) ?? undefined)
+          .map((task) => buildEpisodicTaskFreshnessView(task))
+          .filter((item): item is NonNullable<typeof item> => Boolean(item)),
       });
 
       return ok(req.id, withMemoryClassConsumerPayload({
@@ -1112,11 +1131,12 @@ export async function handleMemoryExperienceMethod(
         noteByClass: {
           episodic_task: "recent_work is a derived episodic task surface built from task recap and recent activity.",
         },
-      }));
+      }, memoryFreshness));
     }
 
     case "memory.resume_context": {
       const taskWorkSurface = resolveScopedTaskWorkSurface(params);
+      const manager = resolveScopedMemoryManager(params);
       if (!taskWorkSurface) return notAvailable(req.id);
 
       const query = readOptionalString(params, "query") ?? "";
@@ -1129,6 +1149,10 @@ export async function handleMemoryExperienceMethod(
         query: query || undefined,
         filter: filter as any,
       });
+      const detail = item?.taskId ? (manager?.getTaskDetail(item.taskId) ?? undefined) : undefined;
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: [buildEpisodicTaskFreshnessView(detail)],
+      });
 
       return ok(req.id, withMemoryClassConsumerPayload({
         item,
@@ -1140,11 +1164,12 @@ export async function handleMemoryExperienceMethod(
         noteByClass: {
           episodic_task: "resume_context is a derived episodic task surface for stop point and next-step recovery.",
         },
-      }));
+      }, memoryFreshness));
     }
 
     case "memory.similar_past_work": {
       const taskWorkSurface = resolveScopedTaskWorkSurface(params);
+      const manager = resolveScopedMemoryManager(params);
       if (!taskWorkSurface) return notAvailable(req.id);
 
       const query = readRequiredString(params, "query");
@@ -1157,6 +1182,12 @@ export async function handleMemoryExperienceMethod(
         limit,
         filter: filter as any,
       });
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: items
+          .map((item) => manager?.getTaskDetail(item.taskId) ?? undefined)
+          .map((task) => buildEpisodicTaskFreshnessView(task))
+          .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+      });
 
       return ok(req.id, withMemoryClassConsumerPayload({
         items,
@@ -1167,11 +1198,12 @@ export async function handleMemoryExperienceMethod(
         noteByClass: {
           episodic_task: "similar_past_work compares derived episodic task evidence across prior tasks.",
         },
-      }));
+      }, memoryFreshness));
     }
 
     case "memory.explain_sources": {
       const taskWorkSurface = resolveScopedTaskWorkSurface(params);
+      const manager = resolveScopedMemoryManager(params);
       if (!taskWorkSurface) return notAvailable(req.id);
 
       const taskId = readOptionalString(params, "taskId") ?? "";
@@ -1187,6 +1219,10 @@ export async function handleMemoryExperienceMethod(
       if (!explanation) {
         return notFound(req.id, "Task work source explanation not found.");
       }
+      const detail = manager?.getTaskDetail(explanation.taskId) ?? undefined;
+      const memoryFreshness = buildMemoryFreshnessView({
+        items: [buildEpisodicTaskFreshnessView(detail)],
+      });
 
       return ok(req.id, withMemoryClassConsumerPayload({
         explanation,
@@ -1197,7 +1233,7 @@ export async function handleMemoryExperienceMethod(
         noteByClass: {
           episodic_task: "explain_sources traces episodic task evidence back to recap, resume, and activity source refs.",
         },
-      }));
+      }, memoryFreshness));
     }
 
     case "experience.candidate.get": {
@@ -2048,6 +2084,54 @@ function readInventoryGovernanceSummary(
     return value as MemorySourceInventoryGovernanceSummary;
   }
   return buildMemorySourceInventoryGovernanceSummary(report);
+}
+
+function readStoredInventoryGovernanceSummary(value: unknown): MemorySourceInventoryGovernanceSummary | undefined {
+  return (
+    isObjectRecord(value)
+    && typeof value.headline === "string"
+    && typeof value.sourceKinds === "number"
+    && typeof value.presentSourceKinds === "number"
+    && typeof value.sourceFamilyCount === "number"
+    && Array.isArray(value.topHighRiskFamilies)
+    && Array.isArray(value.topSuggestedFamilies)
+  )
+    ? value as MemorySourceInventoryGovernanceSummary
+    : undefined;
+}
+
+function buildMemoryFreshnessForTreeReport(
+  report: MemoryTreeReportRecord | null | undefined,
+): MemoryFreshnessView | undefined {
+  if (!report) {
+    return undefined;
+  }
+  const governance = readStoredInventoryGovernanceSummary(report.summary?.governance);
+  const includeProjectSemantic =
+    report.reportType === "inventory"
+    || report.reportType === "tree_build_preview"
+    || report.reportType === "shared_governance_preview";
+  const projectSemanticNote = report.reportType === "shared_governance_preview"
+    ? "Shared governance preview 只间接反映 project semantic 约束，本批仍未补 project truth state。"
+    : includeProjectSemantic
+      ? "当前只观测到 project semantic 的派生 inventory/tree 视图，本批未补 project truth state。"
+      : undefined;
+  const memoryFreshness = buildMemoryFreshnessView({
+    items: [
+      includeProjectSemantic
+        ? buildProjectSemanticFreshnessFromInventory({
+          governance,
+          reportRecord: report,
+          note: projectSemanticNote,
+        })
+        : undefined,
+      buildGovernanceFreshnessFromInventory({
+        governance,
+        reportRecord: report,
+      }),
+    ],
+  });
+  return memoryFreshness.summary.available ? memoryFreshness : undefined;
 }
 
 function readRequiredString(params: Record<string, unknown>, key: string): string {

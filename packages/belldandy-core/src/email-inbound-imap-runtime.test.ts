@@ -561,7 +561,7 @@ describe("startImapPollingEmailInboundRuntime", () => {
           host: "127.0.0.1",
           mailbox: "INBOX",
           error: expect.objectContaining({
-            message: "IMAP socket timeout",
+            message: "IMAP read timeout",
           }),
         }),
       }),

@@ -160,4 +160,99 @@ describe("goals capability panel", () => {
       note: "Reviewed in WebChat",
     }));
   });
+
+  it("renders governance freshness summary when capability payload includes memory freshness", () => {
+    document.body.innerHTML = `
+      <div id="goalsDetail">
+        <div id="goalCapabilityPanel"></div>
+      </div>
+    `;
+    const feature = createGoalsCapabilityPanelFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      escapeHtml: (value) => String(value ?? ""),
+      formatDateTime: (value) => String(value ?? "-"),
+      onOpenSourcePath: vi.fn(async () => {}),
+      onOpenSubtask: vi.fn(async () => {}),
+      onSaveGovernanceSettings: vi.fn(async () => {}),
+      onCommanderDecision: vi.fn(async () => {}),
+      t: (_key, _params, fallback) => fallback ?? "",
+    });
+
+    feature.renderGoalCapabilityPanel({
+      id: "goal_alpha",
+      activeNodeId: "node_impl",
+    }, {
+      nodeMap: {
+        node_impl: "实现节点",
+      },
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "当前治理队列存在待收口项",
+          reviewRequiredCount: 1,
+          staleCount: 0,
+          supersededCount: 0,
+        },
+      },
+      plans: [{
+        id: "plan_impl",
+        goalId: "goal_alpha",
+        nodeId: "node_impl",
+        runId: "run_impl",
+        status: "planned",
+        executionMode: "single_agent",
+        governanceMode: "direct",
+        commanderAgentId: "",
+        preferredAgents: [],
+        riskLevel: "low",
+        objective: "Ship implementation",
+        summary: "Plan summary",
+        queryHints: [],
+        reasoning: [],
+        methods: [],
+        skills: [],
+        mcpServers: [],
+        subAgents: [],
+        gaps: [],
+        checkpoint: {
+          required: false,
+          reasons: [],
+          approvalMode: "none",
+          requiredRequestFields: [],
+          requiredDecisionFields: [],
+          suggestedTitle: "",
+          suggestedNote: "",
+          suggestedReviewer: "",
+          suggestedReviewerRole: "",
+          suggestedSlaHours: null,
+          escalationMode: "none",
+        },
+        actualUsage: {
+          methods: [],
+          skills: [],
+          mcpServers: [],
+          toolNames: [],
+          updatedAt: "",
+        },
+        analysis: {
+          status: "aligned",
+          summary: "",
+          deviations: [],
+          recommendations: [],
+          updatedAt: "",
+        },
+        generatedAt: "2026-05-17T10:00:00.000Z",
+        updatedAt: "2026-05-17T10:10:00.000Z",
+        orchestratedAt: "",
+        orchestration: {
+          finalApprovalMode: "user_required",
+          notes: [],
+        },
+      }],
+    });
+
+    expect(document.getElementById("goalCapabilityPanel")?.textContent || "").toContain("治理 freshness：当前治理队列存在待收口项");
+  });
 });

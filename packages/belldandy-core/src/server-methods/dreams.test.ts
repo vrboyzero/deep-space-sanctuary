@@ -17,7 +17,28 @@ describe("handleDreamMethod", () => {
           failureBackoffMinutes: 30,
           maxRecentRuns: 20,
         },
-        recentRuns: [],
+        recentRuns: [{
+          id: "dream-state-1",
+          agentId: "coder",
+          status: "completed",
+          triggerMode: "manual",
+          requestedAt: "2026-04-19T11:55:00.000Z",
+          finishedAt: "2026-04-19T12:00:00.000Z",
+          summary: "latest dream state",
+          consolidation: {
+            headline: "Dream consolidation surfaced 1 profile patch, 0 stale, and 0 contradiction candidates.",
+            summary: "Readonly consolidation candidates are available.",
+            profilePatchCandidates: [{
+              field: "profile.headline",
+              valueSummary: "喜欢简洁状态表与短结论",
+              source: "mind_profile",
+              confidence: "medium",
+              reason: "Mind snapshot keeps surfacing this as the strongest profile anchor.",
+            }],
+            staleCandidates: [],
+            contradictionCandidates: [],
+          },
+        }],
       })),
     };
 
@@ -35,6 +56,7 @@ describe("handleDreamMethod", () => {
 
     expect(res?.ok).toBe(true);
     expect(res && "payload" in res ? res.payload?.defaultConversationId : undefined).toBe("agent:coder:main");
+    expect(res && "payload" in res ? (res.payload as any)?.state?.recentRuns?.[0]?.consolidation?.profilePatchCandidates?.[0]?.field : undefined).toBe("profile.headline");
     expect(runtime.getState).toHaveBeenCalledTimes(1);
   });
 
@@ -48,6 +70,22 @@ describe("handleDreamMethod", () => {
           status: "completed",
           triggerMode: "manual",
           requestedAt: "2026-04-19T12:00:00.000Z",
+          consolidation: {
+            headline: "Dream consolidation surfaced 1 profile patch, 1 stale, and 0 contradiction candidates.",
+            summary: "Readonly consolidation candidates are available.",
+            profilePatchCandidates: [{
+              field: "profile.headline",
+              valueSummary: "喜欢简洁状态表与短结论",
+              source: "mind_profile",
+              confidence: "medium",
+              reason: "Mind snapshot keeps surfacing this as the strongest profile anchor.",
+            }],
+            staleCandidates: [{
+              memoryClass: "episodic_task",
+              reason: "Recent task evidence still needs follow-up.",
+            }],
+            contradictionCandidates: [],
+          },
         },
         state: {
           version: 1,
@@ -91,6 +129,15 @@ describe("handleDreamMethod", () => {
       triggerMode: "manual",
       reason: "manual-smoke",
     });
+    const payload = res && "payload" in res ? res.payload as any : undefined;
+    expect(payload?.record?.consolidation).toMatchObject({
+      headline: expect.any(String),
+      profilePatchCandidates: [
+        expect.objectContaining({
+          field: "profile.headline",
+        }),
+      ],
+    });
   });
 
   it("runs commons export through dream.commons.export_now", async () => {
@@ -127,6 +174,103 @@ describe("handleDreamMethod", () => {
     expect(res?.ok).toBe(true);
     expect(commonsRuntime.runNow).toHaveBeenCalledTimes(1);
     expect(payload?.state?.approvedCount).toBe(2);
+  });
+
+  it("reviews dream consolidation through dream.consolidation.review", async () => {
+    const runtime = {
+      getAvailability: () => ({ enabled: true, available: true, model: "gpt-test" }),
+      reviewConsolidation: vi.fn(async () => ({
+        record: {
+          id: "dream-1",
+          agentId: "coder",
+          status: "completed",
+          triggerMode: "manual",
+          requestedAt: "2026-04-19T12:00:00.000Z",
+          consolidation: {
+            headline: "Dream consolidation surfaced 1 profile patch, 0 stale, and 0 contradiction candidates.",
+            summary: "Readonly consolidation candidates are available.",
+            profilePatchCandidates: [{
+              field: "profile_state.preferences.response_style",
+              valueSummary: "先给结论，再展开证据",
+              source: "mind_profile",
+              confidence: "medium",
+              reason: "Canonical profile state already exposes this low-risk field in the current dream input snapshot.",
+              profilePath: "preferences.response_style",
+              profileValue: "先给结论，再展开证据",
+            }],
+            staleCandidates: [],
+            contradictionCandidates: [],
+            review: {
+              status: "approved",
+              reviewedBy: "tester",
+              approvedCandidatePaths: ["preferences.response_style"],
+            },
+            apply: {
+              status: "not_applied",
+              appliedPatchCount: 0,
+              appliedPatches: [],
+            },
+          },
+        },
+        state: {
+          version: 1,
+          agentId: "coder",
+          status: "idle",
+          updatedAt: "2026-04-19T12:01:00.000Z",
+          settings: {
+            inputWindowHours: 72,
+            cooldownHours: 12,
+            failureBackoffMinutes: 30,
+            maxRecentRuns: 20,
+          },
+          recentRuns: [],
+        },
+      })),
+    };
+
+    const res = await handleDreamMethod({
+      type: "req",
+      id: "req-5",
+      method: "dream.consolidation.review",
+      params: {
+        agentId: "coder",
+        dreamId: "dream-1",
+        decision: "approved",
+        note: "looks safe",
+        approvedCandidatePaths: ["preferences.response_style"],
+      },
+    }, {
+      resolveDreamRuntime: () => runtime as any,
+      resolveDefaultConversationId: () => "agent:coder:main",
+    });
+
+    expect(res?.ok).toBe(true);
+    expect(runtime.reviewConsolidation).toHaveBeenCalledWith("dream-1", "approved", expect.objectContaining({
+      note: "looks safe",
+      approvedCandidatePaths: ["preferences.response_style"],
+    }));
+  });
+
+  it("requires confirmation for dream.consolidation.apply", async () => {
+    const runtime = {
+      getAvailability: () => ({ enabled: true, available: true, model: "gpt-test" }),
+    };
+
+    const res = await handleDreamMethod({
+      type: "req",
+      id: "req-6",
+      method: "dream.consolidation.apply",
+      params: {
+        agentId: "coder",
+        dreamId: "dream-1",
+      },
+    }, {
+      resolveDreamRuntime: () => runtime as any,
+      resolveDefaultConversationId: () => "agent:coder:main",
+    });
+
+    expect(res?.ok).toBe(false);
+    expect(res && "error" in res ? res.error?.code : undefined).toBe("confirmation_required");
   });
 
   it("returns commons export status through dream.commons.status.get", async () => {

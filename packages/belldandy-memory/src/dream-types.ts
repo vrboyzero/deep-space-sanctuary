@@ -7,6 +7,11 @@ import type {
   TaskWorkSourceReference,
 } from "./task-work-surface.js";
 import type {
+  ProfileStateEntry,
+  ProfileStateValue,
+  UpsertProfileStateEntryInput,
+} from "./profile-state-types.js";
+import type {
   MemoryCategory,
   MemorySearchFilter,
   MemorySearchResult,
@@ -59,6 +64,15 @@ export interface DreamMindProfileSnapshot {
   profile?: {
     headline?: string;
     summaryLines?: string[];
+    stateSummaryLines?: string[];
+    stateEntries?: Array<{
+      path?: string;
+      valueText?: string;
+      confidence?: number;
+      updatedAt?: string;
+      lastConfirmedAt?: string;
+    }>;
+    treeSummaryLines?: string[];
   };
   conversation?: {
     topResidents?: Array<{
@@ -242,6 +256,7 @@ export interface DreamRecord {
   fallbackReason?: DreamFallbackReason;
   input?: DreamInputSnapshotMeta;
   obsidianSync?: DreamObsidianSyncStatus;
+  consolidation?: DreamConsolidationSummary;
 }
 
 export interface DreamShareCandidate {
@@ -262,6 +277,66 @@ export interface DreamModelOutput {
   openQuestions: string[];
   shareCandidates: DreamShareCandidate[];
   nextFocus: string[];
+}
+
+export interface DreamConsolidationProfilePatchCandidate {
+  field: string;
+  valueSummary: string;
+  source: "mind_profile" | "learning_review" | "recent_work" | "durable_memory";
+  confidence: DreamConfidenceLevel;
+  reason: string;
+  profilePath?: string;
+  profileValue?: ProfileStateValue;
+}
+
+export interface DreamConsolidationStaleCandidate {
+  memoryClass: "profile_semantic" | "episodic_task" | "procedural_experience" | "governance";
+  reason: string;
+  evidence?: string;
+}
+
+export interface DreamConsolidationContradictionCandidate {
+  topic: string;
+  left: string;
+  right: string;
+  reason: string;
+}
+
+export interface DreamConsolidationSummary {
+  headline: string;
+  summary: string;
+  profilePatchCandidates: DreamConsolidationProfilePatchCandidate[];
+  staleCandidates: DreamConsolidationStaleCandidate[];
+  contradictionCandidates: DreamConsolidationContradictionCandidate[];
+  review?: DreamConsolidationReviewState;
+  apply?: DreamConsolidationApplyState;
+}
+
+export type DreamConsolidationReviewDecision = "approved" | "rejected" | "superseded";
+
+export interface DreamConsolidationReviewState {
+  status: "pending" | "approved" | "rejected" | "superseded";
+  reviewedAt?: string;
+  reviewedBy?: string;
+  note?: string;
+  approvedCandidatePaths?: string[];
+}
+
+export interface DreamConsolidationAppliedPatch {
+  profilePath: string;
+  profileValue: ProfileStateValue;
+  entryId?: string;
+  action: "create" | "update" | "confirm";
+  changed: boolean;
+}
+
+export interface DreamConsolidationApplyState {
+  status: "not_applied" | "applied";
+  appliedAt?: string;
+  appliedBy?: string;
+  note?: string;
+  appliedPatchCount?: number;
+  appliedPatches?: DreamConsolidationAppliedPatch[];
 }
 
 export interface DreamPromptBundle {
@@ -504,9 +579,25 @@ export interface DreamRuntimeOptions extends DreamRuntimeModelOptions {
     conversationId?: string;
     now: Date;
   }) => Promise<DreamInputSnapshot>;
+  profileStateDelegate?: DreamProfileStateDelegate;
   logger?: DreamRuntimeLogger;
   now?: () => Date;
 }
 
 export type DreamTaskSourceRef = TaskWorkSourceReference;
 export type DreamTaskSourceExplanation = TaskWorkSourceExplanation;
+
+export interface DreamProfileStateDelegate {
+  upsertProfileStateEntry: (input: UpsertProfileStateEntryInput) => ProfileStateEntry;
+}
+
+export interface DreamConsolidationReviewInput {
+  reviewedBy?: string;
+  note?: string;
+  approvedCandidatePaths?: string[];
+}
+
+export interface DreamConsolidationApplyInput {
+  appliedBy?: string;
+  note?: string;
+}

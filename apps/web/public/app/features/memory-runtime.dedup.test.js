@@ -109,19 +109,37 @@ describe("memory runtime duplicate precheck", () => {
               id: "exp-dup-1",
               title: "实现候选层",
             },
+            memoryFreshness: {
+              summary: {
+                available: true,
+                headline: "Procedural experience needs review before publish.",
+                reviewRequiredCount: 1,
+                staleCount: 0,
+                supersededCount: 0,
+              },
+            },
           },
         };
       }
       throw new Error(`unexpected method ${req.method}`);
     });
-    const { feature } = createHarness(sendReq);
+    const { feature, state } = createHarness(sendReq);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const result = await feature.generateExperienceCandidate("task-1", "method");
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       id: "exp-dup-1",
       title: "实现候选层",
+    });
+    expect(state.selectedCandidate).toMatchObject({
+      id: "exp-dup-1",
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "Procedural experience needs review before publish.",
+        },
+      },
     });
     expect(window.confirm).toHaveBeenCalledTimes(1);
     expect(sendReq.mock.calls.map(([req]) => req.method)).toEqual([

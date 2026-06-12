@@ -26,6 +26,7 @@ export const memoryViewerState = {
   memoryQueryView: null,
   experienceQueryView: null,
   sharedGovernance: null,
+  memoryEvaluation: null,
   sharedReviewSummary: null,
   sharedReviewFilters: createDefaultSharedReviewFilters(),
   selectedSharedReviewIds: [],

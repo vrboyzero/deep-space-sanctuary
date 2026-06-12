@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildGovernanceFreshnessFromGoalReview,
   buildMemoryFreshnessFromInventoryDoctorReport,
   buildProceduralExperienceFreshnessView,
   buildProfileSemanticFreshnessView,
@@ -152,6 +153,42 @@ describe("memory freshness view", () => {
       expect.objectContaining({
         memoryClass: "governance",
         status: "review_required",
+      }),
+    ]));
+  });
+
+  it("counts checkpoint approval pressure as governance freshness debt", () => {
+    const result = buildGovernanceFreshnessFromGoalReview({
+      generatedAt: "2026-06-12T12:00:00.000Z",
+      actionableReviews: [],
+      reviewStatusCounts: {
+        pending_review: 0,
+        accepted: 0,
+        rejected: 0,
+        deferred: 0,
+        needs_revision: 0,
+      },
+      workflowPendingCount: 0,
+      workflowOverdueCount: 0,
+      checkpointWorkflowPendingCount: 2,
+      checkpointWorkflowOverdueCount: 1,
+    } as any, {
+      nowMs: Date.parse("2026-06-12T12:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      memoryClass: "governance",
+      status: "review_required",
+      freshnessHeadline: "当前治理队列存在待收口项",
+    });
+    expect(result?.freshnessSignals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "governance_pending_checkpoint",
+        severity: "warn",
+      }),
+      expect.objectContaining({
+        code: "governance_overdue_checkpoint",
+        severity: "warn",
       }),
     ]));
   });

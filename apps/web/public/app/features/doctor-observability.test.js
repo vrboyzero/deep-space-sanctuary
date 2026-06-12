@@ -410,6 +410,28 @@ describe("doctor observability formatting", () => {
           ],
         },
       },
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "当前治理队列存在待收口项",
+          reviewRequiredCount: 1,
+          staleCount: 0,
+          supersededCount: 0,
+          activeCount: 2,
+        },
+        items: [
+          {
+            memoryClass: "governance",
+            status: "review_required",
+            freshnessHeadline: "当前治理队列存在待收口项",
+          },
+          {
+            memoryClass: "profile_semantic",
+            status: "active",
+            freshnessHeadline: "Profile semantic is active.",
+          },
+        ],
+      },
       learningReviewInput: {
         summary: {
           available: true,
@@ -531,6 +553,11 @@ describe("doctor observability formatting", () => {
               summary: "收口共享审批和 dream writer 的链路差异。",
               generationMode: "fallback",
               fallbackReason: "llm_call_failed",
+              consolidation: {
+                profilePatchCandidates: [{ field: "profile.headline" }],
+                staleCandidates: [{ memoryClass: "governance" }],
+                contradictionCandidates: [{ topic: "review pressure" }],
+              },
             },
           ],
         },
@@ -1545,6 +1572,7 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("model gpt-4.1-mini");
     expect(lines.join("\n")).toContain("default conversation: agent:default:main");
     expect(lines.join("\n")).toContain("latest summary: 收口共享审批和 dream writer 的链路差异。");
+    expect(lines.join("\n")).toContain("readonly consolidation: profile_patch=1, stale=1, contradiction=1");
     expect(lines.join("\n")).toContain("generation fallback");
     expect(lines.join("\n")).toContain("latest generation: fallback (llm_call_failed)");
     expect(lines.join("\n")).toContain("latest input: tasks=3, memories=5, usages=2");
@@ -1754,6 +1782,20 @@ describe("doctor observability rendering", () => {
             systemPromptEstimatedTokens: 32,
           },
         },
+        latestRun: {
+          id: "dream-obs-1",
+          status: "completed",
+          requestedAt: "2026-04-19T12:00:00.000Z",
+          finishedAt: "2026-04-19T12:05:00.000Z",
+          summary: "收口共享审批和 dream writer 的链路差异。",
+          generationMode: "fallback",
+          fallbackReason: "llm_call_failed",
+          consolidation: {
+            profilePatchCandidates: [{ field: "profile.headline" }],
+            staleCandidates: [{ memoryClass: "governance" }],
+            contradictionCandidates: [{ topic: "review pressure" }],
+          },
+        },
       },
       queryRuntime: {
         traces: [
@@ -1851,6 +1893,41 @@ describe("doctor observability rendering", () => {
         profile: {
           summaryLines: ["USER.md ready"],
         },
+      },
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "当前治理队列存在待收口项",
+          reviewRequiredCount: 1,
+          staleCount: 0,
+          supersededCount: 0,
+          activeCount: 1,
+        },
+        items: [
+          {
+            memoryClass: "governance",
+            status: "review_required",
+            freshnessHeadline: "当前治理队列存在待收口项",
+          },
+        ],
+      },
+      memoryEvaluation: {
+        available: true,
+        status: "warn",
+        headline: "Memory evaluation needs attention: profile=0, freshness review=1, shared pending=0, dream patch backlog=1.",
+        profileStateFieldCount: 0,
+        freshnessReviewRequiredCount: 1,
+        freshnessStaleCount: 0,
+        governancePendingCount: 0,
+        governanceClaimedCount: 0,
+        dreamProfilePatchBacklogCount: 1,
+        dreamStaleBacklogCount: 1,
+        dreamContradictionBacklogCount: 1,
+        experienceUsageLinkedResidentCount: 0,
+        signals: [
+          "freshness review=1, stale=0",
+          "dream backlog patch=1, stale=1, contradiction=1",
+        ],
       },
     };
   }
@@ -2009,6 +2086,23 @@ describe("doctor observability rendering", () => {
     expect(lines.join("\n")).toContain("RAW prompt=35,338 completion=81 total=35,419");
   });
 
+  it("renders memory freshness in the doctor chat summary", () => {
+    const lines = buildDoctorChatSummary(createRenderPayload());
+
+    expect(lines.join("\n")).toContain("Memory Freshness");
+    expect(lines.join("\n")).toContain("当前治理队列存在待收口项");
+    expect(lines.join("\n")).toContain("governance [review_required]");
+  });
+
+  it("renders memory evaluation in the doctor chat summary", () => {
+    const lines = buildDoctorChatSummary(createRenderPayload());
+
+    expect(lines.join("\n")).toContain("Memory Evaluation");
+    expect(lines.join("\n")).toContain("profile coverage 0");
+    expect(lines.join("\n")).toContain("dream patch 1 / stale 1 / contradiction 1");
+    expect(lines.join("\n")).toContain("Memory evaluation needs attention");
+  });
+
   it("renders query runtime calibration summary in doctor cards", () => {
     const callbacks = [];
     vi.stubGlobal("requestAnimationFrame", (callback) => {
@@ -2026,5 +2120,42 @@ describe("doctor observability rendering", () => {
     expect(container.textContent || "").toContain("Query Runtime");
     expect(container.textContent || "").toContain("latest stage=completed");
     expect(container.textContent || "").toContain("usage calibration @ completed: estimated=1800, avg actual input/call=1050, delta=-42%, status=over_estimated");
+  });
+
+  it("renders memory freshness card from top-level doctor payload", () => {
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, createRenderPayload());
+    flushAnimationFrames(callbacks);
+
+    expect(container.textContent || "").toContain("Memory Freshness");
+    expect(container.textContent || "").toContain("当前治理队列存在待收口项");
+  });
+
+  it("renders memory evaluation card from top-level doctor payload", () => {
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, createRenderPayload());
+    flushAnimationFrames(callbacks);
+
+    expect(container.textContent || "").toContain("Memory Evaluation");
+    expect(container.textContent || "").toContain("profile coverage 0");
+    expect(container.textContent || "").toContain("dream patch 1 / stale 1 / contradiction 1");
   });
 });

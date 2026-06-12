@@ -30,6 +30,42 @@ function normalizeEmailThreadOpenNoteText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function renderCandidateMemoryFreshnessSummary(memoryFreshness, escapeHtml) {
+  const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
+    ? memoryFreshness.summary
+    : null;
+  if (!summary?.available || !summary.headline) {
+    return "";
+  }
+  return `
+    <div class="tool-settings-policy-note" style="margin-bottom:12px;">
+      <div><strong>Memory Freshness：</strong>${escapeHtml(summary.headline)}</div>
+      <div>review_required=${escapeHtml(String(summary.reviewRequiredCount || 0))} / stale=${escapeHtml(String(summary.staleCount || 0))} / superseded=${escapeHtml(String(summary.supersededCount || 0))}</div>
+    </div>
+  `;
+}
+
+function formatDreamConsolidationSummary(consolidation, t = (_key, _params, fallback) => fallback ?? "") {
+  if (!consolidation || typeof consolidation !== "object") {
+    return "";
+  }
+  const profilePatchCount = Array.isArray(consolidation.profilePatchCandidates) ? consolidation.profilePatchCandidates.length : 0;
+  const staleCount = Array.isArray(consolidation.staleCandidates) ? consolidation.staleCandidates.length : 0;
+  const contradictionCount = Array.isArray(consolidation.contradictionCandidates) ? consolidation.contradictionCandidates.length : 0;
+  if (profilePatchCount + staleCount + contradictionCount <= 0) {
+    return "";
+  }
+  return t(
+    "memory.dreamConsolidationSummary",
+    {
+      profilePatchCount: String(profilePatchCount),
+      staleCount: String(staleCount),
+      contradictionCount: String(contradictionCount),
+    },
+    `整理建议：profile_patch ${profilePatchCount} / stale ${staleCount} / contradiction ${contradictionCount}`,
+  );
+}
+
 export function normalizeDreamRuntimeView(payload, fallbackAgentId = "default") {
   const agentId = typeof payload?.agentId === "string" && payload.agentId.trim()
     ? payload.agentId.trim()
@@ -300,6 +336,7 @@ export function buildDreamRuntimeBarView(input, options = {}) {
         `最近输入：任务 ${formatCount(Number(sourceCounts.recentTaskCount) || 0)} / 记忆 ${formatCount(Number(sourceCounts.recentDurableMemoryCount) || 0)} / 经验 ${formatCount(Number(sourceCounts.recentExperienceUsageCount) || 0)}`,
       )
       : t("memory.dreamSummaryEmpty", {}, "最近还没有 dream 记录"));
+  const consolidationText = formatDreamConsolidationSummary(latestRun?.consolidation, t);
 
   return {
     statusLine: connected
@@ -324,8 +361,8 @@ export function buildDreamRuntimeBarView(input, options = {}) {
     obsidianLine: obsidianText,
     summaryLine: t(
       "memory.dreamSummaryLine",
-      { summary: summaryText, generation: generationText, commons: commonsText, gates: gateText, signal: signalText, stats: autoStatsText },
-      `最近摘要：${summaryText} · ${generationText} · ${commonsText} · ${signalText} · ${autoStatsText} · ${gateText}`,
+      { summary: summaryText, generation: generationText, commons: commonsText, consolidation: consolidationText, gates: gateText, signal: signalText, stats: autoStatsText },
+      `最近摘要：${summaryText} · ${generationText} · ${commonsText}${consolidationText ? ` · ${consolidationText}` : ""} · ${signalText} · ${autoStatsText} · ${gateText}`,
     ),
     refreshDisabled: !connected || dreamBusy,
     runDisabled: !connected || dreamBusy || !fallbackReady,
@@ -1410,6 +1447,31 @@ export function createMemoryViewerFeature({
     };
   }
 
+  function formatMemoryEvaluationStatusLabel(summary) {
+    if (!summary?.available) {
+      return t("memory.memoryEvaluationUnavailable", {}, "未评估");
+    }
+    return summary.status === "warn"
+      ? t("memory.memoryEvaluationWarn", {}, "需处理")
+      : t("memory.memoryEvaluationPass", {}, "稳定");
+  }
+
+  function renderMemoryEvaluationStats(summary) {
+    if (!summary?.available) {
+      return "";
+    }
+    const signals = Array.isArray(summary.signals)
+      ? summary.signals.filter((item) => typeof item === "string" && item.trim()).slice(0, 1)
+      : [];
+    const primarySignal = signals[0] || "";
+    return `
+      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationTitle", {}, "Memory Evaluation"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatMemoryEvaluationStatusLabel(summary))}</strong><div class="memory-stat-caption">${escapeHtml(summary.headline || "-")}</div></div>
+      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationProfileCoverage", {}, "Profile Coverage"))}</span><strong class="memory-stat-value">${formatCount(summary.profileStateFieldCount)}</strong><div class="memory-stat-caption">${escapeHtml(`freshness review ${formatCount(summary.freshnessReviewRequiredCount)} / stale ${formatCount(summary.freshnessStaleCount)}`)}</div></div>
+      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationGovernance", {}, "Governance Pressure"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`shared pending ${formatCount(summary.governancePendingCount)} / claimed ${formatCount(summary.governanceClaimedCount)}`)}</strong><div class="memory-stat-caption">${escapeHtml(primarySignal || t("memory.memoryEvaluationGovernanceCaption", {}, "同一摘要已从 doctor 前推到 memory viewer。"))}</div></div>
+      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationDreamBacklog", {}, "Dream Backlog"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`patch ${formatCount(summary.dreamProfilePatchBacklogCount)} / stale ${formatCount(summary.dreamStaleBacklogCount)} / contradiction ${formatCount(summary.dreamContradictionBacklogCount)}`)}</strong><div class="memory-stat-caption">${escapeHtml(`experience-linked residents ${formatCount(summary.experienceUsageLinkedResidentCount)}`)}</div></div>
+    `;
+  }
+
   function getSharedReviewFilters() {
     const memoryViewerState = getMemoryViewerState();
     const existing = memoryViewerState.sharedReviewFilters;
@@ -2126,6 +2188,13 @@ export function createMemoryViewerFeature({
                 </div>
               `).join("")}
             </div>
+            ${(panelView.detail.actions?.canApprove || panelView.detail.actions?.canReject || panelView.detail.actions?.canApply) ? `
+              <div class="goal-detail-actions">
+                ${panelView.detail.actions?.canApprove ? `<button class="memory-usage-action-btn" data-dream-consolidation-action="approve">${escapeHtml(t("memory.dreamConsolidationApprove", {}, "批准低风险画像 patch"))}</button>` : ""}
+                ${panelView.detail.actions?.canReject ? `<button class="memory-usage-action-btn" data-dream-consolidation-action="reject">${escapeHtml(t("memory.dreamConsolidationReject", {}, "驳回本次整理建议"))}</button>` : ""}
+                ${panelView.detail.actions?.canApply ? `<button class="memory-usage-action-btn" data-dream-consolidation-action="apply">${escapeHtml(t("memory.dreamConsolidationApply", {}, "应用已批准 patch"))}</button>` : ""}
+              </div>
+            ` : ""}
             ${panelView.detail.reason ? `
               <div class="memory-detail-card">
                 <span class="memory-detail-label">${escapeHtml(t("memory.dreamHistoryReason", {}, "触发原因"))}</span>
@@ -2283,6 +2352,107 @@ export function createMemoryViewerFeature({
     }
   }
 
+  async function reviewDreamConsolidation(decision) {
+    const memoryViewerState = getMemoryViewerState();
+    const dreamId = typeof memoryViewerState.selectedDreamHistoryId === "string" ? memoryViewerState.selectedDreamHistoryId.trim() : "";
+    const selectedItem = memoryViewerState.selectedDreamHistoryItem;
+    if (!dreamId || !selectedItem) return;
+    const note = window.prompt(
+      decision === "approved"
+        ? t("memory.dreamConsolidationReviewApprovePrompt", {}, "可选备注：为什么批准这些低风险画像 patch？")
+        : t("memory.dreamConsolidationReviewRejectPrompt", {}, "可选备注：为什么拒绝这批整理建议？"),
+      "",
+    );
+    if (note === null) return;
+    const approvedCandidatePaths = decision === "approved"
+      ? (Array.isArray(selectedItem?.consolidation?.profilePatchCandidates)
+        ? selectedItem.consolidation.profilePatchCandidates
+          .map((candidate) => typeof candidate?.profilePath === "string" ? candidate.profilePath.trim() : "")
+          .filter(Boolean)
+        : [])
+      : [];
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "dream.consolidation.review",
+      params: {
+        agentId: getActiveAgentId(),
+        dreamId,
+        decision,
+        note,
+        approvedCandidatePaths,
+      },
+    });
+    if (!res?.ok) {
+      showNotice?.(
+        t("memory.dreamConsolidationReviewFailedTitle", {}, "Dream 整理审批失败"),
+        res?.error?.message || t("memory.dreamConsolidationReviewFailedMessage", {}, "无法更新 Dream consolidation review。"),
+        "error",
+        4200,
+      );
+      return;
+    }
+    showNotice?.(
+      t("memory.dreamConsolidationReviewSuccessTitle", {}, "Dream 整理审批已更新"),
+      res.payload?.record?.consolidation?.review?.status || t("memory.dreamConsolidationReviewSuccessMessage", {}, "Dream consolidation review 已更新。"),
+      "success",
+      2600,
+    );
+    await loadDreamHistory(false, getActiveAgentId());
+    await loadDreamHistoryDetail(dreamId, getActiveAgentId());
+  }
+
+  async function applyDreamConsolidation() {
+    const memoryViewerState = getMemoryViewerState();
+    const dreamId = typeof memoryViewerState.selectedDreamHistoryId === "string" ? memoryViewerState.selectedDreamHistoryId.trim() : "";
+    if (!dreamId) return;
+    const confirmed = window.confirm(
+      t("memory.dreamConsolidationApplyConfirm", {}, "这会写入 canonical profile state。是否继续应用已批准的低风险画像 patch？"),
+    );
+    if (!confirmed) return;
+    const note = window.prompt(
+      t("memory.dreamConsolidationApplyPrompt", {}, "可选备注：本次 Dream consolidation apply 的说明"),
+      "",
+    );
+    if (note === null) return;
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "dream.consolidation.apply",
+      params: {
+        agentId: getActiveAgentId(),
+        dreamId,
+        confirmed: true,
+        note,
+      },
+    });
+    if (!res?.ok) {
+      showNotice?.(
+        t("memory.dreamConsolidationApplyFailedTitle", {}, "Dream 整理应用失败"),
+        res?.error?.message || t("memory.dreamConsolidationApplyFailedMessage", {}, "无法应用 Dream consolidation patch。"),
+        "error",
+        4200,
+      );
+      return;
+    }
+    showNotice?.(
+      t("memory.dreamConsolidationApplySuccessTitle", {}, "Dream 整理 patch 已应用"),
+      t(
+        "memory.dreamConsolidationApplySuccessMessage",
+        { count: String(res.payload?.appliedPatchCount || 0) },
+        `已应用 ${String(res.payload?.appliedPatchCount || 0)} 条低风险画像 patch。`,
+      ),
+      "success",
+      2600,
+    );
+    await loadDreamHistory(false, getActiveAgentId());
+    await loadDreamHistoryDetail(dreamId, getActiveAgentId());
+    void loadDreamRuntimeStatus({
+      requestToken: Number(memoryViewerState.requestToken || 0),
+      agentId: getActiveAgentId(),
+    });
+  }
+
   if (memoryDreamHistoryListEl) {
     memoryDreamHistoryListEl.addEventListener("click", (event) => {
       const target = event.target instanceof Element
@@ -2291,6 +2461,26 @@ export function createMemoryViewerFeature({
       const dreamId = target?.getAttribute("data-dream-history-id");
       if (!dreamId) return;
       void loadDreamHistoryDetail(dreamId);
+    });
+  }
+  if (memoryDreamHistoryDetailEl) {
+    memoryDreamHistoryDetailEl.addEventListener("click", (event) => {
+      const target = event.target instanceof Element
+        ? event.target.closest("[data-dream-consolidation-action]")
+        : null;
+      const action = target?.getAttribute("data-dream-consolidation-action");
+      if (!action) return;
+      if (action === "approve") {
+        void reviewDreamConsolidation("approved");
+        return;
+      }
+      if (action === "reject") {
+        void reviewDreamConsolidation("rejected");
+        return;
+      }
+      if (action === "apply") {
+        void applyDreamConsolidation();
+      }
     });
   }
 
@@ -2476,6 +2666,7 @@ export function createMemoryViewerFeature({
       memoryViewerState.selectedDreamHistoryContent = "";
       memoryViewerState.dreamHistoryDetailLoading = false;
       memoryViewerState.dreamHistoryDetailError = "";
+      memoryViewerState.memoryEvaluation = null;
       renderDreamRuntimeBar();
       renderMemoryViewerStats(null);
       renderMemoryViewerListEmpty(t("memory.disconnectedList", {}, "Not connected to the server."));
@@ -2931,22 +3122,37 @@ export function createMemoryViewerFeature({
 
   async function loadMemoryViewerStats(existingContext = null) {
     const requestContext = createMemoryViewerRequestContext(existingContext);
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "memory.stats",
-      params: buildScopedParams({}, requestContext.agentId),
-    });
+    const shouldLoadMemoryEvaluation = getMemoryViewerState().tab === "memories";
+    const [res, doctorRes] = await Promise.all([
+      sendReq({
+        type: "req",
+        id: makeId(),
+        method: "memory.stats",
+        params: buildScopedParams({}, requestContext.agentId),
+      }),
+      shouldLoadMemoryEvaluation
+        ? sendReq({
+          type: "req",
+          id: makeId(),
+          method: "system.doctor",
+          params: buildScopedParams({ surface: "summary" }, requestContext.agentId),
+        })
+        : Promise.resolve(null),
+    ]);
     const memoryViewerState = getMemoryViewerState();
     if (!isMemoryViewerRequestCurrent(requestContext)) return;
     if (!res || !res.ok) {
       memoryViewerState.sharedGovernance = null;
+      memoryViewerState.memoryEvaluation = null;
       renderMemoryViewerStats(null);
       return;
     }
     memoryViewerState.stats = res.payload?.status ?? null;
     memoryViewerState.memoryQueryView = res.payload?.queryView ?? null;
     memoryViewerState.sharedGovernance = res.payload?.sharedGovernance ?? null;
+    memoryViewerState.memoryEvaluation = doctorRes?.ok
+      ? (doctorRes.payload?.memoryEvaluation ?? null)
+      : null;
     renderMemoryViewerStats(memoryViewerState.stats);
   }
 
@@ -3589,6 +3795,7 @@ export function createMemoryViewerFeature({
       const queryView = memoryViewerState.memoryQueryView;
       const searchDiagnostics = memoryViewerState.memorySearchDiagnostics;
       const sharedGovernance = memoryViewerState.sharedGovernance;
+      const memoryEvaluation = memoryViewerState.memoryEvaluation;
       const governanceFilterLabel = formatGovernanceFilterLabel(memoryChunkGovernanceFilterEl?.value);
 
       memoryViewerStatsEl.innerHTML = `
@@ -3597,6 +3804,7 @@ export function createMemoryViewerFeature({
         ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchReturned", {}, "Search Returned"))}</span><strong class="memory-stat-value">${escapeHtml(formatMemorySearchStageCount(searchDiagnostics.stages?.returned))}</strong><div class="memory-stat-caption">${escapeHtml(formatMemorySearchSourceMix(searchDiagnostics.sourceClassMix))}</div></div>` : ""}
         ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchPipeline", {}, "Search Pipeline"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`${formatMemorySearchStageCount(searchDiagnostics.stages?.raw)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.scoreAware)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.reranked)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.returned)}`)}</strong><div class="memory-stat-caption">${escapeHtml(searchDiagnostics.retrievalMode || "-")}</div></div>` : ""}
         ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchTopHits", {}, "Search Top Hits"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatMemorySearchTopHits(searchDiagnostics.stages?.returned))}</strong></div>` : ""}
+        ${renderMemoryEvaluationStats(memoryEvaluation)}
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statGovernanceFilter", {}, "Current Governance Filter"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(governanceFilterLabel)}</strong></div>
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedPendingQueue", {}, "Pending Shared Queue"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.pendingCount)}</strong></div>
         <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedClaimed", {}, "Claimed Pending"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.claimedCount)}</strong></div>
@@ -4179,6 +4387,9 @@ export function createMemoryViewerFeature({
     const learningReviewInput = candidate.learningReviewInput && typeof candidate.learningReviewInput === "object"
       ? candidate.learningReviewInput
       : null;
+    const memoryFreshness = candidate.memoryFreshness && typeof candidate.memoryFreshness === "object"
+      ? candidate.memoryFreshness
+      : null;
     const skillFreshness = candidate.skillFreshness && typeof candidate.skillFreshness === "object"
       ? candidate.skillFreshness
       : null;
@@ -4270,6 +4481,7 @@ export function createMemoryViewerFeature({
             staleBusy: skillFreshnessStaleBusy,
           },
         }) : ""}
+        ${!compactGovernanceDetailMode ? renderCandidateMemoryFreshnessSummary(memoryFreshness, escapeHtml) : ""}
         ${!compactGovernanceDetailMode && learningReviewInput ? `
           <div class="memory-detail-card">
             <span class="memory-detail-label">Learning / Review Input</span>

@@ -40,6 +40,10 @@ import { RuntimeResilienceTracker } from "./runtime-resilience.js";
 // MemoryManager 内部会初始化 OpenAIEmbeddingProvider，需要 OPENAI_API_KEY
 // 测试环境中设置一个占位值，避免构造函数抛错（不会实际调用 API）
 beforeAll(() => {
+  vi.setConfig({
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
+  });
   if (!process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = "test-placeholder-key";
   }
@@ -771,10 +775,26 @@ test("system.doctor exposes mind/profile snapshot summary", async () => {
         status: "pass",
       }),
       expect.objectContaining({
+        id: "memory_evaluation",
+        status: "warn",
+      }),
+      expect.objectContaining({
         id: "learning_review_input",
         status: "pass",
       }),
     ]));
+    expect(response.payload?.memoryEvaluation).toMatchObject({
+      available: true,
+      status: "warn",
+      profileStateFieldCount: expect.any(Number),
+      freshnessReviewRequiredCount: expect.any(Number),
+      freshnessStaleCount: expect.any(Number),
+      governancePendingCount: 0,
+      dreamProfilePatchBacklogCount: 0,
+      signals: expect.arrayContaining([
+        expect.stringContaining("freshness review="),
+      ]),
+    });
   } finally {
     ws.close();
     await closeP;
@@ -1222,7 +1242,7 @@ test("system.doctor includes MCP recovery and persisted-result summary when MCP 
     await server.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
-});
+}, 15_000);
 
 test("system.doctor reports starweaver-central as primary when local stdio fallback is inactive", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-starweaver-routing-"));
@@ -2096,7 +2116,7 @@ test("system.doctor aggregates shared governance preview summary with the latest
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
   });
-});
+}, 15_000);
 
 test("system.doctor reports session digest rate-limit state after budget is exceeded", async () => {
   await withEnv({

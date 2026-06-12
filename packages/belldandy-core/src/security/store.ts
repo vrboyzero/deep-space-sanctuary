@@ -40,6 +40,8 @@ const PAIRING_CODE_LENGTH = 8;
 const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_TTL_MS = 60 * 60 * 1000;
 const PAIRING_MAX_PENDING = 20;
+const PAIRING_APPROVE_RETRIES = 5;
+const PAIRING_APPROVE_RETRY_DELAY_MS = 20;
 
 export function resolveAllowlistPath(stateDir: string): string {
   return path.join(stateDir, "allowlist.json");
@@ -65,8 +67,13 @@ export async function approvePairingCode(params: {
   env?: NodeJS.ProcessEnv;
 }): Promise<{ ok: true; clientId: string } | { ok: false; message: string }> {
   const stateDir = params.stateDir ?? resolveStateDir(params.env);
-  const pairing = await readPairingStore(stateDir);
-  const match = pairing.pending.find((p) => p.code === params.code);
+  let pairing = await readPairingStore(stateDir);
+  let match = pairing.pending.find((p) => p.code === params.code);
+  for (let attempt = 1; !match && attempt < PAIRING_APPROVE_RETRIES; attempt += 1) {
+    await delay(PAIRING_APPROVE_RETRY_DELAY_MS);
+    pairing = await readPairingStore(stateDir);
+    match = pairing.pending.find((p) => p.code === params.code);
+  }
   if (!match) return { ok: false, message: "pairing code not found or expired" };
 
   const allowlist = await readAllowlistStore(stateDir);

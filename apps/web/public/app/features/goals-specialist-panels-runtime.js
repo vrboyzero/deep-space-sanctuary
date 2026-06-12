@@ -24,6 +24,26 @@ function parseLearningReviewInput(rawInput) {
   };
 }
 
+function parseMemoryFreshness(rawFreshness) {
+  if (!rawFreshness || typeof rawFreshness !== "object") return null;
+  const summary = rawFreshness.summary && typeof rawFreshness.summary === "object" ? rawFreshness.summary : {};
+  const items = Array.isArray(rawFreshness.items) ? rawFreshness.items : [];
+  return {
+    summary: {
+      available: summary.available === true,
+      headline: summary.headline ? String(summary.headline) : "",
+      reviewRequiredCount: Number(summary.reviewRequiredCount || 0),
+      freshCount: Number(summary.freshCount || 0),
+      activeCount: Number(summary.activeCount || 0),
+      staleCount: Number(summary.staleCount || 0),
+      supersededCount: Number(summary.supersededCount || 0),
+    },
+    items: items
+      .map((item) => item && typeof item === "object" ? item : null)
+      .filter(Boolean),
+  };
+}
+
 function parseGoalProgressEntries(rawContent) {
   if (typeof rawContent !== "string" || !rawContent.trim()) return [];
   const entries = [];
@@ -786,7 +806,26 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
     goalsState.capabilitySeq = seq;
     renderGoalCapabilityPanelLoading();
 
-    const entry = await ensureGoalCapabilityCache(goal, { forceReload: true });
+    const governanceCached = goalsState.governanceCache?.[goal.id] || null;
+    const capabilityPromise = ensureGoalCapabilityCache(goal, { forceReload: true });
+    const governancePromise = governanceCached
+      ? Promise.resolve(governanceCached)
+      : typeof sendReq === "function" && typeof makeId === "function"
+        ? sendReq({
+          type: "req",
+          id: makeId(),
+          method: "goal.review_governance.summary",
+          params: { goalId: goal.id },
+        }).then((res) => {
+          if (!res?.ok || !res.payload?.summary) return null;
+          const parsed = parseGoalReviewGovernanceSummary(res.payload.summary, parseGoalCheckpoints);
+          return {
+            ...parsed,
+            memoryFreshness: parseMemoryFreshness(res.payload.memoryFreshness),
+          };
+        }).catch(() => null)
+        : Promise.resolve(null);
+    const [entry, governanceEntry] = await Promise.all([capabilityPromise, governancePromise]);
     if (goalsState.capabilitySeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
     if (!entry || entry.readError) {
@@ -794,9 +833,14 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
       return;
     }
 
+    if (governanceEntry && goalsState.governanceCache && !governanceCached) {
+      goalsState.governanceCache[goal.id] = governanceEntry;
+    }
+
     renderGoalCapabilityPanel(goal, {
       plans: entry.plans,
       nodeMap: entry.nodeMap,
+      memoryFreshness: governanceEntry?.memoryFreshness ?? governanceCached?.memoryFreshness ?? null,
     });
     applyGoalContinuationFocus?.(goal.id);
   }
@@ -910,7 +954,15 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
     goalsState.trackingSeq = seq;
     renderGoalTrackingPanelLoading();
 
-    const [tasksFile, checkpointsFile, capabilityEntry] = await Promise.all([
+    const [taskGraphRes, tasksFile, checkpointsFile, capabilityEntry] = await Promise.all([
+      typeof sendReq === "function" && typeof makeId === "function"
+        ? sendReq({
+          type: "req",
+          id: makeId(),
+          method: "goal.task_graph.read",
+          params: { goalId: goal.id },
+        }).catch(() => null)
+        : Promise.resolve(null),
       readSourceFile(goal.tasksPath),
       readSourceFile(goalRuntimeFilePath(goal, "checkpoints.json")),
       ensureGoalCapabilityCache(goal),
@@ -918,10 +970,14 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
     if (goalsState.trackingSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
-    const rawGraph = tasksFile?.content ? safeJsonParse(tasksFile.content) : null;
-    const rawCheckpoints = checkpointsFile?.content ? safeJsonParse(checkpointsFile.content) : null;
+    const taskGraphPayload = taskGraphRes?.ok && taskGraphRes.payload && typeof taskGraphRes.payload === "object"
+      ? taskGraphRes.payload
+      : null;
+    const rawGraph = taskGraphPayload?.graph ?? (tasksFile?.content ? safeJsonParse(tasksFile.content) : null);
+    const rawCheckpoints = taskGraphPayload?.checkpoints ?? (checkpointsFile?.content ? safeJsonParse(checkpointsFile.content) : null);
+    const memoryFreshness = parseMemoryFreshness(taskGraphPayload?.memoryFreshness);
 
-    if (!tasksFile && !checkpointsFile) {
+    if (!taskGraphPayload && !tasksFile && !checkpointsFile) {
       goalsState.trackingCheckpoints = [];
       renderGoalTrackingPanelError("无法读取 tasks.json / checkpoints.json。若使用了自定义路径，请确认该路径已加入可操作区。");
       return;
@@ -946,6 +1002,7 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
       checkpoints: parsedCheckpoints,
       capabilityPlans: capabilityEntry?.plans || [],
       focusNodeId,
+      memoryFreshness,
     });
     applyGoalContinuationFocus?.(goal.id);
   }
@@ -1145,6 +1202,7 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
     );
     const merged = {
       ...parsed,
+      memoryFreshness: parseMemoryFreshness(res.payload.memoryFreshness),
       ...(bridgeGovernanceSummary ? { bridgeGovernanceSummary } : {}),
     };
     goalsState.governanceCache[goal.id] = merged;
@@ -1180,6 +1238,7 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
     renderGoalHandoffPanel,
     loadGoalHandoffData,
     parseGoalReviewGovernanceSummary,
+    parseMemoryFreshness,
     renderGoalReviewGovernancePanelLoading,
     renderGoalReviewGovernancePanelError,
     renderGoalReviewGovernancePanel,

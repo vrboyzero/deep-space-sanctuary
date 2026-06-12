@@ -36,6 +36,13 @@ function formatDreamTriggerModeLabel(value, t = (_key, _params, fallback) => fal
 }
 
 function buildDreamHistorySnippet(item, t) {
+  const consolidation = item?.consolidation;
+  const profilePatchCount = Array.isArray(consolidation?.profilePatchCandidates) ? consolidation.profilePatchCandidates.length : 0;
+  const staleCount = Array.isArray(consolidation?.staleCandidates) ? consolidation.staleCandidates.length : 0;
+  const contradictionCount = Array.isArray(consolidation?.contradictionCandidates) ? consolidation.contradictionCandidates.length : 0;
+  if (profilePatchCount + staleCount + contradictionCount > 0) {
+    return `整理建议 profile_patch=${profilePatchCount} / stale=${staleCount} / contradiction=${contradictionCount}`;
+  }
   const error = normalizeText(item?.error);
   if (error) return error;
 
@@ -51,6 +58,25 @@ function buildDreamHistorySnippet(item, t) {
 
   if (reason) return reason;
   return normalizeText(item?.id) || t("memory.dreamHistoryItemUntitled", {}, "未命名 Dream");
+}
+
+function buildDreamConsolidationGovernanceSummary(item, t) {
+  const review = item?.consolidation?.review;
+  const apply = item?.consolidation?.apply;
+  const reviewStatus = normalizeText(review?.status) || "pending";
+  const applyStatus = normalizeText(apply?.status) || "not_applied";
+  const approvedCount = Array.isArray(review?.approvedCandidatePaths) ? review.approvedCandidatePaths.length : 0;
+  const appliedCount = Number(apply?.appliedPatchCount) || 0;
+  return t(
+    "memory.dreamHistoryConsolidationGovernance",
+    {
+      reviewStatus,
+      applyStatus,
+      approvedCount: String(approvedCount),
+      appliedCount: String(appliedCount),
+    },
+    `review=${reviewStatus} / approved_patch=${approvedCount} / apply=${applyStatus} / applied_patch=${appliedCount}`,
+  );
 }
 
 export function buildDreamHistoryPanelView(input, options = {}) {
@@ -135,7 +161,20 @@ export function buildDreamHistoryPanelView(input, options = {}) {
         ? `${normalizeText(selectedItem.obsidianSync.stage)}${normalizeText(selectedItem.obsidianSync.targetPath) ? ` · ${normalizeText(selectedItem.obsidianSync.targetPath)}` : ""}`
         : "-",
     },
+    {
+      label: t("memory.dreamHistoryConsolidation", {}, "整理建议"),
+      value: buildDreamHistorySnippet(selectedItem, t),
+    },
+    {
+      label: t("memory.dreamHistoryConsolidationGovernanceLabel", {}, "整理治理"),
+      value: buildDreamConsolidationGovernanceSummary(selectedItem, t),
+    },
   ] : [];
+
+  const canReviewApprove = Array.isArray(selectedItem?.consolidation?.profilePatchCandidates)
+    && selectedItem.consolidation.profilePatchCandidates.some((candidate) => normalizeText(candidate?.profilePath));
+  const reviewStatus = normalizeText(selectedItem?.consolidation?.review?.status) || "pending";
+  const applyStatus = normalizeText(selectedItem?.consolidation?.apply?.status) || "not_applied";
 
   return {
     open,
@@ -158,6 +197,15 @@ export function buildDreamHistoryPanelView(input, options = {}) {
       error: detailError,
       title: normalizeText(selectedItem?.summary) || normalizeText(selectedItem?.id) || t("memory.dreamHistoryDetailEmptyTitle", {}, "Dream 详情"),
       cards: detailCards,
+      actions: selectedItem ? {
+        canApprove: canReviewApprove && reviewStatus !== "approved",
+        canReject: reviewStatus !== "rejected",
+        canApply: reviewStatus === "approved" && applyStatus !== "applied" && canReviewApprove,
+      } : {
+        canApprove: false,
+        canReject: false,
+        canApply: false,
+      },
       summary: normalizeText(selectedItem?.summary) || "",
       reason: normalizeText(selectedItem?.reason) || "",
       content: selectedContent,

@@ -948,6 +948,24 @@ function buildDreamRuntimeCard(payload, t) {
       `latest summary: ${latestRun.summary}`,
     ));
   }
+  const consolidation = latestRun?.consolidation;
+  if (consolidation) {
+    const profilePatchCount = Array.isArray(consolidation.profilePatchCandidates) ? consolidation.profilePatchCandidates.length : 0;
+    const staleCount = Array.isArray(consolidation.staleCandidates) ? consolidation.staleCandidates.length : 0;
+    const contradictionCount = Array.isArray(consolidation.contradictionCandidates) ? consolidation.contradictionCandidates.length : 0;
+    if (profilePatchCount + staleCount + contradictionCount > 0) {
+      notes.push(tr(
+        t,
+        "settings.doctorDreamRuntimeConsolidation",
+        {
+          profilePatchCount: formatNumber(profilePatchCount),
+          staleCount: formatNumber(staleCount),
+          contradictionCount: formatNumber(contradictionCount),
+        },
+        `readonly consolidation: profile_patch=${formatNumber(profilePatchCount)}, stale=${formatNumber(staleCount)}, contradiction=${formatNumber(contradictionCount)}`,
+      ));
+    }
+  }
   if (latestRun?.generationMode) {
     notes.push(tr(
       t,
@@ -1264,6 +1282,130 @@ function buildSkillFreshnessCard(payload, t) {
       : summary.available
         ? "pass"
         : "warn",
+  };
+}
+
+function buildMemoryFreshnessCard(payload, t) {
+  const summary = payload?.memoryFreshness?.summary;
+  if (!summary?.available) {
+    return undefined;
+  }
+
+  const badges = [
+    tr(
+      t,
+      "settings.doctorMemoryFreshnessCounts",
+      {
+        review: formatNumber(summary.reviewRequiredCount),
+        stale: formatNumber(summary.staleCount),
+        superseded: formatNumber(summary.supersededCount),
+        active: formatNumber(summary.activeCount),
+      },
+      `review ${formatNumber(summary.reviewRequiredCount)} / stale ${formatNumber(summary.staleCount)} / superseded ${formatNumber(summary.supersededCount)} / active ${formatNumber(summary.activeCount)}`,
+    ),
+  ];
+
+  const notes = [
+    tr(
+      t,
+      "settings.doctorMemoryFreshnessHeadline",
+      { headline: summary.headline || "-" },
+      summary.headline || "-",
+    ),
+  ];
+  const topItems = Array.isArray(payload?.memoryFreshness?.items) ? payload.memoryFreshness.items.slice(0, 4) : [];
+  for (const item of topItems) {
+    notes.push(tr(
+      t,
+      "settings.doctorMemoryFreshnessItem",
+      {
+        memoryClass: item?.memoryClass || "-",
+        status: item?.status || "-",
+        headline: item?.freshnessHeadline || "-",
+      },
+      `${item?.memoryClass || "-"} [${item?.status || "-"}]: ${item?.freshnessHeadline || "-"}`,
+    ));
+  }
+
+  return {
+    title: tr(t, "settings.doctorMemoryFreshnessTitle", {}, "Memory Freshness"),
+    badges,
+    notes,
+    status: (Number(summary.reviewRequiredCount) || 0) + (Number(summary.staleCount) || 0) + (Number(summary.supersededCount) || 0) > 0
+      ? "warn"
+      : "pass",
+  };
+}
+
+function buildMemoryEvaluationCard(payload, t) {
+  const summary = payload?.memoryEvaluation;
+  if (!summary?.available) {
+    return undefined;
+  }
+
+  const badges = [
+    tr(
+      t,
+      "settings.doctorMemoryEvaluationProfileCoverage",
+      { count: formatNumber(summary.profileStateFieldCount) },
+      `profile coverage ${formatNumber(summary.profileStateFieldCount)}`,
+    ),
+    tr(
+      t,
+      "settings.doctorMemoryEvaluationFreshness",
+      {
+        review: formatNumber(summary.freshnessReviewRequiredCount),
+        stale: formatNumber(summary.freshnessStaleCount),
+      },
+      `freshness review ${formatNumber(summary.freshnessReviewRequiredCount)} / stale ${formatNumber(summary.freshnessStaleCount)}`,
+    ),
+    tr(
+      t,
+      "settings.doctorMemoryEvaluationGovernance",
+      {
+        pending: formatNumber(summary.governancePendingCount),
+        claimed: formatNumber(summary.governanceClaimedCount),
+      },
+      `shared pending ${formatNumber(summary.governancePendingCount)} / claimed ${formatNumber(summary.governanceClaimedCount)}`,
+    ),
+    tr(
+      t,
+      "settings.doctorMemoryEvaluationDreamBacklog",
+      {
+        patch: formatNumber(summary.dreamProfilePatchBacklogCount),
+        stale: formatNumber(summary.dreamStaleBacklogCount),
+        contradiction: formatNumber(summary.dreamContradictionBacklogCount),
+      },
+      `dream patch ${formatNumber(summary.dreamProfilePatchBacklogCount)} / stale ${formatNumber(summary.dreamStaleBacklogCount)} / contradiction ${formatNumber(summary.dreamContradictionBacklogCount)}`,
+    ),
+  ];
+
+  const notes = [
+    tr(
+      t,
+      "settings.doctorMemoryEvaluationHeadline",
+      { headline: summary.headline || "-" },
+      summary.headline || "-",
+    ),
+  ];
+  if (summary.experienceUsageLinkedResidentCount > 0) {
+    notes.push(tr(
+      t,
+      "settings.doctorMemoryEvaluationExperience",
+      { count: formatNumber(summary.experienceUsageLinkedResidentCount) },
+      `experience-linked residents: ${formatNumber(summary.experienceUsageLinkedResidentCount)}`,
+    ));
+  }
+  const signals = Array.isArray(summary.signals) ? summary.signals.slice(0, 5) : [];
+  for (const signal of signals) {
+    notes.push(signal);
+  }
+
+  return {
+    title: tr(t, "settings.doctorMemoryEvaluationTitle", {}, "Memory Evaluation"),
+    badges,
+    notes,
+    status: summary.status === "warn" ? "warn" : "pass",
   };
 }
 
@@ -3893,6 +4035,8 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildLearningReviewInputCard(payload, t),
     buildDreamRuntimeCard(payload, t),
     buildDreamCommonsCard(payload, t),
+    buildMemoryEvaluationCard(payload, t),
+    buildMemoryFreshnessCard(payload, t),
     buildSkillFreshnessCard(payload, t),
     buildSharedGovernanceCard(payload, t),
     buildCompactionRuntimeCard(payload, t),
@@ -4028,6 +4172,22 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${dreamCommonsCard.title}:`);
     lines.push(...dreamCommonsCard.badges.map((badge) => `- ${badge}`));
     lines.push(...dreamCommonsCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const memoryEvaluationCard = buildMemoryEvaluationCard(payload, t);
+  if (memoryEvaluationCard) {
+    lines.push(``);
+    lines.push(`${memoryEvaluationCard.title}:`);
+    lines.push(...memoryEvaluationCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...memoryEvaluationCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const memoryFreshnessCard = buildMemoryFreshnessCard(payload, t);
+  if (memoryFreshnessCard) {
+    lines.push(``);
+    lines.push(`${memoryFreshnessCard.title}:`);
+    lines.push(...memoryFreshnessCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...memoryFreshnessCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const skillFreshnessCard = buildSkillFreshnessCard(payload, t);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildDreamRuntimeBarView,
@@ -21,6 +21,24 @@ import {
   paginateMemoryViewerItems,
 } from "./memory-viewer.js";
 import { buildDreamHistoryPanelView } from "./memory-viewer-dream-history.js";
+
+let previousWebConfig;
+
+beforeEach(() => {
+  previousWebConfig = globalThis.BELLDANDY_WEB_CONFIG;
+  globalThis.BELLDANDY_WEB_CONFIG = {
+    ...(previousWebConfig && typeof previousWebConfig === "object" ? previousWebConfig : {}),
+    governanceDetailMode: "full",
+  };
+});
+
+afterEach(() => {
+  if (previousWebConfig && typeof previousWebConfig === "object") {
+    globalThis.BELLDANDY_WEB_CONFIG = previousWebConfig;
+    return;
+  }
+  delete globalThis.BELLDANDY_WEB_CONFIG;
+});
 
 function createDedupHarness(sendReqImpl = vi.fn()) {
   document.body.innerHTML = `
@@ -89,6 +107,7 @@ function createDedupHarness(sendReqImpl = vi.fn()) {
     selectedTask: null,
     selectedCandidate: null,
     outboundAuditFocus: "all",
+    memoryEvaluation: null,
     sharedReviewSummary: null,
     selectedSharedReviewIds: [],
     sharedReviewBatchBusy: false,
@@ -591,6 +610,68 @@ describe("memory viewer shared review filters", () => {
     expect(refs.memoryViewerListEl.innerHTML).toContain("top hits: mem-curated (curated), mem-derived (derived)");
   });
 
+  it("loads doctor memory evaluation into memories stats as a shared readonly summary", async () => {
+    const sendReq = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        payload: {
+          status: {
+            categorized: 7,
+            uncategorized: 2,
+          },
+          queryView: { scope: "private" },
+          sharedGovernance: {
+            pendingCount: 4,
+            claimedCount: 1,
+            approvedCount: 2,
+            rejectedCount: 0,
+            revokedCount: 0,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        payload: {
+          memoryEvaluation: {
+            available: true,
+            status: "warn",
+            headline: "Memory evaluation indicates stale profile and governance backlog.",
+            profileStateFieldCount: 5,
+            freshnessReviewRequiredCount: 2,
+            freshnessStaleCount: 1,
+            governancePendingCount: 4,
+            governanceClaimedCount: 1,
+            dreamProfilePatchBacklogCount: 3,
+            dreamStaleBacklogCount: 2,
+            dreamContradictionBacklogCount: 1,
+            experienceUsageLinkedResidentCount: 2,
+            signals: ["dream patch backlog 3"],
+          },
+        },
+      });
+    const { refs, state, feature } = createDedupHarness(sendReq);
+    state.tab = "memories";
+
+    await feature.loadMemoryViewerStats();
+
+    expect(sendReq).toHaveBeenCalledTimes(2);
+    expect(sendReq.mock.calls[0]?.[0]?.method).toBe("memory.stats");
+    expect(sendReq.mock.calls[1]?.[0]?.method).toBe("system.doctor");
+    expect(state.memoryEvaluation).toMatchObject({
+      available: true,
+      status: "warn",
+      profileStateFieldCount: 5,
+      governancePendingCount: 4,
+    });
+    expect(refs.memoryViewerStatsEl.textContent).toContain("Memory Evaluation");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("Memory evaluation indicates stale profile and governance backlog.");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("Profile Coverage");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("freshness review 2 / stale 1");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("shared pending 4 / claimed 1");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("patch 3 / stale 2 / contradiction 1");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("experience-linked residents 2");
+  });
+
   it("builds collapsed previews for oversized memory detail blocks", () => {
     const preview = buildMemoryDetailCollapsedPreview(
       Array.from({ length: 20 }, (_, index) => `line-${index + 1}`).join("\n"),
@@ -645,6 +726,11 @@ describe("memory viewer shared review filters", () => {
               summary: "fallback dream generated from rule skeleton",
               generationMode: "fallback",
               fallbackReason: "missing_model_config",
+              consolidation: {
+                profilePatchCandidates: [{ field: "profile.headline" }],
+                staleCandidates: [{ memoryClass: "episodic_task" }],
+                contradictionCandidates: [],
+              },
             },
           ],
         },
@@ -673,6 +759,7 @@ describe("memory viewer shared review filters", () => {
     expect(view.obsidianLine).toContain("Obsidian：synced");
     expect(view.obsidianLine).toContain("E:/vaults/main/Star Sanctuary/Agents/coder/Dreams/2026/04/dream-1.md");
     expect(view.summaryLine).toContain("生成：Fallback (缺少模型配置)");
+    expect(view.summaryLine).toContain("整理建议：profile_patch 1 / stale 1 / contradiction 0");
     expect(view.summaryLine).toContain("Commons：completed · approved 3 / revoked 1 / notes 4");
     expect(view.runDisabled).toBe(false);
     expect(view.runTitle).toBe("");
@@ -693,6 +780,11 @@ describe("memory viewer shared review filters", () => {
           generationMode: "fallback",
           fallbackReason: "missing_model_config",
           dreamPath: "state/dreams/dream-2.md",
+          consolidation: {
+            profilePatchCandidates: [{ field: "profile.headline" }],
+            staleCandidates: [{ memoryClass: "episodic_task" }],
+            contradictionCandidates: [{ topic: "profile inconsistency" }],
+          },
           obsidianSync: {
             stage: "synced",
             targetPath: "vault/Star Sanctuary/Agents/coder/Dreams/2026/04/dream-2.md",
@@ -710,6 +802,11 @@ describe("memory viewer shared review filters", () => {
         generationMode: "fallback",
         fallbackReason: "missing_model_config",
         dreamPath: "state/dreams/dream-2.md",
+        consolidation: {
+          profilePatchCandidates: [{ field: "profile.headline" }],
+          staleCandidates: [{ memoryClass: "episodic_task" }],
+          contradictionCandidates: [{ topic: "profile inconsistency" }],
+        },
         obsidianSync: {
           stage: "synced",
           targetPath: "vault/Star Sanctuary/Agents/coder/Dreams/2026/04/dream-2.md",
@@ -724,8 +821,14 @@ describe("memory viewer shared review filters", () => {
     expect(view.historyStatusLine).toContain("1 条");
     expect(view.entries[0]?.isActive).toBe(true);
     expect(view.entries[0]?.meta.join(" · ")).toContain("Fallback");
+    expect(view.entries[0]?.snippet).toContain("profile_patch=1 / stale=1 / contradiction=1");
     expect(view.detail.title).toContain("fallback dream generated");
     expect(view.detail.cards.some((card) => card.label === "生成" && String(card.value).includes("Fallback"))).toBe(true);
+    expect(view.detail.cards.some((card) => card.label === "整理建议" && String(card.value).includes("profile_patch=1 / stale=1 / contradiction=1"))).toBe(true);
+    expect(view.detail.cards.some((card) => card.label === "整理治理" && String(card.value).includes("review=pending"))).toBe(true);
+    expect(view.detail.actions.canApprove).toBe(false);
+    expect(view.detail.actions.canReject).toBe(true);
+    expect(view.detail.actions.canApply).toBe(false);
     expect(view.detail.content).toContain("# Dream Fallback");
   });
 
@@ -739,6 +842,40 @@ describe("memory viewer shared review filters", () => {
     state.tab = "memories";
     feature.syncMemoryViewerUi();
     expect(refs.memoryDedupPreviewBtn.classList.contains("hidden")).toBe(false);
+  });
+
+  it("renders top-level memory freshness in candidate-only detail", () => {
+    const { refs, feature } = createDedupHarness();
+
+    feature.renderCandidateOnlyDetail({
+      id: "candidate-freshness-1",
+      taskId: "task-freshness-1",
+      type: "method",
+      status: "draft",
+      title: "Candidate Freshness Demo",
+      slug: "candidate-freshness-demo",
+      sourceTaskSnapshot: {},
+      memoryFreshness: {
+        summary: {
+          available: true,
+          headline: "Procedural experience needs review before publish.",
+          reviewRequiredCount: 1,
+          staleCount: 0,
+          supersededCount: 0,
+        },
+      },
+      learningReviewInput: {
+        summary: {
+          headline: "Learning headline fallback",
+        },
+        summaryLines: ["method candidate pending review"],
+        nudges: ["Promote after review."],
+      },
+    });
+
+    expect(refs.memoryViewerDetailEl.innerHTML).toContain("Memory Freshness：");
+    expect(refs.memoryViewerDetailEl.innerHTML).toContain("Procedural experience needs review before publish.");
+    expect(refs.memoryViewerDetailEl.innerHTML).toContain("review_required=1 / stale=0 / superseded=0");
   });
 
   it("runs dedup preview then apply with confirmed=true from the modal", async () => {
@@ -838,6 +975,9 @@ describe("memory viewer shared review filters", () => {
       }
       if (req.method === "memory.stats") {
         return { ok: true, payload: { status: { files: 1, chunks: 4, vectorIndexed: 0, summarized: 0 } } };
+      }
+      if (req.method === "system.doctor") {
+        return { ok: true, payload: { memoryEvaluation: null } };
       }
       if (req.method === "memory.recent") {
         return { ok: true, payload: { items: [] } };

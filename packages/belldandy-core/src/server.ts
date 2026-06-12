@@ -1171,6 +1171,9 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
         warn: (message, data) => log.warn("dream-runtime", message, data),
         error: (message, data) => log.error("dream-runtime", message, data),
       },
+      profileStateDelegate: {
+        upsertProfileStateEntry: (input) => manager.upsertProfileStateEntry(input),
+      },
     });
     dreamRuntimeCache.set(resolvedAgentId, runtime);
     return runtime;
@@ -2178,6 +2181,8 @@ async function handleReq(
     case "dream.status.get":
     case "dream.history.list":
     case "dream.get":
+    case "dream.consolidation.review":
+    case "dream.consolidation.apply":
     case "dream.commons.status.get":
     case "dream.commons.export_now":
       return handleDreamMethod(req, {

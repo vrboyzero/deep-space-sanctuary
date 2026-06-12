@@ -70,6 +70,11 @@ type BuildItemInput = {
   note?: string;
 };
 
+type ProfileSemanticFreshnessEntryInput = {
+  updatedAt?: string;
+  lastConfirmedAt?: string;
+};
+
 const MEMORY_FRESHNESS_SHORT_LABELS: Record<MemoryClass, string> = {
   profile_semantic: "profile",
   project_semantic: "project",
@@ -117,7 +122,25 @@ export function buildProfileSemanticFreshnessView(
   if (!snapshot) {
     return undefined;
   }
-  const stateEntries = Array.isArray(snapshot.profile.stateEntries) ? snapshot.profile.stateEntries : [];
+  return buildProfileSemanticFreshnessFromStateEntries({
+    hasUserProfile: snapshot.summary.hasUserProfile,
+    stateEntries: Array.isArray(snapshot.profile.stateEntries)
+      ? snapshot.profile.stateEntries.map((item) => ({
+        updatedAt: item.updatedAt,
+        lastConfirmedAt: item.lastConfirmedAt,
+      }))
+      : [],
+  }, options);
+}
+
+export function buildProfileSemanticFreshnessFromStateEntries(input: {
+  hasUserProfile?: boolean;
+  stateEntries?: Array<ProfileSemanticFreshnessEntryInput | null | undefined>;
+}, options: BuildOptions = {}): MemoryFreshnessItemView | undefined {
+  const stateEntries = (input.stateEntries ?? []).filter((item): item is ProfileSemanticFreshnessEntryInput => Boolean(item));
+  if (!input.hasUserProfile && stateEntries.length <= 0) {
+    return undefined;
+  }
   const lastUpdatedAt = readLatestIso(stateEntries.map((item) => item.updatedAt));
   const lastConfirmedAt = readLatestIso(stateEntries.map((item) => item.lastConfirmedAt));
   const ageStatus = resolveAgeStatus(lastConfirmedAt ?? lastUpdatedAt, options.nowMs, 30, 180);
@@ -125,7 +148,7 @@ export function buildProfileSemanticFreshnessView(
     ? "fresh"
     : ageStatus;
   const signals: MemoryFreshnessSignalView[] = [];
-  if (snapshot.summary.hasUserProfile) {
+  if (input.hasUserProfile) {
     signals.push({
       code: "profile_anchor_present",
       severity: "info",
@@ -165,6 +188,51 @@ export function buildProfileSemanticFreshnessView(
         ? `Profile state 当前可见 ${stateEntries.length} 条结构化字段`
         : "Mind/profile snapshot 已附着，但显式 profile state 字段仍偏少",
   });
+}
+
+export function cloneMemoryFreshnessView(
+  view: MemoryFreshnessView | undefined,
+): MemoryFreshnessView | undefined {
+  if (!view) {
+    return undefined;
+  }
+  return {
+    summary: {
+      ...view.summary,
+    },
+    items: view.items.map((item) => ({
+      ...item,
+      freshnessSignals: item.freshnessSignals.map((signal) => ({ ...signal })),
+    })),
+  };
+}
+
+export function readMemoryFreshnessView(value: unknown): MemoryFreshnessView | undefined {
+  if (!isObjectRecord(value)) {
+    return undefined;
+  }
+  const summary = isObjectRecord(value.summary) ? value.summary : undefined;
+  const items = Array.isArray(value.items)
+    ? value.items
+      .map((item) => readMemoryFreshnessItemView(item))
+      .filter((item): item is MemoryFreshnessItemView => Boolean(item))
+    : [];
+  if (!summary && items.length <= 0) {
+    return undefined;
+  }
+  return {
+    summary: {
+      available: summary?.available === true || items.length > 0,
+      itemCount: readOptionalFiniteInteger(summary?.itemCount) ?? items.length,
+      freshCount: readOptionalFiniteInteger(summary?.freshCount) ?? items.filter((item) => item.status === "fresh").length,
+      activeCount: readOptionalFiniteInteger(summary?.activeCount) ?? items.filter((item) => item.status === "active").length,
+      staleCount: readOptionalFiniteInteger(summary?.staleCount) ?? items.filter((item) => item.status === "stale").length,
+      supersededCount: readOptionalFiniteInteger(summary?.supersededCount) ?? items.filter((item) => item.status === "superseded").length,
+      reviewRequiredCount: readOptionalFiniteInteger(summary?.reviewRequiredCount) ?? items.filter((item) => item.status === "review_required").length,
+      headline: readOptionalString(summary?.headline) ?? (items.length > 0 ? formatMemoryFreshnessCoverage(items) : "no freshness signals"),
+    },
+    items,
+  };
 }
 
 export function buildProjectSemanticFreshnessFromInventory(input: {
@@ -493,11 +561,58 @@ export function buildGovernanceFreshnessFromGoalReview(
   const acceptedUnpublishedCount = Array.isArray(governance.actionableReviews)
     ? governance.actionableReviews.filter((item) => item.status === "accepted").length
     : 0;
+  return buildGovernanceFreshnessView({
+    generatedAt: governance.generatedAt,
+    workflowPendingCount: Number(governance.workflowPendingCount) || 0,
+    workflowOverdueCount: Number(governance.workflowOverdueCount) || 0,
+    needsRevisionCount: Number(governance.reviewStatusCounts?.needs_revision) || 0,
+    acceptedUnpublishedCount,
+    checkpointWorkflowPendingCount: Number(governance.checkpointWorkflowPendingCount) || 0,
+    checkpointWorkflowOverdueCount: Number(governance.checkpointWorkflowOverdueCount) || 0,
+  }, options);
+}
+
+export type GovernanceFreshnessInput = {
+  generatedAt?: string;
+  workflowPendingCount?: number;
+  workflowOverdueCount?: number;
+  needsRevisionCount?: number;
+  acceptedUnpublishedCount?: number;
+  checkpointWorkflowPendingCount?: number;
+  checkpointWorkflowOverdueCount?: number;
+};
+
+export function buildGovernanceFreshnessView(
+  governance: GovernanceFreshnessInput | undefined,
+  options: BuildOptions = {},
+): MemoryFreshnessItemView | undefined {
+  if (!governance) {
+    return undefined;
+  }
   const pendingCount = Number(governance.workflowPendingCount) || 0;
   const overdueCount = Number(governance.workflowOverdueCount) || 0;
-  const needsRevisionCount = Number(governance.reviewStatusCounts?.needs_revision) || 0;
+  const needsRevisionCount = Number(governance.needsRevisionCount) || 0;
+  const acceptedUnpublishedCount = Number(governance.acceptedUnpublishedCount) || 0;
+  const checkpointPendingCount = Number(governance.checkpointWorkflowPendingCount) || 0;
+  const checkpointOverdueCount = Number(governance.checkpointWorkflowOverdueCount) || 0;
+  if (
+    !governance.generatedAt
+    && pendingCount <= 0
+    && overdueCount <= 0
+    && needsRevisionCount <= 0
+    && acceptedUnpublishedCount <= 0
+    && checkpointPendingCount <= 0
+    && checkpointOverdueCount <= 0
+  ) {
+    return undefined;
+  }
   const ageStatus = resolveAgeStatus(governance.generatedAt, options.nowMs, 7, 30);
-  const reviewRequired = pendingCount > 0 || overdueCount > 0 || needsRevisionCount > 0 || acceptedUnpublishedCount > 0;
+  const reviewRequired = pendingCount > 0
+    || overdueCount > 0
+    || needsRevisionCount > 0
+    || acceptedUnpublishedCount > 0
+    || checkpointPendingCount > 0
+    || checkpointOverdueCount > 0;
   const status: MemoryFreshnessStatus = reviewRequired ? "review_required" : ageStatus;
   const signals: MemoryFreshnessSignalView[] = [];
   if (pendingCount > 0) {
@@ -528,11 +643,25 @@ export function buildGovernanceFreshnessFromGoalReview(
       summary: `存在 ${acceptedUnpublishedCount} 条已 accepted 但尚未 publish 的 suggestion。`,
     });
   }
+  if (checkpointPendingCount > 0) {
+    signals.push({
+      code: "governance_pending_checkpoint",
+      severity: "warn",
+      summary: `存在 ${checkpointPendingCount} 条待处理 checkpoint approval。`,
+    });
+  }
+  if (checkpointOverdueCount > 0) {
+    signals.push({
+      code: "governance_overdue_checkpoint",
+      severity: "warn",
+      summary: `存在 ${checkpointOverdueCount} 条超 SLA 的 checkpoint approval。`,
+    });
+  }
   if (signals.length <= 0) {
     signals.push({
       code: "governance_queue_clear",
       severity: "info",
-      summary: "当前治理队列没有待处理 / 逾期 / 待发布项。",
+      summary: "当前治理队列没有待处理 review / checkpoint / publish 项。",
     });
   }
   return buildMemoryFreshnessItem({
@@ -700,6 +829,89 @@ function dedupeFreshnessSignals(signals: readonly MemoryFreshnessSignalView[]): 
     result.push(signal);
   }
   return result;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readMemoryFreshnessItemView(value: unknown): MemoryFreshnessItemView | undefined {
+  if (!isObjectRecord(value)) {
+    return undefined;
+  }
+  const memoryClass = normalizeMemoryClass(value.memoryClass);
+  if (!memoryClass) {
+    return undefined;
+  }
+  const status = normalizeMemoryFreshnessStatus(value.status);
+  const label = readOptionalString(value.label) ?? getMemoryClassContract(memoryClass).label;
+  const freshnessSignals = Array.isArray(value.freshnessSignals)
+    ? value.freshnessSignals
+      .map((signal) => readMemoryFreshnessSignalView(signal))
+      .filter((signal): signal is MemoryFreshnessSignalView => Boolean(signal))
+    : [];
+  return {
+    memoryClass,
+    label,
+    status: status ?? "active",
+    freshnessHeadline: readOptionalString(value.freshnessHeadline)
+      ?? freshnessSignals.find((item) => item.severity === "warn")?.summary
+      ?? `${label} freshness is ${status ?? "active"}.`,
+    freshnessSignals,
+    ...(readOptionalString(value.lastUpdatedAt) ? { lastUpdatedAt: readOptionalString(value.lastUpdatedAt) } : {}),
+    ...(readOptionalString(value.lastConfirmedAt) ? { lastConfirmedAt: readOptionalString(value.lastConfirmedAt) } : {}),
+    ...(readOptionalString(value.lastUsedAt) ? { lastUsedAt: readOptionalString(value.lastUsedAt) } : {}),
+    ...(readOptionalString(value.reviewedAt) ? { reviewedAt: readOptionalString(value.reviewedAt) } : {}),
+    ...(readOptionalString(value.supersededAt) ? { supersededAt: readOptionalString(value.supersededAt) } : {}),
+    ...(readOptionalString(value.note) ? { note: readOptionalString(value.note) } : {}),
+  };
+}
+
+function readMemoryFreshnessSignalView(value: unknown): MemoryFreshnessSignalView | undefined {
+  if (!isObjectRecord(value)) {
+    return undefined;
+  }
+  const code = readOptionalString(value.code);
+  const summary = readOptionalString(value.summary);
+  const severity = value.severity === "warn" ? "warn" : value.severity === "info" ? "info" : undefined;
+  if (!code || !summary || !severity) {
+    return undefined;
+  }
+  return {
+    code,
+    severity,
+    summary,
+  };
+}
+
+function normalizeMemoryClass(value: unknown): MemoryClass | undefined {
+  return value === "profile_semantic"
+    || value === "project_semantic"
+    || value === "episodic_task"
+    || value === "procedural_experience"
+    || value === "governance"
+    ? value
+    : undefined;
+}
+
+function normalizeMemoryFreshnessStatus(value: unknown): MemoryFreshnessStatus | undefined {
+  return value === "fresh"
+    || value === "active"
+    || value === "stale"
+    || value === "superseded"
+    || value === "review_required"
+    ? value
+    : undefined;
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readOptionalFiniteInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : undefined;
 }
 
 function resolveAgeStatus(

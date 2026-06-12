@@ -303,7 +303,14 @@ export function createMemoryRuntimeFeature({
       showNotice("候选详情加载失败", res?.error?.message || "无法读取 candidate。", "error");
       return;
     }
-    memoryViewerState.selectedCandidate = res.payload?.candidate ?? null;
+    memoryViewerState.selectedCandidate = res.payload?.candidate
+      ? {
+        ...res.payload.candidate,
+        ...(res.payload?.memoryFreshness && typeof res.payload.memoryFreshness === "object"
+          ? { memoryFreshness: res.payload.memoryFreshness }
+          : {}),
+      }
+      : null;
     memoryViewerState.experienceQueryView = res.payload?.queryView ?? memoryViewerState.experienceQueryView ?? null;
     if (memoryViewerState.tab === "tasks" && memoryViewerState.selectedTask) {
       renderTaskDetail(memoryViewerState.selectedTask);

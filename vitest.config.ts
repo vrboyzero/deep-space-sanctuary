@@ -19,7 +19,9 @@ export default defineConfig({
       ...configDefaults.exclude,
       "**/.belldandy/**",
       "**/artifacts/**",
+      "GW/**",
       "**/openclaw/**",
+      "Star_Weaver_Engine/**",
       "**/UI-TARS-desktop-main/**",
       // Root-level temp/reference mirrors can contain tens of thousands of files
       // and make targeted discovery time out on Windows before test execution starts.

@@ -42,6 +42,18 @@ function notFound(id: string, message: string): GatewayResFrame {
   return { type: "res", id, ok: false, error: { code: "not_found", message } };
 }
 
+function confirmationRequired(id: string, message: string): GatewayResFrame {
+  return {
+    type: "res",
+    id,
+    ok: false,
+    error: {
+      code: "confirmation_required",
+      message,
+    },
+  };
+}
+
 async function buildCommonsStatusPayload(
   runtime: ObsidianCommonsRuntime | null,
 ): Promise<Record<string, unknown>> {
@@ -142,6 +154,71 @@ export async function handleDreamMethod(
         item: item.record,
         content: item.content,
       });
+    }
+
+    case "dream.consolidation.review": {
+      const runtime = ctx.resolveDreamRuntime(agentId);
+      if (!runtime) return notAvailable(req.id);
+      const dreamId = readOptionalString(params, "dreamId");
+      if (!dreamId) return invalid(req.id, "dreamId is required");
+      const decision = readOptionalString(params, "decision");
+      if (decision !== "approved" && decision !== "rejected" && decision !== "superseded") {
+        return invalid(req.id, "decision must be approved, rejected, or superseded.");
+      }
+      const approvedCandidatePaths = Array.isArray(params.approvedCandidatePaths)
+        ? params.approvedCandidatePaths
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean)
+        : undefined;
+      try {
+        const result = await runtime.reviewConsolidation(dreamId, decision, {
+          reviewedBy: readOptionalString(params, "reviewedBy") ?? readOptionalString(params, "agentId") ?? "rpc",
+          note: readOptionalString(params, "note"),
+          approvedCandidatePaths,
+        });
+        return ok(req.id, {
+          agentId,
+          availability: runtime.getAvailability(),
+          record: result.record,
+          state: result.state,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/not found/i.test(message)) {
+          return notFound(req.id, message);
+        }
+        return invalid(req.id, message);
+      }
+    }
+
+    case "dream.consolidation.apply": {
+      const runtime = ctx.resolveDreamRuntime(agentId);
+      if (!runtime) return notAvailable(req.id);
+      const dreamId = readOptionalString(params, "dreamId");
+      if (!dreamId) return invalid(req.id, "dreamId is required");
+      if (params.confirmed !== true) {
+        return confirmationRequired(req.id, "dream.consolidation.apply requires explicit confirmed=true because it mutates canonical profile state.");
+      }
+      try {
+        const result = await runtime.applyConsolidation(dreamId, {
+          appliedBy: readOptionalString(params, "appliedBy") ?? readOptionalString(params, "agentId") ?? "rpc",
+          note: readOptionalString(params, "note"),
+        });
+        return ok(req.id, {
+          agentId,
+          availability: runtime.getAvailability(),
+          appliedPatchCount: result.appliedPatchCount,
+          record: result.record,
+          state: result.state,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/not found/i.test(message)) {
+          return notFound(req.id, message);
+        }
+        return invalid(req.id, message);
+      }
     }
 
     case "dream.commons.status.get": {

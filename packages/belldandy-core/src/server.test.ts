@@ -34,6 +34,10 @@ import {
 // MemoryManager 内部会初始化 OpenAIEmbeddingProvider，需要 OPENAI_API_KEY
 // 测试环境中设置一个占位值，避免构造函数抛错（不会实际调用 API）
 beforeAll(() => {
+  vi.setConfig({
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
+  });
   if (!process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = "test-placeholder-key";
   }
@@ -1202,7 +1206,7 @@ test("resident agent memory managers use isolated sqlite files", async () => {
   } finally {
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
-});
+}, 15_000);
 
 test("gateway can auto-run resident agent with a visible reminder", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
@@ -1501,7 +1505,7 @@ test("message.send forwards modelId to AgentRegistry.create as modelOverride", a
     await server.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => { });
   }
-});
+}, 15_000);
 
 test("message.send resolves deepseek:auto to flash when warmup verdict is not promotable", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));

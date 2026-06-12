@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DreamRuntime } from "./dream-runtime.js";
 import * as dreamWriterModule from "./dream-writer.js";
 import type { DreamInputSnapshot } from "./dream-types.js";
+import type { UpsertProfileStateEntryInput } from "./profile-state-types.js";
 
 describe("dream runtime", () => {
   const tempDirs: string[] = [];
@@ -47,6 +48,53 @@ describe("dream runtime", () => {
         summary: "当前主要在打通 Step 3。",
         nextStep: "补手动 RPC。",
         updatedAt: Date.parse("2026-04-19T11:40:00.000Z"),
+      },
+      mindProfileSnapshot: {
+        profile: {
+          headline: "喜欢简洁状态表与短结论",
+          summaryLines: ["USER.md: 喜欢简洁状态表与短结论。"],
+          stateEntries: [{
+            path: "preferences.response_style",
+            valueText: "先给结论，再展开证据",
+            confidence: 0.9,
+            updatedAt: "2026-04-18T12:00:00.000Z",
+            lastConfirmedAt: "2026-04-18T12:00:00.000Z",
+          }],
+          treeSummaryLines: ["偏好短结论与结构化状态输出。"],
+        },
+        summary: {
+          available: true,
+          headline: "user ready, private 1, shared 0, digest 1/1, usage 0",
+          hasUserProfile: true,
+        },
+      },
+      learningReviewInput: {
+        summary: {
+          available: true,
+          headline: "memory=2, task=2, review=0, nudges=1",
+        },
+        summaryLines: [
+          "Mind snapshot: USER.md: 喜欢简洁状态表与短结论。",
+          "Profile anchor: 偏好短结论与结构化状态输出。",
+        ],
+        nudges: [
+          "当前输入已具备最小 learning/review 条件，可继续进入 candidate / governance 审阅。",
+        ],
+        memoryFreshness: {
+          summary: {
+            available: true,
+            headline: "episodic task still needs review",
+            reviewRequiredCount: 1,
+            staleCount: 0,
+          },
+          items: [
+            {
+              memoryClass: "episodic_task",
+              status: "review_required",
+              freshnessHeadline: "Recent task evidence still needs follow-up.",
+            },
+          ],
+        },
       },
       focusTask: {
         id: "task-1",
@@ -245,6 +293,16 @@ describe("dream runtime", () => {
     expect(result.record.status).toBe("completed");
     expect(result.record.generationMode).toBe("llm");
     expect(result.record.fallbackReason).toBeUndefined();
+    expect(result.record.consolidation).toMatchObject({
+      headline: expect.stringContaining("Dream consolidation surfaced"),
+      profilePatchCandidates: expect.arrayContaining([
+        expect.objectContaining({
+          field: "profile_state.preferences.response_style",
+          source: "mind_profile",
+          profilePath: "preferences.response_style",
+        }),
+      ]),
+    });
     expect(result.record.dreamPath).toBeTruthy();
     expect(result.record.indexPath).toBeTruthy();
     expect(result.record.obsidianSync?.stage).toBe("synced");
@@ -252,6 +310,7 @@ describe("dream runtime", () => {
     expect(result.markdown).toContain("- Generation Mode: llm");
     expect(result.state.status).toBe("idle");
     expect(result.state.lastObsidianSync?.stage).toBe("synced");
+    expect(result.state.recentRuns[0]?.consolidation?.profilePatchCandidates?.length).toBeGreaterThan(0);
 
     const dreamContent = await fs.readFile(result.record.dreamPath!, "utf-8");
     const indexContent = await fs.readFile(result.record.indexPath!, "utf-8");
@@ -290,6 +349,97 @@ describe("dream runtime", () => {
     expect(result.markdown).toContain("- Generation Mode: fallback");
     expect(result.markdown).toContain("- Fallback Reason: missing_model_config");
     expect(result.state.recentRuns[0]?.generationMode).toBe("fallback");
+  });
+
+  it("reviews and applies approved low-risk dream consolidation patches into canonical profile state", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-dream-runtime-"));
+    tempDirs.push(stateDir);
+    const appliedEntries: UpsertProfileStateEntryInput[] = [];
+
+    const runtime = new DreamRuntime({
+      stateDir,
+      agentId: "coder",
+      model: "gpt-test",
+      baseUrl: "https://example.com/v1",
+      apiKey: "sk-test",
+      now: () => new Date("2026-04-19T12:00:00.000Z"),
+      buildInputSnapshot: async () => createSnapshot({
+        mindProfileSnapshot: {
+          profile: {
+            headline: "喜欢简洁状态表与短结论",
+            summaryLines: ["USER.md: 喜欢简洁状态表与短结论。"],
+            stateEntries: [{
+              path: "preferences.response_style",
+              valueText: "先给结论，再展开证据",
+              confidence: 0.9,
+              updatedAt: "2026-04-18T12:00:00.000Z",
+              lastConfirmedAt: "2026-04-18T12:00:00.000Z",
+            }],
+            treeSummaryLines: ["偏好短结论与结构化状态输出。"],
+          },
+          summary: {
+            available: true,
+            headline: "user ready, private 1, shared 0, digest 1/1, usage 0",
+            hasUserProfile: true,
+          },
+        },
+      }),
+      profileStateDelegate: {
+        upsertProfileStateEntry: (input) => {
+          appliedEntries.push(input);
+          return {
+            id: `profile:${input.path}`,
+            agentId: input.agentId,
+            scope: input.scope ?? "user",
+            path: input.path,
+            value: input.value,
+            valueType: "string",
+            confidence: input.confidence,
+            status: "active",
+            sourceRefs: input.sourceRefs,
+            lastConfirmedAt: input.lastConfirmedAt,
+            createdAt: "2026-04-19T12:00:00.000Z",
+            updatedAt: "2026-04-19T12:00:00.000Z",
+          };
+        },
+      },
+    });
+
+    const run = await runtime.run({
+      conversationId: "agent:coder:main",
+      triggerMode: "manual",
+    });
+    const reviewed = await runtime.reviewConsolidation(run.record.id, "approved", {
+      reviewedBy: "tester",
+      note: "approve low-risk canonical patch",
+    });
+    expect(reviewed.record.consolidation?.review).toMatchObject({
+      status: "approved",
+      reviewedBy: "tester",
+      approvedCandidatePaths: ["preferences.response_style"],
+    });
+
+    const applied = await runtime.applyConsolidation(run.record.id, {
+      appliedBy: "tester",
+      note: "apply approved dream patch",
+    });
+    expect(applied.appliedPatchCount).toBe(1);
+    expect(appliedEntries).toHaveLength(1);
+    expect(appliedEntries[0]).toMatchObject({
+      path: "preferences.response_style",
+      value: "先给结论，再展开证据",
+      createdBy: "tester",
+    });
+    expect(applied.record.consolidation?.apply).toMatchObject({
+      status: "applied",
+      appliedBy: "tester",
+      appliedPatchCount: 1,
+      appliedPatches: [
+        expect.objectContaining({
+          profilePath: "preferences.response_style",
+        }),
+      ],
+    });
   });
 
   it("mirrors fallback dream to Obsidian when model config is missing", async () => {

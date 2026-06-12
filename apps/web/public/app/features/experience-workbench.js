@@ -146,6 +146,21 @@ function updateExperienceStatsForBulkReject(stats, count) {
   return nextStats;
 }
 
+function renderExperienceCandidateFreshnessSummary(memoryFreshness, escapeHtml) {
+  const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
+    ? memoryFreshness.summary
+    : null;
+  if (!summary?.available || !summary.headline) {
+    return "";
+  }
+  return `
+    <div class="tool-settings-policy-note" style="margin-bottom:12px;">
+      <div><strong>Memory Freshness：</strong>${escapeHtml(summary.headline)}</div>
+      <div>review_required=${escapeHtml(String(summary.reviewRequiredCount || 0))} / stale=${escapeHtml(String(summary.staleCount || 0))} / superseded=${escapeHtml(String(summary.supersededCount || 0))}</div>
+    </div>
+  `;
+}
+
 export function createExperienceWorkbenchFeature({
   refs,
   isConnected,
@@ -1998,6 +2013,9 @@ export function createExperienceWorkbenchFeature({
     const learningReviewInput = candidate.learningReviewInput && typeof candidate.learningReviewInput === "object"
       ? candidate.learningReviewInput
       : null;
+    const memoryFreshness = candidate.memoryFreshness && typeof candidate.memoryFreshness === "object"
+      ? candidate.memoryFreshness
+      : null;
     const skillFreshness = candidate.skillFreshness && typeof candidate.skillFreshness === "object"
       ? candidate.skillFreshness
       : null;
@@ -2032,6 +2050,7 @@ export function createExperienceWorkbenchFeature({
             ${skillFreshness?.summary || skillFreshness?.status ? `<span class="memory-badge">${escapeHtml(String(skillFreshness.summary || skillFreshness.status))}</span>` : ""}
           </div>
         </div>
+        ${renderExperienceCandidateFreshnessSummary(memoryFreshness, escapeHtml)}
         <div class="memory-detail-grid">
           <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("experience.aggregateTaskLabel", {}, "来源任务"))}</span><div class="memory-detail-text">${displayTaskId ? `<button class="memory-path-link" data-open-task-id="${escapeHtml(displayTaskId)}">${escapeHtml(displayTaskId)}</button>` : "-"}</div></div>
           <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("experience.aggregateSlugLabel", {}, "标识"))}</span><div class="memory-detail-text">${escapeHtml(candidate.slug || "-")}</div></div>
@@ -2150,7 +2169,14 @@ export function createExperienceWorkbenchFeature({
       renderExperienceWorkbenchDetailEmpty(res?.error?.message || t("experience.detailLoadFailed", {}, "Failed to load candidate details."));
       return;
     }
-    state.selectedCandidate = res.payload?.candidate ?? null;
+    state.selectedCandidate = res.payload?.candidate
+      ? {
+        ...res.payload.candidate,
+        ...(res.payload?.memoryFreshness && typeof res.payload.memoryFreshness === "object"
+          ? { memoryFreshness: res.payload.memoryFreshness }
+          : {}),
+      }
+      : null;
     renderSelectedExperienceCandidate();
   }
 

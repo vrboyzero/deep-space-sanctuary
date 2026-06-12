@@ -1,6 +1,7 @@
 import type { AgentPromptDelta, BeforeAgentStartResult } from "@belldandy/agent";
 
 import { parseGoalSessionKey } from "./goals/session.js";
+import { buildMemoryFreshnessView, buildProfileSemanticFreshnessView } from "./memory-freshness-view.js";
 import { buildMindProfileRuntimeDigest } from "./mind-profile-runtime-digest.js";
 import { buildMindProfileSnapshot, type MindProfileSnapshot } from "./mind-profile-snapshot.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
@@ -192,6 +193,9 @@ export async function buildMindProfileRuntimePrelude(input: {
     maxLineLength: input.config.maxLineLength,
     maxChars: input.config.maxChars,
   });
+  const memoryFreshness = buildMemoryFreshnessView({
+    items: [buildProfileSemanticFreshnessView(mindProfileSnapshot)],
+  });
   const digestSummaryLines = digest.lines.filter((line) => {
     if (canonicalProfileState.hasNonIdentityState && line.startsWith("Profile anchor:")) {
       return false;
@@ -236,6 +240,7 @@ export async function buildMindProfileRuntimePrelude(input: {
           summaryLineCount: runtimeBlock.summaryLineCount,
           profileStatePaths: canonicalProfileState.paths,
           currentTurnPreview: truncateText(input.currentTurnText, 96) || undefined,
+          ...(memoryFreshness.summary.available ? { memoryFreshness } : {}),
         },
       }),
     ],
