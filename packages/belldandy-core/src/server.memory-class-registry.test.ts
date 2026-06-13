@@ -24,8 +24,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("system.doctor exposes memory class registry and classed signal coverage", async () => {

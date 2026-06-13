@@ -23,8 +23,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("models.list returns sanitized model list with current default model ref", async () => {

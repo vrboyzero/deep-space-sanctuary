@@ -21,8 +21,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 describe("bdd console renderer", () => {

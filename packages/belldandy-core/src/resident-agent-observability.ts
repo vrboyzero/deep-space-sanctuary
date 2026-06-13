@@ -162,14 +162,7 @@ export type ResidentAgentDoctorReport = {
 
 function buildSharedGovernanceCounts(record?: ScopedMemoryManagerRecord): SharedGovernanceCounts {
   if (!record || record.policy.writeTarget === "shared") {
-    return {
-      pendingCount: 0,
-      claimedCount: 0,
-      approvedCount: 0,
-      rejectedCount: 0,
-      revokedCount: 0,
-      noneCount: 0,
-    };
+    return createEmptySharedGovernanceCounts();
   }
 
   return {
@@ -180,6 +173,31 @@ function buildSharedGovernanceCounts(record?: ScopedMemoryManagerRecord): Shared
     revokedCount: record.manager.countChunks({ sharedPromotionStatus: "revoked" }),
     noneCount: record.manager.countChunks({ sharedPromotionStatus: "none" }),
   };
+}
+
+function createEmptySharedGovernanceCounts(): SharedGovernanceCounts {
+  return {
+    pendingCount: 0,
+    claimedCount: 0,
+    approvedCount: 0,
+    rejectedCount: 0,
+    revokedCount: 0,
+    noneCount: 0,
+  };
+}
+
+function readResidentManagerSnapshot<T>(
+  warnings: string[],
+  warningPrefix: string,
+  read: () => T,
+  fallback: T,
+): T {
+  try {
+    return read();
+  } catch (error) {
+    warnings.push(`${warningPrefix}:${error instanceof Error ? error.message : String(error)}`);
+    return fallback;
+  }
 }
 
 function toConversationDigestView(digest: SessionDigestRecord | undefined) {
@@ -444,22 +462,32 @@ export async function buildResidentAgentObservabilitySnapshot(input: {
       warnings.push("digest-unavailable:missing-conversation-id");
     }
 
-    const sharedGovernance = agent.sharedGovernance ?? buildSharedGovernanceCounts(managerRecord);
+    const sharedGovernance = agent.sharedGovernance ?? readResidentManagerSnapshot(
+      warnings,
+      "shared-governance-unavailable",
+      () => buildSharedGovernanceCounts(managerRecord),
+      createEmptySharedGovernanceCounts(),
+    );
     const recentTasks = managerRecord
-      ? managerRecord.manager.getRecentTasks(12)
-        .filter((item) => (!item.agentId || item.agentId === agent.id) && (item.status === "success" || item.status === "partial"))
-        .slice(0, 3)
-        .map((item) => toRecentTaskView({
-          taskId: item.id,
-          title: item.title,
-          objective: item.objective,
-          summary: item.summary,
-          status: item.status,
-          source: item.source,
-          finishedAt: item.finishedAt,
-          toolNames: Array.isArray(item.toolCalls) ? item.toolCalls.map((call) => call.toolName).filter(Boolean) : [],
-          artifactPaths: Array.isArray(item.artifactPaths) ? item.artifactPaths : [],
-        }))
+      ? readResidentManagerSnapshot(
+        warnings,
+        "recent-task-unavailable",
+        () => managerRecord.manager.getRecentTasks(12)
+          .filter((item) => (!item.agentId || item.agentId === agent.id) && (item.status === "success" || item.status === "partial"))
+          .slice(0, 3)
+          .map((item) => toRecentTaskView({
+            taskId: item.id,
+            title: item.title,
+            objective: item.objective,
+            summary: item.summary,
+            status: item.status,
+            source: item.source,
+            finishedAt: item.finishedAt,
+            toolNames: Array.isArray(item.toolCalls) ? item.toolCalls.map((call) => call.toolName).filter(Boolean) : [],
+            artifactPaths: Array.isArray(item.artifactPaths) ? item.artifactPaths : [],
+          })),
+        [],
+      )
       : [];
     const recentTaskDigest = buildRecentTaskDigest(recentTasks);
     let recentSubtaskDigest: ResidentRecentSubtaskDigest | undefined;
@@ -496,17 +524,22 @@ export async function buildResidentAgentObservabilitySnapshot(input: {
     }
 
     const experienceUsages = managerRecord
-      ? managerRecord.manager.listExperienceUsages(24)
-        .filter((item) => {
-          const task = managerRecord.manager.getTask(item.taskId);
-          return !task?.agentId || task.agentId === agent.id;
-        })
-        .map((item) => ({
-          taskId: item.taskId,
-          assetType: item.assetType,
-          assetKey: item.assetKey,
-          createdAt: item.createdAt,
-        }))
+      ? readResidentManagerSnapshot(
+        warnings,
+        "experience-usage-unavailable",
+        () => managerRecord.manager.listExperienceUsages(24)
+          .filter((item) => {
+            const task = managerRecord.manager.getTask(item.taskId);
+            return !task?.agentId || task.agentId === agent.id;
+          })
+          .map((item) => ({
+            taskId: item.taskId,
+            assetType: item.assetType,
+            assetKey: item.assetKey,
+            createdAt: item.createdAt,
+          })),
+        [],
+      )
       : [];
     const experienceUsageDigest = buildExperienceUsageDigest(experienceUsages);
     if ((sharedGovernance.pendingCount ?? 0) > 0) {

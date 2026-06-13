@@ -43,8 +43,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
   clearAutoTaskReportsForTest();
 });
 
@@ -1423,6 +1423,13 @@ test("resident agent durable memories write into agent workspace memory director
 
     const coderManager = getGlobalMemoryManager({ agentId: "coder" }) as any;
     expect(coderManager).toBeTruthy();
+    coderManager.embeddingProvider = {
+      modelName: "test-memory",
+      embed: async () => [0.1],
+      embedBatch: async (texts: string[]) => texts.map(() => [0.1]),
+      embedQuery: async () => [0.1],
+    };
+    await coderManager.startLazyIndexing();
 
     coderManager.evolutionEnabled = true;
     coderManager.evolutionMinMessages = 1;
@@ -1452,6 +1459,7 @@ test("resident agent durable memories write into agent workspace memory director
     const content = await fs.promises.readFile(coderMemoryFile, "utf-8");
     expect(content).toContain("Coder prefers precise patches");
   } finally {
+    await cleanupGlobalMemoryManagersForTest();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
@@ -2487,7 +2495,7 @@ test("gateway durable extraction scheduler reuses canonical extraction view inst
     extractSpy.mockRestore();
     llmSpy.mockRestore();
     await server.close();
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2654,7 +2662,7 @@ test("requestDurableExtractionFromDigest reuses current digest when session dige
       extractSpy.mockRestore();
       llmSpy.mockRestore();
       await server.close();
-      memoryManager.close();
+      await memoryManager.close();
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
       await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     }
@@ -2775,7 +2783,7 @@ test("durable extraction request limiter records blocked request usage and keeps
       await closeP;
       extractionSpy.mockRestore();
       await server.close();
-      memoryManager.close();
+      await memoryManager.close();
       await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -2955,7 +2963,7 @@ test("conversation.memory.extraction.get exposes runtime surfaces and rate-limit
     ws.close();
     await closeP;
     await server.close();
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }

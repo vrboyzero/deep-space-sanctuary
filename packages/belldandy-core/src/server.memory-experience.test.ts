@@ -30,8 +30,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 async function writeExperienceSynthesisTestTemplate(stateDir: string, type: "method" | "skill"): Promise<void> {
@@ -490,7 +490,7 @@ test("experience.candidate.generate creates candidates and respects confirmation
     } else {
       process.env.BELLDANDY_METHOD_GENERATION_CONFIRM_REQUIRED = previousMethodConfirm;
     }
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -569,7 +569,7 @@ test("experience.candidate.accept allows explicit confirmed flag when publish co
     } else {
       process.env.BELLDANDY_METHOD_PUBLISH_CONFIRM_REQUIRED = previousMethodPublishConfirm;
     }
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -656,7 +656,7 @@ test("experience.candidate.reject_bulk rejects all draft candidates for a type a
       rejected: 2,
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -716,7 +716,7 @@ test("experience.asset.read returns published asset detail with content", async 
       content: expect.stringContaining("# "),
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -807,7 +807,7 @@ test("experience.candidate.accept supports method overwrite publishTargetPath", 
     const publishedContent = await fs.promises.readFile(acceptedSeed!.publishedPath!, "utf-8");
     expect(publishedContent).toContain(overwriteCandidate.title);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -932,7 +932,7 @@ test("experience.candidate.accept supports skill overwrite publishTargetPath", a
     } else {
       process.env.BELLDANDY_SKILL_PUBLISH_CONFIRM_REQUIRED = previousSkillPublishConfirm;
     }
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1114,7 +1114,7 @@ test("experience.candidate.cleanup_consumed deletes only consumed draft candidat
     expect(remainingIds).toContain(String(activeDraft.id));
     expect(remainingIds).toContain(String(acceptedDraft.id));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1250,7 +1250,7 @@ test("experience synthesis preview and create log warn details for early invalid
       }),
     ]));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1282,7 +1282,7 @@ test("experience synthesis preview rejects methods/skills directory assetPath wi
     }
     expect(previewRes.error?.message).toContain("assetPath must point to a published method .md file");
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1367,7 +1367,7 @@ test("experience.candidate.synthesize.preview returns similar draft summary for 
       }),
     ]));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1465,7 +1465,7 @@ test("experience.candidate.synthesize.preview supports published asset virtual c
       && previewRes.payload.sourceCandidateIds.some((item: string) => item.startsWith("virtual:method:")),
     ).toBe(true);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1594,7 +1594,7 @@ test("experience.candidate.synthesize.create supports published skill asset virt
     const consumedDraft = memoryManager.getExperienceCandidate(similarSkillDraft!.candidate.id);
     expect(consumedDraft?.metadata?.synthesisConsumed?.consumed).toBe(true);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1746,7 +1746,7 @@ test("experience.candidate.synthesize.preview and create cap similar sources to 
     expect(capturedUserPromptLength).toBeGreaterThan(0);
     expect(capturedUserPromptLength).toBeLessThan(28_000);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -1894,7 +1894,7 @@ test("experience synthesis limits can be overridden via environment variables", 
     expect(usedCharsMatch).toBeTruthy();
     expect(Number(usedCharsMatch?.[1] || "0")).toBeLessThanOrEqual(960);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     if (previousMaxSimilarSources === undefined) {
@@ -2009,7 +2009,7 @@ test("experience.candidate.synthesize.create creates a synthesized draft candida
     expect(consumedSourceOne?.metadata?.synthesisConsumed?.consumedByCandidateId).toBe(String(createdCandidate.id || ""));
     expect(consumedSourceTwo?.metadata?.synthesisConsumed?.consumedByCandidateId).toBe(String(createdCandidate.id || ""));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2088,7 +2088,7 @@ test("experience.candidate.synthesize.create logs error details when model outpu
       }),
     }));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2193,7 +2193,7 @@ test("experience.candidate.synthesize.create retries once with reduced reasoning
       }),
     ]));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2270,7 +2270,7 @@ test("experience.candidate.synthesize.create returns a recoverable error when th
     expect(callInputs[1]?.thinking).toBeUndefined();
     expect(createRes.error?.message).toContain("exhausted its output budget");
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2371,7 +2371,7 @@ test("experience.candidate.synthesize.create accepts chat completion content arr
     expect(createdCandidate.title).toBe("Tool Call Method Array Unified");
   } finally {
     globalThis.fetch = originalFetch;
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2450,7 +2450,7 @@ test("experience.candidate.synthesize.create repairs truncated json object when 
     const createdCandidate = (createRes.payload?.candidate ?? {}) as Record<string, any>;
     expect(createdCandidate.title).toBe("Tool Call Method Truncated Repaired");
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2535,7 +2535,7 @@ test("experience.candidate.synthesize.create warns when source draft set is over
       }),
     ]));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2604,7 +2604,7 @@ test("experience.candidate.check_duplicate previews dedup result before generati
     expect(similarMatches.some((item) => item.source === "method_asset")).toBe(true);
     expect(memoryManager.listExperienceCandidates(10, { taskId: "task-dedup-1", type: "method" })).toHaveLength(0);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2708,7 +2708,7 @@ test("memory.dedup.preview reports exact duplicate groups without mutating chunk
     });
     expect(memoryManager.countChunks()).toBe(beforeCount);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2792,7 +2792,7 @@ test("memory.inventory.preview returns readonly builtin and configured source in
       && item.sourceKind === "configured_external"
       && item.status === "present")).toBe(true);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2884,7 +2884,7 @@ test("memory.configured_sources.update persists sources and inventory preview re
       && item.label === "Obsidian Vault"
       && item.sourceKind === "configured_external")).toBe(true);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -2971,7 +2971,7 @@ test("memory.tree.report.external_ingest.preview can select persisted configured
       }),
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(externalDirA, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(externalDirB, { recursive: true, force: true }).catch(() => {});
@@ -3035,7 +3035,7 @@ test("memory.tree.report.external_ingest.preview supports single-file markdown c
       status: "ready",
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -3312,7 +3312,7 @@ test("memory.tree.report.external_ingest.preview drives approved apply and searc
     }
     expect((staleSearchRes.payload?.items as Array<Record<string, unknown>> | undefined)?.some((item) => item.sourcePath === stalePath)).toBe(false);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(externalDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -3364,6 +3364,7 @@ test("memory.tree source and score rebuild methods persist phase-1 registry data
     });
     (memoryManager as any).store.linkTaskMemory("task-tree-phase1-1", "tree-phase1-daily", "used");
     registerGlobalMemoryManager(memoryManager);
+    await memoryManager.startLazyIndexing();
 
     const rebuildSourceRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -3447,7 +3448,7 @@ test("memory.tree source and score rebuild methods persist phase-1 registry data
       sourceId: expect.stringMatching(/^dynamic:/),
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -3676,7 +3677,7 @@ test("memory.tree report and node methods persist reports, export markdown, and 
       }),
     ]);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -3867,7 +3868,7 @@ test("memory.tree.node.search returns P13 topic nodes with chunk provenance", as
       }),
     ]));
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -4082,7 +4083,7 @@ test("memory.tree.node.rebuild/search/get supports R1 project nodes with chunk p
       "project-node-low",
     ]);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -4250,7 +4251,7 @@ test("memory.search exposes R2 node-assisted diagnostics through resident memory
       store.searchHybrid = originalSearchHybrid;
     }
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
@@ -4343,7 +4344,7 @@ test("memory.search returns session-derived resume results through the RPC surfa
       ]),
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -4445,7 +4446,7 @@ test("memory.search returns accepted experience-derived results through the RPC 
       ]),
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -4628,7 +4629,7 @@ test("memory.tree.report.review and apply close the P14 dedup governance loop", 
     });
     expect(scores.find((item) => item.targetId === "p14-core-remove")?.scoreTotal).toBe(0.05);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -4837,7 +4838,7 @@ test("memory.tree.report.apply supports R3 report-only governance baselines for 
       ],
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -5211,7 +5212,7 @@ test("memory.dedup.apply backs up the db, removes duplicate chunks, and relinks 
     expect(afterLinks.some((item) => item.chunkId === "apply-dup-a")).toBe(true);
     expect(afterLinks.some((item) => item.chunkId === "apply-dup-b")).toBe(false);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -5302,7 +5303,7 @@ test("memory.dedup methods are reachable through gateway websocket dispatch", as
       await server.close();
     }
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -5396,7 +5397,7 @@ test("memory.vacuum preview/apply exposes safe sqlite shrink workflow through me
     expect(result?.after?.pageCount).toBeLessThanOrEqual(result?.before?.pageCount ?? Number.MAX_SAFE_INTEGER);
     expect(result?.after?.totalFileBytes).toBeLessThanOrEqual(result?.before?.totalFileBytes ?? Number.MAX_SAFE_INTEGER);
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -5914,7 +5915,7 @@ test("memory viewer rpc returns task and memory data", async () => {
     ws.close();
     await closeP;
     await server.close();
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -6117,7 +6118,7 @@ test("experience candidate rpc lists and updates candidate status", async () => 
     ws.close();
     await closeP;
     await server.close();
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }

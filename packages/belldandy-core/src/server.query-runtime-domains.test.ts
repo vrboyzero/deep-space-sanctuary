@@ -31,8 +31,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("tool_settings.confirm rejects pending request without applying config change", async () => {

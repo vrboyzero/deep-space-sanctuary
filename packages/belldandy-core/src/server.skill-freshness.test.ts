@@ -21,8 +21,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("server exposes skill freshness across doctor, candidate, usage, and task payloads", async () => {

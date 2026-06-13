@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import {
   getForegroundPidFile,
   preflightGatewayCleanup,
@@ -61,6 +61,7 @@ test("preflight kills owned gateway PID from foreground marker and clears the ma
 });
 
 test("preflight reads BELLDANDY_PORT from env files and blocks unknown external listeners", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
   const stateDir = createTempStateDir();
   let seenPort: number | null = null;
   fs.writeFileSync(path.join(stateDir, ".env.local"), "BELLDANDY_PORT=38889\n", "utf-8");

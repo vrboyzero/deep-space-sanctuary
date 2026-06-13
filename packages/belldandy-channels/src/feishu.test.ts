@@ -42,6 +42,7 @@ import { FeishuChannel } from "./feishu.js";
 
 describe("FeishuChannel", () => {
   it("cascades audio events through download, STT, agent, and reply while reusing cached channel transcription", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const conversationStore = new ConversationStore();
     const seenInputs: any[] = [];
     const baseStt = vi.fn(async () => ({ text: "cached channel transcript" }));
@@ -149,6 +150,7 @@ describe("FeishuChannel", () => {
   });
 
   it("reads audio payload from sdk response.data buffer shape", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     larkMock.getMessageResource.mockResolvedValueOnce({
       data: Buffer.from("mock-audio-from-data"),
     } as any);
@@ -201,6 +203,7 @@ describe("FeishuChannel", () => {
   });
 
   it("reads audio payload from sdk getReadableStream response shape", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     larkMock.getMessageResource.mockResolvedValueOnce({
       headers: {},
       writeFile: vi.fn(),
@@ -257,6 +260,7 @@ describe("FeishuChannel", () => {
   });
 
   it("does not fall back to lastChatId when binding is missing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const channel = new FeishuChannel({
       appId: "app-id",
       appSecret: "app-secret",
@@ -271,6 +275,7 @@ describe("FeishuChannel", () => {
   });
 
   it("rejects explicit sessionKey when binding belongs to another channel", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const channel = new FeishuChannel({
       appId: "app-id",
       appSecret: "app-secret",

@@ -1739,7 +1739,7 @@ async function handleReq(
     const allowed = await isClientAllowed({ clientId: ctx.clientId, stateDir: ctx.stateDir });
     if (!allowed) {
       const pairing = await ensurePairingCode({ clientId: ctx.clientId, stateDir: ctx.stateDir });
-      ctx.log.warn("gateway-security", "Secure method rejected because client is not paired", {
+      ctx.log.debug("gateway-security", "Secure method rejected because client is not paired", {
         clientId: ctx.clientId,
         method: req.method,
         pairingCode: pairing.code,

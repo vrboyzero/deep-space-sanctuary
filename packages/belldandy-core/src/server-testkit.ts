@@ -134,16 +134,18 @@ export function toBase64(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64");
 }
 
-export function cleanupGlobalMemoryManagersForTest(): void {
+export async function cleanupGlobalMemoryManagersForTest(): Promise<void> {
   const managers = listGlobalMemoryManagers();
   resetGlobalMemoryManagers();
-  for (const manager of managers) {
-    try {
-      manager.close();
-    } catch {
-      // ignore cleanup noise from already-disposed managers
-    }
-  }
+  await Promise.allSettled(
+    managers.map(async (manager) => {
+      try {
+        await manager.close();
+      } catch {
+        // ignore cleanup noise from already-disposed managers
+      }
+    }),
+  );
 }
 
 export async function withEnv(

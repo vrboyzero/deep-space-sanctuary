@@ -33,6 +33,8 @@ import {
 } from "./config.js";
 import { mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
 
+type MCPManagerConnectFailureLogLevel = "warn" | "error";
+
 // ============================================================================
 // MCP 管理器实现
 // ============================================================================
@@ -132,7 +134,7 @@ export class MCPManager implements IMCPManager {
         mcpLog("MCPManager", `正在自动连接 ${autoConnectServers.length} 个服务器...`);
 
         const results = await Promise.allSettled(
-          autoConnectServers.map((server) => this.connect(server.id))
+          autoConnectServers.map((server) => this.connectWithPolicy(server.id, { failureLogLevel: "warn" }))
         );
 
         // 统计结果
@@ -191,10 +193,20 @@ export class MCPManager implements IMCPManager {
    * @param serverId 服务器 ID
    */
   async connect(serverId: string): Promise<void> {
-    return this.withServerOperationLock(serverId, async () => this.connectUnlocked(serverId));
+    return this.connectWithPolicy(serverId, { failureLogLevel: "error" });
   }
 
-  private async connectUnlocked(serverId: string): Promise<void> {
+  private async connectWithPolicy(
+    serverId: string,
+    options: { failureLogLevel: MCPManagerConnectFailureLogLevel },
+  ): Promise<void> {
+    return this.withServerOperationLock(serverId, async () => this.connectUnlocked(serverId, options));
+  }
+
+  private async connectUnlocked(
+    serverId: string,
+    options: { failureLogLevel: MCPManagerConnectFailureLogLevel },
+  ): Promise<void> {
     // 检查是否已连接
     if (this.clients.has(serverId)) {
       const client = this.clients.get(serverId)!;
@@ -227,7 +239,7 @@ export class MCPManager implements IMCPManager {
 
     try {
       // 连接
-      await client.connect();
+      await client.connect({ failureLogLevel: "none" });
 
       // 注册工具
       const state = client.getState();
@@ -241,7 +253,11 @@ export class MCPManager implements IMCPManager {
       if (this.clients.get(serverId) === client) {
         this.clients.delete(serverId);
       }
-      mcpError("MCPManager", `连接服务器 ${serverId} 失败`, error);
+      if (options.failureLogLevel === "warn") {
+        mcpWarn("MCPManager", `连接服务器 ${serverId} 失败`, error);
+      } else {
+        mcpError("MCPManager", `连接服务器 ${serverId} 失败`, error);
+      }
       throw error;
     }
   }
@@ -295,7 +311,7 @@ export class MCPManager implements IMCPManager {
   async reconnect(serverId: string): Promise<void> {
     return this.withServerOperationLock(serverId, async () => {
       await this.disconnectUnlocked(serverId);
-      await this.connectUnlocked(serverId);
+      await this.connectUnlocked(serverId, { failureLogLevel: "warn" });
     });
   }
 
@@ -502,7 +518,9 @@ export class MCPManager implements IMCPManager {
       this.toolBridge.unregisterServerTools(event.serverId);
       this.invalidateToolInventoryCache();
       this.rebuildResourceInventoryCache();
-      void this.scheduleAutoReconnect(event.serverId, event.type);
+      if (this.shouldScheduleAutoReconnect(event)) {
+        void this.scheduleAutoReconnect(event.serverId, event.type);
+      }
     }
 
     // 转发给所有监听器
@@ -533,6 +551,20 @@ export class MCPManager implements IMCPManager {
     } finally {
       this.autoReconnectServers.delete(serverId);
     }
+  }
+
+  private shouldScheduleAutoReconnect(event: MCPEvent): boolean {
+    if (event.type === "server:disconnected") {
+      return true;
+    }
+    if (event.type !== "server:error") {
+      return false;
+    }
+    if (!event.data || typeof event.data !== "object") {
+      return true;
+    }
+    const diagnostics = (event.data as { diagnostics?: MCPServerState["diagnostics"] }).diagnostics;
+    return diagnostics?.lastErrorSource !== "connect";
   }
 
   private ensureToolInventoryCache(): void {

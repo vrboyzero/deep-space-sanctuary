@@ -77,6 +77,12 @@ describe("MemoryIndexer", () => {
     expect(resolveVerboseWatchEvents(false, { BELLDANDY_MEMORY_INDEXER_VERBOSE_WATCH: "true" } as NodeJS.ProcessEnv)).toBe(false);
   });
 
+  it("does not start filesystem watching when watch is disabled", async () => {
+    await indexer.startWatching(rootDir);
+
+    expect((indexer as any).watcher).toBeNull();
+  });
+
   it("classifies DREAM.md and dreams/*.md with dedicated dream memory types", async () => {
     const dreamIndexPath = path.join(rootDir, "DREAM.md");
     const dreamsDir = path.join(rootDir, "dreams");

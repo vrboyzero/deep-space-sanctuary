@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "进行了项目安全风险分析，编写了 项目总体分析v2.md 并完成了 `2、4、5、8、9`项 "
+git commit -m "修改了服务日志中的一些日志噪声与项目中的一些小BUG"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

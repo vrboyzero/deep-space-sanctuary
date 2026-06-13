@@ -10,6 +10,7 @@ import {
   parseExtraWorkspaceRoots,
   shouldPipeStdioStderr,
 } from "./client.js";
+import * as loggerAdapter from "./logger-adapter.js";
 
 describe("parseExtraWorkspaceRoots", () => {
   it("splits BELLDANDY_EXTRA_WORKSPACE_ROOTS and removes duplicates", () => {
@@ -178,6 +179,26 @@ describe("MCPClient reconnect", () => {
     }));
     expect(client.getState().diagnostics?.lastErrorAt).toBeInstanceOf(Date);
     expect(client.getState().diagnostics?.lastSessionExpiredAt).toBeInstanceOf(Date);
+  });
+
+  it("can suppress connect failure logging while keeping error diagnostics", async () => {
+    const client = createClient();
+    vi.spyOn(
+      client as unknown as { createTransport: () => Promise<unknown> },
+      "createTransport",
+    ).mockRejectedValue(new Error("connect failed"));
+    const errorSpy = vi.spyOn(loggerAdapter, "mcpError").mockImplementation(() => {});
+
+    await expect(client.connect({ failureLogLevel: "none" })).rejects.toThrow("connect failed");
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(client.getState().status).toBe("error");
+    expect(client.getState().error).toBe("connect failed");
+    expect(client.getState().diagnostics).toEqual(expect.objectContaining({
+      lastErrorMessage: "connect failed",
+      lastErrorSource: "connect",
+      lastErrorRetryable: false,
+    }));
   });
 });
 

@@ -86,6 +86,7 @@ import {
 } from "../email-inbound-checkpoint-store.js";
 import { startImapPollingEmailInboundRuntime } from "../email-inbound-imap-runtime.js";
 import { startStarweaverActiveNotifyRuntime } from "../starweaver-active-notify-runtime.js";
+import { shouldDebugToolAuditLog } from "../tool-audit-log.js";
 
 import {
   OpenAIChatAgent,

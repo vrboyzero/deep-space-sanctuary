@@ -37,6 +37,8 @@ import {
 } from "./types.js";
 import { mcpDebug, mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
 
+type MCPConnectFailureLogLevel = "error" | "none";
+
 const FILESYSTEM_SERVER_PACKAGE = "@modelcontextprotocol/server-filesystem";
 const EXTRA_WORKSPACE_ROOTS_ENV_KEY = "BELLDANDY_EXTRA_WORKSPACE_ROOTS";
 const MAX_INLINE_TEXT_CHARS = 12_000;
@@ -358,7 +360,7 @@ export class MCPClient {
   /**
    * 连接到 MCP 服务器
    */
-  async connect(): Promise<void> {
+  async connect(options?: { failureLogLevel?: MCPConnectFailureLogLevel }): Promise<void> {
     if (this.status === "connected" || this.status === "connecting") {
       mcpLog(`mcp:${this.config.id}`, "已连接或正在连接中，跳过");
       return;
@@ -409,7 +411,9 @@ export class MCPClient {
       this.error = err instanceof Error ? err.message : String(err);
       this.recordFailure(err, { source: "connect" });
       this.setStatus("error");
-      mcpError(`mcp:${this.config.id}`, `连接失败: ${this.error}`);
+      if ((options?.failureLogLevel ?? "error") === "error") {
+        mcpError(`mcp:${this.config.id}`, `连接失败: ${this.error}`);
+      }
       
       // 清理资源
       await this.cleanup();

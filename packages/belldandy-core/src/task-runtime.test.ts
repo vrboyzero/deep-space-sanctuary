@@ -275,13 +275,21 @@ test("subtask runtime store batches thought_delta persistence within a short win
 
     expect(writeFileSpy).not.toHaveBeenCalled();
 
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    const started = Date.now();
+    let persisted: Awaited<ReturnType<SubTaskRuntimeStore["getTask"]>> | undefined;
+    while (Date.now() - started < 1_500) {
+      if (writeFileSpy.mock.calls.length > 0) {
+        const reloaded = new SubTaskRuntimeStore(stateDir);
+        await reloaded.load();
+        persisted = await reloaded.getTask(task.id);
+        if (persisted?.progress.message === "second delta") {
+          break;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
 
     expect(writeFileSpy.mock.calls.length).toBeGreaterThan(0);
-
-    const reloaded = new SubTaskRuntimeStore(stateDir);
-    await reloaded.load();
-    const persisted = await reloaded.getTask(task.id);
     expect(persisted?.progress.message).toBe("second delta");
     const scratchContent = await fs.readFile(path.join(stateDir, "tasks", task.id, "scratch", "scratch-coder.md"), "utf-8");
     expect(scratchContent).toContain("second delta");

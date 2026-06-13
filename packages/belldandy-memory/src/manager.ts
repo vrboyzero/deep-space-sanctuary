@@ -200,6 +200,21 @@ import { createHash, randomUUID } from "node:crypto";
 const MEMORY_TREE_SCORE_VERSION = "v1_rule_only";
 const MEMORY_TREE_SEARCH_RETRIEVAL_WEIGHT = 0.6;
 const MEMORY_TREE_SEARCH_GOVERNANCE_WEIGHT = 0.4;
+let hasLoggedMissingEmbeddingApiKeyNotice = false;
+
+function logMissingEmbeddingApiKeyNotice(): void {
+    if (hasLoggedMissingEmbeddingApiKeyNotice) {
+        return;
+    }
+    hasLoggedMissingEmbeddingApiKeyNotice = true;
+    console.log("[MemoryManager] No API key for embedding — vector search disabled. Configure via WebChat settings if needed.");
+}
+
+function hasExplicitRemoteEmbeddingConfig(options: MemoryManagerOptions): boolean {
+    return options.provider === "openai"
+        || (typeof options.openaiModel === "string" && options.openaiModel.trim().length > 0)
+        || (typeof options.openaiBaseUrl === "string" && options.openaiBaseUrl.trim().length > 0);
+}
 
 // ============================================================================
 // Global Registry - Allows sharing MemoryManager across packages
@@ -781,6 +796,9 @@ export class MemoryManager {
     private summaryBatchSize: number;
     private summaryMinContentLength: number;
     private lazyIndexingPromise: Promise<void> | null = null;
+    private readonly inFlightOperations = new Set<Promise<unknown>>();
+    private closed = false;
+    private closePromise: Promise<void> | null = null;
     // M-N3: 会话记忆自动提取
     private evolutionEnabled: boolean;
     private evolutionModel: string;
@@ -867,7 +885,9 @@ export class MemoryManager {
                 embed: async () => [],
                 embedBatch: async (texts) => texts.map(() => []),
             };
-            console.warn("[MemoryManager] No API key for embedding — vector search disabled. Configure via WebChat settings.");
+            if (hasExplicitRemoteEmbeddingConfig(options)) {
+                logMissingEmbeddingApiKeyNotice();
+            }
         }
 
         this.indexer = new MemoryIndexer(this.store, options.indexerOptions);
@@ -918,20 +938,35 @@ export class MemoryManager {
      * Index files in the workspace
      */
     async indexWorkspace(): Promise<void> {
+        if (this.closed) {
+            return;
+        }
         // Index primary workspace root
         await this.indexer.indexDirectory(this.workspaceRoot);
+        if (this.closed) {
+            return;
+        }
 
         // Index additional roots (e.g. workspace memory files)
         for (const root of this.additionalRoots) {
+            if (this.closed) {
+                return;
+            }
             try {
                 await this.indexer.indexDirectory(root);
             } catch (err) {
-                console.warn(`[MemoryManager] Failed to index additional root ${root}:`, err);
+                const code = (err as NodeJS.ErrnoException | undefined)?.code;
+                if (code !== "ENOENT") {
+                    console.warn(`[MemoryManager] Failed to index additional root ${root}:`, err);
+                }
             }
         }
 
         // Index explicit files (e.g. stateDir/MEMORY.md)
         for (const filePath of this.additionalFiles) {
+            if (this.closed) {
+                return;
+            }
             try {
                 const stats = await fs.stat(filePath);
                 if (stats.isFile()) {
@@ -945,7 +980,13 @@ export class MemoryManager {
             }
         }
 
+        if (this.closed) {
+            return;
+        }
         await this.processPendingEmbeddings();
+        if (this.closed) {
+            return;
+        }
 
         // L0 摘要不再在启动时自动运行，改由 gateway 空闲定时器触发（runIdleSummaries）
 
@@ -959,11 +1000,18 @@ export class MemoryManager {
      * Useful for lazy startup paths where the manager should not block first paint.
      */
     startLazyIndexing(): Promise<void> {
+        if (this.closed) {
+            return this.closePromise ?? Promise.resolve();
+        }
         if (!this.lazyIndexingPromise) {
-            this.lazyIndexingPromise = this.indexWorkspace().catch((err) => {
-                this.lazyIndexingPromise = null;
-                throw err;
+            const run = this.registerInFlight(this.indexWorkspace());
+            let visible: Promise<void>;
+            visible = run.finally(() => {
+                if (this.lazyIndexingPromise === visible) {
+                    this.lazyIndexingPromise = null;
+                }
             });
+            this.lazyIndexingPromise = visible;
         }
         return this.lazyIndexingPromise;
     }
@@ -4034,13 +4082,31 @@ export class MemoryManager {
         relation: TaskMemoryRelation = "generated",
         options: { attempts?: number; delayMs?: number } = {},
     ): Promise<number> {
+        if (this.closed) {
+            return 0;
+        }
         const attempts = Math.max(1, options.attempts ?? 4);
         const delayMs = Math.max(50, options.delayMs ?? 300);
         const candidatePaths = this.resolveSourcePathCandidates(sourcePath);
+        const indexedCandidates = new Set<string>();
 
         for (let attempt = 0; attempt < attempts; attempt++) {
+            if (this.closed) {
+                return 0;
+            }
             for (const candidatePath of candidatePaths) {
-                const chunks = this.store.getChunksBySource(candidatePath, 100);
+                if (this.closed) {
+                    return 0;
+                }
+                let chunks = this.store.getChunksBySource(candidatePath, 100);
+                if (chunks.length === 0 && !indexedCandidates.has(candidatePath)) {
+                    indexedCandidates.add(candidatePath);
+                    await this.indexSourceForTaskLinking(candidatePath);
+                    if (this.closed) {
+                        return 0;
+                    }
+                    chunks = this.store.getChunksBySource(candidatePath, 100);
+                }
                 if (chunks.length === 0) {
                     continue;
                 }
@@ -4065,6 +4131,9 @@ export class MemoryManager {
             }
         }
 
+        if (this.closed) {
+            return 0;
+        }
         const resolvedSourcePath = candidatePaths[0] ?? sourcePath;
         this.taskProcessor.addArtifactPath(conversationId, resolvedSourcePath);
 
@@ -4074,6 +4143,24 @@ export class MemoryManager {
             this.store.updateTask(task.id, { artifactPaths });
         }
         return 0;
+    }
+
+    private async indexSourceForTaskLinking(sourcePath: string): Promise<void> {
+        if (this.closed) {
+            return;
+        }
+        try {
+            const stats = await fs.stat(sourcePath);
+            if (!stats.isFile() || this.closed) {
+                return;
+            }
+            await this.indexer.indexFile(sourcePath);
+        } catch (err) {
+            const code = (err as NodeJS.ErrnoException | undefined)?.code;
+            if (this.closed || code === "ENOENT") {
+                return;
+            }
+        }
     }
 
     private computeEmbeddingSignature(dims: number): string {
@@ -4122,6 +4209,9 @@ export class MemoryManager {
      * Process chunks that lack embeddings (with cache support)
      */
     private async processPendingEmbeddings(): Promise<void> {
+        if (this.closed) {
+            return;
+        }
         // Probe the model to get actual dimensions
         let dims = 1536;
         try {
@@ -4133,6 +4223,9 @@ export class MemoryManager {
             dims = probe.length;
         } catch (e) {
             console.warn("Failed to probe embedding model, skipping vector generation", e);
+            return;
+        }
+        if (this.closed) {
             return;
         }
 
@@ -4154,7 +4247,7 @@ export class MemoryManager {
         };
 
         // Loop until no more pending chunks
-        while (true) {
+        while (!this.closed) {
             const pending = this.store.getUnembeddedChunks(this.embeddingBatchSize);
             if (pending.length === 0) break;
             embeddingStats.batchCount += 1;
@@ -4485,6 +4578,17 @@ export class MemoryManager {
         messages: Array<{ role: string; content: string }>,
         options: ExtractConversationMemoriesOptions = {},
     ): Promise<ExtractConversationMemoriesResult> {
+        if (this.closed) {
+            return {
+                count: 0,
+                acceptedCandidateTypes: [],
+                rejectedCount: 0,
+                rejectedReasons: [],
+                summary: "Memory manager is closing.",
+                skipReason: "manager_closed",
+            };
+        }
+        return this.registerInFlight((async () => {
         const dedupeKey = options.markKey?.trim() || sessionKey;
         const sourceConversationId = options.sourceConversationId?.trim() || sessionKey;
         const sourceLabel = options.sourceLabel?.trim() || dedupeKey;
@@ -4535,6 +4639,16 @@ export class MemoryManager {
 
         try {
             await this.waitIfPaused();
+            if (this.closed) {
+                return {
+                    count: 0,
+                    acceptedCandidateTypes: [],
+                    rejectedCount: 0,
+                    rejectedReasons: [],
+                    summary: "Memory manager is closing.",
+                    skipReason: "manager_closed",
+                };
+            }
 
             // 调用 LLM 提取记忆
             const extracted = await this.callLLMForExtraction(truncated);
@@ -4643,6 +4757,7 @@ export class MemoryManager {
                 summary: `Durable extraction failed: ${err instanceof Error ? err.message : String(err)}`,
             };
         }
+        })());
     }
 
     /** 检查 session 是否已提取过记忆 */
@@ -4926,6 +5041,7 @@ candidateType 必须是以下之一：user / feedback / project / reference
      * 等待暂停结束。在后台循环中调用，实现协作式让步。
      */
     private waitIfPaused(): Promise<void> {
+        if (this.closed) return Promise.resolve();
         if (!this._paused) return Promise.resolve();
         console.log("[MemoryManager] Background task paused (agent active)");
         return new Promise<void>(resolve => {
@@ -4939,18 +5055,47 @@ candidateType 必须是以下之一：user / feedback / project / reference
      * 返回本次生成的摘要数。
      */
     async runIdleSummaries(): Promise<number> {
-        if (!this.summaryEnabled || this._paused || this._summaryRunning) return 0;
+        if (!this.summaryEnabled || this._paused || this._summaryRunning || this.closed) return 0;
         this._summaryRunning = true;
-        try {
-            return await this.generateSummaries({ maxBatches: 1 });
-        } finally {
-            this._summaryRunning = false;
-        }
+        return this.registerInFlight((async () => {
+            try {
+                return await this.generateSummaries({ maxBatches: 1 });
+            } finally {
+                this._summaryRunning = false;
+            }
+        })());
     }
 
-    close(): void {
-        this.indexer.stopWatching().catch(console.error);
-        this.store.close();
+    async close(): Promise<void> {
+        if (this.closePromise) {
+            return this.closePromise;
+        }
+        this.closed = true;
+        if (this._pauseResolve) {
+            this._pauseResolve();
+            this._pauseResolve = null;
+        }
+        this.closePromise = (async () => {
+            await this.indexer.stopWatching().catch(console.error);
+            await this.waitForInFlightOperations();
+            this.store.close();
+        })();
+        return this.closePromise;
+    }
+
+    private registerInFlight<T>(promise: Promise<T>): Promise<T> {
+        let tracked: Promise<T>;
+        tracked = promise.finally(() => {
+            this.inFlightOperations.delete(tracked);
+        });
+        this.inFlightOperations.add(tracked);
+        return tracked;
+    }
+
+    private async waitForInFlightOperations(): Promise<void> {
+        while (this.inFlightOperations.size > 0) {
+            await Promise.allSettled([...this.inFlightOperations]);
+        }
     }
 
     private collectTaskShortcutCandidates(limit: number, filter?: TaskSearchFilter): TaskExperienceDetail[] {

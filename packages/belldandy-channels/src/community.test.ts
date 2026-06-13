@@ -682,6 +682,7 @@ describe("community token usage upload", () => {
   });
 
   it("rejects explicit sessionKey when binding belongs to another channel", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const wsSend = vi.fn();
     const channel = new CommunityChannel({
       endpoint: "https://office.goddess.ai",

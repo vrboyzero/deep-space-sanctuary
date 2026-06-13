@@ -28,8 +28,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("conversation.prompt_snapshot.get returns persisted snapshot artifact", async () => {
@@ -928,6 +928,12 @@ test("conversation.meta stays aligned with digest and resume_context across mult
     taskMemoryEnabled: true,
     openaiApiKey: "test-memory-key",
   });
+  (memoryManager as any).embeddingProvider = {
+    modelName: "test-memory-manager",
+    embed: async () => [0.1],
+    embedBatch: async (texts: string[]) => texts.map(() => [0.1]),
+    embedQuery: async () => [0.1],
+  };
   registerGlobalMemoryManager(memoryManager);
 
   const store = (memoryManager as any).store as {

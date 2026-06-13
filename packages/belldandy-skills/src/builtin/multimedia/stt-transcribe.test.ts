@@ -193,11 +193,16 @@ describe("stt-transcribe", () => {
     });
 
     it("should handle empty buffer", async () => {
-        const result = await transcribeSpeech({
-            buffer: Buffer.alloc(0),
-            fileName: "empty.mp3",
-        });
-        expect(result).toBeNull();
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const result = await transcribeSpeech({
+                buffer: Buffer.alloc(0),
+                fileName: "empty.mp3",
+            });
+            expect(result).toBeNull();
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 
     it("should abort DashScope polling when abortSignal is triggered", async () => {

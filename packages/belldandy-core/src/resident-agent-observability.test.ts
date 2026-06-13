@@ -11,6 +11,7 @@ import { resolveResidentSharedMemoryManager } from "./resident-shared-memory.js"
 
 import { createScopedMemoryManagers } from "./resident-memory-managers.js";
 import { startGatewayServer } from "./server.js";
+import { cleanupGlobalMemoryManagersForTest } from "./server-testkit.js";
 import { approvePairingCode } from "./security/store.js";
 import { SubTaskRuntimeStore } from "./task-runtime.js";
 
@@ -20,7 +21,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
   vi.restoreAllMocks();
 });
 

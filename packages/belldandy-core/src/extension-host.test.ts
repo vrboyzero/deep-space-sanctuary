@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HookRegistry } from "@belldandy/agent";
 import { ToolExecutor } from "@belldandy/skills";
@@ -24,6 +24,7 @@ describe("initializeExtensionHost", () => {
   });
 
   it("unifies plugin loading, skill loading, registry registration, and enabled-skill selection", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-"));
     const bundledSkillsDir = path.join(stateDir, "bundled-skills");
     const pluginDir = path.join(stateDir, "plugins");

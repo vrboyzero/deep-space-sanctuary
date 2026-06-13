@@ -31,7 +31,7 @@ describe("MemoryManager guardrails", () => {
   });
 
   afterEach(async () => {
-    manager?.close();
+    await manager?.close();
     clearMemoryTreeJobInflightForTest();
     await fs.rm(rootDir, { recursive: true, force: true }).catch(() => { });
   });
@@ -70,6 +70,60 @@ describe("MemoryManager guardrails", () => {
     expect(first).toBe(second);
     await Promise.all([first, second]);
     expect(indexSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows fire-and-forget close to drain in-flight lazy indexing before closing the store", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+    });
+
+    vi.spyOn((manager as any).indexer, "indexDirectory").mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      manager!.upsertMemoryChunk({
+        id: "close-lazy-indexing",
+        sourcePath: path.join(sessionsDir, "close-lazy-indexing.md"),
+        sourceType: "file",
+        memoryType: "other",
+        content: "close drains lazy indexing before store shutdown",
+      });
+    });
+
+    const lazy = manager.startLazyIndexing();
+    void manager.close();
+
+    await expect(lazy).resolves.toBeUndefined();
+  });
+
+  it("skips missing optional additional roots without warning noise", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      manager = createManager({
+        workspaceRoot: sessionsDir,
+        stateDir,
+        additionalRoots: [path.join(stateDir, "dreams"), path.join(stateDir, "team-memory", "memory")],
+      });
+
+      await manager.indexWorkspace();
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("falls back to keyword-only embedding without stderr warning when api key is missing", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      manager = createManager({
+        workspaceRoot: sessionsDir,
+        stateDir,
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("resolves relative memory source paths against stateDir roots for task linking", async () => {

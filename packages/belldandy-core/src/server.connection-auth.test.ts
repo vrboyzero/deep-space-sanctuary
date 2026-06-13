@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeAll, expect, test } from "vitest";
+import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 
 import { startGatewayServer } from "./server.js";
@@ -21,8 +21,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("gateway rejects invalid token", async () => {
@@ -79,12 +79,26 @@ test("gateway accepts browser same-origin websocket with explicit port", async (
 
 test("secure methods require pairing for config raw and tools update", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(() => ({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    })),
+    close: vi.fn(),
+  };
 
   const server = await startGatewayServer({
     port: 0,
     auth: { mode: "none" },
     webRoot: resolveWebRoot(),
     stateDir,
+    logger,
   });
 
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
@@ -113,6 +127,20 @@ test("secure methods require pairing for config raw and tools update", async () 
   const toolsUpdateRes = frames.find((f) => f.type === "res" && f.id === "tools-update");
   expect(toolsUpdateRes.ok).toBe(false);
   expect(toolsUpdateRes.error?.code).toBe("pairing_required");
+  expect(logger.debug).toHaveBeenCalledWith(
+    "gateway-security",
+    "Secure method rejected because client is not paired",
+    expect.objectContaining({
+      clientId: expect.any(String),
+      method: "config.readRaw",
+      pairingCode: expect.any(String),
+    }),
+  );
+  expect(logger.warn).not.toHaveBeenCalledWith(
+    "gateway-security",
+    "Secure method rejected because client is not paired",
+    expect.anything(),
+  );
 
   ws.close();
   await closeP;

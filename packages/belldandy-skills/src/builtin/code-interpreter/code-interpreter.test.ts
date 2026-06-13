@@ -40,7 +40,6 @@ describe("Code Interpreter Tool", () => {
 
     it("should execute Python code", async () => {
         if (!hasPython) {
-            console.warn("Skipping Python test: python3 not found");
             return;
         }
 

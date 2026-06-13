@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
@@ -34,6 +35,7 @@ export class MemoryIndexer {
     private watcher: chokidar.FSWatcher | null = null;
     private watchRoots: string[] = [];
     private pendingWatchEvents = new Map<string, { kind: "upsert" | "remove"; timer: NodeJS.Timeout }>();
+    private stopped = false;
 
     constructor(store: MemoryStore, options: IndexerOptions = {}) {
         this.store = store;
@@ -50,9 +52,29 @@ export class MemoryIndexer {
 
     /** 索引指定目录（递归） */
     async indexDirectory(dirPath: string, scanRoot = dirPath): Promise<void> {
-        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        if (this.stopped) {
+            return;
+        }
+
+        let entries: Dirent[];
+        try {
+            entries = await fs.readdir(dirPath, { withFileTypes: true });
+        } catch (err) {
+            const code = (err as NodeJS.ErrnoException | undefined)?.code;
+            if (this.stopped || code === "ENOENT") {
+                return;
+            }
+            throw err;
+        }
+
+        if (this.stopped) {
+            return;
+        }
 
         for (const entry of entries) {
+            if (this.stopped) {
+                return;
+            }
             const fullPath = path.join(dirPath, entry.name);
 
             if (this.shouldIgnore(fullPath, scanRoot)) {
@@ -72,8 +94,14 @@ export class MemoryIndexer {
 
     /** 索引单个文件 */
     async indexFile(filePath: string): Promise<void> {
+        if (this.stopped) {
+            return;
+        }
         try {
             const stats = await fs.stat(filePath);
+            if (this.stopped) {
+                return;
+            }
             const mtime = stats.mtime.toISOString();
             const ext = path.extname(filePath).toLowerCase();
             const fileMeta = this.store.getFileMetadata(filePath);
@@ -87,6 +115,9 @@ export class MemoryIndexer {
                     // 文件 mtime 确认变新，继续重建索引，不需要额外 hash 校验。
                 } else {
                     loaded = await loadIndexableContent(filePath, ext);
+                    if (this.stopped) {
+                        return;
+                    }
                     const nextHash = computeContentHash(loaded.content);
                     if (nextHash === fileMeta.metadata?.file_hash) {
                         return;
@@ -96,6 +127,9 @@ export class MemoryIndexer {
 
             if (!loaded) {
                 loaded = await loadIndexableContent(filePath, ext);
+                if (this.stopped) {
+                    return;
+                }
             }
             const { content, memoryType } = loaded;
 
@@ -136,17 +170,25 @@ export class MemoryIndexer {
             }
 
             // 使用单事务替换同一 source 的索引内容，避免先删后写的中间态暴露给查询方。
+            if (this.stopped) {
+                return;
+            }
             this.store.replaceSourceChunks(filePath, chunks);
 
             // 更新全局索引时间
             this.store.updateLastIndexedAt();
 
         } catch (err) {
+            const code = (err as NodeJS.ErrnoException | undefined)?.code;
+            if (this.stopped || code === "ENOENT") {
+                return;
+            }
             console.error(`Failed to index file: ${filePath}`, err);
         }
     }
     /** 停止监听 */
     async stopWatching(): Promise<void> {
+        this.stopped = true;
         for (const pending of this.pendingWatchEvents.values()) {
             clearTimeout(pending.timer);
         }
@@ -159,6 +201,7 @@ export class MemoryIndexer {
 
     /** 启动目录监听（支持单目录或多目录） */
     async startWatching(dirPaths: string | string[]): Promise<void> {
+        if (this.stopped || !this.options.watch) return;
         if (this.watcher) return;
 
         const paths = Array.isArray(dirPaths) ? dirPaths : [dirPaths];
@@ -269,6 +312,9 @@ export class MemoryIndexer {
     }
 
     private async flushWatchEvent(filePath: string, kind: "upsert" | "remove"): Promise<void> {
+        if (this.stopped) {
+            return;
+        }
         if (this.options.verboseWatchEvents) {
             console.log(kind === "remove" ? `[FileRemoved] ${filePath}` : `[FileChanged] ${filePath}`);
         }
@@ -279,6 +325,9 @@ export class MemoryIndexer {
             }
             await this.indexFile(filePath);
         } catch (error) {
+            if (this.stopped || (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+                return;
+            }
             console.error(`[WatcherFlushError] ${filePath}`, error);
         }
     }

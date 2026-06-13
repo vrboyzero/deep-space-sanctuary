@@ -318,6 +318,7 @@ describe("QqChannel", () => {
     });
 
     it("does not backfill binding-only proactive target from in-memory reply context", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
             ok: true,
             text: async () => "",
@@ -365,6 +366,7 @@ describe("QqChannel", () => {
     });
 
     it("does not fall back to in-memory reply context when binding is missing", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
             ok: true,
             text: async () => "",
@@ -394,6 +396,7 @@ describe("QqChannel", () => {
     });
 
     it("rejects explicit sessionKey when binding belongs to another channel", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
             ok: true,
             text: async () => "",
@@ -621,6 +624,7 @@ describe("QqChannel", () => {
     });
 
     it("retries qq voice_wav_url with fallback providers after normalized wav still returns empty", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (input: string | URL | Request) => {
             const url = String(input);
             if (url.startsWith("https://qqbot.ugcimg.cn/uservoice/")) {
@@ -717,6 +721,7 @@ describe("QqChannel", () => {
     });
 
     it("does not fall back to raw qq attachment after wav and normalized wav both return empty", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (input: string | URL | Request) => {
             const url = String(input);
             if (url.startsWith("https://qqbot.ugcimg.cn/uservoice/")) {
@@ -817,6 +822,7 @@ describe("QqChannel", () => {
     });
 
     it("retries qq amr voice transcription after transcoding to wav on decode error", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (input: string | URL | Request) => {
             const url = String(input);
             if (url.startsWith("https://multimedia.nt.qq.com.cn/download")) {
@@ -894,6 +900,7 @@ describe("QqChannel", () => {
     });
 
     it("retries qq amr voice transcription after transcoding to wav when first stt pass returns null", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (input: string | URL | Request) => {
             const url = String(input);
             if (url.startsWith("https://multimedia.nt.qq.com.cn/download")) {
@@ -971,6 +978,7 @@ describe("QqChannel", () => {
     });
 
     it("skips raw qq silk fallback when silk decoder support is disabled", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
         const fetchMock = vi.fn(async (input: string | URL | Request) => {
             const url = String(input);
             if (url.startsWith("https://multimedia.nt.qq.com.cn/download")) {

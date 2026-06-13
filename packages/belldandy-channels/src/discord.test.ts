@@ -158,6 +158,7 @@ describe("DiscordChannel", () => {
   });
 
   it("does not fall back to historical discord state when binding is missing", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const channel = new DiscordChannel({
       botToken: "discord-token",
       agent: {
@@ -180,6 +181,7 @@ describe("DiscordChannel", () => {
   });
 
   it("rejects explicit sessionKey when binding belongs to another channel", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const channel = new DiscordChannel({
       botToken: "discord-token",
       agent: {
@@ -222,6 +224,7 @@ describe("DiscordChannel", () => {
   });
 
   it("replies with a fallback message when audio-only input cannot be transcribed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const sendTyping = vi.fn(async () => {});
     const send = vi.fn(async () => {});
     const eventListener = vi.fn();
@@ -295,6 +298,7 @@ describe("DiscordChannel", () => {
   });
 
   it("keeps text content when audio transcription returns empty", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const sendTyping = vi.fn(async () => {});
     const send = vi.fn(async () => {});
     const run = vi.fn(async function* (input: any) {

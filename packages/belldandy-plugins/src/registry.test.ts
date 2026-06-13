@@ -19,6 +19,7 @@ describe("PluginRegistry", () => {
   });
 
   it("records load errors and continues scanning remaining plugin files", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-"));
     tempDirs.push(dir);
 
@@ -71,6 +72,7 @@ describe("PluginRegistry", () => {
   });
 
   it("reuses cached inventory views until registry content changes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-cache-"));
     tempDirs.push(dir);
 

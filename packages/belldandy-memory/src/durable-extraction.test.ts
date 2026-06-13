@@ -173,6 +173,14 @@ test("durable extraction runtime respects failure backoff and success cooldown",
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-durable-extraction-backoff-"));
   const calls: string[] = [];
   let shouldFail = true;
+  let resolveFirstFailure: (() => void) | null = null;
+  const firstFailure = new Promise<void>((resolve) => {
+    resolveFirstFailure = resolve;
+  });
+  let resolveSecondSuccess: (() => void) | null = null;
+  const secondSuccess = new Promise<void>((resolve) => {
+    resolveSecondSuccess = resolve;
+  });
 
   const runtime = new DurableExtractionRuntime({
     stateDir,
@@ -201,43 +209,54 @@ test("durable extraction runtime respects failure backoff and success cooldown",
       { role: "user", content: "继续推进 week 9 memory runtime 收口" },
       { role: "assistant", content: "需要补 backoff 与 cooldown" },
     ],
+    onRunFinished: async (event) => {
+      if (event.runCount === 1 && event.failure) {
+        resolveFirstFailure?.();
+      }
+      if (event.runCount === 2 && !event.failure) {
+        resolveSecondSuccess?.();
+      }
+    },
     retryDelayMs: 20,
     failureBackoffMs: 40,
     failureBackoffMaxMs: 40,
     successCooldownMs: 40,
   });
 
-  await runtime.load();
-  await runtime.requestExtraction({
-    conversationId: "conv-backoff",
-    source: "message.send",
-    digest: { lastDigestAt: 100, messageCount: 4, pendingMessageCount: 2, threshold: 2, status: "ready" },
-  });
-  await waitFor(async () => (await runtime.getRecord("conv-backoff")).status === "failed");
+  try {
+    await runtime.load();
+    await runtime.requestExtraction({
+      conversationId: "conv-backoff",
+      source: "message.send",
+      digest: { lastDigestAt: 100, messageCount: 4, pendingMessageCount: 2, threshold: 2, status: "ready" },
+    });
+    await firstFailure;
 
-  const failed = await runtime.getRecord("conv-backoff");
-  expect(failed.consecutiveFailures).toBe(1);
-  expect((failed.nextEligibleAt ?? 0) - (failed.finishedAt ?? 0)).toBeGreaterThanOrEqual(35);
+    const failed = await runtime.getRecord("conv-backoff");
+    expect(failed.status).toBe("failed");
+    expect(failed.consecutiveFailures).toBe(1);
+    expect((failed.nextEligibleAt ?? 0) - (failed.finishedAt ?? 0)).toBeGreaterThanOrEqual(35);
 
-  shouldFail = false;
-  await runtime.requestExtraction({
-    conversationId: "conv-backoff",
-    source: "manual",
-    digest: { lastDigestAt: 200, messageCount: 6, pendingMessageCount: 2, threshold: 2, status: "updated" },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  expect(calls).toHaveLength(1);
+    shouldFail = false;
+    await runtime.requestExtraction({
+      conversationId: "conv-backoff",
+      source: "manual",
+      digest: { lastDigestAt: 200, messageCount: 6, pendingMessageCount: 2, threshold: 2, status: "updated" },
+    });
+    await secondSuccess;
 
-  await waitFor(() => calls.length === 2, 1_500);
-  await waitFor(async () => (await runtime.getRecord("conv-backoff")).status === "completed");
-
-  const completed = await runtime.getRecord("conv-backoff");
-  expect(completed.consecutiveFailures).toBe(0);
-  expect(completed.lastExtractionSummary).toContain("accepted=1");
-  expect(completed.lastAcceptedCandidateTypes).toEqual(["project"]);
-  expect((completed.nextEligibleAt ?? 0) - (completed.finishedAt ?? 0)).toBeGreaterThanOrEqual(35);
-
-  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    const completed = await runtime.getRecord("conv-backoff");
+    expect(calls).toHaveLength(2);
+    expect(completed.status).toBe("completed");
+    expect(completed.consecutiveFailures).toBe(0);
+    expect(completed.lastExtractionSummary).toContain("accepted=1");
+    expect(completed.lastAcceptedCandidateTypes).toEqual(["project"]);
+    expect(completed.startedAt ?? 0).toBeGreaterThanOrEqual(failed.nextEligibleAt ?? 0);
+    expect((completed.nextEligibleAt ?? 0) - (completed.finishedAt ?? 0)).toBeGreaterThanOrEqual(35);
+  } finally {
+    await runtime.close();
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 test("durable extraction runtime skips requests below pending threshold", async () => {

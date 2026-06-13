@@ -22,8 +22,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("goal.handoff.get returns structured handoff snapshot without mutating goal artifacts", async () => {

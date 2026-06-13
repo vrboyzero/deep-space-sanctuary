@@ -2,6 +2,8 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 
 import { MCPManager } from "./manager.js";
 import { MCPClient } from "./client.js";
+import * as configModule from "./config.js";
+import * as loggerAdapter from "./logger-adapter.js";
 import * as toolBridgeModule from "./tool-bridge.js";
 
 describe("MCPManager", () => {
@@ -61,6 +63,7 @@ describe("MCPManager", () => {
   });
 
   it("removes failed clients from the manager after connect failure", async () => {
+    vi.spyOn(loggerAdapter, "mcpError").mockImplementation(() => {});
     const manager = new MCPManager();
     (manager as unknown as { config: unknown }).config = {
       version: 1,
@@ -84,6 +87,80 @@ describe("MCPManager", () => {
 
     expect(manager.getServerState("server_fail")).toBeUndefined();
     expect(removeListenerSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs auto-connect failures as warnings during initialize", async () => {
+    const manager = new MCPManager();
+    const starweaverCentralConfig = {
+      id: "starweaver-central",
+      name: "starweaver-central",
+      enabled: true,
+      autoConnect: true,
+      transport: {
+        type: "sse" as const,
+        url: "http://127.0.0.1:28767/sse",
+      },
+    };
+
+    vi.spyOn(configModule, "createDefaultConfig").mockResolvedValue(undefined);
+    vi.spyOn(configModule, "loadConfig").mockResolvedValue({
+      version: "1.0.0",
+      servers: [starweaverCentralConfig],
+    });
+    vi.spyOn(configModule, "getAutoConnectServers").mockResolvedValue([starweaverCentralConfig]);
+    vi.spyOn(
+      MCPClient.prototype as unknown as { createTransport: () => Promise<unknown> },
+      "createTransport",
+    ).mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:28767"));
+
+    const warnSpy = vi.spyOn(loggerAdapter, "mcpWarn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(loggerAdapter, "mcpError").mockImplementation(() => {});
+
+    await manager.initialize();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "MCPManager",
+      "连接服务器 starweaver-central 失败",
+      expect.any(Error),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(manager.getDiagnostics().initialized).toBe(true);
+    expect(manager.getServerState("starweaver-central")).toBeUndefined();
+  });
+
+  it("logs explicit connect failures only once at manager level", async () => {
+    const manager = new MCPManager();
+    (manager as unknown as { config: unknown }).config = {
+      version: "1.0.0",
+      servers: [
+        {
+          id: "server_manual_connect",
+          name: "Server Manual Connect",
+          enabled: true,
+          transport: {
+            type: "sse",
+            url: "http://127.0.0.1:8089/sse",
+          },
+        },
+      ],
+    };
+
+    vi.spyOn(
+      MCPClient.prototype as unknown as { createTransport: () => Promise<unknown> },
+      "createTransport",
+    ).mockRejectedValue(new Error("connect failed"));
+    const warnSpy = vi.spyOn(loggerAdapter, "mcpWarn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(loggerAdapter, "mcpError").mockImplementation(() => {});
+
+    await expect(manager.connect("server_manual_connect")).rejects.toThrow("connect failed");
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "MCPManager",
+      "连接服务器 server_manual_connect 失败",
+      expect.any(Error),
+    );
   });
 
   it("removes manager event listeners from clients on disconnect", async () => {
@@ -331,6 +408,7 @@ describe("MCPManager", () => {
   });
 
   it("auto-reconnects servers after unexpected disconnect events", async () => {
+    vi.spyOn(loggerAdapter, "mcpWarn").mockImplementation(() => {});
     const manager = new MCPManager();
     (manager as unknown as { config: unknown }).config = {
       version: 1,

@@ -25,8 +25,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 test("agents.list exposes agent name and avatar from per-agent IDENTITY.md", async () => {

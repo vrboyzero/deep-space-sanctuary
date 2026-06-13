@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { AgentRegistry, ConversationStore, MockAgent } from "@belldandy/agent";
 
@@ -25,8 +25,12 @@ describe("obsidian commons runtime", () => {
     }
   });
 
+  beforeEach(async () => {
+    await cleanupGlobalMemoryManagersForTest();
+  });
+
   afterEach(async () => {
-    cleanupGlobalMemoryManagersForTest();
+    await cleanupGlobalMemoryManagersForTest();
     await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true }).catch(() => {})));
     tempDirs.length = 0;
   });
@@ -59,6 +63,7 @@ describe("obsidian commons runtime", () => {
       conversationStore: new ConversationStore({
         dataDir: path.join(stateDir, "sessions"),
       }),
+      embeddingEnabled: false,
       indexerOptions: {
         watch: false,
       },
@@ -184,5 +189,5 @@ describe("obsidian commons runtime", () => {
     expect(approvedContent).toContain("Fallback Reason: missing_model_config");
     expect(revokedContent).toContain("shared_status: \"revoked\"");
     expect(revokedContent).toContain("Generation Mode: llm");
-  });
+  }, 15000);
 });

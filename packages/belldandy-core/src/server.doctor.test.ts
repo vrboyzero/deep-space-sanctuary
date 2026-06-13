@@ -49,8 +49,8 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanupGlobalMemoryManagersForTest();
+afterEach(async () => {
+  await cleanupGlobalMemoryManagersForTest();
 });
 
 async function listenOnEphemeralPort(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -336,7 +336,7 @@ test("system.doctor exposes dream runtime summary", async () => {
     ws.close();
     await closeP;
     await server.close();
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -1860,7 +1860,7 @@ test("system.doctor reports durable extraction gating reasons and restricted mem
     ws.close();
     await closeP;
     await server.close();
-    memoryManager.close();
+    await memoryManager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
