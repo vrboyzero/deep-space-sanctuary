@@ -76,11 +76,20 @@ export class MCPManager implements IMCPManager {
   /** 单 server 串行化操作锁 */
   private readonly serverOperationLocks = new Map<string, Promise<void>>();
 
+  /** 显式断开中的 server，避免把手动断开误判为自动重连信号 */
+  private readonly manualDisconnectServers = new Set<string>();
+
+  /** 自动重连中的 server，避免重复排队 */
+  private readonly autoReconnectServers = new Set<string>();
+
   /** 绑定后的 client 事件监听器，便于 remove */
   private readonly boundClientEventListener: MCPEventListener;
   
   /** 是否已初始化 */
   private initialized = false;
+
+  /** 关闭期内禁止自动重连 */
+  private shuttingDown = false;
 
   constructor() {
     this.boundClientEventListener = this.handleClientEvent.bind(this);
@@ -146,23 +155,30 @@ export class MCPManager implements IMCPManager {
    */
   async shutdown(): Promise<void> {
     mcpLog("MCPManager", "正在关闭...");
+    this.shuttingDown = true;
 
-    // 断开所有客户端
-    const disconnectPromises = Array.from(this.clients.keys()).map((serverId) =>
-      this.disconnect(serverId)
-    );
+    try {
+      // 断开所有客户端
+      const disconnectPromises = Array.from(this.clients.keys()).map((serverId) =>
+        this.disconnect(serverId)
+      );
 
-    await Promise.allSettled(disconnectPromises);
+      await Promise.allSettled(disconnectPromises);
 
-    // 清理资源
-    this.clients.clear();
-    this.toolBridge.unregisterAllTools();
-    this.resetToolInventoryCache();
-    this.resetResourceInventoryCache();
-    this.eventListeners.clear();
-    this.initialized = false;
+      // 清理资源
+      this.clients.clear();
+      this.toolBridge.unregisterAllTools();
+      this.resetToolInventoryCache();
+      this.resetResourceInventoryCache();
+      this.eventListeners.clear();
+      this.initialized = false;
 
-    mcpLog("MCPManager", "已关闭");
+      mcpLog("MCPManager", "已关闭");
+    } finally {
+      this.shuttingDown = false;
+      this.manualDisconnectServers.clear();
+      this.autoReconnectServers.clear();
+    }
   }
 
   // ==========================================================================
@@ -247,22 +263,28 @@ export class MCPManager implements IMCPManager {
     }
 
     mcpLog("MCPManager", `正在断开服务器: ${serverId}`);
+    this.manualDisconnectServers.add(serverId);
+    this.autoReconnectServers.delete(serverId);
 
-    // 注销工具
-    this.toolBridge.unregisterServerTools(serverId);
+    try {
+      // 注销工具
+      this.toolBridge.unregisterServerTools(serverId);
 
-    // 断开连接
-    await client.disconnect();
-    client.removeEventListener(this.boundClientEventListener);
+      // 断开连接
+      await client.disconnect();
+      client.removeEventListener(this.boundClientEventListener);
 
-    // 移除客户端
-    if (this.clients.get(serverId) === client) {
-      this.clients.delete(serverId);
+      // 移除客户端
+      if (this.clients.get(serverId) === client) {
+        this.clients.delete(serverId);
+      }
+      this.invalidateToolInventoryCache();
+      this.rebuildResourceInventoryCache();
+
+      mcpLog("MCPManager", `已断开服务器: ${serverId}`);
+    } finally {
+      this.manualDisconnectServers.delete(serverId);
     }
-    this.invalidateToolInventoryCache();
-    this.rebuildResourceInventoryCache();
-
-    mcpLog("MCPManager", `已断开服务器: ${serverId}`);
   }
 
   /**
@@ -465,7 +487,7 @@ export class MCPManager implements IMCPManager {
    * 处理客户端事件
    */
   private handleClientEvent(event: MCPEvent): void {
-    if (event.type === "tools:updated") {
+    if (event.type === "server:connected" || event.type === "tools:updated") {
       const client = this.clients.get(event.serverId);
       if (client) {
         // 重新注册工具
@@ -473,8 +495,14 @@ export class MCPManager implements IMCPManager {
         this.toolBridge.registerTools(client.getState().tools);
         this.invalidateToolInventoryCache();
       }
+      this.rebuildResourceInventoryCache();
     } else if (event.type === "resources:updated") {
       this.rebuildResourceInventoryCache();
+    } else if (event.type === "server:disconnected" || event.type === "server:error") {
+      this.toolBridge.unregisterServerTools(event.serverId);
+      this.invalidateToolInventoryCache();
+      this.rebuildResourceInventoryCache();
+      void this.scheduleAutoReconnect(event.serverId, event.type);
     }
 
     // 转发给所有监听器
@@ -484,6 +512,26 @@ export class MCPManager implements IMCPManager {
       } catch (err) {
         mcpError("MCPManager", "事件监听器错误", err);
       }
+    }
+  }
+
+  private async scheduleAutoReconnect(serverId: string, reason: "server:disconnected" | "server:error"): Promise<void> {
+    if (this.shuttingDown || this.manualDisconnectServers.has(serverId) || this.autoReconnectServers.has(serverId)) {
+      return;
+    }
+    const serverConfig = this.config?.servers.find((server) => server.id === serverId);
+    if (!serverConfig || serverConfig.enabled === false) {
+      return;
+    }
+
+    this.autoReconnectServers.add(serverId);
+    try {
+      mcpWarn("MCPManager", `检测到 ${serverId} ${reason}，准备自动重连`);
+      await this.reconnect(serverId);
+    } catch (error) {
+      mcpWarn("MCPManager", `自动重连服务器 ${serverId} 失败`, error);
+    } finally {
+      this.autoReconnectServers.delete(serverId);
     }
   }
 

@@ -1267,11 +1267,7 @@ const toolExecutor = new ToolExecutor({
     const msg = log.success
       ? `${log.toolName} completed in ${log.durationMs}ms`
       : `${log.toolName} failed in ${log.durationMs}ms: ${log.error ?? "unknown"}`;
-    const isActiveNotifyPollListRead =
-      log.success
-      && log.toolName === "mcp_starweaver_central_agent_wake_notifications"
-      && log.arguments.ackMatched !== true;
-    if (isActiveNotifyPollListRead) {
+    if (shouldDebugToolAuditLog(log)) {
       logger.debug("tools", msg, { toolName: log.toolName, success: log.success, durationMs: log.durationMs });
       return;
     }

@@ -362,6 +362,44 @@ description: 通过额外根目录读取
       await expect(fs.readFile(path.join(tempDir, "replace-regex.txt"), "utf-8")).resolves.toBe("name=new\nname=older\n");
     });
 
+    it("should reject regex replace patterns with high ReDoS risk", async () => {
+      await fs.writeFile(path.join(tempDir, "replace-regex-risky.txt"), "aaaaaaaaaaaaaaaaaaaa!", "utf-8");
+
+      const result = await fileWriteTool.execute(
+        {
+          path: "replace-regex-risky.txt",
+          content: "safe",
+          mode: "replace",
+          regex: "(a+)+$",
+          regexFlags: "",
+        },
+        baseContext,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("高回溯风险");
+      expect(result.failureKind).toBe("permission_or_policy");
+    });
+
+    it("should reject regex replace on oversized text files", async () => {
+      await fs.writeFile(path.join(tempDir, "replace-regex-large.txt"), `name=old\n${"a".repeat(260_000)}`, "utf-8");
+
+      const result = await fileWriteTool.execute(
+        {
+          path: "replace-regex-large.txt",
+          content: "name=new",
+          mode: "replace",
+          regex: "^name=.*$",
+          regexFlags: "m",
+        },
+        baseContext,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("文本过大");
+      expect(result.failureKind).toBe("permission_or_policy");
+    });
+
     it("should insert content after the requested line", async () => {
       await fs.writeFile(path.join(tempDir, "insert.txt"), "alpha\nbeta\ngamma\n", "utf-8");
 

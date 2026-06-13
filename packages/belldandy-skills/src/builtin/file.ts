@@ -202,6 +202,131 @@ function resolveAndValidatePath(
   return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
 }
 
+const MAX_REGEX_REPLACE_PATTERN_LENGTH = 256;
+const MAX_REGEX_REPLACE_TARGET_BYTES = 256_000;
+const ALLOWED_REGEX_REPLACE_FLAGS = new Set(["d", "g", "i", "m", "s", "u", "v", "y"]);
+
+function isEscapedAt(value: string, index: number): boolean {
+  let backslashes = 0;
+  for (let i = index - 1; i >= 0 && value[i] === "\\"; i -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function collectRegexGroupRanges(pattern: string): Array<{ start: number; end: number }> {
+  const stack: number[] = [];
+  const groups: Array<{ start: number; end: number }> = [];
+  let inCharClass = false;
+
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    if (!char || isEscapedAt(pattern, i)) continue;
+    if (char === "[" && !inCharClass) {
+      inCharClass = true;
+      continue;
+    }
+    if (char === "]" && inCharClass) {
+      inCharClass = false;
+      continue;
+    }
+    if (inCharClass) continue;
+    if (char === "(") {
+      stack.push(i);
+      continue;
+    }
+    if (char === ")") {
+      const start = stack.pop();
+      if (start !== undefined) {
+        groups.push({ start, end: i });
+      }
+    }
+  }
+
+  return groups;
+}
+
+function readRegexTrailingQuantifierKind(
+  pattern: string,
+  index: number,
+): "none" | "optional" | "repeated" {
+  const char = pattern[index];
+  if (!char) return "none";
+  if (char === "+" || char === "*") return "repeated";
+  if (char === "?") return "optional";
+  if (char !== "{") return "none";
+
+  const end = pattern.indexOf("}", index);
+  if (end <= index + 1) return "none";
+  const raw = pattern.slice(index + 1, end).trim();
+  if (!/^\d+(,\d*)?$/.test(raw)) return "none";
+  const [minPart, maxPart] = raw.split(",");
+  const min = Number(minPart);
+  const max = maxPart === undefined || maxPart === "" ? Number.POSITIVE_INFINITY : Number(maxPart);
+  if (!Number.isFinite(min) || Number.isNaN(min) || Number.isNaN(max)) return "none";
+  if (max <= 1) return "optional";
+  return "repeated";
+}
+
+function repeatedGroupBodyHasRiskySignals(body: string): boolean {
+  let inCharClass = false;
+  for (let i = 0; i < body.length; i += 1) {
+    const char = body[i];
+    if (!char || isEscapedAt(body, i)) continue;
+    if (char === "[" && !inCharClass) {
+      inCharClass = true;
+      continue;
+    }
+    if (char === "]" && inCharClass) {
+      inCharClass = false;
+      continue;
+    }
+    if (inCharClass) continue;
+    if (char === "(" || char === "|" || char === "." || char === "+" || char === "*" || char === "{" || char === "?") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function detectRegexReplaceRisk(pattern: string, flags: string): string | null {
+  if (pattern.length > MAX_REGEX_REPLACE_PATTERN_LENGTH) {
+    return `regex 模式长度不能超过 ${MAX_REGEX_REPLACE_PATTERN_LENGTH} 个字符`;
+  }
+  if (flags.length > ALLOWED_REGEX_REPLACE_FLAGS.size) {
+    return "regexFlags 过长";
+  }
+
+  const seenFlags = new Set<string>();
+  for (const flag of flags) {
+    if (!ALLOWED_REGEX_REPLACE_FLAGS.has(flag)) {
+      return `regexFlags 包含不支持的标记：${flag}`;
+    }
+    if (seenFlags.has(flag)) {
+      return `regexFlags 包含重复标记：${flag}`;
+    }
+    seenFlags.add(flag);
+  }
+
+  if (pattern.includes("(?<=") || pattern.includes("(?<!")) {
+    return "regex 模式不允许使用 lookbehind";
+  }
+  if (/\\(?:[1-9]\d*|k<[^>]+>)/u.test(pattern)) {
+    return "regex 模式不允许使用反向引用";
+  }
+
+  for (const group of collectRegexGroupRanges(pattern)) {
+    const quantifierKind = readRegexTrailingQuantifierKind(pattern, group.end + 1);
+    if (quantifierKind !== "repeated") continue;
+    const body = pattern.slice(group.start + 1, group.end);
+    if (repeatedGroupBodyHasRiskySignals(body)) {
+      return "regex 模式包含高回溯风险结构";
+    }
+  }
+
+  return null;
+}
+
 // ============ file_read 工具 ============
 
 export const fileReadTool: Tool = withToolContract({
@@ -527,8 +652,30 @@ export const fileWriteTool: Tool = withToolContract({
         if (mode === "replace") {
           const regex = args.regex as string | undefined;
           if (regex && regex.trim()) {
+            const textBytes = Buffer.byteLength(text, "utf-8");
+            if (textBytes > MAX_REGEX_REPLACE_TARGET_BYTES) {
+              return makeError(
+                `regex replace 已拒绝：目标文本过大（>${MAX_REGEX_REPLACE_TARGET_BYTES} bytes）`,
+                "permission_or_policy",
+              );
+            }
             const flags = (args.regexFlags as string | undefined) ?? "g";
-            const re = new RegExp(regex, flags);
+            const regexRisk = detectRegexReplaceRisk(regex, flags);
+            if (regexRisk) {
+              return makeError(
+                `regex replace 已拒绝：${regexRisk}。请改用更简单的正则、缩小匹配范围，或改用行号替换。`,
+                "permission_or_policy",
+              );
+            }
+            let re: RegExp;
+            try {
+              re = new RegExp(regex, flags);
+            } catch (error) {
+              return makeError(
+                `regex 无效：${error instanceof Error ? error.message : String(error)}`,
+                "input_error",
+              );
+            }
             if (!re.test(text)) {
               return makeError("未匹配到正则内容，未做替换");
             }

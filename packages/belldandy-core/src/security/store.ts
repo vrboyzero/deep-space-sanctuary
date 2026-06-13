@@ -36,6 +36,18 @@ export type PairingStore = {
   pending: PairingRequest[];
 };
 
+export class SecurityStoreReadError extends Error {
+  readonly filePath: string;
+  readonly code?: string;
+
+  constructor(filePath: string, message: string, code?: string, options?: { cause?: unknown }) {
+    super(`Failed to read JSON store ${filePath}: ${message}`, options);
+    this.name = "SecurityStoreReadError";
+    this.filePath = filePath;
+    this.code = code;
+  }
+}
+
 const PAIRING_CODE_LENGTH = 8;
 const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_TTL_MS = 60 * 60 * 1000;
@@ -189,7 +201,13 @@ async function readJson<T>(filePath: string, fallback: T): Promise<T> {
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === "ENOENT") return fallback;
-    return fallback;
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[security/store] Failed to read JSON store; refusing silent fallback.", {
+      filePath,
+      code,
+      message,
+    });
+    throw new SecurityStoreReadError(filePath, message, code, { cause: err });
   }
 }
 

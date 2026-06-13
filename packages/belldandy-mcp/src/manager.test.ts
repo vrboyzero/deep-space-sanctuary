@@ -329,4 +329,93 @@ describe("MCPManager", () => {
     expect(openAISpy).toHaveBeenCalledTimes(2);
     expect(anthropicSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("auto-reconnects servers after unexpected disconnect events", async () => {
+    const manager = new MCPManager();
+    (manager as unknown as { config: unknown }).config = {
+      version: 1,
+      servers: [
+        {
+          id: "server_auto_reconnect",
+          name: "Server Auto Reconnect",
+          enabled: true,
+          transport: {
+            type: "sse",
+            url: "http://127.0.0.1:8087/sse",
+          },
+        },
+      ],
+    };
+
+    vi.spyOn(MCPClient.prototype, "connect").mockImplementation(async function mockConnect(this: MCPClient) {
+      (this as unknown as { status: string; tools: unknown[]; resources: unknown[] }).status = "connected";
+      (this as unknown as { tools: unknown[] }).tools = [];
+      (this as unknown as { resources: unknown[] }).resources = [];
+    });
+    vi.spyOn(MCPClient.prototype, "disconnect").mockImplementation(async function mockDisconnect(this: MCPClient) {
+      (this as unknown as { status: string }).status = "disconnected";
+    });
+
+    await manager.connect("server_auto_reconnect");
+    const reconnectSpy = vi.spyOn(manager, "reconnect").mockResolvedValue(undefined);
+
+    (manager as unknown as { handleClientEvent: (event: unknown) => void }).handleClientEvent({
+      type: "server:disconnected",
+      serverId: "server_auto_reconnect",
+      timestamp: new Date(),
+      data: {
+        diagnostics: {},
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(reconnectSpy).toHaveBeenCalledWith("server_auto_reconnect");
+  });
+
+  it("does not auto-reconnect servers marked as manually disconnecting", async () => {
+    const manager = new MCPManager();
+    (manager as unknown as { config: unknown }).config = {
+      version: 1,
+      servers: [
+        {
+          id: "server_manual_disconnect",
+          name: "Server Manual Disconnect",
+          enabled: true,
+          transport: {
+            type: "sse",
+            url: "http://127.0.0.1:8088/sse",
+          },
+        },
+      ],
+    };
+
+    vi.spyOn(MCPClient.prototype, "connect").mockImplementation(async function mockConnect(this: MCPClient) {
+      (this as unknown as { status: string; tools: unknown[]; resources: unknown[] }).status = "connected";
+      (this as unknown as { tools: unknown[] }).tools = [];
+      (this as unknown as { resources: unknown[] }).resources = [];
+    });
+    vi.spyOn(MCPClient.prototype, "disconnect").mockImplementation(async function mockDisconnect(this: MCPClient) {
+      (this as unknown as { status: string }).status = "disconnected";
+    });
+
+    await manager.connect("server_manual_disconnect");
+    const reconnectSpy = vi.spyOn(manager, "reconnect").mockResolvedValue(undefined);
+    (
+      manager as unknown as { manualDisconnectServers: Set<string> }
+    ).manualDisconnectServers.add("server_manual_disconnect");
+
+    (manager as unknown as { handleClientEvent: (event: unknown) => void }).handleClientEvent({
+      type: "server:disconnected",
+      serverId: "server_manual_disconnect",
+      timestamp: new Date(),
+      data: {
+        diagnostics: {},
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(reconnectSpy).not.toHaveBeenCalled();
+  });
 });

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readPairingStore, writePairingStore } from "./store.js";
+import { readAllowlistStore, readPairingStore, writePairingStore } from "./store.js";
 
 const tempDirs: string[] = [];
 
@@ -42,5 +42,20 @@ describe("security store", () => {
         }),
       ],
     });
+  });
+
+  it("throws and warns when allowlist JSON is malformed", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-security-store-invalid-json-"));
+    tempDirs.push(stateDir);
+    await fs.promises.writeFile(path.join(stateDir, "allowlist.json"), "{not-json", "utf-8");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(readAllowlistStore(stateDir)).rejects.toThrow(/allowlist\.json/i);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[security/store] Failed to read JSON store; refusing silent fallback.",
+      expect.objectContaining({
+        filePath: expect.stringMatching(/allowlist\.json$/),
+      }),
+    );
   });
 });

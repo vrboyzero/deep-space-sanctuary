@@ -296,6 +296,48 @@ describe("MCPClient result normalization", () => {
     expect(result.contents[0]?.blob).toBeUndefined();
   });
 
+  it("hard-limits oversized persisted resource blobs", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mcp-resource-hard-limit-"));
+    process.env.BELLDANDY_STATE_DIR = stateDir;
+    const { client, internals } = createConnectedClient();
+    internals.client = {
+      callTool: vi.fn(),
+      readResource: vi.fn().mockResolvedValue({
+        contents: [
+          {
+            uri: "file:///tmp/huge-demo.bin",
+            mimeType: "application/octet-stream",
+            blob: Buffer.alloc(400_000, 1).toString("base64"),
+          },
+        ],
+      }),
+    };
+
+    try {
+      const result = await client.readResource("file:///tmp/huge-demo.bin");
+      expect(result.diagnostics).toEqual(expect.objectContaining({
+        strategy: "persisted",
+        truncated: true,
+        truncatedItems: 1,
+        persistedItems: 1,
+      }));
+      expect(result.contents[0]).toEqual(expect.objectContaining({
+        uri: "file:///tmp/huge-demo.bin",
+        truncated: true,
+        note: expect.stringContaining("hard limit"),
+      }));
+      expect(result.contents[0]?.blob).toBeUndefined();
+
+      const generatedDir = path.join(stateDir, "generated");
+      const files = await fs.readdir(generatedDir);
+      expect(files).toHaveLength(1);
+      const persistedStat = await fs.stat(path.join(generatedDir, files[0]!));
+      expect(persistedStat.size).toBeLessThan(300_000);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("persists oversized tool text results to generated output and reports persisted diagnostics", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mcp-persist-"));
     process.env.BELLDANDY_STATE_DIR = stateDir;
@@ -323,6 +365,43 @@ describe("MCPClient result normalization", () => {
       const generatedDir = path.join(stateDir, "generated");
       const files = await fs.readdir(generatedDir);
       expect(files.some((file) => file.startsWith("mcp-test-server-tool-text-"))).toBe(true);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("hard-limits oversized persisted tool text results", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mcp-hard-limit-"));
+    process.env.BELLDANDY_STATE_DIR = stateDir;
+    const { client, internals } = createConnectedClient();
+    internals.client = {
+      callTool: vi.fn().mockResolvedValue({
+        isError: false,
+        content: [{ type: "text", text: "z".repeat(400_000) }],
+      }),
+      readResource: vi.fn(),
+    };
+
+    try {
+      const result = await client.callTool("hard-limit-demo", {});
+      expect(result.success).toBe(true);
+      expect(result.diagnostics).toEqual(expect.objectContaining({
+        strategy: "persisted",
+        truncated: true,
+        truncatedItems: 1,
+        persistedItems: 1,
+      }));
+      expect(result.content?.[0]).toEqual(expect.objectContaining({
+        type: "text",
+        truncated: true,
+        note: expect.stringContaining("hard limit"),
+      }));
+
+      const generatedDir = path.join(stateDir, "generated");
+      const files = await fs.readdir(generatedDir);
+      expect(files).toHaveLength(1);
+      const persistedStat = await fs.stat(path.join(generatedDir, files[0]!));
+      expect(persistedStat.size).toBeLessThan(300_000);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }

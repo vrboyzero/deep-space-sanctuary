@@ -41,6 +41,8 @@ const FILESYSTEM_SERVER_PACKAGE = "@modelcontextprotocol/server-filesystem";
 const EXTRA_WORKSPACE_ROOTS_ENV_KEY = "BELLDANDY_EXTRA_WORKSPACE_ROOTS";
 const MAX_INLINE_TEXT_CHARS = 12_000;
 const MAX_INLINE_BINARY_CHARS = 4_096;
+const MAX_PERSISTED_TEXT_BYTES = 256_000;
+const MAX_PERSISTED_BINARY_BYTES = 256_000;
 const MCP_PERSIST_DIR = "generated";
 const MAX_SESSION_RECOVERY_ATTEMPTS = 1;
 const STDIO_STDERR_IGNORE_PATTERNS: Record<string, RegExp[]> = {
@@ -175,6 +177,19 @@ function buildPersistedOutputNote(input: {
   return `${header}\n\nPreview:\n${input.preview}`;
 }
 
+function buildHardLimitedPersistedOutputNote(input: {
+  originalBytes: number;
+  keptBytes: number;
+  webPath: string;
+  preview?: string;
+}): string {
+  const header = `[MCP output exceeded hard limit: original ${input.originalBytes} bytes, saved first ${input.keptBytes} bytes to ${input.webPath}]`;
+  if (!input.preview) {
+    return header;
+  }
+  return `${header}\n\nPreview:\n${input.preview}`;
+}
+
 function sanitizePersistSegment(input: string): string {
   return input.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -195,6 +210,18 @@ function extensionForMimeType(mimeType: string | undefined, fallback: string): s
   if (normalized.includes("octet-stream")) return "bin";
   const subtype = normalized.split("/")[1]?.split(";")[0]?.trim();
   return subtype ? sanitizePersistSegment(subtype) : fallback;
+}
+
+function truncateUtf8TextByBytes(text: string, maxBytes: number): { text: string; bytes: number } {
+  const buffer = Buffer.from(text, "utf-8");
+  if (buffer.length <= maxBytes) {
+    return { text, bytes: buffer.length };
+  }
+  const truncated = buffer.subarray(0, maxBytes).toString("utf-8");
+  return {
+    text: truncated,
+    bytes: Buffer.byteLength(truncated, "utf-8"),
+  };
 }
 
 type MCPNormalizedToolCallContent = {
@@ -1127,17 +1154,29 @@ export class MCPClient {
     if (text.length <= MAX_INLINE_TEXT_CHARS) {
       return { text, truncated: false, persisted: false, originalLength: text.length, estimatedChars: text.length };
     }
-    const persisted = await this.persistLargeText(text, input.persistId, input.mimeType);
+    const originalBytes = Buffer.byteLength(text, "utf-8");
+    const hardLimited = originalBytes > MAX_PERSISTED_TEXT_BYTES;
+    const persistedText = hardLimited
+      ? truncateUtf8TextByBytes(text, MAX_PERSISTED_TEXT_BYTES)
+      : { text, bytes: originalBytes };
+    const persisted = await this.persistLargeText(persistedText.text, input.persistId, input.mimeType);
     if (persisted) {
-      const preview = text.slice(0, 2000);
-      const note = buildPersistedOutputNote({
-        originalLength: text.length,
-        webPath: persisted.webPath,
-        preview,
-      });
+      const preview = persistedText.text.slice(0, 2000);
+      const note = hardLimited
+        ? buildHardLimitedPersistedOutputNote({
+            originalBytes,
+            keptBytes: persistedText.bytes,
+            webPath: persisted.webPath,
+            preview,
+          })
+        : buildPersistedOutputNote({
+            originalLength: text.length,
+            webPath: persisted.webPath,
+            preview,
+          });
       return {
         text: note,
-        truncated: false,
+        truncated: hardLimited,
         persisted: true,
         persistedFilepath: persisted.filepath,
         persistedWebPath: persisted.webPath,
@@ -1170,15 +1209,25 @@ export class MCPClient {
     if (value.length <= MAX_INLINE_BINARY_CHARS) {
       return { value, truncated: false, persisted: false, originalLength: value.length, estimatedChars: value.length };
     }
-    const persisted = await this.persistLargeBinary(value, input.persistId, input.mimeType);
+    const decoded = Buffer.from(value, "base64");
+    const originalBytes = decoded.byteLength;
+    const hardLimited = originalBytes > MAX_PERSISTED_BINARY_BYTES;
+    const persistedBuffer = hardLimited ? decoded.subarray(0, MAX_PERSISTED_BINARY_BYTES) : decoded;
+    const persisted = await this.persistLargeBinary(persistedBuffer, input.persistId, input.mimeType);
     if (persisted) {
-      const note = buildPersistedOutputNote({
-        originalLength: value.length,
-        webPath: persisted.webPath,
-      });
+      const note = hardLimited
+        ? buildHardLimitedPersistedOutputNote({
+            originalBytes,
+            keptBytes: persistedBuffer.byteLength,
+            webPath: persisted.webPath,
+          })
+        : buildPersistedOutputNote({
+            originalLength: value.length,
+            webPath: persisted.webPath,
+          });
       return {
         value: undefined,
-        truncated: false,
+        truncated: hardLimited,
         persisted: true,
         persistedFilepath: persisted.filepath,
         persistedWebPath: persisted.webPath,
@@ -1222,7 +1271,7 @@ export class MCPClient {
   }
 
   private async persistLargeBinary(
-    value: string,
+    value: string | Buffer,
     persistId: string,
     mimeType?: string,
   ): Promise<{ filepath: string; webPath: string } | undefined> {
@@ -1234,7 +1283,7 @@ export class MCPClient {
       const extension = extensionForMimeType(mimeType, "bin");
       const filename = `mcp-${sanitizePersistSegment(persistId)}-${timestamp}.${extension}`;
       const filepath = path.join(generatedDir, filename);
-      await fs.writeFile(filepath, Buffer.from(value, "base64"));
+      await fs.writeFile(filepath, Buffer.isBuffer(value) ? value : Buffer.from(value, "base64"));
       return {
         filepath,
         webPath: `/generated/${filename}`,

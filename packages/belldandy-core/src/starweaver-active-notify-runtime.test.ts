@@ -394,6 +394,50 @@ describe("starweaver active notify runtime", () => {
     );
   });
 
+  it("logs unusable polling output at debug level instead of info", async () => {
+    process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED = "true";
+    process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS = "20";
+
+    const execute = vi.fn().mockResolvedValue({
+      success: false,
+      output: undefined,
+    });
+    const autoRunResidentAgent = vi.fn();
+    const debug = vi.fn();
+    const info = vi.fn();
+
+    const handle = await startStarweaverActiveNotifyRuntime({
+      toolExecutor: {
+        execute,
+      } as any,
+      isBusy: () => false,
+      autoRunResidentAgent,
+      logger: {
+        debug,
+        info,
+        warn: () => {},
+        error: () => {},
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    handle?.close();
+
+    expect(
+      debug.mock.calls.some(([module, message]) => (
+        module === "starweaver-active-notify"
+        && message === "Notification poll returned no usable output."
+      )),
+    ).toBe(true);
+    expect(
+      info.mock.calls.some(([module, message]) => (
+        module === "starweaver-active-notify"
+        && message === "Notification poll returned no usable output."
+      )),
+    ).toBe(false);
+    expect(autoRunResidentAgent).not.toHaveBeenCalled();
+  });
+
   it("does not start when the feature switch is disabled", async () => {
     const execute = vi.fn();
     const autoRunResidentAgent = vi.fn();

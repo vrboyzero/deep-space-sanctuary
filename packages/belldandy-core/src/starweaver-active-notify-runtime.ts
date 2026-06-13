@@ -254,7 +254,7 @@ export async function startStarweaverActiveNotifyRuntime(input: {
         runtimeContext,
       );
       if (!notificationsResult.success || !notificationsResult.output) {
-        input.logger.info("starweaver-active-notify", "Notification poll returned no usable output.", {
+        input.logger.debug?.("starweaver-active-notify", "Notification poll returned no usable output.", {
           success: notificationsResult.success,
           hasOutput: Boolean(notificationsResult.output),
         });

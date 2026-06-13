@@ -121,7 +121,12 @@ export const fetchTool: Tool = withToolContract({
           return makeError(`SSRF 防护：DNS 解析到内网地址 ${address}`, "permission_or_policy");
       }
     } catch (dnsErr) {
-      // DNS 解析失败，允许继续（fetch 会自己处理）
+      if (context.abortSignal?.aborted) {
+        return makeError(readAbortReason(context.abortSignal), "environment_error");
+      }
+      if (!shouldAllowFetchAfterDnsFailure(dnsErr)) {
+        return makeError(buildDnsFailureRejectMessage(hostname, dnsErr), "permission_or_policy");
+      }
     }
 
     // 执行请求
@@ -273,4 +278,21 @@ function isPrivateIP(ip: string): boolean {
   if (ip === "::1" || ip.startsWith("fe80:")) return true;
 
   return false;
+}
+
+function shouldAllowFetchAfterDnsFailure(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  return code === "ENOTFOUND" || code === "ENODATA" || code === "EAI_NONAME";
+}
+
+function buildDnsFailureRejectMessage(hostname: string, error: unknown): string {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  const detail = error instanceof Error ? error.message : String(error);
+  return code
+    ? `SSRF 防护：DNS 解析 ${hostname} 失败（${code}），已拒绝请求：${detail}`
+    : `SSRF 防护：DNS 解析 ${hostname} 失败，已拒绝请求：${detail}`;
 }

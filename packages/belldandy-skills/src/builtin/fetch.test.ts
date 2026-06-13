@@ -93,6 +93,43 @@ describe("web_fetch tool", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("不在白名单中");
     });
+
+    it("should allow ENOTFOUND DNS failures to fall through to fetch", async () => {
+      const dnsError = Object.assign(new Error("getaddrinfo ENOTFOUND example.com"), {
+        code: "ENOTFOUND",
+      });
+      vi.spyOn(dns, "lookup").mockRejectedValue(dnsError);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("ok", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        })
+      );
+
+      const result = await fetchTool.execute({ url: "https://example.com/api" }, baseContext);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+    });
+
+    it("should block timed out DNS lookups before fetch", async () => {
+      const dnsError = Object.assign(new Error("dns lookup timeout"), {
+        code: "ETIMEOUT",
+      });
+      vi.spyOn(dns, "lookup").mockRejectedValue(dnsError);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("should-not-run", {
+          status: 200,
+        })
+      );
+
+      const result = await fetchTool.execute({ url: "https://example.com/api" }, baseContext);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("DNS");
+      expect(result.failureKind).toBe("permission_or_policy");
+    });
   });
 
   describe("input validation", () => {
