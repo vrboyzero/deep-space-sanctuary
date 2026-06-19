@@ -217,6 +217,37 @@ export function buildTokenUsageDiagnosticsSegments(payload, t = (_key, _params, 
       ));
     }
   }
+  if (payload.prefixDrift && typeof payload.prefixDrift === "object") {
+    const reasons = Array.isArray(payload.prefixDrift.reasons) ? payload.prefixDrift.reasons.slice(0, 3).join(",") : "-";
+    segments.push(t(
+      "header.tokenPrefixDrift",
+      {
+        status: payload.prefixDrift.status || "-",
+        reasons,
+      },
+      `DRIFT ${payload.prefixDrift.status || "-"} / ${reasons}`,
+    ));
+  }
+  if (payload.budgetCompetition && typeof payload.budgetCompetition === "object") {
+    const pressure = payload.budgetCompetition.pressure && typeof payload.budgetCompetition.pressure === "object"
+      ? payload.budgetCompetition.pressure
+      : {};
+    const sacrifice = payload.budgetCompetition.sacrifice && typeof payload.budgetCompetition.sacrifice === "object"
+      ? payload.budgetCompetition.sacrifice
+      : {};
+    const details = joinDefinedEntries([
+      formatCountEntry("prompt", pressure.estimatedTotalTokens),
+      formatCountEntry("trim", sacrifice.trimmedMessageCount),
+      typeof sacrifice.historyTrimmed === "boolean" ? `historyTrim=${sacrifice.historyTrimmed ? "yes" : "no"}` : null,
+    ]);
+    if (details) {
+      segments.push(t(
+        "header.tokenBudgetCompetition",
+        { value: details },
+        `BUDGET ${details}`,
+      ));
+    }
+  }
   if (payload.providerRawUsage && typeof payload.providerRawUsage === "object") {
     const details = joinDefinedEntries([
       formatCountEntry("prompt", payload.providerRawUsage.promptTokens),

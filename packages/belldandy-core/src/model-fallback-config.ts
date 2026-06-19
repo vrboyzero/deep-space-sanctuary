@@ -53,6 +53,11 @@ function normalizeOptionsConfig(value: unknown): Record<string, unknown> | undef
   return { ...value };
 }
 
+function normalizeRequestBodyExtrasConfig(value: unknown): Record<string, unknown> | undefined {
+  if (!isObjectRecord(value)) return undefined;
+  return { ...value };
+}
+
 function normalizeModelProfile(value: unknown, index: number): ModelProfile {
   const item = isObjectRecord(value) ? value : {};
   const id = normalizeOptionalString(item.id) ?? `fallback-${index}`;
@@ -85,6 +90,7 @@ function normalizeModelProfile(value: unknown, index: number): ModelProfile {
     thinking: normalizeThinkingConfig(item.thinking),
     reasoningEffort: normalizeOptionalString(item.reasoningEffort),
     options: normalizeOptionsConfig(item.options),
+    requestBodyExtras: normalizeRequestBodyExtrasConfig(item.requestBodyExtras),
   };
 }
 
@@ -125,6 +131,7 @@ function toPersistedModelProfile(profile: ModelProfile): Record<string, unknown>
     ...(profile.thinking ? { thinking: profile.thinking } : {}),
     ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
     ...(profile.options ? { options: profile.options } : {}),
+    ...(profile.requestBodyExtras ? { requestBodyExtras: profile.requestBodyExtras } : {}),
   };
 }
 

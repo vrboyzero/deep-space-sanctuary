@@ -981,6 +981,21 @@ function handleMessageSendUsageEvent(input: {
       contextTokens: number;
       totalPromptTokens: number;
     };
+    prefixShape?: {
+      fingerprint: string;
+      cacheEligiblePrefixFingerprint: string;
+      shapeHashes: Record<string, string>;
+      counts: Record<string, number>;
+      prefixTokens: Record<string, number>;
+    };
+    prefixDrift?: {
+      status: "first_snapshot" | "stable" | "drifted";
+      changed: boolean;
+      reasons: string[];
+      previousFingerprint?: string;
+      currentFingerprint: string;
+    };
+    budgetCompetition?: Record<string, unknown>;
   };
 }): void {
   const latestUsage = {
@@ -1022,6 +1037,15 @@ function handleMessageSendUsageEvent(input: {
       : {}),
     ...(input.item.localPromptEstimate && typeof input.item.localPromptEstimate === "object"
       ? { localPromptEstimate: input.item.localPromptEstimate }
+      : {}),
+    ...(input.item.prefixShape && typeof input.item.prefixShape === "object"
+      ? { prefixShape: input.item.prefixShape }
+      : {}),
+    ...(input.item.prefixDrift && typeof input.item.prefixDrift === "object"
+      ? { prefixDrift: input.item.prefixDrift }
+      : {}),
+    ...(input.item.budgetCompetition && typeof input.item.budgetCompetition === "object"
+      ? { budgetCompetition: input.item.budgetCompetition }
       : {}),
   };
   input.state.run.setLatestUsage(latestUsage);
@@ -1073,6 +1097,15 @@ function handleMessageSendUsageEvent(input: {
         : {}),
       ...(input.item.localPromptEstimate && typeof input.item.localPromptEstimate === "object"
         ? { localPromptEstimate: input.item.localPromptEstimate }
+        : {}),
+      ...(input.item.prefixShape && typeof input.item.prefixShape === "object"
+        ? { prefixShape: input.item.prefixShape }
+        : {}),
+      ...(input.item.prefixDrift && typeof input.item.prefixDrift === "object"
+        ? { prefixDrift: input.item.prefixDrift }
+        : {}),
+      ...(input.item.budgetCompetition && typeof input.item.budgetCompetition === "object"
+        ? { budgetCompetition: input.item.budgetCompetition }
         : {}),
     },
   });

@@ -37,6 +37,8 @@ export type ModelProfile = {
     reasoningEffort?: string;
     /** OpenAI-compatible / provider-specific options（按 provider 原样透传） */
     options?: Record<string, unknown>;
+    /** OpenAI-compatible 请求体顶层透传字段（保留字段会被调用层忽略） */
+    requestBodyExtras?: Record<string, unknown>;
 };
 
 /** 容灾错误原因分类 */
@@ -1022,6 +1024,7 @@ export type ModelConfigFile = {
         thinking?: Record<string, unknown>;
         reasoningEffort?: string;
         options?: Record<string, unknown>;
+        requestBodyExtras?: Record<string, unknown>;
     }>;
 };
 
@@ -1058,6 +1061,7 @@ export async function loadModelFallbacks(filePath: string): Promise<ModelProfile
                 thinking: isThinkingConfig(f.thinking) ? { ...f.thinking, type: normalizeThinkingType(f.thinking.type)! } : undefined,
                 reasoningEffort: typeof f.reasoningEffort === "string" ? normalizeOptionalString(f.reasoningEffort) : undefined,
                 options: isOptionsConfig(f.options) ? { ...f.options } : undefined,
+                requestBodyExtras: isOptionsConfig(f.requestBodyExtras) ? { ...f.requestBodyExtras } : undefined,
             }));
     } catch {
         // 文件不存在或解析失败，静默返回空

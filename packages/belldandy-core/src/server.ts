@@ -187,6 +187,7 @@ export type GatewayServerOptions = {
     thinking?: Record<string, unknown>;
     reasoningEffort?: string;
     options?: Record<string, unknown>;
+    requestBodyExtras?: Record<string, unknown>;
   };
   /** 备用模型配置（来自 models.json） */
   modelFallbacks?: ModelProfile[];

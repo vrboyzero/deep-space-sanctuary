@@ -9,6 +9,7 @@ import {
   sanitizeAssistantToolCallHistoryContent,
   sanitizeResponsesToolDefinitions,
 } from "./tool-agent.js";
+import type { AgentPromptSnapshot } from "./prompt-snapshot.js";
 import { estimateTokens } from "./tokenizer.js";
 import { CompactionRuntimeTracker } from "./compaction-runtime.js";
 import { ConversationStore } from "./conversation.js";
@@ -400,6 +401,76 @@ describe("before_agent_start system prompt overrides", () => {
         cacheControlEligible: false,
       }),
     ]);
+  });
+
+  it("emits prefix drift and budget competition in usage and prompt snapshot meta", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{
+        message: {
+          content: "done",
+        },
+      }],
+      usage: { prompt_tokens: 12, completion_tokens: 2 },
+    }));
+
+    const snapshots: AgentPromptSnapshot[] = [];
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "deepseek-v4-pro",
+      systemPrompt: "base-system-prompt",
+      maxInputTokens: 16,
+      systemPromptMetadata: {
+        prefixShape: {
+          fingerprint: "prev-prefix",
+          shapeHashes: {
+            systemPrompt: "prev-system",
+            toolSchema: "prev-tools",
+            runtimeDelta: "prev-delta",
+            providerNativeBlocks: "prev-blocks",
+            messagePrefix: "prev-msg",
+          },
+        },
+      },
+      toolExecutor: createToolExecutor({
+        toolDefinitions: [{
+          type: "function",
+          function: {
+            name: "tool_search",
+            description: "search tools",
+            parameters: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+              },
+            },
+          },
+        }],
+      }),
+      onPromptSnapshot: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-observability",
+      text: "please continue with the task and keep all context alive",
+      history: [
+        { role: "assistant", content: "old context one" },
+        { role: "assistant", content: "old context two" },
+        { role: "assistant", content: "old context three" },
+      ],
+    }));
+
+    const usage = items.find((item) => item.type === "usage");
+    expect(usage?.prefixShape?.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    expect(usage?.prefixDrift?.status).toBe("drifted");
+    expect(usage?.budgetCompetition?.pressure?.estimatedTotalTokens).toBeGreaterThan(0);
+    expect(usage?.budgetCompetition?.sacrifice?.trimmedMessageCount).toBeGreaterThanOrEqual(0);
+    expect((snapshots[0]?.inputMeta?.prefixShape as any)?.fingerprint).toBe(usage?.prefixShape?.fingerprint);
+    expect(((snapshots[0]?.inputMeta?.budgetCompetition as any)?.pressure)?.estimatedTotalTokens).toBe(
+      usage?.budgetCompetition?.pressure?.estimatedTotalTokens,
+    );
   });
 
   it("warns when approaching the tool-loop iteration budget and injects a prompt delta", async () => {
@@ -3489,11 +3560,16 @@ describe("OpenAI-compatible reasoning config", () => {
           budget_tokens: 2048,
         },
         reasoningEffort: "max",
-        options: {
-          num_ctx: 32768,
+      options: {
+        num_ctx: 32768,
+      },
+      requestBodyExtras: {
+        chat_template_kwargs: {
+          enable_thinking: true,
         },
-      }],
-    });
+      },
+    }],
+  });
 
     const items = await collectItems(agent.run({
       conversationId: "conv-tool-thinking",
@@ -3513,6 +3589,48 @@ describe("OpenAI-compatible reasoning config", () => {
       options: {
         num_ctx: 32768,
       },
+      chat_template_kwargs: {
+        enable_thinking: true,
+      },
+    });
+  });
+
+  it("fails explicitly when a thinking model returns reasoning_content without visible content", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{
+        finish_reason: "stop",
+        message: {
+          content: null,
+          reasoning_content: "Let me think through the user's preference carefully before replying.",
+        },
+      }],
+      usage: { prompt_tokens: 12, completion_tokens: 8 },
+    }));
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://apihub.agnes-ai.com/v1",
+      apiKey: "test-key",
+      model: "agnes-2.0-flash",
+      requestBodyExtras: {
+        chat_template_kwargs: {
+          enable_thinking: true,
+        },
+      },
+      toolExecutor: createToolExecutor(),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-tool-thinking-empty-visible-content",
+      text: "真漂亮，我最爱的就是银河星空了",
+    }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: expect.stringMatching(/^模型返回空内容。finish_reason=stop，reasoning_content=present\(\d+\)。$/),
+    }));
+    expect(items).toContainEqual({
+      type: "status",
+      status: "error",
     });
   });
 
@@ -3541,6 +3659,11 @@ describe("OpenAI-compatible reasoning config", () => {
       options: {
         num_ctx: 16384,
       },
+      requestBodyExtras: {
+        chat_template_kwargs: {
+          enable_thinking: true,
+        },
+      },
       toolExecutor: createToolExecutor(),
     });
 
@@ -3558,6 +3681,9 @@ describe("OpenAI-compatible reasoning config", () => {
       reasoning_effort: "high",
       options: {
         num_ctx: 16384,
+      },
+      chat_template_kwargs: {
+        enable_thinking: true,
       },
     });
   });

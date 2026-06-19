@@ -216,6 +216,11 @@ test("resolveModelConfig preserves primary and named reasoning config", () => {
       thinking: { type: "enabled" },
       reasoningEffort: "high",
       options: { num_ctx: 32768 },
+      requestBodyExtras: {
+        chat_template_kwargs: {
+          enable_thinking: true,
+        },
+      },
     },
     [],
   );
@@ -228,6 +233,11 @@ test("resolveModelConfig preserves primary and named reasoning config", () => {
     thinking: { type: "enabled" },
     reasoningEffort: "high",
     options: { num_ctx: 32768 },
+    requestBodyExtras: {
+      chat_template_kwargs: {
+        enable_thinking: true,
+      },
+    },
     source: "primary",
   });
 
@@ -247,6 +257,11 @@ test("resolveModelConfig preserves primary and named reasoning config", () => {
         thinking: { type: "enabled" },
         reasoningEffort: "max",
         options: { num_ctx: 16384 },
+        requestBodyExtras: {
+          chat_template_kwargs: {
+            enable_thinking: true,
+          },
+        },
       },
     ],
   );
@@ -258,6 +273,11 @@ test("resolveModelConfig preserves primary and named reasoning config", () => {
     thinking: { type: "enabled" },
     reasoningEffort: "max",
     options: { num_ctx: 16384 },
+    requestBodyExtras: {
+      chat_template_kwargs: {
+        enable_thinking: true,
+      },
+    },
     source: "named",
   });
 });

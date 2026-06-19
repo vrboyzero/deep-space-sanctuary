@@ -194,6 +194,11 @@ describe("OpenAIChatAgent prompt snapshot", () => {
         options: {
           num_ctx: 32768,
         },
+        requestBodyExtras: {
+          chat_template_kwargs: {
+            enable_thinking: true,
+          },
+        },
       }],
     });
 
@@ -214,6 +219,9 @@ describe("OpenAIChatAgent prompt snapshot", () => {
       reasoning_effort: "max",
       options: {
         num_ctx: 32768,
+      },
+      chat_template_kwargs: {
+        enable_thinking: true,
       },
     });
   });
@@ -244,6 +252,11 @@ describe("OpenAIChatAgent prompt snapshot", () => {
       options: {
         num_ctx: 16384,
       },
+      requestBodyExtras: {
+        chat_template_kwargs: {
+          enable_thinking: true,
+        },
+      },
     });
 
     const items = await collectItems(agent.run({
@@ -261,7 +274,59 @@ describe("OpenAIChatAgent prompt snapshot", () => {
       options: {
         num_ctx: 16384,
       },
+      chat_template_kwargs: {
+        enable_thinking: true,
+      },
     });
+  });
+
+  it("merges requestBodyExtras without overriding reserved chat completion fields", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      requestBodies.push(body);
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+      });
+    });
+
+    const agent = new OpenAIChatAgent({
+      baseUrl: "https://apihub.agnes-ai.com/v1",
+      apiKey: "test-key",
+      model: "agnes-2.0-flash",
+      stream: false,
+      requestBodyExtras: {
+        model: "should-not-win",
+        messages: [{ role: "user", content: "should-not-win" }],
+        stream: true,
+        max_tokens: 1,
+        chat_template_kwargs: {
+          enable_thinking: true,
+        },
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-openai-request-body-extras-protected",
+      text: "hello",
+    }));
+
+    expect(items).toContainEqual({ type: "final", text: "done" });
+    expect(requestBodies[0]).toMatchObject({
+      model: "agnes-2.0-flash",
+      stream: false,
+      max_tokens: 4096,
+      chat_template_kwargs: {
+        enable_thinking: true,
+      },
+    });
+    expect(requestBodies[0]?.messages).toEqual([
+      { role: "user", content: "hello" },
+    ]);
   });
 });
 

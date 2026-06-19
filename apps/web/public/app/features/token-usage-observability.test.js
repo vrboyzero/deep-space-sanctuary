@@ -102,6 +102,30 @@ describe("token usage observability", () => {
     ]);
   });
 
+  it("formats DRIFT and BUDGET diagnostics for settings doctor cards", () => {
+    expect(buildTokenUsageDiagnosticsSegments({
+      prefixDrift: {
+        status: "drifted",
+        reasons: [
+          "tool_schema_shape_changed",
+          "message_prefix_shape_changed",
+        ],
+      },
+      budgetCompetition: {
+        pressure: {
+          estimatedTotalTokens: 43553,
+        },
+        sacrifice: {
+          historyTrimmed: true,
+          trimmedMessageCount: 4,
+        },
+      },
+    })).toEqual([
+      "DRIFT drifted / tool_schema_shape_changed,message_prefix_shape_changed",
+      "BUDGET prompt=43,553 trim=4 historyTrim=yes",
+    ]);
+  });
+
   it("exposes observability as readable segments for popover rendering", () => {
     const segments = buildTokenUsageObservabilitySegments({
       cacheSupport: "unknown",

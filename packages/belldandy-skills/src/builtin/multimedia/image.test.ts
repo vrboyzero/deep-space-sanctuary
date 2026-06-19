@@ -144,4 +144,199 @@ describe("image_generate", () => {
     expect(generateSignal).toBeInstanceOf(AbortSignal);
     expect(fetchSignal).toBe(generateSignal);
   });
+
+  it("sends Agnes text-to-image URL output requests with extra_body.response_format", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    imageGenerateMock.mockResolvedValue({
+      data: [
+        {
+          url: "https://images.example.invalid/agnes-url.png",
+        },
+      ],
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from("agnes-url-image-bytes"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await imageGenerateTool.execute({
+      prompt: "a floating sanctuary above clouds",
+      size: "1024x768",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    expect(imageGenerateMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: "agnes-image-2.1-flash",
+      prompt: "a floating sanctuary above clouds",
+      size: "1024x768",
+      extra_body: {
+        response_format: "url",
+      },
+    }), expect.anything());
+  });
+
+  it("sends Agnes text-to-image Base64 output requests with return_base64", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    imageGenerateMock.mockResolvedValue({
+      data: [
+        {
+          b64_json: Buffer.from("agnes-b64-image-bytes").toString("base64"),
+        },
+      ],
+    });
+
+    const result = await imageGenerateTool.execute({
+      prompt: "a glass citadel on a snowy cliff",
+      size: "1024x768",
+      response_transport: "base64",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    expect(imageGenerateMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: "agnes-image-2.1-flash",
+      prompt: "a glass citadel on a snowy cliff",
+      size: "1024x768",
+      return_base64: true,
+    }), expect.anything());
+  });
+
+  it("sends Agnes image-to-image URL output requests with input images inside extra_body", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    imageGenerateMock.mockResolvedValue({
+      data: [
+        {
+          url: "https://images.example.invalid/agnes-img2img-url.png",
+        },
+      ],
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from("agnes-img2img-url-bytes"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await imageGenerateTool.execute({
+      prompt: "turn this into a neon cyberpunk night while preserving composition",
+      size: "1024x768",
+      input_images: ["https://example.com/input.png"],
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    expect(imageGenerateMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: "agnes-image-2.1-flash",
+      prompt: "turn this into a neon cyberpunk night while preserving composition",
+      size: "1024x768",
+      extra_body: {
+        image: ["https://example.com/input.png"],
+        response_format: "url",
+      },
+    }), expect.anything());
+  });
+
+  it("sends Agnes image-to-image Base64 output requests with input images inside extra_body", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    imageGenerateMock.mockResolvedValue({
+      data: [
+        {
+          b64_json: Buffer.from("agnes-img2img-b64-bytes").toString("base64"),
+        },
+      ],
+    });
+
+    const result = await imageGenerateTool.execute({
+      prompt: "make the object matte black while preserving composition",
+      size: "1024x768",
+      input_images: ["data:image/png;base64,ZmFrZQ=="],
+      response_transport: "base64",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    expect(imageGenerateMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: "agnes-image-2.1-flash",
+      prompt: "make the object matte black while preserving composition",
+      size: "1024x768",
+      extra_body: {
+        image: ["data:image/png;base64,ZmFrZQ=="],
+        response_format: "b64_json",
+      },
+    }), expect.anything());
+  });
+
+  it("persists Agnes URL responses using the detected file format instead of the local default", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    process.env.BELLDANDY_IMAGE_OUTPUT_FORMAT = "png";
+    imageGenerateMock.mockResolvedValue({
+      data: [
+        {
+          url: "https://images.example.invalid/agnes-jpeg.jpg",
+        },
+      ],
+    });
+
+    const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => jpegBytes,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await imageGenerateTool.execute({
+      prompt: "a brass observatory in warm sunset light",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    expect(result.metadata).toMatchObject({
+      outputFormat: "jpeg",
+      relativePath: expect.stringMatching(/\.jpeg$/),
+      webPath: expect.stringMatching(/\.jpeg$/),
+    });
+  });
+
+  it("persists Agnes Base64 responses using the detected WebP format", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    process.env.BELLDANDY_IMAGE_OUTPUT_FORMAT = "png";
+    const webpBytes = Buffer.from([
+      0x52, 0x49, 0x46, 0x46,
+      0x24, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      0x56, 0x50, 0x38, 0x20,
+    ]);
+    imageGenerateMock.mockResolvedValue({
+      data: [
+        {
+          b64_json: webpBytes.toString("base64"),
+        },
+      ],
+    });
+
+    const result = await imageGenerateTool.execute({
+      prompt: "a translucent shrine suspended over the sea",
+      response_transport: "base64",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    expect(result.metadata).toMatchObject({
+      outputFormat: "webp",
+      relativePath: expect.stringMatching(/\.webp$/),
+      webPath: expect.stringMatching(/\.webp$/),
+    });
+  });
 });

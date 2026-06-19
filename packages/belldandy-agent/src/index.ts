@@ -1,4 +1,9 @@
 import type { JsonObject } from "@belldandy/protocol";
+import type {
+  AgentBudgetCompetition,
+  AgentPrefixDrift,
+  AgentPrefixShape,
+} from "./prompt-budget-observability.js";
 
 export { OpenAIChatAgent, type OpenAIChatAgentOptions } from "./openai.js";
 export { ToolEnabledAgent, type ToolEnabledAgentOptions } from "./tool-agent.js";
@@ -82,6 +87,11 @@ export {
   type AgentPromptSnapshotContentPart,
   type AgentPromptSnapshotMessage,
 } from "./prompt-snapshot.js";
+export {
+  type AgentBudgetCompetition,
+  type AgentPrefixDrift,
+  type AgentPrefixShape,
+} from "./prompt-budget-observability.js";
 
 export {
   ConversationStore,
@@ -318,6 +328,12 @@ export type AgentUsage = {
     contextTokens: number;
     totalPromptTokens: number;
   };
+  /** 最近一次模型调用前缀形状，用于定位缓存 miss 原因 */
+  prefixShape?: AgentPrefixShape;
+  /** 最近一次模型调用相对上一轮的前缀漂移原因 */
+  prefixDrift?: AgentPrefixDrift;
+  /** 最近一次模型调用预算竞争观测 */
+  budgetCompetition?: AgentBudgetCompetition;
 };
 
 export type AgentStreamItem =

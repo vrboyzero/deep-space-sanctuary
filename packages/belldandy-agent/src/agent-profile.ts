@@ -418,6 +418,7 @@ export function resolveModelConfig(
     thinking?: Record<string, unknown>;
     reasoningEffort?: string;
     options?: Record<string, unknown>;
+    requestBodyExtras?: Record<string, unknown>;
   },
   fallbacks: ModelProfile[],
 ): {
@@ -433,6 +434,7 @@ export function resolveModelConfig(
   thinking?: Record<string, unknown>;
   reasoningEffort?: string;
   options?: Record<string, unknown>;
+  requestBodyExtras?: Record<string, unknown>;
   source: "primary" | "named" | "manual";
 } {
   const normalizedModelRef = typeof modelRef === "string" ? modelRef.trim() : "";
@@ -467,6 +469,7 @@ export function resolveModelConfig(
       thinking: found.thinking,
       reasoningEffort: found.reasoningEffort,
       options: found.options,
+      requestBodyExtras: found.requestBodyExtras,
       source: "named",
     };
   }

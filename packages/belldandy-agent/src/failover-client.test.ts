@@ -366,6 +366,7 @@ describe("FailoverClient", () => {
         thinking: undefined,
         reasoningEffort: undefined,
         options: undefined,
+        requestBodyExtras: undefined,
       },
     ]);
   });
@@ -382,6 +383,11 @@ describe("FailoverClient", () => {
           model: "gemma4:e4b",
           options: {
             num_ctx: 32768,
+          },
+          requestBodyExtras: {
+            chat_template_kwargs: {
+              enable_thinking: true,
+            },
           },
         },
       ],
@@ -404,6 +410,11 @@ describe("FailoverClient", () => {
         reasoningEffort: undefined,
         options: {
           num_ctx: 32768,
+        },
+        requestBodyExtras: {
+          chat_template_kwargs: {
+            enable_thinking: true,
+          },
         },
       },
     ]);

@@ -45,6 +45,12 @@ import {
   buildToolResultPromptDeltas,
   collectSystemPromptDeltaTexts,
 } from "./runtime-prompt-deltas.js";
+import {
+  buildBudgetCompetition,
+  buildPrefixShape,
+  classifyPrefixDrift,
+  readPrefixComparableSnapshot,
+} from "./prompt-budget-observability.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -123,6 +129,8 @@ export type ToolEnabledAgentOptions = {
   reasoningEffort?: string;
   /** OpenAI-compatible / provider-specific options（primary profile） */
   options?: Record<string, unknown>;
+  /** OpenAI-compatible 请求体顶层透传字段（保留字段会被忽略） */
+  requestBodyExtras?: Record<string, unknown>;
   /** 启动阶段预置冷却（毫秒） */
   bootstrapProfileCooldowns?: Record<string, number>;
   /** ReAct 循环内压缩配置（可选） */
@@ -194,6 +202,11 @@ type EffectiveSystemPromptState = {
   text: string;
   truncationReason?: JsonObject;
   bypassProviderNativeSystemBlocks: boolean;
+};
+
+type PromptTrimDiagnostics = {
+  trimmedMessageCount: number;
+  trimmedHistoryTokens: number;
 };
 
 export function estimateToolDefinitionTokens(tool: {
@@ -1006,6 +1019,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         thinking: opts.thinking,
         reasoningEffort: opts.reasoningEffort,
         options: opts.options,
+        requestBodyExtras: opts.requestBodyExtras,
       },
       fallbacks: opts.fallbacks,
       logger: opts.failoverLogger,
@@ -1467,7 +1481,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           providerNativeSystemBlocks,
           inputMeta: mergePromptSnapshotInputMeta(
             this.opts.systemPromptMetadata,
-            input.meta,
+            {
+              ...(input.meta ?? {}),
+              ...(lastPrefixShape ? { prefixShape: lastPrefixShape as unknown as JsonObject } : {}),
+              ...(lastPrefixDrift ? { prefixDrift: lastPrefixDrift as unknown as JsonObject } : {}),
+              ...(lastBudgetCompetition ? { budgetCompetition: lastBudgetCompetition as unknown as JsonObject } : {}),
+            } as JsonObject,
             currentSystemPromptState.truncationReason,
           ),
           hookSystemPromptUsed,
@@ -1500,6 +1519,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
     let lastRequestShape: AgentUsage["requestShape"] | undefined;
     let lastLocalPromptEstimate: AgentUsage["localPromptEstimate"] | undefined;
+    let lastPrefixShape: AgentUsage["prefixShape"] | undefined;
+    let lastPrefixDrift: AgentUsage["prefixDrift"] | undefined;
+    let lastBudgetCompetition: AgentUsage["budgetCompetition"] | undefined;
+    let lastTrimDiagnostics: PromptTrimDiagnostics | undefined;
     let toolLoopBudgetWarningIssued = false;
     let lastToolCallFingerprint: string | undefined;
     let lastToolCallName: string | undefined;
@@ -1574,6 +1597,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
         ...(lastProviderRawUsage ? { providerRawUsage: { ...lastProviderRawUsage } } : {}),
         ...(lastRequestShape ? { requestShape: { ...lastRequestShape } } : {}),
         ...(lastLocalPromptEstimate ? { localPromptEstimate: { ...lastLocalPromptEstimate } } : {}),
+        ...(lastPrefixShape ? { prefixShape: { ...lastPrefixShape } } : {}),
+        ...(lastPrefixDrift ? { prefixDrift: { ...lastPrefixDrift } } : {}),
+        ...(lastBudgetCompetition ? { budgetCompetition: { ...lastBudgetCompetition } } : {}),
       };
     };
 
@@ -1767,7 +1793,37 @@ export class ToolEnabledAgent implements BelldandyAgent {
             modelCallIndex: nextModelCallIndex,
           },
           input.abortSignal,
-          capturePromptSnapshot,
+          (requestMessages, trimDiagnostics) => {
+            lastTrimDiagnostics = trimDiagnostics;
+            lastPrefixShape = buildPrefixShape({
+              messages: requestMessages,
+              tools,
+              runtimePromptDeltas: currentRunPromptDeltas,
+              providerNativeSystemBlocks,
+              model: currentTokenEstimateModel,
+            });
+            const previousComparableSnapshot = readPrefixComparableSnapshot(this.opts.systemPromptMetadata);
+            lastPrefixDrift = classifyPrefixDrift({
+              previous: previousComparableSnapshot,
+              current: {
+                fingerprint: lastPrefixShape.fingerprint,
+                shapeHashes: { ...lastPrefixShape.shapeHashes },
+                routeTier: undefined,
+                routeModel: currentTokenEstimateModel,
+              },
+            });
+            lastBudgetCompetition = buildBudgetCompetition({
+              messages: requestMessages,
+              tools,
+              runtimePromptDeltas: currentRunPromptDeltas,
+              providerNativeSystemBlocks,
+              prependContext,
+              maxInputTokens: maxInput,
+              model: currentTokenEstimateModel,
+              trimDiagnostics: lastTrimDiagnostics,
+            });
+            capturePromptSnapshot(requestMessages);
+          },
           currentSystemPromptState.bypassProviderNativeSystemBlocks
             ? undefined
             : providerNativeSystemBlocks,
@@ -2691,7 +2747,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     textAttachmentChars?: number,
     runtimeScope?: { conversationId?: string; agentId?: string; modelCallIndex?: number },
     abortSignal?: AbortSignal,
-    onBeforeRequest?: (messages: Message[]) => void,
+    onBeforeRequest?: (messages: Message[], trimDiagnostics?: PromptTrimDiagnostics) => void,
     providerNativeSystemBlocks?: ProviderNativeSystemBlock[],
   ): Promise<{
     ok: true;
@@ -2722,10 +2778,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
     try {
       // 输入 token 预检：超限时裁剪历史消息
       const maxInput = this.opts.maxInputTokens;
+      let trimDiagnostics: PromptTrimDiagnostics | undefined;
       if (maxInput && maxInput > 0) {
-        trimMessagesToFit(messages, tools, maxInput, currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined);
+        trimDiagnostics = trimMessagesToFit(
+          messages,
+          tools,
+          maxInput,
+          currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined,
+        );
       }
-      onBeforeRequest?.(messages);
+      onBeforeRequest?.(messages, trimDiagnostics);
 
       // 用于记录实际使用的协议（由 buildRequest 内部决定）
       let usedProtocol: ApiProtocol = "openai" as ApiProtocol;
@@ -2968,6 +3030,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const content = typeof message?.content === "string" ? message.content : "";
       const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls as OpenAIToolCall[] : undefined;
       const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
+      const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
+
+      if (!content.trim() && (!toolCalls || toolCalls.length === 0) && reasoning_content?.trim()) {
+        const reasoningLength = reasoning_content.trim().length;
+        return {
+          ok: false,
+          error: `模型返回空内容。finish_reason=${finishReason || "unknown"}，reasoning_content=present(${reasoningLength})。`,
+        };
+      }
 
       // 提取 OpenAI usage（prompt_tokens → input_tokens, completion_tokens → output_tokens）
       const rawUsage = json.usage as any;
@@ -4010,8 +4081,10 @@ function trimMessagesToFit(
   tools: { type: "function"; function: { name: string; description: string; parameters: object } }[] | undefined,
   maxTokens: number,
   tokenEstimateContext?: TokenEstimateContext,
-): void {
+): PromptTrimDiagnostics {
   const SAFETY_MARGIN = 1.2;
+  let trimmedMessageCount = 0;
+  let trimmedHistoryTokens = 0;
 
   // 估算工具定义的 token 数（只算一次）
   let toolsTokens = 0;
@@ -4030,7 +4103,12 @@ function trimMessagesToFit(
   };
 
   let total = estimateTotal();
-  if (total <= maxTokens) return;
+  if (total <= maxTokens) {
+    return {
+      trimmedMessageCount,
+      trimmedHistoryTokens,
+    };
+  }
 
   // 找到可裁剪的历史消息索引（跳过 system 和最后一条 user）
   // messages 结构：[system?, ...history(user/assistant), current_user]
@@ -4039,9 +4117,19 @@ function trimMessagesToFit(
     // 找第一条非 system 消息（但不是最后一条）
     const idx = messages.findIndex((m, i) => m.role !== "system" && i < messages.length - 1);
     if (idx === -1) break;
-    messages.splice(idx, 1);
+    const [removed] = messages.splice(idx, 1);
+    if (removed) {
+      trimmedMessageCount += 1;
+      trimmedHistoryTokens += estimateMessageContentTokens(removed.content, tokenEstimateContext) + 4;
+      trimmedHistoryTokens += estimateAssistantHistoryOverhead(removed, tokenEstimateContext);
+    }
     total = estimateTotal();
   }
+
+  return {
+    trimmedMessageCount,
+    trimmedHistoryTokens,
+  };
 }
 
 function contentToTokenEstimateString(content: unknown): string {

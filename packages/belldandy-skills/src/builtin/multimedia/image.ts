@@ -6,12 +6,18 @@ import path from "node:path";
 import { createLinkedAbortController } from "../../abort-utils.js";
 
 type ImageOutputFormat = "png" | "jpeg" | "webp";
+type ImageResponseTransport = "base64" | "url";
+type GeneratedImageAsset = {
+  buffer: Buffer;
+  detectedFormat: ImageOutputFormat | null;
+};
 
 const DEFAULT_MODEL = "gpt-image-2";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_TIMEOUT_MS = 60000;
 const MAX_SDK_TIMEOUT_MS = 2_147_483_647;
 const REVEAL_PREFIX = "#generated-image-reveal:";
+const AGNES_IMAGE_MODEL = "agnes-image-2.1-flash";
 
 function readImageConfig() {
   return {
@@ -38,6 +44,24 @@ function parseTimeoutMs(value: string | undefined): number {
   const parsed = Number.parseInt(value ?? "", 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TIMEOUT_MS;
   return parsed;
+}
+
+function normalizeResponseTransport(value: unknown): ImageResponseTransport {
+  return typeof value === "string" && value.trim().toLowerCase() === "url" ? "url" : "base64";
+}
+
+function normalizeInputImages(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isAgnesImageModel(model: string): boolean {
+  return model.trim().toLowerCase() === AGNES_IMAGE_MODEL;
 }
 
 function buildTimestamp(): string {
@@ -86,10 +110,43 @@ function getGeneratedImagesDir(context: { stateDir?: string; workspaceRoot: stri
   return path.join(baseDir, "generated", "images");
 }
 
-async function readGeneratedImageBuffer(item: Record<string, unknown>, abortSignal?: AbortSignal): Promise<Buffer> {
+function detectImageOutputFormat(buffer: Buffer): ImageOutputFormat | null {
+  if (buffer.length >= 8
+    && buffer[0] === 0x89
+    && buffer[1] === 0x50
+    && buffer[2] === 0x4e
+    && buffer[3] === 0x47
+    && buffer[4] === 0x0d
+    && buffer[5] === 0x0a
+    && buffer[6] === 0x1a
+    && buffer[7] === 0x0a) {
+    return "png";
+  }
+
+  if (buffer.length >= 3
+    && buffer[0] === 0xff
+    && buffer[1] === 0xd8
+    && buffer[2] === 0xff) {
+    return "jpeg";
+  }
+
+  if (buffer.length >= 12
+    && buffer.subarray(0, 4).toString("ascii") === "RIFF"
+    && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
+    return "webp";
+  }
+
+  return null;
+}
+
+async function readGeneratedImageAsset(item: Record<string, unknown>, abortSignal?: AbortSignal): Promise<GeneratedImageAsset> {
   const b64Json = typeof item.b64_json === "string" ? item.b64_json : "";
   if (b64Json) {
-    return Buffer.from(b64Json, "base64");
+    const buffer = Buffer.from(b64Json, "base64");
+    return {
+      buffer,
+      detectedFormat: detectImageOutputFormat(buffer),
+    };
   }
 
   const imageUrl = typeof item.url === "string" ? item.url : "";
@@ -98,7 +155,11 @@ async function readGeneratedImageBuffer(item: Record<string, unknown>, abortSign
     if (!response.ok) {
       throw new Error(`Failed to download generated image (${response.status}).`);
     }
-    return Buffer.from(await response.arrayBuffer());
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return {
+      buffer,
+      detectedFormat: detectImageOutputFormat(buffer),
+    };
   }
 
   throw new Error("Image generation response did not include b64_json or url.");
@@ -117,8 +178,8 @@ export const imageGenerateTool: Tool = {
         },
         size: {
           type: "string",
-          enum: ["1024x1024", "1536x1024", "1024x1536", "auto"],
-          description: "Resolution of the generated image (default: 1024x1024).",
+          enum: ["1024x1024", "1536x1024", "1024x1536", "1024x768", "768x1024", "auto"],
+          description: "Resolution of the generated image (default: 1024x1024). Agnes-compatible providers may also accept additional custom sizes.",
         },
         quality: {
           type: "string",
@@ -129,6 +190,16 @@ export const imageGenerateTool: Tool = {
           type: "string",
           enum: ["png", "jpeg", "webp"],
           description: "Output format written to generated/images (default: png).",
+        },
+        response_transport: {
+          type: "string",
+          enum: ["base64", "url"],
+          description: "How the provider should return the generated image before we persist it locally (default: base64).",
+        },
+        input_images: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional input images for image-to-image workflows. Supports public URLs or Data URI Base64 strings.",
         },
       },
       required: ["prompt"],
@@ -176,6 +247,9 @@ export const imageGenerateTool: Tool = {
 
     try {
       const outputFormat = normalizeOutputFormat(typeof args.output_format === "string" ? args.output_format : config.outputFormat);
+      const responseTransport = normalizeResponseTransport(args.response_transport);
+      const inputImages = normalizeInputImages(args.input_images);
+      const isAgnes = isAgnesImageModel(config.model);
       const linkedAbort = createLinkedAbortController({
         signal: context.abortSignal,
         timeoutMs: config.timeoutMs > 0 ? config.timeoutMs : undefined,
@@ -188,26 +262,49 @@ export const imageGenerateTool: Tool = {
       });
 
       try {
-        const response = await (openai.images.generate as any)({
+        const payload: Record<string, unknown> = {
           model: config.model,
           prompt: String(args.prompt ?? ""),
           size: typeof args.size === "string" ? args.size : "1024x1024",
-          quality: typeof args.quality === "string" ? args.quality : "auto",
-          output_format: outputFormat,
-        }, { signal: linkedAbort.controller.signal });
+        };
+
+        if (isAgnes) {
+          // Agnes Image 2.1 Flash 的 OpenAI 兼容字段与默认 OpenAI 生图字段不同。
+          if (inputImages.length > 0) {
+            payload.extra_body = {
+              image: inputImages,
+              response_format: responseTransport === "url" ? "url" : "b64_json",
+            };
+          } else if (responseTransport === "url") {
+            payload.extra_body = {
+              response_format: "url",
+            };
+          } else {
+            payload.return_base64 = true;
+          }
+        } else {
+          payload.quality = typeof args.quality === "string" ? args.quality : "auto";
+          payload.output_format = outputFormat;
+        }
+
+        const response = await (openai.images.generate as any)(
+          payload,
+          { signal: linkedAbort.controller.signal },
+        );
 
         const firstItem = Array.isArray(response?.data) ? response.data[0] : undefined;
         if (!firstItem || typeof firstItem !== "object") {
           throw new Error("Image generation response was empty.");
         }
 
-        const buffer = await readGeneratedImageBuffer(firstItem as Record<string, unknown>, linkedAbort.controller.signal);
+        const asset = await readGeneratedImageAsset(firstItem as Record<string, unknown>, linkedAbort.controller.signal);
+        const persistedOutputFormat = isAgnes ? asset.detectedFormat ?? outputFormat : outputFormat;
         const generatedImagesDir = getGeneratedImagesDir(context);
         await fs.mkdir(generatedImagesDir, { recursive: true });
 
-        const fileName = `image-${buildTimestamp()}-${crypto.randomUUID().slice(0, 8)}.${outputFormat}`;
+        const fileName = `image-${buildTimestamp()}-${crypto.randomUUID().slice(0, 8)}.${persistedOutputFormat}`;
         const filePath = path.join(generatedImagesDir, fileName);
-        await fs.writeFile(filePath, buffer);
+        await fs.writeFile(filePath, asset.buffer);
 
         const relativePath = `generated/images/${fileName}`;
         const webPath = `/generated/images/${fileName}`;
@@ -226,7 +323,7 @@ export const imageGenerateTool: Tool = {
             model: config.model,
             webPath,
             relativePath,
-            outputFormat,
+            outputFormat: persistedOutputFormat,
           },
         };
       } finally {

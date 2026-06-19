@@ -78,6 +78,9 @@ export type QueryRuntimeAgentUsage = {
     contextTokens: number;
     totalPromptTokens: number;
   };
+  prefixShape?: AgentUsage["prefixShape"];
+  prefixDrift?: AgentUsage["prefixDrift"];
+  budgetCompetition?: AgentUsage["budgetCompetition"];
 };
 
 export type QueryRuntimeAgentRunSummary = {
@@ -217,6 +220,15 @@ export async function runAgentWithLifecycle(
             : {}),
           ...(item.localPromptEstimate && typeof item.localPromptEstimate === "object"
             ? { localPromptEstimate: item.localPromptEstimate }
+            : {}),
+          ...(item.prefixShape && typeof item.prefixShape === "object"
+            ? { prefixShape: item.prefixShape }
+            : {}),
+          ...(item.prefixDrift && typeof item.prefixDrift === "object"
+            ? { prefixDrift: item.prefixDrift }
+            : {}),
+          ...(item.budgetCompetition && typeof item.budgetCompetition === "object"
+            ? { budgetCompetition: item.budgetCompetition }
             : {}),
         };
         input.onUsage?.(item);

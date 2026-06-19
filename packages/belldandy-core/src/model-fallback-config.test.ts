@@ -28,6 +28,11 @@ describe("model fallback config", () => {
           options: {
             num_ctx: 32768,
           },
+          requestBodyExtras: {
+            chat_template_kwargs: {
+              enable_thinking: true,
+            },
+          },
         },
       ],
     }));
@@ -53,6 +58,11 @@ describe("model fallback config", () => {
         options: {
           num_ctx: 32768,
         },
+        requestBodyExtras: {
+          chat_template_kwargs: {
+            enable_thinking: true,
+          },
+        },
       },
     ]);
 
@@ -63,6 +73,8 @@ describe("model fallback config", () => {
     expect(redacted).toContain('"reasoningEffort": "max"');
     expect(redacted).toContain('"options"');
     expect(redacted).toContain('"num_ctx": 32768');
+    expect(redacted).toContain('"requestBodyExtras"');
+    expect(redacted).toContain('"chat_template_kwargs"');
     expect(redacted).not.toContain("sk-or-test");
   });
 
