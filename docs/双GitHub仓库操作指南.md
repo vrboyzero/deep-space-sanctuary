@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "修改了项目中的一些小BUG，在star-sanctuary\docs\计划中，增加了下一期计划内容"
+git commit -m "合并HR的优化方案为 SS借鉴RH项目优化项实施计划，准备开始实施"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

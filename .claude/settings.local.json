@@ -104,6 +104,7 @@
       "Bash(git checkout:*)",
       "mcp__filesystem__search_files",
       "mcp__filesystem__write_file"
-    ]
+    ],
+     "defaultMode": "acceptEdits"
   }
 }
