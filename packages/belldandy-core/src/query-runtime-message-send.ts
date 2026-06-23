@@ -634,6 +634,16 @@ type MessageSendLatestUsage = {
     contextTokens: number;
     totalPromptTokens: number;
   };
+  prefixShape?: Record<string, unknown>;
+  prefixDrift?: Record<string, unknown>;
+  budgetCompetition?: Record<string, unknown>;
+  compression?: {
+    appliedCount: number;
+    skippedCount: number;
+    failedCount: number;
+    totalSavedTokensEstimate: number;
+    bySource?: Record<string, { applied: number; savedTokens: number }>;
+  };
 };
 
 type MessageSendRunResult = Awaited<ReturnType<typeof runAgentWithLifecycle>>;
@@ -996,6 +1006,13 @@ function handleMessageSendUsageEvent(input: {
       currentFingerprint: string;
     };
     budgetCompetition?: Record<string, unknown>;
+    compression?: {
+      appliedCount: number;
+      skippedCount: number;
+      failedCount: number;
+      totalSavedTokensEstimate: number;
+      bySource?: Record<string, { applied: number; savedTokens: number }>;
+    };
   };
 }): void {
   const latestUsage = {
@@ -1046,6 +1063,9 @@ function handleMessageSendUsageEvent(input: {
       : {}),
     ...(input.item.budgetCompetition && typeof input.item.budgetCompetition === "object"
       ? { budgetCompetition: input.item.budgetCompetition }
+      : {}),
+    ...(input.item.compression && typeof input.item.compression === "object"
+      ? { compression: input.item.compression }
       : {}),
   };
   input.state.run.setLatestUsage(latestUsage);
@@ -1106,6 +1126,9 @@ function handleMessageSendUsageEvent(input: {
         : {}),
       ...(input.item.budgetCompetition && typeof input.item.budgetCompetition === "object"
         ? { budgetCompetition: input.item.budgetCompetition }
+        : {}),
+      ...(input.item.compression && typeof input.item.compression === "object"
+        ? { compression: input.item.compression }
         : {}),
     },
   });

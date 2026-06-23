@@ -103,8 +103,15 @@
       "Bash(corepack pnpm bdd start:*)",
       "Bash(git checkout:*)",
       "mcp__filesystem__search_files",
-      "mcp__filesystem__write_file"
+      "mcp__filesystem__write_file",
+      "Bash(set:*)",
+      "Bash(.:*)",
+      "Bash(export:*)",
+      "Bash(corepack pnpm:*)",
+      "mcp__filesystem__edit_file",
+      "mcp__chrome-devtools__wait_for",
+      "Bash(kill:*)"
     ],
-     "defaultMode": "acceptEdits"
+    "defaultMode": "acceptEdits"
   }
 }

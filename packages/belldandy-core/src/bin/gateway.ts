@@ -2286,6 +2286,11 @@ agentRegistry = agentProvider === "openai"
         toolCallRepairLevel,
         compaction: agentCompactionOpts,
         ...(agentMicrocompactOpts ? { microcompact: agentMicrocompactOpts } : {}),
+        // Phase 2/3：统一压缩层与预算保护策略
+        compression: compressionOpts,
+        budgetProtect: budgetProtectOpts,
+        // Phase 4：stable prefix / transient tail 拆层
+        stablePrefixSplit: stablePrefixSplitOpts,
         summarizer: compactionSummarizer,
         summarizerModelName: compactionRoute?.model || compactionModel || openaiModel,
         compactionRuntimeTracker,
@@ -2737,6 +2742,38 @@ const primaryMicrocompactOpts = preservePrimaryPrefixStability
       preservePrefixStability: true,
     }
   : undefined;
+
+// Phase 2/3：统一压缩层与预算保护策略配置
+const compressionReferenceStoreEnabled = readEnv("BELLDANDY_COMPRESSION_REFERENCE_STORE") !== "false";
+const compressionOpts = {
+  enabled: true,
+  enableReferenceStore: compressionReferenceStoreEnabled,
+  policy: {
+    allowReferenceStore: compressionReferenceStoreEnabled,
+    sourceOverrides: {
+      tool_result: { enabled: true, allowLossy: true, allowReferenceStore: compressionReferenceStoreEnabled },
+      attachment_text: { enabled: true, allowLossy: true, allowReferenceStore: false },
+    },
+  },
+};
+const budgetProtectMode = (readEnv("BELLDANDY_BUDGET_PROTECT_MODE") || "protect_memory_capability") as "protect_memory_capability" | "history_first";
+const budgetProtectKeepRecentRounds = parseInt(readEnv("BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS") || "3", 10);
+const budgetProtectOpts = {
+  mode: budgetProtectMode,
+  keepRecentRounds: Number.isFinite(budgetProtectKeepRecentRounds) && budgetProtectKeepRecentRounds > 0 ? budgetProtectKeepRecentRounds : 3,
+  compressBeforeDelete: true,
+  compressThresholdChars: 500,
+};
+// Phase 4：stable prefix / transient tail 拆层配置
+const stablePrefixSplitEnabled = readEnv("BELLDANDY_STABLE_PREFIX_SPLIT") === "true";
+const stablePrefixSplitOpts = { enabled: stablePrefixSplitEnabled };
+logger.info("compression", "Unified compression layer config", {
+  enabled: compressionOpts.enabled,
+  referenceStore: compressionReferenceStoreEnabled,
+  budgetProtectMode: budgetProtectOpts.mode,
+  budgetProtectKeepRecentRounds: budgetProtectOpts.keepRecentRounds,
+  stablePrefixSplit: stablePrefixSplitEnabled,
+});
 const compactionRuntimeTracker = new CompactionRuntimeTracker(compactionOpts);
 if (preservePrimaryPrefixStability) {
   logger.info("compaction", "Enabled prefix-stability microcompact guard for cache-capable primary provider", {

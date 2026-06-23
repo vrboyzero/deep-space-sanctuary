@@ -81,6 +81,7 @@ export type QueryRuntimeAgentUsage = {
   prefixShape?: AgentUsage["prefixShape"];
   prefixDrift?: AgentUsage["prefixDrift"];
   budgetCompetition?: AgentUsage["budgetCompetition"];
+  compression?: AgentUsage["compression"];
 };
 
 export type QueryRuntimeAgentRunSummary = {
@@ -229,6 +230,9 @@ export async function runAgentWithLifecycle(
             : {}),
           ...(item.budgetCompetition && typeof item.budgetCompetition === "object"
             ? { budgetCompetition: item.budgetCompetition }
+            : {}),
+          ...(item.compression && typeof item.compression === "object"
+            ? { compression: item.compression }
             : {}),
         };
         input.onUsage?.(item);

@@ -189,6 +189,18 @@ export function buildTokenUsageObservabilitySegments(
       `COST ${formatUsd(payload.sessionTotalCostUsd)} / ${budgetUsd ? formatUsd(budgetUsd) : "--"} (${formatPercent(ratio)})`,
     ));
   }
+  if (payload.compression && typeof payload.compression === "object") {
+    const comp = payload.compression;
+    const applied = typeof comp.appliedCount === "number" ? comp.appliedCount : 0;
+    const saved = typeof comp.totalSavedTokensEstimate === "number" ? comp.totalSavedTokensEstimate : 0;
+    if (applied > 0 && saved > 0) {
+      segments.push(t(
+        "header.tokenCompression",
+        { applied: String(applied), saved: String(saved) },
+        `COMPRESSION applied=${applied} saved=${saved}tok`,
+      ));
+    }
+  }
   return segments;
 }
 
@@ -245,6 +257,67 @@ export function buildTokenUsageDiagnosticsSegments(payload, t = (_key, _params, 
         "header.tokenBudgetCompetition",
         { value: details },
         `BUDGET ${details}`,
+      ));
+    }
+  }
+  if (payload.compression && typeof payload.compression === "object") {
+    const comp = payload.compression;
+    const applied = typeof comp.appliedCount === "number" ? comp.appliedCount : 0;
+    const saved = typeof comp.totalSavedTokensEstimate === "number" ? comp.totalSavedTokensEstimate : 0;
+    if (applied > 0 && saved > 0) {
+      segments.push(t(
+        "header.tokenCompression",
+        { applied: String(applied), saved: String(saved) },
+        `COMPRESSION applied=${applied} saved=${saved}tok`,
+      ));
+    }
+    // Phase 2：引用存储与冷恢复裁剪诊断
+    if (typeof comp.referenceStoredCount === "number" && comp.referenceStoredCount > 0) {
+      segments.push(t(
+        "header.tokenCompressionRefs",
+        { refs: String(comp.referenceStoredCount) },
+        `REFS stored=${comp.referenceStoredCount}`,
+      ));
+    }
+    if (comp.coldResumePrune && typeof comp.coldResumePrune === "object") {
+      const prune = comp.coldResumePrune;
+      const invalidated = typeof prune.invalidatedMarkers === "number" ? prune.invalidatedMarkers : 0;
+      if (invalidated > 0) {
+        segments.push(t(
+          "header.tokenCompressionPrune",
+          { invalidated: String(invalidated) },
+          `PRUNE invalidated=${invalidated}`,
+        ));
+      }
+    }
+  }
+  // Phase 3：budget protect 诊断
+  if (payload.budgetProtect && typeof payload.budgetProtect === "object") {
+    const bp = payload.budgetProtect;
+    const compressed = typeof bp.compressedHistoryCount === "number" ? bp.compressedHistoryCount : 0;
+    const deleted = typeof bp.deletedHistoryCount === "number" ? bp.deletedHistoryCount : 0;
+    if (compressed > 0 || deleted > 0) {
+      const parts = [];
+      if (compressed > 0) parts.push(`compressed=${compressed}`);
+      if (deleted > 0) parts.push(`deleted=${deleted}`);
+      segments.push(t(
+        "header.tokenBudgetProtect",
+        { value: parts.join(" ") },
+        `BUDGET_PROTECT ${parts.join(" ")}`,
+      ));
+    }
+  }
+  // Phase 4：stable prefix / transient tail 拆层诊断
+  if (payload.stablePrefixSplit && typeof payload.stablePrefixSplit === "object") {
+    const sps = payload.stablePrefixSplit;
+    const split = typeof sps.splitCount === "number" ? sps.splitCount : 0;
+    const tokens = typeof sps.splitTokensEstimate === "number" ? sps.splitTokensEstimate : 0;
+    const rounds = typeof sps.roundsWithSplit === "number" ? sps.roundsWithSplit : 0;
+    if (split > 0) {
+      segments.push(t(
+        "header.tokenStablePrefixSplit",
+        { split: String(split), tokens: String(tokens), rounds: String(rounds) },
+        `PREFIX_SPLIT split=${split} saved=${tokens}tok rounds=${rounds}`,
       ));
     }
   }

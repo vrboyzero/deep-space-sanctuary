@@ -23,7 +23,9 @@ export type AgentPromptDeltaType =
   | "role-execution-policy"
   | "tool-failure-recovery"
   | "tool-search-follow-up"
-  | "tool-post-verification";
+  | "tool-post-verification"
+  | "delegation-result-review"
+  | "launch-spec";
 
 export type AgentPromptDeltaRole = "system" | "user-prelude" | "attachment";
 

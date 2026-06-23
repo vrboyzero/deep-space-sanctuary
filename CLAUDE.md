@@ -251,6 +251,43 @@ When writing back development progress, stage status, or current-round completio
 - why it comes first,
 - what key closure is still missing.
 
+### Implementation Conclusion Format
+
+When a phase, step, or feature implementation is completed and written back to project docs, use the following structured format for the implementation conclusion:
+
+```markdown
+#### [Phase/Step 名称] 实现结论：[feature 名称]（YYYY-MM-DD）
+
+##### 已完成内容
+
+1. **[文件名] 扩展/修改/新建**：
+   - [具体改动点 1]
+   - [具体改动点 2]
+   - [具体改动点 3]
+
+2. **[另一文件名] 接入/修改**：
+   - [具体改动点 1]
+   - [具体改动点 2]
+
+3. **效果**：
+   - [效果描述 1]
+   - [效果描述 2]
+   - [效果描述 3]
+
+##### 验证结果
+
+- TypeScript 编译无错误
+- [N] 个测试全部通过（含 [M] 个新增 [feature] 测试）
+- [关键功能验证结论]
+```
+
+Rules:
+- Each implementation conclusion must have a heading with phase/step name, feature name, and date.
+- "已完成内容" must list concrete file-level changes with bullet points.
+- "效果" must describe observable outcomes, not implementation details.
+- "验证结果" must include TypeScript compilation status, test count, and key functional verification.
+- Do not mix progress updates into other sections; keep them in this structured format.
+
 ## Execution Rhythm
 
 - The current development environment has strong context compression and handoff continuity. Do not worry about context window exhaustion during normal development, and do not prematurely compress or stop work out of context-limit anxiety alone.

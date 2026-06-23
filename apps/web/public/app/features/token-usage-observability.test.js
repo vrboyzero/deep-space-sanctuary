@@ -126,6 +126,34 @@ describe("token usage observability", () => {
     ]);
   });
 
+  it("formats COMPRESSION diagnostics when compression is applied", () => {
+    const segments = buildTokenUsageObservabilitySegments({
+      compression: {
+        appliedCount: 3,
+        skippedCount: 1,
+        failedCount: 0,
+        totalSavedTokensEstimate: 1250,
+      },
+    });
+    const compressionSegment = segments.find((s) => s.includes("COMPRESSION"));
+    expect(compressionSegment).toBeDefined();
+    expect(compressionSegment).toContain("applied=3");
+    expect(compressionSegment).toContain("saved=1250tok");
+  });
+
+  it("does not show COMPRESSION segment when no compression applied", () => {
+    const segments = buildTokenUsageObservabilitySegments({
+      compression: {
+        appliedCount: 0,
+        skippedCount: 5,
+        failedCount: 0,
+        totalSavedTokensEstimate: 0,
+      },
+    });
+    const compressionSegment = segments.find((s) => s.includes("COMPRESSION"));
+    expect(compressionSegment).toBeUndefined();
+  });
+
   it("exposes observability as readable segments for popover rendering", () => {
     const segments = buildTokenUsageObservabilitySegments({
       cacheSupport: "unknown",

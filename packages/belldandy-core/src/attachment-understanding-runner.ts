@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AgentPromptDelta } from "@belldandy/agent";
+import { createCompressionPipeline, type ContextCompressionPipeline, type CompressionResult } from "@belldandy/agent";
 import type { MessageSendParams } from "@belldandy/protocol";
 import {
   readImageUnderstandConfig,
@@ -61,7 +62,18 @@ export type PreparedAttachmentPrompt = {
   audioTranscriptCacheHits: number;
   attachmentPromptLimits: AttachmentPromptLimits;
   promptDeltas: AgentPromptDelta[];
+  /** Phase 1：附件文本压缩结果（用于 observability 透传） */
+  attachmentCompressionResults?: CompressionResult[];
 };
+
+/** 模块级共享压缩管线实例（无状态，可安全共享） */
+let sharedAttachmentCompressionPipeline: ContextCompressionPipeline | undefined;
+function getAttachmentCompressionPipeline(): ContextCompressionPipeline {
+  if (!sharedAttachmentCompressionPipeline) {
+    sharedAttachmentCompressionPipeline = createCompressionPipeline();
+  }
+  return sharedAttachmentCompressionPipeline;
+}
 
 export async function preparePromptWithAttachments(input: {
   conversationId: string;
@@ -82,6 +94,7 @@ export async function preparePromptWithAttachments(input: {
   let audioTranscriptChars = 0;
   let audioTranscriptCacheHits = 0;
   const promptDeltas: AgentPromptDelta[] = [];
+  const attachmentCompressionResults: CompressionResult[] = [];
 
   if (!input.attachments || input.attachments.length === 0) {
     return {
@@ -223,6 +236,40 @@ export async function preparePromptWithAttachments(input: {
     promptText += "\n" + attachmentPrompts.join("\n");
   }
 
+  // Phase 1：对长文本附件做统一压缩
+  // 只压缩 deltaType=attachment 且文本较长的 promptDelta
+  const ATTACHMENT_COMPRESS_THRESHOLD = 1_200;
+  const pipeline = getAttachmentCompressionPipeline();
+  for (let i = 0; i < promptDeltas.length; i++) {
+    const delta = promptDeltas[i];
+    if (delta.deltaType !== "attachment" || delta.text.length < ATTACHMENT_COMPRESS_THRESHOLD) continue;
+    try {
+      const result = await pipeline.compress({
+        sourceKind: "attachment_text",
+        sourceName: typeof delta.metadata?.name === "string" ? delta.metadata.name : "attachment",
+        content: delta.text,
+        conversationId: input.conversationId,
+      });
+      attachmentCompressionResults.push(result);
+      if (result.applied && result.compressedContent.length < delta.text.length) {
+        // 替换 delta 文本为压缩后内容
+        promptDeltas[i] = {
+          ...delta,
+          text: result.compressedContent,
+          metadata: {
+            ...(delta.metadata ?? {}),
+            compressed: true,
+            compressionStrategy: result.strategy,
+            originalChars: result.originalChars,
+            compressedChars: result.compressedChars,
+          },
+        };
+      }
+    } catch {
+      // fail-open：压缩失败保留原文
+    }
+  }
+
   return {
     promptText,
     contentParts,
@@ -232,6 +279,7 @@ export async function preparePromptWithAttachments(input: {
     audioTranscriptCacheHits,
     attachmentPromptLimits,
     promptDeltas,
+    attachmentCompressionResults,
   };
 }
 

@@ -1,4 +1,5 @@
 import { resolvePinnedToolCompactionLimit } from "./pinning.js";
+import { isAnyCompactedContent } from "./context-compression/marker.js";
 
 export type MicrocompactOptions = {
   enabled?: boolean;
@@ -34,7 +35,13 @@ const DEFAULT_COMPACTABLE_TOOL_NAMES = new Set([
 ]);
 
 function isAlreadyMicrocompacted(content: string): boolean {
-  return content.startsWith("[old tool output cleared]") || content.startsWith("[old tool error summary preserved]");
+  // 优先识别 microcompact 自身标记
+  if (content.startsWith("[old tool output cleared]") || content.startsWith("[old tool error summary preserved]")) {
+    return true;
+  }
+  // 同时识别统一压缩层的标记（Phase 1 [compressed tool output] + Phase 2 [compressed-ref ...]），
+  // 避免 microcompact 二次压缩已压缩内容，覆盖 reference marker
+  return isAnyCompactedContent(content);
 }
 
 function summarizeContent(content: string, maxDigestChars: number): string {

@@ -26,6 +26,23 @@ import { estimateTokens, estimateMessagesTokens, needsInLoopCompaction, compactI
 import type { CompactionRuntimeTracker } from "./compaction-runtime.js";
 import { microcompactMessages, type MicrocompactOptions } from "./microcompact.js";
 import {
+  createCompressionPipeline,
+  createCompressionPipelineWithStore,
+  coldResumePruneMessages,
+  pruneBeforeSummarize,
+  hasCompressionMarker,
+  hasLegacyCompressionMarker,
+  isAnyCompactedContent,
+  parseCompressionMarker,
+  wrapWithMarker,
+  rewriteMarkerRetrievable,
+  type CompressionBatchResult,
+  type CompressionPolicy,
+  type CompressionReferenceStore,
+  type CompressionResult,
+  type ContextCompressionPipeline,
+} from "./context-compression/index.js";
+import {
   buildProviderNativeSystemBlocks,
   type ProviderNativeSystemBlock,
   type SystemPromptSection,
@@ -46,6 +63,26 @@ import {
   collectSystemPromptDeltaTexts,
 } from "./runtime-prompt-deltas.js";
 import {
+  resolveBudgetProtectOptions,
+  computeProtectedIndices,
+  isCompressibleHistoryMessage,
+  isDeletableHistoryMessage,
+  createEmptyBudgetProtectDiagnostics,
+  type BudgetProtectOptions,
+  type BudgetProtectMode,
+} from "./budget-protect.js";
+import {
+  splitDeltasByStability,
+  buildTransientTailText,
+  injectTransientTail,
+  buildIndependentBlockText,
+  injectIndependentBlock,
+  isTransientSafeDelta,
+  isIndependentBlockDelta,
+  type StablePrefixSplitOptions,
+  type StablePrefixSplitResult,
+} from "./stable-prefix-split.js";
+import {
   buildBudgetCompetition,
   buildPrefixShape,
   classifyPrefixDrift,
@@ -65,6 +102,42 @@ const BASE64_FIELD_KEY_RE = /^(base64|data)$/i;
 const DEFAULT_REASONING_TRANSCRIPT_CHAR_LIMIT = 4_000;
 const MIN_REASONING_DEDUPE_CHARS = 96;
 const STOP_REQUESTED_ERROR = "__BELLDANDY_STOP_REQUESTED__";
+
+/**
+ * reasoning_content 回传策略
+ *
+ * Phase 0 live probe 证据（2026-06-23, deepseek-v4-pro）：
+ * - tool_calls turn 不带 reasoning_content 时 status=200，不报 400
+ * - reasoning_content 回传抬升 521 prompt tokens（+60%）
+ *
+ * 策略：
+ * - required_on_tool_call_turn: 仅在 provider 必需时保留 tool_calls turn 的 reasoning_content
+ * - allowed_but_strip_elsewhere: 非 tool_calls turn 默认不回传
+ * - must_preserve_full_reasoning: 全量保留（向后兼容）
+ *
+ * 默认行为可通过 env BELLDANDY_REASONING_CONTENT_POLICY 覆盖。
+ */
+type ReasoningContentPolicy = "required_on_tool_call_turn" | "allowed_but_strip_elsewhere" | "must_preserve_full_reasoning";
+
+function resolveReasoningContentPolicy(): ReasoningContentPolicy {
+  const raw = String(process.env.BELLDANDY_REASONING_CONTENT_POLICY ?? "").trim().toLowerCase();
+  if (raw === "must_preserve_full_reasoning") return "must_preserve_full_reasoning";
+  if (raw === "allowed_but_strip_elsewhere") return "allowed_but_strip_elsewhere";
+  // 默认：最小回传
+  return "required_on_tool_call_turn";
+}
+
+/** 判断模型是否属于已知需要 reasoning_content 占位的思考模型 */
+function isKnownReasoningModel(modelId?: string): boolean {
+  if (!modelId) return false;
+  const lower = modelId.toLowerCase();
+  // kimi 仍需要占位（未做 live probe 验证，保守保留）
+  if (lower.includes("kimi")) return true;
+  // deepseek-v4-pro 已通过 live probe 验证不需要占位
+  // 但 deepseek-reasoner 等旧模型可能仍需要，保守保留
+  if (lower.includes("deepseek-reasoner")) return true;
+  return false;
+}
 const toolDefinitionTokenEstimateCache = new WeakMap<object, {
   name: string;
   description: string;
@@ -137,6 +210,19 @@ export type ToolEnabledAgentOptions = {
   compaction?: CompactionOptions;
   /** 工具结果轻压缩配置（可选） */
   microcompact?: MicrocompactOptions;
+  /** Phase 3：预算保护策略配置（可选，默认 protect_memory_capability） */
+  budgetProtect?: BudgetProtectOptions;
+  /** Phase 4：stable prefix / transient tail 拆层配置（可选，默认 false） */
+  stablePrefixSplit?: StablePrefixSplitOptions;
+  /** 统一上下文压缩层配置（可选，Phase 1 新增；Phase 2 扩展 referenceStore） */
+  compression?: {
+    enabled?: boolean;
+    policy?: Partial<CompressionPolicy>;
+    /** Phase 2：是否启用引用存储（原文回取）。默认 false，与 Phase 1 行为一致 */
+    enableReferenceStore?: boolean;
+  };
+  /** 统一上下文压缩层实例（可选，用于外部注入或测试） */
+  compressionPipeline?: ContextCompressionPipeline;
   /** 模型摘要函数（用于循环内压缩） */
   summarizer?: SummarizerFn;
   /** 摘要模型名称（用于观测与 hook 事件） */
@@ -207,6 +293,16 @@ type EffectiveSystemPromptState = {
 type PromptTrimDiagnostics = {
   trimmedMessageCount: number;
   trimmedHistoryTokens: number;
+  /** Phase 3：budget protect 诊断 */
+  budgetProtect?: {
+    mode: string;
+    compressedHistoryCount: number;
+    compressedHistorySavedTokens: number;
+    deletedHistoryCount: number;
+    deletedHistoryTokens: number;
+    protectedRounds: number;
+    protectionActivated: boolean;
+  };
 };
 
 export function estimateToolDefinitionTokens(tool: {
@@ -993,6 +1089,24 @@ export class ToolEnabledAgent implements BelldandyAgent {
   private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
     Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
   private readonly failoverClient: FailoverClient;
+  /** 统一上下文压缩管线（Phase 1 + Phase 2） */
+  private readonly compressionPipeline: ContextCompressionPipeline | undefined;
+  /** Phase 2：引用存储（若启用） */
+  private readonly compressionReferenceStore: CompressionReferenceStore | undefined;
+  /** 最近一次压缩批结果（用于 observability 透传） */
+  private lastCompressionBatch: CompressionBatchResult | undefined;
+  /** Phase 2：最近一次冷恢复裁剪诊断 */
+  private lastColdResumePrune: { scannedMarkers: number; invalidatedMarkers: number; retrievableMarkers: number } | undefined;
+  /** Phase 4：最近一次 stable prefix / transient tail 拆层诊断 */
+  private lastStablePrefixSplit: StablePrefixSplitResult | undefined;
+  /** Phase 4：整个 run 中累积的 stable prefix split 诊断（汇总所有轮次） */
+  private accumulatedStablePrefixSplit: {
+    totalSplitCount: number;
+    totalSplitTokensEstimate: number;
+    roundsWithSplit: number;
+    stableDeltaCount: number;
+    transientDeltaCount: number;
+  } | undefined;
 
   constructor(opts: ToolEnabledAgentOptions) {
     this.opts = {
@@ -1025,6 +1139,33 @@ export class ToolEnabledAgent implements BelldandyAgent {
       logger: opts.failoverLogger,
       bootstrapCooldowns: opts.bootstrapProfileCooldowns,
     });
+
+    // 初始化统一上下文压缩管线（Phase 1 + Phase 2）
+    // 默认启用，可通过 compression.enabled=false 关闭
+    // Phase 2：若 compression.enableReferenceStore=true，则创建带引用存储的管线
+    const compressionEnabled = opts.compression?.enabled !== false;
+    if (compressionEnabled) {
+      if (opts.compressionPipeline) {
+        // 外部注入优先
+        this.compressionPipeline = opts.compressionPipeline;
+        this.compressionReferenceStore = opts.compressionPipeline.getReferenceStore?.();
+      } else if (opts.compression?.enableReferenceStore) {
+        // Phase 2：带引用存储的管线
+        const { pipeline, store } = createCompressionPipelineWithStore(
+          opts.compression?.policy,
+          { storeKind: "conversation" },
+        );
+        this.compressionPipeline = pipeline;
+        this.compressionReferenceStore = store;
+      } else {
+        // Phase 1 兼容模式：不带引用存储
+        this.compressionPipeline = createCompressionPipeline(opts.compression?.policy);
+        this.compressionReferenceStore = undefined;
+      }
+    } else {
+      this.compressionPipeline = undefined;
+      this.compressionReferenceStore = undefined;
+    }
   }
 
   private async withStageTimeout<T>(label: string, task: Promise<T>): Promise<T> {
@@ -1053,6 +1194,123 @@ export class ToolEnabledAgent implements BelldandyAgent {
       agentId,
       sessionKey: conversationId,
     };
+  }
+
+  /**
+   * 统一压缩层 — 对 messages 中的 tool messages 做内容感知压缩（Phase 1 + Phase 2）
+   *
+   * 策略：
+   * - 保留最近 keepRecent 条 tool message 不压（避免影响当前轮上下文）
+   * - 已被 microcompact 标记的 tool message 跳过
+   * - 已被统一 marker 标记的 tool message 跳过（避免重复压缩）
+   * - Phase 2：使用统一 marker 格式 [compressed-ref ...]，支持 reference store 回取
+   * - fail-open：压缩失败不阻塞主流程
+   */
+  private async compressToolMessagesInPlace(
+    messages: Message[],
+    ctx: {
+      conversationId?: string;
+      agentId?: string;
+      runId?: string;
+    },
+  ): Promise<CompressionBatchResult> {
+    const pipeline = this.compressionPipeline;
+    if (!pipeline) {
+      return { results: [], totalSavedTokensEstimate: 0, appliedCount: 0, skippedCount: 0, failedCount: 0 };
+    }
+
+    // 构造 tool_call_id -> tool name 映射
+    const toolCallNameById = new Map<string, string>();
+    for (const msg of messages) {
+      if (msg.role === "assistant" && Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          if (tc?.id && tc?.function?.name) {
+            toolCallNameById.set(tc.id, tc.function.name);
+          }
+        }
+      }
+    }
+
+    // 收集 tool message 索引
+    const toolMessageIndices: number[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === "tool") {
+        toolMessageIndices.push(i);
+      }
+    }
+
+    // 保留最近 N 条不压（与 microcompact 的 keepRecent 对齐）
+    const keepRecent = Math.max(0, this.opts.microcompact?.keepRecentToolMessages ?? 4);
+    const compactUntil = Math.max(0, toolMessageIndices.length - keepRecent);
+
+    const results: CompressionResult[] = [];
+    let appliedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    let totalSavedTokensEstimate = 0;
+    let referenceStoredCount = 0;
+
+    for (let i = 0; i < compactUntil; i++) {
+      const msgIdx = toolMessageIndices[i];
+      const msg = messages[msgIdx];
+      if (!msg || msg.role !== "tool") continue;
+
+      const content = msg.content;
+      if (typeof content !== "string" || !content.trim()) continue;
+
+      // 跳过已被任何压缩层标记的（Phase 2 统一检测）
+      if (isAnyCompactedContent(content)) {
+        skippedCount++;
+        continue;
+      }
+
+      const toolName = toolCallNameById.get(msg.tool_call_id) ?? "unknown";
+
+      try {
+        const result = await pipeline.compress({
+          sourceKind: "tool_result",
+          sourceName: toolName,
+          content,
+          conversationId: ctx.conversationId,
+          runId: ctx.runId,
+          agentId: ctx.agentId,
+        });
+
+        results.push(result);
+
+        if (result.applied && result.compressedContent.length < content.length) {
+          // Phase 2：使用统一 marker 格式包装压缩内容
+          if (result.reference) {
+            // 有引用存储，使用可回取 marker
+            msg.content = wrapWithMarker({
+              refId: result.reference.refId,
+              strategy: result.strategy,
+              source: toolName,
+              retrievable: result.reference.status === "active",
+              compressedContent: result.compressedContent,
+            });
+            referenceStoredCount++;
+          } else {
+            // 无引用存储，使用旧标记格式保持兼容
+            const marker = `[compressed tool output]\nsource=${toolName}\nstrategy=${result.strategy}\n`;
+            msg.content = marker + result.compressedContent;
+          }
+          appliedCount++;
+          totalSavedTokensEstimate += result.savedTokensEstimate;
+        } else {
+          skippedCount++;
+        }
+      } catch (err) {
+        // fail-open
+        failedCount++;
+        this.opts.logger?.warn?.("agent", "[compression] tool_result compress failed, fallback to original", {
+          toolName,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return { results, totalSavedTokensEstimate, appliedCount, skippedCount, failedCount, referenceStoredCount };
   }
 
   private async emitBeforeCompaction(
@@ -1422,6 +1680,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
     );
     let pendingToolFollowupDeltas: AgentPromptDelta[] = [];
     let currentRunPromptDeltas = baseRunPromptDeltas.map((delta) => ({ ...delta }));
+    // Phase 4：transient tail 文本（每次 refresh 后重建）
+    let currentTransientTailText = "";
+    // Phase 4 步骤 2：independent block 文本（identity-authority 独立 block）
+    let currentIndependentBlockText = "";
     let providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
       sections: hookSystemPromptUsed ? undefined : this.opts.systemPromptSections,
       deltas: currentRunPromptDeltas,
@@ -1436,15 +1698,41 @@ export class ToolEnabledAgent implements BelldandyAgent {
         metaPromptDeltas,
         transientPromptDeltas: pendingToolFollowupDeltas,
       });
+      // Phase 4：stable prefix / transient tail 拆层
+      const splitResult = splitDeltasByStability(currentRunPromptDeltas, this.opts.stablePrefixSplit);
+      this.lastStablePrefixSplit = splitResult;
+      // 累积整个 run 中所有轮次的 split 诊断
+      if (splitResult.splitActivated) {
+        if (!this.accumulatedStablePrefixSplit) {
+          this.accumulatedStablePrefixSplit = {
+            totalSplitCount: 0,
+            totalSplitTokensEstimate: 0,
+            roundsWithSplit: 0,
+            stableDeltaCount: 0,
+            transientDeltaCount: 0,
+          };
+        }
+        this.accumulatedStablePrefixSplit.totalSplitCount += splitResult.splitCount;
+        this.accumulatedStablePrefixSplit.totalSplitTokensEstimate += splitResult.splitTokensEstimate;
+        this.accumulatedStablePrefixSplit.roundsWithSplit++;
+        this.accumulatedStablePrefixSplit.stableDeltaCount = splitResult.stableDeltas.length;
+        this.accumulatedStablePrefixSplit.transientDeltaCount = splitResult.transientDeltas.length;
+      }
+      // 只用 stable deltas 构建 system prompt，保持 stable prefix 稳定
+      const deltasForSystemPrompt = splitResult.splitActivated ? splitResult.stableDeltas : currentRunPromptDeltas;
       currentSystemPromptState = buildEffectiveSystemPromptState({
         systemPrompt: runSystemPrompt,
-        runtimePromptDeltas: currentRunPromptDeltas,
+        runtimePromptDeltas: deltasForSystemPrompt,
         systemPromptMetadata: this.opts.systemPromptMetadata,
       });
       setSystemPromptMessage(messages, currentSystemPromptState.text);
+      // 构建 transient tail 文本（稍后在发送请求前注入）
+      currentTransientTailText = splitResult.splitActivated ? buildTransientTailText(splitResult.transientDeltas) : "";
+      // Phase 4 步骤 2：构建 independent block 文本（identity-authority 独立 block）
+      currentIndependentBlockText = splitResult.splitActivated ? buildIndependentBlockText(splitResult.independentBlockDeltas) : "";
       providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
         sections: hookSystemPromptUsed ? undefined : this.opts.systemPromptSections,
-        deltas: currentRunPromptDeltas,
+        deltas: deltasForSystemPrompt,
         fallbackText: runSystemPrompt,
       });
       pendingToolFollowupDeltas = [];
@@ -1523,6 +1811,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let lastPrefixDrift: AgentUsage["prefixDrift"] | undefined;
     let lastBudgetCompetition: AgentUsage["budgetCompetition"] | undefined;
     let lastTrimDiagnostics: PromptTrimDiagnostics | undefined;
+    // Phase 4：重置累积的 stable prefix split 诊断
+    this.accumulatedStablePrefixSplit = undefined;
     let toolLoopBudgetWarningIssued = false;
     let lastToolCallFingerprint: string | undefined;
     let lastToolCallName: string | undefined;
@@ -1600,6 +1890,36 @@ export class ToolEnabledAgent implements BelldandyAgent {
         ...(lastPrefixShape ? { prefixShape: { ...lastPrefixShape } } : {}),
         ...(lastPrefixDrift ? { prefixDrift: { ...lastPrefixDrift } } : {}),
         ...(lastBudgetCompetition ? { budgetCompetition: { ...lastBudgetCompetition } } : {}),
+        ...(this.lastCompressionBatch && this.lastCompressionBatch.appliedCount > 0 ? {
+          compression: {
+            appliedCount: this.lastCompressionBatch.appliedCount,
+            skippedCount: this.lastCompressionBatch.skippedCount,
+            failedCount: this.lastCompressionBatch.failedCount,
+            totalSavedTokensEstimate: this.lastCompressionBatch.totalSavedTokensEstimate,
+            bySource: buildCompressionBySourceSummary(this.lastCompressionBatch.results),
+            // Phase 2：引用存储与冷恢复裁剪诊断
+            ...(this.lastCompressionBatch.referenceStoredCount && this.lastCompressionBatch.referenceStoredCount > 0 ? {
+              referenceStoredCount: this.lastCompressionBatch.referenceStoredCount,
+            } : {}),
+            ...(this.lastColdResumePrune ? {
+              coldResumePrune: { ...this.lastColdResumePrune },
+            } : {}),
+          },
+        } : {}),
+        // Phase 3：budget protect 诊断透传
+        ...(lastTrimDiagnostics?.budgetProtect && lastTrimDiagnostics.budgetProtect.protectionActivated ? {
+          budgetProtect: { ...lastTrimDiagnostics.budgetProtect },
+        } : {}),
+        // Phase 4：stable prefix / transient tail 拆层诊断透传（使用累积数据）
+        ...(this.accumulatedStablePrefixSplit && this.accumulatedStablePrefixSplit.roundsWithSplit > 0 ? {
+          stablePrefixSplit: {
+            splitCount: this.accumulatedStablePrefixSplit.totalSplitCount,
+            splitTokensEstimate: this.accumulatedStablePrefixSplit.totalSplitTokensEstimate,
+            roundsWithSplit: this.accumulatedStablePrefixSplit.roundsWithSplit,
+            stableDeltaCount: this.accumulatedStablePrefixSplit.stableDeltaCount,
+            transientDeltaCount: this.accumulatedStablePrefixSplit.transientDeltaCount,
+          },
+        } : {}),
       };
     };
 
@@ -1682,6 +2002,41 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
         refreshModelPromptState();
+        // 统一压缩层 — 在 microcompact 前对 tool_result 做内容感知压缩（Phase 1 + Phase 2）
+        // 只压缩尚未被压缩过的 tool message，保留最近 N 条不压（与 microcompact 的 keepRecent 对齐）
+        if (this.compressionPipeline) {
+          this.lastCompressionBatch = await this.compressToolMessagesInPlace(messages, {
+            conversationId: input.conversationId,
+            agentId: resolvedAgentId,
+          });
+          if (this.lastCompressionBatch.appliedCount > 0) {
+            logDebug("[compression] tool_result compressed in-place", {
+              appliedCount: this.lastCompressionBatch.appliedCount,
+              skippedCount: this.lastCompressionBatch.skippedCount,
+              savedTokensEstimate: this.lastCompressionBatch.totalSavedTokensEstimate,
+              referenceStoredCount: this.lastCompressionBatch.referenceStoredCount ?? 0,
+            });
+          }
+        }
+        // Phase 2：prune-before-summarize — 在 microcompact/compaction 前先校正 marker 状态
+        // 确保后续 summarizer 看到的引用状态与 reference store 一致
+        if (this.compressionReferenceStore) {
+          const pruneResult = pruneBeforeSummarize(messages as unknown as Array<{ role: string; content?: unknown }>, this.compressionReferenceStore);
+          if (pruneResult.scannedMarkers > 0) {
+            this.lastColdResumePrune = {
+              scannedMarkers: pruneResult.scannedMarkers,
+              invalidatedMarkers: pruneResult.invalidatedMarkers,
+              retrievableMarkers: pruneResult.retrievableMarkers,
+            };
+            if (pruneResult.invalidatedMarkers > 0) {
+              logDebug("[compression] prune-before-summarize invalidated stale markers", {
+                scanned: pruneResult.scannedMarkers,
+                invalidated: pruneResult.invalidatedMarkers,
+                retrievable: pruneResult.retrievableMarkers,
+              });
+            }
+          }
+        }
         const microcompactCandidate = messages.some((message) => message.role === "tool");
         const microcompactEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
         const microcompactOriginalTokens = microcompactCandidate ? estimateMessagesTotal(messages, microcompactEstimateContext) : 0;
@@ -1783,6 +2138,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
         });
 
         // 调用模型
+        // Phase 4：在调用模型前注入 transient tail（在最后一条 user 消息前插入 transient 指令）
+        if (currentTransientTailText) {
+          injectTransientTail(messages as unknown as Array<{ role: string; content: unknown }>, currentTransientTailText);
+        }
+        // Phase 4 步骤 2：注入 independent block（identity-authority 独立 block，在 system prompt 后插入）
+        if (currentIndependentBlockText) {
+          injectIndependentBlock(messages as unknown as Array<{ role: string; content: unknown }>, currentIndependentBlockText);
+        }
         const response = await this.callModel(
           messages,
           tools.length > 0 ? tools : undefined,
@@ -2785,6 +3148,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           tools,
           maxInput,
           currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined,
+          this.opts.budgetProtect,
         );
       }
       onBeforeRequest?.(messages, trimDiagnostics);
@@ -3699,24 +4063,64 @@ function resolveWireApiForProfile(
   return defaultWireApi;
 }
 
+/** 按来源汇总压缩结果 */
+function buildCompressionBySourceSummary(
+  results: CompressionResult[],
+): Record<string, { applied: number; savedTokens: number }> {
+  const summary: Record<string, { applied: number; savedTokens: number }> = {};
+  for (const result of results) {
+    const source = result.observability.sourceKind;
+    if (!summary[source]) {
+      summary[source] = { applied: 0, savedTokens: 0 };
+    }
+    if (result.applied) {
+      summary[source].applied++;
+      summary[source].savedTokens += result.savedTokensEstimate;
+    }
+  }
+  return summary;
+}
+
 // 辅助函数：转换 Message 对象为 OpenAI 格式（去除 undefined 字段）
+// reasoning_content 最小回传策略（Phase 0 probe 验证）：
+// - 默认 required_on_tool_call_turn：仅对已知需要占位的模型 + tool_calls turn 保留 reasoning_content
+// - 非 tool_calls turn 的 reasoning_content 默认不回传（减少 prompt 体积）
+// - 可通过 env BELLDANDY_REASONING_CONTENT_POLICY=must_preserve_full_reasoning 回退旧行为
 function cleanupMessage(msg: Message, modelId?: string): any {
   if (msg.role === "assistant") {
-    // 显式保留 reasoning_content，即使它不是标准 OpenAI 字段
-    // 因为某些兼容模型（如 Kimi）需要它作为历史上下文
+    const policy = resolveReasoningContentPolicy();
+    const hasToolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
+    const isReasoningModel = isKnownReasoningModel(modelId);
+
+    // 决定是否保留 reasoning_content
+    let reasoningContentToSend: string | undefined;
+
+    if (policy === "must_preserve_full_reasoning") {
+      // 旧行为：全量保留
+      reasoningContentToSend = msg.reasoning_content;
+    } else if (policy === "allowed_but_strip_elsewhere") {
+      // 中间策略：所有 turn 都不回传 reasoning_content，除非已知需要占位
+      if (isReasoningModel && hasToolCalls && !msg.reasoning_content) {
+        reasoningContentToSend = "（思考内容已省略）";
+      }
+      // 有 reasoning_content 时不回传
+    } else {
+      // 默认 required_on_tool_call_turn：
+      // - 非 tool_calls turn：不回传 reasoning_content（减少 prompt 体积）
+      // - tool_calls turn：仅对已知需要占位的模型保留/补占位
+      if (hasToolCalls && isReasoningModel) {
+        reasoningContentToSend = msg.reasoning_content ?? "（思考内容已省略）";
+      }
+      // 非 tool_calls turn 或非已知思考模型：不回传
+    }
+
     const cleaned: any = {
       role: msg.role,
       content: msg.content,
       tool_calls: msg.tool_calls,
-      reasoning_content: msg.reasoning_content,
     };
-
-    // [兼容性修复] 针对 Kimi/DeepSeek 等思考模型
-    // 如果历史消息中缺少 reasoning_content（例如来自非思考模型 Claude），
-    // 且当前请求的目标模型是思考模型，则注入空思考占位符，防止 API 报错
-    const isReasoningModel = modelId && (modelId.includes("kimi") || modelId.includes("deepseek"));
-    if (isReasoningModel && msg.tool_calls && !msg.reasoning_content) {
-      cleaned.reasoning_content = "（思考内容已省略）";
+    if (typeof reasoningContentToSend === "string" && reasoningContentToSend) {
+      cleaned.reasoning_content = reasoningContentToSend;
     }
 
     return cleaned;
@@ -4072,8 +4476,12 @@ function stripToolCallsSection(text: string): string {
 }
 
 /**
- * 输入 token 预检：估算 messages + tools 的总 token 数，
- * 超限时从历史消息（非 system、非最后一条 user）开始裁剪。
+ * 输入 token 预检：估算 messages + tools 的总 token 数，超限时按 budget protect 策略裁剪。
+ *
+ * Phase 3 改造：
+ * - protect_memory_capability 模式（默认）：先压缩历史内容 → 保留最近 N 轮 → 从最老开始删 → 保护 system
+ * - history_first 模式（旧行为）：从第一条非 system 消息开始删
+ *
  * 直接修改 messages 数组（in-place）。
  */
 function trimMessagesToFit(
@@ -4081,8 +4489,11 @@ function trimMessagesToFit(
   tools: { type: "function"; function: { name: string; description: string; parameters: object } }[] | undefined,
   maxTokens: number,
   tokenEstimateContext?: TokenEstimateContext,
+  budgetProtectOpts?: BudgetProtectOptions,
 ): PromptTrimDiagnostics {
   const SAFETY_MARGIN = 1.2;
+  const bpOpts = resolveBudgetProtectOptions(budgetProtectOpts);
+  const bpDiag = createEmptyBudgetProtectDiagnostics(bpOpts.mode);
   let trimmedMessageCount = 0;
   let trimmedHistoryTokens = 0;
 
@@ -4107,21 +4518,92 @@ function trimMessagesToFit(
     return {
       trimmedMessageCount,
       trimmedHistoryTokens,
+      budgetProtect: bpDiag,
     };
   }
 
-  // 找到可裁剪的历史消息索引（跳过 system 和最后一条 user）
-  // messages 结构：[system?, ...history(user/assistant), current_user]
-  // 从 index 1 开始裁剪（保留 system），保留最后一条（current user）
+  if (bpOpts.mode === "history_first") {
+    // 旧行为：从第一条非 system 消息开始删，保留最后一条
+    while (total > maxTokens && messages.length > 2) {
+      const idx = messages.findIndex((m, i) => m.role !== "system" && i < messages.length - 1);
+      if (idx === -1) break;
+      const [removed] = messages.splice(idx, 1);
+      if (removed) {
+        trimmedMessageCount += 1;
+        trimmedHistoryTokens += estimateMessageContentTokens(removed.content, tokenEstimateContext) + 4;
+        trimmedHistoryTokens += estimateAssistantHistoryOverhead(removed, tokenEstimateContext);
+      }
+      total = estimateTotal();
+    }
+    bpDiag.deletedHistoryCount = trimmedMessageCount;
+    bpDiag.deletedHistoryTokens = trimmedHistoryTokens;
+    bpDiag.protectionActivated = false;
+    return {
+      trimmedMessageCount,
+      trimmedHistoryTokens,
+      budgetProtect: bpDiag,
+    };
+  }
+
+  // protect_memory_capability 模式（Phase 3 新行为）
+  bpDiag.protectionActivated = true;
+
+  // 计算受保护的索引（最近 N 轮）
+  const protectedIndices = computeProtectedIndices(messages, bpOpts.keepRecentRounds);
+  bpDiag.protectedRounds = bpOpts.keepRecentRounds;
+
+  // 阶段 1：先尝试压缩历史中的长消息内容（user/assistant）
+  if (bpOpts.compressBeforeDelete) {
+    for (let i = 0; i < messages.length && total > maxTokens; i++) {
+      const msg = messages[i];
+      if (!msg || protectedIndices.has(i)) continue;
+      if (!isCompressibleHistoryMessage(msg, bpOpts.compressThresholdChars)) continue;
+
+      const originalContent = msg.content as string;
+      const originalTokens = estimateMessageContentTokens(originalContent, tokenEstimateContext);
+      // 简单压缩：保留首尾，中间省略（与 compaction.ts 的 compressToolContent 类似但更激进）
+      const headChars = Math.min(300, Math.floor(originalContent.length * 0.3));
+      const tailChars = Math.min(200, Math.floor(originalContent.length * 0.1));
+      if (headChars + tailChars + 50 >= originalContent.length) continue; // 压缩收益太小
+      const compressed = `${originalContent.slice(0, headChars)}\n... [${originalContent.length - headChars - tailChars} chars omitted by budget-protect] ...\n${originalContent.slice(-tailChars)}`;
+      const compressedTokens = estimateMessageContentTokens(compressed, tokenEstimateContext);
+      const saved = Math.max(0, originalTokens - compressedTokens);
+      if (saved > 0) {
+        msg.content = compressed;
+        bpDiag.compressedHistoryCount++;
+        bpDiag.compressedHistorySavedTokens += saved;
+        trimmedHistoryTokens += saved;
+        total = estimateTotal();
+      }
+    }
+  }
+
+  // 阶段 2：从最老的历史消息开始删除（跳过 system 和受保护的）
   while (total > maxTokens && messages.length > 2) {
-    // 找第一条非 system 消息（但不是最后一条）
-    const idx = messages.findIndex((m, i) => m.role !== "system" && i < messages.length - 1);
+    // 从头找第一个可删除的消息（非 system、非受保护、非最后一条）
+    let idx = -1;
+    for (let i = 0; i < messages.length - 1; i++) {
+      if (isDeletableHistoryMessage(messages[i], i, protectedIndices)) {
+        idx = i;
+        break;
+      }
+    }
     if (idx === -1) break;
     const [removed] = messages.splice(idx, 1);
     if (removed) {
       trimmedMessageCount += 1;
-      trimmedHistoryTokens += estimateMessageContentTokens(removed.content, tokenEstimateContext) + 4;
-      trimmedHistoryTokens += estimateAssistantHistoryOverhead(removed, tokenEstimateContext);
+      const removedTokens = estimateMessageContentTokens(removed.content, tokenEstimateContext) + 4
+        + estimateAssistantHistoryOverhead(removed, tokenEstimateContext);
+      trimmedHistoryTokens += removedTokens;
+      bpDiag.deletedHistoryCount++;
+      bpDiag.deletedHistoryTokens += removedTokens;
+      // 删除后受保护索引需要调整（索引前移）
+      // 但由于我们每次都从头找，且 protectedIndices 是基于原始位置的，
+      // 删除后重新计算更安全
+      // 简化：删除后重算受保护索引
+      const newProtected = computeProtectedIndices(messages, bpOpts.keepRecentRounds);
+      protectedIndices.clear();
+      for (const idx2 of newProtected) protectedIndices.add(idx2);
     }
     total = estimateTotal();
   }
@@ -4129,6 +4611,7 @@ function trimMessagesToFit(
   return {
     trimmedMessageCount,
     trimmedHistoryTokens,
+    budgetProtect: bpDiag,
   };
 }
 

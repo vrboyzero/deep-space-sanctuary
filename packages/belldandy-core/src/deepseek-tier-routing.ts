@@ -23,6 +23,12 @@ export type DeepSeekTierRouteDecision = {
     flash?: string;
     pro?: string;
   };
+  /** Phase 4 步骤 3：tier pinning 信息 */
+  tierPinning?: {
+    pinned: boolean;
+    previousTier?: "flash" | "pro";
+    reason?: string;
+  };
 };
 
 type DeepSeekRouteCandidate = {
@@ -105,6 +111,15 @@ function getCacheFamilyAffinity(snapshot?: ConversationPromptSnapshotArtifact): 
         : {}),
     }
     : undefined;
+}
+
+/** Phase 4 步骤 3：从 prompt snapshot 中读取前一次请求的 tier */
+function getPreviousTier(snapshot?: ConversationPromptSnapshotArtifact): "flash" | "pro" | undefined {
+  const route = snapshot?.snapshot?.inputMeta?.deepseekRoute;
+  if (!route || typeof route !== "object") return undefined;
+  const selectedTier = (route as { selectedTier?: unknown }).selectedTier;
+  if (selectedTier === "flash" || selectedTier === "pro") return selectedTier;
+  return undefined;
 }
 
 export function findDeepSeekRouteCandidates(input: {
@@ -285,6 +300,8 @@ export function resolveDeepSeekTierRoute(input: {
   const affinity = getCacheFamilyAffinity(previous);
   const orderingStatus = getOrderingGuardStatus(previous);
   const structureSignature = getStructureSignature(previous);
+  // Phase 4 步骤 3：读取前一次 tier 用于 soft pinning
+  const previousTier = getPreviousTier(previous);
 
   if (structureSignature) {
     evidence.push("previous_structure_signature_present");
@@ -302,6 +319,59 @@ export function resolveDeepSeekTierRoute(input: {
   }
   if (orderingStatus) {
     evidence.push(`ordering:${orderingStatus}`);
+  }
+  if (previousTier) {
+    evidence.push(`previous_tier:${previousTier}`);
+  }
+
+  // Phase 4 步骤 3：soft tier pinning
+  // 如果前一次使用了 pro 且没有降级理由（ordering risk / affinity misaligned），保持 pro
+  if (previousTier === "pro" && candidates.pro) {
+    const shouldDowngrade = orderingStatus === "risk" || affinity?.status === "misaligned";
+    if (!shouldDowngrade) {
+      evidence.push("tier_pinning:kept_pro");
+      return {
+        requestedRoute,
+        resolvedModelId: candidates.pro.id,
+        selectedTier: "pro",
+        routeMode: "deepseek_virtual",
+        degraded: false,
+        reason: "auto_pinned_to_pro",
+        evidence,
+        available,
+        tierPinning: { pinned: true, previousTier: "pro", reason: "no_downgrade_signal" },
+      };
+    } else {
+      evidence.push("tier_pinning:downgraded_from_pro");
+    }
+  }
+
+  // 如果前一次使用了 flash 且没有升级理由，保持 flash
+  if (previousTier === "flash" && candidates.flash) {
+    const shouldUpgrade = Boolean(
+      structureSignature
+      && warmup?.eligible === true
+      && warmup.status === "warm_candidate"
+      && warmup.recommendation === "proceed"
+      && affinity?.status === "aligned"
+      && orderingStatus !== "risk"
+    );
+    if (!shouldUpgrade) {
+      evidence.push("tier_pinning:kept_flash");
+      return {
+        requestedRoute,
+        resolvedModelId: candidates.flash.id,
+        selectedTier: "flash",
+        routeMode: "deepseek_virtual",
+        degraded: false,
+        reason: "auto_pinned_to_flash",
+        evidence,
+        available,
+        tierPinning: { pinned: true, previousTier: "flash", reason: "no_upgrade_signal" },
+      };
+    } else {
+      evidence.push("tier_pinning:upgraded_from_flash");
+    }
   }
 
   const shouldUsePro = Boolean(

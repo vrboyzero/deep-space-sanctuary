@@ -334,6 +334,15 @@ export type AgentUsage = {
   prefixDrift?: AgentPrefixDrift;
   /** 最近一次模型调用预算竞争观测 */
   budgetCompetition?: AgentBudgetCompetition;
+  /** Phase 1：统一压缩层观测（本次 run 最近一次压缩批结果） */
+  compression?: {
+    appliedCount: number;
+    skippedCount: number;
+    failedCount: number;
+    totalSavedTokensEstimate: number;
+    /** 按来源汇总 */
+    bySource?: Record<string, { applied: number; savedTokens: number }>;
+  };
 };
 
 export type AgentStreamItem =
@@ -480,3 +489,86 @@ export {
   type CompactionRuntimeSource,
   type CompactionRuntimeSkipDecision,
 } from "./compaction-runtime.js";
+
+// 统一上下文压缩层（Phase 1 + Phase 2）
+export {
+  createCompressionPipeline,
+  createCompressionPipelineWithStore,
+  DEFAULT_COMPRESSION_POLICY,
+  resolveCompressionPolicy,
+  isSourceEnabled,
+  isSourceLossyAllowed,
+  isReferenceStoreAllowed,
+  detectContentType,
+  buildObservabilityRecord,
+  PassthroughCompressor,
+  PlainTextCompressor,
+  LogOutputCompressor,
+  SearchResultsCompressor,
+  JsonToolOutputCompressor,
+  CodeSnippetCompressor,
+  ConversationReferenceStore,
+  generateRefId,
+  hasCompressionMarker,
+  hasLegacyCompressionMarker,
+  isAnyCompactedContent,
+  parseCompressionMarker,
+  buildCompressionMarkerHeader,
+  wrapWithMarker,
+  rewriteMarkerRetrievable,
+  statusToRetrievable,
+  coldResumePruneMessages,
+  pruneBeforeSummarize,
+  type CompressionPolicy,
+  type CompressionRequest,
+  type CompressionResult,
+  type CompressionSourceKind,
+  type CompressionContentType,
+  type CompressionBatchResult,
+  type ContextCompressionPipeline,
+  type ContextCompressor,
+  type ReferenceStatus,
+  type StoredReference,
+  type CompressionReferenceStore,
+  type ParsedCompressionMarker,
+  type ColdResumePruneResult,
+} from "./context-compression/index.js";
+
+// Phase 3：预算保护策略
+export {
+  resolveBudgetProtectOptions,
+  computeProtectedIndices,
+  isCompressibleHistoryMessage,
+  isDeletableHistoryMessage,
+  createEmptyBudgetProtectDiagnostics,
+  DEFAULT_BUDGET_PROTECT_OPTIONS,
+  type BudgetProtectMode,
+  type BudgetProtectOptions,
+  type BudgetProtectDiagnostics,
+} from "./budget-protect.js";
+
+// Phase 4：stable prefix / transient tail 拆层
+export {
+  splitDeltasByStability,
+  buildTransientTailText,
+  injectTransientTail,
+  buildIndependentBlockText,
+  injectIndependentBlock,
+  isTransientSafeDelta,
+  isStableDelta,
+  isIndependentBlockDelta,
+  DEFAULT_STABLE_PREFIX_SPLIT_OPTIONS,
+  type StablePrefixSplitOptions,
+  type StablePrefixSplitResult,
+} from "./stable-prefix-split.js";
+
+// Phase 4 步骤 4：shared compressed context
+export {
+  SharedCompressedContextStore,
+  getOrCreateSharedCompressedContextStore,
+  getSharedCompressedContextStore,
+  cleanupSharedCompressedContextStore,
+  injectSharedCompressedContext,
+  buildLaneSummary,
+  type SharedContextEntry,
+} from "./shared-compressed-context.js";

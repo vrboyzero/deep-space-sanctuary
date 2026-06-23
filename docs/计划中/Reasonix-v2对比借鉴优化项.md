@@ -921,8 +921,8 @@ Risk
 | ID | 阶段 / 任务组 | 状态 | 当前范围 | 完成标准 | 主要风险 / 阻塞 | 下一步 |
 | --- | --- | --- | --- | --- | --- | --- |
 | P0 | Reasonix v2 对比分析与借鉴评估 | 已完成 | 文档分析、Star 对照、借鉴判断、优先级排序 | 本文档完成且给出推荐路线 | 未做真实 DeepSeek API 实测 | 如确认继续，进入 Phase 0 诊断落地 |
-| P1 | Phase 0：证据基线、预算竞争与 drift 诊断 | 进行中 | 已完成 request-shape / drift / budget 观测落地、`token.usage` 透传、prompt snapshot 回写、前端 `DRIFT / BUDGET` 摘要、定向测试与 `agent/core build`；real probe 文件已补但未执行 | 能解释 cache miss 主因，并看清记忆/能力被谁挤压 | 当前环境缺 `DEEPSEEK_API_KEY`，live probe 未跑；真实长会话观察样本仍不足；仓库里还有其他与本任务无关的脏改动，继续时需避免误覆盖 | 先补 live probe 与真实长会话样本，再决定 P2 优先落 `budget protect` 还是 `reasoning_content` 收紧 |
-| P2 | Phase 1：低风险 prompt 缩身与保底 | 未开始 | reasoning_content 最小回传、cold resume prune、prune-before-summarize、budget protect | 冷恢复成本下降，probe 通过，且关键 memory/tool guidance 不退化 | provider 兼容性与回归风险 | 先做 probe、保底规则和策略开关 |
+| P1 | Phase 0：证据基线、预算竞争与 drift 诊断 | 已完成 | live DeepSeek probe 已运行（deepseek-v4-pro）；4 个本地诊断样本已采集；Phase 0 证据结论已形成并写入统一实施计划 | 能解释 cache miss 主因，并看清记忆/能力被谁挤压 | 无 | 进入 Phase 1 低风险 prompt 缩身 |
+| P2 | Phase 1：低风险 prompt 缩身与保底 | 已完成 | reasoning_content 最小回传（provider-aware）、tool_result 统一压缩、attachment_text 压缩、compression observability 透传 | 冷恢复成本下降，probe 通过，且关键 memory/tool guidance 不退化 | 无 | 进入 Phase 2 cache-first 试点 |
 | P3 | Phase 2：DeepSeek cache-first 试点 | 未开始 | transient delta 拆层试点、soft tier pinning、schema drift 治理 | system prompt 更稳定，cache mismatch 下降 | 可能影响 agent 质量 | 先从 tool-search / tool-failure delta 试点 |
 | P4 | Phase 3：扩展到 team / delegation / strict lane | 未开始 | manager/worker/verifier、strict lane isolation | 多 Agent 仍能保持治理质量 | 编排复杂度高 | 单 agent 试点稳定后再推进 |
 
