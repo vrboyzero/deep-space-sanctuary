@@ -1,4 +1,8 @@
+import type Database from "better-sqlite3";
+
 export { MemoryStore } from "./store.js";
+/** better-sqlite3 的 Database 实例类型，供同进程治理模块（如 WorkflowJournal）共享 db 句柄时使用 */
+export type SqliteDatabase = InstanceType<typeof Database>;
 export { MemoryIndexer } from "./indexer.js";
 export { ResultReranker, type RerankerOptions, type GetVectorFn } from "./reranker.js";
 export {

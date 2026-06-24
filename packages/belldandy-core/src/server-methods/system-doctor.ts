@@ -163,6 +163,8 @@ type SystemDoctorMethodContext = {
   }) => Promise<any>;
   subTaskRuntimeStore?: SubTaskRuntimeStore;
   goalManager?: GoalManager;
+  /** 动态工作流运行时（用于 doctor 观测） */
+  workflowRuntime?: import("@belldandy/skills").WorkflowRuntimeCapabilities;
 };
 
 type DoctorPerformanceStage = {
@@ -1262,6 +1264,36 @@ export async function handleSystemDoctorMethod(
     status: optionalCapabilities.summary.warnCount > 0 ? "warn" : "pass",
     message: optionalCapabilities.summary.headline,
   });
+  // ── 动态工作流 WorkflowRuntime 观测 ──
+  if (ctx.workflowRuntime) {
+    try {
+      const activeRuns = ctx.workflowRuntime.listActiveRuns?.() ?? [];
+      const runningCount = activeRuns.filter((r) => r.status === "running").length;
+      const doneCount = activeRuns.filter((r) => r.status === "done").length;
+      const errorCount = activeRuns.filter((r) => r.status === "error" || r.status === "budget_exceeded").length;
+      checks.push({
+        id: "workflow_runtime",
+        name: "Workflow Runtime",
+        status: errorCount > 0 ? "warn" : "pass",
+        message: `Active runs: ${activeRuns.length} (running=${runningCount}, done=${doneCount}, error=${errorCount})`,
+        details: { activeRuns },
+      });
+    } catch (err) {
+      checks.push({
+        id: "workflow_runtime",
+        name: "Workflow Runtime",
+        status: "warn",
+        message: `Failed to read workflow runtime status: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  } else {
+    checks.push({
+      id: "workflow_runtime",
+      name: "Workflow Runtime",
+      status: "warn",
+      message: "Workflow runtime not available (memory manager may be disabled).",
+    });
+  }
   if (cameraRuntime) {
     checks.push({
       id: "camera_runtime",

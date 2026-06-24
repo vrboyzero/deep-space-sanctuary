@@ -22,6 +22,7 @@ import type {
   ToolDiscoveryEntriesOptions,
   ToolDiscoveryFamilyDefinition,
   MCPRuntimeCapabilities,
+  WorkflowRuntimeCapabilities,
 } from "./types.js";
 import { getToolContract, type ToolContract } from "./tool-contract.js";
 import {
@@ -720,6 +721,7 @@ export class ToolExecutor {
   private broadcast?: (event: string, payload: Record<string, unknown>) => void;
   private mcp?: MCPRuntimeCapabilities;
   private bridgeSessionGovernance?: BridgeSessionGovernanceCapabilities;
+  private workflowRuntime?: WorkflowRuntimeCapabilities;
   private broadcastObserver?: (event: string, payload: Record<string, unknown>, meta: {
     conversationId: string;
     agentId?: string;
@@ -789,6 +791,10 @@ export class ToolExecutor {
     governance?: BridgeSessionGovernanceCapabilities,
   ): void {
     this.bridgeSessionGovernance = governance;
+  }
+
+  setWorkflowRuntime(runtime?: WorkflowRuntimeCapabilities): void {
+    this.workflowRuntime = runtime;
   }
 
   setBroadcastObserver(
@@ -1226,6 +1232,7 @@ export class ToolExecutor {
         trace: () => {},
       } : undefined,
       mcp: this.mcp,
+      workflowRuntime: this.workflowRuntime,
     };
 
     if (abortSignal?.aborted) {

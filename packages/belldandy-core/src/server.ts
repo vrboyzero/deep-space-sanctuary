@@ -108,7 +108,7 @@ import { ResidentConversationStore } from "./resident-conversation-store.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
 import { notifyConversationToolEvent } from "./query-runtime-side-effects.js";
 import { buildDelegationObservabilitySnapshot } from "./subtask-result-envelope.js";
-import type { ToolExecutor, TranscribeOptions, TranscribeResult, SkillRegistry } from "@belldandy/skills";
+import type { ToolExecutor, TranscribeOptions, TranscribeResult, SkillRegistry, WorkflowRuntimeCapabilities } from "@belldandy/skills";
 import type { ToolExecutionRuntimeContext } from "@belldandy/skills";
 import { listToolContractsV2, TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
 import type { PluginRegistry } from "@belldandy/plugins";
@@ -140,6 +140,7 @@ import {
 } from "./server-websocket-runtime.js";
 import { handleSystemDoctorMethod } from "./server-methods/system-doctor.js";
 import { handleWorkspaceConversationMethod } from "./server-methods/workspace-conversation.js";
+import { handleWorkflowMethod } from "./server-methods/workflow.js";
 import { buildChannelSecurityDoctorReport } from "./channel-security-doctor.js";
 import {
   getChannelReplyChunkingConfigContent,
@@ -304,6 +305,10 @@ export type GatewayServerOptions = {
   updateSubTask?: (taskId: string, message: string) => Promise<SubTaskRecord | undefined>;
   /** 子任务停止控制 */
   stopSubTask?: (taskId: string, reason?: string) => Promise<SubTaskRecord | undefined>;
+  /** 动态工作流运行时（由 Gateway 装配后注入） */
+  workflowRuntime?: WorkflowRuntimeCapabilities;
+  /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
+  commanderMode?: "on" | "off" | "auto";
   /** Webhook 配置 */
   webhookConfig?: WebhookConfig;
   /** Webhook 幂等性管理器 */
@@ -1256,6 +1261,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     takeoverSubTask: opts.takeoverSubTask,
     updateSubTask: opts.updateSubTask,
     stopSubTask: opts.stopSubTask,
+    workflowRuntime: opts.workflowRuntime,
+    commanderMode: opts.commanderMode,
     tokenUsageUploadConfig,
     broadcast: (frame) => broadcastEvent?.(frame),
     broadcastEvent: (frame) => broadcastEvent?.(frame),
@@ -2028,6 +2035,7 @@ async function handleReq(
         inspectAgentPrompt: ctx.inspectAgentPrompt,
         subTaskRuntimeStore: ctx.subTaskRuntimeStore,
         goalManager: ctx.goalManager,
+        workflowRuntime: ctx.workflowRuntime,
       });
     }
 
@@ -2243,6 +2251,16 @@ async function handleReq(
     case "subtask.stop":
     case "subtask.archive": {
       return handleQueryRuntimeDomainsMethod(req, queryRuntimeDomainsContext);
+    }
+
+    case "workflow.run":
+    case "workflow.status":
+    case "workflow.stop":
+    case "workflow.list": {
+      return handleWorkflowMethod(req, {
+        workflowRuntime: ctx.workflowRuntime,
+        stateDir: ctx.stateDir,
+      });
     }
   }
 

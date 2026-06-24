@@ -14,6 +14,7 @@ import {
 } from "@belldandy/protocol";
 import type { MemoryRuntimeBudgetGuard, MemoryRuntimeUsageAccounting } from "./memory-runtime-budget.js";
 import { preparePromptWithAttachments, type AttachmentPromptLimits } from "./attachment-understanding-runner.js";
+import { detectChatCommanderTrigger, buildChatCommanderHintText } from "./chat-commander-trigger.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
 import { runAgentWithLifecycle } from "./query-runtime-agent-run.js";
 import { QueryRuntime, type QueryRuntimeObserver } from "./query-runtime.js";
@@ -80,6 +81,8 @@ export type MessageSendQueryRuntimeContext = {
       wireApi?: string;
     }>;
     deepSeekRoutePolicyEnabled?: boolean;
+    /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
+    commanderMode?: "on" | "off" | "auto";
   };
   toolControl: {
     confirmationStore?: ToolControlConfirmationStore;
@@ -350,6 +353,31 @@ export async function handleMessageSendWithQueryRuntime(
     });
 
     const abortController = new AbortController();
+
+    // ── Chat Commander 显式触发判定 ──
+    // 检测用户消息是否显式要求使用 commander / multi-agent / parallel review / workflow
+    // 不做 auto 判定，只响应显式触发或 commanderMode === "on"
+    const commanderTrigger = detectChatCommanderTrigger(userText, runtimeDeps.commanderMode);
+    const commanderPromptDeltas: AgentPromptDelta[] = [];
+    if (commanderTrigger.triggered) {
+      commanderPromptDeltas.push({
+        id: `chat-commander-hint-${runId}`,
+        deltaType: "chat-commander-hint",
+        role: "system",
+        text: buildChatCommanderHintText(commanderTrigger),
+        source: "chat-commander-trigger",
+        metadata: {
+          matchedPhrases: commanderTrigger.matchedPhrases,
+          suggestedTools: commanderTrigger.suggestedTools,
+          reason: commanderTrigger.reason,
+        },
+      });
+      runtimeDeps.log.info("chat-commander", `Triggered: ${commanderTrigger.reason}`, {
+        matchedPhrases: commanderTrigger.matchedPhrases,
+        runId,
+      });
+    }
+
     runtimeDeps.conversationRunRegistry.register({
       conversationId,
       runId,
@@ -380,7 +408,7 @@ export async function handleMessageSendWithQueryRuntime(
       normalizedRoomContext,
       promptText: preparedPrompt.promptText,
       contentParts: preparedPrompt.contentParts,
-      promptDeltas: preparedPrompt.promptDeltas,
+      promptDeltas: [...preparedPrompt.promptDeltas, ...commanderPromptDeltas],
       textAttachmentCount: preparedPrompt.textAttachmentCount,
       textAttachmentChars: preparedPrompt.textAttachmentChars,
       audioTranscriptChars: preparedPrompt.audioTranscriptChars,

@@ -204,8 +204,8 @@ export function createControlPanelCommanderToggleController({
         res.payload?.restartRequired === true
           ? t("panel.commanderQuickToggleRestartHint", {}, "The settings were saved, but the server reported that a restart is required. Restart from Settings before checking new task behavior.")
           : shouldEnable
-            ? t("panel.commanderQuickToggleEnabled", {}, "Commander governance preset is enabled. New long-running tasks will default to parallel specialists, and no restart is required.")
-            : t("panel.commanderQuickToggleDisabled", {}, "Non-commander settings have been restored. This only affects future tasks and does not require a restart."),
+            ? t("panel.commanderQuickToggleEnabled", {}, "Commander governance preset is enabled. Explicitly triggered chat / task / goal will use commander orchestration; normal conversations are unaffected. No restart is required.")
+            : t("panel.commanderQuickToggleDisabled", {}, "Non-commander settings have been restored. This only affects future explicitly triggered chat / task / goal and does not require a restart."),
         res.payload?.restartRequired === true ? "info" : "success",
         4200,
       );

@@ -129,6 +129,10 @@ export type GatewayWebSocketRequestContext = {
     recoveryRunId?: string;
     reason?: string;
   }>;
+  /** 动态工作流运行时（由 Gateway 装配后注入） */
+  workflowRuntime?: import("@belldandy/skills").WorkflowRuntimeCapabilities;
+  /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
+  commanderMode?: "on" | "off" | "auto";
 };
 
 type CreateGatewayWebSocketRequestHandlerOptions = Omit<

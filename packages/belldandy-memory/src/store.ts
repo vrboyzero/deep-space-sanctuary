@@ -2508,6 +2508,22 @@ export class MemoryStore {
     return String(main?.file ?? "");
   }
 
+  /**
+   * 暴露底层 better-sqlite3 db 句柄供同进程治理模块共享 schema 和事务。
+   *
+   * 使用约束：
+   * - 调用方只能用于安装自有 schema（CREATE TABLE IF NOT EXISTS ...）和执行自有 CRUD
+   * - 调用方不得关闭该句柄（close 仍由 MemoryStore 管理）
+   * - 调用方不得修改 MemoryStore 管理的表（chunks / tasks / experience_* / memory_tree_* / profile_state_*）
+   * - 仅限同进程使用，不跨进程传递
+   *
+   * 当前消费者：WorkflowJournal（动态工作流事件溯源）。
+   */
+  getDbHandleForSharedSchema(): Database.Database {
+    this.ensureOpen();
+    return this.db;
+  }
+
   // ========== Phase M-1: 元数据过滤 ==========
 
   /**

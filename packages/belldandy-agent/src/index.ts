@@ -468,6 +468,14 @@ export {
   type OrchestratorHookRunner,
 } from "./orchestrator.js";
 
+// 动态工作流 WorkflowContext 类型定义（实现由 @belldandy/core 提供）
+export {
+  type AgentCallOptions,
+  type WorkflowContext,
+  type WorkflowTaskResult,
+  type PipelineStage,
+} from "./workflow-context.js";
+
 // 对话压缩
 export {
   compactMessages,

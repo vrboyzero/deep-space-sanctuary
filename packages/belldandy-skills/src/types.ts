@@ -336,6 +336,52 @@ export type MCPRuntimeCapabilities = {
   getDiagnostics?(): MCPRuntimeDiagnosticsSnapshot | null;
 };
 
+/** 动态工作流运行时能力接口（由 @belldandy/core 的 WorkflowRuntime 实现） */
+export type WorkflowRunOptionsLike = {
+  source:
+    | { kind: "file"; path: string }
+    | { kind: "builtin"; name: string }
+    | { kind: "inline"; code: string; name?: string };
+  args?: Record<string, unknown>;
+  budget?: {
+    maxTokens?: number;
+    maxAgentCalls?: number;
+    maxRetries?: number;
+    maxWallClockMs?: number;
+    maxConcurrent?: number;
+    onExceeded?: "abort" | "warn";
+  };
+  maxConcurrent?: number;
+  allowInlineScript?: boolean;
+  parentConversationId: string;
+  channel: string;
+  resumeJournalId?: string;
+  stateDir?: string;
+};
+
+export type WorkflowRunResultLike = {
+  success: boolean;
+  output: string;
+  journalId: string;
+  scriptHash: string;
+  workflowName: string;
+  workflowVersion: string;
+  stats: {
+    agentCalls: number;
+    cacheHits: number;
+    totalTokens: number;
+    durationMs: number;
+  };
+  error?: string;
+};
+
+export type WorkflowRuntimeCapabilities = {
+  run(opts: WorkflowRunOptionsLike): Promise<WorkflowRunResultLike>;
+  stop(journalId: string, reason?: string): Promise<boolean>;
+  getStatus?(journalId: string): unknown | null;
+  listActiveRuns?(): Array<{ journalId: string; status: string; workflowName: string; startedAt: number }>;
+};
+
 export type AgentCapabilities = {
   spawnSubAgent?: (opts: SpawnSubAgentOptions) => Promise<SubAgentResult>;
   spawnParallel?: (tasks: SpawnSubAgentOptions[]) => Promise<SubAgentResult[]>;
@@ -1927,6 +1973,8 @@ export type ToolContext = {
     trace(message: string): void;
   };
   mcp?: MCPRuntimeCapabilities;
+  /** 动态工作流运行时能力（由 Gateway 注入 WorkflowRuntime 实例） */
+  workflowRuntime?: WorkflowRuntimeCapabilities;
 };
 
 export type ConversationAccessKind = "main" | "subtask" | "goal" | "heartbeat";

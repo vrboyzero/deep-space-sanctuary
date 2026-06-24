@@ -25,7 +25,8 @@ export type AgentPromptDeltaType =
   | "tool-search-follow-up"
   | "tool-post-verification"
   | "delegation-result-review"
-  | "launch-spec";
+  | "launch-spec"
+  | "chat-commander-hint";
 
 export type AgentPromptDeltaRole = "system" | "user-prelude" | "attachment";
 

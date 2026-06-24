@@ -29,6 +29,9 @@ export type {
   ConversationAccessKind,
   MCPRuntimeCapabilities,
   MCPRuntimeToolCallRequest,
+  WorkflowRuntimeCapabilities,
+  WorkflowRunOptionsLike,
+  WorkflowRunResultLike,
 } from "./types.js";
 export {
   buildDelegationProtocol,
@@ -210,6 +213,7 @@ export type {
   CameraRuntimeDoctorProvider,
 } from "./builtin/multimedia/index.js";
 export { sessionsSpawnTool, sessionsHistoryTool, delegateTaskTool, delegateParallelTool } from "./builtin/session/index.js";
+export { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "./builtin/run-workflow.js";
 export {
   buildDelegationResultFollowUpStrategy,
   buildDelegationResultToolMetadata,

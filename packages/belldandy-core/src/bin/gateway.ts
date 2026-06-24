@@ -312,6 +312,10 @@ import {
 } from "../task-auto-report.js";
 import { GoalManager } from "../goals/manager.js";
 import { parseGoalSessionKey } from "../goals/session.js";
+import { WorkflowRuntime } from "../workflow-runtime.js";
+import { registerCodeAuditBuiltinWorkflow } from "../workflow-builtin-code-audit.js";
+import { registerParallelResearchBuiltinWorkflow } from "../workflow-builtin-parallel-research.js";
+import { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "@belldandy/skills";
 import { buildContextInjectionPrelude } from "../context-injection.js";
 import { bridgeLegacyPluginHooks, initializeExtensionHost } from "../extension-host.js";
 import { truncateToolTranscriptContent } from "../tool-transcript.js";
@@ -443,6 +447,8 @@ process.env.BELLDANDY_ENV_DIR = runtimePaths.envDir;
 const port = Number(readEnv("BELLDANDY_PORT") ?? "28889");
 const host = readEnv("BELLDANDY_HOST") ?? "127.0.0.1"; // Security: Default to localhost
 const authMode = (readEnv("BELLDANDY_AUTH_MODE") ?? "none") as "none" | "token" | "password";
+const commanderRuntimeSwitches = resolveCommanderRuntimeSwitches(readEnv);
+const commanderMode = commanderRuntimeSwitches.commanderMode;
 const autoOpenBrowser = readEnv("AUTO_OPEN_BROWSER") === "true";
 let authToken = readEnv("BELLDANDY_AUTH_TOKEN");
 const launcherSetupAuth = resolveLauncherSetupAuth({
@@ -2825,6 +2831,7 @@ let takeoverSubTask:
   | ((taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>)
   | undefined;
 let updateSubTask: ((taskId: string, message: string) => Promise<SubTaskRecord | undefined>) | undefined;
+let workflowRuntime: WorkflowRuntime | undefined;
 if (agentRegistry && toolsEnabled) {
   const subAgentMaxConcurrent = parseInt(readEnv("BELLDANDY_SUB_AGENT_MAX_CONCURRENT") || "3", 10);
   const subAgentTimeoutMs = parseInt(readEnv("BELLDANDY_SUB_AGENT_TIMEOUT_MS") || "120000", 10);
@@ -2959,6 +2966,37 @@ if (agentRegistry && toolsEnabled) {
   toolExecutor.setBridgeSessionGovernance(createBridgeSessionGovernanceCapabilities({
     runtimeStore: subTaskRuntimeStore,
   }));
+
+  // ── 动态工作流 WorkflowRuntime 装配 ──
+  // 复用 global memory manager 的 SQLite db 句柄；memory 未启用时不创建 WorkflowRuntime
+  const workflowMemoryManager = getGlobalMemoryManager({});
+  if (workflowMemoryManager) {
+    try {
+      const dbHandle = workflowMemoryManager.getDbHandleForSharedSchema();
+      workflowRuntime = new WorkflowRuntime({
+        db: dbHandle,
+        agentRegistry,
+        conversationStore,
+        readEnv: readEnv,
+        logger: {
+          info: (m, d) => logger.info("workflow", m, d),
+          warn: (m, d) => logger.warn("workflow", m, d),
+          error: (m, d) => logger.error("workflow", m, d),
+          debug: (m, d) => logger.debug("workflow", m, d),
+        },
+      });
+      toolExecutor.setWorkflowRuntime(workflowRuntime);
+      toolExecutor.registerTool(runWorkflowTool);
+      // 注册 builtin 工作流
+      registerCodeAuditBuiltinWorkflow();
+      registerParallelResearchBuiltinWorkflow();
+      logger.info("workflow", `WorkflowRuntime initialized (run_workflow tool registered, builtins: code-audit, parallel-research)`);
+    } catch (err) {
+      logger.warn("workflow", `Failed to initialize WorkflowRuntime: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else {
+    logger.info("workflow", `WorkflowRuntime skipped (memory manager not available)`);
+  }
 
   updateSubTask = createSubTaskUpdateController({
     runtimeStore: subTaskRuntimeStore,
@@ -4065,6 +4103,8 @@ const serverOptions = buildGatewayServerOptions({
   takeoverSubTask,
   updateSubTask,
   stopSubTask,
+  workflowRuntime,
+  commanderMode,
   ttsEnabled: isTtsEnabledFn,
   ttsSynthesize,
   sttTranscribe,

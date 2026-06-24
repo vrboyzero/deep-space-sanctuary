@@ -1,4 +1,5 @@
 import { MemoryStore, type TaskSummaryRecord } from "./store.js";
+import type { SqliteDatabase } from "./index.js";
 import { MemoryIndexer, type IndexerOptions } from "./indexer.js";
 import { ResultReranker, type RerankerOptions } from "./reranker.js";
 import { shouldSkipRetrieval } from "./adaptive-retrieval.js";
@@ -5064,6 +5065,15 @@ candidateType 必须是以下之一：user / feedback / project / reference
                 this._summaryRunning = false;
             }
         })());
+    }
+
+    /**
+     * 暴露底层 SQLite db 句柄供同进程治理模块共享 schema 和事务。
+     * 代理到 MemoryStore.getDbHandleForSharedSchema()。
+     * 使用约束见 MemoryStore.getDbHandleForSharedSchema() 的注释。
+     */
+    getDbHandleForSharedSchema(): SqliteDatabase {
+        return this.store.getDbHandleForSharedSchema();
     }
 
     async close(): Promise<void> {
