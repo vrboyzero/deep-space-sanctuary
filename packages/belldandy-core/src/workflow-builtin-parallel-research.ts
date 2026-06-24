@@ -37,7 +37,7 @@ async function parallelResearch(ctx: WorkflowContext): Promise<string> {
   const { topics = [], depth = "standard" } = ctx.args as ParallelResearchArgs;
 
   if (!Array.isArray(topics) || topics.length === 0) {
-    return "错误：parallel-research 工作流需要 args.topics（非空字符串数组）";
+    throw new Error("parallel-research 工作流需要 args.topics（非空字符串数组）");
   }
 
   const depthHint = DEPTH_PROMPT_MAP[depth] ?? DEPTH_PROMPT_MAP.standard;
@@ -64,7 +64,7 @@ async function parallelResearch(ctx: WorkflowContext): Promise<string> {
   }
 
   if (validResults.length === 0) {
-    return "错误：所有主题研究均失败，无法生成汇总报告";
+    throw new Error("所有主题研究均失败，无法生成汇总报告");
   }
 
   // 阶段2：汇总综合报告

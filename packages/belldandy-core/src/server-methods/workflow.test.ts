@@ -97,6 +97,52 @@ describe("handleWorkflowMethod", () => {
     }
   });
 
+  it("workflow.run inline 模式透传 inlineCode 与 allowInlineScript", async () => {
+    const result = await handleWorkflowMethod(
+      {
+        type: "req",
+        id: "3-inline",
+        method: "workflow.run",
+        params: {
+          workflowName: "inline-audit",
+          sourceKind: "inline",
+          inlineCode: `export default async function(ctx) { return "inline ok"; }`,
+          allowInlineScript: true,
+        },
+      },
+      { workflowRuntime: mockRuntime, stateDir: tempDir },
+    );
+    expect(result?.ok).toBe(true);
+    const callArgs = (mockRuntime.run as any).mock.calls[0][0];
+    expect(callArgs.source).toEqual({
+      kind: "inline",
+      name: "inline-audit",
+      code: `export default async function(ctx) { return "inline ok"; }`,
+    });
+    expect(callArgs.allowInlineScript).toBe(true);
+  });
+
+  it("workflow.run inline 模式缺少 inlineCode 返回 invalid_params", async () => {
+    const result = await handleWorkflowMethod(
+      {
+        type: "req",
+        id: "3-inline-missing",
+        method: "workflow.run",
+        params: {
+          workflowName: "inline-audit",
+          sourceKind: "inline",
+          allowInlineScript: true,
+        },
+      },
+      { workflowRuntime: mockRuntime, stateDir: tempDir },
+    );
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.error.code).toBe("invalid_params");
+      expect(result.error.message).toMatch(/inlineCode is required/i);
+    }
+  });
+
   it("workflow.run file 模式找不到文件返回 invalid_params", async () => {
     const result = await handleWorkflowMethod(
       {

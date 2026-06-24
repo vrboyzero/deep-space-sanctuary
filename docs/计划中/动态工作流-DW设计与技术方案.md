@@ -51,12 +51,12 @@ Star Sanctuary 现有的**指挥模式**（`SubAgentOrchestrator` + `DelegationP
 
 **两种模式并不冲突，可以同时开启。**
 
-- 指挥模式：适合需要显式拆分、并行审查、多人协作收口的任务
+- 指挥模式：适合需要显式拆分、并行协作收口、多人分工推进的任务
 - 动态工作流：适合步骤固定、规模较大、需要可靠重跑的任务
 
 工作流里的每个步骤，仍然可以利用指挥模式来调度一个小团队完成。
 
-普通对话默认仍走主 Agent。只有当用户显式开启 chat commander，或在提示中明确要求"用指挥官 / 多 Agent / 并行审查"时，才允许普通 chat 使用指挥官式委托；本期不做普通对话的自动判定和自动升级。
+普通对话默认仍走主 Agent。只有当用户显式开启 chat commander，或在提示中明确要求"用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官"，或明确要求"用动态工作流 / 使用动态工作流 / 进动态工作流 / 用动态工作流模式 / 使用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 使用DW模式 / 进DW模式"时，才允许普通 chat 注入对应的编排提示；本期不做普通对话的自动判定和自动升级。
 
 ### 对用户有什么好处
 
@@ -88,7 +88,7 @@ Star Sanctuary 现有的**指挥模式**（`SubAgentOrchestrator` + `DelegationP
 |---|---|---|
 | 脚本语言 | 核心工作流运行时使用 TypeScript 脚本 | 不先引 Python 作为核心编排语言 |
 | Python 生态 | 后续可通过受控 activity / adapter 接入 | 不允许 Python 直接访问 DW 内部状态或主控制流 |
-| chat commander | 仅支持手动触发：用户显式开启或提示"指挥官 / 多 Agent / 并行审查" | 不做普通对话 / 普通任务的 auto commander |
+| chat commander | 仅支持手动触发：用户显式开启或提示"用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官" | 不做普通对话 / 普通任务的 auto commander |
 | DW 触发 | `run_workflow` 工具或 `workflow.*` RPC 显式触发 | 不自动把所有复杂任务改写成工作流 |
 | inline 脚本 | 默认关闭；需要显式启用、审批与安全扫描 | 不执行未经审批的 Agent 生成脚本 |
 | 外部框架 | 借鉴 LangGraph / Temporal / XState 的模式 | 本期不直接引入这些框架作为运行时依赖 |
@@ -121,7 +121,8 @@ SubAgentOrchestrator  ←── 复用（WorkflowContext 内部委托）
 
 触发条件：
 
-- 用户在当前对话中明确要求"用指挥官"、"用多 Agent"、"并行审查"、"让多个专家分别看"等语义
+- 用户在当前对话中明确要求"用指挥模式"、"使用指挥模式"、"进指挥模式"、"成为指挥官"
+- 用户在当前对话中明确要求"用动态工作流"、"使用动态工作流"、"进动态工作流"、"用动态工作流模式"、"使用动态工作流模式"、"进动态工作流模式"、"用DW模式"、"使用DW模式"、"进DW模式"
 - 用户通过 UI / 设置显式开启 chat commander 手动模式
 - 工作流脚本内部调用 `ctx.agent()` 或 `ctx.parallel()`，由 DW 明确进入子 Agent 编排
 
@@ -129,7 +130,7 @@ SubAgentOrchestrator  ←── 复用（WorkflowContext 内部委托）
 
 - 普通闲聊、问答、单文件小修、低风险短任务
 - 仅因为任务看起来复杂就自动切换 commander
-- 后台根据模型判断自行启动多 Agent 或 DW
+- 后台根据模型判断自行启动子 Agent 编排或 DW
 
 风险控制：
 
@@ -553,7 +554,7 @@ DW orchestrator 的 `maxDepth` 默认设为 2（与指挥模式一致），通�
 | 重试死循环 | 节点持续失败导致无限重试 | `maxRetries` 默认 2，超限返回结构化失败项 |
 | 脚本确定性 | 开发者在脚本中用了 `Date.now()`/`Math.random()` | file/builtin 文档约束；inline 白名单扫描拦截；随机/时间必须通过 `args` 传入 |
 | 缓存误命中 | 相同 prompt 或脚本版本变化可能复用错误结果 | fingerprint 绑定 `scriptHash`、`callKey`、模型/profile/prompt/tool policy 与稳定 args |
-| chat commander 过度触发 | 普通问答被误拆成多 Agent，增加延迟和费用 | 只做 manual；显式提示或 UI 开启才可用；不做 auto |
+| chat commander 过度触发 | 普通问答被误拆成子 Agent 编排，增加延迟和费用 | 只做 manual；显式提示或 UI 开启才可用；不做 auto |
 | 权限放大 | commander 或 workflow 子 Agent 继承过宽工具权限 | 继续走 tool contract、安全矩阵、profile 默认工具族；显式 tools/allowed families 优先收敛 |
 | orchestrator 槽位争抢 | 工作流与指挥模式同时运行时可能竞争 | WorkflowRuntime 使用独立 orchestrator 实例，相互隔离 |
 
@@ -579,7 +580,7 @@ Given 用户发送普通闲聊消息且未开启 chat commander，
 When 消息进入普通 chat runtime，
 Then 系统不自动调用 commander / delegate_parallel / run_workflow。
 
-Given 用户明确要求"用多 Agent 并行审查这个方案"，
+Given 用户明确要求"用指挥模式，然后用动态工作流执行这个方案"，
 When chat commander manual 模式可用，
 Then 主 Agent 可使用 delegate_parallel 或 run_workflow，但仍受工具安全矩阵、预算和并发限制。
 
@@ -604,15 +605,15 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| P0 · 基础数据层 | `workflow_journal` 表 + `WorkflowJournal` 类 + 稳定 fingerprint + `WorkflowBudgetGuard` | 已完成 |
-| P1 · Context API | `WorkflowContext` 实现（agent / parallel / parallelMap / phase / log，结构化结果）| 已完成 |
-| P2 · 执行引擎 | `WorkflowRuntime`（file/builtin 脚本加载、生命周期、scriptHash、缓存命中；inline 默认关闭）| 已完成 |
-| P3 · 工具与 RPC 接入 | `run_workflow` 内置工具 + `workflow.*` server-methods + gateway 装配 | 已完成 |
-| P4 · manual commander for chat | 显式触发判定、prompt delta、UI 文案和开关语义；不做 auto | 已完成 |
-| P5 · 内置示例与观测 | 1-2 个 builtin 工作流（code-audit / parallel-research）+ 状态/日志/预算展示 | 已完成 |
-| P6a · 延后扩展（主体） | `pipeline()`、workflow composition、跨版本 migration policy | 已完成 |
-| P6b · 延后扩展（worktree） | worktree 隔离：`agent()` 的 `isolationMode: "worktree"`、git worktree add、patch 合并 | 未开始（待明确需求后推进） |
-| P7 · 文档更新 | 使用手册、project-map.md、Windows 定向测试说明（如测试链路变化）补充 | 未开始 |
+| P0 · 基础数据层 | `workflow_journal` 表 + `WorkflowJournal` 类 + 稳定 fingerprint + `WorkflowBudgetGuard` | 已完成（2026-06-24 已完成两轮审查后修复，fingerprint 承诺字段已闭环） |
+| P1 · Context API | `WorkflowContext` 实现（agent / parallel / parallelMap / phase / log，结构化结果）| 已完成（2026-06-24 已完成审查后修复） |
+| P2 · 执行引擎 | `WorkflowRuntime`（file/builtin 脚本加载、生命周期、scriptHash、缓存命中；inline 默认关闭）| 已完成（2026-06-24 已完成审查后修复） |
+| P3 · 工具与 RPC 接入 | `run_workflow` 内置工具 + `workflow.*` server-methods + gateway 装配 | 已完成（2026-06-24 已补齐 inline 公开入口） |
+| P4 · manual commander for chat | 显式触发判定、prompt delta、UI 文案和开关语义；不做 auto | 已完成（2026-06-24 已统一实现、测试与方案口径） |
+| P5 · 内置示例与观测 | 1-2 个 builtin 工作流（code-audit / parallel-research）+ 状态/日志/预算展示 | 已完成（2026-06-24 已完成审查后修复） |
+| P6a · 延后扩展（主体） | `pipeline()`、workflow composition、跨版本 migration policy | 已完成（2026-06-24 已完成两轮审查后修复，子工作流预算继承已闭环） |
+| P6b · 延后扩展（worktree） | worktree 隔离：`agent()` 的 `isolationMode: "worktree"`、git worktree add、patch artifact 导出与显式合并 | 进行中（2026-06-24 已完成需求收敛与边界设计，待进入实现拆分） |
+| P7 · 文档更新 | 使用手册、project-map.md、Windows 定向测试说明（如测试链路变化）补充 | 已完成（含 2026-06-24 审查与修复进度回写） |
 
 ### P0 细化任务清单
 
@@ -968,14 +969,15 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
    - `detectChatCommanderTrigger(userText, commanderMode)`：检测用户消息中的显式触发语义
    - **两种独立模式，可分开触发，也可同时触发（兼容）**：
      - **指挥模式（Commander Mode）** → 建议工具：`delegate_task` / `delegate_parallel`
-       - 中文：使用指挥模式 / 进指挥模式 / 成为指挥官
-       - 英文：use commander mode / enter commander mode / become commander / act as commander
-     - **动态工作流模式（Dynamic Workflow Mode）** → 建议工具：`run_workflow`
-       - 中文：用动态工作流 / 进动态工作流 / 用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 进DW模式
-       - 英文：use dynamic workflow / enter dynamic workflow / use dynamic workflow mode / enter dynamic workflow mode / use DW mode / enter DW mode
-   - 返回 `ChatCommanderTriggerResult`：`{ triggered, commanderTriggered, workflowTriggered, reason, matchedPhrases, suggestedTools }`
-   - `commanderMode === "on"` 时指挥模式始终触发，但仍会继续检测工作流模式关键词
-   - 非触发条件：普通闲聊、问答、单文件小修、低风险短任务（不做 auto 判定）
+       - 中文：用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官
+     - 英文：use commander mode / enter commander mode / become commander / act as commander
+- **动态工作流模式（Dynamic Workflow Mode）** → 建议工具：`run_workflow`
+  - 中文：用动态工作流 / 使用动态工作流 / 进动态工作流 / 用动态工作流模式 / 使用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 使用DW模式 / 进DW模式
+  - 英文：use dynamic workflow / enter dynamic workflow / use dynamic workflow mode / enter dynamic workflow mode / use DW mode / enter DW mode
+- 除以上列表外，文档其他章节若出现“并行审查”“多 Agent”“用工作流”等表达，均仅表示场景或历史讨论，不构成触发词契约，也不得作为后续实现或测试的新增别名依据
+  - 返回 `ChatCommanderTriggerResult`：`{ triggered, commanderTriggered, workflowTriggered, reason, matchedPhrases, suggestedTools }`
+  - `commanderMode === "on"` 时指挥模式始终触发，但仍会继续检测工作流模式关键词
+  - 非触发条件：普通闲聊、问答、单文件小修、低风险短任务（不做 auto 判定）
 
 2. **prompt delta 注入**（`packages/belldandy-core/src/query-runtime-message-send.ts`）：
    - 在 `preparePromptWithAttachments` 之后，调用 `detectChatCommanderTrigger(userText)`
@@ -1004,8 +1006,8 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
 1. **`packages/belldandy-core/src/chat-commander-trigger.ts` 新建**：
    - `detectChatCommanderTrigger(userText, commanderMode)` 显式触发判定函数
    - **两种独立模式，可分开触发，也可同时触发（兼容）**：
-     - 指挥模式关键词（中英文）：使用指挥模式 / 进指挥模式 / 成为指挥官 / use commander mode / enter commander mode / become commander / act as commander → 建议工具 delegate_task / delegate_parallel
-     - 动态工作流模式关键词（中英文）：用动态工作流 / 进动态工作流 / 用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 进DW模式 / use dynamic workflow / enter dynamic workflow / use dynamic workflow mode / enter dynamic workflow mode / use DW mode / enter DW mode → 建议工具 run_workflow
+    - 指挥模式关键词（中英文）：用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官 / use commander mode / enter commander mode / become commander / act as commander → 建议工具 delegate_task / delegate_parallel
+    - 动态工作流模式关键词（中英文）：用动态工作流 / 使用动态工作流 / 进动态工作流 / 用动态工作流模式 / 使用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 使用DW模式 / 进DW模式 / use dynamic workflow / enter dynamic workflow / use dynamic workflow mode / enter dynamic workflow mode / use DW mode / enter DW mode → 建议工具 run_workflow
    - `commanderMode === "on"` 时指挥模式始终触发，但仍继续检测工作流模式关键词（支持两种模式同时触发）
    - `commanderMode === "off" | "auto"` 时按关键词检测
    - 返回 `ChatCommanderTriggerResult`：triggered/commanderTriggered/workflowTriggered/reason/matchedPhrases/suggestedTools
@@ -1065,7 +1067,7 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
   - 两种模式可同时触发（兼容），suggestedTools 合并
   - commanderMode=on 时指挥模式始终触发，且继续检测工作流模式关键词
   - 普通闲聊/问答/单文件小修不触发
-  - 旧关键词（用指挥官/并行审查/用工作流/multi-agent）不再触发
+  - 第 969 行契约范围外的历史别名一律不触发
   - hint 文本按触发的模式生成不同段落
   - UI 文案调整为显式 chat/task/goal，不暗示 auto
 
@@ -1264,7 +1266,7 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
 ##### 已知限制
 
 - `workflow()` 嵌套当前只支持 builtin 模式，file 模式嵌套抛错（本期不实现）
-- 子工作流使用独立 budgetGuard，父级 `result.stats.agentCalls` 只反映父级调用，不汇总子工作流
+- 父子工作流现已共享 `WorkflowBudgetGuard`，但父级 `result.stats.agentCalls` 仍主要反映父级 Journal 命中与调用视角，尚未额外展开子工作流级细粒度观测
 - migration 只在显式 resume（`resumeJournalId`）时触发，非 resume 运行不迁移
 
 ##### migration 规则详细说明
@@ -1287,20 +1289,363 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
 
 ##### 后续计划
 
-- **P6b（worktree 隔离）**：待明确需求后推进，涉及 Git worktree 操作和文件系统管理，复杂度和风险明显高于 P6a
+- **P6b（worktree 隔离）**：需求收敛已完成，下一步进入实现拆分，优先补 `ctx.agent()` 入口契约、runtime 接线和 patch artifact 导出链路
 - **workflow composition 增强**：当前 `workflow()` 只支持 builtin 模式，后续可扩展 file 模式（需 stateDir 解析和路径安全校验）
-- **子工作流预算汇总**：当前子工作流使用独立 budgetGuard，后续可考虑共享父级 budgetGuard 或在 `WorkflowRunResult` 中汇总子工作流统计
+- **子工作流预算汇总**：父子工作流现已共享 `WorkflowBudgetGuard`；后续若需要强化观测，可在 `WorkflowRunResult` / doctor 中补充父子级预算明细汇总
 - **P7（文档更新）**：补充 pipeline/migration/composition 的使用手册和示例脚本
 
 #### P6b · 延后扩展（worktree 隔离）
 
-高复杂度，高风险，待明确需求后推进。
+高复杂度，高风险，现已完成第一版需求收敛与实现边界定义；当前阶段目标是把范围收敛到“可安全落地的最小闭环”，而不是把 worktree 自动合并能力一次做满。
 
-- `agent()` 的 `isolationMode: "worktree"` 选项
-- 自动 `git worktree add` 创建隔离工作区
-- 子 Agent 在隔离工作区中读写、执行 Shell 脚本、运行测试
-- 完成后生成 patch 并统一合并、冲突解决
-- 文件系统清理和错误回滚
-- 需要大量边界测试（worktree 创建失败、合并冲突、磁盘空间不足等）
+##### 现状基础
 
-**拆分理由**：worktree 隔离涉及 Git 操作和文件系统管理，复杂度和风险明显高于其他三项。设计文档本身也把它列为"长期可扩展"，并非第一期必须。拆分后 P6a 可以较快完成，P6b 留到有明确需求时再做。
+- 仓库内已经存在可复用的 `SubTaskWorktreeRuntime` 生命周期实现，而不是从零开始：
+  - `packages/belldandy-core/src/worktree-runtime.ts` 已支持 `isolationMode === "worktree"` 时自动 `git worktree add -b <branch> <path> HEAD`
+  - `prepareTaskLaunch()` 会把 `cwd` 重写到 worktree 中对应的相对子目录，并把 `worktreePath / worktreeRepoRoot / worktreeBranch / worktreeStatus` 持久化到 runtime summary
+  - `cleanupTaskRuntime()` / `reconcileSubTaskWorktreeRuntimes()` / `createSubTaskWorktreeLifecycleHandler()` 已具备清理、归档回收、重启后对账能力
+- 当前缺口不在“worktree 生命周期完全不存在”，而在 **Dynamic Workflow 的 `ctx.agent()` 尚未把 worktree 当成一等运行模式接入**，也没有定义 patch 导出、主仓合并与 HITL 边界。
+
+##### 第一版目标
+
+1. **让 DW 的 `ctx.agent()` 可显式请求 worktree 隔离**：
+   - 增加 `cwd` / `isolationMode` 入口契约，支持 `ctx.agent(prompt, { cwd, isolationMode: "worktree" })`
+   - 运行时使用与 subtask runtime 同口径的 launchSpec 解析和 worktree 生命周期
+2. **让子 Agent 真正在隔离工作区执行**：
+   - `cwd` 必须先解析到 Git repo 内部路径
+   - worktree 内的实际执行目录应与主仓相对路径一致，避免“仓库根可用、子目录失真”
+3. **让第一版以 patch artifact 形成最小闭环**：
+   - 子 Agent 结束后导出 `git diff --binary` 或等价 patch artifact
+   - 主流程记录变更摘要、artifact 路径、生成状态，供后续人工审阅或显式 apply
+4. **让失败与清理具备可诊断性**：
+   - 创建失败、清理失败、repo 丢失、worktree 缺失等情况都要回写结构化状态，而不是静默吞掉
+
+##### 第一版非目标
+
+- **不做自动合并回主仓**
+- **不做自动冲突解决或三方合并**
+- **不做跨 repo worktree**
+- **不支持非 Git 目录上的 worktree 隔离**
+- **不把多个 worktree 的 patch 自动 fan-in 回 manager 正文**
+- **不在第一版里扩展深层嵌套 `workflow() -> agent(worktree) -> workflow()` 的多层 worktree 级联复用**
+
+##### 候选方案对比
+
+| 方案 | 描述 | 优点 | 风险 / 缺点 |
+|---|---|---|---|
+| A. 直接在 `ctx.agent()` 内新写一套 worktree 生命周期 | DW 独立创建、清理、合并 worktree，不复用现有 subtask runtime | 表面上耦合少 | 与现有 `task-runtime` 形成两套语义；测试与维护成本高；容易出现状态字段、清理策略、异常语义分叉 |
+| B. 复用 `SubTaskWorktreeRuntime`，DW 只补入口与 patch artifact | `ctx.agent()` 解析出 `isolationMode: "worktree"` 后，复用现有 prepare/reconcile/cleanup 能力；第一版只导出 patch artifact，不自动 merge | 复用现有实现与测试；范围可控；风险最低；与子任务体系口径一致 | 第一版用户仍需显式决定是否把 patch 应回主仓，自动化程度较保守 |
+| C. 复用 worktree runtime，并在第一版直接自动 apply patch 回主仓 | worktree 结束后自动生成 patch 并立即 apply 到主仓 | 体验最“完整” | 会直接引入主仓脏树、补丁冲突、误覆盖用户改动、失败回滚复杂度；与仓库 HITL 约束冲突 |
+
+##### 推荐方案
+
+推荐 **方案 B：复用 `SubTaskWorktreeRuntime`，Dynamic Workflow 第一版只做“隔离运行 + patch artifact 导出 + 显式合并/HITL”**。
+
+推荐理由：
+
+- 仓库已有 `worktree-runtime.ts`、`task-runtime.ts` 与对应测试，说明生命周期治理已经在 subtask 体系验证过，复用比重写更稳。
+- 当前仓库允许存在用户未提交的脏工作区；自动 apply patch 回主仓会把 P6b 从“隔离运行”扩展成“高风险写回主仓”，不适合作为第一版默认能力。
+- 文档与仓库全局规则都明确，高风险 Git / 文件覆盖动作应保留人为确认，因此“生成 patch artifact + 上层显式决定是否 apply”更符合当前工程约束。
+
+##### 入口契约收敛
+
+第一版需要把 `ctx.agent()` 与 `AgentCallOptions` 扩成以下最小集合：
+
+```ts
+type AgentCallOptions = {
+  model?: string;
+  role?: AgentLaunchRole;
+  allowedToolFamilies?: string[];
+  maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+  callKey?: string;
+  delegationProtocol?: DelegationProtocol;
+  timeoutMs?: number;
+  cwd?: string;
+  isolationMode?: "worktree";
+};
+```
+
+约束：
+
+- 当 `isolationMode === "worktree"` 时，`cwd` 必填。
+- `cwd` 必须位于可解析出的 Git repo root 内部；若 `cwd` 脱离 repo，则直接失败并记录 `worktreeStatus=failed`。
+- 第一版不暴露 `branchName`、`baseRef`、`mergeStrategy` 等更强能力，统一由 runtime 内部按 task / callKey 生成受控分支名，避免外部随意扩面。
+
+##### 运行生命周期
+
+第一版推荐按以下状态机落地：
+
+1. **resolve launchSpec**
+   - `ctx.agent()` 先完成现有 launchSpec 解析、fingerprint 计算与 Journal 查找。
+   - 仅当缓存未命中且 `opts.isolationMode === "worktree"` 时，进入 worktree 准备阶段。
+2. **prepare worktree**
+   - 复用 `SubTaskWorktreeRuntime.prepareTaskLaunch()`
+   - 自动解析 repo root
+   - 自动创建 `stateDir/subtasks/worktrees/<task-or-call-id>/`
+   - 自动重写执行 `cwd` 到 worktree 内对应相对子目录
+3. **spawn child agent**
+   - 子 Agent 只拿到重写后的 `cwd`
+   - 工具运行时沿用当前 `cwd/worktree` 的写入边界，不允许回写到主仓原目录
+4. **collect artifact**
+   - 结束后在主 repo root 上对该 worktree 执行 `git diff --binary HEAD --`
+   - 导出 patch artifact、变更文件摘要、退出状态
+   - 如无差异，显式记录 `patchStatus=no_changes`
+5. **cleanup / reconcile**
+   - 默认执行 cleanup
+   - cleanup 失败时保留 worktree 路径与错误信息，供后续 reconcile/人工介入
+   - 进程重启后继续复用 `reconcileSubTaskWorktreeRuntimes()` 的对账思路恢复状态
+
+##### patch artifact 与合并策略
+
+第一版明确采用 **artifact-first** 策略：
+
+- worktree 运行结束后，输出物应至少包含：
+  - patch 文件路径
+  - worktree 路径
+  - repo root
+  - branch 名
+  - 变更文件列表或摘要
+  - patch 生成是否成功
+- `WorkflowJournal` / 运行结果里建议新增结构化 metadata，而不是只把 patch 路径塞进纯文本 output。
+- **第一版默认不自动 apply patch 到主仓**：
+  - 若上层未来要做 “apply patch / merge back”，应作为独立显式动作设计
+  - 默认需要 HITL 或上层明确调用专门的 merge/apply 能力
+
+##### 失败与回滚边界
+
+第一版必须覆盖以下失败语义：
+
+- `git rev-parse --show-toplevel` 失败：直接失败，不启动 child agent
+- `git worktree add` 失败：记录 `worktreeStatus=failed`
+- 子 Agent 运行失败：保留 patch 导出机会；若 patch 导出也失败，则分别记录 child failure 与 artifact failure
+- cleanup 失败：记录 `worktreeStatus=remove_failed`，不伪装成成功
+- worktree 目录丢失 / repo root 丢失：reconcile 时标记 `missing` / `failed`
+
+回滚策略：
+
+- 第一版的“回滚”只限于 **删除受管 worktree 与受管分支**
+- 不承诺自动恢复主仓工作区，因为第一版本就不自动向主仓 apply patch
+- 对主仓的任何写回动作必须延后到显式 merge/apply 阶段，并单独定义回滚方案
+
+##### 与现有 runtime 的协作边界
+
+- **worktree 生命周期**：复用 `packages/belldandy-core/src/worktree-runtime.ts`
+- **任务状态持久化 / 对账 / 归档清理模式**：复用 `packages/belldandy-core/src/task-runtime.ts` 里已验证的 runtime summary 字段与状态口径
+- **DW 入口与 Journal 缓存**：仍由 `packages/belldandy-core/src/workflow-context-impl.ts` 和 `workflow-runtime.ts` 负责
+- **bridge runtime / manager fan-in**：第一版只消费 patch artifact 摘要，不把整段 compressed context 或完整 diff 直接并入 manager 主正文，避免 fan-in 内容继续膨胀
+
+##### 安全边界
+
+- worktree 路径必须位于受管目录：沿用 `SubTaskWorktreeRuntime` 当前的 managed path 校验
+- cleanup 只允许删除受管 worktree 路径与对应受管分支
+- `cwd` 不可逃逸出 repo root
+- patch artifact 只能作为受控输出，不应默认自动执行或自动 apply
+- 若 repo 当前不存在 Git 元数据，或用户传入非 repo 路径，应 fail closed，而不是退回普通 cwd 写入
+
+##### 验收标准（第一版 Done 定义）
+
+1. `ctx.agent(prompt, { cwd, isolationMode: "worktree" })` 能在 Git repo 内成功创建并使用隔离 worktree。
+2. 子 Agent 看到的执行目录是 worktree 内对应子目录，而不是主仓原目录。
+3. 运行结束后能稳定导出 patch artifact 与变更摘要。
+4. 默认不会自动把 patch 应用回主仓。
+5. cleanup 成功时 worktree 与受管 branch 被移除；cleanup 失败时状态可观测、可对账。
+6. 对非 Git 目录、repo 外 cwd、创建失败、cleanup 失败、空 diff、子 Agent 失败等场景都有稳定测试。
+
+##### 测试清单
+
+- **单元 / 模块测试**
+  - `AgentCallOptions` 新增 `cwd/isolationMode` 的 schema 与默认值
+  - DW `ctx.agent()` 在 worktree 模式下的 launchSpec 解析与 fingerprint 口径
+  - patch artifact 导出成功 / 空 diff / 导出失败
+- **集成测试**
+  - worktree 创建成功并重写 `cwd`
+  - child agent 在 worktree 中写文件、执行测试、生成 diff
+  - cleanup 正常删除 worktree 与 branch
+  - reconcile 恢复 active worktree，归档后异步清理
+- **回归测试**
+  - 普通 `ctx.agent()` 调用不受影响
+  - `workflow()` 嵌套与共享 `WorkflowBudgetGuard` 不回归
+  - 指挥模式 / task runtime 现有 worktree 语义不分叉
+
+##### 实现拆分建议
+
+1. **P6b-1 · 入口契约与 launchSpec 接线**
+   - 扩展 `AgentCallOptions`
+   - 让 `ctx.agent()` 能把 `cwd/isolationMode` 透传到真实 launchSpec
+2. **P6b-2 · DW worktree runtime 接入**
+   - 复用 `SubTaskWorktreeRuntime.prepareTaskLaunch()/cleanupTaskRuntime()`
+   - 为 DW 生成稳定的 worktree task/call 标识
+3. **P6b-3 · patch artifact 导出**
+   - 设计 artifact 落盘路径、metadata 结构和 Journal 挂载方式
+4. **P6b-4 · 边界测试与观测**
+   - 补空 diff、cleanup 失败、repo 缺失、重启 reconcile 等测试
+   - 在 doctor / status 中补 worktree artifact 摘要（如有需要）
+
+**拆分理由**：worktree 隔离涉及 Git 操作和文件系统管理，复杂度和风险明显高于其他三项。当前通过“复用已有 lifecycle + 第一版不自动 merge 主仓”的收敛方式，已经把风险主要压缩到受控 runtime 与 artifact 导出层；后续实现应继续保持这个范围，避免直接膨胀到自动冲突解决。
+
+---
+
+#### [P7 · 文档更新] 实现结论：使用说明 + project-map 更新（2026-06-24）
+
+##### 已完成内容
+
+1. **`docs/指挥模式与动态工作流使用说明.md` 新建**：
+   - 两种模式简介（指挥模式 vs 动态工作流，适用场景与关系）
+   - 快速上手（内置工作流 code-audit / parallel-research 的参数与执行阶段、对话触发、RPC 触发、查看可用工作流）
+   - 工作流脚本编写（脚本位置、脚本结构、WorkflowContext API 参考：agent / parallel / parallelMap / pipeline / workflow / phase / log / args）
+   - WorkflowTaskResult 结构说明
+   - 断点续传与缓存（基本原理、断点续传用法、跨版本缓存迁移规则与典型场景）
+   - 预算控制（预算参数、环境变量、设置预算示例）
+   - 运行状态查询与控制（workflow.status / workflow.stop / doctor 观测）
+   - 安全注意事项（inline 脚本默认关闭、沙盒边界、确定性要求）
+   - 完整脚本示例（多阶段代码审计 parallel+pipeline、嵌套调用子工作流 workflow composition、断点续传完整示例）
+   - 常见问题 FAQ（7 个常见问题解答）
+
+2. **`docs/project-map.md` 修改**：
+   - 常用入口文件 Root/Workspace 段新增 `docs/指挥模式与动态工作流使用说明.md` 引用
+   - 关键功能位置新增 `Dynamic Workflows（DW）` 段，列出 13 个 DW 相关源文件和文档入口
+
+##### 效果
+
+- 普通用户可通过使用说明快速上手内置工作流，无需阅读设计文档
+- 开发者可通过 API 参考和完整示例编写自定义工作流脚本
+- project-map.md 补充了 DW 模块的完整文件位置索引
+
+##### 验证结果
+
+- 文档内容与 P0-P6a 实现一致（API 签名、参数、环境变量、迁移规则均对照源码核实）
+- project-map.md 条目与实际文件路径一致
+
+---
+
+## P0-P6a 实现审查（2026-06-24）
+
+### 审查计划
+
+1. **P0 · 基础数据层**：复核 `WorkflowJournal` / `workflow-fingerprint` / `WorkflowBudgetGuard` 的契约一致性，重点检查缓存正确性、幂等边界和文档承诺是否真实落地。
+2. **P1 · Context API**：复核 `WorkflowContext.agent/parallel/parallelMap` 的真实执行链，重点检查 `AgentCallOptions` 是否真正生效、事件流是否可被前端稳定消费。
+3. **P2 · 执行引擎**：复核 `WorkflowRuntime` / `workflow-script-loader` 在 Node + Windows 环境下的真实可用性，以及 inline 脚本的安全边界。
+4. **P3 · 工具与 RPC 接入**：复核 `run_workflow` 工具、`workflow.*` RPC 和 gateway 装配是否完整暴露运行时能力，重点检查参数透传与公开入口契约一致性。
+5. **P4 · manual commander for chat**：复核 chat 显式触发语义是否与文档前文、BDD 示例、测试口径一致，避免“前文承诺一种说法，实际只支持另一种说法”。
+6. **P5 · 内置示例与观测**：复核 builtin workflow 与 doctor 观测，重点检查失败语义、结果真假成功、观测数据真实性和可诊断性。
+7. **P6a · pipeline / migration / workflow composition**：复核嵌套调用、预算继承、统计汇总和已声明限制，确认是否与 P6a 原任务清单一致。
+
+### P0 审查结论
+
+1. **中高｜fix_now｜fingerprint 绑定字段少于方案承诺**：方案正文 `4.4 指纹计算` 和 `P0 细化任务清单` 明确把 `agentProfileId` / `systemPromptHash` / `toolPolicyHash` 列为 fingerprint 输入，但 `ctx.agent()` 实际调用 `computeWorkflowFingerprint()` 时没有传入这 3 个字段，只传了 `model/role/allowedToolFamilies/maxToolRiskLevel/delegationHash/workflowArgs`。这会导致默认 agent profile、系统提示或工具策略变化后，旧 journal 结果仍可能错误命中。证据：`packages/belldandy-core/src/workflow-context-impl.ts:179-195`、`packages/belldandy-core/src/workflow-fingerprint.ts:22-37,87-106`、方案正文 `4.4 指纹计算`。
+2. **低｜record_only｜`recordPending()` 的代码、注释和测试标题语义不一致**：`recordPending()` 注释写的是“UNIQUE 冲突则忽略”，但底层 prepared statement 仍是普通 `INSERT`；测试标题写“重复 recordPending 不报错（幂等）”，实际断言却是 `expect(...).toThrow()`。这不是运行时阻塞问题，但会误导后续维护者。证据：`packages/belldandy-core/src/workflow-journal.ts:314-329,142-159`、`packages/belldandy-core/src/workflow-journal.test.ts:104-119`。
+
+### P1 审查结论
+
+1. **高｜fix_now｜`AgentCallOptions` 大部分字段没有真正作用到子 Agent 启动链**：`WorkflowContext.agent()` 里的 `spawnOpts` 只传了 `parentConversationId`、`instruction`、`context`、`delegationProtocol` 和 `onSessionCreated`，没有把 `role`、`allowedToolFamilies`、`maxToolRiskLevel`、`timeoutMs` 透传到 `SubAgentOrchestrator` 的 `launchSpec`；`model` 甚至在 `AgentLaunchSpecInput` 中没有下游字段，当前只是“进入 fingerprint 但不影响执行”的死字段。直接影响是 P5 builtin 中的 `{ role: "researcher" }`、P1 方案承诺的工具族/风险等级/超时约束都不生效。证据：`packages/belldandy-core/src/workflow-context-impl.ts:221-245`、`packages/belldandy-agent/src/orchestrator.ts:112-123,186-191`、`packages/belldandy-agent/src/launch-spec.ts:9-29,31-50`。
+2. **中｜fix_now｜`started` 事件会重复发送且 sessionId 不一致**：`WorkflowContext.agent()` 在 `spawn()` 之前先手工发一个 `wf_${callKey}_...` 的 started 事件，`orchestrator` 创建真实会话后又通过 `onSessionCreated` 发一次真实 `sub_xxx` started；completed 事件使用的是 `result.sessionId`。前端如果按 `sessionId` 关联 started/completed，会看到一个无法闭合的伪 started。证据：`packages/belldandy-core/src/workflow-context-impl.ts:220-242,258-274`、`packages/belldandy-agent/src/orchestrator.ts:283-312`。
+
+### P2 审查结论
+
+1. **高｜fix_now｜Windows 下 file / inline 工作流在纯 Node 运行时存在真实加载失败风险**：`workflow-script-loader` 对 file / inline 最终都直接 `await import(modulePath)`。在 Windows 的 plain Node ESM 里，绝对路径必须是 `file://` URL，直接 `import("C:\\...")` 或 `import("C:/...")` 会报 `ERR_UNSUPPORTED_ESM_URL_SCHEME`。本轮已手工复现：`node` 执行 `import('C:/temp/demo.mjs')` 返回该错误。证据：`packages/belldandy-core/src/workflow-script-loader.ts:144-165,178-191`，以及本轮手工复现结果 `ERR_UNSUPPORTED_ESM_URL_SCHEME`。
+2. **高｜fix_now｜inline“白名单 AST 扫描”实际只是 regex 扫描，且可被简单字符串拼接绕过**：方案正文和注释都写的是 AST/白名单扫描，但实现只有 14 个正则；例如 `import("node:" + "f" + "s")` 不会命中 `fs` / `import` 规则。本轮已手工复现：`scanInlineScriptSafety()` 对该 payload 返回 `{"safe":true,"violations":[]}`。这意味着一旦开放 inline，就存在明显安全缺口。证据：`packages/belldandy-core/src/workflow-script-loader.ts:61-87`，以及本轮手工复现结果。
+
+### P3 审查结论
+
+1. **中高｜fix_now｜公开入口没有暴露 `allowInlineScript`，P3 契约未闭环**：`WorkflowRunOptionsLike` 和 `WorkflowRuntime.run()` 都支持 `allowInlineScript`，但 `run_workflow` 工具 schema 没有该字段，`workflow.run` RPC 也没有解析/透传该字段；当前公开入口只允许 `file` / `builtin`，无法按方案要求显式开启 inline。它一方面降低了 P2 安全问题的对外暴露面，另一方面也说明 P3 文档承诺的能力并未真正交付。证据：`packages/belldandy-skills/src/types.ts:339-360`、`packages/belldandy-core/src/workflow-runtime.ts:41-57,150-159`、`packages/belldandy-skills/src/builtin/run-workflow.ts:31-58,138-147`、`packages/belldandy-core/src/server-methods/workflow.ts:79-125`。
+
+### P4 审查结论
+
+1. **已关闭｜fix_now｜P4 触发词已按第 969 行口径统一**：实现、测试与方案前文现已统一为“两种独立模式，可分开触发，也可同时触发（兼容）”。指挥模式接受 `用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官 / use commander mode / enter commander mode / become commander / act as commander`；动态工作流模式接受 `用动态工作流 / 使用动态工作流 / 进动态工作流 / 用动态工作流模式 / 使用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 使用DW模式 / 进DW模式 / use dynamic workflow / enter dynamic workflow / use dynamic workflow mode / enter dynamic workflow mode / use DW mode / enter DW mode`。第 969 行契约范围外的历史别名均不再触发，也不得作为后续实现或测试的扩展依据。
+
+### P5 审查结论
+
+1. **中高｜fix_now｜`parallel-research` 会把明确失败当成功返回**：`topics` 非数组或为空时直接 `return "错误：..."`，所有 research 全失败时也只是返回错误字符串；`WorkflowRuntime.run()` 只要脚本没有抛异常就会记为 `success: true`。调用方会拿到“成功执行”的 workflow 结果，但内容其实是报错文本。证据：`packages/belldandy-core/src/workflow-builtin-parallel-research.ts:37-40,66-79`、`packages/belldandy-core/src/workflow-runtime.ts:257-303`。
+2. **中高｜fix_now｜`code-audit` 在全量扫描/验证失败时仍可能产出伪成功审计报告**：阶段 1 失败后只做日志提示；阶段 2 对 `validScans` 为空直接并行空数组；阶段 3 即使 `verifiedReports` 为空也照样让总结 agent 生成最终报告。这会制造“无输入也成功完成”的假阳性结果。证据：`packages/belldandy-core/src/workflow-builtin-code-audit.ts:49-79`。
+3. **中｜fix_now｜doctor 的 “Active runs” 统计会长期失真**：`WorkflowRuntime` 把 done/error/budget_exceeded 的 run 一直保留在 `activeRuns` 里，注释写“由 cleanup() 定期清理”，但仓库内没有实际调用 `workflowRuntime.cleanup()` 的地方；`system-doctor` 又直接把 `listActiveRuns()` 全量显示为 `Active runs`。运行时间一长后，这个卡片展示的是“累计未清理历史”而不是真正 active。证据：`packages/belldandy-core/src/workflow-runtime.ts:214-228,282-381`、`packages/belldandy-core/src/server-methods/system-doctor.ts:1268-1279`，以及仓库检索未发现 `workflowRuntime.cleanup()` 调用方。
+
+### P6a 审查结论
+
+1. **中｜split_task｜子工作流并未继承父级 token/call/retry 预算，P6a 原任务清单未完全兑现**：P6a 任务清单和 `WorkflowContext.workflow()` 注释都写了“子工作流继承父级并发限制和代币预算”，但当前 `workflow()` 只向 `runtime.run()` 传了 `maxConcurrent` 和 `depth`，没有传共享 budget 或 shared `budgetGuard`；`WorkflowRuntime.run()` 每次都会重新创建新的 `WorkflowBudgetGuard`。这个问题文档后半段 `已知限制` 已经承认，但相对 P6a 原计划仍属未闭环项。证据：方案 `P6a · 延后扩展（主体）` 第 2 项与 `P6a 细化任务清单` 第 7 项，对照 `packages/belldandy-core/src/workflow-context-impl.ts:446-456`、`packages/belldandy-core/src/workflow-runtime.ts:188-191`、`packages/belldandy-agent/src/workflow-context.ts:91-101`。
+
+### 总结与优先级建议
+
+1. **第一优先级（建议先修）**：P1 的 `AgentCallOptions` 不生效、P2 的 Windows 动态导入问题、P2 的 inline 扫描绕过、P5 的 builtin 假成功。这 4 项直接影响功能正确性或安全边界。
+2. **第二优先级（尽快补齐契约）**：P0 的 fingerprint 绑定字段缺失、P3 的 `allowInlineScript` 公开入口缺漏、P5 的 active runs 清理缺失。这 3 项会造成缓存错误命中、功能不完整或观测误导。
+3. **第三优先级（同步文档/后续拆分）**：P4 的触发词口径漂移、P6a 的子工作流预算继承未闭环、P0 的 `recordPending` 注释/测试标题不一致。这些问题不会立刻阻塞运行，但会持续增加误用和维护成本。
+
+### 本轮验证依据
+
+1. **源码与测试人工审查**：逐阶段核对了 `workflow-context-impl.ts`、`workflow-runtime.ts`、`workflow-script-loader.ts`、`workflow-journal.ts`、`chat-commander-trigger.ts`、`workflow-builtin-*.ts`、`server-methods/workflow.ts`、`run-workflow.ts` 及其相邻测试。
+2. **定向测试复核**：执行 `node .\\node_modules\\vitest\\vitest.mjs run packages/belldandy-core/src/workflow-context-impl.test.ts packages/belldandy-core/src/workflow-budget-guard.test.ts packages/belldandy-core/src/workflow-fingerprint.test.ts packages/belldandy-core/src/workflow-journal.test.ts packages/belldandy-core/src/workflow-script-loader.test.ts packages/belldandy-core/src/workflow-runtime.test.ts packages/belldandy-core/src/workflow-builtin-workflows.test.ts packages/belldandy-core/src/chat-commander-trigger.test.ts packages/belldandy-core/src/server-methods/workflow.test.ts packages/belldandy-skills/src/builtin/run-workflow.test.ts --reporter verbose`，结果为 **10 个测试文件、203 个测试全部通过**。
+3. **手工复现**：
+   - Windows ESM 路径导入：`node` 直接执行 `import('C:/temp/demo.mjs')`，返回 `ERR_UNSUPPORTED_ESM_URL_SCHEME`。
+   - inline 扫描绕过：`scanInlineScriptSafety('export default async function(ctx){ const mod = await import(\"node:\" + \"f\" + \"s\"); return \"ok\"; }')` 返回 `{\"safe\":true,\"violations\":[]}`。
+
+#### [P0-P6a 审查后修复] 实现结论：第一优先级修复收敛（2026-06-24）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workflow-context-impl.ts`、`packages/belldandy-agent/src/orchestrator.ts`、`packages/belldandy-agent/src/launch-spec.ts` 修改**：
+   - `ctx.agent()` 改为统一走 `launchSpec`，真实透传 `model -> modelOverride`、`role`、`allowedToolFamilies`、`maxToolRiskLevel`、`timeoutMs`
+   - 子 Agent 启动链开始实际执行模型覆盖、角色、工具族和风险等级约束
+   - 去掉 workflow 链路里重复和伪造的 `started/completed` 事件，统一以 orchestrator 的真实会话事件为准
+
+2. **`packages/belldandy-core/src/workflow-script-loader.ts`、`packages/belldandy-skills/src/builtin/run-workflow.ts`、`packages/belldandy-core/src/server-methods/workflow.ts` 修改**：
+   - Windows 下 file / inline 动态导入改为 `pathToFileURL(...).href`，修复纯 Node ESM 绝对路径导入失败
+   - inline 安全扫描从 regex-only 升级为 TypeScript AST 扫描，补上动态 `import()` 绕过拦截
+   - `run_workflow` 工具与 `workflow.run` RPC 补齐 `sourceKind: "inline"`、`inlineCode`、`allowInlineScript`
+
+3. **`packages/belldandy-core/src/workflow-runtime.ts`、`packages/belldandy-core/src/workflow-journal.ts`、builtin workflows 修改**：
+   - `parallel-research`、`code-audit` 在非法参数、全失败或无有效验证输入时改为明确抛错，避免伪成功
+   - `WorkflowJournal.recordPending()` 改为 `INSERT OR IGNORE`，与幂等语义保持一致
+   - `WorkflowRuntime.listActiveRuns()` 只返回真实 active 的 `running/stopping`，并做机会式 `cleanup()`，避免 doctor 把历史完成项算作 active
+
+##### 效果
+
+- `AgentCallOptions` 中的模型、角色、工具约束和超时配置开始真实生效，P1/P5 的执行语义与方案承诺一致
+- file / inline workflow 在 Windows 纯 Node ESM 环境可正常加载，inline 开放链路的安全边界更接近方案设计
+- builtin workflow、缓存和运行态观测不再把明显失败误记为成功，doctor 的 active runs 展示更接近真实运行态
+
+##### 验证结果
+
+- 未单独执行全量 TypeScript 编译；本轮以定向 Vitest 回归为主
+- 12 个测试文件全部通过，共 243 个测试通过（含 `workflow-context-impl`、`workflow-script-loader`、`workflow-runtime`、`workflow-builtin-workflows`、`server-methods/workflow`、`run-workflow`、`orchestrator`、`workflow-journal` 等修复相关测试）
+- 关键功能验证结论：`AgentCallOptions` 透传、`modelOverride` 生效、Windows `file://` ESM 导入修复、inline AST 安全扫描、builtin 失败语义、`allowInlineScript` 公开入口、`recordPending` 幂等、active runs 统计修正均已覆盖
+
+##### 后续计划
+
+- 下一步准备进入 `P6b · worktree 隔离` 的实现拆分，优先补 `AgentCallOptions` 的 `cwd/isolationMode` 入口、DW runtime 对 `SubTaskWorktreeRuntime` 的复用接线，以及 patch artifact 导出链路。
+- 之所以先做这一项，是因为 P0/P4/P6a 本轮已闭环，DW 方案当前剩余的主风险已经集中到 worktree 运行边界与主仓写回策略。
+- 当前还缺的关键闭环是：DW 侧尚未接入 worktree 入口契约、patch artifact 的 metadata / 落盘结构尚未确定、以及 doctor / status 是否需要补 worktree 观测摘要。
+
+#### [P0/P4/P6a 审查后修复] 实现结论：契约闭环与预算继承收敛（2026-06-24）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workflow-context-impl.ts`、`packages/belldandy-core/src/workflow-fingerprint.ts`、`packages/belldandy-core/src/bin/gateway.ts` 修改**：
+   - `ctx.agent()` 现在先按与 orchestrator 一致的规则解析真实 `launchSpec`，再计算 fingerprint
+   - fingerprint 已绑定 `agentProfileId`、`systemPromptHash`、`toolPolicyHash`，并把这些真实生效字段写入 `optsJson`，保证 migration 继续可复用
+   - gateway 已把 prompt inspection 的 `systemPromptFingerprint` 注入 `WorkflowRuntime`，不再依赖伪值或临时拼装
+
+2. **`packages/belldandy-core/src/chat-commander-trigger.ts` 与相应测试修改**：
+   - 触发词已严格按第 969 行定义收敛为两组独立模式，并兼容“用/使用”同义写法：指挥模式接受 `用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官` 与对应英文；动态工作流模式接受 `用动态工作流 / 使用动态工作流 / 进动态工作流 / 用动态工作流模式 / 使用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 使用DW模式 / 进DW模式` 与对应英文
+   - 第 969 行契约范围外的历史别名已统一改为不触发，保持“只显式触发、不做 auto”不变
+
+3. **`packages/belldandy-core/src/workflow-runtime.ts`、`packages/belldandy-agent/src/orchestrator.ts` 及相关测试修改**：
+   - `workflow()` 嵌套调用改为共享父级 `WorkflowBudgetGuard`，子工作流预算现在与父级统一熔断
+   - `WorkflowRuntime` 为每个 run 记录 budget baseline，用差量统计避免共享 guard 后 `stats` 读数失真
+   - 新增 launchSpec resolver 透传链，避免 context 层依赖不稳定的实例私有结构
+
+##### 效果
+
+- journal 缓存命中现在真正绑定到实际生效的 agent profile、system prompt 和工具策略，避免配置变化后命中旧结果
+- chat commander 的显式触发词与方案前文、测试和真实行为重新统一，用户按文档提示操作可稳定触发
+- 父子工作流现在共享统一预算上限，嵌套调用不会再绕过父级 token / call / retry 限制
+
+##### 验证结果
+
+- 未单独执行全量 TypeScript 编译；本轮仍以定向 Vitest 回归为主
+- 12 个测试文件全部通过，共 248 个测试通过（较上一轮新增覆盖 fingerprint 扩展字段、触发词兼容、launchSpec resolver、子工作流共享预算）
+- 关键功能验证结论：fingerprint 承诺字段来源、旧触发词兼容、共享 `WorkflowBudgetGuard` 熔断、shared budget 差量统计、migration 兼容性均已覆盖
+
+##### 后续计划
+
+- 下一步准备进入 `P6b · worktree 隔离` 的实现拆分，优先补 `AgentCallOptions` 的 `cwd/isolationMode` 入口、DW runtime 对 `SubTaskWorktreeRuntime` 的复用接线，以及 patch artifact 导出链路。
+- 之所以先做它，是因为 P0、P4、P6a 本轮已经闭环，当前剩余未完成项的主要风险已经从“方案未定义”收敛为“runtime 接线、artifact 结构与主仓写回边界”。
+- 当前还缺的关键闭环是：DW 侧尚未接入 worktree 入口契约、patch artifact 的 metadata / 落盘结构尚未确定、以及 doctor / status 是否需要补 worktree 观测摘要。

@@ -3,11 +3,11 @@
  *
  * 支持两种独立的编排模式触发：
  * 1. 指挥模式（Commander Mode）：主 Agent 在 ReAct 循环中实时调度子 Agent
- *    - 触发词：使用指挥模式 / 进指挥模式 / 成为指挥官
+ *    - 触发词：用指挥模式 / 使用指挥模式 / 进指挥模式 / 成为指挥官
  *    - 建议工具：delegate_task / delegate_parallel
  *
  * 2. 动态工作流模式（Dynamic Workflow Mode）：确定性 TypeScript 脚本编排
- *    - 触发词：用动态工作流 / 进动态工作流 / 用DW模式 / 进DW模式
+ *    - 触发词：用动态工作流 / 使用动态工作流 / 进动态工作流 / 用动态工作流模式 / 使用动态工作流模式 / 进动态工作流模式 / 用DW模式 / 使用DW模式 / 进DW模式
  *    - 建议工具：run_workflow
  *
  * 两种模式可同时触发（兼容），也可独立触发。
@@ -36,6 +36,7 @@ export type ChatCommanderTriggerResult = {
 
 const COMMANDER_MODE_PHRASES: string[] = [
   // 中文
+  "用指挥模式",
   "使用指挥模式",
   "进指挥模式",
   "成为指挥官",
@@ -51,10 +52,13 @@ const COMMANDER_MODE_PHRASES: string[] = [
 const WORKFLOW_MODE_PHRASES: string[] = [
   // 中文
   "用动态工作流",
+  "使用动态工作流",
   "进动态工作流",
   "用动态工作流模式",
+  "使用动态工作流模式",
   "进动态工作流模式",
   "用dw模式",
+  "使用dw模式",
   "进dw模式",
   // 英文
   "use dynamic workflow",
@@ -64,6 +68,35 @@ const WORKFLOW_MODE_PHRASES: string[] = [
   "use dw mode",
   "enter dw mode",
 ];
+
+/**
+ * 某些中文短语需要阻止被不兼容的更长旧口径前缀误命中。
+ * 当前仅拦截未被明确列入兼容词表的“使 + 用...”旧写法。
+ */
+const BLOCKED_PREFIX_BY_PHRASE: Readonly<Record<string, readonly string[]>> = {
+  "进指挥模式": ["前"],
+  "进动态工作流": ["前"],
+  "进动态工作流模式": ["前"],
+  "进dw模式": ["前"],
+};
+
+function hasPhraseMatch(lowerText: string, phrase: string): boolean {
+  const lowerPhrase = phrase.toLowerCase();
+  const blockedPrefixes = BLOCKED_PREFIX_BY_PHRASE[lowerPhrase] ?? [];
+  let startIndex = 0;
+  while (startIndex < lowerText.length) {
+    const matchIndex = lowerText.indexOf(lowerPhrase, startIndex);
+    if (matchIndex < 0) {
+      return false;
+    }
+    const prevChar = matchIndex > 0 ? lowerText[matchIndex - 1] : "";
+    if (!blockedPrefixes.includes(prevChar)) {
+      return true;
+    }
+    startIndex = matchIndex + lowerPhrase.length;
+  }
+  return false;
+}
 
 // ─── 检测函数 ─────────────────────────────────────────────────────────────
 
@@ -117,7 +150,7 @@ export function detectChatCommanderTrigger(
     reasons.push("Commander mode is explicitly enabled via settings");
   }
   for (const phrase of COMMANDER_MODE_PHRASES) {
-    if (lowerText.includes(phrase.toLowerCase())) {
+    if (hasPhraseMatch(lowerText, phrase)) {
       commanderTriggered = true;
       matchedPhrases.push(phrase);
       suggestedTools.add("delegate_task");
@@ -131,7 +164,7 @@ export function detectChatCommanderTrigger(
   // 检测动态工作流模式关键词
   let workflowTriggered = false;
   for (const phrase of WORKFLOW_MODE_PHRASES) {
-    if (lowerText.includes(phrase.toLowerCase())) {
+    if (hasPhraseMatch(lowerText, phrase)) {
       workflowTriggered = true;
       matchedPhrases.push(phrase);
       suggestedTools.add("run_workflow");

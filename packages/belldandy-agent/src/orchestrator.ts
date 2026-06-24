@@ -15,6 +15,11 @@ import type { AgentRegistry } from "./agent-registry.js";
 import type { ConversationStore } from "./conversation.js";
 import type { AgentStreamItem, BelldandyAgent } from "./index.js";
 import {
+  buildLaneSummary,
+  getOrCreateSharedCompressedContextStore,
+  injectSharedCompressedContext,
+} from "./shared-compressed-context.js";
+import {
   DEFAULT_AGENT_LAUNCH_TIMEOUT_MS,
   normalizeAgentLaunchSpecWithCatalog,
   type AgentLaunchSpec,
@@ -118,6 +123,7 @@ function toLaunchSpecInput(opts: SpawnOptions): AgentLaunchSpecInput {
     parentConversationId: opts.parentConversationId,
     agentId: opts.agentId,
     context: opts.context,
+    modelOverride: undefined,
     delegationProtocol: opts.delegationProtocol,
   };
 }
@@ -168,6 +174,15 @@ export class SubAgentOrchestrator {
     this.logger = options.logger;
     this.onEvent = options.onEvent;
     this.hookRunner = options.hookRunner;
+  }
+
+  resolveLaunchSpec(input: AgentLaunchSpecInput): AgentLaunchSpec {
+    return normalizeAgentLaunchSpecWithCatalog(input, {
+      agentRegistry: this.agentRegistry,
+      defaults: {
+        timeoutMs: this.sessionTimeoutMs,
+      },
+    });
   }
 
   private emitEvent(event: SubAgentEvent): void {
@@ -259,7 +274,7 @@ export class SubAgentOrchestrator {
     // ── Resolve agent ──
     let agent: BelldandyAgent;
     try {
-      agent = this.agentRegistry.create(agentId);
+      agent = this.agentRegistry.create(agentId, launchSpec.modelOverride ? { modelOverride: launchSpec.modelOverride } : undefined);
     } catch (err) {
       return {
         success: false,
@@ -293,6 +308,7 @@ export class SubAgentOrchestrator {
       instruction: launchSpec.instruction.slice(0, 200),
       launchSpec: {
         profileId: launchSpec.profileId,
+        modelOverride: launchSpec.modelOverride,
         channel: launchSpec.channel,
         background: launchSpec.background,
         timeoutMs: launchSpec.timeoutMs,
@@ -455,6 +471,7 @@ export class SubAgentOrchestrator {
     const history = providedHistory.length > 0
       ? providedHistory.map((item) => ({ ...item }))
       : this.conversationStore.getHistory(conversationId);
+    injectSharedCompressedContextForTeamRun(history, session.launchSpec);
 
     return new Promise<SpawnResult>((resolve) => {
       let settled = false;
@@ -601,6 +618,7 @@ export class SubAgentOrchestrator {
         _parentConversationId: launchSpec.parentConversationId,
           _agentLaunchSpec: {
             profileId: launchSpec.profileId,
+            modelOverride: launchSpec.modelOverride,
             channel: launchSpec.channel,
             background: launchSpec.background,
             timeoutMs: launchSpec.timeoutMs,
@@ -700,6 +718,7 @@ export class SubAgentOrchestrator {
     this.conversationStore.addMessage(conversationId, "assistant", finalText, {
       agentId: session.agentId,
     });
+    persistSharedCompressedContextForTeamRun(session, finalText);
 
     this.logger?.info(`Sub-agent completed: ${session.id}`, {
       agentId: session.agentId,
@@ -726,4 +745,37 @@ export class SubAgentOrchestrator {
       sessionId: session.id,
     };
   }
+}
+
+function injectSharedCompressedContextForTeamRun(
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  launchSpec: AgentLaunchSpec,
+): void {
+  const team = launchSpec.delegationProtocol?.team;
+  if (!team?.id || !team.currentLaneId) {
+    return;
+  }
+  const store = getOrCreateSharedCompressedContextStore(team.id);
+  const contextText = store.buildFanInContextText();
+  if (!contextText) {
+    return;
+  }
+  injectSharedCompressedContext(history, contextText);
+}
+
+function persistSharedCompressedContextForTeamRun(
+  session: SubAgentSession,
+  output: string,
+): void {
+  const team = session.launchSpec.delegationProtocol?.team;
+  if (!team?.id || !team.currentLaneId) {
+    return;
+  }
+  const store = getOrCreateSharedCompressedContextStore(team.id);
+  const summary = buildLaneSummary(output);
+  store.upsert({
+    laneId: team.currentLaneId,
+    agentId: session.agentId,
+    rawSummary: summary,
+  });
 }

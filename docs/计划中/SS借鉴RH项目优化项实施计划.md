@@ -777,10 +777,16 @@ Done 标准
 | --- | --- | --- | --- | --- | --- | --- |
 | P0 | 统一规划与文档收敛 | 已完成 | 统一目标、统一分工、冲突处理规则、阶段顺序、接入点边界 | 本文档完成并可作为后续开发总计划 | 无 | 进入证据与实现分流 |
 | P1 | Phase 0：证据基线 | 已完成 | live DeepSeek probe 已运行；4 个本地诊断样本已采集；Phase 0 证据结论已形成 | 能明确热点来源与后续优先级 | 无 | 进入 Phase 1 压缩层骨架 |
-| P2 | Phase 1：低风险统一压缩试点 | 已完成 | `context-compression/` 骨架、4 个压缩器、tool_result 接入、attachment_text 接入、reasoning_content 最小回传、compression observability 透传与前端展示 | 两个入口接入统一压缩层，compression observability 可见 | 无 | 进入 Phase 2 reference 协议与冷恢复整合 |
+| P2 | Phase 1：低风险统一压缩试点 | 已完成 | `context-compression/` 骨架、4 个压缩器、tool_result 接入、attachment_text 接入、reasoning_content 最小回传、compression observability 透传与前端展示、附件真实 prompt 改写、附件压缩收益透传到 `token.usage` 与前端 `ATTACH_COMP`、附件压缩 `fail-open` 回归覆盖、图文混合场景下 `text` / `content[0].text` 对齐回归覆盖、`image_input` / `video_input` 端到端组合回归、图片/视频自动理解失败兜底回归、Windows 下 `video_input` 标准 `file:///` URL 修复、图片/视频自动理解成功态回归、缓存命中回归、旧 `frame_sampling_fallback` 缓存刷新回归、能力缺失降级态回归 | 两个入口接入统一压缩层，附件压缩真实生效且 observability 可见；压缩失败时保留原文；图文混合场景下真实 prompt、首个 text content part 与 `promptDeltas` 保持一致；图片/视频多模态、自动理解成功/失败、缓存命中/刷新、能力缺失降级在 `message.send` 端到端链路中都有长期回归护栏 | 无 | Phase 1 附件入口主护栏已基本补齐；如继续扩展，转向更边缘的 provider / 传输 / observability 场景 |
 | P3 | Phase 2：reference 协议与冷恢复整合 | 已完成 | reference store、统一 marker 格式、retrieve runtime、cold resume prune、prune-before-summarize、JsonToolOutputCompressor、CodeSnippetCompressor | 单一 marker 协议打通，冷恢复生命周期一致 | 无 | 进入 Phase 3 budget protect 与安全整形 |
-| P4 | Phase 3：budget protect 与安全整形 | 已完成 | `budget-protect.ts`、`trimMessagesToFit()` 保护策略重构、`protect_memory_capability` 模式、历史内容压缩优先于删除、最近 N 轮保护、observability 透传与前端展示 | 预算吃紧时先保关键记忆与能力 | 无 | 进入 Phase 4 stable prefix 与多 Agent 扩展 |
-| P5 | Phase 4：stable prefix 与多 Agent 扩展 | 已完成（第一步） | `stable-prefix-split.ts`、transient-safe delta 分离、transient tail 注入、observability 透传与前端展示、gateway 装配与环境变量 | stable prefix 真正更稳定，cache mismatch 下降 | 后续步骤待验证 | 验证 cache 命中率提升后推进 identity-authority 独立 block 与 shared compressed context |
+| P4 | Phase 3：budget protect 与安全整形 | 已完成 | `budget-protect.ts`、`trimMessagesToFit()` 保护策略重构、`protect_memory_capability` 模式、历史内容压缩优先于删除、最近 N 轮保护、observability 透传与前端展示、budget protect 结构化压缩替换首尾硬截断、`trimMessagesToFit()` 行为级回归测试补强、`compressBeforeDelete=true` 边界测试补齐（压缩足够不删 / 压缩后再删） | 预算吃紧时先保关键记忆与能力，且历史压缩优先走统一压缩层；关键 trim 顺序已有行为级测试约束 | 无 | 转回 Phase 1 附件入口与长期回归覆盖补强 |
+| P5 | Phase 4：stable prefix 与多 Agent 扩展 | 已完成 | `stable-prefix-split.ts`、transient-safe delta 分离、transient tail 注入、observability 透传与前端展示、gateway 装配与环境变量、`identity-authority` independent block、DeepSeek `tierPinning` 透传到 `token.usage` 与前端、`shared compressed context` 接入 orchestrator team 主链路（完成写回与后续 lane 注入） | stable prefix 更稳定，tier pinning 与多 Agent 共享上下文已有真实主链路闭环；manager fan-in 目前以 `delegationResults` / `team-*` runtime deltas 为主，不默认再并入 shared context 正文 | 若后续在长链 fan-in / compaction 压力下证明确有 lane 摘要缺口，再评估条件式注入 shared context delta | 暂不直接把 shared context 摘要并入 manager fan-in 正文；如后续证据显示缺口，再做按需注入而非默认正文拼接 |
+
+后续计划：
+
+- 下一步准备从 `Phase 1` 附件入口转向更边缘的扩展验证，优先考虑不同 provider / transport 分支、视频 native fallback 诊断透传、以及附件相关 observability 在更多前端展示位的稳定性。
+- 之所以先做它，是因为附件入口最核心的长期护栏已经覆盖到文本压缩、多模态注入、自动理解成功/失败、缓存命中/刷新和能力降级，继续加测试的收益已经从“补主闭环”转成“补边界与扩展态”。
+- 当前还缺的关键闭环主要有两项：一是不同 provider / transport 组合下的视频理解分支还没有全部端到端回归；二是如果未来出现长链 fan-in / 压缩后 manager 丢失 lane 摘要的证据，再按条件式 delta 注入评估 shared compressed context，而不是直接恢复正文拼接方案。
 
 ### Phase 0 证据结论（2026-06-23）
 
@@ -1301,3 +1307,148 @@ prefix drift 场景（Sample D）：
 - TypeScript 编译无错误
 - 92 个测试全部通过（含 18 个新增 shared compressed context 测试）
 - `SharedCompressedContextStore` 正确存储/检索/标记 stale/构建 fan-in 文本
+
+---
+
+## 14. 已完成实现代码审查（2026-06-24）
+
+### 审查计划
+
+本轮审查只覆盖本文档中已标记“已完成”的实现，按阶段拆成 5 个模块逐一核对：
+
+1. **P1 / Phase 0 证据基线**
+   - 核对证据样本、诊断输出、文档结论是否一致，确认是否存在“基于错误证据推进后续阶段”的风险。
+2. **P2 / Phase 1 统一压缩层试点**
+   - 核对 `tool_result / attachment_text / reasoning_content / observability` 的真实接线路径。
+   - 重点检查压缩是否作用于真实发送给模型的 prompt，而不只是作用于旁路元数据。
+3. **P3 / Phase 2 reference 协议 + 冷恢复整合**
+   - 核对 marker、reference store、cold resume prune、prune-before-summarize 是否在主链路一致生效。
+4. **P4 / Phase 3 budget protect**
+   - 核对 `trimMessagesToFit()` 的真实策略顺序、诊断透传、以及测试是否覆盖关键行为。
+5. **P5 / Phase 4 stable prefix / tier pinning / shared compressed context**
+   - 分别核对 stable prefix 拆层、DeepSeek soft tier pinning、shared compressed context 的主链路接线、诊断透传和前端展示是否真正闭环。
+
+### 审查结论
+
+#### P1 / Phase 0：证据基线
+
+- 本阶段未发现阻塞后续实现的明显代码错误。
+- 审查结论：
+  - `deepseek-realcache.probe.test.ts`、`phase0-sample-collection.test.ts` 对应的结论与文档中 Phase 0 的优先级判断基本一致。
+  - 当前主要问题不在 Phase 0 证据本身，而在后续 Phase 1、Phase 4 的“已完成闭环”表述有高估。
+
+#### P2 / Phase 1：统一压缩层试点
+
+##### Finding 1
+
+- **严重级别**：中高
+- **决策类型**：`fix_now`
+- **问题**：附件文本压缩没有真正作用到发送给模型的主 prompt，当前只改写了 `promptDeltas` 副本。
+- **证据**：
+  - [attachment-understanding-runner.ts](E:/project/star-sanctuary/packages/belldandy-core/src/attachment-understanding-runner.ts:235) 先把 `attachmentPrompts` 追加进 `promptText`，随后才在 [243-267](E:/project/star-sanctuary/packages/belldandy-core/src/attachment-understanding-runner.ts:243) 对 `promptDeltas` 做压缩替换。
+  - [query-runtime-message-send.ts](E:/project/star-sanctuary/packages/belldandy-core/src/query-runtime-message-send.ts:409) 实际发送给后台运行的是 `preparedPrompt.promptText`，而压缩后的 `promptDeltas` 只作为 `meta.promptDeltas` 附带在 [411](E:/project/star-sanctuary/packages/belldandy-core/src/query-runtime-message-send.ts:411)。
+  - `tool-agent.ts` 初始输入仍以 `input.text / input.content` 构建消息，`meta.promptDeltas` 不会反向替换用户正文中的附件原文，见 [tool-agent.ts:1676](E:/project/star-sanctuary/packages/belldandy-agent/src/tool-agent.ts:1676)。
+- **影响**：
+  - 文档宣称 `attachment_text` 已接入统一压缩层，但真实 prompt token 体积未必下降。
+  - observability 可能显示压缩发生，实际模型输入却仍带原始附件文本，造成“观测与真实效果不一致”。
+
+##### Finding 2
+
+- **严重级别**：中
+- **决策类型**：`split_task`
+- **问题**：`attachmentCompressionResults` 已生成但没有被任何主链路消费，附件压缩收益无法进入统一 observability。
+- **证据**：
+  - `attachment-understanding-runner.ts` 在 [66](E:/project/star-sanctuary/packages/belldandy-core/src/attachment-understanding-runner.ts:66) 定义、在 [282](E:/project/star-sanctuary/packages/belldandy-core/src/attachment-understanding-runner.ts:282) 返回 `attachmentCompressionResults`。
+  - 全仓搜索只有定义和返回，没有 usage event、前端或 doctor 消费。
+- **影响**：
+  - 即使后续补齐了真实附件 prompt 压缩，当前前端也看不到附件维度的独立压缩收益。
+  - 文档中“compression observability 可见”的表述对附件入口来说并不完整。
+
+##### Finding 3
+
+- **严重级别**：中
+- **决策类型**：`split_task`
+- **问题**：附件相关测试只验证了 `promptDeltas` 和 `seenInputs[0].text` 的截断预算，没有验证“长附件被统一压缩后，真实发送 prompt 已替换为压缩文本”。
+- **证据**：
+  - [server.attachments.test.ts:244](E:/project/star-sanctuary/packages/belldandy-core/src/server.attachments.test.ts:244)、[383](E:/project/star-sanctuary/packages/belldandy-core/src/server.attachments.test.ts:383)、[480](E:/project/star-sanctuary/packages/belldandy-core/src/server.attachments.test.ts:480) 仅断言 `promptDeltas` 存在。
+  - 当前没有任何测试断言 `attachmentCompressionResults`、`compressionStrategy`，也没有测试覆盖“压缩后 `promptText` 被替换”的行为。
+- **影响**：
+  - Phase 1 的附件入口属于“有模块实现、缺行为级回归”，容易在后续重构中继续漂移。
+
+#### P3 / Phase 2：reference 协议 + 冷恢复整合
+
+- 本阶段主链路接线整体成立，未发现新的高优先级功能缺口。
+- 审查结论：
+  - reference marker、reference store、cold resume prune、prune-before-summarize 的代码和前述实现结论一致。
+  - 本轮未新增必须阻塞推进的实现错误。
+- 残余风险：
+  - 文档中已经记录过 `enableReferenceStore` 默认未在真实装配中开启的问题，这仍然是“端到端验证范围受限”的已知风险，不是本轮新增问题。
+
+#### P4 / Phase 3：budget protect
+
+##### Finding 4
+
+- **严重级别**：中
+- **决策类型**：`split_task`
+- **问题**：`budget-protect.ts` 的辅助函数有单测，但 `trimMessagesToFit()` 的关键行为缺少直接测试覆盖。
+- **证据**：
+  - [budget-protect.test.ts](E:/project/star-sanctuary/packages/belldandy-agent/src/budget-protect.test.ts:1) 当前只覆盖 `resolveBudgetProtectOptions()`、`computeProtectedIndices()`、`isCompressibleHistoryMessage()`、`isDeletableHistoryMessage()` 和默认值。
+  - 真正执行顺序和删除重算逻辑在 [tool-agent.ts:4487](E:/project/star-sanctuary/packages/belldandy-agent/src/tool-agent.ts:4487) 到 [4615](E:/project/star-sanctuary/packages/belldandy-agent/src/tool-agent.ts:4615)。
+- **缺失场景**：
+  - `compressBeforeDelete=true` 时是否真的先压后删。
+  - 删除后受保护索引是否按预期重算。
+  - `system` / tool schema 不被误删。
+  - trim 触发后的 `budgetProtect` 诊断是否正确进入 usage event。
+- **影响**：
+  - 当前更像“策略实现完成 + 辅助逻辑覆盖”，还不是完整的行为级闭环。
+
+#### P5 / Phase 4：stable prefix / tier pinning / shared compressed context
+
+##### Finding 5
+
+- **严重级别**：中
+- **决策类型**：`record_only`
+- **问题**：Phase 4 文档前半段仍保留了“identity-authority 留在 stable prefix”的旧表述，和后续已完成的“独立 block”实现不一致。
+- **证据**：
+  - 文档在 [1087-1089](E:/project/star-sanctuary/docs/计划中/SS借鉴RH项目优化项实施计划.md:1087) 仍写着 `identity-authority` 留在 stable prefix。
+  - 实际实现已在 [stable-prefix-split.ts](E:/project/star-sanctuary/packages/belldandy-agent/src/stable-prefix-split.ts:39) 及对应注入逻辑中拆为 independent block，并在后文 [1217](E:/project/star-sanctuary/docs/计划中/SS借鉴RH项目优化项实施计划.md:1217) 单独记录。
+- **影响**：
+  - 文档口径漂移，后续开发者容易按旧边界继续扩展 stable prefix，造成误用。
+
+##### Finding 6
+
+- **严重级别**：中
+- **决策类型**：`fix_now`
+- **问题**：`tierPinning` 诊断字段只在 `deepseek-tier-routing.ts` 内存在，进入 usage / observability 链路前已经被裁掉，当前文档“可在 observability 中查看”不成立。
+- **证据**：
+  - `DeepSeekTierRouteDecision` 在 [deepseek-tier-routing.ts:27](E:/project/star-sanctuary/packages/belldandy-core/src/deepseek-tier-routing.ts:27) 定义了 `tierPinning`。
+  - 但 `query-runtime-message-send.ts` 给后台运行传入的 `routeDecision` 类型只保留到 `reason`，见 [578-585](E:/project/star-sanctuary/packages/belldandy-core/src/query-runtime-message-send.ts:578) 和 [420-427](E:/project/star-sanctuary/packages/belldandy-core/src/query-runtime-message-send.ts:420)。
+  - usage event 仅原样转发这个被裁剪后的 `routeDecision`，见 [1062-1064](E:/project/star-sanctuary/packages/belldandy-core/src/query-runtime-message-send.ts:1062) 和 [1125-1127](E:/project/star-sanctuary/packages/belldandy-core/src/query-runtime-message-send.ts:1125)。
+  - 前端 `token-usage-observability.js` 在 [138-149](E:/project/star-sanctuary/apps/web/public/app/features/token-usage-observability.js:138) 只显示 `selectedTier` 与 `reason`。
+  - 现有测试也只校验 `selectedTier / reason`，见 [token-usage-observability.test.js:27](E:/project/star-sanctuary/apps/web/public/app/features/token-usage-observability.test.js:27) 和 [server.test.ts:1831](E:/project/star-sanctuary/packages/belldandy-core/src/server.test.ts:1831)。
+- **影响**：
+  - soft pinning 的诊断价值没有真正透传到观察层，排查“为什么保持 pro/flash”时仍然缺关键证据。
+
+##### Finding 7
+
+- **严重级别**：中高
+- **决策类型**：`fix_now`
+- **问题**：`shared compressed context` 当前只有模块与单测，没有接入任何 team / manager / fan-in 主链路，但文档把它表述成“已完成效果”。
+- **证据**：
+  - 相关 API 只出现在导出文件 [index.ts:573-580](E:/project/star-sanctuary/packages/belldandy-agent/src/index.ts:573) 和模块 / 测试自身。
+  - 全仓搜索 `getOrCreateSharedCompressedContextStore`、`injectSharedCompressedContext`、`buildLaneSummary` 没有任何 team runtime、manager fan-in、delegation 主链路调用。
+- **影响**：
+  - 当前最多只能证明“模块可用、单测通过”，不能证明“manager prompt 已减少”“fan-in 决策效率已提升”。
+  - 这属于文档完成度高于真实接线完成度的闭环缺口。
+
+### 总结与优先级建议
+
+1. **第一优先级：修复 Phase 1 附件压缩假闭环**
+   - 先让附件统一压缩真正改写发送给模型的 `promptText` 或 `contentParts`，再把 `attachmentCompressionResults` 接进 usage / 前端。
+   - 这是当前最明显的“功能宣称已完成、真实节省未落地”问题。
+2. **第二优先级：补齐 Phase 4 的两处诊断/接线缺口**
+   - 一是 `tierPinning` 透传到 usage event 和前端。
+   - 二是把 `shared compressed context` 真正接入 team / fan-in 主链路，或者下调文档状态为“模块完成，主链路待接线”。
+3. **第三优先级：补测试闭环**
+   - Phase 3 需要给 `trimMessagesToFit()` 增加行为级测试。
+   - Phase 1 附件入口也需要新增“压缩结果作用到真实 prompt”的回归测试。

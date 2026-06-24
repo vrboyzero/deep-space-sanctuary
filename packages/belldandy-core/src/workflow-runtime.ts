@@ -26,6 +26,7 @@ import {
   WorkflowBudgetExceededError,
   resolveWorkflowBudgetFromEnv,
   type WorkflowBudget,
+  type WorkflowBudgetUsage,
 } from "./workflow-budget-guard.js";
 import { createWorkflowContext, type WorkflowContextCallbacks } from "./workflow-context-impl.js";
 import { computeMigrationFingerprint } from "./workflow-fingerprint.js";
@@ -49,6 +50,16 @@ export type WorkflowRunOptions = {
   resumeJournalId?: string;
   stateDir?: string;
   callbacks?: WorkflowContextCallbacks;
+  /**
+   * 复用父工作流的预算守卫。用于 workflow() 嵌套时共享 token/call/retry/wall-clock 预算。
+   */
+  sharedBudgetGuard?: WorkflowBudgetGuard;
+  /**
+   * 顶层 runtime 可注入的 agent profile / prompt / tool policy 解析器，
+   * 用于让 ctx.agent() 的 fingerprint 绑定到真实生效的执行语义。
+   */
+  resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
+  resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
   /**
    * 嵌套深度。顶层工作流为 0，子工作流为 1。
    * 由 workflow() 嵌套调用时自动设置，外部调用方通常不需要指定。
@@ -115,6 +126,23 @@ export type WorkflowRuntimeDeps = {
     error(message: string, data?: unknown): void;
     debug(message: string, data?: unknown): void;
   };
+  resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
+  resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
+};
+
+export type AgentExecutionFingerprintInputResolver = (input: {
+  agentId: string;
+  profileId: string;
+  modelOverride?: string;
+  role?: string;
+  allowedToolFamilies?: string[];
+  maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+  permissionMode?: string;
+  policySummary?: string;
+}) => {
+  agentProfileId?: string;
+  systemPromptHash?: string;
+  toolPolicyHash?: string;
 };
 
 type ActiveRun = {
@@ -127,6 +155,7 @@ type ActiveRun = {
   journal: WorkflowJournal;
   orchestrator: SubAgentOrchestrator;
   abortController: AbortController;
+  budgetBaseline: WorkflowBudgetUsage;
   error?: string;
   startedAt: number;
 };
@@ -137,6 +166,8 @@ export class WorkflowRuntime {
   private readonly conversationStore: ConversationStore;
   private readonly readEnv: (name: string) => string | undefined;
   private readonly logger?: WorkflowRuntimeDeps["logger"];
+  private readonly resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
+  private readonly resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
   private readonly activeRuns = new Map<string, ActiveRun>();
 
   constructor(deps: WorkflowRuntimeDeps) {
@@ -145,6 +176,8 @@ export class WorkflowRuntime {
     this.conversationStore = deps.conversationStore;
     this.readEnv = deps.readEnv ?? ((name: string) => process.env[name]);
     this.logger = deps.logger;
+    this.resolveAgentExecutionFingerprintInputs = deps.resolveAgentExecutionFingerprintInputs;
+    this.resolveWorkflowAgentLaunchSpec = deps.resolveWorkflowAgentLaunchSpec;
   }
 
   async run(opts: WorkflowRunOptions): Promise<WorkflowRunResult> {
@@ -188,7 +221,7 @@ export class WorkflowRuntime {
     // 3. 创建 BudgetGuard（环境变量默认值 + opts.budget 覆盖）
     const envBudget = resolveWorkflowBudgetFromEnv(this.readEnv);
     const budget = mergeBudget(envBudget, opts.budget);
-    const budgetGuard = new WorkflowBudgetGuard(budget);
+    const budgetGuard = opts.sharedBudgetGuard ?? new WorkflowBudgetGuard(budget);
 
     // 4. 创建独立 orchestrator 实例
     const maxConcurrent = Math.min(
@@ -223,6 +256,7 @@ export class WorkflowRuntime {
       journal,
       orchestrator,
       abortController,
+      budgetBaseline: budgetGuard.getUsage(),
       startedAt,
     };
     this.activeRuns.set(journalId, activeRun);
@@ -240,7 +274,16 @@ export class WorkflowRuntime {
       channel: opts.channel,
       journalId,
       maxConcurrent,
-      callbacks: opts.callbacks,
+      callbacks: opts.callbacks ? {
+        ...opts.callbacks,
+        // started/completed/thought_delta 已由 orchestrator.onEvent 统一推送。
+        // 这里避免 ctx.agent() 再次重复发事件。
+        onAgentEvent: undefined,
+      } : undefined,
+      resolveAgentExecutionFingerprintInputs: opts.resolveAgentExecutionFingerprintInputs
+        ?? this.resolveAgentExecutionFingerprintInputs,
+      resolveWorkflowAgentLaunchSpec: opts.resolveWorkflowAgentLaunchSpec
+        ?? this.resolveWorkflowAgentLaunchSpec,
       // workflow() 嵌套支持：传入 runtime 引用和深度
       runtime: this,
       depth: opts.depth ?? 0,
@@ -275,7 +318,7 @@ export class WorkflowRuntime {
 
     // 8. 收集统计
     const journalStats = journal.getStats(journalId);
-    const budgetUsage = budgetGuard.getUsage();
+    const budgetUsage = diffBudgetUsage(budgetGuard.getUsage(), activeRun.budgetBaseline);
     activeRun.status = finalStatus;
     activeRun.error = error;
 
@@ -334,7 +377,7 @@ export class WorkflowRuntime {
     if (!run) return null;
 
     const stats = run.journal.getStats(journalId);
-    const budgetUsage = run.budgetGuard.getUsage();
+    const budgetUsage = diffBudgetUsage(run.budgetGuard.getUsage(), run.budgetBaseline);
 
     return {
       status: run.status,
@@ -358,12 +401,16 @@ export class WorkflowRuntime {
    * 列出所有 active runs。
    */
   listActiveRuns(): Array<{ journalId: string; status: WorkflowRuntimeStatus; workflowName: string; startedAt: number }> {
-    return [...this.activeRuns.values()].map((run) => ({
+    // 机会式清理已结束且超过默认保留期的记录，避免 doctor 视角持续膨胀。
+    this.cleanup();
+    return [...this.activeRuns.values()]
+      .filter((run) => run.status === "running" || run.status === "stopping")
+      .map((run) => ({
       journalId: run.journalId,
       status: run.status,
       workflowName: run.workflowName,
       startedAt: run.startedAt,
-    }));
+      }));
   }
 
   /**
@@ -462,5 +509,16 @@ function mergeBudget(env: WorkflowBudget, override?: WorkflowBudget): WorkflowBu
     maxWallClockMs: override.maxWallClockMs ?? env.maxWallClockMs,
     maxConcurrent: override.maxConcurrent ?? env.maxConcurrent,
     onExceeded: override.onExceeded ?? env.onExceeded,
+  };
+}
+
+function diffBudgetUsage(current: WorkflowBudgetUsage, baseline: WorkflowBudgetUsage): WorkflowBudgetUsage {
+  return {
+    tokens: Math.max(0, current.tokens - baseline.tokens),
+    calls: Math.max(0, current.calls - baseline.calls),
+    retries: Math.max(0, current.retries - baseline.retries),
+    durationMs: Math.max(0, current.durationMs - baseline.durationMs),
+    exceeded: current.exceeded,
+    exceededReason: current.exceededReason,
   };
 }

@@ -51,6 +51,9 @@ async function codeAudit(ctx: WorkflowContext): Promise<string> {
   if (failedScans.length > 0) {
     ctx.log(`${failedScans.length} 个模块扫描失败，继续验证已完成的 ${validScans.length} 个`);
   }
+  if (validScans.length === 0) {
+    throw new Error("所有模块扫描均失败，无法继续审计");
+  }
 
   // 阶段2：交叉验证
   ctx.phase("阶段2：交叉验证");
@@ -66,6 +69,9 @@ async function codeAudit(ctx: WorkflowContext): Promise<string> {
   const verifiedReports = verifyResults
     .filter((r) => r.ok)
     .map((r) => (r as { ok: true; value: string }).value);
+  if (verifiedReports.length === 0) {
+    throw new Error("所有扫描结果均未通过验证，无法生成审计报告");
+  }
 
   // 阶段3：汇总报告
   ctx.phase("阶段3：汇总报告");

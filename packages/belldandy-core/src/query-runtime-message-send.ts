@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import type { WebSocket } from "ws";
-import type { AgentPromptDelta, AgentRegistry, BelldandyAgent, ConversationStore } from "@belldandy/agent";
+import type { AgentPromptDelta, AgentRegistry, BelldandyAgent, CompressionResult, ConversationStore } from "@belldandy/agent";
 import type { DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableExtractionRuntime } from "@belldandy/memory";
 import {
   uploadTokenUsage,
@@ -409,6 +409,7 @@ export async function handleMessageSendWithQueryRuntime(
       promptText: preparedPrompt.promptText,
       contentParts: preparedPrompt.contentParts,
       promptDeltas: [...preparedPrompt.promptDeltas, ...commanderPromptDeltas],
+      attachmentCompressionResults: preparedPrompt.attachmentCompressionResults,
       textAttachmentCount: preparedPrompt.textAttachmentCount,
       textAttachmentChars: preparedPrompt.textAttachmentChars,
       audioTranscriptChars: preparedPrompt.audioTranscriptChars,
@@ -424,6 +425,19 @@ export async function handleMessageSendWithQueryRuntime(
         routeMode: modelRouteDecision.routeMode,
         degraded: modelRouteDecision.degraded,
         reason: modelRouteDecision.reason,
+        ...(modelRouteDecision.tierPinning
+          ? {
+            tierPinning: {
+              pinned: modelRouteDecision.tierPinning.pinned,
+              ...(modelRouteDecision.tierPinning.previousTier
+                ? { previousTier: modelRouteDecision.tierPinning.previousTier }
+                : {}),
+              ...(modelRouteDecision.tierPinning.reason
+                ? { reason: modelRouteDecision.tierPinning.reason }
+                : {}),
+            },
+          }
+          : {}),
       },
     });
 
@@ -567,6 +581,7 @@ type MessageSendBackgroundInput = {
   promptText: string;
   contentParts: Array<Record<string, unknown>>;
   promptDeltas: AgentPromptDelta[];
+  attachmentCompressionResults?: CompressionResult[];
   textAttachmentCount: number;
   textAttachmentChars: number;
   audioTranscriptChars: number;
@@ -582,6 +597,11 @@ type MessageSendBackgroundInput = {
     routeMode?: "passthrough" | "deepseek_virtual";
     degraded?: boolean;
     reason?: string;
+    tierPinning?: {
+      pinned?: boolean;
+      previousTier?: "flash" | "pro";
+      reason?: string;
+    };
   };
   auxSummaryVerdict?: {
     strategy?: string;
@@ -620,6 +640,17 @@ type MessageSendLatestUsage = {
     routeMode?: "passthrough" | "deepseek_virtual";
     degraded?: boolean;
     reason?: string;
+    tierPinning?: {
+      pinned?: boolean;
+      previousTier?: "flash" | "pro";
+      reason?: string;
+    };
+  };
+  attachmentCompression?: {
+    appliedCount: number;
+    totalSavedChars: number;
+    totalSavedCharsPositive: boolean;
+    bySource?: Record<string, { applied: number; savedChars: number }>;
   };
   auxSummaryVerdict?: {
     strategy?: string;
@@ -694,6 +725,8 @@ type MessageSendBackgroundRunState = {
   run: {
     getLatestUsage: () => MessageSendLatestUsage | undefined;
     setLatestUsage: (usage: MessageSendLatestUsage | undefined) => void;
+    getRunMeta: () => Record<string, unknown> | undefined;
+    setRunMeta: (meta: Record<string, unknown> | undefined) => void;
     hasEmittedTaskResult: () => boolean;
     markTaskResultEmitted: () => void;
     hasReceivedFinal: () => boolean;
@@ -762,10 +795,11 @@ function buildMessageSendAgentRunInput(
 function buildMessageSendAttachmentStats(
   input: Pick<
     MessageSendBackgroundInput,
-    "textAttachmentCount" | "textAttachmentChars" | "audioTranscriptChars" | "audioTranscriptCacheHits" | "attachmentPromptLimits"
+    "textAttachmentCount" | "textAttachmentChars" | "audioTranscriptChars" | "audioTranscriptCacheHits" | "attachmentPromptLimits" | "attachmentCompressionResults"
   >,
 ): Record<string, unknown> | undefined {
-  if (input.textAttachmentCount <= 0 && input.audioTranscriptChars <= 0) {
+  const attachmentCompression = summarizeAttachmentCompressionResults(input.attachmentCompressionResults);
+  if (input.textAttachmentCount <= 0 && input.audioTranscriptChars <= 0 && !attachmentCompression) {
     return undefined;
   }
 
@@ -778,16 +812,81 @@ function buildMessageSendAttachmentStats(
     textAttachmentTruncatedCharLimit: input.attachmentPromptLimits.textCharLimit,
     textAttachmentTotalCharLimit: input.attachmentPromptLimits.totalTextCharLimit,
     audioTranscriptAppendCharLimit: input.attachmentPromptLimits.audioTranscriptAppendCharLimit,
+    ...(attachmentCompression ? { attachmentCompression } : {}),
+  };
+}
+
+function summarizeAttachmentCompressionResults(
+  results: CompressionResult[] | undefined,
+): {
+  appliedCount: number;
+  totalSavedChars: number;
+  totalSavedCharsPositive: boolean;
+  bySource?: Record<string, { applied: number; savedChars: number }>;
+} | undefined {
+  if (!Array.isArray(results) || results.length === 0) {
+    return undefined;
+  }
+  let appliedCount = 0;
+  let totalSavedChars = 0;
+  const bySource = new Map<string, { applied: number; savedChars: number }>();
+  for (const result of results) {
+    if (!result?.applied) continue;
+    const sourceKind = typeof result.sourceKind === "string" && result.sourceKind.trim()
+      ? result.sourceKind.trim()
+      : "unknown";
+    const savedChars = Math.max(0, Number(result.originalChars ?? 0) - Number(result.compressedChars ?? 0));
+    appliedCount += 1;
+    totalSavedChars += savedChars;
+    const current = bySource.get(sourceKind) ?? { applied: 0, savedChars: 0 };
+    current.applied += 1;
+    current.savedChars += savedChars;
+    bySource.set(sourceKind, current);
+  }
+  if (appliedCount <= 0) {
+    return undefined;
+  }
+  return {
+    appliedCount,
+    totalSavedChars,
+    totalSavedCharsPositive: totalSavedChars > 0,
+    ...(bySource.size > 0 ? { bySource: Object.fromEntries(bySource.entries()) } : {}),
+  };
+}
+
+function readAttachmentCompressionFromRunMeta(
+  meta: Record<string, unknown> | undefined,
+): {
+  appliedCount: number;
+  totalSavedChars: number;
+  totalSavedCharsPositive: boolean;
+  bySource?: Record<string, { applied: number; savedChars: number }>;
+} | undefined {
+  const attachmentStats = meta?.attachmentStats;
+  if (!attachmentStats || typeof attachmentStats !== "object") {
+    return undefined;
+  }
+  const attachmentCompression = (attachmentStats as Record<string, unknown>).attachmentCompression;
+  if (!attachmentCompression || typeof attachmentCompression !== "object") {
+    return undefined;
+  }
+  return attachmentCompression as {
+    appliedCount: number;
+    totalSavedChars: number;
+    totalSavedCharsPositive: boolean;
+    bySource?: Record<string, { applied: number; savedChars: number }>;
   };
 }
 
 function createMessageSendBackgroundRunState(): MessageSendBackgroundRunState {
   const runState: {
     latestUsage?: MessageSendLatestUsage;
+    runMeta?: Record<string, unknown>;
     didEmitAutoRunTaskResult: boolean;
     receivedFinal: boolean;
   } = {
     latestUsage: undefined,
+    runMeta: undefined,
     didEmitAutoRunTaskResult: false,
     receivedFinal: false,
   };
@@ -800,6 +899,10 @@ function createMessageSendBackgroundRunState(): MessageSendBackgroundRunState {
       getLatestUsage: () => runState.latestUsage,
       setLatestUsage: (usage) => {
         runState.latestUsage = usage;
+      },
+      getRunMeta: () => runState.runMeta,
+      setRunMeta: (meta) => {
+        runState.runMeta = meta;
       },
       hasEmittedTaskResult: () => runState.didEmitAutoRunTaskResult,
       markTaskResultEmitted: () => {
@@ -951,6 +1054,11 @@ function handleMessageSendUsageEvent(input: {
     routeMode?: "passthrough" | "deepseek_virtual";
     degraded?: boolean;
     reason?: string;
+    tierPinning?: {
+      pinned?: boolean;
+      previousTier?: "flash" | "pro";
+      reason?: string;
+    };
   };
   auxSummaryVerdict?: {
     strategy?: string;
@@ -1041,6 +1149,12 @@ function handleMessageSendUsageEvent(input: {
       totalSavedTokensEstimate: number;
       bySource?: Record<string, { applied: number; savedTokens: number }>;
     };
+    attachmentCompression?: {
+      appliedCount: number;
+      totalSavedChars: number;
+      totalSavedCharsPositive: boolean;
+      bySource?: Record<string, { applied: number; savedChars: number }>;
+    };
   };
 }): void {
   const latestUsage = {
@@ -1061,6 +1175,9 @@ function handleMessageSendUsageEvent(input: {
       : {}),
     ...(input.routeDecision && typeof input.routeDecision === "object"
       ? { deepseekRoute: input.routeDecision }
+      : {}),
+    ...(input.item.attachmentCompression && typeof input.item.attachmentCompression === "object"
+      ? { attachmentCompression: input.item.attachmentCompression }
       : {}),
     ...(input.auxSummaryVerdict && typeof input.auxSummaryVerdict === "object"
       ? { auxSummaryVerdict: input.auxSummaryVerdict }
@@ -1124,6 +1241,9 @@ function handleMessageSendUsageEvent(input: {
         : {}),
       ...(input.routeDecision && typeof input.routeDecision === "object"
         ? { deepseekRoute: input.routeDecision }
+        : {}),
+      ...(input.item.attachmentCompression && typeof input.item.attachmentCompression === "object"
+        ? { attachmentCompression: input.item.attachmentCompression }
         : {}),
       ...(input.auxSummaryVerdict && typeof input.auxSummaryVerdict === "object"
         ? { auxSummaryVerdict: input.auxSummaryVerdict }
@@ -1199,6 +1319,11 @@ function createMessageSendStreamAdapter(input: {
     routeMode?: "passthrough" | "deepseek_virtual";
     degraded?: boolean;
     reason?: string;
+    tierPinning?: {
+      pinned?: boolean;
+      previousTier?: "flash" | "pro";
+      reason?: string;
+    };
   };
 }): {
   handlers: {
@@ -1268,6 +1393,12 @@ function createMessageSendStreamAdapter(input: {
         systemPromptTokens: number;
         contextTokens: number;
         totalPromptTokens: number;
+      };
+      attachmentCompression?: {
+        appliedCount: number;
+        totalSavedChars: number;
+        totalSavedCharsPositive: boolean;
+        bySource?: Record<string, { applied: number; savedChars: number }>;
       };
     }) => void;
   };
@@ -1370,6 +1501,7 @@ function createMessageSendStreamAdapter(input: {
         }
       },
       onUsage: (item) => {
+        const attachmentCompression = readAttachmentCompressionFromRunMeta(input.state.run.getRunMeta?.());
         handleMessageSendUsageEvent({
           ctx: input.ctx,
           conversationId: input.conversationId,
@@ -1378,7 +1510,10 @@ function createMessageSendStreamAdapter(input: {
           from: input.from,
           state: input.state,
           routeDecision: input.routeDecision,
-          item,
+          item: {
+            ...item,
+            ...(attachmentCompression ? { attachmentCompression } : {}),
+          },
         });
       },
     },
@@ -1797,6 +1932,7 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
     ctx.runtime.residentAgentRuntime?.touchConversation(input.requestedAgentId ?? "default", input.conversationId);
 
     const runInput = buildMessageSendAgentRunInput(input, ctx.media);
+    state.run.setRunMeta(runInput.meta && typeof runInput.meta === "object" ? runInput.meta as Record<string, unknown> : undefined);
     const isTts = ctx.media.ttsEnabled?.() ?? false;
     const streamAdapter = createMessageSendStreamAdapter({
       ctx,

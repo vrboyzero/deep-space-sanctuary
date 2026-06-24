@@ -108,6 +108,7 @@ import {
   type SummarizerFn,
   AgentRegistry,
   SubAgentOrchestrator,
+  normalizeAgentLaunchSpecWithCatalog,
   loadAgentProfiles,
   buildDefaultProfile,
   buildBuiltinWorkerProfiles,
@@ -313,6 +314,7 @@ import {
 import { GoalManager } from "../goals/manager.js";
 import { parseGoalSessionKey } from "../goals/session.js";
 import { WorkflowRuntime } from "../workflow-runtime.js";
+import { computeWorkflowToolPolicyHash } from "../workflow-fingerprint.js";
 import { registerCodeAuditBuiltinWorkflow } from "../workflow-builtin-code-audit.js";
 import { registerParallelResearchBuiltinWorkflow } from "../workflow-builtin-parallel-research.js";
 import { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "@belldandy/skills";
@@ -2978,6 +2980,41 @@ if (agentRegistry && toolsEnabled) {
         agentRegistry,
         conversationStore,
         readEnv: readEnv,
+        resolveWorkflowAgentLaunchSpec: (input) => normalizeAgentLaunchSpecWithCatalog({
+          instruction: input.instruction,
+          parentConversationId: input.parentConversationId,
+          agentId: "default",
+          modelOverride: input.modelOverride,
+          role: input.role,
+          allowedToolFamilies: input.allowedToolFamilies,
+          maxToolRiskLevel: input.maxToolRiskLevel,
+          timeoutMs: input.timeoutMs,
+          delegationProtocol: input.delegationProtocol,
+        }, {
+          agentRegistry,
+          defaults: {
+            timeoutMs: parseInt(readEnv("BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS") ?? "300000", 10),
+          },
+        }),
+        resolveAgentExecutionFingerprintInputs: (input) => {
+          const profile = agentRegistry.getProfile(input.profileId) ?? agentRegistry.getProfile(input.agentId);
+          const inspection = profile
+            ? gatewayPromptInspectionRuntime.buildEffectiveAgentPromptInspection(profile)
+            : undefined;
+          return {
+            agentProfileId: profile?.id ?? input.profileId ?? input.agentId,
+            systemPromptHash: typeof inspection?.metadata?.systemPromptFingerprint === "string"
+              ? inspection.metadata.systemPromptFingerprint
+              : undefined,
+            toolPolicyHash: computeWorkflowToolPolicyHash({
+              role: input.role,
+              permissionMode: input.permissionMode,
+              allowedToolFamilies: input.allowedToolFamilies,
+              maxToolRiskLevel: input.maxToolRiskLevel,
+              policySummary: input.policySummary,
+            }),
+          };
+        },
         logger: {
           info: (m, d) => logger.info("workflow", m, d),
           warn: (m, d) => logger.warn("workflow", m, d),
@@ -4395,4 +4432,3 @@ startGatewayConfigWatcher({
     setTimeout(() => process.exit(100), 300);
   },
 });
-

@@ -3485,6 +3485,384 @@ describe("ToolEnabledAgent hook timeouts", () => {
     }));
   });
 
+  it("uses structured plain-text compression for budget protect instead of head-tail truncation", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      requestBodies.push(body);
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "budget protected",
+          },
+        }],
+        usage: { prompt_tokens: 50, completion_tokens: 8 },
+      });
+    });
+
+    const middleNoise = Array.from({ length: 260 }, (_, index) => `普通背景行 ${index}`).join("\n");
+    const longHistoryText = [
+      "# 历史任务背景",
+      "这里是启动说明",
+      middleNoise,
+      "结论：必须保留最终审批约束",
+      "warning: 不能直接发布",
+    ].join("\n");
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxInputTokens: 220,
+      toolExecutor: createToolExecutor(),
+      budgetProtect: {
+        mode: "protect_memory_capability",
+        keepRecentRounds: 1,
+        compressBeforeDelete: true,
+        compressThresholdChars: 200,
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-budget-protect-plain-text",
+      text: "继续处理",
+      history: [
+        { role: "user", content: longHistoryText },
+        { role: "assistant", content: "收到，我会继续处理并保留审批约束。" },
+      ],
+    }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      budgetProtect: expect.objectContaining({
+        protectionActivated: true,
+        compressedHistoryCount: expect.any(Number),
+      }),
+    }));
+
+    const sentMessages = requestBodies[0]?.messages as Array<{ role: string; content?: string }> | undefined;
+    const serializedMessages = JSON.stringify(sentMessages);
+    expect(serializedMessages).not.toContain("chars omitted by budget-protect");
+  });
+
+  it("uses structured json compression for budget protect history when the message is json-shaped", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      requestBodies.push(body);
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "json preserved",
+          },
+        }],
+        usage: { prompt_tokens: 50, completion_tokens: 8 },
+      });
+    });
+
+    const jsonHistoryText = JSON.stringify({
+      task: "deploy-check",
+      constraints: {
+        approvals: Array.from({ length: 100 }, (_, index) => ({ stage: `s${index}`, owner: "ops", note: "must approve before release" })),
+        report: "X".repeat(4000),
+      },
+      summary: "保留结构骨架",
+    }, null, 2);
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxInputTokens: 700,
+      toolExecutor: createToolExecutor(),
+      budgetProtect: {
+        mode: "protect_memory_capability",
+        keepRecentRounds: 1,
+        compressBeforeDelete: true,
+        compressThresholdChars: 200,
+      },
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-budget-protect-json",
+      text: "继续处理",
+      history: [
+        { role: "user", content: jsonHistoryText },
+        { role: "assistant", content: "收到，我会继续处理 JSON 里的约束。" },
+      ],
+    }));
+
+    const sentMessages = requestBodies[0]?.messages as Array<{ role: string; content?: string }> | undefined;
+    const compressedUser = sentMessages?.find((msg) => msg.role === "user" && typeof msg.content === "string" && msg.content.includes("\"constraints\""));
+    expect(compressedUser?.content).toContain("\"task\": \"deploy-check\"");
+    expect(compressedUser?.content).toContain("\"constraints\"");
+    expect(compressedUser?.content).toContain("[...");
+    expect(compressedUser?.content).toContain("[truncated:");
+    expect(compressedUser?.content).not.toContain("chars omitted by budget-protect");
+  });
+
+  it("does not delete history when compressBeforeDelete compression alone gets under budget", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      requestBodies.push(body);
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "compression-only",
+          },
+        }],
+        usage: { prompt_tokens: 50, completion_tokens: 8 },
+      });
+    });
+
+    const compressionPipeline = {
+      compress: vi.fn(async (request: { content: string }) => {
+        if (!request.content.includes("COMPRESS_ONLY_TARGET")) {
+          return {
+            applied: false,
+            compressedContent: request.content,
+          };
+        }
+        return {
+          applied: true,
+          compressedContent: [
+            "# 历史压缩摘要",
+            "关键结论：保留审批链与最终约束。",
+            "...[48 lines omitted]...",
+            "后续动作：继续处理当前请求。",
+          ].join("\n"),
+        };
+      }),
+    } as any;
+
+    const longHistoryText = [
+      "# 历史任务背景",
+      ...Array.from({ length: 140 }, (_, index) => `COMPRESS_ONLY_TARGET 段落 ${index}：这里是冗长背景说明与上下文噪音。`),
+      "结论：必须保留审批链与最终约束。",
+    ].join("\n");
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxInputTokens: 240,
+      toolExecutor: createToolExecutor(),
+      compressionPipeline,
+      budgetProtect: {
+        mode: "protect_memory_capability",
+        keepRecentRounds: 1,
+        compressBeforeDelete: true,
+        compressThresholdChars: 200,
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-budget-protect-compression-only",
+      text: "CURRENT_KEEP",
+      history: [
+        { role: "user", content: longHistoryText },
+        { role: "assistant", content: "OLD_ASSIST_KEEP" },
+      ],
+    }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      budgetProtect: expect.objectContaining({
+        protectionActivated: true,
+        compressedHistoryCount: 1,
+        deletedHistoryCount: 0,
+      }),
+    }));
+    expect(compressionPipeline.compress).toHaveBeenCalledTimes(1);
+
+    const sentMessages = requestBodies[0]?.messages as Array<{ role: string; content?: string }> | undefined;
+    const serializedMessages = JSON.stringify(sentMessages);
+    expect(serializedMessages).toContain("关键结论：保留审批链与最终约束。");
+    expect(serializedMessages).toContain("OLD_ASSIST_KEEP");
+    expect(serializedMessages).toContain("CURRENT_KEEP");
+    expect(serializedMessages).not.toContain("COMPRESS_ONLY_TARGET 段落 139");
+  });
+
+  it("compresses later history before deleting the earliest non-compressible message", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      requestBodies.push(body);
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "compressed then deleted",
+          },
+        }],
+        usage: { prompt_tokens: 50, completion_tokens: 8 },
+      });
+    });
+
+    const compressionPipeline = {
+      compress: vi.fn(async (request: { content: string }) => {
+        if (!request.content.includes("COMPRESS_BEFORE_DELETE_TARGET")) {
+          return {
+            applied: false,
+            compressedContent: request.content,
+          };
+        }
+        return {
+          applied: true,
+          compressedContent: Array.from(
+            { length: 30 },
+            (_, index) => `LATER_COMPRESSED_SUMMARY line ${index} keeps only the essential fan-in evidence for manager review.`,
+          ).join("\n"),
+        };
+      }),
+    } as any;
+
+    const earliestDeletableHistory = Array.from(
+      { length: 16 },
+      (_, index) => `EARLY_DELETE record ${index} still adds budget pressure before fan-in handoff.`,
+    ).join("\n");
+    const laterCompressibleHistory = Array.from(
+      { length: 70 },
+      (_, index) => `COMPRESS_BEFORE_DELETE_TARGET line ${index} contains long fan-in review context that can be reduced before trimming.`,
+    ).join("\n");
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxInputTokens: 900,
+      toolExecutor: createToolExecutor(),
+      compressionPipeline,
+      budgetProtect: {
+        mode: "protect_memory_capability",
+        keepRecentRounds: 1,
+        compressBeforeDelete: true,
+        compressThresholdChars: 2000,
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-budget-protect-compress-then-delete",
+      text: "CURRENT_KEEP",
+      history: [
+        { role: "user", content: earliestDeletableHistory },
+        { role: "assistant", content: "EARLY_ASSIST_KEEP" },
+        { role: "user", content: laterCompressibleHistory },
+        { role: "assistant", content: "LATER_ASSIST_KEEP" },
+      ],
+    }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      budgetProtect: expect.objectContaining({
+        protectionActivated: true,
+        compressedHistoryCount: 1,
+        deletedHistoryCount: 1,
+      }),
+    }));
+    expect(compressionPipeline.compress).toHaveBeenCalledTimes(1);
+
+    const sentMessages = requestBodies[0]?.messages as Array<{ role: string; content?: string }> | undefined;
+    const serializedMessages = JSON.stringify(sentMessages);
+    expect(serializedMessages).not.toContain("EARLY_DELETE record 0");
+    expect(serializedMessages).toContain("LATER_COMPRESSED_SUMMARY line 0 keeps only the essential fan-in evidence");
+    expect(serializedMessages).toContain("EARLY_ASSIST_KEEP");
+    expect(serializedMessages).toContain("LATER_ASSIST_KEEP");
+    expect(serializedMessages).toContain("CURRENT_KEEP");
+  });
+
+  it("recomputes protected rounds after repeated deletions and keeps system/tool schema intact", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      requestBodies.push(body);
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: "trimmed safely",
+          },
+        }],
+        usage: { prompt_tokens: 50, completion_tokens: 8 },
+      });
+    });
+
+    const toolDefinitions = [{
+      type: "function" as const,
+      function: {
+        name: "release_guard",
+        description: "guard release workflow",
+        parameters: {
+          type: "object",
+          properties: {
+            ticket: { type: "string" },
+          },
+          required: ["ticket"],
+        },
+      },
+    }];
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      systemPrompt: `SYSTEM_GUARD ${"S".repeat(2200)}`,
+      maxInputTokens: 420,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => toolDefinitions,
+      }),
+      budgetProtect: {
+        mode: "protect_memory_capability",
+        keepRecentRounds: 2,
+        compressBeforeDelete: false,
+        compressThresholdChars: 200,
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-budget-protect-recompute",
+      text: `CURRENT_USER_KEEP ${"E".repeat(2200)}`,
+      history: [
+        { role: "user", content: `OLD1_USER ${"A".repeat(2400)}` },
+        { role: "assistant", content: `OLD1_ASSIST ${"B".repeat(2400)}` },
+        { role: "user", content: `OLD2_USER ${"C".repeat(2400)}` },
+        { role: "assistant", content: `OLD2_ASSIST ${"D".repeat(2400)}` },
+        { role: "user", content: "RECENT_USER_KEEP" },
+        { role: "assistant", content: "RECENT_ASSIST_KEEP" },
+      ],
+    }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      budgetProtect: expect.objectContaining({
+        protectionActivated: true,
+        compressedHistoryCount: 0,
+        deletedHistoryCount: 4,
+      }),
+    }));
+
+    const payload = requestBodies[0] ?? {};
+    const sentMessages = payload.messages as Array<{ role: string; content?: string }> | undefined;
+    const serializedMessages = JSON.stringify(sentMessages);
+
+    expect(sentMessages?.[0]).toEqual(expect.objectContaining({
+      role: "system",
+    }));
+    expect(payload.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        function: expect.objectContaining({
+          name: "release_guard",
+        }),
+      }),
+    ]));
+    expect(serializedMessages).not.toContain("OLD1_USER");
+    expect(serializedMessages).not.toContain("OLD1_ASSIST");
+    expect(serializedMessages).not.toContain("OLD2_USER");
+    expect(serializedMessages).not.toContain("OLD2_ASSIST");
+    expect(serializedMessages).toContain("RECENT_USER_KEEP");
+    expect(serializedMessages).toContain("RECENT_ASSIST_KEEP");
+    expect(serializedMessages).toContain("CURRENT_USER_KEEP");
+  });
+
   it("estimates usage tokens with the active model profile instead of the generic fallback", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(createJsonResponse({

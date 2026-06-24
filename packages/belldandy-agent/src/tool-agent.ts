@@ -305,6 +305,13 @@ type PromptTrimDiagnostics = {
   };
 };
 
+type HistoryCompressionContext = {
+  pipeline?: ContextCompressionPipeline;
+  conversationId?: string;
+  runId?: string;
+  agentId?: string;
+};
+
 export function estimateToolDefinitionTokens(tool: {
   type: "function";
   function: { name: string; description: string; parameters: object };
@@ -324,6 +331,75 @@ export function estimateToolDefinitionTokens(tool: {
     tokens,
   });
   return tokens;
+}
+
+function inferHistoryCompressionSourceKind(message: Message): CompressionSourceKind {
+  if (typeof message.content !== "string") {
+    return "manual";
+  }
+  const trimmed = message.content.trim();
+  if (!trimmed) {
+    return "manual";
+  }
+  try {
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && JSON.parse(trimmed)) {
+      return "tool_result";
+    }
+  } catch {
+    // not json-shaped enough, continue with other heuristics
+  }
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return "tool_result";
+  }
+  if (/^(.+?):(\d+):/m.test(trimmed) || /\b(rg|grep|ripgrep)\b/i.test(trimmed)) {
+    return "search_result";
+  }
+  if (/^\s*(import|export|function|class|def |const |let |var |public |private |async )\b/m.test(trimmed)) {
+    return "code_snippet";
+  }
+  return "manual";
+}
+
+async function compressHistoryMessageForBudgetProtect(
+  message: Message,
+  ctx: HistoryCompressionContext,
+  tokenEstimateContext?: TokenEstimateContext,
+): Promise<{
+  applied: boolean;
+  content?: string;
+  savedTokens?: number;
+}> {
+  if (!ctx.pipeline || typeof message.content !== "string" || !message.content.trim()) {
+    return { applied: false };
+  }
+  if (isAnyCompactedContent(message.content)) {
+    return { applied: false };
+  }
+
+  const result = await ctx.pipeline.compress({
+    sourceKind: inferHistoryCompressionSourceKind(message),
+    sourceName: message.role === "assistant" ? "assistant_history" : "user_history",
+    content: message.content,
+    conversationId: ctx.conversationId,
+    runId: ctx.runId,
+    agentId: ctx.agentId,
+  });
+  if (!result.applied || result.compressedContent.length >= message.content.length) {
+    return { applied: false };
+  }
+
+  const originalTokens = estimateMessageContentTokens(message.content, tokenEstimateContext);
+  const compressedTokens = estimateMessageContentTokens(result.compressedContent, tokenEstimateContext);
+  const savedTokens = Math.max(0, originalTokens - compressedTokens);
+  if (savedTokens <= 0) {
+    return { applied: false };
+  }
+
+  return {
+    applied: true,
+    content: result.compressedContent,
+    savedTokens,
+  };
 }
 
 function hasMultimodalContentInMessages(messages: Message[]): boolean {
@@ -3143,12 +3219,17 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const maxInput = this.opts.maxInputTokens;
       let trimDiagnostics: PromptTrimDiagnostics | undefined;
       if (maxInput && maxInput > 0) {
-        trimDiagnostics = trimMessagesToFit(
+        trimDiagnostics = await trimMessagesToFit(
           messages,
           tools,
           maxInput,
           currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined,
           this.opts.budgetProtect,
+          {
+            pipeline: this.compressionPipeline,
+            conversationId: runtimeScope?.conversationId,
+            agentId: runtimeScope?.agentId,
+          },
         );
       }
       onBeforeRequest?.(messages, trimDiagnostics);
@@ -4484,13 +4565,14 @@ function stripToolCallsSection(text: string): string {
  *
  * 直接修改 messages 数组（in-place）。
  */
-function trimMessagesToFit(
+async function trimMessagesToFit(
   messages: Message[],
   tools: { type: "function"; function: { name: string; description: string; parameters: object } }[] | undefined,
   maxTokens: number,
   tokenEstimateContext?: TokenEstimateContext,
   budgetProtectOpts?: BudgetProtectOptions,
-): PromptTrimDiagnostics {
+  historyCompressionContext?: HistoryCompressionContext,
+): Promise<PromptTrimDiagnostics> {
   const SAFETY_MARGIN = 1.2;
   const bpOpts = resolveBudgetProtectOptions(budgetProtectOpts);
   const bpDiag = createEmptyBudgetProtectDiagnostics(bpOpts.mode);
@@ -4561,13 +4643,33 @@ function trimMessagesToFit(
 
       const originalContent = msg.content as string;
       const originalTokens = estimateMessageContentTokens(originalContent, tokenEstimateContext);
-      // 简单压缩：保留首尾，中间省略（与 compaction.ts 的 compressToolContent 类似但更激进）
-      const headChars = Math.min(300, Math.floor(originalContent.length * 0.3));
-      const tailChars = Math.min(200, Math.floor(originalContent.length * 0.1));
-      if (headChars + tailChars + 50 >= originalContent.length) continue; // 压缩收益太小
-      const compressed = `${originalContent.slice(0, headChars)}\n... [${originalContent.length - headChars - tailChars} chars omitted by budget-protect] ...\n${originalContent.slice(-tailChars)}`;
-      const compressedTokens = estimateMessageContentTokens(compressed, tokenEstimateContext);
-      const saved = Math.max(0, originalTokens - compressedTokens);
+      let compressed = "";
+      let saved = 0;
+
+      try {
+        const structured = await compressHistoryMessageForBudgetProtect(
+          msg,
+          historyCompressionContext ?? {},
+          tokenEstimateContext,
+        );
+        if (structured.applied && structured.content) {
+          compressed = structured.content;
+          saved = structured.savedTokens ?? 0;
+        }
+      } catch {
+        // fail-open：统一压缩层失败时回退旧策略
+      }
+
+      if (!compressed || saved <= 0) {
+        // 回退：保留首尾，中间省略（兼容旧行为，但只作为兜底）
+        const headChars = Math.min(300, Math.floor(originalContent.length * 0.3));
+        const tailChars = Math.min(200, Math.floor(originalContent.length * 0.1));
+        if (headChars + tailChars + 50 >= originalContent.length) continue; // 压缩收益太小
+        compressed = `${originalContent.slice(0, headChars)}\n... [${originalContent.length - headChars - tailChars} chars omitted by budget-protect] ...\n${originalContent.slice(-tailChars)}`;
+        const compressedTokens = estimateMessageContentTokens(compressed, tokenEstimateContext);
+        saved = Math.max(0, originalTokens - compressedTokens);
+      }
+
       if (saved > 0) {
         msg.content = compressed;
         bpDiag.compressedHistoryCount++;

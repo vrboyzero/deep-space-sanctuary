@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeWorkflowFingerprint,
   computeStableHash,
+  computeWorkflowToolPolicyHash,
   stableCanonicalize,
   type WorkflowFingerprintInput,
 } from "./workflow-fingerprint.js";
@@ -145,5 +146,31 @@ describe("computeStableHash", () => {
   it("null 和 undefined 视为相同（JSON 语义）", () => {
     // undefined 在稳定序列化中被忽略，与 null 产生相同 hash
     expect(computeStableHash(null)).toBe(computeStableHash(undefined));
+  });
+});
+
+describe("computeWorkflowToolPolicyHash", () => {
+  it("allowedToolFamilies 顺序不同时 hash 相同", () => {
+    const a = computeWorkflowToolPolicyHash({
+      role: "researcher",
+      permissionMode: "plan",
+      allowedToolFamilies: ["workspace-read", "network-read"],
+      maxToolRiskLevel: "medium",
+      policySummary: "read only",
+    });
+    const b = computeWorkflowToolPolicyHash({
+      role: "researcher",
+      permissionMode: "plan",
+      allowedToolFamilies: ["network-read", "workspace-read"],
+      maxToolRiskLevel: "medium",
+      policySummary: "read only",
+    });
+    expect(a).toBe(b);
+  });
+
+  it("permissionMode 变化时 hash 不同", () => {
+    const a = computeWorkflowToolPolicyHash({ permissionMode: "plan" });
+    const b = computeWorkflowToolPolicyHash({ permissionMode: "confirm" });
+    expect(a).not.toBe(b);
   });
 });

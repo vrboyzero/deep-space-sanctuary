@@ -142,10 +142,20 @@ export function buildTokenUsageObservabilitySegments(
     const reason = typeof payload.deepseekRoute.reason === "string" && payload.deepseekRoute.reason.trim()
       ? payload.deepseekRoute.reason.trim()
       : "-";
+    const pinning = payload.deepseekRoute.tierPinning && typeof payload.deepseekRoute.tierPinning === "object"
+      ? payload.deepseekRoute.tierPinning
+      : null;
+    const pinningSuffix = pinning?.pinned
+      ? `/ pinned=${typeof pinning.previousTier === "string" && pinning.previousTier.trim() ? pinning.previousTier.trim() : "-"}:${typeof pinning.reason === "string" && pinning.reason.trim() ? pinning.reason.trim() : "-"}`
+      : "";
     segments.push(t(
       "header.tokenDeepSeekRoute",
-      { tier: selectedTier, reason },
-      `ROUTE ${selectedTier} / ${reason}`,
+      {
+        tier: selectedTier,
+        reason,
+        pinning: pinningSuffix ? pinningSuffix.replace(/^\/\s*/, "") : "",
+      },
+      `ROUTE ${selectedTier} / ${reason} ${pinningSuffix}`.trim(),
     ));
   }
   if (payload.auxSummaryVerdict && typeof payload.auxSummaryVerdict === "object") {
@@ -198,6 +208,18 @@ export function buildTokenUsageObservabilitySegments(
         "header.tokenCompression",
         { applied: String(applied), saved: String(saved) },
         `COMPRESSION applied=${applied} saved=${saved}tok`,
+      ));
+    }
+  }
+  if (payload.attachmentCompression && typeof payload.attachmentCompression === "object") {
+    const comp = payload.attachmentCompression;
+    const applied = typeof comp.appliedCount === "number" ? comp.appliedCount : 0;
+    const savedChars = typeof comp.totalSavedChars === "number" ? comp.totalSavedChars : 0;
+    if (applied > 0 && savedChars > 0) {
+      segments.push(t(
+        "header.tokenAttachmentCompression",
+        { applied: String(applied), savedChars: formatNumber(savedChars) },
+        `ATTACH_COMP applied=${applied} saved=${formatNumber(savedChars)}char`,
       ));
     }
   }

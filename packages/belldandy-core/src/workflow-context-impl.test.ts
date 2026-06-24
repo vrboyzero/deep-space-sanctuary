@@ -16,6 +16,23 @@ type MockSpawnBehavior = (opts: SpawnOptions) => Promise<SpawnResult> | SpawnRes
 function createMockOrchestrator(behavior: MockSpawnBehavior) {
   const spawnCalls: SpawnOptions[] = [];
   return {
+    resolveLaunchSpec: vi.fn((input: any) => ({
+      instruction: input.instruction ?? "",
+      parentConversationId: input.parentConversationId ?? "system",
+      agentId: input.agentId ?? "default",
+      profileId: input.agentId ?? "default",
+      modelOverride: input.modelOverride,
+      background: true,
+      timeoutMs: input.timeoutMs ?? 120_000,
+      channel: "subtask",
+      context: input.context,
+      role: input.role,
+      allowedToolFamilies: input.allowedToolFamilies,
+      maxToolRiskLevel: input.maxToolRiskLevel,
+      permissionMode: input.permissionMode,
+      policySummary: input.policySummary,
+      delegationProtocol: input.delegationProtocol,
+    })),
     spawn: vi.fn(async (opts: SpawnOptions): Promise<SpawnResult> => {
       spawnCalls.push(opts);
       return behavior(opts);
@@ -108,6 +125,56 @@ describe("createWorkflowContext", () => {
       expect(rows.some((r) => r.status === "done")).toBe(true);
     });
 
+    it("透传 model/role/工具约束/timeout 到 launchSpec", async () => {
+      const f = await setupContext({ journalId: "journal-launch-spec" });
+      fixtures.push(f.cleanup);
+      await f.ctx.agent("扫描 auth 模块", {
+        callKey: "scan/0",
+        model: "claude-opus",
+        role: "researcher",
+        allowedToolFamilies: ["workspace-read", "network-read"],
+        maxToolRiskLevel: "medium",
+        timeoutMs: 45_000,
+      });
+      expect(f.orchestrator.spawn).toHaveBeenCalledTimes(1);
+      const [spawnCall] = f.orchestrator.spawnCalls;
+      expect("launchSpec" in spawnCall).toBe(true);
+      if (!("launchSpec" in spawnCall)) {
+        throw new Error("expected launchSpec spawn call");
+      }
+      expect(spawnCall.launchSpec).toMatchObject({
+        instruction: "扫描 auth 模块",
+        parentConversationId: "parent-conv-1",
+        modelOverride: "claude-opus",
+        role: "researcher",
+        allowedToolFamilies: ["workspace-read", "network-read"],
+        maxToolRiskLevel: "medium",
+        timeoutMs: 45_000,
+      });
+    });
+
+    it("fingerprint 绑定 agentProfileId/systemPromptHash/toolPolicyHash，字段变化时不命中缓存", async () => {
+      const resolver = vi.fn()
+        .mockReturnValueOnce({
+          agentProfileId: "ops-coder",
+          systemPromptHash: "sys-a",
+          toolPolicyHash: "policy-a",
+        })
+        .mockReturnValueOnce({
+          agentProfileId: "ops-coder",
+          systemPromptHash: "sys-b",
+          toolPolicyHash: "policy-a",
+        });
+      const f = await setupContext({
+        journalId: "journal-fingerprint-extra",
+        resolveAgentExecutionFingerprintInputs: resolver,
+      });
+      fixtures.push(f.cleanup);
+      await f.ctx.agent("扫描 auth", { callKey: "scan/0", role: "researcher" });
+      await f.ctx.agent("扫描 auth", { callKey: "scan/0", role: "researcher" });
+      expect(f.orchestrator.spawn).toHaveBeenCalledTimes(2);
+    });
+
     it("相同 callKey + prompt 第二次调用命中缓存，不触发 spawn", async () => {
       const f = await setupContext({ journalId: "journal-cache-test" });
       fixtures.push(f.cleanup);
@@ -153,12 +220,28 @@ describe("createWorkflowContext", () => {
       await expect(f.ctx.agent("扫描", { callKey: "scan/0" })).rejects.toThrow(WorkflowBudgetExceededError);
     });
 
-    it("onAgentEvent 回调触发 started + completed", async () => {
-      const f = await setupContext({ journalId: "journal-events" });
+    it("onAgentEvent 对单次 agent 调用仅触发一次 started/completed，且 sessionId 一致", async () => {
+      const f = await setupContext({
+        journalId: "journal-events",
+        orchestratorBehavior: async (opts) => {
+          const sessionId = "sub_evt_001";
+          opts.onSessionCreated?.(sessionId, "default");
+          return {
+            success: true,
+            output: "result for: 扫描",
+            sessionId,
+          };
+        },
+      });
       fixtures.push(f.cleanup);
       await f.ctx.agent("扫描", { callKey: "scan/0" });
-      expect(f.events.some((e) => e.type === "started")).toBe(true);
-      expect(f.events.some((e) => e.type === "completed" && e.success)).toBe(true);
+      const started = f.events.filter((e) => e.type === "started");
+      const completed = f.events.filter((e) => e.type === "completed");
+      expect(started).toHaveLength(1);
+      expect(completed).toHaveLength(1);
+      expect(started[0]?.sessionId).toBe("sub_evt_001");
+      expect(completed[0]?.sessionId).toBe("sub_evt_001");
+      expect((completed[0] as Extract<SubAgentEvent, { type: "completed" }>).success).toBe(true);
     });
   });
 
@@ -377,6 +460,7 @@ describe("createWorkflowContext", () => {
       expect(callArgs.args).toEqual({ topics: ["a"] });
       expect(callArgs.depth).toBe(1);
       expect(callArgs.maxConcurrent).toBe(3); // 继承父级
+      expect(callArgs.sharedBudgetGuard).toBe(f.budgetGuard);
     });
 
     it("无 runtime 引用时抛错", async () => {

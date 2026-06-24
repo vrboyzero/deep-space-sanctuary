@@ -30,10 +30,20 @@ import type {
   WorkflowContext,
   WorkflowTaskResult,
 } from "@belldandy/agent";
-import type { SubAgentOrchestrator, SubAgentEvent, SpawnOptions } from "@belldandy/agent";
+import {
+  normalizeAgentLaunchSpecWithCatalog,
+  type SubAgentOrchestrator,
+  type SubAgentEvent,
+  type SpawnOptions,
+} from "@belldandy/agent";
 import type { WorkflowJournal } from "./workflow-journal.js";
 import type { WorkflowBudgetGuard } from "./workflow-budget-guard.js";
-import { computeWorkflowFingerprint, computeStableHash } from "./workflow-fingerprint.js";
+import {
+  computeWorkflowFingerprint,
+  computeStableHash,
+  computeWorkflowToolPolicyHash,
+} from "./workflow-fingerprint.js";
+import type { AgentExecutionFingerprintInputResolver } from "./workflow-runtime.js";
 
 // ─── 依赖类型 ─────────────────────────────────────────────────────────────
 
@@ -83,6 +93,41 @@ export type WorkflowContextDeps = {
    * 可选：stateDir，子工作流 file 模式加载脚本时需要。
    */
   stateDir?: string;
+  /**
+   * 可选：把真实生效的 agent profile / prompt / tool policy 指纹输入
+   * 注入到 workflow fingerprint，避免缓存命中与实际执行语义脱节。
+   */
+  resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
+  /**
+   * 可选：按与 orchestrator 一致的规则把 agent() 调用解析成真实 launchSpec。
+   * runtime 会优先注入，避免依赖 orchestrator 实例上的额外方法。
+   */
+  resolveWorkflowAgentLaunchSpec?: (input: {
+    instruction: string;
+    parentConversationId: string;
+    modelOverride?: string;
+    role?: string;
+    allowedToolFamilies?: string[];
+    maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+    timeoutMs?: number;
+    delegationProtocol?: AgentCallOptions["delegationProtocol"];
+  }) => {
+    instruction: string;
+    parentConversationId: string;
+    agentId: string;
+    profileId: string;
+    modelOverride?: string;
+    background: boolean;
+    timeoutMs: number;
+    channel: string;
+    context?: Record<string, unknown>;
+    permissionMode?: string;
+    role?: string;
+    allowedToolFamilies?: string[];
+    maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
+    policySummary?: string;
+    delegationProtocol?: AgentCallOptions["delegationProtocol"];
+  };
 };
 
 /**
@@ -102,6 +147,9 @@ export interface WorkflowRuntimeLike {
     stateDir?: string;
     budget?: Record<string, unknown>;
     maxConcurrent?: number;
+    sharedBudgetGuard?: WorkflowBudgetGuard;
+    resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
+    resolveWorkflowAgentLaunchSpec?: WorkflowContextDeps["resolveWorkflowAgentLaunchSpec"];
     depth?: number;
   }): Promise<WorkflowRunResultLike>;
 }
@@ -164,6 +212,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     depth = 0,
     maxDepth = 1,
     stateDir,
+    resolveAgentExecutionFingerprintInputs,
+    resolveWorkflowAgentLaunchSpec,
   } = deps;
 
   let agentCallIndex = 0;
@@ -176,6 +226,72 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
       const callKey = opts?.callKey ?? `${phaseId}/${agentCallIndex}`;
       agentCallIndex++;
 
+      const resolvedLaunchSpec = resolveWorkflowAgentLaunchSpec
+        ? resolveWorkflowAgentLaunchSpec({
+          instruction: prompt,
+          parentConversationId,
+          modelOverride: opts?.model,
+          role: opts?.role,
+          allowedToolFamilies: opts?.allowedToolFamilies,
+          maxToolRiskLevel: opts?.maxToolRiskLevel,
+          timeoutMs: opts?.timeoutMs,
+          delegationProtocol: opts?.delegationProtocol,
+        })
+        : typeof (orchestrator as unknown as { resolveLaunchSpec?: (...args: unknown[]) => unknown }).resolveLaunchSpec === "function"
+          ? (orchestrator as unknown as {
+            resolveLaunchSpec: (input: Parameters<NonNullable<WorkflowContextDeps["resolveWorkflowAgentLaunchSpec"]>>[0]) => ReturnType<NonNullable<WorkflowContextDeps["resolveWorkflowAgentLaunchSpec"]>>;
+          }).resolveLaunchSpec({
+            instruction: prompt,
+            parentConversationId,
+            modelOverride: opts?.model,
+            role: opts?.role,
+            allowedToolFamilies: opts?.allowedToolFamilies,
+            maxToolRiskLevel: opts?.maxToolRiskLevel,
+            timeoutMs: opts?.timeoutMs,
+            delegationProtocol: opts?.delegationProtocol,
+          })
+          : normalizeAgentLaunchSpecWithCatalog({
+        instruction: prompt,
+        parentConversationId,
+        agentId: "default",
+        modelOverride: opts?.model,
+        role: opts?.role,
+        allowedToolFamilies: opts?.allowedToolFamilies,
+        maxToolRiskLevel: opts?.maxToolRiskLevel,
+        timeoutMs: opts?.timeoutMs,
+        delegationProtocol: opts?.delegationProtocol,
+      });
+      const resolvedFingerprintInputs = resolveAgentExecutionFingerprintInputs?.({
+        agentId: resolvedLaunchSpec.agentId,
+        profileId: resolvedLaunchSpec.profileId,
+        modelOverride: resolvedLaunchSpec.modelOverride,
+        role: resolvedLaunchSpec.role,
+        allowedToolFamilies: resolvedLaunchSpec.allowedToolFamilies,
+        maxToolRiskLevel: resolvedLaunchSpec.maxToolRiskLevel,
+        permissionMode: resolvedLaunchSpec.permissionMode,
+        policySummary: resolvedLaunchSpec.policySummary,
+      });
+      const resolvedToolPolicyHash = resolvedFingerprintInputs?.toolPolicyHash
+        ?? computeWorkflowToolPolicyHash({
+          role: resolvedLaunchSpec.role,
+          permissionMode: resolvedLaunchSpec.permissionMode,
+          allowedToolFamilies: resolvedLaunchSpec.allowedToolFamilies,
+          maxToolRiskLevel: resolvedLaunchSpec.maxToolRiskLevel,
+          policySummary: resolvedLaunchSpec.policySummary,
+        });
+      const persistedOpts = {
+        ...(opts ?? {}),
+        model: resolvedLaunchSpec.modelOverride,
+        agentProfileId: resolvedFingerprintInputs?.agentProfileId ?? resolvedLaunchSpec.profileId,
+        systemPromptHash: resolvedFingerprintInputs?.systemPromptHash,
+        toolPolicyHash: resolvedToolPolicyHash,
+        role: resolvedLaunchSpec.role,
+        permissionMode: resolvedLaunchSpec.permissionMode,
+        allowedToolFamilies: resolvedLaunchSpec.allowedToolFamilies,
+        maxToolRiskLevel: resolvedLaunchSpec.maxToolRiskLevel,
+        policySummary: resolvedLaunchSpec.policySummary,
+      };
+
       // 计算 fingerprint
       const fingerprint = computeWorkflowFingerprint({
         schemaVersion: 1,
@@ -184,10 +300,13 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         scriptHash,
         callKey,
         prompt,
-        model: opts?.model,
-        role: opts?.role,
-        allowedToolFamilies: opts?.allowedToolFamilies,
-        maxToolRiskLevel: opts?.maxToolRiskLevel,
+        model: resolvedLaunchSpec.modelOverride,
+        agentProfileId: resolvedFingerprintInputs?.agentProfileId ?? resolvedLaunchSpec.profileId,
+        systemPromptHash: resolvedFingerprintInputs?.systemPromptHash,
+        toolPolicyHash: resolvedToolPolicyHash,
+        role: resolvedLaunchSpec.role,
+        allowedToolFamilies: resolvedLaunchSpec.allowedToolFamilies,
+        maxToolRiskLevel: resolvedLaunchSpec.maxToolRiskLevel,
         delegationHash: opts?.delegationProtocol
           ? computeStableHash(opts.delegationProtocol)
           : undefined,
@@ -213,16 +332,16 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         callKey,
         fingerprint,
         prompt,
-        optsJson: JSON.stringify(opts ?? {}),
+        optsJson: JSON.stringify(persistedOpts),
       });
 
-      // 调用 orchestrator
-      const sessionId = `wf_${callKey}_${randomUUID().slice(0, 8)}`;
+      // 调用 orchestrator。这里统一走 launchSpec，避免 legacy spawnOpts 丢失
+      // role / timeout / tool 限制 / modelOverride 等字段。
       const spawnOpts: SpawnOptions = {
-        parentConversationId,
-        instruction: prompt,
-        context: { _workflowJournalId: journalId, _workflowCallKey: callKey },
-        delegationProtocol: opts?.delegationProtocol,
+        launchSpec: {
+          ...resolvedLaunchSpec,
+          context: { _workflowJournalId: journalId, _workflowCallKey: callKey },
+        },
         onSessionCreated: (sid, agentId) => {
           callbacks?.onAgentEvent?.({
             type: "started",
@@ -232,14 +351,6 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
           });
         },
       };
-
-      // 在 spawn 前发 started 事件（保证即使 orchestrator 不调用 onSessionCreated 也能观测）
-      callbacks?.onAgentEvent?.({
-        type: "started",
-        sessionId,
-        agentId: "workflow-agent",
-        instruction: prompt,
-      });
 
       const startMs = Date.now();
       const result = await orchestrator.spawn(spawnOpts);
@@ -450,6 +561,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         channel,
         stateDir,
         maxConcurrent,
+        sharedBudgetGuard: budgetGuard,
+        resolveAgentExecutionFingerprintInputs,
         // 子工作流深度 +1，runtime 会把它传给子 ctx，
         // 子 ctx 的 depth=1 >= maxDepth=1，禁止再次嵌套
         depth: depth + 1,

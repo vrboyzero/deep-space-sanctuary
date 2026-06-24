@@ -128,6 +128,40 @@ describe("run_workflow tool", () => {
     expect(callArgs.source.name).toBe("code-audit");
   });
 
+  it("inline 模式透传 inlineCode 与 allowInlineScript", async () => {
+    const mockRuntime = createMockWorkflowRuntime({});
+    const ctx = createToolContext({ stateDir: tempDir, workflowRuntime: mockRuntime });
+    const result = await runWorkflowTool.execute(
+      {
+        workflowName: "inline-audit",
+        sourceKind: "inline",
+        inlineCode: `export default async function(ctx) { return "inline ok"; }`,
+        allowInlineScript: true,
+      },
+      ctx,
+    );
+    expect(result.success).toBe(true);
+    const callArgs = (mockRuntime.run as any).mock.calls[0][0];
+    expect(callArgs.source).toEqual({
+      kind: "inline",
+      name: "inline-audit",
+      code: `export default async function(ctx) { return "inline ok"; }`,
+    });
+    expect(callArgs.allowInlineScript).toBe(true);
+  });
+
+  it("inline 模式缺少 inlineCode 时返回 input_error", async () => {
+    const mockRuntime = createMockWorkflowRuntime({});
+    const ctx = createToolContext({ stateDir: tempDir, workflowRuntime: mockRuntime });
+    const result = await runWorkflowTool.execute(
+      { workflowName: "inline-audit", sourceKind: "inline", allowInlineScript: true },
+      ctx,
+    );
+    expect(result.success).toBe(false);
+    expect(result.failureKind).toBe("input_error");
+    expect(result.error).toMatch(/inlineCode is required/i);
+  });
+
   it("runtime.run 抛错时返回 business_logic_error", async () => {
     const mockRuntime = createMockWorkflowRuntime({ throwError: new Error("runtime boom") });
     const ctx = createToolContext({ stateDir: tempDir, workflowRuntime: mockRuntime });

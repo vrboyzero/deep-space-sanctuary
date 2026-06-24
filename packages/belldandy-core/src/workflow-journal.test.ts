@@ -114,8 +114,9 @@ describe("WorkflowJournal", () => {
     };
     // 第一次插入成功
     journal.recordPending(input);
-    // 第二次插入相同 fingerprint 应该因 UNIQUE 冲突抛错
-    expect(() => journal.recordPending(input)).toThrow();
+    // 第二次插入相同 fingerprint 应该被忽略，不抛错
+    expect(() => journal.recordPending(input)).not.toThrow();
+    expect(journal.listByJournal(journalId)).toHaveLength(1);
   });
 
   it("跨 journalId 隔离：相同 fingerprint 不同 journalId 互不影响", () => {

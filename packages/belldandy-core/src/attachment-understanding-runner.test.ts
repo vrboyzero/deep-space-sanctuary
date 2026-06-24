@@ -133,6 +133,22 @@ function createSpyLogger() {
   };
 }
 
+async function loadAttachmentRunnerWithBrokenCompressionPipeline() {
+  vi.resetModules();
+  vi.doMock("@belldandy/agent", async () => {
+    const actual = await vi.importActual<typeof import("@belldandy/agent")>("@belldandy/agent");
+    return {
+      ...actual,
+      createCompressionPipeline: vi.fn(() => ({
+        compress: vi.fn(async () => {
+          throw new Error("compression unavailable");
+        }),
+      })),
+    };
+  });
+  return import("./attachment-understanding-runner.js");
+}
+
 describe("attachment understanding runner", () => {
   beforeEach(() => {
     delete process.env.BELLDANDY_VIDEO_UNDERSTAND_AUTO_ATTACHMENT_MAX_TIMELINE_ITEMS;
@@ -579,6 +595,105 @@ describe("attachment understanding runner", () => {
       expect(result.promptText).toContain(longSummary);
       expect(result.promptText).toContain("00:06 片段 6");
     } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("compresses oversized text attachment content into the returned promptText, not only promptDeltas", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-att-runner-text-compress-"));
+    try {
+      const longAttachment = [
+        "# 任务背景",
+        ...Array.from({ length: 220 }, (_, index) => `普通说明行 ${index}`),
+        "结论：最终必须保留审批约束",
+        "warning: 不允许直接上线",
+      ].join("\n");
+
+      const result = await preparePromptWithAttachments({
+        conversationId: "conv-text-compress",
+        promptText: "请处理附件",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: Buffer.from(longAttachment).toString("base64") },
+        ],
+        stateDir,
+        log: noopLogger,
+        getAttachmentPromptLimits: () => ({
+          textCharLimit: 5_000,
+          totalTextCharLimit: 8_000,
+          audioTranscriptAppendCharLimit: 120,
+        }),
+        truncateTextForPrompt: (text, limit, suffix) => ({
+          text: text.length > limit ? `${text.slice(0, limit)}${suffix}` : text,
+          truncated: text.length > limit,
+        }),
+        acceptedContentCapabilities: ["text_inline"],
+      });
+
+      expect(result.promptText).toContain("# 任务背景");
+      expect(result.promptText).toContain("结论：最终必须保留审批约束");
+      expect(result.promptText).toContain("warning: 不允许直接上线");
+      expect(result.promptText).toContain("lines omitted");
+      expect(result.promptText).not.toContain("普通说明行 100");
+      expect(result.promptDeltas).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          deltaType: "attachment",
+          metadata: expect.objectContaining({
+            compressed: true,
+          }),
+        }),
+      ]));
+      expect(result.attachmentCompressionResults?.some((item) => item.applied)).toBe(true);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("keeps original text attachment prompt when attachment compression fails open", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-att-runner-text-fail-open-"));
+
+    try {
+      const { preparePromptWithAttachments: preparePromptWithAttachmentsFailOpen } =
+        await loadAttachmentRunnerWithBrokenCompressionPipeline();
+      const longAttachment = [
+        "# 原始附件",
+        ...Array.from({ length: 220 }, (_, index) => `原始说明行 ${index}`),
+        "结论：失败时必须保留原文",
+      ].join("\n");
+
+      const result = await preparePromptWithAttachmentsFailOpen({
+        conversationId: "conv-text-compress-fail-open",
+        promptText: "请处理附件",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: Buffer.from(longAttachment).toString("base64") },
+        ],
+        stateDir,
+        log: noopLogger,
+        getAttachmentPromptLimits: () => ({
+          textCharLimit: 5_000,
+          totalTextCharLimit: 8_000,
+          audioTranscriptAppendCharLimit: 120,
+        }),
+        truncateTextForPrompt: (text, limit, suffix) => ({
+          text: text.length > limit ? `${text.slice(0, limit)}${suffix}` : text,
+          truncated: text.length > limit,
+        }),
+        acceptedContentCapabilities: ["text_inline"],
+      });
+
+      expect(result.promptText).toContain("原始说明行 100");
+      expect(result.promptText).toContain("结论：失败时必须保留原文");
+      expect(result.promptText).not.toContain("lines omitted");
+      expect(result.promptDeltas).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          deltaType: "attachment",
+          metadata: expect.not.objectContaining({
+            compressed: true,
+          }),
+        }),
+      ]));
+      expect(result.attachmentCompressionResults).toEqual([]);
+    } finally {
+      vi.resetModules();
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
   });

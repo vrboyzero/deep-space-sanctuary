@@ -81,13 +81,20 @@ export async function handleWorkflowMethod(
       const workflowName = readRequiredString(params, "workflowName");
       if (!workflowName) return invalid(req.id, "workflowName is required");
 
-      const sourceKind = (typeof params.sourceKind === "string" ? params.sourceKind : "file") as "file" | "builtin";
+      const sourceKind = (typeof params.sourceKind === "string" ? params.sourceKind : "file") as "file" | "builtin" | "inline";
       const stateDir = ctx.stateDir;
+      const allowInlineScript = params.allowInlineScript === true;
 
       // 构建 source
       let source;
       if (sourceKind === "builtin") {
         source = { kind: "builtin" as const, name: workflowName };
+      } else if (sourceKind === "inline") {
+        const inlineCode = typeof params.inlineCode === "string" ? params.inlineCode : "";
+        if (!inlineCode.trim()) {
+          return invalid(req.id, "inlineCode is required when sourceKind=inline");
+        }
+        source = { kind: "inline" as const, name: workflowName, code: inlineCode };
       } else {
         const workflowsDir = path.join(stateDir, "workflows");
         const candidates = [
@@ -118,6 +125,7 @@ export async function handleWorkflowMethod(
           source,
           args: typeof params.args === "object" && params.args !== null ? params.args as Record<string, unknown> : undefined,
           budget: budgetOpts,
+          allowInlineScript,
           parentConversationId: readRequiredString(params, "parentConversationId") || "rpc",
           channel: typeof params.channel === "string" ? params.channel : "gateway",
           resumeJournalId: readOptionalString(params, "resumeJournalId"),

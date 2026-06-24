@@ -69,6 +69,7 @@ star-sanctuary/
 - `scripts/verify-release-light-assets.mjs`: 校验轻量正式附件结构、版本与 hash
 - `scripts/verify-winget-assets.mjs`: 校验本地生成的 `winget` 资产与 manifests 一致性
 - `docs/Star Sanctuary使用手册.md`: 当前版用户手册，聚焦 Agent / 工具 / Agent Teams 的使用与配置说明
+- `docs/指挥模式与动态工作流使用说明.md`: 指挥模式与动态工作流（DW）的使用说明、脚本编写、API 参考
 
 ### Gateway / CLI
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
@@ -165,6 +166,21 @@ star-sanctuary/
 - `apps/web/public/app/features/subtasks-runtime.js`: subtasks 前端流程
 - `apps/web/public/app/features/subtasks-overview.js`: subtask 详情页、delegation protocol、Team shared state / lane roster / completion gate / identity authority UI
 - `apps/web/public/app/features/prompt-snapshot-detail.js`: prompt snapshot detail、active sections / deltas、Team coordination / Identity Authority 摘要
+
+### Dynamic Workflows（DW）
+- `packages/belldandy-agent/src/workflow-context.ts`: `WorkflowContext` 类型定义（agent / parallel / parallelMap / pipeline / workflow / phase / log / args）
+- `packages/belldandy-core/src/workflow-context-impl.ts`: `createWorkflowContext()` 工厂实现、Semaphore、pipeline 无屏障流水线、workflow composition 嵌套调用
+- `packages/belldandy-core/src/workflow-runtime.ts`: `WorkflowRuntime` 执行引擎（脚本加载、Journal 创建/恢复、BudgetGuard、orchestrator、跨版本 migration）
+- `packages/belldandy-core/src/workflow-journal.ts`: `WorkflowJournal` 事件溯源（CRUD、migration 查询、统计）
+- `packages/belldandy-core/src/workflow-fingerprint.ts`: 稳定指纹计算、`computeMigrationFingerprint()`
+- `packages/belldandy-core/src/workflow-budget-guard.ts`: 预算熔断
+- `packages/belldandy-core/src/workflow-script-loader.ts`: 脚本加载器（file / builtin / inline + AST 安全扫描）
+- `packages/belldandy-core/src/workflow-builtin-registry.ts`: 内置工作流注册表
+- `packages/belldandy-core/src/workflow-builtin-code-audit.ts`: `code-audit` 内置工作流（3 阶段安全审计）
+- `packages/belldandy-core/src/workflow-builtin-parallel-research.ts`: `parallel-research` 内置工作流（2 阶段并行研究）
+- `packages/belldandy-skills/src/builtin/run-workflow.ts`: `run_workflow` 内置工具（让主 Agent 触发工作流）
+- `packages/belldandy-core/src/server-methods/workflow.ts`: `workflow.run` / `workflow.status` / `workflow.stop` / `workflow.list` RPC
+- `docs/指挥模式与动态工作流使用说明.md`: 使用说明（快速上手、脚本编写、API 参考、断点续传、预算控制）
 
 ### Tools / Skills / Plugins / MCP
 - `packages/belldandy-skills/src/executor.ts`: ToolExecutor

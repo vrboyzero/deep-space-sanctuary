@@ -27,6 +27,11 @@ describe("token usage observability", () => {
       deepseekRoute: {
         selectedTier: "flash",
         reason: "auto_kept_on_flash",
+        tierPinning: {
+          pinned: true,
+          previousTier: "flash",
+          reason: "no_upgrade_signal",
+        },
       },
       auxSummaryVerdict: {
         strategy: "deepseek_flash_preferred",
@@ -67,7 +72,7 @@ describe("token usage observability", () => {
     expect(text).toContain("FP 1234567890abcdef");
     expect(text).toContain("WARM warming / delay_if_possible");
     expect(text).toContain("AFF aligned");
-    expect(text).toContain("ROUTE flash / auto_kept_on_flash");
+    expect(text).toContain("ROUTE flash / auto_kept_on_flash / pinned=flash:no_upgrade_signal");
     expect(text).toContain("AUX deepseek_flash_preferred / deepseek_primary_with_flash_candidate / enabled=yes");
     expect(text).toContain("CAL 1,800 -> 1,050 (-42%, over_estimated)");
     expect(text).not.toContain("LOCAL ");
@@ -141,6 +146,20 @@ describe("token usage observability", () => {
     expect(compressionSegment).toContain("saved=1250tok");
   });
 
+  it("formats ATTACH_COMP diagnostics when attachment compression is applied", () => {
+    const segments = buildTokenUsageObservabilitySegments({
+      attachmentCompression: {
+        appliedCount: 1,
+        totalSavedChars: 332,
+        totalSavedCharsPositive: true,
+      },
+    });
+    const attachmentSegment = segments.find((s) => s.includes("ATTACH_COMP"));
+    expect(attachmentSegment).toBeDefined();
+    expect(attachmentSegment).toContain("applied=1");
+    expect(attachmentSegment).toContain("saved=332char");
+  });
+
   it("does not show COMPRESSION segment when no compression applied", () => {
     const segments = buildTokenUsageObservabilitySegments({
       compression: {
@@ -162,6 +181,11 @@ describe("token usage observability", () => {
       deepseekRoute: {
         selectedTier: "flash",
         reason: "auto_kept_on_flash",
+        tierPinning: {
+          pinned: true,
+          previousTier: "flash",
+          reason: "no_upgrade_signal",
+        },
       },
       localPromptEstimate: {
         systemPromptTokens: 41651,
@@ -183,7 +207,7 @@ describe("token usage observability", () => {
     expect(segments).toEqual([
       "CACHE unknown",
       "HIT 33,536 / MISS 5,142",
-      "ROUTE flash / auto_kept_on_flash",
+      "ROUTE flash / auto_kept_on_flash / pinned=flash:no_upgrade_signal",
     ]);
   });
 

@@ -11,6 +11,7 @@ export type AgentLaunchSpec = {
   parentConversationId: string;
   agentId: string;
   profileId: string;
+  modelOverride?: string;
   background: boolean;
   timeoutMs: number;
   channel: string;
@@ -33,6 +34,7 @@ export type AgentLaunchSpecInput = {
   parentConversationId: string;
   agentId?: string;
   profileId?: string;
+  modelOverride?: string;
   background?: boolean;
   timeoutMs?: number;
   channel?: string;
@@ -317,6 +319,7 @@ export function normalizeAgentLaunchSpec(
     parentConversationId: normalizeOptionalString(input.parentConversationId) ?? "system",
     agentId,
     profileId,
+    modelOverride: normalizeOptionalString(input.modelOverride) ?? normalizeOptionalString(defaults.modelOverride),
     background: input.background ?? defaults.background ?? true,
     timeoutMs,
     channel: normalizeOptionalString(input.channel) ?? normalizeOptionalString(defaults.channel) ?? "subtask",

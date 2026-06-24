@@ -155,6 +155,32 @@ describe("WorkflowRuntime", () => {
     expect(result.output).toBe("inline agent result");
   });
 
+  it("agent 事件不会重复 started/completed，且 sessionId 一致", async () => {
+    const f = await setupRuntime("event test result");
+    cleanups.push(f.cleanup);
+    const events: any[] = [];
+    const wfPath = await writeFile(f.tempDir, "event-wf.mjs", `
+      export default async function(ctx) {
+        return await ctx.agent("scan event", { callKey: "scan/0" });
+      }
+    `);
+    const result = await f.runtime.run({
+      source: { kind: "file", path: wfPath },
+      parentConversationId: "conv-events",
+      channel: "test",
+      stateDir: f.tempDir,
+      callbacks: {
+        onAgentEvent: (event) => events.push(event),
+      },
+    });
+    expect(result.success).toBe(true);
+    const started = events.filter((event) => event.type === "started");
+    const completed = events.filter((event) => event.type === "completed");
+    expect(started).toHaveLength(1);
+    expect(completed).toHaveLength(1);
+    expect(started[0]?.sessionId).toBe(completed[0]?.sessionId);
+  });
+
   it("resume 命中缓存跳过 agent 调用", async () => {
     const f = await setupRuntime("cached response");
     cleanups.push(f.cleanup);
@@ -240,7 +266,7 @@ describe("WorkflowRuntime", () => {
     // 不需要 setupRuntime，但为了 cleanup 一致性还是建一个
   });
 
-  it("listActiveRuns 列出运行记录", async () => {
+  it("listActiveRuns 只列出仍在运行的记录", async () => {
     const f = await setupRuntime("list test");
     cleanups.push(f.cleanup);
     const wfPath = await writeFile(f.tempDir, "list-wf.mjs", `
@@ -253,7 +279,7 @@ describe("WorkflowRuntime", () => {
       stateDir: f.tempDir,
     });
     const list = f.runtime.listActiveRuns();
-    expect(list.length).toBeGreaterThanOrEqual(1);
+    expect(list).toEqual([]);
   });
 
   it("parallel 工作流端到端运行", async () => {
@@ -444,9 +470,35 @@ describe("WorkflowRuntime", () => {
     });
     expect(result.success).toBe(true);
     expect(result.output).toBe("nested agent result");
-    // 父工作流自身的 agent 调用：1 次（summarize）
-    // 子工作流的 agent 调用计入子 run 的独立 budgetGuard，不计入父级 stats
-    expect(result.stats.agentCalls).toBe(1);
+    // 共享 budgetGuard 后，父 run 的统计会把子工作流的 agent 调用一并计入统一预算视角。
+    expect(result.stats.agentCalls).toBe(2);
+  });
+
+  it("workflow() 嵌套调用共享父级预算守卫", async () => {
+    const f = await setupRuntime("shared budget result");
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "budget-child",
+      scriptHash: "budget-child-hash-001",
+      default: async (ctx) => {
+        return await ctx.agent("child task", { callKey: "child/0" });
+      },
+    });
+    const parentWfPath = await writeFile(f.tempDir, "budget-parent-wf.mjs", `
+      export default async function(ctx) {
+        await ctx.agent("parent task", { callKey: "parent/0" });
+        return await ctx.workflow("budget-child");
+      }
+    `);
+    const result = await f.runtime.run({
+      source: { kind: "file", path: parentWfPath },
+      parentConversationId: "conv-budget-share",
+      channel: "test",
+      stateDir: f.tempDir,
+      budget: { maxAgentCalls: 1 },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("agent call budget exceeded");
   });
 
   it("workflow() 嵌套深度超限时子工作流抛错", async () => {

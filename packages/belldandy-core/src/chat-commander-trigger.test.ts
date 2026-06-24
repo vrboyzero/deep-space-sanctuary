@@ -7,15 +7,23 @@ import {
 
 describe("detectChatCommanderTrigger", () => {
   describe("指挥模式触发关键词", () => {
+    it("检测 '用指挥模式'", () => {
+      const result = detectChatCommanderTrigger("请用指挥模式来处理这个任务");
+      expect(result.triggered).toBe(true);
+      expect(result.commanderTriggered).toBe(true);
+      expect(result.workflowTriggered).toBe(false);
+      expect(result.matchedPhrases).toContain("用指挥模式");
+      expect(result.suggestedTools).toContain("delegate_task");
+      expect(result.suggestedTools).toContain("delegate_parallel");
+      expect(result.suggestedTools).not.toContain("run_workflow");
+    });
+
     it("检测 '使用指挥模式'", () => {
       const result = detectChatCommanderTrigger("请使用指挥模式来处理这个任务");
       expect(result.triggered).toBe(true);
       expect(result.commanderTriggered).toBe(true);
       expect(result.workflowTriggered).toBe(false);
       expect(result.matchedPhrases).toContain("使用指挥模式");
-      expect(result.suggestedTools).toContain("delegate_task");
-      expect(result.suggestedTools).toContain("delegate_parallel");
-      expect(result.suggestedTools).not.toContain("run_workflow");
     });
 
     it("检测 '进指挥模式'", () => {
@@ -68,6 +76,14 @@ describe("detectChatCommanderTrigger", () => {
       expect(result.suggestedTools).not.toContain("delegate_task");
     });
 
+    it("检测 '使用动态工作流'", () => {
+      const result = detectChatCommanderTrigger("请使用动态工作流来完成这个审计");
+      expect(result.triggered).toBe(true);
+      expect(result.workflowTriggered).toBe(true);
+      expect(result.commanderTriggered).toBe(false);
+      expect(result.matchedPhrases).toContain("使用动态工作流");
+    });
+
     it("检测 '进动态工作流'", () => {
       const result = detectChatCommanderTrigger("我们进动态工作流吧");
       expect(result.triggered).toBe(true);
@@ -87,10 +103,24 @@ describe("detectChatCommanderTrigger", () => {
       expect(result.workflowTriggered).toBe(true);
     });
 
+    it("检测 '使用动态工作流模式'", () => {
+      const result = detectChatCommanderTrigger("请使用动态工作流模式处理");
+      expect(result.triggered).toBe(true);
+      expect(result.workflowTriggered).toBe(true);
+      expect(result.matchedPhrases).toContain("使用动态工作流模式");
+    });
+
     it("检测 '用DW模式'（大小写不敏感）", () => {
       const result = detectChatCommanderTrigger("请用DW模式来完成");
       expect(result.triggered).toBe(true);
       expect(result.workflowTriggered).toBe(true);
+    });
+
+    it("检测 '使用DW模式'（大小写不敏感）", () => {
+      const result = detectChatCommanderTrigger("请使用DW模式来完成");
+      expect(result.triggered).toBe(true);
+      expect(result.workflowTriggered).toBe(true);
+      expect(result.matchedPhrases).toContain("使用dw模式");
     });
 
     it("检测 '进DW模式'（大小写不敏感）", () => {
@@ -127,7 +157,7 @@ describe("detectChatCommanderTrigger", () => {
 
   describe("两种模式同时触发（兼容）", () => {
     it("同时包含指挥模式和工作流模式关键词", () => {
-      const result = detectChatCommanderTrigger("使用指挥模式，然后用动态工作流来执行");
+      const result = detectChatCommanderTrigger("用指挥模式，然后用动态工作流来执行");
       expect(result.triggered).toBe(true);
       expect(result.commanderTriggered).toBe(true);
       expect(result.workflowTriggered).toBe(true);
@@ -138,7 +168,7 @@ describe("detectChatCommanderTrigger", () => {
     });
 
     it("reason 包含两种模式的原因", () => {
-      const result = detectChatCommanderTrigger("使用指挥模式，用DW模式");
+      const result = detectChatCommanderTrigger("用指挥模式，用DW模式");
       expect(result.reason).toContain("指挥模式");
       expect(result.reason).toContain("动态工作流");
     });
@@ -199,27 +229,22 @@ describe("detectChatCommanderTrigger", () => {
     });
 
     it("commanderMode=off 时仍按关键词检测", () => {
-      const result = detectChatCommanderTrigger("使用指挥模式", "off");
+      const result = detectChatCommanderTrigger("用指挥模式", "off");
       expect(result.triggered).toBe(true);
       expect(result.commanderTriggered).toBe(true);
     });
 
-    it("旧关键词 '用指挥官' 不再触发", () => {
-      const result = detectChatCommanderTrigger("请用指挥官模式来处理");
-      expect(result.triggered).toBe(false);
-    });
-
-    it("旧关键词 '并行审查' 不再触发", () => {
+    it("旧关键词 '并行审查' 不触发", () => {
       const result = detectChatCommanderTrigger("请并行审查这个方案");
       expect(result.triggered).toBe(false);
     });
 
-    it("旧关键词 '用工作流' 不再触发（需用 '用动态工作流'）", () => {
+    it("旧关键词 '用工作流' 不触发", () => {
       const result = detectChatCommanderTrigger("请用工作流来完成");
       expect(result.triggered).toBe(false);
     });
 
-    it("旧关键词 'multi-agent' 不再触发", () => {
+    it("旧关键词 'multi-agent' 不触发", () => {
       const result = detectChatCommanderTrigger("Let's use multi-agent approach");
       expect(result.triggered).toBe(false);
     });
@@ -228,7 +253,7 @@ describe("detectChatCommanderTrigger", () => {
 
 describe("buildChatCommanderHintText", () => {
   it("指挥模式触发时生成指挥模式提示", () => {
-    const result = detectChatCommanderTrigger("使用指挥模式");
+    const result = detectChatCommanderTrigger("用指挥模式");
     const text = buildChatCommanderHintText(result);
     expect(text).toContain("Chat Orchestration Hint");
     expect(text).toContain("指挥模式");
@@ -246,7 +271,7 @@ describe("buildChatCommanderHintText", () => {
   });
 
   it("两种模式同时触发时生成两段提示", () => {
-    const result = detectChatCommanderTrigger("使用指挥模式，用动态工作流");
+    const result = detectChatCommanderTrigger("用指挥模式，用动态工作流");
     const text = buildChatCommanderHintText(result);
     expect(text).toContain("指挥模式");
     expect(text).toContain("动态工作流模式");
@@ -263,7 +288,7 @@ describe("buildChatCommanderHintText", () => {
   });
 
   it("包含注意事项", () => {
-    const result = detectChatCommanderTrigger("使用指挥模式");
+    const result = detectChatCommanderTrigger("用指挥模式");
     const text = buildChatCommanderHintText(result);
     expect(text).toContain("注意事项");
     expect(text).toContain("工具安全矩阵");

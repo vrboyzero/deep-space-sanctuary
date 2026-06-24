@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "完成动态工作流主要功能（P0-P6a）"
+git commit -m "审查并修复动态工作流、上下文与记忆压缩的问题"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

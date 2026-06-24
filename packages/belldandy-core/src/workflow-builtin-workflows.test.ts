@@ -131,6 +131,42 @@ describe("code-audit builtin workflow", () => {
     const result = await entry.default(ctx);
     expect(result).toContain("mock response");
   });
+
+  it("全部扫描失败时抛错，不生成成功报告", async () => {
+    registerCodeAuditBuiltinWorkflow();
+    const entry = getBuiltinWorkflow("code-audit")!;
+    const ctx = createMockCtx({
+      args: { modules: ["a", "b"] },
+      parallel: (vi.fn(async () => [
+        { ok: false, error: "scan failed", taskId: "t0" },
+        { ok: false, error: "scan failed", taskId: "t1" },
+      ]) as any),
+    });
+    await expect(entry.default(ctx)).rejects.toThrow(/扫描均失败|无法继续审计/);
+  });
+
+  it("交叉验证没有有效结果时抛错，不生成成功报告", async () => {
+    registerCodeAuditBuiltinWorkflow();
+    const entry = getBuiltinWorkflow("code-audit")!;
+    let parallelCallCount = 0;
+    const ctx = createMockCtx({
+      args: { modules: ["a"] },
+      parallel: (vi.fn(async (tasks: any) => {
+        parallelCallCount++;
+        if (parallelCallCount === 1) {
+          return [
+            { ok: true, value: "scan result a", taskId: "t0", cacheHit: false },
+          ];
+        }
+        return Promise.all(tasks.map(async (_task: any, i: number) => ({
+          ok: false as const,
+          error: `verify failed ${i}`,
+          taskId: `v${i}`,
+        })));
+      }) as any),
+    });
+    await expect(entry.default(ctx)).rejects.toThrow(/未通过验证|无法生成审计报告/);
+  });
 });
 
 describe("parallel-research builtin workflow", () => {
@@ -166,21 +202,18 @@ describe("parallel-research builtin workflow", () => {
     expect((ctx.agent as any)).toHaveBeenCalled();
   });
 
-  it("topics 为空时返回错误信息", async () => {
+  it("topics 为空时抛错", async () => {
     registerParallelResearchBuiltinWorkflow();
     const entry = getBuiltinWorkflow("parallel-research")!;
     const ctx = createMockCtx({ args: {} });
-    const result = await entry.default(ctx);
-    expect(result).toContain("错误");
-    expect(result).toContain("topics");
+    await expect(entry.default(ctx)).rejects.toThrow(/topics/);
   });
 
-  it("topics 非数组时返回错误信息", async () => {
+  it("topics 非数组时抛错", async () => {
     registerParallelResearchBuiltinWorkflow();
     const entry = getBuiltinWorkflow("parallel-research")!;
     const ctx = createMockCtx({ args: { topics: "not-an-array" } });
-    const result = await entry.default(ctx);
-    expect(result).toContain("错误");
+    await expect(entry.default(ctx)).rejects.toThrow(/topics/);
   });
 
   it("depth 参数影响 prompt", async () => {
@@ -193,7 +226,7 @@ describe("parallel-research builtin workflow", () => {
     expect(agentCalls.length).toBeGreaterThan(0);
   });
 
-  it("所有主题研究失败时返回错误", async () => {
+  it("所有主题研究失败时抛错", async () => {
     registerParallelResearchBuiltinWorkflow();
     const entry = getBuiltinWorkflow("parallel-research")!;
     const ctx = createMockCtx({
@@ -203,9 +236,7 @@ describe("parallel-research builtin workflow", () => {
         { ok: false, error: "research failed", taskId: "m1" },
       ]) as any),
     });
-    const result = await entry.default(ctx);
-    expect(result).toContain("错误");
-    expect(result).toContain("失败");
+    await expect(entry.default(ctx)).rejects.toThrow(/研究均失败|无法生成汇总报告/);
   });
 });
 

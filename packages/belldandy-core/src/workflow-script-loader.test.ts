@@ -101,11 +101,18 @@ describe("scanInlineScriptSafety", () => {
     expect(result.violations.some((v) => v.includes("Math.random"))).toBe(true);
   });
 
-  it("检测 child_process", () => {
-    const code = `export default async function(ctx) { return "child_process"; }`;
+  it("检测动态 import()，即使 specifier 是拼接表达式", () => {
+    const code = `export default async function(ctx) { const mod = await import("node:" + "f" + "s"); return String(mod); }`;
     const result = scanInlineScriptSafety(code);
     expect(result.safe).toBe(false);
-    expect(result.violations.some((v) => v.includes("child_process"))).toBe(true);
+    expect(result.violations.some((v) => v.includes("dynamic import"))).toBe(true);
+  });
+
+  it("不会把普通字符串字面量误判为受限模块访问", () => {
+    const code = `export default async function(ctx) { return "child_process"; }`;
+    const result = scanInlineScriptSafety(code);
+    expect(result.safe).toBe(true);
+    expect(result.violations).toHaveLength(0);
   });
 });
 
@@ -146,6 +153,15 @@ describe("loadWorkflowScript", () => {
     expect(script.scriptHash).toMatch(/^[0-9a-f]{64}$/);
     const result = await script.default({} as any);
     expect(result).toBe("file result");
+  });
+
+  it("file 模式支持 slash-separated 绝对路径导入", async () => {
+    const filePath = path.join(tempDir, "slash-path-wf.mjs");
+    await fs.writeFile(filePath, `export default async function(ctx) { return "slash path result"; }\n`, "utf-8");
+    const slashSeparatedPath = filePath.replace(/\\/g, "/");
+    const script = await loadWorkflowScript({ kind: "file", path: slashSeparatedPath }, { stateDir: tempDir });
+    const result = await script.default({} as any);
+    expect(result).toBe("slash path result");
   });
 
   it("file 模式文件不存在抛错", async () => {

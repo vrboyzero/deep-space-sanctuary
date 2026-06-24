@@ -13,6 +13,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { pathToFileURL } from "node:url";
+import * as ts from "typescript";
 
 import type { WorkflowContext } from "@belldandy/agent";
 import { getBuiltinWorkflow } from "./workflow-builtin-registry.js";
@@ -62,29 +64,63 @@ function computeScriptHash(content: string, workflowName: string, workflowVersio
 
 const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bimport\s+/m, reason: "import 语句禁止" },
-  { pattern: /\brequire\s*\(/m, reason: "require() 禁止" },
-  { pattern: /\beval\s*\(/m, reason: "eval() 禁止" },
-  { pattern: /\bFunction\s*\(/m, reason: "Function() 构造禁止" },
-  { pattern: /\bprocess\b/m, reason: "process 全局对象禁止" },
-  { pattern: /\bglobalThis\b/m, reason: "globalThis 禁止" },
-  { pattern: /\bfs\b/m, reason: "fs 模块禁止" },
-  { pattern: /\bnet\b/m, reason: "net 模块禁止" },
-  { pattern: /\bchild_process\b/m, reason: "child_process 模块禁止" },
   { pattern: /\bDate\.now\s*\(/m, reason: "Date.now() 非确定性，禁止" },
   { pattern: /\bMath\.random\s*\(/m, reason: "Math.random() 非确定性，禁止" },
   { pattern: /\bnew\s+Date\s*\(\s*\)/m, reason: "new Date() 无参数非确定性，禁止" },
-  { pattern: /\b__dirname\b/m, reason: "__dirname 禁止" },
-  { pattern: /\b__filename\b/m, reason: "__filename 禁止" },
 ];
 
 export function scanInlineScriptSafety(code: string): { safe: boolean; violations: string[] } {
-  const violations: string[] = [];
+  const violations = new Set<string>();
   for (const { pattern, reason } of FORBIDDEN_PATTERNS) {
     if (pattern.test(code)) {
-      violations.push(reason);
+      violations.add(reason);
     }
   }
-  return { safe: violations.length === 0, violations };
+  const sourceFile = ts.createSourceFile("inline-workflow.ts", code, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  const addViolation = (reason: string) => {
+    violations.add(reason);
+  };
+  const isIdentifierNamed = (node: ts.Node, name: string): boolean => ts.isIdentifier(node) && node.text === name;
+  const isPropertyAccess = (node: ts.Node, objectName: string, propertyName: string): boolean => (
+    ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === objectName
+    && node.name.text === propertyName
+  );
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        addViolation("dynamic import() 禁止");
+      } else if (isIdentifierNamed(node.expression, "require")) {
+        addViolation("require() 禁止");
+      } else if (isIdentifierNamed(node.expression, "eval")) {
+        addViolation("eval() 禁止");
+      } else if (isPropertyAccess(node.expression, "Date", "now")) {
+        addViolation("Date.now() 非确定性，禁止");
+      } else if (isPropertyAccess(node.expression, "Math", "random")) {
+        addViolation("Math.random() 非确定性，禁止");
+      }
+    } else if (ts.isNewExpression(node)) {
+      if (isIdentifierNamed(node.expression, "Function")) {
+        addViolation("Function() 构造禁止");
+      }
+      if (isIdentifierNamed(node.expression, "Date") && (!node.arguments || node.arguments.length === 0)) {
+        addViolation("new Date() 无参数非确定性，禁止");
+      }
+    } else if (ts.isIdentifier(node)) {
+      if (node.text === "process") addViolation("process 全局对象禁止");
+      if (node.text === "globalThis") addViolation("globalThis 禁止");
+      if (node.text === "__dirname") addViolation("__dirname 禁止");
+      if (node.text === "__filename") addViolation("__filename 禁止");
+    } else if (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node)) {
+      addViolation("import 语句禁止");
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return { safe: violations.size === 0, violations: [...violations] };
 }
 
 // ─── esbuild 编译 .ts → .mjs ──────────────────────────────────────────────
@@ -162,7 +198,7 @@ async function loadFile(source: { kind: "file"; path: string }, opts: LoadScript
     throw new WorkflowScriptLoadError("unsupported_extension", `Unsupported file extension: ${ext}`);
   }
 
-  const mod = await import(modulePath);
+  const mod = await import(pathToFileURL(modulePath).href);
   if (typeof mod.default !== "function") {
     throw new WorkflowScriptLoadError("no_default_export", `Workflow script must have a default export function: ${filePath}`);
   }
@@ -188,7 +224,7 @@ async function loadInline(source: { kind: "inline"; code: string; name?: string 
   const scriptHash = computeScriptHash(source.code, workflowName, workflowVersion);
   const cacheDir = getWorkflowCacheDir(opts.stateDir);
   const modulePath = await compileTsToMjs(source.code, cacheDir, scriptHash.slice(0, 16));
-  const mod = await import(modulePath);
+  const mod = await import(pathToFileURL(modulePath).href);
   if (typeof mod.default !== "function") {
     throw new WorkflowScriptLoadError("no_default_export", "Inline workflow script must have a default export function");
   }

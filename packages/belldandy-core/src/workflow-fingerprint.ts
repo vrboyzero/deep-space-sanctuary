@@ -37,6 +37,14 @@ export type WorkflowFingerprintInput = {
   workflowArgs?: Record<string, unknown>;
 };
 
+export type WorkflowToolPolicyFingerprintInput = {
+  role?: string;
+  permissionMode?: string;
+  allowedToolFamilies?: string[];
+  maxToolRiskLevel?: string;
+  policySummary?: string;
+};
+
 // ─── 稳定序列化 ──────────────────────────────────────────────────────────
 
 /**
@@ -115,6 +123,16 @@ export function computeStableHash(value: unknown): string {
   return createHash("sha256").update(canonical ?? "null").digest("hex");
 }
 
+export function computeWorkflowToolPolicyHash(input: WorkflowToolPolicyFingerprintInput): string {
+  return computeStableHash({
+    role: input.role ?? "",
+    permissionMode: input.permissionMode ?? "",
+    allowedToolFamilies: [...(input.allowedToolFamilies ?? [])].sort(),
+    maxToolRiskLevel: input.maxToolRiskLevel ?? "",
+    policySummary: input.policySummary ?? "",
+  });
+}
+
 // ─── 跨版本 migration 指纹 ─────────────────────────────────────────────────
 //
 // migration 场景下，旧记录的完整 AgentCallOptions 可能无法精确还原，
@@ -151,9 +169,21 @@ export function computeMigrationFingerprint(
     callKey,
     prompt,
     model: typeof opts.model === "string" ? opts.model : undefined,
+    agentProfileId: typeof opts.agentProfileId === "string" ? opts.agentProfileId : undefined,
+    systemPromptHash: typeof opts.systemPromptHash === "string" ? opts.systemPromptHash : undefined,
+    toolPolicyHash: typeof opts.toolPolicyHash === "string"
+      ? opts.toolPolicyHash
+      : computeWorkflowToolPolicyHash({
+        role: typeof opts.role === "string" ? opts.role : undefined,
+        permissionMode: typeof opts.permissionMode === "string" ? opts.permissionMode : undefined,
+        allowedToolFamilies: Array.isArray(opts.allowedToolFamilies) ? opts.allowedToolFamilies : undefined,
+        maxToolRiskLevel: typeof opts.maxToolRiskLevel === "string" ? opts.maxToolRiskLevel : undefined,
+        policySummary: typeof opts.policySummary === "string" ? opts.policySummary : undefined,
+      }),
     role: typeof opts.role === "string" ? opts.role : undefined,
     allowedToolFamilies: Array.isArray(opts.allowedToolFamilies) ? opts.allowedToolFamilies : undefined,
     maxToolRiskLevel: typeof opts.maxToolRiskLevel === "string" ? opts.maxToolRiskLevel : undefined,
+    delegationHash: opts.delegationProtocol ? computeStableHash(opts.delegationProtocol) : undefined,
     workflowArgs,
   });
 }

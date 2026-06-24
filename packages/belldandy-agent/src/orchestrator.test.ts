@@ -4,6 +4,7 @@ import { AgentRegistry } from "./agent-registry.js";
 import { ConversationStore } from "./conversation.js";
 import type { BelldandyAgent, AgentStreamItem, AgentRunInput } from "./index.js";
 import type { AgentProfile } from "./agent-profile.js";
+import { cleanupSharedCompressedContextStore, getSharedCompressedContextStore } from "./shared-compressed-context.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -68,6 +69,10 @@ function setup(overrides?: Partial<OrchestratorOptions>) {
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 describe("SubAgentOrchestrator", () => {
+  beforeEach(() => {
+    cleanupSharedCompressedContextStore("team-shared-context");
+  });
+
   describe("spawn", () => {
     it("should spawn a sub-agent and return result", async () => {
       const { orchestrator } = setup();
@@ -110,6 +115,133 @@ describe("SubAgentOrchestrator", () => {
       expect(result.output).toBe("coder response");
     });
 
+    it("should forward modelOverride from launchSpec to AgentRegistry.create", async () => {
+      const calls: Array<string | undefined> = [];
+      const registry = new AgentRegistry((_profile, opts) => {
+        calls.push(opts?.modelOverride);
+        return createMockAgent("model override response");
+      });
+      registry.register(defaultProfile);
+
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+      });
+
+      const result = await orch.spawn({
+        launchSpec: {
+          parentConversationId: "parent-1",
+          instruction: "Use model override",
+          modelOverride: "claude-opus",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(calls).toEqual(["claude-opus"]);
+      expect(orch.getSession(result.sessionId)?.launchSpec.modelOverride).toBe("claude-opus");
+    });
+
+    it("stores completed lane summaries in shared compressed context for team runs", async () => {
+      const { orchestrator } = setup();
+
+      const result = await orchestrator.spawn({
+        launchSpec: {
+          parentConversationId: "parent-1",
+          instruction: "Implement lane A",
+          delegationProtocol: {
+            intent: { summary: "Implement lane A" },
+            contextPolicy: { contextKeys: [] },
+            expectedDeliverable: { summary: "lane result", format: "summary" },
+            launchDefaults: {},
+            team: {
+              id: "team-shared-context",
+              mode: "parallel_subtasks",
+              currentLaneId: "lane_a",
+              memberRoster: [
+                { laneId: "lane_a", agentId: "coder", role: "coder" },
+                { laneId: "lane_b", agentId: "verifier", role: "verifier" },
+              ],
+            },
+          },
+        },
+      });
+
+      expect(result.success).toBe(true);
+      const store = getSharedCompressedContextStore("team-shared-context");
+      expect(store?.get("lane_a")).toMatchObject({
+        laneId: "lane_a",
+        agentId: "default",
+        rawSummary: "default response",
+        status: "active",
+      });
+    });
+
+    it("injects existing shared compressed context into later team lane history", async () => {
+      const seenHistories: Array<Array<{ role: "user" | "assistant"; content: string }>> = [];
+      const registry = new AgentRegistry(() => ({
+        async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
+          seenHistories.push(input.history.map((item) => ({ ...item })));
+          yield { type: "status", status: "running" };
+          yield { type: "final", text: "worker output" };
+          yield { type: "status", status: "done" };
+        },
+      }));
+      registry.register(defaultProfile);
+
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+      });
+
+      const teamProtocol = {
+        intent: { summary: "Coordinate lanes" },
+        contextPolicy: { contextKeys: [] },
+        expectedDeliverable: { summary: "lane result", format: "summary" as const },
+        launchDefaults: {},
+        team: {
+          id: "team-shared-context",
+          mode: "parallel_subtasks" as const,
+          memberRoster: [
+            { laneId: "lane_a", agentId: "coder", role: "coder" as const },
+            { laneId: "lane_b", agentId: "verifier", role: "verifier" as const },
+          ],
+        },
+      };
+
+      await orch.spawn({
+        launchSpec: {
+          parentConversationId: "parent-1",
+          instruction: "Implement lane A",
+          delegationProtocol: {
+            ...teamProtocol,
+            team: {
+              ...teamProtocol.team,
+              currentLaneId: "lane_a",
+            },
+          },
+        },
+      });
+
+      await orch.spawn({
+        launchSpec: {
+          parentConversationId: "parent-1",
+          instruction: "Verify lane B",
+          delegationProtocol: {
+            ...teamProtocol,
+            team: {
+              ...teamProtocol.team,
+              currentLaneId: "lane_b",
+            },
+          },
+        },
+      });
+
+      expect(seenHistories).toHaveLength(2);
+      expect(seenHistories[1]?.some((item) => item.role === "system" && item.content.includes("<team-shared-context"))).toBe(true);
+      expect(seenHistories[1]?.some((item) => item.content.includes("Lane lane_a"))).toBe(true);
+      expect(seenHistories[1]?.some((item) => item.content.includes("worker output"))).toBe(true);
+    });
+
     it("should apply catalog launch defaults when spawn input omits role and policy fields", async () => {
       const registry = new AgentRegistry(() => createMockAgent("catalog response"));
       registry.register(defaultProfile);
@@ -137,6 +269,40 @@ describe("SubAgentOrchestrator", () => {
       expect(result.success).toBe(true);
       const session = orch.getSession(result.sessionId);
       expect(session?.launchSpec).toMatchObject({
+        agentId: "ops-coder",
+        profileId: "ops-coder",
+        role: "coder",
+        permissionMode: "confirm",
+        allowedToolFamilies: ["workspace-read", "workspace-write", "patch"],
+        maxToolRiskLevel: "high",
+      });
+    });
+
+    it("should expose resolveLaunchSpec with the same catalog-normalized semantics as spawn", () => {
+      const registry = new AgentRegistry(() => createMockAgent("catalog response"));
+      registry.register(defaultProfile);
+      registry.register({
+        id: "ops-coder",
+        displayName: "Ops Coder",
+        model: "primary",
+        defaultRole: "coder",
+        defaultPermissionMode: "confirm",
+        defaultAllowedToolFamilies: ["workspace-read", "workspace-write", "patch"],
+        defaultMaxToolRiskLevel: "high",
+      });
+
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+      });
+
+      const spec = orch.resolveLaunchSpec({
+        parentConversationId: "parent-1",
+        agentId: "ops-coder",
+        instruction: "Implement rollout guardrails",
+      });
+
+      expect(spec).toMatchObject({
         agentId: "ops-coder",
         profileId: "ops-coder",
         role: "coder",

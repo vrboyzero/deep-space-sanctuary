@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type { AgentPromptDelta } from "@belldandy/agent";
 import { createCompressionPipeline, type ContextCompressionPipeline, type CompressionResult } from "@belldandy/agent";
@@ -36,6 +37,11 @@ type QueryRuntimeLogger = {
   info: (module: string, message: string, data?: unknown) => void;
   warn: (module: string, message: string, data?: unknown) => void;
   error: (module: string, message: string, data?: unknown) => void;
+};
+
+type AttachmentPromptEntry = {
+  text: string;
+  deltaId?: string;
 };
 
 type AttachmentKind = "image" | "video" | "audio" | "text" | "file";
@@ -121,7 +127,7 @@ export async function preparePromptWithAttachments(input: {
   );
   await fs.mkdir(attachmentDir, { recursive: true });
 
-  const attachmentPrompts: string[] = [];
+  const attachmentPrompts: AttachmentPromptEntry[] = [];
   for (const [index, attachment] of input.attachments.entries()) {
     try {
       const normalized = await normalizeAttachment({
@@ -140,7 +146,7 @@ export async function preparePromptWithAttachments(input: {
           promptPath: toAttachmentPromptPath(input.stateDir, normalized.savePath),
           acceptedContentCapabilities: input.acceptedContentCapabilities,
         });
-        attachmentPrompts.push(...imageHandled.prompts);
+        attachmentPrompts.push(...imageHandled.prompts.map((text) => ({ text })));
         if (imageHandled.contentPart) contentParts.push(imageHandled.contentPart);
         promptDeltas.push(...imageHandled.promptDeltas);
         continue;
@@ -157,7 +163,7 @@ export async function preparePromptWithAttachments(input: {
           promptPath: toAttachmentPromptPath(input.stateDir, normalized.savePath),
           acceptedContentCapabilities: input.acceptedContentCapabilities,
         });
-        attachmentPrompts.push(...videoHandled.prompts);
+        attachmentPrompts.push(...videoHandled.prompts.map((text) => ({ text })));
         if (videoHandled.contentPart) contentParts.push(videoHandled.contentPart);
         promptDeltas.push(...videoHandled.promptDeltas);
         continue;
@@ -180,7 +186,7 @@ export async function preparePromptWithAttachments(input: {
         promptText = audioResult.promptText;
         audioTranscriptChars = audioResult.audioTranscriptChars;
         audioTranscriptCacheHits += audioResult.audioTranscriptCacheHits;
-        attachmentPrompts.push(...audioResult.prompts);
+        attachmentPrompts.push(...audioResult.prompts.map((text) => ({ text })));
         promptDeltas.push(...audioResult.promptDeltas);
         continue;
       }
@@ -199,14 +205,16 @@ export async function preparePromptWithAttachments(input: {
         });
         textAttachmentCount += textResult.didCount ? 1 : 0;
         textAttachmentChars += textResult.addedChars;
-        attachmentPrompts.push(textResult.prompt);
+        attachmentPrompts.push({
+          text: textResult.prompt,
+          deltaId: textResult.promptDelta?.id,
+        });
         if (textResult.promptDelta) promptDeltas.push(textResult.promptDelta);
         continue;
       }
 
       const promptPath = toAttachmentPromptPath(input.stateDir, normalized.savePath);
-      attachmentPrompts.push(`\n[User uploaded a file: ${attachment.name} (type: ${attachment.type}), workspace path: ${promptPath}]`);
-      promptDeltas.push(createPromptDelta({
+      const promptDelta = createPromptDelta({
         id: `attachment-file-${index + 1}`,
         deltaType: "attachment",
         role: "attachment",
@@ -218,56 +226,72 @@ export async function preparePromptWithAttachments(input: {
           fingerprint: normalized.fingerprint,
           path: promptPath,
         },
-      }));
+      });
+      attachmentPrompts.push({ text: promptDelta.text, deltaId: promptDelta.id });
+      promptDeltas.push(promptDelta);
     } catch (error) {
       input.log.error("message", `Failed to save attachment ${attachment.name}`, error);
-      attachmentPrompts.push(`\n[Failed to upload file: ${attachment.name}]`);
-      promptDeltas.push(createPromptDelta({
+      const promptDelta = createPromptDelta({
         id: `attachment-error-${index + 1}`,
         deltaType: "attachment",
         role: "attachment",
         text: `[Failed to upload file: ${attachment.name}]`,
         metadata: { name: attachment.name, mime: attachment.type, kind: "error" },
-      }));
+      });
+      attachmentPrompts.push({ text: promptDelta.text, deltaId: promptDelta.id });
+      promptDeltas.push(promptDelta);
     }
   }
 
-  if (attachmentPrompts.length > 0) {
-    promptText += "\n" + attachmentPrompts.join("\n");
-  }
-
   // Phase 1：对长文本附件做统一压缩
-  // 只压缩 deltaType=attachment 且文本较长的 promptDelta
+  // 同时回写 promptText 与 promptDeltas，避免只压缩旁路元数据
   const ATTACHMENT_COMPRESS_THRESHOLD = 1_200;
   const pipeline = getAttachmentCompressionPipeline();
-  for (let i = 0; i < promptDeltas.length; i++) {
-    const delta = promptDeltas[i];
-    if (delta.deltaType !== "attachment" || delta.text.length < ATTACHMENT_COMPRESS_THRESHOLD) continue;
+  for (let i = 0; i < attachmentPrompts.length; i++) {
+    const entry = attachmentPrompts[i];
+    if (!entry || entry.text.length < ATTACHMENT_COMPRESS_THRESHOLD) continue;
     try {
       const result = await pipeline.compress({
         sourceKind: "attachment_text",
-        sourceName: typeof delta.metadata?.name === "string" ? delta.metadata.name : "attachment",
-        content: delta.text,
+        sourceName: typeof entry.deltaId === "string"
+          ? (typeof promptDeltas.find((delta) => delta.id === entry.deltaId)?.metadata?.name === "string"
+            ? String(promptDeltas.find((delta) => delta.id === entry.deltaId)?.metadata?.name)
+            : "attachment")
+          : "attachment",
+        content: entry.text,
         conversationId: input.conversationId,
       });
       attachmentCompressionResults.push(result);
-      if (result.applied && result.compressedContent.length < delta.text.length) {
-        // 替换 delta 文本为压缩后内容
-        promptDeltas[i] = {
-          ...delta,
+      if (result.applied && result.compressedContent.length < entry.text.length) {
+        attachmentPrompts[i] = {
+          ...entry,
           text: result.compressedContent,
-          metadata: {
-            ...(delta.metadata ?? {}),
-            compressed: true,
-            compressionStrategy: result.strategy,
-            originalChars: result.originalChars,
-            compressedChars: result.compressedChars,
-          },
         };
+        if (entry.deltaId) {
+          const deltaIndex = promptDeltas.findIndex((delta) => delta.id === entry.deltaId);
+          if (deltaIndex >= 0) {
+            const delta = promptDeltas[deltaIndex];
+            promptDeltas[deltaIndex] = {
+              ...delta,
+              text: result.compressedContent,
+              metadata: {
+                ...(delta.metadata ?? {}),
+                compressed: true,
+                compressionStrategy: result.strategy,
+                originalChars: result.originalChars,
+                compressedChars: result.compressedChars,
+              },
+            };
+          }
+        }
       }
     } catch {
       // fail-open：压缩失败保留原文
     }
+  }
+
+  if (attachmentPrompts.length > 0) {
+    promptText += "\n" + attachmentPrompts.map((entry) => entry.text).join("\n");
   }
 
   return {
@@ -764,12 +788,12 @@ function handleVideoAttachment(input: {
   promptDelta: AgentPromptDelta;
 } {
   if (hasMediaCapability(input.acceptedContentCapabilities, "video_input")) {
-    const absPath = path.resolve(input.savePath);
+    const absPath = pathToFileURL(path.resolve(input.savePath)).href;
     return {
       prompt: `\n[用户上传了视频: ${input.attachment.name}] (System Note: Video content has been injected via multimodal channel. Please analyze it directly.)`,
       contentPart: {
         type: "video_url",
-        video_url: { url: `file://${absPath}` },
+        video_url: { url: absPath },
       },
       promptDelta: createPromptDelta({
         id: `attachment-video-${input.index + 1}`,

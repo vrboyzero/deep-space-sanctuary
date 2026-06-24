@@ -1763,12 +1763,15 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
       systemPrompt: "system",
       messages: [],
       inputMeta: {
+        deepseekRoute: {
+          selectedTier: "pro",
+        },
         structureSignature: "sig-stable",
         orderingGuard: { status: "stable", reasons: [] },
         warmupCoordination: {
           eligible: true,
-          status: "warm_candidate",
-          recommendation: "proceed",
+          status: "warming",
+          recommendation: "proceed_with_caution",
           reason: "test_previous_snapshot",
         },
         cacheFamilyAffinity: {
@@ -1834,7 +1837,12 @@ test("message.send token.usage includes deepseek route verdict for auto tier rou
       selectedTier: "pro",
       routeMode: "deepseek_virtual",
       degraded: false,
-      reason: "auto_promoted_to_pro",
+      reason: "auto_pinned_to_pro",
+      tierPinning: {
+        pinned: true,
+        previousTier: "pro",
+        reason: "no_downgrade_signal",
+      },
     });
     expect(usageEvent?.payload?.usageCalibration).toMatchObject({
       estimatedPromptTokens: 7,

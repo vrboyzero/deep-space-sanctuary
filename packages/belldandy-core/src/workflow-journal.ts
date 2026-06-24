@@ -150,7 +150,7 @@ export class WorkflowJournal {
       opts_json: string;
       created_at: number;
     }>(`
-      INSERT INTO workflow_journal
+      INSERT OR IGNORE INTO workflow_journal
         (id, journal_id, workflow_name, script_hash, call_key, fingerprint,
          prompt, opts_json, status, cache_hit_count, created_at)
       VALUES
