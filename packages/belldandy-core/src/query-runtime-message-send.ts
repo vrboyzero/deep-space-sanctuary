@@ -832,8 +832,8 @@ function summarizeAttachmentCompressionResults(
   const bySource = new Map<string, { applied: number; savedChars: number }>();
   for (const result of results) {
     if (!result?.applied) continue;
-    const sourceKind = typeof result.sourceKind === "string" && result.sourceKind.trim()
-      ? result.sourceKind.trim()
+    const sourceKind = typeof result.observability?.sourceKind === "string" && result.observability.sourceKind.trim()
+      ? result.observability.sourceKind.trim()
       : "unknown";
     const savedChars = Math.max(0, Number(result.originalChars ?? 0) - Number(result.compressedChars ?? 0));
     appliedCount += 1;

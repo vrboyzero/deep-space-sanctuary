@@ -140,3 +140,18 @@ export const subtasksState = {
   liveUpdateTimers: {},
   liveUpdatePending: {},
 };
+
+export const bridgeRuntimeState = {
+  items: [],
+  totalCount: 0,
+  activeCount: 0,
+  closedCount: 0,
+  selectedSessionId: null,
+  selectedSession: null,
+  selectedPeek: null,
+  loadSeq: 0,
+  detailSeq: 0,
+  loading: false,
+  detailLoading: false,
+  viewActive: false,
+};

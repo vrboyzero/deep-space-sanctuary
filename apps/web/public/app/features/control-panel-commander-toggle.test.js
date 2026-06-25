@@ -113,7 +113,7 @@ describe("control panel commander toggle controller", () => {
     expect(refs.cfgGoalGovernanceMode.value).toBe("commander");
     expect(showNotice).toHaveBeenCalledWith(
       "Commander mode updated",
-      "Commander governance preset is enabled. New long-running tasks will default to parallel specialists, and no restart is required.",
+      "Commander governance preset is enabled. Explicitly triggered chat / task / goal will use commander orchestration; normal conversations are unaffected. No restart is required.",
       "success",
       4200,
     );

@@ -45,6 +45,10 @@ import {
   handleSubTaskUpdateWithQueryRuntime,
 } from "../query-runtime-subtask.js";
 import {
+  handleBridgeSessionListWithQueryRuntime,
+  handleBridgeSessionPeekWithQueryRuntime,
+} from "../query-runtime-bridge.js";
+import {
   handleToolSettingsConfirmWithQueryRuntime,
   handleToolsListWithQueryRuntime,
   handleToolsUpdateWithQueryRuntime,
@@ -111,6 +115,9 @@ type SubTaskRuntimeMethod =
   | "subtask.update"
   | "subtask.stop"
   | "subtask.archive";
+type BridgeRuntimeMethod =
+  | "bridge.session.list"
+  | "bridge.session.peek";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -154,6 +161,14 @@ function createSubTaskRuntimeContext(requestId: string, ctx: QueryRuntimeDomains
     updateSubTask: ctx.updateSubTask,
     stopSubTask: ctx.stopSubTask,
     runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<SubTaskRuntimeMethod>(),
+  };
+}
+
+function createBridgeRuntimeContext(requestId: string, ctx: QueryRuntimeDomainsMethodContext) {
+  return {
+    requestId,
+    stateDir: ctx.stateDir,
+    runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<BridgeRuntimeMethod>(),
   };
 }
 
@@ -470,6 +485,39 @@ export async function handleQueryRuntimeDomainsMethod(
       return handleSubTaskArchiveWithQueryRuntime(createSubTaskRuntimeContext(req.id, ctx), {
         taskId,
         reason,
+      });
+    }
+
+    case "bridge.session.list": {
+      const params = isObjectRecord(req.params) ? req.params : {};
+      const status = params.status === "active" || params.status === "closed"
+        ? params.status
+        : undefined;
+      const targetId = typeof params.targetId === "string" && params.targetId.trim()
+        ? params.targetId.trim()
+        : undefined;
+      const taskId = typeof params.taskId === "string" && params.taskId.trim()
+        ? params.taskId.trim()
+        : undefined;
+      return handleBridgeSessionListWithQueryRuntime(createBridgeRuntimeContext(req.id, ctx), {
+        status,
+        targetId,
+        taskId,
+      });
+    }
+
+    case "bridge.session.peek": {
+      const params = isObjectRecord(req.params) ? req.params : {};
+      const sessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
+      const transcriptLimit = typeof params.transcriptLimit === "number" && Number.isFinite(params.transcriptLimit)
+        ? params.transcriptLimit
+        : undefined;
+      if (!sessionId) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "sessionId is required" } };
+      }
+      return handleBridgeSessionPeekWithQueryRuntime(createBridgeRuntimeContext(req.id, ctx), {
+        sessionId,
+        transcriptLimit,
       });
     }
 

@@ -2,12 +2,14 @@ export function createHeaderNavigationFeature({
   refs,
   switchMode,
   loadGoals,
+  loadBridgeSessions,
   focusPrompt,
   buildMultiPageUrl,
 } = {}) {
   const {
     openWebChatTabLink,
     goGoalsPageBtn,
+    goBridgePageBtn,
     goChatPageBtn,
   } = refs ?? {};
 
@@ -28,6 +30,11 @@ export function createHeaderNavigationFeature({
     await loadGoals?.(false);
   });
 
+  goBridgePageBtn?.addEventListener("click", async () => {
+    switchMode?.("bridge");
+    await loadBridgeSessions?.(false);
+  });
+
   goChatPageBtn?.addEventListener("click", () => {
     switchMode?.("chat");
     focusPrompt?.();
@@ -42,6 +49,10 @@ export function createHeaderNavigationFeature({
     openGoalsPage() {
       switchMode?.("goals");
       return loadGoals?.(false);
+    },
+    openBridgePage() {
+      switchMode?.("bridge");
+      return loadBridgeSessions?.(false);
     },
     openChatPage() {
       switchMode?.("chat");

@@ -193,6 +193,14 @@ export class PtyManager {
         return output;
     }
 
+    peek(id: string): string {
+        const session = this.sessions.get(id);
+        if (!session) {
+            return "";
+        }
+        return session.buffer.join("");
+    }
+
     kill(id: string) {
         const session = this.sessions.get(id);
         if (session) {

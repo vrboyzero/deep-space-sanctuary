@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { DelegationProtocol } from "@belldandy/skills";
 import { SubAgentOrchestrator, type OrchestratorOptions } from "./orchestrator.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { ConversationStore } from "./conversation.js";
-import type { BelldandyAgent, AgentStreamItem, AgentRunInput } from "./index.js";
+import type { AgentContentPart, BelldandyAgent, AgentStreamItem, AgentRunInput } from "./index.js";
 import type { AgentProfile } from "./agent-profile.js";
 import { cleanupSharedCompressedContextStore, getSharedCompressedContextStore } from "./shared-compressed-context.js";
 
@@ -149,9 +150,15 @@ describe("SubAgentOrchestrator", () => {
           parentConversationId: "parent-1",
           instruction: "Implement lane A",
           delegationProtocol: {
-            intent: { summary: "Implement lane A" },
-            contextPolicy: { contextKeys: [] },
+            source: "delegate_parallel",
+            intent: { kind: "parallel_subtasks", summary: "Implement lane A" },
+            contextPolicy: {
+              includeParentConversation: true,
+              includeStructuredContext: true,
+              contextKeys: [],
+            },
             expectedDeliverable: { summary: "lane result", format: "summary" },
+            aggregationPolicy: { mode: "parallel_collect", summarizeFailures: true },
             launchDefaults: {},
             team: {
               id: "team-shared-context",
@@ -177,10 +184,10 @@ describe("SubAgentOrchestrator", () => {
     });
 
     it("injects existing shared compressed context into later team lane history", async () => {
-      const seenHistories: Array<Array<{ role: "user" | "assistant"; content: string }>> = [];
+      const seenHistories: Array<Array<{ role: string; content: string | AgentContentPart[] }>> = [];
       const registry = new AgentRegistry(() => ({
         async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
-          seenHistories.push(input.history.map((item) => ({ ...item })));
+          seenHistories.push((input.history ?? []).map((item) => ({ role: item.role, content: item.content })));
           yield { type: "status", status: "running" };
           yield { type: "final", text: "worker output" };
           yield { type: "status", status: "done" };
@@ -193,19 +200,26 @@ describe("SubAgentOrchestrator", () => {
         conversationStore: new ConversationStore(),
       });
 
-      const teamProtocol = {
-        intent: { summary: "Coordinate lanes" },
-        contextPolicy: { contextKeys: [] },
-        expectedDeliverable: { summary: "lane result", format: "summary" as const },
-        launchDefaults: {},
-        team: {
-          id: "team-shared-context",
-          mode: "parallel_subtasks" as const,
-          memberRoster: [
-            { laneId: "lane_a", agentId: "coder", role: "coder" as const },
-            { laneId: "lane_b", agentId: "verifier", role: "verifier" as const },
-          ],
+      const teamMetadata: NonNullable<DelegationProtocol["team"]> = {
+        id: "team-shared-context",
+        mode: "parallel_subtasks",
+        memberRoster: [
+          { laneId: "lane_a", agentId: "coder", role: "coder" },
+          { laneId: "lane_b", agentId: "verifier", role: "verifier" },
+        ],
+      };
+      const teamProtocol: DelegationProtocol = {
+        source: "delegate_parallel",
+        intent: { kind: "parallel_subtasks", summary: "Coordinate lanes" },
+        contextPolicy: {
+          includeParentConversation: true,
+          includeStructuredContext: true,
+          contextKeys: [],
         },
+        expectedDeliverable: { summary: "lane result", format: "summary" as const },
+        aggregationPolicy: { mode: "parallel_collect", summarizeFailures: true },
+        launchDefaults: {},
+        team: teamMetadata,
       };
 
       await orch.spawn({
@@ -215,7 +229,7 @@ describe("SubAgentOrchestrator", () => {
           delegationProtocol: {
             ...teamProtocol,
             team: {
-              ...teamProtocol.team,
+              ...teamMetadata,
               currentLaneId: "lane_a",
             },
           },
@@ -229,7 +243,7 @@ describe("SubAgentOrchestrator", () => {
           delegationProtocol: {
             ...teamProtocol,
             team: {
-              ...teamProtocol.team,
+              ...teamMetadata,
               currentLaneId: "lane_b",
             },
           },
@@ -237,9 +251,11 @@ describe("SubAgentOrchestrator", () => {
       });
 
       expect(seenHistories).toHaveLength(2);
-      expect(seenHistories[1]?.some((item) => item.role === "system" && item.content.includes("<team-shared-context"))).toBe(true);
-      expect(seenHistories[1]?.some((item) => item.content.includes("Lane lane_a"))).toBe(true);
-      expect(seenHistories[1]?.some((item) => item.content.includes("worker output"))).toBe(true);
+      const containsText = (needle: string) => seenHistories[1]?.some((item) =>
+        typeof item.content === "string" && item.content.includes(needle));
+      expect(containsText("<team-shared-context")).toBe(true);
+      expect(containsText("Lane lane_a")).toBe(true);
+      expect(containsText("worker output")).toBe(true);
     });
 
     it("should apply catalog launch defaults when spawn input omits role and policy fields", async () => {

@@ -6,7 +6,7 @@ import { afterEach, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
 
 import { AgentRegistry, ConversationStore, MockAgent } from "@belldandy/agent";
-import { ToolExecutor } from "@belldandy/skills";
+import { bridgeSessionCloseTool, bridgeSessionStartTool, ToolExecutor } from "@belldandy/skills";
 
 import { persistConversationPromptSnapshot } from "./conversation-prompt-snapshot.js";
 import { startGatewayServer } from "./server.js";
@@ -17,6 +17,7 @@ import {
   createWriteContractedTestTool,
   pairWebSocketClient,
   resolveWebRoot,
+  sleep,
   waitFor,
 } from "./server-testkit.js";
 import { SubTaskRuntimeStore } from "./task-runtime.js";
@@ -1014,6 +1015,143 @@ test("subtask.list and subtask.get expose bridge session runtime visibility", as
       blockReason: "Bridge session runtime lost during startup recovery and must be resumed or relaunched before work can continue.",
     });
   } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("bridge.session.list and bridge.session.peek expose live bridge runtime over websocket", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const startupSequenceWaitMs = process.platform === "win32" ? 1_200 : 120;
+  const postStartWaitMs = process.platform === "win32" ? 1_600 : 200;
+
+  await fs.promises.writeFile(path.join(stateDir, "agent-bridge.json"), JSON.stringify({
+    version: "1.0.0",
+    targets: [
+      {
+        id: "node-bridge-runtime",
+        category: "agent-cli",
+        transport: "pty",
+        enabled: true,
+        entry: { binary: process.execPath },
+        cwdPolicy: "workspace-only",
+        sessionMode: "persistent",
+        actions: {
+          interactive: {
+            template: ["-i"],
+            startupSequence: [
+              {
+                data: "process.stdout.write('bridge-runtime-peek\\n')\n",
+                waitMs: startupSequenceWaitMs,
+              },
+            ],
+          },
+        },
+      },
+    ],
+  }, null, 2), "utf-8");
+
+  const bridgeToolContext: any = {
+    conversationId: "conv-bridge-runtime",
+    workspaceRoot: stateDir,
+    defaultCwd: stateDir,
+    policy: {
+      allowedPaths: [],
+      deniedPaths: [],
+      allowedDomains: [],
+      deniedDomains: [],
+      maxTimeoutMs: 10_000,
+      maxResponseBytes: 4_096,
+    },
+    logger: {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      trace: () => {},
+    },
+  };
+
+  const startResult = await bridgeSessionStartTool.execute({
+    targetId: "node-bridge-runtime",
+    action: "interactive",
+  }, bridgeToolContext);
+  expect(startResult.success).toBe(true);
+  const started = JSON.parse(startResult.output) as { sessionId: string };
+  expect(started.sessionId).toBeTruthy();
+
+  await sleep(postStartWaitMs);
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "bridge-runtime-list",
+      method: "bridge.session.list",
+      params: {},
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "bridge-runtime-list"));
+
+    const listRes = frames.find((f) => f.type === "res" && f.id === "bridge-runtime-list");
+    expect(listRes.ok).toBe(true);
+    expect(listRes.payload).toMatchObject({
+      totalCount: 1,
+      activeCount: 1,
+      closedCount: 0,
+      items: [
+        expect.objectContaining({
+          sessionId: started.sessionId,
+          targetId: "node-bridge-runtime",
+          action: "interactive",
+          status: "active",
+          hasBufferedOutput: true,
+        }),
+      ],
+    });
+    expect(String(listRes.payload?.items?.[0]?.latestOutputPreview || "").length).toBeGreaterThan(0);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "bridge-runtime-peek",
+      method: "bridge.session.peek",
+      params: { sessionId: started.sessionId, transcriptLimit: 10 },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "bridge-runtime-peek"));
+
+    const peekRes = frames.find((f) => f.type === "res" && f.id === "bridge-runtime-peek");
+    expect(peekRes.ok).toBe(true);
+    expect(peekRes.payload?.session).toMatchObject({
+      sessionId: started.sessionId,
+      targetId: "node-bridge-runtime",
+      action: "interactive",
+      status: "active",
+      hasBufferedOutput: true,
+    });
+    expect(String(peekRes.payload?.liveOutput || "").length).toBeGreaterThan(0);
+    expect(peekRes.payload?.transcriptTail).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        direction: "input",
+        content: "process.stdout.write('bridge-runtime-peek\\n')",
+      }),
+    ]));
+    expect(Number(peekRes.payload?.transcriptEventCount || 0)).toBeGreaterThanOrEqual(1);
+  } finally {
+    await bridgeSessionCloseTool.execute({ sessionId: started.sessionId }, bridgeToolContext);
     ws.close();
     await closeP;
     await server.close();

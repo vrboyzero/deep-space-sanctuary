@@ -39,6 +39,7 @@ test("configureClaudeCodeExecMcp creates minimal mcp and bridge config from empt
     stateDir,
     repoRoot,
     workspaceRoot,
+    extraWorkspaceRoots: ["E:/other-project", "D:/shared-workspace"],
     claudeCommand: "claude",
     gitBashPath: "C:/Program Files/Git/bin/bash.exe",
     serverId: "claude-bridge",
@@ -48,6 +49,10 @@ test("configureClaudeCodeExecMcp creates minimal mcp and bridge config from empt
 
   expect(result.changed).toBe(true);
   expect(result.wrapperScriptPath).toBe(scriptPath);
+  expect(result.extraWorkspaceRoots).toEqual([
+    "E:\\other-project",
+    "D:\\shared-workspace",
+  ]);
   expect(result.createdFiles).toEqual([
     path.join(stateDir, "mcp.json"),
     path.join(stateDir, "agent-bridge.json"),
@@ -67,6 +72,10 @@ test("configureClaudeCodeExecMcp creates minimal mcp and bridge config from empt
           workspaceRoot,
           "--claude-command",
           "claude",
+          "--extra-workspace-root",
+          "E:\\other-project",
+          "--extra-workspace-root",
+          "D:\\shared-workspace",
           "--git-bash-path",
           "C:/Program Files/Git/bin/bash.exe",
         ]),
@@ -75,6 +84,15 @@ test("configureClaudeCodeExecMcp creates minimal mcp and bridge config from empt
   ]);
 
   const bridgeConfig = JSON.parse(await fs.readFile(path.join(stateDir, "agent-bridge.json"), "utf-8"));
+  expect(bridgeConfig.workspaceRoots).toEqual([
+    workspaceRoot,
+    "E:\\other-project",
+    "D:\\shared-workspace",
+  ]);
+  expect(bridgeConfig.extraWorkspaceRoots).toEqual([
+    "E:\\other-project",
+    "D:\\shared-workspace",
+  ]);
   expect(bridgeConfig.targets).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: "claude_code_exec",
@@ -208,6 +226,64 @@ test("configureClaudeCodeExecMcp preserves unrelated servers and targets while u
     expect.objectContaining({ id: "claude_code_exec", transport: "mcp" }),
     expect.objectContaining({ id: "claude_code_exec_cli", transport: "exec" }),
   ]));
+});
+
+test("configureClaudeCodeExecMcp preserves external mcpServers format", async () => {
+  const stateDir = await createTempDir("belldandy-configure-claude-bridge-state-");
+  const workspaceRoot = await createTempDir("belldandy-configure-claude-bridge-workspace-");
+  const { repoRoot, scriptPath } = await createFakeRepoRoot();
+
+  await fs.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      filesystem: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem"],
+        autoConnect: false,
+      },
+      "claude-bridge": {
+        command: "node",
+        args: ["old-bridge.mjs"],
+        autoConnect: true,
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  const result = await configureClaudeCodeExecMcp({
+    stateDir,
+    repoRoot,
+    workspaceRoot,
+    extraWorkspaceRoots: ["E:/other-project"],
+    claudeCommand: "claude.cmd",
+    serverId: "claude-bridge",
+    targetId: "claude_code_exec",
+    fallbackTargetId: "claude_code_exec_cli",
+  });
+
+  expect(result.updatedFiles).toContain(path.join(stateDir, "mcp.json"));
+
+  const mcpConfig = JSON.parse(await fs.readFile(path.join(stateDir, "mcp.json"), "utf-8"));
+  expect(mcpConfig.mcpServers).toMatchObject({
+    filesystem: {
+      command: "npx",
+      autoConnect: false,
+    },
+    "claude-bridge": {
+      command: "node",
+      autoConnect: true,
+      args: expect.arrayContaining([
+        scriptPath,
+        "--workspace-root",
+        workspaceRoot,
+        "--default-cwd",
+        workspaceRoot,
+        "--extra-workspace-root",
+        "E:\\other-project",
+        "--claude-command",
+        "claude.cmd",
+      ]),
+    },
+  });
+  expect(mcpConfig.servers).toBeUndefined();
 });
 
 test("claude-code-exec-mcp command prints json summary", async () => {

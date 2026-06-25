@@ -35,6 +35,7 @@ export function createAppShellFeature({
     experienceWorkbenchSection,
     goalsSection,
     subtasksSection,
+    bridgeSection,
     composerSection,
     editorActions,
   } = refs;
@@ -110,6 +111,7 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
       if (goalsSection) goalsSection.classList.add("hidden");
       if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
       if (composerSection) composerSection.classList.add("hidden");
       if (editorActions) editorActions.classList.remove("hidden");
     } else if (mode === "canvas") {
@@ -120,6 +122,7 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
       if (goalsSection) goalsSection.classList.add("hidden");
       if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
       if (composerSection) composerSection.classList.add("hidden");
       if (editorActions) editorActions.classList.add("hidden");
     } else if (mode === "memory") {
@@ -130,6 +133,7 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
       if (goalsSection) goalsSection.classList.add("hidden");
       if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
       if (composerSection) composerSection.classList.add("hidden");
       if (editorActions) editorActions.classList.add("hidden");
     } else if (mode === "experience") {
@@ -140,6 +144,7 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.remove("hidden");
       if (goalsSection) goalsSection.classList.add("hidden");
       if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
       if (composerSection) composerSection.classList.add("hidden");
       if (editorActions) editorActions.classList.add("hidden");
     } else if (mode === "goals") {
@@ -150,6 +155,7 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
       if (goalsSection) goalsSection.classList.remove("hidden");
       if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
       if (composerSection) composerSection.classList.add("hidden");
       if (editorActions) editorActions.classList.add("hidden");
     } else if (mode === "subtasks") {
@@ -160,6 +166,18 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
       if (goalsSection) goalsSection.classList.add("hidden");
       if (subtasksSection) subtasksSection.classList.remove("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
+      if (composerSection) composerSection.classList.add("hidden");
+      if (editorActions) editorActions.classList.add("hidden");
+    } else if (mode === "bridge") {
+      if (chatSection) chatSection.classList.add("hidden");
+      if (editorSection) editorSection.classList.add("hidden");
+      if (canvasSection) canvasSection.classList.add("hidden");
+      if (memoryViewerSection) memoryViewerSection.classList.add("hidden");
+      if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
+      if (goalsSection) goalsSection.classList.add("hidden");
+      if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.remove("hidden");
       if (composerSection) composerSection.classList.add("hidden");
       if (editorActions) editorActions.classList.add("hidden");
     } else {
@@ -173,6 +191,7 @@ export function createAppShellFeature({
       if (experienceWorkbenchSection) experienceWorkbenchSection.classList.add("hidden");
       if (goalsSection) goalsSection.classList.add("hidden");
       if (subtasksSection) subtasksSection.classList.add("hidden");
+      if (bridgeSection) bridgeSection.classList.add("hidden");
       if (composerSection) composerSection.classList.remove("hidden");
       if (editorActions) editorActions.classList.add("hidden");
     }

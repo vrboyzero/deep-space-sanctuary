@@ -13,6 +13,7 @@ export function parseArgs(argv) {
   const result = {
     workspaceRoot: process.cwd(),
     defaultCwd: process.cwd(),
+    extraWorkspaceRoots: [],
     codexCommand: "codex",
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
@@ -30,6 +31,12 @@ export function parseArgs(argv) {
       case "--default-cwd":
         if (next) {
           result.defaultCwd = path.resolve(next);
+          index += 1;
+        }
+        break;
+      case "--extra-workspace-root":
+        if (next) {
+          result.extraWorkspaceRoots.push(path.resolve(next));
           index += 1;
         }
         break;
@@ -58,7 +65,14 @@ export function isUnderRoot(targetPath, rootPath) {
   return !(relative.startsWith("..") || path.isAbsolute(relative));
 }
 
-export function resolveCwd(requestedCwd, workspaceRoot, defaultCwd) {
+function isUnderAllowedRoots(targetPath, workspaceRoot, extraWorkspaceRoots = []) {
+  if (isUnderRoot(targetPath, workspaceRoot)) {
+    return true;
+  }
+  return extraWorkspaceRoots.some((rootPath) => isUnderRoot(targetPath, rootPath));
+}
+
+export function resolveCwd(requestedCwd, workspaceRoot, defaultCwd, extraWorkspaceRoots = []) {
   const source = typeof requestedCwd === "string" && requestedCwd.trim()
     ? requestedCwd.trim()
     : defaultCwd;
@@ -66,7 +80,7 @@ export function resolveCwd(requestedCwd, workspaceRoot, defaultCwd) {
     ? path.resolve(source)
     : path.resolve(workspaceRoot, source);
 
-  if (!isUnderRoot(resolved, workspaceRoot)) {
+  if (!isUnderAllowedRoots(resolved, workspaceRoot, extraWorkspaceRoots)) {
     throw new Error(`cwd 越界: ${requestedCwd}`);
   }
 
@@ -76,12 +90,16 @@ export function resolveCwd(requestedCwd, workspaceRoot, defaultCwd) {
 export function runCodexExec({
   codexCommand,
   cwd,
+  extraWorkspaceRoots,
   model,
   prompt,
   timeoutMs,
 }) {
   return new Promise((resolve, reject) => {
     const args = ["exec", "--sandbox", "workspace-write"];
+    for (const root of extraWorkspaceRoots ?? []) {
+      args.push("--add-dir", root);
+    }
     if (typeof model === "string" && model.trim()) {
       args.push("--model", model.trim());
     }
@@ -131,10 +149,11 @@ export function runCodexExec({
 }
 
 export async function executeCodexExecOnce(launch, { prompt, model, cwd }) {
-  const resolvedCwd = resolveCwd(cwd, launch.workspaceRoot, launch.defaultCwd);
+  const resolvedCwd = resolveCwd(cwd, launch.workspaceRoot, launch.defaultCwd, launch.extraWorkspaceRoots);
   const result = await runCodexExec({
     codexCommand: launch.codexCommand,
     cwd: resolvedCwd,
+    extraWorkspaceRoots: launch.extraWorkspaceRoots,
     model,
     prompt,
     timeoutMs: launch.timeoutMs,
@@ -237,7 +256,7 @@ function registerStructuredCodexTool(server, launch, name, mode, description) {
       constraints: z.array(z.string().min(1)).optional().describe("附加限制，例如不要运行 git"),
       expectedOutput: z.array(z.string().min(1)).optional().describe("期望输出，例如 3 到 5 条结论或简短验证说明"),
       model: z.string().optional().describe("可选模型名"),
-      cwd: z.string().optional().describe("可选工作目录，必须位于启动时声明的 workspaceRoot 内"),
+      cwd: z.string().optional().describe("可选工作目录，必须位于启动时声明的 workspaceRoot 或 extraWorkspaceRoots 内"),
     },
     outputSchema: {
       success: z.boolean(),
@@ -263,7 +282,7 @@ export function createCodexBridgeServer(launch) {
     inputSchema: {
       prompt: z.string().min(1).describe("要提交给 Codex CLI 的任务指令"),
       model: z.string().optional().describe("可选模型名"),
-      cwd: z.string().optional().describe("可选工作目录，必须位于启动时声明的 workspaceRoot 内"),
+      cwd: z.string().optional().describe("可选工作目录，必须位于启动时声明的 workspaceRoot 或 extraWorkspaceRoots 内"),
     },
     outputSchema: {
       success: z.boolean(),
@@ -287,7 +306,7 @@ export function createCodexBridgeServer(launch) {
       constraints: z.array(z.string().min(1)).optional().describe("附加限制，例如不要运行 git"),
       expectedOutput: z.array(z.string().min(1)).optional().describe("期望输出，例如 3 到 5 条结论或简短验证说明"),
       model: z.string().optional().describe("可选模型名"),
-      cwd: z.string().optional().describe("可选工作目录，必须位于启动时声明的 workspaceRoot 内"),
+      cwd: z.string().optional().describe("可选工作目录，必须位于启动时声明的 workspaceRoot 或 extraWorkspaceRoots 内"),
     },
     outputSchema: {
       success: z.boolean(),
@@ -328,7 +347,7 @@ export async function main(argv = process.argv.slice(2)) {
   const server = createCodexBridgeServer(launch);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[codex-bridge-server] running on stdio (workspaceRoot=${launch.workspaceRoot})`);
+  console.error(`[codex-bridge-server] running on stdio (workspaceRoot=${launch.workspaceRoot}, extraWorkspaceRoots=${launch.extraWorkspaceRoots.join(",")})`);
 }
 
 const isMainModule = process.argv[1]

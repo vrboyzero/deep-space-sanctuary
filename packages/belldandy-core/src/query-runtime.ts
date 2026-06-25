@@ -3,6 +3,8 @@ import crypto from "node:crypto";
 export type QueryRuntimeMethod =
   | "models.list"
   | "message.send"
+  | "bridge.session.list"
+  | "bridge.session.peek"
   | "conversation.run.stop"
   | "artifact.reveal"
   | "api.message"

@@ -34,6 +34,23 @@ function normalizeStringArray(value: unknown): string[] {
     .filter((item): item is string => Boolean(item));
 }
 
+function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = Object.entries(value as Record<string, unknown>)
+    .reduce<Record<string, string>>((acc, [key, raw]) => {
+      const normalizedKey = normalizeOptionalString(key);
+      const normalizedValue = normalizeOptionalString(raw);
+      if (!normalizedKey || !normalizedValue) {
+        return acc;
+      }
+      acc[normalizedKey] = normalizedValue;
+      return acc;
+    }, {});
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function normalizeCategory(value: unknown): BridgeCategory | undefined {
   const normalized = normalizeOptionalString(value);
   switch (normalized) {
@@ -169,6 +186,7 @@ function normalizeTargetConfig(index: number, raw: unknown): BridgeTargetConfig 
     ? record.entry as Record<string, unknown>
     : undefined;
   const binary = normalizeOptionalString(entryRecord?.binary);
+  const env = normalizeStringRecord(entryRecord?.env);
   const mcpRecord = entryRecord?.mcp && typeof entryRecord.mcp === "object" && !Array.isArray(entryRecord.mcp)
     ? entryRecord.mcp as Record<string, unknown>
     : undefined;
@@ -195,6 +213,7 @@ function normalizeTargetConfig(index: number, raw: unknown): BridgeTargetConfig 
     enabled: record.enabled !== false,
     entry: {
       ...(binary ? { binary } : {}),
+      ...(env ? { env } : {}),
       ...(mcpServerId && mcpToolName
         ? {
             mcp: {

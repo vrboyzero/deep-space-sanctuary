@@ -153,10 +153,16 @@ export {
   bridgeSessionStatusTool,
   bridgeSessionCloseTool,
   bridgeSessionListTool,
+  listBridgeSessionRuntimeViews,
+  peekBridgeSessionRuntimeView,
   loadRuntimeLostBridgeSessions,
   loadRecoveredBridgeSessions,
 } from "./builtin/agent-bridge/index.js";
-export type { BridgeSessionRecord } from "./builtin/agent-bridge/index.js";
+export type {
+  BridgeSessionPeekView,
+  BridgeSessionRecord,
+  BridgeSessionRuntimeView,
+} from "./builtin/agent-bridge/index.js";
 export { codeInterpreterTool } from "./builtin/code-interpreter/index.js";
 export { ptcRuntimeTool } from "./builtin/ptc-runtime/index.js";
 export {

@@ -9,11 +9,16 @@ export {
   bridgeSessionCloseTool,
   bridgeSessionListTool,
 } from "./tool-bridge-session.js";
+export {
+  listBridgeSessionRuntimeViews,
+  peekBridgeSessionRuntimeView,
+} from "./query.js";
 export { loadRuntimeLostBridgeSessions, loadRecoveredBridgeSessions } from "./sessions.js";
 export type {
   BridgeActionConfig,
   BridgeCategory,
   BridgeConfig,
+  BridgeSessionArtifactSummary,
   BridgeCwdPolicy,
   BridgeSessionRecord,
   BridgeSessionStatus,
@@ -22,3 +27,7 @@ export type {
   BridgeTargetListItem,
   BridgeTransport,
 } from "./types.js";
+export type {
+  BridgeSessionPeekView,
+  BridgeSessionRuntimeView,
+} from "./query.js";

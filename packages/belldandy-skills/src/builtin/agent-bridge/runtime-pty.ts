@@ -319,6 +319,7 @@ export async function startBridgeSession(
     const ptyManager = PtyManager.getInstance();
     const runtimeSessionId = await ptyManager.createSession(cmd, cmdArgs, {
       cwd: resolvedCwd,
+      env: target.entry.env,
       cols: resolvedCols,
       rows: resolvedRows,
     });

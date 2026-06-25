@@ -4,38 +4,19 @@ import path from "node:path";
 import { defineCommand } from "citty";
 
 import { createCLIContext } from "../../shared/context.js";
+import {
+  buildCompatibleMcpOutput,
+  readCompatibleMcpConfig,
+  type CompatibleMcpConfig,
+  type CompatibleMcpServerConfig,
+  writeJsonFile,
+} from "./mcp-config-compat.js";
 
 const MCP_CONFIG_FILE_NAME = "mcp.json";
 const BRIDGE_CONFIG_FILE_NAME = "agent-bridge.json";
 const DEFAULT_VERSION = "1.0.0";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OUTPUT_BYTES = 262_144;
-
-type MCPServerConfig = {
-  id: string;
-  name?: string;
-  description?: string;
-  transport?: {
-    type?: string;
-    command?: string;
-    args?: string[];
-  };
-  autoConnect?: boolean;
-  enabled?: boolean;
-  timeout?: number;
-  retryCount?: number;
-  retryDelay?: number;
-};
-
-type MCPConfig = {
-  version?: string;
-  servers?: MCPServerConfig[];
-  settings?: {
-    defaultTimeout?: number;
-    debug?: boolean;
-    toolPrefix?: boolean;
-  };
-};
 
 type BridgeActionConfig = {
   template: string[];
@@ -75,6 +56,7 @@ export interface ConfigureCodexExecMcpOptions {
   stateDir: string;
   repoRoot: string;
   workspaceRoot: string;
+  extraWorkspaceRoots?: string[];
   codexCommand: string;
   serverId: string;
   targetId: string;
@@ -86,6 +68,7 @@ export interface ConfigureCodexExecMcpResult {
   stateDir: string;
   repoRoot: string;
   workspaceRoot: string;
+  extraWorkspaceRoots: string[];
   wrapperScriptPath: string;
   mcpPath: string;
   bridgePath: string;
@@ -97,7 +80,7 @@ export interface ConfigureCodexExecMcpResult {
   nextSteps: string[];
 }
 
-function defaultMCPConfig(): MCPConfig {
+function defaultMCPConfig(): CompatibleMcpConfig {
   return {
     version: DEFAULT_VERSION,
     servers: [],
@@ -129,11 +112,6 @@ async function readJsonFile<T>(filePath: string, fallback: T): Promise<{ existed
   }
 }
 
-async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
-}
-
 function upsertById<T extends { id: string }>(items: T[], nextItem: T): { items: T[]; changed: boolean } {
   const index = items.findIndex((item) => item.id === nextItem.id);
   if (index === -1) {
@@ -159,12 +137,84 @@ function upsertById<T extends { id: string }>(items: T[], nextItem: T): { items:
   };
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeOptionalString(item))
+    .filter((item): item is string => Boolean(item));
+}
+
+function parseCommaSeparatedRoots(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeExtraWorkspaceRoots(roots: string[], workspaceRoot: string): string[] {
+  const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const root of roots) {
+    const resolved = path.resolve(root);
+    if (!resolved || resolved === resolvedWorkspaceRoot || seen.has(resolved)) {
+      continue;
+    }
+    seen.add(resolved);
+    normalized.push(resolved);
+  }
+
+  return normalized;
+}
+
+function resolveExtraWorkspaceRoots(options: {
+  explicit?: string[];
+  existing?: string[];
+  workspaceRoot: string;
+}): string[] {
+  const explicit = normalizeExtraWorkspaceRoots(options.explicit ?? [], options.workspaceRoot);
+  if (explicit.length > 0) {
+    return explicit;
+  }
+
+  const existing = normalizeExtraWorkspaceRoots(options.existing ?? [], options.workspaceRoot);
+  if (existing.length > 0) {
+    return existing;
+  }
+
+  return normalizeExtraWorkspaceRoots(
+    parseCommaSeparatedRoots(process.env.BELLDANDY_EXTRA_WORKSPACE_ROOTS),
+    options.workspaceRoot,
+  );
+}
+
 function buildCodexBridgeServer(options: {
   serverId: string;
   wrapperScriptPath: string;
   workspaceRoot: string;
+  extraWorkspaceRoots?: string[];
   codexCommand: string;
-}): MCPServerConfig {
+}): CompatibleMcpServerConfig {
+  const args = [
+    options.wrapperScriptPath,
+    "--workspace-root",
+    options.workspaceRoot,
+    "--default-cwd",
+    options.workspaceRoot,
+    "--codex-command",
+    options.codexCommand,
+  ];
+  for (const root of options.extraWorkspaceRoots ?? []) {
+    args.push("--extra-workspace-root", root);
+  }
   return {
     id: options.serverId,
     name: options.serverId,
@@ -172,15 +222,7 @@ function buildCodexBridgeServer(options: {
     transport: {
       type: "stdio",
       command: "node",
-      args: [
-        options.wrapperScriptPath,
-        "--workspace-root",
-        options.workspaceRoot,
-        "--default-cwd",
-        options.workspaceRoot,
-        "--codex-command",
-        options.codexCommand,
-      ],
+      args,
     },
     autoConnect: true,
     enabled: true,
@@ -243,8 +285,13 @@ function buildCodexMcpTarget(options: {
 function buildCodexCliFallbackTarget(options: {
   targetId: string;
   workspaceRoot: string;
+  extraWorkspaceRoots?: string[];
   codexCommand: string;
 }): BridgeTargetConfig {
+  const template = ["exec", "--sandbox", "workspace-write"];
+  for (const root of options.extraWorkspaceRoots ?? []) {
+    template.push("--add-dir", root);
+  }
   return {
     id: options.targetId,
     category: "agent-cli",
@@ -260,7 +307,7 @@ function buildCodexCliFallbackTarget(options: {
     defaultCwd: options.workspaceRoot,
     actions: {
       exec: {
-        template: ["exec", "--sandbox", "workspace-write"],
+        template,
         allowStructuredArgs: ["prompt", "model"],
         description: "Codex CLI 回退路径，仅在 MCP 路径不可用时使用",
       },
@@ -278,18 +325,26 @@ export async function configureCodexExecMcp(options: ConfigureCodexExecMcpOption
 
   await fs.access(wrapperScriptPath);
 
-  const mcpLoaded = await readJsonFile<MCPConfig>(mcpPath, defaultMCPConfig());
+  const mcpLoaded = await readCompatibleMcpConfig(mcpPath, defaultMCPConfig());
   const bridgeLoaded = await readJsonFile<BridgeConfig>(bridgePath, defaultBridgeConfig());
+  const extraWorkspaceRoots = resolveExtraWorkspaceRoots({
+    explicit: options.extraWorkspaceRoots,
+    existing: [
+      ...normalizeStringArray(bridgeLoaded.value.extraWorkspaceRoots),
+      ...normalizeStringArray(bridgeLoaded.value.workspaceRoots),
+    ],
+    workspaceRoot,
+  });
 
   const nextMcp = {
-    version: mcpLoaded.value.version ?? DEFAULT_VERSION,
-    servers: Array.isArray(mcpLoaded.value.servers) ? [...mcpLoaded.value.servers] : [],
-    settings: mcpLoaded.value.settings ?? defaultMCPConfig().settings,
-  } satisfies MCPConfig;
+    version: mcpLoaded.internal.version ?? DEFAULT_VERSION,
+    servers: Array.isArray(mcpLoaded.internal.servers) ? [...mcpLoaded.internal.servers] : [],
+    settings: mcpLoaded.internal.settings ?? defaultMCPConfig().settings,
+  } satisfies CompatibleMcpConfig;
   const nextBridge = {
     version: bridgeLoaded.value.version ?? DEFAULT_VERSION,
-    workspaceRoots: bridgeLoaded.value.workspaceRoots,
-    extraWorkspaceRoots: bridgeLoaded.value.extraWorkspaceRoots,
+    workspaceRoots: [workspaceRoot, ...extraWorkspaceRoots],
+    extraWorkspaceRoots,
     targets: Array.isArray(bridgeLoaded.value.targets) ? [...bridgeLoaded.value.targets] : [],
   } satisfies BridgeConfig;
 
@@ -297,9 +352,11 @@ export async function configureCodexExecMcp(options: ConfigureCodexExecMcpOption
     serverId: options.serverId,
     wrapperScriptPath,
     workspaceRoot,
+    extraWorkspaceRoots,
     codexCommand: options.codexCommand,
   }));
   nextMcp.servers = serverUpsert.items;
+  const mcpOutput = buildCompatibleMcpOutput(mcpLoaded, defaultMCPConfig(), serverUpsert.items.find((item) => item.id === options.serverId)!);
 
   const mcpTargetUpsert = upsertById(nextBridge.targets ?? [], buildCodexMcpTarget({
     targetId: options.targetId,
@@ -309,17 +366,26 @@ export async function configureCodexExecMcp(options: ConfigureCodexExecMcpOption
   const cliTargetUpsert = upsertById(mcpTargetUpsert.items, buildCodexCliFallbackTarget({
     targetId: options.fallbackTargetId,
     workspaceRoot,
+    extraWorkspaceRoots,
     codexCommand: options.codexCommand,
   }));
   nextBridge.targets = cliTargetUpsert.items;
 
   const createdFiles: string[] = [];
   const updatedFiles: string[] = [];
-  const mcpChanged = !mcpLoaded.existed || serverUpsert.changed;
-  const bridgeChanged = !bridgeLoaded.existed || mcpTargetUpsert.changed || cliTargetUpsert.changed;
+  const mcpChanged = mcpOutput.changed;
+  const bridgeChanged = !bridgeLoaded.existed
+    || mcpTargetUpsert.changed
+    || cliTargetUpsert.changed
+    || JSON.stringify({
+      version: bridgeLoaded.value.version ?? DEFAULT_VERSION,
+      workspaceRoots: normalizeStringArray(bridgeLoaded.value.workspaceRoots),
+      extraWorkspaceRoots: normalizeStringArray(bridgeLoaded.value.extraWorkspaceRoots),
+      targets: Array.isArray(bridgeLoaded.value.targets) ? bridgeLoaded.value.targets : [],
+    }) !== JSON.stringify(nextBridge);
 
   if (mcpChanged) {
-    await writeJsonFile(mcpPath, nextMcp);
+    await writeJsonFile(mcpPath, mcpOutput.value);
     if (mcpLoaded.existed) {
       updatedFiles.push(mcpPath);
     } else {
@@ -341,6 +407,7 @@ export async function configureCodexExecMcp(options: ConfigureCodexExecMcpOption
     stateDir,
     repoRoot,
     workspaceRoot,
+    extraWorkspaceRoots,
     wrapperScriptPath,
     mcpPath,
     bridgePath,
@@ -353,6 +420,9 @@ export async function configureCodexExecMcp(options: ConfigureCodexExecMcpOption
       "运行 `bdd doctor`，确认 mcp.json 已被正常加载。",
       `启动 Gateway 后，用 bridge_target_diagnose 检查 targetId=${options.targetId}。`,
       `优先使用 ${options.targetId}；若 MCP 路径失败，可回退 ${options.fallbackTargetId}。`,
+      extraWorkspaceRoots.length > 0
+        ? `当前 bridge 额外开放目录：${extraWorkspaceRoots.join(", ")}。`
+        : "如果需要跨项目访问，请同步配置 BELLDANDY_EXTRA_WORKSPACE_ROOTS 或传入 --extra-workspace-roots。",
     ],
   };
 }
@@ -367,6 +437,7 @@ export default defineCommand({
     "state-dir": { type: "string", description: "Override state directory" },
     "repo-root": { type: "string", description: "Repository root that contains packages/belldandy-mcp/scripts/codex-bridge-server.mjs" },
     "workspace-root": { type: "string", description: "Workspace root used by codex-bridge and bridge targets" },
+    "extra-workspace-roots": { type: "string", description: "Comma-separated extra workspace roots mirrored into bridge cwd allowlist and CLI --add-dir" },
     "codex-command": { type: "string", description: "Codex CLI command name", default: "codex" },
     "server-id": { type: "string", description: "MCP server id", default: "codex-bridge" },
     "target-id": { type: "string", description: "Bridge MCP target id", default: "codex_exec" },
@@ -384,6 +455,7 @@ export default defineCommand({
       stateDir: ctx.stateDir,
       repoRoot,
       workspaceRoot,
+      extraWorkspaceRoots: parseCommaSeparatedRoots(args["extra-workspace-roots"]),
       codexCommand: String(args["codex-command"] ?? "codex"),
       serverId: String(args["server-id"] ?? "codex-bridge"),
       targetId,

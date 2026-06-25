@@ -30,6 +30,7 @@ export type BridgeTargetConfig = {
   enabled: boolean;
   entry: {
     binary?: string;
+    env?: Record<string, string>;
     mcp?: {
       serverId: string;
       toolName: string;

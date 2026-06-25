@@ -123,6 +123,7 @@
               <button id="toggleControlPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.controlPanel" aria-controls="controlPanel">操作</button>
               <button id="toggleAgentPanelBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.agentPanel" aria-controls="agentRightPanel">代理</button>
               <button id="goGoalsPageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.goalsPage" aria-controls="goalsSection">任务</button>
+              <button id="goBridgePageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.bridgePage" aria-controls="bridgeSection">桥接</button>
               <button id="goChatPageBtn" type="button" class="header-toggle-link theme-link theme-link-accent" data-i18n="header.chatPage" aria-controls="chatSection">聊天</button>
             </div>
           </div>
@@ -647,6 +648,36 @@
               </aside>
               <section class="memory-viewer-detail" id="subtasksDetail">
                 <div class="memory-viewer-empty" data-i18n="subtasks.detailSelect">选择左侧子任务查看详情。</div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="memory-viewer hidden" id="bridgeSection">
+          <div class="memory-viewer-shell bridge-viewer-shell">
+            <div class="memory-viewer-header">
+              <div>
+                <div class="memory-viewer-kicker" data-i18n="bridge.kicker">桥接</div>
+                <div class="memory-viewer-title" data-i18n="bridge.title">Bridge 运行观察</div>
+              </div>
+              <div class="subtasks-header-actions">
+                <button id="bridgeRefresh" class="button" data-i18n="common.refresh">刷新</button>
+              </div>
+            </div>
+
+            <div class="memory-viewer-stats" id="bridgeSummary">
+              <div class="memory-stat-card">
+                <span class="memory-stat-label" data-i18n="bridge.statSessions">桥接会话</span>
+                <strong class="memory-stat-value">--</strong>
+              </div>
+            </div>
+
+            <div class="memory-viewer-body">
+              <aside class="memory-viewer-list" id="bridgeList">
+                <div class="memory-viewer-empty" data-i18n="bridge.waiting">等待加载…</div>
+              </aside>
+              <section class="memory-viewer-detail" id="bridgeDetail">
+                <div class="memory-viewer-empty" data-i18n="bridge.detailSelect">选择左侧桥接会话查看详情。</div>
               </section>
             </div>
           </div>

@@ -39,6 +39,7 @@ test("configureCodexExecMcp creates minimal mcp and bridge config from empty sta
     stateDir,
     repoRoot,
     workspaceRoot,
+    extraWorkspaceRoots: ["E:/other-project", "D:/shared-workspace"],
     codexCommand: "codex",
     serverId: "codex-bridge",
     targetId: "codex_exec",
@@ -47,6 +48,10 @@ test("configureCodexExecMcp creates minimal mcp and bridge config from empty sta
 
   expect(result.changed).toBe(true);
   expect(result.wrapperScriptPath).toBe(scriptPath);
+  expect(result.extraWorkspaceRoots).toEqual([
+    "E:\\other-project",
+    "D:\\shared-workspace",
+  ]);
   expect(result.createdFiles).toEqual([
     path.join(stateDir, "mcp.json"),
     path.join(stateDir, "agent-bridge.json"),
@@ -66,12 +71,25 @@ test("configureCodexExecMcp creates minimal mcp and bridge config from empty sta
           workspaceRoot,
           "--codex-command",
           "codex",
+          "--extra-workspace-root",
+          "E:\\other-project",
+          "--extra-workspace-root",
+          "D:\\shared-workspace",
         ]),
       }),
     }),
   ]);
 
   const bridgeConfig = JSON.parse(await fs.readFile(path.join(stateDir, "agent-bridge.json"), "utf-8"));
+  expect(bridgeConfig.workspaceRoots).toEqual([
+    workspaceRoot,
+    "E:\\other-project",
+    "D:\\shared-workspace",
+  ]);
+  expect(bridgeConfig.extraWorkspaceRoots).toEqual([
+    "E:\\other-project",
+    "D:\\shared-workspace",
+  ]);
   expect(bridgeConfig.targets).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: "codex_exec",
@@ -205,6 +223,64 @@ test("configureCodexExecMcp preserves unrelated servers and targets while updati
     expect.objectContaining({ id: "codex_exec", transport: "mcp" }),
     expect.objectContaining({ id: "codex_exec_cli", transport: "exec" }),
   ]));
+});
+
+test("configureCodexExecMcp preserves external mcpServers format", async () => {
+  const stateDir = await createTempDir("belldandy-configure-bridge-state-");
+  const workspaceRoot = await createTempDir("belldandy-configure-bridge-workspace-");
+  const { repoRoot, scriptPath } = await createFakeRepoRoot();
+
+  await fs.writeFile(path.join(stateDir, "mcp.json"), `${JSON.stringify({
+    mcpServers: {
+      filesystem: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem"],
+        autoConnect: false,
+      },
+      "codex-bridge": {
+        command: "node",
+        args: ["old-bridge.mjs"],
+        autoConnect: true,
+      },
+    },
+  }, null, 2)}\n`, "utf-8");
+
+  const result = await configureCodexExecMcp({
+    stateDir,
+    repoRoot,
+    workspaceRoot,
+    extraWorkspaceRoots: ["E:/other-project"],
+    codexCommand: "codex.cmd",
+    serverId: "codex-bridge",
+    targetId: "codex_exec",
+    fallbackTargetId: "codex_exec_cli",
+  });
+
+  expect(result.updatedFiles).toContain(path.join(stateDir, "mcp.json"));
+
+  const mcpConfig = JSON.parse(await fs.readFile(path.join(stateDir, "mcp.json"), "utf-8"));
+  expect(mcpConfig.mcpServers).toMatchObject({
+    filesystem: {
+      command: "npx",
+      autoConnect: false,
+    },
+    "codex-bridge": {
+      command: "node",
+      autoConnect: true,
+      args: expect.arrayContaining([
+        scriptPath,
+        "--workspace-root",
+        workspaceRoot,
+        "--default-cwd",
+        workspaceRoot,
+        "--extra-workspace-root",
+        "E:\\other-project",
+        "--codex-command",
+        "codex.cmd",
+      ]),
+    },
+  });
+  expect(mcpConfig.servers).toBeUndefined();
 });
 
 test("codex-exec-mcp command prints json summary", async () => {

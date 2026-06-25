@@ -45,6 +45,8 @@ describe("codex-bridge-server", () => {
       "E:/project/star-sanctuary",
       "--default-cwd",
       "packages",
+      "--extra-workspace-root",
+      "E:/other-project",
       "--codex-command",
       "codex.cmd",
       "--timeout-ms",
@@ -53,6 +55,9 @@ describe("codex-bridge-server", () => {
 
     expect(parsed.workspaceRoot).toMatch(/star-sanctuary$/);
     expect(parsed.defaultCwd).toMatch(/star-sanctuary[\\/]+packages$/);
+    expect(parsed.extraWorkspaceRoots).toEqual([
+      expect.stringMatching(/other-project$/),
+    ]);
     expect(parsed.codexCommand).toBe("codex.cmd");
     expect(parsed.timeoutMs).toBe(12345);
   });
@@ -63,6 +68,15 @@ describe("codex-bridge-server", () => {
     );
   });
 
+  it("allows cwd inside extra workspace roots", () => {
+    expect(resolveCwd(
+      "E:/other-project",
+      "E:/project/star-sanctuary",
+      "E:/project/star-sanctuary",
+      ["E:/other-project"],
+    )).toMatch(/other-project$/);
+  });
+
   it("executes one-shot Codex requests and returns structured content", async () => {
     const child = createMockChild();
     spawnMock.mockReturnValue(child);
@@ -70,6 +84,7 @@ describe("codex-bridge-server", () => {
     const promise = executeCodexExecOnce({
       workspaceRoot: "E:/project/star-sanctuary",
       defaultCwd: "E:/project/star-sanctuary",
+      extraWorkspaceRoots: ["E:/other-project"],
       codexCommand: "codex.cmd",
       timeoutMs: 1000,
     }, {
@@ -88,7 +103,16 @@ describe("codex-bridge-server", () => {
 
     expect(spawnMock).toHaveBeenCalledWith(
       "codex.cmd",
-      ["exec", "--sandbox", "workspace-write", "--model", "gpt-5", "Summarize the bridge implementation."],
+      [
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--add-dir",
+        "E:/other-project",
+        "--model",
+        "gpt-5",
+        "Summarize the bridge implementation.",
+      ],
       expect.objectContaining({
         cwd: expect.stringMatching(/star-sanctuary[\\/]+packages$/),
         shell: false,
@@ -121,6 +145,7 @@ describe("codex-bridge-server", () => {
     const promise = executeCodexTaskOnce({
       workspaceRoot: "E:/project/star-sanctuary",
       defaultCwd: "E:/project/star-sanctuary",
+      extraWorkspaceRoots: [],
       codexCommand: "codex.cmd",
       timeoutMs: 1000,
     }, {
@@ -160,6 +185,7 @@ describe("codex-bridge-server", () => {
     const promise = executeCodexExecOnce({
       workspaceRoot: "E:/project/star-sanctuary",
       defaultCwd: "E:/project/star-sanctuary",
+      extraWorkspaceRoots: [],
       codexCommand: "codex",
       timeoutMs: 1000,
     }, {

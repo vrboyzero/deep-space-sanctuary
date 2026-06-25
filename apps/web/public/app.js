@@ -28,6 +28,7 @@ import {
   WORKSPACE_ROOTS_KEY,
 } from "./app/bootstrap/storage-keys.js";
 import {
+  bridgeRuntimeState,
   createDefaultSharedReviewFilters,
   experienceWorkbenchState,
   goalsState,
@@ -54,6 +55,7 @@ import { createGoalsStateRuntimeFeature } from "./app/features/goals-state-runti
 import { createGoalsReadonlyPanelsFeature } from "./app/features/goals-readonly-panels.js";
 import { createGoalsRuntimeFeature } from "./app/features/goals-runtime.js";
 import { createGoalsTrackingPanelFeature } from "./app/features/goals-tracking-panel.js";
+import { createBridgeRuntimeFeature } from "./app/features/bridge-runtime.js";
 import { createHeaderNavigationFeature } from "./app/features/header-navigation.js";
 import { createMemoryDetailRenderFeature } from "./app/features/memory-detail-render.js";
 import { createMemoryRuntimeFeature } from "./app/features/memory-runtime.js";
@@ -102,6 +104,7 @@ const {
   fileTreeEl,
   refreshTreeBtn,
   goGoalsPageBtn,
+  goBridgePageBtn,
   goChatPageBtn,
   chatSection,
   editorSection,
@@ -231,6 +234,11 @@ const {
   subtasksDetailEl,
   subtasksShowArchivedEl,
   subtasksRefreshBtn,
+  bridgeSection,
+  bridgeSummaryEl,
+  bridgeListEl,
+  bridgeDetailEl,
+  bridgeRefreshBtn,
   goalCreateBtn,
   goalCreateModal,
   goalCreateCloseBtn,
@@ -655,6 +663,7 @@ let sessionDigestFeature = null;
 let settingsRuntimeFeature = null;
 let subtasksOverviewFeature = null;
 let subtasksRuntimeFeature = null;
+let bridgeRuntimeFeature = null;
 let sessionNavigationFeature = null;
 
 function debugLog(...args) {
@@ -682,6 +691,7 @@ const appShellFeature = createAppShellFeature({
     experienceWorkbenchSection,
     goalsSection,
     subtasksSection,
+    bridgeSection,
     composerSection,
     editorActions,
   },
@@ -694,16 +704,22 @@ const appShellFeature = createAppShellFeature({
   renderCanvasGoalContext: () => renderCanvasGoalContext(),
 });
 const showNotice = (...args) => appShellFeature.showNotice(...args);
-const switchMode = (...args) => appShellFeature.switchMode(...args);
+const switchMode = (mode) => {
+  const result = appShellFeature.switchMode(mode);
+  bridgeRuntimeFeature?.setViewActive?.(mode === "bridge");
+  return result;
+};
 const updateSidebarModeButtons = (...args) => appShellFeature.updateSidebarModeButtons(...args);
 createHeaderNavigationFeature({
   refs: {
     openWebChatTabLink,
     goGoalsPageBtn,
+    goBridgePageBtn,
     goChatPageBtn,
   },
   switchMode,
   loadGoals: (forceReload = false) => loadGoals(forceReload),
+  loadBridgeSessions: (forceReload = false) => loadBridgeSessions(forceReload),
   focusPrompt: () => promptEl?.focus(),
   buildMultiPageUrl: () => createSessionAuthHandoffUrl({
     currentUrl: window.location.href,
@@ -777,6 +793,7 @@ localeController.subscribe(() => {
   memoryViewerFeature?.syncMemoryViewerHeaderTitle?.();
   sessionDigestFeature?.refreshLocale?.();
   refreshSubtasksLocale();
+  refreshBridgeLocale();
   agentRuntimeFeature?.refreshLocale?.();
   syncSaveWorkspaceRootsButton();
   renderTaskTokenHistory();
@@ -1445,6 +1462,29 @@ subtasksRuntimeFeature = createSubtasksRuntimeFeature({
   getSubtasksOverviewFeature: () => subtasksOverviewFeature,
   switchMode,
   openConversationSession,
+  t: localeController.t,
+});
+
+bridgeRuntimeFeature = createBridgeRuntimeFeature({
+  refs: {
+    bridgeSection,
+    bridgeSummaryEl,
+    bridgeListEl,
+    bridgeDetailEl,
+    bridgeRefreshBtn,
+  },
+  isConnected: () => Boolean(ws && isReady),
+  sendReq,
+  makeId,
+  getBridgeRuntimeState: () => bridgeRuntimeState,
+  escapeHtml,
+  formatDateTime,
+  onOpenSourcePath: (sourcePath) => openSourcePath(sourcePath),
+  onOpenTask: async (taskId) => {
+    switchMode("subtasks");
+    await openSubtaskById(taskId);
+  },
+  showNotice,
   t: localeController.t,
 });
 
@@ -3362,6 +3402,10 @@ function refreshSubtasksLocale() {
   return subtasksRuntimeFeature?.refreshSubtasksLocale();
 }
 
+function refreshBridgeLocale() {
+  return bridgeRuntimeFeature?.refreshLocale();
+}
+
 function bindGoalDetailActions(goal) {
   return goalsRuntimeFeature?.bindGoalDetailActions(goal);
 }
@@ -3547,6 +3591,10 @@ async function loadGoals(forceReload = false, preferredGoalId) {
 
 async function loadSubtasks(forceSelectFirst = false) {
   return subtasksRuntimeFeature?.loadSubtasks(forceSelectFirst);
+}
+
+async function loadBridgeSessions(forceSelectFirst = false) {
+  return bridgeRuntimeFeature?.loadBridgeSessions(forceSelectFirst);
 }
 
 async function loadSubtaskDetail(taskId, options = {}) {

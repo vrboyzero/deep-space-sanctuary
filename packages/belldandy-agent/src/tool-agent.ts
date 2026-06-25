@@ -40,6 +40,7 @@ import {
   type CompressionPolicy,
   type CompressionReferenceStore,
   type CompressionResult,
+  type CompressionSourceKind,
   type ContextCompressionPipeline,
 } from "./context-compression/index.js";
 import {

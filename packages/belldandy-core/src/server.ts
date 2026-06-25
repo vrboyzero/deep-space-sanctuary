@@ -1643,6 +1643,8 @@ async function handleReq(
     "subtask.update",
     "subtask.stop",
     "subtask.archive",
+    "bridge.session.list",
+    "bridge.session.peek",
     "agent.catalog.get",
     "agent.contracts.get",
     "delegation.inspect.get",
@@ -2249,7 +2251,9 @@ async function handleReq(
     case "subtask.takeover":
     case "subtask.update":
     case "subtask.stop":
-    case "subtask.archive": {
+    case "subtask.archive":
+    case "bridge.session.list":
+    case "bridge.session.peek": {
       return handleQueryRuntimeDomainsMethod(req, queryRuntimeDomainsContext);
     }
 

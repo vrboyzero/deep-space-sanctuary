@@ -27,6 +27,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentCallOptions,
+  AgentLaunchSpec,
+  AgentLaunchSpecInput,
   WorkflowContext,
   WorkflowTaskResult,
 } from "@belldandy/agent";
@@ -102,32 +104,17 @@ export type WorkflowContextDeps = {
    * 可选：按与 orchestrator 一致的规则把 agent() 调用解析成真实 launchSpec。
    * runtime 会优先注入，避免依赖 orchestrator 实例上的额外方法。
    */
-  resolveWorkflowAgentLaunchSpec?: (input: {
-    instruction: string;
-    parentConversationId: string;
-    modelOverride?: string;
-    role?: string;
-    allowedToolFamilies?: string[];
-    maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
-    timeoutMs?: number;
-    delegationProtocol?: AgentCallOptions["delegationProtocol"];
-  }) => {
-    instruction: string;
-    parentConversationId: string;
-    agentId: string;
-    profileId: string;
-    modelOverride?: string;
-    background: boolean;
-    timeoutMs: number;
-    channel: string;
-    context?: Record<string, unknown>;
-    permissionMode?: string;
-    role?: string;
-    allowedToolFamilies?: string[];
-    maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
-    policySummary?: string;
-    delegationProtocol?: AgentCallOptions["delegationProtocol"];
-  };
+  resolveWorkflowAgentLaunchSpec?: (input: Pick<
+    AgentLaunchSpecInput,
+    | "instruction"
+    | "parentConversationId"
+    | "modelOverride"
+    | "role"
+    | "allowedToolFamilies"
+    | "maxToolRiskLevel"
+    | "timeoutMs"
+    | "delegationProtocol"
+  >) => AgentLaunchSpec;
 };
 
 /**
