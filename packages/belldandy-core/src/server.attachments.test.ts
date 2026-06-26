@@ -847,6 +847,96 @@ test("message.send token.usage exposes attachment compression observability", as
   }
 });
 
+test("forensic: long attachment prompt input does not automatically become high retained context", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield {
+        type: "usage" as const,
+        systemPromptTokens: 12,
+        contextTokens: 90000,
+        inputTokens: 120000,
+        outputTokens: 32,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        modelCalls: 1,
+        localPromptEstimate: {
+          systemPromptTokens: 12,
+          contextTokens: 90000,
+          totalPromptTokens: 90012,
+        },
+      };
+      yield { type: "final" as const, text: `已处理附件：${String(input.text).slice(0, 8)}` };
+      yield { type: "status", status: "done" as const };
+    },
+  };
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const conversationId = "conv-attachment-retained-forensic";
+    const attachmentText = Array.from({ length: 12000 }, (_, index) => `附件正文行 ${index}`).join("\n");
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "att-retained-forensic-send",
+      method: "message.send",
+      params: {
+        conversationId,
+        text: "请分析这个长附件",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: toBase64(attachmentText) },
+        ],
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "token.usage" && f.payload?.conversationId === conversationId));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "chat.final" && f.payload?.conversationId === conversationId));
+
+    const usageEvent = frames.find((f) => f.type === "event" && f.event === "token.usage" && f.payload?.conversationId === conversationId);
+    expect(usageEvent?.payload).toMatchObject({
+      inputTokens: 120000,
+      outputTokens: 32,
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "att-retained-forensic-meta",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "att-retained-forensic-meta" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "att-retained-forensic-meta");
+    const retainedEstimate = metaRes?.payload?.retainedContextEstimate;
+    const retainedTokens = Number(retainedEstimate?.tokens || 0);
+
+    expect(retainedEstimate).toMatchObject({
+      compacted: false,
+      messageCount: 2,
+    });
+    expect(retainedTokens).toBeGreaterThan(0);
+    expect(retainedTokens).toBeLessThan(20000);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("message.send reuses cached audio transcription for repeated attachments", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const seenInputs: any[] = [];

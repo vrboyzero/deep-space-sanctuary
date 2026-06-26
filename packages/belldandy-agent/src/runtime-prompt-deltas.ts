@@ -128,7 +128,8 @@ function buildToolSearchFollowUpPromptDelta(input: {
       "## Tool Search Follow-up",
       "",
       `The exact deferred schemas are already loaded in this conversation: ${toolList}.`,
-      "Call those exact tools directly next. Do not repeat a broad `tool_search` while these schemas remain visible.",
+      "If the latest user request still needs them, call those exact tools directly next. Do not repeat a broad `tool_search` while these schemas remain visible.",
+      "This is tool-context reuse guidance, not a standalone instruction to replay an older plan when the latest user turn has changed direction.",
     ].join("\n"),
     metadata: {
       toolName: input.toolName,

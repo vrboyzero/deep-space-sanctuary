@@ -614,6 +614,163 @@ test("gateway injects work overview and resume details into non-mock continuatio
   }
 }, 60000);
 
+test("gateway forensic prompt snapshot separates latest analysis-only request from historical resume actions", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-history-boundary-e2e-"));
+  const conversationId = "conv-real-resume-current";
+  const promptMarker = "PROMPT_HISTORY_BOUNDARY_E2E_MARKER";
+  const analysisText = "继续分析一下为什么之前会误执行旧命令，不要执行任何命令，只做原因分析。";
+  const fakeOpenAI = await startFakeOpenAIServer();
+  let gateway: GatewayProcessHandle | undefined;
+  let wsHandle: GatewayWebSocketHandle | undefined;
+
+  try {
+    await seedResumePromptTasks(stateDir);
+
+    gateway = await startGatewayProcess({
+      stateDir,
+      openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+      promptMarker,
+      extraEnv: {
+        BELLDANDY_TASK_MEMORY_ENABLED: "true",
+        BELLDANDY_CONTEXT_INJECTION: "true",
+        BELLDANDY_CONTEXT_INJECTION_TASK_LIMIT: "3",
+        BELLDANDY_AUTO_RECALL_ENABLED: "false",
+      },
+    });
+    wsHandle = await connectGatewayWebSocket(gateway.port);
+
+    const sendBeforePairingReqId = "message-send-history-boundary-before-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendBeforePairingReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: analysisText,
+      },
+    }));
+    await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+    const sendReqId = "message-send-history-boundary-after-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: analysisText,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === sendReqId && frame.ok === true));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "event" && frame.event === "chat.final" && frame.payload?.conversationId === conversationId));
+    await waitFor(() => fakeOpenAI.requests.length > 0);
+
+    const sendRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === sendReqId && frame.ok === true);
+    const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+    expect(runId).toBeTruthy();
+
+    const modelPromptText = extractFakeOpenAIRequestText(fakeOpenAI.requests.at(-1)?.body);
+    expect(modelPromptText).toContain("<current-turn");
+    expect(modelPromptText).toContain("<latest-user-request");
+    expect(modelPromptText).toContain("只有这里的最新用户请求");
+    expect(modelPromptText).toContain("不要自动重放旧动作");
+    expect(modelPromptText).toContain(analysisText);
+    expect(modelPromptText).toContain("<work-overview");
+    expect(modelPromptText).toContain("<resume-details");
+    expect(modelPromptText).toContain("已执行工具 apply_patch");
+    expect(modelPromptText).toContain("先验证最近变更或产物，再继续后续动作。");
+    expect(modelPromptText).toContain("旧命令、旧工具结果、旧 next step、旧参数默认都只是恢复线索");
+
+    const artifactPath = getConversationPromptSnapshotArtifactPath({
+      stateDir,
+      conversationId,
+      runId,
+    });
+    await waitFor(async () => {
+      try {
+        await fs.access(artifactPath);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    const persisted = await loadConversationPromptSnapshotArtifact({
+      stateDir,
+      conversationId,
+      runId,
+    });
+    expect(persisted?.snapshot.systemPrompt).toContain("Only the latest user turn authorizes new actions");
+    expect(persisted?.snapshot.prependContext).toContain("<current-turn");
+    expect(persisted?.snapshot.prependContext).toContain("<latest-user-request");
+    expect(persisted?.snapshot.prependContext).toContain(analysisText);
+    expect(persisted?.snapshot.prependContext).toContain("已执行工具 apply_patch");
+    expect(persisted?.snapshot.prependContext).toContain("先验证最近变更或产物，再继续后续动作。");
+    expect(persisted?.snapshot.prependContext).toContain("不要自动重放旧动作");
+    expect(persisted?.snapshot.prependContext).toContain("旧命令、旧工具结果、旧 next step、旧参数默认都只是恢复线索");
+
+    const inspectReqId = "agents-prompt-inspect-history-boundary-after-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: inspectReqId,
+      method: "agents.prompt.inspect",
+      params: {
+        conversationId,
+        runId,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === inspectReqId && frame.ok === true));
+
+    const inspectRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === inspectReqId);
+    expect(inspectRes?.payload?.text).toContain("Only the latest user turn authorizes new actions");
+    expect(inspectRes?.payload?.deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "current-turn",
+        deltaType: "user-prelude",
+        text: expect.stringContaining("<latest-user-request"),
+      }),
+      expect.objectContaining({
+        id: "work-overview",
+        deltaType: "user-prelude",
+        text: expect.stringContaining("next=先验证最近变更或产物，再继续后续动作。"),
+      }),
+      expect.objectContaining({
+        id: "resume-details",
+        deltaType: "user-prelude",
+        text: expect.stringContaining("已执行工具 apply_patch"),
+      }),
+    ]));
+
+    const rpcReqId = "conversation-prompt-snapshot-history-boundary-get";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: rpcReqId,
+      method: "conversation.prompt_snapshot.get",
+      params: {
+        conversationId,
+        runId,
+      },
+    }));
+    await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === rpcReqId && frame.ok === true));
+
+    const rpcRes = wsHandle.frames.find((frame) => frame.type === "res" && frame.id === rpcReqId);
+    expect(rpcRes?.payload?.snapshot?.snapshot?.systemPrompt).toContain("Only the latest user turn authorizes new actions");
+    expect(rpcRes?.payload?.snapshot?.snapshot?.prependContext).toContain("<latest-user-request");
+    expect(rpcRes?.payload?.snapshot?.snapshot?.prependContext).toContain(analysisText);
+    expect(rpcRes?.payload?.snapshot?.snapshot?.prependContext).toContain("已执行工具 apply_patch");
+    expect(fakeOpenAI.requests).toHaveLength(1);
+  } finally {
+    if (wsHandle) {
+      await wsHandle.close().catch(() => {});
+    }
+    if (gateway) {
+      await stopGatewayProcess(gateway).catch(() => {});
+    }
+    await fakeOpenAI.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 60000);
+
 test("gateway exposes canonical profile state through model prompt, persisted snapshot, and inspect surfaces", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-prompt-profile-state-e2e-"));
   const conversationId = "conv-profile-state-runtime";
@@ -1334,14 +1491,1920 @@ test("gateway prefers structured deltas over legacy marker splitting for old sna
   }
 }, 60000);
 
+test("gateway carryover context forensics keeps a single latest file_read source across real multi-turn prompts", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-carryover-context-e2e-"));
+  const conversationId = "conv-carryover-context-real";
+  const promptMarker = "PROMPT_CARRYOVER_CONTEXT_E2E_MARKER";
+  const fileRelativePath = "src/app.ts";
+  const fileAbsolutePath = path.join(stateDir, "src", "app.ts");
+  const fakeOpenAI = await startFakeOpenAIServer({
+    handler: ({ requests }) => {
+      switch (requests.length) {
+        case 1:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "call-file-1",
+              name: "file_read",
+              arguments: JSON.stringify({ path: fileRelativePath }),
+            }],
+          });
+        case 2:
+          return createFakeChatCompletionResponse({
+            content: "已读取第一版文件。",
+          });
+        case 3:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "call-file-2",
+              name: "file_read",
+              arguments: JSON.stringify({ path: fileRelativePath }),
+            }],
+          });
+        case 4:
+          return createFakeChatCompletionResponse({
+            content: "已读取第二版文件。",
+          });
+        case 5:
+          return createFakeChatCompletionResponse({
+            content: "基于现有上下文给出稳定结论。",
+          });
+        default:
+          return createFakeChatCompletionResponse({
+            content: `unexpected request ${requests.length}`,
+          });
+      }
+    },
+  });
+  let gateway: GatewayProcessHandle | undefined;
+  let wsHandle: GatewayWebSocketHandle | undefined;
+
+  try {
+    await fs.mkdir(path.dirname(fileAbsolutePath), { recursive: true });
+    await fs.writeFile(fileAbsolutePath, "export const answer = 42;\nexport const label = \"v1\";\n", "utf-8");
+
+    gateway = await startGatewayProcess({
+      stateDir,
+      openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+      promptMarker,
+      extraEnv: {
+        BELLDANDY_TOOLS_ENABLED: "true",
+        BELLDANDY_CONTEXT_INJECTION: "true",
+        BELLDANDY_AUTO_RECALL_ENABLED: "false",
+      },
+    });
+    wsHandle = await connectGatewayWebSocket(gateway.port);
+
+    const sendMessage = async (requestId: string, text: string): Promise<string> => {
+      const finalCountBefore = wsHandle!.frames.filter((frame) =>
+        frame.type === "event"
+        && frame.event === "chat.final"
+        && frame.payload?.conversationId === conversationId
+      ).length;
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "message.send",
+        params: {
+          conversationId,
+          text,
+        },
+      }));
+      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      await waitFor(() =>
+        wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === conversationId
+        ).length > finalCountBefore,
+      );
+      const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+      const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+      expect(runId).toBeTruthy();
+      return runId;
+    };
+
+    const readMeta = async (requestId: string) => {
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "conversation.meta",
+        params: {
+          conversationId,
+        },
+      }));
+      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+    };
+
+    const inspectRun = async (requestId: string, runId: string) => {
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "agents.prompt.inspect",
+        params: {
+          conversationId,
+          runId,
+        },
+      }));
+      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+    };
+
+    const sendBeforePairingReqId = "message-send-carryover-before-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendBeforePairingReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: "pairing bootstrap",
+      },
+    }));
+    await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+    await sendMessage("message-send-carryover-round-1", "读取 src/app.ts，并总结关键事实。");
+    await waitFor(() => fakeOpenAI.requests.length >= 2);
+
+    const metaAfterFirstRun = await readMeta("conversation-meta-carryover-round-1");
+    expect(metaAfterFirstRun?.carryoverContextEstimate).toMatchObject({
+      itemCount: 1,
+    });
+    expect(metaAfterFirstRun?.carryoverContextEstimate?.tokens).toBeGreaterThan(0);
+    expect(metaAfterFirstRun?.nextTurnContextEstimate?.tokens).toBeGreaterThan(metaAfterFirstRun?.retainedContextEstimate?.tokens ?? 0);
+
+    await fs.writeFile(fileAbsolutePath, "export const answer = 43;\nexport const label = \"v2\";\n", "utf-8");
+
+    await sendMessage("message-send-carryover-round-2", "继续分析这个文件，如有需要可再次读取。");
+    await waitFor(() => fakeOpenAI.requests.length >= 4);
+
+    const secondTurnPrompt = fakeOpenAI.requestTexts[2] ?? "";
+    const secondTurnCarryover = extractTaggedPromptBlock(secondTurnPrompt, "carryover-context");
+    expect(secondTurnPrompt).toContain("<carryover-context");
+    expect(secondTurnCarryover).toContain("file_read: src/app.ts");
+    expect(secondTurnCarryover).toContain("export const answer = 42;");
+    expect(countSubstring(secondTurnCarryover, "file_read: src/app.ts")).toBe(1);
+
+    const metaAfterSecondRun = await readMeta("conversation-meta-carryover-round-2");
+    expect(metaAfterSecondRun?.carryoverContextEstimate).toMatchObject({
+      itemCount: 1,
+    });
+    expect(metaAfterSecondRun?.carryoverContextEstimate?.tokens).toBeGreaterThan(0);
+    expect(metaAfterSecondRun?.nextTurnContextEstimate?.tokens).toBeGreaterThan(metaAfterSecondRun?.retainedContextEstimate?.tokens ?? 0);
+
+    const finalRunId = await sendMessage("message-send-carryover-round-3", "继续，不要再读文件，直接基于现有上下文给出结论。");
+    await waitFor(() => fakeOpenAI.requests.length >= 5);
+
+    const thirdTurnPrompt = fakeOpenAI.requestTexts[4] ?? "";
+    const thirdTurnCarryover = extractTaggedPromptBlock(thirdTurnPrompt, "carryover-context");
+    expect(thirdTurnPrompt).toContain("<carryover-context");
+    expect(thirdTurnCarryover).toContain("file_read: src/app.ts");
+    expect(thirdTurnCarryover).toContain("export const answer = 43;");
+    expect(thirdTurnCarryover).not.toContain("export const answer = 42;");
+    expect(countSubstring(thirdTurnCarryover, "file_read: src/app.ts")).toBe(1);
+
+    const inspectRes = await inspectRun("agents-prompt-inspect-carryover-round-3", finalRunId);
+    const carryoverDelta = Array.isArray(inspectRes?.deltas)
+      ? inspectRes.deltas.find((item: any) => item?.id === "carryover-context")
+      : undefined;
+    expect(carryoverDelta).toMatchObject({
+      id: "carryover-context",
+      deltaType: "user-prelude",
+      text: expect.stringContaining("file_read: src/app.ts"),
+    });
+    expect(String(carryoverDelta?.text ?? "")).toContain("export const answer = 43;");
+    expect(String(carryoverDelta?.text ?? "")).not.toContain("export const answer = 42;");
+    expect(countSubstring(String(carryoverDelta?.text ?? ""), "file_read: src/app.ts")).toBe(1);
+
+    expect(fakeOpenAI.requests).toHaveLength(5);
+  } finally {
+    if (wsHandle) {
+      await wsHandle.close().catch(() => {});
+    }
+    if (gateway) {
+      await stopGatewayProcess(gateway).catch(() => {});
+    }
+    await fakeOpenAI.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 60000);
+
+test("gateway low-risk config A/B keeps retained history thicker without displacing carryover context", async () => {
+  const rounds = Array.from({ length: 12 }, (_, index) => {
+    const turn = index + 1;
+    return `第${turn}轮：保留这个续做锚点 MARKER_TURN_${turn.toString().padStart(2, "0")}，并继续当前分析。`;
+  });
+
+  async function runScenario(input: {
+    stateDirPrefix: string;
+    promptMarker: string;
+    conversationId: string;
+    extraEnv?: Record<string, string>;
+  }) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), input.stateDirPrefix));
+    const fileRelativePath = "src/app.ts";
+    const fileAbsolutePath = path.join(stateDir, "src", "app.ts");
+    let requestCount = 0;
+    const fakeOpenAI = await startFakeOpenAIServer({
+      handler: () => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "ab-call-file-1",
+              name: "file_read",
+              arguments: JSON.stringify({ path: fileRelativePath }),
+            }],
+          });
+        }
+        if (requestCount === 2) {
+          return createFakeChatCompletionResponse({
+            content: "已读取关键文件，继续推进。",
+          });
+        }
+        return createFakeChatCompletionResponse({
+          content: `ack-turn-${requestCount}`,
+        });
+      },
+    });
+    let gateway: GatewayProcessHandle | undefined;
+    let wsHandle: GatewayWebSocketHandle | undefined;
+
+    try {
+      await fs.mkdir(path.dirname(fileAbsolutePath), { recursive: true });
+      await fs.writeFile(fileAbsolutePath, "export const answer = 42;\nexport const label = \"ab-test\";\n", "utf-8");
+
+      gateway = await startGatewayProcess({
+        stateDir,
+        openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+        promptMarker: input.promptMarker,
+        extraEnv: {
+          BELLDANDY_TOOLS_ENABLED: "true",
+          BELLDANDY_CONTEXT_INJECTION: "true",
+          BELLDANDY_AUTO_RECALL_ENABLED: "false",
+          BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "false",
+          BELLDANDY_TASK_MEMORY_ENABLED: "false",
+          BELLDANDY_MEMORY_SESSION_DIGEST_MAX_RUNS: "0",
+          ...(input.extraEnv ?? {}),
+        },
+      });
+      wsHandle = await connectGatewayWebSocket(gateway.port);
+
+      const sendMessage = async (requestId: string, text: string): Promise<string> => {
+        const finalCountBefore = wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === input.conversationId
+        ).length;
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "message.send",
+          params: {
+            conversationId: input.conversationId,
+            text,
+          },
+        }));
+        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        await waitFor(() =>
+          wsHandle!.frames.filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId
+          ).length > finalCountBefore,
+        );
+        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+        expect(runId).toBeTruthy();
+        return runId;
+      };
+
+      const readMeta = async (requestId: string) => {
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "conversation.meta",
+          params: {
+            conversationId: input.conversationId,
+          },
+        }));
+        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+      };
+
+      const sendBeforePairingReqId = `${input.conversationId}-before-pairing`;
+      wsHandle.ws.send(JSON.stringify({
+        type: "req",
+        id: sendBeforePairingReqId,
+        method: "message.send",
+        params: {
+          conversationId: input.conversationId,
+          text: "pairing bootstrap",
+        },
+      }));
+      await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+      await sendMessage(`${input.conversationId}-read-file`, "先读取 src/app.ts，并记住里面的关键事实。");
+      await waitFor(() => fakeOpenAI.requests.length >= 2);
+
+      let finalRunId = "";
+      for (let index = 0; index < rounds.length; index += 1) {
+        finalRunId = await sendMessage(`${input.conversationId}-turn-${index + 1}`, rounds[index]);
+      }
+      await waitFor(() => fakeOpenAI.requests.length >= 2 + rounds.length);
+
+      const meta = await readMeta(`${input.conversationId}-meta-final`);
+      const finalPromptText = fakeOpenAI.requestTexts.at(-1) ?? "";
+      const finalCarryoverBlock = extractTaggedPromptBlock(finalPromptText, "carryover-context");
+
+      return {
+        stateDir,
+        finalRunId,
+        meta,
+        finalPromptText,
+        finalCarryoverBlock,
+        requestCount: fakeOpenAI.requests.length,
+      };
+    } finally {
+      if (wsHandle) {
+        await wsHandle.close().catch(() => {});
+      }
+      if (gateway) {
+        await stopGatewayProcess(gateway).catch(() => {});
+      }
+      await fakeOpenAI.close().catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  const baseline = await runScenario({
+    stateDirPrefix: "belldandy-low-risk-ab-baseline-",
+    promptMarker: "PROMPT_LOW_RISK_AB_BASELINE",
+    conversationId: "conv-low-risk-ab-baseline",
+  });
+  const variant = await runScenario({
+    stateDirPrefix: "belldandy-low-risk-ab-variant-",
+    promptMarker: "PROMPT_LOW_RISK_AB_VARIANT",
+    conversationId: "conv-low-risk-ab-variant",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+    },
+  });
+
+  expect(baseline.meta?.messages).toHaveLength(10);
+  expect(variant.meta?.messages).toHaveLength(26);
+
+  expect(Number(baseline.meta?.retainedContextEstimate?.messageCount ?? 0)).toBe(10);
+  expect(Number(variant.meta?.retainedContextEstimate?.messageCount ?? 0)).toBe(26);
+  expect(Number(variant.meta?.retainedContextEstimate?.tokens ?? 0)).toBeGreaterThan(Number(baseline.meta?.retainedContextEstimate?.tokens ?? 0));
+
+  expect(Number(baseline.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(1);
+  expect(Number(variant.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(1);
+  expect(Number(baseline.meta?.nextTurnContextEstimate?.tokens ?? 0)).toBeGreaterThan(Number(baseline.meta?.retainedContextEstimate?.tokens ?? 0));
+  expect(Number(variant.meta?.nextTurnContextEstimate?.tokens ?? 0)).toBeGreaterThan(Number(variant.meta?.retainedContextEstimate?.tokens ?? 0));
+
+  expect(baseline.finalPromptText).not.toContain("MARKER_TURN_01");
+  expect(variant.finalPromptText).toContain("MARKER_TURN_01");
+  expect(baseline.finalPromptText).not.toContain("MARKER_TURN_04");
+  expect(variant.finalPromptText).toContain("MARKER_TURN_04");
+  expect(baseline.finalPromptText).toContain("MARKER_TURN_12");
+  expect(variant.finalPromptText).toContain("MARKER_TURN_12");
+
+  expect(baseline.finalCarryoverBlock).toContain("file_read: src/app.ts");
+  expect(variant.finalCarryoverBlock).toContain("file_read: src/app.ts");
+  expect(countSubstring(baseline.finalCarryoverBlock, "file_read: src/app.ts")).toBe(1);
+  expect(countSubstring(variant.finalCarryoverBlock, "file_read: src/app.ts")).toBe(1);
+  expect(baseline.requestCount).toBe(14);
+  expect(variant.requestCount).toBe(14);
+}, 120000);
+
+test("gateway carryover context ranks multi-source records by current request relevance and keeps stable source keys", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-carryover-multi-source-e2e-"));
+  const conversationId = "conv-carryover-multi-source-real";
+  const promptMarker = "PROMPT_CARRYOVER_MULTI_SOURCE_E2E_MARKER";
+  const logDate = new Date().toISOString().slice(0, 10);
+  const fakeOpenAI = await startFakeOpenAIServer({
+    handler: ({ requests }) => {
+      switch (requests.length) {
+        case 1:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "call-file-seed",
+              name: "file_read",
+              arguments: JSON.stringify({ path: "src/app.ts" }),
+            }],
+          });
+        case 2:
+          return createFakeChatCompletionResponse({
+            content: "已读取文件。",
+          });
+        case 3:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "call-conversation-seed",
+              name: "conversation_read",
+              arguments: JSON.stringify({ conversation_id: conversationId, view: "restore", limit: 5 }),
+            }],
+          });
+        case 4:
+          return createFakeChatCompletionResponse({
+            content: "已读取会话恢复视图。",
+          });
+        case 5:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "call-log-search-seed",
+              name: "log_search",
+              arguments: JSON.stringify({ query: "spawn EPERM", startDate: logDate, endDate: logDate }),
+            }],
+          });
+        case 6:
+          return createFakeChatCompletionResponse({
+            content: "已读取日志错误。",
+          });
+        case 7:
+          return createFakeChatCompletionResponse({
+            content: "基于现有上下文继续排查 pnpm test 的 spawn EPERM。",
+          });
+        default:
+          return createFakeChatCompletionResponse({
+            content: `unexpected request ${requests.length}`,
+          });
+      }
+    },
+  });
+  let gateway: GatewayProcessHandle | undefined;
+  let wsHandle: GatewayWebSocketHandle | undefined;
+
+  try {
+    await fs.mkdir(path.join(stateDir, "src"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "src", "app.ts"), "export const answer = 43;\n", "utf-8");
+    await fs.mkdir(path.join(stateDir, "logs"), { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, "logs", `${logDate}.log`),
+      `[ERROR][gateway] spawn EPERM while launching pnpm test\n[INFO][gateway] startup ok\n`,
+      "utf-8",
+    );
+
+    gateway = await startGatewayProcess({
+      stateDir,
+      openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+      promptMarker,
+      extraEnv: {
+        BELLDANDY_TOOLS_ENABLED: "true",
+        BELLDANDY_CONTEXT_INJECTION: "true",
+        BELLDANDY_AUTO_RECALL_ENABLED: "false",
+        BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "false",
+      },
+    });
+    wsHandle = await connectGatewayWebSocket(gateway.port);
+
+    const sendMessage = async (requestId: string, text: string): Promise<string> => {
+      const finalCountBefore = wsHandle!.frames.filter((frame) =>
+        frame.type === "event"
+        && frame.event === "chat.final"
+        && frame.payload?.conversationId === conversationId
+      ).length;
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "message.send",
+        params: {
+          conversationId,
+          text,
+        },
+      }));
+      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      await waitFor(() =>
+        wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === conversationId
+        ).length > finalCountBefore,
+      );
+      const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+      const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+      expect(runId).toBeTruthy();
+      return runId;
+    };
+
+    const readMeta = async (requestId: string) => {
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "conversation.meta",
+        params: {
+          conversationId,
+        },
+      }));
+      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+    };
+
+    const sendBeforePairingReqId = "message-send-carryover-multi-source-before-pairing";
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: sendBeforePairingReqId,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: "pairing bootstrap",
+      },
+    }));
+    await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+    await sendMessage("message-send-carryover-source-file", "先读取 src/app.ts，并记住关键事实。");
+    await waitFor(() => fakeOpenAI.requests.length >= 2);
+
+    await sendMessage("message-send-carryover-source-conversation", "再读取当前会话的 restore 视图，确认上轮停点。");
+    await waitFor(() => fakeOpenAI.requests.length >= 4);
+
+    await sendMessage("message-send-carryover-source-log", "再搜索 logs 里关于 spawn EPERM 的错误。");
+    await waitFor(() => fakeOpenAI.requests.length >= 6);
+
+    await sendMessage("message-send-carryover-source-final", "继续排查 pnpm test 的 spawn EPERM，不要重复读文件。");
+    await waitFor(() => fakeOpenAI.requests.length >= 7);
+
+    const finalPromptText = fakeOpenAI.requestTexts.at(-1) ?? "";
+    const carryoverBlock = extractTaggedPromptBlock(finalPromptText, "carryover-context");
+    const meta = await readMeta("conversation-meta-carryover-multi-source");
+
+    expect(carryoverBlock).toContain("log_search: spawn EPERM");
+    expect(carryoverBlock).toContain("conversation_read: conv-carryover-multi-source-real#restore");
+    expect(carryoverBlock).toContain("file_read: src/app.ts");
+    expect(carryoverBlock.indexOf("log_search: spawn EPERM")).toBeGreaterThanOrEqual(0);
+    expect(carryoverBlock.indexOf("log_search: spawn EPERM")).toBeLessThan(carryoverBlock.indexOf("conversation_read: conv-carryover-multi-source-real#restore"));
+    expect(carryoverBlock.indexOf("log_search: spawn EPERM")).toBeLessThan(carryoverBlock.indexOf("file_read: src/app.ts"));
+
+    expect(Number(meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(3);
+    expect(Number(meta?.nextTurnContextEstimate?.tokens ?? 0)).toBeGreaterThan(Number(meta?.retainedContextEstimate?.tokens ?? 0));
+  } finally {
+    if (wsHandle) {
+      await wsHandle.close().catch(() => {});
+    }
+    if (gateway) {
+      await stopGatewayProcess(gateway).catch(() => {});
+    }
+    await fakeOpenAI.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 120000);
+
+test("gateway long-session experience A/B compares baseline, low-risk, and low-risk+carryover on rereads, omissions, and conclusion stability", async () => {
+  const FACT_ROLLOUT_DECISION = "rolloutDecision=low-risk-first";
+  const FACT_NORMALIZE_OLD_FACTS = "normalizeOldFacts = false;";
+  const FACT_STOP_POINT = "stopPoint=verify-long-session-ab-metrics";
+  const FACT_ROOT_CAUSE = "rootCause=spawn-EPERM-vitest-child-process";
+  const EXPECTED_FACTS = [
+    FACT_ROLLOUT_DECISION,
+    FACT_NORMALIZE_OLD_FACTS,
+    FACT_STOP_POINT,
+    FACT_ROOT_CAUSE,
+  ];
+  const canonicalFinalText = [
+    "稳定结论：",
+    FACT_ROLLOUT_DECISION,
+    "carryoverLimit = 6;",
+    FACT_NORMALIZE_OLD_FACTS,
+    FACT_STOP_POINT,
+    FACT_ROOT_CAUSE,
+  ].join("\n");
+  const fillerTurns = Array.from({ length: 8 }, (_, index) =>
+    `第${index + 1}轮继续推进长会话验证，保留占位 MARKER_LONG_${String(index + 1).padStart(2, "0")}。`);
+
+  async function runScenario(input: {
+    stateDirPrefix: string;
+    promptMarker: string;
+    conversationId: string;
+    extraEnv?: Record<string, string>;
+  }) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), input.stateDirPrefix));
+    const fileRelativePath = "src/runtime/carryover.ts";
+    const fileAbsolutePath = path.join(stateDir, "src", "runtime", "carryover.ts");
+    const logDate = new Date().toISOString().slice(0, 10);
+    const logQuery = "spawn-EPERM";
+    const scenarioState = {
+      finalTurnToolCalls: 0,
+    };
+    const fakeOpenAI = await startFakeOpenAIServer({
+      handler: ({ body, requests }) => {
+        const promptText = extractFakeOpenAIRequestText(body);
+        const latestUserRequest = extractTaggedPromptInnerText(promptText, "latest-user-request");
+        const missingFacts = EXPECTED_FACTS.filter((fact) => !promptText.includes(fact));
+
+        switch (requests.length) {
+          case 1:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "long-file-1",
+                name: "file_read",
+                arguments: JSON.stringify({ path: fileRelativePath }),
+              }],
+            });
+          case 2:
+            return createFakeChatCompletionResponse({
+              content: "已确认 src/runtime/carryover.ts 中 carryoverLimit = 6；我继续核对其他来源。",
+            });
+          case 3:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "long-conversation-1",
+                name: "conversation_read",
+                arguments: JSON.stringify({ conversation_id: input.conversationId, view: "restore", limit: 20 }),
+              }],
+            });
+          case 4:
+            return createFakeChatCompletionResponse({
+              content: `从 restore 看，${FACT_STOP_POINT}。`,
+            });
+          case 5:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "long-log-1",
+                name: "log_search",
+                arguments: JSON.stringify({ query: logQuery, startDate: logDate, endDate: logDate }),
+              }],
+            });
+          case 6:
+            return createFakeChatCompletionResponse({
+              content: `日志结论：${FACT_ROOT_CAUSE}。`,
+            });
+          case 7:
+            return createFakeChatCompletionResponse({
+              content: `收到，${FACT_ROLLOUT_DECISION}。`,
+            });
+          default:
+            if (latestUserRequest.includes("不要重读，直接给完整结论")) {
+              if (missingFacts.length === 0) {
+                return createFakeChatCompletionResponse({
+                  content: canonicalFinalText,
+                });
+              }
+              if (scenarioState.finalTurnToolCalls > 0) {
+                return createFakeChatCompletionResponse({
+                  content: canonicalFinalText,
+                });
+              }
+              scenarioState.finalTurnToolCalls += 1;
+              if (missingFacts.includes(FACT_ROLLOUT_DECISION) || missingFacts.includes(FACT_STOP_POINT)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `long-final-conversation-${scenarioState.finalTurnToolCalls}`,
+                    name: "conversation_read",
+                    arguments: JSON.stringify({ conversation_id: input.conversationId, view: "restore", limit: 20 }),
+                  }],
+                });
+              }
+              if (missingFacts.includes(FACT_NORMALIZE_OLD_FACTS)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `long-final-file-${scenarioState.finalTurnToolCalls}`,
+                    name: "file_read",
+                    arguments: JSON.stringify({ path: fileRelativePath }),
+                  }],
+                });
+              }
+              if (missingFacts.includes(FACT_ROOT_CAUSE)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `long-final-log-${scenarioState.finalTurnToolCalls}`,
+                    name: "log_search",
+                    arguments: JSON.stringify({ query: logQuery, startDate: logDate, endDate: logDate }),
+                  }],
+                });
+              }
+              return createFakeChatCompletionResponse({
+                content: canonicalFinalText,
+              });
+            }
+            return createFakeChatCompletionResponse({
+              content: `ack-long-turn-${requests.length}`,
+            });
+        }
+      },
+    });
+    let gateway: GatewayProcessHandle | undefined;
+    let wsHandle: GatewayWebSocketHandle | undefined;
+
+    try {
+      await fs.mkdir(path.dirname(fileAbsolutePath), { recursive: true });
+      await fs.writeFile(fileAbsolutePath, [
+        "export const carryoverLimit = 6;",
+        "export const normalizeOldFacts = false;",
+        "export const carryoverSourceMode = \"stable\";",
+        "",
+      ].join("\n"), "utf-8");
+      await fs.mkdir(path.join(stateDir, "logs"), { recursive: true });
+      await fs.writeFile(
+        path.join(stateDir, "logs", `${logDate}.log`),
+        [
+          `[ERROR][gateway] ${FACT_ROOT_CAUSE}`,
+          "[INFO][gateway] startup ok",
+          "",
+        ].join("\n"),
+        "utf-8",
+      );
+
+      gateway = await startGatewayProcess({
+        stateDir,
+        openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+        promptMarker: input.promptMarker,
+        extraEnv: {
+          BELLDANDY_TOOLS_ENABLED: "true",
+          BELLDANDY_CONTEXT_INJECTION: "true",
+          BELLDANDY_AUTO_RECALL_ENABLED: "false",
+          BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "false",
+          BELLDANDY_TASK_MEMORY_ENABLED: "false",
+          BELLDANDY_MEMORY_SESSION_DIGEST_MAX_RUNS: "0",
+          ...(input.extraEnv ?? {}),
+        },
+      });
+      wsHandle = await connectGatewayWebSocket(gateway.port);
+
+      const sendMessage = async (
+        requestId: string,
+        text: string,
+        timeoutMs = 5000,
+      ): Promise<{ runId: string; finalText: string }> => {
+        const finalCountBefore = wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === input.conversationId
+        ).length;
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "message.send",
+          params: {
+            conversationId: input.conversationId,
+            text,
+          },
+        }));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          timeoutMs,
+        );
+        await waitFor(() =>
+          wsHandle!.frames.filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId
+          ).length > finalCountBefore,
+          timeoutMs,
+        );
+        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+        const finalFrame = wsHandle!.frames
+          .filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId)
+          .at(-1);
+        const finalText = String(finalFrame?.payload?.text ?? "");
+        expect(runId).toBeTruthy();
+        expect(finalText).toBeTruthy();
+        return { runId, finalText };
+      };
+
+      const readMeta = async (requestId: string) => {
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "conversation.meta",
+          params: {
+            conversationId: input.conversationId,
+          },
+        }));
+        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+      };
+
+      const sendBeforePairingReqId = `${input.conversationId}-before-pairing`;
+      wsHandle.ws.send(JSON.stringify({
+        type: "req",
+        id: sendBeforePairingReqId,
+        method: "message.send",
+        params: {
+          conversationId: input.conversationId,
+          text: "pairing bootstrap",
+        },
+      }));
+      await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+      await sendMessage(`${input.conversationId}-source-file`, "先读取 src/runtime/carryover.ts，并记住实现细节。");
+      await sendMessage(`${input.conversationId}-source-conversation`, "再读取当前会话 restore 视图，确认停点。");
+      await sendMessage(`${input.conversationId}-source-log`, "再搜索 logs 里关于 spawn-EPERM 的错误。");
+      await sendMessage(`${input.conversationId}-decision`, `再记住这个决策：${FACT_ROLLOUT_DECISION}。`);
+
+      for (let index = 0; index < fillerTurns.length; index += 1) {
+        await sendMessage(`${input.conversationId}-filler-${index + 1}`, fillerTurns[index]);
+      }
+
+      const preFinalRequestCount = fakeOpenAI.requests.length;
+      const finalResult = await sendMessage(
+        `${input.conversationId}-final`,
+        "不要重读，直接给完整结论：需要包含 rolloutDecision、normalizeOldFacts、stopPoint、rootCause。",
+        15000,
+      );
+      const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
+      const initialMissingFacts = EXPECTED_FACTS.filter((fact) => !initialFinalPromptText.includes(fact));
+      const meta = await readMeta(`${input.conversationId}-meta-final`);
+
+      return {
+        initialFinalPromptText,
+        initialFinalCarryoverBlock: extractTaggedPromptBlock(initialFinalPromptText, "carryover-context"),
+        initialMissingFacts,
+        finalTurnToolCalls: scenarioState.finalTurnToolCalls,
+        finalText: finalResult.finalText,
+        meta,
+      };
+    } finally {
+      if (wsHandle) {
+        await wsHandle.close().catch(() => {});
+      }
+      if (gateway) {
+        await stopGatewayProcess(gateway).catch(() => {});
+      }
+      await fakeOpenAI.close().catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  const baseline = await runScenario({
+    stateDirPrefix: "belldandy-long-session-baseline-",
+    promptMarker: "PROMPT_LONG_SESSION_BASELINE",
+    conversationId: "conv-long-session-baseline",
+    extraEnv: {
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+    },
+  });
+  const lowRiskOnly = await runScenario({
+    stateDirPrefix: "belldandy-long-session-low-risk-only-",
+    promptMarker: "PROMPT_LONG_SESSION_LOW_RISK_ONLY",
+    conversationId: "conv-long-session-low-risk-only",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "false",
+    },
+  });
+  const lowRiskWithCarryover = await runScenario({
+    stateDirPrefix: "belldandy-long-session-low-risk-carryover-",
+    promptMarker: "PROMPT_LONG_SESSION_LOW_RISK_CARRYOVER",
+    conversationId: "conv-long-session-low-risk-carryover",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+    },
+  });
+
+  expect(baseline.initialMissingFacts).toEqual([
+    FACT_ROLLOUT_DECISION,
+    FACT_STOP_POINT,
+  ]);
+  expect(lowRiskOnly.initialMissingFacts).toEqual([
+    FACT_NORMALIZE_OLD_FACTS,
+  ]);
+  expect(lowRiskWithCarryover.initialMissingFacts).toEqual([]);
+
+  expect(baseline.finalTurnToolCalls).toBe(1);
+  expect(lowRiskOnly.finalTurnToolCalls).toBe(1);
+  expect(lowRiskWithCarryover.finalTurnToolCalls).toBe(0);
+
+  expect(baseline.finalText).toBe(canonicalFinalText);
+  expect(lowRiskOnly.finalText).toBe(canonicalFinalText);
+  expect(lowRiskWithCarryover.finalText).toBe(canonicalFinalText);
+  expect(new Set([
+    baseline.finalText,
+    lowRiskOnly.finalText,
+    lowRiskWithCarryover.finalText,
+  ]).size).toBe(1);
+
+  expect(baseline.initialFinalCarryoverBlock).toContain("file_read: src/runtime/carryover.ts");
+  expect(baseline.initialFinalCarryoverBlock).toContain(FACT_NORMALIZE_OLD_FACTS);
+  expect(baseline.initialFinalCarryoverBlock).toContain("log_search: spawn-EPERM");
+  expect(baseline.initialFinalCarryoverBlock).toContain(FACT_ROOT_CAUSE);
+
+  expect(lowRiskOnly.initialFinalPromptText).not.toContain("<carryover-context");
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_ROLLOUT_DECISION);
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_STOP_POINT);
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_ROOT_CAUSE);
+  expect(lowRiskOnly.initialFinalPromptText).not.toContain(FACT_NORMALIZE_OLD_FACTS);
+
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain("file_read: src/runtime/carryover.ts");
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain(FACT_NORMALIZE_OLD_FACTS);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_ROLLOUT_DECISION);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_STOP_POINT);
+
+  expect(Number(baseline.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
+  expect(Number(lowRiskOnly.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(0);
+  expect(Number(lowRiskWithCarryover.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
+}, 180000);
+
+test("gateway debug-session experience A/B keeps run_command failure facts and log_read hints without reruns when low-risk history and carryover are combined", async () => {
+  const FACT_DECISION = "decision=prefer-log-read-before-rerun";
+  const FACT_FAILURE_SIGNATURE = "failureSignature=spawn-EPERM-while-launching-pnpm-test";
+  const FACT_LOG_HINT = "logHint=close-inherited-handles-before-spawning-vitest-child";
+  const EXPECTED_FACTS = [
+    FACT_DECISION,
+    FACT_FAILURE_SIGNATURE,
+    FACT_LOG_HINT,
+  ];
+  const canonicalFinalText = [
+    "稳定结论：",
+    FACT_DECISION,
+    FACT_FAILURE_SIGNATURE,
+    FACT_LOG_HINT,
+  ].join("\n");
+  const fillerTurns = Array.from({ length: 8 }, (_, index) =>
+    `第${index + 1}轮继续推进错误排查续做，保留占位 MARKER_DEBUG_${String(index + 1).padStart(2, "0")}。`);
+
+  async function runScenario(input: {
+    stateDirPrefix: string;
+    promptMarker: string;
+    conversationId: string;
+    extraEnv?: Record<string, string>;
+  }) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), input.stateDirPrefix));
+    const logDate = new Date().toISOString().slice(0, 10);
+    const failingCommand = `node -e "console.error('${FACT_FAILURE_SIGNATURE}'); process.exit(1)"`;
+    const scenarioState = {
+      finalTurnToolCalls: 0,
+    };
+    const fakeOpenAI = await startFakeOpenAIServer({
+      handler: ({ body, requests }) => {
+        const promptText = extractFakeOpenAIRequestText(body);
+        const latestUserRequest = extractTaggedPromptInnerText(promptText, "latest-user-request");
+        const missingFacts = EXPECTED_FACTS.filter((fact) => !promptText.includes(fact));
+
+        switch (requests.length) {
+          case 1:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "debug-run-command-1",
+                name: "run_command",
+                arguments: JSON.stringify({ command: failingCommand }),
+              }],
+            });
+          case 2:
+            return createFakeChatCompletionResponse({
+              content: "命令失败了，我先改用日志排查。",
+            });
+          case 3:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "debug-log-read-1",
+                name: "log_read",
+                arguments: JSON.stringify({ date: logDate, keyword: "EPERM" }),
+              }],
+            });
+          case 4:
+            return createFakeChatCompletionResponse({
+              content: "日志已读取，我继续整理结论。",
+            });
+          case 5:
+            return createFakeChatCompletionResponse({
+              content: `收到，${FACT_DECISION}。`,
+            });
+          default:
+            if (latestUserRequest.includes("不要重跑命令，直接给完整结论")) {
+              if (missingFacts.length === 0) {
+                return createFakeChatCompletionResponse({
+                  content: canonicalFinalText,
+                });
+              }
+              if (scenarioState.finalTurnToolCalls > 0) {
+                return createFakeChatCompletionResponse({
+                  content: canonicalFinalText,
+                });
+              }
+              scenarioState.finalTurnToolCalls += 1;
+              if (missingFacts.includes(FACT_DECISION)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `debug-final-conversation-${scenarioState.finalTurnToolCalls}`,
+                    name: "conversation_read",
+                    arguments: JSON.stringify({ conversation_id: input.conversationId, view: "restore", limit: 20 }),
+                  }],
+                });
+              }
+              if (missingFacts.includes(FACT_FAILURE_SIGNATURE) || missingFacts.includes(FACT_LOG_HINT)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `debug-final-log-${scenarioState.finalTurnToolCalls}`,
+                    name: "log_read",
+                    arguments: JSON.stringify({ date: logDate, keyword: "EPERM" }),
+                  }],
+                });
+              }
+              return createFakeChatCompletionResponse({
+                content: canonicalFinalText,
+              });
+            }
+            return createFakeChatCompletionResponse({
+              content: `ack-debug-turn-${requests.length}`,
+            });
+        }
+      },
+    });
+    let gateway: GatewayProcessHandle | undefined;
+    let wsHandle: GatewayWebSocketHandle | undefined;
+
+    try {
+      await fs.mkdir(path.join(stateDir, "logs"), { recursive: true });
+      await fs.writeFile(
+        path.join(stateDir, "logs", `${logDate}.log`),
+        [
+          `[ERROR][gateway] ${FACT_FAILURE_SIGNATURE}; ${FACT_LOG_HINT}`,
+          "[INFO][gateway] startup ok",
+          "",
+        ].join("\n"),
+        "utf-8",
+      );
+
+      gateway = await startGatewayProcess({
+        stateDir,
+        openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+        promptMarker: input.promptMarker,
+        extraEnv: {
+          BELLDANDY_TOOLS_ENABLED: "true",
+          BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
+          BELLDANDY_CONTEXT_INJECTION: "true",
+          BELLDANDY_AUTO_RECALL_ENABLED: "false",
+          BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "false",
+          BELLDANDY_TASK_MEMORY_ENABLED: "false",
+          BELLDANDY_MEMORY_SESSION_DIGEST_MAX_RUNS: "0",
+          ...(input.extraEnv ?? {}),
+        },
+      });
+      wsHandle = await connectGatewayWebSocket(gateway.port);
+
+      const sendMessage = async (
+        requestId: string,
+        text: string,
+        timeoutMs = 5000,
+      ): Promise<{ runId: string; finalText: string }> => {
+        const finalCountBefore = wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === input.conversationId
+        ).length;
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "message.send",
+          params: {
+            conversationId: input.conversationId,
+            text,
+          },
+        }));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          timeoutMs,
+        );
+        await waitFor(() =>
+          wsHandle!.frames.filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId
+          ).length > finalCountBefore,
+          timeoutMs,
+        );
+        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+        const finalFrame = wsHandle!.frames
+          .filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId)
+          .at(-1);
+        const finalText = String(finalFrame?.payload?.text ?? "");
+        expect(runId).toBeTruthy();
+        expect(finalText).toBeTruthy();
+        return { runId, finalText };
+      };
+
+      const readMeta = async (requestId: string) => {
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "conversation.meta",
+          params: {
+            conversationId: input.conversationId,
+          },
+        }));
+        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+      };
+
+      const sendBeforePairingReqId = `${input.conversationId}-before-pairing`;
+      wsHandle.ws.send(JSON.stringify({
+        type: "req",
+        id: sendBeforePairingReqId,
+        method: "message.send",
+        params: {
+          conversationId: input.conversationId,
+          text: "pairing bootstrap",
+        },
+      }));
+      await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+      await sendMessage(`${input.conversationId}-source-run-command`, "先跑一次 pnpm test，确认失败信号。", 15000);
+      await sendMessage(`${input.conversationId}-source-log-read`, "再直接读取当天日志，确认错误提示。");
+      await sendMessage(`${input.conversationId}-decision`, `再记住这个决策：${FACT_DECISION}。`);
+
+      for (let index = 0; index < fillerTurns.length; index += 1) {
+        await sendMessage(`${input.conversationId}-filler-${index + 1}`, fillerTurns[index]);
+      }
+
+      const preFinalRequestCount = fakeOpenAI.requests.length;
+      const finalResult = await sendMessage(
+        `${input.conversationId}-final`,
+        "不要重跑命令，直接给完整结论：需要包含 decision、failureSignature、logHint。",
+        15000,
+      );
+      const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
+      const initialMissingFacts = EXPECTED_FACTS.filter((fact) => !initialFinalPromptText.includes(fact));
+      const meta = await readMeta(`${input.conversationId}-meta-final`);
+
+      return {
+        initialFinalPromptText,
+        initialFinalCarryoverBlock: extractTaggedPromptBlock(initialFinalPromptText, "carryover-context"),
+        initialMissingFacts,
+        finalTurnToolCalls: scenarioState.finalTurnToolCalls,
+        finalText: finalResult.finalText,
+        meta,
+      };
+    } finally {
+      if (wsHandle) {
+        await wsHandle.close().catch(() => {});
+      }
+      if (gateway) {
+        await stopGatewayProcess(gateway).catch(() => {});
+      }
+      await fakeOpenAI.close().catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  const baseline = await runScenario({
+    stateDirPrefix: "belldandy-debug-session-baseline-",
+    promptMarker: "PROMPT_DEBUG_SESSION_BASELINE",
+    conversationId: "conv-debug-session-baseline",
+    extraEnv: {
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+    },
+  });
+  const lowRiskOnly = await runScenario({
+    stateDirPrefix: "belldandy-debug-session-low-risk-only-",
+    promptMarker: "PROMPT_DEBUG_SESSION_LOW_RISK_ONLY",
+    conversationId: "conv-debug-session-low-risk-only",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "false",
+    },
+  });
+  const lowRiskWithCarryover = await runScenario({
+    stateDirPrefix: "belldandy-debug-session-low-risk-carryover-",
+    promptMarker: "PROMPT_DEBUG_SESSION_LOW_RISK_CARRYOVER",
+    conversationId: "conv-debug-session-low-risk-carryover",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+    },
+  });
+
+  expect(baseline.initialMissingFacts).toEqual([
+    FACT_DECISION,
+  ]);
+  expect(lowRiskOnly.initialMissingFacts).toEqual([
+    FACT_FAILURE_SIGNATURE,
+    FACT_LOG_HINT,
+  ]);
+  expect(lowRiskWithCarryover.initialMissingFacts).toEqual([]);
+
+  expect(baseline.finalTurnToolCalls).toBe(1);
+  expect(lowRiskOnly.finalTurnToolCalls).toBe(1);
+  expect(lowRiskWithCarryover.finalTurnToolCalls).toBe(0);
+
+  expect(baseline.finalText).toBe(canonicalFinalText);
+  expect(lowRiskOnly.finalText).toBe(canonicalFinalText);
+  expect(lowRiskWithCarryover.finalText).toBe(canonicalFinalText);
+  expect(new Set([
+    baseline.finalText,
+    lowRiskOnly.finalText,
+    lowRiskWithCarryover.finalText,
+  ]).size).toBe(1);
+
+  expect(baseline.initialFinalCarryoverBlock).toContain("run_command: node -e");
+  expect(baseline.initialFinalCarryoverBlock).toContain(FACT_FAILURE_SIGNATURE);
+  expect(baseline.initialFinalCarryoverBlock).toContain("log_read:");
+  expect(baseline.initialFinalCarryoverBlock).toContain(FACT_LOG_HINT);
+  expect(baseline.initialFinalPromptText).not.toContain(FACT_DECISION);
+  expect(baseline.initialFinalPromptText).toContain(FACT_LOG_HINT);
+
+  expect(lowRiskOnly.initialFinalPromptText).not.toContain("<carryover-context");
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_DECISION);
+  expect(lowRiskOnly.initialFinalPromptText).not.toContain(FACT_FAILURE_SIGNATURE);
+  expect(lowRiskOnly.initialFinalPromptText).not.toContain(FACT_LOG_HINT);
+
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain("run_command: node -e");
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain(FACT_FAILURE_SIGNATURE);
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain("log_read:");
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain(FACT_LOG_HINT);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_DECISION);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_FAILURE_SIGNATURE);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_LOG_HINT);
+
+  expect(Number(baseline.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
+  expect(Number(lowRiskOnly.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(0);
+  expect(Number(lowRiskWithCarryover.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
+}, 180000);
+
+test("gateway browser_get_content experience A/B keeps article facts and avoids rereads when low-risk history and carryover are combined", async () => {
+  const FACT_BROWSER_DECISION = "browserDecision=prefer-carryover-page-facts";
+  const FACT_BROWSER_ROOT_CAUSE = "browserRootCause=fixture-article-shows-context-drift";
+  const FACT_BROWSER_STOP_POINT = "browserStopPoint=verify-browser-content-ab-metrics";
+  const FACT_BROWSER_TITLE = "Fixture Browser Carryover Article";
+  const EXPECTED_FACTS = [
+    FACT_BROWSER_DECISION,
+    FACT_BROWSER_ROOT_CAUSE,
+    FACT_BROWSER_STOP_POINT,
+  ];
+  const canonicalFinalText = [
+    "稳定结论：",
+    FACT_BROWSER_DECISION,
+    FACT_BROWSER_ROOT_CAUSE,
+    FACT_BROWSER_STOP_POINT,
+  ].join("\n");
+  const fillerTurns = Array.from({ length: 8 }, (_, index) =>
+    `第${index + 1}轮继续推进 browser 正文续做验证，保留占位 MARKER_BROWSER_${String(index + 1).padStart(2, "0")}。`);
+
+  async function runScenario(input: {
+    stateDirPrefix: string;
+    promptMarker: string;
+    conversationId: string;
+    extraEnv?: Record<string, string>;
+  }) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), input.stateDirPrefix));
+    const fixturePageUrl = "https://example.com/context/browser-carryover-article";
+    const fixturePageBodyText = [
+      FACT_BROWSER_ROOT_CAUSE,
+      FACT_BROWSER_STOP_POINT,
+      "这篇正文用于验证 browser_get_content 的体验级 carryover 恢复效果。",
+      "如果续做阶段还能直接恢复这些正文事实，就说明正文类来源的漂移已经受控。",
+      "额外补足一些正文长度，确保 waitForFunction 的正文长度阈值被满足。".repeat(8),
+    ].join(" ");
+    const fixturePageHtml = [
+      "<html><head><title>",
+      FACT_BROWSER_TITLE,
+      "</title></head><body><article>",
+      `<h1>${FACT_BROWSER_TITLE}</h1>`,
+      `<p>${FACT_BROWSER_ROOT_CAUSE}</p>`,
+      `<p>${FACT_BROWSER_STOP_POINT}</p>`,
+      "<p>这篇正文用于验证 browser_get_content 的体验级 carryover 恢复效果。</p>",
+      "<p>如果续做阶段还能直接恢复这些正文事实，就说明正文类来源的漂移已经受控。</p>",
+      `<p>${"额外补足一些正文长度，确保 waitForFunction 的正文长度阈值被满足。".repeat(8)}</p>`,
+      "</article></body></html>",
+    ].join("");
+    const preload = await createBrowserGetContentFixturePreload({
+      stateDir,
+      pageUrl: fixturePageUrl,
+      pageTitle: FACT_BROWSER_TITLE,
+      bodyText: fixturePageBodyText,
+      html: fixturePageHtml,
+    });
+    const scenarioState = {
+      finalTurnToolCalls: 0,
+    };
+    const fakeOpenAI = await startFakeOpenAIServer({
+      handler: ({ body, requests }) => {
+        const promptText = extractFakeOpenAIRequestText(body);
+        const latestUserRequest = extractTaggedPromptInnerText(promptText, "latest-user-request");
+        const missingFacts = EXPECTED_FACTS.filter((fact) => !promptText.includes(fact));
+
+        switch (requests.length) {
+          case 1:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "browser-content-1",
+                name: "browser_get_content",
+                arguments: JSON.stringify({ format: "markdown" }),
+              }],
+            });
+          case 2:
+            return createFakeChatCompletionResponse({
+              content: `已确认正文来源 ${FACT_BROWSER_ROOT_CAUSE}；我继续核对续做停点。`,
+            });
+          case 3:
+            return createFakeChatCompletionResponse({
+              content: "",
+              toolCalls: [{
+                id: "browser-conversation-1",
+                name: "conversation_read",
+                arguments: JSON.stringify({ conversation_id: input.conversationId, view: "restore", limit: 20 }),
+              }],
+            });
+          case 4:
+            return createFakeChatCompletionResponse({
+              content: `从 restore 看，${FACT_BROWSER_STOP_POINT}。`,
+            });
+          case 5:
+            return createFakeChatCompletionResponse({
+              content: `收到，${FACT_BROWSER_DECISION}。`,
+            });
+          default:
+            if (latestUserRequest.includes("不要重复读取页面，直接给完整结论")) {
+              if (missingFacts.length === 0) {
+                return createFakeChatCompletionResponse({
+                  content: canonicalFinalText,
+                });
+              }
+              if (scenarioState.finalTurnToolCalls > 0) {
+                return createFakeChatCompletionResponse({
+                  content: canonicalFinalText,
+                });
+              }
+              scenarioState.finalTurnToolCalls += 1;
+              if (missingFacts.includes(FACT_BROWSER_DECISION) || missingFacts.includes(FACT_BROWSER_STOP_POINT)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `browser-final-conversation-${scenarioState.finalTurnToolCalls}`,
+                    name: "conversation_read",
+                    arguments: JSON.stringify({ conversation_id: input.conversationId, view: "restore", limit: 20 }),
+                  }],
+                });
+              }
+              if (missingFacts.includes(FACT_BROWSER_ROOT_CAUSE)) {
+                return createFakeChatCompletionResponse({
+                  content: "",
+                  toolCalls: [{
+                    id: `browser-final-content-${scenarioState.finalTurnToolCalls}`,
+                    name: "browser_get_content",
+                    arguments: JSON.stringify({ format: "markdown" }),
+                  }],
+                });
+              }
+              return createFakeChatCompletionResponse({
+                content: canonicalFinalText,
+              });
+            }
+            return createFakeChatCompletionResponse({
+              content: `ack-browser-turn-${requests.length}`,
+            });
+        }
+      },
+    });
+    let gateway: GatewayProcessHandle | undefined;
+    let wsHandle: GatewayWebSocketHandle | undefined;
+
+    try {
+      gateway = await startGatewayProcess({
+        stateDir,
+        openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+        promptMarker: input.promptMarker,
+        extraEnv: {
+          BELLDANDY_TOOLS_ENABLED: "true",
+          BELLDANDY_BROWSER_RELAY_ENABLED: "false",
+          BELLDANDY_CONTEXT_INJECTION: "true",
+          BELLDANDY_AUTO_RECALL_ENABLED: "false",
+          BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "false",
+          BELLDANDY_TASK_MEMORY_ENABLED: "false",
+          BELLDANDY_MEMORY_SESSION_DIGEST_MAX_RUNS: "0",
+          ...(input.extraEnv ?? {}),
+        },
+        extraImports: [preload.importSpecifier],
+      });
+      wsHandle = await connectGatewayWebSocket(gateway.port, {
+        role: "node",
+        clientId: `bdd-node-browser-${input.conversationId}`,
+      });
+
+      const sendMessage = async (
+        requestId: string,
+        text: string,
+        timeoutMs = 5000,
+      ): Promise<{ runId: string; finalText: string }> => {
+        const finalCountBefore = wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === input.conversationId
+        ).length;
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "message.send",
+          params: {
+            conversationId: input.conversationId,
+            text,
+          },
+        }));
+        await waitFor(
+          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+          timeoutMs,
+        );
+        await waitFor(() =>
+          wsHandle!.frames.filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId
+          ).length > finalCountBefore,
+          timeoutMs,
+        );
+        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+        const finalFrame = wsHandle!.frames
+          .filter((frame) =>
+            frame.type === "event"
+            && frame.event === "chat.final"
+            && frame.payload?.conversationId === input.conversationId)
+          .at(-1);
+        const finalText = String(finalFrame?.payload?.text ?? "");
+        expect(runId).toBeTruthy();
+        expect(finalText).toBeTruthy();
+        return { runId, finalText };
+      };
+
+      const readMeta = async (requestId: string) => {
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "conversation.meta",
+          params: {
+            conversationId: input.conversationId,
+          },
+        }));
+        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+      };
+
+      const sendBeforePairingReqId = `${input.conversationId}-before-pairing`;
+      wsHandle.ws.send(JSON.stringify({
+        type: "req",
+        id: sendBeforePairingReqId,
+        method: "message.send",
+        params: {
+          conversationId: input.conversationId,
+          text: "pairing bootstrap",
+        },
+      }));
+      await approveLatestPairingCode(wsHandle.frames, stateDir);
+      const toolsVisibilityRes = await (async () => {
+        const requestId = `${input.conversationId}-tools-list`;
+        wsHandle!.ws.send(JSON.stringify({
+          type: "req",
+          id: requestId,
+          method: "tools.list",
+          params: {
+            conversationId: input.conversationId,
+          },
+        }));
+        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+        return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+      })();
+
+      await sendMessage(`${input.conversationId}-source-browser`, "先读取当前页面正文，并记住关键事实。", 15000);
+      await sendMessage(`${input.conversationId}-source-conversation`, "再读取当前会话 restore 视图，确认停点。");
+      await sendMessage(`${input.conversationId}-decision`, `再记住这个决策：${FACT_BROWSER_DECISION}。`);
+
+      for (let index = 0; index < fillerTurns.length; index += 1) {
+        await sendMessage(`${input.conversationId}-filler-${index + 1}`, fillerTurns[index]);
+      }
+
+      const preFinalRequestCount = fakeOpenAI.requests.length;
+      const finalResult = await sendMessage(
+        `${input.conversationId}-final`,
+        "不要重复读取页面，直接给完整结论：需要包含 browserDecision、browserRootCause、browserStopPoint。",
+        15000,
+      );
+      const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
+      const initialMissingFacts = EXPECTED_FACTS.filter((fact) => !initialFinalPromptText.includes(fact));
+      const meta = await readMeta(`${input.conversationId}-meta-final`);
+
+      return {
+        initialFinalPromptText,
+        initialFinalCarryoverBlock: extractTaggedPromptBlock(initialFinalPromptText, "carryover-context"),
+        initialMissingFacts,
+        finalTurnToolCalls: scenarioState.finalTurnToolCalls,
+        finalText: finalResult.finalText,
+        meta,
+        toolsVisibility: toolsVisibilityRes?.visibility?.browser_get_content,
+      };
+    } finally {
+      if (wsHandle) {
+        await wsHandle.close().catch(() => {});
+      }
+      if (gateway) {
+        await stopGatewayProcess(gateway).catch(() => {});
+      }
+      await fakeOpenAI.close().catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  const baseline = await runScenario({
+    stateDirPrefix: "belldandy-browser-session-baseline-",
+    promptMarker: "PROMPT_BROWSER_SESSION_BASELINE",
+    conversationId: "conv-browser-session-baseline",
+    extraEnv: {
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+    },
+  });
+  const lowRiskOnly = await runScenario({
+    stateDirPrefix: "belldandy-browser-session-low-risk-only-",
+    promptMarker: "PROMPT_BROWSER_SESSION_LOW_RISK_ONLY",
+    conversationId: "conv-browser-session-low-risk-only",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "false",
+    },
+  });
+  const lowRiskWithCarryover = await runScenario({
+    stateDirPrefix: "belldandy-browser-session-low-risk-carryover-",
+    promptMarker: "PROMPT_BROWSER_SESSION_LOW_RISK_CARRYOVER",
+    conversationId: "conv-browser-session-low-risk-carryover",
+    extraEnv: {
+      BELLDANDY_MAX_HISTORY: "60",
+      BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+      BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+      BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+    },
+  });
+
+  expect(baseline.initialMissingFacts).toEqual([
+    FACT_BROWSER_DECISION,
+  ]);
+  expect(lowRiskOnly.initialMissingFacts).toEqual([]);
+  expect(lowRiskWithCarryover.initialMissingFacts).toEqual([]);
+
+  expect(baseline.finalTurnToolCalls).toBe(1);
+  expect(lowRiskOnly.finalTurnToolCalls).toBe(0);
+  expect(lowRiskWithCarryover.finalTurnToolCalls).toBe(0);
+
+  expect(baseline.finalText).toBe(canonicalFinalText);
+  expect(lowRiskOnly.finalText).toBe(canonicalFinalText);
+  expect(lowRiskWithCarryover.finalText).toBe(canonicalFinalText);
+  expect(new Set([
+    baseline.finalText,
+    lowRiskOnly.finalText,
+    lowRiskWithCarryover.finalText,
+  ]).size).toBe(1);
+
+  expect(baseline.initialFinalCarryoverBlock).toContain("browser_get_content: https://example.com/context/browser-carryover-article");
+  expect(baseline.initialFinalCarryoverBlock).toContain(FACT_BROWSER_ROOT_CAUSE);
+  expect(baseline.initialFinalCarryoverBlock).toContain(FACT_BROWSER_STOP_POINT);
+  expect(baseline.initialFinalPromptText).not.toContain(FACT_BROWSER_DECISION);
+  expect(baseline.initialFinalPromptText).toContain(FACT_BROWSER_ROOT_CAUSE);
+  expect(baseline.initialFinalPromptText).toContain(FACT_BROWSER_STOP_POINT);
+
+  expect(lowRiskOnly.initialFinalPromptText).not.toContain("<carryover-context");
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_BROWSER_DECISION);
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_BROWSER_ROOT_CAUSE);
+  expect(lowRiskOnly.initialFinalPromptText).toContain(FACT_BROWSER_STOP_POINT);
+
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain("browser_get_content: https://example.com/context/browser-carryover-article");
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain(FACT_BROWSER_ROOT_CAUSE);
+  expect(lowRiskWithCarryover.initialFinalCarryoverBlock).toContain(FACT_BROWSER_STOP_POINT);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_BROWSER_DECISION);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_BROWSER_ROOT_CAUSE);
+  expect(lowRiskWithCarryover.initialFinalPromptText).toContain(FACT_BROWSER_STOP_POINT);
+
+  expect(Number(baseline.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
+  expect(Number(lowRiskOnly.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBe(0);
+  expect(Number(lowRiskWithCarryover.meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThan(0);
+}, 180000);
+
+test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated across page switches", async () => {
+  const PAGE_A_URL = "https://example.com/context/browser-carryover-page-a";
+  const PAGE_B_URL = "https://example.com/context/browser-carryover-page-b";
+  const FACT_PAGE_A_ROOT_CAUSE = "browserPageARootCause=page-a-documents-old-render-path";
+  const FACT_PAGE_A_STOP_POINT = "browserPageAStopPoint=archive-page-a-context-only";
+  const FACT_PAGE_B_DECISION = "browserPageBDecision=prefer-page-b-current-source";
+  const FACT_PAGE_B_ROOT_CAUSE = "browserPageBRootCause=page-b-confirms-source-key-isolation";
+  const FACT_PAGE_B_STOP_POINT = "browserPageBStopPoint=ship-page-url-stable-carryover";
+  const EXPECTED_PAGE_B_FACTS = [
+    FACT_PAGE_B_DECISION,
+    FACT_PAGE_B_ROOT_CAUSE,
+    FACT_PAGE_B_STOP_POINT,
+  ];
+  const canonicalFinalText = [
+    "第二页稳定结论：",
+    FACT_PAGE_B_DECISION,
+    FACT_PAGE_B_ROOT_CAUSE,
+    FACT_PAGE_B_STOP_POINT,
+  ].join("\n");
+  const fillerTurns = Array.from({ length: 8 }, (_, index) =>
+    `第${index + 1}轮继续推进跨页面 carryover 验证，保留占位 MARKER_BROWSER_MULTI_${String(index + 1).padStart(2, "0")}。`);
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-browser-multi-page-carryover-"));
+  const conversationId = "conv-browser-multi-page-carryover";
+  const preload = await createSequentialBrowserGetContentFixturePreload({
+    stateDir,
+    pages: [
+      {
+        pageUrl: PAGE_A_URL,
+        pageTitle: "Fixture Browser Carryover Page A",
+        bodyText: [
+          FACT_PAGE_A_ROOT_CAUSE,
+          FACT_PAGE_A_STOP_POINT,
+          "第一页正文专门用于验证它不会在跨页面续做时覆盖第二页事实。",
+          "额外补足一些正文长度，确保 waitForFunction 的正文长度阈值被满足。".repeat(8),
+        ].join(" "),
+        html: [
+          "<html><head><title>Fixture Browser Carryover Page A</title></head><body><article>",
+          "<h1>Fixture Browser Carryover Page A</h1>",
+          `<p>${FACT_PAGE_A_ROOT_CAUSE}</p>`,
+          `<p>${FACT_PAGE_A_STOP_POINT}</p>`,
+          "<p>第一页正文专门用于验证它不会在跨页面续做时覆盖第二页事实。</p>",
+          `<p>${"额外补足一些正文长度，确保 waitForFunction 的正文长度阈值被满足。".repeat(8)}</p>`,
+          "</article></body></html>",
+        ].join(""),
+      },
+      {
+        pageUrl: PAGE_B_URL,
+        pageTitle: "Fixture Browser Carryover Page B",
+        bodyText: [
+          FACT_PAGE_B_ROOT_CAUSE,
+          FACT_PAGE_B_STOP_POINT,
+          "第二页正文用于确认 pageUrl 稳定来源键能把当前页面事实单独保留下来。",
+          "额外补足一些正文长度，确保 waitForFunction 的正文长度阈值被满足。".repeat(8),
+        ].join(" "),
+        html: [
+          "<html><head><title>Fixture Browser Carryover Page B</title></head><body><article>",
+          "<h1>Fixture Browser Carryover Page B</h1>",
+          `<p>${FACT_PAGE_B_ROOT_CAUSE}</p>`,
+          `<p>${FACT_PAGE_B_STOP_POINT}</p>`,
+          "<p>第二页正文用于确认 pageUrl 稳定来源键能把当前页面事实单独保留下来。</p>",
+          `<p>${"额外补足一些正文长度，确保 waitForFunction 的正文长度阈值被满足。".repeat(8)}</p>`,
+          "</article></body></html>",
+        ].join(""),
+      },
+    ],
+  });
+  const fakeOpenAI = await startFakeOpenAIServer({
+    handler: ({ body, requests }) => {
+      const promptText = extractFakeOpenAIRequestText(body);
+      const latestUserRequest = extractTaggedPromptInnerText(promptText, "latest-user-request");
+      const missingFacts = EXPECTED_PAGE_B_FACTS.filter((fact) => !promptText.includes(fact));
+
+      switch (requests.length) {
+        case 1:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "browser-page-a",
+              name: "browser_get_content",
+              arguments: JSON.stringify({ format: "markdown" }),
+            }],
+          });
+        case 2:
+          return createFakeChatCompletionResponse({
+            content: `已读取第一页：${FACT_PAGE_A_ROOT_CAUSE}，${FACT_PAGE_A_STOP_POINT}。`,
+          });
+        case 3:
+          return createFakeChatCompletionResponse({
+            content: "",
+            toolCalls: [{
+              id: "browser-page-b",
+              name: "browser_get_content",
+              arguments: JSON.stringify({ format: "markdown" }),
+            }],
+          });
+        case 4:
+          return createFakeChatCompletionResponse({
+            content: `已读取第二页：${FACT_PAGE_B_ROOT_CAUSE}，${FACT_PAGE_B_STOP_POINT}。`,
+          });
+        case 5:
+          return createFakeChatCompletionResponse({
+            content: `收到，${FACT_PAGE_B_DECISION}。`,
+          });
+        default:
+          if (latestUserRequest.includes("第二页稳定结论")) {
+            return createFakeChatCompletionResponse({
+              content: missingFacts.length === 0
+                ? canonicalFinalText
+                : `MISSING_PAGE_B_FACTS:${missingFacts.join(",")}`,
+            });
+          }
+          return createFakeChatCompletionResponse({
+            content: `ack-browser-multi-turn-${requests.length}`,
+          });
+      }
+    },
+  });
+  let gateway: GatewayProcessHandle | undefined;
+  let wsHandle: GatewayWebSocketHandle | undefined;
+
+  try {
+    gateway = await startGatewayProcess({
+      stateDir,
+      openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
+      promptMarker: "PROMPT_BROWSER_MULTI_PAGE_CARRYOVER",
+      extraEnv: {
+        BELLDANDY_TOOLS_ENABLED: "true",
+        BELLDANDY_BROWSER_RELAY_ENABLED: "false",
+        BELLDANDY_CONTEXT_INJECTION: "true",
+        BELLDANDY_AUTO_RECALL_ENABLED: "false",
+        BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "false",
+        BELLDANDY_TASK_MEMORY_ENABLED: "false",
+        BELLDANDY_MEMORY_SESSION_DIGEST_MAX_RUNS: "0",
+        BELLDANDY_MAX_HISTORY: "60",
+        BELLDANDY_COMPACTION_KEEP_RECENT: "40",
+        BELLDANDY_TOOL_RESULT_TRANSCRIPT_CHAR_LIMIT: "24000",
+        BELLDANDY_PROMPT_SNAPSHOT_MAX_RUNS: "96",
+        BELLDANDY_PROMPT_SNAPSHOT_MAX_PERSISTED_RUNS: "40",
+        BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "true",
+      },
+      extraImports: [preload.importSpecifier],
+    });
+    wsHandle = await connectGatewayWebSocket(gateway.port, {
+      role: "node",
+      clientId: "bdd-node-browser-multi-page",
+    });
+
+    const sendMessage = async (
+      requestId: string,
+      text: string,
+      timeoutMs = 5000,
+    ): Promise<{ runId: string; finalText: string }> => {
+      const finalCountBefore = wsHandle!.frames.filter((frame) =>
+        frame.type === "event"
+        && frame.event === "chat.final"
+        && frame.payload?.conversationId === conversationId
+      ).length;
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "message.send",
+        params: {
+          conversationId,
+          text,
+        },
+      }));
+      await waitFor(
+        () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
+        timeoutMs,
+      );
+      await waitFor(() =>
+        wsHandle!.frames.filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === conversationId
+        ).length > finalCountBefore,
+        timeoutMs,
+      );
+      const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
+      const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
+      const finalFrame = wsHandle!.frames
+        .filter((frame) =>
+          frame.type === "event"
+          && frame.event === "chat.final"
+          && frame.payload?.conversationId === conversationId)
+        .at(-1);
+      const finalText = String(finalFrame?.payload?.text ?? "");
+      expect(runId).toBeTruthy();
+      expect(finalText).toBeTruthy();
+      return { runId, finalText };
+    };
+
+    const readMeta = async (requestId: string) => {
+      wsHandle!.ws.send(JSON.stringify({
+        type: "req",
+        id: requestId,
+        method: "conversation.meta",
+        params: {
+          conversationId,
+        },
+      }));
+      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
+      return wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId)?.payload;
+    };
+
+    wsHandle.ws.send(JSON.stringify({
+      type: "req",
+      id: `${conversationId}-before-pairing`,
+      method: "message.send",
+      params: {
+        conversationId,
+        text: "pairing bootstrap",
+      },
+    }));
+    await approveLatestPairingCode(wsHandle.frames, stateDir);
+
+    await sendMessage(`${conversationId}-page-a`, "先读取第一页正文，并只记住第一页事实。", 15000);
+    await sendMessage(`${conversationId}-page-b`, "现在切换到第二页，再读取当前页面正文，并记住第二页事实。", 15000);
+    await sendMessage(`${conversationId}-decision`, `再记住这个当前页决策：${FACT_PAGE_B_DECISION}。`);
+
+    for (let index = 0; index < fillerTurns.length; index += 1) {
+      await sendMessage(`${conversationId}-filler-${index + 1}`, fillerTurns[index]);
+    }
+
+    const preFinalRequestCount = fakeOpenAI.requests.length;
+    const finalResult = await sendMessage(
+      `${conversationId}-final`,
+      "不要重复读取页面，直接给第二页稳定结论：需要包含 browserPageBDecision、browserPageBRootCause、browserPageBStopPoint，且不要把第一页事实误当成第二页。",
+      15000,
+    );
+    const initialFinalPromptText = fakeOpenAI.requestTexts[preFinalRequestCount] ?? "";
+    const initialFinalCarryoverBlock = extractTaggedPromptBlock(initialFinalPromptText, "carryover-context");
+    const pageALine = initialFinalCarryoverBlock
+      .split("\n")
+      .find((line) => line.includes(`browser_get_content: ${PAGE_A_URL}`)) ?? "";
+    const pageBLine = initialFinalCarryoverBlock
+      .split("\n")
+      .find((line) => line.includes(`browser_get_content: ${PAGE_B_URL}`)) ?? "";
+    const meta = await readMeta(`${conversationId}-meta-final`);
+
+    expect(finalResult.finalText).toBe(canonicalFinalText);
+    expect(initialFinalPromptText).toContain(FACT_PAGE_B_DECISION);
+    expect(initialFinalPromptText).toContain(FACT_PAGE_B_ROOT_CAUSE);
+    expect(initialFinalPromptText).toContain(FACT_PAGE_B_STOP_POINT);
+
+    expect(initialFinalCarryoverBlock).toContain(`browser_get_content: ${PAGE_A_URL}`);
+    expect(initialFinalCarryoverBlock).toContain(`browser_get_content: ${PAGE_B_URL}`);
+    expect(countSubstring(initialFinalCarryoverBlock, `browser_get_content: ${PAGE_A_URL}`)).toBe(1);
+    expect(countSubstring(initialFinalCarryoverBlock, `browser_get_content: ${PAGE_B_URL}`)).toBe(1);
+
+    expect(pageALine).toContain(FACT_PAGE_A_ROOT_CAUSE);
+    expect(pageALine).toContain(FACT_PAGE_A_STOP_POINT);
+    expect(pageALine).not.toContain(FACT_PAGE_B_ROOT_CAUSE);
+    expect(pageALine).not.toContain(FACT_PAGE_B_STOP_POINT);
+
+    expect(pageBLine).toContain(FACT_PAGE_B_ROOT_CAUSE);
+    expect(pageBLine).toContain(FACT_PAGE_B_STOP_POINT);
+    expect(pageBLine).not.toContain(FACT_PAGE_A_ROOT_CAUSE);
+    expect(pageBLine).not.toContain(FACT_PAGE_A_STOP_POINT);
+
+    expect(Number(meta?.carryoverContextEstimate?.itemCount ?? 0)).toBeGreaterThanOrEqual(2);
+  } finally {
+    if (wsHandle) {
+      await wsHandle.close().catch(() => {});
+    }
+    if (gateway) {
+      await stopGatewayProcess(gateway).catch(() => {});
+    }
+    await fakeOpenAI.close().catch(() => {});
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 180000);
+
 type FakeOpenAIHandle = {
   baseUrl: string;
   requests: Array<{ url: string; body: Record<string, unknown> }>;
+  requestTexts: string[];
   close: () => Promise<void>;
 };
 
-async function startFakeOpenAIServer(): Promise<FakeOpenAIHandle> {
+async function startFakeOpenAIServer(options?: {
+  handler?: (input: {
+    url: string;
+    body: Record<string, unknown>;
+    requests: Array<{ url: string; body: Record<string, unknown> }>;
+  }) => unknown;
+}): Promise<FakeOpenAIHandle> {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const requestTexts: string[] = [];
   const server = http.createServer(async (req, res) => {
     if (req.method !== "POST" || !req.url || !req.url.endsWith("/chat/completions")) {
       res.statusCode = 404;
@@ -1355,10 +3418,19 @@ async function startFakeOpenAIServer(): Promise<FakeOpenAIHandle> {
       url: req.url,
       body,
     });
+    requestTexts.push(extractFakeOpenAIRequestText(body));
+
+    const responsePayload = options?.handler
+      ? options.handler({
+        url: req.url,
+        body,
+        requests,
+      })
+      : undefined;
 
     res.statusCode = 200;
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({
+    res.end(JSON.stringify(responsePayload ?? {
       id: "chatcmpl-test",
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
@@ -1397,6 +3469,7 @@ async function startFakeOpenAIServer(): Promise<FakeOpenAIHandle> {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
+    requestTexts,
     close: async () => {
       if (!server.listening) return;
       await new Promise<void>((resolve, reject) => {
@@ -1412,6 +3485,49 @@ async function startFakeOpenAIServer(): Promise<FakeOpenAIHandle> {
   };
 }
 
+function createFakeChatCompletionResponse(payload: {
+  content?: string;
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    arguments: string;
+  }>;
+}) {
+  return {
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: "gpt-test",
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          ...(payload.content !== undefined ? { content: payload.content } : {}),
+          ...(payload.toolCalls?.length
+            ? {
+              tool_calls: payload.toolCalls.map((toolCall) => ({
+                id: toolCall.id,
+                type: "function",
+                function: {
+                  name: toolCall.name,
+                  arguments: toolCall.arguments,
+                },
+              })),
+            }
+            : {}),
+          },
+        finish_reason: payload.toolCalls?.length ? "tool_calls" : "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      total_tokens: 2,
+    },
+  };
+}
+
 type GatewayProcessHandle = {
   child: ChildProcess;
   port: number;
@@ -1423,6 +3539,7 @@ async function startGatewayProcess(input: {
   openaiBaseUrl: string;
   promptMarker: string;
   extraEnv?: Record<string, string>;
+  extraImports?: string[];
 }): Promise<GatewayProcessHandle> {
   const output: string[] = [];
   const port = await getAvailablePort();
@@ -1434,7 +3551,13 @@ async function startGatewayProcess(input: {
       && key !== "AUTO_OPEN_BROWSER"
     ),
   );
-  const child = spawn(process.execPath, ["--import", "tsx", GATEWAY_ENTRY_PATH], {
+  const nodeArgs = ["--import", "tsx"];
+  for (const extraImport of input.extraImports ?? []) {
+    nodeArgs.push("--import", extraImport);
+  }
+  nodeArgs.push(GATEWAY_ENTRY_PATH);
+
+  const child = spawn(process.execPath, nodeArgs, {
     cwd: REPO_ROOT,
     env: {
       ...inheritedEnv,
@@ -1491,6 +3614,77 @@ async function startGatewayProcess(input: {
   };
 }
 
+async function createBrowserGetContentFixturePreload(input: {
+  stateDir: string;
+  pageUrl: string;
+  pageTitle: string;
+  bodyText: string;
+  html: string;
+}): Promise<{ filePath: string; importSpecifier: string }> {
+  const preloadPath = path.join(input.stateDir, "browser-get-content-fixture-preload.mjs");
+  const moduleCode = [
+    "import { BrowserManager } from \"file:///E:/project/star-sanctuary/packages/belldandy-skills/dist/builtin/browser/tools.js\";",
+    `const fixturePageUrl = ${JSON.stringify(input.pageUrl)};`,
+    `const fixturePageTitle = ${JSON.stringify(input.pageTitle)};`,
+    `const fixtureBodyText = ${JSON.stringify(input.bodyText)};`,
+    `const fixtureHtml = ${JSON.stringify(input.html)};`,
+    "BrowserManager.getInstance = () => ({",
+    "  getPage: async () => ({",
+    "    waitForFunction: async () => true,",
+    "    content: async () => fixtureHtml,",
+    "    evaluate: async () => ({ title: fixturePageTitle, bodyText: fixtureBodyText }),",
+    "    url: () => fixturePageUrl,",
+    "    isClosed: () => false,",
+    "    target: () => ({ _targetId: 'fixture-browser-page' }),",
+    "  }),",
+    "});",
+    "",
+  ].join("\n");
+  await fs.writeFile(preloadPath, moduleCode, "utf-8");
+  return {
+    filePath: preloadPath,
+    importSpecifier: `file:///${preloadPath.replace(/\\/g, "/")}`,
+  };
+}
+
+async function createSequentialBrowserGetContentFixturePreload(input: {
+  stateDir: string;
+  pages: Array<{
+    pageUrl: string;
+    pageTitle: string;
+    bodyText: string;
+    html: string;
+  }>;
+}): Promise<{ filePath: string; importSpecifier: string }> {
+  const preloadPath = path.join(input.stateDir, "browser-get-content-sequential-fixture-preload.mjs");
+  const moduleCode = [
+    "import { BrowserManager } from \"file:///E:/project/star-sanctuary/packages/belldandy-skills/dist/builtin/browser/tools.js\";",
+    `const fixturePages = ${JSON.stringify(input.pages)};`,
+    "let callCount = 0;",
+    "BrowserManager.getInstance = () => ({",
+    "  getPage: async () => {",
+    "    const index = Math.min(callCount, fixturePages.length - 1);",
+    "    callCount += 1;",
+    "    const page = fixturePages[index];",
+    "    return {",
+    "      waitForFunction: async () => true,",
+    "      content: async () => page.html,",
+    "      evaluate: async () => ({ title: page.pageTitle, bodyText: page.bodyText }),",
+    "      url: () => page.pageUrl,",
+    "      isClosed: () => false,",
+    "      target: () => ({ _targetId: `fixture-browser-page-${index + 1}` }),",
+    "    };",
+    "  },",
+    "});",
+    "",
+  ].join("\n");
+  await fs.writeFile(preloadPath, moduleCode, "utf-8");
+  return {
+    filePath: preloadPath,
+    importSpecifier: `file:///${preloadPath.replace(/\\/g, "/")}`,
+  };
+}
+
 async function stopGatewayProcess(handle: GatewayProcessHandle): Promise<void> {
   const child = handle.child;
   if (child.exitCode !== null || child.killed) {
@@ -1526,7 +3720,13 @@ type GatewayWebSocketHandle = {
   close: () => Promise<void>;
 };
 
-async function connectGatewayWebSocket(port: number): Promise<GatewayWebSocketHandle> {
+async function connectGatewayWebSocket(
+  port: number,
+  options?: {
+    role?: "web" | "cli" | "node";
+    clientId?: string;
+  },
+): Promise<GatewayWebSocketHandle> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`, { origin: "http://127.0.0.1" });
   const frames: any[] = [];
   const closePromise = new Promise<void>((resolve) => ws.once("close", () => resolve()));
@@ -1535,7 +3735,12 @@ async function connectGatewayWebSocket(port: number): Promise<GatewayWebSocketHa
   });
 
   await waitFor(() => frames.some((frame) => frame.type === "connect.challenge"));
-  ws.send(JSON.stringify({ type: "connect", role: "web", auth: { mode: "none" } }));
+  ws.send(JSON.stringify({
+    type: "connect",
+    role: options?.role ?? "web",
+    auth: { mode: "none" },
+    ...(options?.clientId ? { clientId: options.clientId } : {}),
+  }));
   await waitFor(() => frames.some((frame) => frame.type === "hello-ok"));
 
   return {
@@ -1795,6 +4000,37 @@ function extractOpenAIMessageContent(content: unknown): string[] {
     const text = (part as Record<string, unknown>).text;
     return typeof text === "string" ? [text] : [];
   });
+}
+
+function extractTaggedPromptBlock(text: string, tagName: string): string {
+  const pattern = new RegExp(`<${tagName}\\b[^>]*>[\\s\\S]*?<\\/${tagName}>`, "i");
+  return pattern.exec(text)?.[0] ?? "";
+}
+
+function extractTaggedPromptInnerText(text: string, tagName: string): string {
+  const block = extractTaggedPromptBlock(text, tagName);
+  if (!block) {
+    return "";
+  }
+  return block
+    .replace(new RegExp(`^<${tagName}\\b[^>]*>`, "i"), "")
+    .replace(new RegExp(`<\\/${tagName}>$`, "i"), "")
+    .trim();
+}
+
+function countSubstring(text: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let searchIndex = 0;
+  while (searchIndex < text.length) {
+    const matchIndex = text.indexOf(needle, searchIndex);
+    if (matchIndex === -1) {
+      break;
+    }
+    count += 1;
+    searchIndex = matchIndex + needle.length;
+  }
+  return count;
 }
 
 async function readRequestBody(req: http.IncomingMessage): Promise<string> {

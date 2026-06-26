@@ -103,6 +103,17 @@ const BASE64_FIELD_KEY_RE = /^(base64|data)$/i;
 const DEFAULT_REASONING_TRANSCRIPT_CHAR_LIMIT = 4_000;
 const MIN_REASONING_DEDUPE_CHARS = 96;
 const STOP_REQUESTED_ERROR = "__BELLDANDY_STOP_REQUESTED__";
+const CARRYOVER_CONTEXT_TOOL_LIMIT = 12;
+const CARRYOVER_CONTEXT_FACT_LIMIT = 4;
+const CARRYOVER_CONTEXT_IMPORTANT_TOOLS = new Set([
+  "file_read",
+  "conversation_read",
+  "retrieve_tool_result",
+  "log_read",
+  "log_search",
+  "browser_get_content",
+  "run_command",
+]);
 
 /**
  * reasoning_content 回传策略
@@ -722,6 +733,33 @@ function compactToolDigestText(value: unknown, limit: number = 180): string {
 }
 
 function inferToolDigestTarget(args: JsonObject): string | undefined {
+  const conversationId = typeof args.conversation_id === "string" ? args.conversation_id.trim() : "";
+  if (conversationId) {
+    const view = typeof args.view === "string" ? args.view.trim() : "";
+    return view ? `${conversationId}#${view}` : conversationId;
+  }
+  const pageUrl = typeof args.pageUrl === "string" ? args.pageUrl.trim() : "";
+  if (pageUrl) {
+    return compactToolDigestText(pageUrl, 120);
+  }
+  const browserUrl = typeof args.url === "string" ? args.url.trim() : "";
+  if (browserUrl) {
+    return compactToolDigestText(browserUrl, 120);
+  }
+  const logQuery = typeof args.query === "string" ? args.query.trim() : "";
+  if (logQuery) {
+    const startDate = typeof args.startDate === "string" ? args.startDate.trim() : "";
+    const endDate = typeof args.endDate === "string" ? args.endDate.trim() : "";
+    const range = [startDate, endDate].filter(Boolean).join("..");
+    return compactToolDigestText(range ? `${logQuery} @ ${range}` : logQuery, 120);
+  }
+  const logDate = typeof args.date === "string" ? args.date.trim() : "";
+  if (logDate) {
+    const moduleName = typeof args.module === "string" ? args.module.trim() : "";
+    const keyword = typeof args.keyword === "string" ? args.keyword.trim() : "";
+    const suffix = [moduleName && `module=${moduleName}`, keyword && `keyword=${keyword}`].filter(Boolean).join(" ");
+    return compactToolDigestText(suffix ? `${logDate} ${suffix}` : logDate, 120);
+  }
   const candidateKeys = ["path", "file", "filename", "url", "query", "command", "cwd", "sessionId"];
   for (const key of candidateKeys) {
     const value = args[key];
@@ -730,6 +768,16 @@ function inferToolDigestTarget(args: JsonObject): string | undefined {
     }
   }
   return undefined;
+}
+
+function buildCarryoverSourceKey(toolName: string, args: JsonObject, target?: string): string {
+  const normalizedTarget = typeof target === "string" ? target.trim() : "";
+  if (normalizedTarget) {
+    return `${toolName}:${normalizedTarget}`;
+  }
+  const projectedArgs = projectRecentToolResultArgs(args);
+  const serializedArgs = compactToolDigestText(JSON.stringify(projectedArgs || {}), 120);
+  return `${toolName}:${serializedArgs || "{}"}`;
 }
 
 const RECENT_TOOL_RESULT_ARG_STRING_LIMIT = 160;
@@ -996,6 +1044,83 @@ function buildRecentToolResultRecord(input: {
   };
 }
 
+function buildCarryoverFacts(input: {
+  summary: string;
+  target?: string;
+  output?: string;
+  error?: string;
+}): string[] {
+  const facts = [
+    input.target ? `target: ${compactToolDigestText(input.target, 180)}` : "",
+    input.output ? `result: ${compactToolDigestText(input.output, 220)}` : "",
+    input.error ? `error: ${compactToolDigestText(input.error, 220)}` : "",
+    input.summary ? `summary: ${compactToolDigestText(input.summary, 220)}` : "",
+  ]
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set(facts)].slice(0, CARRYOVER_CONTEXT_FACT_LIMIT);
+}
+
+function inferCarryoverSourceType(toolName: string): "file_read" | "conversation_read" | "tool_result" | "log_read" | "web_result" | "other" {
+  switch (toolName) {
+    case "file_read":
+      return "file_read";
+    case "conversation_read":
+      return "conversation_read";
+    case "log_read":
+    case "log_search":
+      return "log_read";
+    case "browser_get_content":
+      return "web_result";
+    default:
+      return "tool_result";
+  }
+}
+
+function buildCarryoverContextRecord(input: {
+  toolName: string;
+  args: JsonObject;
+  success: boolean;
+  output?: string;
+  error?: string;
+  toolCallId?: string;
+}) {
+  if (!CARRYOVER_CONTEXT_IMPORTANT_TOOLS.has(input.toolName)) {
+    return undefined;
+  }
+  const digest = buildToolDigestRecord(input);
+  const keyFacts = buildCarryoverFacts({
+    summary: digest.summary,
+    target: digest.target,
+    output: input.success ? input.output : undefined,
+    error: input.success ? undefined : input.error,
+  });
+  const summary = input.success
+    ? compactToolDigestText(input.output || digest.summary, 420)
+    : compactToolDigestText(input.error || digest.summary, 420);
+  if (!summary || (summary.length < 48 && keyFacts.length === 0)) {
+    return undefined;
+  }
+
+  const titleBase = digest.target
+    ? `${input.toolName}: ${digest.target}`
+    : input.toolName;
+  const priority = input.success
+    ? Math.min(10, 4 + keyFacts.length + (summary.length >= 160 ? 2 : 0))
+    : Math.min(10, 6 + keyFacts.length);
+
+  return {
+    sourceType: inferCarryoverSourceType(input.toolName),
+    sourceKey: buildCarryoverSourceKey(input.toolName, input.args, digest.target),
+    title: compactToolDigestText(titleBase, 120),
+    summary,
+    keyFacts,
+    tokenEstimate: estimateTokens([summary, ...keyFacts].join("\n")),
+    lastUsedAt: Date.now(),
+    priority,
+  };
+}
+
 function cloneJsonObject<T extends JsonObject | undefined>(value: T): T {
   if (!value || typeof value !== "object") {
     return value;
@@ -1014,11 +1139,19 @@ function recordToolResultArtifacts(input: {
   failureKind?: ToolFailureKind;
   toolCallId?: string;
   isSynthetic?: boolean;
+  metadata?: JsonObject;
 }): void {
   if (!input.conversationStore) return;
+  const argsWithMetadata = cloneJsonObject(input.args) ?? {};
+  if (input.toolName === "browser_get_content") {
+    const pageUrl = typeof input.metadata?.pageUrl === "string" ? input.metadata.pageUrl.trim() : "";
+    if (pageUrl) {
+      argsWithMetadata.pageUrl = pageUrl;
+    }
+  }
   input.conversationStore.recordToolDigest(input.conversationId, buildToolDigestRecord({
     toolName: input.toolName,
-    args: input.args,
+    args: argsWithMetadata,
     success: input.success,
     output: input.output,
     error: input.error,
@@ -1026,7 +1159,7 @@ function recordToolResultArtifacts(input: {
   }));
   input.conversationStore.recordRecentToolResult(input.conversationId, buildRecentToolResultRecord({
     toolName: input.toolName,
-    args: input.args,
+    args: argsWithMetadata,
     success: input.success,
     output: input.output,
     error: input.error,
@@ -1034,6 +1167,21 @@ function recordToolResultArtifacts(input: {
     toolCallId: input.toolCallId,
     isSynthetic: input.isSynthetic,
   }));
+  const carryoverRecord = buildCarryoverContextRecord({
+    toolName: input.toolName,
+    args: argsWithMetadata,
+    success: input.success,
+    output: input.output,
+    error: input.error,
+    toolCallId: input.toolCallId,
+  });
+  if (carryoverRecord) {
+    input.conversationStore.upsertCarryoverContext(
+      input.conversationId,
+      carryoverRecord,
+      CARRYOVER_CONTEXT_TOOL_LIMIT,
+    );
+  }
 }
 
 function buildRecoveredDuplicateToolResult(input: {
@@ -3084,17 +3232,18 @@ export class ToolEnabledAgent implements BelldandyAgent {
               toolCallId: tc.id,
             },
           }));
-          recordToolResultArtifacts({
-            conversationStore: this.opts.conversationStore,
-            conversationId: input.conversationId,
-            toolName: result.name,
-            args: request.arguments,
-            success: result.success,
-            output: result.output,
-            error: result.error,
-            failureKind: result.failureKind,
-            toolCallId: tc.id,
-          });
+              recordToolResultArtifacts({
+                conversationStore: this.opts.conversationStore,
+                conversationId: input.conversationId,
+                toolName: result.name,
+                args: request.arguments,
+                success: result.success,
+                output: result.output,
+                error: result.error,
+                failureKind: result.failureKind,
+                toolCallId: tc.id,
+                metadata: result.metadata,
+              });
           pendingToolFollowupDeltas.push(...buildToolResultPromptDeltas({
             result,
             requestArguments: request.arguments,

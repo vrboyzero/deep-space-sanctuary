@@ -242,6 +242,21 @@ export class ResidentConversationStore extends ConversationStore {
     return this.withConversationStore(conversationId, (store) => store.getRecentToolResults(conversationId, options));
   }
 
+  getCarryoverContext(...args: Parameters<ConversationStore["getCarryoverContext"]>): ReturnType<ConversationStore["getCarryoverContext"]> {
+    const [conversationId, options] = args;
+    return this.withConversationStore(conversationId, (store) => store.getCarryoverContext(conversationId, options));
+  }
+
+  setCarryoverContext(...args: Parameters<ConversationStore["setCarryoverContext"]>): ReturnType<ConversationStore["setCarryoverContext"]> {
+    const [conversationId, records, limit] = args;
+    return this.withConversationStore(conversationId, (store) => store.setCarryoverContext(conversationId, records, limit));
+  }
+
+  upsertCarryoverContext(...args: Parameters<ConversationStore["upsertCarryoverContext"]>): ReturnType<ConversationStore["upsertCarryoverContext"]> {
+    const [conversationId, record, limit] = args;
+    return this.withConversationStore(conversationId, (store) => store.upsertCarryoverContext(conversationId, record, limit));
+  }
+
   recordTaskTokenResult(...args: Parameters<ConversationStore["recordTaskTokenResult"]>): void {
     const [conversationId, record, limit] = args;
     this.withConversationStore(conversationId, (store) => store.recordTaskTokenResult(conversationId, record, limit));

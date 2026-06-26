@@ -106,6 +106,32 @@ export type ToolDigestRecord = {
 
 export type StoredRecentToolResultRecord = RecentToolResultRecord;
 
+export type CarryoverContextSourceType =
+    | "file_read"
+    | "conversation_read"
+    | "tool_result"
+    | "log_read"
+    | "web_result"
+    | "attachment"
+    | "other";
+
+export type CarryoverContextRecord = {
+    sourceType: CarryoverContextSourceType;
+    sourceKey: string;
+    title: string;
+    summary: string;
+    keyFacts: string[];
+    tokenEstimate: number;
+    lastUsedAt: number;
+    priority: number;
+};
+
+type CarryoverContextQueryOptions = {
+    limit?: number;
+    query?: string;
+    now?: number;
+};
+
 export type CompactBoundaryRecord = {
     id: string;
     trigger: "request" | "manual" | "partial_up_to" | "partial_from";
@@ -178,6 +204,8 @@ export type Conversation = {
     toolDigests?: ToolDigestRecord[];
     /** 最近可恢复的工具结果 */
     recentToolResults?: StoredRecentToolResultRecord[];
+    /** 下一轮可继承的结构化工作集 */
+    carryoverContext?: CarryoverContextRecord[];
     /** 当前会话为下一轮模型调用临时排队的 deferred tools */
     loadedToolNames?: string[];
     /** 最近压缩边界元数据 */
@@ -264,7 +292,7 @@ export type PersistedConversationSummary = {
 
 type ConversationMetaSnapshot = Partial<Pick<
     Conversation,
-    "agentId" | "channel" | "activeCounters" | "taskTokenRecords" | "toolDigests" | "recentToolResults" | "loadedToolNames" | "compactBoundaries" | "partialCompactionView" | "createdAt" | "updatedAt"
+    "agentId" | "channel" | "activeCounters" | "taskTokenRecords" | "toolDigests" | "recentToolResults" | "carryoverContext" | "loadedToolNames" | "compactBoundaries" | "partialCompactionView" | "createdAt" | "updatedAt"
 >> & {
     conversationId?: string;
 };
@@ -509,6 +537,163 @@ function normalizeRecentToolResultRecords(records: unknown): StoredRecentToolRes
         })
         .filter((item): item is StoredRecentToolResultRecord => Boolean(item));
     return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeCarryoverFact(value: unknown): string | undefined {
+    const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+    if (!text) return undefined;
+    return text.length > 240 ? `${text.slice(0, 237)}...` : text;
+}
+
+function normalizeCarryoverTitle(value: unknown): string {
+    const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+    if (!text) return "";
+    return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function normalizeCarryoverSummary(value: unknown): string {
+    const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+    if (!text) return "";
+    return text.length > 800 ? `${text.slice(0, 797)}...` : text;
+}
+
+function normalizeCarryoverSourceType(value: unknown): CarryoverContextSourceType {
+    switch (value) {
+        case "file_read":
+        case "conversation_read":
+        case "tool_result":
+        case "log_read":
+        case "web_result":
+        case "attachment":
+            return value;
+        default:
+            return "other";
+    }
+}
+
+function normalizeCarryoverContextRecord(record: Partial<CarryoverContextRecord> | undefined): CarryoverContextRecord | undefined {
+    if (!record) return undefined;
+    const sourceKey = typeof record.sourceKey === "string" ? record.sourceKey.trim() : "";
+    const title = normalizeCarryoverTitle(record.title);
+    const summary = normalizeCarryoverSummary(record.summary);
+    if (!sourceKey || !title || !summary) {
+        return undefined;
+    }
+
+    const keyFacts = Array.isArray(record.keyFacts)
+        ? record.keyFacts
+            .map((item) => normalizeCarryoverFact(item))
+            .filter((item): item is string => Boolean(item))
+            .slice(0, 8)
+        : [];
+    const tokenEstimateRaw = typeof record.tokenEstimate === "number" && Number.isFinite(record.tokenEstimate)
+        ? Math.max(0, Math.floor(record.tokenEstimate))
+        : estimateTokens([summary, ...keyFacts].join("\n"));
+    const lastUsedAt = typeof record.lastUsedAt === "number" && Number.isFinite(record.lastUsedAt)
+        ? Math.max(0, Math.floor(record.lastUsedAt))
+        : Date.now();
+    const priority = typeof record.priority === "number" && Number.isFinite(record.priority)
+        ? Math.max(0, Math.floor(record.priority))
+        : 0;
+
+    return {
+        sourceType: normalizeCarryoverSourceType(record.sourceType),
+        sourceKey,
+        title,
+        summary,
+        keyFacts,
+        tokenEstimate: tokenEstimateRaw,
+        lastUsedAt,
+        priority,
+    };
+}
+
+function normalizeCarryoverContextRecords(records: unknown): CarryoverContextRecord[] | undefined {
+    if (!Array.isArray(records)) return undefined;
+    const normalized = records
+        .map((item) => {
+            if (!item || typeof item !== "object") return undefined;
+            return normalizeCarryoverContextRecord(item as Partial<CarryoverContextRecord>);
+        })
+        .filter((item): item is CarryoverContextRecord => Boolean(item));
+    return normalized.length > 0 ? normalized : undefined;
+}
+
+function mergeCarryoverContextRecord(
+    existing: CarryoverContextRecord,
+    incoming: CarryoverContextRecord,
+): CarryoverContextRecord {
+    const incomingFacts = incoming.keyFacts;
+    const mergedFacts = [
+        ...incomingFacts,
+        ...(incomingFacts.length > 0 ? [] : existing.keyFacts),
+    ].filter((item, index, array) => array.indexOf(item) === index).slice(0, 8);
+    return {
+        ...existing,
+        ...incoming,
+        keyFacts: mergedFacts,
+        priority: Math.max(existing.priority, incoming.priority),
+        lastUsedAt: Math.max(existing.lastUsedAt, incoming.lastUsedAt),
+        tokenEstimate: estimateTokens([incoming.summary, ...mergedFacts].join("\n")),
+    };
+}
+
+function tokenizeCarryoverQuery(value: string): string[] {
+    return Array.from(new Set(
+        value
+            .toLowerCase()
+            .split(/[^a-z0-9_./:-]+/i)
+            .map((item) => item.trim())
+            .filter((item) => item.length >= 2),
+    ));
+}
+
+function computeCarryoverRelevanceScore(record: CarryoverContextRecord, queryTokens: string[]): number {
+    if (queryTokens.length === 0) {
+        return 0;
+    }
+    const haystack = [
+        record.sourceKey,
+        record.title,
+        record.summary,
+        ...record.keyFacts,
+    ].join("\n").toLowerCase();
+    let score = 0;
+    for (const token of queryTokens) {
+        if (!haystack.includes(token)) {
+            continue;
+        }
+        score += 1;
+        if (record.sourceKey.toLowerCase().includes(token)) score += 3;
+        if (record.title.toLowerCase().includes(token)) score += 2;
+        if (record.summary.toLowerCase().includes(token)) score += 1;
+    }
+    return score;
+}
+
+function computeCarryoverRecencyPenalty(record: CarryoverContextRecord, now: number): number {
+    const ageMs = Math.max(0, now - record.lastUsedAt);
+    const ageHours = ageMs / (60 * 60 * 1000);
+    if (ageHours < 6) return 0;
+    if (ageHours < 24) return 1;
+    if (ageHours < 72) return 2;
+    return 3;
+}
+
+function computeCarryoverSourceTypeBoost(sourceType: CarryoverContextSourceType): number {
+    switch (sourceType) {
+        case "file_read":
+            return 2;
+        case "conversation_read":
+        case "log_read":
+            return 1;
+        case "web_result":
+            return 0;
+        case "tool_result":
+            return -1;
+        default:
+            return 0;
+    }
 }
 
 async function readConversationTailLines(filePath: string, maxLines: number): Promise<string[]> {
@@ -884,6 +1069,7 @@ export class ConversationStore {
                 taskTokenRecords: meta.taskTokenRecords,
                 toolDigests: meta.toolDigests,
                 recentToolResults: meta.recentToolResults,
+                carryoverContext: meta.carryoverContext,
                 loadedToolNames: meta.loadedToolNames,
                 compactBoundaries: meta.compactBoundaries,
                 partialCompactionView: meta.partialCompactionView,
@@ -915,7 +1101,7 @@ export class ConversationStore {
             }
 
             if (messages.length === 0) {
-                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.loadedToolNames?.length) {
+                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.carryoverContext?.length && !meta?.loadedToolNames?.length) {
                     return undefined;
                 }
                 return {
@@ -929,6 +1115,7 @@ export class ConversationStore {
                     taskTokenRecords: meta?.taskTokenRecords,
                     toolDigests: meta?.toolDigests,
                     recentToolResults: meta?.recentToolResults,
+                    carryoverContext: meta?.carryoverContext,
                     loadedToolNames: meta?.loadedToolNames,
                     compactBoundaries: meta?.compactBoundaries,
                     partialCompactionView: meta?.partialCompactionView,
@@ -951,6 +1138,7 @@ export class ConversationStore {
                 taskTokenRecords: meta?.taskTokenRecords,
                 toolDigests: meta?.toolDigests,
                 recentToolResults: meta?.recentToolResults,
+                carryoverContext: meta?.carryoverContext,
                 loadedToolNames: meta?.loadedToolNames,
                 compactBoundaries: meta?.compactBoundaries,
                 partialCompactionView: meta?.partialCompactionView,
@@ -1037,6 +1225,7 @@ export class ConversationStore {
                 taskTokenRecords: meta.taskTokenRecords,
                 toolDigests: meta.toolDigests,
                 recentToolResults: meta.recentToolResults,
+                carryoverContext: meta.carryoverContext,
                 loadedToolNames: meta.loadedToolNames,
                 compactBoundaries: meta.compactBoundaries,
                 partialCompactionView: meta.partialCompactionView,
@@ -1065,7 +1254,7 @@ export class ConversationStore {
             }
 
             if (messages.length === 0) {
-                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.loadedToolNames?.length) {
+                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.carryoverContext?.length && !meta?.loadedToolNames?.length) {
                     return undefined;
                 }
                 return {
@@ -1079,6 +1268,7 @@ export class ConversationStore {
                     taskTokenRecords: meta?.taskTokenRecords,
                     toolDigests: meta?.toolDigests,
                     recentToolResults: meta?.recentToolResults,
+                    carryoverContext: meta?.carryoverContext,
                     loadedToolNames: meta?.loadedToolNames,
                     compactBoundaries: meta?.compactBoundaries,
                     partialCompactionView: meta?.partialCompactionView,
@@ -1100,6 +1290,7 @@ export class ConversationStore {
                 taskTokenRecords: meta?.taskTokenRecords,
                 toolDigests: meta?.toolDigests,
                 recentToolResults: meta?.recentToolResults,
+                carryoverContext: meta?.carryoverContext,
                 loadedToolNames: meta?.loadedToolNames,
                 compactBoundaries: meta?.compactBoundaries,
                 partialCompactionView: meta?.partialCompactionView,
@@ -1178,6 +1369,7 @@ export class ConversationStore {
                     taskTokenRecords?: TaskTokenRecord[];
                     toolDigests?: ToolDigestRecord[];
                     recentToolResults?: StoredRecentToolResultRecord[];
+                    carryoverContext?: CarryoverContextRecord[];
                     loadedToolNames?: string[];
                     compactBoundaries?: CompactBoundaryRecord[];
                     partialCompactionView?: PartialCompactionViewRecord;
@@ -1191,6 +1383,7 @@ export class ConversationStore {
                     || Array.isArray(parsed.taskTokenRecords)
                     || Array.isArray(parsed.toolDigests)
                     || Array.isArray(parsed.recentToolResults)
+                    || Array.isArray(parsed.carryoverContext)
                     || Array.isArray(parsed.loadedToolNames)
                     || Array.isArray(parsed.compactBoundaries)
                     || typeof parsed.partialCompactionView === "object"
@@ -1205,6 +1398,7 @@ export class ConversationStore {
                     taskTokenRecords: Array.isArray(parsed.taskTokenRecords) ? parsed.taskTokenRecords : undefined,
                     toolDigests: Array.isArray(parsed.toolDigests) ? parsed.toolDigests : undefined,
                     recentToolResults: normalizeRecentToolResultRecords(parsed.recentToolResults),
+                    carryoverContext: normalizeCarryoverContextRecords(parsed.carryoverContext),
                     loadedToolNames: Array.isArray(parsed.loadedToolNames)
                         ? parsed.loadedToolNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
                         : undefined,
@@ -1233,6 +1427,7 @@ export class ConversationStore {
                     taskTokenRecords?: TaskTokenRecord[];
                     toolDigests?: ToolDigestRecord[];
                     recentToolResults?: StoredRecentToolResultRecord[];
+                    carryoverContext?: CarryoverContextRecord[];
                     loadedToolNames?: string[];
                     compactBoundaries?: CompactBoundaryRecord[];
                     partialCompactionView?: PartialCompactionViewRecord;
@@ -1246,6 +1441,7 @@ export class ConversationStore {
                     || Array.isArray(parsed.taskTokenRecords)
                     || Array.isArray(parsed.toolDigests)
                     || Array.isArray(parsed.recentToolResults)
+                    || Array.isArray(parsed.carryoverContext)
                     || Array.isArray(parsed.loadedToolNames)
                     || Array.isArray(parsed.compactBoundaries)
                     || typeof parsed.partialCompactionView === "object"
@@ -1260,6 +1456,7 @@ export class ConversationStore {
                     taskTokenRecords: Array.isArray(parsed.taskTokenRecords) ? parsed.taskTokenRecords : undefined,
                     toolDigests: Array.isArray(parsed.toolDigests) ? parsed.toolDigests : undefined,
                     recentToolResults: normalizeRecentToolResultRecords(parsed.recentToolResults),
+                    carryoverContext: normalizeCarryoverContextRecords(parsed.carryoverContext),
                     loadedToolNames: Array.isArray(parsed.loadedToolNames)
                         ? parsed.loadedToolNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
                         : undefined,
@@ -1291,6 +1488,7 @@ export class ConversationStore {
             taskTokenRecords: conv.taskTokenRecords,
             toolDigests: conv.toolDigests,
             recentToolResults: conv.recentToolResults,
+            carryoverContext: conv.carryoverContext,
             loadedToolNames: conv.loadedToolNames,
             compactBoundaries: conv.compactBoundaries,
             partialCompactionView: conv.partialCompactionView,
@@ -1304,6 +1502,7 @@ export class ConversationStore {
             && !payload.taskTokenRecords
             && !payload.toolDigests
             && !payload.recentToolResults?.length
+            && !payload.carryoverContext?.length
             && !payload.loadedToolNames?.length
             && !payload.compactBoundaries
             && !payload.partialCompactionView
@@ -2354,18 +2553,19 @@ export class ConversationStore {
                         : "";
                 const parsed = parseSessionMemoryResponse(responseText);
                 if (parsed) {
+                    const hasField = (key: keyof StoredSessionMemory): boolean =>
+                        Object.prototype.hasOwnProperty.call(parsed, key);
                     const merged = coerceStoredSessionMemory({
                         ...existing,
-                        ...parsed,
-                        summary: normalizeString(parsed.summary),
-                        currentGoal: normalizeString(parsed.currentGoal) || existing.currentGoal,
-                        decisions: normalizeStringArray(parsed.decisions).length > 0 ? normalizeStringArray(parsed.decisions) : existing.decisions,
-                        keyResults: normalizeStringArray(parsed.keyResults).length > 0 ? normalizeStringArray(parsed.keyResults) : existing.keyResults,
-                        filesTouched: normalizeStringArray(parsed.filesTouched).length > 0 ? normalizeStringArray(parsed.filesTouched) : existing.filesTouched,
-                        errorsAndFixes: normalizeStringArray(parsed.errorsAndFixes).length > 0 ? normalizeStringArray(parsed.errorsAndFixes) : existing.errorsAndFixes,
-                        pendingTasks: normalizeStringArray(parsed.pendingTasks).length > 0 ? normalizeStringArray(parsed.pendingTasks) : existing.pendingTasks,
-                        currentWork: normalizeString(parsed.currentWork) || existing.currentWork,
-                        nextStep: normalizeString(parsed.nextStep) || existing.nextStep,
+                        summary: hasField("summary") ? normalizeString(parsed.summary) : existing.summary,
+                        currentGoal: hasField("currentGoal") ? normalizeString(parsed.currentGoal) : existing.currentGoal,
+                        decisions: hasField("decisions") ? normalizeStringArray(parsed.decisions) : existing.decisions,
+                        keyResults: hasField("keyResults") ? normalizeStringArray(parsed.keyResults) : existing.keyResults,
+                        filesTouched: hasField("filesTouched") ? normalizeStringArray(parsed.filesTouched) : existing.filesTouched,
+                        errorsAndFixes: hasField("errorsAndFixes") ? normalizeStringArray(parsed.errorsAndFixes) : existing.errorsAndFixes,
+                        pendingTasks: hasField("pendingTasks") ? normalizeStringArray(parsed.pendingTasks) : existing.pendingTasks,
+                        currentWork: hasField("currentWork") ? normalizeString(parsed.currentWork) : existing.currentWork,
+                        nextStep: hasField("nextStep") ? normalizeString(parsed.nextStep) : existing.nextStep,
                         lastSummarizedMessageCount: history.length,
                         lastSummarizedMessageId: lastHistoryMessageId,
                         lastSummarizedToolCursor: toolDigests.length,
@@ -3073,6 +3273,99 @@ export class ConversationStore {
             ? Math.max(1, Math.floor(options.limit))
             : DEFAULT_RECENT_TOOL_RESULT_LIMIT;
         return filtered.slice(0, limit);
+    }
+
+    getCarryoverContext(
+        conversationId: string,
+        options: CarryoverContextQueryOptions = {},
+    ): CarryoverContextRecord[] {
+        const conv = this.get(conversationId);
+        const items = conv?.carryoverContext ?? [];
+        const queryTokens = typeof options.query === "string" ? tokenizeCarryoverQuery(options.query) : [];
+        const now = typeof options.now === "number" && Number.isFinite(options.now)
+            ? Math.max(0, Math.floor(options.now))
+            : Date.now();
+        const sorted = [...items].sort((left, right) => {
+            const leftRelevance = computeCarryoverRelevanceScore(left, queryTokens);
+            const rightRelevance = computeCarryoverRelevanceScore(right, queryTokens);
+            if (leftRelevance !== rightRelevance) {
+                return rightRelevance - leftRelevance;
+            }
+            const leftRecencyPenalty = computeCarryoverRecencyPenalty(left, now);
+            const rightRecencyPenalty = computeCarryoverRecencyPenalty(right, now);
+            if (leftRecencyPenalty !== rightRecencyPenalty) {
+                return leftRecencyPenalty - rightRecencyPenalty;
+            }
+            const leftSourceTypeBoost = computeCarryoverSourceTypeBoost(left.sourceType);
+            const rightSourceTypeBoost = computeCarryoverSourceTypeBoost(right.sourceType);
+            if (leftSourceTypeBoost !== rightSourceTypeBoost) {
+                return rightSourceTypeBoost - leftSourceTypeBoost;
+            }
+            if (left.priority !== right.priority) {
+                return right.priority - left.priority;
+            }
+            if (left.lastUsedAt !== right.lastUsedAt) {
+                return right.lastUsedAt - left.lastUsedAt;
+            }
+            return left.sourceKey.localeCompare(right.sourceKey, "en-US");
+        });
+        const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+            ? Math.max(1, Math.floor(options.limit))
+            : sorted.length;
+        return sorted.slice(0, limit);
+    }
+
+    setCarryoverContext(
+        conversationId: string,
+        records: Array<Partial<CarryoverContextRecord>>,
+        limit: number = 12,
+    ): void {
+        const normalized = records
+            .map((item) => normalizeCarryoverContextRecord(item))
+            .filter((item): item is CarryoverContextRecord => Boolean(item))
+            .sort((left, right) => {
+                if (left.priority !== right.priority) {
+                    return right.priority - left.priority;
+                }
+                if (left.lastUsedAt !== right.lastUsedAt) {
+                    return right.lastUsedAt - left.lastUsedAt;
+                }
+                return left.sourceKey.localeCompare(right.sourceKey, "en-US");
+            })
+            .slice(0, Math.max(1, limit));
+
+        let conv = this.get(conversationId);
+        const now = Date.now();
+        if (!conv) {
+            if (normalized.length === 0) {
+                return;
+            }
+            conv = {
+                id: conversationId,
+                messages: [],
+                createdAt: now,
+                updatedAt: now,
+            };
+            this.conversations.set(conversationId, conv);
+        }
+
+        conv.carryoverContext = normalized.length > 0 ? normalized : undefined;
+        conv.updatedAt = now;
+        this.persistConversationMeta(conversationId, conv);
+    }
+
+    upsertCarryoverContext(
+        conversationId: string,
+        record: Partial<CarryoverContextRecord>,
+        limit: number = 12,
+    ): void {
+        const normalized = normalizeCarryoverContextRecord(record);
+        if (!normalized) return;
+        const existing = this.getCarryoverContext(conversationId);
+        const matched = existing.find((item) => item.sourceKey === normalized.sourceKey);
+        const merged = matched ? mergeCarryoverContextRecord(matched, normalized) : normalized;
+        const deduped = existing.filter((item) => item.sourceKey !== normalized.sourceKey);
+        this.setCarryoverContext(conversationId, [merged, ...deduped], limit);
     }
 
     recordTaskTokenResult(

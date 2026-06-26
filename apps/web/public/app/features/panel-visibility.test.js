@@ -12,6 +12,14 @@ function createHarness() {
         <span class="token-label">IN</span>
         <span class="token-val" id="tuIn">28.9k</span>
       </span>
+      <span class="token-metric token-metric-ret">
+        <span class="token-label">RET</span>
+        <span class="token-val" id="tuRet">18.4k</span>
+      </span>
+      <span class="token-metric token-metric-nxt">
+        <span class="token-label">NXT</span>
+        <span class="token-val" id="tuNxt">23.1k</span>
+      </span>
     </div>
     <aside id="sidebar"></aside>
     <button id="toggleContentPanelBtn" type="button">Content</button>
@@ -67,6 +75,7 @@ describe("panel visibility feature", () => {
     expect(refs.controlPanelEl.classList.contains("hidden")).toBe(true);
     expect(refs.agentRightPanelEl.classList.contains("hidden")).toBe(true);
     expect(document.body.classList.contains("control-panel-hidden")).toBe(true);
+    expect(refs.tokenUsageEl.textContent).toContain("NXT");
   });
 
   it("toggles token usage and persists the collapsed state", () => {

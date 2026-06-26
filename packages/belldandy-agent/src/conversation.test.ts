@@ -615,6 +615,146 @@ describe("ConversationStore", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("should persist and reload carryover context records from meta", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const store = new ConversationStore({ dataDir });
+
+        store.upsertCarryoverContext("conv-carryover", {
+            sourceType: "file_read",
+            sourceKey: "docs/project-map.md",
+            title: "file_read: docs/project-map.md",
+            summary: "读取了 project map，并确认 WebChat token 面板与 conversation.meta 链路。",
+            keyFacts: [
+                "面板值来自 conversation.meta",
+                "RET 只统计 retained 主历史",
+            ],
+            tokenEstimate: 64,
+            lastUsedAt: 1234567890,
+            priority: 7,
+        });
+
+        const reloaded = new ConversationStore({ dataDir });
+        expect(reloaded.getCarryoverContext("conv-carryover")).toEqual([{
+            sourceType: "file_read",
+            sourceKey: "docs/project-map.md",
+            title: "file_read: docs/project-map.md",
+            summary: "读取了 project map，并确认 WebChat token 面板与 conversation.meta 链路。",
+            keyFacts: [
+                "面板值来自 conversation.meta",
+                "RET 只统计 retained 主历史",
+            ],
+            tokenEstimate: 64,
+            lastUsedAt: 1234567890,
+            priority: 7,
+        }]);
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("should merge carryover context by stable source key and prioritize the latest summary", () => {
+        const store = new ConversationStore();
+        const id = "conv-carryover-merge";
+
+        store.upsertCarryoverContext(id, {
+            sourceType: "file_read",
+            sourceKey: "file_read:docs/project-map.md",
+            title: "file_read: docs/project-map.md",
+            summary: "第一次读取 project-map，确认了 WebChat 面板入口。",
+            keyFacts: ["入口在 app.js", "前端刷新来自 conversation.meta"],
+            tokenEstimate: 48,
+            lastUsedAt: 100,
+            priority: 6,
+        });
+        store.upsertCarryoverContext(id, {
+            sourceType: "file_read",
+            sourceKey: "file_read:docs/project-map.md",
+            title: "file_read: docs/project-map.md",
+            summary: "第二次读取 project-map，确认 NXT 不是单纯的 retained history。",
+            keyFacts: ["NXT 包含 carryover", "RET 不含工具大输出"],
+            tokenEstimate: 52,
+            lastUsedAt: 200,
+            priority: 8,
+        });
+
+        expect(store.getCarryoverContext(id)).toEqual([expect.objectContaining({
+            sourceKey: "file_read:docs/project-map.md",
+            summary: "第二次读取 project-map，确认 NXT 不是单纯的 retained history。",
+            priority: 8,
+            lastUsedAt: 200,
+            keyFacts: [
+                "NXT 包含 carryover",
+                "RET 不含工具大输出",
+            ],
+        })]);
+    });
+
+    it("should replace stale carryover facts when the same source publishes a newer fact set", () => {
+        const store = new ConversationStore();
+        const id = "conv-carryover-stale-facts";
+
+        store.upsertCarryoverContext(id, {
+            sourceType: "file_read",
+            sourceKey: "file_read:src/app.ts",
+            title: "file_read: src/app.ts",
+            summary: "第一次读取，确认 answer=42。",
+            keyFacts: ["target: src/app.ts", "result: export const answer = 42;"],
+            lastUsedAt: 100,
+            priority: 6,
+        });
+        store.upsertCarryoverContext(id, {
+            sourceType: "file_read",
+            sourceKey: "file_read:src/app.ts",
+            title: "file_read: src/app.ts",
+            summary: "第二次读取，确认 answer=43。",
+            keyFacts: ["target: src/app.ts", "result: export const answer = 43;"],
+            lastUsedAt: 200,
+            priority: 8,
+        });
+
+        expect(store.getCarryoverContext(id)).toEqual([expect.objectContaining({
+            sourceKey: "file_read:src/app.ts",
+            summary: "第二次读取，确认 answer=43。",
+            keyFacts: [
+                "target: src/app.ts",
+                "result: export const answer = 43;",
+            ],
+        })]);
+    });
+
+    it("should rank carryover context by query relevance before plain priority", () => {
+        const store = new ConversationStore();
+        const id = "conv-carryover-query-rank";
+
+        store.setCarryoverContext(id, [
+            {
+                sourceType: "log_read",
+                sourceKey: "log_search:spawn EPERM @ 2026-06-26..2026-06-26",
+                title: "log_search: spawn EPERM @ 2026-06-26..2026-06-26",
+                summary: "日志里确认 pnpm test 因 spawn EPERM 失败。",
+                keyFacts: ["error: spawn EPERM", "target: pnpm test"],
+                lastUsedAt: 100,
+                priority: 5,
+            },
+            {
+                sourceType: "file_read",
+                sourceKey: "file_read:src/app.ts",
+                title: "file_read: src/app.ts",
+                summary: "已确认 answer=43。",
+                keyFacts: ["target: src/app.ts", "result: export const answer = 43;"],
+                lastUsedAt: 200,
+                priority: 8,
+            },
+        ]);
+
+        const ranked = store.getCarryoverContext(id, {
+            query: "继续排查 pnpm test 的 spawn EPERM",
+        });
+        expect(ranked[0]).toMatchObject({
+            sourceKey: "log_search:spawn EPERM @ 2026-06-26..2026-06-26",
+        });
+    });
+
     it("should retain persisted digest threshold during automatic refresh", async () => {
         const store = new ConversationStore({
             compaction: {
@@ -766,6 +906,50 @@ describe("ConversationStore", () => {
             currentGoal: "补完配置兜底与测试",
             lastSummarizedMessageCount: 4,
             lastSummarizedToolCursor: 2,
+        });
+    });
+
+    it("should allow session memory refresh to clear stale fields when the summarizer returns explicit empties", async () => {
+        let refreshCount = 0;
+        const store = new ConversationStore({
+            summarizer: async () => {
+                refreshCount += 1;
+                if (refreshCount === 1) {
+                    return JSON.stringify({
+                        summary: "第一轮摘要",
+                        currentGoal: "修复启动流程",
+                        pendingTasks: ["补测试", "验证 CLI 参数"],
+                        currentWork: "读取 bootstrap.ts",
+                        nextStep: "修改默认值",
+                    });
+                }
+                return JSON.stringify({
+                    summary: "第二轮摘要",
+                    currentGoal: "",
+                    pendingTasks: [],
+                    currentWork: "",
+                    nextStep: "",
+                });
+            },
+        });
+        const id = "conv-session-memory-clear-stale-fields";
+
+        store.addMessage(id, "user", "先修启动流程");
+        store.addMessage(id, "assistant", "收到，我先读代码。");
+        await store.refreshSessionMemory(id, { force: true, threshold: 1 });
+
+        store.addMessage(id, "user", "这部分完成了，先不要保留旧 next step");
+        store.addMessage(id, "assistant", "改为重新评估当前状态。");
+        await store.refreshSessionMemory(id, { force: true, threshold: 1 });
+
+        const memory = await store.getSessionMemory(id);
+        expect(memory).toMatchObject({
+            conversationId: id,
+            summary: "第二轮摘要",
+            currentGoal: "",
+            pendingTasks: [],
+            currentWork: "",
+            nextStep: "",
         });
     });
 

@@ -131,12 +131,16 @@
         </div>
       </div>
       <div class="header-actions">
-        <div class="token-usage" id="tokenUsage" title="Token Usage (INΣ = run cumulative input across model calls)">
+        <div class="token-usage" id="tokenUsage" title="Token Usage (INΣ = run cumulative input across model calls; RET = retained user/assistant history estimate; NXT = next-turn retained + carryover context estimate)">
           <span class="token-metric token-metric-sys"><span class="token-label">SYS</span><span class="token-val" id="tuSys">--</span></span>
           <span class="token-sep">|</span>
           <span class="token-metric token-metric-ctx"><span class="token-label">CTX</span><span class="token-val" id="tuCtx">--</span></span>
           <span class="token-sep">|</span>
           <span class="token-metric token-metric-in"><span class="token-label">INΣ</span><span class="token-val" id="tuIn">--</span></span>
+          <span class="token-sep">|</span>
+          <span class="token-metric token-metric-ret"><span class="token-label">RET</span><span class="token-val" id="tuRet">--</span></span>
+          <span class="token-sep">|</span>
+          <span class="token-metric token-metric-nxt"><span class="token-label">NXT</span><span class="token-val" id="tuNxt">--</span></span>
           <span class="token-sep">|</span>
           <span class="token-metric token-metric-out"><span class="token-label">OUT</span><span class="token-val" id="tuOut">--</span></span>
           <span class="token-sep">|</span>
@@ -1162,6 +1166,38 @@
             <div class="form-help" data-i18n="settings.compactionContextWindowFractionHelp">已知主模型 context window 时，用该比例推导 compaction 阈值；未知时仍回退固定阈值。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgModelContextWindow" data-i18n="settings.modelContextWindowLabel">Model Context Window</label>
+            <input id="cfgModelContextWindow" class="input" inputmode="numeric" data-i18n-placeholder="settings.modelContextWindowPlaceholder" placeholder="128000" />
+            <div class="form-help" data-i18n="settings.modelContextWindowHelp">显式声明当前主模型的上下文窗口大小，供 compaction 阈值推导与预算保护策略参考。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCompressionReferenceStore">
+              <input id="cfgCompressionReferenceStore" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.compressionReferenceStoreLabel">启用 Compression Reference Store</span>
+            </label>
+            <div class="form-help" data-i18n="settings.compressionReferenceStoreHelp">控制压缩后是否保存可回取引用。关闭后回退到更兼容但更容易信息漂移的旧模式。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgBudgetProtectMode" data-i18n="settings.budgetProtectModeLabel">Budget Protect Mode</label>
+            <select id="cfgBudgetProtectMode" class="input">
+              <option value="protect_memory_capability">protect_memory_capability</option>
+              <option value="history_first">history_first</option>
+            </select>
+            <div class="form-help" data-i18n="settings.budgetProtectModeHelp">控制接近上下文预算时，优先保记忆能力还是优先删历史消息。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgBudgetProtectKeepRecentRounds" data-i18n="settings.budgetProtectKeepRecentRoundsLabel">Budget Protect Keep Recent Rounds</label>
+            <input id="cfgBudgetProtectKeepRecentRounds" class="input" inputmode="numeric" data-i18n-placeholder="settings.budgetProtectKeepRecentRoundsPlaceholder" placeholder="3" />
+            <div class="form-help" data-i18n="settings.budgetProtectKeepRecentRoundsHelp">预算保护删除历史时，至少保留多少最近轮次不动。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgStablePrefixSplit">
+              <input id="cfgStablePrefixSplit" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.stablePrefixSplitLabel">启用 Stable Prefix Split</span>
+            </label>
+            <div class="form-help" data-i18n="settings.stablePrefixSplitHelp">将稳定前缀与易变 runtime tail 拆开，减少 system prompt 高频漂移。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgCompactionModelRoute" data-i18n="settings.compactionModelRouteLabel">Compaction Model Route</label>
             <input id="cfgCompactionModelRoute" class="input" placeholder="primary / fallback-name / manual:gpt-4o-mini" />
             <div class="form-help" data-i18n="settings.compactionModelRouteHelp">控制 compaction 摘要链路走 primary、指定 fallback，或 `manual:&lt;model&gt;`。留空时按默认 primary 路由。</div>
@@ -1314,6 +1350,13 @@
             <label class="form-label" data-i18n="settings.contextInjectionAllowedCategoriesLabel">Allowed Categories</label>
             <input id="cfgContextInjectionAllowedCategories" class="input" data-i18n-placeholder="settings.contextInjectionAllowedCategoriesPlaceholder" placeholder="preference,fact,decision,entity" />
             <div class="form-help" data-i18n="settings.contextInjectionAllowedCategoriesHelp">逗号分隔，例如 `preference,fact,decision,entity,experience`。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCarryoverContextEnabled">
+              <input id="cfgCarryoverContextEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.carryoverContextEnabledLabel">启用 Carryover Context</span>
+            </label>
+            <div class="form-help" data-i18n="settings.carryoverContextEnabledHelp">控制是否把上一轮关键工具读物与中间事实，作为“可续跑背景”注入到后续轮次，减少重读与丢上下文。</div>
           </div>
 
           <hr class="theme-divider">
@@ -1908,6 +1951,43 @@
             <label class="form-label" for="cfgSubAgentMaxDepth" data-i18n="settings.subAgentMaxDepthLabel">Sub Agent Max Depth</label>
             <input id="cfgSubAgentMaxDepth" class="input" data-i18n-placeholder="settings.subAgentMaxDepthPlaceholder" placeholder="2" />
             <div class="form-help" data-i18n="settings.subAgentMaxDepthHelp">子代理继续派生子代理时允许的最大嵌套层级。</div>
+          </div>
+
+          <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div>
+              <div class="settings-subsection-title" data-i18n="settings.workflowSectionTitle">Dynamic Workflows</div>
+              <div class="form-help" data-i18n="settings.workflowSectionHelp">动态工作流 orchestrator 的并发、排队、超时与调用预算。与旧 Sub Agent 配置并存，便于灰度迁移。</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowMaxConcurrent" data-i18n="settings.workflowMaxConcurrentLabel">Workflow Max Concurrent</label>
+            <input id="cfgWorkflowMaxConcurrent" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowMaxConcurrentPlaceholder" placeholder="6" />
+            <div class="form-help" data-i18n="settings.workflowMaxConcurrentHelp">单个动态工作流内允许同时运行的 agent 调用并发上限。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowMaxQueueSize" data-i18n="settings.workflowMaxQueueSizeLabel">Workflow Max Queue Size</label>
+            <input id="cfgWorkflowMaxQueueSize" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowMaxQueueSizePlaceholder" placeholder="20" />
+            <div class="form-help" data-i18n="settings.workflowMaxQueueSizeHelp">动态工作流等待执行队列的最大长度。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowTimeoutMs" data-i18n="settings.workflowTimeoutMsLabel">Workflow Timeout (ms)</label>
+            <input id="cfgWorkflowTimeoutMs" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowTimeoutMsPlaceholder" placeholder="600000" />
+            <div class="form-help" data-i18n="settings.workflowTimeoutMsHelp">单次动态工作流总耗时上限，超时后整体终止。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowAgentTimeoutMs" data-i18n="settings.workflowAgentTimeoutMsLabel">Workflow Agent Timeout (ms)</label>
+            <input id="cfgWorkflowAgentTimeoutMs" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowAgentTimeoutMsPlaceholder" placeholder="300000" />
+            <div class="form-help" data-i18n="settings.workflowAgentTimeoutMsHelp">动态工作流内部单次 agent 调用的默认超时时间。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowMaxAgentCalls" data-i18n="settings.workflowMaxAgentCallsLabel">Workflow Max Agent Calls</label>
+            <input id="cfgWorkflowMaxAgentCalls" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowMaxAgentCallsPlaceholder" placeholder="50" />
+            <div class="form-help" data-i18n="settings.workflowMaxAgentCallsHelp">单次动态工作流最多允许多少次 agent 调用。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowMaxDepth" data-i18n="settings.workflowMaxDepthLabel">Workflow Max Depth</label>
+            <input id="cfgWorkflowMaxDepth" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowMaxDepthPlaceholder" placeholder="2" />
+            <div class="form-help" data-i18n="settings.workflowMaxDepthHelp">动态工作流 orchestrator 允许的最大嵌套深度。</div>
           </div>
 
           <hr class="theme-divider">
@@ -2664,6 +2744,15 @@
           <div class="form-group">
             <label class="form-label" for="cfgUpdateCheckApiUrl" data-i18n="settings.updateCheckApiUrlLabel">Update Check API URL</label>
             <input id="cfgUpdateCheckApiUrl" class="input" data-i18n-placeholder="settings.updateCheckApiUrlPlaceholder" placeholder="https://api.github.com/repos/vrboyzero/star-sanctuary/releases/latest" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgDevRuntimeDistGuard" data-i18n="settings.devRuntimeDistGuardLabel">Dev Runtime Dist Guard</label>
+            <select id="cfgDevRuntimeDistGuard" class="input">
+              <option value="build">build</option>
+              <option value="warn">warn</option>
+              <option value="off">off</option>
+            </select>
+            <div class="form-help" data-i18n="settings.devRuntimeDistGuardHelp">开发态启动前对关键 dist 产物做陈旧检查。`build` 会自动补构建，`warn` 只提示，`off` 完全关闭。</div>
           </div>
 
           <hr class="theme-divider">

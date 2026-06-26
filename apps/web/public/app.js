@@ -2794,6 +2794,9 @@ chatEventsFeature = createChatEventsFeature({
   onConversationFinal: (payload) => {
     agentRuntimeFeature?.handleConversationFinalPayload(payload);
     handleComposerRunFinal(payload);
+    if (payload?.conversationId && payload.conversationId === activeConversationId) {
+      void loadConversationMeta(activeConversationId, { renderMessages: false });
+    }
   },
   onConversationStopped: (payload) => {
     agentRuntimeFeature?.handleConversationStoppedPayload(payload);
@@ -2975,6 +2978,8 @@ async function loadConversationMeta(conversationId, options = {}) {
   const renderMessages = options.renderMessages !== false;
   const showGoalEntryBanner = options.showGoalEntryBanner === true;
   if (!conversationId || !ws || !isReady) {
+    updateRetainedContextEstimate(null);
+    updateNextTurnContextEstimate(null);
     renderTaskTokenHistory();
     sessionDigestFeature?.clear?.();
     return;
@@ -2991,6 +2996,8 @@ async function loadConversationMeta(conversationId, options = {}) {
     } else {
       renderTaskTokenHistory();
     }
+    updateRetainedContextEstimate(res.payload.retainedContextEstimate || null);
+    updateNextTurnContextEstimate(res.payload.nextTurnContextEstimate || null);
     if (Array.isArray(res.payload.messages)) {
       agentRuntimeFeature?.setConversationMessages(conversationId, res.payload.messages);
     }
@@ -3013,6 +3020,8 @@ async function loadConversationMeta(conversationId, options = {}) {
     sessionDigestFeature?.setContinuationState?.(res.payload.continuationState || null, { conversationId });
     return;
   }
+  updateRetainedContextEstimate(null);
+  updateNextTurnContextEstimate(null);
   sessionDigestFeature?.setContinuationState?.(null, { conversationId });
   renderTaskTokenHistory();
 }
@@ -3047,6 +3056,20 @@ function renderTaskTokenHistory() {
 
 let sessionTotalTokens = 0;
 const costBudgetTracker = createCostBudgetTracker();
+
+function updateRetainedContextEstimate(estimate) {
+  const el = tokenUsageValueEls.tuRet;
+  if (!el) return;
+  const tokens = Number(estimate?.tokens ?? 0);
+  el.textContent = formatTokenCount(tokens);
+}
+
+function updateNextTurnContextEstimate(estimate) {
+  const el = tokenUsageValueEls.tuNxt;
+  if (!el) return;
+  const tokens = Number(estimate?.tokens ?? 0);
+  el.textContent = formatTokenCount(tokens);
+}
 
 function updateTokenUsage(payload) {
   if (!payload) return;

@@ -9,6 +9,7 @@ import { AgentRegistry, type BelldandyAgent, ConversationStore, MockAgent } from
 import { MemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
 
 import { startGatewayServer } from "./server.js";
+import { estimateCarryoverContextPreludeTokens } from "./context-injection.js";
 import {
   cleanupGlobalMemoryManagersForTest,
   pairWebSocketClient,
@@ -252,6 +253,394 @@ test("conversation.meta keeps time metadata on every message and marks only the 
       { role: "assistant", content: "echo:第二轮", isLatest: true },
     ]);
     expect(messages.filter((message: { isLatest: boolean }) => message.isLatest)).toHaveLength(1);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("conversation.meta exposes retained context estimate for the next turn", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield { type: "final" as const, text: `echo:${input.text}` };
+      yield { type: "status" as const, status: "done" };
+    },
+  };
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const conversationId = "conv-meta-retained";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-meta-retained",
+      method: "message.send",
+      params: { text: "保留上下文估算测试", conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "chat.final" && f.payload?.conversationId === conversationId));
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-meta-retained",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-meta-retained" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "conversation-meta-retained");
+
+    expect(metaRes?.payload?.retainedContextEstimate).toMatchObject({
+      messageCount: 2,
+      compacted: false,
+    });
+    expect(Number(metaRes?.payload?.retainedContextEstimate?.tokens || 0)).toBeGreaterThan(0);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("conversation.meta exposes carryover and next-turn context estimates", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const fixedCarryoverTimestamp = 1_710_000_000_000;
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield { type: "final" as const, text: `echo:${input.text}` };
+      yield { type: "status" as const, status: "done" };
+    },
+  };
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const conversationId = "conv-meta-next-turn";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-meta-next-turn",
+      method: "message.send",
+      params: { text: "继续排查 NXT", conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "chat.final" && f.payload?.conversationId === conversationId));
+
+    conversationStore.upsertCarryoverContext(conversationId, {
+      sourceType: "file_read",
+      sourceKey: "docs/project-map.md",
+      title: "file_read: docs/project-map.md",
+      summary: "已确认 conversation.meta 会返回 retained 与 carryover 统计。",
+      keyFacts: ["RET 不含工具大输出", "NXT = RET + carryover"],
+      tokenEstimate: 88,
+      lastUsedAt: fixedCarryoverTimestamp,
+      priority: 8,
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-meta-next-turn",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-meta-next-turn" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "conversation-meta-next-turn");
+    const retainedTokens = Number(metaRes?.payload?.retainedContextEstimate?.tokens || 0);
+    const expectedCarryoverTokens = estimateCarryoverContextPreludeTokens([{
+      sourceType: "file_read",
+      sourceKey: "docs/project-map.md",
+      title: "file_read: docs/project-map.md",
+      summary: "已确认 conversation.meta 会返回 retained 与 carryover 统计。",
+      keyFacts: ["RET 不含工具大输出", "NXT = RET + carryover"],
+      tokenEstimate: 88,
+      lastUsedAt: fixedCarryoverTimestamp,
+      priority: 8,
+    }]);
+
+    expect(metaRes?.payload?.carryoverContextEstimate).toMatchObject({
+      tokens: expectedCarryoverTokens,
+      itemCount: 1,
+    });
+    expect(metaRes?.payload?.nextTurnContextEstimate).toMatchObject({
+      retainedTokens,
+      carryoverTokens: expectedCarryoverTokens,
+      tokens: retainedTokens + expectedCarryoverTokens,
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("conversation.meta drops carryover estimate when carryover context is disabled", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+  const fixedCarryoverTimestamp = Date.now();
+  const previousCarryoverEnv = process.env.BELLDANDY_CARRYOVER_CONTEXT_ENABLED;
+  process.env.BELLDANDY_CARRYOVER_CONTEXT_ENABLED = "false";
+
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield { type: "final" as const, text: `echo:${input.text}` };
+      yield { type: "status" as const, status: "done" };
+    },
+  };
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const conversationId = "conv-meta-carryover-disabled";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-meta-carryover-disabled",
+      method: "message.send",
+      params: { text: "确认 carryover 关闭后的 NXT", conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "chat.final" && f.payload?.conversationId === conversationId));
+
+    conversationStore.upsertCarryoverContext(conversationId, {
+      sourceType: "file_read",
+      sourceKey: "src/app.ts",
+      title: "file_read: src/app.ts",
+      summary: "这里本来有一段可继承文件摘要。",
+      keyFacts: ["answer = 43", "label = stable"],
+      tokenEstimate: 64,
+      lastUsedAt: fixedCarryoverTimestamp,
+      priority: 8,
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-meta-carryover-disabled",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-meta-carryover-disabled" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "conversation-meta-carryover-disabled");
+    const retainedTokens = Number(metaRes?.payload?.retainedContextEstimate?.tokens || 0);
+
+    expect(metaRes?.payload?.carryoverContextEstimate).toMatchObject({
+      tokens: 0,
+      itemCount: 0,
+    });
+    expect(metaRes?.payload?.nextTurnContextEstimate).toMatchObject({
+      retainedTokens,
+      carryoverTokens: 0,
+      tokens: retainedTokens,
+    });
+  } finally {
+    if (previousCarryoverEnv === undefined) {
+      delete process.env.BELLDANDY_CARRYOVER_CONTEXT_ENABLED;
+    } else {
+      process.env.BELLDANDY_CARRYOVER_CONTEXT_ENABLED = previousCarryoverEnv;
+    }
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("forensic: a high input token run can still retain a much smaller next-turn context estimate", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const largePayload = "FILE_BLOCK ".repeat(5000);
+  const promptTokens = 220000;
+  const completionTokens = 24;
+
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield {
+        type: "usage" as const,
+        systemPromptTokens: 12,
+        contextTokens: 180000,
+        inputTokens: promptTokens,
+        outputTokens: completionTokens,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        modelCalls: 1,
+        localPromptEstimate: {
+          systemPromptTokens: 12,
+          contextTokens: 180000,
+          totalPromptTokens: 180012,
+        },
+      };
+      yield { type: "final" as const, text: `已读取大文件并完成分析：${input.text.slice(0, 12)}` };
+      yield { type: "status" as const, status: "done" };
+    },
+  };
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const conversationId = "conv-forensic-high-in";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-forensic-high-in",
+      method: "message.send",
+      params: { text: largePayload, conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "token.usage" && f.payload?.conversationId === conversationId));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "chat.final" && f.payload?.conversationId === conversationId));
+
+    const usageEvent = frames.find((f) => f.type === "event" && f.event === "token.usage" && f.payload?.conversationId === conversationId);
+    expect(usageEvent?.payload).toMatchObject({
+      inputTokens: promptTokens,
+      outputTokens: completionTokens,
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-meta-forensic-high-in",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-meta-forensic-high-in" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "conversation-meta-forensic-high-in");
+    const retainedTokens = Number(metaRes?.payload?.retainedContextEstimate?.tokens || 0);
+
+    expect(retainedTokens).toBeGreaterThan(0);
+    expect(retainedTokens).toBeLessThan(promptTokens / 4);
+    expect(metaRes?.payload?.retainedContextEstimate).toMatchObject({
+      compacted: false,
+      messageCount: 2,
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("forensic: retained context estimate is not capped near 5K when long user and assistant history is actually persisted", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const longUserText = "用户长正文片段 ".repeat(2200);
+  const longAssistantText = "助手长正文片段 ".repeat(2200);
+
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield { type: "final" as const, text: longAssistantText };
+      yield { type: "status" as const, status: "done" };
+    },
+  };
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    const conversationId = "conv-forensic-retained-long-history";
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-forensic-retained-long-history",
+      method: "message.send",
+      params: { text: longUserText, conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "chat.final" && f.payload?.conversationId === conversationId));
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-meta-forensic-retained-long-history",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-meta-forensic-retained-long-history" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "conversation-meta-forensic-retained-long-history");
+    const retainedEstimate = metaRes?.payload?.retainedContextEstimate;
+    const retainedTokens = Number(retainedEstimate?.tokens || 0);
+
+    expect(retainedEstimate).toMatchObject({
+      compacted: false,
+      messageCount: 2,
+    });
+    expect(retainedTokens).toBeGreaterThan(5000);
   } finally {
     ws.close();
     await closeP;

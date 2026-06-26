@@ -78,7 +78,7 @@ describe("chat events pairing", () => {
 
     feature.handleEvent("agent.status", { conversationId: "conv-1", status: "running" });
     feature.handleEvent("token.usage", { inputTokens: 1 });
-    feature.handleEvent("token.usage", { inputTokens: 3 });
+    feature.handleEvent("token.usage", { inputTokens: 3, retainedContextEstimate: { tokens: 12 }, nextTurnContextEstimate: { tokens: 20 } });
     feature.handleEvent("goal.update", { goal: { id: "goal-1", title: "v1" } });
     feature.handleEvent("goal.update", { goal: { id: "goal-1", title: "v2" } });
     feature.handleEvent("subtask.update", { item: { id: "task-1", title: "v1" } });
@@ -95,7 +95,7 @@ describe("chat events pairing", () => {
 
     expect(setTokenUsageRunning).toHaveBeenCalledWith(true);
     expect(updateTokenUsage).toHaveBeenCalledTimes(1);
-    expect(updateTokenUsage).toHaveBeenCalledWith({ inputTokens: 3 });
+    expect(updateTokenUsage).toHaveBeenCalledWith({ inputTokens: 3, retainedContextEstimate: { tokens: 12 }, nextTurnContextEstimate: { tokens: 20 } });
     expect(queueGoalUpdateEvent).toHaveBeenCalledTimes(1);
     expect(queueGoalUpdateEvent).toHaveBeenCalledWith({ goal: { id: "goal-1", title: "v2" } });
     expect(onSubtaskUpdated).toHaveBeenCalledTimes(1);

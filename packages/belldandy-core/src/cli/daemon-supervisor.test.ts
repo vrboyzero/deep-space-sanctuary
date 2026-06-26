@@ -3,10 +3,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
+import type { WorkspacePackageBuildGuardResult } from "./workspace-build-guard.js";
 
-const { forkMock, preflightGatewayCleanupMock } = vi.hoisted(() => ({
+const {
+  forkMock,
+  preflightGatewayCleanupMock,
+  ensureFreshWorkspaceBuildsForDevRuntimeMock,
+} = vi.hoisted(() => ({
   forkMock: vi.fn(),
   preflightGatewayCleanupMock: vi.fn(async () => {}),
+  ensureFreshWorkspaceBuildsForDevRuntimeMock: vi.fn<() => WorkspacePackageBuildGuardResult>(() => ({ ok: true, mode: "verified", packageNames: [] })),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -33,6 +39,10 @@ vi.mock("@star-sanctuary/distribution", async (importOriginal) => {
     writeForegroundPid: vi.fn(),
   };
 });
+
+vi.mock("./workspace-build-guard.js", () => ({
+  ensureFreshWorkspaceBuildsForDevRuntime: ensureFreshWorkspaceBuildsForDevRuntimeMock,
+}));
 
 import { startDaemon } from "./daemon.js";
 
@@ -74,4 +84,24 @@ test("startDaemon launches the bdd supervisor instead of the gateway entry direc
 
   const pidContent = await fs.readFile(path.join(stateDir, "gateway.pid"), "utf-8");
   expect(pidContent.trim()).toBe("4321");
+});
+
+test("startDaemon returns an error when dev runtime workspace build guard fails", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-daemon-build-guard-"));
+  tempDirs.push(stateDir);
+
+  ensureFreshWorkspaceBuildsForDevRuntimeMock.mockReturnValue({
+    ok: false,
+    mode: "failed",
+    packageNames: ["@belldandy/agent"],
+    reason: "Workspace package build guard failed while rebuilding: @belldandy/agent",
+  });
+
+  const result = await startDaemon(stateDir);
+
+  expect(result).toEqual({
+    success: false,
+    error: "Workspace package build guard failed while rebuilding: @belldandy/agent",
+  });
+  expect(forkMock).not.toHaveBeenCalled();
 });

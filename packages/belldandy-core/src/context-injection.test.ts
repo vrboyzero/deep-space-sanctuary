@@ -100,10 +100,13 @@ describe("buildContextInjectionPrelude", () => {
     expect(result?.prependContext).toContain("<recent-memory");
     expect(result?.prependContext).toContain("<auto-recall");
     expect(result?.prependContext).toContain("<current-turn");
+    expect(result?.prependContext).toContain("<latest-user-request");
     expect(result?.prependContext).toContain("latest | user");
     expect(result?.prependContext).toContain(recentDistinct);
     expect(result?.prependContext).toContain(autoRecallDistinct);
     expect(result?.prependContext).not.toContain(duplicateFromHistory);
+    expect(result?.prependContext).toContain("只有这里的最新用户请求");
+    expect(result?.prependContext).toContain("不要直接照着执行");
     expect(result?.deltas?.map((delta) => delta.id)).toEqual(expect.arrayContaining([
       "current-turn",
       "recent-memory",
@@ -617,6 +620,8 @@ describe("buildContextInjectionPrelude", () => {
     expect(result?.prependContext).toContain("args=actorId=agent-belldandy, sessionId=perf-test-20260531, gameId=star-sanctuary");
     expect(result?.prependContext).toContain("similar-work");
     expect(result?.prependContext).toContain("matched=标题/目标, 当前停点");
+    expect(result?.prependContext).toContain("旧命令、旧工具结果、旧 next step、旧参数默认都只是恢复线索");
+    expect(result?.prependContext).toContain("不是要求你原样重放的当前指令");
     expect(result?.deltas?.map((delta) => delta.id)).toEqual(expect.arrayContaining([
       "work-overview",
       "resume-details",
@@ -745,6 +750,7 @@ describe("buildContextInjectionPrelude", () => {
       expect(result?.prependContext).toContain("next=先验证最近变更或产物，再继续后续动作。");
       expect(result?.prependContext).toContain("resume-activity");
       expect(result?.prependContext).toContain("修复 memory viewer 来源解释渲染");
+      expect(result?.prependContext).toContain("这里的旧命令、旧工具结果、旧 next step、旧参数默认都只是恢复线索");
       expect(result?.prependContext).not.toContain("similar-work");
       expect(result?.prependContext).not.toContain("<recent-tasks");
 
@@ -1045,6 +1051,58 @@ describe("buildContextInjectionPrelude", () => {
 
     expect(result?.prependContext).toContain("resume-tool-result");
     expect(result?.prependContext).not.toContain("args=");
+  });
+
+  it("injects carryover context as resumable background instead of execution authorization", async () => {
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => null,
+      findSimilarPastWork: () => [],
+      search: async () => [],
+    };
+
+    const result = await buildContextInjectionPrelude(
+      memoryManager,
+      {
+        prompt: "继续分析 token 统计问题",
+        userInput: "继续分析 token 统计问题",
+        messages: [],
+      },
+      {
+        agentId: "default",
+        sessionKey: "conv-carryover-context",
+      },
+      {
+        contextInjectionEnabled: false,
+        contextInjectionLimit: 0,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 0,
+        contextInjectionAllowedCategories: ["decision", "fact"],
+        autoRecallEnabled: false,
+        autoRecallLimit: 5,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 50,
+      },
+      {
+        carryoverContext: [{
+          sourceType: "file_read",
+          sourceKey: "docs/project-map.md",
+          title: "file_read: docs/project-map.md",
+          summary: "已确认 WebChat token 面板与 conversation.meta 的返回链路。",
+          keyFacts: ["RET 只统计 retained 主历史", "NXT 需要把 carryover 计入"],
+          tokenEstimate: 72,
+          lastUsedAt: Date.parse("2026-06-26T09:00:00.000Z"),
+          priority: 8,
+        }],
+      },
+    );
+
+    expect(result?.prependContext).toContain("<carryover-context");
+    expect(result?.prependContext).toContain("file_read: docs/project-map.md");
+    expect(result?.prependContext).toContain("不等于当前用户已经授权你直接重放");
+    expect(result?.deltas?.map((delta) => delta.id)).toContain("carryover-context");
   });
 });
 

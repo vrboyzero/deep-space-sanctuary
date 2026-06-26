@@ -196,6 +196,8 @@ describe("tool result prompt deltas", () => {
     expect(followUpDelta?.text).toContain("exact deferred schemas are already loaded");
     expect(followUpDelta?.text).toContain("mcp_starweaver_central_starweaver_runtime_describe");
     expect(followUpDelta?.text).toContain("Do not repeat a broad `tool_search`");
+    expect(followUpDelta?.text).toContain("If the latest user request still needs them");
+    expect(followUpDelta?.text).toContain("not a standalone instruction to replay an older plan");
   });
 
   it("does not build tool_search follow-up delta when no deferred schemas are loaded", () => {

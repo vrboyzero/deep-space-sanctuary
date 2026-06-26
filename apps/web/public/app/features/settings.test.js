@@ -196,6 +196,7 @@ function createSettingsRefs(overrides = {}) {
     cfgUpdateCheckEnabled: overrides.cfgUpdateCheckEnabled || createCheckbox(true),
     cfgUpdateCheckTimeoutMs: overrides.cfgUpdateCheckTimeoutMs || createInput(""),
     cfgUpdateCheckApiUrl: overrides.cfgUpdateCheckApiUrl || createInput(""),
+    cfgDevRuntimeDistGuard: overrides.cfgDevRuntimeDistGuard || createInput("build"),
     cfgAuthMode: overrides.cfgAuthMode || createInput("none"),
     cfgAuthToken: overrides.cfgAuthToken || createInput(""),
     cfgAuthPassword: overrides.cfgAuthPassword || createInput(""),
@@ -254,6 +255,12 @@ function createSettingsRefs(overrides = {}) {
     cfgSubAgentMaxQueueSize: overrides.cfgSubAgentMaxQueueSize || createInput(""),
     cfgSubAgentTimeoutMs: overrides.cfgSubAgentTimeoutMs || createInput(""),
     cfgSubAgentMaxDepth: overrides.cfgSubAgentMaxDepth || createInput(""),
+    cfgWorkflowMaxConcurrent: overrides.cfgWorkflowMaxConcurrent || createInput(""),
+    cfgWorkflowMaxQueueSize: overrides.cfgWorkflowMaxQueueSize || createInput(""),
+    cfgWorkflowTimeoutMs: overrides.cfgWorkflowTimeoutMs || createInput(""),
+    cfgWorkflowAgentTimeoutMs: overrides.cfgWorkflowAgentTimeoutMs || createInput(""),
+    cfgWorkflowMaxAgentCalls: overrides.cfgWorkflowMaxAgentCalls || createInput(""),
+    cfgWorkflowMaxDepth: overrides.cfgWorkflowMaxDepth || createInput(""),
     cfgMemoryEnabled: overrides.cfgMemoryEnabled || createCheckbox(true),
     refreshMemoryConfiguredSourcesBtn: overrides.refreshMemoryConfiguredSourcesBtn || createButton("刷新来源配置"),
     previewMemoryInventoryBtn: overrides.previewMemoryInventoryBtn || createButton("预览 Inventory"),
@@ -280,6 +287,7 @@ function createSettingsRefs(overrides = {}) {
     cfgContextInjectionIncludeSession: overrides.cfgContextInjectionIncludeSession || createCheckbox(false),
     cfgContextInjectionTaskLimit: overrides.cfgContextInjectionTaskLimit || createInput(""),
     cfgContextInjectionAllowedCategories: overrides.cfgContextInjectionAllowedCategories || createInput(""),
+    cfgCarryoverContextEnabled: overrides.cfgCarryoverContextEnabled || createCheckbox(true),
     cfgAutoRecallEnabled: overrides.cfgAutoRecallEnabled || createCheckbox(false),
     cfgAutoRecallLimit: overrides.cfgAutoRecallLimit || createInput(""),
     cfgAutoRecallMinScore: overrides.cfgAutoRecallMinScore || createInput(""),
@@ -430,6 +438,11 @@ function createSettingsRefs(overrides = {}) {
     cfgCompactionMaxConsecutiveFailures: overrides.cfgCompactionMaxConsecutiveFailures || createInput(""),
     cfgCompactionMaxPtlRetries: overrides.cfgCompactionMaxPtlRetries || createInput(""),
     cfgCompactionContextWindowFraction: overrides.cfgCompactionContextWindowFraction || createInput(""),
+    cfgModelContextWindow: overrides.cfgModelContextWindow || createInput(""),
+    cfgCompressionReferenceStore: overrides.cfgCompressionReferenceStore || createCheckbox(true),
+    cfgBudgetProtectMode: overrides.cfgBudgetProtectMode || createInput("protect_memory_capability"),
+    cfgBudgetProtectKeepRecentRounds: overrides.cfgBudgetProtectKeepRecentRounds || createInput(""),
+    cfgStablePrefixSplit: overrides.cfgStablePrefixSplit || createCheckbox(false),
     cfgCompactionModelRoute: overrides.cfgCompactionModelRoute || createInput(""),
     cfgCompactionModel: overrides.cfgCompactionModel || createInput(""),
     cfgCompactionBaseUrl: overrides.cfgCompactionBaseUrl || createInput(""),
@@ -635,6 +648,7 @@ describe("settings controller", () => {
       BELLDANDY_UPDATE_CHECK: "false",
       BELLDANDY_UPDATE_CHECK_TIMEOUT_MS: "3500",
       BELLDANDY_UPDATE_CHECK_API_URL: "https://api.github.com/repos/example/project/releases/latest",
+      BELLDANDY_DEV_RUNTIME_DIST_GUARD: "warn",
       BELLDANDY_AUTH_MODE: "token",
       BELLDANDY_AUTH_TOKEN: "[REDACTED]",
       BELLDANDY_ALLOWED_ORIGINS: "http://localhost:5173,https://app.example.com",
@@ -682,6 +696,12 @@ describe("settings controller", () => {
       BELLDANDY_MAX_INPUT_TOKENS: "20000",
       BELLDANDY_MAX_OUTPUT_TOKENS: "8192",
       BELLDANDY_MEMORY_ENABLED: "false",
+      BELLDANDY_WORKFLOW_MAX_CONCURRENT: "6",
+      BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE: "20",
+      BELLDANDY_WORKFLOW_TIMEOUT_MS: "600000",
+      BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS: "300000",
+      BELLDANDY_WORKFLOW_MAX_AGENT_CALLS: "50",
+      BELLDANDY_WORKFLOW_MAX_DEPTH: "2",
       BELLDANDY_EMBEDDING_ENABLED: "true",
       BELLDANDY_EMBEDDING_PROVIDER: "local",
       BELLDANDY_EMBEDDING_OPENAI_BASE_URL: "https://embedding.example.com/v1",
@@ -693,6 +713,7 @@ describe("settings controller", () => {
       BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "true",
       BELLDANDY_CONTEXT_INJECTION_TASK_LIMIT: "4",
       BELLDANDY_CONTEXT_INJECTION_ALLOWED_CATEGORIES: "preference,fact,experience",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "false",
       BELLDANDY_AUTO_RECALL_ENABLED: "true",
       BELLDANDY_AUTO_RECALL_LIMIT: "5",
       BELLDANDY_AUTO_RECALL_MIN_SCORE: "0.42",
@@ -846,6 +867,7 @@ describe("settings controller", () => {
     expect(refs.cfgUpdateCheckEnabled.checked).toBe(false);
     expect(refs.cfgUpdateCheckTimeoutMs.value).toBe("3500");
     expect(refs.cfgUpdateCheckApiUrl.value).toBe("https://api.github.com/repos/example/project/releases/latest");
+    expect(refs.cfgDevRuntimeDistGuard.value).toBe("warn");
     expect(refs.cfgAuthMode.value).toBe("token");
     expect(refs.cfgAuthToken.value).toBe("[REDACTED]");
     expect(refs.cfgAllowedOrigins.value).toBe("http://localhost:5173,https://app.example.com");
@@ -898,6 +920,12 @@ describe("settings controller", () => {
     expect(refs.cfgMaxInputTokens.value).toBe("20000");
     expect(refs.cfgMaxOutputTokens.value).toBe("8192");
     expect(refs.cfgMemoryEnabled.checked).toBe(false);
+    expect(refs.cfgWorkflowMaxConcurrent.value).toBe("6");
+    expect(refs.cfgWorkflowMaxQueueSize.value).toBe("20");
+    expect(refs.cfgWorkflowTimeoutMs.value).toBe("600000");
+    expect(refs.cfgWorkflowAgentTimeoutMs.value).toBe("300000");
+    expect(refs.cfgWorkflowMaxAgentCalls.value).toBe("50");
+    expect(refs.cfgWorkflowMaxDepth.value).toBe("2");
     expect(refs.cfgEmbeddingEnabled.checked).toBe(true);
     expect(refs.cfgEmbeddingProvider.value).toBe("local");
     expect(refs.cfgEmbeddingBaseUrl.value).toBe("https://embedding.example.com/v1");
@@ -909,6 +937,7 @@ describe("settings controller", () => {
     expect(refs.cfgContextInjectionIncludeSession.checked).toBe(true);
     expect(refs.cfgContextInjectionTaskLimit.value).toBe("4");
     expect(refs.cfgContextInjectionAllowedCategories.value).toBe("preference,fact,experience");
+    expect(refs.cfgCarryoverContextEnabled.checked).toBe(false);
     expect(refs.cfgAutoRecallEnabled.checked).toBe(true);
     expect(refs.cfgAutoRecallLimit.value).toBe("5");
     expect(refs.cfgAutoRecallMinScore.value).toBe("0.42");
@@ -1303,6 +1332,7 @@ describe("settings controller", () => {
       cfgUpdateCheckEnabled: createCheckbox(false),
       cfgUpdateCheckTimeoutMs: createInput("3500"),
       cfgUpdateCheckApiUrl: createInput("https://api.github.com/repos/example/project/releases/latest"),
+      cfgDevRuntimeDistGuard: createInput("warn"),
       cfgAuthMode: createInput("token"),
       cfgAuthToken: createInput("setup-test-token"),
       cfgAuthPassword: createInput("super-secret-pass"),
@@ -1351,6 +1381,12 @@ describe("settings controller", () => {
       cfgMaxInputTokens: createInput("20000"),
       cfgMaxOutputTokens: createInput("8192"),
       cfgMemoryEnabled: createCheckbox(false),
+      cfgWorkflowMaxConcurrent: createInput("6"),
+      cfgWorkflowMaxQueueSize: createInput("20"),
+      cfgWorkflowTimeoutMs: createInput("600000"),
+      cfgWorkflowAgentTimeoutMs: createInput("300000"),
+      cfgWorkflowMaxAgentCalls: createInput("50"),
+      cfgWorkflowMaxDepth: createInput("2"),
       cfgEmbeddingEnabled: createCheckbox(true),
       cfgEmbeddingProvider: createInput("local"),
       cfgEmbeddingBaseUrl: createInput("https://embedding.example.com/v1"),
@@ -1362,6 +1398,7 @@ describe("settings controller", () => {
       cfgContextInjectionIncludeSession: createCheckbox(true),
       cfgContextInjectionTaskLimit: createInput("4"),
       cfgContextInjectionAllowedCategories: createInput(" preference,fact,experience "),
+      cfgCarryoverContextEnabled: createCheckbox(false),
       cfgAutoRecallEnabled: createCheckbox(true),
       cfgAutoRecallLimit: createInput("5"),
       cfgAutoRecallMinScore: createInput("0.42"),
@@ -1549,6 +1586,7 @@ describe("settings controller", () => {
       BELLDANDY_UPDATE_CHECK: "false",
       BELLDANDY_UPDATE_CHECK_TIMEOUT_MS: "3500",
       BELLDANDY_UPDATE_CHECK_API_URL: "https://api.github.com/repos/example/project/releases/latest",
+      BELLDANDY_DEV_RUNTIME_DIST_GUARD: "warn",
       BELLDANDY_AUTH_MODE: "token",
       BELLDANDY_AUTH_TOKEN: "setup-test-token",
       BELLDANDY_AUTH_PASSWORD: "super-secret-pass",
@@ -1614,6 +1652,7 @@ describe("settings controller", () => {
       BELLDANDY_CONTEXT_INJECTION_INCLUDE_SESSION: "true",
       BELLDANDY_CONTEXT_INJECTION_TASK_LIMIT: "4",
       BELLDANDY_CONTEXT_INJECTION_ALLOWED_CATEGORIES: "preference,fact,experience",
+      BELLDANDY_CARRYOVER_CONTEXT_ENABLED: "false",
       BELLDANDY_AUTO_RECALL_ENABLED: "true",
       BELLDANDY_AUTO_RECALL_LIMIT: "5",
       BELLDANDY_AUTO_RECALL_MIN_SCORE: "0.42",
@@ -1795,6 +1834,11 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES: "3",
       BELLDANDY_COMPACTION_MAX_PTL_RETRIES: "2",
       BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
+      BELLDANDY_MODEL_CONTEXT_WINDOW: "256000",
+      BELLDANDY_COMPRESSION_REFERENCE_STORE: "false",
+      BELLDANDY_BUDGET_PROTECT_MODE: "history_first",
+      BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS: "5",
+      BELLDANDY_STABLE_PREFIX_SPLIT: "true",
       BELLDANDY_COMPACTION_MODEL_ROUTE: "compact-fallback",
       BELLDANDY_COMPACTION_MODEL: "gpt-4o-mini",
       BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
@@ -1809,6 +1853,12 @@ describe("settings controller", () => {
       BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE: "10",
       BELLDANDY_SUB_AGENT_TIMEOUT_MS: "120000",
       BELLDANDY_SUB_AGENT_MAX_DEPTH: "2",
+      BELLDANDY_WORKFLOW_MAX_CONCURRENT: "6",
+      BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE: "20",
+      BELLDANDY_WORKFLOW_TIMEOUT_MS: "600000",
+      BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS: "300000",
+      BELLDANDY_WORKFLOW_MAX_AGENT_CALLS: "50",
+      BELLDANDY_WORKFLOW_MAX_DEPTH: "2",
       BELLDANDY_IMAGE_ENABLED: "true",
       BELLDANDY_IMAGE_PROVIDER: "openai",
       BELLDANDY_IMAGE_OPENAI_API_KEY: "[REDACTED]",
@@ -1863,6 +1913,11 @@ describe("settings controller", () => {
     expect(refs.cfgPromptSnapshotRetentionDays.value).toBe("7");
     expect(refs.cfgCompactionEnabled.checked).toBe(true);
     expect(refs.cfgCompactionContextWindowFraction.value).toBe("0.1");
+    expect(refs.cfgModelContextWindow.value).toBe("256000");
+    expect(refs.cfgCompressionReferenceStore.checked).toBe(false);
+    expect(refs.cfgBudgetProtectMode.value).toBe("history_first");
+    expect(refs.cfgBudgetProtectKeepRecentRounds.value).toBe("5");
+    expect(refs.cfgStablePrefixSplit.checked).toBe(true);
     expect(refs.cfgCompactionModelRoute.value).toBe("compact-fallback");
     expect(refs.cfgCompactionBaseUrl.value).toBe("https://compaction.example.com/v1");
     expect(refs.cfgCompactionApiKey.value).toBe("[REDACTED]");
@@ -1873,6 +1928,12 @@ describe("settings controller", () => {
     expect(refs.cfgDangerousToolsEnabled.checked).toBe(true);
     expect(refs.cfgToolsPolicyFile.value).toBe("~/.star_sanctuary/tools-policy.json");
     expect(refs.cfgSubAgentMaxDepth.value).toBe("2");
+    expect(refs.cfgWorkflowMaxConcurrent.value).toBe("6");
+    expect(refs.cfgWorkflowMaxQueueSize.value).toBe("20");
+    expect(refs.cfgWorkflowTimeoutMs.value).toBe("600000");
+    expect(refs.cfgWorkflowAgentTimeoutMs.value).toBe("300000");
+    expect(refs.cfgWorkflowMaxAgentCalls.value).toBe("50");
+    expect(refs.cfgWorkflowMaxDepth.value).toBe("2");
     expect(refs.cfgImageEnabled.checked).toBe(true);
     expect(refs.cfgImageApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgImageUnderstandEnabled.checked).toBe(true);
@@ -2264,6 +2325,11 @@ describe("settings controller", () => {
       cfgCompactionMaxConsecutiveFailures: createInput("3"),
       cfgCompactionMaxPtlRetries: createInput("2"),
       cfgCompactionContextWindowFraction: createInput(" 0.1 "),
+      cfgModelContextWindow: createInput(" 256000 "),
+      cfgCompressionReferenceStore: createCheckbox(false),
+      cfgBudgetProtectMode: createInput(" history_first "),
+      cfgBudgetProtectKeepRecentRounds: createInput(" 5 "),
+      cfgStablePrefixSplit: createCheckbox(true),
       cfgCompactionModelRoute: createInput(" compact-fallback "),
       cfgCompactionModel: createInput(" gpt-4o-mini "),
       cfgCompactionBaseUrl: createInput(" https://compaction.example.com/v1 "),
@@ -2278,6 +2344,12 @@ describe("settings controller", () => {
       cfgSubAgentMaxQueueSize: createInput("10"),
       cfgSubAgentTimeoutMs: createInput("120000"),
       cfgSubAgentMaxDepth: createInput("2"),
+      cfgWorkflowMaxConcurrent: createInput("6"),
+      cfgWorkflowMaxQueueSize: createInput("20"),
+      cfgWorkflowTimeoutMs: createInput("600000"),
+      cfgWorkflowAgentTimeoutMs: createInput("300000"),
+      cfgWorkflowMaxAgentCalls: createInput("50"),
+      cfgWorkflowMaxDepth: createInput("2"),
       cfgImageEnabled: createCheckbox(true),
       cfgImageProvider: createInput(" openai "),
       cfgImageApiKey: createInput("image-secret"),
@@ -2369,6 +2441,11 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_MAX_CONSECUTIVE_FAILURES: "3",
       BELLDANDY_COMPACTION_MAX_PTL_RETRIES: "2",
       BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
+      BELLDANDY_MODEL_CONTEXT_WINDOW: "256000",
+      BELLDANDY_COMPRESSION_REFERENCE_STORE: "false",
+      BELLDANDY_BUDGET_PROTECT_MODE: "history_first",
+      BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS: "5",
+      BELLDANDY_STABLE_PREFIX_SPLIT: "true",
       BELLDANDY_COMPACTION_MODEL_ROUTE: "compact-fallback",
       BELLDANDY_COMPACTION_MODEL: "gpt-4o-mini",
       BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
@@ -2383,6 +2460,12 @@ describe("settings controller", () => {
       BELLDANDY_SUB_AGENT_MAX_QUEUE_SIZE: "10",
       BELLDANDY_SUB_AGENT_TIMEOUT_MS: "120000",
       BELLDANDY_SUB_AGENT_MAX_DEPTH: "2",
+      BELLDANDY_WORKFLOW_MAX_CONCURRENT: "6",
+      BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE: "20",
+      BELLDANDY_WORKFLOW_TIMEOUT_MS: "600000",
+      BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS: "300000",
+      BELLDANDY_WORKFLOW_MAX_AGENT_CALLS: "50",
+      BELLDANDY_WORKFLOW_MAX_DEPTH: "2",
       BELLDANDY_IMAGE_ENABLED: "true",
       BELLDANDY_IMAGE_PROVIDER: "openai",
       BELLDANDY_IMAGE_OPENAI_API_KEY: "image-secret",

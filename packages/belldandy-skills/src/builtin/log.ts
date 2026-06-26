@@ -31,7 +31,10 @@ function parseDateStr(s: string): Date | null {
 
 /** 格式化日期为 YYYY-MM-DD */
 function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /** 列出某日期对应的所有日志文件（主文件 + 轮转文件） */

@@ -16,6 +16,7 @@ import {
   writeForegroundPid,
 } from "@star-sanctuary/distribution";
 import { resolveStateDir } from "./shared/env-loader.js";
+import { ensureFreshWorkspaceBuildsForDevRuntime } from "./workspace-build-guard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +25,6 @@ const __dirname = path.dirname(__filename);
 const EXT = path.extname(__filename);
 const GATEWAY_SCRIPT = path.resolve(__dirname, `../bin/gateway${EXT}`);
 const BDD_SCRIPT = path.resolve(__dirname, `../bin/bdd${EXT}`);
-
 function resolveGatewayScript(): string {
   const override = process.env.STAR_SANCTUARY_GATEWAY_ENTRY?.trim()
     || process.env.BELLDANDY_GATEWAY_ENTRY?.trim();
@@ -138,6 +138,15 @@ export function getDaemonStatus(stateDir?: string): DaemonStatus {
 export async function startDaemon(stateDir?: string): Promise<{ success: boolean; pid?: number; error?: string }> {
   const resolvedStateDir = stateDir ?? resolveStateDir();
   const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
+  if (EXT === ".ts") {
+    const guard = ensureFreshWorkspaceBuildsForDevRuntime();
+    if (!guard.ok) {
+      return {
+        success: false,
+        error: guard.reason ?? "Workspace package build guard failed.",
+      };
+    }
+  }
   await preflightGatewayCleanup({
     label: "Launcher",
     stateDir: resolvedStateDir,
@@ -242,6 +251,13 @@ export async function stopDaemon(stateDir?: string, timeout = 10000): Promise<{ 
  */
 export async function startForeground(stateDir?: string): Promise<void> {
   const resolvedStateDir = stateDir ?? resolveStateDir();
+  const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
+  if (EXT === ".ts") {
+    const guard = ensureFreshWorkspaceBuildsForDevRuntime();
+    if (!guard.ok) {
+      throw new Error(guard.reason ?? "Workspace package build guard failed.");
+    }
+  }
 
   function launchGateway(): void {
     const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
@@ -278,7 +294,7 @@ export async function startForeground(stateDir?: string): Promise<void> {
   await preflightGatewayCleanup({
     label: "Launcher",
     stateDir: resolvedStateDir,
-    env: reloadLauncherEnv(process.env, resolvedStateDir),
+    env: launchEnv,
     ownershipTokens: [resolveGatewayScript(), BDD_SCRIPT],
   });
   launchGateway();

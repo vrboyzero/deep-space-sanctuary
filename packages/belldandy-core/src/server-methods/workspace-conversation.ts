@@ -7,6 +7,7 @@ import type {
   ConversationMessage,
   ConversationStore,
 } from "@belldandy/agent";
+import { estimateMessagesTokens } from "@belldandy/agent";
 import type {
   ConversationMetaMessage,
   GatewayEventFrame,
@@ -24,6 +25,7 @@ import {
 } from "@belldandy/memory";
 
 import { buildConversationContinuationState } from "../continuation-state.js";
+import { estimateCarryoverContextPreludeTokens } from "../context-injection.js";
 import type { ConversationPromptSnapshotArtifact } from "../conversation-prompt-snapshot.js";
 import { buildGoalSessionStartBanner } from "../goal-session-banner.js";
 import type {
@@ -179,6 +181,10 @@ function createConversationRuntimeContext(
     isMemoryBudgetExceededError: ctx.isMemoryBudgetExceededError,
     runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<ConversationMethod>(),
   };
+}
+
+function isCarryoverContextEnabled(): boolean {
+  return process.env.BELLDANDY_CARRYOVER_CONTEXT_ENABLED !== "false";
 }
 
 function pad2(value: number): string {
@@ -373,6 +379,14 @@ export async function handleWorkspaceConversationMethod(
       const taskTokenResults = ctx.conversationStore.getTaskTokenResults(conversationId, limit);
       const loadedDeferredTools = ctx.conversationStore.getLoadedToolNames(conversationId);
       const compactBoundaries = ctx.conversationStore.getCompactBoundaries(conversationId, limit);
+      const carryoverContext = isCarryoverContextEnabled() && typeof (ctx.conversationStore as ConversationStore & {
+        getCarryoverContext?: (conversationId: string, options?: { limit?: number }) => Array<{ tokenEstimate?: number }>;
+      }).getCarryoverContext === "function"
+        ? (ctx.conversationStore as ConversationStore & {
+          getCarryoverContext: (conversationId: string, options?: { limit?: number }) => Array<{ tokenEstimate?: number }>;
+        }).getCarryoverContext(conversationId, { limit: 6 })
+        : [];
+      const retainedContext = await ctx.conversationStore.getConversationHistoryCompacted(conversationId);
       const digest = await ctx.conversationStore.getSessionDigest(conversationId);
       const sessionMemory = await ctx.conversationStore.getSessionMemory(conversationId);
       const memoryManager = getGlobalMemoryManager({ conversationId });
@@ -387,6 +401,8 @@ export async function handleWorkspaceConversationMethod(
           readTaskGraph: (goalId) => ctx.goalManager!.readTaskGraph(goalId),
         }).catch(() => undefined)
         : undefined;
+      const retainedTokens = retainedContext.history.length > 0 ? estimateMessagesTokens(retainedContext.history) : 0;
+      const carryoverTokens = estimateCarryoverContextPreludeTokens(carryoverContext);
       return {
         type: "res",
         id: req.id,
@@ -397,6 +413,21 @@ export async function handleWorkspaceConversationMethod(
           taskTokenResults,
           loadedDeferredTools,
           compactBoundaries,
+          retainedContextEstimate: {
+            tokens: retainedTokens,
+            messageCount: retainedContext.history.length,
+            compacted: retainedContext.compacted,
+            ...(retainedContext.boundary ? { boundary: retainedContext.boundary } : {}),
+          },
+          carryoverContextEstimate: {
+            tokens: carryoverTokens,
+            itemCount: carryoverContext.length,
+          },
+          nextTurnContextEstimate: {
+            tokens: retainedTokens + carryoverTokens,
+            retainedTokens,
+            carryoverTokens,
+          },
           continuationState: buildConversationContinuationState({
             conversationId,
             messages,

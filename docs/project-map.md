@@ -74,7 +74,8 @@ star-sanctuary/
 ### Gateway / CLI
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
 - `packages/belldandy-core/src/cli/main.ts`: CLI 根命令定义
-- `packages/belldandy-core/src/bin/gateway.ts`: Gateway 总装配入口
+- `packages/belldandy-core/src/bin/gateway.ts`: Gateway 开发态 bootstrap 入口（先做 dev/runtime 旧 `dist` 预检，再加载主装配）
+- `packages/belldandy-core/src/bin/gateway-main.ts`: Gateway 总装配入口
 - `packages/belldandy-core/src/bin/gateway-prompt-sections.ts`: Agent runtime prompt sections 组装，包含 Team / identity governance 静态 section
 - `packages/belldandy-core/src/server.ts`: Gateway 主服务与方法分发中心
 - `packages/belldandy-core/src/server-methods/`: RPC 方法分域处理

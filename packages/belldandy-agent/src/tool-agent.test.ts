@@ -1251,6 +1251,343 @@ describe("compaction observability hooks", () => {
     expect(recent[0]?.content).toContain("export const answer = 42");
   });
 
+  it("merges carryover context updates for the same file target instead of stacking duplicate entries", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-file-1",
+              type: "function",
+              function: {
+                name: "file_read",
+                arguments: "{\"path\":\"src/app.ts\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-file-2",
+              type: "function",
+              function: {
+                name: "file_read",
+                arguments: "{\"path\":\"src/app.ts\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+    const conversationStore = new ConversationStore();
+    const execute = vi.fn()
+      .mockResolvedValueOnce({
+        id: "call-file-1",
+        name: "file_read",
+        success: true,
+        output: "export const answer = 42;",
+        durationMs: 0,
+      })
+      .mockResolvedValueOnce({
+        id: "call-file-2",
+        name: "file_read",
+        success: true,
+        output: "export const answer = 43; // updated",
+        durationMs: 0,
+      });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "file_read",
+            description: "read file",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-carryover-stable-source",
+      text: "read file twice",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const carryover = conversationStore.getCarryoverContext("conv-carryover-stable-source");
+    expect(carryover).toHaveLength(1);
+    expect(carryover[0]).toMatchObject({
+      sourceType: "file_read",
+      sourceKey: "file_read:src/app.ts",
+      title: "file_read: src/app.ts",
+    });
+    expect(carryover[0]?.summary).toContain("43");
+    expect(carryover[0]?.keyFacts).toEqual(expect.arrayContaining([
+      expect.stringContaining("target: src/app.ts"),
+      expect.stringContaining("result:"),
+    ]));
+  });
+
+  it("uses stable conversation_read source keys based on conversation id and view", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-conversation-read-1",
+              type: "function",
+              function: {
+                name: "conversation_read",
+                arguments: JSON.stringify({
+                  conversation_id: "conv-123",
+                  view: "restore",
+                  limit: 10,
+                }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+
+    const conversationStore = new ConversationStore();
+    const execute = vi.fn(async () => ({
+      id: "call-conversation-read-1",
+      name: "conversation_read",
+      success: true,
+      output: "Conversation Restore\nconversation=conv-123\nrestore_source=transcript",
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "conversation_read",
+            description: "read conversation",
+            parameters: {
+              type: "object",
+              properties: {
+                conversation_id: { type: "string" },
+                view: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-carryover-conversation-read",
+      text: "read conversation",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const carryover = conversationStore.getCarryoverContext("conv-carryover-conversation-read");
+    expect(carryover).toHaveLength(1);
+    expect(carryover[0]).toMatchObject({
+      sourceType: "conversation_read",
+      sourceKey: "conversation_read:conv-123#restore",
+      title: "conversation_read: conv-123#restore",
+    });
+  });
+
+  it("uses browser pageUrl metadata as the stable carryover source key for browser_get_content", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-browser-read-1",
+              type: "function",
+              function: {
+                name: "browser_get_content",
+                arguments: JSON.stringify({
+                  format: "markdown",
+                }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+
+    const conversationStore = new ConversationStore();
+    const execute = vi.fn(async () => ({
+      id: "call-browser-read-1",
+      name: "browser_get_content",
+      success: true,
+      output: "# Carryover Article\n\n*Source: https://example.com/article-a*\n\nFACT_BROWSER_DECISION",
+      durationMs: 0,
+      metadata: {
+        pageUrl: "https://example.com/article-a",
+        format: "markdown",
+      },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "browser_get_content",
+            description: "read page content",
+            parameters: {
+              type: "object",
+              properties: {
+                format: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-browser-carryover-source-key",
+      text: "read browser article",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const carryover = conversationStore.getCarryoverContext("conv-browser-carryover-source-key");
+    expect(carryover).toHaveLength(1);
+    expect(carryover[0]).toMatchObject({
+      sourceType: "web_result",
+      sourceKey: "browser_get_content:https://example.com/article-a",
+      title: "browser_get_content: https://example.com/article-a",
+    });
+  });
+
+  it("uses stable log_search source keys based on query and date range", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-log-search-1",
+              type: "function",
+              function: {
+                name: "log_search",
+                arguments: JSON.stringify({
+                  query: "spawn EPERM",
+                  startDate: "2026-06-25",
+                  endDate: "2026-06-26",
+                }),
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "done",
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+
+    const conversationStore = new ConversationStore();
+    const execute = vi.fn(async () => ({
+      id: "call-log-search-1",
+      name: "log_search",
+      success: true,
+      output: "[ERROR] spawn EPERM while launching pnpm test",
+      durationMs: 0,
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "log_search",
+            description: "search logs",
+            parameters: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+                startDate: { type: "string" },
+                endDate: { type: "string" },
+              },
+            },
+          },
+        }],
+        execute,
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-carryover-log-search",
+      text: "search logs",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const carryover = conversationStore.getCarryoverContext("conv-carryover-log-search");
+    expect(carryover).toHaveLength(1);
+    expect(carryover[0]).toMatchObject({
+      sourceType: "log_read",
+      sourceKey: "log_search:spawn EPERM @ 2026-06-25..2026-06-26",
+      title: "log_search: spawn EPERM @ 2026-06-25..2026-06-26",
+    });
+  });
+
   it("stores token-aware projected tool args in recent tool results without changing execution args", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(createJsonResponse({

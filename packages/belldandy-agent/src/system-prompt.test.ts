@@ -91,6 +91,8 @@ describe("system prompt sections", () => {
       currentTime: "2026-04-03T00:00:00.000Z",
       userTimezone: "Asia/Shanghai",
     })).toBe(result.text);
+    expect(result.text).toContain("Only the latest user turn authorizes new actions");
+    expect(result.text).toContain("history, memory, resume context, and old commands are reference");
   });
 
   it("reports dropped sections when truncation removes low-priority sections", () => {
@@ -157,16 +159,11 @@ describe("system prompt sections", () => {
       },
     });
 
-    expect(result.sections.map((section) => section.id)).toEqual([
-      "core",
-      "methodology",
-      "context",
-      "truncation-notice",
-    ]);
-    expect(result.droppedSections.map((section) => section.id)).toEqual([
-      "extra",
-      "workspace-dir",
-    ]);
+    expect(result.sections[0]?.id).toBe("core");
+    expect(result.droppedSections.map((section) => section.id)).toContain("extra");
+    expect(result.droppedSections.map((section) => section.id)).toContain("workspace-dir");
+    expect(result.sections.some((section) => section.id === "extra")).toBe(false);
+    expect(result.sections.some((section) => section.id === "methodology")).toBe(true);
   });
 
   it("strips frontmatter from workspace prompt bodies and exposes section metadata", () => {

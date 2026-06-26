@@ -346,12 +346,19 @@ export class BrowserManager {
 }
 
 // Helper to standardise tool results
-const success = (id: string, name: string, output: string, start: number): ToolCallResult => ({
+const success = (
+    id: string,
+    name: string,
+    output: string,
+    start: number,
+    metadata?: ToolCallResult["metadata"],
+): ToolCallResult => ({
     id,
     name,
     success: true,
     output,
     durationMs: Date.now() - start,
+    ...(metadata ? { metadata } : {}),
 });
 
 const failure = (id: string, name: string, error: unknown, start: number): ToolCallResult => ({
@@ -764,7 +771,10 @@ export const browserGetContentTool: Tool = withToolContract({
                 ? content.slice(0, MAX_LEN) + `\n\n...[content truncated, original length: ${content.length} chars]...`
                 : content;
 
-            return success("unknown", "browser_get_content", truncated, start);
+            return success("unknown", "browser_get_content", truncated, start, {
+                pageUrl: typeof page.url === "function" ? page.url() : undefined,
+                format,
+            });
         } catch (err) {
             return failure("unknown", "browser_get_content", err, start);
         }
