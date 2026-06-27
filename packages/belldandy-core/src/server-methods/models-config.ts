@@ -77,6 +77,7 @@ export async function handleModelsConfigMethod(
         if (ctx.modelFallbacks) {
           ctx.modelFallbacks.splice(0, ctx.modelFallbacks.length, ...mergedConfig.fallbacks.map((item) => ({ ...item })));
         }
+        ctx.agentRegistry?.clearAllInstances();
         return {
           type: "res",
           id: req.id,

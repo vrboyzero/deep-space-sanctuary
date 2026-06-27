@@ -320,6 +320,82 @@ test("conversation.meta exposes retained context estimate for the next turn", as
   }
 });
 
+test("conversation.meta exposes persisted planState projection", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+
+  const conversationId = "conv-meta-plan-state";
+  const updated = conversationStore.updatePlanState(conversationId, {
+    ifAbsent: "create",
+    seed: {
+      title: "Phase A",
+      status: "active",
+      mode: "agent",
+    },
+    operations: [
+      {
+        type: "set_focus",
+        nextAction: "先补 conversation.meta 投影",
+      },
+      {
+        type: "upsert_step",
+        step: {
+          id: "server",
+          title: "补 server planState",
+          status: "in_progress",
+        },
+      },
+    ],
+  });
+  expect(updated.applied).toBe(true);
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-meta-plan-state",
+      method: "conversation.meta",
+      params: { conversationId },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-meta-plan-state" && f.ok === true));
+    const metaRes = frames.find((f) => f.type === "res" && f.id === "conversation-meta-plan-state");
+
+    expect(metaRes?.payload?.planState).toMatchObject({
+      title: "Phase A",
+      status: "active",
+      nextAction: "先补 conversation.meta 投影",
+      steps: [{
+        id: "server",
+        title: "补 server planState",
+        status: "in_progress",
+      }],
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("conversation.meta exposes carryover and next-turn context estimates", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const fixedCarryoverTimestamp = 1_710_000_000_000;

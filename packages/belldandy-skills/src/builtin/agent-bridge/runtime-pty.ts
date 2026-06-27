@@ -411,6 +411,7 @@ export async function startBridgeSession(
 export async function writeBridgeSession(
   sessionId: string,
   data: unknown,
+  submitLine: unknown,
   waitMs: unknown,
   context: Pick<ToolContext, "workspaceRoot" | "bridgeSessionGovernance" | "abortSignal">,
 ): Promise<ToolCallResult> {
@@ -419,7 +420,12 @@ export async function writeBridgeSession(
 
   try {
     throwIfAborted(context.abortSignal);
-    if (typeof data !== "string") {
+    const hasData = typeof data === "string";
+    const shouldSubmitLine = submitLine === true;
+    if (!hasData && !shouldSubmitLine) {
+      throw new Error("bridge_session_write 需要提供 data 字符串，或把 submitLine 设为 true。");
+    }
+    if (data !== undefined && typeof data !== "string") {
       throw new Error("bridge_session_write.data 必须是字符串。");
     }
 
@@ -434,8 +440,15 @@ export async function writeBridgeSession(
     }
 
     const ptyManager = PtyManager.getInstance();
-    ptyManager.write(record.runtimeSessionId, data);
-    store.appendTranscript(sessionId, "input", data);
+    let writtenInput = "";
+    if (hasData) {
+      writtenInput += data;
+    }
+    if (shouldSubmitLine) {
+      writtenInput += "\n";
+    }
+    ptyManager.write(record.runtimeSessionId, writtenInput);
+    store.appendTranscript(sessionId, "input", writtenInput);
     const resolvedWaitMs = normalizeWaitMs(waitMs);
     await delay(resolvedWaitMs, context.abortSignal);
     const output = ptyManager.read(record.runtimeSessionId);
@@ -464,6 +477,7 @@ export async function writeBridgeSession(
       output: JSON.stringify({
         ...toSessionPayload(updated),
         waitMs: resolvedWaitMs,
+        ...(shouldSubmitLine ? { submitLine: true } : {}),
         output,
         ...(firstTurnWriteWarning ? { firstTurnWarning: firstTurnWriteWarning } : {}),
         ...(firstTurnGuidance ? firstTurnGuidance : {}),

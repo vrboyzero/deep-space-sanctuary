@@ -193,6 +193,39 @@ describe("agent bridge P1 session tools", () => {
     expect(readAfterClose.error).toContain("已关闭");
   }, WINDOWS_PTY_FLOW_TEST_TIMEOUT_MS);
 
+  it("submits the current input line when bridge_session_write.submitLine is true", async () => {
+    const startResult = await bridgeSessionStartTool.execute({
+      targetId: "node-repl",
+      action: "interactive",
+    }, baseContext);
+
+    expect(startResult.success).toBe(true);
+    const started = JSON.parse(startResult.output) as { sessionId: string };
+
+    await bridgeSessionReadTool.execute({
+      sessionId: started.sessionId,
+      waitMs: INITIAL_SESSION_READ_WAIT_MS,
+    }, baseContext);
+
+    const stagedWrite = await bridgeSessionWriteTool.execute({
+      sessionId: started.sessionId,
+      data: "process.stdout.write('submit-line-ok\\n')",
+      waitMs: 150,
+    }, baseContext);
+    expect(stagedWrite.success).toBe(true);
+    const stagedPayload = JSON.parse(stagedWrite.output) as { output: string };
+    expect(stagedPayload.output).not.toContain("submit-line-ok");
+
+    const submitResult = await bridgeSessionWriteTool.execute({
+      sessionId: started.sessionId,
+      submitLine: true,
+      waitMs: SESSION_WRITE_WAIT_MS,
+    }, baseContext);
+    expect(submitResult.success).toBe(true);
+    const submitPayload = JSON.parse(submitResult.output) as { output: string };
+    expect(submitPayload.output).toContain("submit-line-ok");
+  }, WINDOWS_PTY_FLOW_TEST_TIMEOUT_MS);
+
   it("aborts bridge_session_read while waiting for output", async () => {
     const startResult = await bridgeSessionStartTool.execute({
       targetId: "node-repl",

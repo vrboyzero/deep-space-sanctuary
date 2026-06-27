@@ -1117,8 +1117,107 @@ body.control-panel-hidden .main-content {
   min-width: 108px;
 }
 
+.session-plan-panel {
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.session-plan-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.session-plan-card {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-surface);
+  overflow: hidden;
+}
+
+.session-plan-card.is-interactive {
+  cursor: pointer;
+}
+
+.session-plan-card.is-interactive:hover {
+  border-color: var(--primary);
+  background: var(--glass-highlight);
+}
+
+.session-plan-card.is-interactive:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.session-plan-card-head {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-plan-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-plan-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-plan-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 1 auto;
+}
+
+.session-plan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.session-plan-summary-text {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
 .session-digest-modal {
   max-width: 640px;
+}
+
+.session-plan-modal {
+  max-width: 760px;
 }
 
 .experience-synthesis-modal {
@@ -1324,6 +1423,262 @@ body.control-panel-hidden .main-content {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.session-plan-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+  max-height: 72vh;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.session-plan-modal-meta {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--memory-card-bg);
+  border: 1px solid var(--memory-card-border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.session-plan-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding-right: 4px;
+  min-width: 0;
+}
+
+.session-plan-modal-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--memory-card-bg);
+  border: 1px solid var(--memory-card-border);
+}
+
+.session-plan-modal-plan-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.session-plan-modal-plan-summary {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.session-plan-modal-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-plan-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.session-plan-modal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--memory-card-bg);
+  border: 1px solid var(--memory-card-border);
+  min-width: 0;
+}
+
+.session-plan-modal-card-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.session-plan-modal-card-value {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.session-plan-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-plan-modal-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.session-plan-modal-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.session-plan-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-plan-step-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--memory-card-bg);
+  border: 1px solid var(--memory-card-border);
+}
+
+.session-plan-step-item.is-current {
+  border-color: var(--primary);
+  background:
+    linear-gradient(135deg, rgba(86, 151, 224, 0.14), rgba(86, 151, 224, 0.04)),
+    var(--memory-card-bg);
+}
+
+.session-plan-step-item.is-continuation-focus,
+.session-plan-ref-badge.is-continuation-focus {
+  border-color: rgba(0, 243, 255, 0.52);
+  box-shadow: 0 0 0 1px rgba(0, 243, 255, 0.22), 0 0 24px rgba(0, 243, 255, 0.12);
+}
+
+.session-plan-step-item.is-blocked {
+  border-color: rgba(212, 98, 98, 0.42);
+  background:
+    linear-gradient(135deg, rgba(212, 98, 98, 0.14), rgba(212, 98, 98, 0.04)),
+    var(--memory-card-bg);
+}
+
+.session-plan-step-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.session-plan-step-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-plan-step-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.session-plan-step-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-plan-step-action:hover {
+  color: var(--primary);
+}
+
+.session-plan-step-action:focus-visible,
+.session-plan-ref-badge:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.session-plan-step-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.session-plan-step-summary,
+.session-plan-step-blocker {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.session-plan-step-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-plan-ref-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-plan-ref-badge {
+  appearance: none;
+  cursor: pointer;
+}
+
+.session-plan-ref-badge:hover {
+  border-color: var(--primary);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.session-plan-ref-badge.is-workflow-active {
+  border-color: rgba(83, 219, 154, 0.38);
+}
+
+.session-plan-ref-badge.is-workflow-blocked {
+  border-color: rgba(212, 98, 98, 0.42);
+}
+
+.session-plan-ref-badge.is-workflow-completed {
+  border-color: rgba(0, 243, 255, 0.32);
+}
+
+.session-plan-ref-status {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.session-plan-empty {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--memory-card-bg);
+  border: 1px dashed var(--memory-badge-border);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .session-digest-modal-section {
@@ -5477,7 +5832,8 @@ body.control-panel-hidden .main-content {
   }
 
   .task-token-history-bar,
-  .session-digest-bar {
+  .session-digest-bar,
+  .session-plan-panel {
     flex-direction: column;
     align-items: stretch;
   }
@@ -5490,12 +5846,19 @@ body.control-panel-hidden .main-content {
     flex-basis: 42%;
   }
 
+  .session-plan-title-row,
+  .session-plan-step-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .session-digest-refresh-btn {
     align-self: flex-start;
     min-width: 0;
   }
 
-  .session-digest-modal-actions {
+  .session-digest-modal-actions,
+  .session-plan-modal-section-head {
     flex-direction: column;
   }
 

@@ -69,6 +69,8 @@ test("configureClaudeCodeSession creates a persistent claude bridge session targ
           recommendedReadWaitMs: 2200,
           template: [
             "--dangerously-skip-permissions",
+            "-p",
+            "{{prompt}}",
             "--add-dir",
             "E:\\other-project",
             "--add-dir",

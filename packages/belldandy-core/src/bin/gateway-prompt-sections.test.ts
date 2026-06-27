@@ -237,4 +237,34 @@ describe("buildAgentRuntimePromptSections", () => {
       "tool-use-policy",
     ]);
   });
+
+  it("injects current plan operating policy when current plan tools are visible", () => {
+    const sections = buildAgentRuntimePromptSections({
+      hasAvailableTools: true,
+      visibleContracts: [
+        createContract({
+          name: "plan_current_update",
+          family: "other",
+          riskLevel: "low",
+          isReadOnly: false,
+        }),
+      ],
+      canDelegate: false,
+      role: "default",
+    });
+
+    expect(sections.map((section) => section.id)).toEqual([
+      "tool-use-policy",
+      "tool-contract-governance",
+      "current-plan-operating-policy",
+    ]);
+    expect(sections.find((section) => section.id === "current-plan-operating-policy")?.text)
+      .toContain("Do not create a current plan for ordinary chat");
+    expect(sections.find((section) => section.id === "current-plan-operating-policy")?.text)
+      .toContain("keep the terminal snapshot visible");
+    expect(sections.find((section) => section.id === "current-plan-operating-policy")?.text)
+      .toContain("ending the old current plan");
+    expect(sections.find((section) => section.id === "current-plan-operating-policy")?.text)
+      .toContain("read-only bridge metadata");
+  });
 });

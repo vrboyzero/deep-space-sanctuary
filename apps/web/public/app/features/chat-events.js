@@ -19,6 +19,7 @@ export function createChatEventsFeature({
   onEmailOutboundConfirmResolved,
   onToolsConfigUpdated,
   onConversationDigestUpdated,
+  onConversationPlanUpdated,
   stripThinkBlocks,
   configureMarkedOnce,
   renderAssistantMessage,
@@ -436,6 +437,11 @@ export function createChatEventsFeature({
 
     if (event === "conversation.digest.updated") {
       onConversationDigestUpdated?.(payload);
+      return true;
+    }
+
+    if (event === "conversation.plan.updated") {
+      onConversationPlanUpdated?.(payload);
       return true;
     }
 

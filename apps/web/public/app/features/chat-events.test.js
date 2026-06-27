@@ -160,6 +160,56 @@ describe("chat events pairing", () => {
     expect(onSubtaskUpdated).toHaveBeenNthCalledWith(2, { item: { id: "task-2", title: "B" } });
   });
 
+  it("forwards conversation.plan.updated to the plan panel callback", () => {
+    const onConversationPlanUpdated = vi.fn();
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => document.createElement("div")),
+      onPairingRequired: vi.fn(),
+      showRestartCountdown: vi.fn(),
+      setTokenUsageRunning: vi.fn(),
+      updateTokenUsage: vi.fn(),
+      showTaskTokenResult: vi.fn(),
+      onChannelSecurityPending: vi.fn(),
+      queueGoalUpdateEvent: vi.fn(),
+      onSubtaskUpdated: vi.fn(),
+      onToolSettingsConfirmRequired: vi.fn(),
+      onToolSettingsConfirmResolved: vi.fn(),
+      onExternalOutboundConfirmRequired: vi.fn(),
+      onExternalOutboundConfirmResolved: vi.fn(),
+      onEmailOutboundConfirmRequired: vi.fn(),
+      onEmailOutboundConfirmResolved: vi.fn(),
+      onToolsConfigUpdated: vi.fn(),
+      onConversationDigestUpdated: vi.fn(),
+      onConversationPlanUpdated,
+      stripThinkBlocks: (value) => value,
+      configureMarkedOnce: vi.fn(),
+      renderAssistantMessage: vi.fn(),
+      updateMessageMeta: vi.fn(),
+      forceScrollToBottom: vi.fn(),
+      getCanvasApp: () => null,
+      getActiveConversationId: () => "conv-plan",
+      onAgentStatusEvent: vi.fn(),
+      onConversationDelta: vi.fn(),
+      onConversationFinal: vi.fn(),
+      onConversationStopped: vi.fn(),
+      getStoppedMessageText: () => "Interrupted",
+      escapeHtml: (value) => String(value),
+    });
+
+    const handled = feature.handleEvent("conversation.plan.updated", {
+      conversationId: "conv-plan",
+      source: "tool",
+      planState: { title: "Current plan" },
+    });
+
+    expect(handled).toBe(true);
+    expect(onConversationPlanUpdated).toHaveBeenCalledWith({
+      conversationId: "conv-plan",
+      source: "tool",
+      planState: { title: "Current plan" },
+    });
+  });
+
   it("replaces an empty streaming bubble with an interrupted system message when conversation.run.stopped arrives", () => {
     document.body.innerHTML = "<div id=\"messages\"></div>";
     const messagesEl = document.getElementById("messages");

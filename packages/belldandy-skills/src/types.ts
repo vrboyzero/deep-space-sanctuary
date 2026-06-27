@@ -382,6 +382,127 @@ export type WorkflowRuntimeCapabilities = {
   listActiveRuns?(): Array<{ journalId: string; status: string; workflowName: string; startedAt: number }>;
 };
 
+export type ConversationPlanStatus =
+  | "draft"
+  | "active"
+  | "blocked"
+  | "completed"
+  | "cancelled";
+
+export type ConversationPlanStepStatus =
+  | "pending"
+  | "in_progress"
+  | "blocked"
+  | "completed"
+  | "skipped";
+
+export type ConversationPlanMode = "agent" | "manual";
+
+export type ConversationPlanUpdatedBy = "agent" | "user" | "system";
+
+export type ConversationPlanRef =
+  | { kind: "goal"; goalId: string; nodeId?: string; label?: string }
+  | { kind: "workflow"; journalId: string; workflowName?: string; label?: string }
+  | { kind: "subtask"; taskId: string; sessionId?: string; label?: string };
+
+export type ConversationPlanStep = {
+  id: string;
+  title: string;
+  summary?: string;
+  status: ConversationPlanStepStatus;
+  blocker?: string;
+  refs?: ConversationPlanRef[];
+  updatedAt: number;
+};
+
+export type ConversationPlanState = {
+  version: 1;
+  planId: string;
+  revision: number;
+  status: ConversationPlanStatus;
+  title: string;
+  summary?: string;
+  mode: ConversationPlanMode;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: ConversationPlanUpdatedBy;
+  currentStepId?: string;
+  nextAction?: string;
+  blocker?: string;
+  steps: ConversationPlanStep[];
+};
+
+export type ConversationPlanSeed = {
+  title: string;
+  summary?: string;
+  mode?: ConversationPlanMode;
+  status?: Extract<ConversationPlanStatus, "draft" | "active">;
+};
+
+export type ConversationPlanPatchOperation =
+  | {
+    type: "replace";
+    plan: Omit<ConversationPlanState, "revision" | "createdAt" | "updatedAt" | "updatedBy">;
+  }
+  | {
+    type: "set_header";
+    title?: string;
+    summary?: string;
+  }
+  | {
+    type: "set_status";
+    status: ConversationPlanStatus;
+    blocker?: string;
+  }
+  | {
+    type: "set_focus";
+    currentStepId?: string;
+    nextAction?: string;
+    blocker?: string;
+  }
+  | {
+    type: "upsert_step";
+    step: Omit<ConversationPlanStep, "updatedAt">;
+  }
+  | {
+    type: "set_step_status";
+    stepId: string;
+    status: ConversationPlanStepStatus;
+    blocker?: string;
+  }
+  | {
+    type: "attach_ref";
+    stepId: string;
+    ref: ConversationPlanRef;
+  }
+  | {
+    type: "clear";
+  };
+
+export type ConversationPlanUpdateInput = {
+  baseRevision?: number;
+  ifAbsent?: "create" | "reject";
+  seed?: ConversationPlanSeed;
+  operations: ConversationPlanPatchOperation[];
+  updatedBy?: ConversationPlanUpdatedBy;
+};
+
+export type ConversationPlanUpdateReasonCode =
+  | "ok"
+  | "conflict"
+  | "missing_plan"
+  | "missing_seed"
+  | "invalid_patch";
+
+export type ConversationPlanUpdateResult = {
+  applied: boolean;
+  conflict: boolean;
+  planState: ConversationPlanState | null;
+  cleared?: boolean;
+  reasonCode?: ConversationPlanUpdateReasonCode;
+  message?: string;
+};
+
 export type AgentCapabilities = {
   spawnSubAgent?: (opts: SpawnSubAgentOptions) => Promise<SubAgentResult>;
   spawnParallel?: (tasks: SpawnSubAgentOptions[]) => Promise<SubAgentResult[]>;
@@ -2092,6 +2213,17 @@ export interface ConversationStoreInterface {
   getHistory(
     conversationId: string,
   ): Array<{ role: "user" | "assistant"; content: string }>;
+  getPlanState?(
+    conversationId: string,
+  ): ConversationPlanState | null;
+  updatePlanState?(
+    conversationId: string,
+    input: ConversationPlanUpdateInput,
+  ): ConversationPlanUpdateResult;
+  clearPlanState?(
+    conversationId: string,
+    updatedBy?: ConversationPlanUpdatedBy,
+  ): ConversationPlanState | null;
   listPersistedConversations?(
     options?: {
       limit?: number;

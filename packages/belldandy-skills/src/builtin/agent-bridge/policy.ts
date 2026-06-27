@@ -42,6 +42,32 @@ function normalizeNumberish(value: unknown): string | undefined {
   return normalizeOptionalString(value);
 }
 
+function replaceTemplatePlaceholders(
+  template: string[],
+  allowedArgs: string[],
+  args: Record<string, unknown>,
+): { tokens: string[]; consumedKeys: Set<string> } {
+  const consumedKeys = new Set<string>();
+  const tokens = template.map((token) => {
+    if (typeof token !== "string") {
+      return token;
+    }
+    return token.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, key: string) => {
+      if (!allowedArgs.includes(key)) {
+        throw new Error(`Bridge template 使用了未声明的结构化参数占位符: ${key}`);
+      }
+      const value = args[key];
+      const normalized = normalizeOptionalString(value);
+      if (!normalized) {
+        throw new Error(`Bridge 参数 ${key} 必须是非空字符串。`);
+      }
+      consumedKeys.add(key);
+      return normalized;
+    });
+  });
+  return { tokens, consumedKeys };
+}
+
 function quoteCommandToken(token: string): string {
   if (token.length === 0) return "\"\"";
   if (!/[\s"'&|;<>]/.test(token)) return token;
@@ -141,11 +167,15 @@ export function buildBridgeCommandTokens(
   }
 
   const args = validateBridgeStructuredArgs(action, rawArgs);
-  const tokens = [target.entry.binary, ...action.template];
   const allowed = action.allowStructuredArgs ?? [];
+  const renderedTemplate = replaceTemplatePlaceholders(action.template, allowed, args);
+  const tokens = [target.entry.binary, ...renderedTemplate.tokens];
 
   const pathWithLocation = allowed.includes("path") ? resolvePathWithLocation(args) : undefined;
   for (const key of allowed) {
+    if (renderedTemplate.consumedKeys.has(key)) {
+      continue;
+    }
     if (key === "line" || key === "column") continue;
     if (key === "path" && pathWithLocation) {
       tokens.push(pathWithLocation);

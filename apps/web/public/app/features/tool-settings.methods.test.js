@@ -58,6 +58,14 @@ function createHarness(payloadOverride = {}) {
           plugins: [],
           methods: [],
           skills: [],
+          runtimeCapabilities: {
+            workflow: {
+              toolName: "run_workflow",
+              runtimeAvailable: false,
+              registered: false,
+              reasonCode: "runtime_unavailable",
+            },
+          },
           disabled: { builtin: [], mcp_servers: [], plugins: [], skills: [] },
           visibilityContext: {},
           toolControl: { mode: "disabled", requiresConfirmation: false, hasConfirmPassword: false, pendingRequest: null },
@@ -122,6 +130,46 @@ describe("tool settings methods tab", () => {
     refs.toolTabButtons.find((item) => item.dataset.tab === "methods")?.click();
 
     expect(refs.toolSettingsBody.textContent).toContain("未发布方法");
+  });
+
+  it("renders workflow capability hint when runtime is unavailable", async () => {
+    const { controller, refs } = createHarness({
+      builtin: ["alpha_builtin"],
+      runtimeCapabilities: {
+        workflow: {
+          toolName: "run_workflow",
+          runtimeAvailable: false,
+          registered: false,
+          reasonCode: "runtime_unavailable",
+        },
+      },
+    });
+
+    await controller.toggle(true);
+
+    expect(refs.toolSettingsBody.textContent).toContain("Dynamic Workflow");
+    expect(refs.toolSettingsBody.textContent).toContain("run_workflow");
+    expect(refs.toolSettingsBody.textContent).toContain("not registered in builtin tools");
+  });
+
+  it("renders workflow capability ready hint when run_workflow is registered", async () => {
+    const { controller, refs } = createHarness({
+      builtin: ["alpha_builtin", "run_workflow"],
+      runtimeCapabilities: {
+        workflow: {
+          toolName: "run_workflow",
+          runtimeAvailable: true,
+          registered: true,
+          reasonCode: "available",
+        },
+      },
+    });
+
+    await controller.toggle(true);
+
+    expect(refs.toolSettingsBody.textContent).toContain("Dynamic Workflow");
+    expect(refs.toolSettingsBody.textContent).toContain("Workflow tool ready");
+    expect(refs.toolSettingsBody.textContent).toContain("available in the current builtin tools list");
   });
 
   it("notifies the agent conversation after approving a tool settings request", async () => {

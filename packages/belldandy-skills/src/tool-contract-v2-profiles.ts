@@ -573,6 +573,79 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     ],
     userVisibleRiskNote: "这是压缩后工具结果的恢复入口。优先按 tool_call_id 或明确过滤读取，避免把无关的大段旧输出重新拉回当前上下文。",
   },
+  plan_current_get: {
+    family: "other",
+    riskLevel: "low",
+    needsPermission: false,
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    activityDescription: "Read the current conversation plan state for the active task",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need to inspect the current conversation-scoped plan before continuing a complex multi-step task",
+      "Need the latest revision, focus step, next action, or terminal snapshot that the main agent is already maintaining",
+    ],
+    avoidWhen: [
+      "The task is ordinary chat, one-shot Q&A, or another case where having no plan is normal",
+      "You actually need the source-of-truth state of a goal, workflow, or subtask runtime rather than the conversation plan overlay",
+    ],
+    confirmWhen: [],
+    preflightChecks: [
+      "Treat hasPlan=false as a normal state for ordinary conversations instead of a runtime failure",
+      "If you need bottom-layer truth for goal, workflow, or subtask execution, read those systems directly instead of inferring from planState alone",
+    ],
+    fallbackStrategy: [
+      "Use goal, workflow, or subtask runtime reads directly when the plan overlay is absent or too high-level for the needed evidence",
+    ],
+    expectedOutput: [
+      "JSON snapshot with hasPlan plus the latest current plan state when one exists",
+    ],
+    sideEffectSummary: [
+      "Read-only access to the conversation-scoped current plan overlay",
+    ],
+    userVisibleRiskNote: "这是低风险只读工具。普通会话没有 current plan 属于正常情况，不应因此反推系统异常。",
+  },
+  plan_current_update: {
+    family: "other",
+    riskLevel: "low",
+    needsPermission: false,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    activityDescription: "Create or patch the current conversation plan state for complex multi-step work",
+    outputPersistencePolicy: "external-state",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need to lazily create or maintain a single current plan for a complex multi-step task that will span multiple turns, modules, or blockers",
+      "Need to update step status, focus, next action, blocker, or read-only refs while keeping one conversation-scoped plan truth",
+    ],
+    avoidWhen: [
+      "The task is ordinary chat, a one-shot explanation, a tiny single-step fix, or another case where no persistent plan is warranted",
+      "You are trying to make planState the source of truth for goal, workflow, or subtask runtimes instead of using refs as a read-only bridge",
+    ],
+    confirmWhen: [
+      "You are replacing an existing current plan; end the old current plan intentionally and provide a distinct replacement plan instead of silently overwriting it",
+    ],
+    preflightChecks: [
+      "Use ifAbsent=create only after the task has clearly entered a complex multi-step execution phase; otherwise leave ordinary conversations without a plan",
+      "When a plan reaches completed or cancelled, keep the terminal snapshot unless the user explicitly wants it cleared or you are intentionally replacing it with a new current plan",
+      "Treat goal, workflow, and subtask refs as read-only bridge metadata and jump targets rather than objects that plan_current_update should govern bidirectionally",
+    ],
+    fallbackStrategy: [
+      "Use plan_current_get first when you need the latest revision before patching an existing plan",
+      "Use replace for a truly new current plan and incremental patch operations for ordinary progress updates; do not silently overwrite a finished plan",
+    ],
+    expectedOutput: [
+      "JSON result with applied/conflict state plus the latest current plan snapshot after the patch",
+    ],
+    sideEffectSummary: [
+      "Mutates the conversation-scoped current plan state and can replace or clear the visible current plan for this conversation",
+      "Successful updates also emit conversation.plan.updated so WebChat can refresh the plan panel",
+    ],
+    userVisibleRiskNote: "这是低风险会话状态工具，但它会改变当前会话计划面板的真源。普通会话默认不需要它；替换旧计划时要显式进入新的 current plan。",
+  },
   memory_search: {
     family: "memory",
     riskLevel: "low",

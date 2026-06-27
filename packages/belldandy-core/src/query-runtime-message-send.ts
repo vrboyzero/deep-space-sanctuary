@@ -975,6 +975,25 @@ function readToolResultFollowUpStrategy(metadata: unknown): Record<string, unkno
   return metadata.followUpStrategy;
 }
 
+function readPlanLifecycleMetadata(metadata: unknown): Record<string, unknown> | undefined {
+  if (!isJsonObjectRecord(metadata) || !isJsonObjectRecord(metadata.planLifecycle)) {
+    return undefined;
+  }
+  return metadata.planLifecycle;
+}
+
+function readPlanLifecycleString(metadata: unknown, key: string): string | undefined {
+  const lifecycle = readPlanLifecycleMetadata(metadata);
+  const value = lifecycle?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readPlanLifecycleBoolean(metadata: unknown, key: string): boolean | undefined {
+  const lifecycle = readPlanLifecycleMetadata(metadata);
+  const value = lifecycle?.[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function readFirstDelegationAcceptanceGate(metadata: unknown): Record<string, unknown> | undefined {
   if (!isJsonObjectRecord(metadata)) {
     return undefined;
@@ -1442,6 +1461,14 @@ function createMessageSendStreamAdapter(input: {
         const followUpRuntimeAction = readToolResultFollowUpRuntimeAction(item.metadata);
         const followUpHighPriorityLabels = readToolResultFollowUpHighPriorityLabels(item.metadata);
         const verifierHandoffSuggested = readToolResultVerifierHandoffSuggested(item.metadata);
+        const planLifecycleAction = readPlanLifecycleString(item.metadata, "action");
+        const planStatus = readPlanLifecycleString(item.metadata, "status");
+        const planId = readPlanLifecycleString(item.metadata, "planId");
+        const previousPlanId = readPlanLifecycleString(item.metadata, "previousPlanId");
+        const operationTypes = readPlanLifecycleMetadata(item.metadata)?.operationTypes;
+        const enteredPlanMode = readPlanLifecycleBoolean(item.metadata, "enteredPlanMode");
+        const switchedCurrentPlan = readPlanLifecycleBoolean(item.metadata, "switchedCurrentPlan");
+        const retainedTerminalSnapshot = readPlanLifecycleBoolean(item.metadata, "retainedTerminalSnapshot");
         input.queryRuntime.mark("tool_result_emitted", {
           conversationId: input.conversationId,
           detail: {
@@ -1454,6 +1481,21 @@ function createMessageSendStreamAdapter(input: {
             ...(followUpRuntimeAction ? { followUpRuntimeAction } : {}),
             ...(followUpHighPriorityLabels ? { followUpHighPriorityLabels } : {}),
             ...(verifierHandoffSuggested ? { verifierHandoffSuggested } : {}),
+            ...(planLifecycleAction ? { planLifecycleAction } : {}),
+            ...(planStatus ? { planStatus } : {}),
+            ...(planId ? { planId } : {}),
+            ...(previousPlanId ? { previousPlanId } : {}),
+            ...(Array.isArray(operationTypes) && operationTypes.length > 0
+              ? {
+                planOperationTypes: operationTypes
+                  .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                  .map((value) => value.trim())
+                  .join(", "),
+              }
+              : {}),
+            ...(typeof enteredPlanMode === "boolean" ? { enteredPlanMode } : {}),
+            ...(typeof switchedCurrentPlan === "boolean" ? { switchedCurrentPlan } : {}),
+            ...(typeof retainedTerminalSnapshot === "boolean" ? { retainedTerminalSnapshot } : {}),
           },
         });
         input.ctx.io.sendEvent(input.ctx.request.ws, {

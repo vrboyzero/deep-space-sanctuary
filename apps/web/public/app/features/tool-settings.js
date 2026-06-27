@@ -138,6 +138,16 @@ export function createToolSettingsController({
     };
   }
 
+  function normalizeWorkflowCapability(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    return {
+      toolName: entry.toolName ? String(entry.toolName) : "run_workflow",
+      runtimeAvailable: entry.runtimeAvailable === true,
+      registered: entry.registered === true,
+      reasonCode: entry.reasonCode ? String(entry.reasonCode) : "tool_system_unavailable",
+    };
+  }
+
   function formatContractFamilyLabel(family) {
     const labels = {
       "network-read": t("toolSettings.familyNetworkRead", {}, "Network Read"),
@@ -479,6 +489,47 @@ export function createToolSettingsController({
     if (toolSettingsConfirmModal) toolSettingsConfirmModal.classList.add("hidden");
   }
 
+  function formatWorkflowCapabilityReason(capability) {
+    if (!capability) return "";
+    const toolName = capability.toolName || "run_workflow";
+    const labels = {
+      available: t(
+        "toolSettings.workflowCapabilityAvailable",
+        { toolName },
+        `${toolName} is available in the current builtin tools list.`,
+      ),
+      runtime_unavailable: t(
+        "toolSettings.workflowCapabilityRuntimeUnavailable",
+        { toolName },
+        `Dynamic Workflow runtime is unavailable, so ${toolName} is not registered in builtin tools.`,
+      ),
+      tool_not_registered: t(
+        "toolSettings.workflowCapabilityToolNotRegistered",
+        { toolName },
+        `Dynamic Workflow runtime is ready, but ${toolName} is still not registered in builtin tools.`,
+      ),
+      tool_system_unavailable: t(
+        "toolSettings.workflowCapabilityToolSystemUnavailable",
+        { toolName },
+        `Tool system is unavailable, so ${toolName} cannot be listed.`,
+      ),
+    };
+    return labels[capability.reasonCode] || labels.tool_system_unavailable;
+  }
+
+  function renderWorkflowCapabilitySummary(capability) {
+    if (!capability) return "";
+    const statusText = capability.registered
+      ? t("toolSettings.workflowCapabilityStatusReady", {}, "Workflow tool ready")
+      : t("toolSettings.workflowCapabilityStatusMissing", {}, "Workflow tool unavailable");
+    return `
+      <div class="tool-settings-policy-note">
+        <div><strong>${escapeHtml(t("toolSettings.workflowCapabilityTitle", {}, "Dynamic Workflow"))}</strong> · ${escapeHtml(statusText)}</div>
+        <div>${escapeHtml(formatWorkflowCapabilityReason(capability))}</div>
+      </div>
+    `;
+  }
+
   function buildToolSettingsConfirmAgentNotice(request, decision) {
     const approved = decision === "approve";
     const summary = Array.isArray(request?.summary)
@@ -658,6 +709,7 @@ export function createToolSettingsController({
       skillVisibility,
       visibilityContext,
       toolControl,
+      runtimeCapabilities,
     } = toolSettingsData;
 
     if (toolSettingsActiveTab === "builtin") {
@@ -668,6 +720,7 @@ export function createToolSettingsController({
         visibility || {},
         visibilityContext || {},
         normalizeToolControlState(toolControl),
+        normalizeWorkflowCapability(runtimeCapabilities?.workflow),
       );
     } else if (toolSettingsActiveTab === "mcp") {
       renderMCPTab(mcp, disabled.mcp_servers || [], mcpVisibility || {}, visibilityContext || {}, normalizeToolControlState(toolControl));
@@ -681,7 +734,7 @@ export function createToolSettingsController({
     updateSaveButtonAvailability();
   }
 
-  function renderBuiltinTab(tools, disabledList, contractsByName, visibilityByName, visibilityContext, toolControl) {
+  function renderBuiltinTab(tools, disabledList, contractsByName, visibilityByName, visibilityContext, toolControl, workflowCapability) {
     if (!tools || tools.length === 0) {
       renderEmpty("toolSettings.emptyUnavailable", "Tool system is disabled (BELLDANDY_TOOLS_ENABLED=false)");
       return;
@@ -690,6 +743,7 @@ export function createToolSettingsController({
     const enabledCount = tools.length - disabledSet.size;
     let html = `<div class="tool-section-header"><span>${escapeHtml(t("toolSettings.sectionBuiltin", {}, "Built-in Tools"))}</span><span class="tool-section-count">${escapeHtml(t("toolSettings.enabledCount", { enabled: enabledCount, total: tools.length }, `${enabledCount}/${tools.length} enabled`))}</span></div>`;
     html += renderToolControlState(toolControl, visibilityContext);
+    html += renderWorkflowCapabilitySummary(workflowCapability);
     for (const name of [...tools].sort((a, b) => String(a).localeCompare(String(b)))) {
       const checked = !disabledSet.has(name);
       const contract = normalizeBuiltinContract(contractsByName ? contractsByName[name] : null);

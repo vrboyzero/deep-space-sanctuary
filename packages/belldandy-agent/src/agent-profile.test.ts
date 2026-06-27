@@ -262,6 +262,7 @@ test("resolveModelConfig preserves primary and named reasoning config", () => {
             enable_thinking: true,
           },
         },
+        messageLayout: "single_system_only",
       },
     ],
   );
@@ -278,6 +279,7 @@ test("resolveModelConfig preserves primary and named reasoning config", () => {
         enable_thinking: true,
       },
     },
+    messageLayout: "single_system_only",
     source: "named",
   });
 });

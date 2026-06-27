@@ -16,6 +16,7 @@
  *   identity-authority（模型需要知道权限边界，但不需要每轮重建 system prompt）
  */
 
+import type { ModelMessageLayout } from "./failover-client.js";
 import type { AgentPromptDelta } from "./prompt-snapshot.js";
 
 /** Transient-safe delta 类型集合（可安全挪到 transient tail） */
@@ -220,6 +221,141 @@ export function injectIndependentBlock(
   // 没有 system prompt，插入到最前面
   messages.unshift({ role: "system", content: blockText });
   return { injected: true, insertIndex: 0 };
+}
+
+function prependTextToContent(content: unknown, text: string): unknown {
+  if (typeof content === "string") {
+    return content.trim() ? `${text}\n\n${content}` : text;
+  }
+
+  if (Array.isArray(content)) {
+    const cloned = content.map((part) =>
+      part && typeof part === "object" && !Array.isArray(part)
+        ? { ...(part as Record<string, unknown>) }
+        : part
+    );
+    const textPartIndex = cloned.findIndex((part: any) => part?.type === "text" && typeof part?.text === "string");
+    if (textPartIndex >= 0) {
+      const part = cloned[textPartIndex] as { type: string; text: string };
+      part.text = part.text.trim() ? `${text}\n\n${part.text}` : text;
+      return cloned;
+    }
+    cloned.unshift({ type: "text", text });
+    return cloned;
+  }
+
+  if (typeof content === "undefined" || content === null) {
+    return text;
+  }
+
+  return `${text}\n\n${String(content)}`;
+}
+
+export function prependTransientTailToLastUser(
+  messages: Array<{ role: string; content?: unknown }>,
+  transientText: string,
+): { injected: boolean; targetIndex: number } {
+  if (!transientText) return { injected: false, targetIndex: -1 };
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role !== "user") continue;
+    messages[i] = {
+      ...messages[i],
+      content: prependTextToContent(messages[i].content, transientText),
+    };
+    return { injected: true, targetIndex: i };
+  }
+
+  if (messages[0]?.role === "system" && typeof messages[0].content === "string") {
+    messages[0] = {
+      ...messages[0],
+      content: `${messages[0].content}\n\n${transientText}`,
+    };
+    return { injected: true, targetIndex: 0 };
+  }
+
+  return { injected: false, targetIndex: -1 };
+}
+
+export function mergeIndependentBlockIntoFirstSystem(
+  messages: Array<{ role: string; content?: unknown }>,
+  blockText: string,
+): { injected: boolean; targetIndex: number } {
+  if (!blockText) return { injected: false, targetIndex: -1 };
+
+  if (messages[0]?.role === "system") {
+    const existing = typeof messages[0].content === "string" ? messages[0].content.trim() : "";
+    messages[0] = {
+      ...messages[0],
+      content: existing ? `${existing}\n\n${blockText}` : blockText,
+    };
+    return { injected: true, targetIndex: 0 };
+  }
+
+  messages.unshift({ role: "system", content: blockText });
+  return { injected: true, targetIndex: 0 };
+}
+
+function cloneMessageContent(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  return content.map((part) =>
+    part && typeof part === "object" && !Array.isArray(part)
+      ? { ...(part as Record<string, unknown>) }
+      : part
+  );
+}
+
+function cloneMessages<T extends { role: string }>(messages: readonly T[]): T[] {
+  return messages.map((message) => {
+    const cloned = { ...message } as T & { content?: unknown };
+    if ("content" in cloned) {
+      cloned.content = cloneMessageContent(cloned.content);
+    }
+    return cloned as T;
+  });
+}
+
+export function applyStablePrefixSplitMessageLayout<T extends { role: string }>(
+  messages: readonly T[],
+  options: {
+    transientText?: string;
+    independentBlockText?: string;
+    messageLayout?: ModelMessageLayout;
+  } = {},
+): T[] {
+  const cloned = cloneMessages(messages);
+  const transientText = options.transientText ?? "";
+  const independentBlockText = options.independentBlockText ?? "";
+
+  if (options.messageLayout === "single_system_only") {
+    if (independentBlockText) {
+      mergeIndependentBlockIntoFirstSystem(
+        cloned as Array<{ role: string; content?: unknown }>,
+        independentBlockText,
+      );
+    }
+    if (transientText) {
+      prependTransientTailToLastUser(
+        cloned as Array<{ role: string; content?: unknown }>,
+        transientText,
+      );
+    }
+    return cloned;
+  }
+
+  if (transientText) {
+    injectTransientTail(
+      cloned as unknown as Array<{ role: string; content: unknown }>,
+      transientText,
+    );
+  }
+  if (independentBlockText) {
+    injectIndependentBlock(
+      cloned as unknown as Array<{ role: string; content: unknown }>,
+      independentBlockText,
+    );
+  }
+  return cloned;
 }
 
 /** 默认配置 */

@@ -1,7 +1,12 @@
 import type { AgentRegistry } from "@belldandy/agent";
 import type { ToolExecutionRuntimeContext } from "@belldandy/skills";
-import { TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
-import type { ToolContractChannel, ToolExecutor, SkillRegistry } from "@belldandy/skills";
+import { RUN_WORKFLOW_TOOL_NAME, TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
+import type {
+  ToolContractChannel,
+  ToolExecutor,
+  SkillRegistry,
+  WorkflowRuntimeCapabilities,
+} from "@belldandy/skills";
 import {
   listToolContractsV2,
 } from "@belldandy/skills";
@@ -45,6 +50,13 @@ type MethodInventoryItem = {
   path?: string;
 };
 
+type WorkflowRuntimeCapabilityPayload = {
+  toolName: string;
+  runtimeAvailable: boolean;
+  registered: boolean;
+  reasonCode: "available" | "runtime_unavailable" | "tool_not_registered" | "tool_system_unavailable";
+};
+
 export type QueryRuntimeToolsContext = {
   requestId: string;
   clientId?: string;
@@ -60,6 +72,7 @@ export type QueryRuntimeToolsContext = {
   extensionHost?: Pick<ExtensionHostState, "lifecycle">;
   skillRegistry?: SkillRegistry;
   subTaskRuntimeStore?: SubTaskRuntimeStore;
+  workflowRuntime?: WorkflowRuntimeCapabilities;
   resolvePendingToolControlRequest?: (input: {
     confirmationStore?: ToolControlConfirmationStore;
     getMode?: () => "disabled" | "confirm" | "auto";
@@ -168,6 +181,13 @@ export async function handleToolsListWithQueryRuntime(
             requiresConfirmation: false,
             hasConfirmPassword: false,
             pendingRequest: null,
+          },
+          runtimeCapabilities: {
+            workflow: buildWorkflowRuntimeCapability({
+              workflowRuntime: ctx.workflowRuntime,
+              registeredToolNames: [],
+              toolSystemAvailable: false,
+            }),
           },
           disabled: { builtin: [], mcp_servers: [], plugins: [], skills: [] },
           extensions: extensionRuntime,
@@ -327,6 +347,11 @@ export async function handleToolsListWithQueryRuntime(
       getConfirmPassword: ctx.getAgentToolControlConfirmPassword,
       conversationId: visibilityConversationId,
     });
+    const workflowCapability = buildWorkflowRuntimeCapability({
+      workflowRuntime: ctx.workflowRuntime,
+      registeredToolNames: allNames,
+      toolSystemAvailable: true,
+    });
 
     const builtin: string[] = [];
     const mcp: Record<string, { tools: string[] }> = {};
@@ -455,10 +480,50 @@ export async function handleToolsListWithQueryRuntime(
             : {}),
         },
         toolControl,
+        runtimeCapabilities: {
+          workflow: workflowCapability,
+        },
         disabled: visibleDisabled,
       },
     };
   });
+}
+
+function buildWorkflowRuntimeCapability(input: {
+  workflowRuntime?: WorkflowRuntimeCapabilities;
+  registeredToolNames: string[];
+  toolSystemAvailable: boolean;
+}): WorkflowRuntimeCapabilityPayload {
+  if (!input.toolSystemAvailable) {
+    return {
+      toolName: RUN_WORKFLOW_TOOL_NAME,
+      runtimeAvailable: false,
+      registered: false,
+      reasonCode: "tool_system_unavailable",
+    };
+  }
+  if (!input.workflowRuntime) {
+    return {
+      toolName: RUN_WORKFLOW_TOOL_NAME,
+      runtimeAvailable: false,
+      registered: false,
+      reasonCode: "runtime_unavailable",
+    };
+  }
+  if (!input.registeredToolNames.includes(RUN_WORKFLOW_TOOL_NAME)) {
+    return {
+      toolName: RUN_WORKFLOW_TOOL_NAME,
+      runtimeAvailable: true,
+      registered: false,
+      reasonCode: "tool_not_registered",
+    };
+  }
+  return {
+    toolName: RUN_WORKFLOW_TOOL_NAME,
+    runtimeAvailable: true,
+    registered: true,
+    reasonCode: "available",
+  };
 }
 
 function buildToolRuntimeContext(

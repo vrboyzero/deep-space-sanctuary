@@ -237,6 +237,10 @@
             </div>
             <button id="sessionDigestRefresh" class="button session-digest-refresh-btn" data-i18n="panel.sessionDigestRefresh">刷新摘要</button>
           </div>
+          <div id="sessionPlanPanel" class="session-plan-panel hidden">
+            <div class="task-token-history-label" data-i18n="panel.sessionPlanLabel">当前计划</div>
+            <div class="session-plan-summary" id="sessionPlanSummary"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -3121,6 +3125,19 @@
         <div id="sessionDigestModalMeta" class="session-digest-modal-meta"></div>
         <div id="sessionDigestModalActions" class="session-digest-modal-actions hidden"></div>
         <div id="sessionDigestModalContent" class="session-digest-modal-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sessionPlanModal" class="modal-overlay hidden">
+    <div class="modal session-plan-modal">
+      <div class="modal-header" style="display: flex; align-items: center;">
+        <span id="sessionPlanModalTitle" data-i18n="panel.sessionPlanTitle">当前计划</span>
+        <button id="sessionPlanModalClose" class="settings-btn" data-i18n-title="panel.sessionPlanClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body session-plan-modal-body">
+        <div id="sessionPlanModalMeta" class="session-plan-modal-meta"></div>
+        <div id="sessionPlanModalContent" class="session-plan-modal-content"></div>
       </div>
     </div>
   </div>

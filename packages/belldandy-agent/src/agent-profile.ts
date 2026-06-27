@@ -419,6 +419,7 @@ export function resolveModelConfig(
     reasoningEffort?: string;
     options?: Record<string, unknown>;
     requestBodyExtras?: Record<string, unknown>;
+    messageLayout?: "single_system_only";
   },
   fallbacks: ModelProfile[],
 ): {
@@ -435,6 +436,7 @@ export function resolveModelConfig(
   reasoningEffort?: string;
   options?: Record<string, unknown>;
   requestBodyExtras?: Record<string, unknown>;
+  messageLayout?: "single_system_only";
   source: "primary" | "named" | "manual";
 } {
   const normalizedModelRef = typeof modelRef === "string" ? modelRef.trim() : "";
@@ -470,6 +472,7 @@ export function resolveModelConfig(
       reasoningEffort: found.reasoningEffort,
       options: found.options,
       requestBodyExtras: found.requestBodyExtras,
+      messageLayout: found.messageLayout,
       source: "named",
     };
   }

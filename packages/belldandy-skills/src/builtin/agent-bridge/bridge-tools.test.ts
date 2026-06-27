@@ -264,6 +264,41 @@ describe("agent bridge P0 tools", () => {
     expect(result.error).toContain("不允许结构化参数");
   });
 
+  it("renders structured prompt into template placeholders instead of appending it positionally", async () => {
+    const config = {
+      version: "1.0.0",
+      targets: [
+        {
+          id: "claude-session-like",
+          category: "agent-cli",
+          transport: "exec",
+          enabled: true,
+          entry: { binary: "claude" },
+          cwdPolicy: "workspace-only",
+          sessionMode: "oneshot",
+          actions: {
+            interactive: {
+              template: ["--dangerously-skip-permissions", "-p", "{{prompt}}"],
+              allowStructuredArgs: ["prompt"],
+            },
+          },
+        },
+      ],
+    };
+    await fs.writeFile(path.join(tempDir, "agent-bridge.json"), JSON.stringify(config, null, 2), "utf-8");
+
+    const result = await bridgeRunTool.execute({
+      targetId: "claude-session-like",
+      action: "interactive",
+      args: {
+        prompt: "inspect the startup chain",
+      },
+    }, baseContext);
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("\"commandPreview\": \"claude --dangerously-skip-permissions -p \\\"inspect the startup chain\\\"\"");
+  });
+
   it("rejects cwd outside the allowed workspace scope", async () => {
     await writeBridgeConfig();
 

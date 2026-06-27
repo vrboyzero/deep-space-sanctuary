@@ -8,6 +8,8 @@
 // ─── Types ───────────────────────────────────────────────────────────────
 
 /** 模型 Profile：描述一个可用的 API 端点 */
+export type ModelMessageLayout = "single_system_only";
+
 export type ModelProfile = {
     /** 唯一标识（用于日志） */
     id?: string;
@@ -39,6 +41,8 @@ export type ModelProfile = {
     options?: Record<string, unknown>;
     /** OpenAI-compatible 请求体顶层透传字段（保留字段会被调用层忽略） */
     requestBodyExtras?: Record<string, unknown>;
+    /** 消息布局兼容模式（用于兼容只允许首条 system 的本地模板） */
+    messageLayout?: ModelMessageLayout;
 };
 
 /** 容灾错误原因分类 */
@@ -1025,6 +1029,7 @@ export type ModelConfigFile = {
         reasoningEffort?: string;
         options?: Record<string, unknown>;
         requestBodyExtras?: Record<string, unknown>;
+        messageLayout?: ModelMessageLayout;
     }>;
 };
 
@@ -1062,6 +1067,7 @@ export async function loadModelFallbacks(filePath: string): Promise<ModelProfile
                 reasoningEffort: typeof f.reasoningEffort === "string" ? normalizeOptionalString(f.reasoningEffort) : undefined,
                 options: isOptionsConfig(f.options) ? { ...f.options } : undefined,
                 requestBodyExtras: isOptionsConfig(f.requestBodyExtras) ? { ...f.requestBodyExtras } : undefined,
+                messageLayout: f.messageLayout === "single_system_only" ? "single_system_only" : undefined,
             }));
     } catch {
         // 文件不存在或解析失败，静默返回空

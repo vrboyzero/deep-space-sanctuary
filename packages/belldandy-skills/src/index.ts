@@ -32,6 +32,18 @@ export type {
   WorkflowRuntimeCapabilities,
   WorkflowRunOptionsLike,
   WorkflowRunResultLike,
+  ConversationPlanStatus,
+  ConversationPlanStepStatus,
+  ConversationPlanMode,
+  ConversationPlanUpdatedBy,
+  ConversationPlanRef,
+  ConversationPlanStep,
+  ConversationPlanState,
+  ConversationPlanSeed,
+  ConversationPlanPatchOperation,
+  ConversationPlanUpdateInput,
+  ConversationPlanUpdateResult,
+  ConversationPlanUpdateReasonCode,
 } from "./types.js";
 export {
   buildDelegationProtocol,
@@ -142,6 +154,8 @@ export { listFilesTool } from "./builtin/list-files.js";
 export { applyPatchTool } from "./builtin/apply-patch/index.js";
 export { webSearchTool } from "./builtin/web-search/index.js";
 export { createToolSearchTool, TOOL_SEARCH_NAME } from "./builtin/tool-search.js";
+export { planCurrentGetTool } from "./builtin/plan-current-get.js";
+export { planCurrentUpdateTool } from "./builtin/plan-current-update.js";
 export { runCommandTool, processManagerTool, terminalTool } from "./builtin/system/index.js";
 export {
   bridgeTargetListTool,

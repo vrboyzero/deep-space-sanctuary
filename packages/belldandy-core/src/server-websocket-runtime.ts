@@ -236,6 +236,7 @@ const DEFAULT_EVENTS = [
   "token.counter.result",
   "channel.security.pending",
   "conversation.digest.updated",
+  "conversation.plan.updated",
   "conversation.memory.extraction.updated",
   "goal.update",
   "subtask.update",

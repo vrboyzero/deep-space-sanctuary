@@ -162,19 +162,23 @@ export const bridgeSessionWriteTool: Tool = withToolContract({
           type: "string",
           description: "写入会话的数据，支持换行符。",
         },
+        submitLine: {
+          type: "boolean",
+          description: "是否在本次写入后额外发送一次换行，用于提交当前输入行。",
+        },
         waitMs: {
           type: "number",
           description: "写入后等待输出的毫秒数，默认 100，最大 10000。",
         },
       },
-      required: ["sessionId", "data"],
+      required: ["sessionId"],
     },
   },
   async execute(args, context): Promise<ToolCallResult> {
     const start = Date.now();
     const sessionId = normalizeOptionalString(args.sessionId);
     if (!sessionId) return missingFieldResult("bridge_session_write", "sessionId", start);
-    return writeBridgeSession(sessionId, args.data, args.waitMs, context);
+    return writeBridgeSession(sessionId, args.data, args.submitLine, args.waitMs, context);
   },
 }, {
   family: "command-exec",

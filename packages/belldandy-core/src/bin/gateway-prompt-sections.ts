@@ -92,6 +92,11 @@ export function buildAgentRuntimePromptSections(
     sections.push(toolGovernanceSection);
   }
 
+  const currentPlanPolicySection = buildCurrentPlanOperatingPolicySection(options.visibleContracts);
+  if (currentPlanPolicySection) {
+    sections.push(currentPlanPolicySection);
+  }
+
   const teamOperatingModelSection = buildTeamOperatingModelSection({
     canDelegate: options.canDelegate,
   });
@@ -303,6 +308,33 @@ export function buildToolContractGovernanceSection(
     source: "runtime",
     priority: 56,
     text,
+  });
+}
+
+const CURRENT_PLAN_TOOL_NAMES = new Set(["plan_current_get", "plan_current_update"]);
+
+export function buildCurrentPlanOperatingPolicySection(
+  contracts: readonly ToolContractV2[],
+): SystemPromptSection | undefined {
+  if (!contracts.some((contract) => CURRENT_PLAN_TOOL_NAMES.has(contract.name))) {
+    return undefined;
+  }
+
+  return createGatewaySystemPromptSection({
+    id: "current-plan-operating-policy",
+    label: "current-plan-operating-policy",
+    source: "runtime",
+    priority: 56,
+    text: [
+      "## Current Plan Operating Policy",
+      "",
+      "Treat the conversation current plan as an optional execution overlay, not as the default mode for every chat.",
+      "- Do not create a current plan for ordinary chat, one-shot Q&A, tiny single-step fixes, or other work that does not need persistent multi-step tracking.",
+      "- Enter current-plan mode lazily: create it only when the task clearly becomes complex, multi-step, multi-turn, or needs explicit blocker/next-action tracking.",
+      "- If a plan reaches completed or cancelled, keep the terminal snapshot visible until it is explicitly cleared or intentionally replaced.",
+      "- When starting a new plan for a new task, treat that as ending the old current plan; use an explicit replacement instead of silently mutating the old terminal snapshot.",
+      "- Use goal, workflow, and subtask refs as read-only bridge metadata and jump targets. Do not make current plan the source of truth for those runtimes.",
+    ].join("\n"),
   });
 }
 

@@ -272,6 +272,21 @@ export class ResidentConversationStore extends ConversationStore {
     return this.withConversationStore(conversationId, (store) => store.getLoadedToolNames(conversationId));
   }
 
+  getPlanState(...args: Parameters<ConversationStore["getPlanState"]>): ReturnType<ConversationStore["getPlanState"]> {
+    const [conversationId] = args;
+    return this.withConversationStore(conversationId, (store) => store.getPlanState(conversationId));
+  }
+
+  updatePlanState(...args: Parameters<ConversationStore["updatePlanState"]>): ReturnType<ConversationStore["updatePlanState"]> {
+    const [conversationId, input] = args;
+    return this.withConversationStore(conversationId, (store) => store.updatePlanState(conversationId, input));
+  }
+
+  clearPlanState(...args: Parameters<ConversationStore["clearPlanState"]>): ReturnType<ConversationStore["clearPlanState"]> {
+    const [conversationId, updatedBy] = args;
+    return this.withConversationStore(conversationId, (store) => store.clearPlanState(conversationId, updatedBy));
+  }
+
   setLoadedToolNames(...args: Parameters<ConversationStore["setLoadedToolNames"]>): ReturnType<ConversationStore["setLoadedToolNames"]> {
     const [conversationId, toolNames] = args;
     return this.withConversationStore(conversationId, (store) => store.setLoadedToolNames(conversationId, toolNames));

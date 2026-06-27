@@ -315,6 +315,131 @@ describe("ConversationStore", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("should persist and restore plan state for meta-only conversations", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const store = new ConversationStore({ dataDir });
+        const id = "conv-plan-only";
+
+        const updated = store.updatePlanState(id, {
+            ifAbsent: "create",
+            seed: {
+                title: "统一计划",
+                status: "active",
+                mode: "agent",
+            },
+            operations: [{
+                type: "upsert_step",
+                step: {
+                    id: "phase-a",
+                    title: "梳理会话真源",
+                    status: "in_progress",
+                },
+            }],
+        });
+
+        expect(updated.applied).toBe(true);
+        expect(updated.planState).toMatchObject({
+            title: "统一计划",
+            status: "active",
+            mode: "agent",
+            revision: 1,
+            steps: [{
+                id: "phase-a",
+                title: "梳理会话真源",
+                status: "in_progress",
+            }],
+        });
+
+        const reloaded = new ConversationStore({ dataDir });
+        expect(reloaded.getPlanState(id)).toMatchObject({
+            title: "统一计划",
+            revision: 1,
+            steps: [{
+                id: "phase-a",
+                title: "梳理会话真源",
+                status: "in_progress",
+            }],
+        });
+
+        const restored = await reloaded.getConversationHistoryCompacted(id);
+        expect(restored.conversation?.id).toBe(id);
+        expect(restored.conversation?.planState?.title).toBe("统一计划");
+        expect(restored.history).toEqual([]);
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("should reject stale revision updates for current plan state", () => {
+        const store = new ConversationStore();
+        const id = "conv-plan-conflict";
+
+        const initial = store.updatePlanState(id, {
+            ifAbsent: "create",
+            seed: {
+                title: "Phase A",
+                status: "active",
+                mode: "agent",
+            },
+            operations: [{
+                type: "upsert_step",
+                step: {
+                    id: "step-1",
+                    title: "建立真源",
+                    status: "in_progress",
+                },
+            }],
+        });
+        expect(initial.applied).toBe(true);
+        expect(initial.planState?.revision).toBe(1);
+
+        const conflicted = store.updatePlanState(id, {
+            baseRevision: 0,
+            operations: [{
+                type: "set_header",
+                title: "过期修改",
+            }],
+        });
+
+        expect(conflicted.applied).toBe(false);
+        expect(conflicted.conflict).toBe(true);
+        expect(conflicted.reasonCode).toBe("conflict");
+        expect(conflicted.planState?.revision).toBe(1);
+        expect(store.getPlanState(id)?.title).toBe("Phase A");
+    });
+
+    it("should clear persisted plan state and avoid restoring cleared meta-only conversations", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const store = new ConversationStore({ dataDir });
+        const id = "conv-plan-cleared";
+
+        const created = store.updatePlanState(id, {
+            ifAbsent: "create",
+            seed: {
+                title: "待清理计划",
+                status: "draft",
+                mode: "agent",
+            },
+            operations: [{
+                type: "set_focus",
+                nextAction: "先删除计划态",
+            }],
+        });
+        expect(created.applied).toBe(true);
+        expect(store.getPlanState(id)?.title).toBe("待清理计划");
+
+        const cleared = store.clearPlanState(id, "system");
+        expect(cleared).toBeNull();
+        expect(store.getPlanState(id)).toBeNull();
+
+        const reloaded = new ConversationStore({ dataDir });
+        expect(reloaded.getPlanState(id)).toBeNull();
+        expect(reloaded.get(id)).toBeUndefined();
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
     it("should persist community conversation files with Windows-safe filenames", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
         const dataDir = path.join(tempDir, "sessions");

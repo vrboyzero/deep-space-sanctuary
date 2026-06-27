@@ -10,6 +10,9 @@ import {
   injectTransientTail,
   buildIndependentBlockText,
   injectIndependentBlock,
+  prependTransientTailToLastUser,
+  mergeIndependentBlockIntoFirstSystem,
+  applyStablePrefixSplitMessageLayout,
   isTransientSafeDelta,
   isStableDelta,
   isIndependentBlockDelta,
@@ -226,5 +229,60 @@ describe("Phase 4 step 2: independent block (identity-authority)", () => {
     expect(result.transientDeltas.map(d => d.deltaType)).toEqual(["tool-failure-recovery"]);
     expect(result.independentBlockDeltas.map(d => d.deltaType)).toEqual(["runtime-identity-authority"]);
     expect(result.splitActivated).toBe(true);
+  });
+});
+
+describe("Phase 4: single_system_only message layout", () => {
+  it("prepends transient tail into the last user message", () => {
+    const messages = [
+      { role: "system", content: "sys" },
+      { role: "assistant", content: "hi" },
+      { role: "user", content: "continue" },
+    ];
+    const result = prependTransientTailToLastUser(messages, "transient text");
+    expect(result.injected).toBe(true);
+    expect(result.targetIndex).toBe(2);
+    expect(messages[2]).toEqual({
+      role: "user",
+      content: "transient text\n\ncontinue",
+    });
+  });
+
+  it("merges independent block into the first system message", () => {
+    const messages = [
+      { role: "system", content: "sys prompt" },
+      { role: "user", content: "hello" },
+    ];
+    const result = mergeIndependentBlockIntoFirstSystem(messages, "identity block");
+    expect(result.injected).toBe(true);
+    expect(result.targetIndex).toBe(0);
+    expect(messages[0]).toEqual({
+      role: "system",
+      content: "sys prompt\n\nidentity block",
+    });
+  });
+
+  it("builds a request copy with only one system message", () => {
+    const messages = [
+      { role: "system", content: "sys prompt" },
+      { role: "user", content: "hello" },
+    ];
+    const result = applyStablePrefixSplitMessageLayout(messages, {
+      transientText: "transient text",
+      independentBlockText: "identity block",
+      messageLayout: "single_system_only",
+    });
+    expect(result).not.toBe(messages);
+    expect(result.filter((message) => message.role === "system")).toHaveLength(1);
+    expect(result[0]).toEqual({
+      role: "system",
+      content: "sys prompt\n\nidentity block",
+    });
+    expect(result[1]).toEqual({
+      role: "user",
+      content: "transient text\n\nhello",
+    });
+    expect(messages[0]).toEqual({ role: "system", content: "sys prompt" });
+    expect(messages[1]).toEqual({ role: "user", content: "hello" });
   });
 });

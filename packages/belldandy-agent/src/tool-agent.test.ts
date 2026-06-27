@@ -236,6 +236,70 @@ describe("before_agent_start system prompt overrides", () => {
     });
   });
 
+  it("adapts stable prefix split injection for single_system_only models", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{
+        message: {
+          content: "done",
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "qwythos-local",
+      systemPrompt: "base-system-prompt",
+      messageLayout: "single_system_only",
+      stablePrefixSplit: { enabled: true },
+      toolExecutor: createToolExecutor(),
+      hookRunner: {
+        runBeforeAgentStart: async () => ({
+          deltas: [
+            {
+              id: "transient-1",
+              deltaType: "tool-failure-recovery",
+              role: "system",
+              text: "Transient guidance",
+            },
+            {
+              id: "authority-1",
+              deltaType: "runtime-identity-authority",
+              role: "system",
+              text: "Authority mode: owner",
+            },
+          ],
+        }),
+        runAgentEnd: async () => {},
+        runBeforeToolCall: async () => undefined,
+        runAfterToolCall: async () => {},
+        runToolResultPersist: () => undefined,
+      } as any,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-single-system-layout",
+      text: "hello",
+    }));
+
+    expect(items).toContainEqual({ type: "final", text: "done" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const requestInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+    const payload = JSON.parse(String(requestInit?.body ?? "{}"));
+    expect(payload.messages.filter((message: any) => message.role === "system")).toHaveLength(1);
+    expect(payload.messages[0]).toEqual({
+      role: "system",
+      content: expect.stringContaining("base-system-prompt"),
+    });
+    expect(payload.messages[0].content).toContain("<identity-authority");
+    expect(payload.messages[0].content).toContain("Authority mode: owner");
+    expect(payload.messages[1].role).toBe("user");
+    expect(payload.messages[1].content).toContain("<transient-context");
+    expect(payload.messages[1].content).toContain("Transient guidance");
+    expect(payload.messages[1].content).toContain("hello");
+  });
+
   it("captures a per-run prompt snapshot with hook systemPrompt and prependContext", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
       choices: [{

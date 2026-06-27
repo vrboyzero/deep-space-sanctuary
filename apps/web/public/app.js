@@ -63,6 +63,7 @@ import { createMemoryViewerFeature } from "./app/features/memory-viewer.js";
 import { createExperienceWorkbenchFeature } from "./app/features/experience-workbench.js";
 import { createSessionNavigationFeature } from "./app/features/session-navigation.js";
 import { createSessionDigestFeature } from "./app/features/session-digest.js";
+import { createPlanPanelFeature } from "./app/features/plan-panel.js";
 import { createSettingsRuntimeFeature } from "./app/features/settings-runtime.js";
 import { createSubtasksOverviewFeature, parseGoalSessionReference } from "./app/features/subtasks-overview.js";
 import { createSubtasksRuntimeFeature } from "./app/features/subtasks-runtime.js";
@@ -278,12 +279,19 @@ const {
   sessionDigestSummaryEl,
   sessionContinuationSummaryEl,
   sessionDigestRefreshBtn,
+  sessionPlanPanelEl,
+  sessionPlanSummaryEl,
   sessionDigestModalEl,
   sessionDigestModalTitleEl,
   sessionDigestModalMetaEl,
   sessionDigestModalActionsEl,
   sessionDigestModalContentEl,
   sessionDigestModalCloseBtn,
+  sessionPlanModalEl,
+  sessionPlanModalTitleEl,
+  sessionPlanModalMetaEl,
+  sessionPlanModalContentEl,
+  sessionPlanModalCloseBtn,
   tokenUsageEl,
   tokenUsageObservabilityEl,
   toggleContentPanelBtn,
@@ -660,11 +668,23 @@ let memoryViewerFeature = null;
 let experienceWorkbenchFeature = null;
 let emailInboundSessionBannerFeature = null;
 let sessionDigestFeature = null;
+let sessionPlanFeature = null;
 let settingsRuntimeFeature = null;
 let subtasksOverviewFeature = null;
 let subtasksRuntimeFeature = null;
 let bridgeRuntimeFeature = null;
 let sessionNavigationFeature = null;
+
+function setActiveConversationIdValue(conversationId) {
+  const normalized = typeof conversationId === "string" ? conversationId : "";
+  const changed = activeConversationId !== normalized;
+  activeConversationId = normalized;
+  renderComposerPrimaryAction();
+  if (changed) {
+    sessionDigestFeature?.clear?.();
+    sessionPlanFeature?.clear?.();
+  }
+}
 
 function debugLog(...args) {
   if (!webchatDebugEnabled) return;
@@ -733,8 +753,7 @@ sessionNavigationFeature = createSessionNavigationFeature({
     messagesEl,
   },
   setActiveConversationId: (conversationId) => {
-    activeConversationId = conversationId;
-    renderComposerPrimaryAction();
+    setActiveConversationIdValue(conversationId);
   },
   getActiveConversationId: () => activeConversationId,
   renderCanvasGoalContext: () => renderCanvasGoalContext(),
@@ -792,6 +811,7 @@ localeController.subscribe(() => {
   refreshMemoryLocale();
   memoryViewerFeature?.syncMemoryViewerHeaderTitle?.();
   sessionDigestFeature?.refreshLocale?.();
+  sessionPlanFeature?.refreshLocale?.();
   refreshSubtasksLocale();
   refreshBridgeLocale();
   agentRuntimeFeature?.refreshLocale?.();
@@ -1210,6 +1230,7 @@ function handleHelloOk(frame) {
     void sessionDigestFeature?.loadSessionDigest(activeConversationId);
   } else {
     sessionDigestFeature?.clear?.();
+    sessionPlanFeature?.clear?.();
   }
   flushQueuedText();
 
@@ -1592,8 +1613,7 @@ goalsActionsRuntimeFeature = createGoalsActionsRuntimeFeature({
   isConversationForGoal,
   getActiveConversationId: () => activeConversationId,
   setActiveConversationId: (conversationId) => {
-    activeConversationId = conversationId;
-    renderComposerPrimaryAction();
+    setActiveConversationIdValue(conversationId);
   },
   renderCanvasGoalContext,
   getChatEventsFeature: () => chatEventsFeature,
@@ -1936,6 +1956,25 @@ sessionDigestFeature = createSessionDigestFeature({
   t: localeController.t,
 });
 
+sessionPlanFeature = createPlanPanelFeature({
+  refs: {
+    sessionPlanPanelEl,
+    sessionPlanSummaryEl,
+    sessionPlanModalEl,
+    sessionPlanModalTitleEl,
+    sessionPlanModalMetaEl,
+    sessionPlanModalContentEl,
+    sessionPlanModalCloseBtn,
+  },
+  isConnected: () => Boolean(ws && isReady),
+  getActiveConversationId: () => activeConversationId,
+  onOpenPlanAction: (action) => openContinuationAction(action),
+  onLoadWorkflowStatus: ({ journalId }) => loadWorkflowPlanStatus(journalId),
+  escapeHtml,
+  formatDateTime,
+  t: localeController.t,
+});
+
 agentRuntimeFeature = createAgentRuntimeFeature({
   refs: {
     agentSelectEl,
@@ -1968,8 +2007,7 @@ agentRuntimeFeature = createAgentRuntimeFeature({
   getHttpAuthHeaders,
   getActiveConversationId: () => activeConversationId,
   setActiveConversationId: (conversationId) => {
-    activeConversationId = conversationId;
-    renderComposerPrimaryAction();
+    setActiveConversationIdValue(conversationId);
   },
   renderCanvasGoalContext,
   switchMode,
@@ -2131,6 +2169,53 @@ async function openSubtaskBySession(sessionId, options = {}) {
 
 async function openContinuationAction(action = {}) {
   return agentRuntimeFeature?.openContinuationAction(action);
+}
+
+async function loadWorkflowPlanStatus(journalId) {
+  const normalizedJournalId = typeof journalId === "string" ? journalId.trim() : "";
+  if (!normalizedJournalId) {
+    return {
+      status: "",
+      missing: true,
+      errorMessage: localeController.t("panel.sessionPlanWorkflowMissing", {}, "Workflow run is not active."),
+    };
+  }
+  try {
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "workflow.status",
+      params: { journalId: normalizedJournalId },
+    });
+    if (res?.ok && res.payload?.status && typeof res.payload.status === "object") {
+      return {
+        ...res.payload.status,
+        missing: false,
+      };
+    }
+    if (res?.error?.code === "not_found") {
+      return {
+        status: "",
+        journalId: normalizedJournalId,
+        missing: true,
+        errorMessage: localeController.t("panel.sessionPlanWorkflowMissing", {}, "Workflow run is not active."),
+      };
+    }
+    return {
+      status: "",
+      journalId: normalizedJournalId,
+      missing: true,
+      errorMessage: res?.error?.message
+        || localeController.t("panel.sessionPlanWorkflowStatusUnknown", {}, "Unknown"),
+    };
+  } catch (error) {
+    return {
+      status: "",
+      journalId: normalizedJournalId,
+      missing: true,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function openAgentObservabilityAction(agentId, action = {}) {
@@ -2674,7 +2759,7 @@ async function sendMessage(options = {}) {
   }
 
   if (payload && payload.ok && payload.payload && payload.payload.conversationId) {
-    activeConversationId = String(payload.payload.conversationId);
+    setActiveConversationIdValue(String(payload.payload.conversationId));
     bindComposerRun(payload.payload);
     agentRuntimeFeature?.handleMessageSendConversationBound({
       conversationId: activeConversationId,
@@ -2779,6 +2864,7 @@ chatEventsFeature = createChatEventsFeature({
   onEmailOutboundConfirmResolved: (payload) => settingsRuntimeFeature?.handleEmailOutboundConfirmResolved(payload),
   onToolsConfigUpdated: (payload) => settingsRuntimeFeature?.handleToolsConfigUpdated(payload),
   onConversationDigestUpdated: (payload) => sessionDigestFeature?.handleDigestUpdated(payload),
+  onConversationPlanUpdated: (payload) => sessionPlanFeature?.handlePlanUpdated(payload),
   stripThinkBlocks,
   configureMarkedOnce,
   renderAssistantMessage: (bubble, rawText) => chatUiFeature?.renderAssistantMessage?.(bubble, rawText),
@@ -2982,6 +3068,7 @@ async function loadConversationMeta(conversationId, options = {}) {
     updateNextTurnContextEstimate(null);
     renderTaskTokenHistory();
     sessionDigestFeature?.clear?.();
+    sessionPlanFeature?.clear?.();
     return;
   }
   const res = await sendReq({
@@ -3017,11 +3104,16 @@ async function loadConversationMeta(conversationId, options = {}) {
         }
       }
     }
+    sessionPlanFeature?.setPlanState?.(res.payload.planState || null, {
+      conversationId,
+      source: "meta",
+    });
     sessionDigestFeature?.setContinuationState?.(res.payload.continuationState || null, { conversationId });
     return;
   }
   updateRetainedContextEstimate(null);
   updateNextTurnContextEstimate(null);
+  sessionPlanFeature?.setPlanState?.(null, { conversationId, source: "meta" });
   sessionDigestFeature?.setContinuationState?.(null, { conversationId });
   renderTaskTokenHistory();
 }

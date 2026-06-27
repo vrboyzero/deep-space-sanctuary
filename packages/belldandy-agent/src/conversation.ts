@@ -43,7 +43,17 @@ import {
     buildSessionTimelineProjection,
     type SessionTimelineProjection,
 } from "./session-timeline.js";
-import type { RecentToolResultRecord } from "@belldandy/skills";
+import type {
+    ConversationPlanState,
+    ConversationPlanUpdateInput,
+    ConversationPlanUpdateResult,
+    ConversationPlanUpdatedBy,
+    RecentToolResultRecord,
+} from "@belldandy/skills";
+import {
+    normalizeConversationPlanState,
+    updateConversationPlanState,
+} from "./conversation-plan-state.js";
 
 /**
  * 对话消息
@@ -212,6 +222,8 @@ export type Conversation = {
     compactBoundaries?: CompactBoundaryRecord[];
     /** 手动 partial compact 视图（当前仅 from 方向需要） */
     partialCompactionView?: PartialCompactionViewRecord;
+    /** 当前会话级统一计划状态 */
+    planState?: ConversationPlanState;
 };
 
 /**
@@ -292,7 +304,7 @@ export type PersistedConversationSummary = {
 
 type ConversationMetaSnapshot = Partial<Pick<
     Conversation,
-    "agentId" | "channel" | "activeCounters" | "taskTokenRecords" | "toolDigests" | "recentToolResults" | "carryoverContext" | "loadedToolNames" | "compactBoundaries" | "partialCompactionView" | "createdAt" | "updatedAt"
+    "agentId" | "channel" | "activeCounters" | "taskTokenRecords" | "toolDigests" | "recentToolResults" | "carryoverContext" | "loadedToolNames" | "compactBoundaries" | "partialCompactionView" | "planState" | "createdAt" | "updatedAt"
 >> & {
     conversationId?: string;
 };
@@ -1073,6 +1085,7 @@ export class ConversationStore {
                 loadedToolNames: meta.loadedToolNames,
                 compactBoundaries: meta.compactBoundaries,
                 partialCompactionView: meta.partialCompactionView,
+                planState: meta.planState,
             };
         }
 
@@ -1101,7 +1114,7 @@ export class ConversationStore {
             }
 
             if (messages.length === 0) {
-                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.carryoverContext?.length && !meta?.loadedToolNames?.length) {
+                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.carryoverContext?.length && !meta?.loadedToolNames?.length && !meta?.planState) {
                     return undefined;
                 }
                 return {
@@ -1119,6 +1132,7 @@ export class ConversationStore {
                     loadedToolNames: meta?.loadedToolNames,
                     compactBoundaries: meta?.compactBoundaries,
                     partialCompactionView: meta?.partialCompactionView,
+                    planState: meta?.planState,
                 };
             }
 
@@ -1142,6 +1156,7 @@ export class ConversationStore {
                 loadedToolNames: meta?.loadedToolNames,
                 compactBoundaries: meta?.compactBoundaries,
                 partialCompactionView: meta?.partialCompactionView,
+                planState: meta?.planState,
             };
         } catch (err) {
             console.error(`Failed to load conversation ${id}:`, err);
@@ -1229,6 +1244,7 @@ export class ConversationStore {
                 loadedToolNames: meta.loadedToolNames,
                 compactBoundaries: meta.compactBoundaries,
                 partialCompactionView: meta.partialCompactionView,
+                planState: meta.planState,
             };
         }
 
@@ -1254,7 +1270,7 @@ export class ConversationStore {
             }
 
             if (messages.length === 0) {
-                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.carryoverContext?.length && !meta?.loadedToolNames?.length) {
+                if (!meta?.activeCounters && !meta?.taskTokenRecords && !meta?.recentToolResults?.length && !meta?.carryoverContext?.length && !meta?.loadedToolNames?.length && !meta?.planState) {
                     return undefined;
                 }
                 return {
@@ -1272,6 +1288,7 @@ export class ConversationStore {
                     loadedToolNames: meta?.loadedToolNames,
                     compactBoundaries: meta?.compactBoundaries,
                     partialCompactionView: meta?.partialCompactionView,
+                    planState: meta?.planState,
                 };
             }
 
@@ -1294,6 +1311,7 @@ export class ConversationStore {
                 loadedToolNames: meta?.loadedToolNames,
                 compactBoundaries: meta?.compactBoundaries,
                 partialCompactionView: meta?.partialCompactionView,
+                planState: meta?.planState,
             };
         } catch (err) {
             console.error(`Failed to load conversation ${id}:`, err);
@@ -1373,6 +1391,7 @@ export class ConversationStore {
                     loadedToolNames?: string[];
                     compactBoundaries?: CompactBoundaryRecord[];
                     partialCompactionView?: PartialCompactionViewRecord;
+                    planState?: ConversationPlanState;
                     createdAt?: number;
                     updatedAt?: number;
                 };
@@ -1387,6 +1406,7 @@ export class ConversationStore {
                     || Array.isArray(parsed.loadedToolNames)
                     || Array.isArray(parsed.compactBoundaries)
                     || typeof parsed.partialCompactionView === "object"
+                    || typeof parsed.planState === "object"
                     || typeof parsed.createdAt === "number"
                     || typeof parsed.updatedAt === "number";
                 if (!hasMeta) return undefined;
@@ -1404,6 +1424,7 @@ export class ConversationStore {
                         : undefined,
                     compactBoundaries: Array.isArray(parsed.compactBoundaries) ? parsed.compactBoundaries : undefined,
                     partialCompactionView: typeof parsed.partialCompactionView === "object" ? parsed.partialCompactionView : undefined,
+                    planState: normalizeConversationPlanState(parsed.planState),
                     createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : undefined,
                     updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : undefined,
                 };
@@ -1431,6 +1452,7 @@ export class ConversationStore {
                     loadedToolNames?: string[];
                     compactBoundaries?: CompactBoundaryRecord[];
                     partialCompactionView?: PartialCompactionViewRecord;
+                    planState?: ConversationPlanState;
                     createdAt?: number;
                     updatedAt?: number;
                 };
@@ -1445,6 +1467,7 @@ export class ConversationStore {
                     || Array.isArray(parsed.loadedToolNames)
                     || Array.isArray(parsed.compactBoundaries)
                     || typeof parsed.partialCompactionView === "object"
+                    || typeof parsed.planState === "object"
                     || typeof parsed.createdAt === "number"
                     || typeof parsed.updatedAt === "number";
                 if (!hasMeta) return undefined;
@@ -1462,6 +1485,7 @@ export class ConversationStore {
                         : undefined,
                     compactBoundaries: Array.isArray(parsed.compactBoundaries) ? parsed.compactBoundaries : undefined,
                     partialCompactionView: typeof parsed.partialCompactionView === "object" ? parsed.partialCompactionView : undefined,
+                    planState: normalizeConversationPlanState(parsed.planState),
                     createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : undefined,
                     updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : undefined,
                 };
@@ -1492,6 +1516,7 @@ export class ConversationStore {
             loadedToolNames: conv.loadedToolNames,
             compactBoundaries: conv.compactBoundaries,
             partialCompactionView: conv.partialCompactionView,
+            planState: conv.planState,
             createdAt: conv.createdAt,
             updatedAt: conv.updatedAt,
         };
@@ -1506,6 +1531,7 @@ export class ConversationStore {
             && !payload.loadedToolNames?.length
             && !payload.compactBoundaries
             && !payload.partialCompactionView
+            && !payload.planState
         ) {
             if (fs.existsSync(filePath)) {
                 try {
@@ -3404,6 +3430,60 @@ export class ConversationStore {
     getLoadedToolNames(conversationId: string): string[] {
         const conv = this.get(conversationId);
         return conv?.loadedToolNames ? [...conv.loadedToolNames] : [];
+    }
+
+    getPlanState(conversationId: string): ConversationPlanState | null {
+        const conv = this.get(conversationId);
+        return conv?.planState ? {
+            ...conv.planState,
+            steps: conv.planState.steps.map((step) => ({
+                ...step,
+                ...(step.refs ? { refs: step.refs.map((ref) => ({ ...ref })) } : {}),
+            })),
+        } : null;
+    }
+
+    updatePlanState(
+        conversationId: string,
+        input: ConversationPlanUpdateInput,
+    ): ConversationPlanUpdateResult {
+        const now = Date.now();
+        let conv = this.get(conversationId);
+        if (!conv) {
+            conv = {
+                id: conversationId,
+                messages: [],
+                createdAt: now,
+                updatedAt: now,
+            };
+            this.conversations.set(conversationId, conv);
+        }
+
+        const result = updateConversationPlanState(conv.planState ?? null, input, now);
+        if (!result.applied) {
+            return result;
+        }
+
+        conv.planState = result.planState ?? undefined;
+        conv.updatedAt = now;
+        this.persistConversationMeta(conversationId, conv);
+        return {
+            ...result,
+            planState: this.getPlanState(conversationId),
+        };
+    }
+
+    clearPlanState(
+        conversationId: string,
+        updatedBy: ConversationPlanUpdatedBy = "system",
+    ): ConversationPlanState | null {
+        const result = this.updatePlanState(conversationId, {
+            updatedBy,
+            ifAbsent: "create",
+            seed: { title: "Cleared Plan", status: "draft", mode: "agent" },
+            operations: [{ type: "clear" }],
+        });
+        return result.planState ?? null;
     }
 
     setLoadedToolNames(conversationId: string, toolNames: string[]): void {

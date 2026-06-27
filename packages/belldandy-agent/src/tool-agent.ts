@@ -13,7 +13,13 @@ import type { ToolExecutionRuntimeContext, ToolExecutor, ToolCallRequest, ToolFa
 import type { AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
 import type { AfterCompactionEvent, BeforeCompactionEvent, HookAgentContext, HookToolContext, HookToolResultPersistContext } from "./hooks.js";
-import { FailoverClient, type ModelProfile, type FailoverExecutionSummary, type FailoverLogger } from "./failover-client.js";
+import {
+  FailoverClient,
+  type ModelMessageLayout,
+  type ModelProfile,
+  type FailoverExecutionSummary,
+  type FailoverLogger,
+} from "./failover-client.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 import {
@@ -73,11 +79,10 @@ import {
   type BudgetProtectMode,
 } from "./budget-protect.js";
 import {
+  applyStablePrefixSplitMessageLayout,
   splitDeltasByStability,
   buildTransientTailText,
-  injectTransientTail,
   buildIndependentBlockText,
-  injectIndependentBlock,
   isTransientSafeDelta,
   isIndependentBlockDelta,
   type StablePrefixSplitOptions,
@@ -216,6 +221,8 @@ export type ToolEnabledAgentOptions = {
   options?: Record<string, unknown>;
   /** OpenAI-compatible 请求体顶层透传字段（保留字段会被忽略） */
   requestBodyExtras?: Record<string, unknown>;
+  /** 单模型消息布局兼容模式（用于本地 chat template 兼容） */
+  messageLayout?: ModelMessageLayout;
   /** 启动阶段预置冷却（毫秒） */
   bootstrapProfileCooldowns?: Record<string, number>;
   /** ReAct 循环内压缩配置（可选） */
@@ -2325,16 +2332,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
         const tools = this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
         const toolNames = tools.map((tool) => tool.function.name);
+        const requestMessages = applyStablePrefixSplitMessageLayout(messages, {
+          transientText: currentTransientTailText,
+          independentBlockText: currentIndependentBlockText,
+          messageLayout: this.opts.messageLayout,
+        }) as Message[];
         const dispatchTokenEstimateContext = currentTokenEstimateModel ? { model: currentTokenEstimateModel } : undefined;
-        const dispatchSystemPromptTokens = estimateSystemPromptTokens(messages, dispatchTokenEstimateContext);
+        const dispatchSystemPromptTokens = estimateSystemPromptTokens(requestMessages, dispatchTokenEstimateContext);
         const dispatchContextTokens = estimateContextTokensFromMessages(
-          messages,
+          requestMessages,
           { includeSystem: false },
           dispatchTokenEstimateContext,
         );
         lastRequestShape = {
-          messageCount: messages.length,
-          systemMessageCount: messages.filter((message) => message.role === "system").length,
+          messageCount: requestMessages.length,
+          systemMessageCount: requestMessages.filter((message) => message.role === "system").length,
           toolSchemaCount: tools.length,
         };
         lastLocalPromptEstimate = {
@@ -2363,16 +2375,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
         });
 
         // 调用模型
-        // Phase 4：在调用模型前注入 transient tail（在最后一条 user 消息前插入 transient 指令）
-        if (currentTransientTailText) {
-          injectTransientTail(messages as unknown as Array<{ role: string; content: unknown }>, currentTransientTailText);
-        }
-        // Phase 4 步骤 2：注入 independent block（identity-authority 独立 block，在 system prompt 后插入）
-        if (currentIndependentBlockText) {
-          injectIndependentBlock(messages as unknown as Array<{ role: string; content: unknown }>, currentIndependentBlockText);
-        }
         const response = await this.callModel(
-          messages,
+          requestMessages,
           tools.length > 0 ? tools : undefined,
           textAttachmentChars,
           {

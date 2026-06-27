@@ -119,6 +119,8 @@ describe("tool contract v2", () => {
     const memorySearch = getToolContractV2("memory_search");
     const memoryRead = getToolContractV2("memory_read");
     const memoryGet = getToolContractV2("memory_get");
+    const planCurrentGet = getToolContractV2("plan_current_get");
+    const planCurrentUpdate = getToolContractV2("plan_current_update");
     const browserOpen = getToolContractV2("browser_open");
     const browserGetContent = getToolContractV2("browser_get_content");
     const browserSnapshot = getToolContractV2("browser_snapshot");
@@ -178,6 +180,25 @@ describe("tool contract v2", () => {
 
     expect(memoryGet?.avoidWhen.join("\n")).toContain("memory_read");
     expect(memoryGet?.expectedOutput.join("\n")).toContain("Deprecated guidance text");
+
+    expect(planCurrentGet).toMatchObject({
+      family: "other",
+      riskLevel: "low",
+      needsPermission: false,
+      isReadOnly: true,
+    });
+    expect(planCurrentGet?.avoidWhen.join("\n")).toContain("ordinary chat");
+    expect(planCurrentGet?.preflightChecks.join("\n")).toContain("hasPlan=false");
+
+    expect(planCurrentUpdate).toMatchObject({
+      family: "other",
+      riskLevel: "low",
+      needsPermission: false,
+      isReadOnly: false,
+    });
+    expect(planCurrentUpdate?.avoidWhen.join("\n")).toContain("tiny single-step fix");
+    expect(planCurrentUpdate?.confirmWhen.join("\n")).toContain("replacing an existing current plan");
+    expect(planCurrentUpdate?.preflightChecks.join("\n")).toContain("read-only bridge");
 
     expect(browserOpen).toMatchObject({
       family: "browser",

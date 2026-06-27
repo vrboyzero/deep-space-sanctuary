@@ -58,6 +58,10 @@ function normalizeRequestBodyExtrasConfig(value: unknown): Record<string, unknow
   return { ...value };
 }
 
+function normalizeMessageLayout(value: unknown): "single_system_only" | undefined {
+  return normalizeString(value) === "single_system_only" ? "single_system_only" : undefined;
+}
+
 function normalizeModelProfile(value: unknown, index: number): ModelProfile {
   const item = isObjectRecord(value) ? value : {};
   const id = normalizeOptionalString(item.id) ?? `fallback-${index}`;
@@ -91,6 +95,7 @@ function normalizeModelProfile(value: unknown, index: number): ModelProfile {
     reasoningEffort: normalizeOptionalString(item.reasoningEffort),
     options: normalizeOptionsConfig(item.options),
     requestBodyExtras: normalizeRequestBodyExtrasConfig(item.requestBodyExtras),
+    messageLayout: normalizeMessageLayout(item.messageLayout),
   };
 }
 
@@ -132,6 +137,7 @@ function toPersistedModelProfile(profile: ModelProfile): Record<string, unknown>
     ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
     ...(profile.options ? { options: profile.options } : {}),
     ...(profile.requestBodyExtras ? { requestBodyExtras: profile.requestBodyExtras } : {}),
+    ...(profile.messageLayout ? { messageLayout: profile.messageLayout } : {}),
   };
 }
 

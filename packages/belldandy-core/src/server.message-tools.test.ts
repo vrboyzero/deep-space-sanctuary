@@ -11,6 +11,8 @@ import {
   SkillRegistry,
   ToolExecutor,
   createToolSettingsControlTool,
+  planCurrentGetTool,
+  planCurrentUpdateTool,
   TOOL_SETTINGS_CONTROL_NAME,
   withToolContract,
 } from "@belldandy/skills";
@@ -393,6 +395,54 @@ test("tools.list hides tool_settings_control from builtin tools", async () => {
       demo: {
         tools: ["mcp_demo_ping"],
       },
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("tools.list exposes workflow runtime capability when run_workflow is unavailable", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const toolsConfigManager = new ToolsConfigManager(stateDir);
+  await toolsConfigManager.load();
+
+  const toolExecutor = new ToolExecutor({
+    tools: [
+      createTestTool("alpha_builtin"),
+    ],
+    workspaceRoot: process.cwd(),
+  });
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    toolsConfigManager,
+    toolExecutor,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+
+    ws.send(JSON.stringify({ type: "req", id: "tools-list-workflow-capability", method: "tools.list", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "tools-list-workflow-capability"));
+    const listRes = frames.find((f) => f.type === "res" && f.id === "tools-list-workflow-capability");
+
+    expect(listRes.ok).toBe(true);
+    expect(listRes.payload?.runtimeCapabilities?.workflow).toEqual({
+      toolName: "run_workflow",
+      runtimeAvailable: false,
+      registered: false,
+      reasonCode: "runtime_unavailable",
     });
   } finally {
     ws.close();
@@ -1098,6 +1148,323 @@ test("tools.update ignores tool_settings_control in disabled builtin list", asyn
     expect(listRes.ok).toBe(true);
     expect(listRes.payload?.disabled?.builtin).toEqual(["alpha_builtin"]);
     expect(listRes.payload?.disabled?.builtin).not.toContain(TOOL_SETTINGS_CONTROL_NAME);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("message.send emits conversation.plan.updated when agent updates current plan state", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+  let toolExecutor!: ToolExecutor;
+  let server!: Awaited<ReturnType<typeof startGatewayServer>>;
+
+  toolExecutor = new ToolExecutor({
+    tools: [
+      planCurrentGetTool,
+      planCurrentUpdateTool,
+    ],
+    workspaceRoot: process.cwd(),
+    conversationStore,
+  });
+
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield { type: "status", status: "running" as const };
+      const request = {
+        id: "tool-call-plan-update",
+        name: "plan_current_update",
+        arguments: {
+          ifAbsent: "create",
+          seed: {
+            title: "Phase A",
+            status: "active",
+            mode: "agent",
+          },
+          operations: [
+            {
+              type: "set_focus",
+              nextAction: "先落会话真源",
+            },
+            {
+              type: "upsert_step",
+              step: {
+                id: "store",
+                title: "补 store 接线",
+                status: "in_progress",
+              },
+            },
+          ],
+        },
+      };
+      yield {
+        type: "tool_call" as const,
+        id: request.id,
+        name: request.name,
+        arguments: request.arguments,
+      };
+      const result = await toolExecutor.execute(request, input.conversationId, input.agentId, input.userUuid, input.senderInfo, input.roomContext);
+      yield {
+        type: "tool_result" as const,
+        id: result.id,
+        name: result.name,
+        success: result.success,
+        output: result.output,
+        error: result.error,
+        metadata: result.metadata,
+      };
+      yield { type: "final" as const, text: "计划已更新" };
+      yield { type: "status", status: "done" as const };
+    },
+  };
+
+  server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    toolExecutor,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-send-plan-update",
+      method: "message.send",
+      params: {
+        text: "请更新当前计划",
+        conversationId: "conv-plan-update-event",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "message-send-plan-update" && f.ok === true));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "conversation.plan.updated"));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "tool_result"));
+
+    const planEvent = frames.find((f) => f.type === "event" && f.event === "conversation.plan.updated");
+    expect(planEvent?.payload).toMatchObject({
+      conversationId: "conv-plan-update-event",
+      source: "tool",
+      cleared: false,
+      planLifecycle: {
+        action: "created",
+        enteredPlanMode: true,
+        switchedCurrentPlan: false,
+      },
+      planState: {
+        title: "Phase A",
+        status: "active",
+        nextAction: "先落会话真源",
+        steps: [{
+          id: "store",
+          title: "补 store 接线",
+          status: "in_progress",
+        }],
+      },
+    });
+
+    ws.send(JSON.stringify({ type: "req", id: "system-doctor-plan-update-trace", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-plan-update-trace"));
+    const doctorRes = frames.find((f) => f.type === "res" && f.id === "system-doctor-plan-update-trace");
+    const traces = doctorRes.payload?.queryRuntime?.traces ?? [];
+    const runtimeTrace = traces.find((item: any) => item.traceId === "message-send-plan-update");
+    const toolResultStage = runtimeTrace?.stages?.find((item: any) => item.stage === "tool_result_emitted");
+    expect(toolResultStage?.detail).toMatchObject({
+      toolName: "plan_current_update",
+      success: true,
+      planLifecycleAction: "created",
+      enteredPlanMode: true,
+      switchedCurrentPlan: false,
+      planStatus: "active",
+      planOperationTypes: "set_focus, upsert_step",
+    });
+
+    const storedPlan = conversationStore.getPlanState("conv-plan-update-event");
+    expect(storedPlan).toMatchObject({
+      title: "Phase A",
+      steps: [{
+        id: "store",
+        title: "补 store 接线",
+        status: "in_progress",
+      }],
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("message.send exposes current plan replacement lifecycle in doctor trace", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+  conversationStore.updatePlanState("conv-plan-replace-event", {
+    ifAbsent: "create",
+    seed: {
+      title: "旧计划",
+      status: "active",
+      mode: "agent",
+    },
+    operations: [{
+      type: "upsert_step",
+      step: {
+        id: "old-step",
+        title: "旧步骤",
+        status: "in_progress",
+      },
+    }],
+    updatedBy: "agent",
+  });
+  const previousPlan = conversationStore.getPlanState("conv-plan-replace-event");
+  let toolExecutor!: ToolExecutor;
+  let server!: Awaited<ReturnType<typeof startGatewayServer>>;
+
+  toolExecutor = new ToolExecutor({
+    tools: [
+      planCurrentGetTool,
+      planCurrentUpdateTool,
+    ],
+    workspaceRoot: process.cwd(),
+    conversationStore,
+  });
+
+  const agent: BelldandyAgent = {
+    async *run(input) {
+      yield { type: "status", status: "running" as const };
+      const request = {
+        id: "tool-call-plan-replace",
+        name: "plan_current_update",
+        arguments: {
+          operations: [
+            {
+              type: "replace",
+              plan: {
+                version: 1,
+                planId: "plan-replaced",
+                status: "active",
+                title: "新计划",
+                mode: "agent",
+                currentStepId: "new-step",
+                nextAction: "进入新计划",
+                steps: [
+                  {
+                    id: "new-step",
+                    title: "新步骤",
+                    status: "pending",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      };
+      yield {
+        type: "tool_call" as const,
+        id: request.id,
+        name: request.name,
+        arguments: request.arguments,
+      };
+      const result = await toolExecutor.execute(request, input.conversationId, input.agentId, input.userUuid, input.senderInfo, input.roomContext);
+      yield {
+        type: "tool_result" as const,
+        id: result.id,
+        name: result.name,
+        success: result.success,
+        output: result.output,
+        error: result.error,
+        metadata: result.metadata,
+      };
+      yield { type: "final" as const, text: "计划已替换" };
+      yield { type: "status", status: "done" as const };
+    },
+  };
+
+  server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    toolExecutor,
+    agentFactory: () => agent,
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-send-plan-replace",
+      method: "message.send",
+      params: {
+        text: "请替换当前计划",
+        conversationId: "conv-plan-replace-event",
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "message-send-plan-replace" && f.ok === true));
+    await waitFor(() => frames.some((f) => f.type === "event" && f.event === "conversation.plan.updated"));
+
+    const planEvent = frames.find((f) => f.type === "event" && f.event === "conversation.plan.updated");
+    expect(planEvent?.payload).toMatchObject({
+      conversationId: "conv-plan-replace-event",
+      cleared: false,
+      planLifecycle: {
+        action: "replaced",
+        hadExistingPlan: true,
+        enteredPlanMode: false,
+        switchedCurrentPlan: true,
+        previousPlanId: previousPlan?.planId,
+        planId: "plan-replaced",
+      },
+    });
+
+    ws.send(JSON.stringify({ type: "req", id: "system-doctor-plan-replace-trace", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-plan-replace-trace"));
+    const doctorRes = frames.find((f) => f.type === "res" && f.id === "system-doctor-plan-replace-trace");
+    const traces = doctorRes.payload?.queryRuntime?.traces ?? [];
+    const runtimeTrace = traces.find((item: any) => item.traceId === "message-send-plan-replace");
+    const toolResultStage = runtimeTrace?.stages?.find((item: any) => item.stage === "tool_result_emitted");
+    expect(toolResultStage?.detail).toMatchObject({
+      toolName: "plan_current_update",
+      success: true,
+      planLifecycleAction: "replaced",
+      enteredPlanMode: false,
+      switchedCurrentPlan: true,
+      previousPlanId: previousPlan?.planId,
+      planId: "plan-replaced",
+      planOperationTypes: "replace",
+    });
+
+    const storedPlan = conversationStore.getPlanState("conv-plan-replace-event");
+    expect(storedPlan).toMatchObject({
+      planId: "plan-replaced",
+      title: "新计划",
+    });
   } finally {
     ws.close();
     await closeP;

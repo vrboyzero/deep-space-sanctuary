@@ -378,6 +378,7 @@ export async function handleWorkspaceConversationMethod(
       const messages = buildConversationMetaMessages(conversation);
       const taskTokenResults = ctx.conversationStore.getTaskTokenResults(conversationId, limit);
       const loadedDeferredTools = ctx.conversationStore.getLoadedToolNames(conversationId);
+      const planState = ctx.conversationStore.getPlanState?.(conversationId) ?? null;
       const compactBoundaries = ctx.conversationStore.getCompactBoundaries(conversationId, limit);
       const carryoverContext = isCarryoverContextEnabled() && typeof (ctx.conversationStore as ConversationStore & {
         getCarryoverContext?: (conversationId: string, options?: { limit?: number }) => Array<{ tokenEstimate?: number }>;
@@ -412,6 +413,7 @@ export async function handleWorkspaceConversationMethod(
           messages,
           taskTokenResults,
           loadedDeferredTools,
+          planState,
           compactBoundaries,
           retainedContextEstimate: {
             tokens: retainedTokens,

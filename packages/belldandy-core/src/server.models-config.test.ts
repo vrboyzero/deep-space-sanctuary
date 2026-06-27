@@ -2,10 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeAll, expect, test } from "vitest";
+import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 
-import { AgentRegistry, MockAgent } from "@belldandy/agent";
+import { AgentRegistry, MockAgent, type ModelProfile } from "@belldandy/agent";
 
 import {
   cleanupGlobalMemoryManagersForTest,
@@ -227,7 +227,14 @@ test("config.update persists preferred providers and refreshes models.list immed
 test("models.config.update preserves redacted secrets and refreshes models.list immediately", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const modelsPath = path.join(stateDir, "models.json");
-  const modelFallbacks = [
+  const registry = new AgentRegistry(() => new MockAgent());
+  registry.register({
+    id: "default",
+    displayName: "Belldandy",
+    model: "openrouter-main",
+  });
+  const clearAllInstancesSpy = vi.spyOn(registry, "clearAllInstances");
+  const modelFallbacks: ModelProfile[] = [
     {
       id: "openrouter-main",
       displayName: "OpenRouter Main",
@@ -243,6 +250,7 @@ test("models.config.update preserves redacted secrets and refreshes models.list 
     auth: { mode: "none" },
     webRoot: resolveWebRoot(),
     stateDir,
+    agentRegistry: registry,
     primaryModelConfig: {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-primary",
@@ -281,6 +289,7 @@ test("models.config.update preserves redacted secrets and refreshes models.list 
               model: "openai/gpt-4.1-mini",
               protocol: "openai",
               wireApi: "responses",
+              messageLayout: "single_system_only",
             },
             {
               id: "anthropic-alt",
@@ -312,6 +321,7 @@ test("models.config.update preserves redacted secrets and refreshes models.list 
           model: "openai/gpt-4.1-mini",
           protocol: "openai",
           wireApi: "responses",
+          messageLayout: "single_system_only",
         },
         {
           id: "anthropic-alt",
@@ -326,7 +336,9 @@ test("models.config.update preserves redacted secrets and refreshes models.list 
 
     expect(modelFallbacks).toHaveLength(2);
     expect(modelFallbacks[0]?.apiKey).toBe("sk-openrouter-old");
+    expect(modelFallbacks[0]?.messageLayout).toBe("single_system_only");
     expect(modelFallbacks[1]?.apiKey).toBe("sk-anthropic-new");
+    expect(clearAllInstancesSpy).toHaveBeenCalledTimes(1);
 
     ws.send(JSON.stringify({ type: "req", id: "models-list-after-update", method: "models.list", params: {} }));
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "models-list-after-update"));

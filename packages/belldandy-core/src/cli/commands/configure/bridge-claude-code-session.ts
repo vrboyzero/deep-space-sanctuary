@@ -183,7 +183,7 @@ function buildClaudeSessionTarget(options: {
   claudeCommand: string;
   gitBashPath?: string;
 }): BridgeTargetConfig {
-  const template = ["--dangerously-skip-permissions"];
+  const template = ["--dangerously-skip-permissions", "-p", "{{prompt}}"];
   for (const root of options.extraWorkspaceRoots ?? []) {
     template.push("--add-dir", root);
   }

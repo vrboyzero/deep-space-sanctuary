@@ -1,7 +1,12 @@
 import type { AgentRegistry } from "@belldandy/agent";
 import type { GatewayEventFrame, GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
 import type { PluginRegistry } from "@belldandy/plugins";
-import type { SkillRegistry, ToolContractChannel, ToolExecutor } from "@belldandy/skills";
+import type {
+  SkillRegistry,
+  ToolContractChannel,
+  ToolExecutor,
+  WorkflowRuntimeCapabilities,
+} from "@belldandy/skills";
 
 import type { ExternalOutboundAuditStore } from "../external-outbound-audit-store.js";
 import type { ExternalOutboundConfirmationStore } from "../external-outbound-confirmation-store.js";
@@ -79,6 +84,7 @@ type QueryRuntimeDomainsMethodContext = {
   extensionHost?: Pick<ExtensionHostState, "lifecycle">;
   skillRegistry?: SkillRegistry;
   subTaskRuntimeStore?: SubTaskRuntimeStore;
+  workflowRuntime?: WorkflowRuntimeCapabilities;
   getConversationPromptSnapshot?: (input: {
     conversationId: string;
     runId?: string;
@@ -139,6 +145,7 @@ function createToolsRuntimeContext(requestId: string, ctx: QueryRuntimeDomainsMe
     extensionHost: ctx.extensionHost,
     skillRegistry: ctx.skillRegistry,
     subTaskRuntimeStore: ctx.subTaskRuntimeStore,
+    workflowRuntime: ctx.workflowRuntime,
     resolvePendingToolControlRequest: ctx.resolvePendingToolControlRequest,
     applyToolControlChanges: ctx.applyToolControlChanges,
     buildToolControlDisabledPayload: ctx.buildToolControlDisabledPayload,
