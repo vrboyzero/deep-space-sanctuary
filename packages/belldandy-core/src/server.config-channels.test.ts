@@ -935,6 +935,18 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
           BELLDANDY_COMPACTION_MODEL: "gpt-4o-mini",
           BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
           BELLDANDY_COMPACTION_API_KEY: "compaction-secret",
+          BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED: "true",
+          BELLDANDY_PREFLIGHT_COMPRESSION_MODE: "attachments",
+          BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS: "4000",
+          BELLDANDY_PREFLIGHT_TARGET_RATIO: "0.5",
+          BELLDANDY_PREFLIGHT_MIN_SAVINGS_RATIO: "0.2",
+          BELLDANDY_PREFLIGHT_TIMEOUT_MS: "2500",
+          BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE: "none",
+          BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS: "604800000",
+          BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES: "512",
+          BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE: "true",
+          BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS: "86400000",
+          BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES: "64",
           BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
           BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
           BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
@@ -993,6 +1005,13 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(readRes.payload?.config?.BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION).toBe("0.1");
     expect(readRes.payload?.config?.BELLDANDY_COMPACTION_MODEL_ROUTE).toBe("compact-fallback");
     expect(readRes.payload?.config?.BELLDANDY_COMPACTION_API_KEY).toBe("[REDACTED]");
+    expect(readRes.payload?.config?.BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS).toBe("4000");
+    expect(readRes.payload?.config?.BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE).toBe("none");
+    expect(readRes.payload?.config?.BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS).toBe("604800000");
+    expect(readRes.payload?.config?.BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES).toBe("512");
+    expect(readRes.payload?.config?.BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES).toBe("64");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_ITERATION_BUDGET).toBe("8");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_WARNING_FRACTION).toBe("0.75");
     expect(readRes.payload?.config?.BELLDANDY_DANGEROUS_TOOLS_ENABLED).toBe("true");
@@ -1015,6 +1034,13 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(envLocalContent).toContain('BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION="0.1"');
     expect(envLocalContent).toContain('BELLDANDY_COMPACTION_MODEL_ROUTE="compact-fallback"');
     expect(envLocalContent).toContain('BELLDANDY_COMPACTION_API_KEY="compaction-secret"');
+    expect(envLocalContent).toContain('BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED="true"');
+    expect(envLocalContent).toContain('BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS="4000"');
+    expect(envLocalContent).toContain('BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE="none"');
+    expect(envLocalContent).toContain('BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS="604800000"');
+    expect(envLocalContent).toContain('BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES="512"');
+    expect(envLocalContent).toContain('BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE="true"');
+    expect(envLocalContent).toContain('BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES="64"');
     expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_ITERATION_BUDGET="8"');
     expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_WARNING_FRACTION="0.75"');
     expect(envLocalContent).toContain('BELLDANDY_DANGEROUS_TOOLS_ENABLED="true"');

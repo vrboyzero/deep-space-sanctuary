@@ -153,6 +153,21 @@ export type CompressionBatchResult = {
   failedCount: number;
   /** Phase 2：本批次中存储到 reference store 的引用数 */
   referenceStoredCount?: number;
+  /** Phase 3：工具结果 adaptive keep 选择诊断 */
+  selection?: {
+    adaptive: boolean;
+    keepRecentToolMessages: number;
+    toolMessageCount: number;
+    selectedCount: number;
+    keptCount: number;
+    decisions: Array<{
+      messageIndex: number;
+      toolName: string;
+      action: "compress" | "keep";
+      reason: string;
+      contentChars: number;
+    }>;
+  };
 };
 
 /** 压缩执行上下文（传给压缩器的运行时信息） */

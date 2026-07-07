@@ -44,6 +44,7 @@ import type { EmailOutboundConfirmationStore } from "./email-outbound-confirmati
 import type { EmailOutboundProviderRegistry } from "./email-outbound-provider-registry.js";
 import type { EmailInboundAuditStore } from "./email-inbound-audit-store.js";
 import type { EmailFollowUpReminderStore } from "./email-follow-up-reminder-store.js";
+import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
 import {
   buildPromptObservabilitySummary,
   formatPromptObservabilityHeadline,
@@ -309,6 +310,8 @@ export type GatewayServerOptions = {
   workflowRuntime?: WorkflowRuntimeCapabilities;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
   commanderMode?: "on" | "off" | "auto";
+  /** 发送前附件/长输入压缩策略。 */
+  preflightCompressionPolicy?: PreflightCompressionPolicy;
   /** Webhook 配置 */
   webhookConfig?: WebhookConfig;
   /** Webhook 幂等性管理器 */
@@ -1263,6 +1266,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     stopSubTask: opts.stopSubTask,
     workflowRuntime: opts.workflowRuntime,
     commanderMode: opts.commanderMode,
+    preflightCompressionPolicy: opts.preflightCompressionPolicy,
     tokenUsageUploadConfig,
     broadcast: (frame) => broadcastEvent?.(frame),
     broadcastEvent: (frame) => broadcastEvent?.(frame),
@@ -1632,6 +1636,8 @@ async function handleReq(
     "conversation.transcript.export",
     "conversation.timeline.get",
     "conversation.prompt_snapshot.get",
+    "conversation.preflight_compression.retrieve",
+    "conversation.tool_result_reference.retrieve",
     "conversation.digest.get",
     "conversation.digest.refresh",
     "conversation.memory.extract",
@@ -2213,6 +2219,8 @@ async function handleReq(
     case "conversation.transcript.export":
     case "conversation.timeline.get":
     case "conversation.prompt_snapshot.get":
+    case "conversation.preflight_compression.retrieve":
+    case "conversation.tool_result_reference.retrieve":
     case "conversation.digest.get":
     case "conversation.digest.refresh":
     case "conversation.memory.extraction.get":

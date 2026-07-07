@@ -40,6 +40,7 @@ import type { ToolControlConfirmationStore } from "./tool-control-confirmation-s
 import type { ToolsConfigManager } from "./tools-config.js";
 import type { SubTaskRecord, SubTaskRuntimeStore } from "./task-runtime.js";
 import type { GatewayWebSocketConnectionContext } from "./server-websocket-runtime.js";
+import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
 
 type GatewayLog = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -133,6 +134,8 @@ export type GatewayWebSocketRequestContext = {
   workflowRuntime?: import("@belldandy/skills").WorkflowRuntimeCapabilities;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
   commanderMode?: "on" | "off" | "auto";
+  /** 发送前附件/长输入压缩策略。业务逻辑在 query runtime 内执行，这里只透传配置。 */
+  preflightCompressionPolicy?: PreflightCompressionPolicy;
 };
 
 type CreateGatewayWebSocketRequestHandlerOptions = Omit<
@@ -217,6 +220,7 @@ export function buildGatewayWebSocketRequestContext(
     getBackgroundContinuationRuntimeDoctorReport: options.getBackgroundContinuationRuntimeDoctorReport,
     runCronJobNow: options.runCronJobNow,
     runCronRecovery: options.runCronRecovery,
+    preflightCompressionPolicy: options.preflightCompressionPolicy,
   };
 }
 

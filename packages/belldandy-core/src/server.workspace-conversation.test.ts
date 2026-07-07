@@ -5,11 +5,12 @@ import path from "node:path";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 
-import { AgentRegistry, type BelldandyAgent, ConversationStore, MockAgent } from "@belldandy/agent";
+import { AgentRegistry, type BelldandyAgent, ConversationStore, MockAgent, PersistentCompressionReferenceStore } from "@belldandy/agent";
 import { MemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
 
 import { startGatewayServer } from "./server.js";
 import { estimateCarryoverContextPreludeTokens } from "./context-injection.js";
+import { writePreflightCompressionSidecar } from "./preflight-compression-sidecar.js";
 import {
   cleanupGlobalMemoryManagersForTest,
   pairWebSocketClient,
@@ -31,6 +32,159 @@ beforeAll(() => {
 
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
+});
+
+test("conversation.preflight_compression.retrieve returns sidecar original text and rejects path-like refs", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const sidecar = await writePreflightCompressionSidecar({
+    stateDir,
+    conversationId: "conv-sidecar-rpc",
+    runId: "run-sidecar-rpc",
+    sourceRef: "pfc_rpc_ref_001",
+    sourceKind: "attachment_text",
+    sourceName: "long.txt",
+    originalText: "RPC 可回取的附件原文",
+    compressedText: "附件摘要",
+    strategy: "plain_text_extract",
+  });
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => new MockAgent(),
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "preflight-sidecar-get",
+      method: "conversation.preflight_compression.retrieve",
+      params: {
+        conversationId: "conv-sidecar-rpc",
+        runId: "run-sidecar-rpc",
+        sourceRef: sidecar.sourceRef,
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "preflight-sidecar-get"));
+
+    const res = frames.find((f) => f.type === "res" && f.id === "preflight-sidecar-get");
+    expect(res.ok).toBe(true);
+    expect(res.payload).toMatchObject({
+      originalText: "RPC 可回取的附件原文",
+      sidecar: {
+        conversationId: "conv-sidecar-rpc",
+        runId: "run-sidecar-rpc",
+        sourceRef: sidecar.sourceRef,
+      },
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "preflight-sidecar-invalid",
+      method: "conversation.preflight_compression.retrieve",
+      params: {
+        conversationId: "conv-sidecar-rpc",
+        runId: "run-sidecar-rpc",
+        sourceRef: "../secret",
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "preflight-sidecar-invalid"));
+
+    const invalidRes = frames.find((f) => f.type === "res" && f.id === "preflight-sidecar-invalid");
+    expect(invalidRes.ok).toBe(false);
+    expect(invalidRes.error).toMatchObject({
+      code: "invalid_source_ref",
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("conversation.tool_result_reference.retrieve returns persisted tool output and rejects invalid refs", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const store = new PersistentCompressionReferenceStore({ stateDir });
+  const stored = store.store("persisted tool output", {
+    conversationId: "conv-tool-ref-rpc",
+    runId: "run-tool-ref-rpc",
+    sourceName: "run_command",
+  });
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => new MockAgent(),
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "tool-ref-get",
+      method: "conversation.tool_result_reference.retrieve",
+      params: {
+        conversationId: "conv-tool-ref-rpc",
+        runId: "run-tool-ref-rpc",
+        refId: stored.refId,
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "tool-ref-get"));
+
+    const res = frames.find((f) => f.type === "res" && f.id === "tool-ref-get");
+    expect(res.ok).toBe(true);
+    expect(res.payload).toMatchObject({
+      refId: stored.refId,
+      status: "active",
+      content: "persisted tool output",
+      chars: "persisted tool output".length,
+      metadata: {
+        conversationId: "conv-tool-ref-rpc",
+        runId: "run-tool-ref-rpc",
+        sourceName: "run_command",
+      },
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "tool-ref-invalid",
+      method: "conversation.tool_result_reference.retrieve",
+      params: {
+        conversationId: "conv-tool-ref-rpc",
+        refId: "../escape",
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "tool-ref-invalid"));
+
+    const invalidRes = frames.find((f) => f.type === "res" && f.id === "tool-ref-invalid");
+    expect(invalidRes.ok).toBe(false);
+    expect(invalidRes.error).toMatchObject({
+      code: "invalid_ref_id",
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 test("conversation.prompt_snapshot.get returns persisted snapshot artifact", async () => {

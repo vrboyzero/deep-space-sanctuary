@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "完善了计划模式与计划相关的UI展示"
+git commit -m "实现了会话前预压缩相关功能，详见预压缩方案计划.md"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

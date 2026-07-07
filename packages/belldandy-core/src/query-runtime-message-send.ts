@@ -30,6 +30,7 @@ import type { MediaCapability } from "./media-capability-registry.js";
 import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
 import type { ConversationPromptSnapshotArtifact } from "./conversation-prompt-snapshot.js";
 import { resolveDeepSeekTierRoute } from "./deepseek-tier-routing.js";
+import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -83,6 +84,7 @@ export type MessageSendQueryRuntimeContext = {
     deepSeekRoutePolicyEnabled?: boolean;
     /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
     commanderMode?: "on" | "off" | "auto";
+    preflightCompressionPolicy?: PreflightCompressionPolicy;
   };
   toolControl: {
     confirmationStore?: ToolControlConfirmationStore;
@@ -339,6 +341,7 @@ export async function handleMessageSendWithQueryRuntime(
 
     const preparedPrompt = await preparePromptWithAttachments({
       conversationId,
+      runId,
       promptText: userText,
       attachments: request.params.attachments,
       stateDir: request.stateDir,
@@ -350,6 +353,7 @@ export async function handleMessageSendWithQueryRuntime(
         requestedAgentId,
         requestedModelId,
       }),
+      preflightCompressionPolicy: runtimeDeps.preflightCompressionPolicy,
     });
 
     const abortController = new AbortController();

@@ -342,6 +342,21 @@ export type AgentUsage = {
     totalSavedTokensEstimate: number;
     /** 按来源汇总 */
     bySource?: Record<string, { applied: number; savedTokens: number }>;
+    /** 工具结果 adaptive keep 选择诊断 */
+    selection?: {
+      adaptive: boolean;
+      keepRecentToolMessages: number;
+      toolMessageCount: number;
+      selectedCount: number;
+      keptCount: number;
+      decisions: Array<{
+        messageIndex: number;
+        toolName: string;
+        action: "compress" | "keep";
+        reason: string;
+        contentChars: number;
+      }>;
+    };
   };
 };
 
@@ -516,6 +531,11 @@ export {
   JsonToolOutputCompressor,
   CodeSnippetCompressor,
   ConversationReferenceStore,
+  PersistentCompressionReferenceStore,
+  readPersistentCompressionReference,
+  getPersistentCompressionReferenceRoot,
+  cleanupPersistentCompressionReferences,
+  normalizePersistentRefId,
   generateRefId,
   hasCompressionMarker,
   hasLegacyCompressionMarker,
@@ -538,6 +558,8 @@ export {
   type ReferenceStatus,
   type StoredReference,
   type CompressionReferenceStore,
+  type PersistentCompressionReferenceReadResult,
+  type PersistentCompressionReferenceCleanupResult,
   type ParsedCompressionMarker,
   type ColdResumePruneResult,
 } from "./context-compression/index.js";

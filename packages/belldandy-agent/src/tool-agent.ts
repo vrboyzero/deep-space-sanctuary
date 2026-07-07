@@ -34,6 +34,7 @@ import { microcompactMessages, type MicrocompactOptions } from "./microcompact.j
 import {
   createCompressionPipeline,
   createCompressionPipelineWithStore,
+  PersistentCompressionReferenceStore,
   coldResumePruneMessages,
   pruneBeforeSummarize,
   hasCompressionMarker,
@@ -94,6 +95,7 @@ import {
   classifyPrefixDrift,
   readPrefixComparableSnapshot,
 } from "./prompt-budget-observability.js";
+import { selectToolMessagesForCompression } from "./tool-result-adaptive-keep.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -239,6 +241,13 @@ export type ToolEnabledAgentOptions = {
     policy?: Partial<CompressionPolicy>;
     /** Phase 2：是否启用引用存储（原文回取）。默认 false，与 Phase 1 行为一致 */
     enableReferenceStore?: boolean;
+    /** Phase 4：是否启用工具结果持久 reference store。默认 false，避免敏感输出默认落盘 */
+    persistentReferenceStore?: {
+      enabled?: boolean;
+      stateDir: string;
+      ttlMs?: number;
+      maxEntries?: number;
+    };
   };
   /** 统一上下文压缩层实例（可选，用于外部注入或测试） */
   compressionPipeline?: ContextCompressionPipeline;
@@ -1381,6 +1390,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
         // 外部注入优先
         this.compressionPipeline = opts.compressionPipeline;
         this.compressionReferenceStore = opts.compressionPipeline.getReferenceStore?.();
+      } else if (opts.compression?.persistentReferenceStore?.enabled) {
+        // Phase 4：显式启用时才把工具结果 reference 持久化到 stateDir。
+        const store = new PersistentCompressionReferenceStore({
+          stateDir: opts.compression.persistentReferenceStore.stateDir,
+          ttlMs: opts.compression.persistentReferenceStore.ttlMs,
+          maxEntries: opts.compression.persistentReferenceStore.maxEntries,
+          storeKind: "conversation",
+        });
+        this.compressionPipeline = createCompressionPipeline(opts.compression?.policy, { referenceStore: store });
+        this.compressionReferenceStore = store;
       } else if (opts.compression?.enableReferenceStore) {
         // Phase 2：带引用存储的管线
         const { pipeline, store } = createCompressionPipelineWithStore(
@@ -1463,27 +1482,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
       }
     }
 
-    // 收集 tool message 索引
-    const toolMessageIndices: number[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      if (messages[i].role === "tool") {
-        toolMessageIndices.push(i);
-      }
-    }
-
-    // 保留最近 N 条不压（与 microcompact 的 keepRecent 对齐）
     const keepRecent = Math.max(0, this.opts.microcompact?.keepRecentToolMessages ?? 4);
-    const compactUntil = Math.max(0, toolMessageIndices.length - keepRecent);
+    const selection = selectToolMessagesForCompression({
+      messages,
+      toolCallNameById,
+      keepRecentToolMessages: keepRecent,
+    });
 
     const results: CompressionResult[] = [];
     let appliedCount = 0;
-    let skippedCount = 0;
+    let skippedCount = selection.decisions.filter((decision) => decision.action === "keep").length;
     let failedCount = 0;
     let totalSavedTokensEstimate = 0;
     let referenceStoredCount = 0;
 
-    for (let i = 0; i < compactUntil; i++) {
-      const msgIdx = toolMessageIndices[i];
+    for (const msgIdx of selection.selectedIndices) {
       const msg = messages[msgIdx];
       if (!msg || msg.role !== "tool") continue;
 
@@ -1542,7 +1555,28 @@ export class ToolEnabledAgent implements BelldandyAgent {
       }
     }
 
-    return { results, totalSavedTokensEstimate, appliedCount, skippedCount, failedCount, referenceStoredCount };
+    return {
+      results,
+      totalSavedTokensEstimate,
+      appliedCount,
+      skippedCount,
+      failedCount,
+      referenceStoredCount,
+      selection: {
+        adaptive: selection.adaptive,
+        keepRecentToolMessages: selection.keepRecentToolMessages,
+        toolMessageCount: selection.toolMessageCount,
+        selectedCount: selection.selectedIndices.length,
+        keptCount: selection.decisions.filter((decision) => decision.action === "keep").length,
+        decisions: selection.decisions.map((decision) => ({
+          messageIndex: decision.messageIndex,
+          toolName: decision.toolName,
+          action: decision.action,
+          reason: decision.reason,
+          contentChars: decision.contentChars,
+        })),
+      },
+    };
   }
 
   private async emitBeforeCompaction(
@@ -2122,13 +2156,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
         ...(lastPrefixShape ? { prefixShape: { ...lastPrefixShape } } : {}),
         ...(lastPrefixDrift ? { prefixDrift: { ...lastPrefixDrift } } : {}),
         ...(lastBudgetCompetition ? { budgetCompetition: { ...lastBudgetCompetition } } : {}),
-        ...(this.lastCompressionBatch && this.lastCompressionBatch.appliedCount > 0 ? {
+        ...(this.lastCompressionBatch && (this.lastCompressionBatch.appliedCount > 0 || this.lastCompressionBatch.selection) ? {
           compression: {
             appliedCount: this.lastCompressionBatch.appliedCount,
             skippedCount: this.lastCompressionBatch.skippedCount,
             failedCount: this.lastCompressionBatch.failedCount,
             totalSavedTokensEstimate: this.lastCompressionBatch.totalSavedTokensEstimate,
             bySource: buildCompressionBySourceSummary(this.lastCompressionBatch.results),
+            ...(this.lastCompressionBatch.selection ? {
+              selection: { ...this.lastCompressionBatch.selection },
+            } : {}),
             // Phase 2：引用存储与冷恢复裁剪诊断
             ...(this.lastCompressionBatch.referenceStoredCount && this.lastCompressionBatch.referenceStoredCount > 0 ? {
               referenceStoredCount: this.lastCompressionBatch.referenceStoredCount,

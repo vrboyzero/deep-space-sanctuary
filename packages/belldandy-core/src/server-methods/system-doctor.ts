@@ -111,6 +111,7 @@ import {
 import { ResidentAgentRuntimeRegistry } from "../resident-agent-runtime.js";
 import { resolveResidentStateBindingViewForAgent } from "../resident-state-binding.js";
 import { buildOptionalCapabilitiesDoctorReport } from "../optional-capabilities-doctor.js";
+import { buildPreflightCompressionGovernanceReport } from "../preflight-compression-governance.js";
 import type { RuntimeResilienceDoctorReport } from "../runtime-resilience.js";
 import { buildRuntimeResilienceDiagnosticSummary } from "../runtime-resilience-diagnostics.js";
 import {
@@ -1465,6 +1466,7 @@ export async function handleSystemDoctorMethod(
   let promptObservability: Record<string, unknown> | undefined;
   let toolBehaviorObservability: Record<string, unknown> | undefined;
   let toolContractV2Observability: Record<string, unknown> | undefined;
+  let preflightCompressionGovernance: Awaited<ReturnType<typeof buildPreflightCompressionGovernanceReport>> | undefined;
   let residentAgents: any;
   let mindProfileSnapshot: any;
   let learningReviewInput: any;
@@ -1640,6 +1642,14 @@ export async function handleSystemDoctorMethod(
       });
     }
   }
+
+  const preflightCompressionStage = await captureDoctorStage(
+    doctorPerformanceStages,
+    "preflight_compression_governance",
+    async () => buildPreflightCompressionGovernanceReport({ stateDir: ctx.stateDir }),
+  );
+  preflightCompressionGovernance = unwrapDoctorStageResult(preflightCompressionStage);
+  checks.push(...preflightCompressionGovernance.checks);
 
   if (!summaryOnly && ctx.agentRegistry && (ctx.residentMemoryManagers?.length ?? 0) > 0) {
     const roster = await buildAgentRoster({
@@ -2019,6 +2029,7 @@ export async function handleSystemDoctorMethod(
       ...(promptObservability ? { promptObservability } : {}),
       ...(toolBehaviorObservability ? { toolBehaviorObservability } : {}),
       ...(toolContractV2Observability ? { toolContractV2Observability } : {}),
+      ...(preflightCompressionGovernance ? { preflightCompressionGovernance } : {}),
       ...(bridgeRecoveryDiagnostics ? { bridgeRecoveryDiagnostics } : {}),
       ...(residentAgents ? { residentAgents } : {}),
       ...(memoryClassConsumer ? {

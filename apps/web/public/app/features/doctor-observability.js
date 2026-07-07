@@ -1733,6 +1733,77 @@ function buildCompactionRuntimeCard(payload, t) {
   };
 }
 
+function buildPreflightCompressionGovernanceCard(payload, t) {
+  const report = payload?.preflightCompressionGovernance;
+  if (!report?.config || !report?.storage) {
+    return undefined;
+  }
+  const config = report.config;
+  const sidecars = report.storage.sidecars || {};
+  const references = report.storage.persistentReferences || {};
+  const sidecarPending = Number(sidecars.expiredCount || 0) + Number(sidecars.overLimitCount || 0);
+  const referencePending = Number(references.expiredCount || 0) + Number(references.overLimitCount || 0);
+  const invalidCount = Number(sidecars.invalidCount || 0) + Number(references.invalidCount || 0);
+  const badges = [
+    tr(
+      t,
+      "settings.doctorPreflightConfigBadge",
+      {
+        mode: config.enabled ? config.mode : "off",
+        threshold: formatNumber(config.attachmentThresholdChars),
+        reference: config.attachmentReference || "-",
+      },
+      `mode=${config.enabled ? config.mode : "off"} / threshold=${formatNumber(config.attachmentThresholdChars)} / reference=${config.attachmentReference || "-"}`,
+    ),
+    tr(
+      t,
+      "settings.doctorPreflightStorageBadge",
+      {
+        sidecars: formatNumber(sidecars.totalSidecars),
+        refs: formatNumber(references.totalReferences),
+      },
+      `sidecars=${formatNumber(sidecars.totalSidecars)} / toolRefs=${formatNumber(references.totalReferences)}`,
+    ),
+  ];
+  const notes = [
+    tr(
+      t,
+      "settings.doctorPreflightSidecarNote",
+      {
+        pending: formatNumber(sidecarPending),
+        retentionMs: formatNumber(sidecars.retentionMs),
+        maxEntries: formatNumber(sidecars.maxEntries),
+      },
+      `sidecar cleanup pending=${formatNumber(sidecarPending)}, retentionMs=${formatNumber(sidecars.retentionMs)}, maxEntries=${formatNumber(sidecars.maxEntries)}`,
+    ),
+    tr(
+      t,
+      "settings.doctorPreflightReferenceNote",
+      {
+        pending: formatNumber(referencePending),
+        enabled: config.persistentReferenceStoreEnabled ? "true" : "false",
+        ttlMs: formatNumber(references.ttlMs),
+        maxEntries: formatNumber(references.maxEntries),
+      },
+      `tool reference cleanup pending=${formatNumber(referencePending)}, enabled=${config.persistentReferenceStoreEnabled ? "true" : "false"}, ttlMs=${formatNumber(references.ttlMs)}, maxEntries=${formatNumber(references.maxEntries)}`,
+    ),
+  ];
+  if (invalidCount > 0) {
+    notes.push(tr(
+      t,
+      "settings.doctorPreflightInvalidNote",
+      { count: formatNumber(invalidCount) },
+      `invalid metadata files=${formatNumber(invalidCount)}`,
+    ));
+  }
+  return {
+    title: tr(t, "settings.doctorPreflightTitle", {}, "Preflight Compression"),
+    badges,
+    notes,
+    status: report.summary?.status === "warn" ? "warn" : "pass",
+  };
+}
+
 function buildDelegationCard(payload, t) {
   const observability = payload?.delegationObservability;
   const summary = observability?.summary;
@@ -4027,6 +4098,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildConfigSourceCard(payload, t),
     buildPromptObservabilityCard(payload, t),
     buildTokenUsageDiagnosticsCard(payload, t),
+    buildPreflightCompressionGovernanceCard(payload, t),
     buildQueryRuntimeCard(payload, t),
     buildToolBehaviorCard(payload, t),
     buildToolContractV2Card(payload, t),
@@ -4108,6 +4180,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${tokenUsageDiagnosticsCard.title}:`);
     lines.push(...tokenUsageDiagnosticsCard.badges.map((badge) => `- ${badge}`));
     lines.push(...tokenUsageDiagnosticsCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const preflightCompressionCard = buildPreflightCompressionGovernanceCard(payload, t);
+  if (preflightCompressionCard) {
+    lines.push(``);
+    lines.push(`${preflightCompressionCard.title}:`);
+    lines.push(...preflightCompressionCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...preflightCompressionCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const toolCard = buildToolBehaviorCard(payload, t);

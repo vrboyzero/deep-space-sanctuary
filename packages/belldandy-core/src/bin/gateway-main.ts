@@ -408,6 +408,7 @@ import { readMcpRoutingDoctorReport } from "../mcp-config-routing.js";
 import { createScopedMemoryManagers } from "../resident-memory-managers.js";
 import { loadConversationPromptSnapshotArtifact } from "../conversation-prompt-snapshot.js";
 import { PromptSnapshotStore } from "../prompt-snapshot-store.js";
+import { readPreflightCompressionPolicyFromEnv } from "../preflight-compression-config.js";
 import {
   parsePromptExperimentConfig,
 } from "../prompt-observability.js";
@@ -2769,13 +2770,27 @@ const primaryMicrocompactOpts = preservePrimaryPrefixStability
 
 // Phase 2/3：统一压缩层与预算保护策略配置
 const compressionReferenceStoreEnabled = readEnv("BELLDANDY_COMPRESSION_REFERENCE_STORE") !== "false";
+const compressionPersistentReferenceStoreEnabled = readEnv("BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE") === "true";
+const compressionPersistentReferenceTtlMs = parseInt(readEnv("BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS") || String(24 * 60 * 60 * 1000), 10);
+const compressionPersistentReferenceMaxEntries = parseInt(readEnv("BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES") || "128", 10);
+const compressionReferenceStoreAllowed = compressionReferenceStoreEnabled || compressionPersistentReferenceStoreEnabled;
 const compressionOpts = {
   enabled: true,
   enableReferenceStore: compressionReferenceStoreEnabled,
+  persistentReferenceStore: {
+    enabled: compressionPersistentReferenceStoreEnabled,
+    stateDir,
+    ttlMs: Number.isFinite(compressionPersistentReferenceTtlMs) && compressionPersistentReferenceTtlMs > 0
+      ? compressionPersistentReferenceTtlMs
+      : 24 * 60 * 60 * 1000,
+    maxEntries: Number.isFinite(compressionPersistentReferenceMaxEntries) && compressionPersistentReferenceMaxEntries > 0
+      ? compressionPersistentReferenceMaxEntries
+      : 128,
+  },
   policy: {
-    allowReferenceStore: compressionReferenceStoreEnabled,
+    allowReferenceStore: compressionReferenceStoreAllowed,
     sourceOverrides: {
-      tool_result: { enabled: true, allowLossy: true, allowReferenceStore: compressionReferenceStoreEnabled },
+      tool_result: { enabled: true, allowLossy: true, allowReferenceStore: compressionReferenceStoreAllowed },
       attachment_text: { enabled: true, allowLossy: true, allowReferenceStore: false },
     },
   },
@@ -2791,12 +2806,25 @@ const budgetProtectOpts = {
 // Phase 4：stable prefix / transient tail 拆层配置
 const stablePrefixSplitEnabled = readEnv("BELLDANDY_STABLE_PREFIX_SPLIT") === "true";
 const stablePrefixSplitOpts = { enabled: stablePrefixSplitEnabled };
+const preflightCompressionPolicy = readPreflightCompressionPolicyFromEnv(process.env);
 logger.info("compression", "Unified compression layer config", {
   enabled: compressionOpts.enabled,
   referenceStore: compressionReferenceStoreEnabled,
+  persistentReferenceStore: compressionPersistentReferenceStoreEnabled,
+  persistentReferenceTtlMs: compressionOpts.persistentReferenceStore.ttlMs,
+  persistentReferenceMaxEntries: compressionOpts.persistentReferenceStore.maxEntries,
   budgetProtectMode: budgetProtectOpts.mode,
   budgetProtectKeepRecentRounds: budgetProtectOpts.keepRecentRounds,
   stablePrefixSplit: stablePrefixSplitEnabled,
+  preflightCompression: {
+    enabled: preflightCompressionPolicy.enabled,
+    mode: preflightCompressionPolicy.mode,
+    attachmentThresholdChars: preflightCompressionPolicy.attachmentThresholdChars,
+    targetRatio: preflightCompressionPolicy.targetRatio,
+    minSavingsRatio: preflightCompressionPolicy.minSavingsRatio,
+    timeoutMs: preflightCompressionPolicy.timeoutMs,
+    attachmentReference: preflightCompressionPolicy.attachmentReference,
+  },
 });
 const compactionRuntimeTracker = new CompactionRuntimeTracker(compactionOpts);
 if (preservePrimaryPrefixStability) {
@@ -4158,6 +4186,7 @@ const serverOptions = buildGatewayServerOptions({
   stopSubTask,
   workflowRuntime,
   commanderMode,
+  preflightCompressionPolicy,
   ttsEnabled: isTtsEnabledFn,
   ttsSynthesize,
   sttTranscribe,

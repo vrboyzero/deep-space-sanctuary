@@ -52,6 +52,7 @@ type MessageSendMethodContext = Pick<
   | "queryRuntimeTraceStore"
   | "residentAgentRuntime"
   | "commanderMode"
+  | "preflightCompressionPolicy"
 > & {
   parseMessageSendParams: (value: unknown) => { ok: true; value: MessageSendParams } | { ok: false; message: string };
   parseConversationRunStopParams: (
@@ -179,6 +180,7 @@ export async function handleMessageSendMethod(
         modelFallbacks: ctx.modelFallbacks,
         deepSeekRoutePolicyEnabled: String(process.env.BELLDANDY_DEEPSEEK_ROUTE_POLICY_ENABLED ?? "true").trim().toLowerCase() !== "false",
         commanderMode: ctx.commanderMode,
+        preflightCompressionPolicy: ctx.preflightCompressionPolicy,
       },
       toolControl: {
         confirmationStore: ctx.toolControlConfirmationStore,

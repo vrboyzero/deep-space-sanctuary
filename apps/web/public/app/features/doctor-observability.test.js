@@ -9,6 +9,44 @@ afterEach(() => {
 });
 
 describe("doctor observability formatting", () => {
+  it("formats preflight compression governance diagnostics", () => {
+    const summary = buildDoctorChatSummary({
+      preflightCompressionGovernance: {
+        summary: { status: "warn", headline: "preflight=attachments" },
+        config: {
+          enabled: true,
+          mode: "attachments",
+          attachmentThresholdChars: 1200,
+          attachmentReference: "sidecar",
+          persistentReferenceStoreEnabled: true,
+        },
+        storage: {
+          sidecars: {
+            totalSidecars: 2,
+            expiredCount: 1,
+            overLimitCount: 0,
+            retentionMs: 604800000,
+            maxEntries: 512,
+            invalidCount: 0,
+          },
+          persistentReferences: {
+            totalReferences: 3,
+            expiredCount: 0,
+            overLimitCount: 1,
+            ttlMs: 86400000,
+            maxEntries: 128,
+            invalidCount: 0,
+          },
+        },
+      },
+    }, (_key, _params, fallback) => fallback);
+
+    expect(summary.join("\n")).toContain("Preflight Compression");
+    expect(summary.join("\n")).toContain("sidecars=2 / toolRefs=3");
+    expect(summary.join("\n")).toContain("sidecar cleanup pending=1");
+    expect(summary.join("\n")).toContain("tool reference cleanup pending=1");
+  });
+
   it("builds a user-facing doctor summary for prompt and tool observability", () => {
     const lines = buildDoctorChatSummary({
       promptObservability: {

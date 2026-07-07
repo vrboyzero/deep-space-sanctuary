@@ -440,6 +440,18 @@ function createSettingsRefs(overrides = {}) {
     cfgCompactionContextWindowFraction: overrides.cfgCompactionContextWindowFraction || createInput(""),
     cfgModelContextWindow: overrides.cfgModelContextWindow || createInput(""),
     cfgCompressionReferenceStore: overrides.cfgCompressionReferenceStore || createCheckbox(true),
+    cfgPreflightCompressionEnabled: overrides.cfgPreflightCompressionEnabled || createCheckbox(true),
+    cfgPreflightCompressionMode: overrides.cfgPreflightCompressionMode || createInput("attachments"),
+    cfgPreflightAttachmentThresholdChars: overrides.cfgPreflightAttachmentThresholdChars || createInput(""),
+    cfgPreflightTargetRatio: overrides.cfgPreflightTargetRatio || createInput(""),
+    cfgPreflightMinSavingsRatio: overrides.cfgPreflightMinSavingsRatio || createInput(""),
+    cfgPreflightTimeoutMs: overrides.cfgPreflightTimeoutMs || createInput(""),
+    cfgPreflightAttachmentReference: overrides.cfgPreflightAttachmentReference || createInput("none"),
+    cfgPreflightSidecarRetentionMs: overrides.cfgPreflightSidecarRetentionMs || createInput(""),
+    cfgPreflightSidecarMaxEntries: overrides.cfgPreflightSidecarMaxEntries || createInput(""),
+    cfgCompressionPersistentReferenceStore: overrides.cfgCompressionPersistentReferenceStore || createCheckbox(false),
+    cfgCompressionPersistentReferenceTtlMs: overrides.cfgCompressionPersistentReferenceTtlMs || createInput(""),
+    cfgCompressionPersistentReferenceMaxEntries: overrides.cfgCompressionPersistentReferenceMaxEntries || createInput(""),
     cfgBudgetProtectMode: overrides.cfgBudgetProtectMode || createInput("protect_memory_capability"),
     cfgBudgetProtectKeepRecentRounds: overrides.cfgBudgetProtectKeepRecentRounds || createInput(""),
     cfgStablePrefixSplit: overrides.cfgStablePrefixSplit || createCheckbox(false),
@@ -1836,6 +1848,18 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
       BELLDANDY_MODEL_CONTEXT_WINDOW: "256000",
       BELLDANDY_COMPRESSION_REFERENCE_STORE: "false",
+      BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED: "true",
+      BELLDANDY_PREFLIGHT_COMPRESSION_MODE: "attachments",
+      BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS: "4000",
+      BELLDANDY_PREFLIGHT_TARGET_RATIO: "0.5",
+      BELLDANDY_PREFLIGHT_MIN_SAVINGS_RATIO: "0.2",
+      BELLDANDY_PREFLIGHT_TIMEOUT_MS: "2500",
+      BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE: "sidecar",
+      BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS: "604800000",
+      BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES: "512",
+      BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE: "true",
+      BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS: "86400000",
+      BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES: "64",
       BELLDANDY_BUDGET_PROTECT_MODE: "history_first",
       BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS: "5",
       BELLDANDY_STABLE_PREFIX_SPLIT: "true",
@@ -1915,6 +1939,15 @@ describe("settings controller", () => {
     expect(refs.cfgCompactionContextWindowFraction.value).toBe("0.1");
     expect(refs.cfgModelContextWindow.value).toBe("256000");
     expect(refs.cfgCompressionReferenceStore.checked).toBe(false);
+    expect(refs.cfgPreflightCompressionEnabled.checked).toBe(true);
+    expect(refs.cfgPreflightCompressionMode.value).toBe("attachments");
+    expect(refs.cfgPreflightAttachmentThresholdChars.value).toBe("4000");
+    expect(refs.cfgPreflightAttachmentReference.value).toBe("sidecar");
+    expect(refs.cfgPreflightSidecarRetentionMs.value).toBe("604800000");
+    expect(refs.cfgPreflightSidecarMaxEntries.value).toBe("512");
+    expect(refs.cfgCompressionPersistentReferenceStore.checked).toBe(true);
+    expect(refs.cfgCompressionPersistentReferenceTtlMs.value).toBe("86400000");
+    expect(refs.cfgCompressionPersistentReferenceMaxEntries.value).toBe("64");
     expect(refs.cfgBudgetProtectMode.value).toBe("history_first");
     expect(refs.cfgBudgetProtectKeepRecentRounds.value).toBe("5");
     expect(refs.cfgStablePrefixSplit.checked).toBe(true);
@@ -2327,6 +2360,18 @@ describe("settings controller", () => {
       cfgCompactionContextWindowFraction: createInput(" 0.1 "),
       cfgModelContextWindow: createInput(" 256000 "),
       cfgCompressionReferenceStore: createCheckbox(false),
+      cfgPreflightCompressionEnabled: createCheckbox(true),
+      cfgPreflightCompressionMode: createInput(" attachments "),
+      cfgPreflightAttachmentThresholdChars: createInput(" 4000 "),
+      cfgPreflightTargetRatio: createInput(" 0.5 "),
+      cfgPreflightMinSavingsRatio: createInput(" 0.2 "),
+      cfgPreflightTimeoutMs: createInput(" 2500 "),
+      cfgPreflightAttachmentReference: createInput(" sidecar "),
+      cfgPreflightSidecarRetentionMs: createInput(" 604800000 "),
+      cfgPreflightSidecarMaxEntries: createInput(" 512 "),
+      cfgCompressionPersistentReferenceStore: createCheckbox(true),
+      cfgCompressionPersistentReferenceTtlMs: createInput(" 86400000 "),
+      cfgCompressionPersistentReferenceMaxEntries: createInput(" 64 "),
       cfgBudgetProtectMode: createInput(" history_first "),
       cfgBudgetProtectKeepRecentRounds: createInput(" 5 "),
       cfgStablePrefixSplit: createCheckbox(true),
@@ -2443,6 +2488,18 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION: "0.1",
       BELLDANDY_MODEL_CONTEXT_WINDOW: "256000",
       BELLDANDY_COMPRESSION_REFERENCE_STORE: "false",
+      BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED: "true",
+      BELLDANDY_PREFLIGHT_COMPRESSION_MODE: "attachments",
+      BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS: "4000",
+      BELLDANDY_PREFLIGHT_TARGET_RATIO: "0.5",
+      BELLDANDY_PREFLIGHT_MIN_SAVINGS_RATIO: "0.2",
+      BELLDANDY_PREFLIGHT_TIMEOUT_MS: "2500",
+      BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE: "sidecar",
+      BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS: "604800000",
+      BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES: "512",
+      BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE: "true",
+      BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS: "86400000",
+      BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES: "64",
       BELLDANDY_BUDGET_PROTECT_MODE: "history_first",
       BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS: "5",
       BELLDANDY_STABLE_PREFIX_SPLIT: "true",

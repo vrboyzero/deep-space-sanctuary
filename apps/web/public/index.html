@@ -1181,6 +1181,86 @@
             </label>
             <div class="form-help" data-i18n="settings.compressionReferenceStoreHelp">控制压缩后是否保存可回取引用。关闭后回退到更兼容但更容易信息漂移的旧模式。</div>
           </div>
+
+          <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div>
+              <div class="settings-subsection-title" data-i18n="settings.preflightCompressionSectionTitle">Preflight Compression</div>
+              <div class="form-help" data-i18n="settings.preflightCompressionSectionHelp">发送给主模型前的附件预压缩、sidecar 原文回取和清理治理。</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightCompressionEnabled">
+              <input id="cfgPreflightCompressionEnabled" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.preflightCompressionEnabledLabel">启用预压缩</span>
+            </label>
+            <div class="form-help" data-i18n="settings.preflightCompressionEnabledHelp">默认只处理长附件文本；用户直接粘贴的长文本和便宜模型 LLM 预压缩暂不启用。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightCompressionMode" data-i18n="settings.preflightCompressionModeLabel">Preflight Mode</label>
+            <select id="cfgPreflightCompressionMode" class="input">
+              <option value="off">off</option>
+              <option value="attachments">attachments</option>
+              <option value="long_input">long_input</option>
+              <option value="all_long_blocks">all_long_blocks</option>
+            </select>
+            <div class="form-help" data-i18n="settings.preflightCompressionModeHelp">当前实现主要覆盖 attachments；long_input / all_long_blocks 作为后续保留模式，不建议现在开启。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightAttachmentThresholdChars" data-i18n="settings.preflightAttachmentThresholdLabel">Attachment Threshold Chars</label>
+            <input id="cfgPreflightAttachmentThresholdChars" class="input" inputmode="numeric" placeholder="1200" />
+            <div class="form-help" data-i18n="settings.preflightAttachmentThresholdHelp">附件文本达到该字符数后才进入预压缩判断。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightTargetRatio" data-i18n="settings.preflightTargetRatioLabel">Target Ratio</label>
+            <input id="cfgPreflightTargetRatio" class="input" inputmode="decimal" placeholder="0.5" />
+            <div class="form-help" data-i18n="settings.preflightTargetRatioHelp">目标保留比例，0.5 表示压缩到原始字符量约 50%。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightMinSavingsRatio" data-i18n="settings.preflightMinSavingsRatioLabel">Min Savings Ratio</label>
+            <input id="cfgPreflightMinSavingsRatio" class="input" inputmode="decimal" placeholder="0.15" />
+            <div class="form-help" data-i18n="settings.preflightMinSavingsRatioHelp">压缩收益低于该比例时保留原文，避免为了少量节省引入信息损失。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightTimeoutMs" data-i18n="settings.preflightTimeoutMsLabel">Timeout Ms</label>
+            <input id="cfgPreflightTimeoutMs" class="input" inputmode="numeric" placeholder="3000" />
+            <div class="form-help" data-i18n="settings.preflightTimeoutMsHelp">预压缩超时后 fail-open，继续发送原文。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightAttachmentReference" data-i18n="settings.preflightAttachmentReferenceLabel">Attachment Reference</label>
+            <select id="cfgPreflightAttachmentReference" class="input">
+              <option value="none">none</option>
+              <option value="memory">memory</option>
+              <option value="sidecar">sidecar</option>
+            </select>
+            <div class="form-help" data-i18n="settings.preflightAttachmentReferenceHelp">sidecar 会在压缩前保存附件原文，便于受控回取；精确任务建议使用 sidecar。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightSidecarRetentionMs" data-i18n="settings.preflightSidecarRetentionMsLabel">Sidecar Retention Ms</label>
+            <input id="cfgPreflightSidecarRetentionMs" class="input" inputmode="numeric" placeholder="604800000" />
+            <div class="form-help" data-i18n="settings.preflightSidecarRetentionMsHelp">附件 sidecar 原文保留时间，默认 7 天。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPreflightSidecarMaxEntries" data-i18n="settings.preflightSidecarMaxEntriesLabel">Sidecar Max Entries</label>
+            <input id="cfgPreflightSidecarMaxEntries" class="input" inputmode="numeric" placeholder="512" />
+            <div class="form-help" data-i18n="settings.preflightSidecarMaxEntriesHelp">附件 sidecar 全局最大条目数，超出后优先清理最旧条目。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCompressionPersistentReferenceStore">
+              <input id="cfgCompressionPersistentReferenceStore" type="checkbox" style="margin-right: 8px;" />
+              <span data-i18n="settings.compressionPersistentReferenceStoreLabel">启用工具结果持久 Reference</span>
+            </label>
+            <div class="form-help" data-i18n="settings.compressionPersistentReferenceStoreHelp">默认关闭；开启后被压缩的工具结果原文可按 refId 受控回取，并受 TTL / 最大条目数约束。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCompressionPersistentReferenceTtlMs" data-i18n="settings.compressionPersistentReferenceTtlMsLabel">Tool Reference TTL Ms</label>
+            <input id="cfgCompressionPersistentReferenceTtlMs" class="input" inputmode="numeric" placeholder="86400000" />
+            <div class="form-help" data-i18n="settings.compressionPersistentReferenceTtlMsHelp">工具结果持久 reference 保留时间，默认 24 小时。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgCompressionPersistentReferenceMaxEntries" data-i18n="settings.compressionPersistentReferenceMaxEntriesLabel">Tool Reference Max Entries</label>
+            <input id="cfgCompressionPersistentReferenceMaxEntries" class="input" inputmode="numeric" placeholder="128" />
+            <div class="form-help" data-i18n="settings.compressionPersistentReferenceMaxEntriesHelp">工具结果持久 reference 最大条目数，超出后优先清理最旧条目。</div>
+          </div>
           <div class="form-group">
             <label class="form-label" for="cfgBudgetProtectMode" data-i18n="settings.budgetProtectModeLabel">Budget Protect Mode</label>
             <select id="cfgBudgetProtectMode" class="input">

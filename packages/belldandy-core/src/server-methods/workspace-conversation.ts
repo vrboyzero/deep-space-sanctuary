@@ -44,6 +44,8 @@ import {
   handleConversationTranscriptExportWithQueryRuntime,
 } from "../query-runtime-memory.js";
 import { handleConversationPromptSnapshotGetWithQueryRuntime } from "../query-runtime-prompt-snapshot.js";
+import { handleConversationPreflightCompressionRetrieveWithQueryRuntime } from "../query-runtime-preflight-compression.js";
+import { handleConversationToolResultReferenceRetrieveWithQueryRuntime } from "../query-runtime-tool-reference.js";
 import type { QueryRuntimeTraceStore } from "../query-runtime-trace.js";
 import {
   handleWorkspaceListWithQueryRuntime,
@@ -137,6 +139,8 @@ type ConversationMethod =
   | "conversation.timeline.get"
   | "conversation.digest.get"
   | "conversation.digest.refresh"
+  | "conversation.preflight_compression.retrieve"
+  | "conversation.tool_result_reference.retrieve"
   | "conversation.memory.extraction.get"
   | "conversation.memory.extract";
 
@@ -512,6 +516,66 @@ export async function handleWorkspaceConversationMethod(
       }, {
         conversationId,
         runId,
+      });
+    }
+
+    case "conversation.preflight_compression.retrieve": {
+      const params = req.params as {
+        conversationId?: string;
+        runId?: string;
+        sourceRef?: string;
+      } | undefined;
+      const conversationId = typeof params?.conversationId === "string" ? params.conversationId.trim() : "";
+      const runId = typeof params?.runId === "string" && params.runId.trim()
+        ? params.runId.trim()
+        : undefined;
+      const sourceRef = typeof params?.sourceRef === "string" ? params.sourceRef.trim() : "";
+
+      if (!conversationId) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "conversationId is required" } };
+      }
+      if (!sourceRef) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "sourceRef is required" } };
+      }
+
+      return handleConversationPreflightCompressionRetrieveWithQueryRuntime({
+        requestId: req.id,
+        stateDir: ctx.stateDir,
+        runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"conversation.preflight_compression.retrieve">(),
+      }, {
+        conversationId,
+        runId,
+        sourceRef,
+      });
+    }
+
+    case "conversation.tool_result_reference.retrieve": {
+      const params = req.params as {
+        conversationId?: string;
+        runId?: string;
+        refId?: string;
+      } | undefined;
+      const conversationId = typeof params?.conversationId === "string" ? params.conversationId.trim() : "";
+      const runId = typeof params?.runId === "string" && params.runId.trim()
+        ? params.runId.trim()
+        : undefined;
+      const refId = typeof params?.refId === "string" ? params.refId.trim() : "";
+
+      if (!conversationId) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "conversationId is required" } };
+      }
+      if (!refId) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "refId is required" } };
+      }
+
+      return handleConversationToolResultReferenceRetrieveWithQueryRuntime({
+        requestId: req.id,
+        stateDir: ctx.stateDir,
+        runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"conversation.tool_result_reference.retrieve">(),
+      }, {
+        conversationId,
+        runId,
+        refId,
       });
     }
 

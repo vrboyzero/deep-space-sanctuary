@@ -69,6 +69,15 @@ export { CodeSnippetCompressor } from "./compressors/code-snippet.js";
 // Phase 2：引用存储与 marker
 export { ConversationReferenceStore, generateRefId } from "./reference-store.js";
 export {
+  PersistentCompressionReferenceStore,
+  readPersistentCompressionReference,
+  getPersistentCompressionReferenceRoot,
+  cleanupPersistentCompressionReferences,
+  normalizePersistentRefId,
+  type PersistentCompressionReferenceReadResult,
+  type PersistentCompressionReferenceCleanupResult,
+} from "../persistent-compression-reference-store.js";
+export {
   COMPRESSION_MARKER_PREFIX,
   LEGACY_MARKER_PREFIX,
   MICROCOMPACT_CLEARED_PREFIX,

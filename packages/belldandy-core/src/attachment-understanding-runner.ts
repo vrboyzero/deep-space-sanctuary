@@ -25,6 +25,20 @@ import {
   writeCachedVideoUnderstanding,
 } from "./attachment-understanding-cache.js";
 import { hasMediaCapability, type MediaCapability } from "./media-capability-registry.js";
+import {
+  normalizePreflightCompressionPolicy,
+  shouldCompressAttachmentText,
+  toAttachmentCompressionPolicy,
+  type PreflightCompressionPolicy,
+} from "./preflight-compression-config.js";
+import {
+  classifyPreflightCompressionIntent,
+  type PreflightCompressionIntentDecision,
+} from "./preflight-compression-intent.js";
+import {
+  writePreflightCompressionSidecar,
+  type PreflightCompressionSidecarSourceKind,
+} from "./preflight-compression-sidecar.js";
 
 export type AttachmentPromptLimits = {
   textCharLimit: number;
@@ -73,16 +87,25 @@ export type PreparedAttachmentPrompt = {
 };
 
 /** 模块级共享压缩管线实例（无状态，可安全共享） */
-let sharedAttachmentCompressionPipeline: ContextCompressionPipeline | undefined;
-function getAttachmentCompressionPipeline(): ContextCompressionPipeline {
-  if (!sharedAttachmentCompressionPipeline) {
-    sharedAttachmentCompressionPipeline = createCompressionPipeline();
+const sharedAttachmentCompressionPipelines = new Map<string, ContextCompressionPipeline>();
+function getAttachmentCompressionPipeline(policy: PreflightCompressionPolicy): ContextCompressionPipeline {
+  const key = JSON.stringify({
+    minSavingsRatio: policy.minSavingsRatio,
+    attachmentReference: policy.attachmentReference,
+    enabled: policy.enabled,
+    mode: policy.mode,
+  });
+  let pipeline = sharedAttachmentCompressionPipelines.get(key);
+  if (!pipeline) {
+    pipeline = createCompressionPipeline(toAttachmentCompressionPolicy(policy));
+    sharedAttachmentCompressionPipelines.set(key, pipeline);
   }
-  return sharedAttachmentCompressionPipeline;
+  return pipeline;
 }
 
 export async function preparePromptWithAttachments(input: {
   conversationId: string;
+  runId?: string;
   promptText: string;
   attachments: MessageSendParams["attachments"];
   stateDir: string;
@@ -91,10 +114,13 @@ export async function preparePromptWithAttachments(input: {
   getAttachmentPromptLimits: () => AttachmentPromptLimits;
   truncateTextForPrompt: (text: string, limit: number, suffix: string) => { text: string; truncated: boolean };
   acceptedContentCapabilities?: readonly MediaCapability[];
+  preflightCompressionPolicy?: Partial<PreflightCompressionPolicy>;
 }): Promise<PreparedAttachmentPrompt> {
   let promptText = input.promptText;
   const contentParts: Array<Record<string, unknown>> = [];
   const attachmentPromptLimits = input.getAttachmentPromptLimits();
+  const preflightCompressionPolicy = normalizePreflightCompressionPolicy(input.preflightCompressionPolicy);
+  const compressionIntent = classifyPreflightCompressionIntent(input.promptText);
   let textAttachmentCount = 0;
   let textAttachmentChars = 0;
   let audioTranscriptChars = 0;
@@ -243,26 +269,62 @@ export async function preparePromptWithAttachments(input: {
     }
   }
 
-  // Phase 1：对长文本附件做统一压缩
-  // 同时回写 promptText 与 promptDeltas，避免只压缩旁路元数据
-  const ATTACHMENT_COMPRESS_THRESHOLD = 1_200;
-  const pipeline = getAttachmentCompressionPipeline();
+  // Phase 2：对长文本附件做统一压缩，并按任务意图决定是否允许有损摘要。
+  // 同时回写 promptText 与 promptDeltas，避免只压缩旁路元数据。
+  const pipeline = getAttachmentCompressionPipeline(preflightCompressionPolicy);
   for (let i = 0; i < attachmentPrompts.length; i++) {
     const entry = attachmentPrompts[i];
-    if (!entry || entry.text.length < ATTACHMENT_COMPRESS_THRESHOLD) continue;
-    try {
-      const result = await pipeline.compress({
-        sourceKind: "attachment_text",
-        sourceName: typeof entry.deltaId === "string"
-          ? (typeof promptDeltas.find((delta) => delta.id === entry.deltaId)?.metadata?.name === "string"
-            ? String(promptDeltas.find((delta) => delta.id === entry.deltaId)?.metadata?.name)
-            : "attachment")
-          : "attachment",
-        content: entry.text,
-        conversationId: input.conversationId,
+    if (!entry || !shouldCompressAttachmentText(preflightCompressionPolicy, entry.text)) continue;
+    if (shouldSkipCompressionForPrecisionTask(preflightCompressionPolicy, compressionIntent)) {
+      annotatePromptDeltaCompressionSkip({
+        promptDeltas,
+        deltaId: entry.deltaId,
+        intent: compressionIntent,
+        reason: "precision_without_sidecar",
       });
-      attachmentCompressionResults.push(result);
+      continue;
+    }
+    try {
+      const delta = entry.deltaId
+        ? promptDeltas.find((candidate) => candidate.id === entry.deltaId)
+        : undefined;
+      const sourceName = resolveAttachmentSourceName(delta);
+      const result = await withTimeout(
+        pipeline.compress({
+          sourceKind: "attachment_text",
+          sourceName,
+          content: entry.text,
+          conversationId: input.conversationId,
+          runId: input.runId,
+          metadata: {
+            compressionMode: "preflight",
+            taskIntent: compressionIntent.taskIntent,
+            precisionRequired: compressionIntent.precisionRequired,
+            intentMatchedKeywords: compressionIntent.matchedKeywords,
+            targetRatio: preflightCompressionPolicy.targetRatio,
+            thresholdChars: preflightCompressionPolicy.attachmentThresholdChars,
+            referenceMode: preflightCompressionPolicy.attachmentReference,
+          },
+        }),
+        preflightCompressionPolicy.timeoutMs,
+      );
       if (result.applied && result.compressedContent.length < entry.text.length) {
+        const sidecar = preflightCompressionPolicy.attachmentReference === "sidecar"
+          ? await writePreflightCompressionSidecar({
+            stateDir: input.stateDir,
+            conversationId: input.conversationId,
+            runId: input.runId,
+            sourceKind: resolveSidecarSourceKind(delta),
+            sourceName,
+            fingerprint: resolveAttachmentFingerprint(delta),
+            originalText: entry.text,
+            compressedText: result.compressedContent,
+            strategy: result.strategy,
+            cleanupRetentionMs: preflightCompressionPolicy.sidecarRetentionMs,
+            cleanupMaxEntries: preflightCompressionPolicy.sidecarMaxEntries,
+          })
+          : undefined;
+        attachmentCompressionResults.push(result);
         attachmentPrompts[i] = {
           ...entry,
           text: result.compressedContent,
@@ -278,12 +340,27 @@ export async function preparePromptWithAttachments(input: {
                 ...(delta.metadata ?? {}),
                 compressed: true,
                 compressionStrategy: result.strategy,
+                compressionMode: "preflight",
+                preflightTaskIntent: compressionIntent.taskIntent,
+                preflightPrecisionRequired: compressionIntent.precisionRequired,
+                preflightIntentMatchedKeywords: compressionIntent.matchedKeywords,
                 originalChars: result.originalChars,
                 compressedChars: result.compressedChars,
+                compressionThresholdChars: preflightCompressionPolicy.attachmentThresholdChars,
+                compressionTargetRatio: preflightCompressionPolicy.targetRatio,
+                compressionMinSavingsRatio: preflightCompressionPolicy.minSavingsRatio,
+                compressionReferenceMode: preflightCompressionPolicy.attachmentReference,
+                ...(sidecar ? {
+                  sourceRef: sidecar.sourceRef,
+                  sidecarOriginalChars: sidecar.originalChars,
+                  sidecarCreatedAt: sidecar.createdAt,
+                } : {}),
               },
             };
           }
         }
+      } else {
+        attachmentCompressionResults.push(result);
       }
     } catch {
       // fail-open：压缩失败保留原文
@@ -305,6 +382,71 @@ export async function preparePromptWithAttachments(input: {
     promptDeltas,
     attachmentCompressionResults,
   };
+}
+
+function shouldSkipCompressionForPrecisionTask(
+  policy: PreflightCompressionPolicy,
+  intent: PreflightCompressionIntentDecision,
+): boolean {
+  return intent.precisionRequired && policy.attachmentReference !== "sidecar";
+}
+
+function annotatePromptDeltaCompressionSkip(input: {
+  promptDeltas: AgentPromptDelta[];
+  deltaId?: string;
+  intent: PreflightCompressionIntentDecision;
+  reason: string;
+}): void {
+  if (!input.deltaId) return;
+  const deltaIndex = input.promptDeltas.findIndex((delta) => delta.id === input.deltaId);
+  if (deltaIndex < 0) return;
+  const delta = input.promptDeltas[deltaIndex];
+  input.promptDeltas[deltaIndex] = {
+    ...delta,
+    metadata: {
+      ...(delta.metadata ?? {}),
+      compressionSkipped: true,
+      compressionSkipReason: input.reason,
+      preflightTaskIntent: input.intent.taskIntent,
+      preflightPrecisionRequired: input.intent.precisionRequired,
+      preflightIntentMatchedKeywords: input.intent.matchedKeywords,
+    },
+  };
+}
+
+function resolveAttachmentSourceName(delta: AgentPromptDelta | undefined): string {
+  const name = delta?.metadata?.name;
+  return typeof name === "string" && name.trim() ? name : "attachment";
+}
+
+function resolveAttachmentFingerprint(delta: AgentPromptDelta | undefined): string | undefined {
+  const fingerprint = delta?.metadata?.fingerprint;
+  return typeof fingerprint === "string" && fingerprint.trim() ? fingerprint : undefined;
+}
+
+function resolveSidecarSourceKind(delta: AgentPromptDelta | undefined): PreflightCompressionSidecarSourceKind {
+  const kind = delta?.metadata?.kind;
+  if (kind === "audio_transcript") return "audio_transcript";
+  if (kind === "image_understanding" || kind === "video_understanding") return "attachment_understanding";
+  if (kind === "ocr_text") return "ocr_text";
+  return "attachment_text";
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("preflight_compression_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function normalizeAttachment(input: {

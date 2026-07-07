@@ -110,6 +110,7 @@ vi.mock("@belldandy/skills", () => ({
 }));
 
 import { preparePromptWithAttachments, type AttachmentPromptLimits } from "./attachment-understanding-runner.js";
+import { readPreflightCompressionSidecar } from "./preflight-compression-sidecar.js";
 
 const TEST_LIMITS: AttachmentPromptLimits = {
   textCharLimit: 200,
@@ -643,6 +644,192 @@ describe("attachment understanding runner", () => {
         }),
       ]));
       expect(result.attachmentCompressionResults?.some((item) => item.applied)).toBe(true);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("writes sidecar for compressed text attachment when sidecar reference mode is enabled", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-att-runner-text-sidecar-"));
+    try {
+      const longAttachment = [
+        "# 任务背景",
+        ...Array.from({ length: 220 }, (_, index) => `sidecar 说明行 ${index}`),
+        "结论：sidecar 必须能回取原文",
+      ].join("\n");
+
+      const result = await preparePromptWithAttachments({
+        conversationId: "conv-text-sidecar",
+        runId: "run-sidecar",
+        promptText: "请总结附件",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: Buffer.from(longAttachment).toString("base64") },
+        ],
+        stateDir,
+        log: noopLogger,
+        getAttachmentPromptLimits: () => ({
+          textCharLimit: 5_000,
+          totalTextCharLimit: 8_000,
+          audioTranscriptAppendCharLimit: 120,
+        }),
+        truncateTextForPrompt: (text, limit, suffix) => ({
+          text: text.length > limit ? `${text.slice(0, limit)}${suffix}` : text,
+          truncated: text.length > limit,
+        }),
+        acceptedContentCapabilities: ["text_inline"],
+        preflightCompressionPolicy: {
+          attachmentReference: "sidecar",
+        },
+      });
+
+      const compressedDelta = result.promptDeltas.find((delta) => delta.metadata?.compressed === true);
+      const sourceRef = compressedDelta?.metadata?.sourceRef;
+      expect(typeof sourceRef).toBe("string");
+      expect(compressedDelta?.metadata).toEqual(expect.objectContaining({
+        compressionReferenceMode: "sidecar",
+        preflightTaskIntent: "summary",
+        preflightPrecisionRequired: false,
+      }));
+
+      const sidecar = await readPreflightCompressionSidecar({
+        stateDir,
+        conversationId: "conv-text-sidecar",
+        runId: "run-sidecar",
+        sourceRef: String(sourceRef),
+      });
+      expect(sidecar.originalText).toContain("sidecar 说明行 100");
+      expect(sidecar.originalText).toContain("结论：sidecar 必须能回取原文");
+      expect(sidecar.sidecar.compressedText).toBe(compressedDelta?.text);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("skips compression for precision task when no sidecar reference is enabled", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-att-runner-text-precision-"));
+    try {
+      const longAttachment = [
+        "# 原始附件",
+        ...Array.from({ length: 220 }, (_, index) => `精确说明行 ${index}`),
+        "结论：精确任务不能无回取压缩",
+      ].join("\n");
+
+      const result = await preparePromptWithAttachments({
+        conversationId: "conv-text-precision",
+        promptText: "请逐字核对附件中的字段和数字",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: Buffer.from(longAttachment).toString("base64") },
+        ],
+        stateDir,
+        log: noopLogger,
+        getAttachmentPromptLimits: () => ({
+          textCharLimit: 5_000,
+          totalTextCharLimit: 8_000,
+          audioTranscriptAppendCharLimit: 120,
+        }),
+        truncateTextForPrompt: (text, limit, suffix) => ({
+          text: text.length > limit ? `${text.slice(0, limit)}${suffix}` : text,
+          truncated: text.length > limit,
+        }),
+        acceptedContentCapabilities: ["text_inline"],
+        preflightCompressionPolicy: {
+          attachmentReference: "none",
+        },
+      });
+
+      expect(result.promptText).toContain("精确说明行 100");
+      expect(result.promptText).not.toContain("lines omitted");
+      expect(result.attachmentCompressionResults).toEqual([]);
+      expect(result.promptDeltas).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            compressionSkipped: true,
+            compressionSkipReason: "precision_without_sidecar",
+            preflightTaskIntent: "precision",
+            preflightPrecisionRequired: true,
+          }),
+        }),
+      ]));
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("skips attachment compression when preflight compression is disabled", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-att-runner-text-compress-disabled-"));
+    try {
+      const longAttachment = [
+        "# 原始附件",
+        ...Array.from({ length: 220 }, (_, index) => `原始说明行 ${index}`),
+        "结论：关闭预压缩时保留原文",
+      ].join("\n");
+
+      const result = await preparePromptWithAttachments({
+        conversationId: "conv-text-compress-disabled",
+        promptText: "请处理附件",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: Buffer.from(longAttachment).toString("base64") },
+        ],
+        stateDir,
+        log: noopLogger,
+        getAttachmentPromptLimits: () => ({
+          textCharLimit: 5_000,
+          totalTextCharLimit: 8_000,
+          audioTranscriptAppendCharLimit: 120,
+        }),
+        truncateTextForPrompt: (text, limit, suffix) => ({
+          text: text.length > limit ? `${text.slice(0, limit)}${suffix}` : text,
+          truncated: text.length > limit,
+        }),
+        acceptedContentCapabilities: ["text_inline"],
+        preflightCompressionPolicy: {
+          enabled: false,
+        },
+      });
+
+      expect(result.promptText).toContain("原始说明行 100");
+      expect(result.promptText).not.toContain("lines omitted");
+      expect(result.attachmentCompressionResults).toEqual([]);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("respects configured attachment compression threshold", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-att-runner-text-compress-threshold-"));
+    try {
+      const longAttachment = [
+        "# 原始附件",
+        ...Array.from({ length: 220 }, (_, index) => `阈值说明行 ${index}`),
+        "结论：阈值过高时保留原文",
+      ].join("\n");
+
+      const result = await preparePromptWithAttachments({
+        conversationId: "conv-text-compress-threshold",
+        promptText: "请处理附件",
+        attachments: [
+          { name: "long.txt", type: "text/plain", base64: Buffer.from(longAttachment).toString("base64") },
+        ],
+        stateDir,
+        log: noopLogger,
+        getAttachmentPromptLimits: () => ({
+          textCharLimit: 5_000,
+          totalTextCharLimit: 8_000,
+          audioTranscriptAppendCharLimit: 120,
+        }),
+        truncateTextForPrompt: (text, limit, suffix) => ({
+          text: text.length > limit ? `${text.slice(0, limit)}${suffix}` : text,
+          truncated: text.length > limit,
+        }),
+        acceptedContentCapabilities: ["text_inline"],
+        preflightCompressionPolicy: {
+          attachmentThresholdChars: 20_000,
+        },
+      });
+
+      expect(result.promptText).toContain("阈值说明行 100");
+      expect(result.promptText).not.toContain("lines omitted");
+      expect(result.attachmentCompressionResults).toEqual([]);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }

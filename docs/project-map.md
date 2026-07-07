@@ -112,15 +112,17 @@ star-sanctuary/
 - `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，本地打开保存目录/定位文件
 - `packages/belldandy-core/src/query-runtime-message-send.ts`: `message.send` 主执行链、tool result metadata / `failureKind` / follow-up runtime marks 透传
 - `packages/belldandy-core/src/attachment-understanding-runner.ts`: 附件落盘、图片/视频自动识别摘要注入、音频转写缓存复用
+- `packages/belldandy-core/src/preflight-compression-config.ts` / `preflight-compression-sidecar.ts` / `preflight-compression-governance.ts`: 发送前附件预压缩配置、sidecar 原文回取、TTL/最大条目清理治理与 doctor 观测
+- `packages/belldandy-agent/src/tool-result-adaptive-keep.ts` / `persistent-compression-reference-store.ts`: 工具结果 adaptive keep 选择、压缩后工具原文持久 reference 与清理治理
 
 ### UI / WebChat
 - `apps/web/public/app.js`: 前端总装配
 - `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示
 - `apps/web/public/app/features/chat-network.js`: WebSocket 请求/响应、模型/Agent 选择
 - `apps/web/public/app/features/settings-runtime.js`: 设置面板运行时桥接
-- `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources 配置/preview）
+- `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources、Preflight Compression 配置/preview）
 - `apps/web/public/app/features/workspace.js`: 文件树和编辑器
-- `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Dream Runtime 卡片）
+- `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Dream Runtime、Preflight Compression 治理卡片）
 
 ### State / Workspace / Persistence
 - `packages/belldandy-protocol/src/state-dir.ts`: 全局 state dir 解析

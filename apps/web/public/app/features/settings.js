@@ -296,6 +296,18 @@ export function createSettingsController({
     cfgCompactionContextWindowFraction,
     cfgModelContextWindow,
     cfgCompressionReferenceStore,
+    cfgPreflightCompressionEnabled,
+    cfgPreflightCompressionMode,
+    cfgPreflightAttachmentThresholdChars,
+    cfgPreflightTargetRatio,
+    cfgPreflightMinSavingsRatio,
+    cfgPreflightTimeoutMs,
+    cfgPreflightAttachmentReference,
+    cfgPreflightSidecarRetentionMs,
+    cfgPreflightSidecarMaxEntries,
+    cfgCompressionPersistentReferenceStore,
+    cfgCompressionPersistentReferenceTtlMs,
+    cfgCompressionPersistentReferenceMaxEntries,
     cfgBudgetProtectMode,
     cfgBudgetProtectKeepRecentRounds,
     cfgStablePrefixSplit,
@@ -1011,6 +1023,18 @@ export function createSettingsController({
     if (cfgCompactionContextWindowFraction) cfgCompactionContextWindowFraction.value = c["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] || "";
     if (cfgModelContextWindow) cfgModelContextWindow.value = c["BELLDANDY_MODEL_CONTEXT_WINDOW"] || "";
     if (cfgCompressionReferenceStore) cfgCompressionReferenceStore.checked = c["BELLDANDY_COMPRESSION_REFERENCE_STORE"] !== "false";
+    if (cfgPreflightCompressionEnabled) cfgPreflightCompressionEnabled.checked = c["BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED"] !== "false";
+    if (cfgPreflightCompressionMode) cfgPreflightCompressionMode.value = c["BELLDANDY_PREFLIGHT_COMPRESSION_MODE"] || "attachments";
+    if (cfgPreflightAttachmentThresholdChars) cfgPreflightAttachmentThresholdChars.value = c["BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS"] || "";
+    if (cfgPreflightTargetRatio) cfgPreflightTargetRatio.value = c["BELLDANDY_PREFLIGHT_TARGET_RATIO"] || "";
+    if (cfgPreflightMinSavingsRatio) cfgPreflightMinSavingsRatio.value = c["BELLDANDY_PREFLIGHT_MIN_SAVINGS_RATIO"] || "";
+    if (cfgPreflightTimeoutMs) cfgPreflightTimeoutMs.value = c["BELLDANDY_PREFLIGHT_TIMEOUT_MS"] || "";
+    if (cfgPreflightAttachmentReference) cfgPreflightAttachmentReference.value = c["BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE"] || "none";
+    if (cfgPreflightSidecarRetentionMs) cfgPreflightSidecarRetentionMs.value = c["BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS"] || "";
+    if (cfgPreflightSidecarMaxEntries) cfgPreflightSidecarMaxEntries.value = c["BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES"] || "";
+    if (cfgCompressionPersistentReferenceStore) cfgCompressionPersistentReferenceStore.checked = c["BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE"] === "true";
+    if (cfgCompressionPersistentReferenceTtlMs) cfgCompressionPersistentReferenceTtlMs.value = c["BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS"] || "";
+    if (cfgCompressionPersistentReferenceMaxEntries) cfgCompressionPersistentReferenceMaxEntries.value = c["BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES"] || "";
     if (cfgBudgetProtectMode) cfgBudgetProtectMode.value = c["BELLDANDY_BUDGET_PROTECT_MODE"] || "protect_memory_capability";
     if (cfgBudgetProtectKeepRecentRounds) cfgBudgetProtectKeepRecentRounds.value = c["BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS"] || "";
     if (cfgStablePrefixSplit) cfgStablePrefixSplit.checked = c["BELLDANDY_STABLE_PREFIX_SPLIT"] === "true";
@@ -2218,6 +2242,18 @@ export function createSettingsController({
     if (cfgCompactionContextWindowFraction) updates["BELLDANDY_COMPACTION_CONTEXT_WINDOW_FRACTION"] = cfgCompactionContextWindowFraction.value.trim();
     if (cfgModelContextWindow) updates["BELLDANDY_MODEL_CONTEXT_WINDOW"] = cfgModelContextWindow.value.trim();
     if (cfgCompressionReferenceStore) updates["BELLDANDY_COMPRESSION_REFERENCE_STORE"] = cfgCompressionReferenceStore.checked ? "true" : "false";
+    if (cfgPreflightCompressionEnabled) updates["BELLDANDY_PREFLIGHT_COMPRESSION_ENABLED"] = cfgPreflightCompressionEnabled.checked ? "true" : "false";
+    if (cfgPreflightCompressionMode) updates["BELLDANDY_PREFLIGHT_COMPRESSION_MODE"] = cfgPreflightCompressionMode.value.trim() || "attachments";
+    if (cfgPreflightAttachmentThresholdChars) updates["BELLDANDY_PREFLIGHT_ATTACHMENT_THRESHOLD_CHARS"] = cfgPreflightAttachmentThresholdChars.value.trim();
+    if (cfgPreflightTargetRatio) updates["BELLDANDY_PREFLIGHT_TARGET_RATIO"] = cfgPreflightTargetRatio.value.trim();
+    if (cfgPreflightMinSavingsRatio) updates["BELLDANDY_PREFLIGHT_MIN_SAVINGS_RATIO"] = cfgPreflightMinSavingsRatio.value.trim();
+    if (cfgPreflightTimeoutMs) updates["BELLDANDY_PREFLIGHT_TIMEOUT_MS"] = cfgPreflightTimeoutMs.value.trim();
+    if (cfgPreflightAttachmentReference) updates["BELLDANDY_PREFLIGHT_ATTACHMENT_REFERENCE"] = cfgPreflightAttachmentReference.value.trim() || "none";
+    if (cfgPreflightSidecarRetentionMs) updates["BELLDANDY_PREFLIGHT_SIDECAR_RETENTION_MS"] = cfgPreflightSidecarRetentionMs.value.trim();
+    if (cfgPreflightSidecarMaxEntries) updates["BELLDANDY_PREFLIGHT_SIDECAR_MAX_ENTRIES"] = cfgPreflightSidecarMaxEntries.value.trim();
+    if (cfgCompressionPersistentReferenceStore) updates["BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE"] = cfgCompressionPersistentReferenceStore.checked ? "true" : "false";
+    if (cfgCompressionPersistentReferenceTtlMs) updates["BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS"] = cfgCompressionPersistentReferenceTtlMs.value.trim();
+    if (cfgCompressionPersistentReferenceMaxEntries) updates["BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES"] = cfgCompressionPersistentReferenceMaxEntries.value.trim();
     if (cfgBudgetProtectMode) updates["BELLDANDY_BUDGET_PROTECT_MODE"] = cfgBudgetProtectMode.value.trim() || "protect_memory_capability";
     if (cfgBudgetProtectKeepRecentRounds) updates["BELLDANDY_BUDGET_PROTECT_KEEP_RECENT_ROUNDS"] = cfgBudgetProtectKeepRecentRounds.value.trim();
     if (cfgStablePrefixSplit) updates["BELLDANDY_STABLE_PREFIX_SPLIT"] = cfgStablePrefixSplit.checked ? "true" : "false";
