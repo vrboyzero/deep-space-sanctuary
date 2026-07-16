@@ -1,0 +1,14 @@
+diff --git a/lib/esm/fastembed.js b/lib/esm/fastembed.js
+index 620362efd465c6d3ce8c9eb54990c24168b16145..00dc67229ce4b083be66d4791d86929e6c96c5db 100644
+--- a/lib/esm/fastembed.js
++++ b/lib/esm/fastembed.js
+@@ -4,7 +4,8 @@ import https from "https";
+ import * as ort from "onnxruntime-node";
+ import path from "path";
+ import Progress from "progress";
+-import tar from "tar";
++// tar 7 exposes named ESM exports; the namespace keeps Fastembed's tar.x call compatible.
++import * as tar from "tar";
+ import { downloadFileToCacheDir } from "@huggingface/hub";
+ export var ExecutionProvider;
+ (function (ExecutionProvider) {

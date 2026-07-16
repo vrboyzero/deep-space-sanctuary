@@ -158,14 +158,15 @@ test("dependency contract refreshes Rollup within the Vite declaration", () => {
   expect(lockfile).not.toContain("rollup@4.57.1:");
 });
 
-test("dependency contract refreshes Tar 7 within the ONNX Runtime declaration", () => {
+test("dependency contract refreshes Tar 7 within optional native consumer declarations", () => {
   const rootPackage = readJson("package.json");
+  expect(rootPackage.pnpm?.overrides?.["fastembed@2.1.0>tar"]).toBe("7.5.20");
   expect(rootPackage.pnpm?.overrides?.["onnxruntime-node@1.21.0>tar"]).toBe("7.5.20");
 
   const lockfile = fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml"), "utf-8");
   expect(lockfile).toContain("tar@7.5.20:");
   expect(lockfile).not.toContain("tar@7.5.7:");
-  expect(lockfile).toContain("tar@6.2.1:");
+  expect(lockfile).not.toContain("tar@6.2.1:");
 });
 
 test("dependency contract refreshes Undici 7 within the Jsdom declaration", () => {
