@@ -497,7 +497,8 @@ test("gateway injects work overview and resume details into non-mock continuatio
       openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
       promptMarker,
       extraEnv: {
-        BELLDANDY_TASK_MEMORY_ENABLED: "true",
+        // 该 fixture 验证预置任务的恢复，不应让当前测试请求覆盖预置 stop point。
+        BELLDANDY_TASK_MEMORY_ENABLED: "false",
         BELLDANDY_CONTEXT_INJECTION: "true",
         BELLDANDY_CONTEXT_INJECTION_TASK_LIMIT: "3",
         BELLDANDY_AUTO_RECALL_ENABLED: "false",
@@ -640,7 +641,8 @@ test("gateway forensic prompt snapshot separates latest analysis-only request fr
       openaiBaseUrl: `${fakeOpenAI.baseUrl}/v1`,
       promptMarker,
       extraEnv: {
-        BELLDANDY_TASK_MEMORY_ENABLED: "true",
+        // 该 fixture 验证预置任务的恢复，不应让当前测试请求覆盖预置 stop point。
+        BELLDANDY_TASK_MEMORY_ENABLED: "false",
         BELLDANDY_CONTEXT_INJECTION: "true",
         BELLDANDY_CONTEXT_INJECTION_TASK_LIMIT: "3",
         BELLDANDY_AUTO_RECALL_ENABLED: "false",
@@ -3576,6 +3578,13 @@ async function connectGatewayWebSocket(
 
 async function approveLatestPairingCode(frames: any[], stateDir: string): Promise<void> {
   await waitFor(() => frames.some((frame) => frame.type === "event" && frame.event === "pairing.required"));
+  // 先确认当前未配对请求已被拒绝，再写入 allowlist，避免慢环境中旧请求跨过 pairing 边界。
+  const rejected = await waitFor(() => frames.find((frame) =>
+    frame.type === "res"
+    && frame.ok === false
+    && frame.error?.code === "pairing_required",
+  ));
+  expect(rejected.error?.code).toBe("pairing_required");
   const approved = await waitFor(async () => {
     const pairingEvents = frames.filter((frame) => frame.type === "event" && frame.event === "pairing.required");
     const candidateCodes = [];

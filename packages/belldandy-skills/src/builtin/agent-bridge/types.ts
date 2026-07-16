@@ -17,6 +17,8 @@ export type BridgeActionConfig = {
   firstTurnHint?: string;
   recommendedReadWaitMs?: number;
   startupReadWaitMs?: number;
+  startupReadyText?: string;
+  startupReadyWaitMs?: number;
   startupSequence?: Array<{
     data: string;
     waitMs?: number;

@@ -1146,7 +1146,8 @@ test("bridge.session.list and bridge.session.peek expose live bridge runtime ove
     expect(peekRes.payload?.transcriptTail).toEqual(expect.arrayContaining([
       expect.objectContaining({
         direction: "input",
-        content: "process.stdout.write('bridge-runtime-peek\\n')",
+        // startupSequence 的末尾换行会提交 REPL 命令，transcript 必须保留真实写入内容。
+        content: "process.stdout.write('bridge-runtime-peek\\n')\n",
       }),
     ]));
     expect(Number(peekRes.payload?.transcriptEventCount || 0)).toBeGreaterThanOrEqual(1);

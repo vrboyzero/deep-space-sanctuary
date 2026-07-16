@@ -2106,29 +2106,6 @@ P1 以正确性和资源收敛为完成目标，不用性能数字替代；P2 �
 - `defer`：E2/E3 候选尚无基准数据，先进入观测与基准阶段。
 - `record_only`：仅影响 Locality、当前无运行/安全收益或删除测试不成立的架构技术债。
 
-## 12. 实施计划进度表
-
-| 阶段 | 范围 | 状态 | 本轮产出 / 下一闭环 |
-| --- | --- | --- | --- |
-| Phase 0 | 基线、范围、观测 | 已完成 | 已确认现有 trace/startup 观测与四项基线缺口，见 9.1 |
-| Phase 1 | Protocol / Distribution | 已完成 | 已确认路径/manifest、完整性校验、启动预检与 supervisor 优化项，见 9.2 |
-| Phase 2 | Agent Runtime | 已完成 | 已确认会话路径、工具循环预算、取消链、持久化写放大、transcript、真实流式与 prompt 热路径优化项，见 9.5 |
-| Phase 3 | Skills | 已完成 | 已确认 contract fail-open、真实路径、统一预算、SSRF/下载、进程、多媒体、审计与 Tool 状态优化项，见 9.6 |
-| Phase 4 | Memory | 已完成 | 源码证据复核与 Memory 包构建通过；43 个测试文件、189 项测试通过；已确认 retrieval deadline、derived scan/N+1、embedding 进度与 cache、index/watch 背压、tree 前后台隔离、external ingest 事务/路径、Dream/durable lifecycle 与公开 Interface 优化项，见 9.7 |
-| Phase 5 | MCP / Plugins / Browser | 已完成 | 源码证据复核通过；相关 7 个测试文件、39 项测试通过；已确认 MCP timeout/配置/日志、插件激活事务性与 Relay 鉴权/限界/生命周期优化项，见 9.3 |
-| Phase 6 | Core / Goals / 指挥模式 / 动态工作流 | 已完成 | Core 构建通过；35 个定向测试文件、479 项测试通过；已确认 method 授权、transport/附件/shutdown、Goal/Subtask 一致性、指挥模式 role/fan-in、DW 信任/路径/预算/Journal 与 scheduler 优化项，见 9.8 |
-| Phase 7 | Channels | 已完成 | 源码证据复核通过；相关 12 个测试文件、68 项测试通过；已确认入口安全顺序、媒体限界、配置 fail-open、日志、背压、绑定存储与生命周期优化项，见 9.4 |
-| Phase 8 | WebChat | 已完成 | 73 个运行时 JS 语法通过；50 个测试文件、267 项测试通过；隔离 Chrome 正常连接/导航 smoke 通过并复现 close TDZ；已确认凭据、富文本、流式重绘、首屏、长列表与 lifecycle 优化项，见 9.9 |
-| Phase 9 | Build / Release / Dependencies | 已完成 | 根 build 与全量 397 文件/2619 测试通过；当前 slim portable/winget 实测完成；已确认 Relay bin 漏装、版本/可信链、不可复现 archive、安装校验、native matrix、CI/Web asset/audit 与 Windows 发布闭环优化项，见 9.10 |
-| Phase 10 | 综合复核 | 已完成 | 89 个 OPT 已唯一映射到 7 个实施波次与 P0-P3（32/44/11/2）；共享主责、冲突裁决、首批小提交、Gate、风险与回滚已收口，见 10 |
-| Wave 0 | 基线与 Delivery Gate | 进行中 | P0.0-1 至 P0.0-7 持续推进：全部正确性 Gate、OSV fail-closed Gate、B00 BuildGraph report-only 基准和 WebChat CSP/Trusted Types Chromium fixture 已在本地接入；release-light 测试改用隔离输出根以消除并行产物竞争。远端 push/Actions/branch protection、release signing/attestation 仍未核验，本地优化可继续但不得声明远端可合并或 Wave 0 已关闭 |
-| Wave 1 | P0 fast lane | 已完成（本地） | P0.1-1 至 P0.1-6 已本地闭环：WebSocket close、CredentialSession、256-bit setup token、ArtifactContract、portable Relay bin/probe 与 Tool/Skill registry fail-closed 均有回归；single-exe/winget 完整发行矩阵仍受既有提取/归档成本阻塞并保留到 R06，远端 Gate 继续按既定决策 defer |
-| Wave 2 | 信任、文件与外部输入 | 已完成（本地） | P0.2/P0.3/P0.4 已本地闭环：FilesystemCapability、Gateway/Relay/Channel/Workflow/Plugin admission、统一安全输出、OutboundRequestPolicy、MCP/Channel 日志收口、离线 hash Web 资产、富内容清理、enforced CSP、RichContentRenderer Trusted Types fixture 与 verified release-light installer 均有回归。installer signature/attestation、全局 Trusted Types enforced 与远端 Gate 仍按既定边界 `split_task` / `defer`，不得表述为 Delivery Ready |
-| Wave 3 | 预算、取消与 lifecycle | 未开始 | P0 外部输入 seam 与 RequestAdmission 稳定后启动，目标是 timeout 后资源归零、队列有界、shutdown 可证明 |
-| Wave 4 | 状态、事务与 retention | 未开始 | 原子/revision 与 lifecycle 稳定后启动，目标是无半提交、状态/写入/query/cache 有硬上限 |
-| Wave 5 | 热路径与体验深度 | 未开始 | 只启动已通过 B00-B03 收益 Gate 的 streaming、request、Commander、WebChat 优化 |
-| Wave 6 | 发行矩阵与 rollout | 未开始 | frozen identity、native probe、公开下载/hash、离线恢复和 upgrade/rollback 全部通过后才可发布对应变体 |
-
 #### P0.0-1 实现结论：PR build + 全量 Vitest Quality Gate（2026-07-15）
 
 ##### 已完成内容
@@ -3120,4 +3097,27 @@ P1 以正确性和资源收敛为完成目标，不用性能数字替代；P2 �
 
 ### 后续计划
 
-下一步先按用户确认的包清单精确提交并仅推送 `private/main`，因为本地 Quality Gates 及 CSP/Trusted Types fixture 已准备完成，尚缺远端 commit、Actions run 与 required-check 证据。推送后优先核验私有仓库的 workflow 状态、branch protection 和对应 check 名称；release signing/attestation 仍需 GitHub 侧授权与独立设计。全局 WebChat Trusted Types enforced 仍为 `split_task`：当前 Chromium fixture 只覆盖本地资产加载和富内容渲染，完整 UI 尚有 192 个 HTML sink，不能据此宣称全站已启用。
+下一步以 Linux CI 的 6 项失败为定向复现环，修复 resident-state fixture 与 Agent Bridge PTY fallback 的跨平台时序问题；Repository Admin 需单独配置 Docker Hub 登录凭据，不能通过代码或放宽 workflow 绕过。通过定向测试、完整 build/test 后，按包范围说明仅重推 `private/main`，再核验对应 commit 的远端 Quality Gates 与 Docker jobs。当前仍缺的关键闭环是 Linux 全量测试、Dependency audit 的真实 finding 处置、Docker Hub 凭据、branch protection、release signing/attestation 与公开发布资产回读；全局 WebChat Trusted Types enforced 继续保持 `split_task`，不能据此宣称全站已启用。
+
+## 12. 实施计划进度表
+
+| 阶段 | 范围 | 状态 | 本轮产出 / 下一闭环 |
+| --- | --- | --- | --- |
+| Phase 0 | 基线、范围、观测 | 已完成 | 已确认现有 trace/startup 观测与四项基线缺口，见 9.1 |
+| Phase 1 | Protocol / Distribution | 已完成 | 已确认路径/manifest、完整性校验、启动预检与 supervisor 优化项，见 9.2 |
+| Phase 2 | Agent Runtime | 已完成 | 已确认会话路径、工具循环预算、取消链、持久化写放大、transcript、真实流式与 prompt 热路径优化项，见 9.5 |
+| Phase 3 | Skills | 已完成 | 已确认 contract fail-open、真实路径、统一预算、SSRF/下载、进程、多媒体、审计与 Tool 状态优化项，见 9.6 |
+| Phase 4 | Memory | 已完成 | 源码证据复核与 Memory 包构建通过；43 个测试文件、189 项测试通过；已确认 retrieval deadline、derived scan/N+1、embedding 进度与 cache、index/watch 背压、tree 前后台隔离、external ingest 事务/路径、Dream/durable lifecycle 与公开 Interface 优化项，见 9.7 |
+| Phase 5 | MCP / Plugins / Browser | 已完成 | 源码证据复核通过；相关 7 个测试文件、39 项测试通过；已确认 MCP timeout/配置/日志、插件激活事务性与 Relay 鉴权/限界/生命周期优化项，见 9.3 |
+| Phase 6 | Core / Goals / 指挥模式 / 动态工作流 | 已完成 | Core 构建通过；35 个定向测试文件、479 项测试通过；已确认 method 授权、transport/附件/shutdown、Goal/Subtask 一致性、指挥模式 role/fan-in、DW 信任/路径/预算/Journal 与 scheduler 优化项，见 9.8 |
+| Phase 7 | Channels | 已完成 | 源码证据复核通过；相关 12 个测试文件、68 项测试通过；已确认入口安全顺序、媒体限界、配置 fail-open、日志、背压、绑定存储与生命周期优化项，见 9.4 |
+| Phase 8 | WebChat | 已完成 | 73 个运行时 JS 语法通过；50 个测试文件、267 项测试通过；隔离 Chrome 正常连接/导航 smoke 通过并复现 close TDZ；已确认凭据、富文本、流式重绘、首屏、长列表与 lifecycle 优化项，见 9.9 |
+| Phase 9 | Build / Release / Dependencies | 已完成 | 根 build 与全量 397 文件/2619 测试通过；当前 slim portable/winget 实测完成；已确认 Relay bin 漏装、版本/可信链、不可复现 archive、安装校验、native matrix、CI/Web asset/audit 与 Windows 发布闭环优化项，见 9.10 |
+| Phase 10 | 综合复核 | 已完成 | 89 个 OPT 已唯一映射到 7 个实施波次与 P0-P3（32/44/11/2）；共享主责、冲突裁决、首批小提交、Gate、风险与回滚已收口，见 10 |
+| Wave 0 | 基线与 Delivery Gate | 进行中（本地修复完成，待远端复核） | 截至 2026-07-16，`private/main@64b6463` 的 Docker 与 Quality Gates 均已结束。Quality Gates 的 WebChat 123-file contract（含 enforced CSP / Trusted Types fixture）、Distribution contract 与 B00 build benchmark report 通过；Build and full test suite 在 2 个文件中有 6 项 Linux 失败。Dependency audit 因真实 `tar@6.2.1` finding 为 `findings_present`，按 fail-closed 设计正确红灯。Docker test image、health smoke 与多平台 build 通过；Publish to Docker Hub 在登录时返回 `Username and password required`，Create GitHub Release 与 Windows Packaging Assets 被跳过。本轮本地已修复并验证：Agent Bridge PTY 保留 startup command 末尾换行、显式等待 target ready、ready 超时清理 session/runtime；Gateway fixture 在写入 allowlist 前先确认未配对请求已被拒绝，seeded resume 用例关闭本轮 task capture；Bridge transcript 断言保留真实提交换行。`pnpm build`、Gateway 18 项、Agent Bridge 15 项、Bridge WebSocket 13 项定向测试均通过；Windows 全量 Vitest 为 422 文件/2774 测试通过、1 项跳过。当前工作树无法由 WSL 直接复跑最新 Linux 测试，原因是 Windows `node_modules` 缺少 `@rollup/rollup-linux-x64-gnu`；Linux 全量结论以新 GitHub Actions 为准。Dependency audit finding、Docker Hub 凭据、branch protection、release signing/attestation 与公开发布资产回读仍未闭环。后续计划：提交 `belldandy-core`、`belldandy-skills` 与计划文档的最小修复，仅推送 `private/main`，然后复核新 Quality Gates/Docker 结果；先做远端复核是因为 Linux CI 是本轮修复的真实验收面。 |
+| Wave 1 | P0 fast lane | 已完成（本地） | P0.1-1 至 P0.1-6 已本地闭环：WebSocket close、CredentialSession、256-bit setup token、ArtifactContract、portable Relay bin/probe 与 Tool/Skill registry fail-closed 均有回归；single-exe/winget 完整发行矩阵仍受既有提取/归档成本阻塞并保留到 R06。远端交付状态统一见 Wave 0 |
+| Wave 2 | 信任、文件与外部输入 | 已完成（本地） | P0.2/P0.3/P0.4 已本地闭环：FilesystemCapability、Gateway/Relay/Channel/Workflow/Plugin admission、统一安全输出、OutboundRequestPolicy、MCP/Channel 日志收口、离线 hash Web 资产、富内容清理、enforced CSP、RichContentRenderer Trusted Types fixture 与 verified release-light installer 均有回归。installer signature/attestation 与全局 Trusted Types enforced 仍按既定边界 `split_task`；远端交付状态统一见 Wave 0，仍不得表述为 Delivery Ready |
+| Wave 3 | 预算、取消与 lifecycle | 未开始 | P0 外部输入 seam 与 RequestAdmission 稳定后启动，目标是 timeout 后资源归零、队列有界、shutdown 可证明 |
+| Wave 4 | 状态、事务与 retention | 未开始 | 原子/revision 与 lifecycle 稳定后启动，目标是无半提交、状态/写入/query/cache 有硬上限 |
+| Wave 5 | 热路径与体验深度 | 未开始 | 只启动已通过 B00-B03 收益 Gate 的 streaming、request、Commander、WebChat 优化 |
+| Wave 6 | 发行矩阵与 rollout | 未开始 | frozen identity、native probe、公开下载/hash、离线恢复和 upgrade/rollback 全部通过后才可发布对应变体 |

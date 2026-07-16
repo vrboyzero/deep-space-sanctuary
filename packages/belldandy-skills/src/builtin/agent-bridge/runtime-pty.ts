@@ -19,6 +19,7 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const DEFAULT_IO_WAIT_MS = 100;
 const MAX_IO_WAIT_MS = 10_000;
+const DEFAULT_STARTUP_READY_WAIT_MS = 5_000;
 const STARTUP_OUTPUT_POLL_INTERVAL_MS = 25;
 
 function normalizePositiveInt(value: unknown, fallback: number): number {
@@ -60,6 +61,7 @@ async function runStartupSequence(
   ptyManager: PtyManager,
   signal?: AbortSignal,
 ): Promise<void> {
+  await waitForStartupReady(sessionId, action, store, ptyManager, signal);
   for (const step of action.startupSequence ?? []) {
     throwIfAborted(signal);
     if (step.waitMs) {
@@ -77,6 +79,41 @@ async function runStartupSequence(
       includeTranscript: true,
     });
   }
+}
+
+async function waitForStartupReady(
+  sessionId: string,
+  action: BridgeActionConfig,
+  store: BridgeSessionStore,
+  ptyManager: PtyManager,
+  signal?: AbortSignal,
+): Promise<void> {
+  const expectedText = action.startupReadyText;
+  if (!expectedText) {
+    return;
+  }
+
+  const waitMs = normalizeWaitMs(action.startupReadyWaitMs ?? DEFAULT_STARTUP_READY_WAIT_MS);
+  const startedAt = Date.now();
+
+  // 只有 target 显式声明 ready 文本时才等待，避免把任意 CLI 的 banner 当作可输入状态。
+  while (Date.now() - startedAt <= waitMs) {
+    throwIfAborted(signal);
+    const record = store.get(sessionId);
+    if (!record || record.status !== "active") {
+      throw new Error("Bridge session 在启动 ready 前已关闭。");
+    }
+    if (ptyManager.peek(record.runtimeSessionId).includes(expectedText)) {
+      return;
+    }
+    const remainingMs = waitMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      break;
+    }
+    await delay(Math.min(STARTUP_OUTPUT_POLL_INTERVAL_MS, remainingMs), signal);
+  }
+
+  throw new Error(`Bridge session 启动后未在 ${waitMs}ms 内达到配置的 ready 状态。`);
 }
 
 async function captureStartupOutput(
@@ -383,22 +420,25 @@ export async function startBridgeSession(
       durationMs: Date.now() - start,
     };
   } catch (error) {
-    if (isAbortError(error)) {
-      if (createdRuntimeSessionId) {
-        try {
-          PtyManager.getInstance().kill(createdRuntimeSessionId);
-        } catch {
-          // ignore cleanup race
-        }
+    if (createdRuntimeSessionId) {
+      try {
+        PtyManager.getInstance().kill(createdRuntimeSessionId);
+      } catch {
+        // ignore cleanup race
       }
-      if (createdSessionId) {
-        try {
-          const closed = await BridgeSessionStore.getInstance().close(createdSessionId, "manual");
+    }
+    if (createdSessionId) {
+      try {
+        const closed = await BridgeSessionStore.getInstance().close(
+          createdSessionId,
+          isAbortError(error) ? "manual" : "runtime-lost",
+        );
+        if (isAbortError(error)) {
           await completeGovernedBridgeSession(context, closed);
           governanceTaskId = undefined;
-        } catch {
-          // ignore cleanup race
         }
+      } catch {
+        // ignore cleanup race
       }
     }
     if (governanceTaskId && context.bridgeSessionGovernance) {

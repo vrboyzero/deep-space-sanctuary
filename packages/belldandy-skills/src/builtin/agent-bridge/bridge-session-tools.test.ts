@@ -382,6 +382,8 @@ describe("agent bridge P1 session tools", () => {
           actions: {
             interactive: {
               template: ["-i"],
+              startupReadyText: "> ",
+              startupReadyWaitMs: 5_000,
               startupSequence: [
                 {
                   waitMs: STARTUP_SEQUENCE_STEP_WAIT_MS,
@@ -405,6 +407,41 @@ describe("agent bridge P1 session tools", () => {
     const payload = JSON.parse(startResult.output) as { startupOutput?: string };
     expect(payload.startupOutput).toContain("startup-output-ok");
   }, WINDOWS_SLOW_PTY_TEST_TIMEOUT_MS);
+
+  it("fails closed and releases the runtime when configured startup ready text never arrives", async () => {
+    const timeoutConfig = {
+      version: "1.0.0",
+      targets: [
+        {
+          id: "node-repl-ready-timeout",
+          category: "agent-cli",
+          transport: "pty",
+          enabled: true,
+          entry: { binary: process.execPath },
+          cwdPolicy: "workspace-only",
+          sessionMode: "persistent",
+          actions: {
+            interactive: {
+              template: ["-e", "setInterval(() => {}, 1000)"],
+              startupReadyText: "never-ready",
+              startupReadyWaitMs: 100,
+              startupSequence: [{ data: "process.stdout.write('unreachable')\n" }],
+            },
+          },
+        },
+      ],
+    };
+    await fs.writeFile(path.join(tempDir, "agent-bridge.json"), JSON.stringify(timeoutConfig, null, 2), "utf-8");
+
+    const startResult = await bridgeSessionStartTool.execute({
+      targetId: "node-repl-ready-timeout",
+      action: "interactive",
+    }, baseContext);
+
+    expect(startResult.success).toBe(false);
+    expect(startResult.error).toContain("ready 状态");
+    expect(PtyManager.getInstance().list()).toEqual([]);
+  });
 
   it("returns first-turn guidance from bridge_session_start when configured", async () => {
     const guidedConfig = {

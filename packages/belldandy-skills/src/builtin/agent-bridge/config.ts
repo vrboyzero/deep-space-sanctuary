@@ -122,7 +122,9 @@ function normalizeStartupSequence(value: unknown): BridgeActionConfig["startupSe
       if (!item || typeof item !== "object" || Array.isArray(item)) {
         return undefined;
       }
-      const data = normalizeOptionalString((item as { data?: unknown }).data);
+      const rawData = (item as { data?: unknown }).data;
+      // startupSequence 是终端输入，末尾换行决定当前命令是否真正提交，不能沿用 trim() 规范化。
+      const data = typeof rawData === "string" && rawData.trim() ? rawData : undefined;
       if (!data) return undefined;
       const waitMs = normalizePositiveInt((item as { waitMs?: unknown }).waitMs);
       return {
@@ -148,6 +150,8 @@ function normalizeActionConfig(actionName: string, raw: unknown): BridgeActionCo
     firstTurnHint: normalizeOptionalString((raw as { firstTurnHint?: unknown }).firstTurnHint),
     recommendedReadWaitMs: normalizePositiveInt((raw as { recommendedReadWaitMs?: unknown }).recommendedReadWaitMs),
     startupReadWaitMs: normalizePositiveInt((raw as { startupReadWaitMs?: unknown }).startupReadWaitMs),
+    startupReadyText: normalizeOptionalString((raw as { startupReadyText?: unknown }).startupReadyText),
+    startupReadyWaitMs: normalizePositiveInt((raw as { startupReadyWaitMs?: unknown }).startupReadyWaitMs),
     startupSequence: normalizeStartupSequence((raw as { startupSequence?: unknown }).startupSequence),
   };
 }
