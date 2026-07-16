@@ -55,7 +55,7 @@ star-sanctuary/
 | `@belldandy/browser` | Relay server，桥接 Chrome 扩展与 CDP client | `packages/belldandy-browser/src/index.ts` |
 | `@star-sanctuary/distribution` | runtime 路径解析、bootstrap auth token、portable/single-exe 运行时处理与前台 Gateway supervisor lifecycle | `packages/star-sanctuary-distribution/src/index.ts` |
 | `apps/web` | WebChat 前端功能编排与 UI | `apps/web/public/app.js` |
-| `apps/browser-extension` | 浏览器扩展侧 relay client、tab/CDP 管理 | `apps/browser-extension/background.js` |
+| `apps/browser-extension` | 浏览器扩展侧 Relay client、tab/CDP 管理与单一连接生命周期 | `apps/browser-extension/background.js` |
 
 ## 3. 常用入口文件
 
@@ -231,7 +231,8 @@ star-sanctuary/
 
 ### Browser Relay / Automation
 - `packages/belldandy-browser/src/relay.ts` / `relay-credential.ts`: 本地 Relay、握手凭据、连接/消息限额与关闭清理
-- `apps/browser-extension/background.js`: 扩展 service worker、tab attach、CDP command forwarding
+- `apps/browser-extension/relay-connection-controller.js`: 扩展唯一 socket、generation、退避重连、debugger listener 与 suspend 清理所有权
+- `apps/browser-extension/background.js`: 扩展 service worker 装配、tab attach、CDP command forwarding 与 Relay Badge
 - `packages/belldandy-skills/src/builtin/browser/`: 浏览器工具
 
 ### Config / Runtime / Distribution

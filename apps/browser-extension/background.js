@@ -1,9 +1,6 @@
-﻿const DEFAULT_PORT = 28892;
+﻿import { RelayConnectionController } from "./relay-connection-controller.js";
 
-/** @type {WebSocket|null} */
-let relayWs = null;
-/** @type {Promise<void>|null} */
-let relayConnectPromise = null;
+const DEFAULT_PORT = 28892;
 
 // 存储 Tab 与 Session 的映射
 const tabs = new Map(); // tabId -> { sessionId, targetId, state }
@@ -23,8 +20,7 @@ chrome.alarms.create(KEEP_ALIVE_ALARM_NAME, {
 chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === KEEP_ALIVE_ALARM_NAME) {
         // 发送心跳 ping 保持 WebSocket 连接
-        if (relayWs && relayWs.readyState === WebSocket.OPEN) {
-            relayWs.send(JSON.stringify({ method: "ping" }));
+        if (relayConnection.send({ method: "ping" })) {
             console.log("[Star Sanctuary] Keep-alive ping sent");
         }
     }
@@ -41,69 +37,56 @@ async function getRelayConfig() {
     return { port, token };
 }
 
-// 连接到 Relay Server
-async function ensureRelayConnection() {
-    // 【修复】检查 WebSocket 状态，如果已关闭或正在关闭，清理引用
-    if (relayWs) {
-        if (relayWs.readyState === WebSocket.OPEN) {
-            return; // 已连接，无需操作
-        }
-        if (relayWs.readyState === WebSocket.CLOSING || relayWs.readyState === WebSocket.CLOSED) {
-            console.log("[Star Sanctuary] Cleaning up closed WebSocket");
-            relayWs = null;
-        }
+const relayConnection = new RelayConnectionController({
+    getConfig: getRelayConfig,
+    createSocket: (url, protocols) => new WebSocket(url, protocols),
+    attachDebuggerListeners: () => {
+        chrome.debugger.onEvent.addListener(onDebuggerEvent);
+        chrome.debugger.onDetach.addListener(onDebuggerDetach);
+    },
+    detachDebuggerListeners: () => {
+        chrome.debugger.onEvent.removeListener(onDebuggerEvent);
+        chrome.debugger.onDetach.removeListener(onDebuggerDetach);
+    },
+    onMessage: onRelayMessage,
+    onStateChange: onRelayConnectionStateChange,
+});
+
+// 连接控制器负责唯一 socket、退避重连与 listener 生命周期；后台仅保留业务装配。
+function ensureRelayConnection() {
+    return relayConnection.start();
+}
+
+function onRelayConnectionStateChange(state, detail = {}) {
+    if (state === "reconnecting") {
+        // 等待退避期间维持 OFF/ERR，只有实际创建新 socket 时才显示连接中。
+        console.log("[Star Sanctuary] Relay reconnect scheduled", detail);
+        return;
     }
-
-    if (relayConnectPromise) return await relayConnectPromise;
-
-    relayConnectPromise = (async () => {
-        const { port, token } = await getRelayConfig();
-        const wsUrl = `ws://127.0.0.1:${port}/extension`;
-        const relayProtocol = `belldandy-relay-v1.${token}`;
-
-        console.log(`[Star Sanctuary] Connecting to Relay on port ${port}...`);
+    if (state === "connecting") {
+        console.log("[Star Sanctuary] Connecting to Relay...");
         setBadge("...", "#2196F3"); // Blue
-
-        try {
-            const ws = new WebSocket(wsUrl, [relayProtocol]);
-            relayWs = ws;
-
-            await new Promise((resolve, reject) => {
-                const t = setTimeout(() => reject(new Error("Timeout")), 5000);
-                ws.onopen = () => {
-                    clearTimeout(t);
-                    console.log("[Star Sanctuary] Relay Connected");
-                    setBadge("ON", "#4CAF50"); // Green
-                    resolve();
-                };
-                ws.onerror = () => {
-                    clearTimeout(t);
-                    console.error("[Star Sanctuary] Connection Failed");
-                    setBadge("ERR", "#F44336"); // Red
-                    reject(new Error("Connection Failed"));
-                };
-            });
-
-            ws.onmessage = (event) => onRelayMessage(event.data);
-            ws.onclose = () => {
-                console.log("[Star Sanctuary] Relay Disconnected");
-                setBadge("OFF", "#F44336"); // Red
-                relayWs = null;
-            };
-
-            // 监听 Debugger 事件
-            chrome.debugger.onEvent.addListener(onDebuggerEvent);
-            chrome.debugger.onDetach.addListener(onDebuggerDetach);
-        } catch (err) {
-            console.error("[Star Sanctuary] Connection Error:", err);
-            relayWs = null;
-            throw err;
-        } finally {
-            relayConnectPromise = null;
-        }
-    })();
-
-    return relayConnectPromise;
+        return;
+    }
+    if (state === "connected") {
+        console.log("[Star Sanctuary] Relay Connected");
+        setBadge("ON", "#4CAF50"); // Green
+        return;
+    }
+    if (state === "disconnected" || state === "disposed") {
+        console.log("[Star Sanctuary] Relay Disconnected");
+        setBadge("OFF", "#F44336"); // Red
+        return;
+    }
+    if (state === "reconnect-exhausted") {
+        console.warn("[Star Sanctuary] Relay auto-reconnect exhausted", detail);
+        setBadge("ERR", "#F44336"); // Red
+        return;
+    }
+    if (state === "error" || state === "message-error" || state === "send-error") {
+        console.error("[Star Sanctuary] Relay connection error:", detail.error);
+        setBadge("ERR", "#F44336"); // Red
+    }
 }
 
 // 处理来自 Relay 的消息
@@ -112,7 +95,7 @@ async function onRelayMessage(data) {
     try { msg = JSON.parse(data); } catch { return; }
 
     if (msg.method === "ping") {
-        relayWs?.send(JSON.stringify({ method: "pong" }));
+        relayConnection.send({ method: "pong" });
         return;
     }
 
@@ -122,9 +105,9 @@ async function onRelayMessage(data) {
 
         try {
             const result = await handleCdpCommand(method, params, sessionId);
-            relayWs?.send(JSON.stringify({ id, result }));
+            relayConnection.send({ id, result });
         } catch (err) {
-            relayWs?.send(JSON.stringify({ id, error: err.message }));
+            relayConnection.send({ id, error: err.message });
         }
     }
 }
@@ -350,12 +333,10 @@ function onDebuggerDetach(source, reason) {
 }
 
 function sendEventToRelay(method, params, sessionId) {
-    if (relayWs && relayWs.readyState === WebSocket.OPEN) {
-        relayWs.send(JSON.stringify({
-            method: "forwardCDPEvent",
-            params: { method, params, sessionId }
-        }));
-    }
+    relayConnection.send({
+        method: "forwardCDPEvent",
+        params: { method, params, sessionId }
+    });
 }
 
 // 状态指示器
@@ -371,16 +352,8 @@ setBadge("OFF", "#F44336");
 chrome.action.onClicked.addListener(async () => {
     console.log("[Star Sanctuary] User clicked action icon. Forcing reconnection...");
 
-    // 强制清理现有连接
-    if (relayWs) {
-        try { relayWs.close(); } catch (e) { }
-        relayWs = null;
-    }
-    relayConnectPromise = null;
-
-    // 尝试重连
     try {
-        await ensureRelayConnection();
+        await relayConnection.forceReconnect();
         // 主动 attach 当前 tab
         const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (active) {
@@ -397,62 +370,34 @@ chrome.action.onClicked.addListener(async () => {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || (!changes.relayPort && !changes.relayToken)) return;
-    if (relayWs) {
-        try { relayWs.close(); } catch { }
-        relayWs = null;
-    }
-    autoConnectRetries = 0;
-    void autoConnectToRelay();
+    void relayConnection.forceReconnect().catch((error) => {
+        console.error("[Star Sanctuary] Relay reconnect after configuration change failed:", error);
+    });
 });
 
 // =========================================
 // AUTO-CONNECT: 扩展启动时自动连接到 Relay
 // =========================================
-let autoConnectRetries = 0;
-const MAX_AUTO_RETRIES = 10;
-const AUTO_RETRY_DELAY = 3000; // 3 秒
 
-async function autoConnectToRelay() {
-    while (autoConnectRetries < MAX_AUTO_RETRIES) {
-        try {
-            await ensureRelayConnection();
+function startAutoConnect() {
+    void ensureRelayConnection()
+        .then(() => {
             console.log("[Star Sanctuary] Auto-connect succeeded!");
-            autoConnectRetries = 0; // 重置计数器
-            return;
-        } catch (err) {
-            autoConnectRetries++;
-            console.log(`[Star Sanctuary] Auto-connect attempt ${autoConnectRetries}/${MAX_AUTO_RETRIES} failed, retrying in ${AUTO_RETRY_DELAY}ms...`);
-            await new Promise(resolve => setTimeout(resolve, AUTO_RETRY_DELAY));
-        }
-    }
-    console.warn("[Star Sanctuary] Auto-connect exhausted all retries. Click the extension icon to connect manually.");
+        })
+        .catch((error) => {
+            // Controller 已调度唯一的带上限退避重连；这里仅保留首次失败诊断。
+            console.error("[Star Sanctuary] Initial Relay connection failed:", error);
+        });
 }
 
 // 启动时尝试自动连接
-autoConnectToRelay();
+startAutoConnect();
 
-// 断开时自动重连
-function setupAutoReconnect() {
-    const originalOnClose = () => {
-        console.log("[Star Sanctuary] Relay Disconnected, will auto-reconnect...");
-        relayWs = null;
-        // 延迟重连
-        setTimeout(() => {
-            autoConnectRetries = 0;
-            autoConnectToRelay();
-        }, 2000);
-    };
-
-    // Patch ensureRelayConnection to add reconnect listener
-    const originalEnsure = ensureRelayConnection;
-    ensureRelayConnection = async function () {
-        await originalEnsure();
-        if (relayWs && !relayWs._autoReconnectPatched) {
-            relayWs._autoReconnectPatched = true;
-            relayWs.addEventListener('close', originalOnClose);
-        }
-    };
-}
-
-setupAutoReconnect();
+chrome.runtime.onSuspend.addListener(() => {
+    // MV3 worker 被挂起前不保留旧连接、listener 或 tab/session 所有权。
+    relayConnection.dispose();
+    tabs.clear();
+    tabBySession.clear();
+    void chrome.alarms.clear(KEEP_ALIVE_ALARM_NAME);
+});
 
