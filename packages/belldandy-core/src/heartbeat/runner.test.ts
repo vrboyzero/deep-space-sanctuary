@@ -15,6 +15,7 @@ describe("Heartbeat Runner", () => {
     });
 
     afterEach(async () => {
+        vi.useRealTimers();
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
@@ -44,7 +45,8 @@ describe("Heartbeat Runner", () => {
             sendMessage,
             isBusy: () => false, // Not busy
             intervalMs: 1000,
-            activeHours: { start: "00:00", end: "23:59" }, // Force active
+            // `23:59` 是排他结束边界，全天夹具必须使用 runner 已支持的 `24:00`。
+            activeHours: { start: "00:00", end: "24:00" },
         }).runOnce;
 
         await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "check something");
@@ -96,6 +98,26 @@ describe("Heartbeat Runner", () => {
         expect(sendMessage).not.toHaveBeenCalled();
     });
 
+    it("keeps a full-day active-hours fixture active through 23:59", async () => {
+        await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "check boundary");
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-07-16T23:59:00.000Z"));
+        const runner = startHeartbeatRunner({
+            workspaceDir: tmpDir,
+            sendMessage: vi.fn().mockResolvedValue(HEARTBEAT_OK_TOKEN),
+            activeHours: { start: "00:00", end: "24:00" },
+            timezone: "UTC",
+        });
+
+        try {
+            const result = await runner.runOnce();
+            expect(result.status).toBe("ran");
+            expect(result.reason).toBe("ok");
+        } finally {
+            runner.stop();
+        }
+    });
+
     it("does not overlap interval runs while a previous heartbeat is still in flight", async () => {
         vi.useFakeTimers();
         await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "check overlap");
@@ -114,7 +136,7 @@ describe("Heartbeat Runner", () => {
             workspaceDir: tmpDir,
             sendMessage,
             intervalMs: 1000,
-            activeHours: { start: "00:00", end: "23:59" },
+            activeHours: { start: "00:00", end: "24:00" },
         });
 
         await vi.advanceTimersByTimeAsync(1000);
