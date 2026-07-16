@@ -138,6 +138,28 @@ test("Docker runtime starts the built CLI without invoking the dev-only asset bu
   expect(dockerfile).not.toContain('CMD ["pnpm", "start"]');
 });
 
+test("Docker dependency stages copy pnpm patches before frozen installs", () => {
+  const dockerfile = readDockerfile();
+  const depsStart = dockerfile.indexOf("FROM base AS deps");
+  const builderStart = dockerfile.indexOf("FROM base AS builder");
+  const runtimeStart = dockerfile.indexOf("FROM node:22-bookworm-slim AS runtime");
+
+  expect(depsStart).toBeGreaterThan(-1);
+  expect(builderStart).toBeGreaterThan(depsStart);
+  expect(runtimeStart).toBeGreaterThan(builderStart);
+
+  for (const stage of [
+    dockerfile.slice(depsStart, builderStart),
+    dockerfile.slice(builderStart, runtimeStart),
+  ]) {
+    const patchCopyIndex = stage.indexOf("COPY patches ./patches");
+    const frozenInstallIndex = stage.indexOf("pnpm install --frozen-lockfile");
+
+    expect(patchCopyIndex).toBeGreaterThan(-1);
+    expect(frozenInstallIndex).toBeGreaterThan(patchCopyIndex);
+  }
+});
+
 test("tag release forwards its resolved version to release-light build and verification", () => {
   const workflow = readDockerWorkflow();
 

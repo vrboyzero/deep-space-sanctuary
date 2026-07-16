@@ -18,6 +18,8 @@ FROM base AS deps
 # Copy package files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY .npmrc* ./
+# pnpm validates patchedDependencies during frozen install, before workspace source is copied.
+COPY patches ./patches
 COPY packages/belldandy-protocol/package.json ./packages/belldandy-protocol/
 COPY packages/star-sanctuary-distribution/package.json ./packages/star-sanctuary-distribution/
 COPY packages/belldandy-agent/package.json ./packages/belldandy-agent/
@@ -57,6 +59,8 @@ FROM base AS builder
 # Copy package files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY .npmrc* ./
+# Keep the patch input available for the builder stage's frozen install as well.
+COPY patches ./patches
 COPY packages/belldandy-protocol/package.json ./packages/belldandy-protocol/
 COPY packages/star-sanctuary-distribution/package.json ./packages/star-sanctuary-distribution/
 COPY packages/belldandy-agent/package.json ./packages/belldandy-agent/
