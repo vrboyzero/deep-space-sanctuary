@@ -567,6 +567,7 @@ export const enUS = {
     doctorQueryRuntimeLatestMethod: "latest {method}",
     doctorQueryRuntimeLatestStage: "trace={traceId}, latest stage={stage}",
     doctorQueryRuntimeUsageCalibration: "usage calibration @ {stage}: {summary}",
+    doctorQueryRuntimeSlowStage: "slowest p95={p95Ms}ms · {method}: {previousStage} -> {stage} ({outcome}, n={count})",
     doctorRuntimeResilienceTitle: "Runtime Resilience",
     doctorRuntimeResiliencePrimary: "primary {route}",
     doctorRuntimeResilienceFallbacks: "{count} fallbacks",

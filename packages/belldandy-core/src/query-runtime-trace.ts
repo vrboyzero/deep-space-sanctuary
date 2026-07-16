@@ -25,10 +25,36 @@ export type QueryRuntimeTraceRecord = {
   stages: QueryRuntimeTraceStageSnapshot[];
 };
 
+export type QueryRuntimeStageDurationAggregate = {
+  method: QueryRuntimeMethod;
+  previousStage: QueryRuntimeStage;
+  stage: QueryRuntimeStage;
+  outcome: QueryRuntimeTraceStatus;
+  count: number;
+  sumMs: number;
+  maxMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  buckets: Array<{
+    upperBoundMs?: number;
+    count: number;
+  }>;
+};
+
+export type QueryRuntimeStageDurationSummary = {
+  available: boolean;
+  maxAggregates: number;
+  maxSamplesPerAggregate: number;
+  aggregateCount: number;
+  aggregates: QueryRuntimeStageDurationAggregate[];
+  slowest: QueryRuntimeStageDurationAggregate[];
+};
+
 export type QueryRuntimeTraceSummary = {
   observerEnabled: true;
   totalObservedEvents: number;
   activeTraceCount: number;
+  stageDurations: QueryRuntimeStageDurationSummary;
   stopDiagnostics: QueryRuntimeStopDiagnosticsSummary;
   traces: QueryRuntimeTraceRecord[];
 };
@@ -88,15 +114,58 @@ type QueryRuntimeTraceInternalRecord = {
   terminalStage?: TerminalStage;
 };
 
+type QueryRuntimeStageDurationInternalAggregate = {
+  key: string;
+  method: QueryRuntimeMethod;
+  previousStage: QueryRuntimeStage;
+  stage: QueryRuntimeStage;
+  outcome: QueryRuntimeTraceStatus;
+  samplesMs: number[];
+  bucketCounts: number[];
+  sumMs: number;
+  maxMs: number;
+  updatedAt: number;
+};
+
+const STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS = [
+  1,
+  5,
+  10,
+  25,
+  50,
+  100,
+  250,
+  500,
+  1_000,
+  2_500,
+  5_000,
+  10_000,
+  30_000,
+] as const;
+const MAX_SLOW_STAGE_RANKINGS = 6;
+
 export class QueryRuntimeTraceStore {
   private readonly maxTraces: number;
   private readonly maxStagesPerTrace: number;
+  private readonly stageDurationAggregationEnabled: boolean;
+  private readonly maxDurationAggregates: number;
+  private readonly maxDurationSamplesPerAggregate: number;
   private readonly traces = new Map<string, QueryRuntimeTraceInternalRecord>();
+  private readonly durationAggregates = new Map<string, QueryRuntimeStageDurationInternalAggregate>();
   private totalObservedEvents = 0;
 
-  constructor(options: { maxTraces?: number; maxStagesPerTrace?: number } = {}) {
+  constructor(options: {
+    maxTraces?: number;
+    maxStagesPerTrace?: number;
+    enableStageDurationAggregation?: boolean;
+    maxDurationAggregates?: number;
+    maxDurationSamplesPerAggregate?: number;
+  } = {}) {
     this.maxTraces = Math.max(1, Math.floor(options.maxTraces ?? 24));
     this.maxStagesPerTrace = Math.max(1, Math.floor(options.maxStagesPerTrace ?? 16));
+    this.stageDurationAggregationEnabled = options.enableStageDurationAggregation ?? true;
+    this.maxDurationAggregates = Math.max(1, Math.floor(options.maxDurationAggregates ?? 48));
+    this.maxDurationSamplesPerAggregate = Math.max(1, Math.floor(options.maxDurationSamplesPerAggregate ?? 64));
   }
 
   createObserver<TMethod extends QueryRuntimeMethod>(): QueryRuntimeObserver<TMethod> {
@@ -130,6 +199,16 @@ export class QueryRuntimeTraceStore {
       return;
     }
 
+    if (this.stageDurationAggregationEnabled) {
+      this.observeStageDuration({
+        method: event.method,
+        previousStage: current.latestStage,
+        stage: event.stage,
+        outcome: toStatus(toTerminalStage(event.stage)),
+        durationMs: normalizeDurationMs(event.timestamp - current.updatedAt),
+        updatedAt: event.timestamp,
+      });
+    }
     current.conversationId = event.conversationId ?? current.conversationId;
     current.updatedAt = event.timestamp;
     current.latestStage = event.stage;
@@ -171,9 +250,95 @@ export class QueryRuntimeTraceStore {
       observerEnabled: true,
       totalObservedEvents: this.totalObservedEvents,
       activeTraceCount: traces.filter((trace) => trace.status === "running").length,
+      stageDurations: this.getStageDurationSummary(),
       stopDiagnostics,
       traces,
     };
+  }
+
+  private observeStageDuration(input: {
+    method: QueryRuntimeMethod;
+    previousStage: QueryRuntimeStage;
+    stage: QueryRuntimeStage;
+    outcome: QueryRuntimeTraceStatus;
+    durationMs: number;
+    updatedAt: number;
+  }): void {
+    const key = `${input.method}\u0000${input.previousStage}\u0000${input.stage}\u0000${input.outcome}`;
+    let aggregate = this.durationAggregates.get(key);
+    if (!aggregate) {
+      this.trimDurationAggregatesToLimit();
+      aggregate = {
+        key,
+        method: input.method,
+        previousStage: input.previousStage,
+        stage: input.stage,
+        outcome: input.outcome,
+        samplesMs: [],
+        bucketCounts: Array.from({ length: STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS.length + 1 }, () => 0),
+        sumMs: 0,
+        maxMs: 0,
+        updatedAt: input.updatedAt,
+      };
+      this.durationAggregates.set(key, aggregate);
+    }
+
+    aggregate.samplesMs.push(input.durationMs);
+    aggregate.sumMs += input.durationMs;
+    aggregate.bucketCounts[findStageDurationBucketIndex(input.durationMs)] += 1;
+    aggregate.maxMs = Math.max(aggregate.maxMs, input.durationMs);
+    aggregate.updatedAt = input.updatedAt;
+
+    if (aggregate.samplesMs.length > this.maxDurationSamplesPerAggregate) {
+      const evictedDuration = aggregate.samplesMs.shift();
+      if (typeof evictedDuration === "number") {
+        aggregate.sumMs -= evictedDuration;
+        aggregate.bucketCounts[findStageDurationBucketIndex(evictedDuration)] -= 1;
+        if (evictedDuration === aggregate.maxMs) {
+          aggregate.maxMs = Math.max(0, ...aggregate.samplesMs);
+        }
+      }
+    }
+  }
+
+  private getStageDurationSummary(): QueryRuntimeStageDurationSummary {
+    if (!this.stageDurationAggregationEnabled) {
+      return {
+        available: false,
+        maxAggregates: this.maxDurationAggregates,
+        maxSamplesPerAggregate: this.maxDurationSamplesPerAggregate,
+        aggregateCount: 0,
+        aggregates: [],
+        slowest: [],
+      };
+    }
+
+    const aggregates = [...this.durationAggregates.values()]
+      .map((aggregate) => toStageDurationAggregateSnapshot(aggregate))
+      .sort(compareStageDurationAggregate);
+    const slowest = [...aggregates]
+      .sort(compareSlowStageDurationAggregate)
+      .slice(0, MAX_SLOW_STAGE_RANKINGS);
+    return {
+      available: true,
+      maxAggregates: this.maxDurationAggregates,
+      maxSamplesPerAggregate: this.maxDurationSamplesPerAggregate,
+      aggregateCount: aggregates.length,
+      aggregates,
+      slowest,
+    };
+  }
+
+  private trimDurationAggregatesToLimit(): void {
+    if (this.durationAggregates.size < this.maxDurationAggregates) {
+      return;
+    }
+
+    const oldest = [...this.durationAggregates.values()]
+      .sort((left, right) => left.updatedAt - right.updatedAt || left.key.localeCompare(right.key))[0];
+    if (oldest) {
+      this.durationAggregates.delete(oldest.key);
+    }
   }
 
   private trimToLimit(): void {
@@ -195,6 +360,78 @@ export class QueryRuntimeTraceStore {
       this.traces.delete(traceId);
     }
   }
+}
+
+function normalizeDurationMs(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function findStageDurationBucketIndex(durationMs: number): number {
+  const index = STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS.findIndex((upperBoundMs) => durationMs <= upperBoundMs);
+  return index === -1 ? STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS.length : index;
+}
+
+function approximateStageDurationQuantile(
+  aggregate: QueryRuntimeStageDurationInternalAggregate,
+  quantile: number,
+): number {
+  const sampleCount = aggregate.samplesMs.length;
+  if (sampleCount <= 0) {
+    return 0;
+  }
+
+  const targetCount = Math.max(1, Math.ceil(sampleCount * quantile));
+  let cumulativeCount = 0;
+  for (let index = 0; index < aggregate.bucketCounts.length; index += 1) {
+    cumulativeCount += aggregate.bucketCounts[index] ?? 0;
+    if (cumulativeCount >= targetCount) {
+      return STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS[index] ?? aggregate.maxMs;
+    }
+  }
+  return aggregate.maxMs;
+}
+
+function toStageDurationAggregateSnapshot(
+  aggregate: QueryRuntimeStageDurationInternalAggregate,
+): QueryRuntimeStageDurationAggregate {
+  return {
+    method: aggregate.method,
+    previousStage: aggregate.previousStage,
+    stage: aggregate.stage,
+    outcome: aggregate.outcome,
+    count: aggregate.samplesMs.length,
+    sumMs: aggregate.sumMs,
+    maxMs: aggregate.maxMs,
+    p50Ms: approximateStageDurationQuantile(aggregate, 0.5),
+    p95Ms: approximateStageDurationQuantile(aggregate, 0.95),
+    buckets: aggregate.bucketCounts.map((count, index) => ({
+      ...(STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS[index] !== undefined
+        ? { upperBoundMs: STAGE_DURATION_BUCKET_UPPER_BOUNDS_MS[index] }
+        : {}),
+      count,
+    })),
+  };
+}
+
+function compareStageDurationAggregate(
+  left: QueryRuntimeStageDurationAggregate,
+  right: QueryRuntimeStageDurationAggregate,
+): number {
+  return left.method.localeCompare(right.method)
+    || left.previousStage.localeCompare(right.previousStage)
+    || left.stage.localeCompare(right.stage)
+    || left.outcome.localeCompare(right.outcome);
+}
+
+function compareSlowStageDurationAggregate(
+  left: QueryRuntimeStageDurationAggregate,
+  right: QueryRuntimeStageDurationAggregate,
+): number {
+  return right.p95Ms - left.p95Ms
+    || right.maxMs - left.maxMs
+    || right.sumMs - left.sumMs
+    || right.count - left.count
+    || compareStageDurationAggregate(left, right);
 }
 
 function toTerminalStage(stage: QueryRuntimeStage): TerminalStage | undefined {

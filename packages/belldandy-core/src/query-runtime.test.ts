@@ -86,6 +86,113 @@ test("query runtime trace store retains recent lifecycle summary for diagnostics
   expect(summary.traces[0]?.stages[1]?.detail).toMatchObject({ updated: true });
 });
 
+test("query runtime trace store aggregates bounded stage durations during observation", () => {
+  const traceStore = new QueryRuntimeTraceStore({
+    maxDurationAggregates: 4,
+    maxDurationSamplesPerAggregate: 2,
+  });
+
+  traceStore.observe({
+    traceId: "duration-a",
+    method: "message.send",
+    stage: "started",
+    timestamp: 0,
+    detail: { prompt: "must-not-enter-aggregate" },
+  });
+  traceStore.observe({
+    traceId: "duration-a",
+    method: "message.send",
+    stage: "request_validated",
+    timestamp: 10,
+  });
+  traceStore.observe({
+    traceId: "duration-b",
+    method: "message.send",
+    stage: "started",
+    timestamp: 100,
+  });
+  traceStore.observe({
+    traceId: "duration-b",
+    method: "message.send",
+    stage: "request_validated",
+    timestamp: 150,
+  });
+  traceStore.observe({
+    traceId: "duration-c",
+    method: "message.send",
+    stage: "started",
+    timestamp: 200,
+  });
+  traceStore.observe({
+    traceId: "duration-c",
+    method: "message.send",
+    stage: "request_validated",
+    timestamp: 300,
+  });
+
+  const summary = traceStore.getSummary();
+  const aggregate = summary.stageDurations.aggregates.find((item) =>
+    item.method === "message.send"
+    && item.previousStage === "started"
+    && item.stage === "request_validated");
+
+  expect(aggregate).toMatchObject({
+    outcome: "running",
+    count: 2,
+    sumMs: 150,
+    maxMs: 100,
+    p50Ms: 50,
+    p95Ms: 100,
+  });
+  expect(summary.stageDurations.slowest[0]).toMatchObject(aggregate ?? {});
+  expect(JSON.stringify(summary.stageDurations)).not.toContain("must-not-enter-aggregate");
+});
+
+test("query runtime trace store evicts least-recent duration aggregates at its configured limit", () => {
+  const traceStore = new QueryRuntimeTraceStore({
+    maxDurationAggregates: 1,
+    maxDurationSamplesPerAggregate: 4,
+  });
+
+  traceStore.observe({ traceId: "duration-message", method: "message.send", stage: "started", timestamp: 0 });
+  traceStore.observe({ traceId: "duration-message", method: "message.send", stage: "request_validated", timestamp: 20 });
+  traceStore.observe({ traceId: "duration-workspace", method: "workspace.read", stage: "started", timestamp: 100 });
+  traceStore.observe({ traceId: "duration-workspace", method: "workspace.read", stage: "workspace_target_resolved", timestamp: 140 });
+
+  const summary = traceStore.getSummary();
+  expect(summary.stageDurations.aggregates).toEqual([
+    expect.objectContaining({
+      method: "workspace.read",
+      previousStage: "started",
+      stage: "workspace_target_resolved",
+      count: 1,
+      sumMs: 40,
+    }),
+  ]);
+});
+
+test("query runtime trace store can disable duration aggregation without changing trace diagnostics", () => {
+  const traceStore = new QueryRuntimeTraceStore({
+    enableStageDurationAggregation: false,
+  });
+
+  traceStore.observe({ traceId: "duration-disabled", method: "message.send", stage: "started", timestamp: 0 });
+  traceStore.observe({ traceId: "duration-disabled", method: "message.send", stage: "request_validated", timestamp: 20 });
+
+  const summary = traceStore.getSummary();
+  expect(summary.stageDurations).toMatchObject({
+    available: false,
+    aggregateCount: 0,
+    aggregates: [],
+    slowest: [],
+  });
+  expect(summary.traces[0]).toMatchObject({
+    traceId: "duration-disabled",
+    stageCount: 2,
+    latestStage: "request_validated",
+  });
+});
+
 test("query runtime trace store derives stop diagnostics for runs that are still active after stop", async () => {
   const traceStore = new QueryRuntimeTraceStore({
     maxTraces: 8,

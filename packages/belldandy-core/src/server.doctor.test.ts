@@ -2648,6 +2648,18 @@ test("system.doctor exposes recent query runtime lifecycle traces", async () => 
     ]));
     expect(response.payload?.queryRuntime?.observerEnabled).toBe(true);
     expect(response.payload?.queryRuntime?.totalObservedEvents).toBeGreaterThan(0);
+    expect(response.payload?.queryRuntime?.stageDurations).toMatchObject({
+      available: true,
+      aggregateCount: expect.any(Number),
+      slowest: expect.any(Array),
+    });
+    expect(response.payload?.queryRuntime?.stageDurations?.slowest).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        method: "message.send",
+        p50Ms: expect.any(Number),
+        p95Ms: expect.any(Number),
+      }),
+    ]));
     expect(response.payload?.queryRuntime?.traces).toEqual(expect.arrayContaining([
       expect.objectContaining({
         traceId: "query-runtime-message-send",

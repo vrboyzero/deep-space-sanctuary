@@ -3651,16 +3651,15 @@ function buildAgentStopRuntimeCard(payload, t) {
 
 function buildQueryRuntimeCard(payload, t) {
   const traces = Array.isArray(payload?.queryRuntime?.traces) ? payload.queryRuntime.traces : [];
-  if (traces.length <= 0) {
-    return undefined;
-  }
-
   const messageSendTrace = [...traces].reverse().find((item) => item?.method === "message.send");
-  if (!messageSendTrace) {
+  const slowestStage = Array.isArray(payload?.queryRuntime?.stageDurations?.slowest)
+    ? payload.queryRuntime.stageDurations.slowest.find((item) => item && typeof item === "object")
+    : undefined;
+  if (!messageSendTrace && !slowestStage) {
     return undefined;
   }
 
-  const stages = Array.isArray(messageSendTrace.stages) ? messageSendTrace.stages : [];
+  const stages = Array.isArray(messageSendTrace?.stages) ? messageSendTrace.stages : [];
   const latestStage = stages.length > 0 ? stages[stages.length - 1] : null;
   const latestUsageCalibrationStage = [...stages].reverse().find((stage) => stage?.detail?.usageCalibration && typeof stage.detail.usageCalibration === "object") || null;
   const latestUsageCalibration = latestUsageCalibrationStage?.detail?.usageCalibration;
@@ -3672,16 +3671,18 @@ function buildQueryRuntimeCard(payload, t) {
       { count: formatNumber(traces.length) },
       `${formatNumber(traces.length)} traces`,
     ),
-    tr(
+  ];
+  if (messageSendTrace) {
+    badges.push(tr(
       t,
       "settings.doctorQueryRuntimeLatestMethod",
       { method: messageSendTrace.method || "message.send" },
       `latest ${messageSendTrace.method || "message.send"}`,
-    ),
-  ];
+    ));
+  }
 
   const notes = [];
-  if (messageSendTrace.traceId || latestStage?.stage) {
+  if (messageSendTrace?.traceId || latestStage?.stage) {
     notes.push(tr(
       t,
       "settings.doctorQueryRuntimeLatestStage",
@@ -3701,6 +3702,21 @@ function buildQueryRuntimeCard(payload, t) {
         summary: formatUsageCalibrationSummary(latestUsageCalibration),
       },
       `usage calibration @ ${latestUsageCalibrationStage?.stage || "-"}: ${formatUsageCalibrationSummary(latestUsageCalibration)}`,
+    ));
+  }
+  if (slowestStage) {
+    notes.push(tr(
+      t,
+      "settings.doctorQueryRuntimeSlowStage",
+      {
+        p95Ms: formatNumber(slowestStage.p95Ms),
+        method: slowestStage.method || "-",
+        previousStage: slowestStage.previousStage || "-",
+        stage: slowestStage.stage || "-",
+        outcome: slowestStage.outcome || "-",
+        count: formatNumber(slowestStage.count),
+      },
+      `slowest p95=${formatNumber(slowestStage.p95Ms)}ms · ${slowestStage.method || "-"}: ${slowestStage.previousStage || "-"} -> ${slowestStage.stage || "-"} (${slowestStage.outcome || "-"}, n=${formatNumber(slowestStage.count)})`,
     ));
   }
 

@@ -605,6 +605,7 @@ export const zhCN = {
     doctorQueryRuntimeLatestMethod: "latest {method}",
     doctorQueryRuntimeLatestStage: "trace={traceId}, latest stage={stage}",
     doctorQueryRuntimeUsageCalibration: "usage calibration @ {stage}: {summary}",
+    doctorQueryRuntimeSlowStage: "慢阶段 p95={p95Ms}ms · {method}: {previousStage} -> {stage} ({outcome}, n={count})",
     doctorRuntimeResilienceTitle: "Runtime Resilience",
     doctorRuntimeResiliencePrimary: "主路由 {route}",
     doctorRuntimeResilienceFallbacks: "{count} 个 fallback",

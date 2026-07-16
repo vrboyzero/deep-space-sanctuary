@@ -1381,6 +1381,16 @@ describe("doctor observability formatting", () => {
         totalsSummary: "observed=3, degraded=1, failed=0, retry=1, switch=1, cooldown=0",
       },
       queryRuntime: {
+        stageDurations: {
+          slowest: [{
+            method: "message.send",
+            previousStage: "agent_created",
+            stage: "agent_running",
+            outcome: "running",
+            count: 2,
+            p95Ms: 250,
+          }],
+        },
         traces: [
           {
             method: "message.send",
@@ -1792,6 +1802,7 @@ describe("doctor observability formatting", () => {
     expect(lines.join("\n")).toContain("latest message.send");
     expect(lines.join("\n")).toContain("trace=-, latest stage=completed");
     expect(lines.join("\n")).toContain("usage calibration @ completed: estimated=1800, avg actual input/call=1050, delta=-42%, status=over_estimated");
+    expect(lines.join("\n")).toContain("slowest p95=250ms · message.send: agent_created -> agent_running (running, n=2)");
     expect(lines.join("\n")).toContain("Runtime Resilience");
     expect(lines.join("\n")).toContain("primary openai.com/gpt-4.1");
     expect(lines.join("\n")).toContain("1 fallbacks");
@@ -1836,6 +1847,16 @@ describe("doctor observability rendering", () => {
         },
       },
       queryRuntime: {
+        stageDurations: {
+          slowest: [{
+            method: "message.send",
+            previousStage: "agent_created",
+            stage: "agent_running",
+            outcome: "running",
+            count: 2,
+            p95Ms: 250,
+          }],
+        },
         traces: [
           {
             method: "message.send",
@@ -2158,6 +2179,7 @@ describe("doctor observability rendering", () => {
     expect(container.textContent || "").toContain("Query Runtime");
     expect(container.textContent || "").toContain("latest stage=completed");
     expect(container.textContent || "").toContain("usage calibration @ completed: estimated=1800, avg actual input/call=1050, delta=-42%, status=over_estimated");
+    expect(container.textContent || "").toContain("slowest p95=250ms · message.send: agent_created -> agent_running (running, n=2)");
   });
 
   it("renders memory freshness card from top-level doctor payload", () => {
