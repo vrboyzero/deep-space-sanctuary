@@ -1566,31 +1566,12 @@ test("gateway carryover context forensics keeps a single latest file_read source
     wsHandle = await connectGatewayWebSocket(gateway.port);
 
     const sendMessage = async (requestId: string, text: string): Promise<string> => {
-      const finalCountBefore = wsHandle!.frames.filter((frame) =>
-        frame.type === "event"
-        && frame.event === "chat.final"
-        && frame.payload?.conversationId === conversationId
-      ).length;
-      wsHandle!.ws.send(JSON.stringify({
-        type: "req",
-        id: requestId,
-        method: "message.send",
-        params: {
-          conversationId,
-          text,
-        },
-      }));
-      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
-      await waitFor(() =>
-        wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === conversationId
-        ).length > finalCountBefore,
-      );
-      const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-      const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-      expect(runId).toBeTruthy();
+      const { runId } = await sendGatewayMessage({
+        wsHandle: wsHandle!,
+        conversationId,
+        requestId,
+        text,
+      });
       return runId;
     };
 
@@ -1762,31 +1743,12 @@ test("gateway low-risk config A/B keeps retained history thicker without displac
       wsHandle = await connectGatewayWebSocket(gateway.port);
 
       const sendMessage = async (requestId: string, text: string): Promise<string> => {
-        const finalCountBefore = wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === input.conversationId
-        ).length;
-        wsHandle!.ws.send(JSON.stringify({
-          type: "req",
-          id: requestId,
-          method: "message.send",
-          params: {
-            conversationId: input.conversationId,
-            text,
-          },
-        }));
-        await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
-        await waitFor(() =>
-          wsHandle!.frames.filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId
-          ).length > finalCountBefore,
-        );
-        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-        expect(runId).toBeTruthy();
+        const { runId } = await sendGatewayMessage({
+          wsHandle: wsHandle!,
+          conversationId: input.conversationId,
+          requestId,
+          text,
+        });
         return runId;
       };
 
@@ -1978,31 +1940,12 @@ test("gateway carryover context ranks multi-source records by current request re
     wsHandle = await connectGatewayWebSocket(gateway.port);
 
     const sendMessage = async (requestId: string, text: string): Promise<string> => {
-      const finalCountBefore = wsHandle!.frames.filter((frame) =>
-        frame.type === "event"
-        && frame.event === "chat.final"
-        && frame.payload?.conversationId === conversationId
-      ).length;
-      wsHandle!.ws.send(JSON.stringify({
-        type: "req",
-        id: requestId,
-        method: "message.send",
-        params: {
-          conversationId,
-          text,
-        },
-      }));
-      await waitFor(() => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true));
-      await waitFor(() =>
-        wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === conversationId
-        ).length > finalCountBefore,
-      );
-      const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-      const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-      expect(runId).toBeTruthy();
+      const { runId } = await sendGatewayMessage({
+        wsHandle: wsHandle!,
+        conversationId,
+        requestId,
+        text,
+      });
       return runId;
     };
 
@@ -2248,47 +2191,14 @@ test("gateway long-session experience A/B compares baseline, low-risk, and low-r
       const sendMessage = async (
         requestId: string,
         text: string,
-        timeoutMs = 5000,
-      ): Promise<{ runId: string; finalText: string }> => {
-        const finalCountBefore = wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === input.conversationId
-        ).length;
-        wsHandle!.ws.send(JSON.stringify({
-          type: "req",
-          id: requestId,
-          method: "message.send",
-          params: {
-            conversationId: input.conversationId,
-            text,
-          },
-        }));
-        await waitFor(
-          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
-          timeoutMs,
-        );
-        await waitFor(() =>
-          wsHandle!.frames.filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId
-          ).length > finalCountBefore,
-          timeoutMs,
-        );
-        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-        const finalFrame = wsHandle!.frames
-          .filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId)
-          .at(-1);
-        const finalText = String(finalFrame?.payload?.text ?? "");
-        expect(runId).toBeTruthy();
-        expect(finalText).toBeTruthy();
-        return { runId, finalText };
-      };
+        timeoutMs = E2E_WAIT_TIMEOUT_MS,
+      ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
+        wsHandle: wsHandle!,
+        conversationId: input.conversationId,
+        requestId,
+        text,
+        timeoutMs,
+      });
 
       const readMeta = async (requestId: string) => {
         wsHandle!.ws.send(JSON.stringify({
@@ -2577,47 +2487,14 @@ test("gateway debug-session experience A/B keeps run_command failure facts and l
       const sendMessage = async (
         requestId: string,
         text: string,
-        timeoutMs = 5000,
-      ): Promise<{ runId: string; finalText: string }> => {
-        const finalCountBefore = wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === input.conversationId
-        ).length;
-        wsHandle!.ws.send(JSON.stringify({
-          type: "req",
-          id: requestId,
-          method: "message.send",
-          params: {
-            conversationId: input.conversationId,
-            text,
-          },
-        }));
-        await waitFor(
-          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
-          timeoutMs,
-        );
-        await waitFor(() =>
-          wsHandle!.frames.filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId
-          ).length > finalCountBefore,
-          timeoutMs,
-        );
-        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-        const finalFrame = wsHandle!.frames
-          .filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId)
-          .at(-1);
-        const finalText = String(finalFrame?.payload?.text ?? "");
-        expect(runId).toBeTruthy();
-        expect(finalText).toBeTruthy();
-        return { runId, finalText };
-      };
+        timeoutMs = E2E_WAIT_TIMEOUT_MS,
+      ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
+        wsHandle: wsHandle!,
+        conversationId: input.conversationId,
+        requestId,
+        text,
+        timeoutMs,
+      });
 
       const readMeta = async (requestId: string) => {
         wsHandle!.ws.send(JSON.stringify({
@@ -2928,47 +2805,14 @@ test("gateway browser_get_content experience A/B keeps article facts and avoids 
       const sendMessage = async (
         requestId: string,
         text: string,
-        timeoutMs = 5000,
-      ): Promise<{ runId: string; finalText: string }> => {
-        const finalCountBefore = wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === input.conversationId
-        ).length;
-        wsHandle!.ws.send(JSON.stringify({
-          type: "req",
-          id: requestId,
-          method: "message.send",
-          params: {
-            conversationId: input.conversationId,
-            text,
-          },
-        }));
-        await waitFor(
-          () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
-          timeoutMs,
-        );
-        await waitFor(() =>
-          wsHandle!.frames.filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId
-          ).length > finalCountBefore,
-          timeoutMs,
-        );
-        const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-        const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-        const finalFrame = wsHandle!.frames
-          .filter((frame) =>
-            frame.type === "event"
-            && frame.event === "chat.final"
-            && frame.payload?.conversationId === input.conversationId)
-          .at(-1);
-        const finalText = String(finalFrame?.payload?.text ?? "");
-        expect(runId).toBeTruthy();
-        expect(finalText).toBeTruthy();
-        return { runId, finalText };
-      };
+        timeoutMs = E2E_WAIT_TIMEOUT_MS,
+      ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
+        wsHandle: wsHandle!,
+        conversationId: input.conversationId,
+        requestId,
+        text,
+        timeoutMs,
+      });
 
       const readMeta = async (requestId: string) => {
         wsHandle!.ws.send(JSON.stringify({
@@ -3275,47 +3119,14 @@ test("gateway browser_get_content carryover keeps pageUrl-scoped facts separated
     const sendMessage = async (
       requestId: string,
       text: string,
-      timeoutMs = 5000,
-    ): Promise<{ runId: string; finalText: string }> => {
-      const finalCountBefore = wsHandle!.frames.filter((frame) =>
-        frame.type === "event"
-        && frame.event === "chat.final"
-        && frame.payload?.conversationId === conversationId
-      ).length;
-      wsHandle!.ws.send(JSON.stringify({
-        type: "req",
-        id: requestId,
-        method: "message.send",
-        params: {
-          conversationId,
-          text,
-        },
-      }));
-      await waitFor(
-        () => wsHandle!.frames.some((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true),
-        timeoutMs,
-      );
-      await waitFor(() =>
-        wsHandle!.frames.filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === conversationId
-        ).length > finalCountBefore,
-        timeoutMs,
-      );
-      const sendRes = wsHandle!.frames.find((frame) => frame.type === "res" && frame.id === requestId && frame.ok === true);
-      const runId = typeof sendRes?.payload?.runId === "string" ? sendRes.payload.runId : "";
-      const finalFrame = wsHandle!.frames
-        .filter((frame) =>
-          frame.type === "event"
-          && frame.event === "chat.final"
-          && frame.payload?.conversationId === conversationId)
-        .at(-1);
-      const finalText = String(finalFrame?.payload?.text ?? "");
-      expect(runId).toBeTruthy();
-      expect(finalText).toBeTruthy();
-      return { runId, finalText };
-    };
+      timeoutMs = E2E_WAIT_TIMEOUT_MS,
+    ): Promise<{ runId: string; finalText: string }> => sendGatewayMessage({
+      wsHandle: wsHandle!,
+      conversationId,
+      requestId,
+      text,
+      timeoutMs,
+    });
 
     const readMeta = async (requestId: string) => {
       wsHandle!.ws.send(JSON.stringify({
@@ -3869,7 +3680,7 @@ async function seedResumePromptTasks(stateDir: string): Promise<void> {
       ],
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
   }
 }
 
@@ -3898,7 +3709,7 @@ async function seedPromptProfileState(stateDir: string): Promise<void> {
       createdBy: "test-seed",
     });
   } finally {
-    memoryManager.close();
+    await memoryManager.close();
   }
 }
 
@@ -4050,7 +3861,48 @@ async function readRequestBody(req: http.IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-async function waitFor<T>(predicate: () => T | Promise<T>, timeoutMs = 5000): Promise<Exclude<T, false | undefined | null>> {
+const E2E_WAIT_TIMEOUT_MS = 15_000;
+
+async function sendGatewayMessage(input: {
+  wsHandle: GatewayWebSocketHandle;
+  conversationId: string;
+  requestId: string;
+  text: string;
+  timeoutMs?: number;
+}): Promise<{ runId: string; finalText: string }> {
+  const timeoutMs = input.timeoutMs ?? E2E_WAIT_TIMEOUT_MS;
+  input.wsHandle.ws.send(JSON.stringify({
+    type: "req",
+    id: input.requestId,
+    method: "message.send",
+    params: {
+      conversationId: input.conversationId,
+      text: input.text,
+    },
+  }));
+  const sendResponse = await waitFor(
+    () => input.wsHandle.frames.find((frame) => frame.type === "res" && frame.id === input.requestId && frame.ok === true),
+    timeoutMs,
+  );
+  const runId = typeof sendResponse.payload?.runId === "string" ? sendResponse.payload.runId : "";
+  expect(runId).toBeTruthy();
+  const finalFrame = await waitFor(
+    () => input.wsHandle.frames.find((frame) =>
+      frame.type === "event"
+      && frame.event === "chat.final"
+      && frame.payload?.conversationId === input.conversationId
+      && frame.payload?.runId === runId),
+    timeoutMs,
+  );
+  const finalText = String(finalFrame.payload?.text ?? "");
+  expect(finalText).toBeTruthy();
+  return { runId, finalText };
+}
+
+async function waitFor<T>(
+  predicate: () => T | Promise<T>,
+  timeoutMs = E2E_WAIT_TIMEOUT_MS,
+): Promise<Exclude<T, false | undefined | null>> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const result = await predicate();

@@ -36,11 +36,13 @@
     "@belldandy/skills": "workspace:*",
     "@star-sanctuary/distribution": "workspace:*",
     "citty": "^0.1.6",
+    "esbuild": "^0.25.10",
     "@clack/prompts": "^0.10.0",
     "express": "^5.1.0",
     "nodemailer": "^9.0.3",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
+    "typescript": "^5.7.3",
     "ws": "^8.21.1"
   }
 }

@@ -41,24 +41,24 @@ afterEach(() => {
 
 describe("codex-bridge-server", () => {
   it("parses launch arguments and resolves defaults", () => {
+    const workspaceRoot = path.join(process.cwd(), "bridge-test-workspace");
+    const extraWorkspaceRoot = path.join(process.cwd(), "bridge-test-extra");
     const parsed = parseArgs([
       "--workspace-root",
-      "E:/project/star-sanctuary",
+      workspaceRoot,
       "--default-cwd",
       "packages",
       "--extra-workspace-root",
-      "E:/other-project",
+      extraWorkspaceRoot,
       "--codex-command",
       "codex.cmd",
       "--timeout-ms",
       "12345",
     ]);
 
-    expect(parsed.workspaceRoot).toMatch(/star-sanctuary$/);
-    expect(parsed.defaultCwd).toBe(path.join(parsed.workspaceRoot, "packages"));
-    expect(parsed.extraWorkspaceRoots).toEqual([
-      expect.stringMatching(/other-project$/),
-    ]);
+    expect(parsed.workspaceRoot).toBe(workspaceRoot);
+    expect(parsed.defaultCwd).toBe(path.join(workspaceRoot, "packages"));
+    expect(parsed.extraWorkspaceRoots).toEqual([extraWorkspaceRoot]);
     expect(parsed.codexCommand).toBe("codex.cmd");
     expect(parsed.timeoutMs).toBe(12345);
   });

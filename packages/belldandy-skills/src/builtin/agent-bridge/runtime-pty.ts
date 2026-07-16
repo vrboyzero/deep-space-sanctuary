@@ -19,6 +19,7 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const DEFAULT_IO_WAIT_MS = 100;
 const MAX_IO_WAIT_MS = 10_000;
+const STARTUP_OUTPUT_POLL_INTERVAL_MS = 25;
 
 function normalizePositiveInt(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -87,12 +88,24 @@ async function captureStartupOutput(
 ): Promise<string> {
   const waitMs = action.startupReadWaitMs;
   if (!waitMs) return "";
-  await delay(waitMs, signal);
-  const record = store.get(sessionId);
-  if (!record || record.status !== "active") {
-    return "";
+  const startedAt = Date.now();
+  let output = "";
+
+  // 子进程可能先输出启动 banner，随后才处理 startupSequence 的输入；在整个窗口内累积，避免单次 read 抢先消费 banner。
+  while (Date.now() - startedAt <= waitMs) {
+    throwIfAborted(signal);
+    const record = store.get(sessionId);
+    if (!record || record.status !== "active") {
+      break;
+    }
+    output += ptyManager.read(record.runtimeSessionId);
+    const remainingMs = waitMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      break;
+    }
+    await delay(Math.min(STARTUP_OUTPUT_POLL_INTERVAL_MS, remainingMs), signal);
   }
-  const output = ptyManager.read(record.runtimeSessionId);
+
   if (!output) {
     return "";
   }

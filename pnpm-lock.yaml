@@ -159,6 +159,9 @@ importers:
       citty:
         specifier: ^0.1.6
         version: 0.1.6
+      esbuild:
+        specifier: ^0.25.10
+        version: 0.25.12
       express:
         specifier: ^5.1.0
         version: 5.2.1
@@ -171,6 +174,9 @@ importers:
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
       ws:
         specifier: ^8.21.1
         version: 8.21.1

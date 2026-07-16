@@ -18,6 +18,7 @@ export function parseArgs(argv) {
     codexCommand: "codex",
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
+  let configuredDefaultCwd;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -31,7 +32,7 @@ export function parseArgs(argv) {
         break;
       case "--default-cwd":
         if (next) {
-          result.defaultCwd = path.resolve(next);
+          configuredDefaultCwd = next;
           index += 1;
         }
         break;
@@ -56,6 +57,13 @@ export function parseArgs(argv) {
       default:
         break;
     }
+  }
+
+  if (configuredDefaultCwd) {
+    // 相对 cwd 必须锚定已声明的 workspace，而不是 bridge 进程自身的 cwd。
+    result.defaultCwd = path.isAbsolute(configuredDefaultCwd)
+      ? path.resolve(configuredDefaultCwd)
+      : path.resolve(result.workspaceRoot, configuredDefaultCwd);
   }
 
   return result;

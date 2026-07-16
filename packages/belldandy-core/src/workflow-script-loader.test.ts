@@ -28,6 +28,19 @@ function createWorkflowPolicy(root: string, overrides: Partial<WorkflowExecution
   };
 }
 
+describe("workflow script runtime dependency contract", () => {
+  it("将 TypeScript 编译器声明为 core 的生产依赖", async () => {
+    const packageJson = JSON.parse(
+      await fs.readFile(new URL("../package.json", import.meta.url), "utf-8"),
+    );
+
+    expect(packageJson.dependencies).toMatchObject({
+      esbuild: expect.any(String),
+      typescript: expect.any(String),
+    });
+  });
+});
+
 describe("BUILTIN_WORKFLOWS registry", () => {
   beforeEach(() => clearBuiltinWorkflows());
   afterEach(() => clearBuiltinWorkflows());
