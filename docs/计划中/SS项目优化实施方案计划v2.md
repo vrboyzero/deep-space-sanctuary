@@ -3121,10 +3121,47 @@ P1 以正确性和资源收敛为完成目标，不用性能数字替代；P2 �
 | Wave 3 | 预算、取消与 lifecycle | 进行中（`OPT-P02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01` 已完成） | 截至 2026-07-17，`OPT-P02` 已将 owner token-usage 外发收敛为默认全局 4、每 endpoint 1 并发、最多 128 个 tracked key 的有界单飞/待发队列；同一摘要 key 仅保留一个 in-flight 与一个累计 pending，超时会 Abort，失败响应正文最多保留 2 KiB 且经脱敏，Map key、Doctor 与日志均不保留 URL/token。为保持现有私网/DNS endpoint 兼容，严格 `OutboundRequestPolicy` 迁移维持 `split_task`，不纳入当前持续推进。`OPT-D05` 的共享 `gateway-supervisor-lifecycle` 已使 Distribution portable/single-exe 与 Core `bdd start/dev` 保持唯一 active child、restart timer 与信号 listener pair，且 child 的 `error`/`exit` 只结算一次。`OPT-BR03` 新建扩展侧 `RelayConnectionController`，以唯一 active socket、连接 Promise、带上限 jitter 的单一退避 timer、generation 与 listener ownership 替代全局 `relayWs`/`relayConnectPromise`、并行 auto-connect loop 和 monkey-patch；旧 socket 的 close/error/message 不能覆盖当前 generation。点击图标与配置变更仍可强制重连，24 秒 ping、启动自动恢复及 Badge 语义保持；MV3 `onSuspend` 会释放 controller、debugger listener、alarm 与 tab/session 映射。控制器 fixture 覆盖重复 close、20 次成功断连重连、旧 socket 迟到事件、连接失败单一重试与 dispose；后台装配 fixture 固定 suspend 清理。扩展/Relay/credential 定向 4 个文件、11 项通过，Browser 包编译通过；`corepack pnpm build` 与全量 Vitest 通过（431 个文件、2816 项通过，1 项跳过）。全量中仍见既有 `conversation.digest` 临时 state-dir 清理后的非失败 `ENOENT` 告警，继续作为 Wave 3/4 lifecycle/atomic-write 债务；PID instance nonce/process metadata 加固与 owner endpoint 的 strict policy 均保持 `split_task`。Core Relay handle 的统一 shutdown/drain 属于后续 `OPT-GW04`，本项未扩大至该边界。`OPT-MCP01` 已在 `MCPClient` 建立唯一 `runWithDeadline()`：connect、tools/resources discovery、tool call 与 resource read 都携带 SDK `signal`、`timeout` 与 `maxTotalTimeout`；deadline 或调用方取消会先摘除当前 lease，再同步发起 transport/client close 和 stdio child kill，不等待可能卡死的 SDK close。Server 未显式设置 `timeout` 时正确继承 `settings.defaultTimeout`，显式 server timeout 优先；deadline 归类为 transport，调用方取消归类为 cancelled 且不触发 Manager 自动重连，`-32601` capability fallback 与 session-expired 单次恢复保持。Manager、ToolBridge、普通 MCP Tool、Core Bridge runtime 与 Agent Bridge MCP target 均已把 `ToolContext.abortSignal` 透传到该 seam。新增 connect/discovery/call/read never-settle、挂起 close、默认/显式 timeout、取消与入口透传 fixture；MCP/Core/Bridge 定向 8 个文件、65 项通过，`corepack pnpm build` 通过，全量 Vitest 为 433 个文件、2828 项通过、1 项跳过。全量验证同时暴露两处无关 fixture 时序：Conversation 冷加载改为等待实际 append 链，SubTask thought_delta 改为等待同次 deferred persist 的 scratch artifact 收尾；二者均无生产行为变更。`conversation.digest` teardown/atomic-write 债务继续按既定边界 `defer` 至 Wave 3/4，Core Relay handle 的统一 shutdown/drain 仍属于 `OPT-GW04`，未扩展本项。后续计划：先实施 `OPT-PL01`，将 Plugin activate 改为 staging 后原子 publish，补 duplicate ownership、dispose/unload 与有界错误账本；它是当前 Wave 3 剩余的资源 owner 一致性缺口。关键闭环是 activate 失败回滚、重复 tool 归属、Hook/Skill dir 残留与 reload/unload fixture；已明确 `split_task`/`defer` 的外部 Delivery Gate、Windows 资产、GitHub Release 和 Plugin 信任链不进入持续队列。 |
 | Wave 3 / OPT-PL01 | 实现结论：Plugin 事务加载与卸载生命周期 | 已完成（2026-07-17） | **已完成内容**：`PluginContext` 新增 `onDispose`，插件可选 `deactivate`；Registry 先私有 staging，再按单一加载队列有序 activate/publish，拒绝跨插件及并发同名 Tool 所有权竞争；activate 失败逆序执行已登记 disposer。新增 `unloadPlugin()` / `dispose()`，即使 cleanup 失败也移除 Tool、Hook、Skill dir 与 inventory 所有权，并保留最多 32 条有界 lifecycle/load 错误账本。**效果**：坏插件不再留下幽灵注册项，同名 Tool 不会覆盖既有 owner，卸载路径对并发调用幂等。**验证结果**：插件包 TypeScript 编译通过；Registry/Extension Host/Doctor 定向 3 个文件、56 项通过；`corepack pnpm build` 通过；全量 Vitest 433 个文件、2835 项通过、1 项跳过。范围明确为 `PluginRegistry` 生命周期；Gateway 动态热重载以及已注册至 ToolExecutor/SkillRegistry 的下游反注册不纳入本项。**后续计划**：实施 `OPT-PL02` 的 Hook 阶段计时与可诊断故障隔离观测，先做它是因为 Tool/Hook owner 与卸载语义现已稳定，而同步串行 Hook 的慢点和抛错仍不可定位；关键闭环是在不记录输入内容、不改变顺序合并/`false` 阻断行为的前提下输出 `pluginId`、hook 名、耗时和结果，并明确 fail-open/fail-closed 契约。`OPT-PL03` 信任链、外部 Delivery Gate、Windows 资产和 GitHub Release 继续按既定 `split_task`/`defer` 排除在持续队列外。 |
 | Wave 3 / OPT-PL02 | 实现结论：Plugin Hook 运行诊断（2026-07-17） | 已完成 | **已完成内容**：1. `packages/belldandy-plugins/src/types.ts` 新增不含调用内容的 `PluginHookMetric`、Hook 名称与结果类型；`registry.ts` 在四类 legacy Hook 的既有串行路径外只包裹计时，按 `pluginId + hookName` 聚合调用、成功/阻断/失败、总计/最大/最新耗时、p50/p95 与最新结果。2. 指标键最多 128 个并按最近访问 LRU 淘汰，每键只保留最新 32 个时长样本；不保留 Hook 输入、参数、返回结果或异常文本。3. `extension-runtime.ts` 与 `system.doctor.ts` 输出动态指标、失败数和淘汰计数；存在 live Registry 时 Doctor 重建 runtime report，避免读取启动时快照。**效果**：慢 Hook、`beforeToolCall` 阻断与异常可定位，且 Hook 顺序、逐步参数合并、`false` 阻断和异常向 HookRunner 传播的既有语义不变。**验证结果**：workspace TypeScript 构建无错误；Registry/Extension Host/Doctor/Tool inventory 定向 4 个文件、73 项通过（覆盖成功/阻断/失败、无内容泄漏、32 样本上限与真实 LRU）；`corepack pnpm build` 通过；全量 Vitest 433 个文件、2838 项通过、1 项跳过。timeout、quarantine 与改变 fail-open/fail-closed 策略没有在本项引入，继续按证据 `defer`。**后续计划**：实施 `OPT-C05` 的统一按 Session 有序、有界 Ingress Scheduler；优先做它是因为 Wave 3 的 timeout、资源 owner 和 Hook 运行诊断已具备，跨渠道消息仍缺一致的顺序、背压与并发上限。关键闭环是 Channels/Core 共享 scheduler 的契约、溢出策略、排队取消以及 shutdown/drain 故障注入；`OPT-PL03`、外部 Delivery Gate、Windows 资产与 GitHub Release 保持既定 `split_task`/`defer`，不进入持续队列。 |
-| Wave 3 / 当前状态 | 预算、取消与 lifecycle | 进行中（`OPT-P02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01`、`OPT-PL01`、`OPT-PL02` 已完成） | 已完成项的文件级实现结论与验证证据见本表对应行；下一项为 `OPT-C05`，以统一跨渠道的 session 顺序、背压、取消与 shutdown/drain 为本 Wave 剩余闭环。 |
+| Wave 3 / OPT-C05 | 实现结论：统一有界 Channel Ingress Scheduler（2026-07-17） | 已完成 | Community、Discord、Feishu、QQ 已接入 Gateway 共享 Scheduler；同一 ConversationStore 历史 owner 串行、跨 session 公平调度，并具备全局/每渠道并发、每会话/全局待执行数、等待时间与 payload bytes 硬上限。重复事件合并，过期、stop、handler throw 均有明确终态；Doctor/WebChat 输出不含会话身份的 active、queued、oldestWait、rejected。容量参数已接入 `.env.example`、服务端配置白名单和 WebChat 渠道设置。详细文件级结论与验证证据见本表后的结构化实现结论。 |
+| Wave 3 / 当前状态 | 预算、取消与 lifecycle | 已暂停（`OPT-P02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01`、`OPT-PL01`、`OPT-PL02`、`OPT-C05` 已完成） | 按用户指令在 `OPT-C05` 完成后暂停，不自动进入下一阶段。恢复时下一项为 `OPT-C07`：先收口 Channel replace/unregister、幂等 start/stop、Feishu 真实连接 owner 与出站 deadline/幂等；先做它是因为 C05 已约束排队容量，但运行中实例替换、活动任务取消和旧连接 drain 仍是当前关键生命周期闭环。`OPT-PL03`、外部 Delivery Gate、Windows 资产与 GitHub Release 继续按既定 `split_task`/`defer` 排除在持续队列外。 |
 | Wave 4 | 状态、事务与 retention | 未开始 | 原子/revision 与 lifecycle 稳定后启动，目标是无半提交、状态/写入/query/cache 有硬上限 |
 | Wave 5 | 热路径与体验深度 | 未开始 | 只启动已通过 B00-B03 收益 Gate 的 streaming、request、Commander、WebChat 优化 |
 | Wave 6 | 发行矩阵与 rollout | 未开始 | frozen identity、native probe、公开下载/hash、离线恢复和 upgrade/rollback 全部通过后才可发布对应变体 |
+
+#### Wave 3 / OPT-C05 实现结论：统一有界 Channel Ingress Scheduler（2026-07-17）
+
+##### 已完成内容
+
+1. **`channel-ingress-scheduler.ts` 新建**：
+   - 实现按 ConversationStore 历史 owner 串行、跨 session 公平的共享入口调度；群组渠道使用 `legacyConversationId` 作为调度键，避免同一 chat history 被 canonical sender session 并发写入。
+   - 提供全局/每渠道并发、每会话/全局待执行数、最大等待时间、单任务/排队 payload bytes 硬上限，以及重复事件合并。
+   - 对过期、channel stop、scheduler close 和 handler throw 建立明确终态与容量释放；当前 stop 只清理尚未启动的任务，活动 Agent 的真实 abort 保留给 `OPT-A03`/后续 lifecycle 合约。
+
+2. **Community、Discord、Feishu、QQ 与 Gateway 接入**：
+   - 四个 Channel 共用 Gateway 创建的单例 Scheduler，独立构造时保留本地有界 fallback；Channel stop 只清理本渠道待执行任务。
+   - Gateway 从 7 个 `BELLDANDY_CHANNEL_INGRESS_*` 环境变量读取容量，并将同一 Scheduler 快照注册到运行资源观测。
+   - `.env.example`、服务端配置白名单及 WebChat“渠道入口容量”设置已同步，保存后重启 Gateway 生效。
+
+3. **Doctor / WebChat 可观测接入**：
+   - `RuntimeResourceObservability` 接收全局与分渠道快照，汇总时跳过 `aggregate` 总览以避免重复计数。
+   - WebChat 在既有运行资源卡片中展示 active、queued、oldest wait 和 rejected；`doctor-observability.js` 超过 3000 行，仅保留接线，新逻辑拆入 `runtime-resource-queue-pressure.js`。
+   - 诊断只公开受控 channel 标签和数值，不保留 session key、去重键、消息正文或 payload。
+
+4. **效果**：
+   - 同一历史会话的消息不再并发改写 history，不同会话仍可公平并行。
+   - 突发消息、慢 Agent 与异常 handler 无法无限积累待执行闭包或 payload，过载与等待可被 Doctor 直接识别。
+   - Channel stop 后待执行任务被清理，异常完成后并发容量可继续被后续任务使用。
+
+##### 验证结果
+
+- TypeScript workspace 编译无错误，`corepack pnpm build` 与 workspace entrypoint 校验通过。
+- 核心 Scheduler、四 Channel、Gateway 与 Doctor 定向 8 个文件、81 项测试全部通过；配置审计、设置读写、服务端持久化与核心调度补充回归 5 个文件、52 项测试全部通过。
+- 全量 Vitest：435 个测试文件、2853 项测试通过，1 项按条件跳过；无失败项。
+- `corepack pnpm verify:webchat` 验证 129 个文件及本地资源 manifest；隔离 Chrome smoke 确认页面完整加载、7 个容量字段接线存在且无运行时异常。
+- `git diff --check` 通过；全量测试中的附件理解 fail-open 与 QQ stop 脱敏 warning 均为预期 fixture 输出，不是失败。
+
+### 后续计划
+
+按用户指令，本阶段闭环后暂停，不自动开始 `OPT-C07`。恢复推进时先完成 Channel replace/unregister、幂等 start/stop、真实连接关闭及出站 deadline/幂等治理；先做它是因为入口排队现已有界，但活动任务取消、旧连接 drain 与运行实例替换仍缺统一生命周期证明。明确 `defer`/暂不发布的外部 Delivery Gate、Windows 安装资产、GitHub Release 与 `OPT-PL03` 不纳入恢复后的持续队列。
 
 #### 持续执行规则
 
