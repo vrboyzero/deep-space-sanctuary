@@ -23,6 +23,7 @@ export function createChatEventsFeature({
   stripThinkBlocks,
   configureMarkedOnce,
   renderAssistantMessage,
+  measureStreamingRender,
   updateMessageMeta,
   forceScrollToBottom,
   getCanvasApp,
@@ -109,14 +110,23 @@ export function createChatEventsFeature({
     return botMessageEl;
   }
 
-  function renderStreamingMarkdown(rawText) {
-    const target = ensureBotMessage();
-    botRawHtmlBuffer = rawText;
-    renderAssistantMessage?.(target, botRawHtmlBuffer);
-    if (botMessageMeta) {
-      updateMessageMeta?.(target, { ...botMessageMeta, isLatest: true });
+  function renderStreamingMarkdown(rawText, kind = "delta") {
+    const render = () => {
+      const target = ensureBotMessage();
+      botRawHtmlBuffer = rawText;
+      renderAssistantMessage?.(target, botRawHtmlBuffer);
+      if (botMessageMeta) {
+        updateMessageMeta?.(target, { ...botMessageMeta, isLatest: true });
+      }
+      return target;
+    };
+    if (typeof measureStreamingRender === "function") {
+      return measureStreamingRender({
+        kind,
+        renderedChars: typeof rawText === "string" ? rawText.length : 0,
+      }, render);
     }
-    return target;
+    return render();
   }
 
   function discardStreamingBubbleIfEmpty() {
@@ -452,7 +462,7 @@ export function createChatEventsFeature({
       if (!isActiveConversationPayload(payload)) {
         return true;
       }
-      renderStreamingMarkdown(botRawHtmlBuffer + delta);
+      renderStreamingMarkdown(botRawHtmlBuffer + delta, "delta");
       forceScrollToBottom();
       return true;
     }
@@ -463,7 +473,7 @@ export function createChatEventsFeature({
       if (!isActiveConversationPayload(payload)) {
         return true;
       }
-      const target = renderStreamingMarkdown(text);
+      const target = renderStreamingMarkdown(text, "final");
       const meta = payload?.messageMeta && typeof payload.messageMeta === "object"
         ? payload.messageMeta
         : {};

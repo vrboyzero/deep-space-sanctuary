@@ -42,6 +42,7 @@ import { createChatNetworkFeature } from "./app/features/chat-network.js";
 import { createChatUiFeature } from "./app/features/chat-ui.js";
 import { createCanvasContextFeature } from "./app/features/canvas-context.js";
 import { buildDoctorChatSummary } from "./app/features/doctor-observability.js";
+import { createWebchatPerformanceObservability } from "./app/features/webchat-performance-observability.js";
 import { createAppShellFeature } from "./app/features/app-shell.js";
 import { createEmailInboundSessionBannerFeature } from "./app/features/email-inbound-session-banner.js";
 import { createGoalsDetailFeature } from "./app/features/goals-detail.js";
@@ -457,11 +458,27 @@ function markWebchatStartup(stage, extra = {}) {
     return markFn(stage, extra);
   }
   try {
-    console.info("[WebChat startup]", stage, extra);
+    console.info("[WebChat startup]", stage);
   } catch {
     // ignore console failures
   }
   return null;
+}
+
+const webchatPerformanceObservability = createWebchatPerformanceObservability({
+  startup: webchatStartup,
+});
+webchatPerformanceObservability.start();
+window.addEventListener("pagehide", () => {
+  webchatPerformanceObservability.dispose();
+}, { once: true });
+
+function withWebchatPerformance(payload) {
+  if (!payload || typeof payload !== "object") return payload;
+  return {
+    ...payload,
+    webchatPerformance: webchatPerformanceObservability.getSummary(),
+  };
 }
 
 const promptController = initPromptController({
@@ -2610,7 +2627,7 @@ async function sendMessage(options = {}) {
         const icon = c.status === "pass" ? "✅" : c.status === "warn" ? "⚠️" : "❌";
         return `${icon} ${c.name}: ${c.message}`;
       });
-      lines.push(...buildDoctorChatSummary(res.payload, localeController.t));
+      lines.push(...buildDoctorChatSummary(withWebchatPerformance(res.payload), localeController.t));
       statusEl.textContent = lines.join("\n");
     } else {
       statusEl.textContent = localeController.t(
@@ -2825,6 +2842,7 @@ settingsRuntimeFeature = createSettingsRuntimeFeature({
   getActiveConversationId: () => activeConversationId || "",
   getSelectedSubtaskId: () => subtasksState.selectedId || "",
   isSubtasksViewActive: () => Boolean(subtasksSection && !subtasksSection.classList.contains("hidden")),
+  getWebchatPerformanceSummary: () => webchatPerformanceObservability.getSummary(),
   escapeHtml,
   showNotice,
   redactedPlaceholder: REDACTED_PLACEHOLDER,
@@ -2875,6 +2893,7 @@ chatEventsFeature = createChatEventsFeature({
   stripThinkBlocks,
   configureMarkedOnce,
   renderAssistantMessage: (bubble, rawText) => chatUiFeature?.renderAssistantMessage?.(bubble, rawText),
+  measureStreamingRender: (input, render) => webchatPerformanceObservability.measureStreamingRender(input, render),
   updateMessageMeta: (bubble, meta) => chatUiFeature?.updateMessageMeta?.(bubble, meta),
   forceScrollToBottom,
   getCanvasApp: () => window._canvasApp,

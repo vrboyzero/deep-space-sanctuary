@@ -3881,6 +3881,126 @@ function buildRuntimeResourcesCard(payload, t) {
   };
 }
 
+function buildWebchatPerformanceCard(payload, t) {
+  const metrics = payload?.webchatPerformance;
+  if (!metrics || typeof metrics !== "object" || !metrics.available) {
+    return undefined;
+  }
+
+  const startup = metrics.startup && typeof metrics.startup === "object" ? metrics.startup : {};
+  const streaming = metrics.streaming && typeof metrics.streaming === "object" ? metrics.streaming : {};
+  const longTasks = metrics.longTasks && typeof metrics.longTasks === "object" ? metrics.longTasks : {};
+  const interactions = metrics.interactions && typeof metrics.interactions === "object" ? metrics.interactions : {};
+  const navigation = startup.navigation && typeof startup.navigation === "object" ? startup.navigation : undefined;
+  const latestStartupMark = Array.isArray(startup.marks) ? startup.marks.at(-1) : undefined;
+  const latestRender = Array.isArray(streaming.recent) ? streaming.recent.at(-1) : undefined;
+  const badges = [
+    tr(
+      t,
+      "settings.doctorWebchatPerformanceStartup",
+      { count: formatNumber(startup.markCount) },
+      `${formatNumber(startup.markCount)} startup marks`,
+    ),
+    tr(
+      t,
+      "settings.doctorWebchatPerformanceStreaming",
+      { count: formatNumber(streaming.renderCount) },
+      `${formatNumber(streaming.renderCount)} stream renders`,
+    ),
+    tr(
+      t,
+      "settings.doctorWebchatPerformanceLongTasks",
+      { count: formatNumber(longTasks.count) },
+      `${formatNumber(longTasks.count)} long tasks`,
+    ),
+    tr(
+      t,
+      "settings.doctorWebchatPerformanceInteractions",
+      { count: formatNumber(interactions.count) },
+      `${formatNumber(interactions.count)} interactions`,
+    ),
+  ];
+  const notes = [];
+  if (latestStartupMark?.stage) {
+    notes.push(tr(
+      t,
+      "settings.doctorWebchatPerformanceLatestStartup",
+      {
+        stage: latestStartupMark.stage,
+        elapsedMs: formatRuntimeResourceDelay(latestStartupMark.elapsedMs),
+      },
+      `latest startup: ${latestStartupMark.stage} @ ${formatRuntimeResourceDelay(latestStartupMark.elapsedMs)}`,
+    ));
+  }
+  if (navigation) {
+    notes.push(tr(
+      t,
+      "settings.doctorWebchatPerformanceNavigation",
+      {
+        type: navigation.type || "unknown",
+        interactiveMs: formatRuntimeResourceDelay(navigation.domInteractiveMs),
+        loadMs: formatRuntimeResourceDelay(navigation.loadEventEndMs),
+        durationMs: formatRuntimeResourceDelay(navigation.durationMs),
+      },
+      `navigation ${navigation.type || "unknown"}: interactive=${formatRuntimeResourceDelay(navigation.domInteractiveMs)}, load=${formatRuntimeResourceDelay(navigation.loadEventEndMs)}, total=${formatRuntimeResourceDelay(navigation.durationMs)}`,
+    ));
+  }
+  if (Number(streaming.renderCount) > 0) {
+    notes.push(tr(
+      t,
+      "settings.doctorWebchatPerformanceStreamingStats",
+      {
+        p50Ms: formatRuntimeResourceDelay(streaming.p50Ms),
+        p95Ms: formatRuntimeResourceDelay(streaming.p95Ms),
+        maxMs: formatRuntimeResourceDelay(streaming.maxMs),
+        chars: formatNumber(streaming.totalRenderedChars),
+      },
+      `stream render p50/p95/max=${formatRuntimeResourceDelay(streaming.p50Ms)}/${formatRuntimeResourceDelay(streaming.p95Ms)}/${formatRuntimeResourceDelay(streaming.maxMs)}, chars=${formatNumber(streaming.totalRenderedChars)}`,
+    ));
+  }
+  if (latestRender && typeof latestRender === "object") {
+    notes.push(tr(
+      t,
+      "settings.doctorWebchatPerformanceLatestRender",
+      {
+        kind: latestRender.kind || "delta",
+        chars: formatNumber(latestRender.renderedChars),
+        durationMs: formatRuntimeResourceDelay(latestRender.durationMs),
+      },
+      `latest render: ${latestRender.kind || "delta"}, chars=${formatNumber(latestRender.renderedChars)}, duration=${formatRuntimeResourceDelay(latestRender.durationMs)}`,
+    ));
+  }
+  for (const [key, summary] of [["longTasks", longTasks], ["interactions", interactions]]) {
+    const observerName = key === "longTasks"
+      ? tr(t, "settings.doctorWebchatPerformanceLongTaskLabel", {}, "long tasks")
+      : tr(t, "settings.doctorWebchatPerformanceInteractionLabel", {}, "interactions");
+    const supported = summary.supported === true;
+    notes.push(tr(
+      t,
+      supported
+        ? "settings.doctorWebchatPerformanceObserverStats"
+        : "settings.doctorWebchatPerformanceObserverUnsupported",
+      supported
+        ? {
+          name: observerName,
+          p95Ms: formatRuntimeResourceDelay(summary.p95Ms),
+          maxMs: formatRuntimeResourceDelay(summary.maxMs),
+        }
+        : { name: observerName },
+      supported
+        ? `${observerName} p95/max=${formatRuntimeResourceDelay(summary.p95Ms)}/${formatRuntimeResourceDelay(summary.maxMs)}`
+        : `${observerName} observer unavailable`,
+    ));
+  }
+
+  return {
+    title: tr(t, "settings.doctorWebchatPerformanceTitle", {}, "WebChat Performance"),
+    badges,
+    notes,
+    status: "pass",
+  };
+}
+
 function resolveRuntimeResilienceDiagnostics(payload, runtime) {
   const launchView = payload?.promptObservability?.launchExplainability?.runtimeResilience;
   if (
@@ -4266,6 +4386,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildPreflightCompressionGovernanceCard(payload, t),
     buildQueryRuntimeCard(payload, t),
     buildRuntimeResourcesCard(payload, t),
+    buildWebchatPerformanceCard(payload, t),
     buildToolBehaviorCard(payload, t),
     buildToolContractV2Card(payload, t),
     buildResidentAgentsCard(payload, t),
@@ -4378,6 +4499,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${runtimeResourcesCard.title}:`);
     lines.push(...runtimeResourcesCard.badges.map((badge) => `- ${badge}`));
     lines.push(...runtimeResourcesCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const webchatPerformanceCard = buildWebchatPerformanceCard(payload, t);
+  if (webchatPerformanceCard) {
+    lines.push(``);
+    lines.push(`${webchatPerformanceCard.title}:`);
+    lines.push(...webchatPerformanceCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...webchatPerformanceCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const toolContractV2Card = buildToolContractV2Card(payload, t);

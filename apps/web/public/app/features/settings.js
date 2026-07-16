@@ -28,6 +28,7 @@ export function createSettingsController({
   onModelCatalogChanged,
   onConfigSaved,
   onOpenContinuationAction,
+  getWebchatPerformanceSummary,
   redactedPlaceholder = "[REDACTED]",
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -1836,6 +1837,20 @@ export function createSettingsController({
     });
   }
 
+  function attachLocalDoctorObservability(payload) {
+    if (!payload || typeof payload !== "object" || typeof getWebchatPerformanceSummary !== "function") {
+      return payload;
+    }
+    try {
+      const webchatPerformance = getWebchatPerformanceSummary();
+      return webchatPerformance && typeof webchatPerformance === "object"
+        ? { ...payload, webchatPerformance }
+        : payload;
+    } catch {
+      return payload;
+    }
+  }
+
   function renderDoctorPayload(payload, options = {}) {
     if (!doctorStatusEl || !doctorToggleBtn || !payload?.checks) return false;
     let hasFail = false;
@@ -1890,7 +1905,7 @@ export function createSettingsController({
     });
 
     if (options.includeCards) {
-      renderDoctorObservabilityCards(doctorStatusEl, payload, t, {
+      renderDoctorObservabilityCards(doctorStatusEl, attachLocalDoctorObservability(payload), t, {
         onOpenContinuationAction,
       });
     }

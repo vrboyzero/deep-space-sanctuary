@@ -280,4 +280,41 @@ describe("chat events pairing", () => {
     expect(messagesEl.querySelectorAll(".msg-wrapper.bot")).toHaveLength(0);
     expect(messagesEl.querySelector(".system-msg")?.textContent).toBe("Interrupted");
   });
+
+  it("measures 10/100/1000-character streaming renders without forwarding message content", () => {
+    const target = document.createElement("div");
+    const measureStreamingRender = vi.fn((input, render) => render());
+    const renderAssistantMessage = vi.fn();
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => target),
+      renderAssistantMessage,
+      measureStreamingRender,
+      forceScrollToBottom: vi.fn(),
+      getCanvasApp: () => null,
+      getActiveConversationId: () => "",
+    });
+
+    feature.beginStreamingReply();
+    feature.handleEvent("chat.delta", { delta: "a".repeat(10) });
+    feature.handleEvent("chat.delta", { delta: "b".repeat(90) });
+    feature.handleEvent("chat.delta", { delta: "c".repeat(900) });
+
+    expect(measureStreamingRender).toHaveBeenNthCalledWith(
+      1,
+      { kind: "delta", renderedChars: 10 },
+      expect.any(Function),
+    );
+    expect(measureStreamingRender).toHaveBeenNthCalledWith(
+      2,
+      { kind: "delta", renderedChars: 100 },
+      expect.any(Function),
+    );
+    expect(measureStreamingRender).toHaveBeenNthCalledWith(
+      3,
+      { kind: "delta", renderedChars: 1000 },
+      expect.any(Function),
+    );
+    expect(renderAssistantMessage).toHaveBeenCalledTimes(3);
+    expect(measureStreamingRender.mock.calls.flatMap(([input]) => Object.values(input))).not.toContain("a".repeat(10));
+  });
 });

@@ -15,7 +15,7 @@ function markStartupObservability(stage, extra = {}) {
     return markFn(stage, extra);
   }
   try {
-    console.info("[WebChat startup]", stage, extra);
+    console.info("[WebChat startup]", stage);
   } catch {
     // ignore console failures
   }

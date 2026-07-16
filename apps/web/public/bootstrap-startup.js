@@ -1,4 +1,7 @@
 (() => {
+  const MAX_STARTUP_MARKS = 64;
+  const MAX_STARTUP_EXTRA_FIELDS = 16;
+  const MAX_STARTUP_STAGE_LENGTH = 80;
   const perfNow = () =>
     typeof window.performance?.now === "function" ? window.performance.now() : Date.now();
   const startup = window.__SS_WEBCHAT_STARTUP__ = window.__SS_WEBCHAT_STARTUP__ || {
@@ -6,13 +9,54 @@
     parseStartedAtMs: perfNow(),
     marks: [],
   };
+  const listeners = startup.__listeners instanceof Set ? startup.__listeners : new Set();
+  startup.__listeners = listeners;
+
+  const sanitizeStage = (stage) => {
+    const normalized = typeof stage === "string" ? stage.trim().slice(0, MAX_STARTUP_STAGE_LENGTH) : "";
+    return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(normalized) ? normalized : "unknown";
+  };
+
+  const sanitizeExtra = (extra) => {
+    if (!extra || typeof extra !== "object") return {};
+    const safe = {};
+    for (const [key, value] of Object.entries(extra)) {
+      if (Object.keys(safe).length >= MAX_STARTUP_EXTRA_FIELDS) break;
+      if (key === "stage" || key === "atMs") continue;
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,47}$/.test(key)) continue;
+      if (typeof value === "boolean") {
+        safe[key] = value;
+      } else if (typeof value === "number" && Number.isFinite(value)) {
+        safe[key] = Math.round(value * 100) / 100;
+      }
+    }
+    return safe;
+  };
+
+  const createMarkEntry = (stage, atMs, extra = {}) => ({
+    stage: sanitizeStage(stage),
+    atMs: typeof atMs === "number" && Number.isFinite(atMs) ? Math.round(atMs * 100) / 100 : perfNow(),
+    ...sanitizeExtra(extra),
+  });
+
+  // 旧页面或第三方脚本预填的标记同样不能把 URL、正文或任意对象留在全局诊断缓冲区。
+  startup.marks = Array.isArray(startup.marks)
+    ? startup.marks.slice(-MAX_STARTUP_MARKS).map((entry) => createMarkEntry(entry?.stage, entry?.atMs, entry))
+    : [];
+
   const mark = (stage, extra = {}) => {
-    const entry = {
-      stage,
-      atMs: perfNow(),
-      ...extra,
-    };
+    const entry = createMarkEntry(stage, perfNow(), extra);
     startup.marks.push(entry);
+    if (startup.marks.length > MAX_STARTUP_MARKS) {
+      startup.marks.splice(0, startup.marks.length - MAX_STARTUP_MARKS);
+    }
+    for (const listener of listeners) {
+      try {
+        listener(entry);
+      } catch {
+        // 观测订阅失败不能影响首屏初始化。
+      }
+    }
     try {
       console.info("[WebChat startup]", stage, entry);
     } catch {
@@ -21,6 +65,11 @@
     return entry;
   };
   startup.mark = mark;
+  startup.subscribe = (listener) => {
+    if (typeof listener !== "function") return () => {};
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
   mark("index.inline-bootstrap.start");
 
   const THEME_STORAGE_KEY = "ss-webchat-theme";
@@ -78,7 +127,6 @@
       nextHopProtocol: typeof navEntry?.nextHopProtocol === "string" ? navEntry.nextHopProtocol : "",
       activationStartMs: typeof navEntry?.activationStart === "number" ? Math.round(navEntry.activationStart) : null,
       persisted: event?.persisted === true,
-      referrer: typeof document.referrer === "string" ? document.referrer : "",
     });
   }, { once: true });
   window.addEventListener("load", () => {

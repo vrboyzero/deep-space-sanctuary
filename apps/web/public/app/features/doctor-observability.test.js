@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDoctorChatSummary, renderDoctorObservabilityCards } from "./doctor-observability.js";
+import { enUS } from "../i18n/en-US.js";
+import { zhCN } from "../i18n/zh-CN.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -2244,6 +2246,69 @@ describe("doctor observability rendering", () => {
     flushAnimationFrames(callbacks);
     expect(container.textContent || "").toContain("Runtime Resources");
     expect(container.textContent || "").toContain("lag p50/p95/max=3ms/12ms/20ms");
+  });
+
+  it("renders local WebChat performance diagnostics without source content", () => {
+    const payload = {
+      webchatPerformance: {
+        available: true,
+        startup: {
+          markCount: 3,
+          marks: [{ stage: "app.bootstrap.ready", elapsedMs: 14 }],
+          navigation: {
+            type: "navigate",
+            domInteractiveMs: 18,
+            loadEventEndMs: 31,
+            durationMs: 32,
+          },
+        },
+        streaming: {
+          renderCount: 3,
+          totalRenderedChars: 1110,
+          p50Ms: 10,
+          p95Ms: 100,
+          maxMs: 100,
+          recent: [{ kind: "delta", renderedChars: 1000, durationMs: 100 }],
+        },
+        longTasks: {
+          supported: true,
+          count: 1,
+          p95Ms: 80,
+          maxMs: 80,
+        },
+        interactions: {
+          supported: false,
+          count: 0,
+        },
+      },
+    };
+    const lines = buildDoctorChatSummary(payload);
+    expect(lines.join("\n")).toContain("WebChat Performance");
+    expect(lines.join("\n")).toContain("3 startup marks");
+    expect(lines.join("\n")).toContain("stream render p50/p95/max=10ms/100ms/100ms, chars=1110");
+    expect(lines.join("\n")).toContain("latest render: delta, chars=1000, duration=100ms");
+    expect(lines.join("\n")).not.toContain("message content");
+
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, payload);
+    flushAnimationFrames(callbacks);
+    expect(container.textContent || "").toContain("WebChat Performance");
+    expect(container.textContent || "").toContain("long tasks p95/max=80ms/80ms");
+  });
+
+  it("keeps Query Runtime and runtime resource translations in the settings namespace", () => {
+    expect(zhCN.settings.doctorQueryRuntimeTitle).toBe("Query Runtime");
+    expect(zhCN.settings.doctorRuntimeResourcesTitle).toBe("运行资源");
+    expect(enUS.settings.doctorQueryRuntimeTitle).toBe("Query Runtime");
+    expect(enUS.settings.doctorRuntimeResourcesTitle).toBe("Runtime Resources");
   });
 
   it("renders memory freshness card from top-level doctor payload", () => {

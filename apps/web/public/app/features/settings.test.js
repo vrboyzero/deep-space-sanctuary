@@ -575,6 +575,7 @@ function createController(overrides = {}) {
     syncAttachmentLimitsFromConfig: overrides.syncAttachmentLimitsFromConfig || vi.fn(),
     getConnectionAuthMode: overrides.getConnectionAuthMode || (() => "none"),
     onApprovePairing,
+    getWebchatPerformanceSummary: overrides.getWebchatPerformanceSummary,
     t: overrides.t,
   });
   return {
@@ -2702,9 +2703,17 @@ describe("settings controller", () => {
           return { ok: true, payload: {} };
       }
     });
+    const getWebchatPerformanceSummary = vi.fn(() => ({
+      available: true,
+      startup: { markCount: 2 },
+      streaming: { renderCount: 3 },
+      longTasks: { supported: false, count: 0 },
+      interactions: { supported: false, count: 0 },
+    }));
     const { controller } = createController({
       sendReq,
       loadServerConfig: vi.fn().mockResolvedValue({}),
+      getWebchatPerformanceSummary,
     });
 
     await controller.toggle(true);
@@ -2721,6 +2730,11 @@ describe("settings controller", () => {
     expect(renderDoctorObservabilityCards.mock.calls[0][1]).toMatchObject({
       surface: "full",
       residentAgents: { summary: { headline: "resident ok" } },
+      webchatPerformance: {
+        available: true,
+        startup: { markCount: 2 },
+      },
     });
+    expect(getWebchatPerformanceSummary).toHaveBeenCalledTimes(1);
   });
 });

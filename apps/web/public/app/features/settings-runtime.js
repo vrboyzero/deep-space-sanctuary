@@ -25,6 +25,7 @@ export function createSettingsRuntimeFeature({
   getActiveConversationId,
   getSelectedSubtaskId,
   isSubtasksViewActive,
+  getWebchatPerformanceSummary,
   escapeHtml,
   showNotice,
   redactedPlaceholder = "[REDACTED]",
@@ -176,6 +177,7 @@ export function createSettingsRuntimeFeature({
       await commanderQuickToggleController.syncFromConfig(config);
     },
     onOpenContinuationAction,
+    getWebchatPerformanceSummary,
     redactedPlaceholder,
     t,
   });
