@@ -157,6 +157,50 @@ describe("DiscordChannel", () => {
     expect(listener).not.toHaveBeenCalledWith({ type: "started", channel: "discord" });
   });
 
+  it("serializes ingress by the shared channel history owner", async () => {
+    const channel = createChannel();
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const handled: string[] = [];
+    vi.spyOn(channel as any, "handleMessage").mockImplementation(async (message: any) => {
+      handled.push(message.id);
+      if (message.id === "discord-ingress-first") {
+        markFirstStarted();
+        await firstGate;
+      }
+    });
+    const message = (id: string, userId: string) => ({
+      id,
+      content: id,
+      channelId: "shared-discord-channel",
+      guildId: "guild-a",
+      author: { id: userId, bot: false },
+    });
+
+    (channel as any).enqueueMessage(message("discord-ingress-first", "user-a"));
+    await firstStarted;
+    (channel as any).enqueueMessage(message("discord-ingress-second", "user-b"));
+    await Promise.resolve();
+
+    expect(handled).toEqual(["discord-ingress-first"]);
+    expect((channel as any).ingressScheduler.getRuntimeSnapshots()[0]).toMatchObject({
+      activeCount: 1,
+      queuedCount: 1,
+    });
+
+    releaseFirst();
+    await vi.waitFor(() => expect(handled).toEqual([
+      "discord-ingress-first",
+      "discord-ingress-second",
+    ]));
+  });
+
   it("does not fall back to historical discord state when binding is missing", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const channel = new DiscordChannel({

@@ -8,6 +8,7 @@ import { FilesystemCapability, assertSafeFilesystemBasename } from "@belldandy/p
 import type { ChatKind, ChannelRouter } from "./router/types.js";
 import type { Channel, ChannelConfig, ChannelProactiveTarget } from "./types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
+import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
 import { readBoundedMediaBuffer } from "./media-reader.js";
@@ -118,6 +119,7 @@ export class QqChannel implements Channel {
     private readonly onChannelSecurityApprovalRequired?: QqChannelConfig["onChannelSecurityApprovalRequired"];
     private readonly sttTranscribe?: QqChannelConfig["sttTranscribe"];
     private readonly eventSampleCapture?: QqChannelConfig["eventSampleCapture"];
+    private readonly ingressScheduler: ChannelIngressScheduler;
 
     private _running = false;
     private readonly replyContextByChatId = new Map<string, QqReplyContext>();
@@ -154,6 +156,7 @@ export class QqChannel implements Channel {
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
         this.sttTranscribe = config.sttTranscribe;
         this.eventSampleCapture = config.eventSampleCapture?.enabled ? config.eventSampleCapture : undefined;
+        this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
     }
 
     private resolveAgent(agentId?: string): BelldandyAgent {
@@ -1036,7 +1039,7 @@ export class QqChannel implements Channel {
                             });
                         });
                     }
-                    await this.handleMessage(this.normalizeDispatchMessage(payload), t);
+                    await this.enqueueMessage(this.normalizeDispatchMessage(payload), t);
                 } else {
                     console.log(`[${this.name}] Unhandled event type: ${t}`);
                 }
@@ -1149,6 +1152,61 @@ export class QqChannel implements Channel {
     /**
      * 处理消息
      */
+    /** Gateway dispatch keeps its existing handler, but bounded scheduling owns its execution slot. */
+    private async enqueueMessage(message: any, eventType: string): Promise<void> {
+        const messageId = typeof message?.id === "string" ? message.id : "";
+        const chatId = this.resolveChatId(message);
+        if (!messageId || !chatId) {
+            await this.handleMessage(message, eventType);
+            return;
+        }
+        const chatKind = this.inferChatKind(eventType);
+        const senderId = typeof message.author?.id === "string" ? message.author.id : undefined;
+        const session = buildChannelSessionDescriptor({
+            channel: "qq",
+            chatKind,
+            chatId,
+            senderId,
+        });
+        const scheduled = this.ingressScheduler.enqueue({
+            channel: this.name,
+            // QQ ConversationStore state remains chat-scoped, including group and channel conversations.
+            sessionKey: session.legacyConversationId,
+            dedupeKey: messageId,
+            payloadBytes: Buffer.byteLength(typeof message.content === "string" ? message.content : "", "utf8"),
+            run: () => this.handleMessage(message, eventType),
+        });
+        if (!scheduled.accepted) {
+            channelSafeLogger.warn({
+                channel: this.name,
+                event: "ingress_rejected",
+                messageId,
+                failureKind: "resource_exhausted",
+                context: { reason: scheduled.reason },
+            });
+            return;
+        }
+        try {
+            const completion = await scheduled.completion;
+            if (completion.status !== "completed") {
+                channelSafeLogger.warn({
+                    channel: this.name,
+                    event: "ingress_not_completed",
+                    messageId,
+                    failureKind: completion.status,
+                    context: { outcome: completion.status },
+                });
+            }
+        } catch {
+            channelSafeLogger.error({
+                channel: this.name,
+                event: "queued_message_failed",
+                messageId,
+                failureKind: "internal_error",
+            });
+        }
+    }
+
     private async handleMessage(message: any, eventType: string): Promise<void> {
         if (!message || !message.id) return;
 
@@ -1443,6 +1501,7 @@ export class QqChannel implements Channel {
         if (!this._running) return;
 
         this._running = false;
+        this.ingressScheduler.cancelChannel(this.name);
         this.suppressCloseReconnect = false;
 
         // 清理定时器

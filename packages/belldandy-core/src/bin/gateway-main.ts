@@ -4068,6 +4068,7 @@ const channelRuntime = createGatewayChannelsRuntime({
 const {
   deliverToLatestBoundExternalChannel,
   recordChannelSecurityApprovalRequest,
+  getRuntimeResourceQueueSnapshots: getChannelIngressRuntimeResourceQueueSnapshots,
 } = channelRuntime;
 
 const startupConnectivityObservability: {
@@ -4181,6 +4182,9 @@ const serverOptions = buildGatewayServerOptions({
       activeCount: number;
       queuedCount: number;
       capacity?: number;
+      oldestWaitMs?: number;
+      rejectedCount?: number;
+      aggregate?: boolean;
     }> = [];
     if (subAgentOrchestrator) {
       const snapshot = subAgentOrchestrator.getRuntimeSnapshot();
@@ -4212,6 +4216,7 @@ const serverOptions = buildGatewayServerOptions({
         queuedCount: 0,
       });
     }
+    snapshots.push(...getChannelIngressRuntimeResourceQueueSnapshots());
     return snapshots;
   },
   inspectAgentPrompt,

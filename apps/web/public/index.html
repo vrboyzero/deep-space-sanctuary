@@ -2336,6 +2336,50 @@
 
             <hr class="theme-divider">
 
+            <div class="settings-subsection-header">
+              <div>
+                <div class="settings-subsection-title" data-i18n="settings.channelIngressSectionTitle">渠道入口容量</div>
+                <div class="form-help" data-i18n="settings.channelIngressSectionHelp">限制跨渠道消息进入 Agent 前的并发、排队和负载容量。保存后需重启 Gateway 生效。</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxConcurrent" data-i18n="settings.channelIngressMaxConcurrentLabel">全局最大并发</label>
+              <input id="cfgChannelIngressMaxConcurrent" class="input" type="number" min="1" step="1" placeholder="4" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxConcurrentHelp">所有渠道合计允许同时进入 Agent 的任务数。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxConcurrentPerChannel" data-i18n="settings.channelIngressMaxConcurrentPerChannelLabel">每渠道最大并发</label>
+              <input id="cfgChannelIngressMaxConcurrentPerChannel" class="input" type="number" min="1" step="1" placeholder="2" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxConcurrentPerChannelHelp">单个渠道允许同时进入 Agent 的任务数。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxPendingPerSession" data-i18n="settings.channelIngressMaxPendingPerSessionLabel">每会话最大待执行数</label>
+              <input id="cfgChannelIngressMaxPendingPerSession" class="input" type="number" min="1" step="1" placeholder="16" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxPendingPerSessionHelp">同一历史会话最多保留的待执行入口任务数。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxQueued" data-i18n="settings.channelIngressMaxQueuedLabel">全局最大待执行数</label>
+              <input id="cfgChannelIngressMaxQueued" class="input" type="number" min="1" step="1" placeholder="128" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxQueuedHelp">所有渠道合计最多保留的待执行入口任务数。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxWaitMs" data-i18n="settings.channelIngressMaxWaitMsLabel">最大排队时间（ms）</label>
+              <input id="cfgChannelIngressMaxWaitMs" class="input" type="number" min="1" step="1" placeholder="120000" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxWaitMsHelp">入口任务超过该等待时间后自动过期。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxPayloadBytes" data-i18n="settings.channelIngressMaxPayloadBytesLabel">单任务负载上限（bytes）</label>
+              <input id="cfgChannelIngressMaxPayloadBytes" class="input" type="number" min="1" step="1" placeholder="131072" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxPayloadBytesHelp">单个入口任务允许占用的最大估算负载。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cfgChannelIngressMaxQueuedPayloadBytes" data-i18n="settings.channelIngressMaxQueuedPayloadBytesLabel">排队负载总上限（bytes）</label>
+              <input id="cfgChannelIngressMaxQueuedPayloadBytes" class="input" type="number" min="1" step="1" placeholder="2097152" />
+              <div class="form-help" data-i18n="settings.channelIngressMaxQueuedPayloadBytesHelp">所有待执行入口任务允许占用的最大估算负载总量。</div>
+            </div>
+
+            <hr class="theme-divider">
+
             <div class="form-group">
               <label class="form-label" for="cfgDiscordEnabled">
                 <input id="cfgDiscordEnabled" type="checkbox" style="margin-right: 8px;" />

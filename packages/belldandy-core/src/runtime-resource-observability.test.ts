@@ -36,8 +36,8 @@ test("runtime resource observability keeps bounded resource samples and aggregat
     setIntervalFn,
     clearIntervalFn,
     queueProviders: [() => [
-      { id: "subagent", activeCount: 2, queuedCount: 3, capacity: 10 },
-      { id: "websocket", activeCount: 5, queuedCount: 0 },
+      { id: "subagent", activeCount: 2, queuedCount: 3, capacity: 10, oldestWaitMs: 120, rejectedCount: 2 },
+      { id: "websocket", activeCount: 5, queuedCount: 0, oldestWaitMs: 30, rejectedCount: 1 },
     ]],
   });
 
@@ -59,6 +59,8 @@ test("runtime resource observability keeps bounded resource samples and aggregat
       queueCount: 2,
       activeCount: 7,
       queuedCount: 3,
+      oldestWaitMs: 120,
+      rejectedCount: 3,
     },
   });
   expect(summary.latest).toMatchObject({
@@ -77,8 +79,8 @@ test("runtime resource observability keeps bounded resource samples and aggregat
       heapUsedBytes: 64,
     },
     queues: [
-      { id: "subagent", activeCount: 2, queuedCount: 3, capacity: 10 },
-      { id: "websocket", activeCount: 5, queuedCount: 0 },
+      { id: "subagent", activeCount: 2, queuedCount: 3, capacity: 10, oldestWaitMs: 120, rejectedCount: 2 },
+      { id: "websocket", activeCount: 5, queuedCount: 0, oldestWaitMs: 30, rejectedCount: 1 },
     ],
   });
   expect(JSON.stringify(summary)).not.toContain("conversationId");
@@ -115,6 +117,8 @@ test("runtime resource observability can remain disabled without starting sampli
       queueCount: 0,
       activeCount: 0,
       queuedCount: 0,
+      oldestWaitMs: 0,
+      rejectedCount: 0,
     },
   });
   expect(createEventLoopDelayHistogram).not.toHaveBeenCalled();
@@ -127,6 +131,8 @@ test("runtime resource observability bounds provider and overall queue snapshots
     id: `${prefix}-${index}`,
     activeCount: 1,
     queuedCount: 0,
+    oldestWaitMs: 0,
+    rejectedCount: 0,
   }));
   const collector = new RuntimeResourceObservability({
     memoryUsage: () => ({ rss: 0, heapTotal: 0, heapUsed: 0, external: 0 }),
@@ -149,4 +155,44 @@ test("runtime resource observability bounds provider and overall queue snapshots
   const queueIds = summary.latest?.queues.map((queue) => queue.id) ?? [];
   expect(queueIds).not.toContain("first-16");
   expect(queueIds).not.toContain("third-0");
+});
+
+test("runtime resource observability excludes display-only aggregate queue snapshots from totals", () => {
+  const collector = new RuntimeResourceObservability({
+    memoryUsage: () => ({ rss: 0, heapTotal: 0, heapUsed: 0, external: 0 }),
+    queueProviders: [() => [
+      {
+        id: "channel_ingress",
+        activeCount: 3,
+        queuedCount: 5,
+        oldestWaitMs: 80,
+        rejectedCount: 4,
+        aggregate: true,
+      },
+      {
+        id: "channel_ingress:discord",
+        activeCount: 2,
+        queuedCount: 3,
+        oldestWaitMs: 80,
+        rejectedCount: 3,
+      },
+      {
+        id: "channel_ingress:qq",
+        activeCount: 1,
+        queuedCount: 2,
+        oldestWaitMs: 30,
+        rejectedCount: 1,
+      },
+    ]],
+  });
+
+  collector.sampleNow();
+
+  expect(collector.getSummary().queueTotals).toEqual({
+    queueCount: 2,
+    activeCount: 3,
+    queuedCount: 5,
+    oldestWaitMs: 80,
+    rejectedCount: 4,
+  });
 });

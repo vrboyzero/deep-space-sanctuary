@@ -487,6 +487,13 @@ function createSettingsRefs(overrides = {}) {
     cfgChannelRouterEnabled: overrides.cfgChannelRouterEnabled || createCheckbox(false),
     cfgChannelRouterConfigPath: overrides.cfgChannelRouterConfigPath || createInput(""),
     cfgChannelRouterDefaultAgentId: overrides.cfgChannelRouterDefaultAgentId || createInput(""),
+    cfgChannelIngressMaxConcurrent: overrides.cfgChannelIngressMaxConcurrent || createInput(""),
+    cfgChannelIngressMaxConcurrentPerChannel: overrides.cfgChannelIngressMaxConcurrentPerChannel || createInput(""),
+    cfgChannelIngressMaxPendingPerSession: overrides.cfgChannelIngressMaxPendingPerSession || createInput(""),
+    cfgChannelIngressMaxQueued: overrides.cfgChannelIngressMaxQueued || createInput(""),
+    cfgChannelIngressMaxWaitMs: overrides.cfgChannelIngressMaxWaitMs || createInput(""),
+    cfgChannelIngressMaxPayloadBytes: overrides.cfgChannelIngressMaxPayloadBytes || createInput(""),
+    cfgChannelIngressMaxQueuedPayloadBytes: overrides.cfgChannelIngressMaxQueuedPayloadBytes || createInput(""),
     cfgFeishuAppId: overrides.cfgFeishuAppId || createInput(""),
     cfgFeishuAppSecret: overrides.cfgFeishuAppSecret || createInput(""),
     cfgFeishuAgentId: overrides.cfgFeishuAgentId || createInput(""),
@@ -2633,6 +2640,55 @@ describe("settings controller", () => {
       BELLDANDY_ASSISTANT_MODE_ENABLED: "false",
       BELLDANDY_HEARTBEAT_ENABLED: "false",
       BELLDANDY_CRON_ENABLED: "false",
+    });
+  });
+
+  it("loads and persists channel ingress capacity settings", async () => {
+    const loadServerConfig = vi.fn().mockResolvedValue({
+      BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT: "4",
+      BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT_PER_CHANNEL: "2",
+      BELLDANDY_CHANNEL_INGRESS_MAX_PENDING_PER_SESSION: "16",
+      BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED: "128",
+      BELLDANDY_CHANNEL_INGRESS_MAX_WAIT_MS: "120000",
+      BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES: "131072",
+      BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES: "2097152",
+    });
+    const sendReq = vi.fn(async (frame) => {
+      switch (frame.method) {
+        case "config.update":
+          return { ok: true, payload: {} };
+        case "channel.security.get":
+        case "channel.reply_chunking.get":
+          return { ok: true, payload: { path: "ok.json", content: '{\n  "version": 1,\n  "channels": {}\n}\n' } };
+        case "channel.security.pending.list":
+          return { ok: true, payload: { pending: [] } };
+        default:
+          return { ok: true, payload: {} };
+      }
+    });
+    const { controller, refs } = createController({ loadServerConfig, sendReq });
+
+    await controller.loadConfig();
+
+    expect(refs.cfgChannelIngressMaxConcurrent.value).toBe("4");
+    expect(refs.cfgChannelIngressMaxConcurrentPerChannel.value).toBe("2");
+    expect(refs.cfgChannelIngressMaxPendingPerSession.value).toBe("16");
+    expect(refs.cfgChannelIngressMaxQueued.value).toBe("128");
+    expect(refs.cfgChannelIngressMaxWaitMs.value).toBe("120000");
+    expect(refs.cfgChannelIngressMaxPayloadBytes.value).toBe("131072");
+    expect(refs.cfgChannelIngressMaxQueuedPayloadBytes.value).toBe("2097152");
+
+    await controller.saveConfig();
+
+    const updateCall = sendReq.mock.calls.find(([frame]) => frame.method === "config.update");
+    expect(updateCall?.[0]?.params?.updates).toMatchObject({
+      BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT: "4",
+      BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT_PER_CHANNEL: "2",
+      BELLDANDY_CHANNEL_INGRESS_MAX_PENDING_PER_SESSION: "16",
+      BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED: "128",
+      BELLDANDY_CHANNEL_INGRESS_MAX_WAIT_MS: "120000",
+      BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES: "131072",
+      BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES: "2097152",
     });
   });
 

@@ -49,7 +49,7 @@ star-sanctuary/
 | `@belldandy/skills` | ToolExecutor、security matrix、builtin tools、skills registry | `packages/belldandy-skills/src/index.ts` |
 | `@belldandy/memory` | SQLite/FTS/vector retrieval、task、experience、durable extraction | `packages/belldandy-memory/src/index.ts` |
 | `@belldandy/core` | CLI、Gateway 装配、HTTP/WS server、query-runtime、goals、cron、doctor | `packages/belldandy-core/src/index.ts` |
-| `@belldandy/channels` | 外部渠道适配与 router | `packages/belldandy-channels/src/index.ts` |
+| `@belldandy/channels` | 外部渠道适配、router 与有界入站调度 | `packages/belldandy-channels/src/index.ts` |
 | `@belldandy/mcp` | MCP 配置、连接管理、工具桥接 | `packages/belldandy-mcp/src/index.ts` |
 | `@belldandy/plugins` | 插件加载、Tool/Hook/Skill 所有权、卸载生命周期与 hooks 聚合 | `packages/belldandy-plugins/src/index.ts` |
 | `@belldandy/browser` | Relay server，桥接 Chrome 扩展与 CDP client | `packages/belldandy-browser/src/index.ts` |
@@ -221,12 +221,14 @@ star-sanctuary/
 
 ### Channels / Community / External Delivery
 - `packages/belldandy-channels/src/manager.ts`: channel manager
+- `packages/belldandy-channels/src/channel-ingress-scheduler.ts`: 按 history owner 保序、跨 session 公平、全局/渠道并发与有界 pending 的共享入站调度器；快照不含会话或正文
 - `packages/belldandy-channels/src/media-reader.ts`: 已批准媒体请求的 deadline 与总字节上限读取器
 - `packages/belldandy-channels/src/community.ts`: community 长连接与房间消息处理
 - `packages/belldandy-channels/src/feishu.ts`: 飞书渠道
 - `packages/belldandy-channels/src/qq.ts`: QQ 渠道
 - `packages/belldandy-channels/src/discord.ts`: Discord 渠道
 - `packages/belldandy-channels/src/router/`: 安全 ingress preflight、路由规则与渠道策略加载
+- `packages/belldandy-core/src/bin/gateway-channels-runtime.ts`: 从环境装配一个共享 ChannelIngressScheduler，注入四个渠道并向 Core 资源观测提供聚合快照
 - `packages/belldandy-core/src/query-runtime-email-outbound.ts`: 邮件外发
 - `packages/belldandy-core/src/query-runtime-external-outbound.ts`: 外部消息外发审批/执行
 

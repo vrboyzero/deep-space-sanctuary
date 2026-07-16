@@ -11,6 +11,7 @@ import { createJoinRoomTool, createLeaveRoomTool } from "@belldandy/skills";
 import type { TokenUsageUploadConfig } from "@belldandy/protocol";
 import { extractOwnerUuid } from "@belldandy/protocol";
 import {
+  ChannelIngressScheduler,
   CommunityChannel,
   createChannelRouter,
   DiscordChannel,
@@ -60,7 +61,22 @@ type GatewayChannelsRuntimeInput = {
   readEnv: (name: string) => string | undefined;
 };
 
+function readPositiveInt(readEnv: GatewayChannelsRuntimeInput["readEnv"], name: string): number | undefined {
+  const value = Number(readEnv(name));
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
 export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput) {
+  // Shared by all adapters so global and per-channel capacity are enforced across channel boundaries.
+  const channelIngressScheduler = new ChannelIngressScheduler({
+    maxConcurrent: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT"),
+    maxConcurrentPerChannel: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT_PER_CHANNEL"),
+    maxPendingPerSession: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_PENDING_PER_SESSION"),
+    maxQueued: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED"),
+    maxWaitMs: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_WAIT_MS"),
+    maxPayloadBytes: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES"),
+    maxQueuedPayloadBytes: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES"),
+  });
   const communityConfigured = Boolean(input.createAgent && fs.existsSync(getCommunityConfigPath()));
   const requiredSecurityChannels = [
     input.feishuAppId && input.feishuAppSecret ? "feishu" : undefined,
@@ -216,6 +232,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           router: channelRouter,
           replyChunkingConfig: channelReplyChunkingConfig,
           currentConversationBindingStore: input.currentConversationBindingStore,
+          ingressScheduler: channelIngressScheduler,
           agentResolver: resolveChannelAgent,
           onChannelSecurityApprovalRequired: recordChannelSecurityApprovalRequest,
           conversationStore: input.conversationStore,
@@ -255,6 +272,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           router: channelRouter,
           replyChunkingConfig: channelReplyChunkingConfig,
           currentConversationBindingStore: input.currentConversationBindingStore,
+          ingressScheduler: channelIngressScheduler,
           agentResolver: resolveChannelAgent,
           sttTranscribe: async (opts) => {
             const result = await input.sttTranscribe(opts);
@@ -305,6 +323,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           router: channelRouter,
           replyChunkingConfig: channelReplyChunkingConfig,
           currentConversationBindingStore: input.currentConversationBindingStore,
+          ingressScheduler: channelIngressScheduler,
           agentResolver: resolveChannelAgent,
           onChannelSecurityApprovalRequired: recordChannelSecurityApprovalRequest,
           reconnect: communityConfig.reconnect,
@@ -337,5 +356,6 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
     recordChannelSecurityApprovalRequest,
     logChannelRuntimeConfiguration,
     startChannels,
+    getRuntimeResourceQueueSnapshots: () => channelIngressScheduler.getRuntimeSnapshots(),
   };
 }

@@ -2198,6 +2198,8 @@ describe("doctor observability rendering", () => {
           providerCount: 2,
           activeCount: 4,
           queuedCount: 2,
+          oldestWaitMs: 240,
+          rejectedCount: 3,
         },
         latest: {
           capturedAt: 1710000000000,
@@ -2219,7 +2221,7 @@ describe("doctor observability rendering", () => {
             arrayBuffersBytes: 524288,
           },
           queues: [
-            { id: "subagent", activeCount: 2, queuedCount: 2, capacity: 16 },
+            { id: "subagent", activeCount: 2, queuedCount: 2, capacity: 16, oldestWaitMs: 240, rejectedCount: 3 },
             { id: "websocket", activeCount: 2, queuedCount: 0 },
           ],
         },
@@ -2230,7 +2232,8 @@ describe("doctor observability rendering", () => {
     expect(lines.join("\n")).toContain("3/24 samples");
     expect(lines.join("\n")).toContain("event loop 25%");
     expect(lines.join("\n")).toContain("rss 128 MiB");
-    expect(lines.join("\n")).toContain("queue subagent: active 2, queued 2, capacity=16");
+    expect(lines.join("\n")).toContain("active 4 / queued 2, oldest wait=240ms, rejected=3");
+    expect(lines.join("\n")).toContain("queue subagent: active 2, queued 2, capacity=16, oldest wait=240ms, rejected=3");
     expect(lines.join("\n")).toContain("queue websocket: active 2, queued 0");
 
     const callbacks = [];

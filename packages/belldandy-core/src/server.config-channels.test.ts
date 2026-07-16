@@ -852,6 +852,13 @@ test("config.update accepts advanced channel env settings and redacts email secr
           BELLDANDY_CHANNEL_ROUTER_ENABLED: "true",
           BELLDANDY_CHANNEL_ROUTER_CONFIG_PATH: "~/.star_sanctuary/channels-routing.json",
           BELLDANDY_CHANNEL_ROUTER_DEFAULT_AGENT_ID: "default",
+          BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT: "4",
+          BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT_PER_CHANNEL: "2",
+          BELLDANDY_CHANNEL_INGRESS_MAX_PENDING_PER_SESSION: "16",
+          BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED: "128",
+          BELLDANDY_CHANNEL_INGRESS_MAX_WAIT_MS: "120000",
+          BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES: "131072",
+          BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES: "2097152",
           BELLDANDY_DISCORD_DEFAULT_CHANNEL_ID: "123456789012345678",
         },
       },
@@ -870,12 +877,16 @@ test("config.update accepts advanced channel env settings and redacts email secr
     expect(readRes.payload?.config?.BELLDANDY_EMAIL_IMAP_PASS).toBe("[REDACTED]");
     expect(readRes.payload?.config?.BELLDANDY_CHANNEL_ROUTER_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_CHANNEL_ROUTER_CONFIG_PATH).toBe("~/.star_sanctuary/channels-routing.json");
+    expect(readRes.payload?.config?.BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT).toBe("4");
+    expect(readRes.payload?.config?.BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES).toBe("2097152");
     expect(readRes.payload?.config?.BELLDANDY_DISCORD_DEFAULT_CHANNEL_ID).toBe("123456789012345678");
 
     const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
     expect(envLocalContent).toContain('BELLDANDY_EMAIL_SMTP_PASS="smtp-app-pass"');
     expect(envLocalContent).toContain('BELLDANDY_EMAIL_IMAP_PASS="imap-app-pass"');
     expect(envLocalContent).toContain('BELLDANDY_CHANNEL_ROUTER_DEFAULT_AGENT_ID="default"');
+    expect(envLocalContent).toContain('BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT="4"');
+    expect(envLocalContent).toContain('BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES="2097152"');
     expect(envLocalContent).toContain('BELLDANDY_DISCORD_DEFAULT_CHANNEL_ID="123456789012345678"');
   } finally {
     ws.close();

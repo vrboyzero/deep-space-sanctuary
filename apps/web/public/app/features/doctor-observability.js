@@ -5,6 +5,7 @@ import { buildContinuationAction } from "./continuation-targets.js";
 import { buildExternalOutboundDiagnosis } from "./external-outbound-diagnosis.js";
 import { buildAgentWorkSummary } from "./agent-work-summary.js";
 import { buildTokenUsageDiagnosticsSegments } from "./token-usage-observability.js";
+import { buildRuntimeResourceQueuePressure } from "./runtime-resource-queue-pressure.js";
 
 function tr(t, key, params, fallback) {
   return typeof t === "function" ? t(key, params ?? {}, fallback) : fallback;
@@ -3774,6 +3775,7 @@ function buildRuntimeResourcesCard(payload, t) {
   const queueTotals = runtimeResources.queueTotals && typeof runtimeResources.queueTotals === "object"
     ? runtimeResources.queueTotals
     : {};
+  const totalQueuePressure = buildRuntimeResourceQueuePressure(t, queueTotals, formatNumber, formatRuntimeResourceDelay);
   const eventLoop = latest?.eventLoop && typeof latest.eventLoop === "object" ? latest.eventLoop : {};
   const memory = latest?.memory && typeof latest.memory === "object" ? latest.memory : {};
   const delay = eventLoop.delay && typeof eventLoop.delay === "object" ? eventLoop.delay : {};
@@ -3808,8 +3810,9 @@ function buildRuntimeResourcesCard(payload, t) {
       {
         active: formatNumber(queueTotals.activeCount),
         queued: formatNumber(queueTotals.queuedCount),
+        pressure: totalQueuePressure,
       },
-      `active ${formatNumber(queueTotals.activeCount)} / queued ${formatNumber(queueTotals.queuedCount)}`,
+      `active ${formatNumber(queueTotals.activeCount)} / queued ${formatNumber(queueTotals.queuedCount)}${totalQueuePressure}`,
     ),
   ];
   const notes = [tr(
@@ -3860,6 +3863,7 @@ function buildRuntimeResourcesCard(payload, t) {
         `, capacity=${formatNumber(queue.capacity)}`,
       )
       : "";
+    const pressure = buildRuntimeResourceQueuePressure(t, queue, formatNumber, formatRuntimeResourceDelay);
     notes.push(tr(
       t,
       "settings.doctorRuntimeResourcesQueue",
@@ -3868,8 +3872,9 @@ function buildRuntimeResourcesCard(payload, t) {
         active: formatNumber(queue.activeCount),
         queued: formatNumber(queue.queuedCount),
         capacity,
+        pressure,
       },
-      `queue ${queue.id}: active ${formatNumber(queue.activeCount)}, queued ${formatNumber(queue.queuedCount)}${capacity}`,
+      `queue ${queue.id}: active ${formatNumber(queue.activeCount)}, queued ${formatNumber(queue.queuedCount)}${capacity}${pressure}`,
     ));
   }
 

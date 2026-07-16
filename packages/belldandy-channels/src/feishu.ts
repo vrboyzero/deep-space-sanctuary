@@ -4,6 +4,7 @@ import type { CurrentConversationBindingStore } from "./current-conversation-bin
 import type { ChatKind, ChannelRouter } from "./router/types.js";
 import type { Channel, ChannelAgentResolver, ChannelConfig, ChannelProactiveTarget } from "./types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
+import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
 import {
     ChannelSafeLogger,
@@ -47,6 +48,7 @@ export class FeishuChannel implements Channel {
     private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
     private readonly sttTranscribe?: (opts: { buffer: Buffer; fileName: string; mime?: string }) => Promise<{ text: string } | null>;
     private readonly onChannelSecurityApprovalRequired?: FeishuChannelConfig["onChannelSecurityApprovalRequired"];
+    private readonly ingressScheduler: ChannelIngressScheduler;
     private _running = false;
 
     // Deduplication: track processed message IDs to avoid responding multiple times
@@ -68,6 +70,7 @@ export class FeishuChannel implements Channel {
         this.replyChunkingConfig = config.replyChunkingConfig;
         this.currentConversationBindingStore = config.currentConversationBindingStore;
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
+        this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
 
         // HTTP Client for sending messages
         this.client = new lark.Client({
@@ -204,7 +207,7 @@ export class FeishuChannel implements Channel {
         // Create an event dispatcher
         const eventDispatcher = new lark.EventDispatcher({}).register({
             "im.message.receive_v1": async (data) => {
-                await this.handleMessage(data);
+                await this.enqueueMessage(data);
             },
         });
 
@@ -226,6 +229,7 @@ export class FeishuChannel implements Channel {
             // await this.wsClient.stop();
 
             this._running = false;
+            this.ingressScheduler.cancelChannel(this.name);
             this.processedMessages.clear();
             console.log(`[${this.name}] Channel stopped.`);
         } catch (e) {
@@ -235,6 +239,63 @@ export class FeishuChannel implements Channel {
                 failureKind: "internal_error",
             });
             throw e;
+        }
+    }
+
+    /** SDK callback keeps awaiting completion, while queue ownership stays bounded and observable. */
+    private async enqueueMessage(data: any): Promise<void> {
+        const message = data?.message;
+        const sender = data?.sender;
+        const chatId = typeof message?.chat_id === "string" ? message.chat_id : "";
+        const messageId = typeof message?.message_id === "string" ? message.message_id : "";
+        if (!message || !chatId || !messageId) {
+            await this.handleMessage(data);
+            return;
+        }
+        const chatKind = this.inferChatKind(message);
+        const senderId = sender?.sender_id?.open_id || sender?.sender_id?.user_id || sender?.sender_id?.union_id;
+        const session = buildChannelSessionDescriptor({
+            channel: "feishu",
+            chatKind,
+            chatId,
+            senderId: typeof senderId === "string" ? senderId : undefined,
+        });
+        const scheduled = this.ingressScheduler.enqueue({
+            channel: this.name,
+            // ConversationStore persists group history by chatId, so retain that serialization owner.
+            sessionKey: session.legacyConversationId,
+            dedupeKey: messageId,
+            payloadBytes: Buffer.byteLength(typeof message.content === "string" ? message.content : "", "utf8"),
+            run: () => this.handleMessage(data),
+        });
+        if (!scheduled.accepted) {
+            channelSafeLogger.warn({
+                channel: this.name,
+                event: "ingress_rejected",
+                messageId,
+                failureKind: "resource_exhausted",
+                context: { reason: scheduled.reason },
+            });
+            return;
+        }
+        try {
+            const completion = await scheduled.completion;
+            if (completion.status !== "completed") {
+                channelSafeLogger.warn({
+                    channel: this.name,
+                    event: "ingress_not_completed",
+                    messageId,
+                    failureKind: completion.status,
+                    context: { outcome: completion.status },
+                });
+            }
+        } catch {
+            channelSafeLogger.error({
+                channel: this.name,
+                event: "queued_message_failed",
+                messageId,
+                failureKind: "internal_error",
+            });
         }
     }
 

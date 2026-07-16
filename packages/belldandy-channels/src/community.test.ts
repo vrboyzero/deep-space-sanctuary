@@ -238,7 +238,7 @@ describe("community token usage upload", () => {
     expect(uploadTokenUsageMock.mock.calls[0][0].userUuid).toBeUndefined();
   });
 
-  it("cleans per-room message queue after queued work finishes", async () => {
+  it("cleans bounded ingress queue after queued work finishes", async () => {
     let releaseRun: (() => void) | undefined;
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -280,13 +280,19 @@ describe("community token usage upload", () => {
       },
     }, state);
 
-    expect((channel as any).messageQueues.get("room-queue")).toBeTruthy();
+    expect((channel as any).ingressScheduler.getRuntimeSnapshots()[0]).toMatchObject({
+      activeCount: 1,
+      queuedCount: 0,
+    });
 
     await started;
     releaseRun?.();
     await pending;
 
-    expect((channel as any).messageQueues.has("room-queue")).toBe(false);
+    expect((channel as any).ingressScheduler.getRuntimeSnapshots()[0]).toMatchObject({
+      activeCount: 0,
+      queuedCount: 0,
+    });
   });
 
   it("records bounded connectivity state when room lookup fails at network layer", async () => {

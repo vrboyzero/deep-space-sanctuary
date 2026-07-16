@@ -6,6 +6,7 @@ import { ConversationStore } from "@belldandy/agent";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import { updateAgentRoom } from "./community-config.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
+import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
 import {
   ChannelSafeLogger,
@@ -143,6 +144,7 @@ export class CommunityChannel implements Channel {
   private readonly onChannelSecurityApprovalRequired?: CommunityChannelConfig["onChannelSecurityApprovalRequired"];
   private readonly replyChunkingConfig?: CommunityChannelConfig["replyChunkingConfig"];
   private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
+  private readonly ingressScheduler: ChannelIngressScheduler;
   private readonly reconnectConfig: {
     enabled: boolean;
     maxRetries: number;
@@ -155,8 +157,6 @@ export class CommunityChannel implements Channel {
   private connections = new Map<string, ConnectionState>(); // agentName -> ConnectionState
   private processedMessages = new Set<string>();
   private readonly MESSAGE_CACHE_SIZE = 1000;
-  // Per-room 消息串行队列，避免同一房间的消息并发处理导致冲突
-  private messageQueues = new Map<string, Promise<void>>();
   private readonly pendingConnectivityDiagnostics = new Map<string, Promise<void>>();
   private readonly lastConnectivityDiagnosticAt = new Map<string, number>();
 
@@ -175,6 +175,7 @@ export class CommunityChannel implements Channel {
     this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
     this.replyChunkingConfig = config.replyChunkingConfig;
     this.currentConversationBindingStore = config.currentConversationBindingStore;
+    this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
     this.tokenUsageUpload = config.tokenUsageUpload;
     this.ownerUserUuid = config.ownerUserUuid;
     this.reconnectConfig = config.reconnect ?? {
@@ -242,7 +243,7 @@ export class CommunityChannel implements Channel {
     }
 
     this.connections.clear();
-    this.messageQueues.clear();
+    this.ingressScheduler.cancelChannel(this.name);
     this.pendingConnectivityDiagnostics.clear();
     this.lastConnectivityDiagnosticAt.clear();
     this._running = false;
@@ -688,26 +689,52 @@ export class CommunityChannel implements Channel {
     }
   }
 
-  /**
-   * 将消息加入 per-room 串行队列
-   */
+  /** 将消息交给共享 scheduler；原有 handler 仍负责去重、准入、路由和回复。 */
   private async enqueueMessage(data: any, state: ConnectionState): Promise<void> {
-    const roomId = state.roomId;
-    const prev = this.messageQueues.get(roomId) ?? Promise.resolve();
-    const next = prev.then(() => this.handleChatMessage(data, state)).catch(() => {
+    const senderId = normalizeCommunitySenderId(data?.sender);
+    const session = buildChannelSessionDescriptor({
+      channel: "community",
+      accountId: state.agentConfig.name,
+      chatKind: "room",
+      chatId: state.roomId,
+      senderId: senderId || undefined,
+    });
+    const scheduled = this.ingressScheduler.enqueue({
+      channel: this.name,
+      // Community history is still room-scoped; preserving that owner prevents cross-sender history races.
+      sessionKey: session.legacyConversationId,
+      dedupeKey: typeof data?.id === "string" ? data.id : undefined,
+      payloadBytes: Buffer.byteLength(typeof data?.content === "string" ? data.content : "", "utf8"),
+      run: () => this.handleChatMessage(data, state),
+    });
+    if (!scheduled.accepted) {
+      channelSafeLogger.warn({
+        channel: this.name,
+        event: "ingress_rejected",
+        accountId: state.agentConfig.name,
+        failureKind: "resource_exhausted",
+        context: { reason: scheduled.reason },
+      });
+      return;
+    }
+    try {
+      const completion = await scheduled.completion;
+      if (completion.status !== "completed") {
+        channelSafeLogger.warn({
+          channel: this.name,
+          event: "ingress_not_completed",
+          accountId: state.agentConfig.name,
+          failureKind: completion.status,
+          context: { outcome: completion.status },
+        });
+      }
+    } catch {
       channelSafeLogger.error({
         channel: "community",
         event: "queued_message_failed",
         failureKind: "internal_error",
       });
-    });
-    this.messageQueues.set(roomId, next);
-    void next.finally(() => {
-      if (this.messageQueues.get(roomId) === next) {
-        this.messageQueues.delete(roomId);
-      }
-    });
-    await next;
+    }
   }
 
   /**
@@ -1011,7 +1038,6 @@ export class CommunityChannel implements Channel {
 
     // 3. 从连接池移除（WS 会被服务端关闭，无需主动 close）
     this.connections.delete(agentName);
-    this.messageQueues.delete(state.roomId);
 
     console.log(`[${this.name}] Agent ${agentName} disconnected from room (reason: ${reason})`);
   }
@@ -1065,7 +1091,6 @@ export class CommunityChannel implements Channel {
 
     // 4. 从连接池移除
     this.connections.delete(agentConfig.name);
-    this.messageQueues.delete(state.roomId);
 
     console.log(`[${this.name}] Left room "${roomIdOrName}"`);
   }

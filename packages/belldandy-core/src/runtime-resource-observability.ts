@@ -14,6 +14,10 @@ export type RuntimeResourceQueueSnapshot = {
   activeCount: number;
   queuedCount: number;
   capacity?: number;
+  oldestWaitMs?: number;
+  rejectedCount?: number;
+  /** 仅展示的父级汇总快照，不参与 queueTotals 的加总。 */
+  aggregate?: boolean;
 };
 
 export type RuntimeResourceQueueProvider = () => readonly RuntimeResourceQueueSnapshot[] | undefined;
@@ -80,6 +84,8 @@ export type RuntimeResourceObservabilitySummary = {
     queueCount: number;
     activeCount: number;
     queuedCount: number;
+    oldestWaitMs: number;
+    rejectedCount: number;
   };
   headline: string;
   latest?: RuntimeResourceSample;
@@ -334,11 +340,21 @@ function normalizeQueueSnapshot(value: unknown): RuntimeResourceQueueSnapshot | 
   const capacity = Number.isFinite(input.capacity) && Number(input.capacity) > 0
     ? Math.floor(Number(input.capacity))
     : undefined;
+  const oldestWaitMs = Number.isFinite(input.oldestWaitMs)
+    ? Math.floor(normalizeNonNegativeNumber(input.oldestWaitMs))
+    : undefined;
+  const rejectedCount = Number.isFinite(input.rejectedCount)
+    ? Math.floor(normalizeNonNegativeNumber(input.rejectedCount))
+    : undefined;
+  const aggregate = input.aggregate === true;
   return {
     id,
     activeCount: Math.floor(normalizeNonNegativeNumber(input.activeCount)),
     queuedCount: Math.floor(normalizeNonNegativeNumber(input.queuedCount)),
     ...(capacity !== undefined ? { capacity } : {}),
+    ...(oldestWaitMs !== undefined ? { oldestWaitMs } : {}),
+    ...(rejectedCount !== undefined ? { rejectedCount } : {}),
+    ...(aggregate ? { aggregate: true } : {}),
   };
 }
 
@@ -349,19 +365,31 @@ function mergeQueueSnapshots(
   const capacity = [left.capacity, right.capacity]
     .filter((value): value is number => typeof value === "number")
     .reduce((sum, value) => sum + value, 0);
+  const oldestWaitMs = [left.oldestWaitMs, right.oldestWaitMs]
+    .filter((value): value is number => typeof value === "number")
+    .reduce((max, value) => Math.max(max, value), 0);
+  const rejectedCount = [left.rejectedCount, right.rejectedCount]
+    .filter((value): value is number => typeof value === "number")
+    .reduce((sum, value) => sum + value, 0);
   return {
     id: left.id,
     activeCount: left.activeCount + right.activeCount,
     queuedCount: left.queuedCount + right.queuedCount,
     ...(capacity > 0 ? { capacity } : {}),
+    ...(oldestWaitMs > 0 ? { oldestWaitMs } : {}),
+    ...(rejectedCount > 0 ? { rejectedCount } : {}),
+    ...(left.aggregate === true && right.aggregate === true ? { aggregate: true } : {}),
   };
 }
 
 function summarizeQueues(queues: RuntimeResourceQueueSnapshot[]): RuntimeResourceObservabilitySummary["queueTotals"] {
+  const summableQueues = queues.filter((queue) => !queue.aggregate);
   return {
-    queueCount: queues.length,
-    activeCount: queues.reduce((total, queue) => total + queue.activeCount, 0),
-    queuedCount: queues.reduce((total, queue) => total + queue.queuedCount, 0),
+    queueCount: summableQueues.length,
+    activeCount: summableQueues.reduce((total, queue) => total + queue.activeCount, 0),
+    queuedCount: summableQueues.reduce((total, queue) => total + queue.queuedCount, 0),
+    oldestWaitMs: summableQueues.reduce((max, queue) => Math.max(max, queue.oldestWaitMs ?? 0), 0),
+    rejectedCount: summableQueues.reduce((total, queue) => total + (queue.rejectedCount ?? 0), 0),
   };
 }
 
@@ -382,6 +410,8 @@ function buildRuntimeResourceHeadline(
     `rss=${latest.memory.rssBytes}`,
     `active=${queueTotals.activeCount}`,
     `queued=${queueTotals.queuedCount}`,
+    `oldestWait=${queueTotals.oldestWaitMs}ms`,
+    `rejected=${queueTotals.rejectedCount}`,
   ].join(", ");
 }
 

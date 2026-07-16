@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import { ConversationStore } from "@belldandy/agent";
 
 import { QqChannel } from "./qq.js";
+import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import { createFileCurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import { normalizeReplyChunkingConfig } from "./reply-chunking-config.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
@@ -21,7 +22,7 @@ describe("QqChannel", () => {
         vi.unstubAllGlobals();
     });
 
-    it("keeps reply context isolated for concurrent messages", async () => {
+  it("keeps reply context isolated for concurrent messages", async () => {
         const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
             ok: true,
             text: async () => "",
@@ -101,7 +102,7 @@ describe("QqChannel", () => {
             body: JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}")) as { content?: string; msg_id?: string },
         }));
 
-        expect(sent).toEqual(expect.arrayContaining([
+    expect(sent).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 url: "https://sandbox.api.sgroup.qq.com/channels/channel-a/messages",
                 body: expect.objectContaining({
@@ -117,6 +118,97 @@ describe("QqChannel", () => {
                 }),
             }),
         ]));
+    });
+
+    it("serializes ingress by the shared chat history owner", async () => {
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { run: vi.fn() } as any,
+            conversationStore: new ConversationStore(),
+        });
+        let releaseFirst!: () => void;
+        let markFirstStarted!: () => void;
+        const firstStarted = new Promise<void>((resolve) => {
+            markFirstStarted = resolve;
+        });
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        const handled: string[] = [];
+        vi.spyOn(channel as any, "handleMessage").mockImplementation(async (message: any) => {
+            handled.push(message.id);
+            if (message.id === "qq-ingress-first") {
+                markFirstStarted();
+                await firstGate;
+            }
+        });
+        const message = (id: string, userId: string) => ({
+            id,
+            content: id,
+            channel_id: "shared-qq-channel",
+            guild_id: "guild-a",
+            author: { id: userId, username: userId },
+        });
+
+        const first = (channel as any).enqueueMessage(message("qq-ingress-first", "user-a"), "MESSAGE_CREATE");
+        await firstStarted;
+        const second = (channel as any).enqueueMessage(message("qq-ingress-second", "user-b"), "MESSAGE_CREATE");
+        await Promise.resolve();
+
+        expect(handled).toEqual(["qq-ingress-first"]);
+        releaseFirst();
+        await Promise.all([first, second]);
+        expect(handled).toEqual(["qq-ingress-first", "qq-ingress-second"]);
+    });
+
+    it("clears queued ingress when the channel stops without claiming active Agent cancellation", async () => {
+        const scheduler = new ChannelIngressScheduler({ maxConcurrent: 1 });
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { run: vi.fn() } as any,
+            conversationStore: new ConversationStore(),
+            ingressScheduler: scheduler,
+        });
+        let releaseFirst!: () => void;
+        let markFirstStarted!: () => void;
+        const firstStarted = new Promise<void>((resolve) => {
+            markFirstStarted = resolve;
+        });
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        const handled: string[] = [];
+        vi.spyOn(channel as any, "handleMessage").mockImplementation(async (message: any) => {
+            handled.push(message.id);
+            if (message.id === "qq-stop-first") {
+                markFirstStarted();
+                await firstGate;
+            }
+        });
+        const message = (id: string) => ({
+            id,
+            content: id,
+            channel_id: "qq-stop-channel",
+            author: { id: "user-a", username: "Alice" },
+        });
+
+        const first = (channel as any).enqueueMessage(message("qq-stop-first"), "MESSAGE_CREATE");
+        await firstStarted;
+        const second = (channel as any).enqueueMessage(message("qq-stop-second"), "MESSAGE_CREATE");
+        await Promise.resolve();
+        (channel as any)._running = true;
+
+        await channel.stop();
+        await second;
+        expect(handled).toEqual(["qq-stop-first"]);
+        expect(scheduler.getRuntimeSnapshots()[0]).toMatchObject({ activeCount: 1, queuedCount: 0 });
+
+        releaseFirst();
+        await first;
     });
 
     it("uses the requested chat context for proactive messages", async () => {

@@ -8,6 +8,7 @@ import type { CurrentConversationBindingStore } from "./current-conversation-bin
 import type { ChannelRouter } from "./router/types.js";
 import type { SecurityBackedChannelKind } from "./router/security-config.js";
 import type { ReplyChunkingConfig } from "./reply-chunking-config.js";
+import type { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 
 export type ChannelAgentResolver = (agentId?: string) => BelldandyAgent;
 export type ChannelProactiveTarget = string | {
@@ -43,6 +44,8 @@ export interface ChannelConfig {
     currentConversationBindingStore?: CurrentConversationBindingStore;
     /** 可选：当渠道 DM 命中 allowlist 阻断时记录待审批请求 */
     onChannelSecurityApprovalRequired?: (input: ChannelSecurityApprovalRequestInput) => void | Promise<void>;
+    /** 可选：Gateway 注入的共享入站调度器；独立渠道实例会创建本地 fallback。 */
+    ingressScheduler?: ChannelIngressScheduler;
 }
 
 /**

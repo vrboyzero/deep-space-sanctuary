@@ -349,6 +349,13 @@ export function createSettingsController({
     cfgChannelRouterEnabled,
     cfgChannelRouterConfigPath,
     cfgChannelRouterDefaultAgentId,
+    cfgChannelIngressMaxConcurrent,
+    cfgChannelIngressMaxConcurrentPerChannel,
+    cfgChannelIngressMaxPendingPerSession,
+    cfgChannelIngressMaxQueued,
+    cfgChannelIngressMaxWaitMs,
+    cfgChannelIngressMaxPayloadBytes,
+    cfgChannelIngressMaxQueuedPayloadBytes,
     cfgFeishuAppId,
     cfgFeishuAppSecret,
     cfgFeishuAgentId,
@@ -1074,6 +1081,13 @@ export function createSettingsController({
     if (cfgChannelRouterEnabled) cfgChannelRouterEnabled.checked = c["BELLDANDY_CHANNEL_ROUTER_ENABLED"] === "true";
     if (cfgChannelRouterConfigPath) cfgChannelRouterConfigPath.value = c["BELLDANDY_CHANNEL_ROUTER_CONFIG_PATH"] || "";
     if (cfgChannelRouterDefaultAgentId) cfgChannelRouterDefaultAgentId.value = c["BELLDANDY_CHANNEL_ROUTER_DEFAULT_AGENT_ID"] || "";
+    if (cfgChannelIngressMaxConcurrent) cfgChannelIngressMaxConcurrent.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT"] || "";
+    if (cfgChannelIngressMaxConcurrentPerChannel) cfgChannelIngressMaxConcurrentPerChannel.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT_PER_CHANNEL"] || "";
+    if (cfgChannelIngressMaxPendingPerSession) cfgChannelIngressMaxPendingPerSession.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_PENDING_PER_SESSION"] || "";
+    if (cfgChannelIngressMaxQueued) cfgChannelIngressMaxQueued.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED"] || "";
+    if (cfgChannelIngressMaxWaitMs) cfgChannelIngressMaxWaitMs.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_WAIT_MS"] || "";
+    if (cfgChannelIngressMaxPayloadBytes) cfgChannelIngressMaxPayloadBytes.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES"] || "";
+    if (cfgChannelIngressMaxQueuedPayloadBytes) cfgChannelIngressMaxQueuedPayloadBytes.value = c["BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES"] || "";
     if (cfgFeishuAppId) cfgFeishuAppId.value = c["BELLDANDY_FEISHU_APP_ID"] || "";
     if (cfgFeishuAppSecret) cfgFeishuAppSecret.value = c["BELLDANDY_FEISHU_APP_SECRET"] || "";
     if (cfgFeishuAgentId) cfgFeishuAgentId.value = c["BELLDANDY_FEISHU_AGENT_ID"] || "";
@@ -2306,6 +2320,13 @@ export function createSettingsController({
     if (cfgChannelRouterEnabled) updates["BELLDANDY_CHANNEL_ROUTER_ENABLED"] = cfgChannelRouterEnabled.checked ? "true" : "false";
     if (cfgChannelRouterConfigPath) updates["BELLDANDY_CHANNEL_ROUTER_CONFIG_PATH"] = cfgChannelRouterConfigPath.value.trim();
     if (cfgChannelRouterDefaultAgentId) updates["BELLDANDY_CHANNEL_ROUTER_DEFAULT_AGENT_ID"] = cfgChannelRouterDefaultAgentId.value.trim();
+    if (cfgChannelIngressMaxConcurrent) updates["BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT"] = cfgChannelIngressMaxConcurrent.value.trim();
+    if (cfgChannelIngressMaxConcurrentPerChannel) updates["BELLDANDY_CHANNEL_INGRESS_MAX_CONCURRENT_PER_CHANNEL"] = cfgChannelIngressMaxConcurrentPerChannel.value.trim();
+    if (cfgChannelIngressMaxPendingPerSession) updates["BELLDANDY_CHANNEL_INGRESS_MAX_PENDING_PER_SESSION"] = cfgChannelIngressMaxPendingPerSession.value.trim();
+    if (cfgChannelIngressMaxQueued) updates["BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED"] = cfgChannelIngressMaxQueued.value.trim();
+    if (cfgChannelIngressMaxWaitMs) updates["BELLDANDY_CHANNEL_INGRESS_MAX_WAIT_MS"] = cfgChannelIngressMaxWaitMs.value.trim();
+    if (cfgChannelIngressMaxPayloadBytes) updates["BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES"] = cfgChannelIngressMaxPayloadBytes.value.trim();
+    if (cfgChannelIngressMaxQueuedPayloadBytes) updates["BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES"] = cfgChannelIngressMaxQueuedPayloadBytes.value.trim();
     if (cfgFeishuAppId) updates["BELLDANDY_FEISHU_APP_ID"] = cfgFeishuAppId.value.trim();
     assignSecretUpdate(updates, "BELLDANDY_FEISHU_APP_SECRET", cfgFeishuAppSecret);
     if (cfgFeishuAgentId) updates["BELLDANDY_FEISHU_AGENT_ID"] = cfgFeishuAgentId.value.trim();

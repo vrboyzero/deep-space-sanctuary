@@ -149,6 +149,51 @@ describe("FeishuChannel", () => {
     expect(history[1]?.content).toBe("音频已处理: [音频转写]\ncached channel transcript");
   });
 
+  it("serializes group ingress by the shared chat history owner", async () => {
+    const channel = new FeishuChannel({
+      appId: "app-id",
+      appSecret: "app-secret",
+      conversationStore: new ConversationStore(),
+      agent: { run: vi.fn() } as any,
+    });
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const handled: string[] = [];
+    vi.spyOn(channel as any, "handleMessage").mockImplementation(async (event: any) => {
+      handled.push(event.message.message_id);
+      if (event.message.message_id === "feishu-ingress-first") {
+        markFirstStarted();
+        await firstGate;
+      }
+    });
+    const event = (messageId: string, userId: string) => ({
+      message: {
+        chat_id: "shared-feishu-chat",
+        message_id: messageId,
+        message_type: "text",
+        chat_type: "group",
+        content: JSON.stringify({ text: messageId }),
+      },
+      sender: { sender_id: { open_id: userId } },
+    });
+
+    const first = (channel as any).enqueueMessage(event("feishu-ingress-first", "user-a"));
+    await firstStarted;
+    const second = (channel as any).enqueueMessage(event("feishu-ingress-second", "user-b"));
+    await Promise.resolve();
+
+    expect(handled).toEqual(["feishu-ingress-first"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(handled).toEqual(["feishu-ingress-first", "feishu-ingress-second"]);
+  });
+
   it("reads audio payload from sdk response.data buffer shape", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     larkMock.getMessageResource.mockResolvedValueOnce({

@@ -4,6 +4,7 @@ import type { CurrentConversationBindingStore } from "./current-conversation-bin
 import type { Channel, ChannelConfig, ChannelEventListener, ChannelProactiveTarget } from "./types.js";
 import type { ChannelRouter } from "./router/types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
+import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
 import {
     ChannelSafeLogger,
@@ -45,6 +46,7 @@ export class DiscordChannel implements Channel {
     private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
     private readonly sttTranscribe?: DiscordChannelConfig["sttTranscribe"];
     private readonly onChannelSecurityApprovalRequired?: DiscordChannelConfig["onChannelSecurityApprovalRequired"];
+    private readonly ingressScheduler: ChannelIngressScheduler;
 
     constructor(config: DiscordChannelConfig) {
         this.agent = config.agent;
@@ -54,6 +56,7 @@ export class DiscordChannel implements Channel {
         this.currentConversationBindingStore = config.currentConversationBindingStore;
         this.sttTranscribe = config.sttTranscribe;
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
+        this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
     }
 
     private resolveAgent(agentId?: string): BelldandyAgent {
@@ -109,7 +112,7 @@ export class DiscordChannel implements Channel {
             if (this.client !== client || this.clientSession !== session) {
                 return;
             }
-            this.handleMessage(msg);
+            void this.enqueueMessage(msg);
         });
 
         client.on("error", (error) => {
@@ -155,6 +158,7 @@ export class DiscordChannel implements Channel {
         this.client = null;
         this.clientSession = session + 1;
         this._running = false;
+        this.ingressScheduler.cancelChannel(this.name);
         this.processedMessages.clear();
         if (client) {
             client.destroy();
@@ -215,6 +219,54 @@ export class DiscordChannel implements Channel {
                 status: "failed",
             };
         }
+    }
+
+    /** 仅提交已有 handler；history 仍按 legacy conversation owner 串行。 */
+    private enqueueMessage(message: Message): void {
+        const chatId = message.channelId;
+        const chatKind = message.guildId ? "channel" : "dm";
+        const session = buildChannelSessionDescriptor({
+            channel: "discord",
+            chatKind,
+            chatId,
+            senderId: message.author.id,
+        });
+        const scheduled = this.ingressScheduler.enqueue({
+            channel: this.name,
+            // Group channel history is keyed by channelId, not by the canonical per-sender session key.
+            sessionKey: session.legacyConversationId,
+            dedupeKey: message.id,
+            payloadBytes: Buffer.byteLength(message.content || "", "utf8"),
+            run: () => this.handleMessage(message),
+        });
+        if (!scheduled.accepted) {
+            channelSafeLogger.warn({
+                channel: this.name,
+                event: "ingress_rejected",
+                messageId: message.id,
+                failureKind: "resource_exhausted",
+                context: { reason: scheduled.reason },
+            });
+            return;
+        }
+        void scheduled.completion.then((completion) => {
+            if (completion.status !== "completed") {
+                channelSafeLogger.warn({
+                    channel: this.name,
+                    event: "ingress_not_completed",
+                    messageId: message.id,
+                    failureKind: completion.status,
+                    context: { outcome: completion.status },
+                });
+            }
+        }).catch(() => {
+            channelSafeLogger.error({
+                channel: this.name,
+                event: "queued_message_failed",
+                messageId: message.id,
+                failureKind: "internal_error",
+            });
+        });
     }
 
     private async handleMessage(message: Message): Promise<void> {
