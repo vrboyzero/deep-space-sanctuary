@@ -532,7 +532,8 @@ describe("ConversationStore", () => {
         const store = new ConversationStore({ dataDir });
 
         store.addMessage("conv-async-load", "user", "hello", { agentId: "agent-a", channel: "webchat" });
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        // 以实际 append 队列完成作为冷加载前置条件，避免全量并行测试下的任意时钟等待。
+        await store.waitForPendingPersistence("conv-async-load");
 
         const reloaded = new ConversationStore({ dataDir });
         const readFileSyncSpy = vi.spyOn(fs, "readFileSync");

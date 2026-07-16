@@ -276,13 +276,17 @@ test("subtask runtime store batches thought_delta persistence within a short win
     expect(writeFileSpy).not.toHaveBeenCalled();
 
     const started = Date.now();
+    const scratchPath = path.join(stateDir, "tasks", task.id, "scratch", "scratch-coder.md");
     let persisted: Awaited<ReturnType<SubTaskRuntimeStore["getTask"]>> | undefined;
+    let scratchContent = "";
     while (Date.now() - started < 1_500) {
       if (writeFileSpy.mock.calls.length > 0) {
         const reloaded = new SubTaskRuntimeStore(stateDir);
         await reloaded.load();
         persisted = await reloaded.getTask(task.id);
-        if (persisted?.progress.message === "second delta") {
+        // Registry 先于 artifact 原子写入，必须等待同一次 deferred persist 的 scratch 收尾完成。
+        scratchContent = await fs.readFile(scratchPath, "utf-8").catch(() => "");
+        if (persisted?.progress.message === "second delta" && scratchContent.includes("second delta")) {
           break;
         }
       }
@@ -291,7 +295,6 @@ test("subtask runtime store batches thought_delta persistence within a short win
 
     expect(writeFileSpy.mock.calls.length).toBeGreaterThan(0);
     expect(persisted?.progress.message).toBe("second delta");
-    const scratchContent = await fs.readFile(path.join(stateDir, "tasks", task.id, "scratch", "scratch-coder.md"), "utf-8");
     expect(scratchContent).toContain("second delta");
   } finally {
     writeFileSpy.mockRestore();
