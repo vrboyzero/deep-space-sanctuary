@@ -1,4 +1,5 @@
 import type { PluginRegistry } from "@belldandy/plugins";
+import type { PluginHookMetric } from "@belldandy/plugins";
 import type { PluginLoadErrorRecord } from "@belldandy/plugins";
 import type { SkillDefinition, SkillRegistry } from "@belldandy/skills";
 
@@ -49,6 +50,8 @@ export type ExtensionRuntimeReport = {
     disabledPluginCount: number;
     pluginToolCount: number;
     pluginLoadErrorCount: number;
+    pluginHookMetricCount: number;
+    pluginHookFailureCount: number;
     skillCount: number;
     disabledSkillCount: number;
     ineligibleSkillCount: number;
@@ -60,6 +63,8 @@ export type ExtensionRuntimeReport = {
   registry: ExtensionRegistryPlan;
   diagnostics: {
     pluginLoadErrors: PluginLoadErrorRecord[];
+    pluginHookMetrics: PluginHookMetric[];
+    hookMetricEvictionCount: number;
   };
 };
 
@@ -111,6 +116,7 @@ export function buildExtensionRuntimeReport(input: {
   const disabled = getDisabledConfig(input.toolsConfigManager);
 
   const pluginDiagnostics = input.pluginRegistry?.getDiagnostics();
+  const pluginHookMetrics = pluginDiagnostics?.hookMetrics ?? [];
   const plugins = (input.pluginRegistry?.listPlugins() ?? []).map((plugin) => ({
     ...plugin,
     toolNames: [...plugin.toolNames].sort((a, b) => a.localeCompare(b)),
@@ -158,6 +164,8 @@ export function buildExtensionRuntimeReport(input: {
       disabledPluginCount: plugins.filter((plugin) => plugin.disabled).length,
       pluginToolCount: plugins.reduce((sum, plugin) => sum + plugin.toolNames.length, 0),
       pluginLoadErrorCount: pluginDiagnostics?.loadErrors.length ?? 0,
+      pluginHookMetricCount: pluginHookMetrics.length,
+      pluginHookFailureCount: pluginHookMetrics.reduce((sum, metric) => sum + metric.failedCount, 0),
       skillCount: skills.length,
       disabledSkillCount: skills.filter((skill) => skill.disabled).length,
       ineligibleSkillCount: skills.filter((skill) => !skill.eligible).length,
@@ -169,6 +177,8 @@ export function buildExtensionRuntimeReport(input: {
     registry,
     diagnostics: {
       pluginLoadErrors: (pluginDiagnostics?.loadErrors ?? []).map((item) => ({ ...item })),
+      pluginHookMetrics: pluginHookMetrics.map((item) => ({ ...item })),
+      hookMetricEvictionCount: pluginDiagnostics?.hookMetricEvictionCount ?? 0,
     },
   };
 }

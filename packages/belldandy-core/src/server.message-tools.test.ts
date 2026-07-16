@@ -834,6 +834,8 @@ test("tools.list exposes visibility reasons for selected agent and conversation"
       disabledPluginCount: 1,
       pluginToolCount: 1,
       pluginLoadErrorCount: 0,
+      pluginHookMetricCount: 0,
+      pluginHookFailureCount: 0,
       skillCount: 3,
       disabledSkillCount: 1,
       ineligibleSkillCount: 1,

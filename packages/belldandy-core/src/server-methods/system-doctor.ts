@@ -1031,11 +1031,18 @@ export async function handleSystemDoctorMethod(
   });
 
   const overviewSyncResult = await captureDoctorStage(doctorPerformanceStages, "overview_sync", async () => {
-    const extensionRuntimeBase = ctx.extensionHost?.extensionRuntime ?? buildExtensionRuntimeReport({
-      pluginRegistry: ctx.pluginRegistry,
-      skillRegistry: ctx.skillRegistry,
-      toolsConfigManager: ctx.toolsConfigManager,
-    });
+    // Hook 指标会在运行期持续变化；有 live Registry 时不能复用启动时的 Host 快照。
+    const extensionRuntimeBase = (ctx.pluginRegistry || ctx.skillRegistry)
+      ? buildExtensionRuntimeReport({
+        pluginRegistry: ctx.pluginRegistry,
+        skillRegistry: ctx.skillRegistry,
+        toolsConfigManager: ctx.toolsConfigManager,
+      })
+      : (ctx.extensionHost?.extensionRuntime ?? buildExtensionRuntimeReport({
+        pluginRegistry: ctx.pluginRegistry,
+        skillRegistry: ctx.skillRegistry,
+        toolsConfigManager: ctx.toolsConfigManager,
+      }));
     const deploymentBackends = buildDeploymentBackendsDoctorReport({
       stateDir: ctx.stateDir,
     });

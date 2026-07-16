@@ -45,10 +45,35 @@ export interface PluginLoadErrorRecord {
     message: string;
 }
 
+/** Legacy Plugin Hook 的可观测阶段；不包含输入、参数或结果内容。 */
+export type PluginHookName = "beforeRun" | "afterRun" | "beforeToolCall" | "afterToolCall";
+
+/** Hook 返回 false 时保留阻断语义；异常继续交给调用方的现有错误策略。 */
+export type PluginHookOutcome = "succeeded" | "blocked" | "failed";
+
+/** 单个 Plugin Hook 的有界运行聚合，用于定位慢 Hook 且不保留调用内容。 */
+export interface PluginHookMetric {
+    pluginId: string;
+    hookName: PluginHookName;
+    invocationCount: number;
+    succeededCount: number;
+    blockedCount: number;
+    failedCount: number;
+    totalDurationMs: number;
+    maxDurationMs: number;
+    p50DurationMs: number;
+    p95DurationMs: number;
+    latestDurationMs: number;
+    latestOutcome: PluginHookOutcome;
+    latestAt: Date;
+}
+
 export interface PluginRegistryDiagnostics {
     pluginCount: number;
     toolCount: number;
     hookCount: number;
     skillDirCount: number;
     loadErrors: PluginLoadErrorRecord[];
+    hookMetrics: PluginHookMetric[];
+    hookMetricEvictionCount: number;
 }

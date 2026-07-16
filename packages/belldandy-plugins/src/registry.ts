@@ -4,6 +4,9 @@ import type {
     BelldandyPlugin,
     PluginContext,
     PluginDisposer,
+    PluginHookMetric,
+    PluginHookName,
+    PluginHookOutcome,
     PluginLoadErrorRecord,
     PluginRegistryDiagnostics,
     PluginRuntimeDescriptor,
@@ -13,10 +16,16 @@ import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const MAX_LOAD_ERRORS = 32;
+const MAX_HOOK_METRIC_KEYS = 128;
+const MAX_HOOK_DURATION_SAMPLES = 32;
 
 type PluginHookRegistration = {
     pluginId: string;
     hooks: AgentHooks;
+};
+
+type PluginHookMetricState = Omit<PluginHookMetric, "p50DurationMs" | "p95DurationMs"> & {
+    durationSamplesMs: number[];
 };
 
 export class PluginRegistryRegistrationError extends Error {
@@ -59,6 +68,9 @@ export class PluginRegistry {
      * 唯一性检查看到前一个已完成的所有权，而不是两个私有 staging 的竞态。
      */
     private pluginLoadQueue: Promise<void> = Promise.resolve();
+    /** 按 Plugin/Hook 聚合的有界运行诊断，不保留输入、参数或结果。 */
+    private hookMetrics: Map<string, PluginHookMetricState> = new Map();
+    private hookMetricEvictionCount = 0;
     /** 最近一次插件扫描/加载错误 */
     private loadErrors: PluginLoadErrorRecord[] = [];
     /** inventory 缓存代次 */
@@ -71,6 +83,8 @@ export class PluginRegistry {
         hookCount: 0,
         skillDirCount: 0,
         loadErrors: [],
+        hookMetrics: [],
+        hookMetricEvictionCount: 0,
     };
     private cachedLegacyHookAvailability = {
         beforeRun: false,
@@ -304,6 +318,8 @@ export class PluginRegistry {
         return {
             ...this.cachedDiagnostics,
             loadErrors: this.cachedDiagnostics.loadErrors.map((item) => ({ ...item })),
+            hookMetrics: this.listHookMetrics(),
+            hookMetricEvictionCount: this.hookMetricEvictionCount,
         };
     }
 
@@ -337,9 +353,9 @@ export class PluginRegistry {
     getAggregatedHooks(): AgentHooks {
         return {
             beforeRun: async (evt, ctx) => {
-                for (const { hooks: h } of this.hooksList) {
+                for (const { pluginId, hooks: h } of this.hooksList) {
                     if (h.beforeRun) {
-                        const res = await h.beforeRun(evt, ctx);
+                        const res = await this.runPluginHook(pluginId, "beforeRun", () => h.beforeRun!(evt, ctx));
                         if (res && typeof res === "object") {
                             evt.input = { ...evt.input, ...res };
                         }
@@ -347,14 +363,18 @@ export class PluginRegistry {
                 }
             },
             afterRun: async (evt, ctx) => {
-                for (const { hooks: h } of this.hooksList) {
-                    if (h.afterRun) await h.afterRun(evt, ctx);
+                for (const { pluginId, hooks: h } of this.hooksList) {
+                    if (h.afterRun) await this.runPluginHook(pluginId, "afterRun", () => h.afterRun!(evt, ctx));
                 }
             },
             beforeToolCall: async (evt, ctx) => {
-                for (const { hooks: h } of this.hooksList) {
+                for (const { pluginId, hooks: h } of this.hooksList) {
                     if (h.beforeToolCall) {
-                        const result = await h.beforeToolCall(evt, ctx);
+                        const result = await this.runPluginHook(
+                            pluginId,
+                            "beforeToolCall",
+                            () => h.beforeToolCall!(evt, ctx),
+                        );
                         if (result === false) return false; // Block execution
                         if (typeof result === "object") {
                             // Merge argument overrides
@@ -364,8 +384,8 @@ export class PluginRegistry {
                 }
             },
             afterToolCall: async (evt, ctx) => {
-                for (const { hooks: h } of this.hooksList) {
-                    if (h.afterToolCall) await h.afterToolCall(evt, ctx);
+                for (const { pluginId, hooks: h } of this.hooksList) {
+                    if (h.afterToolCall) await this.runPluginHook(pluginId, "afterToolCall", () => h.afterToolCall!(evt, ctx));
                 }
             }
         };
@@ -387,6 +407,115 @@ export class PluginRegistry {
             this.loadErrors.splice(0, this.loadErrors.length - MAX_LOAD_ERRORS);
         }
         this.invalidateInventoryCache();
+    }
+
+    /**
+     * 只包裹观测，不吞掉 Hook 的返回值或异常；由现有 HookRunner 决定最终 fail-open/fail-closed 行为。
+     */
+    private async runPluginHook<TResult>(
+        pluginId: string,
+        hookName: PluginHookName,
+        handler: () => TResult | Promise<TResult>,
+    ): Promise<TResult> {
+        const startedAt = Date.now();
+        let outcome: PluginHookOutcome = "succeeded";
+        try {
+            const result = await handler();
+            if (hookName === "beforeToolCall" && result === false) {
+                outcome = "blocked";
+            }
+            return result;
+        } catch (error) {
+            outcome = "failed";
+            throw error;
+        } finally {
+            this.recordHookMetric(pluginId, hookName, Date.now() - startedAt, outcome);
+        }
+    }
+
+    private recordHookMetric(
+        pluginId: string,
+        hookName: PluginHookName,
+        durationMs: number,
+        outcome: PluginHookOutcome,
+    ): void {
+        const metricKey = `${pluginId}\u0000${hookName}`;
+        let metric = this.hookMetrics.get(metricKey);
+        if (!metric) {
+            if (this.hookMetrics.size >= MAX_HOOK_METRIC_KEYS) {
+                const oldestKey = this.hookMetrics.keys().next().value;
+                if (typeof oldestKey === "string") {
+                    this.hookMetrics.delete(oldestKey);
+                    this.hookMetricEvictionCount += 1;
+                }
+            }
+            metric = {
+                pluginId,
+                hookName,
+                invocationCount: 0,
+                succeededCount: 0,
+                blockedCount: 0,
+                failedCount: 0,
+                totalDurationMs: 0,
+                maxDurationMs: 0,
+                latestDurationMs: 0,
+                latestOutcome: outcome,
+                latestAt: new Date(),
+                durationSamplesMs: [],
+            };
+        } else {
+            // Map 的尾部表示最近访问，容量打满后从头部淘汰最久未更新的键。
+            this.hookMetrics.delete(metricKey);
+        }
+
+        const safeDurationMs = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+        metric.invocationCount += 1;
+        metric.totalDurationMs += safeDurationMs;
+        metric.maxDurationMs = Math.max(metric.maxDurationMs, safeDurationMs);
+        metric.latestDurationMs = safeDurationMs;
+        metric.latestOutcome = outcome;
+        metric.latestAt = new Date();
+        metric.durationSamplesMs.push(safeDurationMs);
+        if (metric.durationSamplesMs.length > MAX_HOOK_DURATION_SAMPLES) {
+            metric.durationSamplesMs.splice(0, metric.durationSamplesMs.length - MAX_HOOK_DURATION_SAMPLES);
+        }
+        if (outcome === "succeeded") metric.succeededCount += 1;
+        if (outcome === "blocked") metric.blockedCount += 1;
+        if (outcome === "failed") metric.failedCount += 1;
+        this.hookMetrics.set(metricKey, metric);
+    }
+
+    private listHookMetrics(): PluginHookMetric[] {
+        return Array.from(this.hookMetrics.values())
+            .map((metric) => {
+                const samples = [...metric.durationSamplesMs].sort((a, b) => a - b);
+                return {
+                    pluginId: metric.pluginId,
+                    hookName: metric.hookName,
+                    invocationCount: metric.invocationCount,
+                    succeededCount: metric.succeededCount,
+                    blockedCount: metric.blockedCount,
+                    failedCount: metric.failedCount,
+                    totalDurationMs: metric.totalDurationMs,
+                    maxDurationMs: metric.maxDurationMs,
+                    p50DurationMs: this.getDurationPercentile(samples, 0.5),
+                    p95DurationMs: this.getDurationPercentile(samples, 0.95),
+                    latestDurationMs: metric.latestDurationMs,
+                    latestOutcome: metric.latestOutcome,
+                    latestAt: new Date(metric.latestAt),
+                };
+            })
+            .sort((left, right) => (
+                right.latestAt.getTime() - left.latestAt.getTime()
+                || left.pluginId.localeCompare(right.pluginId)
+                || left.hookName.localeCompare(right.hookName)
+            ));
+    }
+
+    private getDurationPercentile(samples: number[], percentile: number): number {
+        if (samples.length === 0) return 0;
+        const index = Math.min(samples.length - 1, Math.max(0, Math.ceil(samples.length * percentile) - 1));
+        return samples[index] ?? 0;
     }
 
     /** Execute cleanup callbacks in reverse registration order and retain every failure in diagnostics. */
@@ -444,6 +573,8 @@ export class PluginRegistry {
             hookCount: this.hooksList.length,
             skillDirCount: this.pluginSkillDirs.size,
             loadErrors: this.loadErrors.map((item) => ({ ...item })),
+            hookMetrics: [],
+            hookMetricEvictionCount: 0,
         };
         this.cachedLegacyHookAvailability = {
             beforeRun: this.hooksList.some(({ hooks }) => typeof hooks.beforeRun === "function"),

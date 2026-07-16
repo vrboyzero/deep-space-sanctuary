@@ -451,4 +451,156 @@ describe("PluginRegistry", () => {
     expect(errors[0]?.target).toContain("broken-4.mjs");
     expect(errors.at(-1)?.target).toContain("broken-35.mjs");
   });
+
+  it("aggregates hook timing and outcomes without retaining hook inputs", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-hook-metrics-"));
+    tempDirs.push(dir);
+    const pluginPath = path.join(dir, "hook-metrics-plugin.mjs");
+
+    await fs.writeFile(
+      pluginPath,
+      [
+        "export default {",
+        "  id: 'hook-metrics-plugin',",
+        "  name: 'Hook Metrics Plugin',",
+        "  async activate(context) {",
+        "    context.registerHooks({",
+        "      beforeRun() {},",
+        "      beforeToolCall() { return false; },",
+        "      afterToolCall() { throw new Error('after hook failure'); },",
+        "    });",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const registry = new PluginRegistry();
+    await registry.loadPlugin(pluginPath);
+    const hooks = registry.getAggregatedHooks();
+    const dateNow = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(110)
+      .mockReturnValueOnce(200)
+      .mockReturnValueOnce(205)
+      .mockReturnValueOnce(300)
+      .mockReturnValueOnce(315);
+    const secret = "plugin-hook-input-must-not-escape";
+
+    try {
+      await hooks.beforeRun?.({ input: { secret } } as never, { conversationId: "metrics" });
+      await expect(hooks.beforeToolCall?.({
+        id: "tool-call",
+        toolName: "demo",
+        arguments: { secret },
+      } as never, { conversationId: "metrics" })).resolves.toBe(false);
+      await expect(hooks.afterToolCall?.({
+        id: "tool-call",
+        toolName: "demo",
+        arguments: { secret },
+        result: "ok",
+        success: true,
+      } as never, { conversationId: "metrics" })).rejects.toThrow("after hook failure");
+    } finally {
+      dateNow.mockRestore();
+    }
+
+    const diagnostics = registry.getDiagnostics() as unknown as {
+      hookMetrics: Array<Record<string, unknown>>;
+    };
+    expect(diagnostics.hookMetrics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        pluginId: "hook-metrics-plugin",
+        hookName: "beforeRun",
+        invocationCount: 1,
+        succeededCount: 1,
+        blockedCount: 0,
+        failedCount: 0,
+        totalDurationMs: 10,
+        maxDurationMs: 10,
+        p50DurationMs: 10,
+        p95DurationMs: 10,
+        latestDurationMs: 10,
+        latestOutcome: "succeeded",
+        latestAt: expect.any(Date),
+      }),
+      expect.objectContaining({
+        pluginId: "hook-metrics-plugin",
+        hookName: "beforeToolCall",
+        invocationCount: 1,
+        succeededCount: 0,
+        blockedCount: 1,
+        failedCount: 0,
+        totalDurationMs: 5,
+        latestOutcome: "blocked",
+      }),
+      expect.objectContaining({
+        pluginId: "hook-metrics-plugin",
+        hookName: "afterToolCall",
+        invocationCount: 1,
+        succeededCount: 0,
+        blockedCount: 0,
+        failedCount: 1,
+        totalDurationMs: 15,
+        latestOutcome: "failed",
+      }),
+    ]));
+    expect(JSON.stringify(diagnostics.hookMetrics)).not.toContain(secret);
+  });
+
+  it("bounds hook metric keys with least-recent eviction", () => {
+    const registry = new PluginRegistry();
+    const recordHookMetric = (registry as any).recordHookMetric.bind(registry) as (
+      pluginId: string,
+      hookName: string,
+      durationMs: number,
+      outcome: string,
+    ) => void;
+
+    for (let index = 0; index < 128; index += 1) {
+      recordHookMetric(`plugin-${index}`, "beforeRun", index, "succeeded");
+    }
+    // Refresh the oldest key before capacity is exceeded; the next eviction must be plugin-1.
+    recordHookMetric("plugin-0", "beforeRun", 128, "succeeded");
+    recordHookMetric("plugin-128", "beforeRun", 129, "succeeded");
+
+    const diagnostics = registry.getDiagnostics() as unknown as {
+      hookMetrics: Array<{ pluginId: string }>;
+      hookMetricEvictionCount: number;
+    };
+    expect(diagnostics.hookMetrics).toHaveLength(128);
+    expect(diagnostics.hookMetricEvictionCount).toBe(1);
+    expect(diagnostics.hookMetrics.some((metric) => metric.pluginId === "plugin-0")).toBe(true);
+    expect(diagnostics.hookMetrics.some((metric) => metric.pluginId === "plugin-1")).toBe(false);
+    expect(diagnostics.hookMetrics.some((metric) => metric.pluginId === "plugin-128")).toBe(true);
+  });
+
+  it("bounds hook duration samples while preserving aggregate totals", () => {
+    const registry = new PluginRegistry();
+    const recordHookMetric = (registry as any).recordHookMetric.bind(registry) as (
+      pluginId: string,
+      hookName: string,
+      durationMs: number,
+      outcome: string,
+    ) => void;
+
+    for (let durationMs = 1; durationMs <= 40; durationMs += 1) {
+      recordHookMetric("sampled-plugin", "afterRun", durationMs, "succeeded");
+    }
+
+    const metric = registry.getDiagnostics().hookMetrics.find((item) => (
+      item.pluginId === "sampled-plugin" && item.hookName === "afterRun"
+    ));
+    expect(metric).toMatchObject({
+      invocationCount: 40,
+      succeededCount: 40,
+      totalDurationMs: 820,
+      maxDurationMs: 40,
+      // Only the latest 32 samples (9..40) participate in percentile diagnostics.
+      p50DurationMs: 24,
+      p95DurationMs: 39,
+      latestDurationMs: 40,
+    });
+  });
 });

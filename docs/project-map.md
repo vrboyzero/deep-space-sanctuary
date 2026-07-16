@@ -214,7 +214,7 @@ star-sanctuary/
 - `packages/belldandy-skills/src/builtin/switch-faqi.ts`: 当前 Agent 自助切换 currentFaqi，并提示重启生效
 - `packages/belldandy-skills/src/builtin/multimedia/`: 图片生成、图片识别、视频识别、TTS/STT、摄像头与屏幕截图工具
 - `packages/belldandy-skills/src/skill-registry.ts`: skills 汇总与 eligibility
-- `packages/belldandy-plugins/src/registry.ts`: Plugin staging 加载、Tool/Hook/Skill 所有权、unload/dispose 生命周期与有界诊断
+- `packages/belldandy-plugins/src/registry.ts`: Plugin staging 加载、Tool/Hook/Skill 所有权、unload/dispose 生命周期，以及不保留调用内容的有界 Hook 耗时/结果诊断
 - `packages/belldandy-core/src/extension-host.ts` / `extension-integrity.ts`: Marketplace 扩展加载 seam、物化目录内容 hash 与真实路径/manifest identity 校验
 - `packages/belldandy-mcp/src/client.ts`: MCP 操作 deadline、调用方取消与 transport/child lease 清理
 - `packages/belldandy-mcp/src/manager.ts`: MCP server 连接管理

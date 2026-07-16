@@ -1504,6 +1504,21 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
       },
     },
   };
+  // The Extension Host snapshot predates this runtime metric. Doctor must rebuild from the live Registry.
+  ((pluginRegistry as any).hookMetrics).set("demo-plugin\u0000beforeRun", {
+    pluginId: "demo-plugin",
+    hookName: "beforeRun",
+    invocationCount: 1,
+    succeededCount: 1,
+    blockedCount: 0,
+    failedCount: 0,
+    totalDurationMs: 7,
+    maxDurationMs: 7,
+    durationSamplesMs: [7],
+    latestDurationMs: 7,
+    latestOutcome: "succeeded",
+    latestAt: new Date("2026-04-02T12:07:00.000Z"),
+  });
 
   const server = await startGatewayServer({
     port: 0,
@@ -1540,6 +1555,8 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
       disabledPluginCount: 1,
       pluginToolCount: 1,
       pluginLoadErrorCount: 1,
+      pluginHookMetricCount: 1,
+      pluginHookFailureCount: 0,
       skillCount: 2,
       disabledSkillCount: 1,
       ineligibleSkillCount: 0,
@@ -1551,6 +1568,16 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
         phase: "load_plugin",
         target: "broken-plugin.mjs",
         message: "missing activate function",
+      }),
+    ]);
+    expect(response.payload?.extensionRuntime?.diagnostics?.pluginHookMetrics).toEqual([
+      expect.objectContaining({
+        pluginId: "demo-plugin",
+        hookName: "beforeRun",
+        totalDurationMs: 7,
+        p50DurationMs: 7,
+        p95DurationMs: 7,
+        latestOutcome: "succeeded",
       }),
     ]);
     expect(response.payload?.extensionRuntime?.registry).toEqual({
