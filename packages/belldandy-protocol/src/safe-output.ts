@@ -107,6 +107,12 @@ export function redactSensitiveValue(
 export function redactSensitiveUrl(value: string): string {
   try {
     const url = new URL(value);
+    if (url.username) {
+      url.username = REDACTED_VALUE;
+    }
+    if (url.password) {
+      url.password = REDACTED_VALUE;
+    }
     for (const key of Array.from(url.searchParams.keys())) {
       if (SENSITIVE_QUERY_KEY_PATTERN.test(key)) {
         url.searchParams.set(key, REDACTED_VALUE);

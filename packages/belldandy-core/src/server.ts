@@ -22,7 +22,11 @@ import {
   type DurableExtractionDigestSnapshot,
   type DurableExtractionRecord,
 } from "@belldandy/memory";
-import { DEFAULT_STATE_DIR_DISPLAY, type TokenUsageUploadConfig } from "@belldandy/protocol";
+import {
+  DEFAULT_STATE_DIR_DISPLAY,
+  getTokenUsageUploadRuntimeSnapshot,
+  type TokenUsageUploadConfig,
+} from "@belldandy/protocol";
 import { MockAgent, type AgentPromptDelta, type BelldandyAgent, ConversationStore, type AgentRegistry, isResidentAgentProfile, type ModelProfile, type CompactionRuntimeReport, type ProviderNativeSystemBlock, type SessionTimelineProjection, type SessionTranscriptExportBundle, type SystemPromptSection } from "@belldandy/agent";
 import type {
   GatewayReqFrame,
@@ -1234,6 +1238,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     eventLoopDelayResolutionMs: parsePositiveIntEnv("BELLDANDY_RUNTIME_RESOURCE_EVENT_LOOP_RESOLUTION_MS", 20),
     queueProviders: [
       () => opts.getRuntimeResourceQueueSnapshots?.() ?? [],
+      () => [getTokenUsageUploadRuntimeSnapshot()],
       () => {
         const snapshot = durableExtractionRuntime?.getRuntimeSnapshot();
         return snapshot ? [{ id: "durable_extraction", ...snapshot }] : [];

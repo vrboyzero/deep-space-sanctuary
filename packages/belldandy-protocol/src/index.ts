@@ -51,8 +51,21 @@ export type {
   FilesystemCapabilityPathOptions,
 } from "./filesystem-capability.js";
 
-export type { TokenUsageUploadConfig, TokenUsageUploadLogger } from "./token-usage-upload.js";
-export { uploadTokenUsage } from "./token-usage-upload.js";
+export type {
+  TokenUsageUploadConfig,
+  TokenUsageUploadInput,
+  TokenUsageUploadLogger,
+  TokenUsageUploadRequest,
+  TokenUsageUploadRequestInput,
+  TokenUsageUploadRuntimeSnapshot,
+  TokenUsageUploadScheduler,
+  TokenUsageUploadSchedulerOptions,
+} from "./token-usage-upload.js";
+export {
+  createTokenUsageUploadScheduler,
+  getTokenUsageUploadRuntimeSnapshot,
+  uploadTokenUsage,
+} from "./token-usage-upload.js";
 export {
   buildIdentityAuthorityMayDirect,
   buildIdentityAuthorityReportsTo,

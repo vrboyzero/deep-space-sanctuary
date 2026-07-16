@@ -4,6 +4,7 @@ import {
   createPublicFailureEnvelope,
   readResponseTextBounded,
   redactSensitiveText,
+  redactSensitiveUrl,
   redactSensitiveValue,
 } from "./safe-output.js";
 
@@ -58,6 +59,15 @@ describe("safe output contracts", () => {
       retryable: true,
     });
     expect(JSON.stringify(failure)).not.toContain("not-for-user");
+  });
+
+  it("redacts URL userinfo together with sensitive query parameters", () => {
+    const redacted = redactSensitiveUrl("https://owner:password@example.test/callback?token=query-secret&safe=ok");
+
+    expect(redacted).not.toContain("owner");
+    expect(redacted).not.toContain("password");
+    expect(redacted).not.toContain("query-secret");
+    expect(redacted).toContain("token=%5BREDACTED%5D");
   });
 
   it("reads error responses with a byte limit and redacts retained text", async () => {

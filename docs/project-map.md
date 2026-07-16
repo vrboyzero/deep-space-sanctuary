@@ -111,6 +111,7 @@ star-sanctuary/
 ### Auth / Pairing / Security
 - `packages/belldandy-core/src/security/`: pairing、allowlist、连接安全
 - `packages/belldandy-protocol/src/safe-output.ts` / `outbound-request-policy.ts`: 公共错误脱敏、受限输出读取与出站 URL/redirect 策略
+- `packages/belldandy-protocol/src/token-usage-upload.ts`: owner token-usage 的有界单飞上传队列、超时/错误正文限界与资源水位快照
 - `packages/belldandy-core/src/server-websocket-runtime.ts`: WebSocket 握手、鉴权、可用 methods/events
 - `packages/belldandy-core/src/gateway-method-registry.ts` / `request-admission.ts`: RPC 方法目录、风险分类、配对/role/capability admission
 - `packages/belldandy-core/src/channel-security-store.ts`: 渠道安全审批配置
