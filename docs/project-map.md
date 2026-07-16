@@ -27,7 +27,7 @@ star-sanctuary/
 │   ├── belldandy-memory/                  # memory store、indexer、task/experience
 │   ├── belldandy-channels/                # Feishu / QQ / Discord / community / router
 │   ├── belldandy-mcp/                     # MCP client、manager、tool bridge
-│   ├── belldandy-plugins/                 # 动态插件加载与 hooks/tool 聚合
+│   ├── belldandy-plugins/                 # 动态插件加载、生命周期与 hooks/tool 所有权
 │   ├── belldandy-browser/                 # Browser Relay server
 │   ├── belldandy-core/                    # Gateway、CLI、HTTP/WS、goals、cron、doctor
 │   └── star-sanctuary-distribution/       # portable/single-exe/runtime 路径与安装布局
@@ -51,7 +51,7 @@ star-sanctuary/
 | `@belldandy/core` | CLI、Gateway 装配、HTTP/WS server、query-runtime、goals、cron、doctor | `packages/belldandy-core/src/index.ts` |
 | `@belldandy/channels` | 外部渠道适配与 router | `packages/belldandy-channels/src/index.ts` |
 | `@belldandy/mcp` | MCP 配置、连接管理、工具桥接 | `packages/belldandy-mcp/src/index.ts` |
-| `@belldandy/plugins` | 插件加载、工具注册、hooks 聚合 | `packages/belldandy-plugins/src/index.ts` |
+| `@belldandy/plugins` | 插件加载、Tool/Hook/Skill 所有权、卸载生命周期与 hooks 聚合 | `packages/belldandy-plugins/src/index.ts` |
 | `@belldandy/browser` | Relay server，桥接 Chrome 扩展与 CDP client | `packages/belldandy-browser/src/index.ts` |
 | `@star-sanctuary/distribution` | runtime 路径解析、bootstrap auth token、portable/single-exe 运行时处理与前台 Gateway supervisor lifecycle | `packages/star-sanctuary-distribution/src/index.ts` |
 | `apps/web` | WebChat 前端功能编排与 UI | `apps/web/public/app.js` |
@@ -214,7 +214,7 @@ star-sanctuary/
 - `packages/belldandy-skills/src/builtin/switch-faqi.ts`: 当前 Agent 自助切换 currentFaqi，并提示重启生效
 - `packages/belldandy-skills/src/builtin/multimedia/`: 图片生成、图片识别、视频识别、TTS/STT、摄像头与屏幕截图工具
 - `packages/belldandy-skills/src/skill-registry.ts`: skills 汇总与 eligibility
-- `packages/belldandy-plugins/src/registry.ts`: plugin 加载和 hooks 聚合
+- `packages/belldandy-plugins/src/registry.ts`: Plugin staging 加载、Tool/Hook/Skill 所有权、unload/dispose 生命周期与有界诊断
 - `packages/belldandy-core/src/extension-host.ts` / `extension-integrity.ts`: Marketplace 扩展加载 seam、物化目录内容 hash 与真实路径/manifest identity 校验
 - `packages/belldandy-mcp/src/client.ts`: MCP 操作 deadline、调用方取消与 transport/child lease 清理
 - `packages/belldandy-mcp/src/manager.ts`: MCP server 连接管理
