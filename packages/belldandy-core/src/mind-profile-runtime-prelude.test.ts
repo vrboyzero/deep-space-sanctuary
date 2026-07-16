@@ -107,6 +107,8 @@ describe("buildMindProfileRuntimePrelude", () => {
       blockTag: "mind-profile-runtime",
       sessionKind: "main",
       signalCount: expect.any(Number),
+      // canonical profile state 是此 prelude 的更强激活依据，即使摘要信号也达到阈值。
+      activationReason: "profile_state_present",
       profileStateLineCount: 2,
       summaryLineCount: 1,
       profileStatePaths: [

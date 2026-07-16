@@ -235,7 +235,8 @@ export async function buildMindProfileRuntimePrelude(input: {
           charCount: runtimeBlock.charCount,
           includedSignals: digest.summary.includedSignals,
           headline: digest.summary.headline,
-          activationReason: meetsSignalThreshold ? "signal_threshold" : "profile_state_present",
+          // canonical profile state 是可验证真值，出现时优先于摘要信号说明注入原因。
+          activationReason: hasCanonicalProfileState ? "profile_state_present" : "signal_threshold",
           profileStateLineCount: runtimeBlock.profileStateLineCount,
           summaryLineCount: runtimeBlock.summaryLineCount,
           profileStatePaths: canonicalProfileState.paths,
