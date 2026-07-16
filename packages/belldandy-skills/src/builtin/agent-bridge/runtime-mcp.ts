@@ -111,6 +111,7 @@ export async function executeBridgeMcpRun(
       serverId: target.entry.mcp.serverId,
       toolName,
       arguments: args,
+      ...(context.abortSignal ? { signal: context.abortSignal } : {}),
     });
     const stdout = stringifyMcpResult(result);
     const output = clampBridgeOutput(target, stdout, "", context);

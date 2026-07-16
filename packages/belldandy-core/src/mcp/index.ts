@@ -11,6 +11,7 @@ import {
   shutdownMCP,
   getMCPManager,
   type MCPManager,
+  type MCPExecutionOptions,
   type MCPServerRuntimeDiagnostics,
   type MCPToolInfo,
 } from "@belldandy/mcp";
@@ -53,7 +54,11 @@ const state: MCPIntegrationState = {
  */
 function mcpToolToTool(
   mcpTool: MCPToolInfo,
-  callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>
+  callTool: (
+    name: string,
+    args: Record<string, unknown>,
+    options?: MCPExecutionOptions,
+  ) => Promise<unknown>,
 ): Tool {
   const shortDescription = String(mcpTool.description ?? "").split(/\r?\n/)[0]?.trim()
     || `MCP tool ${mcpTool.name}`;
@@ -72,7 +77,12 @@ function mcpToolToTool(
     execute: async (args: JsonObject, context: ToolContext): Promise<ToolCallResult> => {
       const start = Date.now();
       try {
-        const result = await callTool(mcpTool.bridgedName, args as Record<string, unknown>);
+        // ToolExecutor 的取消信号必须进入 MCP deadline seam，不能只停止等待方。
+        const result = await callTool(
+          mcpTool.bridgedName,
+          args as Record<string, unknown>,
+          context.abortSignal ? { signal: context.abortSignal } : undefined,
+        );
         return {
           id: "",  // 由 ToolExecutor 设置
           name: mcpTool.bridgedName,
@@ -197,11 +207,15 @@ export function getMCPTools(): Tool[] {
   const mcpTools = state.manager.getAllTools();
   
   return mcpTools.map((tool: MCPToolInfo) =>
-    mcpToolToTool(tool, async (name: string, args: Record<string, unknown>) => {
+    mcpToolToTool(tool, async (
+      name: string,
+      args: Record<string, unknown>,
+      options?: MCPExecutionOptions,
+    ) => {
       const result = await state.manager!.callTool({
         name,
         arguments: args,
-      });
+      }, options);
 
       if (result.isError) {
         throw new Error(

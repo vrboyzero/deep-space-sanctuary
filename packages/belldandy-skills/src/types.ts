@@ -305,6 +305,8 @@ export type MCPRuntimeToolCallRequest = {
   serverId: string;
   toolName: string;
   arguments: Record<string, unknown>;
+  /** 由 ToolContext 透传的协作式取消信号。 */
+  signal?: AbortSignal;
 };
 
 export type MCPRuntimeToolInfoSnapshot = {

@@ -8,6 +8,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import spawn from "cross-spawn";
 import fs from "node:fs/promises";
@@ -25,6 +26,7 @@ import {
   type MCPServerStatus,
   type MCPServerFailureKind,
   type MCPServerFailureSource,
+  type MCPExecutionOptions,
   type MCPServerResultSource,
   type MCPServerRuntimeDiagnostics,
   type MCPToolInfo,
@@ -38,11 +40,20 @@ import {
   type MCPEventListener,
   isStdioTransport,
   isSSETransport,
+  DEFAULT_SERVER_CONFIG,
 } from "./types.js";
 import { mcpDebug, mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
 import { BoundedStdioStderrLineBuffer } from "./stdio-stderr.js";
 
 type MCPConnectFailureLogLevel = "error" | "none";
+type MCPConnectOptions = MCPExecutionOptions & {
+  failureLogLevel?: MCPConnectFailureLogLevel;
+};
+
+type MCPConnectionLease = {
+  client: Client;
+  transport: Transport | null;
+};
 
 const FILESYSTEM_SERVER_PACKAGE = "@modelcontextprotocol/server-filesystem";
 const EXTRA_WORKSPACE_ROOTS_ENV_KEY = "BELLDANDY_EXTRA_WORKSPACE_ROOTS";
@@ -59,6 +70,41 @@ const STDIO_STDERR_IGNORE_PATTERNS: Record<string, RegExp[]> = {
     /^No handler registered for issue code PerformanceIssue$/,
   ],
 };
+
+/**
+ * 表示 MCP SDK 操作超过配置 deadline。消息只含受控 source 和时长，避免泄漏请求内容。
+ */
+export class MCPDeadlineError extends Error {
+  readonly source: MCPServerFailureSource;
+  readonly timeoutMs: number;
+
+  constructor(source: MCPServerFailureSource, timeoutMs: number) {
+    super("MCP " + source + " timed out after " + timeoutMs + "ms.");
+    this.name = "MCPDeadlineError";
+    this.source = source;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * 表示上层主动取消 MCP 操作。它与 transport 故障分开记录，避免无意义自动重连。
+ */
+export class MCPAbortError extends Error {
+  readonly source: MCPServerFailureSource;
+
+  constructor(source: MCPServerFailureSource) {
+    super("MCP " + source + " cancelled by caller.");
+    this.name = "MCPAbortError";
+    this.source = source;
+  }
+}
+
+function normalizeTimeoutMs(value: number | undefined, fallback: number): number {
+  if (Number.isFinite(value) && value! > 0) {
+    return Math.floor(value!);
+  }
+  return fallback;
+}
 
 export function shouldPipeStdioStderr(serverId: string): boolean {
   return (STDIO_STDERR_IGNORE_PATTERNS[serverId]?.length ?? 0) > 0;
@@ -321,6 +367,9 @@ type MCPNormalizedBinaryItem = {
 export class MCPClient {
   /** 服务器配置 */
   private config: MCPServerConfig;
+
+  /** server 未设置 timeout 时继承的全局默认值 */
+  private readonly defaultTimeoutMs: number;
   
   /** MCP SDK 客户端实例 */
   private client: Client | null = null;
@@ -370,8 +419,15 @@ export class MCPClient {
     reconnectAttempts: 0,
   };
 
-  constructor(config: MCPServerConfig) {
+  constructor(
+    config: MCPServerConfig,
+    options: { defaultTimeoutMs?: number } = {},
+  ) {
     this.config = config;
+    this.defaultTimeoutMs = normalizeTimeoutMs(
+      options.defaultTimeoutMs,
+      DEFAULT_SERVER_CONFIG.timeout,
+    );
   }
 
   // ==========================================================================
@@ -411,7 +467,7 @@ export class MCPClient {
   /**
    * 连接到 MCP 服务器
    */
-  async connect(options?: { failureLogLevel?: MCPConnectFailureLogLevel }): Promise<void> {
+  async connect(options: MCPConnectOptions = {}): Promise<void> {
     if (this.status === "connected" || this.status === "connecting") {
       mcpLog(`mcp:${this.config.id}`, "已连接或正在连接中，跳过");
       return;
@@ -423,9 +479,6 @@ export class MCPClient {
     this.error = undefined;
 
     try {
-      // 创建传输层
-      this.transport = await this.createTransport();
-
       // 创建客户端
       this.client = new Client(
         {
@@ -437,8 +490,23 @@ export class MCPClient {
         }
       );
 
+      // 传输创建和握手均受同一 deadline 约束，避免 DNS/stdio 启动卡住连接状态。
+      this.transport = await this.runWithDeadline(
+        "connect",
+        () => this.createTransport(),
+        options,
+      );
+
       // 连接到服务器
-      await this.client.connect(this.transport);
+      const transport = this.transport;
+      if (!transport) {
+        throw new Error("MCP transport was not created.");
+      }
+      await this.runWithDeadline(
+        "connect",
+        (sdkClient, requestOptions) => sdkClient.connect(transport, requestOptions),
+        options,
+      );
 
       // 获取服务器信息
       const serverInfo = this.client.getServerVersion();
@@ -449,7 +517,7 @@ export class MCPClient {
       };
 
       // 发现工具和资源
-      await this.discoverCapabilities();
+      await this.discoverCapabilities(options);
 
       // 更新状态
       this.connectedAt = new Date();
@@ -462,7 +530,7 @@ export class MCPClient {
       this.error = err instanceof Error ? err.message : String(err);
       this.recordFailure(err, { source: "connect" });
       this.setStatus("error");
-      if ((options?.failureLogLevel ?? "error") === "error") {
+      if ((options.failureLogLevel ?? "error") === "error") {
         mcpError(`mcp:${this.config.id}`, `连接失败: ${this.error}`);
       }
       
@@ -524,7 +592,8 @@ export class MCPClient {
    */
   async callTool(
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    options: MCPExecutionOptions = {},
   ): Promise<MCPToolCallResult> {
     if (!this.client || this.status !== "connected") {
       return {
@@ -541,10 +610,18 @@ export class MCPClient {
           : mcpLog;
       logToolCall(`mcp:${this.config.id}`, `调用工具: ${toolName}`);
       const result = await this.executeWithSessionRecovery("call_tool", () =>
-        this.client!.callTool({
-          name: toolName,
-          arguments: args,
-        })
+        this.runWithDeadline(
+          "call_tool",
+          (sdkClient, requestOptions) => sdkClient.callTool(
+            {
+              name: toolName,
+              arguments: args,
+            },
+            undefined,
+            requestOptions,
+          ),
+          options,
+        )
       );
 
       const normalized = await this.normalizeToolCallContent(
@@ -578,7 +655,10 @@ export class MCPClient {
    * @param uri 资源 URI
    * @returns 资源内容
    */
-  async readResource(uri: string): Promise<MCPResourceReadResult> {
+  async readResource(
+    uri: string,
+    options: MCPExecutionOptions = {},
+  ): Promise<MCPResourceReadResult> {
     if (!this.client || this.status !== "connected") {
       throw new Error("MCP 服务器未连接");
     }
@@ -587,7 +667,11 @@ export class MCPClient {
 
     try {
       const result = await this.executeWithSessionRecovery("read_resource", () =>
-        this.client!.readResource({ uri })
+        this.runWithDeadline(
+          "read_resource",
+          (sdkClient, requestOptions) => sdkClient.readResource({ uri }, requestOptions),
+          options,
+        )
       );
       const normalized = await this.normalizeResourceReadContent(result.contents);
       this.recordResultDiagnostics("read_resource", normalized.diagnostics);
@@ -605,12 +689,23 @@ export class MCPClient {
   /**
    * 刷新工具和资源列表
    */
-  async refresh(): Promise<void> {
+  async refresh(options: MCPExecutionOptions = {}): Promise<void> {
     if (this.status !== "connected") {
       throw new Error("MCP 服务器未连接");
     }
 
-    await this.discoverCapabilities();
+    try {
+      await this.discoverCapabilities(options);
+    } catch (error) {
+      this.recordFailure(error, {
+        source: this.getFailureSource(error, "list_tools"),
+        retryable: this.classifyFailureKind(error) === "transport",
+      });
+      if (this.isConnectionInterruption(error)) {
+        this.setStatus("error");
+      }
+      throw error;
+    }
     
     this.emitEvent("tools:updated", { tools: this.tools });
     this.emitEvent("resources:updated", { resources: this.resources });
@@ -712,12 +807,16 @@ export class MCPClient {
   /**
    * 发现服务器能力（工具和资源）
    */
-  private async discoverCapabilities(): Promise<void> {
+  private async discoverCapabilities(options: MCPExecutionOptions = {}): Promise<void> {
     if (!this.client) return;
 
     // 发现工具
     try {
-      const toolsResult = await this.client.listTools();
+      const toolsResult = await this.runWithDeadline(
+        "list_tools",
+        (sdkClient, requestOptions) => sdkClient.listTools(undefined, requestOptions),
+        options,
+      );
       this.tools = (toolsResult.tools || []).map((tool) => ({
         name: tool.name,
         bridgedName: this.getBridgedToolName(tool.name),
@@ -729,6 +828,8 @@ export class MCPClient {
       if (this.isJsonRpcMethodNotFound(err)) {
         mcpLog(`mcp:${this.config.id}`, "服务器未实现 tools/list，按无工具处理");
         this.tools = [];
+      } else if (this.isConnectionInterruption(err)) {
+        throw err;
       } else {
         this.recordFailure(err, { updateCurrentError: false, source: "list_tools" });
         mcpWarn(`mcp:${this.config.id}`, "无法列出工具", err);
@@ -738,7 +839,11 @@ export class MCPClient {
 
     // 发现资源
     try {
-      const resourcesResult = await this.client.listResources();
+      const resourcesResult = await this.runWithDeadline(
+        "list_resources",
+        (sdkClient, requestOptions) => sdkClient.listResources(undefined, requestOptions),
+        options,
+      );
       this.resources = (resourcesResult.resources || []).map((resource) => ({
         uri: resource.uri,
         name: resource.name,
@@ -750,6 +855,8 @@ export class MCPClient {
       if (this.isJsonRpcMethodNotFound(err)) {
         mcpLog(`mcp:${this.config.id}`, "服务器未实现 resources/list，按无资源处理");
         this.resources = [];
+      } else if (this.isConnectionInterruption(err)) {
+        throw err;
       } else {
         this.recordFailure(err, { updateCurrentError: false, source: "list_resources" });
         mcpWarn(`mcp:${this.config.id}`, "无法列出资源", err);
@@ -771,44 +878,177 @@ export class MCPClient {
   }
 
   /**
+   * 解析本次操作的有效 deadline：server 显式值优先，其次才是全局默认值。
+   */
+  private getOperationTimeoutMs(): number {
+    return normalizeTimeoutMs(this.config.timeout, this.defaultTimeoutMs);
+  }
+
+  /**
+   * 运行受 deadline 控制的 SDK 操作。外层 race 只负责及时返回；同时主动 abort 和关闭
+   * 当前 lease，确保不支持 signal 的 transport/fake 也不会把后台工作遗留到下一次连接。
+   */
+  private async runWithDeadline<T>(
+    source: MCPServerFailureSource,
+    operation: (sdkClient: Client, requestOptions: RequestOptions) => Promise<T>,
+    options: MCPExecutionOptions = {},
+  ): Promise<T> {
+    const sdkClient = this.client;
+    if (!sdkClient) {
+      throw new Error("MCP server is not connected.");
+    }
+
+    const lease: MCPConnectionLease = {
+      client: sdkClient,
+      transport: this.transport,
+    };
+    const timeoutMs = this.getOperationTimeoutMs();
+    const requestController = new AbortController();
+    let interrupted = false;
+    let rejectInterruption!: (error: Error) => void;
+    const interruption = new Promise<never>((_resolve, reject) => {
+      rejectInterruption = reject;
+    });
+    const interrupt = (error: Error) => {
+      if (interrupted) {
+        return;
+      }
+      interrupted = true;
+      requestController.abort(error);
+      rejectInterruption(error);
+    };
+
+    const callerSignal = options.signal;
+    const onCallerAbort = () => interrupt(new MCPAbortError(source));
+    if (callerSignal?.aborted) {
+      onCallerAbort();
+    } else {
+      callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+    }
+
+    const deadlineError = new MCPDeadlineError(source, timeoutMs);
+    const timeout = setTimeout(() => {
+      interrupt(deadlineError);
+    }, timeoutMs);
+    const requestOptions: RequestOptions = {
+      signal: requestController.signal,
+      timeout: timeoutMs,
+      maxTotalTimeout: timeoutMs,
+    };
+    const operationPromise = Promise.resolve().then(() => {
+      if (requestController.signal.aborted) {
+        throw requestController.signal.reason instanceof Error
+          ? requestController.signal.reason
+          : deadlineError;
+      }
+      return operation(sdkClient, requestOptions);
+    });
+
+    try {
+      return await Promise.race([operationPromise, interruption]);
+    } catch (error) {
+      const interruptionError = requestController.signal.reason instanceof Error
+        ? requestController.signal.reason
+        : undefined;
+      const terminalError = interrupted
+        ? interruptionError ?? deadlineError
+        : this.isSdkRequestTimeout(error)
+          ? deadlineError
+          : undefined;
+      if (!terminalError) {
+        throw error;
+      }
+
+      if (!requestController.signal.aborted) {
+        requestController.abort(terminalError);
+      }
+      await this.cleanupLeaseIfCurrent(lease);
+      throw terminalError;
+    } finally {
+      clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    }
+  }
+
+  private async cleanupLeaseIfCurrent(lease: MCPConnectionLease): Promise<void> {
+    if (this.client !== lease.client || this.transport !== lease.transport) {
+      return;
+    }
+    await this.cleanup({ waitForClose: false });
+  }
+
+  private isConnectionInterruption(error: unknown): error is MCPDeadlineError | MCPAbortError {
+    return error instanceof MCPDeadlineError || error instanceof MCPAbortError;
+  }
+
+  private isSdkRequestTimeout(error: unknown): boolean {
+    if (error instanceof MCPDeadlineError) {
+      return true;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    return normalized.includes("request timed out") || normalized.includes("maximum total timeout");
+  }
+
+  private getFailureSource(
+    error: unknown,
+    fallback: MCPServerFailureSource,
+  ): MCPServerFailureSource {
+    return this.isConnectionInterruption(error) ? error.source : fallback;
+  }
+
+  /**
    * 清理资源
    */
-  private async cleanup(): Promise<void> {
-    // 关闭客户端连接
-    if (this.client) {
-      try {
-        await this.client.close();
-      } catch (err) {
-        mcpWarn(`mcp:${this.config.id}`, "关闭客户端时出错", err);
-      }
-      this.client = null;
-    }
-
-    // 关闭传输层
-    if (this.transport) {
-      try {
-        await this.transport.close();
-      } catch (err) {
-        mcpWarn(`mcp:${this.config.id}`, "关闭传输时出错", err);
-      }
-      this.transport = null;
-    }
-
-    // 终止子进程
-    if (this.childProcess) {
-      try {
-        this.childProcess.kill();
-      } catch (err) {
-        mcpWarn(`mcp:${this.config.id}`, "终止子进程时出错", err);
-      }
-      this.childProcess = null;
-    }
+  private async cleanup(options: { waitForClose?: boolean } = {}): Promise<void> {
+    // 先摘除所有权，迟到 close/error 不能把新连接的引用清掉。
+    const sdkClient = this.client;
+    const transport = this.transport;
+    const childProcess = this.childProcess;
+    this.client = null;
+    this.transport = null;
+    this.childProcess = null;
 
     // 清空缓存
     this.tools = [];
     this.resources = [];
     this.metadata = undefined;
     this.connectedAt = undefined;
+
+    // 同时启动 transport 与 SDK close，避免 client.close 卡住时延迟真实 socket/process 关闭。
+    const closeOperations: Promise<void>[] = [];
+    if (transport) {
+      try {
+        closeOperations.push(Promise.resolve(transport.close()).catch((err) => {
+          mcpWarn(`mcp:${this.config.id}`, "关闭传输时出错", err);
+        }));
+      } catch (err) {
+        mcpWarn(`mcp:${this.config.id}`, "关闭传输时出错", err);
+      }
+    }
+    if (sdkClient) {
+      try {
+        closeOperations.push(Promise.resolve(sdkClient.close()).catch((err) => {
+          mcpWarn(`mcp:${this.config.id}`, "关闭客户端时出错", err);
+        }));
+      } catch (err) {
+        mcpWarn(`mcp:${this.config.id}`, "关闭客户端时出错", err);
+      }
+    }
+    if (childProcess) {
+      try {
+        childProcess.kill();
+      } catch (err) {
+        mcpWarn(`mcp:${this.config.id}`, "终止子进程时出错", err);
+      }
+    }
+
+    const closed = Promise.all(closeOperations);
+    if (options.waitForClose !== false) {
+      await closed;
+    } else {
+      void closed;
+    }
   }
 
   private async runReconnectLoop(): Promise<void> {
@@ -903,6 +1143,12 @@ export class MCPClient {
   }
 
   private classifyFailureKind(error: unknown): MCPServerFailureKind {
+    if (error instanceof MCPAbortError) {
+      return "cancelled";
+    }
+    if (error instanceof MCPDeadlineError) {
+      return "transport";
+    }
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();
     if (
@@ -978,6 +1224,10 @@ export class MCPClient {
           retryable: isRecoverable,
           updateCurrentError: false,
         });
+        if (this.isConnectionInterruption(error)) {
+          // deadline/调用方取消已清理当前 lease，状态不能继续显示为 connected。
+          this.setStatus("error");
+        }
         if (!isRecoverable || attempt >= MAX_SESSION_RECOVERY_ATTEMPTS) {
           throw error;
         }

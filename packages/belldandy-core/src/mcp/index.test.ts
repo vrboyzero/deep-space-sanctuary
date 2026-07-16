@@ -74,7 +74,8 @@ describe("mcp integration", () => {
     expect(getMCPManagerIfInitialized()).toBeTruthy();
 
     const [tool] = getMCPTools();
-    const result = await tool!.execute({}, {} as any);
+    const abortController = new AbortController();
+    const result = await tool!.execute({}, { abortSignal: abortController.signal } as any);
     const parsed = JSON.parse(result.output);
 
     expect(parsed).toEqual({
@@ -85,6 +86,12 @@ describe("mcp integration", () => {
           actorId: "actor.player",
         },
       ],
+    });
+    expect(manager.callTool).toHaveBeenCalledWith({
+      name: "mcp_starweaver_central_agent_wake_notifications",
+      arguments: {},
+    }, {
+      signal: abortController.signal,
     });
   });
 });

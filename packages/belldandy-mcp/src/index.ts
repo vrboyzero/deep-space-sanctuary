@@ -40,6 +40,7 @@ export type {
   MCPServerStatus,
   MCPServerFailureKind,
   MCPServerFailureSource,
+  MCPExecutionOptions,
   MCPServerRuntimeDiagnostics,
   MCPResultDiagnostics,
   MCPServerState,

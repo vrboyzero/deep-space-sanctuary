@@ -9,6 +9,7 @@ import {
   type MCPConfig,
   type MCPServerConfig,
   type MCPServerState,
+  type MCPExecutionOptions,
   type MCPToolInfo,
   type MCPResourceInfo,
   type MCPToolCallRequest,
@@ -20,7 +21,7 @@ import {
   type MCPManager as IMCPManager,
   type BelldandyToolDefinition,
 } from "./types.js";
-import { MCPClient } from "./client.js";
+import { MCPAbortError, MCPClient } from "./client.js";
 import { MCPToolBridge, toOpenAIFunctions, toAnthropicTools } from "./tool-bridge.js";
 import {
   loadConfig,
@@ -192,21 +193,28 @@ export class MCPManager implements IMCPManager {
    * 
    * @param serverId 服务器 ID
    */
-  async connect(serverId: string): Promise<void> {
-    return this.connectWithPolicy(serverId, { failureLogLevel: "error" });
+  async connect(serverId: string, executionOptions: MCPExecutionOptions = {}): Promise<void> {
+    return this.connectWithPolicy(serverId, {
+      failureLogLevel: "error",
+      signal: executionOptions.signal,
+    });
   }
 
   private async connectWithPolicy(
     serverId: string,
-    options: { failureLogLevel: MCPManagerConnectFailureLogLevel },
+    options: { failureLogLevel: MCPManagerConnectFailureLogLevel; signal?: AbortSignal },
   ): Promise<void> {
     return this.withServerOperationLock(serverId, async () => this.connectUnlocked(serverId, options));
   }
 
   private async connectUnlocked(
     serverId: string,
-    options: { failureLogLevel: MCPManagerConnectFailureLogLevel },
+    options: { failureLogLevel: MCPManagerConnectFailureLogLevel; signal?: AbortSignal },
   ): Promise<void> {
+    if (options.signal?.aborted) {
+      throw new MCPAbortError("connect");
+    }
+
     // 检查是否已连接
     if (this.clients.has(serverId)) {
       const client = this.clients.get(serverId)!;
@@ -229,7 +237,9 @@ export class MCPManager implements IMCPManager {
     mcpLog("MCPManager", `正在连接到服务器: ${serverId}`);
 
     // 创建客户端
-    const client = new MCPClient(serverConfig);
+    const client = new MCPClient(serverConfig, {
+      defaultTimeoutMs: this.config?.settings?.defaultTimeout,
+    });
 
     // 添加事件监听
     client.addEventListener(this.boundClientEventListener);
@@ -239,7 +249,10 @@ export class MCPManager implements IMCPManager {
 
     try {
       // 连接
-      await client.connect({ failureLogLevel: "none" });
+      await client.connect({
+        failureLogLevel: "none",
+        signal: options.signal,
+      });
 
       // 注册工具
       const state = client.getState();
@@ -368,8 +381,11 @@ export class MCPManager implements IMCPManager {
    * @param request 工具调用请求
    * @returns 工具调用结果
    */
-  async callTool(request: MCPToolCallRequest): Promise<MCPToolCallResult> {
-    return this.toolBridge.callTool(request.name, request.arguments);
+  async callTool(
+    request: MCPToolCallRequest,
+    options: MCPExecutionOptions = {},
+  ): Promise<MCPToolCallResult> {
+    return this.toolBridge.callTool(request.name, request.arguments, options);
   }
 
   /**
@@ -414,10 +430,13 @@ export class MCPManager implements IMCPManager {
    * @param request 资源读取请求
    * @returns 资源内容
    */
-  async readResource(request: MCPResourceReadRequest): Promise<MCPResourceReadResult> {
+  async readResource(
+    request: MCPResourceReadRequest,
+    options: MCPExecutionOptions = {},
+  ): Promise<MCPResourceReadResult> {
     const resolvedClient = this.resolveResourceClient(request.uri);
     if (resolvedClient) {
-      return resolvedClient.readResource(request.uri);
+      return resolvedClient.readResource(request.uri, options);
     }
 
     throw new Error(`资源 "${request.uri}" 不存在`);
@@ -564,6 +583,9 @@ export class MCPManager implements IMCPManager {
       return true;
     }
     const diagnostics = (event.data as { diagnostics?: MCPServerState["diagnostics"] }).diagnostics;
+    if (diagnostics?.lastErrorKind === "cancelled") {
+      return false;
+    }
     return diagnostics?.lastErrorSource !== "connect";
   }
 
@@ -659,7 +681,8 @@ export class MCPManager implements IMCPManager {
   private async handleToolCall(
     toolName: string,
     serverId: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    options: MCPExecutionOptions = {},
   ): Promise<MCPToolCallResult> {
     const client = this.clients.get(serverId);
     
@@ -671,7 +694,7 @@ export class MCPManager implements IMCPManager {
       };
     }
 
-    return client.callTool(toolName, args);
+    return client.callTool(toolName, args, options);
   }
 
   // ==========================================================================

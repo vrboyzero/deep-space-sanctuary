@@ -6,6 +6,7 @@
  */
 
 import type {
+  MCPExecutionOptions,
   MCPToolInfo,
   MCPToolCallResult,
   BelldandyToolDefinition,
@@ -22,7 +23,8 @@ import { mcpLog } from "./logger-adapter.js";
 type ToolCallFn = (
   toolName: string,
   serverId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options?: MCPExecutionOptions,
 ) => Promise<MCPToolCallResult>;
 
 interface RuntimeDescribeSessionCacheEntry {
@@ -182,7 +184,8 @@ export class MCPToolBridge {
    */
   async callTool(
     bridgedName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    options: MCPExecutionOptions = {},
   ): Promise<MCPToolCallResult> {
     const tool = this.bridgedTools.get(bridgedName);
     
@@ -201,7 +204,7 @@ export class MCPToolBridge {
         return cached.result;
       }
 
-      const result = await this.callToolFn(tool.name, tool.serverId, args);
+      const result = await this.callToolFn(tool.name, tool.serverId, args, options);
       if (!result.isError && result.success) {
         this.runtimeDescribeSessionCache.set(tool.serverId, {
           cacheKey,
@@ -213,7 +216,7 @@ export class MCPToolBridge {
       return result;
     }
 
-    return this.callToolFn(tool.name, tool.serverId, args);
+    return this.callToolFn(tool.name, tool.serverId, args, options);
   }
 
   // ==========================================================================

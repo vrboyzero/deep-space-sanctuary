@@ -45,7 +45,7 @@ export function createBridgeMcpCapabilities(
       const result = await manager.callTool({
         name: tool.bridgedName,
         arguments: request.arguments,
-      });
+      }, request.signal ? { signal: request.signal } : undefined);
 
       if (result.isError) {
         throw new Error(

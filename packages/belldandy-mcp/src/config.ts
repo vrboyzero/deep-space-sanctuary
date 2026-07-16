@@ -100,7 +100,8 @@ const ServerConfigSchema = z.object({
   transport: TransportConfigSchema,
   autoConnect: z.boolean().optional().default(DEFAULT_SERVER_CONFIG.autoConnect),
   enabled: z.boolean().optional().default(DEFAULT_SERVER_CONFIG.enabled),
-  timeout: z.number().positive().optional().default(DEFAULT_SERVER_CONFIG.timeout),
+  // 不在单服务器层提前写入默认值，运行时才能正确继承 settings.defaultTimeout。
+  timeout: z.number().positive().optional(),
   retryCount: z.number().int().min(0).optional().default(DEFAULT_SERVER_CONFIG.retryCount),
   retryDelay: z.number().positive().optional().default(DEFAULT_SERVER_CONFIG.retryDelay),
 });
@@ -109,7 +110,7 @@ const ServerConfigSchema = z.object({
  * 全局设置验证
  */
 const SettingsSchema = z.object({
-  defaultTimeout: z.number().positive().optional().default(30000),
+  defaultTimeout: z.number().positive().optional().default(DEFAULT_MCP_CONFIG.settings?.defaultTimeout ?? DEFAULT_SERVER_CONFIG.timeout),
   debug: z.boolean().optional().default(false),
   toolPrefix: z.boolean().optional().default(true),
 });

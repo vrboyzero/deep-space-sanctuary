@@ -321,7 +321,9 @@ describe("agent bridge P0 tools", () => {
       result: "mcp-ok",
       source: "codex-wrapper",
     }));
+    const abortController = new AbortController();
     baseContext.mcp = { callTool };
+    baseContext.abortSignal = abortController.signal;
     baseContext.launchSpec = {
       parentTaskId: "task-bridge-1",
       bridgeSubtask: {
@@ -351,6 +353,7 @@ describe("agent bridge P0 tools", () => {
         scope: ["."],
         cwd: tempDir,
       },
+      signal: abortController.signal,
     });
 
     const payload = JSON.parse(result.output) as {

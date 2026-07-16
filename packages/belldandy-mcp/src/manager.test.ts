@@ -11,6 +11,103 @@ describe("MCPManager", () => {
     vi.restoreAllMocks();
   });
 
+  it("passes the global timeout and caller signal to a server without an override", async () => {
+    const manager = new MCPManager();
+    (manager as unknown as { config: unknown }).config = {
+      version: "1.0.0",
+      settings: {
+        defaultTimeout: 12345,
+      },
+      servers: [
+        {
+          id: "server_timeout_default",
+          name: "Server Timeout Default",
+          enabled: true,
+          transport: {
+            type: "stdio",
+            command: "node",
+          },
+        },
+      ],
+    };
+    const abortController = new AbortController();
+    const connectSpy = vi.spyOn(MCPClient.prototype, "connect").mockImplementation(
+      async function mockConnect(this: MCPClient) {
+        (this as unknown as { status: string; tools: unknown[]; resources: unknown[] }).status = "connected";
+        (this as unknown as { tools: unknown[] }).tools = [];
+        (this as unknown as { resources: unknown[] }).resources = [];
+      },
+    );
+
+    await manager.connect("server_timeout_default", { signal: abortController.signal });
+
+    expect(connectSpy).toHaveBeenCalledWith(expect.objectContaining({
+      failureLogLevel: "none",
+      signal: abortController.signal,
+    }));
+    const managedClient = (manager as unknown as { clients: Map<string, MCPClient> })
+      .clients
+      .get("server_timeout_default");
+    expect(managedClient as unknown as { defaultTimeoutMs: number }).toEqual(
+      expect.objectContaining({ defaultTimeoutMs: 12345 }),
+    );
+  });
+
+  it("does not create a transport when the caller cancels before its connect lock runs", async () => {
+    const manager = new MCPManager();
+    (manager as unknown as { config: unknown }).config = {
+      version: "1.0.0",
+      servers: [
+        {
+          id: "server_cancel_connect",
+          name: "Server Cancel Connect",
+          enabled: true,
+          transport: {
+            type: "stdio",
+            command: "node",
+          },
+        },
+      ],
+    };
+    const abortController = new AbortController();
+    abortController.abort();
+    const connectSpy = vi.spyOn(MCPClient.prototype, "connect");
+
+    await expect(manager.connect("server_cancel_connect", { signal: abortController.signal }))
+      .rejects
+      .toThrow("connect cancelled by caller");
+
+    expect(connectSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-reconnect a client cancelled by its caller", () => {
+    const manager = new MCPManager();
+    const internals = manager as unknown as {
+      handleClientEvent: (event: {
+        type: "server:error";
+        serverId: string;
+        timestamp: Date;
+        data: unknown;
+      }) => void;
+      scheduleAutoReconnect: (serverId: string, reason: "server:error") => Promise<void>;
+    };
+    const scheduleSpy = vi.spyOn(internals, "scheduleAutoReconnect").mockResolvedValue(undefined);
+
+    internals.handleClientEvent({
+      type: "server:error",
+      serverId: "server_cancelled",
+      timestamp: new Date(),
+      data: {
+        diagnostics: {
+          lastErrorKind: "cancelled",
+          lastErrorSource: "call_tool",
+        },
+      },
+    });
+
+    expect(scheduleSpy).not.toHaveBeenCalled();
+  });
+
   it("serializes concurrent connect calls for the same server", async () => {
     const manager = new MCPManager();
     (manager as unknown as { config: unknown }).config = {

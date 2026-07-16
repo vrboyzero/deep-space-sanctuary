@@ -114,6 +114,7 @@ export type MCPServerStatus =
 export type MCPServerFailureKind =
   | "session_expired"
   | "transport"
+  | "cancelled"
   | "unknown";
 
 export type MCPServerFailureSource =
@@ -122,6 +123,13 @@ export type MCPServerFailureSource =
   | "read_resource"
   | "list_tools"
   | "list_resources";
+
+/**
+ * 上层调用传入的执行控制。取消会终止当前 MCP transport，而不只取消等待方。
+ */
+export interface MCPExecutionOptions {
+  signal?: AbortSignal;
+}
 
 export type MCPResultHandlingStrategy =
   | "inline"
@@ -351,7 +359,7 @@ export interface MCPManager {
   shutdown(): Promise<void>;
   
   /** 连接指定服务器 */
-  connect(serverId: string): Promise<void>;
+  connect(serverId: string, options?: MCPExecutionOptions): Promise<void>;
   
   /** 断开指定服务器 */
   disconnect(serverId: string): Promise<void>;
@@ -369,10 +377,10 @@ export interface MCPManager {
   getAllResources(): MCPResourceInfo[];
   
   /** 调用工具 */
-  callTool(request: MCPToolCallRequest): Promise<MCPToolCallResult>;
+  callTool(request: MCPToolCallRequest, options?: MCPExecutionOptions): Promise<MCPToolCallResult>;
   
   /** 读取资源 */
-  readResource(request: MCPResourceReadRequest): Promise<MCPResourceReadResult>;
+  readResource(request: MCPResourceReadRequest, options?: MCPExecutionOptions): Promise<MCPResourceReadResult>;
   
   /** 添加事件监听器 */
   addEventListener(listener: MCPEventListener): void;

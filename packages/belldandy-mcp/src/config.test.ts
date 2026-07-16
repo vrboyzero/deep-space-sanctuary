@@ -105,6 +105,34 @@ test("external mcpServers format maps autoConnect=false into internal server con
   }
 });
 
+test("keeps global defaultTimeout available when a server omits its own timeout", async () => {
+  previousStateDir = process.env.BELLDANDY_STATE_DIR;
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mcp-config-timeout-"));
+  process.env.BELLDANDY_STATE_DIR = stateDir;
+
+  try {
+    await fs.writeFile(
+      path.join(stateDir, "mcp.json"),
+      JSON.stringify({
+        version: "1.0.0",
+        settings: {
+          defaultTimeout: 12345,
+        },
+        servers: [createServer("inherits-default")],
+      }),
+      "utf-8",
+    );
+    const configModule = await import("./config.js");
+
+    const config = await configModule.loadConfig();
+
+    expect(config.settings?.defaultTimeout).toBe(12345);
+    expect(config.servers[0]?.timeout).toBeUndefined();
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("serializes concurrent server mutations without losing config changes", async () => {
   previousStateDir = process.env.BELLDANDY_STATE_DIR;
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-mcp-config-mutation-"));

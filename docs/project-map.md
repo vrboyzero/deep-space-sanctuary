@@ -216,6 +216,7 @@ star-sanctuary/
 - `packages/belldandy-skills/src/skill-registry.ts`: skills 汇总与 eligibility
 - `packages/belldandy-plugins/src/registry.ts`: plugin 加载和 hooks 聚合
 - `packages/belldandy-core/src/extension-host.ts` / `extension-integrity.ts`: Marketplace 扩展加载 seam、物化目录内容 hash 与真实路径/manifest identity 校验
+- `packages/belldandy-mcp/src/client.ts`: MCP 操作 deadline、调用方取消与 transport/child lease 清理
 - `packages/belldandy-mcp/src/manager.ts`: MCP server 连接管理
 
 ### Channels / Community / External Delivery
