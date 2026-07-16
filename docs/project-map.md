@@ -100,7 +100,7 @@ star-sanctuary/
 
 ### Frontend
 - `apps/web/public/app.js`: WebChat 装配入口
-- `apps/web/public/bootstrap-startup.js`: 首屏主题、语言与启动性能标记的同源外置 bootstrap，满足 CSP `script-src 'self'`
+- `apps/web/public/bootstrap-startup.js`: 首屏主题、语言与有界净化启动标记的同源外置 bootstrap，满足 CSP `script-src 'self'`
 - `apps/web/public/app/bootstrap/dom.js`: DOM 引用总表
 - `apps/web/public/app/bootstrap/state.js`: 前端全局状态
 - `apps/web/public/app/bootstrap/web-assets.js`: 本地 hash Web 资产清单与加载就绪状态
@@ -132,10 +132,11 @@ star-sanctuary/
 - `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示
 - `apps/web/public/app/features/rich-content-renderer.js`: DOMPurify 富内容清理、媒体 URL allowlist 与受限 TrustedHTML policy
 - `apps/web/public/app/features/chat-network.js`: WebSocket 请求/响应、模型/Agent 选择
+- `apps/web/public/app/features/webchat-performance-observability.js`: 本页有界启动、流式渲染、Long Task 与交互性能采样，不持久化或上传内容
 - `apps/web/public/app/features/settings-runtime.js`: 设置面板运行时桥接
 - `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources、Preflight Compression 配置/preview）
 - `apps/web/public/app/features/workspace.js`: 文件树和编辑器
-- `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Query Runtime、运行资源、Dream Runtime、Preflight Compression 治理卡片）
+- `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Query Runtime、运行资源、WebChat 性能、Dream Runtime、Preflight Compression 治理卡片）
 
 ### State / Workspace / Persistence
 - `packages/belldandy-protocol/src/state-dir.ts`: 全局 state dir 解析
