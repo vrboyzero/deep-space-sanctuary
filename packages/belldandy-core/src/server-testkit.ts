@@ -188,7 +188,7 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function approveLatestPairingCode(frames: any[], stateDir: string, timeoutMs = 5000): Promise<void> {
+export async function approveLatestPairingCode(frames: any[], stateDir: string, timeoutMs = 5000): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const pairingEvents = frames.filter((frame) => frame.type === "event" && frame.event === "pairing.required");

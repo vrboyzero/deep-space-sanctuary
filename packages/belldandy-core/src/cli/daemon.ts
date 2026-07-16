@@ -7,9 +7,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createGatewaySupervisorLifecycle,
   ensureDefaultEnvFiles,
   loadRuntimeEnvFiles,
   readTrimmedEnv,
+  RESTART_DELAY_MS,
+  RESTART_EXIT_CODE,
   resolveRuntimeEnvDir,
   preflightGatewayCleanup,
   removeForegroundPid,
@@ -30,10 +33,6 @@ function resolveGatewayScript(): string {
     || process.env.BELLDANDY_GATEWAY_ENTRY?.trim();
   return override ? path.resolve(override) : GATEWAY_SCRIPT;
 }
-
-// 重启信号 exit code（与 system.restart 保持一致）
-const RESTART_EXIT_CODE = 100;
-const RESTART_DELAY_MS = 500;
 
 export function reloadLauncherEnv(baseEnv: NodeJS.ProcessEnv, stateDir: string): NodeJS.ProcessEnv {
   const envDir = resolveRuntimeEnvDir({
@@ -259,45 +258,35 @@ export async function startForeground(stateDir?: string): Promise<void> {
     }
   }
 
-  function launchGateway(): void {
-    const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
-    console.log(`[Launcher] Starting Gateway...`);
-
-    const child = fork(resolveGatewayScript(), [], {
-      stdio: "inherit",
-      execArgv: EXT === ".ts" ? ["--import", "tsx"] : [],
-      env: launchEnv,
-    });
-    if (child.pid) {
-      writeForegroundPid(resolvedStateDir, child.pid);
-    }
-
-    child.on("exit", (code, signal) => {
-      removeForegroundPid(resolvedStateDir);
-      if (code === RESTART_EXIT_CODE) {
-        console.log(`[Launcher] Gateway requested restart, restarting in ${RESTART_DELAY_MS}ms...`);
-        setTimeout(() => launchGateway(), RESTART_DELAY_MS);
-      } else {
-        const reason = signal ? `signal ${signal}` : `exit code ${code ?? 1}`;
-        console.log(`[Launcher] Gateway exited (${reason}).`);
-        process.exit(code ?? 1);
-      }
-    });
-
-    const forwardSignal = (sig: NodeJS.Signals) => {
-      child.kill(sig);
-    };
-    process.on("SIGINT", forwardSignal);
-    process.on("SIGTERM", forwardSignal);
-  }
-
   await preflightGatewayCleanup({
     label: "Launcher",
     stateDir: resolvedStateDir,
     env: launchEnv,
     ownershipTokens: [resolveGatewayScript(), BDD_SCRIPT],
   });
-  launchGateway();
+  const lifecycle = createGatewaySupervisorLifecycle({
+    label: "Launcher",
+    restartExitCode: RESTART_EXIT_CODE,
+    restartDelayMs: RESTART_DELAY_MS,
+    signalTarget: process,
+    removeForegroundPid: () => removeForegroundPid(resolvedStateDir),
+    onExit: (exitCode) => process.exit(exitCode),
+    launch: async () => {
+      const launchEnv = reloadLauncherEnv(process.env, resolvedStateDir);
+      console.log("[Launcher] Starting Gateway...");
+
+      const child = fork(resolveGatewayScript(), [], {
+        stdio: "inherit",
+        execArgv: EXT === ".ts" ? ["--import", "tsx"] : [],
+        env: launchEnv,
+      });
+      if (child.pid) {
+        writeForegroundPid(resolvedStateDir, child.pid);
+      }
+      return child;
+    },
+  });
+  await lifecycle.start();
 }
 
 /** Format uptime in human-readable format */

@@ -27,6 +27,16 @@ export {
   type GatewayProcessInfo,
 } from "./gateway-preflight.js";
 export {
+  createGatewaySupervisorLifecycle,
+  RESTART_DELAY_MS,
+  RESTART_EXIT_CODE,
+  type GatewaySupervisorChild,
+  type GatewaySupervisorLifecycle,
+  type GatewaySupervisorLifecycleOptions,
+  type GatewaySupervisorSignal,
+  type GatewaySupervisorSignalTarget,
+} from "./gateway-supervisor-lifecycle.js";
+export {
   resolveEnvFilePaths,
   resolvePreferredEnvDir,
   resolvePreferredEnvDirInfo,

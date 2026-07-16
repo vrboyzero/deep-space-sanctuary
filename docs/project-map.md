@@ -53,7 +53,7 @@ star-sanctuary/
 | `@belldandy/mcp` | MCP 配置、连接管理、工具桥接 | `packages/belldandy-mcp/src/index.ts` |
 | `@belldandy/plugins` | 插件加载、工具注册、hooks 聚合 | `packages/belldandy-plugins/src/index.ts` |
 | `@belldandy/browser` | Relay server，桥接 Chrome 扩展与 CDP client | `packages/belldandy-browser/src/index.ts` |
-| `@star-sanctuary/distribution` | runtime 路径解析、bootstrap auth token、portable/single-exe 运行时处理 | `packages/star-sanctuary-distribution/src/index.ts` |
+| `@star-sanctuary/distribution` | runtime 路径解析、bootstrap auth token、portable/single-exe 运行时处理与前台 Gateway supervisor lifecycle | `packages/star-sanctuary-distribution/src/index.ts` |
 | `apps/web` | WebChat 前端功能编排与 UI | `apps/web/public/app.js` |
 | `apps/browser-extension` | 浏览器扩展侧 relay client、tab/CDP 管理 | `apps/browser-extension/background.js` |
 
@@ -244,6 +244,7 @@ star-sanctuary/
 - `packages/star-sanctuary-distribution/src/runtime-paths.ts`: runtime/env/web root 解析
 - `packages/star-sanctuary-distribution/src/portable-runtime.ts`: portable runtime
 - `packages/star-sanctuary-distribution/src/runtime-extract.ts`: single-exe 解包
+- `packages/star-sanctuary-distribution/src/gateway-supervisor-lifecycle.ts`: portable/single-exe 与 Core `bdd start/dev` 共用的 child 单终态、signal 转发和有界重启 lifecycle
 - `packages/belldandy-core/src/gateway-config.ts`: Gateway env/config 读取
 - `packages/belldandy-core/src/tools-config.ts`: 工具配置管理
 - `packages/belldandy-core/src/memory-configured-sources-store.ts`: P15 configured external sources 持久配置文件读写

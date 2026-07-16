@@ -16,11 +16,11 @@ import { createScopedMemoryManagers } from "./resident-memory-managers.js";
 import { resolveResidentSharedStateDir } from "./resident-memory-policy.js";
 import { notifyConversationToolEvent } from "./query-runtime-side-effects.js";
 import { startGatewayServer } from "./server.js";
-import { approvePairingCode } from "./security/store.js";
 import { RuntimeResilienceTracker } from "./runtime-resilience.js";
 import { BELLDANDY_VERSION } from "./version.generated.js";
 import { clearAutoTaskReportsForTest } from "./task-auto-report.js";
 import {
+  approveLatestPairingCode,
   cleanupGlobalMemoryManagersForTest,
   formatLocalDateForTest,
   pairWebSocketClient,
@@ -2855,12 +2855,7 @@ test("message.send userUuid overrides handshake userUuid for agent input and tok
           params: { text: "pairing-init" },
         }));
         await waitFor(() => frames.some((f) => f.type === "event" && f.event === "pairing.required"));
-        const pairingEvents = frames.filter((f) => f.type === "event" && f.event === "pairing.required");
-        const pairing = pairingEvents[pairingEvents.length - 1];
-        const code = pairing?.payload?.code ? String(pairing.payload.code) : "";
-        expect(code.length).toBeGreaterThan(0);
-        const approved = await approvePairingCode({ code, stateDir });
-        expect(approved.ok).toBe(true);
+        await approveLatestPairingCode(frames, stateDir);
 
         const reqId = "message-uuid-override";
         ws.send(JSON.stringify({
