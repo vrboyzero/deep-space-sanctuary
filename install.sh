@@ -13,6 +13,11 @@ FORCE_SETUP=0
 MIN_NODE_MAJOR=22
 MIN_NODE_MINOR=12
 FIRST_START_NOTICE_FILE="first-start-notice.txt"
+MAX_RELEASE_ARCHIVE_BYTES=$((512 * 1024 * 1024))
+MAX_RELEASE_METADATA_BYTES=$((1024 * 1024))
+MAX_RELEASE_ARCHIVE_ENTRIES=100000
+MAX_RELEASE_ARCHIVE_ENTRY_BYTES=$((256 * 1024 * 1024))
+MAX_RELEASE_ARCHIVE_UNPACKED_BYTES=$((2 * 1024 * 1024 * 1024))
 
 log() {
   printf '[install] %s\n' "$1"
@@ -170,6 +175,15 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   github_headers=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
 fi
 
+validate_repository_identity() {
+  local normalized_version
+  normalized_version="$(normalize_version "${VERSION}")"
+  [[ "${REPO_OWNER}" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] \
+    && [[ "${REPO_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]] \
+    && [[ "${normalized_version}" == "latest" || "${normalized_version}" =~ ^v?[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || fail "Repository owner or name contains unsupported characters."
+}
+
 release_endpoint() {
   local normalized
   normalized="$(normalize_version "$VERSION")"
@@ -211,72 +225,69 @@ detect_install_payload_kind() {
 resolve_remote_install_payload_plan() {
   local release_json="$1"
   local tag_name="$2"
-  local version_number asset_name asset_url source_url
+  local version_number asset_name manifest_name sha256_name
+  local asset_url manifest_url sha256_url archive_size archive_digest
 
   version_number="$(release_version_number_from_tag "$tag_name")"
+  [[ "${version_number}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Failed to resolve a safe release version number from tag."
   asset_name="star-sanctuary-dist-v${version_number}.tar.gz"
+  manifest_name="star-sanctuary-dist-v${version_number}.manifest.json"
+  sha256_name="star-sanctuary-dist-v${version_number}.sha256"
   asset_url="$(printf '%s' "$release_json" | json_read "(() => { const assets = Array.isArray(data.assets) ? data.assets : []; const hit = assets.find((item) => item && item.name === ${asset_name@Q}); return hit ? hit.browser_download_url : ''; })()")" || asset_url=""
-  if [[ -n "${asset_url}" ]]; then
-    printf 'release-light|github-release-light|%s|GitHub release-light archive|release-light archive' "${asset_url}"
-    return 0
-  fi
+  manifest_url="$(printf '%s' "$release_json" | json_read "(() => { const assets = Array.isArray(data.assets) ? data.assets : []; const hit = assets.find((item) => item && item.name === ${manifest_name@Q}); return hit ? hit.browser_download_url : ''; })()")" || manifest_url=""
+  sha256_url="$(printf '%s' "$release_json" | json_read "(() => { const assets = Array.isArray(data.assets) ? data.assets : []; const hit = assets.find((item) => item && item.name === ${sha256_name@Q}); return hit ? hit.browser_download_url : ''; })()")" || sha256_url=""
+  archive_size="$(printf '%s' "$release_json" | json_read "(() => { const assets = Array.isArray(data.assets) ? data.assets : []; const hit = assets.find((item) => item && item.name === ${asset_name@Q}); return hit && Number.isSafeInteger(hit.size) ? String(hit.size) : ''; })()")" || archive_size=""
+  archive_digest="$(printf '%s' "$release_json" | json_read "(() => { const assets = Array.isArray(data.assets) ? data.assets : []; const hit = assets.find((item) => item && item.name === ${asset_name@Q}); return typeof hit?.digest === 'string' ? hit.digest : ''; })()")" || archive_digest=""
 
-  source_url="$(printf '%s' "$release_json" | json_read 'data.tarball_url || ""')" || source_url=""
-  if [[ -n "${source_url}" ]]; then
-    printf 'source|github-release-source|%s|GitHub release source archive|source archive' "${source_url}"
-    return 0
-  fi
+  [[ -n "${asset_url}" && -n "${manifest_url}" && -n "${sha256_url}" ]] \
+    || fail "The selected release is missing required verified release-light assets."
+  [[ "${archive_size}" =~ ^[0-9]+$ ]] && (( archive_size > 0 && archive_size <= MAX_RELEASE_ARCHIVE_BYTES )) \
+    || fail "The release-light archive size is outside the installer limit."
 
-  fail "The selected release does not expose a usable release-light asset or source tarball."
+  printf 'release-light|github-release-light|%s|%s|%s|%s|%s|%s|GitHub release-light archive|release-light archive' \
+    "${asset_url}" "${manifest_url}" "${sha256_url}" "${asset_name}" "${archive_size}" "${archive_digest}"
 }
 
 resolve_release_tag_from_page() {
-  local page_url effective_url
+  local page_url effective_url expected_prefix resolved_tag
   page_url="$(release_page_endpoint)"
   log "Falling back to release page resolution via ${page_url}"
-  effective_url="$(curl -fsSL -H 'User-Agent: Star-Sanctuary-Installer' "${github_headers[@]}" -o /dev/null -w '%{url_effective}' "${page_url}")" \
+  # 页面回退不需要令牌；只允许 HTTPS 重定向，避免认证信息外流。
+  effective_url="$(curl -fsSL --proto '=https' --proto-redir '=https' --max-redirs 5 -H 'User-Agent: Star-Sanctuary-Installer' -o /dev/null -w '%{url_effective}' "${page_url}")" \
     || fail "Failed to resolve release page."
 
-  if [[ "${effective_url}" =~ /releases/tag/(v[^/?#]+) ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
-    return 0
+  expected_prefix="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/tag/"
+  if [[ "${effective_url}" == "${expected_prefix}"* ]]; then
+    resolved_tag="${effective_url#"${expected_prefix}"}"
+    if [[ "${resolved_tag}" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+      printf '%s' "${resolved_tag}"
+      return 0
+    fi
   fi
 
   fail "Failed to resolve release tag from GitHub release page."
 }
 
-remote_url_exists() {
-  local url="$1"
-  curl -fsSI -H 'User-Agent: Star-Sanctuary-Installer' "${github_headers[@]}" "${url}" >/dev/null 2>&1
-}
-
 resolve_remote_install_payload_plan_from_tag() {
   local tag_name="$1"
   local requested_version="$2"
-  local normalized version_number asset_name asset_url source_url
+  local normalized version_number asset_name manifest_name sha256_name asset_base_url
 
   normalized="$(normalize_version "${requested_version}")"
   version_number="$(release_version_number_from_tag "$tag_name")"
+  [[ "${version_number}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Failed to resolve a safe release version number from tag."
   asset_name="star-sanctuary-dist-v${version_number}.tar.gz"
+  manifest_name="star-sanctuary-dist-v${version_number}.manifest.json"
+  sha256_name="star-sanctuary-dist-v${version_number}.sha256"
 
   if [[ "${normalized}" == "latest" ]]; then
-    asset_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/${asset_name}"
+    asset_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/"
   else
-    asset_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag_name}/${asset_name}"
+    asset_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag_name}/"
   fi
 
-  if remote_url_exists "${asset_url}"; then
-    printf 'release-light|github-release-light|%s|GitHub release-light archive|release-light archive' "${asset_url}"
-    return 0
-  fi
-
-  source_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${tag_name}.tar.gz"
-  if remote_url_exists "${source_url}"; then
-    printf 'source|github-release-source|%s|GitHub release source archive|source archive' "${source_url}"
-    return 0
-  fi
-
-  fail "The selected release does not expose a usable release-light asset or source tarball."
+  printf 'release-light|github-release-light|%s|%s|%s|%s|||GitHub release-light archive|release-light archive' \
+    "${asset_base_url}${asset_name}" "${asset_base_url}${manifest_name}" "${asset_base_url}${sha256_name}" "${asset_name}"
 }
 
 json_read() {
@@ -288,7 +299,332 @@ const value = ${expression};
 if (value === undefined || value === null) process.exit(1);
 if (typeof value === 'string') process.stdout.write(value);
 else process.stdout.write(JSON.stringify(value));
-"
+  "
+}
+
+download_trusted_payload() {
+  local source_url="$1"
+  local output_path="$2"
+  local maximum_bytes="$3"
+  local label="$4"
+
+  # 逐跳检查 GitHub 下载重定向，避免将令牌或归档内容交给任意 Host。
+  if ! node - "${source_url}" "${output_path}" "${maximum_bytes}" >/dev/null <<'NODE'
+const fs = require("node:fs");
+const https = require("node:https");
+const { URL } = require("node:url");
+
+const args = process.argv.slice(2);
+const [sourceUrl, outputPath, maxBytesRaw] = args;
+const maxBytes = Number(maxBytesRaw);
+const allowedHosts = new Set([
+  "github.com",
+  "api.github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "github-releases.githubusercontent.com",
+]);
+const maxRedirects = 5;
+const requestTimeoutMs = 120_000;
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function assertTrustedUrl(value) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())) {
+    fail("release download URL is outside the trusted HTTPS host allowlist");
+  }
+  return url;
+}
+
+function headersFor(url) {
+  const headers = {
+    "User-Agent": "Star-Sanctuary-Installer",
+    "Accept": "application/octet-stream",
+  };
+  const host = url.hostname.toLowerCase();
+  if (process.env.GITHUB_TOKEN && (host === "github.com" || host === "api.github.com")) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  return headers;
+}
+
+function request(url, redirectCount, partialPath) {
+  const current = assertTrustedUrl(url);
+  return new Promise((resolve, reject) => {
+    const req = https.request(current, { method: "GET", headers: headersFor(current) }, (res) => {
+      const status = Number(res.statusCode || 0);
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        const location = res.headers.location;
+        res.resume();
+        if (!location) return reject(new Error("release download redirect did not include a location"));
+        if (redirectCount >= maxRedirects) return reject(new Error("release download exceeded redirect limit"));
+        return resolve(request(new URL(location, current).toString(), redirectCount + 1, partialPath));
+      }
+      if (status < 200 || status >= 300) {
+        res.resume();
+        return reject(new Error(`release download returned HTTP ${status}`));
+      }
+
+      const declaredBytes = Number(res.headers["content-length"]);
+      if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+        res.resume();
+        return reject(new Error("release download exceeds configured byte limit"));
+      }
+
+      let bytes = 0;
+      let settled = false;
+      const output = fs.createWriteStream(partialPath, { flags: "w" });
+      const failOnce = (error) => {
+        if (settled) return;
+        settled = true;
+        output.destroy();
+        reject(error);
+      };
+
+      res.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > maxBytes) {
+          res.destroy(new Error("release download exceeds configured byte limit"));
+        }
+      });
+      res.on("error", failOnce);
+      output.on("error", failOnce);
+      output.on("finish", () => {
+        if (settled) return;
+        settled = true;
+        output.close((error) => {
+          if (error) return reject(error);
+          try {
+            fs.renameSync(partialPath, outputPath);
+            resolve(bytes);
+          } catch (renameError) {
+            reject(renameError);
+          }
+        });
+      });
+      res.pipe(output);
+    });
+    req.setTimeout(requestTimeoutMs, () => req.destroy(new Error("release download timed out")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+if (!sourceUrl || !outputPath || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+  fail("invalid trusted release download arguments");
+}
+
+const partialPath = `${outputPath}.part`;
+fs.rmSync(partialPath, { force: true });
+request(sourceUrl, 0, partialPath)
+  .catch((error) => {
+    fs.rmSync(partialPath, { force: true });
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+NODE
+  then
+    fail "Failed to download ${label} through the trusted release transport."
+  fi
+
+  [[ -f "${output_path}" ]] || fail "Trusted download did not create ${label}."
+}
+
+get_verified_release_identity() {
+  local manifest_path="$1"
+  local checksum_path="$2"
+  local archive_name="$3"
+  local expected_version="$4"
+
+  # `.sha256` 与 manifest 互相校验；签名/attestation 的独立信任根仍由后续发行任务提供。
+  node - "${manifest_path}" "${checksum_path}" "${archive_name}" "${expected_version}" \
+    "${MAX_RELEASE_ARCHIVE_BYTES}" "${MAX_RELEASE_ARCHIVE_ENTRIES}" "${MAX_RELEASE_ARCHIVE_UNPACKED_BYTES}" <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+
+const [manifestPath, checksumPath, archiveName, expectedVersion, maxArchiveBytesRaw, maxEntriesRaw, maxUnpackedBytesRaw] = process.argv.slice(2);
+const maxArchiveBytes = Number(maxArchiveBytesRaw);
+const maxEntries = Number(maxEntriesRaw);
+const maxUnpackedBytes = Number(maxUnpackedBytesRaw);
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function sha256File(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+const rootName = `star-sanctuary-dist-v${expectedVersion}`;
+const manifestName = `${rootName}.manifest.json`;
+const expectedNames = new Set([`${rootName}.zip`, `${rootName}.tar.gz`, manifestName]);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+assert(manifest && typeof manifest === "object", "release manifest must be an object");
+assert(manifest.schemaVersion === 1, "unsupported release manifest schema");
+assert(manifest.product === "star-sanctuary" && manifest.version === expectedVersion, "release manifest identity mismatch");
+assert(manifest.releaseKind === "light" && manifest.currentInstallerInput === "release-light-archive", "release manifest is not an installer payload");
+assert(manifest.packageRoot === rootName, "release manifest package root mismatch");
+
+const checksums = new Map();
+for (const line of fs.readFileSync(checksumPath, "utf8").split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+  const match = /^([a-f0-9]{64})\s+([A-Za-z0-9._-]+)$/i.exec(line);
+  assert(match, "invalid release checksum entry");
+  const [, hash, name] = match;
+  assert(expectedNames.has(name) && !checksums.has(name), "unexpected or duplicate release checksum entry");
+  checksums.set(name, hash.toLowerCase());
+}
+assert(checksums.size === expectedNames.size, "release checksum file is incomplete");
+assert(checksums.get(manifestName) === sha256File(manifestPath), "release manifest checksum mismatch");
+
+const archive = Array.isArray(manifest.archives)
+  ? manifest.archives.find((item) => item && item.fileName === archiveName)
+  : undefined;
+assert(archive && archive.format === "tar.gz", "release manifest archive entry is missing or invalid");
+assert(typeof archive.sha256 === "string" && /^[a-f0-9]{64}$/i.test(archive.sha256), "release manifest archive hash is invalid");
+assert(Number.isSafeInteger(archive.size) && archive.size > 0 && archive.size <= maxArchiveBytes, "release manifest archive size is outside the installer limit");
+assert(checksums.get(archiveName) === archive.sha256.toLowerCase(), "release manifest and checksum archive hashes disagree");
+
+const content = manifest.content;
+assert(content && Number.isSafeInteger(content.fileCount) && content.fileCount >= 0 && content.fileCount <= maxEntries, "release manifest file count is outside the installer limit");
+assert(Number.isSafeInteger(content.totalBytes) && content.totalBytes >= 0 && content.totalBytes <= maxUnpackedBytes, "release manifest unpacked size is outside the installer limit");
+process.stdout.write(JSON.stringify({
+  packageRoot: rootName,
+  archiveSha256: archive.sha256.toLowerCase(),
+  archiveSize: archive.size,
+  contentFileCount: content.fileCount,
+  contentTotalBytes: content.totalBytes,
+}));
+NODE
+}
+
+sha256_file() {
+  node -e "const crypto=require('node:crypto');const fs=require('node:fs');process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'));" "$1"
+}
+
+validate_release_archive() {
+  local archive_path="$1"
+  local expected_root="$2"
+  local expected_file_count="$3"
+  local expected_total_bytes="$4"
+
+  # 在 tar 解压前顺序扫描 header；只接受常规文件/目录，拒绝链接、穿越与超量内容。
+  node - "${archive_path}" "${expected_root}" "${expected_file_count}" "${expected_total_bytes}" \
+    "${MAX_RELEASE_ARCHIVE_ENTRIES}" "${MAX_RELEASE_ARCHIVE_ENTRY_BYTES}" "${MAX_RELEASE_ARCHIVE_UNPACKED_BYTES}" <<'NODE'
+const fs = require("node:fs");
+const { createGunzip } = require("node:zlib");
+
+const [archivePath, expectedRoot, expectedFileCountRaw, expectedTotalBytesRaw, maxEntriesRaw, maxEntryBytesRaw, maxUnpackedBytesRaw] = process.argv.slice(2);
+const expectedFileCount = Number(expectedFileCountRaw);
+const expectedTotalBytes = Number(expectedTotalBytesRaw);
+const maxEntries = Number(maxEntriesRaw);
+const maxEntryBytes = Number(maxEntryBytesRaw);
+const maxUnpackedBytes = Number(maxUnpackedBytesRaw);
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function readText(header, start, length) {
+  const text = header.subarray(start, start + length).toString("utf8");
+  return text.slice(0, text.indexOf("\0") === -1 ? text.length : text.indexOf("\0"));
+}
+
+function readOctal(header, start, length) {
+  const raw = readText(header, start, length).trim();
+  assert(raw === "" || /^[0-7]+$/.test(raw), "release archive contains an invalid tar size header");
+  const value = raw === "" ? 0 : Number.parseInt(raw, 8);
+  assert(Number.isSafeInteger(value) && value >= 0, "release archive contains an invalid tar size header");
+  return value;
+}
+
+function validatePath(rawPath, seen) {
+  assert(/^[A-Za-z0-9._/-]+$/.test(rawPath), "release archive contains an unsafe entry path");
+  assert(!rawPath.includes("//") && !/(^|\/)(\.|\.\.)(\/|$)/.test(rawPath), "release archive contains an unsafe entry path");
+  assert(rawPath === expectedRoot || rawPath.startsWith(`${expectedRoot}/`), "release archive entry is outside the declared package root");
+  const key = rawPath.toLowerCase();
+  assert(!seen.has(key), "release archive contains a duplicate entry path");
+  seen.add(key);
+}
+
+async function scanArchive() {
+  let buffer = Buffer.alloc(0);
+  let dataRemaining = 0;
+  let paddingRemaining = 0;
+  let zeroBlocks = 0;
+  let ended = false;
+  let entryCount = 0;
+  let fileCount = 0;
+  let totalBytes = 0;
+  const seen = new Set();
+
+  const processBuffer = () => {
+    while (true) {
+      if (dataRemaining > 0) {
+        const consumed = Math.min(dataRemaining, buffer.length);
+        buffer = buffer.subarray(consumed);
+        dataRemaining -= consumed;
+        if (dataRemaining > 0) return;
+      }
+      if (paddingRemaining > 0) {
+        const consumed = Math.min(paddingRemaining, buffer.length);
+        buffer = buffer.subarray(consumed);
+        paddingRemaining -= consumed;
+        if (paddingRemaining > 0) return;
+      }
+      if (buffer.length < 512) return;
+
+      const header = buffer.subarray(0, 512);
+      buffer = buffer.subarray(512);
+      if (header.every((byte) => byte === 0)) {
+        zeroBlocks += 1;
+        if (zeroBlocks >= 2) ended = true;
+        continue;
+      }
+      assert(!ended, "release archive contains data after tar terminator");
+      zeroBlocks = 0;
+      entryCount += 1;
+      assert(entryCount <= maxEntries, "release archive contains too many entries");
+
+      const name = readText(header, 0, 100);
+      const prefix = readText(header, 345, 155);
+      const path = prefix ? `${prefix}/${name}` : name;
+      const type = String.fromCharCode(header[156] || 0);
+      const size = readOctal(header, 124, 12);
+      validatePath(path, seen);
+      assert(type === "\0" || type === "0" || type === "5", "release archive links and extended tar entries are not allowed");
+      if (type === "5") {
+        assert(size === 0, "release archive directory entry has unexpected content");
+      } else {
+        assert(size <= maxEntryBytes, "release archive entry exceeds the configured byte limit");
+        assert(totalBytes <= maxUnpackedBytes - size, "release archive exceeds the configured unpacked byte limit");
+        fileCount += 1;
+        totalBytes += size;
+      }
+      dataRemaining = size;
+      paddingRemaining = (512 - (size % 512)) % 512;
+    }
+  };
+
+  const source = fs.createReadStream(archivePath);
+  const gunzip = createGunzip();
+  source.pipe(gunzip);
+  for await (const chunk of gunzip) {
+    buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+    processBuffer();
+  }
+  processBuffer();
+  assert(dataRemaining === 0 && paddingRemaining === 0 && ended, "release archive tar stream is incomplete");
+  assert(fileCount === expectedFileCount && totalBytes === expectedTotalBytes, "release archive content does not match its manifest");
+}
+
+scanArchive().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});
+NODE
 }
 
 write_unix_wrappers() {
@@ -560,6 +896,7 @@ if [[ -n "${SOURCE_DIR}" ]]; then
   RELEASE_NAME="${TAG_NAME}"
   log "Using local ${INSTALL_PAYLOAD_KIND} override from ${SOURCE_DIR}"
 else
+  validate_repository_identity
   ENDPOINT="$(release_endpoint)"
   log "Fetching release metadata from ${ENDPOINT}"
   if RELEASE_JSON="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: Star-Sanctuary-Installer' "${github_headers[@]}" "${ENDPOINT}")"; then
@@ -572,7 +909,7 @@ else
     RELEASE_NAME="${TAG_NAME}"
     REMOTE_PLAN="$(resolve_remote_install_payload_plan_from_tag "$TAG_NAME" "$VERSION")"
   fi
-  IFS='|' read -r INSTALL_PAYLOAD_KIND INSTALL_SOURCE_TYPE ARCHIVE_URL DOWNLOAD_LABEL EXTRACT_LABEL <<< "${REMOTE_PLAN}"
+  IFS='|' read -r INSTALL_PAYLOAD_KIND INSTALL_SOURCE_TYPE ARCHIVE_URL MANIFEST_URL SHA256_URL ARCHIVE_NAME ARCHIVE_DECLARED_SIZE ARCHIVE_API_DIGEST DOWNLOAD_LABEL EXTRACT_LABEL <<< "${REMOTE_PLAN}"
 fi
 
 log "Installing Star Sanctuary ${TAG_NAME} into ${INSTALL_ROOT}"
@@ -580,19 +917,44 @@ log "Installing Star Sanctuary ${TAG_NAME} into ${INSTALL_ROOT}"
 if [[ -n "${SOURCE_DIR}" ]]; then
   SOURCE_ROOT="${SOURCE_DIR}"
 else
-  ARCHIVE_PATH="${TEMP_ROOT}/source.tar.gz"
+  ARCHIVE_PATH="${TEMP_ROOT}/${ARCHIVE_NAME}"
+  MANIFEST_PATH="${TEMP_ROOT}/release-light.manifest.json"
+  CHECKSUM_PATH="${TEMP_ROOT}/release-light.sha256"
   EXTRACT_ROOT="${TEMP_ROOT}/extract"
   mkdir -p "${EXTRACT_ROOT}"
 
-  log "Downloading ${DOWNLOAD_LABEL}"
-  curl -fsSL -H 'User-Agent: Star-Sanctuary-Installer' "${github_headers[@]}" "${ARCHIVE_URL}" -o "${ARCHIVE_PATH}" \
-    || fail "Failed to download ${EXTRACT_LABEL}."
+  log "Downloading release identity metadata"
+  download_trusted_payload "${MANIFEST_URL}" "${MANIFEST_PATH}" "${MAX_RELEASE_METADATA_BYTES}" "release manifest"
+  download_trusted_payload "${SHA256_URL}" "${CHECKSUM_PATH}" "${MAX_RELEASE_METADATA_BYTES}" "release checksum"
+  RELEASE_IDENTITY="$(get_verified_release_identity "${MANIFEST_PATH}" "${CHECKSUM_PATH}" "${ARCHIVE_NAME}" "$(release_version_number_from_tag "${TAG_NAME}")")" \
+    || fail "Release identity validation failed."
+  PACKAGE_ROOT="$(printf '%s' "${RELEASE_IDENTITY}" | json_read 'data.packageRoot')" || fail "Release identity package root is invalid."
+  MANIFEST_ARCHIVE_HASH="$(printf '%s' "${RELEASE_IDENTITY}" | json_read 'data.archiveSha256')" || fail "Release identity archive hash is invalid."
+  MANIFEST_ARCHIVE_SIZE="$(printf '%s' "${RELEASE_IDENTITY}" | json_read 'data.archiveSize')" || fail "Release identity archive size is invalid."
+  MANIFEST_FILE_COUNT="$(printf '%s' "${RELEASE_IDENTITY}" | json_read 'data.contentFileCount')" || fail "Release identity file count is invalid."
+  MANIFEST_TOTAL_BYTES="$(printf '%s' "${RELEASE_IDENTITY}" | json_read 'data.contentTotalBytes')" || fail "Release identity unpacked size is invalid."
 
+  if [[ -n "${ARCHIVE_DECLARED_SIZE}" && "${ARCHIVE_DECLARED_SIZE}" != "${MANIFEST_ARCHIVE_SIZE}" ]]; then
+    fail "Release metadata and manifest archive sizes disagree."
+  fi
+  if [[ -n "${ARCHIVE_API_DIGEST}" ]]; then
+    [[ "${ARCHIVE_API_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ && "${ARCHIVE_API_DIGEST#sha256:}" == "${MANIFEST_ARCHIVE_HASH}" ]] \
+      || fail "Release metadata and manifest archive hashes disagree."
+  fi
+
+  log "Downloading ${DOWNLOAD_LABEL}"
+  download_trusted_payload "${ARCHIVE_URL}" "${ARCHIVE_PATH}" "${MAX_RELEASE_ARCHIVE_BYTES}" "release archive"
+  ARCHIVE_HASH="$(sha256_file "${ARCHIVE_PATH}")" || fail "Failed to calculate release archive hash."
+  [[ "${ARCHIVE_HASH}" == "${MANIFEST_ARCHIVE_HASH}" ]] || fail "Release archive hash does not match its manifest."
+
+  log "Scanning verified archive entries before extracting"
+  validate_release_archive "${ARCHIVE_PATH}" "${PACKAGE_ROOT}" "${MANIFEST_FILE_COUNT}" "${MANIFEST_TOTAL_BYTES}" \
+    || fail "Release archive validation failed."
   log "Extracting ${EXTRACT_LABEL}"
   tar -xzf "${ARCHIVE_PATH}" -C "${EXTRACT_ROOT}" || fail "Failed to extract ${EXTRACT_LABEL}."
 
-  SOURCE_ROOT="$(find "${EXTRACT_ROOT}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  [[ -n "${SOURCE_ROOT}" ]] || fail "Failed to locate extracted source root."
+  SOURCE_ROOT="${EXTRACT_ROOT}/${PACKAGE_ROOT}"
+  [[ -d "${SOURCE_ROOT}" ]] || fail "Failed to locate the verified extracted package root."
 fi
 
 mkdir -p "${INSTALL_ROOT}" "${BACKUP_ROOT}"

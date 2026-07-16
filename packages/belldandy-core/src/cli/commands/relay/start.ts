@@ -23,14 +23,19 @@ export default defineCommand({
     }
 
     try {
-      const { RelayServer } = await import("@belldandy/browser");
-      const relay = new RelayServer(port);
+      const { RelayServer, resolveRelayCredential } = await import("@belldandy/browser");
+      const credential = await resolveRelayCredential({
+        stateDir: ctx.stateDir,
+        configuredToken: process.env.BELLDANDY_RELAY_TOKEN,
+      });
+      const relay = new RelayServer(port, { token: credential.token });
       await relay.start();
 
       if (ctx.json) {
-        ctx.output({ status: "running", port });
+        ctx.output({ status: "running", port: relay.port, credentialSource: credential.source });
       } else {
-        ctx.success(`CDP relay listening on 127.0.0.1:${port}`);
+        ctx.success(`CDP relay listening on 127.0.0.1:${relay.port}`);
+        ctx.log("Configure the browser extension with `bdd relay credential` before connecting.");
         ctx.log("Press Ctrl+C to stop.");
       }
 

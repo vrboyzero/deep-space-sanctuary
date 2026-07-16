@@ -136,7 +136,6 @@ import {
   DEFAULT_POLICY,
   type Tool,
   type ToolDiscoveryFamilyDefinition,
-  getToolContract,
   resolveSafeScopesForChannel,
   type ToolContractAccessPolicy,
   createToolSearchTool,
@@ -319,6 +318,7 @@ import { WorkflowRuntime } from "../workflow-runtime.js";
 import { computeWorkflowToolPolicyHash } from "../workflow-fingerprint.js";
 import { registerCodeAuditBuiltinWorkflow } from "../workflow-builtin-code-audit.js";
 import { registerParallelResearchBuiltinWorkflow } from "../workflow-builtin-parallel-research.js";
+import { resolveWorkflowExecutionPolicy } from "../workflow-execution-policy.js";
 import { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "@belldandy/skills";
 import { buildContextInjectionPrelude } from "../context-injection.js";
 import { bridgeLegacyPluginHooks, initializeExtensionHost } from "../extension-host.js";
@@ -1105,12 +1105,14 @@ const DELEGATION_TOOL_NAMES = new Set([
 const gatewayContractAccessPolicy: ToolContractAccessPolicy = {
   channel: "gateway",
   allowedSafeScopes: resolveSafeScopesForChannel("gateway"),
+  includeToolsWithoutContract: false,
   blockedToolNames: dangerousToolsEnabled ? [] : [runCommandTool.definition.name],
 };
 
 const toolsToRegister = toolsEnabled
   ? await gatewayToolPoolAssembler.assemble({
     ...gatewayContractAccessPolicy,
+    requireToolContracts: true,
     enabledGroups: toolGroups,
   })
   : [];
@@ -1210,11 +1212,7 @@ const AGENT_META_ALWAYS_ALLOWED_TOOLS = new Set<string>([
   SWITCH_FAQI_TOOL_NAME,
   switchFacetTool.definition.name,
 ]);
-const toolContractsByName = new Map(
-  runtimeToolsToRegister.map((tool) => [tool.definition.name, getToolContract(tool)]),
-);
-
-const toolExecutor = new ToolExecutor({
+const toolExecutor: ToolExecutor = new ToolExecutor({
   tools: runtimeToolsToRegister,
   workspaceRoot: stateDir, // Use the resolved state directory as the workspace root for file operations
   stateDir,
@@ -1222,10 +1220,11 @@ const toolExecutor = new ToolExecutor({
   alwaysEnabledTools: toolsEnabled ? [TOOL_SETTINGS_CONTROL_NAME, TOOL_SEARCH_NAME] : [],
   policy: toolsPolicy,
   contractAccessPolicy: gatewayExecutorContractAccessPolicy,
+  requireToolContracts: true,
   deferredToolNames,
   allowedConversationKinds,
   isToolDisabled: (name) => toolsConfigManager.isToolDisabled(name),
-  isToolAllowedForAgent: (toolName, agentId) => {
+  isToolAllowedForAgent: (toolName, agentId): boolean => {
     if (AGENT_META_ALWAYS_ALLOWED_TOOLS.has(toolName)) {
       return true;
     }
@@ -1233,7 +1232,7 @@ const toolExecutor = new ToolExecutor({
       ? agentId.trim()
       : "default";
     const profile = agentRegistry?.getProfile(resolvedAgentId);
-    const contract = toolContractsByName.get(toolName);
+    const contract = toolExecutor.getRegisteredToolContract(toolName);
     return isAgentToolAllowed({
       agentId: resolvedAgentId,
       toolName,
@@ -1350,7 +1349,7 @@ if (toolsEnabled) {
       toolExecutor.clearLoadedDeferredTools(conversationId),
     shrinkLoadedDeferredTools: (conversationId: string, toolNames: string[]) =>
       toolExecutor.shrinkLoadedDeferredTools(conversationId, toolNames),
-  }), { silentReplace: true });
+  }), { origin: "core", silentReplace: true });
 }
 
 // 4. Log enabled tools
@@ -1455,14 +1454,14 @@ if (toolsEnabled) {
     listRegisteredTools: () => toolExecutor.getRegisteredToolNames(),
     listPluginIds: () => pluginRegistry.getPluginIds(),
     confirmationStore: toolControlConfirmationStore,
-  }));
+  }), { origin: "core" });
   logger.info("tools", `registered ${TOOL_SETTINGS_CONTROL_NAME} (mode=${agentToolControlMode})`);
   toolExecutor.registerTool(createSendChannelMessageTool({
     senderRegistry: externalOutboundSenderRegistry,
     confirmationStore: externalOutboundConfirmationStore,
     auditStore: externalOutboundAuditStore,
     getRequireConfirmation: readExternalOutboundRequireConfirmation,
-  }));
+  }), { origin: "core" });
   logger.info("tools", `registered send_channel_message (confirm=${readExternalOutboundRequireConfirmation() ? "required" : "auto"})`);
   toolExecutor.registerTool(createSendEmailTool({
     providerRegistry: emailOutboundProviderRegistry,
@@ -1473,7 +1472,7 @@ if (toolsEnabled) {
     getRequireConfirmation: readEmailOutboundRequireConfirmation,
     getDefaultAccountId: () => emailSmtpAccountId,
     getDefaultProviderId: () => emailOutboundProviderRegistry.getDefaultProviderId() || emailDefaultProviderId,
-  }));
+  }), { origin: "core" });
   logger.info("tools", `registered send_email (confirm=${readEmailOutboundRequireConfirmation() ? "required" : "auto"}, providers=${emailOutboundProviderRegistry.listProviderIds().join(",") || "none"})`);
 }
 
@@ -3024,6 +3023,7 @@ if (agentRegistry && toolsEnabled) {
         agentRegistry,
         conversationStore,
         readEnv: readEnv,
+        workflowExecutionPolicy: resolveWorkflowExecutionPolicy({ stateDir, readEnv }),
         resolveWorkflowAgentLaunchSpec: (input) => normalizeAgentLaunchSpecWithCatalog({
           instruction: input.instruction,
           parentConversationId: input.parentConversationId,
@@ -3067,7 +3067,7 @@ if (agentRegistry && toolsEnabled) {
         },
       });
       toolExecutor.setWorkflowRuntime(workflowRuntime);
-      toolExecutor.registerTool(runWorkflowTool);
+      toolExecutor.registerTool(runWorkflowTool, { origin: "workflow" });
       // 注册 builtin 工作流
       registerCodeAuditBuiltinWorkflow();
       registerParallelResearchBuiltinWorkflow();
@@ -4459,6 +4459,8 @@ const browserRelayPort = Number(readEnv("BELLDANDY_RELAY_PORT") ?? "28892");
 startBrowserRelayRuntime({
   enabled: browserRelayEnabled,
   port: browserRelayPort,
+  stateDir,
+  configuredToken: readEnv("BELLDANDY_RELAY_TOKEN"),
   logger,
 });
 

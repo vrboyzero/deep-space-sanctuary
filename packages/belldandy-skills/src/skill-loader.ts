@@ -11,6 +11,18 @@ import type { SkillDefinition, SkillSource, SkillPriority, SkillEligibility } fr
 
 const SKILL_FILENAME = "SKILL.md";
 
+export class SkillDirectoryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SkillDirectoryError";
+  }
+}
+
+export type LoadSkillsFromDirOptions = {
+  /** Missing user-owned directories are optional; declared bundled/plugin directories are not. */
+  requireDirectory?: boolean;
+};
+
 /**
  * 从单个目录加载一个 Skill
  */
@@ -41,13 +53,27 @@ export async function loadSkillFromDir(
 export async function loadSkillsFromDir(
   parentDir: string,
   source: SkillSource,
+  options: LoadSkillsFromDirOptions = {},
 ): Promise<SkillDefinition[]> {
   const skills: SkillDefinition[] = [];
   let entries: import("node:fs").Dirent[];
   try {
+    const stat = await fs.stat(parentDir);
+    if (!stat.isDirectory()) {
+      throw new SkillDirectoryError(`Invalid required skill directory: ${parentDir} is not a directory.`);
+    }
     entries = await fs.readdir(parentDir, { withFileTypes: true });
-  } catch {
-    return skills;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT" && !options.requireDirectory) {
+      return skills;
+    }
+    if (error instanceof SkillDirectoryError) {
+      throw error;
+    }
+    throw new SkillDirectoryError(
+      `Invalid required skill directory: ${parentDir} (${error instanceof Error ? error.message : String(error)}).`,
+    );
   }
 
   for (const entry of entries) {

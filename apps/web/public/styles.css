@@ -1988,6 +1988,28 @@ body.control-panel-hidden .main-content {
   min-width: 300px;
 }
 
+.auth-session-option {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auth-session-option input {
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.auth-session-option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .uuid-input-group {
   flex: 1.2;
   min-width: 260px;

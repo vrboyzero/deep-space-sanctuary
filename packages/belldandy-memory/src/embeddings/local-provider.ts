@@ -1,6 +1,37 @@
-import type { FlagEmbedding } from "fastembed";
+import type { EmbeddingModel, FlagEmbedding } from "fastembed";
 import { EmbeddingProvider } from "./index.js";
 import { AuthenticationError, RateLimitError } from "../types.js";
+
+const FASTEMBED_MODEL_ALIASES: Record<string, string> = {
+    // 兼容项目文档与旧配置使用的 Hugging Face 仓库名。
+    "BAAI/bge-small-en-v1.5": "fast-bge-small-en-v1.5",
+};
+
+const SUPPORTED_FASTEMBED_MODELS = [
+    "fast-all-MiniLM-L6-v2",
+    "fast-bge-base-en",
+    "fast-bge-base-en-v1.5",
+    "fast-bge-small-en",
+    "fast-bge-small-en-v1.5",
+    "fast-bge-small-zh-v1.5",
+    "fast-multilingual-e5-large",
+] as const;
+
+export const DEFAULT_LOCAL_EMBEDDING_MODEL = "fast-bge-small-en-v1.5";
+
+type StandardFastembedModel = Exclude<EmbeddingModel, EmbeddingModel.CUSTOM>;
+
+function resolveFastembedModel(modelName: string): StandardFastembedModel {
+    const requestedModel = modelName.trim();
+    const resolvedModel = FASTEMBED_MODEL_ALIASES[requestedModel] ?? requestedModel;
+    if (!(SUPPORTED_FASTEMBED_MODELS as readonly string[]).includes(resolvedModel)) {
+        throw new Error(
+            `Unsupported local embedding model "${modelName}" for Fastembed 2. `
+            + `Supported models: ${SUPPORTED_FASTEMBED_MODELS.join(", ")}`,
+        );
+    }
+    return resolvedModel as StandardFastembedModel;
+}
 
 export class LocalEmbeddingProvider implements EmbeddingProvider {
     private model: FlagEmbedding | null = null;
@@ -8,7 +39,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     readonly cacheDir?: string;
     private initPromise: Promise<void> | null = null;
 
-    constructor(modelName: string = "BAAI/bge-small-en-v1.5", cacheDir?: string) {
+    constructor(modelName: string = DEFAULT_LOCAL_EMBEDDING_MODEL, cacheDir?: string) {
         this.modelName = modelName;
         this.cacheDir = cacheDir;
     }
@@ -19,18 +50,16 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
 
         this.initPromise = (async () => {
             try {
+                const fastembedModel = resolveFastembedModel(this.modelName);
                 if (this.cacheDir) {
                     const fs = await import("node:fs/promises");
-                    const path = await import("node:path");
-                    // [FIX] Create full model path including subdirectories (e.g., BAAI/bge-m3)
-                    // fastembed expects this structure to exist
-                    const modelSubdir = path.join(this.cacheDir, this.modelName.replace("/", path.sep));
-                    await fs.mkdir(modelSubdir, { recursive: true });
+                    // Fastembed 会把已存在的模型子目录视为完整缓存，因此这里只准备缓存根目录。
+                    await fs.mkdir(this.cacheDir, { recursive: true });
                 }
 
                 const { FlagEmbedding } = await import("fastembed");
                 this.model = await FlagEmbedding.init({
-                    model: this.modelName as any,
+                    model: fastembedModel,
                     cacheDir: this.cacheDir
                 });
                 console.log(`[LocalEmbedding] Initialized model: ${this.modelName} in ${this.cacheDir || "default cache"}`);

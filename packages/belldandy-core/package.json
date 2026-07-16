@@ -38,9 +38,9 @@
     "citty": "^0.1.6",
     "@clack/prompts": "^0.10.0",
     "express": "^5.1.0",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^9.0.3",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
-    "ws": "^8.18.3"
+    "ws": "^8.21.1"
   }
 }

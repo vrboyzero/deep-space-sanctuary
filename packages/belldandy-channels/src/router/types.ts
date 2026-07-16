@@ -48,6 +48,11 @@ export interface RouteDecision {
 }
 
 export interface ChannelRouter {
+  /**
+   * 在下载附件、转码或解析正文前执行的安全预检。
+   * 普通业务路由仍由 decide() 在完整文本可用后完成。
+   */
+  admitIngress?(ctx: RouteContext): RouteDecision;
   decide(ctx: RouteContext): RouteDecision;
 }
 

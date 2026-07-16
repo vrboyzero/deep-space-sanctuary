@@ -52,6 +52,8 @@ export interface MaterializedExtensionMarketplaceSource {
   sourceKey: string;
   materializedPath: string;
   manifestPath?: string;
+  /** 物化目录的确定性内容摘要，作为启动加载前的完整性基线。 */
+  contentSha256: string;
   materializedAt: string;
   strategy: "copy";
 }
@@ -126,6 +128,44 @@ function resolveMaterializedManifestPath(materializedPath: string, manifestPath?
     : "belldandy-extension.json";
   const resolved = ensurePathInsideRoot(materializedPath, path.join(materializedPath, candidate), "manifestPath");
   return resolved;
+}
+
+/**
+ * Marketplace 安装目录不是可执行信任根。安装完成时与每次加载前都计算相同的
+ * 树摘要，避免 manifest 以外的 plugin entry 或 skill 内容被替换后仍被激活。
+ */
+export async function computeMaterializedExtensionContentSha256(rootPath: string): Promise<string> {
+  const canonicalRoot = await fs.realpath(rootPath);
+  const rootStat = await fs.lstat(canonicalRoot);
+  if (!rootStat.isDirectory()) {
+    throw new Error("Materialized extension root must be a directory.");
+  }
+
+  const hash = crypto.createHash("sha256");
+  const visit = async (currentPath: string, relativePath: string): Promise<void> => {
+    const stat = await fs.lstat(currentPath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Materialized extension cannot contain symbolic links: ${relativePath || "."}`);
+    }
+    if (stat.isDirectory()) {
+      hash.update(`directory\0${relativePath}\0`);
+      const entries = await fs.readdir(currentPath, { withFileTypes: true });
+      entries.sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        const childRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+        await visit(path.join(currentPath, entry.name), childRelativePath);
+      }
+      return;
+    }
+    if (!stat.isFile()) {
+      throw new Error(`Materialized extension contains an unsupported entry: ${relativePath}`);
+    }
+    hash.update(`file\0${relativePath}\0`);
+    hash.update(await fs.readFile(currentPath));
+  };
+
+  await visit(canonicalRoot, "");
+  return hash.digest("hex");
 }
 
 async function writeJson(targetPath: string, value: unknown): Promise<void> {
@@ -242,6 +282,7 @@ export async function materializeExtensionMarketplaceSource(
     sourceKey: input.sourceState.sourceKey,
     materializedPath,
     manifestPath: manifestStat?.isFile() ? manifestPath : undefined,
+    contentSha256: await computeMaterializedExtensionContentSha256(materializedPath),
     materializedAt: nowIso(),
     strategy: "copy",
   };

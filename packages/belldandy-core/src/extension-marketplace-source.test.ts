@@ -71,6 +71,7 @@ describe("extension marketplace source service", () => {
 
     expect(materialized.materializedPath).toBe(getMaterializedExtensionPath(stateDir, "official-market", "demo-plugin"));
     expect(materialized.manifestPath).toBe(path.join(materialized.materializedPath, "belldandy-extension.json"));
+    expect(materialized.contentSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(await fs.readFile(path.join(materialized.materializedPath, "dist", "plugin.mjs"), "utf-8")).toContain("export default");
   });
 

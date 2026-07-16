@@ -1,5 +1,6 @@
 import type { Tool } from "./types.js";
 import {
+  getToolContract,
   type ToolContractChannel,
   type ToolContractSafeScope,
 } from "./tool-contract.js";
@@ -14,6 +15,8 @@ export interface ToolPoolAssemblyContext extends ToolContractAccessPolicy {
   enabledGroups?: Iterable<string>;
   allowedSafeScopes?: Iterable<ToolContractSafeScope>;
   flags?: Record<string, boolean>;
+  /** Gateway startup treats a missing contract as a configuration error. */
+  requireToolContracts?: boolean;
 }
 
 type ToolEntryValue = Tool | readonly Tool[];
@@ -97,8 +100,14 @@ export class ToolPoolAssembler {
 
       const tools = await resolveEntryTools(entry, context);
       for (const tool of tools) {
+        if (context.requireToolContracts && !getToolContract(tool)) {
+          throw new Error(`Tool pool contains an ungoverned tool: ${tool.definition.name}`);
+        }
         if (!isToolAllowedByContract(tool, context)) {
           continue;
+        }
+        if (deduped.has(tool.definition.name)) {
+          throw new Error(`Duplicate tool in pool: ${tool.definition.name}`);
         }
         deduped.set(tool.definition.name, tool);
       }

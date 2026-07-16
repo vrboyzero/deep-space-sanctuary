@@ -32,6 +32,8 @@ test("external mcpServers format maps autoConnect=false into internal server con
           },
           "starweaver-central": {
             url: "http://127.0.0.1:28767/sse",
+            allowInsecureHttp: true,
+            allowPrivateNetwork: true,
             headers: {
               Authorization: "Bearer test-key",
             },
@@ -60,6 +62,8 @@ test("external mcpServers format maps autoConnect=false into internal server con
         transport: expect.objectContaining({
           type: "sse",
           url: "http://127.0.0.1:28767/sse",
+          allowInsecureHttp: true,
+          allowPrivateNetwork: true,
         }),
       }),
     ]));

@@ -84,6 +84,7 @@ export async function checkEligibility(
 export async function checkEligibilityBatch(
   skills: SkillDefinition[],
   ctx: EligibilityContext,
+  keyForSkill: (skill: SkillDefinition) => string = (skill) => skill.name,
 ): Promise<Map<string, EligibilityResult>> {
   const results = new Map<string, EligibilityResult>();
 
@@ -105,7 +106,7 @@ export async function checkEligibilityBatch(
   for (const skill of skills) {
     const elig = skill.eligibility;
     if (!elig) {
-      results.set(skill.name, { eligible: true, reasons: [] });
+      results.set(keyForSkill(skill), { eligible: true, reasons: [] });
       continue;
     }
 
@@ -144,7 +145,7 @@ export async function checkEligibilityBatch(
       }
     }
 
-    results.set(skill.name, { eligible: reasons.length === 0, reasons });
+    results.set(keyForSkill(skill), { eligible: reasons.length === 0, reasons });
   }
 
   return results;

@@ -1,6 +1,6 @@
-import crypto from "node:crypto";
 import path from "node:path";
 
+import { generateBootstrapAuthToken } from "./bootstrap-auth-token.js";
 import { ensureDefaultEnvFiles, loadRuntimeEnvFiles, readTrimmedEnv, resolveRuntimeEnvDir } from "./env.js";
 import { startGatewaySupervisor } from "./gateway-supervisor.js";
 import {
@@ -32,7 +32,7 @@ function ensureSingleExeEnv(params: {
   env.AUTO_OPEN_BROWSER = readTrimmedEnv(env, "AUTO_OPEN_BROWSER") ?? "true";
 
   if (readTrimmedEnv(env, "BELLDANDY_AUTH_MODE") === "token" && !readTrimmedEnv(env, "BELLDANDY_AUTH_TOKEN")) {
-    const setupToken = `setup-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const setupToken = generateBootstrapAuthToken();
     env.SETUP_TOKEN = setupToken;
     env.BELLDANDY_AUTH_TOKEN = setupToken;
   }

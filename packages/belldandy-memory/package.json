@@ -24,12 +24,12 @@
     "sqlite-vec": "0.1.7-alpha.2"
   },
   "optionalDependencies": {
-    "fastembed": "^1.14.1"
+    "fastembed": "^2.1.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/chokidar": "^2.1.7",
     "@types/node": "^22.0.0",
-    "vitest": "^2.0.0"
+    "vitest": "^3.2.6"
   }
 }

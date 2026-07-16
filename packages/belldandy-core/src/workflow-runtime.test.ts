@@ -40,7 +40,7 @@ function createMockAgentRegistry(responseText: string): AgentRegistry {
 
 // ─── 测试夹具 ─────────────────────────────────────────────────────────────
 
-async function setupRuntime(responseText = "mock agent response") {
+async function setupRuntime(responseText = "mock agent response", options: { allowInline?: boolean } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `belldandy-wf-runtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`));
   const dbPath = path.join(tempDir, "memory.db");
   const store = new MemoryStore(dbPath);
@@ -50,6 +50,13 @@ async function setupRuntime(responseText = "mock agent response") {
     db: store.getDbHandleForSharedSchema(),
     agentRegistry,
     conversationStore,
+    workflowExecutionPolicy: {
+      workflowRoot: tempDir,
+      allowInline: options.allowInline === true,
+      allowLegacyFiles: true,
+      approvedFileHashes: new Map(),
+      maxFileBytes: 1024 * 1024,
+    },
     readEnv: (name) => {
       if (name === "BELLDANDY_WORKFLOW_MAX_AGENT_CALLS") return "50";
       if (name === "BELLDANDY_WORKFLOW_MAX_CONCURRENT") return "6";
@@ -142,11 +149,10 @@ describe("WorkflowRuntime", () => {
   });
 
   it("inline 模式显式启用后运行成功", async () => {
-    const f = await setupRuntime("inline agent result");
+    const f = await setupRuntime("inline agent result", { allowInline: true });
     cleanups.push(f.cleanup);
     const result = await f.runtime.run({
       source: { kind: "inline", code: `export default async function(ctx) { return await ctx.agent("test"); }` },
-      allowInlineScript: true,
       parentConversationId: "conv-4",
       channel: "test",
       stateDir: f.tempDir,

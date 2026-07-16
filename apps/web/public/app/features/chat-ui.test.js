@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import createDOMPurify from "dompurify";
 
 import { createChatEventsFeature } from "./chat-events.js";
 import { createChatUiFeature } from "./chat-ui.js";
@@ -121,11 +122,13 @@ function createChatEventsHarness(feature, overrides = {}) {
 describe("chat ui rich text rendering", () => {
   beforeEach(() => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    window.DOMPurify = createDOMPurify(window);
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    delete window.DOMPurify;
     delete window.marked;
     document.body.innerHTML = "";
   });
@@ -212,6 +215,31 @@ describe("chat ui rich text rendering", () => {
     expect(links[1]?.getAttribute("href")).toBe("https://example.com/docs");
     expect(links[1]?.getAttribute("rel")).toBe("noopener noreferrer");
     expect(body?.querySelector("img")).toBeNull();
+  });
+
+  it("rejects raw SVG and untrusted assistant media URLs", () => {
+    installMarkedStub((text) => text);
+    const { bubble, feature } = createFeature();
+
+    feature.renderAssistantMessage(
+      bubble,
+      [
+        '<svg><a href="javascript:alert(\'x\')">svg payload</a></svg>',
+        '<img src="data:image/png;base64,AAAA" alt="inline">',
+        '<img src="blob:https://evil.example/media" alt="blob">',
+        '<video src="http://example.com/demo.mp4" controls></video>',
+        '<img src="/generated/images/safe.png" alt="safe">',
+      ].join(""),
+    );
+
+    const body = bubble.querySelector(".msg-body");
+    expect(body?.querySelector("svg")).toBeNull();
+    expect(body?.querySelector("img")).toBeNull();
+    expect(body?.querySelector("video")).toBeNull();
+    expect(body?.querySelectorAll(".media-thumbnail")).toHaveLength(1);
+    expect(body?.innerHTML).not.toContain("data:image");
+    expect(body?.innerHTML).not.toContain("blob:");
+    expect(body?.innerHTML).not.toContain("http://example.com");
   });
 
   it("provides copy feedback for code and message copy buttons", async () => {

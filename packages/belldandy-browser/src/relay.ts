@@ -1,7 +1,10 @@
-import { createServer, type Server } from "node:http";
+import crypto from "node:crypto";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import WebSocket, { WebSocketServer } from "ws";
+
+import { assertValidRelayToken } from "./relay-credential.js";
 
 // Logger interface to avoid circular dependency
 interface Logger {
@@ -28,9 +31,26 @@ type CdpCommand = {
 type CdpResponse = {
     id: number;
     result?: unknown;
-    error?: { message: string };
+    error?: { code?: number; message: string };
     sessionId?: string;
 };
+
+export type RelayServerOptions = {
+    token: string;
+    maxPayloadBytes?: number;
+    maxCdpClients?: number;
+    maxPendingRequests?: number;
+    requestTimeoutMs?: number;
+};
+
+type RelayEndpoint = "extension" | "cdp";
+
+const DEFAULT_MAX_PAYLOAD_BYTES = 512 * 1024;
+const DEFAULT_MAX_CDP_CLIENTS = 8;
+const DEFAULT_MAX_PENDING_REQUESTS = 64;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_BUFFERED_BYTES = 1024 * 1024;
+const EXTENSION_PROTOCOL_PREFIX = "belldandy-relay-v1.";
 
 export class RelayServer {
     private server: Server;
@@ -38,30 +58,44 @@ export class RelayServer {
     private wssCdp: WebSocketServer;
     private extensionWs: WebSocket | null = null;
     private cdpClients = new Set<WebSocket>();
+    private extensionGeneration = 0;
+    private stopPromise: Promise<void> | null = null;
 
     // 发送给插件的挂起请求（等待响应）
     private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
     private nextId = 1;
 
-    public readonly port: number;
+    public port: number;
     private logger?: Logger;
+    private readonly token: string;
+    private readonly maxPayloadBytes: number;
+    private readonly maxCdpClients: number;
+    private readonly maxPendingRequests: number;
+    private readonly requestTimeoutMs: number;
 
-    constructor(port: number = 28892, logger?: Logger) {
+    constructor(port: number, options: RelayServerOptions, logger?: Logger) {
         this.logger = logger;
         this.port = port;
+        this.token = assertValidRelayToken(options.token);
+        this.maxPayloadBytes = normalizePositiveLimit(options.maxPayloadBytes, DEFAULT_MAX_PAYLOAD_BYTES, "maxPayloadBytes");
+        this.maxCdpClients = normalizePositiveLimit(options.maxCdpClients, DEFAULT_MAX_CDP_CLIENTS, "maxCdpClients");
+        this.maxPendingRequests = normalizePositiveLimit(options.maxPendingRequests, DEFAULT_MAX_PENDING_REQUESTS, "maxPendingRequests");
+        this.requestTimeoutMs = normalizePositiveLimit(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, "requestTimeoutMs");
         this.server = createServer((req, res) => {
+            const requestUrl = new URL(req.url ?? "/", "http://localhost");
             // 基础健康检查与版本信息
-            if (req.url === "/json/version") {
+            if (requestUrl.pathname === "/json/version") {
                 res.writeHead(200, { "Content-Type": "application/json" });
                 const wsUrl = `ws://127.0.0.1:${this.port}/cdp`;
                 res.end(JSON.stringify({
                     Browser: "Star Sanctuary/Relay",
                     "Protocol-Version": "1.3",
-                    webSocketDebuggerUrl: this.extensionWs ? wsUrl : undefined
+                    // 未认证 discovery 不返回可复用 credential，避免 loopback 探测直接获得 CDP 控制路径。
+                    webSocketDebuggerUrl: this.isRequestAuthenticated(req) && this.isExtensionConnected() ? wsUrl : undefined
                 }));
                 return;
             }
-            if (req.url === "/json/list") {
+            if (requestUrl.pathname === "/json/list") {
                 // 返回一个虚拟 Target，以便 Puppeteer 可以通过 http://.../json/list 进行发现。
                 // 在真实实现中，我们应该追踪 Tab 列表。目前暂时返回空数组或单个 Target。
                 // Puppeteer 通常通过 /json/version 获取 webSocketDebuggerUrl。
@@ -73,88 +107,136 @@ export class RelayServer {
             res.end("Not Found");
         });
 
-        this.wssExtension = new WebSocketServer({ noServer: true });
-        this.wssCdp = new WebSocketServer({ noServer: true });
+        this.wssExtension = new WebSocketServer({ noServer: true, maxPayload: this.maxPayloadBytes });
+        this.wssCdp = new WebSocketServer({ noServer: true, maxPayload: this.maxPayloadBytes });
 
         this.setupExtensionServer();
         this.setupCdpServer();
 
         this.server.on("upgrade", (req, socket, head) => {
             const url = new URL(req.url ?? "/", "http://localhost");
-            if (url.pathname === "/extension") {
-                this.wssExtension.handleUpgrade(req, socket, head, (ws) => this.wssExtension.emit("connection", ws, req));
-            } else if (url.pathname === "/cdp") {
-                this.wssCdp.handleUpgrade(req, socket, head, (ws) => this.wssCdp.emit("connection", ws, req));
-            } else {
+            const endpoint = url.pathname === "/extension"
+                ? "extension"
+                : url.pathname === "/cdp"
+                    ? "cdp"
+                    : null;
+            if (!endpoint) {
                 socket.destroy();
+                return;
             }
+            const wss = endpoint === "extension" ? this.wssExtension : this.wssCdp;
+            wss.handleUpgrade(req, socket, head, (ws) => {
+                const rejection = this.getUpgradeRejection(req, endpoint);
+                if (rejection) {
+                    safeClose(ws, rejection.code, rejection.reason);
+                    return;
+                }
+                wss.emit("connection", ws, req);
+            });
         });
+    }
+
+    private isRequestAuthenticated(req: IncomingMessage, endpoint: RelayEndpoint = "cdp"): boolean {
+        const supplied = endpoint === "extension"
+            ? getExtensionProtocolToken(req)
+            : getBearerToken(req);
+        if (!supplied) return false;
+        const expected = Buffer.from(this.token);
+        const candidate = Buffer.from(supplied);
+        return expected.length === candidate.length && crypto.timingSafeEqual(expected, candidate);
+    }
+
+    private getUpgradeRejection(
+        req: IncomingMessage,
+        endpoint: RelayEndpoint,
+    ): { code: number; reason: string } | null {
+        if (!this.isRequestAuthenticated(req, endpoint)) {
+            return { code: 4401, reason: "relay credential required" };
+        }
+        if (!isRelayOriginAllowed(req.headers.origin, endpoint)) {
+            return { code: 4403, reason: "relay origin rejected" };
+        }
+        if (endpoint === "extension" && this.isExtensionConnected()) {
+            return { code: 4409, reason: "extension owner already connected" };
+        }
+        if (endpoint === "cdp" && this.cdpClients.size >= this.maxCdpClients) {
+            return { code: 4429, reason: "cdp client limit reached" };
+        }
+        return null;
+    }
+
+    private isExtensionConnected(): boolean {
+        return this.extensionWs?.readyState === WebSocket.OPEN;
+    }
+
+    private rejectPending(reason: string): void {
+        for (const pending of this.pending.values()) {
+            clearTimeout(pending.timer);
+            pending.reject(new Error(reason));
+        }
+        this.pending.clear();
     }
 
     private setupExtensionServer() {
         this.wssExtension.on("connection", (ws) => {
-            this.logger?.info("Extension connected");
+            const generation = ++this.extensionGeneration;
+            this.logger?.info("Extension connected", { generation });
             this.extensionWs = ws;
 
             ws.on("message", (data) => {
                 const dataStr = data.toString();
-                // Avoid logging raw ping/pong to keep noise down, but log everything else
-                if (!dataStr.includes('"method":"pong"') && !dataStr.includes('"method":"ping"')) {
-                    this.logger?.debug(`Extension message: ${dataStr}`);
-                }
-
                 try {
                     const msg = JSON.parse(dataStr) as ExtensionMessage;
+                    if (!("method" in msg && (msg.method === "ping" || msg.method === "pong"))) {
+                        this.logger?.debug("Extension message received", {
+                            generation,
+                            bytes: Buffer.byteLength(dataStr),
+                            kind: "method" in msg ? msg.method : "response",
+                        });
+                    }
                     this.handleExtensionMessage(msg);
-                } catch (err) {
-                    this.logger?.error("Failed to parse extension message", err);
+                } catch {
+                    // Bad frames are rejected without logging their potentially sensitive payload.
+                    this.logger?.warn("Rejected invalid extension message", { generation, bytes: Buffer.byteLength(dataStr) });
+                    safeClose(ws, 4400, "invalid extension frame");
                 }
             });
 
             ws.on("close", () => {
-                this.logger?.info("Extension disconnected");
-                this.extensionWs = null;
-                // 拒绝所有挂起的请求
-                for (const p of this.pending.values()) {
-                    clearTimeout(p.timer);
-                    p.reject(new Error("Extension disconnected"));
+                if (this.extensionWs !== ws || generation !== this.extensionGeneration) {
+                    return;
                 }
-                this.pending.clear();
+                this.logger?.info("Extension disconnected", { generation });
+                this.extensionWs = null;
+                this.rejectPending("Extension disconnected");
             });
         });
     }
 
     private setupCdpServer() {
         this.wssCdp.on("connection", (ws) => {
-            this.logger?.debug("CDP client connected");
+            this.logger?.debug("CDP client connected", { clients: this.cdpClients.size + 1 });
             this.cdpClients.add(ws);
 
             ws.on("message", async (data) => {
-                if (!this.extensionWs) {
-                    // 如果插件未连接，立即发送错误响应
-                    try {
-                        const cmd = JSON.parse(data.toString()) as CdpCommand;
-                        if (cmd.id !== undefined) {
-                            ws.send(JSON.stringify({
-                                id: cmd.id,
-                                error: {
-                                    code: -32000,
-                                    message: "浏览器扩展未连接。请告知用户：1) 确保 Chrome 浏览器正在运行；2) 检查 Star Sanctuary Browser Relay 扩展是否已启用并显示已连接状态；3) 如果问题持续，请让用户刷新扩展或重启浏览器。在扩展重新连接前，浏览器相关功能暂时不可用。"
-                                }
-                            }));
-                        }
-                    } catch {
-                        // Ignore parse errors
-                    }
+                const cmd = parseCdpCommand(data.toString());
+                if (!cmd) {
+                    safeClose(ws, 4400, "invalid cdp command");
+                    return;
+                }
+                if (!this.isExtensionConnected()) {
+                    this.sendJson(ws, {
+                        id: cmd.id,
+                        error: {
+                            code: -32000,
+                            message: "Browser extension is not connected.",
+                        },
+                        sessionId: cmd.sessionId,
+                    });
                     return;
                 }
 
-                try {
-                    const cmd = JSON.parse(data.toString()) as CdpCommand;
-                    this.handleCdpCommand(ws, cmd);
-                } catch (err) {
-                    this.logger?.error("Failed to parse CDP command", err);
-                }
+                await this.handleCdpCommand(ws, cmd);
             });
 
             ws.on("close", () => {
@@ -187,11 +269,8 @@ export class RelayServer {
                         if (!info.title) info.title = "Active Tab";
                     }
                 }
-                const payload = JSON.stringify(cdpEvent);
                 for (const client of this.cdpClients) {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(payload);
-                    }
+                    this.sendJson(client, cdpEvent);
                 }
             }
             return;
@@ -211,7 +290,7 @@ export class RelayServer {
     }
 
     private async handleCdpCommand(client: WebSocket, cmd: CdpCommand) {
-        this.logger?.debug(`CDP command: ${cmd.method} (ID: ${cmd.id})`);
+        this.logger?.debug("CDP command received", { method: cmd.method, id: cmd.id });
 
         // Intercept specific commands
         if (cmd.method === "Target.getBrowserContexts") {
@@ -330,19 +409,25 @@ export class RelayServer {
         };
 
         try {
-            if (!this.extensionWs || this.extensionWs.readyState !== WebSocket.OPEN) {
+            if (!this.isExtensionConnected() || !this.extensionWs) {
                 throw new Error("Extension not connected");
             }
+            if (this.pending.size >= this.maxPendingRequests) {
+                throw new Error("Relay pending request limit reached");
+            }
 
-            // 发送给 Extension 并等待响应
-            this.sendJson(this.extensionWs, payload);
-
-            const result = await new Promise((resolve, reject) => {
+            // 先登记 pending 再发送，防止 Extension 快速响应时丢失结果。
+            const result = await new Promise<unknown>((resolve, reject) => {
                 const timer = setTimeout(() => {
                     this.pending.delete(id);
                     reject(new Error("Timeout waiting for extension"));
-                }, 30000);
+                }, this.requestTimeoutMs);
                 this.pending.set(id, { resolve, reject, timer });
+                if (!this.sendJson(this.extensionWs, payload)) {
+                    clearTimeout(timer);
+                    this.pending.delete(id);
+                    reject(new Error("Extension connection is not writable"));
+                }
             });
 
             // 将结果回传给 CDP Client
@@ -367,30 +452,154 @@ export class RelayServer {
         socket: Pick<WebSocket, "send"> | null | undefined,
         payload: unknown,
         debugLabel?: string,
-    ): void {
-        if (!socket) return;
-        const serialized = JSON.stringify(payload);
-        if (debugLabel) {
-            this.logger?.debug(`${debugLabel}: ${serialized}`);
+    ): boolean {
+        if (!socket) return false;
+        const relaySocket = socket as Partial<Pick<WebSocket, "readyState" | "bufferedAmount" | "close">>;
+        if (relaySocket.readyState !== undefined && relaySocket.readyState !== WebSocket.OPEN) return false;
+        if (typeof relaySocket.bufferedAmount === "number" && relaySocket.bufferedAmount > MAX_BUFFERED_BYTES) {
+            if (typeof relaySocket.close === "function") {
+                safeClose(relaySocket as WebSocket, 1013, "relay consumer is too slow");
+            }
+            return false;
         }
-        socket.send(serialized);
+        const serialized = JSON.stringify(payload);
+        const bytes = Buffer.byteLength(serialized);
+        if (bytes > this.maxPayloadBytes) {
+            this.logger?.warn("Rejected oversized relay outbound frame", { bytes });
+            return false;
+        }
+        if (debugLabel) {
+            this.logger?.debug(`${debugLabel} (bytes=${bytes})`);
+        }
+        try {
+            socket.send(serialized);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
-    public async start() {
+    public async start(): Promise<void> {
         return new Promise<void>((resolve, reject) => {
+            const onError = (error: Error) => {
+                this.server.off("error", onError);
+                reject(error);
+            };
+            this.server.once("error", onError);
             this.server.listen(this.port, "127.0.0.1", () => {
+                this.server.off("error", onError);
+                const address = this.server.address();
+                if (address && typeof address !== "string") {
+                    this.port = (address as AddressInfo).port;
+                }
                 this.logger?.info(`Relay server listening on 127.0.0.1:${this.port}`);
                 resolve();
             });
-            this.server.on("error", reject);
         });
     }
 
-    public async stop() {
-        return new Promise<void>((resolve) => {
-            this.server.close(() => resolve());
-            this.wssExtension.close();
-            this.wssCdp.close();
-        });
+    public async stop(): Promise<void> {
+        if (this.stopPromise) return this.stopPromise;
+        this.stopPromise = (async () => {
+            this.rejectPending("Relay stopped");
+            this.extensionWs && safeClose(this.extensionWs, 1001, "relay stopped");
+            for (const client of this.cdpClients) {
+                safeClose(client, 1001, "relay stopped");
+            }
+            this.cdpClients.clear();
+            this.extensionWs = null;
+            await Promise.all([
+                closeWebSocketServer(this.wssExtension),
+                closeWebSocketServer(this.wssCdp),
+                closeHttpServer(this.server),
+            ]);
+        })();
+        return this.stopPromise;
     }
+}
+
+function normalizePositiveLimit(value: number | undefined, fallback: number, label: string): number {
+    if (value === undefined) return fallback;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new Error(`${label} must be a positive integer.`);
+    }
+    return value;
+}
+
+/** Chrome 扩展不能自定义 Authorization；将凭据放在受握手保护的子协议字段而非 URL。 */
+function getExtensionProtocolToken(req: IncomingMessage): string | undefined {
+    const rawProtocols = req.headers["sec-websocket-protocol"];
+    const protocols = (Array.isArray(rawProtocols) ? rawProtocols.join(",") : rawProtocols ?? "")
+        .split(",")
+        .map((protocol) => protocol.trim())
+        .filter(Boolean);
+    const credentialProtocol = protocols.find((protocol) => protocol.startsWith(EXTENSION_PROTOCOL_PREFIX));
+    return credentialProtocol?.slice(EXTENSION_PROTOCOL_PREFIX.length);
+}
+
+/** CDP/Puppeteer 支持握手 headers，使用标准 Authorization 防止 token 进入 endpoint 字符串。 */
+function getBearerToken(req: IncomingMessage): string | undefined {
+    const authorization = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+    const matched = /^Bearer\s+(.+)$/i.exec(authorization?.trim() ?? "");
+    return matched?.[1]?.trim() || undefined;
+}
+
+function isRelayOriginAllowed(origin: string | string[] | undefined, endpoint: RelayEndpoint): boolean {
+    const value = Array.isArray(origin) ? origin[0] : origin;
+    if (!value) return endpoint === "cdp";
+    try {
+        const parsed = new URL(value);
+        if (endpoint === "extension") return parsed.protocol === "chrome-extension:";
+        return (parsed.protocol === "http:" || parsed.protocol === "https:")
+            && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+    } catch {
+        return false;
+    }
+}
+
+function parseCdpCommand(raw: string): CdpCommand | null {
+    try {
+        const value = JSON.parse(raw) as unknown;
+        if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+        const record = value as Record<string, unknown>;
+        if (typeof record.id !== "number" || !Number.isSafeInteger(record.id) || typeof record.method !== "string" || !record.method.trim()) return null;
+        return {
+            id: record.id,
+            method: record.method,
+            ...(record.params !== undefined ? { params: record.params } : {}),
+            ...(typeof record.sessionId === "string" ? { sessionId: record.sessionId } : {}),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function safeClose(socket: WebSocket, code: number, reason: string): void {
+    try {
+        socket.close(code, reason);
+    } catch {
+        // Socket can already be closed while shutdown is draining it.
+    }
+}
+
+async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+    await new Promise<void>((resolve) => {
+        try {
+            wss.close(() => resolve());
+        } catch {
+            resolve();
+        }
+    });
+}
+
+async function closeHttpServer(server: Server): Promise<void> {
+    await new Promise<void>((resolve) => {
+        try {
+            server.close(() => resolve());
+        } catch {
+            resolve();
+        }
+    });
 }

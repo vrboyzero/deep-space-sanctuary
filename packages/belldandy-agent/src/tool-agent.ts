@@ -6,12 +6,14 @@
 
 import {
   evaluateRuntimeIdentityAuthority,
+  readResponseTextBounded,
   type IdentityAuthorityProfile,
   type JsonObject,
 } from "@belldandy/protocol";
 import type { ToolExecutionRuntimeContext, ToolExecutor, ToolCallRequest, ToolFailureKind } from "@belldandy/skills";
 import type { AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
+import { AgentEndLedger } from "./agent-end-ledger.js";
 import type { AfterCompactionEvent, BeforeCompactionEvent, HookAgentContext, HookToolContext, HookToolResultPersistContext } from "./hooks.js";
 import {
   FailoverClient,
@@ -2050,7 +2052,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     };
     const textAttachmentChars = readTextAttachmentChars(input.meta);
     let toolCallCount = 0;
-    const generatedItems: AgentStreamItem[] = [];
+    const generatedItems = new AgentEndLedger();
     let runSuccess = true;
     let runError: string | undefined;
 
@@ -2194,7 +2196,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
     // 辅助函数：yield 并收集 items
     const yieldItem = async function* (item: AgentStreamItem) {
-      generatedItems.push(item);
+      generatedItems.record(item);
       yield item;
     };
 
@@ -3327,14 +3329,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
       // 用于扩展 C 自动任务边界检测等场景）
       if (this.opts.hookRunner) {
         try {
+          const agentEndSnapshot = generatedItems.snapshot();
           await this.withStageTimeout(
             "agent_end",
             this.opts.hookRunner.runAgentEnd(
               {
-                messages: generatedItems,
+                messages: agentEndSnapshot.items,
                 success: runSuccess,
                 error: runError,
                 durationMs,
+                summary: agentEndSnapshot.summary,
               },
               agentHookCtx,
             ),
@@ -3345,9 +3349,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
       } else if (this.opts.hooks?.afterRun) {
         // 向后兼容：旧版 hooks
         try {
+          const agentEndSnapshot = generatedItems.snapshot();
           await this.withStageTimeout(
             "afterRun",
-            Promise.resolve(this.opts.hooks.afterRun({ input, items: generatedItems }, legacyHookCtx)),
+            Promise.resolve(this.opts.hooks.afterRun({ input, items: agentEndSnapshot.items }, legacyHookCtx)),
           );
         } catch (err) {
           logError(`Hook afterRun failed: ${err}`);
@@ -4719,12 +4724,8 @@ function stableStringify(value: unknown): string {
 }
 
 async function safeReadText(res: Response): Promise<string> {
-  try {
-    const text = await res.text();
-    return text.length > 500 ? `${text.slice(0, 500)}…` : text;
-  } catch {
-    return "";
-  }
+  const result = await readResponseTextBounded(res, { maxBytes: 2048 });
+  return result.truncated ? `${result.text}…` : result.text;
 }
 
 function splitText(text: string, size: number): string[] {

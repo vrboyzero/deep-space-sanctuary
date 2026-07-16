@@ -381,13 +381,15 @@ BELLDANDY_MEMORY_DEEP_RETRIEVAL=false
 ```env
 BELLDANDY_EMBEDDING_ENABLED=true
 BELLDANDY_EMBEDDING_PROVIDER=local
-BELLDANDY_LOCAL_EMBEDDING_MODEL=BAAI/bge-m3
+BELLDANDY_LOCAL_EMBEDDING_MODEL=fast-bge-small-en-v1.5
 ```
 
 但要满足两个前提：
 
 - 环境里已带 `fastembed`
 - 接受首次模型下载和本地 CPU / 内存占用
+
+中文内容可改用 Fastembed 2 内置的 `fast-bge-small-zh-v1.5`；不支持的模型名会在下载前返回可诊断错误。
 
 否则最稳妥的“最节省方案”仍然是直接关闭 Embedding。
 

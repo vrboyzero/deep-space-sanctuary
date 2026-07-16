@@ -1,6 +1,6 @@
-import dns from "node:dns/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchTool } from "./fetch.js";
+import { OutboundRequestPolicy } from "@belldandy/protocol";
+import { createFetchTool, fetchTool } from "./fetch.js";
 import type { ToolContext } from "../types.js";
 
 const baseContext: ToolContext = {
@@ -94,38 +94,19 @@ describe("web_fetch tool", () => {
       expect(result.error).toContain("不在白名单中");
     });
 
-    it("should allow ENOTFOUND DNS failures to fall through to fetch", async () => {
-      const dnsError = Object.assign(new Error("getaddrinfo ENOTFOUND example.com"), {
-        code: "ENOTFOUND",
+    it("should fail closed when DNS cannot resolve the target", async () => {
+      const testTool = createFetchTool({
+        createOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+          ...options,
+          dnsLookup: async () => {
+            throw new Error("resolver unavailable");
+          },
+          requestAdapter: async () => new Response("should-not-run", { status: 200 }),
+        }),
       });
-      vi.spyOn(dns, "lookup").mockRejectedValue(dnsError);
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response("ok", {
-          status: 200,
-          headers: { "content-type": "text/plain" },
-        })
-      );
 
-      const result = await fetchTool.execute({ url: "https://example.com/api" }, baseContext);
+      const result = await testTool.execute({ url: "https://example.com/api" }, baseContext);
 
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(result.success).toBe(true);
-    });
-
-    it("should block timed out DNS lookups before fetch", async () => {
-      const dnsError = Object.assign(new Error("dns lookup timeout"), {
-        code: "ETIMEOUT",
-      });
-      vi.spyOn(dns, "lookup").mockRejectedValue(dnsError);
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response("should-not-run", {
-          status: 200,
-        })
-      );
-
-      const result = await fetchTool.execute({ url: "https://example.com/api" }, baseContext);
-
-      expect(fetchSpy).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.error).toContain("DNS");
       expect(result.failureKind).toBe("permission_or_policy");
@@ -171,34 +152,36 @@ describe("web_fetch tool", () => {
 
   describe("abort handling", () => {
     it("should stop an in-flight fetch when abortSignal is aborted", async () => {
-      vi.spyOn(dns, "lookup").mockResolvedValue({
-        address: "93.184.216.34",
-        family: 4,
-      } as Awaited<ReturnType<typeof dns.lookup>>);
       const controller = new AbortController();
       let markFetchStarted!: () => void;
       const fetchStarted = new Promise<void>((resolve) => {
         markFetchStarted = resolve;
       });
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-        markFetchStarted();
-        return await new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal as AbortSignal | undefined;
-          if (signal?.aborted) {
-            const error = new Error("Stopped by user.");
-            error.name = "AbortError";
-            reject(error);
-            return;
-          }
-          signal?.addEventListener("abort", () => {
-            const error = new Error("Stopped by user.");
-            error.name = "AbortError";
-            reject(error);
-          }, { once: true });
-        });
+      const testTool = createFetchTool({
+        createOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+          ...options,
+          dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+          requestAdapter: async (input) => {
+            markFetchStarted();
+            return await new Promise<Response>((_resolve, reject) => {
+              const signal = input.init.signal;
+              if (signal?.aborted) {
+                const error = new Error("Stopped by user.");
+                error.name = "AbortError";
+                reject(error);
+                return;
+              }
+              signal?.addEventListener("abort", () => {
+                const error = new Error("Stopped by user.");
+                error.name = "AbortError";
+                reject(error);
+              }, { once: true });
+            });
+          },
+        }),
       });
 
-      const resultPromise = fetchTool.execute({ url: "https://example.com/api" }, {
+      const resultPromise = testTool.execute({ url: "https://example.com/api" }, {
         ...baseContext,
         abortSignal: controller.signal,
       });
@@ -211,5 +194,23 @@ describe("web_fetch tool", () => {
       expect(result.error).toBe("Stopped by user.");
       expect(result.failureKind).toBe("environment_error");
     });
+  });
+
+  it("truncates the retained response bytes without allocating beyond the configured limit", async () => {
+    const testTool = createFetchTool({
+      createOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+        ...options,
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        requestAdapter: async () => new Response("x".repeat(2048), { status: 200 }),
+      }),
+    });
+
+    const result = await testTool.execute({ url: "https://example.com/large" }, baseContext);
+    const output = JSON.parse(result.output);
+
+    expect(result.success).toBe(true);
+    expect(output.truncated).toBe(true);
+    expect(output.bytes).toBe(1024);
+    expect(output.body).toHaveLength(1024);
   });
 });

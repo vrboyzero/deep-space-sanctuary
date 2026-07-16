@@ -4,11 +4,21 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
 import type { BelldandyAgent, ConversationStore } from "@belldandy/agent";
+import { FilesystemCapability, assertSafeFilesystemBasename } from "@belldandy/protocol";
 import type { ChatKind, ChannelRouter } from "./router/types.js";
 import type { Channel, ChannelConfig, ChannelProactiveTarget } from "./types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
+import { readBoundedMediaBuffer } from "./media-reader.js";
+import {
+    ChannelSafeLogger,
+    createChannelApprovalPreview,
+    hashChannelIdentifier,
+} from "./channel-safe-logger.js";
+
+const channelSafeLogger = new ChannelSafeLogger();
+const QQ_EVENT_SAMPLE_CAPTURE_MAX_FILES = 100;
 
 export interface QqChannelConfig extends ChannelConfig {
     appId: string;
@@ -29,6 +39,17 @@ interface WsPayload {
     s?: number;
     t?: string;
     id?: string;
+}
+
+function summarizeQqEventPayload(payload: WsPayload): Record<string, unknown> {
+    const data = payload.d && typeof payload.d === "object" ? payload.d as Record<string, unknown> : undefined;
+    return {
+        op: payload.op,
+        ...(typeof payload.s === "number" ? { sequence: payload.s } : {}),
+        ...(typeof payload.t === "string" ? { eventType: payload.t } : {}),
+        ...(typeof payload.id === "string" ? { id: payload.id } : {}),
+        ...(data ? { dataKeys: Object.keys(data).sort().slice(0, 32) } : {}),
+    };
 }
 
 type QqReplyContext = {
@@ -75,6 +96,8 @@ const QQ_EVENT_SAMPLE_CAPTURE_TIMEOUT_MS = 5_000;
 const QQ_VOICE_DOWNLOAD_TIMEOUT_MS = 15_000;
 const QQ_VOICE_STT_TIMEOUT_MS = 30_000;
 const QQ_VOICE_TRANSCODE_TIMEOUT_MS = 30_000;
+const QQ_VOICE_MAX_BYTES = 16 * 1024 * 1024;
+const QQ_FFMPEG_OUTPUT_MAX_BYTES = 64 * 1024;
 const DEFAULT_FFMPEG_COMMAND = "ffmpeg";
 const QQ_SILK_DECODER_SUPPORTED = false;
 
@@ -138,7 +161,11 @@ export class QqChannel implements Channel {
             try {
                 return this.config.agentResolver(agentId);
             } catch (error) {
-                console.warn(`[${this.name}] Failed to resolve agent "${agentId}", fallback to default agent:`, error);
+                channelSafeLogger.warn({
+                    channel: "qq",
+                    event: "agent_resolution_failed",
+                    failureKind: "configuration_error",
+                });
             }
         }
         return this.agent;
@@ -192,6 +219,15 @@ export class QqChannel implements Channel {
         try {
             const dir = this.eventSampleCapture.dir;
             await fs.mkdir(dir, { recursive: true });
+            const existingFiles = await fs.readdir(dir, { withFileTypes: true });
+            if (existingFiles.filter((entry) => entry.isFile()).length >= QQ_EVENT_SAMPLE_CAPTURE_MAX_FILES) {
+                channelSafeLogger.warn({
+                    channel: "qq",
+                    event: "event_sample_skipped",
+                    context: { reason: "file_limit" },
+                });
+                return;
+            }
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
             const messageId = this.sanitizeSampleFileSegment(
                 typeof payload.id === "string" ? payload.id : payload.d?.id,
@@ -204,19 +240,30 @@ export class QqChannel implements Channel {
                 `${timestamp}_${eventSegment}_s${sequenceSegment}_${messageId.slice(0, 24)}.json`,
             );
             const message = this.normalizeDispatchMessage(payload);
+            const chatId = this.resolveChatId(message);
             const sampleRecord = {
                 capturedAt: new Date().toISOString(),
                 channel: "qq",
                 eventType,
                 sequence,
-                messageId: typeof message?.id === "string" ? message.id : undefined,
-                chatId: this.resolveChatId(message),
-                payload,
+                messageIdHash: typeof message?.id === "string" ? hashChannelIdentifier(message.id) : undefined,
+                chatIdHash: chatId ? hashChannelIdentifier(chatId) : undefined,
+                // debug capture 只保存协议形状；正文、作者资料与原始 payload 不落盘。
+                payload: summarizeQqEventPayload(payload),
             };
             await fs.writeFile(filePath, `${JSON.stringify(sampleRecord, null, 2)}\n`, "utf8");
-            console.log(`[${this.name}] Captured QQ event sample: ${filePath}`);
-        } catch (error) {
-            console.warn(`[${this.name}] Failed to capture QQ event sample:`, error);
+            channelSafeLogger.info({
+                channel: "qq",
+                event: "event_sample_captured",
+                messageId: typeof message?.id === "string" ? message.id : undefined,
+                context: { eventType },
+            });
+        } catch {
+            channelSafeLogger.warn({
+                channel: "qq",
+                event: "event_sample_failed",
+                context: { eventType },
+            });
         }
     }
 
@@ -265,10 +312,10 @@ export class QqChannel implements Channel {
             child.stdout.setEncoding("utf8");
             child.stderr.setEncoding("utf8");
             child.stdout.on("data", (chunk) => {
-                stdout += String(chunk);
+                stdout = this.appendBoundedProcessOutput(stdout, chunk);
             });
             child.stderr.on("data", (chunk) => {
-                stderr += String(chunk);
+                stderr = this.appendBoundedProcessOutput(stderr, chunk);
             });
             child.on("error", (error) => {
                 if (settled) return;
@@ -289,16 +336,32 @@ export class QqChannel implements Channel {
         });
     }
 
+    private appendBoundedProcessOutput(current: string, chunk: unknown): string {
+        const remainingBytes = QQ_FFMPEG_OUTPUT_MAX_BYTES - Buffer.byteLength(current, "utf8");
+        if (remainingBytes <= 0) return current;
+        return `${current}${Buffer.from(String(chunk)).subarray(0, remainingBytes).toString("utf8")}`;
+    }
+
     private async transcodeAudioBufferToWav(
         buffer: Buffer,
         inputFileName: string,
         outputFileName: string,
     ): Promise<Buffer> {
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-qq-amr-"));
-        const safeInputFileName = inputFileName || "voice.amr";
-        const inputPath = path.join(tempDir, safeInputFileName);
-        const outputPath = path.join(tempDir, outputFileName);
+        const tempCapability = new FilesystemCapability({
+            rootPath: tempDir,
+            label: "QQ voice transcode temporary directory",
+            maxBytes: QQ_VOICE_MAX_BYTES,
+        });
         try {
+            const safeInputFileName = assertSafeFilesystemBasename(inputFileName || "voice.amr", "QQ voice input file name");
+            const safeOutputFileName = assertSafeFilesystemBasename(outputFileName, "QQ voice output file name");
+            if (safeInputFileName === safeOutputFileName) {
+                throw new Error("QQ voice transcode input and output file names must differ.");
+            }
+            tempCapability.assertByteLength(buffer.length, "QQ voice input");
+            const inputPath = tempCapability.resolveForWriteRelative(safeInputFileName, "QQ voice ffmpeg input");
+            const outputPath = tempCapability.resolveForWriteRelative(safeOutputFileName, "QQ voice ffmpeg output");
             await fs.writeFile(inputPath, buffer);
             const result = await this.runCommand({
                 command: this.readFfmpegCommand(),
@@ -320,15 +383,36 @@ export class QqChannel implements Channel {
             if (result.exitCode !== 0) {
                 throw new Error(result.stderr || result.stdout || `ffmpeg exit=${result.exitCode ?? "null"}`);
             }
-            return await fs.readFile(outputPath);
+            const verifiedOutputPath = tempCapability.resolveExistingRelative(
+                safeOutputFileName,
+                "QQ voice ffmpeg output",
+            );
+            const outputStat = await fs.stat(verifiedOutputPath);
+            if (!outputStat.isFile()) {
+                throw new Error("QQ voice ffmpeg output is not a file.");
+            }
+            tempCapability.assertByteLength(outputStat.size, "QQ voice ffmpeg output");
+            const outputBuffer = await fs.readFile(verifiedOutputPath);
+            tempCapability.assertByteLength(outputBuffer.length, "QQ voice ffmpeg output");
+            return outputBuffer;
         } finally {
-            await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            try {
+                const removableTempDir = tempCapability.resolveForRemovalPath(
+                    tempDir,
+                    "QQ voice transcode temporary directory",
+                    { allowRoot: true },
+                );
+                await fs.rm(removableTempDir, { recursive: true, force: true });
+            } catch {
+                // 临时目录已经丢失或被外部替换时不覆盖原始转码错误。
+            }
         }
     }
 
     private async transcodeAmrBufferToWav(buffer: Buffer, fileName: string): Promise<Buffer> {
-        const baseName = path.parse(fileName || "voice").name || "voice";
-        return await this.transcodeAudioBufferToWav(buffer, fileName || "voice.amr", `${baseName}.wav`);
+        const safeFileName = assertSafeFilesystemBasename(fileName || "voice.amr", "QQ voice input file name");
+        const baseName = path.parse(safeFileName).name || "voice";
+        return await this.transcodeAudioBufferToWav(buffer, safeFileName, `${baseName}.wav`);
     }
 
     private extractVoiceAttachment(message: any): {
@@ -365,21 +449,12 @@ export class QqChannel implements Channel {
     }
 
     private async downloadVoiceAttachmentBuffer(url: string, label: string): Promise<Buffer> {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), QQ_VOICE_DOWNLOAD_TIMEOUT_MS);
-        let response: Response;
-        try {
-            response = await fetch(url, {
-                signal: controller.signal,
-            });
-        } finally {
-            clearTimeout(timeout);
-        }
-        if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            throw new Error(`Failed to download QQ voice attachment (${response.status}) ${text}`.trim());
-        }
-        const buffer = Buffer.from(await response.arrayBuffer());
+        const buffer = await readBoundedMediaBuffer({
+            url,
+            label: `QQ voice attachment ${label}`,
+            timeoutMs: QQ_VOICE_DOWNLOAD_TIMEOUT_MS,
+            maxBytes: QQ_VOICE_MAX_BYTES,
+        });
         console.log(`[${this.name}] Downloaded QQ voice attachment ${label}: ${buffer.length} bytes`);
         return buffer;
     }
@@ -474,8 +549,13 @@ export class QqChannel implements Channel {
                 if (text) {
                     return text;
                 }
-            } catch (error) {
-                console.warn(`[${this.name}] QQ voice ${input.sourceLabel} fallback provider ${provider} failed for ${input.msgId}:`, error);
+            } catch {
+                channelSafeLogger.warn({
+                    channel: "qq",
+                    event: "voice_fallback_transcription_failed",
+                    messageId: input.msgId,
+                    failureKind: "media_error",
+                });
             }
         }
         return undefined;
@@ -518,7 +598,10 @@ export class QqChannel implements Channel {
             return undefined;
         }
 
-        const originalFileName = voiceAttachment.filename || `qq_${msgId}.amr`;
+        const originalFileName = assertSafeFilesystemBasename(
+            voiceAttachment.filename || "voice.amr",
+            "QQ voice attachment file name",
+        );
 
         if (voiceAttachment.wavUrl) {
             console.log(`[${this.name}] Downloading QQ voice attachment WAV for ${msgId}: ${originalFileName}`);
@@ -557,8 +640,13 @@ export class QqChannel implements Channel {
                 if (normalizedFallbackText) {
                     return normalizedFallbackText;
                 }
-            } catch (error) {
-                console.warn(`[${this.name}] Failed to normalize QQ voice WAV for ${msgId}:`, error);
+            } catch {
+                channelSafeLogger.warn({
+                    channel: "qq",
+                    event: "voice_normalization_failed",
+                    messageId: msgId,
+                    failureKind: "media_error",
+                });
             }
             const wavFallbackText = await this.tryTranscribeWithFallbackProviders({
                 buffer: wavBuffer,
@@ -642,8 +730,13 @@ export class QqChannel implements Channel {
         let transcript: string | undefined;
         try {
             transcript = await this.transcribeVoiceAttachment(message, msgId);
-        } catch (error) {
-            console.warn(`[${this.name}] Failed to transcribe QQ voice attachment for ${msgId}:`, error);
+        } catch {
+            channelSafeLogger.warn({
+                channel: "qq",
+                event: "voice_transcription_failed",
+                messageId: msgId,
+                failureKind: "media_error",
+            });
         }
 
         if (content && transcript) {
@@ -701,7 +794,11 @@ export class QqChannel implements Channel {
             console.log(`[${this.name}] AccessToken obtained, expires in ${expiresIn}s (raw: ${rawExpiresIn}s)`);
             this.scheduleTokenRefresh(expiresIn);
         } catch (error) {
-            console.error(`[${this.name}] Failed to fetch AccessToken:`, error);
+            channelSafeLogger.error({
+                channel: "qq",
+                event: "access_token_fetch_failed",
+                failureKind: "transport_error",
+            });
             throw error;
         }
     }
@@ -721,8 +818,12 @@ export class QqChannel implements Channel {
             console.log(`[${this.name}] Refreshing AccessToken...`);
             try {
                 await this.fetchAccessToken();
-            } catch (error) {
-                console.error(`[${this.name}] Failed to refresh AccessToken:`, error);
+            } catch {
+                channelSafeLogger.error({
+                    channel: "qq",
+                    event: "access_token_refresh_failed",
+                    failureKind: "transport_error",
+                });
                 this.scheduleTokenRefresh(60);
             }
         }, safeExpiresIn * 1000);
@@ -745,8 +846,12 @@ export class QqChannel implements Channel {
             if (!this._running) {
                 return;
             }
-            void this.connectWebSocket().catch((error) => {
-                console.error(`[${this.name}] Failed to reconnect WebSocket:`, error);
+            void this.connectWebSocket().catch(() => {
+                channelSafeLogger.error({
+                    channel: "qq",
+                    event: "websocket_reconnect_failed",
+                    failureKind: "transport_error",
+                });
                 this.scheduleReconnect(delayMs);
             });
         }, delayMs);
@@ -803,11 +908,23 @@ export class QqChannel implements Channel {
                 const payload: WsPayload = JSON.parse(data.toString());
                 // 记录所有收到的消息（除了心跳ACK）
                 if (payload.op !== OpCode.HEARTBEAT_ACK) {
-                    console.log(`[${this.name}] Raw WS message:`, JSON.stringify(payload).substring(0, 500));
+                    channelSafeLogger.info({
+                        channel: "qq",
+                        event: "ws_event_received",
+                        messageId: typeof payload.id === "string" ? payload.id : undefined,
+                        context: {
+                            op: payload.op,
+                            eventType: payload.t ?? "unknown",
+                        },
+                    });
                 }
                 void this.handleWsMessage(payload);
-            } catch (error) {
-                console.error(`[${this.name}] Failed to parse WebSocket message:`, error);
+            } catch {
+                channelSafeLogger.error({
+                    channel: "qq",
+                    event: "websocket_message_parse_failed",
+                    failureKind: "invalid_input",
+                });
             }
         });
 
@@ -853,8 +970,12 @@ export class QqChannel implements Channel {
             this.scheduleReconnect(delay);
         });
 
-        this.ws.on("error", (error) => {
-            console.error(`[${this.name}] WebSocket error:`, error);
+        this.ws.on("error", () => {
+            channelSafeLogger.error({
+                channel: "qq",
+                event: "websocket_error",
+                failureKind: "transport_error",
+            });
         });
     }
 
@@ -885,7 +1006,11 @@ export class QqChannel implements Channel {
 
             case OpCode.DISPATCH:
                 // 事件分发
-                console.log(`[${this.name}] Dispatch event: ${t}`, JSON.stringify(d).substring(0, 200));
+                channelSafeLogger.info({
+                    channel: "qq",
+                    event: "dispatch_event",
+                    context: { eventType: t ?? "unknown" },
+                });
                 if (t === "READY") {
                     this.sessionId = d.session_id;
                     console.log(`[${this.name}] Session ready: ${this.sessionId}`);
@@ -903,8 +1028,12 @@ export class QqChannel implements Channel {
                             this.captureEventSample(payload, t, s),
                             QQ_EVENT_SAMPLE_CAPTURE_TIMEOUT_MS,
                             `QQ event sample capture (${t})`,
-                        ).catch((error) => {
-                            console.warn(`[${this.name}] QQ event sample capture failed for ${t}:`, error);
+                        ).catch(() => {
+                            channelSafeLogger.warn({
+                                channel: "qq",
+                                event: "event_sample_timeout",
+                                context: { eventType: t },
+                            });
                         });
                     }
                     await this.handleMessage(this.normalizeDispatchMessage(payload), t);
@@ -1042,26 +1171,11 @@ export class QqChannel implements Channel {
             return;
         }
 
-        const content = await this.buildInboundText(message, msgId);
-        if (!content) return;
-
-        console.log(`[${this.name}] Received message: ${content.substring(0, 50)}...`);
-
         const chatId = this.resolveChatId(message);
         if (!chatId) {
             console.warn(`[${this.name}] Unable to resolve chat ID for message ${msgId}`);
             return;
         }
-
-        const replyContext: QqReplyContext = {
-            channelId: message.channel_id,
-            guildId: message.guild_id,
-            groupOpenId: message.group_openid,
-            userOpenId: message.author?.id,
-            messageId: message.id,
-            eventType,
-        };
-        this.rememberReplyContext(chatId, replyContext);
 
         const chatKind = this.inferChatKind(eventType);
         const mentions = eventType.includes("_AT_") ? ["__mention__"] : [];
@@ -1073,6 +1187,54 @@ export class QqChannel implements Channel {
             chatId,
             senderId,
         });
+        const ingressDecision = this.router?.admitIngress?.({
+            channel: "qq",
+            chatKind,
+            chatId,
+            sessionScope: session.sessionScope,
+            sessionKey: session.sessionKey,
+            text: "",
+            senderId,
+            senderName: typeof message.author?.username === "string" ? message.author.username : undefined,
+            mentions,
+            mentioned,
+            eventType,
+        });
+        if (ingressDecision && !ingressDecision.allow) {
+            if (ingressDecision.reason === "channel_security:dm_allowlist_blocked" && chatKind === "dm" && senderId) {
+                void this.onChannelSecurityApprovalRequired?.({
+                    channel: "qq",
+                    senderId,
+                    senderName: typeof message.author?.username === "string" ? message.author.username : undefined,
+                    chatId,
+                    chatKind: "dm",
+                    messagePreview: "",
+                });
+            }
+            console.log(`[${this.name}] Ingress blocked before media handling for ${msgId} (${ingressDecision.reason})`);
+            return;
+        }
+
+        const content = await this.buildInboundText(message, msgId);
+        if (!content) return;
+
+        channelSafeLogger.info({
+            channel: "qq",
+            event: "message_received",
+            messageId: msgId,
+            body: content,
+        });
+
+        const replyContext: QqReplyContext = {
+            channelId: message.channel_id,
+            guildId: message.guild_id,
+            groupOpenId: message.group_openid,
+            userOpenId: message.author?.id,
+            messageId: message.id,
+            eventType,
+        };
+        this.rememberReplyContext(chatId, replyContext);
+
         const decision = this.router
             ? this.router.decide({
                 channel: "qq",
@@ -1103,7 +1265,7 @@ export class QqChannel implements Channel {
                         senderName: typeof message.author?.username === "string" ? message.author.username : undefined,
                         chatId,
                         chatKind: "dm",
-                        messagePreview: content,
+                        messagePreview: createChannelApprovalPreview(content),
                     });
                 }
             }
@@ -1170,8 +1332,13 @@ export class QqChannel implements Channel {
                     });
                 }
             }
-        } catch (error) {
-            console.error(`[${this.name}] Agent error:`, error);
+        } catch {
+            channelSafeLogger.error({
+                channel: "qq",
+                event: "agent_failed",
+                messageId: msgId,
+                failureKind: "internal_error",
+            });
             await this.sendReply("抱歉，处理消息时出错了。", replyContext);
         }
     }
@@ -1250,8 +1417,12 @@ export class QqChannel implements Channel {
             }
 
             console.log(`[${this.name}] Message sent successfully`);
-        } catch (error) {
-            console.error(`[${this.name}] Failed to send reply:`, error);
+        } catch {
+            channelSafeLogger.error({
+                channel: "qq",
+                event: "reply_failed",
+                failureKind: "transport_error",
+            });
         }
     }
 
@@ -1350,8 +1521,12 @@ export class QqChannel implements Channel {
             await this.sendReply(content, targetContext);
             console.log(`[${this.name}] Proactive message sent to ${targetChatId}`);
             return true;
-        } catch (e) {
-            console.error(`[${this.name}] Failed to send proactive message:`, e);
+        } catch {
+            channelSafeLogger.error({
+                channel: "qq",
+                event: "proactive_send_failed",
+                failureKind: "transport_error",
+            });
             return false;
         }
     }

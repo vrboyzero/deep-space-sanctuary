@@ -2,6 +2,7 @@ import fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { FilesystemCapability } from "@belldandy/protocol";
 import {
     buildCompactedMessages,
     needsCompaction,
@@ -1002,6 +1003,7 @@ export class ConversationStore {
     private readonly maxHistory: number;
     private readonly ttlSeconds: number;
     private readonly dataDir?: string;
+    private readonly dataDirCapability?: FilesystemCapability;
     private readonly compactionOpts?: CompactionOptions;
     private readonly summarizer?: SummarizerFn;
     private readonly summarizerModelName?: string;
@@ -1022,6 +1024,10 @@ export class ConversationStore {
 
         if (this.dataDir) {
             fs.mkdirSync(this.dataDir, { recursive: true });
+            this.dataDirCapability = new FilesystemCapability({
+                rootPath: this.dataDir,
+                label: "conversation data directory",
+            });
         }
     }
 
@@ -1053,7 +1059,7 @@ export class ConversationStore {
             }
         }
 
-        if (this.dataDir) {
+        if (this.dataDir && this.isDataDirAvailable()) {
             const restored = this.loadFromFile(id);
             return this.cacheAndValidateConversation(id, restored, { allowExpiredPersistedConversation: true });
         }
@@ -1068,7 +1074,7 @@ export class ConversationStore {
         if (!this.dataDir) return undefined;
         const filePath = this.getExistingConversationFilePath(id, ".jsonl");
         const meta = this.loadMetaFromFile(id);
-        if (!fs.existsSync(filePath)) {
+        if (!filePath || !fs.existsSync(filePath)) {
             if (!meta) return undefined;
             return {
                 id,
@@ -1172,7 +1178,7 @@ export class ConversationStore {
                 return validatedCached;
             }
         }
-        if (this.dataDir) {
+        if (this.dataDir && this.isDataDirAvailable()) {
             const restored = await this.loadFromFileAsync(id);
             return this.cacheAndValidateConversation(id, restored, { allowExpiredPersistedConversation: true });
         }
@@ -1328,12 +1334,21 @@ export class ConversationStore {
     }
 
     private getConversationFilePath(id: string, suffix: string): string | undefined {
-        if (!this.dataDir) return undefined;
+        if (!this.dataDirCapability || !this.isDataDirAvailable()) return undefined;
         const safeId = this.toSafeConversationFileId(id);
-        return path.join(this.dataDir, `${safeId}${suffix}`);
+        try {
+            return this.dataDirCapability.resolveForWriteRelative(
+                `${safeId}${suffix}`,
+                "conversation artifact",
+            );
+        } catch (error) {
+            // teardown 或外部清理可发生在可用性检查之后；目录已消失时跳过持久化，不向父目录降级。
+            if (!this.isDataDirAvailable()) return undefined;
+            throw error;
+        }
     }
 
-    private getExistingConversationFilePath(id: string, suffix: string): string {
+    private getExistingConversationFilePath(id: string, suffix: string): string | undefined {
         const candidates = this.getConversationFilePathCandidates(id, suffix);
         for (const candidate of candidates) {
             if (fs.existsSync(candidate)) {
@@ -1344,12 +1359,24 @@ export class ConversationStore {
     }
 
     private getConversationFilePathCandidates(id: string, suffix: string): string[] {
-        if (!this.dataDir) return [];
+        if (!this.dataDirCapability || !this.isDataDirAvailable()) return [];
         const primary = this.getConversationFilePath(id, suffix);
         if (!primary) return [];
 
-        const legacy = path.join(this.dataDir, `${id}${suffix}`);
-        return primary === legacy ? [primary] : [primary, legacy];
+        try {
+            // legacy 名称仅在它本身是一个安全的单文件名时才参与 fallback，绝不由外部 id 构造裸路径。
+            const legacy = this.dataDirCapability.resolveForWriteRelative(
+                `${id}${suffix}`,
+                "legacy conversation artifact",
+            );
+            return primary === legacy ? [primary] : [primary, legacy];
+        } catch {
+            return [primary];
+        }
+    }
+
+    private isDataDirAvailable(): boolean {
+        return Boolean(this.dataDir && fs.existsSync(this.dataDir));
     }
 
     private toSafeConversationFileId(id: string): string {
@@ -1619,7 +1646,7 @@ export class ConversationStore {
         }
 
         // 持久化追加
-        if (this.dataDir) {
+        if (this.dataDir && this.isDataDirAvailable()) {
             if (headerChanged) {
                 this.persistConversationMeta(id, conv);
             }
@@ -1635,6 +1662,7 @@ export class ConversationStore {
     private appendToFile(id: string, message: ConversationMessage, conversation?: Conversation): void {
         if (!this.dataDir) return;
         const filePath = this.getExistingConversationFilePath(id, ".jsonl");
+        if (!filePath) return;
         const transcriptFilePath = this.getSessionTranscriptFilePath(id);
         const line = JSON.stringify(message) + "\n";
         const transcriptEvent = createSessionTranscriptMessageEvent({
@@ -2423,6 +2451,8 @@ export class ConversationStore {
         compactedTokens?: number;
         tier?: string;
     }> {
+        // Session memory 会引用消息 ID，先等待历史落盘，避免崩溃恢复时出现孤立摘要。
+        await this.waitForPendingPersistence(id);
         const previousState = await this.getSessionDigestStateAsync(id);
         const threshold = typeof options.threshold === "number" && Number.isFinite(options.threshold)
             ? this.resolveSessionDigestThreshold(options.threshold)
@@ -2911,7 +2941,16 @@ export class ConversationStore {
         for (const entry of entries) {
             if (!entry.isFile()) continue;
             const fileName = entry.name;
-            const fullPath = path.join(this.dataDir, fileName);
+            let fullPath: string;
+            try {
+                fullPath = this.dataDirCapability?.resolveExistingRelative(
+                    fileName,
+                    "persisted conversation entry",
+                ) ?? "";
+            } catch {
+                continue;
+            }
+            if (!fullPath) continue;
 
             if (fileName.endsWith(".transcript.jsonl")) {
                 const key = fileName.slice(0, -".transcript.jsonl".length);

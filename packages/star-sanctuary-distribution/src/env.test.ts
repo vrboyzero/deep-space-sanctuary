@@ -122,7 +122,7 @@ test("ensureDefaultEnvFiles prefers explicit runtime templates over bundle-relat
   expect(envContent).not.toContain("Star Sanctuary default bootstrap config");
   expect(envLocalContent).toContain("BELLDANDY_OPENAI_MODEL=runtime-local-model");
   expect(envLocalContent).not.toContain("Star Sanctuary local overrides");
-  expect(envLocalContent).toMatch(/BELLDANDY_AUTH_TOKEN=setup-[^\r\n]+/);
+  expect(envLocalContent).toMatch(/BELLDANDY_AUTH_TOKEN=setup-[A-Za-z0-9_-]{43}(?:\r?\n|$)/);
 });
 
 test("loadRuntimeEnvFiles preserves explicit base env values over .env defaults", async () => {

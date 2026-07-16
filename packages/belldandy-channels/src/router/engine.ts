@@ -10,13 +10,20 @@ import type {
   RouteRuleAction,
   RouteRuleMatch,
 } from "./types.js";
-import { evaluateChannelSecurityPolicy, type ChannelSecurityConfig } from "./security-config.js";
+import {
+  evaluateChannelIngressSecurity,
+  type ChannelSecurityConfig,
+  type ChannelSecurityConfigLoadStatus,
+  type SecurityBackedChannelKind,
+} from "./security-config.js";
 
 export interface RuleBasedRouterOptions {
   defaultAgentId?: string;
   defaultAllow?: boolean;
   logger?: ChannelRouterLogger;
   securityConfig?: ChannelSecurityConfig;
+  securityLoadStatus?: ChannelSecurityConfigLoadStatus;
+  requiredSecurityChannels?: readonly SecurityBackedChannelKind[];
 }
 
 function normalizeList(values: string[] | undefined): string[] | undefined {
@@ -102,8 +109,22 @@ export function createRuleBasedRouter(
     options.defaultAllow ?? true,
   );
 
+  const admitIngress = (ctx: RouteContext): RouteDecision => {
+    const securityDecision = evaluateChannelIngressSecurity(options.securityConfig, ctx, {
+      loadStatus: options.securityLoadStatus,
+      requiredChannels: options.requiredSecurityChannels,
+    });
+    return securityDecision ?? { allow: true, reason: "channel_security:admitted" };
+  };
+
   return {
+    admitIngress,
     decide(ctx: RouteContext): RouteDecision {
+      const securityDecision = admitIngress(ctx);
+      if (!securityDecision.allow) {
+        logger?.debug?.("channel ingress security rejected", { decision: securityDecision, context: ctx });
+        return securityDecision;
+      }
       for (const rule of rules) {
         if (!rule.enabled) continue;
         if (!isRuleMatch(rule.match, ctx)) continue;
@@ -119,8 +140,7 @@ export function createRuleBasedRouter(
         return decision;
       }
 
-      const securityDecision = evaluateChannelSecurityPolicy(options.securityConfig, ctx);
-      if (securityDecision) {
+      if (securityDecision.reason !== "channel_security:admitted") {
         const decision: RouteDecision = {
           ...securityDecision,
           ...(securityDecision.allow && defaultAction.agentId
@@ -144,6 +164,9 @@ export function createRuleBasedRouter(
 
 export function createDisabledRouter(defaultAgentId?: string): ChannelRouter {
   return {
+    admitIngress(): RouteDecision {
+      return { allow: true, reason: "router_disabled" };
+    },
     decide(): RouteDecision {
       return {
         allow: true,

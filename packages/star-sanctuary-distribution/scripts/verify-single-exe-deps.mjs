@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
 import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
@@ -38,6 +38,13 @@ const stderrPath = path.join(workspaceRoot, "artifacts", `single-exe-verify${suf
 const reportPath = path.join(singleExeRoot, "single-exe-deps-report.json");
 const extractedVerifyStdoutPath = path.join(workspaceRoot, "artifacts", `single-exe-runtime-check${suffix}.stdout.log`);
 const extractedVerifyStderrPath = path.join(workspaceRoot, "artifacts", `single-exe-runtime-check${suffix}.stderr.log`);
+const portableArtifactVerifierPath = path.join(
+  workspaceRoot,
+  "packages",
+  "star-sanctuary-distribution",
+  "scripts",
+  "verify-portable-artifacts.mjs",
+);
 
 async function waitForChildExit(child) {
   return new Promise((resolve) => {
@@ -164,6 +171,32 @@ async function runExtractedRuntimeCheck() {
   return JSON.parse(fs.readFileSync(reportPath, "utf-8"));
 }
 
+function runExtractedRelayArtifactVerifier() {
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
+  const versionRootDir = path.join(singleExeHome, "runtime", buildVersionKey(metadata));
+  const runtimeExecutable = path.join(
+    versionRootDir,
+    platform === "win32" ? "node-runtime.exe" : "node-runtime",
+  );
+  const result = spawnSync(process.execPath, [
+    portableArtifactVerifierPath,
+    `--mode=${mode}`,
+    `--runtime-version-root=${versionRootDir}`,
+    `--runtime-executable=${runtimeExecutable}`,
+  ], {
+    cwd: workspaceRoot,
+    encoding: "utf-8",
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `Single-exe extracted Relay artifact verification failed.\n${result.stderr || result.stdout}`,
+    );
+  }
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+}
+
 function assertReport(report) {
   const nodePtyOk = mode !== "full"
     || (report.nodePty?.installed && report.nodePty?.backend === "node-pty");
@@ -191,6 +224,7 @@ async function main() {
   await runSingleExeForExtraction();
   const report = await runExtractedRuntimeCheck();
   assertReport(report);
+  runExtractedRelayArtifactVerifier();
 
   console.log(`[single-exe-verify] Dependency report (${mode}) written to ${reportPath}`);
   console.log(JSON.stringify(report, null, 2));

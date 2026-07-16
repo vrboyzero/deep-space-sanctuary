@@ -1,24 +1,8 @@
-const SAFE_ASSISTANT_TAGS = new Set([
-  "A", "AUDIO", "B", "BLOCKQUOTE", "BR", "CODE", "DIV", "EM", "H1", "H2", "H3", "H4", "H5", "H6", "HR",
-  "I", "IMG", "LI", "OL", "P", "PRE", "SOURCE", "SPAN", "STRONG", "UL", "VIDEO", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "BUTTON", "SVG", "PATH", "RECT",
-]);
-const GENERATED_IMAGE_REVEAL_PREFIX = "#generated-image-reveal:";
-
-const SAFE_ASSISTANT_ATTRS = {
-  A: new Set(["href", "title", "target", "rel"]),
-  AUDIO: new Set(["src", "controls", "autoplay", "preload", "loop"]),
-  IMG: new Set(["src", "alt", "title"]),
-  SOURCE: new Set(["src", "type"]),
-  VIDEO: new Set(["src", "controls", "autoplay", "muted", "loop", "playsinline", "preload", "poster"]),
-  CODE: new Set(["class", "language"]),
-  PRE: new Set(["class"]),
-  DIV: new Set(["class"]),
-  SPAN: new Set(["class"]),
-  BUTTON: new Set(["class", "title", "onclick"]),
-  SVG: new Set(["width", "height", "viewBox", "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "xmlns", "class"]),
-  PATH: new Set(["d", "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin"]),
-  RECT: new Set(["x", "y", "width", "height", "rx", "ry", "fill", "stroke", "stroke-width"]),
-};
+import {
+  GENERATED_IMAGE_REVEAL_PREFIX,
+  isSafeAssistantMediaUrl,
+  sanitizeRichContent,
+} from "./rich-content-renderer.js";
 
 export function createChatUiFeature({
   refs,
@@ -427,6 +411,7 @@ export function createChatUiFeature({
   }
 
   function openMediaModal(src, type) {
+    if (!isSafeAssistantMediaUrl(src)) return;
     const modal = document.createElement("div");
     modal.className = "media-modal";
     modal.addEventListener("click", () => modal.remove());
@@ -465,7 +450,11 @@ export function createChatUiFeature({
     if (!msgEl) return;
 
     msgEl.querySelectorAll("img").forEach((img) => {
-      const originalSrc = img.src;
+      const originalSrc = img.getAttribute("src") || "";
+      if (!isSafeAssistantMediaUrl(originalSrc)) {
+        img.remove();
+        return;
+      }
       const wrapper = document.createElement("div");
       wrapper.className = "media-thumbnail";
       wrapper.style.backgroundImage = `url(${originalSrc})`;
@@ -475,8 +464,11 @@ export function createChatUiFeature({
     });
 
     msgEl.querySelectorAll("video").forEach((video) => {
-      const originalSrc = video.src || video.querySelector("source")?.src;
-      if (!originalSrc) return;
+      const originalSrc = video.getAttribute("src") || video.querySelector("source")?.getAttribute("src") || "";
+      if (!isSafeAssistantMediaUrl(originalSrc)) {
+        video.remove();
+        return;
+      }
 
       const wrapper = document.createElement("div");
       wrapper.className = "media-thumbnail video-thumbnail";
@@ -538,14 +530,13 @@ export function createChatUiFeature({
     if (markedConfigured || !window.marked) return;
     const renderer = new window.marked.Renderer();
     renderer.code = function (code, language) {
+      const normalizedLanguage = typeof language === "string" ? language.replace(/[^a-z0-9_-]/gi, "") : "";
       return `<div class="code-block-wrapper">
   <div class="code-block-header">
-    <span class="code-block-lang">${language || ""}</span>
-    <button class="copy-code-btn" title="${escapeHtml(t("chat.copyCodeTitle", {}, "Copy code"))}">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> ${escapeHtml(t("chat.copy", {}, "Copy"))}
-    </button>
+    <span class="code-block-lang">${escapeHtml(normalizedLanguage)}</span>
+    <button class="copy-code-btn" title="${escapeHtml(t("chat.copyCodeTitle", {}, "Copy code"))}">${escapeHtml(t("chat.copy", {}, "Copy"))}</button>
   </div>
-  <pre><code class="language-${language}">${escapeHtml(code)}</code></pre>
+  <pre><code class="language-${normalizedLanguage}">${escapeHtml(code)}</code></pre>
 </div>`;
     };
     window.marked.use({ renderer });
@@ -559,93 +550,8 @@ export function createChatUiFeature({
     return stripped;
   }
 
-  function sanitizeAssistantNode(node) {
-    if (!node) return;
-    if (node.nodeType === Node.TEXT_NODE) return;
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      node.remove();
-      return;
-    }
-
-    const el = node;
-    const tag = el.tagName;
-    if (!SAFE_ASSISTANT_TAGS.has(tag)) {
-      const parent = el.parentNode;
-      if (!parent) {
-        el.remove();
-        return;
-      }
-      const children = Array.from(el.childNodes);
-      for (const child of children) {
-        parent.insertBefore(child, el);
-        sanitizeAssistantNode(child);
-      }
-      parent.removeChild(el);
-      return;
-    }
-
-    const allowedAttrs = SAFE_ASSISTANT_ATTRS[tag];
-    for (const attr of Array.from(el.attributes)) {
-      const name = attr.name.toLowerCase();
-      if (name.startsWith("on")) {
-        el.removeAttribute(attr.name);
-        continue;
-      }
-      if (!allowedAttrs || !allowedAttrs.has(name)) {
-        el.removeAttribute(attr.name);
-        continue;
-      }
-      if ((name === "src" || name === "href") && !isSafeAssistantUrl(attr.value, tag, name)) {
-        el.removeAttribute(attr.name);
-      }
-    }
-
-    if (tag === "A" && el.getAttribute("target") === "_blank") {
-      el.setAttribute("rel", "noopener noreferrer");
-    }
-
-    for (const child of Array.from(el.childNodes)) {
-      sanitizeAssistantNode(child);
-    }
-  }
-
   function sanitizeAssistantHtml(rawHtml) {
-    if (!rawHtml) return "";
-    const template = document.createElement("template");
-    template.innerHTML = rawHtml;
-    for (const node of Array.from(template.content.childNodes)) {
-      sanitizeAssistantNode(node);
-    }
-    return template.innerHTML;
-  }
-
-  function isSafeAssistantUrl(value, tag, attrName) {
-    if (typeof value !== "string") return false;
-    const normalized = value.trim();
-    if (!normalized) return false;
-    const lower = normalized.toLowerCase();
-
-    if (normalized.startsWith("/") || normalized.startsWith("./") || normalized.startsWith("../") || normalized.startsWith("#")) {
-      return true;
-    }
-    if (lower.startsWith("blob:")) {
-      return true;
-    }
-    if (attrName === "src" && (tag === "IMG" || tag === "AUDIO" || tag === "VIDEO" || tag === "SOURCE")) {
-      if (lower.startsWith("data:image/") || lower.startsWith("data:audio/") || lower.startsWith("data:video/")) {
-        return true;
-      }
-    }
-
-    try {
-      const parsed = new URL(normalized, window.location.origin);
-      if (attrName === "href") {
-        return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:" || parsed.protocol === "tel:";
-      }
-      return parsed.protocol === "http:" || parsed.protocol === "https:";
-    } catch {
-      return false;
-    }
+    return sanitizeRichContent(rawHtml);
   }
 
   async function copyTextWithFeedback(button, text) {

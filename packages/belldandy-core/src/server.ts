@@ -33,6 +33,8 @@ import type {
   ChatMessageMeta,
 } from "@belldandy/protocol";
 import { approvePairingCode, ensurePairingCode, isClientAllowed, resolveStateDir } from "./security/store.js";
+import { getGatewayMethodPolicy, validateGatewayMethodRegistry } from "./gateway-method-registry.js";
+import { admitGatewayRequest, getPairedGatewayCapabilities } from "./request-admission.js";
 import type { BelldandyLogger } from "./logger/index.js";
 import type { ToolsConfigManager } from "./tools-config.js";
 import type { ToolControlConfirmationStore } from "./tool-control-confirmation-store.js";
@@ -721,6 +723,10 @@ function toChatMessageMeta(timestampMs: number, isLatest = false): ChatMessageMe
 }
 
 export async function startGatewayServer(opts: GatewayServerOptions): Promise<GatewayServer> {
+  const methodRegistryErrors = validateGatewayMethodRegistry();
+  if (methodRegistryErrors.length > 0) {
+    throw new Error(`Gateway method registry is invalid: ${methodRegistryErrors.join("; ")}`);
+  }
   await ensureWebRoot(opts.webRoot);
   const stateDir = opts.stateDir ?? resolveStateDir();
   const avatarDir = path.join(stateDir, "avatar");
@@ -1599,161 +1605,22 @@ async function handleReq(
   req: GatewayReqFrame,
   ctx: GatewayWebSocketRequestContext,
 ): Promise<GatewayResFrame | null> {
-  const secureMethods = [
-    "message.send",
-    "conversation.run.stop",
-    "artifact.reveal",
-    "tool_settings.confirm",
-    "external_outbound.confirm",
-    "external_outbound.audit.list",
-    "email_outbound.confirm",
-    "email_outbound.audit.list",
-    "email_inbound.audit.list",
-    "email_followup.list",
-    "models.config.get",
-    "models.config.update",
-    "config.read",
-    "config.readRaw",
-    "config.update",
-    "config.writeRaw",
-    "channel.reply_chunking.get",
-    "channel.reply_chunking.update",
-    "channel.security.get",
-    "channel.security.update",
-    "channel.security.pending.list",
-    "channel.security.approve",
-    "channel.security.reject",
-    "system.restart",
-    "system.doctor",
-    "workspace.write",
-    "workspace.read",
-    "workspace.readSource",
-    "workspace.list",
-    "context.compact",
-    "context.compact.partial",
-    "conversation.meta",
-    "conversation.restore",
-    "conversation.transcript.export",
-    "conversation.timeline.get",
-    "conversation.prompt_snapshot.get",
-    "conversation.preflight_compression.retrieve",
-    "conversation.tool_result_reference.retrieve",
-    "conversation.digest.get",
-    "conversation.digest.refresh",
-    "conversation.memory.extract",
-    "conversation.memory.extraction.get",
-    "subtask.list",
-    "subtask.get",
-    "subtask.resume",
-    "subtask.takeover",
-    "subtask.update",
-    "subtask.stop",
-    "subtask.archive",
-    "bridge.session.list",
-    "bridge.session.peek",
-    "agent.catalog.get",
-    "agent.contracts.get",
-    "delegation.inspect.get",
-    "agents.prompt.inspect",
-    "tools.update",
-    "memory.search",
-    "memory.get",
-    "memory.recent",
-    "memory.stats",
-    "memory.configured_sources.get",
-    "memory.configured_sources.update",
-    "memory.inventory.preview",
-    "memory.tree.report.inventory.preview",
-    "memory.tree.report.external_ingest.preview",
-    "memory.tree.report.dedup.preview",
-    "memory.tree.report.shared_governance.preview",
-    "memory.tree.report.list",
-    "memory.tree.report.get",
-    "memory.tree.report.export_markdown",
-    "memory.tree.report.review",
-    "memory.tree.report.apply",
-    "memory.tree.lifecycle.get",
-    "memory.tree.lifecycle.report",
-    "memory.tree.job.report",
-    "memory.tree.lifecycle.ensure",
-    "memory.tree.node.rebuild",
-    "memory.tree.node.list",
-    "memory.tree.node.search",
-    "memory.tree.node.get",
-    "memory.tree.source.rebuild",
-    "memory.tree.source.list",
-    "memory.tree.score.rebuild",
-    "memory.tree.score.list",
-    "memory.dedup.preview",
-    "memory.dedup.apply",
-    "memory.share.promote",
-    "memory.share.claim",
-    "memory.share.review",
-    "memory.task.list",
-    "memory.task.get",
-    "memory.recent_work",
-      "memory.resume_context",
-      "memory.similar_past_work",
-      "memory.explain_sources",
-      "dream.run",
-      "dream.status.get",
-      "dream.history.list",
-      "dream.get",
-      "dream.commons.status.get",
-      "dream.commons.export_now",
-      "experience.candidate.check_duplicate",
-      "experience.candidate.generate",
-      "experience.candidate.get",
-      "experience.candidate.list",
-      "experience.candidate.accept",
-      "experience.candidate.reject",
-      "experience.candidate.reject_bulk",
-      "experience.asset.list",
-      "experience.asset.read",
-      "experience.candidate.synthesize.preview",
-      "experience.candidate.synthesize.create",
-      "experience.usage.get",
-      "experience.usage.list",
-      "experience.usage.stats",
-      "experience.usage.revoke",
-      "experience.skill.freshness.update",
-      "goal.create",
-    "goal.list",
-    "goal.get",
-    "goal.resume",
-    "goal.pause",
-    "goal.handoff.get",
-    "goal.handoff.generate",
-    "goal.retrospect.generate",
-    "goal.experience.suggest",
-    "goal.method_candidates.generate",
-    "goal.skill_candidates.generate",
-    "goal.flow_patterns.generate",
-    "goal.flow_patterns.cross_goal",
-    "goal.review_governance.summary",
-    "goal.capability.get",
-    "goal.capability.update",
-    "goal.capability.commander_decide",
-    "goal.approval.scan",
-    "goal.suggestion_review.list",
-      "goal.suggestion_review.workflow.set",
-      "goal.suggestion_review.decide",
-      "goal.suggestion_review.escalate",
-      "goal.suggestion_review.scan",
-      "goal.suggestion.publish",
-      "goal.checkpoint.list",
-      "goal.checkpoint.request",
-      "goal.checkpoint.approve",
-    "goal.checkpoint.reject",
-    "goal.checkpoint.expire",
-    "goal.checkpoint.reopen",
-    "goal.checkpoint.escalate",
-    "cron.run_now",
-    "cron.recovery.run",
-  ];
-  if (secureMethods.includes(req.method)) {
-    const allowed = await isClientAllowed({ clientId: ctx.clientId, stateDir: ctx.stateDir });
-    if (!allowed) {
+  const methodPolicy = getGatewayMethodPolicy(req.method);
+  const paired = methodPolicy?.requiresPairing === true
+    ? await isClientAllowed({ clientId: ctx.clientId, stateDir: ctx.stateDir })
+    : false;
+  const admission = admitGatewayRequest({
+    method: req.method,
+    identity: {
+      subjectId: ctx.clientId,
+      role: ctx.role,
+      authenticated: ctx.authenticated,
+      paired,
+      capabilities: paired ? getPairedGatewayCapabilities() : [],
+    },
+  });
+  if (!admission.allowed) {
+    if (admission.error.code === "pairing_required") {
       const pairing = await ensurePairingCode({ clientId: ctx.clientId, stateDir: ctx.stateDir });
       ctx.log.debug("gateway-security", "Secure method rejected because client is not paired", {
         clientId: ctx.clientId,
@@ -1773,9 +1640,21 @@ async function handleReq(
         type: "res",
         id: req.id,
         ok: false,
-        error: { code: "pairing_required", message: `Pairing required. Code: ${pairing.code}` },
+        error: { code: admission.error.code, message: `Pairing required. Code: ${pairing.code}` },
       };
     }
+
+    ctx.log.debug("gateway-security", "Gateway request rejected by admission", {
+      clientId: ctx.clientId,
+      method: req.method,
+      reason: admission.error.code,
+    });
+    return {
+      type: "res",
+      id: req.id,
+      ok: false,
+      error: admission.error,
+    };
   }
 
   const queryRuntimeDomainsContext = {

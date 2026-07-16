@@ -1,0 +1,233 @@
+name: Quality Gates
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gates-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and full test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Run full test suite
+        run: pnpm test
+
+  webchat-contract:
+    name: WebChat 123-file contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify WebChat module graph
+        run: pnpm verify:webchat
+
+      - name: Verify WebChat CSP and Trusted Types fixtures
+        run: pnpm verify:webchat:security
+
+  distribution-contract:
+    name: Distribution contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Run Distribution contract suite
+        run: >-
+          pnpm exec vitest run
+          packages/star-sanctuary-distribution/src/artifact-contract.test.ts
+          packages/star-sanctuary-distribution/src/bootstrap-auth-token.test.ts
+          packages/star-sanctuary-distribution/src/env.test.ts
+          packages/star-sanctuary-distribution/src/gateway-preflight.test.ts
+          packages/star-sanctuary-distribution/src/install-script-wrappers.test.ts
+          packages/star-sanctuary-distribution/src/portable-artifact-contract.test.ts
+          packages/star-sanctuary-distribution/src/portable-runtime.test.ts
+          packages/star-sanctuary-distribution/src/release-light-assets.test.ts
+          packages/star-sanctuary-distribution/src/runtime-paths.test.ts
+          packages/star-sanctuary-distribution/src/sandbox-paths.test.ts
+
+  build-benchmark-report:
+    name: B00 build benchmark report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run report-only B00 build benchmark
+        run: >-
+          pnpm benchmark:build
+          --output artifacts/benchmarks/b00-build.json
+          --warmup-runs 1
+          --sample-runs 3
+
+      - name: Upload B00 build benchmark
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: b00-build-benchmark
+          path: artifacts/benchmarks/b00-build.json
+          if-no-files-found: error
+          retention-days: 14
+
+  dependency-audit-report:
+    name: Dependency audit report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare dependency audit reports
+        run: mkdir -p artifacts/dependency-audit
+
+      - name: Scan known clean fixture
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2
+        with:
+          scan-args: |-
+            --lockfile=packages/star-sanctuary-distribution/src/fixtures/osv/clean/package-lock.json
+            --format=json
+            --output-file=artifacts/dependency-audit/clean.raw.json
+
+      - name: Verify known clean fixture
+        run: >-
+          node scripts/normalize-osv-report.mjs
+          --input artifacts/dependency-audit/clean.raw.json
+          --output artifacts/dependency-audit/clean.normalized.json
+          --expect-status zero_findings
+
+      - name: Scan known vulnerable fixture
+        id: vulnerable-fixture-scan
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2
+        with:
+          scan-args: |-
+            --lockfile=packages/star-sanctuary-distribution/src/fixtures/osv/vulnerable/package-lock.json
+            --format=json
+            --output-file=artifacts/dependency-audit/vulnerable.raw.json
+
+      - name: Verify known vulnerable fixture
+        run: >-
+          node scripts/normalize-osv-report.mjs
+          --input artifacts/dependency-audit/vulnerable.raw.json
+          --output artifacts/dependency-audit/vulnerable.normalized.json
+          --expect-status findings_present
+          --require-vulnerability GHSA-vh95-rmgr-6w4m
+
+      - name: Scan repository dependencies
+        id: repository-dependency-scan
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2
+        with:
+          scan-args: |-
+            --lockfile=pnpm-lock.yaml
+            --format=json
+            --output-file=artifacts/dependency-audit/repository.raw.json
+
+      - name: Normalize repository dependency report
+        run: >-
+          node scripts/normalize-osv-report.mjs
+          --input artifacts/dependency-audit/repository.raw.json
+          --output artifacts/dependency-audit/repository.normalized.json
+          --record-failure true
+
+      - name: Enforce dependency audit gate
+        run: >-
+          node scripts/evaluate-dependency-audit-gate.mjs
+          --input artifacts/dependency-audit/repository.normalized.json
+          --output artifacts/dependency-audit/repository.gate.json
+          --max-age-hours 24
+
+      - name: Upload dependency audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependency-audit-report
+          path: artifacts/dependency-audit/*.json
+          if-no-files-found: error
+          retention-days: 14

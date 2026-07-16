@@ -61,10 +61,18 @@ type GatewayChannelsRuntimeInput = {
 };
 
 export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput) {
+  const communityConfigured = Boolean(input.createAgent && fs.existsSync(getCommunityConfigPath()));
+  const requiredSecurityChannels = [
+    input.feishuAppId && input.feishuAppSecret ? "feishu" : undefined,
+    input.qqAppId && input.qqAppSecret ? "qq" : undefined,
+    input.discordEnabled && input.discordBotToken ? "discord" : undefined,
+    communityConfigured ? "community" : undefined,
+  ].filter((channel): channel is "feishu" | "qq" | "discord" | "community" => Boolean(channel));
   const channelRouter = createChannelRouter({
     enabled: input.channelRouterEnabled,
     configPath: input.channelRouterConfigPath,
     securityConfigPath: input.channelSecurityConfigPath,
+    requiredSecurityChannels,
     defaultAgentId: input.channelRouterDefaultAgentId,
     logger: {
       debug: (message, data) => input.logger.debug("channel-router", message, data),
@@ -306,9 +314,9 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
 
         input.externalOutboundSenderRegistry.register("community", communityChannel);
         if (input.toolsEnabled) {
-          input.toolExecutor.registerTool(createLeaveRoomTool(communityChannel), { silentReplace: true });
+          input.toolExecutor.registerTool(createLeaveRoomTool(communityChannel), { origin: "channel", silentReplace: true });
           input.logger.info("community", "Registered leave_room tool with channel instance");
-          input.toolExecutor.registerTool(createJoinRoomTool(communityChannel), { silentReplace: true });
+          input.toolExecutor.registerTool(createJoinRoomTool(communityChannel), { origin: "channel", silentReplace: true });
           input.logger.info("community", "Registered join_room tool with channel instance");
         }
 

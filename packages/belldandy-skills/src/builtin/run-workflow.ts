@@ -6,9 +6,9 @@
  *
  * 工具契约：
  * - family: session-orchestration
- * - riskLevel: low（工作流内部子 Agent 受独立 orchestrator + budget guard 约束）
+ * - riskLevel: high（工作流可触发高权限内置编排，必须走 Tool permission）
  * - channels: gateway
- * - inline 默认关闭，需 allowInlineScript=true 显式启用
+ * - inline 不能由模型 Tool 参数启用；source trust 只由 Gateway 启动策略决定
  */
 
 import crypto from "node:crypto";
@@ -39,16 +39,8 @@ export const runWorkflowTool: Tool = withToolContract(
           },
           sourceKind: {
             type: "string",
-            enum: ["file", "builtin", "inline"],
+            enum: ["file", "builtin"],
             description: "脚本来源类型，默认 file",
-          },
-          inlineCode: {
-            type: "string",
-            description: "inline 模式下的工作流源码。仅在 allowInlineScript=true 时允许执行。",
-          },
-          allowInlineScript: {
-            type: "boolean",
-            description: "是否允许执行 inline 脚本。默认 false。",
           },
           args: {
             type: "object",
@@ -98,32 +90,24 @@ export const runWorkflowTool: Tool = withToolContract(
         };
       }
 
-      const sourceKind = (typeof args.sourceKind === "string" ? args.sourceKind : "file") as "file" | "builtin" | "inline";
+      const sourceKind = typeof args.sourceKind === "string" ? args.sourceKind : "file";
       const stateDir = context.stateDir ?? context.workspaceRoot;
-      const allowInlineScript = args.allowInlineScript === true;
+      if (sourceKind !== "file" && sourceKind !== "builtin") {
+        return {
+          id,
+          name: toolName,
+          success: false,
+          output: "",
+          error: "Only approved file and builtin workflow sources are available to tool calls.",
+          failureKind: "permission_or_policy",
+          durationMs: Date.now() - start,
+        };
+      }
 
       // 构建 source
       let source;
       if (sourceKind === "builtin") {
         source = { kind: "builtin" as const, name: workflowName };
-      } else if (sourceKind === "inline") {
-        const inlineCode = typeof args.inlineCode === "string" ? args.inlineCode : "";
-        if (!inlineCode.trim()) {
-          return {
-            id,
-            name: toolName,
-            success: false,
-            output: "",
-            error: "inlineCode is required when sourceKind=inline",
-            failureKind: "input_error",
-            durationMs: Date.now() - start,
-          };
-        }
-        source = {
-          kind: "inline" as const,
-          name: workflowName,
-          code: inlineCode,
-        };
       } else {
         // file 模式：在 stateDir/workflows/ 下查找 .ts / .mjs / .js
         const workflowsDir = path.join(stateDir, "workflows");
@@ -167,7 +151,6 @@ export const runWorkflowTool: Tool = withToolContract(
           source,
           args: workflowArgs,
           budget: budgetOpts,
-          allowInlineScript,
           parentConversationId: context.conversationId,
           channel: "gateway",
           resumeJournalId,
@@ -221,8 +204,8 @@ export const runWorkflowTool: Tool = withToolContract(
     family: "session-orchestration",
     isReadOnly: false,
     isConcurrencySafe: true,
-    needsPermission: false,
-    riskLevel: "low",
+    needsPermission: true,
+    riskLevel: "high",
     channels: ["gateway"],
     safeScopes: ["local-safe"],
     activityDescription: "执行预定义的动态工作流脚本，调度子 Agent 完成复杂多步骤任务",

@@ -5,6 +5,8 @@ import { gunzipSync } from "node:zlib";
 import {
   readPortableVersionFile,
   readRuntimeManifest,
+  parseAndValidatePortableVersionJson,
+  parseAndValidateRuntimeManifestJson,
   resolveRuntimePayloadPaths,
   validateInstalledRuntimeVersion,
   type PortableVersionFile,
@@ -615,8 +617,12 @@ export function ensureSingleExeRuntimeFromSea(
   }
 
   const env = params.env ?? process.env;
-  const versionFile = JSON.parse(getSeaAssetText(SINGLE_EXE_SEA_VERSION_ASSET_KEY)) as PortableVersionFile;
-  const runtimeManifest = JSON.parse(getSeaAssetText(SINGLE_EXE_SEA_RUNTIME_MANIFEST_ASSET_KEY)) as RuntimeManifest;
+  const versionFile = parseAndValidatePortableVersionJson(
+    getSeaAssetText(SINGLE_EXE_SEA_VERSION_ASSET_KEY),
+  );
+  const runtimeManifest = parseAndValidateRuntimeManifestJson(
+    getSeaAssetText(SINGLE_EXE_SEA_RUNTIME_MANIFEST_ASSET_KEY),
+  );
   const versionDirInfo = resolveRuntimeVersionDirInfo(versionFile, {
     env,
     appHomeDir: params.appHomeDir,

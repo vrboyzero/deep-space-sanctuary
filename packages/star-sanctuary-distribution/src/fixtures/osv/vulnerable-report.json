@@ -1,0 +1,43 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "fixtures/vulnerable/package-lock.json",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "minimist",
+            "version": "0.0.8",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-vh95-rmgr-6w4m",
+              "aliases": [
+                "CVE-2020-7598"
+              ]
+            },
+            {
+              "id": "GHSA-xvch-5gv4-984h"
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-vh95-rmgr-6w4m",
+                "CVE-2020-7598"
+              ]
+            },
+            {
+              "ids": [
+                "GHSA-xvch-5gv4-984h"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

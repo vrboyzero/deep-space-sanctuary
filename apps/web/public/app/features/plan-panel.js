@@ -504,7 +504,7 @@ export function createPlanPanelFeature({
     if (!sessionPlanSummaryEl) return;
     const visible = syncVisibility();
     if (!visible) {
-      sessionPlanSummaryEl.innerHTML = "";
+      sessionPlanSummaryEl.replaceChildren();
       renderModal();
       return;
     }

@@ -1958,6 +1958,7 @@ export async function handleSystemDoctorMethod(
         includedContractCount: observability.counts.includedContractCount,
         behaviorContractCount: observability.counts.includedContractCount,
       },
+      registryInventory: ctx.toolExecutor.getRegistryInventory(),
       included: observability.included,
       contracts: observability.contracts,
       ...(observability.summary ? { summary: observability.summary } : {}),

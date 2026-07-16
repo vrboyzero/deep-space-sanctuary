@@ -15,6 +15,13 @@ const DEFAULT_PACKAGE_LOCALE = "en-US";
 const DEFAULT_MANIFEST_VERSION = "1.10.0";
 const DEFAULT_PLATFORM = "win32";
 const DEFAULT_ARCH = "x64";
+const portableArtifactVerifierPath = path.join(
+  workspaceRoot,
+  "packages",
+  "star-sanctuary-distribution",
+  "scripts",
+  "verify-portable-artifacts.mjs",
+);
 
 function getArg(name) {
   const prefix = `--${name}=`;
@@ -59,6 +66,14 @@ function runCommand(command, args, cwd) {
   if (result.status !== 0) {
     throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr || result.stdout}`);
   }
+}
+
+function verifyPortableArtifactForDerivedBuild(portableRoot, mode) {
+  runCommand(process.execPath, [
+    portableArtifactVerifierPath,
+    `--mode=${mode}`,
+    `--portable-root=${portableRoot}`,
+  ], workspaceRoot);
 }
 
 function createZipArchive(versionRoot, stageRootName, zipFileName) {
@@ -247,6 +262,7 @@ function main() {
   if (String(portableVersion.version || "").trim() !== version) {
     throw new Error(`Portable artifact version mismatch: expected ${version}, got ${String(portableVersion.version || "")}.`);
   }
+  verifyPortableArtifactForDerivedBuild(portableRoot, mode);
 
   const distributionMode = String(portableVersion.distributionMode || mode || "slim").trim().toLowerCase();
   const modeSuffix = distributionMode === "full" ? "-full" : "";

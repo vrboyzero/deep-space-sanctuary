@@ -460,12 +460,39 @@ export function createGoalsActionsRuntimeFeature({
       return;
     }
     const goal = getGoalById(goalId);
+    const previewRes = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "goal.delete",
+      params: {
+        goalId,
+        preview: true,
+      },
+    });
+    if (!previewRes || !previewRes.ok) {
+      showNotice(
+        t("goals.deleteFailedTitle", {}, "Failed to delete long task"),
+        previewRes?.error?.message || t("goals.unknownError", {}, "Unknown error."),
+        "error",
+      );
+      return;
+    }
+    const previewWarnings = Array.isArray(previewRes.payload?.storagePreview?.warnings)
+      ? previewRes.payload.storagePreview.warnings
+      : [];
+    const previewNote = previewWarnings.length
+      ? `\n\n${t(
+        "goals.deleteStoragePreview",
+        { warnings: previewWarnings.join("\n") },
+        `Storage cleanup notes:\n${previewWarnings.join("\n")}`,
+      )}`
+      : "";
     const confirmed = window.confirm(
-      t(
+      `${t(
         "goals.deleteConfirm",
         { goalName: goal?.title || goalId, goalId },
         `Delete archived long task ${goal?.title || goalId} permanently? This cannot be undone.`,
-      ),
+      )}${previewNote}`,
     );
     if (!confirmed) {
       return;

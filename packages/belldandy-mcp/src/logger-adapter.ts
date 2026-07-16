@@ -1,3 +1,5 @@
+import { redactSensitiveText, redactSensitiveValue } from "@belldandy/protocol";
+
 /**
  * MCP 日志适配器
  *
@@ -19,33 +21,41 @@ export function setMCPLogger(logger: MCPLogAdapter): void {
 }
 
 export function mcpLog(module: string, message: string, data?: unknown): void {
+  const safeMessage = redactSensitiveText(message);
+  const safeData = data === undefined ? undefined : redactSensitiveValue(data);
   if (adapter) {
-    adapter.info(module, message, data);
+    adapter.info(module, safeMessage, safeData);
   } else {
-    console.log(`[${module}] ${message}`, data ?? "");
+    console.log(`[${module}] ${safeMessage}`, safeData ?? "");
   }
 }
 
 export function mcpDebug(module: string, message: string, data?: unknown): void {
+  const safeMessage = redactSensitiveText(message);
+  const safeData = data === undefined ? undefined : redactSensitiveValue(data);
   if (adapter?.debug) {
-    adapter.debug(module, message, data);
+    adapter.debug(module, safeMessage, safeData);
   } else {
-    console.debug(`[${module}] ${message}`, data ?? "");
+    console.debug(`[${module}] ${safeMessage}`, safeData ?? "");
   }
 }
 
 export function mcpWarn(module: string, message: string, data?: unknown): void {
+  const safeMessage = redactSensitiveText(message);
+  const safeData = data === undefined ? undefined : redactSensitiveValue(data);
   if (adapter) {
-    adapter.warn(module, message, data);
+    adapter.warn(module, safeMessage, safeData);
   } else {
-    console.warn(`[${module}] ${message}`, data ?? "");
+    console.warn(`[${module}] ${safeMessage}`, safeData ?? "");
   }
 }
 
 export function mcpError(module: string, message: string, data?: unknown): void {
+  const safeMessage = redactSensitiveText(message);
+  const safeData = data === undefined ? undefined : redactSensitiveValue(data);
   if (adapter) {
-    adapter.error(module, message, data);
+    adapter.error(module, safeMessage, safeData);
   } else {
-    console.error(`[${module}] ${message}`, data ?? "");
+    console.error(`[${module}] ${safeMessage}`, safeData ?? "");
   }
 }

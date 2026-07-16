@@ -4,7 +4,10 @@ import { MemoryIndexer, type IndexerOptions } from "./indexer.js";
 import { ResultReranker, type RerankerOptions } from "./reranker.js";
 import { shouldSkipRetrieval } from "./adaptive-retrieval.js";
 import { OpenAIEmbeddingProvider } from "./embeddings/openai.js";
-import { LocalEmbeddingProvider } from "./embeddings/local-provider.js";
+import {
+    DEFAULT_LOCAL_EMBEDDING_MODEL,
+    LocalEmbeddingProvider,
+} from "./embeddings/local-provider.js";
 import type { EmbeddingProvider } from "./embeddings/index.js";
 import type {
     MemoryCategory,
@@ -865,7 +868,7 @@ export class MemoryManager {
             };
             console.log("[MemoryManager] Embedding disabled by config — using keyword search only.");
         } else if (options.provider === "local") {
-            const modelName = options.localModel || "BAAI/bge-m3";
+            const modelName = options.localModel || DEFAULT_LOCAL_EMBEDDING_MODEL;
             const modelsDir = options.modelsDir || path.join(workspaceStateDir, "models");
             this.embeddingProvider = new LocalEmbeddingProvider(modelName, modelsDir);
             console.log(`[MemoryManager] Using Local Embedding Provider (${modelName})`);

@@ -4,7 +4,7 @@
  * 支持三种来源：
  * - file：从 stateDir/workflows/<name>.ts|.mjs|.js 加载，.ts 用 esbuild 编译到临时 .mjs
  * - builtin：从 BUILTIN_WORKFLOWS 注册表查找
- * - inline：默认拒绝；allowInlineScript=true 时做白名单 AST 扫描 + esbuild 编译
+ * - inline：默认拒绝；仅启动期 WorkflowExecutionPolicy 允许时做白名单 AST 扫描 + esbuild 编译
  *
  * scriptHash = sha256(脚本内容 + workflowName + workflowVersion)
  */
@@ -16,8 +16,10 @@ import os from "node:os";
 import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
 
+import { FilesystemCapability } from "@belldandy/protocol";
 import type { WorkflowContext } from "@belldandy/agent";
 import { getBuiltinWorkflow } from "./workflow-builtin-registry.js";
+import type { WorkflowExecutionPolicy } from "./workflow-execution-policy.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -32,13 +34,17 @@ export type LoadedWorkflowScript = {
   workflowName: string;
   workflowVersion: string;
   source: WorkflowScriptSource;
+  sourceIdentity?: {
+    relativePath: string;
+    contentSha256: string;
+  };
 };
 
 export type LoadScriptOptions = {
-  /** 是否允许 inline 脚本（默认 false） */
-  allowInlineScript?: boolean;
   /** stateDir，用于 file 模式解析相对路径 */
   stateDir?: string;
+  /** 启动期确定的 source trust policy，调用参数不能覆盖。 */
+  policy?: WorkflowExecutionPolicy;
 };
 
 // ─── Errors ───────────────────────────────────────────────────────────────
@@ -178,15 +184,42 @@ async function loadBuiltin(source: { kind: "builtin"; name: string }): Promise<L
 }
 
 async function loadFile(source: { kind: "file"; path: string }, opts: LoadScriptOptions): Promise<LoadedWorkflowScript> {
-  const filePath = source.path;
-  if (!fs.existsSync(filePath)) {
-    throw new WorkflowScriptLoadError("file_not_found", `Workflow file not found: ${filePath}`);
+  if (!opts.policy) {
+    throw new WorkflowScriptLoadError("file_policy_required", "Workflow file execution requires a startup policy.");
   }
+  let workflowRoot: FilesystemCapability;
+  try {
+    workflowRoot = new FilesystemCapability({
+      rootPath: opts.policy.workflowRoot,
+      label: "workflow source root",
+      maxBytes: opts.policy.maxFileBytes,
+    });
+  } catch {
+    throw new WorkflowScriptLoadError("file_root_unavailable", "Workflow source root is unavailable.");
+  }
+
+  let filePath: string;
+  try {
+    filePath = workflowRoot.resolveExistingPath(source.path, "workflow source");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") {
+      throw new WorkflowScriptLoadError("file_not_found", "Workflow file was not found in the approved root.");
+    }
+    throw new WorkflowScriptLoadError("file_outside_root", "Workflow file is outside the approved source root.");
+  }
+  const relativePath = path.relative(workflowRoot.rootPath, filePath).split(path.sep).join("/");
   const content = fs.readFileSync(filePath, "utf-8");
+  workflowRoot.assertByteLength(Buffer.byteLength(content), "workflow source");
   const ext = path.extname(filePath).toLowerCase();
   const workflowName = path.basename(filePath, ext);
   const workflowVersion = "1.0.0";
   const scriptHash = computeScriptHash(content, workflowName, workflowVersion);
+  const contentSha256 = createHash("sha256").update(content).digest("hex");
+  const approvedHash = opts.policy.approvedFileHashes.get(relativePath);
+  if (!opts.policy.allowLegacyFiles && approvedHash !== contentSha256) {
+    throw new WorkflowScriptLoadError("file_not_approved", "Workflow file is not approved for execution.");
+  }
 
   let modulePath: string;
   if (ext === ".ts") {
@@ -207,13 +240,14 @@ async function loadFile(source: { kind: "file"; path: string }, opts: LoadScript
     scriptHash,
     workflowName,
     workflowVersion,
-    source,
+    source: { kind: "file", path: filePath },
+    sourceIdentity: { relativePath, contentSha256 },
   };
 }
 
 async function loadInline(source: { kind: "inline"; code: string; name?: string }, opts: LoadScriptOptions): Promise<LoadedWorkflowScript> {
-  if (!opts.allowInlineScript) {
-    throw new WorkflowScriptLoadError("inline_disabled", "Inline workflow scripts are disabled. Set allowInlineScript=true to enable.");
+  if (!opts.policy?.allowInline) {
+    throw new WorkflowScriptLoadError("inline_disabled", "Inline workflow scripts are disabled by startup policy.");
   }
   const { safe, violations } = scanInlineScriptSafety(source.code);
   if (!safe) {

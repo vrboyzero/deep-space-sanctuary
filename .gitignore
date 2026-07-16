@@ -11,6 +11,7 @@ dist/
 /.next/
 /.turbo/
 artifacts/
+apps/web/public/assets/
 
 # Bundler / tool caches
 .vite/

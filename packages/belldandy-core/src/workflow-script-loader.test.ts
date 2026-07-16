@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,18 @@ import {
   loadWorkflowScript,
   WorkflowScriptLoadError,
 } from "./workflow-script-loader.js";
+import type { WorkflowExecutionPolicy } from "./workflow-execution-policy.js";
+
+function createWorkflowPolicy(root: string, overrides: Partial<WorkflowExecutionPolicy> = {}): WorkflowExecutionPolicy {
+  return {
+    workflowRoot: root,
+    allowInline: false,
+    allowLegacyFiles: true,
+    approvedFileHashes: new Map(),
+    maxFileBytes: 1024 * 1024,
+    ...overrides,
+  };
+}
 
 describe("BUILTIN_WORKFLOWS registry", () => {
   beforeEach(() => clearBuiltinWorkflows());
@@ -148,7 +161,7 @@ describe("loadWorkflowScript", () => {
   it("file 模式加载 .mjs 文件", async () => {
     const filePath = path.join(tempDir, "test-wf.mjs");
     await fs.writeFile(filePath, `export default async function(ctx) { return "file result"; }\n`, "utf-8");
-    const script = await loadWorkflowScript({ kind: "file", path: filePath }, { stateDir: tempDir });
+    const script = await loadWorkflowScript({ kind: "file", path: filePath }, { stateDir: tempDir, policy: createWorkflowPolicy(tempDir) });
     expect(script.workflowName).toBe("test-wf");
     expect(script.scriptHash).toMatch(/^[0-9a-f]{64}$/);
     const result = await script.default({} as any);
@@ -159,14 +172,14 @@ describe("loadWorkflowScript", () => {
     const filePath = path.join(tempDir, "slash-path-wf.mjs");
     await fs.writeFile(filePath, `export default async function(ctx) { return "slash path result"; }\n`, "utf-8");
     const slashSeparatedPath = filePath.replace(/\\/g, "/");
-    const script = await loadWorkflowScript({ kind: "file", path: slashSeparatedPath }, { stateDir: tempDir });
+    const script = await loadWorkflowScript({ kind: "file", path: slashSeparatedPath }, { stateDir: tempDir, policy: createWorkflowPolicy(tempDir) });
     const result = await script.default({} as any);
     expect(result).toBe("slash path result");
   });
 
   it("file 模式文件不存在抛错", async () => {
     await expect(
-      loadWorkflowScript({ kind: "file", path: "/nonexistent/path.mjs" }),
+      loadWorkflowScript({ kind: "file", path: "/nonexistent/path.mjs" }, { policy: createWorkflowPolicy(tempDir) }),
     ).rejects.toThrow(WorkflowScriptLoadError);
   });
 
@@ -174,7 +187,7 @@ describe("loadWorkflowScript", () => {
     const filePath = path.join(tempDir, "test.txt");
     await fs.writeFile(filePath, "hello", "utf-8");
     await expect(
-      loadWorkflowScript({ kind: "file", path: filePath }),
+      loadWorkflowScript({ kind: "file", path: filePath }, { policy: createWorkflowPolicy(tempDir) }),
     ).rejects.toThrow(/Unsupported file extension/);
   });
 
@@ -182,7 +195,7 @@ describe("loadWorkflowScript", () => {
     const filePath = path.join(tempDir, "no-default.mjs");
     await fs.writeFile(filePath, `export const foo = "bar";\n`, "utf-8");
     await expect(
-      loadWorkflowScript({ kind: "file", path: filePath }),
+      loadWorkflowScript({ kind: "file", path: filePath }, { policy: createWorkflowPolicy(tempDir) }),
     ).rejects.toThrow(/default export/);
   });
 
@@ -193,7 +206,7 @@ describe("loadWorkflowScript", () => {
       `export default async function(ctx: any): Promise<string> { return "ts result"; }\n`,
       "utf-8",
     );
-    const script = await loadWorkflowScript({ kind: "file", path: filePath }, { stateDir: tempDir });
+    const script = await loadWorkflowScript({ kind: "file", path: filePath }, { stateDir: tempDir, policy: createWorkflowPolicy(tempDir) });
     expect(script.workflowName).toBe("ts-wf");
     const result = await script.default({} as any);
     expect(result).toBe("ts result");
@@ -209,7 +222,7 @@ describe("loadWorkflowScript", () => {
     const code = `export default async function(ctx) { return "inline result"; }`;
     const script = await loadWorkflowScript(
       { kind: "inline", code, name: "my-inline" },
-      { allowInlineScript: true, stateDir: tempDir },
+      { stateDir: tempDir, policy: createWorkflowPolicy(tempDir, { allowInline: true }) },
     );
     expect(script.workflowName).toBe("my-inline");
     const result = await script.default({} as any);
@@ -219,15 +232,43 @@ describe("loadWorkflowScript", () => {
   it("inline 模式安全检查失败时抛错", async () => {
     const code = `import fs from "fs"; export default async function(ctx) { return "x"; }`;
     await expect(
-      loadWorkflowScript({ kind: "inline", code }, { allowInlineScript: true, stateDir: tempDir }),
+      loadWorkflowScript({ kind: "inline", code }, { stateDir: tempDir, policy: createWorkflowPolicy(tempDir, { allowInline: true }) }),
     ).rejects.toThrow(/safety check failed/);
+  });
+
+  it("file source 必须位于 canonical root 内且匹配批准内容哈希", async () => {
+    const workflowsDir = path.join(tempDir, "workflows");
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-wf-outside-"));
+    const content = `export default async function(ctx) { return "approved"; }\n`;
+    const approvedPath = path.join(workflowsDir, "approved.mjs");
+    const outsidePath = path.join(outsideDir, "outside.mjs");
+    await fs.mkdir(workflowsDir, { recursive: true });
+    await fs.writeFile(approvedPath, content, "utf-8");
+    await fs.writeFile(outsidePath, content, "utf-8");
+    const contentHash = createHash("sha256").update(content).digest("hex");
+    const policy = createWorkflowPolicy(workflowsDir, {
+      allowLegacyFiles: false,
+      approvedFileHashes: new Map([["approved.mjs", contentHash]]),
+    });
+
+    try {
+      await expect(loadWorkflowScript({ kind: "file", path: approvedPath }, { stateDir: tempDir, policy }))
+        .resolves.toMatchObject({ sourceIdentity: { relativePath: "approved.mjs", contentSha256: contentHash } });
+      await expect(loadWorkflowScript({ kind: "file", path: outsidePath }, { stateDir: tempDir, policy }))
+        .rejects.toMatchObject({ code: "file_outside_root" });
+      await fs.writeFile(approvedPath, `${content}// changed\n`, "utf-8");
+      await expect(loadWorkflowScript({ kind: "file", path: approvedPath }, { stateDir: tempDir, policy }))
+        .rejects.toMatchObject({ code: "file_not_approved" });
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   it("相同内容 file 的 scriptHash 稳定", async () => {
     const filePath = path.join(tempDir, "stable-hash.mjs");
     await fs.writeFile(filePath, `export default async function(ctx) { return "stable"; }\n`, "utf-8");
-    const s1 = await loadWorkflowScript({ kind: "file", path: filePath });
-    const s2 = await loadWorkflowScript({ kind: "file", path: filePath });
+    const s1 = await loadWorkflowScript({ kind: "file", path: filePath }, { policy: createWorkflowPolicy(tempDir) });
+    const s2 = await loadWorkflowScript({ kind: "file", path: filePath }, { policy: createWorkflowPolicy(tempDir) });
     expect(s1.scriptHash).toBe(s2.scriptHash);
   });
 
@@ -236,8 +277,8 @@ describe("loadWorkflowScript", () => {
     const f2 = path.join(tempDir, "v2.mjs");
     await fs.writeFile(f1, `export default async function(ctx) { return "v1"; }\n`, "utf-8");
     await fs.writeFile(f2, `export default async function(ctx) { return "v2"; }\n`, "utf-8");
-    const s1 = await loadWorkflowScript({ kind: "file", path: f1 });
-    const s2 = await loadWorkflowScript({ kind: "file", path: f2 });
+    const s1 = await loadWorkflowScript({ kind: "file", path: f1 }, { policy: createWorkflowPolicy(tempDir) });
+    const s2 = await loadWorkflowScript({ kind: "file", path: f2 }, { policy: createWorkflowPolicy(tempDir) });
     expect(s1.scriptHash).not.toBe(s2.scriptHash);
   });
 });

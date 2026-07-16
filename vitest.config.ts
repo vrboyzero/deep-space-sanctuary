@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDefaults, defineConfig } from "vitest/config";
@@ -12,6 +13,12 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(configDir, "GW", "src"),
+    },
+  },
+  server: {
+    fs: {
+      // Runtime workflow tests load generated ESM modules from the OS temp root.
+      allow: [configDir, os.tmpdir()],
     },
   },
   test: {

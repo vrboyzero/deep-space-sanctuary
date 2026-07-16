@@ -5,12 +5,19 @@ import type { ChatKind, ChannelRouter } from "./router/types.js";
 import type { Channel, ChannelAgentResolver, ChannelConfig, ChannelProactiveTarget } from "./types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
+import {
+    ChannelSafeLogger,
+    createChannelApprovalPreview,
+    createChannelPublicFailureMessage,
+} from "./channel-safe-logger.js";
 
 import { ConversationStore } from "@belldandy/agent";
 
 function formatAudioTranscript(text: string): string {
     return `[音频转写]\n${text}`;
 }
+
+const channelSafeLogger = new ChannelSafeLogger();
 
 export interface FeishuChannelConfig extends ChannelConfig {
     appId: string;
@@ -179,7 +186,11 @@ export class FeishuChannel implements Channel {
             try {
                 return this.agentResolver(agentId);
             } catch (error) {
-                console.warn(`[${this.name}] Failed to resolve agent "${agentId}", fallback to default agent:`, error);
+                channelSafeLogger.warn({
+                    channel: "feishu",
+                    event: "agent_resolution_failed",
+                    failureKind: "configuration_error",
+                });
             }
         }
         return this.agent;
@@ -218,7 +229,11 @@ export class FeishuChannel implements Channel {
             this.processedMessages.clear();
             console.log(`[${this.name}] Channel stopped.`);
         } catch (e) {
-            console.error(`[${this.name}] Error stopping channel:`, e);
+            channelSafeLogger.error({
+                channel: "feishu",
+                event: "stop_failed",
+                failureKind: "internal_error",
+            });
             throw e;
         }
     }
@@ -230,7 +245,11 @@ export class FeishuChannel implements Channel {
         const sender = data.sender;
 
         if (!message) {
-            console.error("Feishu: message object is undefined in event data", data);
+            channelSafeLogger.error({
+                channel: "feishu",
+                event: "invalid_inbound_event",
+                failureKind: "invalid_input",
+            });
             return;
         }
 
@@ -257,6 +276,44 @@ export class FeishuChannel implements Channel {
         if (this.processedMessages.size > this.MESSAGE_CACHE_SIZE) {
             const firstKey = this.processedMessages.values().next().value;
             if (firstKey) this.processedMessages.delete(firstKey);
+        }
+
+        const chatKind = this.inferChatKind(message);
+        const mentions = this.extractMentions(message);
+        const mentioned = chatKind === "dm" ? true : mentions.length > 0;
+        const senderId = sender?.sender_id?.open_id || sender?.sender_id?.user_id || sender?.sender_id?.union_id;
+        const session = buildChannelSessionDescriptor({
+            channel: "feishu",
+            chatKind,
+            chatId,
+            senderId: typeof senderId === "string" ? senderId : undefined,
+        });
+        const ingressDecision = this.router?.admitIngress?.({
+            channel: "feishu",
+            chatKind,
+            chatId,
+            sessionScope: session.sessionScope,
+            sessionKey: session.sessionKey,
+            text: "",
+            senderId: typeof senderId === "string" ? senderId : undefined,
+            senderName: typeof sender?.sender_id?.user_id === "string" ? sender.sender_id.user_id : undefined,
+            mentions,
+            mentioned,
+            eventType: "im.message.receive_v1",
+        });
+        if (ingressDecision && !ingressDecision.allow) {
+            if (ingressDecision.reason === "channel_security:dm_allowlist_blocked" && chatKind === "dm" && typeof senderId === "string") {
+                void this.onChannelSecurityApprovalRequired?.({
+                    channel: "feishu",
+                    senderId,
+                    senderName: typeof sender?.sender_id?.user_id === "string" ? sender.sender_id.user_id : undefined,
+                    chatId,
+                    chatKind: "dm",
+                    messagePreview: "",
+                });
+            }
+            console.log(`[${this.name}] Ingress blocked before media handling for ${msgId} (${ingressDecision.reason})`);
+            return;
         }
 
         // Content is a JSON string: "{\"text\":\"hello\"}"
@@ -347,31 +404,30 @@ export class FeishuChannel implements Channel {
 
                 if (sttRes?.text) {
                     text = formatAudioTranscript(sttRes.text);
-                    console.log(`Feishu: Audio transcribed: "${text}"`);
+                    channelSafeLogger.info({
+                        channel: "feishu",
+                        event: "audio_transcribed",
+                        messageId: msgId,
+                        body: text,
+                    });
                 } else {
                     console.warn(`Feishu: Audio transcription failed for ${msgId}.`);
                     return;
                 }
             }
 
-        } catch (e) {
-            console.error("Failed to parse Feishu message content or download audio", e);
+        } catch {
+            channelSafeLogger.error({
+                channel: "feishu",
+                event: "inbound_media_processing_failed",
+                messageId: msgId,
+                failureKind: "media_error",
+            });
             return;
         }
 
         // Ignore empty messages
         if (!text) return;
-
-        const chatKind = this.inferChatKind(message);
-        const mentions = this.extractMentions(message);
-        const mentioned = chatKind === "dm" ? true : mentions.length > 0;
-        const senderId = sender?.sender_id?.open_id || sender?.sender_id?.user_id || sender?.sender_id?.union_id;
-        const session = buildChannelSessionDescriptor({
-            channel: "feishu",
-            chatKind,
-            chatId,
-            senderId: typeof senderId === "string" ? senderId : undefined,
-        });
 
         const decision = this.router
             ? this.router.decide({
@@ -401,7 +457,7 @@ export class FeishuChannel implements Channel {
                     senderName: typeof sender?.sender_id?.user_id === "string" ? sender.sender_id.user_id : undefined,
                     chatId,
                     chatKind: "dm",
-                    messagePreview: text,
+                    messagePreview: createChannelApprovalPreview(text),
                 });
             }
             console.log(`[${this.name}] Route blocked message ${msgId} (${decision.reason})`);
@@ -425,7 +481,12 @@ export class FeishuChannel implements Channel {
             },
         });
 
-        console.log(`Feishu: Processing message ${msgId} from chat ${chatId}: "${text.slice(0, 50)}..."`);
+        channelSafeLogger.info({
+            channel: "feishu",
+            event: "message_received",
+            messageId: msgId,
+            body: text,
+        });
 
         // Run the agent
         // We create a history context if possible, but for MVP we just send the text
@@ -468,10 +529,21 @@ export class FeishuChannel implements Channel {
                 } else if (item.type === "final") {
                     replyText = item.text; // Ensure we get the final full text if provided
                 } else if (item.type === "tool_call") {
-                    console.log(`Feishu: Tool call: ${item.name}`, item.arguments);
+                    channelSafeLogger.info({
+                        channel: "feishu",
+                        event: "tool_call",
+                        messageId: msgId,
+                        body: JSON.stringify(item.arguments),
+                        context: { toolName: item.name },
+                    });
                 } else if (item.type === "tool_result") {
-                    console.log(`Feishu: Tool result: ${item.name} - success: ${item.success}`,
-                        item.success ? item.output?.slice(0, 100) : item.error);
+                    channelSafeLogger.info({
+                        channel: "feishu",
+                        event: "tool_result",
+                        messageId: msgId,
+                        body: item.success ? item.output : item.error ?? "",
+                        context: { toolName: item.name, success: item.success },
+                    });
                 }
             }
 
@@ -493,9 +565,14 @@ export class FeishuChannel implements Channel {
                 console.warn(`Feishu: Agent returned empty response for message ${msgId}`);
             }
 
-        } catch (e) {
-            console.error("Error running agent for Feishu message:", e);
-            await this.reply(msgId, "Error: " + String(e));
+        } catch {
+            channelSafeLogger.error({
+                channel: "feishu",
+                event: "agent_failed",
+                messageId: msgId,
+                failureKind: "internal_error",
+            });
+            await this.reply(msgId, createChannelPublicFailureMessage());
         }
     }
 
@@ -515,8 +592,13 @@ export class FeishuChannel implements Channel {
                     },
                 });
             }
-        } catch (e) {
-            console.error("Failed to reply to Feishu:", e);
+        } catch {
+            channelSafeLogger.error({
+                channel: "feishu",
+                event: "reply_failed",
+                messageId,
+                failureKind: "transport_error",
+            });
         }
     }
 
@@ -574,8 +656,12 @@ export class FeishuChannel implements Channel {
             }
             console.log(`[${this.name}] Proactive message sent to ${targetChatId}`);
             return true;
-        } catch (e) {
-            console.error(`[${this.name}] Failed to send proactive message:`, e);
+        } catch {
+            channelSafeLogger.error({
+                channel: "feishu",
+                event: "proactive_send_failed",
+                failureKind: "transport_error",
+            });
             return false;
         }
     }

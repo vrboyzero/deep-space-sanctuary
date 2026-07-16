@@ -460,4 +460,43 @@ describe("DiscordChannel", () => {
     }));
     expect(send).toHaveBeenCalledWith("收到：[音频转写]\n这是语音转写");
   });
+
+  it("runs ingress admission before fetching an audio attachment", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const router = {
+      admitIngress: vi.fn(() => ({ allow: false, reason: "channel_security:policy_missing" })),
+      decide: vi.fn(),
+    };
+    const channel = new DiscordChannel({
+      botToken: "discord-token",
+      agent: { async *run() {} } as any,
+      router: router as any,
+      sttTranscribe: vi.fn(),
+    });
+    const message = {
+      id: "discord-blocked-audio",
+      author: { id: "user-blocked", username: "Blocked", bot: false },
+      content: "",
+      channelId: "dm-blocked",
+      guildId: null,
+      attachments: new Map([["att-1", {
+        name: "voice.ogg",
+        url: "https://cdn.example.com/voice.ogg",
+        contentType: "audio/ogg",
+      }]]),
+      mentions: { users: [], has: () => false },
+      channel: { isTextBased: () => true, sendTyping: vi.fn(), send: vi.fn() },
+      reply: vi.fn(),
+    };
+
+    await (channel as any).handleMessage(message);
+
+    expect(router.admitIngress).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "discord",
+      text: "",
+    }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(router.decide).not.toHaveBeenCalled();
+  });
 });

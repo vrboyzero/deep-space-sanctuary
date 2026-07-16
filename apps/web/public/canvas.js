@@ -6,9 +6,13 @@
  *   CanvasRenderer — SVG 渲染 (nodes, edges, viewport transform)
  *   CanvasApp      — 顶层控制器 (toolbar, WS bridge, lifecycle)
  *
- * 依赖: dagre.js (CDN, global `dagre`)
+ * 依赖: 本地 hash manifest 装载的 dagre.js（global `dagre`）
  * 约束: vanilla JS, zero build step, ESM module
  */
+
+import { awaitWebAssetsReady } from "./app/bootstrap/web-assets.js";
+
+await awaitWebAssetsReady();
 
 // ─── Helpers ─────────────────────────────────────────────────
 

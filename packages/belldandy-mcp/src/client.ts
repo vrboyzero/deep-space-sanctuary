@@ -8,12 +8,16 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import spawn from "cross-spawn";
 import fs from "node:fs/promises";
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
-import { resolveStateDir } from "@belldandy/protocol";
+import {
+  OutboundRequestPolicy,
+  OutboundRequestPolicyError,
+  resolveStateDir,
+} from "@belldandy/protocol";
 
 import {
   type MCPServerConfig,
@@ -36,6 +40,7 @@ import {
   isSSETransport,
 } from "./types.js";
 import { mcpDebug, mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
+import { BoundedStdioStderrLineBuffer } from "./stdio-stderr.js";
 
 type MCPConnectFailureLogLevel = "error" | "none";
 
@@ -47,6 +52,8 @@ const MAX_PERSISTED_TEXT_BYTES = 256_000;
 const MAX_PERSISTED_BINARY_BYTES = 256_000;
 const MCP_PERSIST_DIR = "generated";
 const MAX_SESSION_RECOVERY_ATTEMPTS = 1;
+const MAX_RECONNECT_DELAY_MS = 30_000;
+const MIN_RECONNECT_JITTER_RATIO = 0.5;
 const STDIO_STDERR_IGNORE_PATTERNS: Record<string, RegExp[]> = {
   "chrome-devtools": [
     /^No handler registered for issue code PerformanceIssue$/,
@@ -77,10 +84,11 @@ function attachStdioStderrRelay(serverId: string, transport: StdioClientTranspor
     return;
   }
 
-  let pending = "";
+  const buffer = new BoundedStdioStderrLineBuffer();
 
-  const flushLine = (rawLine: string) => {
-    const line = rawLine.trim();
+  const flushLine = (rawLine: string, truncatedBytes: number) => {
+    const suffix = truncatedBytes > 0 ? ` [truncated ${truncatedBytes} bytes]` : "";
+    const line = `${rawLine}${suffix}`.trim();
     if (classifyStdioStderrLine(serverId, line) === "ignore") {
       return;
     }
@@ -88,20 +96,63 @@ function attachStdioStderrRelay(serverId: string, transport: StdioClientTranspor
   };
 
   stderrStream.on("data", (chunk) => {
-    pending += chunk.toString();
-    const lines = pending.split(/\r?\n/);
-    pending = lines.pop() ?? "";
-    for (const line of lines) {
-      flushLine(line);
+    for (const line of buffer.push(chunk)) {
+      flushLine(line.line, line.truncatedBytes);
     }
   });
 
   stderrStream.on("end", () => {
-    if (pending) {
-      flushLine(pending);
-      pending = "";
+    for (const line of buffer.finish()) {
+      flushLine(line.line, line.truncatedBytes);
     }
   });
+}
+
+/**
+ * 重连只在有限窗口内指数扩展，抖动避免多个失联 MCP 服务同时打到同一远端。
+ */
+export function calculateMCPReconnectDelay(
+  attempt: number,
+  initialDelayMs: number,
+  maxDelayMs = MAX_RECONNECT_DELAY_MS,
+  random: () => number = Math.random,
+): number {
+  const normalizedAttempt = Number.isFinite(attempt) ? Math.max(1, Math.floor(attempt)) : 1;
+  const normalizedInitialDelay = Number.isFinite(initialDelayMs) ? Math.max(0, Math.floor(initialDelayMs)) : 0;
+  const normalizedMaxDelay = Number.isFinite(maxDelayMs) ? Math.max(0, Math.floor(maxDelayMs)) : 0;
+  const exponent = Math.min(normalizedAttempt - 1, 30);
+  const exponentialDelay = Math.min(normalizedMaxDelay, normalizedInitialDelay * (2 ** exponent));
+  const minimumDelay = Math.floor(exponentialDelay * MIN_RECONNECT_JITTER_RATIO);
+  const randomSample = random();
+  const sample = Number.isFinite(randomSample)
+    ? Math.min(Math.max(randomSample, 0), 0.999_999)
+    : MIN_RECONNECT_JITTER_RATIO;
+  return Math.min(
+    normalizedMaxDelay,
+    Math.round(minimumDelay + (exponentialDelay - minimumDelay) * sample),
+  );
+}
+
+function createMcpSseOutboundFetch(policy: Pick<OutboundRequestPolicy, "request">): FetchLike {
+  return async (url, init) => {
+    const headers = init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined;
+    const body = normalizeMcpSseRequestBody(init?.body);
+    const result = await policy.request({
+      url,
+      method: init?.method,
+      headers,
+      body,
+      signal: init?.signal ?? undefined,
+    });
+    return result.response;
+  };
+}
+
+function normalizeMcpSseRequestBody(body: BodyInit | null | undefined): string | Uint8Array | undefined {
+  if (body === null || body === undefined) return undefined;
+  if (typeof body === "string" || body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  throw new TypeError("MCP SSE outbound request body must be text or binary data.");
 }
 
 function normalizeComparablePath(input: string): string {
@@ -631,17 +682,27 @@ export class MCPClient {
   /**
    * 创建 SSE 传输层
    */
-  private createSSETransport(
+  private async createSSETransport(
     config: MCPServerConfig["transport"] & { type: "sse" }
-  ): Transport {
+  ): Promise<Transport> {
     mcpLog(`mcp:${this.config.id}`, `创建 SSE 传输: ${config.url}`);
+
+    // 先校验初始流地址，再由同一个 fetch 包装器复核重定向和后续 JSON-RPC POST。
+    const outboundPolicy = new OutboundRequestPolicy({
+      allowInsecureHttp: config.allowInsecureHttp === true,
+      allowPrivateNetwork: config.allowPrivateNetwork === true,
+    });
+    await outboundPolicy.resolveAllowedAddresses(config.url);
+    const outboundFetch = createMcpSseOutboundFetch(outboundPolicy);
 
     const transport = new SSEClientTransport(
       new URL(config.url),
       {
+        eventSourceInit: { fetch: outboundFetch },
         requestInit: config.headers
           ? { headers: config.headers }
           : undefined,
+        fetch: outboundFetch,
       }
     );
 
@@ -752,7 +813,7 @@ export class MCPClient {
 
   private async runReconnectLoop(): Promise<void> {
     const maxRetries = this.config.retryCount ?? 3;
-    const delay = this.config.retryDelay ?? 1000;
+    const initialDelay = this.config.retryDelay ?? 1000;
 
     while (!this.reconnectCancelled) {
       if (this.reconnectCount >= maxRetries) {
@@ -764,6 +825,7 @@ export class MCPClient {
       }
 
       this.reconnectCount++;
+      const delay = calculateMCPReconnectDelay(this.reconnectCount, initialDelay);
       this.diagnostics.reconnectAttempts += 1;
       this.diagnostics.lastRetryAt = new Date();
       this.diagnostics.lastRetryDelayMs = delay;
@@ -795,8 +857,12 @@ export class MCPClient {
           this.setStatus("disconnected");
         }
         return;
-      } catch {
+      } catch (error) {
         if (this.reconnectCancelled) {
+          return;
+        }
+        if (error instanceof OutboundRequestPolicyError) {
+          mcpWarn(`mcp:${this.config.id}`, "MCP SSE 出站策略拒绝重连，停止重试");
           return;
         }
       }

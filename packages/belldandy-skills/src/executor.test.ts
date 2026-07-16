@@ -586,6 +586,48 @@ describe("ToolExecutor", () => {
     expect(auditLogs[0].arguments.message).toBe("hi");
   });
 
+  it("deeply redacts audit data and keeps a completed tool result when the audit consumer throws", async () => {
+    const auditLogs: any[] = [];
+    const sensitiveTool: Tool = {
+      definition: {
+        name: "sensitive_result",
+        description: "returns a sensitive-looking diagnostic result",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "sensitive_result",
+          success: true,
+          output: "Authorization: Bearer tool-output-secret",
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [sensitiveTool],
+      workspaceRoot: "/tmp/test",
+      auditLogger: (log) => {
+        auditLogs.push(log);
+        throw new Error("audit sink unavailable");
+      },
+    });
+
+    const result = await executor.execute({
+      id: "req-audit-isolation",
+      name: "sensitive_result",
+      arguments: {
+        nested: { headers: { authorization: "Bearer nested-secret" } },
+      },
+    }, "conv-audit");
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("tool-output-secret");
+    expect(auditLogs).toHaveLength(1);
+    expect(JSON.stringify(auditLogs[0])).not.toContain("nested-secret");
+    expect(JSON.stringify(auditLogs[0])).not.toContain("tool-output-secret");
+  });
+
   it("should execute multiple tools in parallel", async () => {
     const executor = new ToolExecutor({
       tools: [echoTool],
@@ -998,6 +1040,58 @@ describe("ToolExecutor", () => {
 
     expect(warns).toHaveLength(0);
     expect(executor.hasTool("echo")).toBe(true);
+  });
+
+  it("rejects duplicate registrations unless the caller uses the explicit replacement boundary", () => {
+    const executor = new ToolExecutor({
+      tools: [echoTool],
+      workspaceRoot: "/tmp/test",
+    });
+
+    expect(() => executor.registerTool({ ...echoTool })).toThrow(/Duplicate tool registration: echo/);
+    expect(executor.getRegistryInventory()).toMatchObject({
+      totalToolCount: 1,
+      replacementCount: 0,
+      originCounts: { builtin: 1 },
+    });
+  });
+
+  it("fails closed for ungoverned tools in a strict runtime and keeps a diagnosable inventory", () => {
+    expect(() => new ToolExecutor({
+      tools: [echoTool],
+      workspaceRoot: "/tmp/test",
+      requireToolContracts: true,
+    })).toThrow(/missing a ToolContract/);
+
+    const executor = new ToolExecutor({
+      tools: [echoToolWithContract],
+      workspaceRoot: "/tmp/test",
+      requireToolContracts: true,
+    });
+    executor.registerTool(withToolContract({
+      ...echoTool,
+      definition: { ...echoTool.definition, name: "mcp_echo" },
+    }, {
+      family: "other",
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      needsPermission: true,
+      riskLevel: "high",
+      channels: ["gateway"],
+      safeScopes: ["remote-safe"],
+      activityDescription: "External MCP echo",
+      resultSchema: { kind: "text", description: "echo text" },
+      outputPersistencePolicy: "conversation",
+    }), { origin: "mcp" });
+
+    expect(executor.getRegistryInventory()).toMatchObject({
+      totalToolCount: 2,
+      governedToolCount: 2,
+      catalogGeneration: 2,
+      originCounts: { builtin: 1, mcp: 1 },
+      missingContractNames: [],
+      contractNameMismatchNames: [],
+    });
   });
 
   it("should notify when a conversation token counter is attached", () => {

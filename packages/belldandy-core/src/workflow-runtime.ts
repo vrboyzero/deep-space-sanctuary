@@ -36,6 +36,7 @@ import {
   type LoadedWorkflowScript,
   WorkflowScriptLoadError,
 } from "./workflow-script-loader.js";
+import type { WorkflowExecutionPolicy } from "./workflow-execution-policy.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,6 @@ export type WorkflowRunOptions = {
   args?: Record<string, unknown>;
   budget?: WorkflowBudget;
   maxConcurrent?: number;
-  allowInlineScript?: boolean;
   parentConversationId: string;
   channel: string;
   resumeJournalId?: string;
@@ -119,6 +119,8 @@ export type WorkflowRuntimeDeps = {
   conversationStore: ConversationStore;
   /** 环境变量读取 */
   readEnv?: (name: string) => string | undefined;
+  /** 只在 Gateway 启动时解析一次的 source trust policy。 */
+  workflowExecutionPolicy?: WorkflowExecutionPolicy;
   /** 日志 */
   logger?: {
     info(message: string, data?: unknown): void;
@@ -165,6 +167,7 @@ export class WorkflowRuntime {
   private readonly agentRegistry: AgentRegistry;
   private readonly conversationStore: ConversationStore;
   private readonly readEnv: (name: string) => string | undefined;
+  private readonly workflowExecutionPolicy?: WorkflowExecutionPolicy;
   private readonly logger?: WorkflowRuntimeDeps["logger"];
   private readonly resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
   private readonly resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
@@ -175,6 +178,7 @@ export class WorkflowRuntime {
     this.agentRegistry = deps.agentRegistry;
     this.conversationStore = deps.conversationStore;
     this.readEnv = deps.readEnv ?? ((name: string) => process.env[name]);
+    this.workflowExecutionPolicy = deps.workflowExecutionPolicy;
     this.logger = deps.logger;
     this.resolveAgentExecutionFingerprintInputs = deps.resolveAgentExecutionFingerprintInputs;
     this.resolveWorkflowAgentLaunchSpec = deps.resolveWorkflowAgentLaunchSpec;
@@ -187,8 +191,8 @@ export class WorkflowRuntime {
     let script: LoadedWorkflowScript;
     try {
       script = await loadWorkflowScript(opts.source, {
-        allowInlineScript: opts.allowInlineScript,
         stateDir: opts.stateDir,
+        policy: this.workflowExecutionPolicy,
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

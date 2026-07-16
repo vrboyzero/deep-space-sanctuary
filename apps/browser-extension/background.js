@@ -30,10 +30,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     }
 });
 
-async function getRelayPort() {
-    const stored = await chrome.storage.local.get(['relayPort']);
+async function getRelayConfig() {
+    const stored = await chrome.storage.local.get(['relayPort', 'relayToken']);
     const n = parseInt(stored.relayPort, 10);
-    return (Number.isFinite(n) && n > 0) ? n : DEFAULT_PORT;
+    const port = (Number.isFinite(n) && n > 0 && n <= 65535) ? n : DEFAULT_PORT;
+    const token = typeof stored.relayToken === 'string' ? stored.relayToken.trim() : '';
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
+        throw new Error("Relay credential is missing or invalid. Open extension options to configure it.");
+    }
+    return { port, token };
 }
 
 // 连接到 Relay Server
@@ -52,14 +57,15 @@ async function ensureRelayConnection() {
     if (relayConnectPromise) return await relayConnectPromise;
 
     relayConnectPromise = (async () => {
-        const port = await getRelayPort();
+        const { port, token } = await getRelayConfig();
         const wsUrl = `ws://127.0.0.1:${port}/extension`;
+        const relayProtocol = `belldandy-relay-v1.${token}`;
 
-        console.log(`[Star Sanctuary] Connecting to Relay at ${wsUrl}...`);
+        console.log(`[Star Sanctuary] Connecting to Relay on port ${port}...`);
         setBadge("...", "#2196F3"); // Blue
 
         try {
-            const ws = new WebSocket(wsUrl);
+            const ws = new WebSocket(wsUrl, [relayProtocol]);
             relayWs = ws;
 
             await new Promise((resolve, reject) => {
@@ -383,7 +389,20 @@ chrome.action.onClicked.addListener(async () => {
     } catch (e) {
         console.error("Manual connection failed:", e);
         setBadge("ERR", "#F44336");
+        if (String(e?.message || e).includes("credential")) {
+            chrome.runtime.openOptionsPage();
+        }
     }
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || (!changes.relayPort && !changes.relayToken)) return;
+    if (relayWs) {
+        try { relayWs.close(); } catch { }
+        relayWs = null;
+    }
+    autoConnectRetries = 0;
+    void autoConnectToRelay();
 });
 
 // =========================================

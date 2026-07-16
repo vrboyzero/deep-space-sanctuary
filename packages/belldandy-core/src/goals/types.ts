@@ -115,6 +115,8 @@ export type LongTermGoal = {
   handoffPath: string;
   registryPath: string;
   pathSource: GoalPathSource;
+  /** 仅用于验证 Goal 创建时写入的本地存储 owner marker。 */
+  storageOwnerNonce?: string;
   boardId?: string;
   activeConversationId?: string;
   activeNodeId?: string;

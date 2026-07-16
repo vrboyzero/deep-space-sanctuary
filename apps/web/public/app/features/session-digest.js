@@ -315,16 +315,19 @@ export function createSessionDigestFeature({
   function renderEmpty(message) {
     if (!sessionDigestSummaryEl) return;
     closeModal();
-    sessionDigestSummaryEl.innerHTML = `<div class="task-token-history-empty">${escapeHtml(message)}</div>`;
+    const empty = document.createElement("div");
+    empty.className = "task-token-history-empty";
+    empty.textContent = message;
+    sessionDigestSummaryEl.replaceChildren(empty);
     if (sessionContinuationSummaryEl) {
-      sessionContinuationSummaryEl.innerHTML = "";
+      sessionContinuationSummaryEl.replaceChildren();
     }
     setRefreshButtonState();
   }
 
   function renderContinuationSummary() {
     if (!sessionContinuationSummaryEl) return;
-    sessionContinuationSummaryEl.innerHTML = "";
+    sessionContinuationSummaryEl.replaceChildren();
   }
 
   function renderDigest() {

@@ -2,18 +2,27 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  copyPackageNonDistBinArtifacts,
+  resolveReleaseVersion,
+} from "./artifact-contract.mjs";
 
 const workspaceRoot = process.cwd();
 const packageJsonPath = path.join(workspaceRoot, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
 const versionArg = process.argv.find((arg) => arg.startsWith("--version="));
-const version = (versionArg ? versionArg.slice("--version=".length) : packageJson.version || "").trim();
+const version = resolveReleaseVersion({
+  releaseName: "release-light",
+  packageVersion: packageJson.version,
+  requestedVersion: versionArg?.slice("--version=".length),
+});
 
-if (!version) {
-  throw new Error("Failed to resolve release-light asset version.");
-}
-
-const releaseRoot = path.join(workspaceRoot, "artifacts", "release-light");
+// 测试或并行调用方可提供唯一输出根，避免共享 generated artifact 目录互相清理；
+// 正式发布未设置该变量时仍保持既有 artifacts/release-light 布局。
+const configuredReleaseRoot = process.env.BELLDANDY_RELEASE_LIGHT_ROOT?.trim();
+const releaseRoot = configuredReleaseRoot
+  ? path.resolve(workspaceRoot, configuredReleaseRoot)
+  : path.join(workspaceRoot, "artifacts", "release-light");
 const versionRoot = path.join(releaseRoot, `v${version}`);
 const packageRootName = `star-sanctuary-dist-v${version}`;
 const packageRoot = path.join(versionRoot, packageRootName);
@@ -77,18 +86,6 @@ function copyFileRelative(sourceRelativePath, destinationRelativePath = sourceRe
   fs.copyFileSync(sourcePath, destinationPath);
 }
 
-function copyPathRelative(sourceRelativePath, destinationRelativePath = sourceRelativePath) {
-  const sourcePath = assertExists(sourceRelativePath);
-  const destinationPath = path.join(packageRoot, destinationRelativePath);
-  const stat = fs.statSync(sourcePath);
-  if (stat.isDirectory()) {
-    fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
-    return;
-  }
-  ensureDir(path.dirname(destinationPath));
-  fs.copyFileSync(sourcePath, destinationPath);
-}
-
 function shouldExcludeDistFile(relativePath) {
   return PACKAGE_DIST_EXCLUDE_PATTERNS.some((pattern) => pattern.test(relativePath));
 }
@@ -131,18 +128,11 @@ function copyPackageDistTrees() {
 
     copyFileRelative(packageJsonRelativePath);
     const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, packageJsonRelativePath), "utf-8"));
-    if (packageJson.bin && typeof packageJson.bin === "object") {
-      for (const relativeTarget of Object.values(packageJson.bin)) {
-        if (typeof relativeTarget !== "string" || relativeTarget.startsWith("./dist/")) {
-          continue;
-        }
-        const normalizedTarget = relativeTarget.replace(/^\.\//, "");
-        copyPathRelative(
-          path.join(packageRootPath, normalizedTarget),
-          path.join(packageRootPath, normalizedTarget),
-        );
-      }
-    }
+    copyPackageNonDistBinArtifacts({
+      sourcePackageDir: path.join(workspaceRoot, packageRootPath),
+      destinationPackageDir: path.join(packageRoot, packageRootPath),
+      packageJson,
+    });
     const distAbsolutePath = assertExists(distRelativePath);
     const stat = fs.statSync(distAbsolutePath);
     if (!stat.isDirectory()) {

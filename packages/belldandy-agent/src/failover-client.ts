@@ -5,6 +5,8 @@
  * 参考 OpenClaw 的 model-fallback.ts 实现。
  */
 
+import { readResponseTextBounded } from "@belldandy/protocol";
+
 // ─── Types ───────────────────────────────────────────────────────────────
 
 /** 模型 Profile：描述一个可用的 API 端点 */
@@ -998,14 +1000,10 @@ function extractProvider(baseUrl: string): string {
     }
 }
 
-/** 安全地读取 Response body 前 500 字符 */
+/** 错误正文按 UTF-8 字节流限界并清洗，避免 Provider 响应在截断前占满内存。 */
 async function safeReadText(res: Response): Promise<string> {
-    try {
-        const text = await res.text();
-        return text.length > 500 ? `${text.slice(0, 500)}…` : text;
-    } catch {
-        return "";
-    }
+    const result = await readResponseTextBounded(res, { maxBytes: 2048 });
+    return result.truncated ? `${result.text}…` : result.text;
 }
 
 // ─── 配置加载 ─────────────────────────────────────────────────────────────

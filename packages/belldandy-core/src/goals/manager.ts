@@ -18,6 +18,11 @@ import { generateCrossGoalFlowPatterns } from "./cross-goal-flow-patterns.js";
 import { runGoalReviewScanLearningReview } from "../learning-review-runner.js";
 import { getGoalRegistryEntry, listGoalRegistryEntries, removeGoalRegistryEntry, upsertGoalRegistryEntry } from "./registry.js";
 import { scaffoldGoalFiles } from "./scaffold.js";
+import {
+  prepareGoalStorageOwnership,
+  previewGoalStorageForDeletion,
+  removeGoalStorageForDeletion,
+} from "./storage-policy.js";
 import { createGoalConversationId, createGoalNodeConversationId, createGoalRunId } from "./session.js";
 import { GoalRuntimeBindingStore } from "../goal-runtime-binding-store.js";
 import { analyzeGoalCapabilityPlan, getDefaultCapabilityPlanAnalysis } from "./capability-analysis.js";
@@ -180,12 +185,14 @@ export class GoalManager {
       handoffPath: paths.handoffPath,
       registryPath: paths.registryPath,
       pathSource: paths.pathSource,
+      storageOwnerNonce: crypto.randomUUID(),
       boardId: `${id}_main`,
       createdAt: now,
       updatedAt: now,
       activeConversationId: createGoalConversationId(id),
     };
 
+    await prepareGoalStorageOwnership({ stateDir: this.stateDir, goal });
     await scaffoldGoalFiles(goal);
     await upsertGoalRegistryEntry(this.stateDir, goal);
     return goal;
@@ -808,13 +815,8 @@ export class GoalManager {
       } catch (error) {
         cleanupWarnings.push(this.formatGoalDeletionWarning("runtime bindings", error));
       }
-      for (const targetPath of this.resolveGoalDeletionTargets(goal)) {
-        try {
-          await fs.rm(targetPath, { recursive: true, force: true });
-        } catch (error) {
-          cleanupWarnings.push(this.formatGoalDeletionWarning(targetPath, error));
-        }
-      }
+      const storageCleanup = await removeGoalStorageForDeletion({ stateDir: this.stateDir, goal });
+      cleanupWarnings.push(...storageCleanup.warnings);
       await this.emitGoalUpdate(goal, {
         reason: "goal_deleted",
         nodeId: goal.lastNodeId,
@@ -824,6 +826,24 @@ export class GoalManager {
         goalId: goal.id,
         goal,
         cleanupWarnings,
+      };
+    });
+  }
+
+  async previewGoalDeletion(goalId: string): Promise<{
+    goalId: string;
+    goal: LongTermGoal;
+    storagePreview: Awaited<ReturnType<typeof previewGoalStorageForDeletion>>;
+  }> {
+    return this.withGoalMutationLock(goalId, async () => {
+      const goal = await this.requireGoal(goalId);
+      if (goal.status !== "archived") {
+        throw new Error(`Goal "${goalId}" must be archived before its deletion can be previewed.`);
+      }
+      return {
+        goalId: goal.id,
+        goal,
+        storagePreview: await previewGoalStorageForDeletion({ stateDir: this.stateDir, goal }),
       };
     });
   }
@@ -2103,24 +2123,6 @@ export class GoalManager {
       throw new Error(`Goal not found: ${goalId}`);
     }
     return goal;
-  }
-
-  private resolveGoalDeletionTargets(goal: LongTermGoal): string[] {
-    const forbidden = new Set([
-      path.resolve(this.stateDir),
-      path.resolve(path.join(this.stateDir, "goals")),
-      path.resolve(path.join(this.stateDir, "docs")),
-      path.resolve(path.join(this.stateDir, "docs", "long-tasks")),
-    ]);
-    return [...new Set([
-      goal.goalRoot,
-      goal.runtimeRoot,
-      goal.docRoot,
-    ]
-      .map((value) => (typeof value === "string" && value.trim() ? path.resolve(value) : ""))
-      .filter((value): value is string => Boolean(value)))]
-      .filter((targetPath) => !forbidden.has(targetPath))
-      .sort((left, right) => right.length - left.length);
   }
 
   private formatGoalDeletionWarning(target: string, error: unknown): string {

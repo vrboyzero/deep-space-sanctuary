@@ -1,15 +1,13 @@
 import {
-  persistAuthFields,
+  createCredentialSession,
   persistConnectionFields,
-  persistSessionAuthToken,
   persistUuidField,
   persistWorkspaceRootsField,
-  restoreAuthFields,
-  restoreSessionAuthToken,
   restoreUuidField,
   restoreWorkspaceRootsField,
 } from "./app/features/persistence.js";
 import { APP_DOM_REFS } from "./app/bootstrap/dom.js";
+import { awaitWebAssetsReady } from "./app/bootstrap/web-assets.js";
 import {
   AGENT_PANEL_VISIBLE_KEY,
   DEFAULT_VOICE_SHORTCUT,
@@ -19,6 +17,7 @@ import {
   CONTROL_PANEL_VISIBLE_KEY,
   MODEL_ID_KEY,
   SESSION_AUTH_TOKEN_KEY,
+  SESSION_AUTH_REMEMBER_KEY,
   STORE_KEY,
   TOKEN_USAGE_COLLAPSED_KEY,
   UUID_KEY,
@@ -80,10 +79,13 @@ import { applyWebConfigLinks } from "./app/features/web-config-links.js";
 import { createWorkspaceFeature } from "./app/features/workspace.js";
 import { LOCALE_DICTIONARIES, LOCALE_META } from "./app/i18n/index.js";
 
+await awaitWebAssetsReady();
+
 const {
   statusEl,
   authModeEl,
   authValueEl,
+  rememberSessionAuthEl,
   userUuidEl,
   saveUuidBtn,
   workspaceRootsEl,
@@ -425,6 +427,14 @@ const taskTokenHistoryByConversation = new Map();
 const TASK_TOKEN_HISTORY_LIMIT = 1;
 let transientUrlToken = null;
 const clientId = resolveClientId();
+const credentialSession = createCredentialSession({
+  storeKey: STORE_KEY,
+  sessionStoreKey: SESSION_AUTH_TOKEN_KEY,
+  rememberSessionKey: SESSION_AUTH_REMEMBER_KEY,
+  authModeEl,
+  authValueEl,
+  rememberSessionEl: rememberSessionAuthEl,
+});
 let queuedText = null;
 let composerRunState = { phase: "idle", conversationId: "", runId: "" };
 
@@ -888,14 +898,11 @@ workspaceFeature = createWorkspaceFeature({
 });
 workspaceFeature.handleSidebarVisibilityChange?.(panelVisibilityFeature.getState().contentPanelVisible);
 
-restoreAuthFields({ storeKey: STORE_KEY, authModeEl, authValueEl });
-restoreSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
-const handedOffAuth = consumeSessionAuthHandoff();
+credentialSession.restore();
+const handedOffAuth = await consumeSessionAuthHandoff();
 if (handedOffAuth?.mode === "token" && handedOffAuth.value) {
-  authModeEl.value = "token";
-  authValueEl.value = handedOffAuth.value;
+  credentialSession.setCredential(handedOffAuth);
   transientUrlToken = handedOffAuth.value;
-  persistSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
 }
 restoreWorkspaceRootsField({ workspaceRootsKey: WORKSPACE_ROOTS_KEY, workspaceRootsEl });
 restoreUuidField({ uuidKey: UUID_KEY, userUuidEl });
@@ -933,10 +940,8 @@ if (userUuidEl) {
 // [NEW] Allow ?token=... param to override/set auth
 const urlToken = consumeUrlTokenParam();
 if (urlToken) {
-  authModeEl.value = "token";
-  authValueEl.value = urlToken;
+  credentialSession.setCredential({ mode: "token", value: urlToken });
   transientUrlToken = urlToken;
-  persistSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
 }
 
 setStatus(localeController.t("status.disconnected", {}, "disconnected"));
@@ -2245,7 +2250,9 @@ function syncSaveWorkspaceRootsButton() {
   if (!saveWorkspaceRootsBtn) return;
   const key = saveWorkspaceRootsButtonState === "saved" ? "common.saved" : "common.save";
   const fallback = saveWorkspaceRootsButtonState === "saved" ? "Saved" : "Save";
-  saveWorkspaceRootsBtn.innerHTML = `<u>${localeController.t(key, {}, fallback)}</u>`;
+  const label = document.createElement("u");
+  label.textContent = localeController.t(key, {}, fallback);
+  saveWorkspaceRootsBtn.replaceChildren(label);
 }
 
 syncSaveWorkspaceRootsButton();
@@ -3126,24 +3133,63 @@ function renderTaskTokenHistory() {
   const latestItems = items.slice(0, 1);
 
   if (!latestItems.length) {
-    taskTokenHistoryEl.innerHTML = `<div class="task-token-history-empty">${escapeHtml(localeController.t("panel.taskTokenEmpty", {}, "No task-level token records yet"))}</div>`;
+    const empty = document.createElement("div");
+    empty.className = "task-token-history-empty";
+    empty.textContent = localeController.t("panel.taskTokenEmpty", {}, "No task-level token records yet");
+    taskTokenHistoryEl.replaceChildren(empty);
     return;
   }
 
-  taskTokenHistoryEl.innerHTML = latestItems.map((item) => `
-    <div class="task-token-chip${item.auto ? " auto" : ""}">
-      <div class="task-token-chip-top">
-        <span class="task-token-chip-name">${escapeHtml(item.name)}</span>
-        <span class="task-token-chip-badge">${item.auto ? "AUTO" : "MANUAL"}</span>
-      </div>
-      <div class="task-token-chip-sep">|</div>
-      <div class="task-token-chip-total">TOTAL ${escapeHtml(formatTokenCount(item.totalTokens))}</div>
-      <div class="task-token-chip-sep">|</div>
-      <div class="task-token-chip-meta">IN ${escapeHtml(formatTokenCount(item.inputTokens))} <span style="opacity:0.5;margin:0 2px;">/</span> OUT ${escapeHtml(formatTokenCount(item.outputTokens))}</div>
-      <div class="task-token-chip-sep">|</div>
-      <div class="task-token-chip-meta">${escapeHtml(formatDurationMs(item.durationMs))} <span style="opacity:0.5;margin:0 2px;">/</span> ${escapeHtml(formatTaskTokenTime(item.createdAt))}</div>
-    </div>
-  `).join("");
+  const chips = latestItems.map((item) => {
+    const chip = document.createElement("div");
+    chip.className = `task-token-chip${item.auto ? " auto" : ""}`;
+    const top = document.createElement("div");
+    top.className = "task-token-chip-top";
+    const name = document.createElement("span");
+    name.className = "task-token-chip-name";
+    name.textContent = item.name;
+    const badge = document.createElement("span");
+    badge.className = "task-token-chip-badge";
+    badge.textContent = item.auto ? "AUTO" : "MANUAL";
+    top.append(name, badge);
+
+    const separator = () => {
+      const element = document.createElement("div");
+      element.className = "task-token-chip-sep";
+      element.textContent = "|";
+      return element;
+    };
+    const inlineSeparator = () => {
+      const element = document.createElement("span");
+      element.style.opacity = "0.5";
+      element.style.margin = "0 2px";
+      element.textContent = "/";
+      return element;
+    };
+    const meta = (parts) => {
+      const element = document.createElement("div");
+      element.className = "task-token-chip-meta";
+      element.append(...parts);
+      return element;
+    };
+
+    const inputOutput = meta([
+      `IN ${formatTokenCount(item.inputTokens)} `,
+      inlineSeparator(),
+      ` OUT ${formatTokenCount(item.outputTokens)}`,
+    ]);
+    const duration = meta([
+      `${formatDurationMs(item.durationMs)} `,
+      inlineSeparator(),
+      ` ${formatTaskTokenTime(item.createdAt)}`,
+    ]);
+    const total = document.createElement("div");
+    total.className = "task-token-chip-total";
+    total.textContent = `TOTAL ${formatTokenCount(item.totalTokens)}`;
+    chip.append(top, separator(), total, separator(), inputOutput, separator(), duration);
+    return chip;
+  });
+  taskTokenHistoryEl.replaceChildren(...chips);
 }
 
 let sessionTotalTokens = 0;
@@ -3910,8 +3956,7 @@ function consumeUrlTokenParam() {
 if (authModeEl) {
   authModeEl.addEventListener("change", () => {
     if (authModeEl.value !== "token") transientUrlToken = null;
-    persistAuthFields({ storeKey: STORE_KEY, authModeEl, authValueEl, transientUrlToken });
-    persistSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
+    credentialSession.setMode(authModeEl.value);
   });
 }
 if (authValueEl) {
@@ -3919,10 +3964,12 @@ if (authValueEl) {
     if (transientUrlToken && authValueEl.value.trim() !== transientUrlToken) {
       transientUrlToken = null;
     }
-    persistAuthFields({ storeKey: STORE_KEY, authModeEl, authValueEl, transientUrlToken });
-    persistSessionAuthToken({ sessionStoreKey: SESSION_AUTH_TOKEN_KEY, authModeEl, authValueEl });
+    credentialSession.persist();
   });
 }
+rememberSessionAuthEl?.addEventListener("change", () => {
+  credentialSession.persist();
+});
 
 function configureMarkedOnce() {
   return chatUiFeature?.configureMarkedOnce();

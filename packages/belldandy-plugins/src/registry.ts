@@ -11,6 +11,20 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
+export class PluginRegistryRegistrationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "PluginRegistryRegistrationError";
+    }
+}
+
+export class PluginRegistryDirectoryError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "PluginRegistryDirectoryError";
+    }
+}
+
 export class PluginRegistry {
     private plugins: Map<string, BelldandyPlugin> = new Map();
     private tools: Map<string, Tool> = new Map();
@@ -61,33 +75,34 @@ export class PluginRegistry {
 
             console.log(`Loading plugin: ${plugin.name} (${plugin.id})`);
 
-            const pluginToolNames: string[] = [];
+            // Stage plugin registrations so a rejected duplicate cannot leave a partial runtime.
+            const stagedTools = new Map<string, Tool>();
+            const stagedHooks: AgentHooks[] = [];
+            const stagedSkillDirs = new Set<string>();
             const context: PluginContext = {
                 registerTool: (tool: Tool) => {
-                    if (this.tools.has(tool.definition.name)) {
-                        console.warn(`Plugin ${plugin.id} registered duplicate tool: ${tool.definition.name}`);
+                    const toolName = tool.definition.name;
+                    if (this.tools.has(toolName) || stagedTools.has(toolName)) {
+                        throw new PluginRegistryRegistrationError(`Duplicate plugin tool registration: ${toolName}`);
                     }
-                    this.tools.set(tool.definition.name, tool);
-                    pluginToolNames.push(tool.definition.name);
-                    this.invalidateInventoryCache();
+                    stagedTools.set(toolName, tool);
                 },
                 registerHooks: (hooks: AgentHooks) => {
-                    this.hooksList.push(hooks);
-                    this.invalidateInventoryCache();
+                    stagedHooks.push(hooks);
                 },
                 registerSkillDir: (dir: string) => {
-                    const existing = this.pluginSkillDirs.get(plugin.id) ?? [];
-                    if (!existing.includes(dir)) {
-                        existing.push(dir);
-                        this.invalidateInventoryCache();
-                    }
-                    this.pluginSkillDirs.set(plugin.id, existing);
+                    stagedSkillDirs.add(dir);
                 }
             };
 
             await plugin.activate(context);
             this.plugins.set(plugin.id, plugin);
-            this.pluginToolMap.set(plugin.id, pluginToolNames);
+            for (const [toolName, tool] of stagedTools) {
+                this.tools.set(toolName, tool);
+            }
+            this.hooksList.push(...stagedHooks);
+            this.pluginToolMap.set(plugin.id, [...stagedTools.keys()]);
+            this.pluginSkillDirs.set(plugin.id, [...stagedSkillDirs]);
             this.invalidateInventoryCache();
 
         } catch (err) {
@@ -100,21 +115,35 @@ export class PluginRegistry {
     /**
      * Load all plugins from a directory (non-recursive)
      */
-    async loadPluginDirectory(dirPath: string): Promise<void> {
+    async loadPluginDirectory(
+        dirPath: string,
+        options: { requireDirectory?: boolean; failOnRegistrationError?: boolean } = {},
+    ): Promise<void> {
         try {
             const entries = await fs.readdir(dirPath, { withFileTypes: true });
             for (const entry of entries) {
                 if (entry.isFile() && (entry.name.endsWith(".js") || entry.name.endsWith(".mjs"))) {
                     try {
                         await this.loadPlugin(path.join(dirPath, entry.name));
-                    } catch {
+                    } catch (error) {
+                        if (options.failOnRegistrationError && error instanceof PluginRegistryRegistrationError) {
+                            throw error;
+                        }
                         // 记录错误后继续扫描其它插件，避免单个坏插件阻断整批加载。
                     }
                 }
             }
         } catch (err) {
+            if (err instanceof PluginRegistryRegistrationError) {
+                throw err;
+            }
             this.recordLoadError("scan_directory", dirPath, err);
             console.error(`Failed to load plugins from directory ${dirPath}:`, err);
+            if (options.requireDirectory) {
+                throw new PluginRegistryDirectoryError(
+                    `Invalid required plugin directory: ${dirPath} (${err instanceof Error ? err.message : String(err)}).`,
+                );
+            }
         }
     }
 

@@ -25,6 +25,29 @@ afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
 });
 
+test("gateway serves WebChat with enforced security headers", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+  });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");
+    expect(response.headers.get("content-security-policy-report-only")).toBeNull();
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+  } finally {
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("gateway rejects invalid token", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const server = await startGatewayServer({
@@ -146,6 +169,42 @@ test("secure methods require pairing for config raw and tools update", async () 
   await closeP;
   await server.close();
   await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("request admission requires pairing for formerly unguarded stateful methods", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await waitFor(() => frames.some((f) => f.type === "connect.challenge"));
+    ws.send(JSON.stringify({ type: "connect", role: "web", auth: { mode: "none" } }));
+    await waitFor(() => frames.some((f) => f.type === "hello-ok"));
+
+    const methods = ["agent.create", "goal.delete", "memory.share.queue", "workflow.run"];
+    for (const method of methods) {
+      ws.send(JSON.stringify({ type: "req", id: `unpaired-${method}`, method, params: {} }));
+    }
+
+    await waitFor(() => methods.every((method) => frames.some((frame) => frame.type === "res" && frame.id === `unpaired-${method}`)));
+    for (const method of methods) {
+      const response = frames.find((frame) => frame.type === "res" && frame.id === `unpaired-${method}`);
+      expect(response).toMatchObject({ ok: false, error: { code: "pairing_required" } });
+    }
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 test("config.update rejects enabling community api when auth mode is none", async () => {

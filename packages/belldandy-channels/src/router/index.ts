@@ -1,6 +1,6 @@
 import { loadChannelRouterConfig } from "./config.js";
 import { createDisabledRouter, createRuleBasedRouter } from "./engine.js";
-import { hasChannelSecurityPolicy, loadChannelSecurityConfig } from "./security-config.js";
+import { hasChannelSecurityPolicy, loadChannelSecurityConfigResult, type SecurityBackedChannelKind } from "./security-config.js";
 import type { ChannelRouter, ChannelRouterLogger } from "./types.js";
 
 export type CreateChannelRouterOptions = {
@@ -8,12 +8,13 @@ export type CreateChannelRouterOptions = {
   configPath?: string;
   securityConfigPath?: string;
   defaultAgentId?: string;
+  requiredSecurityChannels?: readonly SecurityBackedChannelKind[];
   logger?: ChannelRouterLogger;
 };
 
 export function createChannelRouter(options: CreateChannelRouterOptions = {}): ChannelRouter {
-  const securityConfig = loadChannelSecurityConfig(options.securityConfigPath, options.logger);
-  if (!options.enabled && !hasChannelSecurityPolicy(securityConfig)) {
+  const securityLoad = loadChannelSecurityConfigResult(options.securityConfigPath, options.logger);
+  if (!options.enabled && !hasChannelSecurityPolicy(securityLoad.config) && !options.requiredSecurityChannels?.length) {
     options.logger?.info?.("channel router disabled");
     return createDisabledRouter(options.defaultAgentId);
   }
@@ -25,7 +26,9 @@ export function createChannelRouter(options: CreateChannelRouterOptions = {}): C
     defaultAgentId: options.defaultAgentId,
     defaultAllow: true,
     logger: options.logger,
-    securityConfig,
+    securityConfig: securityLoad.config,
+    securityLoadStatus: securityLoad.status,
+    requiredSecurityChannels: options.requiredSecurityChannels,
   });
 }
 

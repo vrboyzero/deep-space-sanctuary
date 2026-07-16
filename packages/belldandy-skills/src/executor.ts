@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { JsonObject } from "@belldandy/protocol";
+import { redactSensitiveValue, type JsonObject } from "@belldandy/protocol";
 import type {
   Tool,
   ToolCallRequest,
@@ -111,15 +111,78 @@ export type ToolExecutorOptions = {
   onTokenCounterSet?: (conversationId: string, counter: ITokenCounterService) => void;
   /** 可选：统一 contract 安全矩阵策略 */
   contractAccessPolicy?: ToolContractAccessPolicy;
+  /** 生产运行时要求每个注册 Tool 都具备名称一致的治理 contract。 */
+  requireToolContracts?: boolean;
+  /** 初始 Tool pool 的 inventory 来源；动态注册可单独指定。 */
+  initialToolOrigin?: ToolRegistrationOrigin;
   /** 可选：按会话延迟加载的工具名 */
   deferredToolNames?: string[];
 };
 
+export type ToolRegistrationOrigin =
+  | "builtin"
+  | "core"
+  | "mcp"
+  | "plugin"
+  | "channel"
+  | "workflow"
+  | "runtime";
+
+export type ToolRegistryInventoryEntry = {
+  name: string;
+  origin: ToolRegistrationOrigin;
+  originId?: string;
+  loadingMode: "core" | "deferred";
+  contractName?: string;
+  contractStatus: "governed" | "missing" | "name-mismatch";
+};
+
+export type ToolRegistryReplacement = {
+  name: string;
+  previousOrigin: ToolRegistrationOrigin;
+  nextOrigin: ToolRegistrationOrigin;
+};
+
+export type ToolRegistryInventory = {
+  catalogGeneration: number;
+  totalToolCount: number;
+  governedToolCount: number;
+  missingContractNames: string[];
+  contractNameMismatchNames: string[];
+  originCounts: Record<ToolRegistrationOrigin, number>;
+  replacementCount: number;
+  replacements: ToolRegistryReplacement[];
+  entries: ToolRegistryInventoryEntry[];
+};
+
 const MAX_LEGACY_DEFERRED_TOOL_SELECTIONS = 16;
 
-type RegisterToolOptions = {
+export type RegisterToolOptions = {
+  /** 标记该 Tool 的运行时来源，供 Doctor 和治理 inventory 使用。 */
+  origin?: ToolRegistrationOrigin;
+  /** 可选来源标识，例如 plugin id 或 MCP server id。 */
+  originId?: string;
+  /**
+   * 仅用于已有显式覆盖路径。普通重复注册会失败，避免静默覆盖。
+   * 保留字段名以兼容现有调用方，替换记录会进入 inventory。
+   */
   silentReplace?: boolean;
 };
+
+type ToolRegistrationMetadata = {
+  origin: ToolRegistrationOrigin;
+  originId?: string;
+};
+
+const TOOL_REGISTRATION_ORIGINS: ToolRegistrationOrigin[] = [
+  "builtin",
+  "core",
+  "mcp",
+  "plugin",
+  "channel",
+  "workflow",
+  "runtime",
+];
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -699,6 +762,9 @@ function preflightToolArguments(tool: Tool, args: JsonObject): ToolArgumentPrefl
 
 export class ToolExecutor {
   private readonly tools: Map<string, Tool>;
+  private readonly toolRegistrationMetadata = new Map<string, ToolRegistrationMetadata>();
+  private readonly registryReplacements: ToolRegistryReplacement[] = [];
+  private catalogGeneration = 0;
   private readonly workspaceRoot: string;
   private readonly stateDir: string;
   private readonly extraWorkspaceRoots: string[];
@@ -713,6 +779,7 @@ export class ToolExecutor {
   private readonly isToolAllowedInConversation?: (toolName: string, conversationId: string, agentId?: string) => boolean;
   private readonly getAgentCatalogPreferences?: (agentId?: string) => { methods?: string[]; skills?: string[] } | undefined;
   private readonly contractAccessPolicy?: ToolContractAccessPolicy;
+  private readonly requireToolContracts: boolean;
   private conversationStore?: ConversationStoreInterface; // 移除 readonly，允许后期绑定
   private allowedConversationKinds?: ConversationAccessKind[];
   private readonly tokenCounters = new Map<string, ITokenCounterService>(); // 每个 conversation 的 token 计数器
@@ -730,7 +797,7 @@ export class ToolExecutor {
   private readonly onTokenCounterSet?: (conversationId: string, counter: ITokenCounterService) => void;
 
   constructor(options: ToolExecutorOptions) {
-    this.tools = new Map(options.tools.map(t => [t.definition.name, t]));
+    this.tools = new Map();
     this.workspaceRoot = options.workspaceRoot;
     this.stateDir = options.stateDir ?? options.workspaceRoot;
     this.extraWorkspaceRoots = options.extraWorkspaceRoots ?? [];
@@ -745,6 +812,7 @@ export class ToolExecutor {
     this.isToolAllowedInConversation = options.isToolAllowedInConversation;
     this.getAgentCatalogPreferences = options.getAgentCatalogPreferences;
     this.contractAccessPolicy = options.contractAccessPolicy;
+    this.requireToolContracts = options.requireToolContracts ?? false;
     this.deferredToolNames = new Set(options.deferredToolNames ?? []);
     this.conversationStore = options.conversationStore;
     this.allowedConversationKinds = options.allowedConversationKinds;
@@ -753,6 +821,10 @@ export class ToolExecutor {
     this.bridgeSessionGovernance = options.bridgeSessionGovernance;
     this.broadcastObserver = options.broadcastObserver;
     this.onTokenCounterSet = options.onTokenCounterSet;
+
+    for (const tool of options.tools) {
+      this.registerTool(tool, { origin: options.initialToolOrigin ?? "builtin" });
+    }
   }
 
   /**
@@ -858,6 +930,57 @@ export class ToolExecutor {
   /** 获取所有已注册工具名（不经过 disabled 过滤，用于调用设置列表） */
   getRegisteredToolNames(): string[] {
     return Array.from(this.tools.keys());
+  }
+
+  /** 获取单个已注册 Tool 的 contract，供动态注册后的治理路径查询。 */
+  getRegisteredToolContract(name: string): ToolContract | undefined {
+    const tool = this.tools.get(name);
+    return tool ? getToolContract(tool) : undefined;
+  }
+
+  /**
+   * 返回稳定的运行时注册清单。它不替代权限判定，只用于诊断 coverage 和来源漂移。
+   */
+  getRegistryInventory(): ToolRegistryInventory {
+    const originCounts = Object.fromEntries(
+      TOOL_REGISTRATION_ORIGINS.map((origin) => [origin, 0]),
+    ) as Record<ToolRegistrationOrigin, number>;
+    const entries = Array.from(this.tools.entries())
+      .map(([name, tool]) => {
+        const registration = this.toolRegistrationMetadata.get(name) ?? { origin: "runtime" as const };
+        const contract = getToolContract(tool);
+        const contractStatus = !contract
+          ? "missing" as const
+          : contract.name === name
+            ? "governed" as const
+            : "name-mismatch" as const;
+        originCounts[registration.origin] += 1;
+        return {
+          name,
+          origin: registration.origin,
+          ...(registration.originId ? { originId: registration.originId } : {}),
+          loadingMode: tool.definition.loadingMode ?? "core",
+          ...(contract ? { contractName: contract.name } : {}),
+          contractStatus,
+        };
+      })
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    return {
+      catalogGeneration: this.catalogGeneration,
+      totalToolCount: entries.length,
+      governedToolCount: entries.filter((entry) => entry.contractStatus === "governed").length,
+      missingContractNames: entries
+        .filter((entry) => entry.contractStatus === "missing")
+        .map((entry) => entry.name),
+      contractNameMismatchNames: entries
+        .filter((entry) => entry.contractStatus === "name-mismatch")
+        .map((entry) => entry.name),
+      originCounts,
+      replacementCount: this.registryReplacements.length,
+      replacements: this.registryReplacements.map((replacement) => ({ ...replacement })),
+      entries,
+    };
   }
 
   getCatalogEntries(
@@ -1108,15 +1231,47 @@ export class ToolExecutor {
 
   /** 动态注册工具 */
   registerTool(tool: Tool, options?: RegisterToolOptions): void {
-    if (this.tools.has(tool.definition.name) && !options?.silentReplace) {
-      (this.logger?.warn ?? console.warn)(`[ToolExecutor] 工具 "${tool.definition.name}" 已存在，将被覆盖`);
+    const toolName = tool.definition.name;
+    if (!toolName || toolName !== toolName.trim()) {
+      throw new Error("Tool registration requires a non-empty trimmed tool name.");
     }
-    this.tools.set(tool.definition.name, tool);
+
+    const contract = getToolContract(tool);
+    if (contract && contract.name !== toolName) {
+      throw new Error(`Tool "${toolName}" has a contract name mismatch: ${contract.name}`);
+    }
+    if (this.requireToolContracts && !contract) {
+      throw new Error(`Tool "${toolName}" is missing a ToolContract in this strict runtime.`);
+    }
+
+    const previous = this.toolRegistrationMetadata.get(toolName);
+    if (this.tools.has(toolName) && !options?.silentReplace) {
+      throw new Error(`Duplicate tool registration: ${toolName}`);
+    }
+    const origin = options?.origin ?? "runtime";
+    if (previous) {
+      this.registryReplacements.push({
+        name: toolName,
+        previousOrigin: previous.origin,
+        nextOrigin: origin,
+      });
+    }
+    this.tools.set(toolName, tool);
+    this.toolRegistrationMetadata.set(toolName, {
+      origin,
+      ...(options?.originId ? { originId: options.originId } : {}),
+    });
+    this.catalogGeneration += 1;
   }
 
   /** 动态注销工具 */
   unregisterTool(name: string): boolean {
-    return this.tools.delete(name);
+    const deleted = this.tools.delete(name);
+    if (deleted) {
+      this.toolRegistrationMetadata.delete(name);
+      this.catalogGeneration += 1;
+    }
+    return deleted;
   }
 
   /** 获取已注册的工具数量 */
@@ -1295,22 +1450,32 @@ export class ToolExecutor {
   private audit(result: ToolCallResult, conversationId: string, args: JsonObject): void {
     if (!this.auditLogger) return;
 
-    // 脱敏：不记录可能包含敏感信息的完整输出
-    const safeOutput = result.output.length > 200
-      ? result.output.slice(0, 200) + "...(truncated)"
-      : result.output;
-
-    this.auditLogger({
-      timestamp: new Date().toISOString(),
-      conversationId,
-      toolName: result.name,
-      arguments: sanitizeArgs(args),
-      success: result.success,
-      output: safeOutput,
-      error: result.error,
-      failureKind: result.failureKind,
-      durationMs: result.durationMs,
-    });
+    // 审计是旁路观测：不得把嵌套凭据写入 sink，也不能让 sink 故障改变 Tool 结果。
+    try {
+      this.auditLogger({
+        timestamp: new Date().toISOString(),
+        conversationId,
+        toolName: result.name,
+        arguments: redactSensitiveValue(args, {
+          maxDepth: 6,
+          maxKeys: 50,
+          maxArrayEntries: 50,
+          maxStringBytes: 1024,
+          maxTotalBytes: 4096,
+        }) as JsonObject,
+        success: result.success,
+        output: redactAuditText(result.output),
+        error: result.error ? redactAuditText(result.error) : undefined,
+        failureKind: result.failureKind,
+        durationMs: result.durationMs,
+      });
+    } catch {
+      try {
+        this.logger?.warn?.("[tool-audit] audit sink failed; tool result was preserved");
+      } catch {
+        // 日志实现本身不可用时保持审计旁路，不再传播第二个异常。
+      }
+    }
   }
 
   private evaluateToolAvailability(
@@ -1695,18 +1860,9 @@ export class ToolExecutor {
   }
 }
 
-/** 脱敏参数（移除可能的敏感字段） */
-function sanitizeArgs(args: JsonObject): JsonObject {
-  const sensitiveKeys = ["password", "token", "key", "secret", "api_key", "apikey"];
-  const result: JsonObject = {};
-
-  for (const [k, v] of Object.entries(args)) {
-    if (sensitiveKeys.some(s => k.toLowerCase().includes(s))) {
-      result[k] = "[REDACTED]";
-    } else {
-      result[k] = v;
-    }
-  }
-
-  return result;
+function redactAuditText(value: string): string {
+  return redactSensitiveValue(value, {
+    maxStringBytes: 1024,
+    maxTotalBytes: 1024,
+  }) as string;
 }

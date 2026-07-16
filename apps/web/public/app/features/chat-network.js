@@ -302,7 +302,9 @@ export function createChatNetworkFeature({
     clientId,
   } = keys;
 
-  const pendingReq = new Map();
+  const pendingReqByGeneration = new Map();
+  const socketGenerations = new WeakMap();
+  let nextConnectionGeneration = 0;
   let currentStatus = {
     key: "status.disconnected",
     params: {},
@@ -427,6 +429,17 @@ export function createChatNetworkFeature({
     }
   }
 
+  function settlePendingRequests(generation) {
+    // 连接关闭后立即释放调用方与 deadline，避免所有请求继续悬挂到默认 30 秒超时。
+    const pendingReq = pendingReqByGeneration.get(generation);
+    if (!pendingReq) return;
+    pendingReqByGeneration.delete(generation);
+    for (const inflight of pendingReq.values()) {
+      clearTimeout(inflight.timeoutHandle);
+      inflight.resolve(null);
+    }
+  }
+
   function sendConnect() {
     const socket = getSocket();
     if (!socket) return;
@@ -465,6 +478,8 @@ export function createChatNetworkFeature({
   function sendReq(frame) {
     const socket = getSocket();
     if (!socket) return Promise.resolve(null);
+    const generation = socketGenerations.get(socket);
+    if (generation === undefined) return Promise.resolve(null);
     const normalizedFrame = normalizeRequestFrame(frame, makeId);
     if (!normalizedFrame) {
       debugLog?.("[ws] dropped invalid request frame", frame);
@@ -477,14 +492,19 @@ export function createChatNetworkFeature({
     delete normalizedFrame.timeoutMs;
 
     socket.send(JSON.stringify(normalizedFrame));
+    const pendingReq = pendingReqByGeneration.get(generation) ?? new Map();
+    pendingReqByGeneration.set(generation, pendingReq);
     return new Promise((resolve) => {
-      pendingReq.set(normalizedFrame.id, { resolve });
-      setTimeout(() => {
-        if (pendingReq.has(normalizedFrame.id)) {
-          pendingReq.delete(normalizedFrame.id);
-          resolve(null);
+      const timeoutHandle = setTimeout(() => {
+        const inflight = pendingReq.get(normalizedFrame.id);
+        if (inflight?.resolve !== resolve) return;
+        pendingReq.delete(normalizedFrame.id);
+        if (pendingReq.size === 0) {
+          pendingReqByGeneration.delete(generation);
         }
+        resolve(null);
       }, timeoutMs);
+      pendingReq.set(normalizedFrame.id, { resolve, timeoutHandle });
     });
   }
 
@@ -673,6 +693,9 @@ export function createChatNetworkFeature({
 
     markStartupObservability("chat-network.websocket.create", { url });
     const socket = new WebSocket(url);
+    const generation = ++nextConnectionGeneration;
+    let closeHandled = false;
+    socketGenerations.set(socket, generation);
     setSocket(socket);
     setReady(false);
     onConnectionStateChanged?.({ connected: false, ready: false });
@@ -692,11 +715,15 @@ export function createChatNetworkFeature({
     });
 
     socket.addEventListener("close", (event) => {
+      if (closeHandled) return;
+      closeHandled = true;
       markStartupObservability("chat-network.websocket.close", {
         url,
         code: Number(event?.code) || 0,
         reason: typeof event?.reason === "string" ? event.reason : "",
       });
+      settlePendingRequests(generation);
+      if (getSocket() !== socket) return;
       setReady(false);
       onConnectionStateChanged?.({ connected: false, ready: false });
       if (sendBtn) {
@@ -720,8 +747,12 @@ export function createChatNetworkFeature({
         return;
       }
 
-      const url = buildWebSocketUrl();
-      setLocalizedStatus("status.disconnectedRetrying", { url }, `disconnected (retrying ${url} in 3s...)`);
+      const reconnectUrl = buildWebSocketUrl();
+      setLocalizedStatus(
+        "status.disconnectedRetrying",
+        { url: reconnectUrl },
+        `disconnected (retrying ${reconnectUrl} in 3s...)`,
+      );
       ensureDisconnectHint(statusEl, getStatusHintMessage("status.disconnectedRetrying"));
       setTimeout(() => {
         const currentSocket = getSocket();
@@ -757,9 +788,14 @@ export function createChatNetworkFeature({
       }
 
       if (frame.type === "res") {
-        const inflight = pendingReq.get(frame.id);
+        const pendingReq = pendingReqByGeneration.get(generation);
+        const inflight = pendingReq?.get(frame.id);
         if (inflight) {
           pendingReq.delete(frame.id);
+          if (pendingReq.size === 0) {
+            pendingReqByGeneration.delete(generation);
+          }
+          clearTimeout(inflight.timeoutHandle);
           inflight.resolve(frame);
         }
         return;

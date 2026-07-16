@@ -30,7 +30,8 @@
     "smoke:install-journey": "node ./scripts/smoke-install-journey.mjs",
     "smoke:portable": "node ./scripts/smoke-portable.mjs",
     "smoke:install-state": "node ./scripts/smoke-install-state.mjs",
-    "verify:portable-deps": "node ./scripts/verify-portable-deps.mjs"
+    "verify:portable-deps": "node ./scripts/verify-portable-deps.mjs",
+    "verify:portable-artifacts": "node ./scripts/verify-portable-artifacts.mjs"
   },
   "dependencies": {
     "@belldandy/protocol": "workspace:*"

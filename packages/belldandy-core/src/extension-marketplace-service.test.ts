@@ -58,6 +58,8 @@ describe("extension marketplace service", () => {
 
     expect(installed.manifest.version).toBe("1.2.3");
     expect(installed.installed.enabled).toBe(true);
+    expect(installed.installed.contentSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(installed.installed.approvedAt).toBe(installed.materialized.materializedAt);
     expect(await fs.readFile(path.join(installed.installed.installPath, "dist", "plugin.mjs"), "utf-8")).toContain("1.2.3");
 
     const knownMarketplace = await getKnownMarketplace(stateDir, "official-market");

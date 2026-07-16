@@ -5,107 +5,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title data-i18n="app.documentTitle">Star Sanctuary WebChat</title>
-  <script>
-    (() => {
-      const perfNow = () =>
-        typeof window.performance?.now === "function" ? window.performance.now() : Date.now();
-      const startup = window.__SS_WEBCHAT_STARTUP__ = window.__SS_WEBCHAT_STARTUP__ || {
-        navigationStartMs: Date.now(),
-        parseStartedAtMs: perfNow(),
-        marks: [],
-      };
-      const mark = (stage, extra = {}) => {
-        const entry = {
-          stage,
-          atMs: perfNow(),
-          ...extra,
-        };
-        startup.marks.push(entry);
-        try {
-          console.info("[WebChat startup]", stage, entry);
-        } catch {
-          // ignore console failures
-        }
-        return entry;
-      };
-      startup.mark = mark;
-      mark("index.inline-bootstrap.start");
-
-      const THEME_STORAGE_KEY = "ss-webchat-theme";
-      const LOCALE_STORAGE_KEY = "ss-webchat-locale";
-      const FALLBACK_THEME = "dark";
-      const FALLBACK_LOCALE = "zh-CN";
-      const VALID_THEMES = new Set(["dark", "light"]);
-      const VALID_LOCALES = new Set(["zh-CN", "en-US"]);
-
-      const normalizeLocale = (value) => {
-        if (!value) return FALLBACK_LOCALE;
-        if (VALID_LOCALES.has(value)) return value;
-        const normalized = String(value).trim().toLowerCase();
-        if (normalized.startsWith("zh")) return "zh-CN";
-        if (normalized.startsWith("en")) return "en-US";
-        return FALLBACK_LOCALE;
-      };
-
-      try {
-        const urlLocale = new URLSearchParams(window.location.search).get("lang");
-        const storedLocale = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-        const nextLocale = normalizeLocale(urlLocale || storedLocale || window.navigator.language);
-        document.documentElement.dataset.locale = nextLocale;
-        document.documentElement.lang = nextLocale;
-
-        const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-        const nextTheme = VALID_THEMES.has(storedTheme) ? storedTheme : FALLBACK_THEME;
-        document.documentElement.dataset.theme = nextTheme;
-        document.documentElement.style.colorScheme = nextTheme === "light" ? "light" : "dark";
-      } catch {
-        document.documentElement.dataset.locale = FALLBACK_LOCALE;
-        document.documentElement.lang = FALLBACK_LOCALE;
-        document.documentElement.dataset.theme = FALLBACK_THEME;
-        document.documentElement.style.colorScheme = FALLBACK_THEME;
-      }
-
-      document.addEventListener("DOMContentLoaded", () => {
-        mark("dom.content.loaded");
-      }, { once: true });
-      window.addEventListener("pageshow", (event) => {
-        const navEntry = typeof window.performance?.getEntriesByType === "function"
-          ? window.performance.getEntriesByType("navigation")?.[0]
-          : null;
-        mark("navigation.timing.snapshot", {
-          navigationType: typeof navEntry?.type === "string" ? navEntry.type : "",
-          domInteractiveMs: typeof navEntry?.domInteractive === "number" ? Math.round(navEntry.domInteractive) : null,
-          domContentLoadedEndMs: typeof navEntry?.domContentLoadedEventEnd === "number"
-            ? Math.round(navEntry.domContentLoadedEventEnd)
-            : null,
-          loadEventEndMs: typeof navEntry?.loadEventEnd === "number" ? Math.round(navEntry.loadEventEnd) : null,
-          durationMs: typeof navEntry?.duration === "number" ? Math.round(navEntry.duration) : null,
-          redirectCount: typeof navEntry?.redirectCount === "number" ? navEntry.redirectCount : null,
-          transferSize: typeof navEntry?.transferSize === "number" ? navEntry.transferSize : null,
-          decodedBodySize: typeof navEntry?.decodedBodySize === "number" ? navEntry.decodedBodySize : null,
-          nextHopProtocol: typeof navEntry?.nextHopProtocol === "string" ? navEntry.nextHopProtocol : "",
-          activationStartMs: typeof navEntry?.activationStart === "number" ? Math.round(navEntry.activationStart) : null,
-          persisted: event?.persisted === true,
-          referrer: typeof document.referrer === "string" ? document.referrer : "",
-        });
-      }, { once: true });
-      window.addEventListener("load", () => {
-        mark("window.load");
-      }, { once: true });
-      mark("index.inline-bootstrap.end");
-    })();
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet">
+  <script src="/bootstrap-startup.js"></script>
+  <link rel="stylesheet" href="/assets/web-assets.css">
   <link rel="stylesheet" href="/styles.css?v=10.2" />
   <link rel="stylesheet" href="/canvas.css?v=1.0" />
   <link rel="stylesheet" href="/theme.css?v=1.1" />
   <link rel="icon" type="image/png" href="/logo06-256.png" />
+  <script src="/assets/web-assets-manifest.js"></script>
+  <script src="/assets/web-assets-loader.js"></script>
   <script src="/config.js?v=1.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 </head>
 
 <body>
@@ -184,6 +92,10 @@
         <div class="panel-input-group auth-input-group">
           <div class="input-label-row">
             <span class="panel-label">Auth</span>
+            <label class="auth-session-option" for="rememberSessionAuth">
+              <input id="rememberSessionAuth" type="checkbox" />
+              <span data-i18n="panel.rememberSessionToken">本会话记住 token</span>
+            </label>
           </div>
           <div class="auth-controls">
             <select id="authMode" class="select select-sm">
@@ -1389,7 +1301,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.localEmbeddingModelLabel">Local Embedding Model</label>
-            <input id="cfgLocalEmbeddingModel" class="input" data-i18n-placeholder="settings.localEmbeddingModelPlaceholder" placeholder="BAAI/bge-m3" />
+            <input id="cfgLocalEmbeddingModel" class="input" data-i18n-placeholder="settings.localEmbeddingModelPlaceholder" placeholder="fast-bge-small-en-v1.5" />
             <div class="form-help" data-i18n="settings.localEmbeddingModelHelp">仅在 `Embedding Provider=local` 时生效，本机会自动下载并缓存该模型。</div>
           </div>
           <div class="form-group">
@@ -3469,7 +3381,6 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
   <script type="module" src="/canvas.js?v=1.0"></script>
   <script type="module" src="/app.js"></script>
 </body>

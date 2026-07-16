@@ -56,6 +56,8 @@ const SSEConfigSchema = z.object({
   type: z.literal("sse"),
   url: z.string().url("必须是有效的 URL"),
   headers: z.record(z.string()).optional(),
+  allowInsecureHttp: z.boolean().optional(),
+  allowPrivateNetwork: z.boolean().optional(),
 });
 
 /**
@@ -140,6 +142,10 @@ interface ExternalServerEntry {
   baseUrl?: string;
   /** SSE/HTTP: 请求头 */
   headers?: Record<string, string>;
+  /** SSE/HTTP: 显式允许明文 HTTP */
+  allowInsecureHttp?: boolean;
+  /** SSE/HTTP: 显式允许私网或 loopback */
+  allowPrivateNetwork?: boolean;
   /** 可选：是否自动连接 */
   autoConnect?: boolean;
   /** 可选：是否禁用 */
@@ -190,6 +196,8 @@ function convertExternalConfig(external: ExternalMCPConfig): Record<string, unkn
         type: "sse",
         url: sseUrl,
         ...(entry.headers ? { headers: entry.headers } : {}),
+        ...(entry.allowInsecureHttp === true ? { allowInsecureHttp: true } : {}),
+        ...(entry.allowPrivateNetwork === true ? { allowPrivateNetwork: true } : {}),
       };
     } else {
       transport = {

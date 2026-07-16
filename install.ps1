@@ -16,6 +16,11 @@ $ErrorActionPreference = "Stop"
 $MinimumNodeMajor = 22
 $MinimumNodeMinor = 12
 $FirstStartNoticeFileName = "first-start-notice.txt"
+$MaxReleaseArchiveBytes = 512MB
+$MaxReleaseMetadataBytes = 1MB
+$MaxReleaseArchiveEntries = 100000
+$MaxReleaseArchiveEntryBytes = 256MB
+$MaxReleaseArchiveUnpackedBytes = 2GB
 
 function Write-Step {
   param([string]$Message)
@@ -96,6 +101,27 @@ function Get-GitHubHeaders {
   return $headers
 }
 
+function Get-PublicGitHubHeaders {
+  return @{
+    "User-Agent" = "Star-Sanctuary-Installer"
+  }
+}
+
+function Assert-GitHubRepositoryIdentity {
+  param(
+    [string]$Owner,
+    [string]$Name,
+    [string]$RequestedVersion
+  )
+
+  if ($Owner -notmatch "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$" -or $Name -notmatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$") {
+    throw "Repository owner or name contains unsupported characters."
+  }
+  if ($RequestedVersion -ne "latest" -and $RequestedVersion -notmatch "^v?[A-Za-z0-9][A-Za-z0-9._-]*$") {
+    throw "Requested release version contains unsupported characters."
+  }
+}
+
 function Get-ReleaseMetadata {
   param(
     [string]$Owner,
@@ -137,41 +163,16 @@ function Resolve-ReleaseTagFromPage {
 
   $pageUri = Get-ReleasePageUri -Owner $Owner -Name $Name -RequestedVersion $RequestedVersion
   Write-Step "Falling back to release page resolution via $pageUri"
-  $response = Invoke-WebRequest -Headers (Get-GitHubHeaders) -Uri $pageUri
+  # 页面回退不需要令牌；避免把认证信息转发给任何页面重定向目标。
+  $response = Invoke-WebRequest -Headers (Get-PublicGitHubHeaders) -MaximumRedirection 5 -Uri $pageUri
   $resolvedUri = $response.BaseResponse.ResponseUri.AbsoluteUri
-  if ($resolvedUri -match "/releases/tag/(?<tag>v[^/?#]+)") {
+  $ownerPattern = [Regex]::Escape($Owner)
+  $namePattern = [Regex]::Escape($Name)
+  if ($resolvedUri -match "^https://github\.com/$ownerPattern/$namePattern/releases/tag/(?<tag>v[A-Za-z0-9][A-Za-z0-9._-]*)$") {
     return $Matches["tag"]
   }
 
   throw "Failed to resolve release tag from GitHub release page."
-}
-
-function Test-RemoteUriExists {
-  param(
-    [string]$Uri,
-    [string]$Label
-  )
-
-  try {
-    Invoke-WebRequest -Headers (Get-GitHubHeaders) -Method Head -MaximumRedirection 0 -Uri $Uri | Out-Null
-    return $true
-  } catch {
-    $statusCode = $null
-    if ($_.Exception.Response) {
-      $statusCode = [int]$_.Exception.Response.StatusCode
-    }
-
-    if ($statusCode -in 200, 301, 302, 303, 307, 308) {
-      return $true
-    }
-
-    if ($statusCode -eq 404) {
-      return $false
-    }
-
-    Write-Step "Remote probe for $Label failed; treating it as unavailable."
-    return $false
-  }
 }
 
 function Get-ReleaseVersionNumberFromTag {
@@ -202,38 +203,7 @@ function Resolve-RemoteInstallPayloadPlan {
     [string]$Name
   )
 
-  $tagName = [string]$Release.tag_name
-  $versionNumber = Get-ReleaseVersionNumberFromTag -TagName $tagName
-  $assetName = if ([string]::IsNullOrWhiteSpace($versionNumber)) {
-    $null
-  } else {
-    "star-sanctuary-dist-v$versionNumber.zip"
-  }
-
-  if ($assetName -and $Release.assets) {
-    $asset = @($Release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1)
-    if ($asset.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$asset[0].browser_download_url)) {
-      return @{
-        kind = "release-light"
-        sourceType = "github-release-light"
-        archiveUrl = [string]$asset[0].browser_download_url
-        downloadLabel = "GitHub release-light archive"
-        extractLabel = "release-light archive"
-      }
-    }
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace([string]$Release.zipball_url)) {
-    return @{
-      kind = "source"
-      sourceType = "github-release-source"
-      archiveUrl = [string]$Release.zipball_url
-      downloadLabel = "GitHub release source archive"
-      extractLabel = "source archive"
-    }
-  }
-
-  throw "The selected release does not expose a usable release-light asset or source zipball."
+  return New-ReleaseLightPayloadPlan -Owner $Owner -Name $Name -TagName ([string]$Release.tag_name) -Release $Release
 }
 
 function Resolve-RemoteInstallPayloadPlanFromTag {
@@ -244,41 +214,376 @@ function Resolve-RemoteInstallPayloadPlanFromTag {
     [string]$RequestedVersion
   )
 
+  return New-ReleaseLightPayloadPlan -Owner $Owner -Name $Name -TagName $TagName -RequestedVersion $RequestedVersion
+}
+
+function New-ReleaseLightPayloadPlan {
+  param(
+    [string]$Owner,
+    [string]$Name,
+    [string]$TagName,
+    [object]$Release,
+    [string]$RequestedVersion
+  )
+
+  Assert-GitHubRepositoryIdentity -Owner $Owner -Name $Name -RequestedVersion (Normalize-Version -RawVersion $RequestedVersion)
+
   $versionNumber = Get-ReleaseVersionNumberFromTag -TagName $TagName
-  if ([string]::IsNullOrWhiteSpace($versionNumber)) {
-    throw "Failed to resolve release version number from tag."
+  if ([string]::IsNullOrWhiteSpace($versionNumber) -or $versionNumber -notmatch "^[A-Za-z0-9][A-Za-z0-9._-]*$") {
+    throw "Failed to resolve a safe release version number from tag."
   }
 
-  $assetName = "star-sanctuary-dist-v$versionNumber.zip"
-  $normalizedVersion = Normalize-Version -RawVersion $RequestedVersion
-  $assetUrl = if ($normalizedVersion -eq "latest") {
-    "https://github.com/$Owner/$Name/releases/latest/download/$assetName"
-  } else {
-    "https://github.com/$Owner/$Name/releases/download/$TagName/$assetName"
-  }
+  $archiveName = "star-sanctuary-dist-v$versionNumber.zip"
+  $manifestName = "star-sanctuary-dist-v$versionNumber.manifest.json"
+  $sha256Name = "star-sanctuary-dist-v$versionNumber.sha256"
 
-  if (Test-RemoteUriExists -Uri $assetUrl -Label "release-light asset $assetName") {
+  if ($Release) {
+    $assets = @{}
+    foreach ($asset in @($Release.assets)) {
+      $assetName = [string]$asset.name
+      if (-not [string]::IsNullOrWhiteSpace($assetName)) {
+        $assets[$assetName] = $asset
+      }
+    }
+
+    $requiredNames = @($archiveName, $manifestName, $sha256Name)
+    foreach ($requiredName in $requiredNames) {
+      if (-not $assets.ContainsKey($requiredName) -or [string]::IsNullOrWhiteSpace([string]$assets[$requiredName].browser_download_url)) {
+        throw "The selected release is missing required verified release-light asset: $requiredName"
+      }
+    }
+
+    $archiveSize = [Int64]$assets[$archiveName].size
+    if ($archiveSize -le 0 -or $archiveSize -gt $MaxReleaseArchiveBytes) {
+      throw "The release-light archive size is outside the installer limit."
+    }
+
     return @{
       kind = "release-light"
       sourceType = "github-release-light"
-      archiveUrl = $assetUrl
-      downloadLabel = "GitHub release-light archive"
-      extractLabel = "release-light archive"
+      archiveName = $archiveName
+      archiveUrl = [string]$assets[$archiveName].browser_download_url
+      archiveExpectedSize = $archiveSize
+      archiveApiDigest = [string]$assets[$archiveName].digest
+      manifestUrl = [string]$assets[$manifestName].browser_download_url
+      sha256Url = [string]$assets[$sha256Name].browser_download_url
+      downloadLabel = "verified GitHub release-light archive"
+      extractLabel = "verified release-light archive"
     }
   }
 
-  $sourceUrl = "https://github.com/$Owner/$Name/archive/refs/tags/$TagName.zip"
-  if (Test-RemoteUriExists -Uri $sourceUrl -Label "source archive $TagName") {
-    return @{
-      kind = "source"
-      sourceType = "github-release-source"
-      archiveUrl = $sourceUrl
-      downloadLabel = "GitHub release source archive"
-      extractLabel = "source archive"
-    }
+  $normalizedVersion = Normalize-Version -RawVersion $RequestedVersion
+  $assetBaseUrl = if ($normalizedVersion -eq "latest") {
+    "https://github.com/$Owner/$Name/releases/latest/download/"
+  } else {
+    "https://github.com/$Owner/$Name/releases/download/$TagName/"
   }
 
-  throw "The selected release does not expose a usable release-light asset or source zipball."
+  return @{
+    kind = "release-light"
+    sourceType = "github-release-light"
+    archiveName = $archiveName
+    archiveUrl = "$assetBaseUrl$archiveName"
+    archiveExpectedSize = $null
+    archiveApiDigest = ""
+    manifestUrl = "$assetBaseUrl$manifestName"
+    sha256Url = "$assetBaseUrl$sha256Name"
+    downloadLabel = "verified GitHub release-light archive"
+    extractLabel = "verified release-light archive"
+  }
+}
+
+function Invoke-TrustedPayloadDownload {
+  param(
+    [string]$Uri,
+    [string]$OutputPath,
+    [Int64]$MaximumBytes,
+    [string]$Label
+  )
+
+  if ($MaximumBytes -le 0) {
+    throw "Invalid download limit for $Label."
+  }
+
+  # 逐跳检查 GitHub 下载重定向，避免将令牌或归档内容交给任意 Host。
+  $nodeScript = @'
+const fs = require("node:fs");
+const https = require("node:https");
+const { URL } = require("node:url");
+
+const args = process.argv.slice(1);
+if (args[0] === "-") args.shift();
+const [sourceUrl, outputPath, maxBytesRaw] = args;
+const maxBytes = Number(maxBytesRaw);
+const allowedHosts = new Set([
+  "github.com",
+  "api.github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "github-releases.githubusercontent.com",
+]);
+const maxRedirects = 5;
+const requestTimeoutMs = 120_000;
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function assertTrustedUrl(value) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())) {
+    fail("release download URL is outside the trusted HTTPS host allowlist");
+  }
+  return url;
+}
+
+function headersFor(url) {
+  const headers = {
+    "User-Agent": "Star-Sanctuary-Installer",
+    "Accept": "application/octet-stream",
+  };
+  const host = url.hostname.toLowerCase();
+  if (process.env.GITHUB_TOKEN && (host === "github.com" || host === "api.github.com")) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  return headers;
+}
+
+function request(url, redirectCount, partialPath) {
+  const current = assertTrustedUrl(url);
+  return new Promise((resolve, reject) => {
+    const req = https.request(current, { method: "GET", headers: headersFor(current) }, (res) => {
+      const status = Number(res.statusCode || 0);
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        const location = res.headers.location;
+        res.resume();
+        if (!location) return reject(new Error("release download redirect did not include a location"));
+        if (redirectCount >= maxRedirects) return reject(new Error("release download exceeded redirect limit"));
+        return resolve(request(new URL(location, current).toString(), redirectCount + 1, partialPath));
+      }
+      if (status < 200 || status >= 300) {
+        res.resume();
+        return reject(new Error(`release download returned HTTP ${status}`));
+      }
+
+      const declaredBytes = Number(res.headers["content-length"]);
+      if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+        res.resume();
+        return reject(new Error("release download exceeds configured byte limit"));
+      }
+
+      let bytes = 0;
+      let settled = false;
+      const output = fs.createWriteStream(partialPath, { flags: "w" });
+      const failOnce = (error) => {
+        if (settled) return;
+        settled = true;
+        output.destroy();
+        reject(error);
+      };
+
+      res.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > maxBytes) {
+          res.destroy(new Error("release download exceeds configured byte limit"));
+        }
+      });
+      res.on("error", failOnce);
+      output.on("error", failOnce);
+      output.on("finish", () => {
+        if (settled) return;
+        settled = true;
+        output.close((error) => {
+          if (error) return reject(error);
+          try {
+            fs.renameSync(partialPath, outputPath);
+            resolve(bytes);
+          } catch (renameError) {
+            reject(renameError);
+          }
+        });
+      });
+      res.pipe(output);
+    });
+    req.setTimeout(requestTimeoutMs, () => req.destroy(new Error("release download timed out")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+if (!sourceUrl || !outputPath || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+  fail("invalid trusted release download arguments");
+}
+
+const partialPath = `${outputPath}.part`;
+fs.rmSync(partialPath, { force: true });
+request(sourceUrl, 0, partialPath)
+  .then((bytes) => process.stdout.write(String(bytes)))
+  .catch((error) => {
+    fs.rmSync(partialPath, { force: true });
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+'@
+
+  $null = & node -e $nodeScript $Uri $OutputPath ([string]$MaximumBytes)
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $OutputPath -PathType Leaf)) {
+    throw "Failed to download $Label through the trusted release transport."
+  }
+}
+
+function Get-VerifiedReleaseIdentity {
+  param(
+    [string]$ManifestPath,
+    [string]$ChecksumPath,
+    [string]$ArchiveName,
+    [string]$ExpectedVersion
+  )
+
+  # `.sha256` 与 manifest 互相校验；签名/attestation 的独立信任根仍由后续发行任务提供。
+  $nodeScript = @'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+
+const args = process.argv.slice(1);
+if (args[0] === "-") args.shift();
+const [manifestPath, checksumPath, archiveName, expectedVersion, maxArchiveBytesRaw, maxEntriesRaw, maxUnpackedBytesRaw] = args;
+const maxArchiveBytes = Number(maxArchiveBytesRaw);
+const maxEntries = Number(maxEntriesRaw);
+const maxUnpackedBytes = Number(maxUnpackedBytesRaw);
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function sha256File(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+const rootName = `star-sanctuary-dist-v${expectedVersion}`;
+const manifestName = `${rootName}.manifest.json`;
+const expectedNames = new Set([`${rootName}.zip`, `${rootName}.tar.gz`, manifestName]);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+assert(manifest && typeof manifest === "object", "release manifest must be an object");
+assert(manifest.schemaVersion === 1, "unsupported release manifest schema");
+assert(manifest.product === "star-sanctuary" && manifest.version === expectedVersion, "release manifest identity mismatch");
+assert(manifest.releaseKind === "light" && manifest.currentInstallerInput === "release-light-archive", "release manifest is not an installer payload");
+assert(manifest.packageRoot === rootName, "release manifest package root mismatch");
+
+const checksums = new Map();
+for (const line of fs.readFileSync(checksumPath, "utf8").split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+  const match = /^([a-f0-9]{64})\s+([A-Za-z0-9._-]+)$/i.exec(line);
+  assert(match, "invalid release checksum entry");
+  const [, hash, name] = match;
+  assert(expectedNames.has(name) && !checksums.has(name), "unexpected or duplicate release checksum entry");
+  checksums.set(name, hash.toLowerCase());
+}
+assert(checksums.size === expectedNames.size, "release checksum file is incomplete");
+assert(checksums.get(manifestName) === sha256File(manifestPath), "release manifest checksum mismatch");
+
+const archive = Array.isArray(manifest.archives)
+  ? manifest.archives.find((item) => item && item.fileName === archiveName)
+  : undefined;
+assert(archive && archive.format === "zip", "release manifest archive entry is missing or invalid");
+assert(typeof archive.sha256 === "string" && /^[a-f0-9]{64}$/i.test(archive.sha256), "release manifest archive hash is invalid");
+assert(Number.isSafeInteger(archive.size) && archive.size > 0 && archive.size <= maxArchiveBytes, "release manifest archive size is outside the installer limit");
+assert(checksums.get(archiveName) === archive.sha256.toLowerCase(), "release manifest and checksum archive hashes disagree");
+
+const content = manifest.content;
+assert(content && Number.isSafeInteger(content.fileCount) && content.fileCount >= 0 && content.fileCount <= maxEntries, "release manifest file count is outside the installer limit");
+assert(Number.isSafeInteger(content.totalBytes) && content.totalBytes >= 0 && content.totalBytes <= maxUnpackedBytes, "release manifest unpacked size is outside the installer limit");
+process.stdout.write(JSON.stringify({
+  packageRoot: rootName,
+  archiveSha256: archive.sha256.toLowerCase(),
+  archiveSize: archive.size,
+  contentFileCount: content.fileCount,
+  contentTotalBytes: content.totalBytes,
+}));
+'@
+
+  $rawIdentity = (& node -e $nodeScript $ManifestPath $ChecksumPath $ArchiveName $ExpectedVersion ([string]$MaxReleaseArchiveBytes) ([string]$MaxReleaseArchiveEntries) ([string]$MaxReleaseArchiveUnpackedBytes)) -join ""
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($rawIdentity)) {
+    throw "Release identity validation failed."
+  }
+
+  try {
+    return $rawIdentity | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "Release identity validation returned invalid data."
+  }
+}
+
+function Assert-SafeReleaseArchive {
+  param(
+    [string]$ArchivePath,
+    [string]$ExtractionRoot,
+    [string]$ExpectedRoot,
+    [Int64]$ExpectedFileCount,
+    [Int64]$ExpectedUnpackedBytes
+  )
+
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $rootPath = [System.IO.Path]::GetFullPath($ExtractionRoot)
+  $rootPrefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
+  $seenEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  [Int64]$entryCount = 0
+  [Int64]$fileCount = 0
+  [Int64]$unpackedBytes = 0
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+
+  try {
+    foreach ($entry in $archive.Entries) {
+      $entryCount += 1
+      if ($entryCount -gt $MaxReleaseArchiveEntries) {
+        throw "Release archive contains too many entries."
+      }
+
+      $rawName = [string]$entry.FullName
+      if ([string]::IsNullOrWhiteSpace($rawName)) {
+        throw "Release archive contains an unsafe entry path."
+      }
+
+      # Compress-Archive 在 Windows 上写入反斜杠；统一后再做一次 canonical containment 检查。
+      $normalizedName = $rawName.Replace("\", "/").TrimEnd("/")
+      $isDirectory = $rawName.EndsWith("/") -or $rawName.EndsWith("\")
+      if ($normalizedName -notmatch "^[A-Za-z0-9._/-]+$" -or $normalizedName.StartsWith("/") -or $normalizedName -match "(^|/)(\.|\.\.)(/|$)" -or $normalizedName.Contains("//")) {
+        throw "Release archive contains an unsafe entry path."
+      }
+      if ($normalizedName -ne $ExpectedRoot -and -not $normalizedName.StartsWith("$ExpectedRoot/", [System.StringComparison]::Ordinal)) {
+        throw "Release archive entry is outside the declared package root."
+      }
+      if (-not $seenEntries.Add($normalizedName)) {
+        throw "Release archive contains a duplicate entry path."
+      }
+
+      $relativePath = $normalizedName.Replace("/", [string][System.IO.Path]::DirectorySeparatorChar)
+      $candidatePath = [System.IO.Path]::GetFullPath((Join-Path $rootPath $relativePath))
+      if (-not $candidatePath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Release archive entry escapes the extraction root."
+      }
+
+      $unixFileType = (($entry.ExternalAttributes -shr 16) -band 0xF000)
+      if ($unixFileType -eq 0xA000) {
+        throw "Release archive symlink entries are not allowed."
+      }
+      if ($isDirectory) {
+        continue
+      }
+
+      [Int64]$entryBytes = $entry.Length
+      if ($entryBytes -gt $MaxReleaseArchiveEntryBytes -or $unpackedBytes -gt ($MaxReleaseArchiveUnpackedBytes - $entryBytes)) {
+        throw "Release archive exceeds the configured unpacked byte limit."
+      }
+      $fileCount += 1
+      $unpackedBytes += $entryBytes
+    }
+  } finally {
+    $archive.Dispose()
+  }
+
+  if ($fileCount -ne $ExpectedFileCount -or $unpackedBytes -ne $ExpectedUnpackedBytes) {
+    throw "Release archive content does not match its manifest."
+  }
 }
 
 function Ensure-Command {
@@ -702,6 +1007,7 @@ try {
     $versionName = $resolvedTag
     Write-Step "Using local $installPayloadKind override from $localSourceRoot"
   } else {
+    Assert-GitHubRepositoryIdentity -Owner $RepoOwner -Name $RepoName -RequestedVersion $normalizedVersion
     try {
       $release = Get-ReleaseMetadata -Owner $RepoOwner -Name $RepoName -RequestedVersion $Version
     } catch {
@@ -735,20 +1041,49 @@ try {
   if ($localSourceRoot) {
     $sourceRoot = Get-Item -LiteralPath $localSourceRoot
   } else {
-    $archivePath = Join-Path $tempRoot "source.zip"
+    $archivePath = Join-Path $tempRoot ([string]$remotePayloadPlan.archiveName)
+    $manifestPath = Join-Path $tempRoot "release-light.manifest.json"
+    $checksumPath = Join-Path $tempRoot "release-light.sha256"
     $extractRoot = Join-Path $tempRoot "extract"
     New-Item -ItemType Directory -Path $extractRoot | Out-Null
 
+    Write-Step "Downloading release identity metadata"
+    Invoke-TrustedPayloadDownload -Uri ([string]$remotePayloadPlan.manifestUrl) -OutputPath $manifestPath -MaximumBytes $MaxReleaseMetadataBytes -Label "release manifest"
+    Invoke-TrustedPayloadDownload -Uri ([string]$remotePayloadPlan.sha256Url) -OutputPath $checksumPath -MaximumBytes $MaxReleaseMetadataBytes -Label "release checksum"
+    $releaseIdentity = Get-VerifiedReleaseIdentity -ManifestPath $manifestPath -ChecksumPath $checksumPath -ArchiveName ([string]$remotePayloadPlan.archiveName) -ExpectedVersion (Get-ReleaseVersionNumberFromTag -TagName $resolvedTag)
+
+    if ($null -ne $remotePayloadPlan.archiveExpectedSize -and [Int64]$remotePayloadPlan.archiveExpectedSize -ne [Int64]$releaseIdentity.archiveSize) {
+      throw "Release metadata and manifest archive sizes disagree."
+    }
+    $apiDigest = [string]$remotePayloadPlan.archiveApiDigest
+    if (-not [string]::IsNullOrWhiteSpace($apiDigest)) {
+      if ($apiDigest -notmatch "^sha256:[a-f0-9]{64}$" -or $apiDigest.Substring(7).ToLowerInvariant() -ne [string]$releaseIdentity.archiveSha256) {
+        throw "Release metadata and manifest archive hashes disagree."
+      }
+    }
+
     Write-Step "Downloading $($remotePayloadPlan.downloadLabel)"
-    Invoke-WebRequest -Headers (Get-GitHubHeaders) -Uri $remotePayloadPlan.archiveUrl -OutFile $archivePath
+    Invoke-TrustedPayloadDownload -Uri ([string]$remotePayloadPlan.archiveUrl) -OutputPath $archivePath -MaximumBytes $MaxReleaseArchiveBytes -Label "release archive"
+    $archiveItem = Get-Item -LiteralPath $archivePath
+    if ([Int64]$archiveItem.Length -ne [Int64]$releaseIdentity.archiveSize) {
+      throw "Release archive size does not match its manifest."
+    }
+    $archiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    if ($archiveHash -ne [string]$releaseIdentity.archiveSha256) {
+      throw "Release archive hash does not match its manifest."
+    }
+
+    Write-Step "Scanning verified archive entries before extracting"
+    Assert-SafeReleaseArchive -ArchivePath $archivePath -ExtractionRoot $extractRoot -ExpectedRoot ([string]$releaseIdentity.packageRoot) -ExpectedFileCount ([Int64]$releaseIdentity.contentFileCount) -ExpectedUnpackedBytes ([Int64]$releaseIdentity.contentTotalBytes)
 
     Write-Step "Extracting $($remotePayloadPlan.extractLabel)"
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
 
-    $sourceRoot = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
-    if (-not $sourceRoot) {
-      throw "Failed to locate extracted source root."
+    $sourceRootPath = Join-Path $extractRoot ([string]$releaseIdentity.packageRoot)
+    if (-not (Test-Path $sourceRootPath -PathType Container)) {
+      throw "Failed to locate the verified extracted package root."
     }
+    $sourceRoot = Get-Item -LiteralPath $sourceRootPath
   }
 
   New-Item -ItemType Directory -Path $installRoot -Force | Out-Null

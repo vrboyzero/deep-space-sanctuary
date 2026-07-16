@@ -274,6 +274,40 @@ describe("FeishuChannel", () => {
     expect(larkMock.createMessage).not.toHaveBeenCalled();
   });
 
+  it("runs ingress admission before downloading an audio resource", async () => {
+    larkMock.getMessageResource.mockClear();
+    const router = {
+      admitIngress: vi.fn(() => ({ allow: false, reason: "channel_security:policy_missing" })),
+      decide: vi.fn(),
+    };
+    const channel = new FeishuChannel({
+      appId: "app-id",
+      appSecret: "app-secret",
+      conversationStore: new ConversationStore(),
+      agent: { async *run() {} } as any,
+      router: router as any,
+      sttTranscribe: vi.fn(),
+    });
+
+    await (channel as any).handleMessage({
+      message: {
+        chat_id: "chat-blocked",
+        message_id: "msg-blocked",
+        message_type: "audio",
+        chat_type: "p2p",
+        content: JSON.stringify({ file_key: "should-not-download" }),
+      },
+      sender: { sender_id: { open_id: "user-blocked", user_id: "user-blocked" } },
+    });
+
+    expect(router.admitIngress).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      text: "",
+    }));
+    expect(larkMock.getMessageResource).not.toHaveBeenCalled();
+    expect(router.decide).not.toHaveBeenCalled();
+  });
+
   it("rejects explicit sessionKey when binding belongs to another channel", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const channel = new FeishuChannel({

@@ -39,6 +39,13 @@ function readOptionalString(params: Record<string, unknown>, key: string): strin
   return value || undefined;
 }
 
+function isSafeWorkflowName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(value)
+    && !value.includes("..")
+    && !value.includes("/")
+    && !value.includes("\\");
+}
+
 function invalid(id: string, message: string): GatewayResFrame {
   return { type: "res", id, ok: false, error: { code: "invalid_params", message } };
 }
@@ -81,20 +88,19 @@ export async function handleWorkflowMethod(
       const workflowName = readRequiredString(params, "workflowName");
       if (!workflowName) return invalid(req.id, "workflowName is required");
 
-      const sourceKind = (typeof params.sourceKind === "string" ? params.sourceKind : "file") as "file" | "builtin" | "inline";
+      const sourceKind = typeof params.sourceKind === "string" ? params.sourceKind : "file";
       const stateDir = ctx.stateDir;
-      const allowInlineScript = params.allowInlineScript === true;
+      if (sourceKind !== "file" && sourceKind !== "builtin") {
+        return failure(req.id, "workflow_source_forbidden", new Error("Only approved file and builtin workflow sources are available."));
+      }
+      if (!isSafeWorkflowName(workflowName)) {
+        return invalid(req.id, "workflowName must be a simple workflow identifier.");
+      }
 
       // 构建 source
       let source;
       if (sourceKind === "builtin") {
         source = { kind: "builtin" as const, name: workflowName };
-      } else if (sourceKind === "inline") {
-        const inlineCode = typeof params.inlineCode === "string" ? params.inlineCode : "";
-        if (!inlineCode.trim()) {
-          return invalid(req.id, "inlineCode is required when sourceKind=inline");
-        }
-        source = { kind: "inline" as const, name: workflowName, code: inlineCode };
       } else {
         const workflowsDir = path.join(stateDir, "workflows");
         const candidates = [
@@ -125,7 +131,6 @@ export async function handleWorkflowMethod(
           source,
           args: typeof params.args === "object" && params.args !== null ? params.args as Record<string, unknown> : undefined,
           budget: budgetOpts,
-          allowInlineScript,
           parentConversationId: readRequiredString(params, "parentConversationId") || "rpc",
           channel: typeof params.channel === "string" ? params.channel : "gateway",
           resumeJournalId: readOptionalString(params, "resumeJournalId"),

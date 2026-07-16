@@ -132,4 +132,38 @@ describe("PluginRegistry", () => {
     expect(registry.getDiagnostics().loadErrors).toHaveLength(1);
     expect(rebuildSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("rejects duplicate tool names without replacing the first plugin tool", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-duplicate-"));
+    tempDirs.push(dir);
+
+    for (const [fileName, pluginId] of [["first.mjs", "first-plugin"], ["second.mjs", "second-plugin"]] as const) {
+      await fs.writeFile(
+        path.join(dir, fileName),
+        [
+          "export default {",
+          `  id: '${pluginId}',`,
+          `  name: '${pluginId}',`,
+          "  async activate(context) {",
+          "    context.registerTool({",
+          "      definition: { name: 'shared_tool', description: 'shared', parameters: { type: 'object', properties: {} } },",
+          "      async execute() { return { id: '', name: 'shared_tool', success: true, output: 'ok', durationMs: 0 }; },",
+          "    });",
+          "  },",
+          "};",
+          "",
+        ].join("\n"),
+        "utf-8",
+      );
+    }
+
+    const registry = new PluginRegistry();
+    await registry.loadPlugin(path.join(dir, "first.mjs"));
+
+    await expect(registry.loadPlugin(path.join(dir, "second.mjs")))
+      .rejects.toThrow(/Duplicate plugin tool registration: shared_tool/);
+    expect(registry.getPluginIds()).toEqual(["first-plugin"]);
+    expect(registry.getAllTools()).toHaveLength(1);
+  });
 });

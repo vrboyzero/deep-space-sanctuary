@@ -345,9 +345,11 @@ export async function handleGoalMethod(
       const goalId = readRequiredString(params, "goalId");
       if (!goalId) return invalid(req.id, "goalId is required");
       try {
-        const result = await ctx.goalManager.deleteGoal(goalId, {
-          confirmText: readOptionalString(params, "confirmText"),
-        });
+        const result = params.preview === true
+          ? await ctx.goalManager.previewGoalDeletion(goalId)
+          : await ctx.goalManager.deleteGoal(goalId, {
+            confirmText: readOptionalString(params, "confirmText"),
+          });
         return { type: "res", id: req.id, ok: true, payload: result };
       } catch (err) {
         return failure(req.id, "goal_delete_failed", err);

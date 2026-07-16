@@ -289,7 +289,7 @@ describe("community token usage upload", () => {
     expect((channel as any).messageQueues.has("room-queue")).toBe(false);
   });
 
-  it("logs DNS/TCP diagnostics when room lookup fails at network layer", async () => {
+  it("records bounded connectivity state when room lookup fails at network layer", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -330,15 +330,20 @@ describe("community token usage upload", () => {
     });
     await vi.waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[community] Failed to resolve room name "vrboyzero" (network):',
+        "[channel:community] connectivity_diagnostic_failed",
         expect.objectContaining({
-          host: "office.goddess.ai",
-          port: 443,
-          dns: expect.objectContaining({ ok: true }),
-          tcp: expect.objectContaining({ ok: true }),
+          channel: "community",
+          event: "connectivity_diagnostic_failed",
+          failureKind: "transport_error",
+          context: {
+            dnsReachable: true,
+            tcpReachable: true,
+          },
         }),
       );
     });
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("office.goddess.ai");
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("fetch failed");
   });
 
   it("deduplicates in-flight connectivity diagnostics for repeated room lookup failures", async () => {
@@ -381,15 +386,18 @@ describe("community token usage upload", () => {
     });
     await vi.waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[community] Failed to resolve room name "vrboyzero" (network):',
+        "[channel:community] connectivity_diagnostic_failed",
         expect.objectContaining({
-          host: "office.goddess.ai",
+          context: {
+            dnsReachable: true,
+            tcpReachable: true,
+          },
         }),
       );
     });
   });
 
-  it("logs HTTP status details when room lookup returns non-ok response", async () => {
+  it("records HTTP status without logging a remote error body", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response("room not found", {
         status: 404,
@@ -416,14 +424,16 @@ describe("community token usage upload", () => {
 
     expect(diagnoseSpy).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '[community] Failed to resolve room name "vrboyzero" (http 404):',
+      "[channel:community] room_lookup_failed",
       expect.objectContaining({
-        requestUrl: "https://office.goddess.ai/api/rooms/by-name/vrboyzero",
-        status: 404,
-        statusText: "Not Found",
-        bodyPreview: "room not found",
+        channel: "community",
+        event: "room_lookup_failed",
+        failureKind: "transport_error",
+        context: { status: 404 },
       }),
     );
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("room not found");
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("office.goddess.ai");
   });
 
   it("applies community channel security with per-account defaults", async () => {
@@ -504,6 +514,41 @@ describe("community token usage upload", () => {
         legacyConversationId: "community:room-mention",
       }),
     }));
+  });
+
+  it("runs ingress admission before routing community content to an Agent", async () => {
+    const agent = { run: vi.fn() };
+    const router = {
+      admitIngress: vi.fn(() => ({ allow: false, reason: "channel_security:policy_missing" })),
+      decide: vi.fn(),
+    };
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: agent as any,
+      conversationStore: new ConversationStore(),
+      router: router as any,
+    });
+
+    await (channel as any).handleChatMessage({
+      id: "community-blocked-before-route",
+      content: "untrusted content",
+      sender: { type: "user", id: "u-blocked", uid: "u-blocked", name: "Blocked" },
+    }, {
+      ws: { send: vi.fn() },
+      agentConfig: { name: "贝露丹蒂", apiKey: "gro_test_key" },
+      roomId: "room-blocked",
+      reconnectAttempts: 0,
+      members: [],
+    });
+
+    expect(router.admitIngress).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "community",
+      text: "",
+      chatKind: "room",
+    }));
+    expect(router.decide).not.toHaveBeenCalled();
+    expect(agent.run).not.toHaveBeenCalled();
   });
 
   it("chunks long community room replies through the shared outbound chunker", async () => {

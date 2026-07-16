@@ -44,6 +44,10 @@ export interface MCPSSEConfig {
   url: string;
   /** 可选的请求头（如认证信息） */
   headers?: Record<string, string>;
+  /** 显式允许明文 HTTP，仅用于受控兼容场景。 */
+  allowInsecureHttp?: boolean;
+  /** 显式允许 loopback、私网或保留地址，仅用于本地/受控网络。 */
+  allowPrivateNetwork?: boolean;
 }
 
 /**

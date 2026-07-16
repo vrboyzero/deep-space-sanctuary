@@ -14,6 +14,7 @@ import {
   type MCPServerRuntimeDiagnostics,
   type MCPToolInfo,
 } from "@belldandy/mcp";
+import { withToolContract } from "@belldandy/skills";
 import type { ToolExecutor, Tool, ToolContext, ToolCallResult } from "@belldandy/skills";
 import type { JsonObject } from "@belldandy/protocol";
 import { formatMcpToolError } from "./error-format.js";
@@ -56,7 +57,7 @@ function mcpToolToTool(
 ): Tool {
   const shortDescription = String(mcpTool.description ?? "").split(/\r?\n/)[0]?.trim()
     || `MCP tool ${mcpTool.name}`;
-  return {
+  return withToolContract({
     definition: {
       name: mcpTool.bridgedName,
       description: mcpTool.description 
@@ -90,7 +91,20 @@ function mcpToolToTool(
         };
       }
     },
-  };
+  }, {
+    // MCP schemas do not describe side effects. Keep their default contract conservative
+    // until a later policy layer can map a server-specific capability declaration.
+    family: "other",
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    needsPermission: true,
+    riskLevel: "high",
+    channels: ["gateway"],
+    safeScopes: ["remote-safe"],
+    activityDescription: `Invoke external MCP tool ${mcpTool.serverId}/${mcpTool.name}`,
+    resultSchema: { kind: "text", description: "External MCP tool response." },
+    outputPersistencePolicy: "external-state",
+  });
 }
 
 // ============================================================================
@@ -241,7 +255,7 @@ export function registerMCPToolsToExecutor(
 
   // 注册每个工具
   for (const tool of tools) {
-    executor.registerTool(tool);
+    executor.registerTool(tool, { origin: "mcp" });
   }
   return tools.length;
 }

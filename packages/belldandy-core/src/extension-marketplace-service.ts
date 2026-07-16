@@ -122,6 +122,8 @@ async function installMarketplaceExtensionWithPreparedSource(input: {
     manifestPath: input.manifestPath,
     installPath: materialized.materializedPath,
     sourceKey: input.preparedSource.sourceKey,
+    contentSha256: materialized.contentSha256,
+    approvedAt: materialized.materializedAt,
     installedAt: input.previousInstalledAt,
     lastUpdated: materialized.materializedAt,
     status: "installed",

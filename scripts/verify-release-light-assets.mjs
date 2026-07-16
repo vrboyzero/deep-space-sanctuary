@@ -1,17 +1,26 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  collectPackageArtifactFailures,
+  resolveReleaseVersion,
+} from "./artifact-contract.mjs";
 
 const workspaceRoot = process.cwd();
 const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
 const versionArg = process.argv.find((arg) => arg.startsWith("--version="));
-const version = (versionArg ? versionArg.slice("--version=".length) : packageJson.version || "").trim();
+const version = resolveReleaseVersion({
+  releaseName: "release-light",
+  packageVersion: packageJson.version,
+  requestedVersion: versionArg?.slice("--version=".length),
+});
 
-if (!version) {
-  throw new Error("Failed to resolve release-light verification version.");
-}
-
-const versionRoot = path.join(workspaceRoot, "artifacts", "release-light", `v${version}`);
+// 与 builder 使用同一可选输出根，保证隔离构建能在不触碰共享 artifacts 的情况下验收。
+const configuredReleaseRoot = process.env.BELLDANDY_RELEASE_LIGHT_ROOT?.trim();
+const releaseRoot = configuredReleaseRoot
+  ? path.resolve(workspaceRoot, configuredReleaseRoot)
+  : path.join(workspaceRoot, "artifacts", "release-light");
+const versionRoot = path.join(releaseRoot, `v${version}`);
 const packageRootName = `star-sanctuary-dist-v${version}`;
 const packageRoot = path.join(versionRoot, packageRootName);
 const zipPath = path.join(versionRoot, `${packageRootName}.zip`);
@@ -49,12 +58,45 @@ function sha256File(filePath) {
   return hash.digest("hex");
 }
 
+function collectStagedPackageArtifactFailures() {
+  const failures = [];
+  const packagesDir = path.join(packageRoot, "packages");
+  if (!fs.existsSync(packagesDir)) {
+    return ["release-light -> missing packages"];
+  }
+
+  for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const packageDir = path.join(packagesDir, entry.name);
+    const packageJsonPath = path.join(packageDir, "package.json");
+    if (!fs.existsSync(packageJsonPath)) continue;
+    const stagedPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    if (
+      typeof stagedPackageJson.name !== "string"
+      || (!stagedPackageJson.name.startsWith("@belldandy/")
+        && !stagedPackageJson.name.startsWith("@star-sanctuary/"))
+    ) {
+      continue;
+    }
+    failures.push(...collectPackageArtifactFailures({ packageDir, packageJson: stagedPackageJson }));
+  }
+
+  return failures;
+}
+
 function main() {
   for (const requiredPath of [packageRoot, zipPath, tarGzPath, manifestPath, sha256Path]) {
     assertExists(requiredPath);
   }
   for (const requiredPath of [defaultEnvTemplatePath, defaultEnvLocalTemplatePath]) {
     assertExists(requiredPath);
+  }
+
+  const packageArtifactFailures = collectStagedPackageArtifactFailures();
+  if (packageArtifactFailures.length > 0) {
+    throw new Error(
+      `release-light package artifacts are incomplete:\n- ${packageArtifactFailures.join("\n- ")}`,
+    );
   }
 
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));

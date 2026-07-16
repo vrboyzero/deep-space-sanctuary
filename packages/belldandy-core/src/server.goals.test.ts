@@ -314,6 +314,32 @@ test("goal.delete removes an archived goal through gateway methods", async () =>
 
     ws.send(JSON.stringify({
       type: "req",
+      id: "goal-delete-preview",
+      method: "goal.delete",
+      params: {
+        goalId: goal.id,
+        preview: true,
+      },
+    }));
+
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "goal-delete-preview"));
+    const previewRes = frames.find((f) => f.type === "res" && f.id === "goal-delete-preview");
+    expect(previewRes.ok).toBe(true);
+    expect(previewRes.payload).toMatchObject({
+      goalId: goal.id,
+      storagePreview: {
+        goalId: goal.id,
+        roots: expect.arrayContaining([
+          expect.objectContaining({ rootKind: "goal", action: "remove" }),
+          expect.objectContaining({ rootKind: "docs", action: "remove" }),
+        ]),
+        warnings: [],
+      },
+    });
+    expect(await seededGoalManager.getGoal(goal.id)).toMatchObject({ id: goal.id });
+
+    ws.send(JSON.stringify({
+      type: "req",
       id: "goal-delete",
       method: "goal.delete",
       params: {

@@ -7,8 +7,14 @@ import type { CurrentConversationBindingStore } from "./current-conversation-bin
 import { updateAgentRoom } from "./community-config.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
+import {
+  ChannelSafeLogger,
+  createChannelApprovalPreview,
+} from "./channel-safe-logger.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
+
+const channelSafeLogger = new ChannelSafeLogger();
 
 /**
  * 社区 Agent 配置
@@ -183,7 +189,11 @@ export class CommunityChannel implements Channel {
       try {
         return this.agentResolver(agentId);
       } catch (error) {
-        console.warn(`[${this.name}] Failed to resolve agent "${agentId}", fallback to default agent:`, error);
+        channelSafeLogger.warn({
+          channel: "community",
+          event: "agent_resolution_failed",
+          failureKind: "configuration_error",
+        });
       }
     }
     return this.agent;
@@ -203,8 +213,12 @@ export class CommunityChannel implements Channel {
 
       try {
         await this.connectAgent(agentConfig);
-      } catch (error) {
-        console.error(`[${this.name}] Failed to connect agent ${agentConfig.name}:`, error);
+      } catch {
+        channelSafeLogger.error({
+          channel: "community",
+          event: "agent_connect_failed",
+          failureKind: "transport_error",
+        });
       }
     }
 
@@ -298,8 +312,12 @@ export class CommunityChannel implements Channel {
         }));
       }
       return true;
-    } catch (error) {
-      console.error(`[${this.name}] Failed to send proactive message:`, error);
+    } catch {
+      channelSafeLogger.error({
+        channel: "community",
+        event: "proactive_send_failed",
+        failureKind: "transport_error",
+      });
       return false;
     }
   }
@@ -326,11 +344,11 @@ export class CommunityChannel implements Channel {
 
       if (!roomResponse.ok) {
         const errorText = await roomResponse.text();
-        console.error(`[${this.name}] Failed to resolve room name "${room.name}" (http ${roomResponse.status}):`, {
-          requestUrl: roomLookupUrl,
-          status: roomResponse.status,
-          statusText: roomResponse.statusText,
-          bodyPreview: errorText.slice(0, 300),
+        channelSafeLogger.error({
+          channel: "community",
+          event: "room_lookup_failed",
+          failureKind: "transport_error",
+          context: { status: roomResponse.status },
         });
         throw new Error(`Failed to find room "${room.name}": ${roomResponse.statusText} - ${errorText}`);
       }
@@ -366,11 +384,11 @@ export class CommunityChannel implements Channel {
 
       if (!joinResponse.ok) {
         const errorText = await joinResponse.text();
-        console.error(`[${this.name}] Failed to join room ${room.name} (http ${joinResponse.status}):`, {
-          requestUrl: joinRoomUrl,
-          status: joinResponse.status,
-          statusText: joinResponse.statusText,
-          bodyPreview: errorText.slice(0, 300),
+        channelSafeLogger.error({
+          channel: "community",
+          event: "room_join_failed",
+          failureKind: "transport_error",
+          context: { status: joinResponse.status },
         });
         throw new Error(`Failed to join room: ${joinResponse.statusText} - ${errorText}`);
       }
@@ -418,8 +436,12 @@ export class CommunityChannel implements Channel {
       try {
         const message = JSON.parse(data.toString());
         await this.handleMessage(message, state);
-      } catch (error) {
-        console.error(`[${this.name}] Failed to handle message:`, error);
+      } catch {
+        channelSafeLogger.error({
+          channel: "community",
+          event: "inbound_message_failed",
+          failureKind: "invalid_input",
+        });
       }
     });
 
@@ -433,8 +455,12 @@ export class CommunityChannel implements Channel {
       }
     });
 
-    ws.on("error", (error) => {
-      console.error(`[${this.name}] WebSocket error for agent ${agentConfig.name} in room ${roomId}:`, error);
+    ws.on("error", () => {
+      channelSafeLogger.error({
+        channel: "community",
+        event: "websocket_error",
+        failureKind: "transport_error",
+      });
     });
 
     // 等待连接建立
@@ -560,10 +586,22 @@ export class CommunityChannel implements Channel {
 
     const task = this.diagnoseHttpConnectivity(requestUrl, error)
       .then((diagnostic) => {
-        console.error(`[${this.name}] ${message}`, diagnostic);
+        channelSafeLogger.error({
+          channel: "community",
+          event: "connectivity_diagnostic_failed",
+          failureKind: "transport_error",
+          context: {
+            dnsReachable: diagnostic.dns.ok,
+            tcpReachable: diagnostic.tcp.ok,
+          },
+        });
       })
-      .catch((diagnosticError) => {
-        console.warn(`[${this.name}] Failed to collect connectivity diagnostic for ${requestUrl}:`, diagnosticError);
+      .catch(() => {
+        channelSafeLogger.warn({
+          channel: "community",
+          event: "connectivity_diagnostic_unavailable",
+          failureKind: "transport_error",
+        });
       })
       .finally(() => {
         if (this.pendingConnectivityDiagnostics.get(requestUrl) === task) {
@@ -639,7 +677,11 @@ export class CommunityChannel implements Channel {
         // 应用层 pong 响应，忽略
         break;
       case "error":
-        console.warn(`[${this.name}] Server error: ${data.message}`);
+        channelSafeLogger.warn({
+          channel: "community",
+          event: "server_error_event",
+          failureKind: "remote_error",
+        });
         break;
       default:
         console.log(`[${this.name}] Unknown message type: ${type}`);
@@ -652,8 +694,12 @@ export class CommunityChannel implements Channel {
   private async enqueueMessage(data: any, state: ConnectionState): Promise<void> {
     const roomId = state.roomId;
     const prev = this.messageQueues.get(roomId) ?? Promise.resolve();
-    const next = prev.then(() => this.handleChatMessage(data, state)).catch((err) => {
-      console.error(`[${this.name}] Queued message handler error for room ${roomId}:`, err);
+    const next = prev.then(() => this.handleChatMessage(data, state)).catch(() => {
+      channelSafeLogger.error({
+        channel: "community",
+        event: "queued_message_failed",
+        failureKind: "internal_error",
+      });
     });
     this.messageQueues.set(roomId, next);
     void next.finally(() => {
@@ -687,8 +733,6 @@ export class CommunityChannel implements Channel {
       if (firstKey) this.processedMessages.delete(firstKey);
     }
 
-    console.log(`[${this.name}] Received message from ${sender.name}: ${content}`);
-
     const senderId = normalizeCommunitySenderId(sender);
     const mentioned = isCommunityMentioned(content, state.agentConfig.name, this.agentId);
     const session = buildChannelSessionDescriptor({
@@ -698,6 +742,33 @@ export class CommunityChannel implements Channel {
       chatId: state.roomId,
       senderId: senderId || undefined,
     });
+    const ingressDecision = this.router?.admitIngress?.({
+      channel: "community",
+      accountId: state.agentConfig.name,
+      chatKind: "room",
+      chatId: state.roomId,
+      sessionScope: session.sessionScope,
+      sessionKey: session.sessionKey,
+      text: "",
+      senderId: senderId || undefined,
+      senderName: typeof sender?.name === "string" ? sender.name : undefined,
+      mentions: mentioned ? [state.agentConfig.name] : [],
+      mentioned,
+      eventType: "message",
+    });
+    if (ingressDecision && !ingressDecision.allow) {
+      console.log(`[${this.name}] Ingress blocked before route handling for ${id} (${ingressDecision.reason})`);
+      return;
+    }
+
+    channelSafeLogger.info({
+      channel: "community",
+      event: "message_received",
+      messageId: id,
+      accountId: state.agentConfig.name,
+      body: content || "",
+    });
+
     const decision = this.router
       ? this.router.decide({
         channel: "community",
@@ -727,7 +798,7 @@ export class CommunityChannel implements Channel {
           senderName: typeof sender?.name === "string" ? sender.name : undefined,
           chatId: state.roomId,
           chatKind: "dm",
-          messagePreview: content || "",
+          messagePreview: createChannelApprovalPreview(content || ""),
         });
       }
       console.log(
@@ -795,12 +866,13 @@ export class CommunityChannel implements Channel {
         | undefined;
 
       const tokenUploadLog = {
-        warn: (module: string, message: string, data?: unknown) => {
-          if (data !== undefined) {
-            console.warn(`[${this.name}] [${module}] ${message}`, data);
-          } else {
-            console.warn(`[${this.name}] [${module}] ${message}`);
-          }
+        warn: (module: string) => {
+          channelSafeLogger.warn({
+            channel: "community",
+            event: "token_usage_upload_warning",
+            failureKind: "transport_error",
+            context: { module },
+          });
         },
       };
 
@@ -858,8 +930,14 @@ export class CommunityChannel implements Channel {
           }));
         }
       }
-    } catch (error) {
-      console.error(`[${this.name}] Failed to process message:`, error);
+    } catch {
+      channelSafeLogger.error({
+        channel: "community",
+        event: "agent_failed",
+        messageId: id,
+        accountId: state.agentConfig.name,
+        failureKind: "internal_error",
+      });
       // 发送错误提示
       state.ws.send(JSON.stringify({
         type: "message",
@@ -891,8 +969,12 @@ export class CommunityChannel implements Channel {
     state.reconnectTimer = setTimeout(async () => {
       try {
         await this.connectAgent(state.agentConfig);
-      } catch (error) {
-        console.error(`[${this.name}] Reconnect failed for room ${state.roomId}:`, error);
+      } catch {
+        channelSafeLogger.error({
+          channel: "community",
+          event: "reconnect_failed",
+          failureKind: "transport_error",
+        });
         // 递归调度下一次重连
         this.scheduleReconnect(state);
       }
@@ -914,8 +996,12 @@ export class CommunityChannel implements Channel {
     state.agentConfig.room = undefined;
     try {
       updateAgentRoom(agentName, undefined);
-    } catch (e) {
-      console.warn(`[${this.name}] Failed to persist room removal for ${agentName}:`, e);
+    } catch {
+      channelSafeLogger.warn({
+        channel: "community",
+        event: "room_removal_persist_failed",
+        failureKind: "storage_error",
+      });
     }
 
     // 2. 清理重连定时器
@@ -959,8 +1045,12 @@ export class CommunityChannel implements Channel {
     agentConfig.room = undefined;
     try {
       updateAgentRoom(agentConfig.name, undefined);
-    } catch (e) {
-      console.warn(`[${this.name}] Failed to persist room removal for ${agentConfig.name}:`, e);
+    } catch {
+      channelSafeLogger.warn({
+        channel: "community",
+        event: "room_removal_persist_failed",
+        failureKind: "storage_error",
+      });
     }
 
     // 2. 清理重连定时器

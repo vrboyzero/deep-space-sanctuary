@@ -161,6 +161,14 @@ export interface AgentEndEvent {
   error?: string;
   /** 运行时长（毫秒） */
   durationMs?: number;
+  /** 长运行 Hook 账本的有界摘要；短运行保持完整 messages 行为。 */
+  summary?: {
+    truncated: boolean;
+    eventCount: number;
+    retainedEventCount: number;
+    droppedEventCount: number;
+    totalDeltaChars: number;
+  };
 }
 
 export type CompactionMode =

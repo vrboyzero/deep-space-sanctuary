@@ -3,6 +3,12 @@ import { Tool, ToolContext, ToolCallResult } from "../../types.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import WebSocket from "ws";
+import {
+    OutboundRequestPolicy,
+    OutboundRequestPolicyError,
+    redactSensitiveText,
+    redactSensitiveUrl,
+} from "@belldandy/protocol";
 import { withToolContract } from "../../tool-contract.js";
 import { raceWithAbort, sleepWithAbort, throwIfAborted, toAbortError } from "../../abort-utils.js";
 import { understandCapturedImageArtifact } from "../multimedia/captured-image-understand.js";
@@ -15,8 +21,21 @@ interface Logger {
     error(message: string, data?: unknown): void;
 }
 
-// Relay Server runs on port 28892 by default
-const RELAY_WS_ENDPOINT = "ws://127.0.0.1:28892/cdp";
+function getRelayConnection(): { endpoint: string; headers: Record<string, string> } {
+    const rawPort = process.env.BELLDANDY_RELAY_PORT?.trim() || "28892";
+    const port = Number(rawPort);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+        throw new Error("Browser Relay port is invalid.");
+    }
+    const token = process.env.BELLDANDY_RELAY_TOKEN?.trim();
+    if (!token) {
+        throw new Error("Browser Relay credential is not configured.");
+    }
+    return {
+        endpoint: `ws://127.0.0.1:${port}/cdp`,
+        headers: { Authorization: `Bearer ${token}` },
+    };
+}
 
 import { SNAPSHOT_SCRIPT } from "./snapshot.js";
 
@@ -101,7 +120,8 @@ async function sendCdpCommand(
 ): Promise<unknown> {
     throwIfAborted(signal);
     return new Promise((resolve, reject) => {
-        const ws = new WebSocket(RELAY_WS_ENDPOINT);
+        const relay = getRelayConnection();
+        const ws = new WebSocket(relay.endpoint, { headers: relay.headers });
         const timeoutId = setTimeout(() => {
             ws.close();
             reject(new Error(`CDP command ${method} timed out after ${timeout}ms`));
@@ -177,33 +197,59 @@ const DENIED_DOMAINS_RAW = process.env.BELLDANDY_BROWSER_DENIED_DOMAINS;
 const ALLOWED_DOMAINS = ALLOWED_DOMAINS_RAW?.split(",").map(d => d.trim().toLowerCase()).filter(Boolean) || [];
 const DENIED_DOMAINS = DENIED_DOMAINS_RAW?.split(",").map(d => d.trim().toLowerCase()).filter(Boolean) || [];
 
-function validateBrowserUrl(urlStr: string): { ok: true } | { ok: false; error: string } {
-    let url: URL;
+type BrowserUrlPolicy = Pick<OutboundRequestPolicy, "resolveAllowedAddresses">;
+
+export async function validateBrowserUrl(
+    urlStr: string,
+    policy: BrowserUrlPolicy = createBrowserOutboundRequestPolicy(),
+): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-        url = new URL(urlStr);
-    } catch {
-        return { ok: false, error: `无效的 URL: ${urlStr}` };
-    }
-
-    const hostname = url.hostname.toLowerCase();
-
-    // 黑名单检查（优先级最高）
-    if (DENIED_DOMAINS.length > 0) {
-        const denied = DENIED_DOMAINS.find(d => hostname === d || hostname.endsWith(`.${d}`));
-        if (denied) {
-            return { ok: false, error: `域名被禁止: ${hostname}` };
+        await policy.resolveAllowedAddresses(urlStr);
+        return { ok: true };
+    } catch (error) {
+        if (error instanceof OutboundRequestPolicyError) {
+            return { ok: false, error: formatBrowserUrlPolicyError(error) };
         }
+        return { ok: false, error: "浏览器 URL 安全校验失败" };
     }
+}
 
-    // 白名单检查（仅在配置了白名单时生效）
-    if (ALLOWED_DOMAINS.length > 0) {
-        const allowed = ALLOWED_DOMAINS.some(d => hostname === d || hostname.endsWith(`.${d}`));
-        if (!allowed) {
-            return { ok: false, error: `域名不在白名单中: ${hostname}` };
-        }
+function createBrowserOutboundRequestPolicy(): OutboundRequestPolicy {
+    return new OutboundRequestPolicy({
+        allowedHosts: ALLOWED_DOMAINS,
+        deniedHosts: DENIED_DOMAINS,
+        allowInsecureHttp: isExplicitlyEnabled("BELLDANDY_BROWSER_ALLOW_INSECURE_HTTP"),
+        allowPrivateNetwork: isExplicitlyEnabled("BELLDANDY_BROWSER_ALLOW_PRIVATE_NETWORK"),
+    });
+}
+
+function formatBrowserUrlPolicyError(error: OutboundRequestPolicyError): string {
+    switch (error.code) {
+        case "invalid_url":
+            return "无效的 URL";
+        case "unsupported_scheme":
+            return "浏览器仅支持 HTTP/HTTPS URL";
+        case "insecure_scheme":
+            return "浏览器 HTTP 访问需要显式允许";
+        case "userinfo_not_allowed":
+            return "浏览器 URL 不允许包含用户名或密码";
+        case "host_denied":
+            return "浏览器域名被禁止";
+        case "host_not_allowed":
+            return "浏览器域名不在白名单中";
+        case "private_network_not_allowed":
+            return "浏览器禁止访问内网地址";
+        case "dns_unavailable":
+            return "浏览器 DNS 校验失败，已拒绝导航";
+        case "redirect_limit":
+        case "redirect_without_location":
+        case "idle_timeout":
+            return "浏览器 URL 不符合安全策略";
     }
+}
 
-    return { ok: true };
+function isExplicitlyEnabled(name: string): boolean {
+    return ["1", "true", "yes", "on"].includes(String(process.env[name] ?? "").trim().toLowerCase());
 }
 
 export class BrowserManager {
@@ -242,8 +288,10 @@ export class BrowserManager {
         this.connecting = true;
         try {
             // Connect to Belldandy Relay
+            const relay = getRelayConnection();
             this.browser = await raceWithAbort(puppeteer.connect({
-                browserWSEndpoint: RELAY_WS_ENDPOINT,
+                browserWSEndpoint: relay.endpoint,
+                headers: relay.headers,
                 defaultViewport: null, // Let browser handle viewport
             }), signal);
             browserLogger?.debug("Connected to relay");
@@ -366,7 +414,7 @@ const failure = (id: string, name: string, error: unknown, start: number): ToolC
     name,
     success: false,
     output: "",
-    error: error instanceof Error ? error.message : String(error),
+    error: redactSensitiveText(error instanceof Error ? error.message : String(error)),
     durationMs: Date.now() - start,
 });
 
@@ -391,12 +439,12 @@ export const browserOpenTool: Tool = withToolContract({
             const url = args.url as string;
 
             // [SECURITY] 域名校验
-            const validation = validateBrowserUrl(url);
+            const validation = await validateBrowserUrl(url);
             if (!validation.ok) {
                 return failure("unknown", "browser_open", validation.error, start);
             }
 
-            browserLogger?.debug(`Creating new tab for URL: ${url}`);
+            browserLogger?.debug(`Creating new tab for URL: ${redactSensitiveUrl(url)}`);
 
             // 使用直接 CDP 命令创建标签页（绕过 Puppeteer 的 session 管理）
             // 扩展的 Target.createTarget 会直接创建带 URL 的标签页
@@ -414,7 +462,7 @@ export const browserOpenTool: Tool = withToolContract({
             return success(
                 "unknown",
                 "browser_open",
-                `成功打开新标签页: ${url}`,
+                `成功打开新标签页: ${redactSensitiveUrl(url)}`,
                 start
             );
         } catch (err) {
@@ -457,7 +505,7 @@ export const browserNavigateTool: Tool = withToolContract({
             const url = args.url as string;
 
             // [SECURITY] 域名校验
-            const validation = validateBrowserUrl(url);
+            const validation = await validateBrowserUrl(url);
             if (!validation.ok) {
                 return failure("unknown", "browser_navigate", validation.error, start);
             }
@@ -473,7 +521,7 @@ export const browserNavigateTool: Tool = withToolContract({
                 signal: context.abortSignal,
             });
 
-            return success("unknown", "browser_navigate", `Navigated to ${url}`, start);
+            return success("unknown", "browser_navigate", `Navigated to ${redactSensitiveUrl(url)}`, start);
         } catch (err) {
             return failure("unknown", "browser_navigate", err, start);
         }

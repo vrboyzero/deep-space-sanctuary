@@ -4,6 +4,7 @@ export const APP_DOM_REFS = {
   statusEl: byId("status"),
   authModeEl: byId("authMode"),
   authValueEl: byId("authValue"),
+  rememberSessionAuthEl: byId("rememberSessionAuth"),
   userUuidEl: byId("userUuid"),
   saveUuidBtn: byId("saveUuid"),
   workspaceRootsEl: byId("workspaceRoots"),

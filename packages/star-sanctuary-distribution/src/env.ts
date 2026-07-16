@@ -1,6 +1,6 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { generateBootstrapAuthToken } from "./bootstrap-auth-token.js";
 import {
   resolveEnvFilePaths,
   resolveWorkspaceTemplateDir,
@@ -151,7 +151,7 @@ function ensureBootstrapAuthTokenInEnvLocal(templates: DefaultEnvTemplates): str
     return templates.envLocal;
   }
 
-  const generatedToken = `setup-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  const generatedToken = generateBootstrapAuthToken();
   const suffix = templates.envLocal.endsWith("\n") || !templates.envLocal ? "" : "\n";
   return `${templates.envLocal}${suffix}# Auto-generated bootstrap token for first launch\nBELLDANDY_AUTH_TOKEN=${generatedToken}\n`;
 }

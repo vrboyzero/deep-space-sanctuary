@@ -50,6 +50,13 @@ const NODE_SEA_SENTINEL_FUSE = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 const embeddedNodeRuntimeAssetPath = path.join(buildRoot, "node-runtime.exe.gz");
 const esbuildCliPath = require.resolve("esbuild/bin/esbuild");
 const artifactsRoot = path.join(workspaceRoot, "artifacts");
+const portableArtifactVerifierPath = path.join(
+  workspaceRoot,
+  "packages",
+  "star-sanctuary-distribution",
+  "scripts",
+  "verify-portable-artifacts.mjs",
+);
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -106,6 +113,16 @@ function runCommand(command, args, options = {}) {
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status ?? 1}`);
   }
+}
+
+function verifyPortableArtifactForDerivedBuild() {
+  runCommand(process.execPath, [
+    portableArtifactVerifierPath,
+    `--mode=${mode}`,
+    `--portable-root=${portableRoot}`,
+  ], {
+    shell: false,
+  });
 }
 
 function normalizeAssetKey(key) {
@@ -228,6 +245,7 @@ async function main() {
     );
   }
   assertPortableVersionMatchesWorkspace();
+  verifyPortableArtifactForDerivedBuild();
 
   const archivedRoot = archiveExistingDirectory(singleExeRoot);
   guardedRemovePath(buildRoot, {

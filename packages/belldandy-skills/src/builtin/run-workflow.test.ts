@@ -66,7 +66,8 @@ describe("run_workflow tool", () => {
     expect(runWorkflowTool.definition.name).toBe(RUN_WORKFLOW_TOOL_NAME);
     expect(runWorkflowTool.definition.parameters.required).toEqual(["workflowName"]);
     expect(runWorkflowTool.contract?.family).toBe("session-orchestration");
-    expect(runWorkflowTool.contract?.riskLevel).toBe("low");
+    expect(runWorkflowTool.contract?.riskLevel).toBe("high");
+    expect(runWorkflowTool.contract?.needsPermission).toBe(true);
   });
 
   it("缺少 workflowName 时返回 input_error", async () => {
@@ -128,7 +129,7 @@ describe("run_workflow tool", () => {
     expect(callArgs.source.name).toBe("code-audit");
   });
 
-  it("inline 模式透传 inlineCode 与 allowInlineScript", async () => {
+  it("拒绝 Tool 调用者自选 inline source", async () => {
     const mockRuntime = createMockWorkflowRuntime({});
     const ctx = createToolContext({ stateDir: tempDir, workflowRuntime: mockRuntime });
     const result = await runWorkflowTool.execute(
@@ -140,26 +141,10 @@ describe("run_workflow tool", () => {
       },
       ctx,
     );
-    expect(result.success).toBe(true);
-    const callArgs = (mockRuntime.run as any).mock.calls[0][0];
-    expect(callArgs.source).toEqual({
-      kind: "inline",
-      name: "inline-audit",
-      code: `export default async function(ctx) { return "inline ok"; }`,
-    });
-    expect(callArgs.allowInlineScript).toBe(true);
-  });
-
-  it("inline 模式缺少 inlineCode 时返回 input_error", async () => {
-    const mockRuntime = createMockWorkflowRuntime({});
-    const ctx = createToolContext({ stateDir: tempDir, workflowRuntime: mockRuntime });
-    const result = await runWorkflowTool.execute(
-      { workflowName: "inline-audit", sourceKind: "inline", allowInlineScript: true },
-      ctx,
-    );
     expect(result.success).toBe(false);
-    expect(result.failureKind).toBe("input_error");
-    expect(result.error).toMatch(/inlineCode is required/i);
+    expect(result.failureKind).toBe("permission_or_policy");
+    expect(result.error).toMatch(/approved file and builtin/i);
+    expect(mockRuntime.run).not.toHaveBeenCalled();
   });
 
   it("runtime.run 抛错时返回 business_logic_error", async () => {

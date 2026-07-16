@@ -23,6 +23,13 @@ export interface ChannelSecurityConfig {
   channels: Partial<Record<SecurityBackedChannelKind, ChannelSecurityPolicy>>;
 }
 
+export type ChannelSecurityConfigLoadStatus = "loaded" | "missing" | "invalid" | "not_configured";
+
+export interface ChannelSecurityConfigLoadResult {
+  config: ChannelSecurityConfig;
+  status: ChannelSecurityConfigLoadStatus;
+}
+
 const SECURITY_CHANNELS = ["discord", "feishu", "qq", "community"] as const satisfies readonly SecurityBackedChannelKind[];
 const MENTION_CHAT_KINDS = ["group", "channel", "room"] as const satisfies readonly SecurityMentionChatKind[];
 
@@ -171,38 +178,48 @@ export function resolveChannelSecurityConfigPath(stateDir: string): string {
   return path.join(stateDir, "channel-security.json");
 }
 
-export function loadChannelSecurityConfig(
+export function loadChannelSecurityConfigResult(
   configPath: string | undefined,
   logger?: ChannelRouterLogger,
-): ChannelSecurityConfig {
+): ChannelSecurityConfigLoadResult {
   const fallback: ChannelSecurityConfig = { version: 1, channels: {} };
   if (!configPath || !configPath.trim()) {
     logger?.info?.("no channel security config path provided, use empty channel security policy");
-    return fallback;
+    return { config: fallback, status: "not_configured" };
   }
 
   const resolvedPath = path.resolve(configPath.trim());
   try {
     const raw = fs.readFileSync(resolvedPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("channel security config root must be an object");
+    }
     const config = normalizeChannelSecurityConfig(parsed);
     logger?.info?.("loaded channel security config", {
       path: resolvedPath,
       channels: Object.keys(config.channels).length,
     });
-    return config;
+    return { config, status: "loaded" };
   } catch (error) {
     const code = (error as { code?: string }).code;
     if (code === "ENOENT") {
       logger?.warn?.("channel security config file not found, use empty policy", { path: resolvedPath });
-      return fallback;
+      return { config: fallback, status: "missing" };
     }
     logger?.warn?.("failed to load channel security config, use empty policy", {
       path: resolvedPath,
       error: error instanceof Error ? error.message : String(error),
     });
-    return fallback;
+    return { config: fallback, status: "invalid" };
   }
+}
+
+export function loadChannelSecurityConfig(
+  configPath: string | undefined,
+  logger?: ChannelRouterLogger,
+): ChannelSecurityConfig {
+  return loadChannelSecurityConfigResult(configPath, logger).config;
 }
 
 export function hasChannelSecurityPolicy(config: ChannelSecurityConfig | undefined): boolean {
@@ -261,4 +278,33 @@ export function evaluateChannelSecurityPolicy(
       ? "channel_security:mention_required"
       : "channel_security:mention_required_blocked",
   };
+}
+
+/**
+ * 已启用的外部渠道必须有可读取的显式 policy；否则在任何媒体下载、正文解析或
+ * Agent 执行前拒绝。未列入 requiredChannels 的渠道保持旧的兼容行为。
+ */
+export function evaluateChannelIngressSecurity(
+  config: ChannelSecurityConfig | undefined,
+  ctx: RouteContext,
+  options: {
+    loadStatus?: ChannelSecurityConfigLoadStatus;
+    requiredChannels?: readonly SecurityBackedChannelKind[];
+  } = {},
+): RouteDecision | null {
+  if (!isSecurityBackedChannel(ctx.channel)) return null;
+  const required = options.requiredChannels?.includes(ctx.channel) === true;
+  if (required) {
+    if ((options.loadStatus ?? "loaded") !== "loaded") {
+      return { allow: false, reason: "channel_security:config_unavailable" };
+    }
+    const policy = resolveChannelSecurityPolicy(config, ctx.channel, ctx.accountId);
+    if (!policy) {
+      return { allow: false, reason: "channel_security:policy_missing" };
+    }
+    if (policy.enabled === false) {
+      return { allow: false, reason: "channel_security:policy_disabled" };
+    }
+  }
+  return evaluateChannelSecurityPolicy(config, ctx);
 }

@@ -5,6 +5,11 @@ import type { Channel, ChannelConfig, ChannelEventListener, ChannelProactiveTarg
 import type { ChannelRouter } from "./router/types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
+import {
+    ChannelSafeLogger,
+    createChannelApprovalPreview,
+    createChannelPublicFailureMessage,
+} from "./channel-safe-logger.js";
 
 export interface DiscordChannelConfig extends ChannelConfig {
     botToken: string;
@@ -22,6 +27,8 @@ type AudioAttachmentResolution = {
 function formatAudioTranscript(text: string): string {
     return `[音频转写]\n${text}`;
 }
+
+const channelSafeLogger = new ChannelSafeLogger();
 
 export class DiscordChannel implements Channel {
     readonly name = "discord";
@@ -54,7 +61,11 @@ export class DiscordChannel implements Channel {
             try {
                 return this.config.agentResolver(agentId);
             } catch (error) {
-                console.warn(`[Discord] Failed to resolve agent "${agentId}", fallback to default agent:`, error);
+                channelSafeLogger.warn({
+                    channel: "discord",
+                    event: "agent_resolution_failed",
+                    failureKind: "configuration_error",
+                });
             }
         }
         return this.agent;
@@ -105,7 +116,11 @@ export class DiscordChannel implements Channel {
             if (this.client !== client || this.clientSession !== session) {
                 return;
             }
-            console.error("[Discord] Client error:", error);
+            channelSafeLogger.error({
+                channel: "discord",
+                event: "client_error",
+                failureKind: "transport_error",
+            });
             this.emit({ type: "error", channel: this.name, error });
         });
 
@@ -188,8 +203,12 @@ export class DiscordChannel implements Channel {
                 transcript: formatAudioTranscript(text),
                 status: "transcribed",
             };
-        } catch (error) {
-            console.warn(`[Discord] Failed to transcribe audio attachment ${fileName}:`, error);
+        } catch {
+            channelSafeLogger.warn({
+                channel: "discord",
+                event: "audio_transcription_failed",
+                failureKind: "media_error",
+            });
             return {
                 fileName,
                 mime,
@@ -215,8 +234,50 @@ export class DiscordChannel implements Channel {
         const chatId = message.channelId;
         const userId = message.author.id;
         const username = message.author.username;
+        const chatKind = message.guildId ? "channel" : "dm";
+        const mentions = message.mentions.users.map((u) => u.id);
+        const mentioned = message.guildId ? message.mentions.has(this.client!.user!.id) : true;
+        const session = buildChannelSessionDescriptor({
+            channel: "discord",
+            chatKind,
+            chatId,
+            senderId: userId,
+        });
+        const ingressDecision = this.router?.admitIngress?.({
+            channel: "discord",
+            chatKind,
+            chatId,
+            sessionScope: session.sessionScope,
+            sessionKey: session.sessionKey,
+            text: "",
+            senderId: userId,
+            senderName: username,
+            mentions,
+            mentioned,
+            eventType: "messageCreate",
+        });
+        if (ingressDecision && !ingressDecision.allow) {
+            if (ingressDecision.reason === "channel_security:dm_allowlist_blocked" && chatKind === "dm" && userId) {
+                void this.onChannelSecurityApprovalRequired?.({
+                    channel: "discord",
+                    senderId: userId,
+                    senderName: username,
+                    chatId,
+                    chatKind: "dm",
+                    messagePreview: createChannelApprovalPreview(message.content || ""),
+                });
+            }
+            console.log(`[Discord] Ingress blocked before media handling for ${message.id} (${ingressDecision.reason})`);
+            return;
+        }
 
-        console.log(`[Discord] Message from ${username} in ${chatId}: ${message.content}`);
+        channelSafeLogger.info({
+            channel: "discord",
+            event: "message_received",
+            messageId: message.id,
+            body: message.content || "",
+            context: { attachmentCount: message.attachments.size },
+        });
         this.emit({ type: "message_received", channel: this.name, messageId: message.id, chatId });
 
         // 构建多模态内容
@@ -285,15 +346,6 @@ export class DiscordChannel implements Channel {
             return;
         }
 
-        const chatKind = message.guildId ? "channel" : "dm";
-        const mentions = message.mentions.users.map((u) => u.id);
-        const mentioned = message.guildId ? message.mentions.has(this.client!.user!.id) : true;
-        const session = buildChannelSessionDescriptor({
-            channel: "discord",
-            chatKind,
-            chatId,
-            senderId: userId,
-        });
         const decision = this.router
             ? this.router.decide({
                 channel: "discord",
@@ -322,7 +374,7 @@ export class DiscordChannel implements Channel {
                     senderName: username,
                     chatId,
                     chatKind: "dm",
-                    messagePreview: message.content || "",
+                    messagePreview: createChannelApprovalPreview(message.content || ""),
                 });
             }
             console.log(`[Discord] Route blocked message ${message.id} (${decision.reason})`);
@@ -396,9 +448,14 @@ export class DiscordChannel implements Channel {
                 this.emit({ type: "message_sent", channel: this.name, chatId });
             }
         } catch (error) {
-            console.error("[Discord] Agent error:", error);
-            await message.reply("抱歉，处理消息时出现错误。");
-            this.emit({ type: "error", channel: this.name, error: error as Error });
+            channelSafeLogger.error({
+                channel: "discord",
+                event: "agent_failed",
+                messageId: message.id,
+                failureKind: "internal_error",
+            });
+            await message.reply(createChannelPublicFailureMessage());
+            this.emit({ type: "error", channel: this.name, error: new Error("channel_agent_failed") });
         }
     }
 
@@ -467,7 +524,11 @@ export class DiscordChannel implements Channel {
             this.emit({ type: "message_sent", channel: this.name, chatId: targetChannelId });
             return true;
         } catch (error) {
-            console.error("[Discord] Failed to send proactive message:", error);
+            channelSafeLogger.error({
+                channel: "discord",
+                event: "proactive_send_failed",
+                failureKind: "transport_error",
+            });
             this.emit({ type: "error", channel: this.name, error: error as Error });
             return false;
         }
@@ -491,8 +552,12 @@ export class DiscordChannel implements Channel {
         for (const listener of this.listeners) {
             try {
                 listener(event);
-            } catch (e) {
-                console.error("[Discord] Event listener error:", e);
+            } catch {
+                channelSafeLogger.error({
+                    channel: "discord",
+                    event: "event_listener_failed",
+                    failureKind: "internal_error",
+                });
             }
         }
     }

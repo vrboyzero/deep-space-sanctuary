@@ -1,4 +1,4 @@
-import type { JsonObject } from "@belldandy/protocol";
+import { readResponseTextBounded, type JsonObject } from "@belldandy/protocol";
 
 import type { AgentRunInput, AgentStreamItem, BelldandyAgent } from "./index.js";
 import { FailoverClient, type ModelProfile, type FailoverExecutionSummary, type FailoverLogger } from "./failover-client.js";
@@ -581,12 +581,8 @@ function buildMessages(
 }
 
 async function safeReadText(res: Response): Promise<string> {
-  try {
-    const text = await res.text();
-    return text.length > 500 ? `${text.slice(0, 500)}…` : text;
-  } catch {
-    return "";
-  }
+  const result = await readResponseTextBounded(res, { maxBytes: 2048 });
+  return result.truncated ? `${result.text}…` : result.text;
 }
 
 async function* emitChunkedFinal(text: string): AsyncIterable<AgentStreamItem> {

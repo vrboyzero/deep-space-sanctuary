@@ -20,5 +20,9 @@
     },
     "action": {
         "default_title": "Star Sanctuary Relay (Click to Connect)"
+    },
+    "options_ui": {
+        "page": "options.html",
+        "open_in_tab": true
     }
 }

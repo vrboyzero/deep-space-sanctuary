@@ -15,6 +15,7 @@ import {
 const EXTENSION_STATE_DIRNAME = "extensions";
 const KNOWN_MARKETPLACES_FILENAME = "known-marketplaces.json";
 const INSTALLED_EXTENSIONS_FILENAME = "installed-extensions.json";
+const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 
 export interface KnownMarketplaceRecord {
   name: string;
@@ -42,6 +43,10 @@ export interface InstalledExtensionRecord {
   manifestPath?: string;
   installPath: string;
   sourceKey?: string;
+  /** 安装物化后的完整目录摘要；缺失时不得作为受信 Marketplace 扩展加载。 */
+  contentSha256?: string;
+  /** 与 contentSha256 同一批准动作产生的时间。 */
+  approvedAt?: string;
   installedAt: string;
   lastUpdated?: string;
   status: InstalledExtensionStatus;
@@ -87,6 +92,14 @@ function assertString(value: unknown, label: string): string {
 function assertOptionalString(value: unknown, label: string): string | undefined {
   if (value === undefined) return undefined;
   return assertString(value, label);
+}
+
+function assertOptionalSha256(value: unknown, label: string): string | undefined {
+  const normalized = assertOptionalString(value, label);
+  if (normalized !== undefined && !SHA256_PATTERN.test(normalized)) {
+    throw new Error(`${label} must be a SHA-256 digest.`);
+  }
+  return normalized?.toLowerCase();
 }
 
 function assertMarketplaceName(value: unknown, label: string): string {
@@ -186,6 +199,8 @@ function parseInstalledExtensionRecord(
     manifestPath: assertOptionalString(record.manifestPath, `Installed extension "${id}".manifestPath`),
     installPath: assertString(record.installPath, `Installed extension "${id}".installPath`),
     sourceKey: assertOptionalString(record.sourceKey, `Installed extension "${id}".sourceKey`),
+    contentSha256: assertOptionalSha256(record.contentSha256, `Installed extension "${id}".contentSha256`),
+    approvedAt: assertOptionalString(record.approvedAt, `Installed extension "${id}".approvedAt`),
     installedAt: assertString(record.installedAt, `Installed extension "${id}".installedAt`),
     lastUpdated: assertOptionalString(record.lastUpdated, `Installed extension "${id}".lastUpdated`),
     status: assertExtensionStatus(record.status, `Installed extension "${id}".status`),
@@ -332,6 +347,8 @@ export async function upsertInstalledExtension(
     manifestPath: record.manifestPath?.trim() || undefined,
     installPath: assertString(record.installPath, "Installed extension.installPath"),
     sourceKey: record.sourceKey?.trim() || undefined,
+    contentSha256: assertOptionalSha256(record.contentSha256, "Installed extension.contentSha256"),
+    approvedAt: record.approvedAt?.trim() || undefined,
     installedAt: existing?.installedAt ?? record.installedAt ?? nowIso(),
     lastUpdated: record.lastUpdated?.trim() || undefined,
     status: record.status,

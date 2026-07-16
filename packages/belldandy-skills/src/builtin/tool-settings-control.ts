@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { JsonObject, Tool, ToolCallResult, ToolContext } from "../types.js";
+import { withToolContract } from "../tool-contract.js";
 
 export const TOOL_SETTINGS_CONTROL_NAME = "tool_settings_control";
 
@@ -266,7 +267,7 @@ function getConfirmTargetClientId(context: ToolContext): string | undefined {
 }
 
 export function createToolSettingsControlTool(deps: AgentToolControlDeps): Tool {
-  return {
+  return withToolContract({
     definition: {
       name: TOOL_SETTINGS_CONTROL_NAME,
       description: "Control the global runtime disabled list for currently registered builtin tools, MCP servers, and plugins. This does not change BELLDANDY_TOOLS_ENABLED, does not modify BELLDANDY_TOOL_GROUPS, and does not manage skills.",
@@ -643,5 +644,16 @@ export function createToolSettingsControlTool(deps: AgentToolControlDeps): Tool 
         durationMs: Date.now() - start,
       };
     },
-  };
+  }, {
+    family: "service-admin",
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    needsPermission: true,
+    riskLevel: "high",
+    channels: ["gateway", "web"],
+    safeScopes: ["privileged", "web-safe"],
+    activityDescription: "Read or change global Tool runtime configuration",
+    resultSchema: { kind: "text", description: "Tool configuration status or confirmation result." },
+    outputPersistencePolicy: "external-state",
+  });
 }

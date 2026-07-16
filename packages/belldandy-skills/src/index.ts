@@ -70,9 +70,16 @@ export type {
   EligibilityContext,
   EligibilityResult,
 } from "./skill-types.js";
-export { loadSkillFromDir, loadSkillsFromDir, parseSkillMd } from "./skill-loader.js";
+export { loadSkillFromDir, loadSkillsFromDir, parseSkillMd, SkillDirectoryError } from "./skill-loader.js";
 export { checkEligibility, checkEligibilityBatch } from "./skill-eligibility.js";
-export { SkillRegistry, registerGlobalSkillRegistry, getGlobalSkillRegistry } from "./skill-registry.js";
+export {
+  SkillRegistry,
+  SkillRegistryRegistrationError,
+  registerGlobalSkillRegistry,
+  getGlobalSkillRegistry,
+} from "./skill-registry.js";
+export type { LoadSkillsFromDirOptions } from "./skill-loader.js";
+export type { SkillRegistryInventory, SkillRegistryInventoryEntry } from "./skill-registry.js";
 export { publishSkillCandidate, getUserSkillsDir } from "./skill-publisher.js";
 
 export { ToolExecutor, DEFAULT_POLICY } from "./executor.js";
@@ -87,6 +94,11 @@ export type {
   ToolAvailabilityReasonCode,
   ToolAvailabilityState,
   ToolExecutorOptions,
+  RegisterToolOptions,
+  ToolRegistrationOrigin,
+  ToolRegistryInventory,
+  ToolRegistryInventoryEntry,
+  ToolRegistryReplacement,
 } from "./executor.js";
 export {
   getToolContract,

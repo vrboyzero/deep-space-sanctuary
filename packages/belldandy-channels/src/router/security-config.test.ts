@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   evaluateChannelSecurityPolicy,
   loadChannelSecurityConfig,
+  loadChannelSecurityConfigResult,
   normalizeChannelSecurityConfig,
   resolveChannelSecurityConfigPath,
 } from "./security-config.js";
@@ -93,6 +94,16 @@ describe("channel security config", () => {
         },
       },
     });
+  });
+
+  it("reports missing and malformed security configuration without silently treating it as loaded", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-channel-security-"));
+    tempDirs.push(dir);
+    const filePath = resolveChannelSecurityConfigPath(dir);
+
+    expect(loadChannelSecurityConfigResult(filePath)).toMatchObject({ status: "missing", config: { channels: {} } });
+    await fs.writeFile(filePath, "{invalid", "utf-8");
+    expect(loadChannelSecurityConfigResult(filePath)).toMatchObject({ status: "invalid", config: { channels: {} } });
   });
 
   it("blocks DMs from unknown senders when dmPolicy is allowlist", () => {

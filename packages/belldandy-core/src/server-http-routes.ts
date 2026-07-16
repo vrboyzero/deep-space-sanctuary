@@ -20,6 +20,21 @@ import {
 } from "./webhook/index.js";
 import type { GatewayServerOptions } from "./server.js";
 
+const WEBCHAT_CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' https: data:",
+  "media-src 'self' https:",
+  "font-src 'self'",
+  "connect-src 'self' ws: wss:",
+  "worker-src 'self' blob:",
+].join("; ");
+
 export type RegisterGatewayHttpRoutesContext = {
   app: Express;
   version: string;
@@ -142,6 +157,17 @@ export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesCo
         referer: req.get("referer") ?? null,
       });
     }
+    next();
+  });
+
+  // WebChat 的首屏脚本和第三方资产均为同源文件后，可直接强制 CSP；Trusted Types
+  // 仍以专用浏览器 fixture 收敛，不在未迁移的全局 UI 上提前启用。
+  ctx.app.use((_req, res, next) => {
+    res.setHeader("Content-Security-Policy", WEBCHAT_CSP);
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()");
     next();
   });
 

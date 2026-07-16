@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Tool, ToolCallResult, ToolDiscoveryEntry } from "../types.js";
+import { withToolContract } from "../tool-contract.js";
 
 export const TOOL_SEARCH_NAME = "tool_search";
 
@@ -122,7 +123,7 @@ function getEntrySortKey(entry: ToolDiscoveryEntry): string {
 }
 
 export function createToolSearchTool(options: ToolSearchOptions): Tool {
-  return {
+  return withToolContract({
     definition: {
       name: TOOL_SEARCH_NAME,
       description: "搜索当前可用工具与重型工具簇；可先展开 family，再用 select 只加载需要的精确 deferred schema。",
@@ -261,5 +262,16 @@ export function createToolSearchTool(options: ToolSearchOptions): Tool {
         durationMs: Date.now() - start,
       };
     },
-  };
+  }, {
+    family: "other",
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    needsPermission: false,
+    riskLevel: "low",
+    channels: ["gateway", "web"],
+    safeScopes: ["local-safe", "web-safe"],
+    activityDescription: "Search the current Tool catalog and load deferred schemas",
+    resultSchema: { kind: "text", description: "Tool discovery and deferred-loading summary." },
+    outputPersistencePolicy: "conversation",
+  });
 }

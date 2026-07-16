@@ -29,7 +29,15 @@ BELLDANDY_BROWSER_RELAY_ENABLED=true
 BELLDANDY_RELAY_PORT=28892
 ```
 
-> 默认连接地址是 `ws://127.0.0.1:28892/extension`。
+Relay 会为 state directory 生成本机凭据。运行下面的显式命令取得它，再在扩展的“选项”页面填写端口和凭据：
+
+```bash
+corepack pnpm bdd relay credential
+```
+
+> Relay 凭据只在 WebSocket 握手中传递，不会写入连接 URL；不要把凭据写入仓库或截图中。
+
+手动启动 Relay 时，Gateway 中的 Browser Tool 也必须取得同一个凭据；将命令输出的值写入本机 `.env.local` 的 `BELLDANDY_RELAY_TOKEN`。使用 Gateway 自动启动 Relay 时，该凭据会在进程内自动注入，无需额外配置。
 
 ### 2. 安装扩展
 

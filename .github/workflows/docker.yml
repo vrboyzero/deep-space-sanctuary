@@ -236,10 +236,10 @@ jobs:
         run: pnpm build
 
       - name: Build release-light assets
-        run: pnpm build:release-light
+        run: pnpm build:release-light -- --version=${{ steps.version.outputs.VERSION }}
 
       - name: Verify release-light assets
-        run: pnpm verify:release-light
+        run: pnpm verify:release-light -- --version=${{ steps.version.outputs.VERSION }}
 
       - name: Extract changelog section
         id: changelog
@@ -368,8 +368,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             $tail = (Get-Content $logPath -Tail 80) -join "`n"
             Write-Host "::error::Portable build failed. Tail:`n$tail"
-            exit $LASTEXITCODE
+           exit $LASTEXITCODE
           }
+
+      - name: Verify packaged portable Relay CLI
+        working-directory: ${{ env.SHORT_WORKSPACE }}
+        run: pnpm verify:portable-artifacts
 
       - name: Smoke Windows portable asset
         working-directory: ${{ env.SHORT_WORKSPACE }}

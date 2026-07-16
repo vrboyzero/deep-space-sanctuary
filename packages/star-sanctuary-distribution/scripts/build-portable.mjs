@@ -7,6 +7,7 @@ import { resolveDistributionMode, resolvePortableArtifactRoot } from "./distribu
 import { resolveDistributionPolicySummary } from "./distribution-policy.mjs";
 import { renderPortableGuide } from "./distribution-user-guide.mjs";
 import { assertPathInsideRoots, guardedRemovePath } from "./sandbox-paths.mjs";
+import { copyPackageNonDistBinArtifacts } from "../../../scripts/artifact-contract.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const rootPackageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
@@ -510,10 +511,31 @@ function writeRuntimePackageJson() {
   );
 }
 
+function stripRuntimeTypeExportConditions(value) {
+  if (Array.isArray(value)) {
+    return value.map(stripRuntimeTypeExportConditions);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const runtimeValue = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === "types") continue;
+    runtimeValue[key] = stripRuntimeTypeExportConditions(nested);
+  }
+  return runtimeValue;
+}
+
 function sanitizeRuntimeWorkspacePackageJson(packageJson) {
   const sanitized = { ...packageJson };
   delete sanitized.devDependencies;
   delete sanitized.scripts;
+  // Portable 会裁剪声明文件，runtime manifest 同步移除仅供 TypeScript 使用的出口。
+  delete sanitized.types;
+  if (sanitized.exports) {
+    sanitized.exports = stripRuntimeTypeExportConditions(sanitized.exports);
+  }
   return sanitized;
 }
 
@@ -525,6 +547,7 @@ function copyRuntimePackageJson(src, dest) {
     `${JSON.stringify(sanitizeRuntimeWorkspacePackageJson(packageJson), null, 2)}\n`,
     "utf-8",
   );
+  return packageJson;
 }
 
 function copyPackage(packageName) {
@@ -537,7 +560,15 @@ function copyPackage(packageName) {
     path.join(destRoot, "dist"),
     { filter: createFilteredCopyPredicate(sourceDistRoot) },
   );
-  copyRuntimePackageJson(path.join(sourceRoot, "package.json"), path.join(destRoot, "package.json"));
+  const packageJson = copyRuntimePackageJson(
+    path.join(sourceRoot, "package.json"),
+    path.join(destRoot, "package.json"),
+  );
+  copyPackageNonDistBinArtifacts({
+    sourcePackageDir: sourceRoot,
+    destinationPackageDir: destRoot,
+    packageJson,
+  });
 }
 
 function writeStartBat(executableName) {

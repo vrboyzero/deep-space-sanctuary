@@ -111,7 +111,14 @@ describe("ToolPoolAssembler", () => {
     expect(tools).toHaveLength(0);
   });
 
-  it("supports factory entries and deduplicates by tool name", async () => {
+  it("fails strict startup assembly when a tool has no governance contract", async () => {
+    const assembler = new ToolPoolAssembler([{ tool: createTool("unguarded") }]);
+
+    await expect(assembler.assemble({ requireToolContracts: true }))
+      .rejects.toThrow(/Tool pool contains an ungoverned tool: unguarded/);
+  });
+
+  it("rejects duplicate names instead of silently choosing a factory entry", async () => {
     const repeated = createTool("shared");
     const assembler = new ToolPoolAssembler([
       { tool: repeated },
@@ -123,11 +130,6 @@ describe("ToolPoolAssembler", () => {
       },
     ]);
 
-    const tools = await assembler.assemble();
-
-    expect(tools.map((tool) => tool.definition.name)).toEqual([
-      "shared",
-      "extra",
-    ]);
+    await expect(assembler.assemble()).rejects.toThrow(/Duplicate tool in pool: shared/);
   });
 });

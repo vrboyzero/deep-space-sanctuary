@@ -5,7 +5,7 @@ import type {
   ConversationStore,
   ModelProfile,
 } from "@belldandy/agent";
-import type { GatewayEventFrame, GatewayReqFrame, GatewayResFrame, TokenUsageUploadConfig } from "@belldandy/protocol";
+import type { BelldandyRole, GatewayEventFrame, GatewayReqFrame, GatewayResFrame, TokenUsageUploadConfig } from "@belldandy/protocol";
 import type { EnvDirSource } from "@star-sanctuary/distribution";
 import type { PluginRegistry } from "@belldandy/plugins";
 import type { SkillRegistry, ToolContractChannel, ToolExecutor, TranscribeOptions, TranscribeResult } from "@belldandy/skills";
@@ -51,6 +51,8 @@ type GatewayLog = {
 
 export type GatewayWebSocketRequestContext = {
   clientId: string;
+  role: BelldandyRole;
+  authenticated: boolean;
   requestChannel: ToolContractChannel;
   userUuid?: string;
   stateDir: string;
@@ -140,7 +142,7 @@ export type GatewayWebSocketRequestContext = {
 
 type CreateGatewayWebSocketRequestHandlerOptions = Omit<
   GatewayWebSocketRequestContext,
-  "clientId" | "requestChannel" | "userUuid"
+  "clientId" | "role" | "authenticated" | "requestChannel" | "userUuid"
 > & {
   handleReq: (
     ws: WebSocket,
@@ -155,6 +157,8 @@ export function buildGatewayWebSocketRequestContext(
 ): GatewayWebSocketRequestContext {
   return {
     clientId: connection.clientId,
+    role: connection.role,
+    authenticated: connection.authenticated,
     requestChannel: resolveGatewayWebSocketRequestChannel(connection),
     userUuid: connection.userUuid,
     stateDir: options.stateDir,

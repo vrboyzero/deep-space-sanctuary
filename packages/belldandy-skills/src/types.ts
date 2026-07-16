@@ -352,7 +352,6 @@ export type WorkflowRunOptionsLike = {
     onExceeded?: "abort" | "warn";
   };
   maxConcurrent?: number;
-  allowInlineScript?: boolean;
   parentConversationId: string;
   channel: string;
   resumeJournalId?: string;

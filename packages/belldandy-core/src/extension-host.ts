@@ -1,17 +1,25 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
 import path from "node:path";
 
-import { parseExtensionManifest, PluginRegistry } from "@belldandy/plugins";
+import {
+  PluginRegistry,
+  PluginRegistryDirectoryError,
+  PluginRegistryRegistrationError,
+} from "@belldandy/plugins";
 import type { HookName, HookRegistry } from "@belldandy/agent";
 import {
   createSkillGetTool,
   createSkillsListTool,
   createSkillsSearchTool,
+  getToolContract,
   registerGlobalSkillRegistry,
+  SkillDirectoryError,
   SkillRegistry,
+  SkillRegistryRegistrationError,
   type SkillDefinition,
+  type Tool,
   type ToolExecutor,
+  withToolContract,
 } from "@belldandy/skills";
 
 import {
@@ -21,6 +29,7 @@ import {
   type ExtensionRuntimeReport,
 } from "./extension-runtime.js";
 import { listInstalledExtensions } from "./extension-marketplace-state.js";
+import { verifyInstalledMarketplaceExtension } from "./extension-integrity.js";
 import type { ToolsConfigManager } from "./tools-config.js";
 
 export interface ExtensionHostLogger {
@@ -168,6 +177,27 @@ function createEmptyHookBridgeSummary(source: string): ExtensionHostHookBridgeSu
   };
 }
 
+function ensurePluginToolContract(tool: Tool): Tool {
+  if (getToolContract(tool)) {
+    return tool;
+  }
+
+  // Plugin APIs predate mandatory contracts. Preserve existing plugin loading while
+  // classifying undeclared tools as conservative external capabilities in inventory.
+  return withToolContract(tool, {
+    family: "other",
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    needsPermission: true,
+    riskLevel: "high",
+    channels: ["gateway"],
+    safeScopes: ["remote-safe"],
+    activityDescription: `Invoke external plugin tool ${tool.definition.name}`,
+    resultSchema: { kind: "text", description: "External plugin tool response." },
+    outputPersistencePolicy: "external-state",
+  });
+}
+
 export async function initializeExtensionHost(
   input: InitializeExtensionHostOptions,
 ): Promise<ExtensionHostState> {
@@ -191,8 +221,14 @@ export async function initializeExtensionHost(
 
   if (fs.existsSync(pluginsDir)) {
     try {
-      await pluginRegistry.loadPluginDirectory(pluginsDir);
+      await pluginRegistry.loadPluginDirectory(pluginsDir, {
+        requireDirectory: true,
+        failOnRegistrationError: true,
+      });
     } catch (error) {
+      if (error instanceof PluginRegistryDirectoryError || error instanceof PluginRegistryRegistrationError) {
+        throw error;
+      }
       input.logger.warn("plugins", `插件加载失败: ${String(error)}`, error);
     }
   }
@@ -200,22 +236,20 @@ export async function initializeExtensionHost(
   const installedMarketplaceExtensions = (await listInstalledExtensions(input.stateDir))
     .filter((extension) => extension.enabled && extension.status === "installed");
   for (const extension of installedMarketplaceExtensions) {
-    const manifestRelativePath = extension.manifestPath?.trim() || "belldandy-extension.json";
-    const manifestPath = path.join(extension.installPath, manifestRelativePath);
     try {
-      const rawManifest = await fsp.readFile(manifestPath, "utf-8");
-      const manifest = parseExtensionManifest(JSON.parse(rawManifest) as unknown);
+      const verified = await verifyInstalledMarketplaceExtension({
+        stateDir: input.stateDir,
+        extension,
+      });
+      const { manifest } = verified;
 
-      if (manifest.kind === "plugin" && manifest.entry.pluginModule) {
-        await pluginRegistry.loadPlugin(path.join(extension.installPath, manifest.entry.pluginModule));
+      if (manifest.kind === "plugin" && verified.pluginModulePath) {
+        await pluginRegistry.loadPlugin(verified.pluginModulePath);
         lifecycle.installedMarketplacePluginsLoaded += 1;
       }
 
-      if (manifest.entry.skillDirs && manifest.entry.skillDirs.length > 0) {
-        marketplaceSkillDirs.set(
-          extension.id,
-          manifest.entry.skillDirs.map((dir) => path.join(extension.installPath, dir)),
-        );
+      if (verified.skillDirs.length > 0) {
+        marketplaceSkillDirs.set(extension.id, verified.skillDirs);
       }
 
       lifecycle.installedMarketplaceExtensionsLoaded += 1;
@@ -223,6 +257,9 @@ export async function initializeExtensionHost(
         lifecycle.installedMarketplaceSkillPacksLoaded += 1;
       }
     } catch (error) {
+      if (error instanceof PluginRegistryRegistrationError) {
+        throw error;
+      }
       input.logger.warn(
         "marketplace",
         `installed extension load skipped: ${extension.id}: ${String(error)}`,
@@ -234,7 +271,7 @@ export async function initializeExtensionHost(
   const pluginTools = pluginRegistry.getAllTools();
   if (pluginTools.length > 0) {
     for (const tool of pluginTools) {
-      input.toolExecutor.registerTool(tool);
+      input.toolExecutor.registerTool(ensurePluginToolContract(tool), { origin: "plugin" });
     }
     lifecycle.pluginToolsRegistered = pluginTools.length;
     input.logger.info("plugins", `注册了 ${pluginTools.length} 个插件工具`);
@@ -282,6 +319,9 @@ export async function initializeExtensionHost(
     input.logger.info("skills", `total: ${skillRegistry.size} skills loaded`);
     registerGlobalSkillRegistry(skillRegistry);
   } catch (error) {
+    if (error instanceof SkillDirectoryError || error instanceof SkillRegistryRegistrationError) {
+      throw error;
+    }
     input.logger.warn("skills", `技能加载失败: ${String(error)}`, error);
   }
 
@@ -294,9 +334,9 @@ export async function initializeExtensionHost(
     .filter((item) => item.shouldRegister)
     .map((item) => item.name);
   if (input.toolsEnabled && skillManagementToolsRegistered.length > 0) {
-    input.toolExecutor.registerTool(createSkillsListTool(skillRegistry));
-    input.toolExecutor.registerTool(createSkillsSearchTool(skillRegistry));
-    input.toolExecutor.registerTool(createSkillGetTool(skillRegistry));
+    input.toolExecutor.registerTool(createSkillsListTool(skillRegistry), { origin: "core" });
+    input.toolExecutor.registerTool(createSkillsSearchTool(skillRegistry), { origin: "core" });
+    input.toolExecutor.registerTool(createSkillGetTool(skillRegistry), { origin: "core" });
     lifecycle.skillManagementToolsRegistered = [...skillManagementToolsRegistered];
     input.logger.info(
       "skills",

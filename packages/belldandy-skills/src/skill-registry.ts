@@ -11,7 +11,36 @@ import { checkEligibilityBatch } from "./skill-eligibility.js";
 
 /** 内部存储键：source:name */
 function makeKey(skill: SkillDefinition): string {
-  return `${skill.source.type}:${skill.name}`;
+  return `${sourceScopeKey(skill.source)}:${skill.name}`;
+}
+
+function sourceScopeKey(source: SkillDefinition["source"]): string {
+  if (source.type === "plugin") {
+    return `plugin:${source.pluginId}`;
+  }
+  return source.type;
+}
+
+export type SkillRegistryInventoryEntry = {
+  name: string;
+  source: SkillDefinition["source"]["type"];
+  pluginId?: string;
+  priority: SkillDefinition["priority"];
+};
+
+export type SkillRegistryInventory = {
+  catalogGeneration: number;
+  totalSkillCount: number;
+  sourceCounts: Record<SkillDefinition["source"]["type"], number>;
+  shadowedNames: string[];
+  entries: SkillRegistryInventoryEntry[];
+};
+
+export class SkillRegistryRegistrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SkillRegistryRegistrationError";
+  }
 }
 
 let globalSkillRegistry: SkillRegistry | null = null;
@@ -30,6 +59,7 @@ export class SkillRegistry {
 
   /** 最近一次 eligibility 检查结果缓存 */
   private eligibilityCache = new Map<string, EligibilityResult>();
+  private catalogGeneration = 0;
 
   // ========================================================================
   // 加载
@@ -37,35 +67,33 @@ export class SkillRegistry {
 
   /** 加载内置 skills（随项目发布） */
   async loadBundledSkills(dir: string): Promise<number> {
-    const loaded = await loadSkillsFromDir(dir, { type: "bundled" });
-    for (const skill of loaded) {
-      this.skills.set(makeKey(skill), skill);
-    }
+    const source = { type: "bundled" } as const;
+    const loaded = await loadSkillsFromDir(dir, source, { requireDirectory: true });
+    this.commitLoadedSources([{ source, skills: loaded }]);
     return loaded.length;
   }
 
   /** 加载用户 skills（~/.star_sanctuary/skills/ 默认目录） */
   async loadUserSkills(dir: string): Promise<number> {
-    const loaded = await loadSkillsFromDir(dir, { type: "user", path: dir });
-    for (const skill of loaded) {
-      this.skills.set(makeKey(skill), skill);
-    }
+    const source = { type: "user", path: dir } as const;
+    const loaded = await loadSkillsFromDir(dir, source);
+    this.commitLoadedSources([{ source, skills: loaded }]);
     return loaded.length;
   }
 
   /** 加载插件附带的 skills */
   async loadPluginSkills(dirs: Map<string, string[]>): Promise<number> {
-    let count = 0;
+    const loadedSources: Array<{ source: Extract<SkillDefinition["source"], { type: "plugin" }>; skills: SkillDefinition[] }> = [];
     for (const [pluginId, pluginDirs] of dirs) {
+      const source = { type: "plugin", pluginId } as const;
+      const skills: SkillDefinition[] = [];
       for (const dir of pluginDirs) {
-        const loaded = await loadSkillsFromDir(dir, { type: "plugin", pluginId });
-        for (const skill of loaded) {
-          this.skills.set(makeKey(skill), skill);
-        }
-        count += loaded.length;
+        skills.push(...await loadSkillsFromDir(dir, source, { requireDirectory: true }));
       }
+      loadedSources.push({ source, skills });
     }
-    return count;
+    this.commitLoadedSources(loadedSources);
+    return loadedSources.reduce((count, item) => count + item.skills.length, 0);
   }
 
   // ========================================================================
@@ -98,6 +126,39 @@ export class SkillRegistry {
     return this.skills.size;
   }
 
+  /** Returns the loaded source/name inventory without hiding source-priority shadows. */
+  getRegistryInventory(): SkillRegistryInventory {
+    const sourceCounts: SkillRegistryInventory["sourceCounts"] = {
+      bundled: 0,
+      user: 0,
+      plugin: 0,
+    };
+    const nameCounts = new Map<string, number>();
+    const entries = this.listSkills()
+      .map((skill) => {
+        sourceCounts[skill.source.type] += 1;
+        nameCounts.set(skill.name, (nameCounts.get(skill.name) ?? 0) + 1);
+        return {
+          name: skill.name,
+          source: skill.source.type,
+          ...(skill.source.type === "plugin" ? { pluginId: skill.source.pluginId } : {}),
+          priority: skill.priority,
+        };
+      })
+      .sort((left, right) => left.name.localeCompare(right.name) || left.source.localeCompare(right.source));
+
+    return {
+      catalogGeneration: this.catalogGeneration,
+      totalSkillCount: entries.length,
+      sourceCounts,
+      shadowedNames: Array.from(nameCounts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name)
+        .sort((left, right) => left.localeCompare(right)),
+      entries,
+    };
+  }
+
   // ========================================================================
   // Eligibility
   // ========================================================================
@@ -107,21 +168,22 @@ export class SkillRegistry {
    */
   async refreshEligibility(ctx: EligibilityContext): Promise<void> {
     const all = this.listSkills();
-    const results = await checkEligibilityBatch(all, ctx);
+    const results = await checkEligibilityBatch(all, ctx, makeKey);
     this.eligibilityCache = results;
   }
 
   /** 获取所有通过 eligibility 检查的 skills */
   getEligibleSkills(): SkillDefinition[] {
     return this.listSkills().filter(s => {
-      const result = this.eligibilityCache.get(s.name);
+      const result = this.getEligibilityForSkill(s);
       return result ? result.eligible : true; // 未检查的默认 eligible
     });
   }
 
   /** 获取某个 skill 的 eligibility 结果 */
   getEligibilityResult(name: string): EligibilityResult | undefined {
-    return this.eligibilityCache.get(name);
+    const selected = this.getSkill(name);
+    return selected ? this.getEligibilityForSkill(selected) : this.eligibilityCache.get(name);
   }
 
   /**
@@ -179,5 +241,53 @@ export class SkillRegistry {
       .filter(r => r.score > 0)
       .sort((a, b) => b.score - a.score)
       .map(r => r.skill);
+  }
+
+  private getEligibilityForSkill(skill: SkillDefinition): EligibilityResult | undefined {
+    // The raw-name fallback preserves tests and integrations that populated the old cache shape.
+    return this.eligibilityCache.get(makeKey(skill)) ?? this.eligibilityCache.get(skill.name);
+  }
+
+  private commitLoadedSources(sources: Array<{ source: SkillDefinition["source"]; skills: SkillDefinition[] }>): void {
+    if (sources.length === 0) {
+      return;
+    }
+
+    const scopesToReplace = new Set(sources.map((item) => sourceScopeKey(item.source)));
+    const next = new Map(
+      Array.from(this.skills.entries()).filter(([, skill]) => !scopesToReplace.has(sourceScopeKey(skill.source))),
+    );
+    const pluginNameOwners = new Map<string, string>();
+    for (const skill of next.values()) {
+      if (skill.source.type === "plugin") {
+        pluginNameOwners.set(skill.name, skill.source.pluginId);
+      }
+    }
+
+    for (const { source, skills } of sources) {
+      const names = new Set<string>();
+      for (const skill of skills) {
+        if (names.has(skill.name)) {
+          throw new SkillRegistryRegistrationError(`Duplicate skill registration: ${skill.name}`);
+        }
+        names.add(skill.name);
+        if (source.type === "plugin") {
+          const owner = pluginNameOwners.get(skill.name);
+          if (owner && owner !== source.pluginId) {
+            throw new SkillRegistryRegistrationError(`Duplicate plugin skill registration: ${skill.name}`);
+          }
+          pluginNameOwners.set(skill.name, source.pluginId);
+        }
+      }
+    }
+
+    for (const { skills } of sources) {
+      for (const skill of skills) {
+        next.set(makeKey(skill), skill);
+      }
+    }
+    this.skills = next;
+    this.eligibilityCache.clear();
+    this.catalogGeneration += 1;
   }
 }

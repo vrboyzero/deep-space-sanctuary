@@ -44,7 +44,7 @@ star-sanctuary/
 
 | 模块 | 职责 | 主要入口 |
 | --- | --- | --- |
-| `@belldandy/protocol` | 网关协议、公共类型、状态目录解析 | `packages/belldandy-protocol/src/index.ts` |
+| `@belldandy/protocol` | 网关协议、公共类型、状态目录解析、受限文件系统能力 | `packages/belldandy-protocol/src/index.ts` |
 | `@belldandy/agent` | Agent runtime、conversation、workspace prompt、failover、sub-agent orchestration | `packages/belldandy-agent/src/index.ts` |
 | `@belldandy/skills` | ToolExecutor、security matrix、builtin tools、skills registry | `packages/belldandy-skills/src/index.ts` |
 | `@belldandy/memory` | SQLite/FTS/vector retrieval、task、experience、durable extraction | `packages/belldandy-memory/src/index.ts` |
@@ -53,7 +53,7 @@ star-sanctuary/
 | `@belldandy/mcp` | MCP 配置、连接管理、工具桥接 | `packages/belldandy-mcp/src/index.ts` |
 | `@belldandy/plugins` | 插件加载、工具注册、hooks 聚合 | `packages/belldandy-plugins/src/index.ts` |
 | `@belldandy/browser` | Relay server，桥接 Chrome 扩展与 CDP client | `packages/belldandy-browser/src/index.ts` |
-| `@star-sanctuary/distribution` | runtime 路径解析、portable/single-exe 运行时处理 | `packages/star-sanctuary-distribution/src/index.ts` |
+| `@star-sanctuary/distribution` | runtime 路径解析、bootstrap auth token、portable/single-exe 运行时处理 | `packages/star-sanctuary-distribution/src/index.ts` |
 | `apps/web` | WebChat 前端功能编排与 UI | `apps/web/public/app.js` |
 | `apps/browser-extension` | 浏览器扩展侧 relay client、tab/CDP 管理 | `apps/browser-extension/background.js` |
 
@@ -64,10 +64,17 @@ star-sanctuary/
 - `pnpm-workspace.yaml`: workspace 范围
 - `tsconfig.json`: 各 package 的 TS 编译依赖顺序
 - `vitest.config.ts`: 测试排除项和 Node/forks 配置
+- `scripts/artifact-contract.mjs`: 共享 package/release 产物契约，校验入口、bin、声明资源、路径 containment 与 release version，并驱动非 `dist` bin 复制
+- `scripts/verify-workspace-build.mjs`: 对 workspace package 编译产物执行 ArtifactContract Gate
+- `scripts/build-web-assets.mjs`: 将 WebChat 的第三方脚本与字体本地化为哈希资产，并生成完整性与许可证清单
+- `scripts/verify-webchat-security-policy.mjs`: 以 Chromium 验证 WebChat enforced CSP 首屏与 RichContentRenderer 的 Trusted Types 富内容 fixture
 - `scripts/build-release-light-assets.mjs`: 生成 GitHub Release 轻量正式附件（`zip` / `tar.gz` / `manifest` / `sha256`）
-- `scripts/build-winget-assets.mjs`: 基于 Windows portable 产物生成 `winget` 发布 zip、hash 与 YAML manifests
-- `scripts/verify-release-light-assets.mjs`: 校验轻量正式附件结构、版本与 hash
+- `scripts/build-winget-assets.mjs`: 对源 portable 执行 ArtifactContract/Relay probe 后生成 `winget` 发布 zip、hash 与 YAML manifests
+- `scripts/verify-release-light-assets.mjs`: 校验轻量正式附件的 staged package 契约、版本与 hash
 - `scripts/verify-winget-assets.mjs`: 校验本地生成的 `winget` 资产与 manifests 一致性
+- `scripts/normalize-osv-report.mjs`: 将固定 OSV-Scanner 输出收敛为 dependency governance 报告，供 Quality Gate fixture 与仓库依赖扫描复用
+- `scripts/evaluate-dependency-audit-gate.mjs`: 对依赖扫描报告执行 findings/failure/freshness 的 fail-closed Gate 判定
+- `scripts/run-build-benchmark.mjs`: 运行 B00 TypeScript forced/incremental BuildGraph 基准并输出不设性能阈值的 JSON 报告
 - `docs/Star Sanctuary使用手册.md`: 当前版用户手册，聚焦 Agent / 工具 / Agent Teams 的使用与配置说明
 - `docs/指挥模式与动态工作流使用说明.md`: 指挥模式与动态工作流（DW）的使用说明、脚本编写、API 参考
 
@@ -92,15 +99,19 @@ star-sanctuary/
 
 ### Frontend
 - `apps/web/public/app.js`: WebChat 装配入口
+- `apps/web/public/bootstrap-startup.js`: 首屏主题、语言与启动性能标记的同源外置 bootstrap，满足 CSP `script-src 'self'`
 - `apps/web/public/app/bootstrap/dom.js`: DOM 引用总表
 - `apps/web/public/app/bootstrap/state.js`: 前端全局状态
+- `apps/web/public/app/bootstrap/web-assets.js`: 本地 hash Web 资产清单与加载就绪状态
 - `apps/web/public/app/features/`: 前端业务功能模块
 
 ## 4. 关键功能位置
 
 ### Auth / Pairing / Security
 - `packages/belldandy-core/src/security/`: pairing、allowlist、连接安全
+- `packages/belldandy-protocol/src/safe-output.ts` / `outbound-request-policy.ts`: 公共错误脱敏、受限输出读取与出站 URL/redirect 策略
 - `packages/belldandy-core/src/server-websocket-runtime.ts`: WebSocket 握手、鉴权、可用 methods/events
+- `packages/belldandy-core/src/gateway-method-registry.ts` / `request-admission.ts`: RPC 方法目录、风险分类、配对/role/capability admission
 - `packages/belldandy-core/src/channel-security-store.ts`: 渠道安全审批配置
 - `packages/belldandy-skills/src/security-matrix.ts`: 工具安全矩阵
 - `packages/belldandy-skills/src/runtime-policy.ts`: tool launch/runtime policy
@@ -108,7 +119,7 @@ star-sanctuary/
 ### API / RPC / HTTP
 - `packages/belldandy-core/src/server.ts`: RPC 请求分发总入口
 - `packages/belldandy-core/src/server-methods/`: `models` / `goal` / `memory` / `dream` / `tools` / `workspace` / `subtask`
-- `packages/belldandy-core/src/server-http-routes.ts`: `/health`、`/api/message`、webhook、静态资源
+- `packages/belldandy-core/src/server-http-routes.ts`: `/health`、`/api/message`、webhook、静态资源，以及 WebChat enforced CSP 与基础浏览器安全响应头
 - `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，本地打开保存目录/定位文件
 - `packages/belldandy-core/src/query-runtime-message-send.ts`: `message.send` 主执行链、tool result metadata / `failureKind` / follow-up runtime marks 透传
 - `packages/belldandy-core/src/attachment-understanding-runner.ts`: 附件落盘、图片/视频自动识别摘要注入、音频转写缓存复用
@@ -118,6 +129,7 @@ star-sanctuary/
 ### UI / WebChat
 - `apps/web/public/app.js`: 前端总装配
 - `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示
+- `apps/web/public/app/features/rich-content-renderer.js`: DOMPurify 富内容清理、媒体 URL allowlist 与受限 TrustedHTML policy
 - `apps/web/public/app/features/chat-network.js`: WebSocket 请求/响应、模型/Agent 选择
 - `apps/web/public/app/features/settings-runtime.js`: 设置面板运行时桥接
 - `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources、Preflight Compression 配置/preview）
@@ -126,6 +138,7 @@ star-sanctuary/
 
 ### State / Workspace / Persistence
 - `packages/belldandy-protocol/src/state-dir.ts`: 全局 state dir 解析
+- `packages/belldandy-protocol/src/filesystem-capability.ts`: canonical root、realpath containment、safe relative/basename 与字节上限的共享文件系统能力
 - `packages/belldandy-protocol/src/identity.ts`: `IDENTITY.md` authority profile 解析、owner UUID 读取、运行态 authority relation 评估
 - `packages/belldandy-agent/src/workspace.ts`: `SOUL.md` / `IDENTITY.md` / `USER.md` / `AGENTS.md` 等 workspace 文件加载
 - `apps/web/public/app/features/persistence.js`: 前端 localStorage 持久化
@@ -147,6 +160,7 @@ star-sanctuary/
 
 ### Goals / Long-running Work
 - `packages/belldandy-core/src/goals/manager.ts`: goal 主状态机与治理中心
+- `packages/belldandy-core/src/goals/storage-policy.ts`: Goal 默认目录 owner marker、删除预览与受限物理清理策略
 - `packages/belldandy-core/src/goals/capability-acceptance-gate.ts`: verifier / goals fan-in 结构化 contract gate
 - `packages/belldandy-core/src/goals/task-graph.ts`: goal task graph
 - `packages/belldandy-core/src/goals/runtime.ts`: goal 运行态读写
@@ -177,7 +191,8 @@ star-sanctuary/
 - `packages/belldandy-core/src/workflow-journal.ts`: `WorkflowJournal` 事件溯源（CRUD、migration 查询、统计）
 - `packages/belldandy-core/src/workflow-fingerprint.ts`: 稳定指纹计算、`computeMigrationFingerprint()`
 - `packages/belldandy-core/src/workflow-budget-guard.ts`: 预算熔断
-- `packages/belldandy-core/src/workflow-script-loader.ts`: 脚本加载器（file / builtin / inline + AST 安全扫描）
+- `packages/belldandy-core/src/workflow-execution-policy.ts`: 启动期 Workflow source trust policy、批准 manifest 与 inline/file 迁移开关
+- `packages/belldandy-core/src/workflow-script-loader.ts`: 脚本加载器（file / builtin / inline + AST 安全扫描），按 canonical root 与批准 hash 加载文件 source
 - `packages/belldandy-core/src/workflow-builtin-registry.ts`: 内置工作流注册表
 - `packages/belldandy-core/src/workflow-builtin-code-audit.ts`: `code-audit` 内置工作流（3 阶段安全审计）
 - `packages/belldandy-core/src/workflow-builtin-parallel-research.ts`: `parallel-research` 内置工作流（2 阶段并行研究）
@@ -197,23 +212,32 @@ star-sanctuary/
 - `packages/belldandy-skills/src/builtin/multimedia/`: 图片生成、图片识别、视频识别、TTS/STT、摄像头与屏幕截图工具
 - `packages/belldandy-skills/src/skill-registry.ts`: skills 汇总与 eligibility
 - `packages/belldandy-plugins/src/registry.ts`: plugin 加载和 hooks 聚合
+- `packages/belldandy-core/src/extension-host.ts` / `extension-integrity.ts`: Marketplace 扩展加载 seam、物化目录内容 hash 与真实路径/manifest identity 校验
 - `packages/belldandy-mcp/src/manager.ts`: MCP server 连接管理
 
 ### Channels / Community / External Delivery
 - `packages/belldandy-channels/src/manager.ts`: channel manager
+- `packages/belldandy-channels/src/media-reader.ts`: 已批准媒体请求的 deadline 与总字节上限读取器
 - `packages/belldandy-channels/src/community.ts`: community 长连接与房间消息处理
 - `packages/belldandy-channels/src/feishu.ts`: 飞书渠道
 - `packages/belldandy-channels/src/qq.ts`: QQ 渠道
 - `packages/belldandy-channels/src/discord.ts`: Discord 渠道
+- `packages/belldandy-channels/src/router/`: 安全 ingress preflight、路由规则与渠道策略加载
 - `packages/belldandy-core/src/query-runtime-email-outbound.ts`: 邮件外发
 - `packages/belldandy-core/src/query-runtime-external-outbound.ts`: 外部消息外发审批/执行
 
 ### Browser Relay / Automation
-- `packages/belldandy-browser/src/relay.ts`: 本地 relay server
+- `packages/belldandy-browser/src/relay.ts` / `relay-credential.ts`: 本地 Relay、握手凭据、连接/消息限额与关闭清理
 - `apps/browser-extension/background.js`: 扩展 service worker、tab attach、CDP command forwarding
 - `packages/belldandy-skills/src/builtin/browser/`: 浏览器工具
 
 ### Config / Runtime / Distribution
+- `install.ps1` / `install.sh`: 命令安装器；验证 Release manifest/checksum、下载上限和受限归档条目后才替换 `current/`
+- `packages/star-sanctuary-distribution/scripts/build-portable.mjs`: 从 workspace 构建 Windows portable runtime，并通过共享 ArtifactContract 复制 package 非 `dist` bin
+- `packages/star-sanctuary-distribution/scripts/build-single-exe.mjs`: 消费已通过 ArtifactContract/Relay probe 的 full portable 构建 single-exe
+- `packages/star-sanctuary-distribution/scripts/verify-portable-artifacts.mjs`: 校验 portable 或 single-exe 已提取 runtime 的 package/manifest/recovery 契约，并在隔离目录执行 Relay CLI loopback probe
+- `packages/star-sanctuary-distribution/src/bootstrap-auth-token.ts`: Core/portable/single-exe 共用的 256-bit setup token 生成入口
+- `packages/star-sanctuary-distribution/src/runtime-manifest.ts`: portable/single-exe runtime manifest 与 version descriptor 的有界解析、路径和完整性校验
 - `packages/star-sanctuary-distribution/src/runtime-paths.ts`: runtime/env/web root 解析
 - `packages/star-sanctuary-distribution/src/portable-runtime.ts`: portable runtime
 - `packages/star-sanctuary-distribution/src/runtime-extract.ts`: single-exe 解包

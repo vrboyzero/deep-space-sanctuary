@@ -166,16 +166,17 @@ export function extractReadabilityContent(html: string, url: string): ContentExt
     const reader = new Readability(doc.window.document);
     const article = reader.parse();
 
-    if (!article) return null;
+    // Readability 0.6 exposes nullable fields; keep this Adapter's stable result contract at the boundary.
+    if (!article?.content) return null;
 
     const markdown = createTurndownService().turndown(article.content);
 
     return {
-        title: article.title,
+        title: article.title ?? "",
         content: markdown,
-        excerpt: article.excerpt,
-        byline: article.byline,
-        siteName: article.siteName,
+        excerpt: article.excerpt ?? undefined,
+        byline: article.byline ?? undefined,
+        siteName: article.siteName ?? undefined,
     };
 }
 

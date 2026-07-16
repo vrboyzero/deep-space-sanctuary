@@ -1,5 +1,6 @@
 export const STORE_KEY = "belldandy.webchat.auth";
 export const SESSION_AUTH_TOKEN_KEY = "belldandy.webchat.sessionAuthToken";
+export const SESSION_AUTH_REMEMBER_KEY = "belldandy.webchat.rememberSessionAuth";
 export const CLIENT_KEY = "belldandy.webchat.clientId";
 export const WORKSPACE_ROOTS_KEY = "belldandy.webchat.workspaceRoots";
 export const MODEL_ID_KEY = "belldandy.webchat.modelId";

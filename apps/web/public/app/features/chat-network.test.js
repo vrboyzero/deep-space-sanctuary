@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildManualModelValue,
@@ -215,6 +215,234 @@ describe("chat network transient setup token recovery", () => {
       authMode: "token",
       authValue: "setup-123456",
     })).toBe(false);
+  });
+});
+
+function createConnectionHarness() {
+  const previousLocation = globalThis.location;
+  const previousStartup = globalThis.__SS_WEBCHAT_STARTUP__;
+  const previousWebSocket = globalThis.WebSocket;
+  const sockets = [];
+  let currentSocket = null;
+  let ready = false;
+  let requestId = 0;
+
+  class FakeWebSocket {
+    static CLOSED = 3;
+
+    constructor(url) {
+      const listeners = new Map();
+      const socket = {
+        url,
+        readyState: 0,
+        sent: [],
+        closeCalls: 0,
+        addEventListener(type, listener) {
+          const registered = listeners.get(type) ?? [];
+          registered.push(listener);
+          listeners.set(type, registered);
+        },
+        send(data) {
+          this.sent.push(data);
+        },
+        close() {
+          this.closeCalls += 1;
+        },
+        dispatch(type, event = {}) {
+          for (const listener of listeners.get(type) ?? []) {
+            listener(event);
+          }
+        },
+      };
+      sockets.push(socket);
+      return socket;
+    }
+  }
+
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: {
+      protocol: "http:",
+      host: "127.0.0.1:28889",
+    },
+  });
+  Object.defineProperty(globalThis, "__SS_WEBCHAT_STARTUP__", {
+    configurable: true,
+    value: { mark: () => {} },
+  });
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: FakeWebSocket,
+  });
+  vi.useFakeTimers();
+
+  const feature = createChatNetworkFeature({
+    refs: {
+      statusEl: null,
+      sendBtn: null,
+      authModeEl: { value: "none" },
+      authValueEl: { value: "" },
+      workspaceRootsEl: { value: "" },
+      userUuidEl: { value: "" },
+      agentSelectEl: null,
+      modelPickerEl: null,
+      modelFilterEl: null,
+      modelSelectEl: null,
+    },
+    keys: {
+      storeKey: "store",
+      sessionAuthTokenKey: "session-token",
+      workspaceRootsKey: "roots",
+      uuidKey: "uuid",
+      agentIdKey: "agent",
+      modelIdKey: "model",
+      clientId: "client-1",
+    },
+    getTransientUrlToken: () => "",
+    getSocket: () => currentSocket,
+    setSocket: (value) => {
+      currentSocket = value;
+    },
+    getReady: () => ready,
+    setReady: (value) => {
+      ready = value;
+    },
+    persistConnectionFields: () => {},
+    setStatus: () => {},
+    safeJsonParse: JSON.parse,
+    makeId: () => `req-${++requestId}`,
+  });
+
+  return {
+    feature,
+    sockets,
+    restore() {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      if (previousLocation === undefined) {
+        delete globalThis.location;
+      } else {
+        Object.defineProperty(globalThis, "location", {
+          configurable: true,
+          value: previousLocation,
+        });
+      }
+      if (previousStartup === undefined) {
+        delete globalThis.__SS_WEBCHAT_STARTUP__;
+      } else {
+        Object.defineProperty(globalThis, "__SS_WEBCHAT_STARTUP__", {
+          configurable: true,
+          value: previousStartup,
+        });
+      }
+      if (previousWebSocket === undefined) {
+        delete globalThis.WebSocket;
+      } else {
+        Object.defineProperty(globalThis, "WebSocket", {
+          configurable: true,
+          value: previousWebSocket,
+        });
+      }
+    },
+  };
+}
+
+describe("chat network connection close", () => {
+  it("handles a websocket close without raising a page error", () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+
+      expect(() => harness.sockets[0].dispatch("close", { code: 1006, reason: "" })).not.toThrow();
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("settles pending requests and clears their deadlines when the socket closes", async () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      let result = "unsettled";
+      const request = harness.feature.sendReq({
+        type: "req",
+        id: "pending-1",
+        method: "system.doctor",
+      });
+      void request.then((value) => {
+        result = value;
+      });
+
+      harness.sockets[0].dispatch("close", { code: 4403, reason: "token required" });
+      await Promise.resolve();
+
+      expect(result).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("settles only the requests owned by the socket generation that closed", async () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      const oldSocket = harness.sockets[0];
+      let oldResult = "unsettled";
+      void harness.feature.sendReq({
+        type: "req",
+        id: "shared-1",
+        method: "system.doctor",
+      }).then((value) => {
+        oldResult = value;
+      });
+
+      harness.feature.connect();
+      const currentSocket = harness.sockets[1];
+      let currentResult = "unsettled";
+      void harness.feature.sendReq({
+        type: "req",
+        id: "shared-1",
+        method: "system.doctor",
+      }).then((value) => {
+        currentResult = value;
+      });
+
+      oldSocket.dispatch("close", { code: 4403, reason: "token required" });
+      await Promise.resolve();
+
+      expect(oldResult).toBeNull();
+      expect(currentResult).toBe("unsettled");
+      expect(vi.getTimerCount()).toBe(1);
+
+      const response = { type: "res", id: "shared-1", ok: true, payload: { status: "ok" } };
+      currentSocket.dispatch("message", { data: JSON.stringify(response) });
+      await Promise.resolve();
+
+      expect(currentResult).toEqual(response);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("handles repeated close events for one socket only once", () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      const socket = harness.sockets[0];
+
+      socket.dispatch("close", { code: 1006, reason: "" });
+      socket.dispatch("close", { code: 1006, reason: "" });
+
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      harness.restore();
+    }
   });
 });
 

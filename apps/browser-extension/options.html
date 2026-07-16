@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Star Sanctuary Relay</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 24px; max-width: 560px; }
+    form { display: grid; gap: 16px; }
+    label { display: grid; gap: 6px; font-weight: 600; }
+    input { box-sizing: border-box; width: 100%; padding: 8px; font: inherit; }
+    button { width: fit-content; padding: 8px 14px; font: inherit; }
+    #status { min-height: 1.4em; margin: 0; }
+  </style>
+</head>
+<body>
+  <form id="relayOptions">
+    <label>Relay port
+      <input id="relayPort" type="number" min="1" max="65535" inputmode="numeric" required>
+    </label>
+    <label>Relay credential
+      <input id="relayToken" type="password" autocomplete="off" spellcheck="false" required>
+    </label>
+    <button type="submit">Save</button>
+    <p id="status" role="status"></p>
+  </form>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

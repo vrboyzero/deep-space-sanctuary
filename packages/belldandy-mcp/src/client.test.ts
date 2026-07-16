@@ -5,6 +5,7 @@ import path from "node:path";
 
 import {
   MCPClient,
+  calculateMCPReconnectDelay,
   classifyStdioStderrLine,
   expandFilesystemServerArgs,
   parseExtraWorkspaceRoots,
@@ -116,6 +117,14 @@ describe("MCPClient reconnect", () => {
     });
   }
 
+  it("uses capped exponential backoff with bounded jitter", () => {
+    expect(calculateMCPReconnectDelay(1, 1_000, 30_000, () => 0)).toBe(500);
+    expect(calculateMCPReconnectDelay(2, 1_000, 30_000, () => 0)).toBe(1_000);
+    expect(calculateMCPReconnectDelay(3, 1_000, 30_000, () => 0.999_999)).toBe(4_000);
+    expect(calculateMCPReconnectDelay(10, 10_000, 30_000, () => 0)).toBe(15_000);
+    expect(calculateMCPReconnectDelay(10, 10_000, 30_000, () => 0.999_999)).toBe(30_000);
+  });
+
   it("cancels pending reconnect delay when disconnected", async () => {
     const client = createClient();
     const clientInternals = client as unknown as { cleanup: () => Promise<void> };
@@ -135,6 +144,7 @@ describe("MCPClient reconnect", () => {
   });
 
   it("reuses the same reconnect loop for concurrent callers", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.999_999);
     const client = createClient();
     const clientInternals = client as unknown as { cleanup: () => Promise<void> };
     const cleanupSpy = vi.spyOn(clientInternals, "cleanup").mockResolvedValue(undefined);
@@ -199,6 +209,42 @@ describe("MCPClient reconnect", () => {
       lastErrorSource: "connect",
       lastErrorRetryable: false,
     }));
+  });
+});
+
+describe("MCPClient SSE outbound policy", () => {
+  it("rejects private and insecure SSE targets by default", async () => {
+    const privateClient = new MCPClient({
+      id: "private-sse",
+      name: "Private SSE",
+      transport: { type: "sse", url: "http://127.0.0.1:3000/sse" },
+    });
+    const insecureClient = new MCPClient({
+      id: "insecure-sse",
+      name: "Insecure SSE",
+      transport: { type: "sse", url: "http://8.8.8.8:3000/sse" },
+    });
+
+    await expect((privateClient as unknown as { createTransport: () => Promise<unknown> }).createTransport())
+      .rejects.toThrow("private or reserved network");
+    await expect((insecureClient as unknown as { createTransport: () => Promise<unknown> }).createTransport())
+      .rejects.toThrow("HTTP requires explicit opt-in");
+  });
+
+  it("allows local SSE targets only with explicit compatibility switches", async () => {
+    const client = new MCPClient({
+      id: "local-sse",
+      name: "Local SSE",
+      transport: {
+        type: "sse",
+        url: "http://127.0.0.1:3000/sse",
+        allowInsecureHttp: true,
+        allowPrivateNetwork: true,
+      },
+    });
+
+    await expect((client as unknown as { createTransport: () => Promise<unknown> }).createTransport())
+      .resolves.toBeDefined();
   });
 });
 

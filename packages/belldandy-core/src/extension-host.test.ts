@@ -163,7 +163,35 @@ describe("initializeExtensionHost", () => {
       "skills_search",
       "skill_get",
     ]));
+    expect(toolExecutor.getRegistryInventory().entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "plugin_good_tool",
+        origin: "plugin",
+        contractStatus: "governed",
+      }),
+    ]));
     expect(logs.some((line) => line.includes("eligible: 0 prompt-injected, 2 searchable"))).toBe(true);
+  });
+
+  it("fails startup when the required bundled skills directory is invalid", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-invalid-skills-"));
+    tempDirs.push(stateDir);
+    const toolsConfigManager = new ToolsConfigManager(stateDir);
+    await toolsConfigManager.load();
+
+    await expect(initializeExtensionHost({
+      stateDir,
+      bundledSkillsDir: path.join(stateDir, "missing-bundled-skills"),
+      workspaceRoot: stateDir,
+      toolsEnabled: true,
+      toolExecutor: new ToolExecutor({ tools: [], workspaceRoot: stateDir }),
+      toolsConfigManager,
+      activeMcpServers: [],
+      logger: {
+        info() {},
+        warn() {},
+      },
+    })).rejects.toThrow(/Invalid required skill directory/);
   });
 
   it("bridges legacy plugin hooks into HookRegistry and records lifecycle summary", async () => {
@@ -274,6 +302,7 @@ describe("initializeExtensionHost", () => {
     const skillPackSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-skill-pack-source-"));
     tempDirs.push(stateDir, pluginSourceDir, skillPackSourceDir);
 
+    await fs.mkdir(bundledSkillsDir, { recursive: true });
     await fs.mkdir(path.join(pluginSourceDir, "skills", "market-plugin-skill"), { recursive: true });
     await fs.mkdir(path.join(pluginSourceDir, "dist"), { recursive: true });
     await fs.writeFile(
@@ -430,5 +459,52 @@ describe("initializeExtensionHost", () => {
       "skill_get",
     ]));
     expect(logs.some((line) => line.includes("已加载 1 个插件"))).toBe(true);
+  });
+
+  it("skips a marketplace plugin whose approved materialized content has changed", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-integrity-"));
+    const bundledSkillsDir = path.join(stateDir, "bundled-skills");
+    const pluginSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-integrity-source-"));
+    tempDirs.push(stateDir, pluginSourceDir);
+    await fs.mkdir(bundledSkillsDir, { recursive: true });
+    await fs.mkdir(path.join(pluginSourceDir, "dist"), { recursive: true });
+    await fs.writeFile(path.join(pluginSourceDir, "belldandy-extension.json"), JSON.stringify({
+      schemaVersion: 1,
+      name: "integrity-plugin",
+      kind: "plugin",
+      version: "1.0.0",
+      entry: { pluginModule: "dist/plugin.mjs" },
+    }, null, 2), "utf-8");
+    await fs.writeFile(path.join(pluginSourceDir, "dist", "plugin.mjs"), "export default {};\n", "utf-8");
+    const installed = await installMarketplaceExtension({
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory", path: pluginSourceDir },
+    });
+    await fs.writeFile(path.join(installed.installed.installPath, "dist", "plugin.mjs"), "throw new Error('must not import');\n", "utf-8");
+
+    const toolsConfigManager = new ToolsConfigManager(stateDir);
+    await toolsConfigManager.load();
+    const logs: string[] = [];
+    const result = await initializeExtensionHost({
+      stateDir,
+      bundledSkillsDir,
+      workspaceRoot: stateDir,
+      toolsEnabled: true,
+      toolExecutor: new ToolExecutor({ tools: [], workspaceRoot: stateDir }),
+      toolsConfigManager,
+      activeMcpServers: [],
+      logger: {
+        info: (scope, message) => logs.push(`info:${scope}:${message}`),
+        warn: (scope, message) => logs.push(`warn:${scope}:${message}`),
+      },
+    });
+
+    expect(result.lifecycle).toMatchObject({
+      installedMarketplaceExtensionsLoaded: 0,
+      installedMarketplacePluginsLoaded: 0,
+    });
+    expect(result.extensionRuntime.summary.pluginCount).toBe(0);
+    expect(logs.some((line) => line.includes("content integrity mismatch"))).toBe(true);
   });
 });

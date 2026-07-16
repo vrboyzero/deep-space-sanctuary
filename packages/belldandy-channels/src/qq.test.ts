@@ -460,6 +460,54 @@ describe("QqChannel", () => {
         expect(connectSpy).not.toHaveBeenCalled();
     });
 
+    it("rejects an oversized qq voice attachment before reading its response body", async () => {
+        const readBody = vi.fn(async () => new ArrayBuffer(0));
+        vi.stubGlobal("fetch", vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            headers: new Headers({ "content-length": String(16 * 1024 * 1024 + 1) }),
+            body: null,
+            arrayBuffer: readBody,
+        })) as any);
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+        });
+
+        await expect((channel as any).downloadVoiceAttachmentBuffer(
+            "https://multimedia.nt.qq.com.cn/download?id=oversized",
+            "oversized voice",
+        )).rejects.toThrow(/byte limit/i);
+        expect(readBody).not.toHaveBeenCalled();
+    });
+
+    it("rejects traversal file names before writing a qq ffmpeg temporary input", async () => {
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+        });
+        const writeFile = vi.spyOn(fs, "writeFile").mockResolvedValue(undefined);
+        const runCommand = vi.spyOn(channel as any, "runCommand").mockResolvedValue({
+            exitCode: 1,
+            stdout: "",
+            stderr: "blocked for path test",
+        });
+
+        await expect((channel as any).transcodeAudioBufferToWav(
+            Buffer.from("voice"),
+            "../outside.amr",
+            "normalized.wav",
+        )).rejects.toThrow(/unsafe basename/i);
+        expect(writeFile).not.toHaveBeenCalled();
+        expect(runCommand).not.toHaveBeenCalled();
+    });
+
     it("downloads and transcribes qq voice attachments from C2C events", async () => {
         const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
             const url = String(input);
@@ -1065,7 +1113,7 @@ describe("QqChannel", () => {
         }
     });
 
-    it("captures raw qq message events to the configured sample directory when enabled", async () => {
+    it("captures bounded qq event summaries without retaining raw message payloads", async () => {
         const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qq-event-samples-"));
         const sampleDir = path.join(stateDir, "tmp", "qq-event-samples");
         const channel = new QqChannel({
@@ -1104,16 +1152,16 @@ describe("QqChannel", () => {
                         channel: "qq",
                         eventType: "C2C_MESSAGE_CREATE",
                         sequence: 42,
-                        messageId: "C2C_MESSAGE_CREATE:msg-audio-1",
+                        messageIdHash: expect.any(String),
+                        chatIdHash: expect.any(String),
                     });
                     expect(parsed.payload).toMatchObject({
+                        op: 0,
                         id: "C2C_MESSAGE_CREATE:msg-audio-1",
-                        d: {
-                            author: {
-                                id: "user-a",
-                            },
-                        }
+                        dataKeys: expect.arrayContaining(["author", "content"]),
                     });
+                    expect(JSON.stringify(parsed)).not.toContain("Alice");
+                    expect(JSON.stringify(parsed)).not.toContain("user-a");
                     return;
                 }
                 await sleep(20);
@@ -1123,5 +1171,36 @@ describe("QqChannel", () => {
         } finally {
             await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
         }
+    });
+
+    it("runs ingress admission before building QQ media text", async () => {
+        const router = {
+            admitIngress: vi.fn(() => ({ allow: false, reason: "channel_security:policy_missing" })),
+            decide: vi.fn(),
+        };
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            router: router as any,
+        });
+        const buildInboundText = vi.spyOn(channel as any, "buildInboundText").mockResolvedValue("unexpected");
+
+        await (channel as any).handleMessage({
+            id: "qq-blocked-media",
+            content: "",
+            channel_id: "channel-blocked",
+            guild_id: "guild-blocked",
+            author: { id: "user-blocked", username: "Blocked" },
+        }, "MESSAGE_CREATE");
+
+        expect(router.admitIngress).toHaveBeenCalledWith(expect.objectContaining({
+            channel: "qq",
+            text: "",
+        }));
+        expect(buildInboundText).not.toHaveBeenCalled();
+        expect(router.decide).not.toHaveBeenCalled();
     });
 });

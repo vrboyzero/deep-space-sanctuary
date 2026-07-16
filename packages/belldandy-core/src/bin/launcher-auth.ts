@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { generateBootstrapAuthToken } from "@star-sanctuary/distribution";
 
 export type GatewayAuthMode = "none" | "token" | "password";
 
@@ -13,10 +13,6 @@ export interface ResolveLauncherSetupAuthParams {
 export interface ResolveLauncherSetupAuthResult {
   authToken?: string;
   setupToken?: string;
-}
-
-export function createSetupToken(): string {
-  return `setup-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
 }
 
 export function resolveLauncherSetupAuth(
@@ -38,7 +34,7 @@ export function resolveLauncherSetupAuth(
     return {};
   }
 
-  const setupToken = params.setupToken?.trim() || (params.generateSetupToken ?? createSetupToken)();
+  const setupToken = params.setupToken?.trim() || (params.generateSetupToken ?? generateBootstrapAuthToken)();
   return {
     authToken: setupToken,
     setupToken,

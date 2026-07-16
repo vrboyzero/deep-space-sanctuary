@@ -18,7 +18,7 @@ import {
   type CronSchedulerHandle,
 } from "../cron/index.js";
 import type { GoalManager } from "../goals/manager.js";
-import { RelayServer } from "@belldandy/browser";
+import { RelayServer, resolveRelayCredential } from "@belldandy/browser";
 
 function parseIntervalMs(raw: string): number {
   const match = /^(\d+)(m|h|s)?$/.exec(raw.trim().toLowerCase());
@@ -362,19 +362,28 @@ export async function startCronRuntime(input: {
   return cronSchedulerHandle;
 }
 
-export function startBrowserRelayRuntime(input: {
+export async function startBrowserRelayRuntime(input: {
   enabled: boolean;
   port: number;
+  stateDir: string;
+  configuredToken?: string;
   logger: GatewayBackgroundLogger;
-}): void {
+}): Promise<void> {
   if (!input.enabled) {
     return;
   }
   const relayLogger = input.logger.child("browser-relay");
-  const relay = new RelayServer(input.port, relayLogger);
-  relay.start().then(() => {
-    input.logger.info("browser-relay", `enabled (port=${input.port})`);
-  }).catch((error: unknown) => {
+  try {
+    const credential = await resolveRelayCredential({
+      stateDir: input.stateDir,
+      configuredToken: input.configuredToken,
+    });
+    // Browser tools read the token dynamically from process.env; never write it to logs or WebChat config.
+    process.env.BELLDANDY_RELAY_TOKEN = credential.token;
+    const relay = new RelayServer(input.port, { token: credential.token }, relayLogger);
+    await relay.start();
+    input.logger.info("browser-relay", `enabled (port=${relay.port}, credential=${credential.source})`);
+  } catch (error) {
     input.logger.error("browser-relay", "Relay Error", error);
-  });
+  }
 }

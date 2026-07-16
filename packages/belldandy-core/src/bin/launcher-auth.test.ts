@@ -39,6 +39,17 @@ test("token mode generates setup token only when auto-open is enabled and no aut
   })).toBe("http://localhost:28889/?token=setup-generated-token");
 });
 
+test("token mode default generator emits the shared 256-bit setup token format", () => {
+  const resolved = resolveLauncherSetupAuth({
+    authMode: "token",
+    authToken: undefined,
+    autoOpenBrowser: true,
+  });
+
+  expect(resolved.authToken).toMatch(/^setup-[A-Za-z0-9_-]{43}$/);
+  expect(resolved.setupToken).toBe(resolved.authToken);
+});
+
 test("token mode reuses configured auth token for auto-open query", () => {
   const resolved = resolveLauncherSetupAuth({
     authMode: "token",

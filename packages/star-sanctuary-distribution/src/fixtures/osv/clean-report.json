@@ -1,0 +1,11 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "fixtures/clean/package-lock.json",
+        "type": "lockfile"
+      },
+      "packages": []
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+export { generateBootstrapAuthToken } from "./bootstrap-auth-token.js";
 export {
   ensureDefaultEnvFile,
   ensureDefaultEnvFiles,
@@ -44,6 +45,10 @@ export {
 export {
   readPortableVersionFile,
   readRuntimeManifest,
+  parseAndValidatePortableVersion,
+  parseAndValidateRuntimeManifest,
+  parseAndValidatePortableVersionJson,
+  parseAndValidateRuntimeManifestJson,
   resolveRuntimePayloadPaths,
   resolveSingleExePayloadRoot,
   validateInstalledRuntimeVersion,
@@ -53,6 +58,8 @@ export {
   type RuntimeManifest,
   type RuntimeManifestFileEntry,
   type RuntimeInstallationValidation,
+  type ValidatedPortableVersionFile,
+  type ValidatedRuntimeManifest,
 } from "./runtime-manifest.js";
 export {
   ensureSingleExeRuntime,

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { FilesystemCapability } from "@belldandy/protocol";
 import { ConversationStore, conversationAsyncFs } from "./conversation.js";
 import { CompactionRuntimeTracker } from "./compaction-runtime.js";
 
@@ -88,7 +89,7 @@ describe("ConversationStore", () => {
         ]);
     });
 
-    it("should ignore ENOENT append noise when dataDir has been removed", async () => {
+    it("should skip persistence without surfacing noise when dataDir has been removed", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
         const dataDir = path.join(tempDir, "sessions");
         const store = new ConversationStore({ dataDir });
@@ -98,9 +99,8 @@ describe("ConversationStore", () => {
         const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
         store.addMessage("conv-noise", "user", "hello");
-        await waitFor(() => appendSpy.mock.calls.length === 1);
 
-        expect(appendSpy).toHaveBeenCalled();
+        expect(appendSpy).not.toHaveBeenCalled();
         expect(errorSpy).not.toHaveBeenCalled();
 
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -315,6 +315,28 @@ describe("ConversationStore", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("should skip persistence when dataDir disappears during capability resolution", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const store = new ConversationStore({ dataDir });
+        const resolveForWriteRelative = FilesystemCapability.prototype.resolveForWriteRelative;
+        vi.spyOn(FilesystemCapability.prototype, "resolveForWriteRelative").mockImplementation(function (
+            this: FilesystemCapability,
+            relativePath,
+            label,
+        ) {
+            fs.rmSync(dataDir, { recursive: true, force: true });
+            return resolveForWriteRelative.call(this, relativePath, label);
+        });
+
+        const getConversationFilePath = (store as unknown as {
+            getConversationFilePath: (id: string, suffix: string) => string | undefined;
+        }).getConversationFilePath.bind(store);
+
+        expect(getConversationFilePath("conv-race", ".jsonl")).toBeUndefined();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
     it("should persist and restore plan state for meta-only conversations", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
         const dataDir = path.join(tempDir, "sessions");
@@ -484,6 +506,26 @@ describe("ConversationStore", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("should reject unsafe legacy conversation file candidates while retaining safe legacy files", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const outsidePath = path.join(tempDir, "outside.jsonl");
+        const legacyId = "legacy-room";
+        const outsideContent = `${JSON.stringify({ role: "user", content: "outside", timestamp: 1 })}\n`;
+        const legacyContent = `${JSON.stringify({ role: "user", content: "legacy", timestamp: 2 })}\n`;
+
+        fs.mkdirSync(dataDir, { recursive: true });
+        fs.writeFileSync(outsidePath, outsideContent, "utf8");
+        fs.writeFileSync(path.join(dataDir, `${legacyId}.jsonl`), legacyContent, "utf8");
+        const store = new ConversationStore({ dataDir });
+
+        expect(store.getHistory("../outside")).toEqual([]);
+        expect(fs.readFileSync(outsidePath, "utf8")).toBe(outsideContent);
+        expect(store.getHistory(legacyId)).toEqual([{ role: "user", content: "legacy" }]);
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
     it("should avoid sync file reads on async cold-load path", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
         const dataDir = path.join(tempDir, "sessions");
@@ -543,6 +585,11 @@ describe("ConversationStore", () => {
             summarizer: async () => "rolling-summary-v1",
         });
         const id = "conv-session-digest";
+        const originalAppendFile = conversationAsyncFs.appendFile;
+        vi.spyOn(conversationAsyncFs, "appendFile").mockImplementation(async (filePath, data, encoding) => {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            return originalAppendFile(filePath, data, encoding);
+        });
 
         store.addMessage(id, "user", "A".repeat(80));
         store.addMessage(id, "assistant", "B".repeat(80));

@@ -35,28 +35,37 @@ export function restoreAuthFields({ storeKey, authModeEl, authValueEl }) {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return;
-    if (parsed.mode && authModeEl) authModeEl.value = String(parsed.mode);
-    if (parsed.value && authValueEl) authValueEl.value = String(parsed.value);
+    if (!parsed || typeof parsed !== "object") throw new Error("invalid auth storage payload");
+    const mode = ["none", "token", "password"].includes(String(parsed.mode))
+      ? String(parsed.mode)
+      : "none";
+    if (authModeEl) authModeEl.value = mode;
+    if (authValueEl) authValueEl.value = "";
+    safeStorageWrite((storage) => {
+      // 升级时主动覆盖旧版 { mode, value }，避免明文 secret 在恢复后继续残留。
+      storage.setItem(storeKey, JSON.stringify({ mode }));
+    });
   } catch {
-    // ignore invalid payloads
+    if (authValueEl) authValueEl.value = "";
+    safeStorageWrite((storage) => storage.removeItem(storeKey));
   }
 }
 
-export function persistAuthFields({ storeKey, authModeEl, authValueEl, transientUrlToken = null }) {
-  if (!authModeEl || !authValueEl) return;
+export function persistAuthFields({ storeKey, authModeEl }) {
+  if (!authModeEl) return;
   const mode = authModeEl.value;
-  const value = authValueEl.value.trim();
-  if (transientUrlToken && mode === "token" && value === transientUrlToken) {
-    return;
-  }
   safeStorageWrite((storage) => {
-    storage.setItem(storeKey, JSON.stringify({ mode, value }));
+    // localStorage 只保留非敏感模式，token/password 的生命周期由 CredentialSession 管理。
+    storage.setItem(storeKey, JSON.stringify({ mode }));
   });
 }
 
-export function restoreSessionAuthToken({ sessionStoreKey, authModeEl, authValueEl }) {
+export function restoreSessionAuthToken({ sessionStoreKey, authModeEl, authValueEl, rememberSession = false }) {
   if (!sessionStoreKey || !authModeEl || !authValueEl) return null;
+  if (rememberSession !== true) {
+    safeSessionStorageWrite((storage) => storage.removeItem(sessionStoreKey));
+    return null;
+  }
   const token = safeSessionStorageRead((storage) => storage.getItem(sessionStoreKey));
   if (!token) return null;
   authModeEl.value = "token";
@@ -64,17 +73,96 @@ export function restoreSessionAuthToken({ sessionStoreKey, authModeEl, authValue
   return String(token);
 }
 
-export function persistSessionAuthToken({ sessionStoreKey, authModeEl, authValueEl }) {
+export function persistSessionAuthToken({ sessionStoreKey, authModeEl, authValueEl, rememberSession = false }) {
   if (!sessionStoreKey || !authModeEl || !authValueEl) return;
   const mode = authModeEl.value;
   const value = authValueEl.value.trim();
   safeSessionStorageWrite((storage) => {
-    if (mode === "token" && value) {
+    if (rememberSession === true && mode === "token" && value) {
       storage.setItem(sessionStoreKey, value);
       return;
     }
     storage.removeItem(sessionStoreKey);
   });
+}
+
+export function restoreSessionAuthPreference({ rememberSessionKey, rememberSessionEl }) {
+  if (!rememberSessionKey || !rememberSessionEl) return false;
+  const rememberSession = safeSessionStorageRead((storage) => storage.getItem(rememberSessionKey)) === "true";
+  rememberSessionEl.checked = rememberSession;
+  return rememberSession;
+}
+
+export function persistSessionAuthPreference({ rememberSessionKey, rememberSessionEl }) {
+  if (!rememberSessionKey || !rememberSessionEl) return false;
+  const rememberSession = rememberSessionEl.checked === true;
+  safeSessionStorageWrite((storage) => {
+    if (rememberSession) {
+      storage.setItem(rememberSessionKey, "true");
+      return;
+    }
+    storage.removeItem(rememberSessionKey);
+  });
+  return rememberSession;
+}
+
+function syncRememberSessionControl({ authModeEl, rememberSessionEl }) {
+  if (!rememberSessionEl) return;
+  rememberSessionEl.disabled = authModeEl?.value !== "token";
+}
+
+export function createCredentialSession({
+  storeKey,
+  sessionStoreKey,
+  rememberSessionKey,
+  authModeEl,
+  authValueEl,
+  rememberSessionEl,
+}) {
+  const credentialSession = {
+    restore() {
+      restoreAuthFields({ storeKey, authModeEl, authValueEl });
+      const rememberSession = restoreSessionAuthPreference({ rememberSessionKey, rememberSessionEl });
+      const restoredToken = restoreSessionAuthToken({
+        sessionStoreKey,
+        authModeEl,
+        authValueEl,
+        rememberSession,
+      });
+      syncRememberSessionControl({ authModeEl, rememberSessionEl });
+      return restoredToken;
+    },
+    persist() {
+      persistAuthFields({ storeKey, authModeEl });
+      const rememberSession = persistSessionAuthPreference({ rememberSessionKey, rememberSessionEl });
+      persistSessionAuthToken({
+        sessionStoreKey,
+        authModeEl,
+        authValueEl,
+        rememberSession,
+      });
+      syncRememberSessionControl({ authModeEl, rememberSessionEl });
+    },
+    setCredential({ mode, value } = {}) {
+      const normalizedMode = ["none", "token", "password"].includes(String(mode))
+        ? String(mode)
+        : "none";
+      if (authModeEl) authModeEl.value = normalizedMode;
+      if (authValueEl) {
+        authValueEl.value = normalizedMode === "none" ? "" : String(value ?? "");
+      }
+      credentialSession.persist();
+    },
+    setMode(mode) {
+      const normalizedMode = ["none", "token", "password"].includes(String(mode))
+        ? String(mode)
+        : "none";
+      if (authModeEl) authModeEl.value = normalizedMode;
+      if (authValueEl) authValueEl.value = "";
+      credentialSession.persist();
+    },
+  };
+  return credentialSession;
 }
 
 export function restoreWorkspaceRootsField({ workspaceRootsKey, workspaceRootsEl }) {

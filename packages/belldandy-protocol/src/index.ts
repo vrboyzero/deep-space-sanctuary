@@ -1,5 +1,33 @@
 export type JsonObject = Record<string, unknown>;
 
+export { OutboundRequestPolicy, OutboundRequestPolicyError } from "./outbound-request-policy.js";
+export type {
+  OutboundAddress,
+  OutboundDnsLookup,
+  OutboundRequestAdapter,
+  OutboundRequestAdapterInput,
+  OutboundRequestInit,
+  OutboundRequestPolicyErrorCode,
+  OutboundRequestPolicyOptions,
+  OutboundRequestResult,
+} from "./outbound-request-policy.js";
+
+export {
+  REDACTED_VALUE,
+  createPublicFailureEnvelope,
+  readResponseTextBounded,
+  redactSensitiveText,
+  redactSensitiveUrl,
+  redactSensitiveValue,
+} from "./safe-output.js";
+export type {
+  PublicFailureCode,
+  PublicFailureEnvelope,
+  BoundedResponseText,
+  ReadResponseTextBoundedOptions,
+  RedactSensitiveValueOptions,
+} from "./safe-output.js";
+
 export {
   STATE_DIR_ENV_KEY,
   STATE_DIR_WINDOWS_ENV_KEY,
@@ -13,6 +41,15 @@ export {
   resolveStateDir,
   resolveWorkspaceStateDir,
 } from "./state-dir.js";
+export {
+  FilesystemCapability,
+  assertSafeFilesystemBasename,
+  assertSafeFilesystemRelativePath,
+} from "./filesystem-capability.js";
+export type {
+  FilesystemCapabilityOptions,
+  FilesystemCapabilityPathOptions,
+} from "./filesystem-capability.js";
 
 export type { TokenUsageUploadConfig, TokenUsageUploadLogger } from "./token-usage-upload.js";
 export { uploadTokenUsage } from "./token-usage-upload.js";
