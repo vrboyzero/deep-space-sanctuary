@@ -62,6 +62,13 @@ async function createGuardedPackageFixture(): Promise<GuardedPackage> {
   };
 }
 
+async function markSourceNewerThanDist(sourcePath: string, distPath: string): Promise<void> {
+  // 连续写入在部分文件系统会落在相同 mtime 粒度，fixture 必须显式构造 stale 边界。
+  const distStat = await fs.stat(distPath);
+  const newerAt = new Date(Math.max(Date.now(), distStat.mtimeMs) + 2_000);
+  await fs.utimes(sourcePath, newerAt, newerAt);
+}
+
 test("resolveWorkspaceBuildGuardMode defaults to build and accepts warn/off", () => {
   expect(resolveWorkspaceBuildGuardMode({} as NodeJS.ProcessEnv)).toBe("build");
   expect(resolveWorkspaceBuildGuardMode({ BELLDANDY_DEV_RUNTIME_DIST_GUARD: "warn" } as NodeJS.ProcessEnv)).toBe("warn");
@@ -72,6 +79,7 @@ test("detectStaleWorkspaceBuildPackages reports stale dist when source is newer"
   const fixture = await createGuardedPackageFixture();
   const sourcePath = path.join(fixture.dir, "src", "system-prompt.ts");
   await fs.writeFile(sourcePath, "newer source", "utf-8");
+  await markSourceNewerThanDist(sourcePath, path.join(fixture.dir, "dist", "system-prompt.js"));
 
   const stale = detectStaleWorkspaceBuildPackages([fixture]);
   expect(stale).toEqual(["@belldandy/agent"]);
@@ -79,7 +87,9 @@ test("detectStaleWorkspaceBuildPackages reports stale dist when source is newer"
 
 test("ensureFreshWorkspaceBuildsForDevRuntime returns verified in warn mode without rebuilding", async () => {
   const fixture = await createGuardedPackageFixture();
-  await fs.writeFile(path.join(fixture.dir, "src", "system-prompt.ts"), "newer source", "utf-8");
+  const sourcePath = path.join(fixture.dir, "src", "system-prompt.ts");
+  await fs.writeFile(sourcePath, "newer source", "utf-8");
+  await markSourceNewerThanDist(sourcePath, path.join(fixture.dir, "dist", "system-prompt.js"));
 
   const result = ensureFreshWorkspaceBuildsForDevRuntime({
     env: { BELLDANDY_DEV_RUNTIME_DIST_GUARD: "warn" } as NodeJS.ProcessEnv,
@@ -99,12 +109,14 @@ test("ensureFreshWorkspaceBuildsForDevRuntime returns verified in warn mode with
 
 test("ensureFreshWorkspaceBuildsForDevRuntime triggers rebuild and returns rebuilt when stale", async () => {
   const fixture = await createGuardedPackageFixture();
-  await fs.writeFile(path.join(fixture.dir, "src", "system-prompt.ts"), "newer source", "utf-8");
+  const sourcePath = path.join(fixture.dir, "src", "system-prompt.ts");
+  await fs.writeFile(sourcePath, "newer source", "utf-8");
+  await markSourceNewerThanDist(sourcePath, path.join(fixture.dir, "dist", "system-prompt.js"));
 
   const result = ensureFreshWorkspaceBuildsForDevRuntime({
     packages: [fixture],
     buildRunner: () => {
-      const now = new Date(Date.now() + 2000);
+      const now = new Date(fsSync.statSync(sourcePath).mtimeMs + 2_000);
       for (const artifact of fixture.criticalArtifacts) {
         const absolutePath = path.join(fixture.dir, artifact.distFile);
         fsSync.utimesSync(absolutePath, now, now);
