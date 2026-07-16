@@ -222,3 +222,24 @@ GitHub Actions 已开始提示部分 JavaScript actions 仍运行在 Node.js 20 
 
 - 该事项属于发布基础设施维护，不影响 `private/main` 的日常开发备份职责。
 - 若未来再次出现 Node 运行时弃用告警，应优先在 `origin` 公开发布链路中修复，再决定是否同步到 `private`。
+
+### Tag 发布链与 Docker Hub 权限边界（2026-07-16）
+
+semver tag `vX.Y.Z` 推送到正式公开仓库后，`.github/workflows/docker.yml` 的依赖关系如下：
+
+```text
+Build & Test
+├─ Publish to Docker Hub
+│  └─ Update Docker Hub description（非阻塞）
+└─ Create GitHub Release（构建并校验 release-light）
+   └─ Prepare Windows Packaging Assets（仅 ENABLE_WINDOWS_PACKAGING == true）
+```
+
+关键边界：
+
+- `Create GitHub Release` 只等待 `Build & Test`，不再等待 Docker Hub 发布；因此 Docker Hub 的独立故障不会阻断 release-light ZIP、TAR、manifest 和 checksum。
+- Docker 镜像实际 push 仍是必须单独验收的发布结果；Release 页面只提示到 Docker Hub 核验目标版本 tag，不把镜像可用性当作 GitHub Release 的前置结论。
+- `peter-evans/dockerhub-description` 的 README 描述同步需要额外的 Docker Hub `Delete` 权限。现有 token 仅用于镜像 push 时，不扩大权限；描述同步标记为非阻塞警告，不能使 image push 或 tag release 失败。
+- 默认不设置 `ENABLE_WINDOWS_PACKAGING`。Windows portable、winget 和 single-exe 继续延后，不会作为当前 GitHub Release 的附件或 Gate。
+
+发 tag 后分别核对：`Build & Test`、`Build and push Docker image`、Release 的 4 个 release-light 附件，以及 Docker Hub 上的 `X.Y.Z` tag。当前只允许推送 `private/main` 做内部验证时，不创建 tag，也不会创建 GitHub Release。

@@ -149,6 +149,37 @@ test("tag release forwards its resolved version to release-light build and verif
   );
 });
 
+test("tag release-light stays independent from Docker Hub publishing while Windows assets remain opt-in", () => {
+  const workflow = readDockerWorkflow().replace(/\r\n/g, "\n");
+  const publishStart = workflow.indexOf("  publish:\n");
+  const releaseStart = workflow.indexOf("  release:\n");
+  const windowsReleaseStart = workflow.indexOf("  release-windows-assets:\n");
+
+  expect(publishStart).toBeGreaterThan(-1);
+  expect(releaseStart).toBeGreaterThan(publishStart);
+  expect(windowsReleaseStart).toBeGreaterThan(releaseStart);
+
+  const publishJob = workflow.slice(publishStart, releaseStart);
+  const releaseJob = workflow.slice(releaseStart, windowsReleaseStart);
+  const windowsReleaseJob = workflow.slice(windowsReleaseStart);
+  const descriptionStep = publishJob.slice(
+    publishJob.indexOf("- name: Update Docker Hub description"),
+  );
+
+  // Docker Hub README synchronization needs an optional Delete scope; image publishing must not depend on it.
+  expect(descriptionStep).toContain("continue-on-error: true");
+  expect(descriptionStep.indexOf("continue-on-error: true")).toBeLessThan(
+    descriptionStep.indexOf("uses: peter-evans/dockerhub-description@v4"),
+  );
+  expect(releaseJob).toContain("needs: build-and-test");
+  expect(releaseJob).not.toContain("needs: publish");
+  expect(releaseJob).toContain("Docker image publishing runs independently");
+  expect(windowsReleaseJob).toContain("needs: release");
+  expect(windowsReleaseJob).toContain(
+    "if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_PACKAGING == 'true'",
+  );
+});
+
 test("tag release probes the packaged portable Relay before winget staging", () => {
   const workflow = readDockerWorkflow();
   const rootPackage = readRootPackageJson();
