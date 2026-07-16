@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import { resolveStateDir } from "@belldandy/protocol";
+
 import { generateBootstrapAuthToken } from "./bootstrap-auth-token.js";
 import { ensureDefaultEnvFiles, loadRuntimeEnvFiles, readTrimmedEnv, resolveRuntimeEnvDir } from "./env.js";
 import { startGatewaySupervisor } from "./gateway-supervisor.js";
@@ -16,7 +18,6 @@ import {
 } from "./runtime-extract.js";
 import { resolveSingleExeAppHomeDir } from "./runtime-version-dir.js";
 import { isSeaRuntime } from "./sea.js";
-import { resolveStateDir } from "./state-dir.js";
 
 function ensureSingleExeEnv(params: {
   baseEnv: NodeJS.ProcessEnv;

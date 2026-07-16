@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveStateDir } from "@belldandy/protocol";
+
 import { loadStateDirBootstrapInfo, type StateDirBootstrapSource } from "./state-dir-bootstrap.js";
-import { resolveStateDir } from "./state-dir.js";
 
 export type RuntimeMode = "source" | "portable" | "single-exe";
 

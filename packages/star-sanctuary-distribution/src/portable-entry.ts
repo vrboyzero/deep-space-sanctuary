@@ -2,11 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveStateDir } from "@belldandy/protocol";
+
 import { generateBootstrapAuthToken } from "./bootstrap-auth-token.js";
 import { startGatewaySupervisor } from "./gateway-supervisor.js";
 import { ensureDefaultEnvFiles, loadRuntimeEnvFiles, readTrimmedEnv, resolveRuntimeEnvDir } from "./env.js";
 import { ensurePortableRuntime } from "./portable-runtime.js";
-import { resolveStateDir } from "./state-dir.js";
 
 function resolvePaths() {
   const entryFile = fileURLToPath(import.meta.url);
