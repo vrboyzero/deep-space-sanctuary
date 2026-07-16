@@ -1,4 +1,5 @@
 import type { PluginRegistry } from "@belldandy/plugins";
+import type { PluginLoadErrorRecord } from "@belldandy/plugins";
 import type { SkillDefinition, SkillRegistry } from "@belldandy/skills";
 
 import type { ToolsConfigManager } from "./tools-config.js";
@@ -58,12 +59,7 @@ export type ExtensionRuntimeReport = {
   skills: ExtensionSkillRuntimeItem[];
   registry: ExtensionRegistryPlan;
   diagnostics: {
-    pluginLoadErrors: Array<{
-      at: Date;
-      phase: "load_plugin" | "scan_directory";
-      target: string;
-      message: string;
-    }>;
+    pluginLoadErrors: PluginLoadErrorRecord[];
   };
 };
 
