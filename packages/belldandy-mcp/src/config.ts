@@ -4,8 +4,9 @@
  * 负责从状态目录中的 mcp.json 加载和验证 MCP 服务器配置。
  */
 
-import { readFile, writeFile, mkdir, access } from "node:fs/promises";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { mcpLog } from "./logger-adapter.js";
 import { z } from "zod";
 import { resolveStateDir } from "@belldandy/protocol";
@@ -34,6 +35,17 @@ function getMcpConfigPath(): string {
 
 const MCP_CONFIG_PATH = getMcpConfigPath();
 
+const MAX_MCP_CONFIG_BYTES = 1 * 1024 * 1024;
+const MAX_MCP_SERVERS = 128;
+const MAX_MCP_SERVER_ARGS = 128;
+const MAX_MCP_SERVER_ENV_ENTRIES = 64;
+const MAX_MCP_SERVER_HEADER_ENTRIES = 64;
+const RENAME_RETRIES = 3;
+const RENAME_RETRY_DELAY_MS = 50;
+
+/** 同一进程内的 read-modify-write 队列，避免配置更新互相覆盖。 */
+let configMutationQueue: Promise<void> = Promise.resolve();
+
 // ============================================================================
 // Zod 验证 Schema
 // ============================================================================
@@ -41,11 +53,21 @@ const MCP_CONFIG_PATH = getMcpConfigPath();
 /**
  * stdio 传输配置验证
  */
+const StdioEnvironmentSchema = z.record(z.string()).refine(
+  (entries) => Object.keys(entries).length <= MAX_MCP_SERVER_ENV_ENTRIES,
+  `环境变量不能超过 ${MAX_MCP_SERVER_ENV_ENTRIES} 项`,
+);
+
+const SSEHeadersSchema = z.record(z.string()).refine(
+  (entries) => Object.keys(entries).length <= MAX_MCP_SERVER_HEADER_ENTRIES,
+  `请求头不能超过 ${MAX_MCP_SERVER_HEADER_ENTRIES} 项`,
+);
+
 const StdioConfigSchema = z.object({
   type: z.literal("stdio"),
   command: z.string().min(1, "命令不能为空"),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
+  args: z.array(z.string()).max(MAX_MCP_SERVER_ARGS, `参数不能超过 ${MAX_MCP_SERVER_ARGS} 项`).optional(),
+  env: StdioEnvironmentSchema.optional(),
   cwd: z.string().optional(),
 });
 
@@ -55,7 +77,7 @@ const StdioConfigSchema = z.object({
 const SSEConfigSchema = z.object({
   type: z.literal("sse"),
   url: z.string().url("必须是有效的 URL"),
-  headers: z.record(z.string()).optional(),
+  headers: SSEHeadersSchema.optional(),
   allowInsecureHttp: z.boolean().optional(),
   allowPrivateNetwork: z.boolean().optional(),
 });
@@ -97,7 +119,8 @@ const SettingsSchema = z.object({
  */
 const MCPConfigSchema = z.object({
   version: z.string().optional().default("1.0.0"),
-  servers: z.array(ServerConfigSchema).default([]),
+  revision: z.number().int().min(0).optional().default(0),
+  servers: z.array(ServerConfigSchema).max(MAX_MCP_SERVERS, `服务器不能超过 ${MAX_MCP_SERVERS} 个`).default([]),
   settings: SettingsSchema.optional(),
 });
 
@@ -230,16 +253,205 @@ function convertExternalConfig(external: ExternalMCPConfig): Record<string, unkn
 // 配置加载函数
 // ============================================================================
 
-/**
- * 检查配置文件是否存在
- */
-export async function configExists(): Promise<boolean> {
+function createDefaultConfigSnapshot(): MCPConfig {
+  return {
+    version: DEFAULT_MCP_CONFIG.version,
+    revision: DEFAULT_MCP_CONFIG.revision ?? 0,
+    servers: [],
+    settings: DEFAULT_MCP_CONFIG.settings ? { ...DEFAULT_MCP_CONFIG.settings } : undefined,
+  };
+}
+
+function formatValidationErrors(errors: z.ZodIssue[]): string {
+  return errors
+    .map((error) => `  - ${error.path.join(".")}: ${error.message}`)
+    .join("\n");
+}
+
+function validateConfig(config: unknown, errorPrefix: string): MCPConfig {
+  const result = MCPConfigSchema.safeParse(config);
+  if (!result.success) {
+    throw new Error(`${errorPrefix}:\n${formatValidationErrors(result.error.errors)}`);
+  }
+
+  const serverIds = new Set<string>();
+  for (const server of result.data.servers) {
+    if (serverIds.has(server.id)) {
+      throw new Error(`MCP 配置错误: 服务器 ID "${server.id}" 重复`);
+    }
+    serverIds.add(server.id);
+  }
+
+  return result.data as MCPConfig;
+}
+
+function validateServerConfig(server: unknown, errorPrefix: string): MCPServerConfig {
+  const result = ServerConfigSchema.safeParse(server);
+  if (!result.success) {
+    throw new Error(`${errorPrefix}:\n${formatValidationErrors(result.error.errors)}`);
+  }
+  return result.data as MCPServerConfig;
+}
+
+function ensureConfigContentSize(content: string): void {
+  const byteLength = Buffer.byteLength(content, "utf-8");
+  if (byteLength > MAX_MCP_CONFIG_BYTES) {
+    throw new Error(`MCP 配置文件不能超过 ${MAX_MCP_CONFIG_BYTES} 字节`);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function enqueueConfigMutation<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
+  const task = configMutationQueue.then(operation, operation);
+  configMutationQueue = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return task;
+}
+
+async function configFileExists(filePath: string): Promise<boolean> {
   try {
-    await access(getMcpConfigPath());
+    await fs.access(filePath);
     return true;
   } catch {
     return false;
   }
+}
+
+async function enforcePrivateConfigFileMode(filePath: string): Promise<void> {
+  try {
+    if (process.platform !== "win32") {
+      const mode = (await fs.stat(filePath)).mode & 0o777;
+      if (mode === 0o600) {
+        return;
+      }
+    }
+    await fs.chmod(filePath, 0o600);
+  } catch (error) {
+    if (process.platform !== "win32") {
+      throw error;
+    }
+  }
+}
+
+async function renameWithRetry(sourcePath: string, targetPath: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < RENAME_RETRIES; attempt += 1) {
+    try {
+      await fs.rename(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < RENAME_RETRIES - 1) {
+        await delay(RENAME_RETRY_DELAY_MS);
+      }
+    }
+  }
+  throw lastError;
+}
+
+function isRecoverableWindowsRenameError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EPERM" || code === "EBUSY" || code === "EEXIST";
+}
+
+async function replaceConfigFileWithBackup(tempPath: string, configPath: string): Promise<void> {
+  const backupPath = join(dirname(configPath), `.${basename(configPath)}.${randomUUID()}.bak`);
+  let backupCreated = false;
+
+  try {
+    await fs.rename(configPath, backupPath);
+    backupCreated = true;
+    await renameWithRetry(tempPath, configPath);
+    await fs.unlink(backupPath).catch(() => {});
+    backupCreated = false;
+  } catch (error) {
+    if (backupCreated) {
+      try {
+        await renameWithRetry(backupPath, configPath);
+        backupCreated = false;
+      } catch {
+        throw new Error("MCP 配置原子替换失败，旧配置已保留在同目录备份文件中。");
+      }
+    }
+    throw new Error("无法原子替换 MCP 配置文件。");
+  }
+}
+
+async function replaceConfigFileAtomically(tempPath: string, configPath: string): Promise<void> {
+  try {
+    await renameWithRetry(tempPath, configPath);
+    return;
+  } catch (error) {
+    if (
+      process.platform !== "win32"
+      || !isRecoverableWindowsRenameError(error)
+      || !(await configFileExists(configPath))
+    ) {
+      throw new Error("无法原子替换 MCP 配置文件。");
+    }
+  }
+
+  await replaceConfigFileWithBackup(tempPath, configPath);
+}
+
+async function writeConfigFileAtomically(configPath: string, content: string): Promise<void> {
+  const configDir = dirname(configPath);
+  await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
+
+  const tempPath = join(configDir, `.${basename(configPath)}.${randomUUID()}.tmp`);
+  let tempExists = false;
+  try {
+    const tempFile = await fs.open(tempPath, "wx", 0o600);
+    tempExists = true;
+    try {
+      await tempFile.writeFile(content, "utf-8");
+      await tempFile.sync();
+    } finally {
+      await tempFile.close();
+    }
+
+    await enforcePrivateConfigFileMode(tempPath);
+    await replaceConfigFileAtomically(tempPath, configPath);
+    tempExists = false;
+    await enforcePrivateConfigFileMode(configPath);
+  } finally {
+    if (tempExists) {
+      await fs.unlink(tempPath).catch(() => {});
+    }
+  }
+}
+
+async function saveConfigUnlocked(config: MCPConfig): Promise<void> {
+  const normalized = validateConfig(config, "无效的 MCP 配置");
+  const content = `${JSON.stringify(normalized, null, 2)}\n`;
+  ensureConfigContentSize(content);
+
+  const configPath = getMcpConfigPath();
+  await writeConfigFileAtomically(configPath, content);
+  mcpLog("MCP", `配置已保存到: ${configPath}`);
+}
+
+async function mutateConfig(mutator: (config: MCPConfig) => MCPConfig): Promise<void> {
+  await enqueueConfigMutation(async () => {
+    const current = await loadConfig();
+    const next = mutator(current);
+    await saveConfigUnlocked({
+      ...next,
+      revision: (current.revision ?? 0) + 1,
+    });
+  });
+}
+
+/**
+ * 检查配置文件是否存在
+ */
+export async function configExists(): Promise<boolean> {
+  return configFileExists(getMcpConfigPath());
 }
 
 /**
@@ -249,16 +461,22 @@ export async function configExists(): Promise<boolean> {
  * @throws 如果配置文件无效或不存在
  */
 export async function loadConfig(): Promise<MCPConfig> {
+  const configPath = getMcpConfigPath();
+
   // 检查配置文件是否存在
   if (!(await configExists())) {
-    mcpLog("MCP", `配置文件不存在: ${getMcpConfigPath()}`);
+    mcpLog("MCP", `配置文件不存在: ${configPath}`);
     mcpLog("MCP", "使用默认配置（无服务器）");
-    return { ...DEFAULT_MCP_CONFIG };
+    return createDefaultConfigSnapshot();
   }
 
   try {
+    // mcp.json 可包含 Authorization header 和 env，读取时也修复历史宽权限文件。
+    await enforcePrivateConfigFileMode(configPath);
+
     // 读取配置文件
-    const content = await readFile(getMcpConfigPath(), "utf-8");
+    const content = await fs.readFile(configPath, "utf-8");
+    ensureConfigContentSize(content);
     let rawConfig = JSON.parse(content);
 
     // 兼容外部格式（Claude Desktop / Cursor 等 mcpServers 格式）
@@ -266,26 +484,10 @@ export async function loadConfig(): Promise<MCPConfig> {
       rawConfig = convertExternalConfig(rawConfig);
     }
 
-    // 验证配置
-    const result = MCPConfigSchema.safeParse(rawConfig);
-    if (!result.success) {
-      const errors = result.error.errors
-        .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
-        .join("\n");
-      throw new Error(`MCP 配置验证失败:\n${errors}`);
-    }
+    const config = validateConfig(rawConfig, "MCP 配置验证失败");
 
-    // 验证服务器 ID 唯一性
-    const serverIds = new Set<string>();
-    for (const server of result.data.servers) {
-      if (serverIds.has(server.id)) {
-        throw new Error(`MCP 配置错误: 服务器 ID "${server.id}" 重复`);
-      }
-      serverIds.add(server.id);
-    }
-
-    mcpLog("MCP", `已加载配置，共 ${result.data.servers.length} 个服务器`);
-    return result.data as MCPConfig;
+    mcpLog("MCP", `已加载配置，共 ${config.servers.length} 个服务器`);
+    return config;
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error(`MCP 配置文件 JSON 格式错误: ${error.message}`);
@@ -300,27 +502,9 @@ export async function loadConfig(): Promise<MCPConfig> {
  * @param config 要保存的配置
  */
 export async function saveConfig(config: MCPConfig): Promise<void> {
-  // 确保目录存在
-  try {
-    await access(getBelldandyDir());
-  } catch {
-    await mkdir(getBelldandyDir(), { recursive: true });
-  }
-
-  // 验证配置
-  const result = MCPConfigSchema.safeParse(config);
-  if (!result.success) {
-    const errors = result.error.errors
-      .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
-      .join("\n");
-    throw new Error(`无效的 MCP 配置:\n${errors}`);
-  }
-
-  // 写入配置文件
-  const content = JSON.stringify(config, null, 2);
-  const configPath = getMcpConfigPath();
-  await writeFile(configPath, content, "utf-8");
-  mcpLog("MCP", `配置已保存到: ${configPath}`);
+  await enqueueConfigMutation(async () => {
+    await saveConfigUnlocked(config);
+  });
 }
 
 /**
@@ -329,36 +513,39 @@ export async function saveConfig(config: MCPConfig): Promise<void> {
  * 如果配置文件不存在，则创建一个包含示例服务器的默认配置。
  */
 export async function createDefaultConfig(): Promise<void> {
-  if (await configExists()) {
-    mcpLog("MCP", `配置文件已存在: ${getMcpConfigPath()}`);
-    return;
-  }
+  await enqueueConfigMutation(async () => {
+    if (await configExists()) {
+      mcpLog("MCP", `配置文件已存在: ${getMcpConfigPath()}`);
+      return;
+    }
 
-  const defaultConfig: MCPConfig = {
-    version: "1.0.0",
-    servers: [
-      {
-        id: "example-filesystem",
-        name: "文件系统服务器 (示例)",
-        description: "示例：提供文件系统访问能力的 MCP 服务器",
-        transport: {
-          type: "stdio",
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    const defaultConfig: MCPConfig = {
+      version: "1.0.0",
+      revision: 0,
+      servers: [
+        {
+          id: "example-filesystem",
+          name: "文件系统服务器 (示例)",
+          description: "示例：提供文件系统访问能力的 MCP 服务器",
+          transport: {
+            type: "stdio",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+          },
+          autoConnect: false,
+          enabled: false,
         },
-        autoConnect: false,
-        enabled: false,
+      ],
+      settings: {
+        defaultTimeout: 30000,
+        debug: false,
+        toolPrefix: true,
       },
-    ],
-    settings: {
-      defaultTimeout: 30000,
-      debug: false,
-      toolPrefix: true,
-    },
-  };
+    };
 
-  await saveConfig(defaultConfig);
-  mcpLog("MCP", `已创建默认配置文件: ${getMcpConfigPath()}`);
+    await saveConfigUnlocked(defaultConfig);
+    mcpLog("MCP", `已创建默认配置文件: ${getMcpConfigPath()}`);
+  });
 }
 
 // ============================================================================
@@ -371,24 +558,18 @@ export async function createDefaultConfig(): Promise<void> {
  * @param server 服务器配置
  */
 export async function addServer(server: MCPServerConfig): Promise<void> {
-  const config = await loadConfig();
+  await mutateConfig((config) => {
+    // 检查 ID 是否已存在
+    if (config.servers.some((item) => item.id === server.id)) {
+      throw new Error(`服务器 ID "${server.id}" 已存在`);
+    }
 
-  // 检查 ID 是否已存在
-  if (config.servers.some((s) => s.id === server.id)) {
-    throw new Error(`服务器 ID "${server.id}" 已存在`);
-  }
-
-  // 验证服务器配置
-  const result = ServerConfigSchema.safeParse(server);
-  if (!result.success) {
-    const errors = result.error.errors
-      .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
-      .join("\n");
-    throw new Error(`无效的服务器配置:\n${errors}`);
-  }
-
-  config.servers.push(result.data as MCPServerConfig);
-  await saveConfig(config);
+    const validatedServer = validateServerConfig(server, "无效的服务器配置");
+    return {
+      ...config,
+      servers: [...config.servers, validatedServer],
+    };
+  });
 }
 
 /**
@@ -397,15 +578,16 @@ export async function addServer(server: MCPServerConfig): Promise<void> {
  * @param serverId 服务器 ID
  */
 export async function removeServer(serverId: string): Promise<void> {
-  const config = await loadConfig();
-  const index = config.servers.findIndex((s) => s.id === serverId);
-
-  if (index === -1) {
-    throw new Error(`服务器 "${serverId}" 不存在`);
-  }
-
-  config.servers.splice(index, 1);
-  await saveConfig(config);
+  await mutateConfig((config) => {
+    const index = config.servers.findIndex((server) => server.id === serverId);
+    if (index === -1) {
+      throw new Error(`服务器 "${serverId}" 不存在`);
+    }
+    return {
+      ...config,
+      servers: config.servers.filter((server) => server.id !== serverId),
+    };
+  });
 }
 
 /**
@@ -418,31 +600,26 @@ export async function updateServer(
   serverId: string,
   updates: Partial<MCPServerConfig>
 ): Promise<void> {
-  const config = await loadConfig();
-  const server = config.servers.find((s) => s.id === serverId);
+  await mutateConfig((config) => {
+    const index = config.servers.findIndex((server) => server.id === serverId);
+    if (index === -1) {
+      throw new Error(`服务器 "${serverId}" 不存在`);
+    }
 
-  if (!server) {
-    throw new Error(`服务器 "${serverId}" 不存在`);
-  }
+    // 不允许更改 ID，避免配置索引与已连接客户端漂移。
+    if (updates.id !== undefined && updates.id !== serverId) {
+      throw new Error("不允许更改服务器 ID");
+    }
 
-  // 不允许更改 ID
-  if (updates.id && updates.id !== serverId) {
-    throw new Error("不允许更改服务器 ID");
-  }
-
-  // 合并更新
-  Object.assign(server, updates);
-
-  // 验证更新后的配置
-  const result = ServerConfigSchema.safeParse(server);
-  if (!result.success) {
-    const errors = result.error.errors
-      .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
-      .join("\n");
-    throw new Error(`更新后的配置无效:\n${errors}`);
-  }
-
-  await saveConfig(config);
+    const updatedServer = validateServerConfig({
+      ...config.servers[index],
+      ...updates,
+      id: serverId,
+    }, "更新后的配置无效");
+    const servers = [...config.servers];
+    servers[index] = updatedServer;
+    return { ...config, servers };
+  });
 }
 
 /**

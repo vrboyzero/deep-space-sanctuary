@@ -82,6 +82,8 @@ export interface MCPServerConfig {
 export interface MCPConfig {
   /** 配置版本 */
   version: string;
+  /** 配置变更代次，用于诊断和并发写入回归验证 */
+  revision?: number;
   /** MCP 服务器列表 */
   servers: MCPServerConfig[];
   /** 全局设置 */
@@ -442,6 +444,7 @@ export function isSSETransport(
  */
 export const DEFAULT_MCP_CONFIG: MCPConfig = {
   version: "1.0.0",
+  revision: 0,
   servers: [],
   settings: {
     defaultTimeout: 30000,
