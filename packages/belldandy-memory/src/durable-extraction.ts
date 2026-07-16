@@ -446,6 +446,24 @@ export class DurableExtractionRuntime {
     return existing ? cloneRecord(existing) : buildIdleRecord(normalizedId);
   }
 
+  /** 仅汇总运行和待处理数量，供 Core 资源观测读取。 */
+  getRuntimeSnapshot(): {
+    activeCount: number;
+    queuedCount: number;
+  } {
+    let activeCount = 0;
+    let queuedCount = 0;
+    for (const record of this.records.values()) {
+      if (record.status === "running") {
+        activeCount += 1;
+      }
+      if (record.status === "queued" || record.pending) {
+        queuedCount += 1;
+      }
+    }
+    return { activeCount, queuedCount };
+  }
+
   async requestExtraction(input: {
     conversationId: string;
     source: string;

@@ -101,6 +101,7 @@ import { buildMindProfileSnapshot } from "../mind-profile-snapshot.js";
 import { buildPromptObservabilitySummary, formatPromptObservabilityHeadline, toPromptObservabilityView } from "../prompt-observability.js";
 import { buildAgentRoster } from "../query-runtime-agent-roster.js";
 import type { QueryRuntimeTraceStore } from "../query-runtime-trace.js";
+import type { RuntimeResourceObservability } from "../runtime-resource-observability.js";
 import { readConfiguredMemorySourcesStore } from "../memory-configured-sources-store.js";
 import type { ScopedMemoryManagerRecord } from "../resident-memory-managers.js";
 import { buildResidentAgentObservabilitySnapshot } from "../resident-agent-observability.js";
@@ -150,6 +151,7 @@ type SystemDoctorMethodContext = {
   getCompactionRuntimeReport?: () => CompactionRuntimeReport | undefined;
   getRuntimeResilienceReport?: () => RuntimeResilienceDoctorReport | undefined;
   queryRuntimeTraceStore: QueryRuntimeTraceStore;
+  runtimeResourceObservability: RuntimeResourceObservability;
   residentAgentRuntime: ResidentAgentRuntimeRegistry;
   residentMemoryManagers?: ScopedMemoryManagerRecord[];
   getCronRuntimeDoctorReport?: () => Promise<CronRuntimeDoctorReport | undefined>;
@@ -1050,6 +1052,7 @@ export async function handleSystemDoctorMethod(
       }
       : extensionRuntimeBase;
     const queryRuntime = ctx.queryRuntimeTraceStore.getSummary();
+    const runtimeResources = ctx.runtimeResourceObservability.getSummary();
     return {
       extensionRuntimeBase,
       deploymentBackends,
@@ -1057,6 +1060,7 @@ export async function handleSystemDoctorMethod(
       runtimeResilienceDiagnostics,
       extensionRuntime,
       queryRuntime,
+      runtimeResources,
     };
   });
   const {
@@ -1066,6 +1070,7 @@ export async function handleSystemDoctorMethod(
     runtimeResilienceDiagnostics,
     extensionRuntime,
     queryRuntime,
+    runtimeResources,
   } = unwrapDoctorStageResult(overviewSyncResult);
 
   const [
@@ -1329,6 +1334,12 @@ export async function handleSystemDoctorMethod(
     name: "Query Runtime Trace",
     status: "pass",
     message: `Enabled (${queryRuntime.activeTraceCount} active traces, ${queryRuntime.traces.length} retained, ${queryRuntime.totalObservedEvents} observed events)`,
+  });
+  checks.push({
+    id: "runtime_resources",
+    name: "Runtime Resources",
+    status: runtimeResources.available ? "pass" : "warn",
+    message: runtimeResources.headline,
   });
   if (cronRuntime) {
     checks.push({
@@ -2018,6 +2029,7 @@ export async function handleSystemDoctorMethod(
       extensionMarketplace,
       extensionGovernance,
       queryRuntime,
+      runtimeResources,
       ...(cronRuntime ? { cronRuntime } : {}),
       ...(backgroundContinuationRuntime ? { backgroundContinuationRuntime } : {}),
       ...(externalOutboundRuntime ? { externalOutboundRuntime } : {}),

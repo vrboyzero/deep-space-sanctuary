@@ -33,6 +33,7 @@ import type {
 import type { QueryRuntimeTraceStore } from "./query-runtime-trace.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
 import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
+import type { RuntimeResourceObservability } from "./runtime-resource-observability.js";
 import type { RuntimeResilienceDoctorReport } from "./runtime-resilience.js";
 import type { GatewayServerOptions } from "./server.js";
 import type { ObsidianCommonsRuntime } from "./obsidian-commons-runtime.js";
@@ -116,6 +117,7 @@ export type GatewayWebSocketRequestContext = {
   getCompactionRuntimeReport?: () => CompactionRuntimeReport | undefined;
   getRuntimeResilienceReport?: () => RuntimeResilienceDoctorReport | undefined;
   queryRuntimeTraceStore: QueryRuntimeTraceStore;
+  runtimeResourceObservability: RuntimeResourceObservability;
   residentAgentRuntime: ResidentAgentRuntimeRegistry;
   residentMemoryManagers?: ScopedMemoryManagerRecord[];
   getCronRuntimeDoctorReport?: () => Promise<CronRuntimeDoctorReport | undefined>;
@@ -218,6 +220,7 @@ export function buildGatewayWebSocketRequestContext(
     getCompactionRuntimeReport: options.getCompactionRuntimeReport,
     getRuntimeResilienceReport: options.getRuntimeResilienceReport,
     queryRuntimeTraceStore: options.queryRuntimeTraceStore,
+    runtimeResourceObservability: options.runtimeResourceObservability,
     residentAgentRuntime: options.residentAgentRuntime,
     residentMemoryManagers: options.residentMemoryManagers,
     getCronRuntimeDoctorReport: options.getCronRuntimeDoctorReport,

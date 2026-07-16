@@ -60,6 +60,7 @@ type CreateGatewayWebSocketRuntimeOptions = {
 type GatewayWebSocketRuntime = {
   broadcast: (frame: GatewayEventFrame) => void;
   close: () => Promise<void>;
+  getRuntimeSnapshot: () => { activeCount: number };
 };
 
 type ConnectionState = {
@@ -286,6 +287,9 @@ export function createGatewayWebSocketRuntime(
     close: async () => {
       await new Promise<void>((resolve) => wss.close(() => resolve()));
     },
+    getRuntimeSnapshot: () => ({
+      activeCount: wss.clients.size,
+    }),
   };
 }
 

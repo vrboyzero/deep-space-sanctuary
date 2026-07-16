@@ -286,6 +286,13 @@ describe("WorkflowRuntime", () => {
     });
     const list = f.runtime.listActiveRuns();
     expect(list).toEqual([]);
+    expect(f.runtime.getRuntimeSnapshot()).toEqual({
+      activeRunCount: 0,
+      activeAgentCount: 0,
+      queuedAgentCount: 0,
+      maxConcurrentAgentCount: 0,
+      maxQueuedAgentCount: 0,
+    });
   });
 
   it("parallel 工作流端到端运行", async () => {

@@ -2182,6 +2182,70 @@ describe("doctor observability rendering", () => {
     expect(container.textContent || "").toContain("slowest p95=250ms · message.send: agent_created -> agent_running (running, n=2)");
   });
 
+  it("renders bounded runtime resource diagnostics in doctor cards and chat summaries", () => {
+    const payload = {
+      runtimeResources: {
+        available: true,
+        sampling: {
+          running: true,
+          intervalMs: 15000,
+          maxSamples: 24,
+          sampleCount: 3,
+        },
+        queueTotals: {
+          providerCount: 2,
+          activeCount: 4,
+          queuedCount: 2,
+        },
+        latest: {
+          capturedAt: 1710000000000,
+          eventLoop: {
+            utilization: 0.25,
+            activeMs: 25,
+            idleMs: 75,
+            delay: {
+              p50Ms: 3,
+              p95Ms: 12,
+              maxMs: 20,
+            },
+          },
+          memory: {
+            rssBytes: 134217728,
+            heapTotalBytes: 100663296,
+            heapUsedBytes: 67108864,
+            externalBytes: 1048576,
+            arrayBuffersBytes: 524288,
+          },
+          queues: [
+            { id: "subagent", activeCount: 2, queuedCount: 2, capacity: 16 },
+            { id: "websocket", activeCount: 2, queuedCount: 0 },
+          ],
+        },
+      },
+    };
+    const lines = buildDoctorChatSummary(payload);
+    expect(lines.join("\n")).toContain("Runtime Resources");
+    expect(lines.join("\n")).toContain("3/24 samples");
+    expect(lines.join("\n")).toContain("event loop 25%");
+    expect(lines.join("\n")).toContain("rss 128 MiB");
+    expect(lines.join("\n")).toContain("queue subagent: active 2, queued 2, capacity=16");
+    expect(lines.join("\n")).toContain("queue websocket: active 2, queued 0");
+
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, payload);
+    flushAnimationFrames(callbacks);
+    expect(container.textContent || "").toContain("Runtime Resources");
+    expect(container.textContent || "").toContain("lag p50/p95/max=3ms/12ms/20ms");
+  });
+
   it("renders memory freshness card from top-level doctor payload", () => {
     const callbacks = [];
     vi.stubGlobal("requestAnimationFrame", (callback) => {

@@ -4175,6 +4175,45 @@ const serverOptions = buildGatewayServerOptions({
   getBackgroundContinuationRuntimeDoctorReport: async () => buildBackgroundContinuationRuntimeDoctorReport({
     ledger: backgroundContinuationLedger,
   }),
+  getRuntimeResourceQueueSnapshots: () => {
+    const snapshots: Array<{
+      id: string;
+      activeCount: number;
+      queuedCount: number;
+      capacity?: number;
+    }> = [];
+    if (subAgentOrchestrator) {
+      const snapshot = subAgentOrchestrator.getRuntimeSnapshot();
+      snapshots.push({
+        id: "subagent",
+        activeCount: snapshot.activeCount,
+        queuedCount: snapshot.queuedCount,
+        capacity: snapshot.maxQueueSize,
+      });
+    }
+    const workflowSnapshot = workflowRuntime?.getRuntimeSnapshot?.();
+    if (workflowSnapshot) {
+      snapshots.push({
+        id: "workflow_runs",
+        activeCount: workflowSnapshot.activeRunCount,
+        queuedCount: 0,
+      }, {
+        id: "workflow_agents",
+        activeCount: workflowSnapshot.activeAgentCount,
+        queuedCount: workflowSnapshot.queuedAgentCount,
+        capacity: workflowSnapshot.maxQueuedAgentCount,
+      });
+    }
+    const cronSnapshot = cronSchedulerHandle?.status();
+    if (cronSnapshot) {
+      snapshots.push({
+        id: "cron",
+        activeCount: cronSnapshot.activeRuns,
+        queuedCount: 0,
+      });
+    }
+    return snapshots;
+  },
   inspectAgentPrompt,
   getConversationPromptSnapshot,
   extensionHost,

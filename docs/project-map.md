@@ -86,6 +86,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/bin/gateway-prompt-sections.ts`: Agent runtime prompt sections 组装，包含 Team / identity governance 静态 section
 - `packages/belldandy-core/src/server.ts`: Gateway 主服务与方法分发中心
 - `packages/belldandy-core/src/server-methods/`: RPC 方法分域处理
+- `packages/belldandy-core/src/runtime-resource-observability.ts`: Gateway 低频、有界的 event-loop、进程内存与聚合队列快照采样，供 `system.doctor` 使用
 
 ### Agent / Runtime
 - `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime
@@ -134,7 +135,7 @@ star-sanctuary/
 - `apps/web/public/app/features/settings-runtime.js`: 设置面板运行时桥接
 - `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources、Preflight Compression 配置/preview）
 - `apps/web/public/app/features/workspace.js`: 文件树和编辑器
-- `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Dream Runtime、Preflight Compression 治理卡片）
+- `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Query Runtime、运行资源、Dream Runtime、Preflight Compression 治理卡片）
 
 ### State / Workspace / Persistence
 - `packages/belldandy-protocol/src/state-dir.ts`: 全局 state dir 解析

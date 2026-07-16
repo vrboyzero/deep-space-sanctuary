@@ -379,6 +379,13 @@ export type WorkflowRuntimeCapabilities = {
   stop(journalId: string, reason?: string): Promise<boolean>;
   getStatus?(journalId: string): unknown | null;
   listActiveRuns?(): Array<{ journalId: string; status: string; workflowName: string; startedAt: number }>;
+  getRuntimeSnapshot?(): {
+    activeRunCount: number;
+    activeAgentCount: number;
+    queuedAgentCount: number;
+    maxConcurrentAgentCount: number;
+    maxQueuedAgentCount: number;
+  };
 };
 
 export type ConversationPlanStatus =

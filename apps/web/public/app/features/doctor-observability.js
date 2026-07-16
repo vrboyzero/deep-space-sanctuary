@@ -20,6 +20,24 @@ function formatTimestamp(value) {
     : "-";
 }
 
+function formatRuntimeResourceBytes(value) {
+  const bytes = typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let normalized = bytes;
+  let unitIndex = 0;
+  while (normalized >= 1024 && unitIndex < units.length - 1) {
+    normalized /= 1024;
+    unitIndex += 1;
+  }
+  return `${Math.round(normalized * 100) / 100} ${units[unitIndex]}`;
+}
+
+function formatRuntimeResourceDelay(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(value * 100) / 100}ms`
+    : "-";
+}
+
 function formatDateValue(value) {
   if (typeof value === "string" && value.trim()) {
     const timestamp = Date.parse(value);
@@ -3732,6 +3750,137 @@ function buildQueryRuntimeCard(payload, t) {
   };
 }
 
+function buildRuntimeResourcesCard(payload, t) {
+  const runtimeResources = payload?.runtimeResources;
+  if (!runtimeResources || typeof runtimeResources !== "object") {
+    return undefined;
+  }
+
+  if (!runtimeResources.available) {
+    return {
+      title: tr(t, "settings.doctorRuntimeResourcesTitle", {}, "Runtime Resources"),
+      badges: [tr(t, "settings.doctorRuntimeResourcesDisabled", {}, "sampling disabled")],
+      notes: [runtimeResources.headline || "Runtime resource sampling is disabled."],
+      status: "warn",
+    };
+  }
+
+  const sampling = runtimeResources.sampling && typeof runtimeResources.sampling === "object"
+    ? runtimeResources.sampling
+    : {};
+  const latest = runtimeResources.latest && typeof runtimeResources.latest === "object"
+    ? runtimeResources.latest
+    : undefined;
+  const queueTotals = runtimeResources.queueTotals && typeof runtimeResources.queueTotals === "object"
+    ? runtimeResources.queueTotals
+    : {};
+  const eventLoop = latest?.eventLoop && typeof latest.eventLoop === "object" ? latest.eventLoop : {};
+  const memory = latest?.memory && typeof latest.memory === "object" ? latest.memory : {};
+  const delay = eventLoop.delay && typeof eventLoop.delay === "object" ? eventLoop.delay : {};
+  const queues = Array.isArray(latest?.queues) ? latest.queues.slice(0, 8) : [];
+  const utilizationPercent = Math.round(Math.max(0, Math.min(1, Number(eventLoop.utilization) || 0)) * 100);
+  const samplingState = sampling.running
+    ? tr(t, "settings.doctorRuntimeResourcesSamplingRunning", {}, "running")
+    : tr(t, "settings.doctorRuntimeResourcesSamplingStopped", {}, "stopped");
+
+  const badges = [
+    tr(
+      t,
+      "settings.doctorRuntimeResourcesSamples",
+      { count: formatNumber(sampling.sampleCount), max: formatNumber(sampling.maxSamples) },
+      `${formatNumber(sampling.sampleCount)}/${formatNumber(sampling.maxSamples)} samples`,
+    ),
+    tr(
+      t,
+      "settings.doctorRuntimeResourcesElu",
+      { percent: utilizationPercent },
+      `event loop ${utilizationPercent}%`,
+    ),
+    tr(
+      t,
+      "settings.doctorRuntimeResourcesRss",
+      { value: formatRuntimeResourceBytes(memory.rssBytes) },
+      `rss ${formatRuntimeResourceBytes(memory.rssBytes)}`,
+    ),
+    tr(
+      t,
+      "settings.doctorRuntimeResourcesQueueTotals",
+      {
+        active: formatNumber(queueTotals.activeCount),
+        queued: formatNumber(queueTotals.queuedCount),
+      },
+      `active ${formatNumber(queueTotals.activeCount)} / queued ${formatNumber(queueTotals.queuedCount)}`,
+    ),
+  ];
+  const notes = [tr(
+    t,
+    "settings.doctorRuntimeResourcesSampling",
+    {
+      intervalMs: formatNumber(sampling.intervalMs),
+      state: samplingState,
+      capturedAt: formatTimestamp(latest?.capturedAt),
+    },
+    `sampling: every ${formatNumber(sampling.intervalMs)}ms, ${samplingState}, latest=${formatTimestamp(latest?.capturedAt)}`,
+  )];
+
+  if (latest) {
+    notes.push(tr(
+      t,
+      "settings.doctorRuntimeResourcesEventLoop",
+      {
+        activeMs: formatNumber(eventLoop.activeMs),
+        idleMs: formatNumber(eventLoop.idleMs),
+        p50Ms: formatRuntimeResourceDelay(delay.p50Ms),
+        p95Ms: formatRuntimeResourceDelay(delay.p95Ms),
+        maxMs: formatRuntimeResourceDelay(delay.maxMs),
+      },
+      `event loop: active=${formatNumber(eventLoop.activeMs)}ms, idle=${formatNumber(eventLoop.idleMs)}ms, lag p50/p95/max=${formatRuntimeResourceDelay(delay.p50Ms)}/${formatRuntimeResourceDelay(delay.p95Ms)}/${formatRuntimeResourceDelay(delay.maxMs)}`,
+    ));
+    notes.push(tr(
+      t,
+      "settings.doctorRuntimeResourcesMemory",
+      {
+        heapUsed: formatRuntimeResourceBytes(memory.heapUsedBytes),
+        heapTotal: formatRuntimeResourceBytes(memory.heapTotalBytes),
+        external: formatRuntimeResourceBytes(memory.externalBytes),
+        arrayBuffers: formatRuntimeResourceBytes(memory.arrayBuffersBytes),
+      },
+      `memory: heap ${formatRuntimeResourceBytes(memory.heapUsedBytes)}/${formatRuntimeResourceBytes(memory.heapTotalBytes)}, external ${formatRuntimeResourceBytes(memory.externalBytes)}, array buffers ${formatRuntimeResourceBytes(memory.arrayBuffersBytes)}`,
+    ));
+  }
+  for (const queue of queues) {
+    if (!queue || typeof queue !== "object" || typeof queue.id !== "string" || !queue.id) {
+      continue;
+    }
+    const capacity = typeof queue.capacity === "number" && Number.isFinite(queue.capacity)
+      ? tr(
+        t,
+        "settings.doctorRuntimeResourcesQueueCapacity",
+        { capacity: formatNumber(queue.capacity) },
+        `, capacity=${formatNumber(queue.capacity)}`,
+      )
+      : "";
+    notes.push(tr(
+      t,
+      "settings.doctorRuntimeResourcesQueue",
+      {
+        id: queue.id,
+        active: formatNumber(queue.activeCount),
+        queued: formatNumber(queue.queuedCount),
+        capacity,
+      },
+      `queue ${queue.id}: active ${formatNumber(queue.activeCount)}, queued ${formatNumber(queue.queuedCount)}${capacity}`,
+    ));
+  }
+
+  return {
+    title: tr(t, "settings.doctorRuntimeResourcesTitle", {}, "Runtime Resources"),
+    badges,
+    notes,
+    status: sampling.running ? "pass" : "warn",
+  };
+}
+
 function resolveRuntimeResilienceDiagnostics(payload, runtime) {
   const launchView = payload?.promptObservability?.launchExplainability?.runtimeResilience;
   if (
@@ -4116,6 +4265,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildTokenUsageDiagnosticsCard(payload, t),
     buildPreflightCompressionGovernanceCard(payload, t),
     buildQueryRuntimeCard(payload, t),
+    buildRuntimeResourcesCard(payload, t),
     buildToolBehaviorCard(payload, t),
     buildToolContractV2Card(payload, t),
     buildResidentAgentsCard(payload, t),
@@ -4220,6 +4370,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${queryRuntimeCard.title}:`);
     lines.push(...queryRuntimeCard.badges.map((badge) => `- ${badge}`));
     lines.push(...queryRuntimeCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const runtimeResourcesCard = buildRuntimeResourcesCard(payload, t);
+  if (runtimeResourcesCard) {
+    lines.push(``);
+    lines.push(`${runtimeResourcesCard.title}:`);
+    lines.push(...runtimeResourcesCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...runtimeResourcesCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const toolContractV2Card = buildToolContractV2Card(payload, t);

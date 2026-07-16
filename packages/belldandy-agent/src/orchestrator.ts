@@ -79,6 +79,13 @@ export type SpawnResult = {
   sessionId: string;
 };
 
+export type SubAgentOrchestratorRuntimeSnapshot = {
+  activeCount: number;
+  queuedCount: number;
+  maxConcurrent: number;
+  maxQueueSize: number;
+};
+
 export type OrchestratorLogger = {
   info(message: string, data?: unknown): void;
   warn(message: string, data?: unknown): void;
@@ -372,6 +379,16 @@ export class SubAgentOrchestrator {
    */
   get queueSize(): number {
     return this.pendingQueue.length;
+  }
+
+  /** 仅暴露并发和排队水位，供上层资源观测使用。 */
+  getRuntimeSnapshot(): SubAgentOrchestratorRuntimeSnapshot {
+    return {
+      activeCount: this.runningCount,
+      queuedCount: this.pendingQueue.length,
+      maxConcurrent: this.maxConcurrent,
+      maxQueueSize: this.maxQueueSize,
+    };
   }
 
   /**

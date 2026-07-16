@@ -2645,6 +2645,10 @@ test("system.doctor exposes recent query runtime lifecycle traces", async () => 
         id: "query_runtime_trace",
         status: "pass",
       }),
+      expect.objectContaining({
+        id: "runtime_resources",
+        status: "pass",
+      }),
     ]));
     expect(response.payload?.queryRuntime?.observerEnabled).toBe(true);
     expect(response.payload?.queryRuntime?.totalObservedEvents).toBeGreaterThan(0);
@@ -2666,6 +2670,36 @@ test("system.doctor exposes recent query runtime lifecycle traces", async () => 
         method: "message.send",
         status: "completed",
         latestStage: "completed",
+      }),
+    ]));
+    expect(response.payload?.runtimeResources).toMatchObject({
+      available: true,
+      sampling: {
+        running: true,
+        sampleCount: expect.any(Number),
+        maxSamples: expect.any(Number),
+      },
+      queueTotals: {
+        queueCount: expect.any(Number),
+        activeCount: expect.any(Number),
+        queuedCount: expect.any(Number),
+      },
+      latest: {
+        eventLoop: {
+          utilization: expect.any(Number),
+        },
+        memory: {
+          rssBytes: expect.any(Number),
+          heapUsedBytes: expect.any(Number),
+        },
+        queues: expect.any(Array),
+      },
+    });
+    expect(response.payload?.runtimeResources?.latest?.queues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "websocket",
+        activeCount: expect.any(Number),
+        queuedCount: 0,
       }),
     ]));
 

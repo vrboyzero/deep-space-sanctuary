@@ -76,6 +76,10 @@ test("durable extraction runtime coalesces repeated requests and performs traili
     },
   });
   expect(secondQueued.pending).toBe(true);
+  expect(runtime.getRuntimeSnapshot()).toMatchObject({
+    activeCount: 1,
+    queuedCount: 1,
+  });
 
   releaseResolvers.shift()?.();
   await waitFor(() => calls.length === 2);

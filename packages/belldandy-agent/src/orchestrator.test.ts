@@ -390,12 +390,21 @@ describe("SubAgentOrchestrator", () => {
       });
 
       expect(orch.queueSize).toBe(1);
+      expect(orch.getRuntimeSnapshot()).toMatchObject({
+        activeCount: 1,
+        queuedCount: 1,
+        maxConcurrent: 1,
+      });
 
       // Both should eventually succeed
       const [result1, result2] = await Promise.all([p1, p2]);
       expect(result1.success).toBe(true);
       expect(result2.success).toBe(true);
       expect(orch.queueSize).toBe(0);
+      expect(orch.getRuntimeSnapshot()).toMatchObject({
+        activeCount: 0,
+        queuedCount: 0,
+      });
     });
 
     it("should handle agent errors gracefully", async () => {

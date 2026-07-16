@@ -417,6 +417,32 @@ export class WorkflowRuntime {
       }));
   }
 
+  /** 汇总 workflow 内部子代理的资源水位，不暴露 journal 或会话标识。 */
+  getRuntimeSnapshot(): {
+    activeRunCount: number;
+    activeAgentCount: number;
+    queuedAgentCount: number;
+    maxConcurrentAgentCount: number;
+    maxQueuedAgentCount: number;
+  } {
+    const activeRuns = [...this.activeRuns.values()]
+      .filter((run) => run.status === "running" || run.status === "stopping");
+    return activeRuns.reduce((summary, run) => {
+      const snapshot = run.orchestrator.getRuntimeSnapshot();
+      summary.activeAgentCount += snapshot.activeCount;
+      summary.queuedAgentCount += snapshot.queuedCount;
+      summary.maxConcurrentAgentCount += snapshot.maxConcurrent;
+      summary.maxQueuedAgentCount += snapshot.maxQueueSize;
+      return summary;
+    }, {
+      activeRunCount: activeRuns.length,
+      activeAgentCount: 0,
+      queuedAgentCount: 0,
+      maxConcurrentAgentCount: 0,
+      maxQueuedAgentCount: 0,
+    });
+  }
+
   /**
    * 清理已完成的 active runs。
    */

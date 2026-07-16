@@ -107,6 +107,10 @@ import { resolveResidentStateBindingViewForAgent } from "./resident-state-bindin
 import { buildAgentLaunchExplainability } from "./agent-launch-explainability.js";
 import type { RuntimeResilienceDoctorReport } from "./runtime-resilience.js";
 import { QueryRuntimeTraceStore } from "./query-runtime-trace.js";
+import {
+  RuntimeResourceObservability,
+  type RuntimeResourceQueueSnapshot,
+} from "./runtime-resource-observability.js";
 import { ResidentConversationStore } from "./resident-conversation-store.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
 import { notifyConversationToolEvent } from "./query-runtime-side-effects.js";
@@ -324,6 +328,8 @@ export type GatewayServerOptions = {
   getCronRuntimeDoctorReport?: () => Promise<CronRuntimeDoctorReport | undefined>;
   /** Background continuation runtime 摘要 */
   getBackgroundContinuationRuntimeDoctorReport?: () => Promise<BackgroundContinuationRuntimeDoctorReport | undefined>;
+  /** 由 Gateway 装配层提供的额外运行队列数值快照。 */
+  getRuntimeResourceQueueSnapshots?: () => RuntimeResourceQueueSnapshot[];
   /** Cron runtime immediate run */
   runCronJobNow?: (jobId: string) => Promise<{
     runId?: string;
@@ -1220,6 +1226,28 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
   };
 
   let broadcastEvent: ((frame: GatewayEventFrame) => void) | undefined;
+  let websocketRuntime: ReturnType<typeof createGatewayWebSocketRuntime> | undefined;
+  const runtimeResourceObservability = new RuntimeResourceObservability({
+    enabled: String(process.env.BELLDANDY_RUNTIME_RESOURCE_OBSERVABILITY_ENABLED ?? "true").trim().toLowerCase() !== "false",
+    sampleIntervalMs: parsePositiveIntEnv("BELLDANDY_RUNTIME_RESOURCE_SAMPLE_INTERVAL_MS", 15_000),
+    maxSamples: parsePositiveIntEnv("BELLDANDY_RUNTIME_RESOURCE_MAX_SAMPLES", 24),
+    eventLoopDelayResolutionMs: parsePositiveIntEnv("BELLDANDY_RUNTIME_RESOURCE_EVENT_LOOP_RESOLUTION_MS", 20),
+    queueProviders: [
+      () => opts.getRuntimeResourceQueueSnapshots?.() ?? [],
+      () => {
+        const snapshot = durableExtractionRuntime?.getRuntimeSnapshot();
+        return snapshot ? [{ id: "durable_extraction", ...snapshot }] : [];
+      },
+      () => {
+        const stats = opts.webhookIdempotency?.getStats();
+        return stats ? [{ id: "webhook_idempotency", activeCount: stats.inflight, queuedCount: 0 }] : [];
+      },
+      () => {
+        const snapshot = websocketRuntime?.getRuntimeSnapshot();
+        return snapshot ? [{ id: "websocket", queuedCount: 0, ...snapshot }] : [];
+      },
+    ],
+  });
   const handleWebSocketRequest = createGatewayWebSocketRequestHandler({
     stateDir,
     additionalWorkspaceRoots: opts.additionalWorkspaceRoots ?? [],
@@ -1279,6 +1307,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     getCompactionRuntimeReport: opts.getCompactionRuntimeReport,
     getRuntimeResilienceReport: opts.getRuntimeResilienceReport,
     queryRuntimeTraceStore,
+    runtimeResourceObservability,
     residentAgentRuntime,
     residentMemoryManagers: opts.residentMemoryManagers,
     getCronRuntimeDoctorReport: opts.getCronRuntimeDoctorReport,
@@ -1289,7 +1318,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     setGovernanceDetailMode: setRuntimeGovernanceDetailMode,
     handleReq,
   });
-  const websocketRuntime = createGatewayWebSocketRuntime({
+  websocketRuntime = createGatewayWebSocketRuntime({
     server,
     host,
     stateDir,
@@ -1300,6 +1329,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     startupObservability: opts.startupObservability,
     onRequest: handleWebSocketRequest,
   });
+  runtimeResourceObservability.start();
   broadcastEvent = websocketRuntime.broadcast;
   (opts.toolExecutor as (ToolExecutor & {
     setBroadcast?: (
@@ -1417,7 +1447,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     close: async () => {
       detachSubTaskBroadcast?.();
       detachDurableExtractionBroadcast?.();
-      await websocketRuntime.close();
+      runtimeResourceObservability.stop();
+      await websocketRuntime?.close();
       await new Promise<void>((resolve, reject) => {
         const forceCloseTimer = setTimeout(() => {
           server.closeIdleConnections?.();
@@ -1912,6 +1943,7 @@ async function handleReq(
         getCompactionRuntimeReport: ctx.getCompactionRuntimeReport,
         getRuntimeResilienceReport: ctx.getRuntimeResilienceReport,
         queryRuntimeTraceStore: ctx.queryRuntimeTraceStore,
+        runtimeResourceObservability: ctx.runtimeResourceObservability,
         residentAgentRuntime: ctx.residentAgentRuntime,
         residentMemoryManagers: ctx.residentMemoryManagers,
         getCronRuntimeDoctorReport: ctx.getCronRuntimeDoctorReport,
