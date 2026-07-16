@@ -7,6 +7,11 @@ import { afterEach, expect, test, vi } from "vitest";
 import command, { configureCodexExecMcp } from "./bridge-codex-exec-mcp.js";
 
 const tempDirs = new Set<string>();
+const EXTRA_WORKSPACE_ROOTS = [
+  path.resolve("E:/other-project"),
+  path.resolve("D:/shared-workspace"),
+];
+const EXTRA_WORKSPACE_ROOT = EXTRA_WORKSPACE_ROOTS[0];
 
 async function createTempDir(prefix: string) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -48,10 +53,7 @@ test("configureCodexExecMcp creates minimal mcp and bridge config from empty sta
 
   expect(result.changed).toBe(true);
   expect(result.wrapperScriptPath).toBe(scriptPath);
-  expect(result.extraWorkspaceRoots).toEqual([
-    "E:\\other-project",
-    "D:\\shared-workspace",
-  ]);
+  expect(result.extraWorkspaceRoots).toEqual(EXTRA_WORKSPACE_ROOTS);
   expect(result.createdFiles).toEqual([
     path.join(stateDir, "mcp.json"),
     path.join(stateDir, "agent-bridge.json"),
@@ -72,24 +74,17 @@ test("configureCodexExecMcp creates minimal mcp and bridge config from empty sta
           "--codex-command",
           "codex",
           "--extra-workspace-root",
-          "E:\\other-project",
+          EXTRA_WORKSPACE_ROOTS[0],
           "--extra-workspace-root",
-          "D:\\shared-workspace",
+          EXTRA_WORKSPACE_ROOTS[1],
         ]),
       }),
     }),
   ]);
 
   const bridgeConfig = JSON.parse(await fs.readFile(path.join(stateDir, "agent-bridge.json"), "utf-8"));
-  expect(bridgeConfig.workspaceRoots).toEqual([
-    workspaceRoot,
-    "E:\\other-project",
-    "D:\\shared-workspace",
-  ]);
-  expect(bridgeConfig.extraWorkspaceRoots).toEqual([
-    "E:\\other-project",
-    "D:\\shared-workspace",
-  ]);
+  expect(bridgeConfig.workspaceRoots).toEqual([workspaceRoot, ...EXTRA_WORKSPACE_ROOTS]);
+  expect(bridgeConfig.extraWorkspaceRoots).toEqual(EXTRA_WORKSPACE_ROOTS);
   expect(bridgeConfig.targets).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: "codex_exec",
@@ -274,7 +269,7 @@ test("configureCodexExecMcp preserves external mcpServers format", async () => {
         "--default-cwd",
         workspaceRoot,
         "--extra-workspace-root",
-        "E:\\other-project",
+        EXTRA_WORKSPACE_ROOT,
         "--codex-command",
         "codex.cmd",
       ]),

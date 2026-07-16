@@ -170,5 +170,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Expose port (documentation only, actual mapping requires -p)
 EXPOSE 28889
 
-# Start command (default secure mode)
-CMD ["pnpm", "start"]
+# The builder already emits the hashed WebChat assets. Invoke the built CLI
+# directly so the production image never needs dev-only asset-builder packages.
+CMD ["node", "packages/belldandy-core/dist/bin/bdd.js", "start"]

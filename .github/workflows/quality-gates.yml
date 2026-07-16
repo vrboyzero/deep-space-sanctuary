@@ -138,6 +138,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate workspace version metadata
+        run: pnpm version:generate
+
       - name: Run report-only B00 build benchmark
         run: >-
           pnpm benchmark:build

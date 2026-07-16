@@ -21,13 +21,26 @@ export const methodReadTool: Tool = {
     },
     execute: async (args: JsonObject, context: ToolContext) => {
         const filename = args.filename as string;
-        if (!filename) {
+        if (typeof filename !== "string" || !filename) {
             return {
                 id: "error",
                 name: "method_read",
                 success: false,
                 output: "缺少参数: filename",
                 error: "Missing filename",
+                durationMs: 0
+            };
+        }
+
+        // 方法文件只接受文件名；在 POSIX 上也要把 Windows 反斜杠视为路径分隔符。
+        const normalizedFilename = filename.replace(/\\/g, "/");
+        if (normalizedFilename.includes("/")) {
+            return {
+                id: "error",
+                name: "method_read",
+                success: false,
+                output: "非法的路径访问。",
+                error: "Path traversal detected",
                 durationMs: 0
             };
         }

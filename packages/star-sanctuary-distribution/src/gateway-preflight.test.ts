@@ -28,6 +28,14 @@ function createTempStateDir(): string {
 test("preflight kills owned gateway PID from foreground marker and clears the marker file", async () => {
   const stateDir = createTempStateDir();
   const ownedPid = 43210;
+  const gatewayEntryPath = path.join(
+    process.cwd(),
+    "packages",
+    "belldandy-core",
+    "src",
+    "bin",
+    "gateway.ts",
+  );
   const alive = new Set([ownedPid]);
   fs.writeFileSync(getForegroundPidFile(stateDir), `${ownedPid}\n`, "utf-8");
 
@@ -35,7 +43,7 @@ test("preflight kills owned gateway PID from foreground marker and clears the ma
     async inspectProcess(pid) {
       return {
         pid,
-        commandLine: `node --import tsx E:\\project\\star-sanctuary\\packages\\belldandy-core\\src\\bin\\gateway.ts`,
+        commandLine: `node --import tsx ${gatewayEntryPath}`,
       };
     },
     async findPortOwner() {
@@ -52,7 +60,7 @@ test("preflight kills owned gateway PID from foreground marker and clears the ma
   const result = await preflightGatewayCleanup({
     label: "Test",
     stateDir,
-    ownershipTokens: ["E:/project/star-sanctuary/packages/belldandy-core/src/bin/gateway.ts"],
+    ownershipTokens: [gatewayEntryPath],
     runner,
   });
 

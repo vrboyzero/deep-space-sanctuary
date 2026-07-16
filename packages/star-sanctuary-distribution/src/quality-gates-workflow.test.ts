@@ -22,6 +22,12 @@ function readDockerWorkflow(): string {
   );
 }
 
+function readDockerfile(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const workspaceRoot = path.resolve(currentDir, "..", "..", "..");
+  return fs.readFileSync(path.join(workspaceRoot, "Dockerfile"), "utf-8");
+}
+
 function readRootPackageJson(): Record<string, any> {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   const workspaceRoot = path.resolve(currentDir, "..", "..", "..");
@@ -113,6 +119,8 @@ test("quality gate publishes a report-only B00 build benchmark without performan
   expect(rootPackage.scripts?.["benchmark:build"]).toBe("node scripts/run-build-benchmark.mjs");
   expect(workflow).toContain("build-benchmark-report:");
   expect(workflow).toContain("name: B00 build benchmark report");
+  expect(workflow).toContain("name: Generate workspace version metadata");
+  expect(workflow).toContain("run: pnpm version:generate");
   expect(workflow).toContain("pnpm benchmark:build");
   expect(workflow).toContain("--output artifacts/benchmarks/b00-build.json");
   expect(workflow).toContain("--warmup-runs 1");
@@ -121,6 +129,13 @@ test("quality gate publishes a report-only B00 build benchmark without performan
   expect(workflow).toContain("path: artifacts/benchmarks/b00-build.json");
   expect(workflow).toMatch(/name: Upload B00 build benchmark\s+if: always\(\)/);
   expect(workflow).not.toContain("--max-duration-ms");
+});
+
+test("Docker runtime starts the built CLI without invoking the dev-only asset builder", () => {
+  const dockerfile = readDockerfile();
+
+  expect(dockerfile).toContain('CMD ["node", "packages/belldandy-core/dist/bin/bdd.js", "start"]');
+  expect(dockerfile).not.toContain('CMD ["pnpm", "start"]');
 });
 
 test("tag release forwards its resolved version to release-light build and verification", () => {

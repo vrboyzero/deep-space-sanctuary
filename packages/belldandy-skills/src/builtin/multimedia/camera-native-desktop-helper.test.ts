@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -50,15 +51,18 @@ afterEach(async () => {
 
 describe("camera native desktop helper", () => {
   it("treats a junction-resolved helper path as the same entrypoint", async () => {
-    const argvPath = "E:/install-root/current/packages/belldandy-skills/dist/builtin/multimedia/camera-native-desktop-helper.js";
-    const moduleUrl = "file:///E:/project/star-sanctuary/packages/belldandy-skills/dist/builtin/multimedia/camera-native-desktop-helper.js";
+    const argvPath = path.join(os.tmpdir(), "install-root", "current", "camera-native-desktop-helper.js");
+    const modulePath = path.join(os.tmpdir(), "project-root", "camera-native-desktop-helper.js");
+    const moduleUrl = pathToFileURL(modulePath).href;
+    const resolvedArgPath = path.resolve(argvPath);
+    const resolvedModulePath = path.resolve(modulePath);
     const realpathCalls: string[] = [];
     const realpathImpl = async (targetPath: string) => {
       realpathCalls.push(targetPath);
-      if (targetPath === path.resolve(argvPath)) {
-        return "E:\\project\\star-sanctuary\\packages\\belldandy-skills\\dist\\builtin\\multimedia\\camera-native-desktop-helper.js";
+      if (targetPath === resolvedArgPath) {
+        return resolvedModulePath;
       }
-      if (targetPath === "E:\\project\\star-sanctuary\\packages\\belldandy-skills\\dist\\builtin\\multimedia\\camera-native-desktop-helper.js") {
+      if (targetPath === resolvedModulePath) {
         return targetPath;
       }
       throw new Error(`unexpected realpath target: ${targetPath}`);
@@ -66,8 +70,8 @@ describe("camera native desktop helper", () => {
 
     await expect(isNativeDesktopHelperEntrypoint(argvPath, moduleUrl, realpathImpl)).resolves.toBe(true);
     expect(realpathCalls).toEqual([
-      path.resolve(argvPath),
-      "E:\\project\\star-sanctuary\\packages\\belldandy-skills\\dist\\builtin\\multimedia\\camera-native-desktop-helper.js",
+      resolvedArgPath,
+      resolvedModulePath,
     ]);
   });
 
@@ -105,7 +109,10 @@ describe("camera native desktop helper", () => {
       await fs.writeFile(outputPath, pngBuffer);
       process.exit(0);
     `);
-    const helperPath = path.resolve("E:/project/star-sanctuary/packages/belldandy-skills/src/builtin/multimedia/camera-native-desktop-helper.ts");
+    const helperPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "camera-native-desktop-helper.ts",
+    );
 
     const client = new NativeDesktopStdioHelperClient({
       protocol: "camera-native-desktop/v1",

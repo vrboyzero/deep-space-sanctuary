@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { expect, test, vi } from "vitest";
@@ -70,9 +71,11 @@ test("guardedRemovePath removes a broken symlink inside an allowed root", () => 
 });
 
 test("assertSafeSingleExeRuntimeVersionDirInfo accepts verify sandbox roots", () => {
+  const env = {
+    LOCALAPPDATA: path.join(os.tmpdir(), "star-sanctuary-local-app-data"),
+  } as NodeJS.ProcessEnv;
   const verifyBaseRoot = resolveSingleExeVerifyBaseRoot({
-    env: { LOCALAPPDATA: "C:/Users/admin/AppData/Local" } as NodeJS.ProcessEnv,
-    tmpDir: "C:/Temp",
+    env,
   });
   const appHomeDir = path.join(verifyBaseRoot, "deps-full", "home");
   const runtimeBaseDir = path.join(appHomeDir, "runtime");
@@ -86,9 +89,7 @@ test("assertSafeSingleExeRuntimeVersionDirInfo accepts verify sandbox roots", ()
     runtimeDir: path.join(versionRootDir, "runtime"),
     versionFilePath: path.join(versionRootDir, "version.json"),
     runtimeManifestPath: path.join(versionRootDir, "runtime-manifest.json"),
-  }, {
-    env: { LOCALAPPDATA: "C:/Users/admin/AppData/Local" } as NodeJS.ProcessEnv,
-  })).not.toThrow();
+  }, { env })).not.toThrow();
 });
 
 test("assertSafeSingleExeRuntimeVersionDirInfo rejects unexpected user-home paths", () => {

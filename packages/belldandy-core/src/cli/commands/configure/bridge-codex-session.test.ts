@@ -7,6 +7,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import command, { configureCodexSession } from "./bridge-codex-session.js";
 
 const tempDirs = new Set<string>();
+const EXTRA_WORKSPACE_ROOTS = [
+  path.resolve("E:/other-project"),
+  path.resolve("D:/shared-workspace"),
+];
 
 async function createTempDir(prefix: string) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -35,20 +39,13 @@ test("configureCodexSession creates a persistent codex bridge session target", a
   });
 
   expect(result.changed).toBe(true);
-  expect(result.extraWorkspaceRoots).toEqual([
-    "E:\\other-project",
-    "D:\\shared-workspace",
-  ]);
+  expect(result.extraWorkspaceRoots).toEqual(EXTRA_WORKSPACE_ROOTS);
   expect(result.createdFiles).toEqual([
     path.join(stateDir, "agent-bridge.json"),
   ]);
 
   const bridgeConfig = JSON.parse(await fs.readFile(path.join(stateDir, "agent-bridge.json"), "utf-8"));
-  expect(bridgeConfig.workspaceRoots).toEqual([
-    workspaceRoot,
-    "E:\\other-project",
-    "D:\\shared-workspace",
-  ]);
+  expect(bridgeConfig.workspaceRoots).toEqual([workspaceRoot, ...EXTRA_WORKSPACE_ROOTS]);
   expect(bridgeConfig.targets).toEqual(expect.arrayContaining([
     expect.objectContaining({
       id: "codex_session",
@@ -67,9 +64,9 @@ test("configureCodexSession creates a persistent codex bridge session target", a
             "--sandbox",
             "workspace-write",
             "--add-dir",
-            "E:\\other-project",
+            EXTRA_WORKSPACE_ROOTS[0],
             "--add-dir",
-            "D:\\shared-workspace",
+            EXTRA_WORKSPACE_ROOTS[1],
           ],
         }),
       },

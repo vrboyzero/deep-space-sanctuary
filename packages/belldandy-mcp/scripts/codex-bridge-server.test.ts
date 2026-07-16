@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -54,7 +55,7 @@ describe("codex-bridge-server", () => {
     ]);
 
     expect(parsed.workspaceRoot).toMatch(/star-sanctuary$/);
-    expect(parsed.defaultCwd).toMatch(/star-sanctuary[\\/]+packages$/);
+    expect(parsed.defaultCwd).toBe(path.join(parsed.workspaceRoot, "packages"));
     expect(parsed.extraWorkspaceRoots).toEqual([
       expect.stringMatching(/other-project$/),
     ]);
