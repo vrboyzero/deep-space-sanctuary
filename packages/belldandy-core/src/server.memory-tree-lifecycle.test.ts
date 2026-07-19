@@ -282,7 +282,7 @@ test("memory.tree.lifecycle.ensure records last_error and cooldown when managed 
     const store = (manager as any).store as {
       createTask: (task: Record<string, unknown>) => void;
       linkTaskMemory: (taskId: string, chunkId: string, relation: "used" | "generated" | "referenced") => void;
-      upsertMemoryTreeNodes: (...args: any[]) => void;
+      publishMemoryTreeKind: (...args: any[]) => void;
     };
     store.createTask({
       id: "rpc-lifecycle-failure-task-1",
@@ -301,8 +301,8 @@ test("memory.tree.lifecycle.ensure records last_error and cooldown when managed 
     });
     store.linkTaskMemory("rpc-lifecycle-failure-task-1", "rpc-lifecycle-failure-core", "generated");
 
-    const originalUpsertMemoryTreeNodes = store.upsertMemoryTreeNodes.bind(store);
-    store.upsertMemoryTreeNodes = () => {
+    const originalPublishMemoryTreeKind = store.publishMemoryTreeKind.bind(store);
+    store.publishMemoryTreeKind = () => {
       throw new Error("profile lifecycle boom");
     };
 
@@ -441,7 +441,7 @@ test("memory.tree.lifecycle.ensure records last_error and cooldown when managed 
       }),
     ]));
 
-    store.upsertMemoryTreeNodes = originalUpsertMemoryTreeNodes;
+    store.publishMemoryTreeKind = originalPublishMemoryTreeKind;
   } finally {
     manager.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});

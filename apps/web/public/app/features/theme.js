@@ -45,16 +45,6 @@ function updateToggleButton(toggleButtonEl, activeTheme, translate) {
   toggleButtonEl.setAttribute("aria-label", toggleButtonEl.title);
 }
 
-function runThemeTransition(callback) {
-  const root = document.documentElement;
-  root.classList.add(TRANSITION_CLASS);
-  void root.offsetWidth;
-  callback();
-  window.setTimeout(() => {
-    root.classList.remove(TRANSITION_CLASS);
-  }, TRANSITION_MS);
-}
-
 export function createThemeController({
   storageKey = "ss-webchat-theme",
   defaultTheme = "dark",
@@ -66,11 +56,30 @@ export function createThemeController({
     document.documentElement.dataset.theme || readStoredTheme(storageKey),
     fallbackTheme,
   );
+  let transitionTimer = null;
+  let disposed = false;
 
   applyTheme(activeTheme);
   updateToggleButton(toggleButtonEl, activeTheme, translate);
 
+  function runThemeTransition(callback) {
+    const root = document.documentElement;
+    if (transitionTimer !== null) {
+      window.clearTimeout(transitionTimer);
+      transitionTimer = null;
+    }
+    root.classList.add(TRANSITION_CLASS);
+    void root.offsetWidth;
+    callback();
+    transitionTimer = window.setTimeout(() => {
+      transitionTimer = null;
+      if (disposed) return;
+      root.classList.remove(TRANSITION_CLASS);
+    }, TRANSITION_MS);
+  }
+
   function setTheme(nextTheme, options = {}) {
+    if (disposed) return activeTheme;
     const normalizedTheme = normalizeTheme(nextTheme, fallbackTheme);
     const shouldTransition = options.transition !== false && normalizedTheme !== activeTheme;
 
@@ -91,19 +100,43 @@ export function createThemeController({
   }
 
   function toggle() {
+    if (disposed) return activeTheme;
     return setTheme(getNextTheme(activeTheme));
   }
 
-  if (toggleButtonEl) {
-    toggleButtonEl.addEventListener("click", () => {
-      toggle();
-    });
+  function handleToggleClick() {
+    toggle();
+  }
+
+  toggleButtonEl?.addEventListener("click", handleToggleClick);
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (transitionTimer !== null) {
+      window.clearTimeout(transitionTimer);
+      transitionTimer = null;
+    }
+    document.documentElement.classList.remove(TRANSITION_CLASS);
+    toggleButtonEl?.removeEventListener("click", handleToggleClick);
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      activeTimerCount: transitionTimer === null ? 0 : 1,
+      listenerCount: disposed || !toggleButtonEl ? 0 : 1,
+      disposed,
+    };
   }
 
   return {
+    dispose,
     getAvailableThemes: () => [...VALID_THEMES],
+    getRuntimeSnapshot,
     getTheme: () => activeTheme,
-    refreshLabels: () => updateToggleButton(toggleButtonEl, activeTheme, translate),
+    refreshLabels: () => {
+      if (!disposed) updateToggleButton(toggleButtonEl, activeTheme, translate);
+    },
     setTheme,
     toggle,
   };

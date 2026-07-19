@@ -85,12 +85,18 @@ import {
   resolveEmailInboundCheckpointStorePath,
 } from "../email-inbound-checkpoint-store.js";
 import { startImapPollingEmailInboundRuntime } from "../email-inbound-imap-runtime.js";
+import { TopLevelConversationLifecycle } from "../top-level-conversation-lifecycle.js";
 import { startStarweaverActiveNotifyRuntime } from "../starweaver-active-notify-runtime.js";
 import { shouldDebugToolAuditLog } from "../tool-audit-log.js";
 
 import {
   OpenAIChatAgent,
   ToolEnabledAgent,
+  DEFAULT_MAX_TOOL_CALLS,
+  DEFAULT_TOOL_LOOP_ITERATION_BUDGET,
+  normalizeMaxHighRiskToolCalls,
+  normalizeMaxRunWallTimeMs,
+  normalizeMaxTotalTokens,
   type BelldandyAgent,
   AGENTS_FILENAME,
   BOOTSTRAP_FILENAME,
@@ -200,6 +206,7 @@ import {
   bridgeSessionStatusTool,
   bridgeSessionCloseTool,
   bridgeSessionListTool,
+  shutdownBridgeSessions,
   ptcRuntimeTool,
   methodListTool,
   methodReadTool,
@@ -376,7 +383,9 @@ import {
   BackgroundContinuationLedger,
   buildBackgroundContinuationRuntimeDoctorReport,
 } from "../background-continuation-runtime.js";
+import { BackgroundRunCoordinator } from "../background-run-coordinator.js";
 import { BackgroundRecoveryRuntime } from "../background-recovery-runtime.js";
+import { ConversationRunRegistry } from "../conversation-run-registry.js";
 import { type HeartbeatRunnerHandle } from "../heartbeat/index.js";
 import { createSubTaskBackgroundContinuationLedgerHandler } from "../subtask-background-continuation-ledger.js";
 import { RuntimeResilienceTracker } from "../runtime-resilience.js";
@@ -624,11 +633,30 @@ const maxInputTokens = maxInputTokensRaw ? parseInt(maxInputTokensRaw, 10) || 0 
 const maxOutputTokensRaw = readEnv("BELLDANDY_MAX_OUTPUT_TOKENS");
 // 默认 4096，与硬编码默认值保持一致；用户可调大以避免长输出被截断
 const maxOutputTokens = maxOutputTokensRaw ? parseInt(maxOutputTokensRaw, 10) || 4096 : 4096;
+const maxToolCallsRaw = readEnv("BELLDANDY_MAX_TOOL_CALLS");
+const maxToolCalls = (() => {
+  if (!maxToolCallsRaw) return DEFAULT_MAX_TOOL_CALLS;
+  const value = parseInt(maxToolCallsRaw, 10);
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_MAX_TOOL_CALLS;
+  return Math.floor(value);
+})();
+const maxRunWallTimeMsRaw = readEnv("BELLDANDY_MAX_RUN_WALL_TIME_MS");
+const maxRunWallTimeMs = normalizeMaxRunWallTimeMs(
+  maxRunWallTimeMsRaw ? Number(maxRunWallTimeMsRaw) : undefined,
+);
+const maxTotalTokensRaw = readEnv("BELLDANDY_MAX_TOTAL_TOKENS");
+const maxTotalTokens = normalizeMaxTotalTokens(
+  maxTotalTokensRaw ? Number(maxTotalTokensRaw) : undefined,
+);
+const maxHighRiskToolCallsRaw = readEnv("BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS");
+const maxHighRiskToolCalls = normalizeMaxHighRiskToolCalls(
+  maxHighRiskToolCallsRaw ? Number(maxHighRiskToolCallsRaw) : undefined,
+);
 const toolLoopIterationBudgetRaw = readEnv("BELLDANDY_TOOL_LOOP_ITERATION_BUDGET");
 const toolLoopIterationBudget = (() => {
-  if (!toolLoopIterationBudgetRaw) return 0;
+  if (!toolLoopIterationBudgetRaw) return DEFAULT_TOOL_LOOP_ITERATION_BUDGET;
   const value = parseInt(toolLoopIterationBudgetRaw, 10);
-  if (!Number.isFinite(value)) return 0;
+  if (!Number.isFinite(value)) return DEFAULT_TOOL_LOOP_ITERATION_BUDGET;
   return value <= 0 ? 0 : Math.max(1, Math.floor(value));
 })();
 const toolLoopWarningFractionRaw = readEnv("BELLDANDY_TOOL_LOOP_WARNING_FRACTION");
@@ -708,16 +736,13 @@ const agentProfiles = [...loadedAgentProfiles, ...builtinWorkerProfiles];
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
 
 
-// --- Activity Tracking ---
+// --- Background Run Coordination ---
 
-let lastActiveTime = 0;
-const onActivity = () => {
-  lastActiveTime = Date.now();
-};
-const isBusy = () => {
-  // Busy if active in last 2 minutes
-  return Date.now() - lastActiveTime < 2 * 60 * 1000;
-};
+const conversationRunRegistry = new ConversationRunRegistry();
+const backgroundRunCoordinator = new BackgroundRunCoordinator({
+  getForegroundActiveCount: () => conversationRunRegistry.getRuntimeSnapshot().activeCount,
+});
+const isBusy = () => backgroundRunCoordinator.isForegroundBusy();
 
 // --- Validation ---
 if (!Number.isFinite(port) || port <= 0) {
@@ -820,6 +845,12 @@ if (embeddingEnabled && !openaiApiKey) {
 // [SECURITY] 危险工具需显式启用
 const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "true";
 const agentBridgeEnabled = readEnv("BELLDANDY_AGENT_BRIDGE_ENABLED") === "true";
+if (agentBridgeEnabled) {
+  process.once("exit", () => {
+    // exit hook 只能同步 kill；完整持久化由配置重启路径和后续 shutdown coordinator 负责。
+    void shutdownBridgeSessions().catch(() => {});
+  });
+}
 const readExternalOutboundRequireConfirmation = () => readEnv("BELLDANDY_EXTERNAL_OUTBOUND_REQUIRE_CONFIRMATION") !== "false";
 const readEmailOutboundRequireConfirmation = () => {
   const value = readEnv("BELLDANDY_EMAIL_OUTBOUND_REQUIRE_CONFIRMATION");
@@ -1224,7 +1255,7 @@ const toolExecutor: ToolExecutor = new ToolExecutor({
   deferredToolNames,
   allowedConversationKinds,
   isToolDisabled: (name) => toolsConfigManager.isToolDisabled(name),
-  isToolAllowedForAgent: (toolName, agentId): boolean => {
+  isToolAllowedForAgent: (toolName, agentId, role): boolean => {
     if (AGENT_META_ALWAYS_ALLOWED_TOOLS.has(toolName)) {
       return true;
     }
@@ -1235,6 +1266,7 @@ const toolExecutor: ToolExecutor = new ToolExecutor({
     const contract = toolExecutor.getRegisteredToolContract(toolName);
     return isAgentToolAllowed({
       agentId: resolvedAgentId,
+      role,
       toolName,
       contract,
       profile,
@@ -1640,6 +1672,20 @@ const dynamicSystemPromptBuild = buildSystemPromptResult({
 });
 const dynamicSystemPrompt = dynamicSystemPromptBuild.text;
 logger.info("system-prompt", `length=${dynamicSystemPrompt.length} chars${maxSystemPromptChars ? `, limit=${maxSystemPromptChars}` : ""}`);
+if (
+  dynamicSystemPromptBuild.skillPromptBudget
+  && (
+    dynamicSystemPromptBuild.skillPromptBudget.deferredInstructionCount > 0
+    || dynamicSystemPromptBuild.skillPromptBudget.omittedSummaryCount > 0
+    || dynamicSystemPromptBuild.skillPromptBudget.routingOmitted
+  )
+) {
+  const budget = dynamicSystemPromptBuild.skillPromptBudget;
+  logger.warn(
+    "skills",
+    `prompt budget applied (renderedBytes=${budget.renderedBytes}/${budget.maxBytes}, deferredInstructions=${budget.deferredInstructionCount}, omittedSummaries=${budget.omittedSummaryCount}, routingOmitted=${budget.routingOmitted})`,
+  );
+}
 
 // 7.5 Hook System: HookRegistry + Context Injection
 const hookRegistry = new HookRegistry();
@@ -2221,6 +2267,12 @@ agentRegistry = agentProvider === "openai"
     const profileMaxInputTokens = profile.maxInputTokens ?? maxInputTokens;
     // Determine max output tokens: profile override > env（默认 4096，调大可避免长输出截断工具调用 JSON）
     const profileMaxOutputTokens = profile.maxOutputTokens ?? maxOutputTokens;
+    // Profile 可显式提高后台/长任务预算；未配置时仍采用全局安全默认值。
+    const profileMaxToolCalls = profile.maxToolCalls ?? maxToolCalls;
+    const profileMaxRunWallTimeMs = profile.maxRunWallTimeMs ?? maxRunWallTimeMs;
+    const profileMaxTotalTokens = profile.maxTotalTokens ?? maxTotalTokens;
+    const profileMaxHighRiskToolCalls = profile.maxHighRiskToolCalls ?? maxHighRiskToolCalls;
+    const profileToolLoopIterationBudget = profile.toolLoopIterationBudget ?? toolLoopIterationBudget;
 
     // Resolve protocol: per-model override > global env
     const resolvedProtocol = (resolved.protocol ?? agentProtocol) as "openai" | "anthropic" | undefined;
@@ -2305,7 +2357,11 @@ agentRegistry = agentProvider === "openai"
         sanitizeResponsesToolSchema,
         ...(profileMaxInputTokens > 0 && { maxInputTokens: profileMaxInputTokens }),
         ...(profileMaxOutputTokens > 0 && { maxOutputTokens: profileMaxOutputTokens }),
-        toolLoopIterationBudget,
+        maxToolCalls: profileMaxToolCalls,
+        maxRunWallTimeMs: profileMaxRunWallTimeMs,
+        maxTotalTokens: profileMaxTotalTokens,
+        maxHighRiskToolCalls: profileMaxHighRiskToolCalls,
+        toolLoopIterationBudget: profileToolLoopIterationBudget,
         toolLoopWarningFraction,
         toolCallRepairLevel,
         compaction: agentCompactionOpts,
@@ -2858,6 +2914,7 @@ const conversationStore = new ResidentConversationStore({
     await hookRunner.runAfterCompaction(event, ctx);
   },
 });
+const topLevelConversationLifecycle = new TopLevelConversationLifecycle();
 
 // Wire conversationStore into ToolExecutor (for caching support)
 toolExecutor.setConversationStore(conversationStore);
@@ -4048,6 +4105,7 @@ const channelRuntime = createGatewayChannelsRuntime({
   agentRegistry,
   createAgent,
   conversationStore,
+  topLevelConversationLifecycle,
   currentConversationBindingStore,
   externalOutboundSenderRegistry,
   toolsEnabled,
@@ -4111,9 +4169,10 @@ const serverOptions = buildGatewayServerOptions({
   modelConfigPath: modelConfigFile,
   residentMemoryManagers: scopedMemoryManagers.records,
   conversationStore,
+  conversationRunRegistry,
+  topLevelConversationLifecycle,
   getCompactionRuntimeReport: () => compactionRuntimeTracker.getReport(),
   getRuntimeResilienceReport: () => runtimeResilienceTracker.getReport(),
-  onActivity,
   logger,
   toolsConfigManager,
   toolExecutor: toolsEnabled ? toolExecutor : undefined,
@@ -4216,6 +4275,18 @@ const serverOptions = buildGatewayServerOptions({
         queuedCount: 0,
       });
     }
+    const backgroundRunSnapshot = backgroundRunCoordinator.getRuntimeSnapshot();
+    snapshots.push({
+      id: "background_runs",
+      activeCount: backgroundRunSnapshot.activeCount,
+      queuedCount: backgroundRunSnapshot.queuedCount,
+      capacity: backgroundRunSnapshot.capacity,
+      aggregate: true,
+    }, {
+      id: "foreground_runs",
+      activeCount: backgroundRunSnapshot.foregroundActiveCount,
+      queuedCount: 0,
+    });
     snapshots.push(...getChannelIngressRuntimeResourceQueueSnapshots());
     return snapshots;
   },
@@ -4440,6 +4511,7 @@ heartbeatRunner = await startHeartbeatRuntime({
   deliverToLatestBoundExternalChannel,
   backgroundContinuationLedger,
   backgroundRecoveryRuntime,
+  runCoordinator: backgroundRunCoordinator,
   isBusy,
   onFinalizedRun: async (event) => {
     await dreamAutomationRuntime.handleHeartbeatEvent(event);
@@ -4458,6 +4530,7 @@ cronSchedulerHandle = await startCronRuntime({
   backgroundContinuationLedger,
   backgroundRecoveryRuntime,
   goalManager,
+  runCoordinator: backgroundRunCoordinator,
   isBusy,
   onFinalizedRun: async (event) => {
     await dreamAutomationRuntime.handleCronEvent(event);
@@ -4483,6 +4556,7 @@ emailInboundRuntimeHandle = await startImapPollingEmailInboundRuntime({
   agentFactory: createAgent,
   agentRegistry,
   conversationStore,
+  topLevelConversationLifecycle,
   threadBindingStore: emailThreadBindingStore,
   checkpointStore: emailInboundCheckpointStore,
   auditStore: emailInboundAuditStore,
@@ -4520,6 +4594,17 @@ startGatewayConfigWatcher({
       event: "agent.status",
       payload: { status: "restarting", reason: `${fileName} changed` },
     });
-    setTimeout(() => process.exit(100), 300);
+    // Channel 与 Agent Bridge 各自 drain 所有外部 owner；完整 HTTP/WS shutdown 仍属于 OPT-GW04。
+    void Promise.all([
+      channelRuntime.stopChannels()
+        .catch((error) => logger.warn("config-watcher", "Failed to stop channels before restart", error)),
+      agentBridgeEnabled
+        ? shutdownBridgeSessions()
+          .catch((error) => logger.warn("config-watcher", "Failed to stop Agent Bridge sessions before restart", error))
+        : Promise.resolve(),
+    ])
+      .finally(() => {
+        setTimeout(() => process.exit(100), 300);
+      });
   },
 });

@@ -44,6 +44,7 @@ import {
     buildSessionTimelineProjection,
     type SessionTimelineProjection,
 } from "./session-timeline.js";
+import { readBoundedTailLines } from "./conversation-tail-reader.js";
 import type {
     ConversationPlanState,
     ConversationPlanUpdateInput,
@@ -55,6 +56,11 @@ import {
     normalizeConversationPlanState,
     updateConversationPlanState,
 } from "./conversation-plan-state.js";
+import {
+    ConversationLifecycleCoordinator,
+    type ConversationLifecycleGeneration,
+    type ConversationLifecycleSnapshot,
+} from "./conversation-lifecycle.js";
 
 /**
  * 对话消息
@@ -135,6 +141,16 @@ export type CarryoverContextRecord = {
     tokenEstimate: number;
     lastUsedAt: number;
     priority: number;
+};
+
+/** 同一次 Tool Result 派生的三个持久化投影，必须作为一个最终 meta snapshot 提交。 */
+export type ToolArtifactsRecord = {
+    toolDigest: Omit<ToolDigestRecord, "createdAt"> & { createdAt?: number };
+    recentToolResult: Omit<StoredRecentToolResultRecord, "createdAt"> & { createdAt?: number };
+    carryoverContext?: Partial<CarryoverContextRecord>;
+    toolDigestLimit?: number;
+    recentToolResultLimit?: number;
+    carryoverContextLimit?: number;
 };
 
 type CarryoverContextQueryOptions = {
@@ -291,6 +307,13 @@ export type SessionMemoryRecord = {
     updatedAt: number;
 };
 
+export type ConversationRuntimeSnapshot = ConversationLifecycleSnapshot & {
+    retainedConversation: boolean;
+    retainedCompactionState: boolean;
+    retainedSessionDigestState: boolean;
+    retainedSessionMemory: boolean;
+};
+
 export type PersistedConversationSummary = {
     conversationId: string;
     createdAt: number;
@@ -354,7 +377,6 @@ const RECENT_TOOL_RESULT_TARGET_CHAR_LIMIT = 240;
 let conversationMessageIdCounter = 0;
 let compactBoundaryIdCounter = 0;
 let partialCompactionViewIdCounter = 0;
-const ASYNC_CONVERSATION_TAIL_READ_CHUNK_BYTES = 16 * 1024;
 
 function createConversationMessageId(timestampMs: number): string {
     conversationMessageIdCounter += 1;
@@ -709,43 +731,6 @@ function computeCarryoverSourceTypeBoost(sourceType: CarryoverContextSourceType)
     }
 }
 
-async function readConversationTailLines(filePath: string, maxLines: number): Promise<string[]> {
-    if (!Number.isFinite(maxLines) || maxLines <= 0) {
-        return [];
-    }
-
-    const handle = await fsp.open(filePath, "r");
-    try {
-        const stat = await handle.stat();
-        let position = stat.size;
-        let collected = Buffer.alloc(0);
-
-        while (position > 0) {
-            const chunkSize = Math.min(ASYNC_CONVERSATION_TAIL_READ_CHUNK_BYTES, position);
-            position -= chunkSize;
-
-            const chunk = Buffer.alloc(chunkSize);
-            const { bytesRead } = await handle.read(chunk, 0, chunkSize, position);
-            if (bytesRead <= 0) {
-                break;
-            }
-
-            collected = Buffer.concat([chunk.subarray(0, bytesRead), collected]);
-            const rawLines = collected.toString("utf-8").split("\n");
-            const visibleLines = (position > 0 ? rawLines.slice(1) : rawLines)
-                .filter((line) => line.trim());
-
-            if (visibleLines.length >= maxLines || position === 0) {
-                return visibleLines.slice(-maxLines);
-            }
-        }
-
-        return [];
-    } finally {
-        await handle.close();
-    }
-}
-
 function normalizeString(value: unknown): string {
     return typeof value === "string" ? value.trim() : "";
 }
@@ -996,10 +981,7 @@ export class ConversationStore {
     private compactionStates = new Map<string, CompactionState>();
     private sessionDigestStates = new Map<string, SessionDigestState>();
     private sessionMemories = new Map<string, StoredSessionMemory>();
-    private appendWriteChains = new Map<string, Promise<void>>();
-    private compactionStateWriteChains = new Map<string, Promise<void>>();
-    private sessionDigestStateWriteChains = new Map<string, Promise<void>>();
-    private sessionMemoryWriteChains = new Map<string, Promise<void>>();
+    private readonly lifecycle = new ConversationLifecycleCoordinator();
     private readonly maxHistory: number;
     private readonly ttlSeconds: number;
     private readonly dataDir?: string;
@@ -1170,7 +1152,10 @@ export class ConversationStore {
         }
     }
 
-    private async getAsync(id: string): Promise<Conversation | undefined> {
+    private async getAsync(
+        id: string,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<Conversation | undefined> {
         const cached = this.conversations.get(id);
         if (cached) {
             const validatedCached = this.cacheAndValidateConversation(id, cached);
@@ -1180,6 +1165,9 @@ export class ConversationStore {
         }
         if (this.dataDir && this.isDataDirAvailable()) {
             const restored = await this.loadFromFileAsync(id);
+            if (!this.lifecycle.isGenerationCurrent(id, generation)) {
+                return restored;
+            }
             return this.cacheAndValidateConversation(id, restored, { allowExpiredPersistedConversation: true });
         }
         return undefined;
@@ -1217,7 +1205,7 @@ export class ConversationStore {
         for (const filePath of this.getConversationFilePathCandidates(id, ".jsonl")) {
             try {
                 if (meta) {
-                    lines = await readConversationTailLines(filePath, this.maxHistory);
+                    lines = (await readBoundedTailLines(filePath, { maxLines: this.maxHistory })).lines;
                 } else {
                     const content = await conversationAsyncFs.readFile(filePath, "utf-8");
                     lines = content.split("\n").filter((line) => line.trim());
@@ -1714,18 +1702,7 @@ export class ConversationStore {
     }
 
     private enqueueAppendWrite(id: string, task: () => Promise<void>): Promise<void> {
-        const previous = this.appendWriteChains.get(id) ?? Promise.resolve();
-        const next = previous
-            .catch(() => undefined)
-            .then(task);
-
-        this.appendWriteChains.set(id, next);
-        void next.finally(() => {
-            if (this.appendWriteChains.get(id) === next) {
-                this.appendWriteChains.delete(id);
-            }
-        });
-        return next;
+        return this.lifecycle.enqueue("append", id, task);
     }
 
     private async appendTranscriptEvent(id: string, event: SessionTranscriptEvent): Promise<void> {
@@ -1756,6 +1733,34 @@ export class ConversationStore {
         //     const filePath = path.join(this.dataDir, `${id}.jsonl`);
         //     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         // }
+    }
+
+    /**
+     * 等待会话的四类持久化链完成后释放纯内存状态；canonical 文件保持不变。
+     * release 开始时旧 generation 立即失效，避免长异步摘要在清理后重新写回 Map。
+     */
+    async releaseConversation(id: string): Promise<void> {
+        if (!id) return;
+        await this.lifecycle.release(id, () => {
+            // 无 durable dataDir 时，conversation Map 是唯一 canonical 副本，不能为回收派生状态而丢失。
+            if (this.dataDir && this.isDataDirAvailable()) {
+                this.conversations.delete(id);
+            }
+            this.compactionStates.delete(id);
+            this.sessionDigestStates.delete(id);
+            this.sessionMemories.delete(id);
+        });
+    }
+
+    /** 仅返回资源水位，不暴露消息、摘要或其它会话正文。 */
+    getConversationRuntimeSnapshot(id: string): ConversationRuntimeSnapshot {
+        return {
+            retainedConversation: this.conversations.has(id),
+            retainedCompactionState: this.compactionStates.has(id),
+            retainedSessionDigestState: this.sessionDigestStates.has(id),
+            retainedSessionMemory: this.sessionMemories.has(id),
+            ...this.lifecycle.getSnapshot(id),
+        };
     }
 
     private sanitizeHistoryContent(content: string): string {
@@ -2002,8 +2007,9 @@ export class ConversationStore {
     }
 
     async buildConversationRestoreView(id: string): Promise<SessionRestoreView> {
-        const conversation = await this.getAsync(id);
-        const compactionState = await this.getCompactionStateAsync(id);
+        const generation = this.lifecycle.captureGeneration(id);
+        const conversation = await this.getAsync(id, generation);
+        const compactionState = await this.getCompactionStateAsync(id, generation);
         const transcriptEvents = await this.getSessionTranscriptEvents(id);
         const transcriptArtifacts = deriveTranscriptRelinkArtifacts(transcriptEvents);
         const boundary = this.preferLatestCompactBoundary(
@@ -2064,9 +2070,10 @@ export class ConversationStore {
         id: string,
         overrideOpts?: CompactionOptions,
     ): Promise<{ conversation?: Conversation; history: ConversationHistoryView; compacted: boolean; boundary?: CompactBoundaryRecord }> {
+        const generation = this.lifecycle.captureGeneration(id);
         const wasCached = this.conversations.has(id);
-        const conversation = await this.getAsync(id);
-        const state = await this.getCompactionStateAsync(id);
+        const conversation = await this.getAsync(id, generation);
+        const state = await this.getCompactionStateAsync(id, generation);
         let latestBoundary = conversation?.compactBoundaries?.[0];
         let partialView = conversation?.partialCompactionView;
 
@@ -2146,14 +2153,18 @@ export class ConversationStore {
         });
 
         let boundary: CompactBoundaryRecord | undefined;
-        if (result.compacted) {
+        let appliedCompaction = false;
+        if (result.compacted && this.lifecycle.isGenerationCurrent(id, generation)) {
             // 持久化更新后的压缩状态
             this.clearPartialCompactionView(id, conversation);
-            await this.persistCompactionState(id, result.state);
-            boundary = await this.recordCompactBoundary(id, conversation, this.buildCompactBoundaryRecord(conversation, result, "request"));
+            await this.persistCompactionState(id, result.state, generation);
+            if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                boundary = await this.recordCompactBoundary(id, conversation, this.buildCompactBoundaryRecord(conversation, result, "request"));
+                appliedCompaction = this.lifecycle.isGenerationCurrent(id, generation);
+            }
 
             // 触发 after_compaction 回调
-            await this.emitAfterCompaction(id, {
+            if (appliedCompaction) await this.emitAfterCompaction(id, {
                 messageCount: result.messages.length,
                 tokenCount: result.compactedTokens,
                 compactedCount: history.length - result.messages.length,
@@ -2172,7 +2183,7 @@ export class ConversationStore {
         return {
             conversation,
             history: result.messages,
-            compacted: result.compacted,
+            compacted: appliedCompaction,
             boundary: boundary ?? latestBoundary,
         };
     }
@@ -2198,8 +2209,9 @@ export class ConversationStore {
         id: string,
         overrideOpts?: Pick<CompactionOptions, "keepRecentCount">,
     ): Promise<{ history: Array<{ role: "user" | "assistant"; content: string }>; compacted: boolean; originalTokens?: number; compactedTokens?: number; tier?: string; boundary?: CompactBoundaryRecord }> {
+        const generation = this.lifecycle.captureGeneration(id);
         await this.waitForPendingPersistence(id);
-        const conversation = await this.getAsync(id);
+        const conversation = await this.getAsync(id, generation);
         const history = this.buildHistoryView(conversation);
         const opts = this.compactionOpts
             ? {
@@ -2213,7 +2225,7 @@ export class ConversationStore {
             return { history, compacted: false, boundary: conversation?.compactBoundaries?.[0] };
         }
 
-        const state = await this.getCompactionStateAsync(id);
+        const state = await this.getCompactionStateAsync(id, generation);
         const originalTokens = estimateMessagesTokens(history);
 
         await this.emitBeforeCompaction(id, {
@@ -2236,12 +2248,16 @@ export class ConversationStore {
         });
 
         let boundary: CompactBoundaryRecord | undefined;
-        if (result.compacted) {
+        let appliedCompaction = false;
+        if (result.compacted && this.lifecycle.isGenerationCurrent(id, generation)) {
             this.clearPartialCompactionView(id, conversation);
-            await this.persistCompactionState(id, result.state);
-            boundary = await this.recordCompactBoundary(id, conversation, this.buildCompactBoundaryRecord(conversation, result, "manual"));
+            await this.persistCompactionState(id, result.state, generation);
+            if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                boundary = await this.recordCompactBoundary(id, conversation, this.buildCompactBoundaryRecord(conversation, result, "manual"));
+                appliedCompaction = this.lifecycle.isGenerationCurrent(id, generation);
+            }
 
-            await this.emitAfterCompaction(id, {
+            if (appliedCompaction) await this.emitAfterCompaction(id, {
                 messageCount: result.messages.length,
                 tokenCount: result.compactedTokens,
                 compactedCount: history.length - result.messages.length,
@@ -2259,7 +2275,7 @@ export class ConversationStore {
 
         return {
             history: result.messages,
-            compacted: result.compacted,
+            compacted: appliedCompaction,
             originalTokens: result.originalTokens,
             compactedTokens: result.compactedTokens,
             tier: result.tier,
@@ -2279,8 +2295,9 @@ export class ConversationStore {
         tier?: string;
         boundary?: CompactBoundaryRecord;
     }> {
+        const generation = this.lifecycle.captureGeneration(id);
         await this.waitForPendingPersistence(id);
-        const conversation = await this.getAsync(id);
+        const conversation = await this.getAsync(id, generation);
         const history = this.buildHistoryView(conversation);
         const opts = this.compactionOpts;
         const direction = options.direction;
@@ -2348,14 +2365,18 @@ export class ConversationStore {
         let projectedHistory = history;
         let boundary: CompactBoundaryRecord | undefined;
         let projectedHistoryTokens = originalHistoryTokens;
+        let appliedCompaction = false;
 
-        if (result.compacted) {
+        if (result.compacted && this.lifecycle.isGenerationCurrent(id, generation)) {
             if (direction === "up_to") {
                 const tailMessages = history.slice(pivotIndex + 1);
                 this.clearPartialCompactionView(id, conversation);
-                await this.persistCompactionState(id, result.state);
-                boundary = await this.recordCompactBoundary(id, conversation, this.buildCompactBoundaryRecord(conversation, result, "partial_up_to"));
-                projectedHistory = buildCompactedMessages(result.state, tailMessages);
+                await this.persistCompactionState(id, result.state, generation);
+                if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                    boundary = await this.recordCompactBoundary(id, conversation, this.buildCompactBoundaryRecord(conversation, result, "partial_up_to"));
+                    appliedCompaction = this.lifecycle.isGenerationCurrent(id, generation);
+                    projectedHistory = buildCompactedMessages(result.state, tailMessages);
+                }
             } else {
                 const pivotMessage = conversation?.messages[pivotIndex];
                 const createdAt = Date.now();
@@ -2388,20 +2409,23 @@ export class ConversationStore {
                     view,
                     createdAt: view.createdAt,
                 }));
-                boundary = await this.recordCompactBoundary(
-                    id,
-                    conversation,
-                    partialFromBoundary,
-                    { partialCompactionViewId: view.id },
-                );
-                if (conversation && this.dataDir) {
-                    this.persistConversationMeta(id, conversation);
+                if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                    boundary = await this.recordCompactBoundary(
+                        id,
+                        conversation,
+                        partialFromBoundary,
+                        { partialCompactionViewId: view.id },
+                    );
+                    appliedCompaction = this.lifecycle.isGenerationCurrent(id, generation);
+                    if (appliedCompaction && conversation && this.dataDir) {
+                        this.persistConversationMeta(id, conversation);
+                    }
+                    projectedHistory = this.buildPartialCompactedHistoryFromView(conversation, view) ?? history;
                 }
-                projectedHistory = this.buildPartialCompactedHistoryFromView(conversation, view) ?? history;
             }
             projectedHistoryTokens = estimateMessagesTokens(projectedHistory);
 
-            await this.emitAfterCompaction(id, {
+            if (appliedCompaction) await this.emitAfterCompaction(id, {
                 messageCount: projectedHistory.length,
                 tokenCount: projectedHistoryTokens,
                 compactedCount: Math.max(0, history.length - projectedHistory.length),
@@ -2419,7 +2443,7 @@ export class ConversationStore {
 
         return {
             history: projectedHistory,
-            compacted: result.compacted,
+            compacted: appliedCompaction,
             direction,
             originalTokens: originalHistoryTokens,
             compactedTokens: projectedHistoryTokens,
@@ -2432,11 +2456,23 @@ export class ConversationStore {
         id: string,
         options: Pick<SessionDigestRefreshOptions, "threshold"> = {},
     ): Promise<SessionDigestRecord> {
-        const conversation = await this.getAsync(id);
+        return this.getSessionDigestForGeneration(
+            id,
+            options,
+            this.lifecycle.captureGeneration(id),
+        );
+    }
+
+    private async getSessionDigestForGeneration(
+        id: string,
+        options: Pick<SessionDigestRefreshOptions, "threshold">,
+        generation: ConversationLifecycleGeneration,
+    ): Promise<SessionDigestRecord> {
+        const conversation = await this.getAsync(id, generation);
         const history = this.buildSessionDigestHistoryView(conversation);
-        const compactionState = await this.getCompactionStateAsync(id);
-        const digestState = await this.getSessionDigestStateAsync(id, options.threshold);
-        const sessionMemory = await this.getSessionMemoryAsync(id);
+        const compactionState = await this.getCompactionStateAsync(id, generation);
+        const digestState = await this.getSessionDigestStateAsync(id, options.threshold, generation);
+        const sessionMemory = await this.getSessionMemoryAsync(id, generation);
         return this.buildSessionDigestRecord(id, history, compactionState, digestState, sessionMemory);
     }
 
@@ -2451,26 +2487,31 @@ export class ConversationStore {
         compactedTokens?: number;
         tier?: string;
     }> {
+        const generation = this.lifecycle.captureGeneration(id);
         // Session memory 会引用消息 ID，先等待历史落盘，避免崩溃恢复时出现孤立摘要。
         await this.waitForPendingPersistence(id);
-        const previousState = await this.getSessionDigestStateAsync(id);
+        const previousState = await this.getSessionDigestStateAsync(id, undefined, generation);
         const threshold = typeof options.threshold === "number" && Number.isFinite(options.threshold)
             ? this.resolveSessionDigestThreshold(options.threshold)
             : this.resolveSessionDigestThreshold(previousState.threshold);
-        const current = await this.getSessionDigest(id, { threshold });
+        const current = await this.getSessionDigestForGeneration(id, { threshold }, generation);
         const shouldRefresh = options.force === true || this.shouldRefreshSessionDigest(current);
 
         let sessionMemoryUpdated = false;
 
         if (shouldRefresh) {
-            const result = await this.refreshSessionMemory(id, {
-                force: options.force === true,
-                threshold,
-            });
+            const result = await this.refreshSessionMemoryForGeneration(
+                id,
+                {
+                    force: options.force === true,
+                    threshold,
+                },
+                generation,
+            );
             sessionMemoryUpdated = result.updated;
         }
 
-        const sessionMemory = await this.getSessionMemoryAsync(id);
+        const sessionMemory = await this.getSessionMemoryAsync(id, generation);
         const digestContentChanged =
             previousState.lastDigestAt !== sessionMemory.updatedAt
             || previousState.lastSessionMemoryAt !== sessionMemory.updatedAt
@@ -2495,29 +2536,43 @@ export class ConversationStore {
             || previousState.digestGeneration !== nextDigestState.digestGeneration;
 
         if (stateChanged) {
-            await this.persistSessionDigestState(id, nextDigestState);
+            await this.persistSessionDigestState(id, nextDigestState, generation);
         }
 
+        const generationCurrent = this.lifecycle.isGenerationCurrent(id, generation);
         return {
-            digest: await this.getSessionDigest(id, { threshold }),
-            updated: shouldRefresh && (sessionMemoryUpdated || stateChanged),
+            digest: await this.getSessionDigestForGeneration(id, { threshold }, generation),
+            updated: generationCurrent && shouldRefresh && (sessionMemoryUpdated || stateChanged),
             compacted: false,
         };
     }
 
     async getSessionMemory(id: string): Promise<SessionMemoryRecord> {
-        return this.toSessionMemoryRecord(id, await this.getSessionMemoryAsync(id));
+        const generation = this.lifecycle.captureGeneration(id);
+        return this.toSessionMemoryRecord(id, await this.getSessionMemoryAsync(id, generation));
     }
 
     async refreshSessionMemory(
         id: string,
         options: SessionDigestRefreshOptions = {},
     ): Promise<{ memory: SessionMemoryRecord; updated: boolean }> {
-        const conversation = await this.getAsync(id);
+        return this.refreshSessionMemoryForGeneration(
+            id,
+            options,
+            this.lifecycle.captureGeneration(id),
+        );
+    }
+
+    private async refreshSessionMemoryForGeneration(
+        id: string,
+        options: SessionDigestRefreshOptions,
+        generation: ConversationLifecycleGeneration,
+    ): Promise<{ memory: SessionMemoryRecord; updated: boolean }> {
+        const conversation = await this.getAsync(id, generation);
         const history = this.buildSessionDigestHistoryView(conversation);
-        const digestState = await this.getSessionDigestStateAsync(id, options.threshold);
+        const digestState = await this.getSessionDigestStateAsync(id, options.threshold, generation);
         const threshold = this.resolveSessionDigestThreshold(options.threshold ?? digestState.threshold);
-        const existing = await this.getSessionMemoryAsync(id);
+        const existing = await this.getSessionMemoryAsync(id, generation);
         const toolDigests = this.getToolDigests(id);
         const messageProgress = this.resolveSessionDigestMessageProgress(history, existing);
         const effectiveCursor = messageProgress.effectiveCursor;
@@ -2560,7 +2615,13 @@ export class ConversationStore {
 
         if (history.length === 0) {
             const empty = createEmptySessionMemory();
-            await this.persistSessionMemory(id, empty);
+            await this.persistSessionMemory(id, empty, generation);
+            if (!this.lifecycle.isGenerationCurrent(id, generation)) {
+                return {
+                    memory: this.toSessionMemoryRecord(id, existing),
+                    updated: false,
+                };
+            }
             await this.emitAfterCompaction(id, {
                 messageCount: 0,
                 tokenCount: 0,
@@ -2655,9 +2716,15 @@ export class ConversationStore {
             lastSummarizedToolCursor: toolDigests.length,
             updatedAt: Date.now(),
         });
+        if (!this.lifecycle.isGenerationCurrent(id, generation)) {
+            return {
+                memory: this.toSessionMemoryRecord(id, existing),
+                updated: false,
+            };
+        }
         const updated = !isDeepStrictEqual(existing, nextMemory);
         if (updated) {
-            await this.persistSessionMemory(id, nextMemory);
+            await this.persistSessionMemory(id, nextMemory, generation);
         }
         const nextSummaryTokenCount = nextMemory.summary ? estimateTokens(nextMemory.summary) : 0;
         const newMessageTokens = newMessages.length > 0 ? estimateMessagesTokens(newMessages) : 0;
@@ -2705,7 +2772,10 @@ export class ConversationStore {
         return this.getConversationFilePath(id, ".compaction.json");
     }
 
-    private async getCompactionStateAsync(id: string): Promise<CompactionState> {
+    private async getCompactionStateAsync(
+        id: string,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<CompactionState> {
         // 内存优先
         const cached = this.compactionStates.get(id);
         if (cached) {
@@ -2719,7 +2789,9 @@ export class ConversationStore {
             try {
                 const raw = await conversationAsyncFs.readFile(filePath, "utf-8");
                 const data = normalizeCompactionState(JSON.parse(raw) as Partial<CompactionState>);
-                this.compactionStates.set(id, data);
+                if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                    this.compactionStates.set(id, data);
+                }
                 return data;
             } catch (err) {
                 const fsErr = err as NodeJS.ErrnoException;
@@ -2730,14 +2802,21 @@ export class ConversationStore {
         }
 
         const empty = createEmptyCompactionState();
-        this.compactionStates.set(id, empty);
+        if (this.lifecycle.isGenerationCurrent(id, generation)) {
+            this.compactionStates.set(id, empty);
+        }
         return empty;
     }
 
     /**
      * 更新并持久化压缩状态
      */
-    private async persistCompactionState(id: string, state: CompactionState): Promise<void> {
+    private async persistCompactionState(
+        id: string,
+        state: CompactionState,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<void> {
+        if (!this.lifecycle.isGenerationCurrent(id, generation)) return;
         const normalized = normalizeCompactionState(state);
         this.compactionStates.set(id, normalized);
 
@@ -2766,18 +2845,7 @@ export class ConversationStore {
     }
 
     private enqueueCompactionStateWrite(id: string, task: () => Promise<void>): Promise<void> {
-        const previous = this.compactionStateWriteChains.get(id) ?? Promise.resolve();
-        const next = previous
-            .catch(() => undefined)
-            .then(task);
-
-        this.compactionStateWriteChains.set(id, next);
-        void next.finally(() => {
-            if (this.compactionStateWriteChains.get(id) === next) {
-                this.compactionStateWriteChains.delete(id);
-            }
-        });
-        return next;
+        return this.lifecycle.enqueue("compaction_state", id, task);
     }
 
     private getSessionDigestStateFilePath(id: string): string | undefined {
@@ -2795,7 +2863,11 @@ export class ConversationStore {
         return DEFAULT_SESSION_DIGEST_THRESHOLD;
     }
 
-    private async getSessionDigestStateAsync(id: string, threshold?: number): Promise<SessionDigestState> {
+    private async getSessionDigestStateAsync(
+        id: string,
+        threshold?: number,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<SessionDigestState> {
         const cached = this.sessionDigestStates.get(id);
         if (cached) {
             if (typeof threshold === "number") {
@@ -2819,7 +2891,9 @@ export class ConversationStore {
                     lastSessionMemoryToolCursor: typeof parsed.lastSessionMemoryToolCursor === "number" ? parsed.lastSessionMemoryToolCursor : 0,
                     digestGeneration: typeof parsed.digestGeneration === "number" ? Math.max(0, Math.floor(parsed.digestGeneration)) : 0,
                 };
-                this.sessionDigestStates.set(id, state);
+                if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                    this.sessionDigestStates.set(id, state);
+                }
                 if (typeof threshold === "number") {
                     return {
                         ...state,
@@ -2843,11 +2917,18 @@ export class ConversationStore {
             lastSessionMemoryToolCursor: 0,
             digestGeneration: 0,
         };
-        this.sessionDigestStates.set(id, empty);
+        if (this.lifecycle.isGenerationCurrent(id, generation)) {
+            this.sessionDigestStates.set(id, empty);
+        }
         return empty;
     }
 
-    private async persistSessionDigestState(id: string, state: SessionDigestState): Promise<void> {
+    private async persistSessionDigestState(
+        id: string,
+        state: SessionDigestState,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<void> {
+        if (!this.lifecycle.isGenerationCurrent(id, generation)) return;
         this.sessionDigestStates.set(id, state);
 
         const filePath = this.getSessionDigestStateFilePath(id);
@@ -2875,7 +2956,7 @@ export class ConversationStore {
     }
 
     async waitForPendingPersistence(id: string): Promise<void> {
-        await (this.appendWriteChains.get(id) ?? Promise.resolve()).catch(() => undefined);
+        await this.lifecycle.waitForPendingPersistence(id);
     }
 
     async getSessionTranscriptEvents(id: string): Promise<SessionTranscriptEvent[]> {
@@ -3025,21 +3106,13 @@ export class ConversationStore {
     }
 
     private enqueueSessionDigestStateWrite(id: string, task: () => Promise<void>): Promise<void> {
-        const previous = this.sessionDigestStateWriteChains.get(id) ?? Promise.resolve();
-        const next = previous
-            .catch(() => undefined)
-            .then(task);
-
-        this.sessionDigestStateWriteChains.set(id, next);
-        void next.finally(() => {
-            if (this.sessionDigestStateWriteChains.get(id) === next) {
-                this.sessionDigestStateWriteChains.delete(id);
-            }
-        });
-        return next;
+        return this.lifecycle.enqueue("session_digest_state", id, task);
     }
 
-    private async getSessionMemoryAsync(id: string): Promise<StoredSessionMemory> {
+    private async getSessionMemoryAsync(
+        id: string,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<StoredSessionMemory> {
         const cached = this.sessionMemories.get(id);
         if (cached) return cached;
 
@@ -3048,7 +3121,9 @@ export class ConversationStore {
                 const raw = await conversationAsyncFs.readFile(filePath, "utf-8");
                 const parsed = JSON.parse(raw) as Partial<StoredSessionMemory>;
                 const memory = coerceStoredSessionMemory(parsed);
-                this.sessionMemories.set(id, memory);
+                if (this.lifecycle.isGenerationCurrent(id, generation)) {
+                    this.sessionMemories.set(id, memory);
+                }
                 return memory;
             } catch (err) {
                 const fsErr = err as NodeJS.ErrnoException;
@@ -3059,11 +3134,18 @@ export class ConversationStore {
         }
 
         const empty = createEmptySessionMemory();
-        this.sessionMemories.set(id, empty);
+        if (this.lifecycle.isGenerationCurrent(id, generation)) {
+            this.sessionMemories.set(id, empty);
+        }
         return empty;
     }
 
-    private async persistSessionMemory(id: string, memory: StoredSessionMemory): Promise<void> {
+    private async persistSessionMemory(
+        id: string,
+        memory: StoredSessionMemory,
+        generation: ConversationLifecycleGeneration = this.lifecycle.captureGeneration(id),
+    ): Promise<void> {
+        if (!this.lifecycle.isGenerationCurrent(id, generation)) return;
         const normalized = coerceStoredSessionMemory(memory);
         this.sessionMemories.set(id, normalized);
 
@@ -3092,18 +3174,7 @@ export class ConversationStore {
     }
 
     private enqueueSessionMemoryWrite(id: string, task: () => Promise<void>): Promise<void> {
-        const previous = this.sessionMemoryWriteChains.get(id) ?? Promise.resolve();
-        const next = previous
-            .catch(() => undefined)
-            .then(task);
-
-        this.sessionMemoryWriteChains.set(id, next);
-        void next.finally(() => {
-            if (this.sessionMemoryWriteChains.get(id) === next) {
-                this.sessionMemoryWriteChains.delete(id);
-            }
-        });
-        return next;
+        return this.lifecycle.enqueue("session_memory", id, task);
     }
 
     private resolveSessionDigestMessageProgress(
@@ -3294,6 +3365,73 @@ export class ConversationStore {
         const existing = conv.recentToolResults ?? [];
         const deduped = existing.filter((item) => item.toolCallId !== next.toolCallId);
         conv.recentToolResults = [next, ...deduped].slice(0, Math.max(1, limit));
+        conv.updatedAt = now;
+        this.persistConversationMeta(conversationId, conv);
+    }
+
+    /**
+     * 将同一次 Tool Result 的 digest、可恢复结果和 carryover 合并为单一最终快照。
+     * 单项公开方法保留原有行为；Tool Agent 应使用本入口避免重复同步 meta 写入。
+     */
+    recordToolArtifacts(conversationId: string, artifacts: ToolArtifactsRecord): void {
+        let conv = this.get(conversationId);
+        const now = Date.now();
+        if (!conv) {
+            conv = {
+                id: conversationId,
+                messages: [],
+                createdAt: now,
+                updatedAt: now,
+            };
+            this.conversations.set(conversationId, conv);
+        }
+
+        const toolDigestLimit = Math.max(1, artifacts.toolDigestLimit ?? 100);
+        const toolDigest: ToolDigestRecord = {
+            ...artifacts.toolDigest,
+            createdAt: typeof artifacts.toolDigest.createdAt === "number"
+                ? artifacts.toolDigest.createdAt
+                : now,
+        };
+        conv.toolDigests = [...(conv.toolDigests ?? []), toolDigest].slice(-toolDigestLimit);
+
+        const recentToolResultLimit = Math.max(1, artifacts.recentToolResultLimit ?? DEFAULT_RECENT_TOOL_RESULT_LIMIT);
+        const recentCreatedAt = typeof artifacts.recentToolResult.createdAt === "number"
+            && Number.isFinite(artifacts.recentToolResult.createdAt)
+            ? Math.max(0, Math.floor(artifacts.recentToolResult.createdAt))
+            : now;
+        const recentToolResult = normalizeRecentToolResultRecord(artifacts.recentToolResult, recentCreatedAt);
+        const dedupedRecentResults = (conv.recentToolResults ?? [])
+            .filter((item) => item.toolCallId !== recentToolResult.toolCallId);
+        conv.recentToolResults = [recentToolResult, ...dedupedRecentResults].slice(0, recentToolResultLimit);
+
+        const carryover = normalizeCarryoverContextRecord(artifacts.carryoverContext);
+        if (carryover) {
+            const existingCarryover = conv.carryoverContext ?? [];
+            const matchedCarryover = existingCarryover.find((item) => item.sourceKey === carryover.sourceKey);
+            const mergedCarryover = matchedCarryover
+                ? mergeCarryoverContextRecord(matchedCarryover, carryover)
+                : carryover;
+            const carryoverContextLimit = Math.max(1, artifacts.carryoverContextLimit ?? 12);
+            const normalizedCarryover = [
+                mergedCarryover,
+                ...existingCarryover.filter((item) => item.sourceKey !== carryover.sourceKey),
+            ]
+                .map((item) => normalizeCarryoverContextRecord(item))
+                .filter((item): item is CarryoverContextRecord => Boolean(item))
+                .sort((left, right) => {
+                    if (left.priority !== right.priority) {
+                        return right.priority - left.priority;
+                    }
+                    if (left.lastUsedAt !== right.lastUsedAt) {
+                        return right.lastUsedAt - left.lastUsedAt;
+                    }
+                    return left.sourceKey.localeCompare(right.sourceKey, "en-US");
+                })
+                .slice(0, carryoverContextLimit);
+            conv.carryoverContext = normalizedCarryover.length > 0 ? normalizedCarryover : undefined;
+        }
+
         conv.updatedAt = now;
         this.persistConversationMeta(conversationId, conv);
     }

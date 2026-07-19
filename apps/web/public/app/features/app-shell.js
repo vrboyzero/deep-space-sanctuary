@@ -39,6 +39,27 @@ export function createAppShellFeature({
     composerSection,
     editorActions,
   } = refs;
+  // Notice DOM、timer 与 action closure 必须由同一 owner 释放，避免手动关闭后仍被 timeout 持有。
+  const noticeEntries = new Map();
+  let noticeStack = null;
+  let disposed = false;
+
+  function removeNotice(item) {
+    const entry = noticeEntries.get(item);
+    if (!entry) return;
+    noticeEntries.delete(item);
+    if (entry.timerId !== null) {
+      clearTimeout(entry.timerId);
+      entry.timerId = null;
+    }
+    if (entry.closeButton && entry.closeHandler) {
+      entry.closeButton.removeEventListener("click", entry.closeHandler);
+    }
+    if (entry.actionButton && entry.actionHandler) {
+      entry.actionButton.removeEventListener("click", entry.actionHandler);
+    }
+    item.remove();
+  }
 
   function updateSidebarModeButtons(treeModeOverride) {
     const treeMode = treeModeOverride ?? getTreeMode?.() ?? "root";
@@ -54,13 +75,20 @@ export function createAppShellFeature({
   }
 
   function showNotice(title, message, tone = "info", durationMs = 3200, options = {}) {
+    if (disposed) return;
     const stack = ensureNoticeStack();
+    noticeStack = stack;
     const item = document.createElement("div");
     item.className = `notice-item notice-${tone}`;
     item.setAttribute("role", "alert");
-    const remove = () => {
-      if (item.parentElement) item.parentElement.removeChild(item);
+    const entry = {
+      timerId: null,
+      closeButton: null,
+      closeHandler: null,
+      actionButton: null,
+      actionHandler: null,
     };
+    const remove = () => removeNotice(item);
     const titleEl = document.createElement("div");
     titleEl.className = "notice-title";
     titleEl.textContent = String(title ?? "");
@@ -76,6 +104,8 @@ export function createAppShellFeature({
       closeBtn.setAttribute("aria-label", "Close notice");
       closeBtn.textContent = "×";
       closeBtn.addEventListener("click", remove);
+      entry.closeButton = closeBtn;
+      entry.closeHandler = remove;
       item.appendChild(closeBtn);
     }
     const actionLabel = typeof options?.actionLabel === "string" ? options.actionLabel.trim() : "";
@@ -86,17 +116,48 @@ export function createAppShellFeature({
       actionBtn.type = "button";
       actionBtn.className = "button button-muted notice-action-btn";
       actionBtn.textContent = actionLabel;
-      actionBtn.addEventListener("click", () => {
-        options.onAction?.();
-        remove();
-      });
+      const handleAction = () => {
+        try {
+          options.onAction?.();
+        } finally {
+          remove();
+        }
+      };
+      actionBtn.addEventListener("click", handleAction);
+      entry.actionButton = actionBtn;
+      entry.actionHandler = handleAction;
       actionsEl.appendChild(actionBtn);
       item.appendChild(actionsEl);
     }
     stack.appendChild(item);
+    noticeEntries.set(item, entry);
     if (Number.isFinite(durationMs) && durationMs > 0) {
-      setTimeout(remove, durationMs);
+      entry.timerId = setTimeout(remove, durationMs);
     }
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const item of [...noticeEntries.keys()]) {
+      removeNotice(item);
+    }
+    if (noticeStack && noticeStack.childElementCount === 0) {
+      noticeStack.remove();
+    }
+    noticeStack = null;
+  }
+
+  function getRuntimeSnapshot() {
+    let activeTimerCount = 0;
+    for (const entry of noticeEntries.values()) {
+      if (entry.timerId !== null) activeTimerCount += 1;
+    }
+    return {
+      activeNoticeCount: noticeEntries.size,
+      activeTimerCount,
+      disposed,
+    };
   }
 
   function switchMode(mode) {
@@ -203,6 +264,8 @@ export function createAppShellFeature({
   }
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     showNotice,
     switchMode,
     updateSidebarModeButtons,

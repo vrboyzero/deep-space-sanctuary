@@ -455,3 +455,36 @@ test("agent stream helper preserves status delta and final summary for streaming
     deltaCount: 2,
   });
 });
+
+test("agent stream helper retains and forwards structured budget exhaustion", async () => {
+  const exhausted: Array<{ budget: string; limit: number; observed: number }> = [];
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield { type: "status" as const, status: "running" };
+      yield {
+        type: "budget_exhausted" as const,
+        budget: "tool_calls" as const,
+        limit: 32,
+        observed: 33,
+      };
+      yield { type: "final" as const, text: "工具调用次数超限" };
+      yield { type: "status" as const, status: "error" };
+    },
+  };
+
+  const result = await runAgentWithLifecycle(agent, {
+    conversationId: "conv-budget-exhausted",
+    runInput: {
+      conversationId: "conv-budget-exhausted",
+      text: "ignored",
+    },
+    onBudgetExhausted: (item) => exhausted.push(item),
+  });
+
+  expect(exhausted).toEqual([{ budget: "tool_calls", limit: 32, observed: 33 }]);
+  expect(result).toMatchObject({
+    budgetExhausted: { budget: "tool_calls", limit: 32, observed: 33 },
+    receivedFinal: true,
+    latestStatus: "error",
+  });
+});

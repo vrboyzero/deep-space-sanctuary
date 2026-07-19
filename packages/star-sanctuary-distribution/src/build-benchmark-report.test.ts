@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -81,4 +82,28 @@ test("B00 build benchmark reports reproducible statistics without enforcing perf
     median: 7,
     p95: 9,
   });
+});
+
+test("Build benchmark accepts pnpm's argument separator", async () => {
+  const benchmarkModule = await import(
+    pathToFileURL(path.join(workspaceRoot, "scripts", "run-build-benchmark.mjs")).href
+  );
+
+  expect(benchmarkModule.parseBuildBenchmarkArgs([
+    "--",
+    "--sample-runs",
+    "2",
+  ])).toMatchObject({
+    sampleRuns: 2,
+  });
+});
+
+test("root build defaults to the incremental TypeScript graph while preserving force rebuild", async () => {
+  const packageJson = JSON.parse(await fs.readFile(path.join(workspaceRoot, "package.json"), "utf-8")) as {
+    scripts?: Record<string, string>;
+  };
+
+  expect(packageJson.scripts?.["build:incremental"]).toBe("tsc -b");
+  expect(packageJson.scripts?.build).toBe("pnpm run build:incremental && pnpm run verify:build");
+  expect(packageJson.scripts?.["build:force"]).toBe("tsc -b --force");
 });

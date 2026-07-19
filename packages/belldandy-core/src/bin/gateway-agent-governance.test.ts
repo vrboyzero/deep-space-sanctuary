@@ -24,27 +24,40 @@ function createContract(family: ToolContract["family"]): ToolContract {
 }
 
 describe("isAgentToolAllowed", () => {
-  it("hard-blocks commander from write, patch, and command families even when whitelisted", () => {
+  it("hard-blocks the commander runtime role from write, patch, and command families even when whitelisted", () => {
     expect(isAgentToolAllowed({
-      agentId: "commander",
+      agentId: "ops-coordinator",
+      role: "commander",
       toolName: "file_write",
       contract: createContract("workspace-write"),
       profile: { toolWhitelist: ["file_write"] },
     })).toBe(false);
 
     expect(isAgentToolAllowed({
-      agentId: "commander",
+      agentId: "ops-coordinator",
+      role: "commander",
       toolName: "apply_patch",
       contract: createContract("patch"),
       profile: { toolWhitelist: ["apply_patch"] },
     })).toBe(false);
 
     expect(isAgentToolAllowed({
-      agentId: "commander",
+      agentId: "ops-coordinator",
+      role: "commander",
       toolName: "run_command",
       contract: createContract("command-exec"),
       profile: { toolWhitelist: ["run_command"] },
     })).toBe(false);
+  });
+
+  it("does not infer the commander restriction from an agent id", () => {
+    expect(isAgentToolAllowed({
+      agentId: "commander",
+      role: "coder",
+      toolName: "file_write",
+      contract: createContract("workspace-write"),
+      profile: { toolWhitelist: ["file_write"] },
+    })).toBe(true);
   });
 
   it("still respects whitelist rules for non-blocked families", () => {

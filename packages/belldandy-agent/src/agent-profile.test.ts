@@ -53,6 +53,11 @@ test("loadAgentProfiles accepts resident metadata extensions and ignores invalid
         methods: ["Review-Checklist.md", "Review-Checklist.md", "Refactor-Plan.md"],
         skills: ["repo-map", "repo-map", "review-helper"],
         handoffStyle: "structured",
+        maxToolCalls: 48,
+        toolLoopIterationBudget: 12,
+        maxRunWallTimeMs: 600000,
+        maxTotalTokens: 240000,
+        maxHighRiskToolCalls: 8,
       },
       {
         id: "verifier",
@@ -66,6 +71,9 @@ test("loadAgentProfiles accepts resident metadata extensions and ignores invalid
         defaultPermissionMode: "not-valid",
         defaultMaxToolRiskLevel: "not-valid",
         handoffStyle: "not-valid",
+        maxRunWallTimeMs: 0,
+        maxTotalTokens: -1,
+        maxHighRiskToolCalls: -1,
       },
     ],
   }), "utf-8");
@@ -85,6 +93,11 @@ test("loadAgentProfiles accepts resident metadata extensions and ignores invalid
     methods: ["Review-Checklist.md", "Refactor-Plan.md"],
     skills: ["repo-map", "review-helper"],
     handoffStyle: "structured",
+    maxToolCalls: 48,
+    toolLoopIterationBudget: 12,
+    maxRunWallTimeMs: 600000,
+    maxTotalTokens: 240000,
+    maxHighRiskToolCalls: 8,
   });
   expect(profiles[1]).toMatchObject({
     id: "verifier",
@@ -92,6 +105,9 @@ test("loadAgentProfiles accepts resident metadata extensions and ignores invalid
     workspaceBinding: undefined,
     sessionNamespace: "verifier scope",
     memoryMode: undefined,
+    maxRunWallTimeMs: undefined,
+    maxTotalTokens: undefined,
+    maxHighRiskToolCalls: undefined,
   });
 
   expect(resolveAgentProfileMetadata(profiles[1]!)).toEqual({
@@ -185,7 +201,7 @@ test("buildBuiltinWorkerProfiles exposes commander and verifier defaults", () =>
     expect.objectContaining({
       id: "commander",
       kind: "worker",
-      defaultRole: "default",
+      defaultRole: "commander",
       defaultPermissionMode: "confirm",
       defaultAllowedToolFamilies: [
         "workspace-read",

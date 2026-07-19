@@ -161,11 +161,36 @@ export function createWorkspaceFeature({
   let originalContent = null;
   let currentEditReadOnly = false;
   let currentTreeMode = "root";
+  let editRevision = 0;
+  let saveFinalizeTimer = null;
+  let disposed = false;
   const expandedFolders = new Set();
   let lastRootTreePlaceholder = {
     key: "common.loading",
     fallback: "Loading...",
   };
+
+  function clearSaveFinalizeTimer() {
+    if (saveFinalizeTimer === null) return;
+    clearTimeout(saveFinalizeTimer);
+    saveFinalizeTimer = null;
+  }
+
+  function invalidateEditorSettlement() {
+    const hadFinalizeTimer = saveFinalizeTimer !== null;
+    editRevision += 1;
+    clearSaveFinalizeTimer();
+    if (saveEditBtn && (hadFinalizeTimer || saveEditBtn.disabled)) {
+      saveEditBtn.disabled = currentEditReadOnly;
+      saveEditBtn.textContent = currentEditReadOnly
+        ? t("editor.readonly", {}, "Read-only")
+        : t("common.save", {}, "Save");
+      saveEditBtn.title = currentEditReadOnly
+        ? t("editor.readonlySaveTitle", {}, "This source view is read-only.")
+        : "";
+    }
+    return editRevision;
+  }
 
   if (refreshTreeBtn) {
     refreshTreeBtn.addEventListener("click", () => {
@@ -353,10 +378,12 @@ export function createWorkspaceFeature({
   }
 
   async function openEnvFile() {
+    if (disposed) return;
     if (!isConnected()) {
       showNotice(t("editor.openConfigFailedTitle", {}, "Unable to open config"), t("editor.notConnected", {}, "Not connected to the server."), "error");
       return;
     }
+    invalidateEditorSettlement();
 
     const res = await createReq(sendReq, makeId, "config.readRaw");
     if (!res || !res.ok) {
@@ -519,10 +546,12 @@ export function createWorkspaceFeature({
   }
 
   async function openFile(filePath, options = {}) {
+    if (disposed) return;
     if (!isConnected()) {
       showNotice(t("editor.openFileFailedTitle", {}, "Unable to open file"), t("editor.notConnected", {}, "Not connected to the server."), "error");
       return;
     }
+    invalidateEditorSettlement();
 
     const res = await createReq(sendReq, makeId, "workspace.read", { path: filePath });
     if (!res || !res.ok) {
@@ -574,6 +603,7 @@ export function createWorkspaceFeature({
   }
 
   async function openSourcePath(sourcePath, options = {}) {
+    if (disposed) return;
     if (!isConnected()) {
       showNotice(t("editor.openSourceFailedTitle", {}, "Unable to open source file"), t("editor.notConnected", {}, "Not connected to the server."), "error");
       return;
@@ -582,6 +612,7 @@ export function createWorkspaceFeature({
       showNotice(t("editor.openSourceFailedTitle", {}, "Unable to open source file"), t("editor.invalidSourcePath", {}, "Invalid source path."), "error");
       return;
     }
+    invalidateEditorSettlement();
 
     const res = await createReq(sendReq, makeId, "workspace.readSource", { path: sourcePath });
     if (!res || !res.ok) {
@@ -614,6 +645,7 @@ export function createWorkspaceFeature({
   }
 
   async function saveFile() {
+    if (disposed) return;
     if (!isConnected()) {
       showNotice(t("editor.cannotSaveTitle", {}, "Unable to save"), t("editor.notConnected", {}, "Not connected to the server."), "error");
       return;
@@ -627,17 +659,23 @@ export function createWorkspaceFeature({
       return;
     }
 
+    clearSaveFinalizeTimer();
+    const revision = ++editRevision;
+    const editPath = currentEditPath;
     const content = editorTextareaEl ? editorTextareaEl.value : "";
     if (saveEditBtn) {
       saveEditBtn.textContent = t("editor.saving", {}, "Saving...");
       saveEditBtn.disabled = true;
     }
 
-    const method = currentEditPath === ".env" ? "config.writeRaw" : "workspace.write";
-    const params = currentEditPath === ".env"
+    const method = editPath === ".env" ? "config.writeRaw" : "workspace.write";
+    const params = editPath === ".env"
       ? { content }
-      : { path: currentEditPath, content };
+      : { path: editPath, content };
     const res = await createReq(sendReq, makeId, method, params);
+
+    // 新 editor session 或 pagehide 已接管 UI 时，旧保存响应只能静默结算。
+    if (disposed || revision !== editRevision) return;
 
     if (saveEditBtn) {
       saveEditBtn.disabled = false;
@@ -657,12 +695,14 @@ export function createWorkspaceFeature({
     }
     showNotice(
       t("editor.saveSuccessTitle", {}, "Saved"),
-      t("editor.saveSuccessMessage", { path: currentEditPath }, `${currentEditPath} was written.`),
+      t("editor.saveSuccessMessage", { path: editPath }, `${editPath} was written.`),
       "success",
       1800,
     );
 
-    setTimeout(() => {
+    saveFinalizeTimer = setTimeout(() => {
+      saveFinalizeTimer = null;
+      if (disposed || revision !== editRevision) return;
       if (saveEditBtn) {
         saveEditBtn.textContent = t("common.save", {}, "Save");
       }
@@ -670,17 +710,20 @@ export function createWorkspaceFeature({
       currentEditPath = null;
       originalContent = null;
       resetEditorAccessState();
+      editRevision += 1;
       void loadFileTree();
     }, 500);
   }
 
   function cancelEdit() {
+    if (disposed) return;
     if (originalContent !== null && editorTextareaEl) {
       if (editorTextareaEl.value !== originalContent && !confirm(t("editor.discardConfirm", {}, "Discard changes?"))) {
         return;
       }
     }
 
+    invalidateEditorSettlement();
     switchMode("chat");
     currentEditPath = null;
     originalContent = null;
@@ -688,9 +731,25 @@ export function createWorkspaceFeature({
     void loadFileTree();
   }
 
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    invalidateEditorSettlement();
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      saveFinalizeTimerActive: saveFinalizeTimer !== null,
+      editRevision,
+      disposed,
+    };
+  }
+
   return {
     cancelEdit,
+    dispose,
     getTreeMode,
+    getRuntimeSnapshot,
     handleSidebarVisibilityChange,
     isSidebarExpanded,
     loadFileTree,

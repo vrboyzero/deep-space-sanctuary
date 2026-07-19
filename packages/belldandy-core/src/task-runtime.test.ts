@@ -36,7 +36,15 @@ test("subtask runtime store persists lifecycle, progress, and output artifacts",
       policySummary: "coder role policy",
     },
   });
-  await store.markQueued(task.id, 2);
+  await store.markQueued(task.id, 2, {
+    sessionId: "sub_1234",
+    agentId: "coder",
+    profileId: "coder",
+  });
+  expect(await store.getTask(task.id)).toMatchObject({
+    sessionId: "sub_1234",
+    status: "pending",
+  });
   await store.attachSession(task.id, "sub_1234");
 
   const handler = createSubTaskRuntimeEventHandler(store);
@@ -249,6 +257,45 @@ test("subtask runtime store loads persisted state with UTF-8 BOM", async () => {
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
+test("subtask runtime store quarantines malformed registry without overwriting the original file", async () => {
+  const cases = [
+    {
+      raw: "\ufeff{\"version\":1,\"items\":[",
+      kind: "invalid_json",
+    },
+    {
+      raw: JSON.stringify({ version: 2, items: [] }),
+      kind: "invalid_schema",
+    },
+  ] as const;
+
+  for (const scenario of cases) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-quarantine-"));
+    const statePath = path.join(stateDir, "subtasks", "registry.json");
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, scenario.raw, "utf-8");
+
+    const store = new SubTaskRuntimeStore(stateDir);
+    await store.load();
+
+    expect(store.getQuarantineStatus()).toMatchObject({
+      statePath,
+      kind: scenario.kind,
+    });
+    expect(await store.listTasks()).toEqual([]);
+    await expect(store.createTask({
+      launchSpec: {
+        parentConversationId: "conv-quarantine",
+        agentId: "coder",
+        instruction: "This mutation must not overwrite malformed state.",
+      },
+    })).rejects.toThrow("read-only quarantine");
+    expect(await fs.readFile(statePath, "utf-8")).toBe(scenario.raw);
+
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("subtask runtime store batches thought_delta persistence within a short window", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-thought-delta-"));
   const writeFileSpy = vi.spyOn(fs, "writeFile");
@@ -302,20 +349,55 @@ test("subtask runtime store batches thought_delta persistence within a short win
   }
 });
 
+test("subtask runtime store flushAndClose drains deferred state and rejects new mutations", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-flush-close-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-flush-close",
+      agentId: "coder",
+      instruction: "Persist the final thought delta before shutdown.",
+    },
+  });
+  await store.attachSession(task.id, "sub_flush_close_1", "coder", "coder");
+  await store.recordThoughtDeltaBySession("sub_flush_close_1", "The final deferred progress update must be persisted.");
+
+  await Promise.all([store.flushAndClose(), store.flushAndClose()]);
+
+  const reloaded = new SubTaskRuntimeStore(stateDir);
+  await reloaded.load();
+  expect((await reloaded.getTask(task.id))?.progress.message)
+    .toBe("The final deferred progress update must be persisted.");
+  await expect(store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-flush-close",
+      agentId: "coder",
+      instruction: "This mutation must be rejected after close.",
+    },
+  })).rejects.toThrow("closed");
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
 test("task runtime agent capabilities wrap spawn results into structured task records", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-caps-"));
   const store = new SubTaskRuntimeStore(stateDir);
   await store.load();
+  const controller = new AbortController();
+  let receivedAbortSignal: AbortSignal | undefined;
 
   const handler = createSubTaskRuntimeEventHandler(store);
   const orchestrator = {
     async spawn(opts: {
+      abortSignal?: AbortSignal;
       onQueued?: (position: number) => void;
       onSessionCreated?: (sessionId: string, agentId: string) => void;
       launchSpec: {
         agentId?: string;
       };
     }) {
+      receivedAbortSignal = opts.abortSignal;
       opts.onQueued?.(1);
       opts.onSessionCreated?.("sub_caps_1", opts.launchSpec.agentId ?? "default");
       handler({
@@ -343,6 +425,7 @@ test("task runtime agent capabilities wrap spawn results into structured task re
     parentConversationId: "conv-caps",
     agentId: "coder",
     instruction: "Implement task bridge",
+    abortSignal: controller.signal,
     bridgeSubtask: {
       kind: "review",
       targetId: "codex_exec",
@@ -359,6 +442,7 @@ test("task runtime agent capabilities wrap spawn results into structured task re
   });
   expect(result.taskId).toMatch(/^task_/);
   expect(result.outputPath).toBeTruthy();
+  expect(receivedAbortSignal).toBe(controller.signal);
 
   const sessions = await caps.listSessions!("conv-caps");
   expect(sessions).toEqual([
@@ -380,6 +464,7 @@ test("task runtime agent capabilities wrap spawn results into structured task re
     goalNodeId: "node-review",
     summary: "把 bridge review 语义写进长期任务子任务记录",
   });
+  expect(persisted?.launchSpec).not.toHaveProperty("abortSignal");
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
@@ -626,6 +711,190 @@ test("subtask runtime store persists steering records and ignores stale session 
       deliveredSessionId: "sub_steer_2",
     }),
   ]);
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask command claim reuses an identical steering retry and blocks stale completion", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-command-claim-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-command-claim",
+      agentId: "coder",
+      instruction: "Implement command claim",
+    },
+  });
+  await store.attachSession(task.id, "sub_command_claim_1", "coder", "coder");
+
+  const [first, replay] = await Promise.all([
+    store.requestSteering(task.id, "Prioritize the failing integration path.", {
+      sessionId: "sub_command_claim_1",
+      idempotencyKey: "steering-retry-1",
+    }),
+    store.requestSteering(task.id, "Prioritize the failing integration path.", {
+      sessionId: "sub_command_claim_1",
+      idempotencyKey: "steering-retry-1",
+    }),
+  ]);
+
+  expect(first?.claimOwner).toBe(true);
+  expect(replay?.claimOwner).toBe(false);
+  expect(replay?.steering.id).toBe(first?.steering.id);
+  expect((await store.getTask(task.id))?.steering).toHaveLength(1);
+
+  await expect(store.requestTakeover(task.id, "reviewer", "Take over the same handoff.", {
+    sessionId: "sub_command_claim_1",
+    mode: "safe_point",
+    idempotencyKey: "competing-takeover-1",
+  })).rejects.toThrow("steering is already pending");
+
+  const stale = await store.completeTask(task.id, {
+    status: "stopped",
+    sessionId: "sub_command_claim_1",
+    error: "old session stopped while steering handoff is pending",
+  });
+  expect(stale).toMatchObject({
+    sessionId: "sub_command_claim_1",
+    status: "running",
+  });
+
+  const terminalWithoutSessionCallback = await store.completeTask(task.id, {
+    status: "done",
+    sessionId: "sub_command_claim_1",
+    output: "orchestrator completed before creating a session callback",
+    commandGeneration: first?.commandClaim.generation,
+  });
+  expect(terminalWithoutSessionCallback).toMatchObject({
+    status: "done",
+    activeCommandClaim: undefined,
+  });
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime store releases a pending claim left by a previous runtime instance", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-command-recovery-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-command-recovery",
+      agentId: "coder",
+      instruction: "Recover interrupted command claim",
+    },
+  });
+  await store.attachSession(task.id, "sub_command_recovery_1", "coder", "coder");
+  await store.requestSteering(task.id, "Recover the interrupted steering command.", {
+    sessionId: "sub_command_recovery_1",
+    idempotencyKey: "interrupted-steering-claim",
+  });
+
+  const statePath = path.join(stateDir, "subtasks", "registry.json");
+  const persisted = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
+    items: Array<{ activeCommandClaim?: { ownerInstanceId?: string } }>;
+  };
+  persisted.items[0]!.activeCommandClaim!.ownerInstanceId = "previous-runtime-instance";
+  await fs.writeFile(statePath, JSON.stringify(persisted, null, 2), "utf-8");
+
+  const reloaded = new SubTaskRuntimeStore(stateDir);
+  await reloaded.load();
+  const recovered = await reloaded.getTask(task.id);
+  expect(recovered?.activeCommandClaim).toBeUndefined();
+  expect(recovered?.steering).toEqual([
+    expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("interrupted"),
+    }),
+  ]);
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("steering controller only lets the command claim owner stop and spawn", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-command-owner-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-command-owner",
+      agentId: "coder",
+      instruction: "Implement command ownership",
+    },
+  });
+  await store.attachSession(task.id, "sub_command_owner_1", "coder", "coder");
+
+  let releaseFirstStop!: () => void;
+  const firstStopReleased = new Promise<void>((resolve) => {
+    releaseFirstStop = resolve;
+  });
+  let signalFirstStop!: () => void;
+  const firstStopStarted = new Promise<void>((resolve) => {
+    signalFirstStop = resolve;
+  });
+  const stops: string[] = [];
+  const spawns: string[] = [];
+  const controller = createSubTaskUpdateController({
+    runtimeStore: store,
+    conversationStore: {
+      get: () => ({ messages: [] }),
+    },
+    orchestrator: {
+      getSession(sessionId: string) {
+        return sessionId === "sub_command_owner_1"
+          ? {
+            id: sessionId,
+            status: "running" as const,
+            launchSpec: {
+              parentConversationId: "conv-command-owner",
+              agentId: "coder",
+              profileId: "coder",
+              instruction: "Implement command ownership",
+              background: true,
+              timeoutMs: 60_000,
+              channel: "subtask",
+            },
+          }
+          : undefined;
+      },
+      async stopSession(sessionId: string) {
+        stops.push(sessionId);
+        if (stops.length === 1) {
+          signalFirstStop();
+        }
+        await firstStopReleased;
+        return true;
+      },
+      async spawn(opts: any) {
+        spawns.push(String(opts.launchSpec?.instruction));
+        opts.onSessionCreated?.("sub_command_owner_2", "coder");
+        return {
+          success: true,
+          output: "claimed steering result",
+          sessionId: "sub_command_owner_2",
+        };
+      },
+    } as any,
+  });
+
+  const first = controller(task.id, "Focus on the command claim regression.");
+  await firstStopStarted;
+  const replay = controller(task.id, "Focus on the command claim regression.");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(stops).toEqual(["sub_command_owner_1"]);
+  releaseFirstStop();
+  await Promise.all([first, replay]);
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if ((await store.getTask(task.id))?.status === "done") break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(spawns).toEqual(["Focus on the command claim regression."]);
+  expect((await store.getTask(task.id))?.steering).toHaveLength(1);
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });

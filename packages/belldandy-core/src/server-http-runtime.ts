@@ -49,6 +49,7 @@ type GatewayHttpRuntimeContextInput = {
   getGovernanceDetailMode?: () => "compact" | "full";
   setGovernanceDetailMode?: (value: string | undefined) => void;
   getConversationStore: () => ConversationStore;
+  getTopLevelConversationLifecycle: RegisterGatewayHttpRoutesContext["getTopLevelConversationLifecycle"];
   getQueryRuntimeTraceStore: () => QueryRuntimeTraceStore;
   writeBinaryFileAtomic: RegisterGatewayHttpRoutesContext["writeBinaryFileAtomic"];
   writeTextFileAtomic: RegisterGatewayHttpRoutesContext["writeTextFileAtomic"];
@@ -98,6 +99,7 @@ export function buildGatewayHttpRoutesContext(
     ...runtimeSettings,
     log: input.log,
     getConversationStore: input.getConversationStore,
+    getTopLevelConversationLifecycle: input.getTopLevelConversationLifecycle,
     getQueryRuntimeTraceStore: input.getQueryRuntimeTraceStore,
     requestToFormData,
     isAuthorizedAvatarUpload,

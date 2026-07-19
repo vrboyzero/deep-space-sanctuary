@@ -26,6 +26,7 @@ function createRuntimeInput(): Parameters<typeof buildGatewayHttpRoutesContext>[
       onChannelSecurityApprovalRequired: undefined,
     },
     getConversationStore: (() => ({})) as never,
+    getTopLevelConversationLifecycle: (() => ({})) as never,
     getQueryRuntimeTraceStore: (() => ({})) as never,
     writeBinaryFileAtomic: (async () => {}) as never,
     writeTextFileAtomic: (async () => {}) as never,

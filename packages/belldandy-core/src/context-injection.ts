@@ -252,6 +252,7 @@ export type ContextInjectionMemoryProvider = {
       limit: number;
       filter: { agentId?: string | null };
       retrievalMode: "implicit";
+      signal?: AbortSignal;
     },
   ): Promise<AutoRecallMemoryLike[]>;
   searchWithDiagnostics?(
@@ -260,6 +261,7 @@ export type ContextInjectionMemoryProvider = {
       limit: number;
       filter: { agentId?: string | null };
       retrievalMode: "implicit";
+      signal?: AbortSignal;
     },
   ): Promise<{
     items: AutoRecallMemoryLike[];
@@ -278,6 +280,70 @@ export type ContextInjectionConfig = {
   autoRecallMinScore: number;
   autoRecallTimeoutMs?: number;
 };
+
+async function runAutoRecallSearch(input: {
+  memoryManager: ContextInjectionMemoryProvider;
+  query: string;
+  limit: number;
+  filter: { agentId?: string | null };
+  timeoutMs: number;
+  parentSignal?: AbortSignal;
+}): Promise<AutoRecallSearchExecution> {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onParentAbort = (): void => {
+    controller.abort(new DOMException("Memory auto-recall cancelled by caller.", "AbortError"));
+  };
+  if (input.parentSignal?.aborted) {
+    onParentAbort();
+  } else {
+    input.parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  }
+
+  const timeoutMs = Number.isFinite(input.timeoutMs) && input.timeoutMs > 0
+    ? Math.floor(input.timeoutMs)
+    : 2000;
+  timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException("Memory auto-recall deadline exceeded.", "TimeoutError"));
+  }, timeoutMs);
+  timer.unref?.();
+
+  let removeAbortWaiter = (): void => {};
+  const abortWait = new Promise<never>((_resolve, reject) => {
+    const onAbort = (): void => reject(controller.signal.reason);
+    if (controller.signal.aborted) {
+      onAbort();
+      return;
+    }
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortWaiter = () => controller.signal.removeEventListener("abort", onAbort);
+  });
+  const searchInput = {
+    limit: input.limit,
+    filter: input.filter,
+    retrievalMode: "implicit" as const,
+    signal: controller.signal,
+  };
+  const search = input.memoryManager.searchWithDiagnostics
+    ? input.memoryManager.searchWithDiagnostics(input.query, searchInput)
+    : input.memoryManager.search(input.query, searchInput)
+      .then((items) => ({ items, diagnostics: undefined }));
+
+  try {
+    return await Promise.race([search, abortWait]);
+  } catch (error) {
+    if (timedOut) {
+      return { items: [], timedOut: true };
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    removeAbortWaiter();
+    input.parentSignal?.removeEventListener("abort", onParentAbort);
+  }
+}
 
 export async function buildContextInjectionPrelude(
   memoryManager: ContextInjectionMemoryProvider,
@@ -435,23 +501,14 @@ export async function buildContextInjectionPrelude(
 
   if (config.autoRecallEnabled) {
     if (queryText) {
-      const searchExecution: AutoRecallSearchExecution = await Promise.race([
-        memoryManager.searchWithDiagnostics
-          ? memoryManager.searchWithDiagnostics(queryText, {
-            limit: config.autoRecallLimit,
-            filter: implicitFilter,
-            retrievalMode: "implicit",
-          })
-          : memoryManager.search(queryText, {
-            limit: config.autoRecallLimit,
-            filter: implicitFilter,
-            retrievalMode: "implicit",
-          }).then((items) => ({ items, diagnostics: undefined })),
-        new Promise<AutoRecallSearchExecution>((resolve) => setTimeout(
-          () => resolve({ items: [], timedOut: true }),
-          config.autoRecallTimeoutMs ?? 2000,
-        )),
-      ]);
+      const searchExecution = await runAutoRecallSearch({
+        memoryManager,
+        query: queryText,
+        limit: config.autoRecallLimit,
+        filter: implicitFilter,
+        timeoutMs: config.autoRecallTimeoutMs ?? 2000,
+        parentSignal: ctx.abortSignal,
+      });
       const results = Array.isArray(searchExecution?.items) ? searchExecution.items : [];
       const filtered = results.filter((item) => item.score >= config.autoRecallMinScore);
       if (filtered.length > 0) {

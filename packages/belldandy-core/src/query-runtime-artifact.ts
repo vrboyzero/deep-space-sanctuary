@@ -131,8 +131,14 @@ export async function handleArtifactRevealWithQueryRuntime(
       };
     }
 
+    let canonicalGeneratedDir: string;
+    let canonicalTargetPath: string;
     try {
-      await fs.access(targetPath);
+      // 词法 containment 无法识别目录链接；shell 只能接收已验证的 canonical target。
+      [canonicalGeneratedDir, canonicalTargetPath] = await Promise.all([
+        fs.realpath(ctx.generatedDir),
+        fs.realpath(targetPath),
+      ]);
     } catch {
       queryRuntime.mark("completed", {
         detail: {
@@ -148,8 +154,23 @@ export async function handleArtifactRevealWithQueryRuntime(
       };
     }
 
+    if (!ctx.isUnderRoot(canonicalGeneratedDir, canonicalTargetPath)) {
+      queryRuntime.mark("completed", {
+        detail: {
+          relativePath,
+          code: "invalid_path",
+        },
+      });
+      return {
+        type: "res",
+        id: ctx.requestId,
+        ok: false,
+        error: { code: "invalid_path", message: "artifact path resolves outside generated directory" },
+      };
+    }
+
     const revealArtifactPath = ctx.revealArtifactPath ?? revealArtifactPathInShell;
-    await revealArtifactPath(targetPath);
+    await revealArtifactPath(canonicalTargetPath);
     queryRuntime.mark("artifact_revealed", {
       detail: {
         relativePath,

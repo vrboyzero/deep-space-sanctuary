@@ -1,12 +1,15 @@
-/**
- * Embedding 向量表示
- */
-export type EmbeddingVector = number[];
+import type {
+    EmbeddingProvider as RuntimeEmbeddingProvider,
+    EmbeddingVector as RuntimeEmbeddingVector,
+} from "./index.js";
+
+/** 与 runtime Provider 使用同一个向量类型，避免 DTO 层重新定义。 */
+export type EmbeddingVector = RuntimeEmbeddingVector;
 
 /**
  * 单个 embedding 结果
  */
-export type EmbeddingResult = {
+export type EmbeddingAdapterResult = {
     /** 原始文本 */
     text: string;
     /** 向量表示 */
@@ -17,20 +20,26 @@ export type EmbeddingResult = {
     model: string;
 };
 
+/** @deprecated 使用 `EmbeddingAdapterResult`；它不是 runtime Provider 的返回值。 */
+export type EmbeddingResult = EmbeddingAdapterResult;
+
 /**
  * 批量 embedding 请求
  */
-export type EmbeddingRequest = {
+export type EmbeddingAdapterRequest = {
     /** 要嵌入的文本列表 */
     texts: string[];
 };
 
+/** @deprecated 使用 `EmbeddingAdapterRequest`；它不是 runtime Provider 的 batch 参数。 */
+export type EmbeddingRequest = EmbeddingAdapterRequest;
+
 /**
  * 批量 embedding 响应
  */
-export type EmbeddingResponse = {
+export type EmbeddingAdapterResponse = {
     /** 嵌入结果列表（与输入顺序对应） */
-    embeddings: EmbeddingResult[];
+    embeddings: EmbeddingAdapterResult[];
     /** 使用的 provider */
     provider: string;
     /** 使用的模型 */
@@ -38,6 +47,9 @@ export type EmbeddingResponse = {
     /** 总 token 使用量（如果可用） */
     totalTokens?: number;
 };
+
+/** @deprecated 使用 `EmbeddingAdapterResponse`；它不是 runtime Provider 的 batch 返回值。 */
+export type EmbeddingResponse = EmbeddingAdapterResponse;
 
 /**
  * Embedding Provider 配置
@@ -56,11 +68,10 @@ export type EmbeddingProviderConfig = {
 };
 
 /**
- * Embedding Provider 接口
- * 
- * 所有 embedding 提供者必须实现此接口。
+ * 仅供旧结构化响应 adapter 使用的历史契约。
+ * 新的 runtime Provider 必须从包根导入 `EmbeddingProvider`。
  */
-export interface EmbeddingProvider {
+export interface LegacyEmbeddingProvider {
     /** Provider 名称 */
     readonly name: string;
 
@@ -73,18 +84,24 @@ export interface EmbeddingProvider {
     /**
      * 生成单个文本的 embedding
      */
-    embed(text: string): Promise<EmbeddingResult>;
+    embed(text: string): Promise<EmbeddingAdapterResult>;
 
     /**
      * 批量生成 embedding
      */
-    embedBatch(request: EmbeddingRequest): Promise<EmbeddingResponse>;
+    embedBatch(request: EmbeddingAdapterRequest): Promise<EmbeddingAdapterResponse>;
 
     /**
      * 计算两个向量的余弦相似度
      */
     cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number;
 }
+
+/**
+ * 保留 direct import 的过渡别名，但语义已与 package-root runtime Provider 对齐。
+ * 需要旧结构化响应协议的调用方应显式迁移到 `LegacyEmbeddingProvider`。
+ */
+export type EmbeddingProvider = RuntimeEmbeddingProvider;
 
 /**
  * 计算余弦相似度（通用实现）

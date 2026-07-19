@@ -4,17 +4,23 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createLinkedAbortController } from "../../abort-utils.js";
+import {
+  BoundedResponseLimitError,
+  parsePositiveByteLimit,
+  persistBoundedResponseToFile,
+} from "../remote-response-file.js";
 
 type ImageOutputFormat = "png" | "jpeg" | "webp";
 type ImageResponseTransport = "base64" | "url";
 type GeneratedImageAsset = {
-  buffer: Buffer;
-  detectedFormat: ImageOutputFormat | null;
+  filePath: string;
+  outputFormat: ImageOutputFormat;
 };
 
 const DEFAULT_MODEL = "gpt-image-2";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_TIMEOUT_MS = 60000;
+const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
 const MAX_SDK_TIMEOUT_MS = 2_147_483_647;
 const REVEAL_PREFIX = "#generated-image-reveal:";
 const AGNES_IMAGE_MODEL = "agnes-image-2.1-flash";
@@ -28,6 +34,10 @@ function readImageConfig() {
     model: process.env.BELLDANDY_IMAGE_MODEL?.trim() || DEFAULT_MODEL,
     outputFormat: normalizeOutputFormat(process.env.BELLDANDY_IMAGE_OUTPUT_FORMAT),
     timeoutMs: parseTimeoutMs(process.env.BELLDANDY_IMAGE_TIMEOUT_MS),
+    maxOutputBytes: parsePositiveByteLimit(
+      process.env.BELLDANDY_IMAGE_MAX_OUTPUT_BYTES,
+      DEFAULT_MAX_OUTPUT_BYTES,
+    ),
   };
 }
 
@@ -139,30 +149,62 @@ function detectImageOutputFormat(buffer: Buffer): ImageOutputFormat | null {
   return null;
 }
 
-async function readGeneratedImageAsset(item: Record<string, unknown>, abortSignal?: AbortSignal): Promise<GeneratedImageAsset> {
+async function persistGeneratedImageAsset(input: {
+  item: Record<string, unknown>;
+  generatedImagesDir: string;
+  baseFileName: string;
+  fallbackFormat: ImageOutputFormat;
+  preferDetectedFormat: boolean;
+  maxBytes: number;
+  abortSignal?: AbortSignal;
+}): Promise<GeneratedImageAsset> {
+  const { item } = input;
   const b64Json = typeof item.b64_json === "string" ? item.b64_json : "";
+  let response: Pick<Response, "body" | "headers">;
   if (b64Json) {
-    const buffer = Buffer.from(b64Json, "base64");
-    return {
-      buffer,
-      detectedFormat: detectImageOutputFormat(buffer),
-    };
-  }
-
-  const imageUrl = typeof item.url === "string" ? item.url : "";
-  if (imageUrl) {
-    const response = await fetch(imageUrl, { signal: abortSignal });
-    if (!response.ok) {
-      throw new Error(`Failed to download generated image (${response.status}).`);
+    const decodedLength = Buffer.byteLength(b64Json, "base64");
+    if (decodedLength > input.maxBytes) {
+      throw new BoundedResponseLimitError(
+        `Generated image exceeds the ${input.maxBytes} byte limit (${decodedLength} bytes decoded).`,
+      );
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return {
-      buffer,
-      detectedFormat: detectImageOutputFormat(buffer),
-    };
+    const buffer = Buffer.from(b64Json, "base64");
+    response = new Response(buffer, {
+      headers: {
+        "content-length": String(buffer.length),
+      },
+    });
+  } else {
+    const imageUrl = typeof item.url === "string" ? item.url : "";
+    if (!imageUrl) {
+      throw new Error("Image generation response did not include b64_json or url.");
+    }
+    const remoteResponse = await fetch(imageUrl, { signal: input.abortSignal });
+    if (!remoteResponse.ok) {
+      throw new Error(`Failed to download generated image (${remoteResponse.status}).`);
+    }
+    response = remoteResponse;
   }
 
-  throw new Error("Image generation response did not include b64_json or url.");
+  let outputFormat = input.fallbackFormat;
+  const result = await persistBoundedResponseToFile({
+    response,
+    targetPath: path.join(input.generatedImagesDir, `${input.baseFileName}.${input.fallbackFormat}`),
+    maxBytes: input.maxBytes,
+    label: "Generated image",
+    abortSignal: input.abortSignal,
+    resolveTargetPath: ({ prefix }) => {
+      const detectedFormat = detectImageOutputFormat(prefix);
+      outputFormat = input.preferDetectedFormat
+        ? detectedFormat ?? input.fallbackFormat
+        : input.fallbackFormat;
+      return path.join(input.generatedImagesDir, `${input.baseFileName}.${outputFormat}`);
+    },
+  });
+  return {
+    filePath: result.filePath,
+    outputFormat,
+  };
 }
 
 export const imageGenerateTool: Tool = {
@@ -297,14 +339,19 @@ export const imageGenerateTool: Tool = {
           throw new Error("Image generation response was empty.");
         }
 
-        const asset = await readGeneratedImageAsset(firstItem as Record<string, unknown>, linkedAbort.controller.signal);
-        const persistedOutputFormat = isAgnes ? asset.detectedFormat ?? outputFormat : outputFormat;
         const generatedImagesDir = getGeneratedImagesDir(context);
         await fs.mkdir(generatedImagesDir, { recursive: true });
-
-        const fileName = `image-${buildTimestamp()}-${crypto.randomUUID().slice(0, 8)}.${persistedOutputFormat}`;
-        const filePath = path.join(generatedImagesDir, fileName);
-        await fs.writeFile(filePath, asset.buffer);
+        const baseFileName = `image-${buildTimestamp()}-${crypto.randomUUID().slice(0, 8)}`;
+        const asset = await persistGeneratedImageAsset({
+          item: firstItem as Record<string, unknown>,
+          generatedImagesDir,
+          baseFileName,
+          fallbackFormat: outputFormat,
+          preferDetectedFormat: isAgnes,
+          maxBytes: config.maxOutputBytes,
+          abortSignal: linkedAbort.controller.signal,
+        });
+        const fileName = path.basename(asset.filePath);
 
         const relativePath = `generated/images/${fileName}`;
         const webPath = `/generated/images/${fileName}`;
@@ -323,7 +370,7 @@ export const imageGenerateTool: Tool = {
             model: config.model,
             webPath,
             relativePath,
-            outputFormat: persistedOutputFormat,
+            outputFormat: asset.outputFormat,
           },
         };
       } finally {

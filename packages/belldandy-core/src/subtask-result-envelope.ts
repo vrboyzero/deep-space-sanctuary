@@ -15,7 +15,7 @@ export type SubTaskDelegationSummary = {
   source: DelegationSource;
   intentKind: DelegationIntentKind;
   intentSummary: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: DelegationProtocol["intent"]["role"];
   expectedDeliverableFormat: DelegationDeliverableFormat;
   expectedDeliverableSummary: string;
   aggregationMode: DelegationAggregationMode;

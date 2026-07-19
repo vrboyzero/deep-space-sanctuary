@@ -34,30 +34,43 @@ export function createChatEventsFeature({
   onConversationStopped,
   getStoppedMessageText,
   escapeHtml,
+  dedupeMaxEntries = 512,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
   let botMessageEl = null;
   let botRawHtmlBuffer = "";
   let botMessageMeta = null;
   let pendingFrameFlushHandle = null;
+  let cancelPendingFrameFlush = null;
   let pendingTokenUsagePayload = null;
   let pendingTokenUsageRunning = null;
   const pendingGoalUpdates = new Map();
   const pendingSubtaskUpdates = new Map();
-  const renderedToolResultPreviewKeys = new Set();
-  const handledToolNoticeKeys = new Set();
+  const renderedToolResultPreviewKeys = createBoundedKeySet(dedupeMaxEntries);
+  const handledToolNoticeKeys = createBoundedKeySet(dedupeMaxEntries);
+  let generationClearCount = 0;
+  let disposed = false;
 
   function scheduleFrameFlush() {
     if (pendingFrameFlushHandle !== null) {
       return;
     }
-    const schedule = typeof globalThis.requestAnimationFrame === "function"
-      ? globalThis.requestAnimationFrame.bind(globalThis)
-      : (callback) => globalThis.setTimeout(() => callback(Date.now()), 16);
-    pendingFrameFlushHandle = schedule(() => {
+    const flush = () => {
       pendingFrameFlushHandle = null;
+      cancelPendingFrameFlush = null;
       flushPendingUiEvents();
-    });
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      pendingFrameFlushHandle = globalThis.requestAnimationFrame(flush);
+      cancelPendingFrameFlush = () => {
+        globalThis.cancelAnimationFrame?.(pendingFrameFlushHandle);
+      };
+      return;
+    }
+    pendingFrameFlushHandle = globalThis.setTimeout(flush, 16);
+    cancelPendingFrameFlush = () => {
+      globalThis.clearTimeout(pendingFrameFlushHandle);
+    };
   }
 
   function flushPendingUiEvents() {
@@ -157,6 +170,50 @@ export function createChatEventsFeature({
       return true;
     }
     return payloadConversationId === activeConversationId;
+  }
+
+  function clearPendingUiEvents() {
+    cancelPendingFrameFlush?.();
+    pendingFrameFlushHandle = null;
+    cancelPendingFrameFlush = null;
+    pendingTokenUsagePayload = null;
+    pendingTokenUsageRunning = null;
+    pendingGoalUpdates.clear();
+    pendingSubtaskUpdates.clear();
+  }
+
+  function clearGeneration() {
+    if (disposed) return;
+    clearPendingUiEvents();
+    renderedToolResultPreviewKeys.clear();
+    handledToolNoticeKeys.clear();
+    resetStreamingState();
+    generationClearCount += 1;
+  }
+
+  function dispose() {
+    if (disposed) return;
+    clearPendingUiEvents();
+    renderedToolResultPreviewKeys.dispose();
+    handledToolNoticeKeys.dispose();
+    resetStreamingState();
+    disposed = true;
+  }
+
+  function getRetentionSnapshot() {
+    const previewSnapshot = renderedToolResultPreviewKeys.getSnapshot();
+    const noticeSnapshot = handledToolNoticeKeys.getSnapshot();
+    return {
+      renderedToolResultPreviewKeyCount: previewSnapshot.size,
+      handledToolNoticeKeyCount: noticeSnapshot.size,
+      dedupeMaxEntries: previewSnapshot.maxEntries,
+      evictedDedupeKeyCount: previewSnapshot.evictedCount + noticeSnapshot.evictedCount,
+      pendingGoalUpdateCount: pendingGoalUpdates.size,
+      pendingSubtaskUpdateCount: pendingSubtaskUpdates.size,
+      pendingFrameFlush: pendingFrameFlushHandle !== null,
+      generationClearCount,
+      disposed,
+    };
   }
 
   function readRenderableToolResultHtml(payload) {
@@ -332,6 +389,7 @@ export function createChatEventsFeature({
   }
 
   function handleEvent(event, payload) {
+    if (disposed) return false;
     if (event === "pairing.required") {
       const code = payload && payload.code ? String(payload.code) : "";
       const target = ensureBotMessage();
@@ -369,6 +427,11 @@ export function createChatEventsFeature({
         pendingTokenUsageRunning = payload?.status === "running";
         scheduleFrameFlush();
       }
+      return true;
+    }
+
+    if (event === "agent.budget_exhausted") {
+      // 紧随其后的 error/final 会负责可见反馈；这里仅消费结构化诊断事件。
       return true;
     }
 
@@ -556,5 +619,57 @@ export function createChatEventsFeature({
     beginStreamingReply,
     handleEvent,
     resetStreamingState,
+    clearGeneration,
+    dispose,
+    getRetentionSnapshot,
   };
+}
+
+function createBoundedKeySet(maxEntriesValue) {
+  const keys = new Set();
+  const maxEntries = normalizeNonNegativeInteger(maxEntriesValue, 512);
+  let evictedCount = 0;
+  let disposed = false;
+
+  return {
+    has(key) {
+      if (disposed || !keys.has(key)) return false;
+      // 命中即变为最近使用，容量淘汰保留活跃 dedupe key。
+      keys.delete(key);
+      keys.add(key);
+      return true;
+    },
+    add(key) {
+      if (disposed || !key) return;
+      keys.delete(key);
+      keys.add(key);
+      while (keys.size > maxEntries) {
+        const oldest = keys.values().next().value;
+        if (oldest === undefined) break;
+        keys.delete(oldest);
+        evictedCount += 1;
+      }
+    },
+    clear() {
+      if (disposed) return;
+      keys.clear();
+    },
+    dispose() {
+      keys.clear();
+      disposed = true;
+    },
+    getSnapshot() {
+      return {
+        size: keys.size,
+        maxEntries,
+        evictedCount,
+        disposed,
+      };
+    },
+  };
+}
+
+function normalizeNonNegativeInteger(value, fallback) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.floor(value));
 }

@@ -52,6 +52,7 @@ describe("tts-synthesize", () => {
     delete process.env.BELLDANDY_OPENAI_BASE_URL;
     delete process.env.BELLDANDY_TTS_PROVIDER;
     delete process.env.BELLDANDY_TTS_VOICE;
+    delete process.env.BELLDANDY_TTS_MAX_OUTPUT_BYTES;
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -60,9 +61,7 @@ describe("tts-synthesize", () => {
     process.env.BELLDANDY_OPENAI_BASE_URL = "https://example.invalid/v1";
     process.env.BELLDANDY_TTS_PROVIDER = "dashscope";
     process.env.BELLDANDY_TTS_VOICE = "Chelsie";
-    openAISpeechCreateMock.mockResolvedValue({
-      arrayBuffer: vi.fn(async () => Uint8Array.from([1, 2, 3, 4]).buffer),
-    });
+    openAISpeechCreateMock.mockResolvedValue(new Response(Uint8Array.from([1, 2, 3, 4])));
 
     const result = await synthesizeSpeech({
       text: "Hello world",
@@ -86,9 +85,7 @@ describe("tts-synthesize", () => {
     process.env.BELLDANDY_TTS_OPENAI_BASE_URL = "https://tts.example.invalid/v1";
     process.env.BELLDANDY_OPENAI_API_KEY = "sk-main";
     process.env.BELLDANDY_OPENAI_BASE_URL = "https://main.example.invalid/v1";
-    openAISpeechCreateMock.mockResolvedValue({
-      arrayBuffer: vi.fn(async () => Uint8Array.from([1, 2, 3, 4]).buffer),
-    });
+    openAISpeechCreateMock.mockResolvedValue(new Response(Uint8Array.from([1, 2, 3, 4])));
 
     const result = await synthesizeSpeech({
       text: "Hello TTS",
@@ -106,9 +103,7 @@ describe("tts-synthesize", () => {
   it("uses BELLDANDY_TTS_MODEL for OpenAI and DashScope providers", async () => {
     process.env.BELLDANDY_TTS_MODEL = "shared-tts-model";
     process.env.BELLDANDY_OPENAI_API_KEY = "sk-bdd";
-    openAISpeechCreateMock.mockResolvedValue({
-      arrayBuffer: vi.fn(async () => Uint8Array.from([1, 2, 3, 4]).buffer),
-    });
+    openAISpeechCreateMock.mockResolvedValue(new Response(Uint8Array.from([1, 2, 3, 4])));
 
     const openAiResult = await synthesizeSpeech({
       text: "OpenAI TTS model",
@@ -213,5 +208,25 @@ describe("tts-synthesize", () => {
     controller.abort("Stopped by user.");
 
     await expect(resultPromise).rejects.toThrow("Stopped by user.");
+  });
+
+  it("rejects oversized OpenAI audio without leaving a partial file", async () => {
+    process.env.BELLDANDY_OPENAI_API_KEY = "sk-bdd";
+    process.env.BELLDANDY_TTS_MAX_OUTPUT_BYTES = "8";
+    openAISpeechCreateMock.mockResolvedValue(new Response(Buffer.from("123456789")));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await synthesizeSpeech({
+      text: "Oversized fixture",
+      stateDir: tempDir,
+      provider: "openai",
+    });
+
+    expect(result).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[TTS-Auto] synthesizeSpeech failed:",
+      expect.stringContaining("8 byte limit"),
+    );
+    await expect(fs.readdir(path.join(tempDir, "generated"))).resolves.toEqual([]);
   });
 });

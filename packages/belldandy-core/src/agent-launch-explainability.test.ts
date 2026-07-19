@@ -3,6 +3,31 @@ import { describe, expect, it } from "vitest";
 import { buildAgentLaunchExplainability } from "./agent-launch-explainability.js";
 
 describe("agent launch explainability", () => {
+  it("preserves a commander runtime role for a custom agent id", () => {
+    const explainability = buildAgentLaunchExplainability({
+      agentId: "ops-coordinator",
+      profileId: "ops-coordinator",
+      catalog: {
+        defaultRole: "commander",
+        defaultPermissionMode: "confirm",
+        defaultAllowedToolFamilies: ["workspace-read", "goal-governance"],
+        defaultMaxToolRiskLevel: "high",
+        handoffStyle: "structured",
+        methods: [],
+        skills: [],
+        whenToUse: [],
+      },
+      launchSpec: {
+        agentId: "ops-coordinator",
+        profileId: "ops-coordinator",
+        role: "commander",
+      },
+    });
+
+    expect(explainability?.catalogDefault?.role).toBe("commander");
+    expect(explainability?.effectiveLaunch?.role).toBe("commander");
+  });
+
   it("projects catalog defaults into effective launch when no runtime launch exists", () => {
     const explainability = buildAgentLaunchExplainability({
       agentId: "coder",

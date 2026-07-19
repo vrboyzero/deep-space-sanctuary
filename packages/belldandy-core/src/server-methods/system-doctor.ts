@@ -119,6 +119,7 @@ import {
   buildSkillFreshnessSnapshot,
 } from "../skill-freshness.js";
 import { buildDelegationObservabilitySnapshot } from "../subtask-result-envelope.js";
+import { buildSubTaskRuntimeRetentionObservability } from "../subtask-runtime-retention-observability.js";
 import type { SubTaskRuntimeStore } from "../task-runtime.js";
 import { buildToolBehaviorObservability, readConfiguredPromptExperimentToolContracts } from "../tool-behavior-observability.js";
 import { buildToolContractV2Observability } from "../tool-contract-v2-observability.js";
@@ -1494,6 +1495,7 @@ export async function handleSystemDoctorMethod(
   let memoryEvaluation: MemoryEvaluationSummary | undefined;
   let skillFreshness: any;
   let delegationObservability: any;
+  let subtaskRuntimeRetention: ReturnType<typeof buildSubTaskRuntimeRetentionObservability> | undefined;
   let bridgeRecoveryDiagnostics: any;
 
   if (!summaryOnly && conversationId) {
@@ -1720,9 +1722,11 @@ export async function handleSystemDoctorMethod(
   if (!summaryOnly) {
     const assistantModeStage = await captureDoctorStage(doctorPerformanceStages, "assistant_mode_runtime", async () => {
       let resolvedDelegationObservability: typeof delegationObservability;
+      let resolvedSubtaskRuntimeRetention: typeof subtaskRuntimeRetention;
       if (ctx.subTaskRuntimeStore) {
         const subtaskItems = await ctx.subTaskRuntimeStore.listTasks(undefined, { includeArchived: true });
         resolvedDelegationObservability = buildDelegationObservabilitySnapshot(subtaskItems);
+        resolvedSubtaskRuntimeRetention = buildSubTaskRuntimeRetentionObservability(subtaskItems);
       }
       const resolvedGoalRuntimeSummary = await buildAssistantModeGoalRuntimeSummary({
         goalReader: ctx.goalManager,
@@ -1757,6 +1761,7 @@ export async function handleSystemDoctorMethod(
       });
       return {
         delegationObservability: resolvedDelegationObservability,
+        subtaskRuntimeRetention: resolvedSubtaskRuntimeRetention,
         goalRuntimeSummary: resolvedGoalRuntimeSummary,
         assistantModeRuntime: resolvedAssistantModeRuntime,
       };
@@ -1764,6 +1769,7 @@ export async function handleSystemDoctorMethod(
     {
       const assistantModeState = unwrapDoctorStageResult(assistantModeStage);
       delegationObservability = assistantModeState.delegationObservability;
+      subtaskRuntimeRetention = assistantModeState.subtaskRuntimeRetention;
       goalRuntimeSummary = assistantModeState.goalRuntimeSummary;
       assistantModeRuntime = assistantModeState.assistantModeRuntime;
     }
@@ -1804,6 +1810,14 @@ export async function handleSystemDoctorMethod(
         name: "Delegation Protocol",
         status: delegationHasProtocolGap ? "warn" : "pass",
         message: delegationObservability.summary.headline,
+      });
+    }
+    if (subtaskRuntimeRetention) {
+      checks.push({
+        id: "subtask_runtime_retention",
+        name: "SubTask Runtime Retention",
+        status: "pass",
+        message: subtaskRuntimeRetention.summary.headline,
       });
     }
   }
@@ -2066,6 +2080,7 @@ export async function handleSystemDoctorMethod(
         ...(learningReviewNudgeRuntime ? { learningReviewNudgeRuntime } : {}),
       ...(skillFreshness ? { skillFreshness } : {}),
       ...(delegationObservability ? { delegationObservability } : {}),
+      ...(subtaskRuntimeRetention ? { subtaskRuntimeRetention } : {}),
       ...(conversationDebug ? { conversationDebug } : {}),
       ...(conversationCatalog ? { conversationCatalog } : {}),
       ...(recentConversationExports ? { recentConversationExports } : {}),

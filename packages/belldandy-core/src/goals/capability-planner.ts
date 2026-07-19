@@ -20,7 +20,8 @@ export type CapabilityPlannerAgentCandidate = {
   kind?: "resident" | "worker";
   catalog?: {
     whenToUse?: string[];
-    defaultRole?: GoalCapabilityPlanSubAgent["role"];
+    // Commander 是 manager profile，不会由 buildSubAgents() 作为执行 lane 角色产出。
+    defaultRole?: GoalCapabilityPlanSubAgent["role"] | "commander";
     defaultPermissionMode?: "plan" | "acceptEdits" | "confirm";
     defaultAllowedToolFamilies?: string[];
     defaultMaxToolRiskLevel?: "low" | "medium" | "high" | "critical";

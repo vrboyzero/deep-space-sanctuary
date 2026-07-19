@@ -116,12 +116,14 @@ describe("resolveWorkflowBudgetFromEnv", () => {
   it("读取环境变量覆盖默认值", () => {
     const env: Record<string, string> = {
       BELLDANDY_WORKFLOW_MAX_AGENT_CALLS: "100",
+      BELLDANDY_WORKFLOW_MAX_TOKENS: "200000",
       BELLDANDY_WORKFLOW_MAX_RETRIES: "5",
       BELLDANDY_WORKFLOW_TIMEOUT_MS: "300000",
       BELLDANDY_WORKFLOW_MAX_CONCURRENT: "12",
     };
     const budget = resolveWorkflowBudgetFromEnv((name) => env[name]);
     expect(budget.maxAgentCalls).toBe(100);
+    expect(budget.maxTokens).toBe(200000);
     expect(budget.maxRetries).toBe(5);
     expect(budget.maxWallClockMs).toBe(300000);
     expect(budget.maxConcurrent).toBe(12);

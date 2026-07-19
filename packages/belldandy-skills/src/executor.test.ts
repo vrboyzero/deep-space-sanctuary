@@ -393,6 +393,30 @@ describe("ToolExecutor", () => {
     expect(contracts[0]?.name).toBe("echo_contract");
   });
 
+  it("passes the normalized launch role to the per-agent availability policy", async () => {
+    const isToolAllowedForAgent = vi.fn((_toolName: string, _agentId?: string, role?: string) => role !== "commander");
+    const executor = new ToolExecutor({
+      tools: [echoToolWithContract],
+      workspaceRoot: "/tmp/test",
+      isToolAllowedForAgent,
+    });
+    const runtimeContext = { launchSpec: { role: "commander" as const } };
+
+    expect(executor.getDefinitions("ops-coordinator", "conv-1", runtimeContext)).toEqual([]);
+    expect(isToolAllowedForAgent).toHaveBeenCalledWith("echo_contract", "ops-coordinator", "commander");
+
+    const result = await executor.execute(
+      { id: "commander-role-blocked", name: "echo_contract", arguments: { message: "blocked" } },
+      "conv-1",
+      "ops-coordinator",
+      undefined,
+      undefined,
+      undefined,
+      runtimeContext,
+    );
+    expect(result.success).toBe(false);
+  });
+
   it("should filter tool definitions by agent whitelist", () => {
     const executor = new ToolExecutor({
       tools: [echoTool, failTool],
@@ -563,7 +587,7 @@ describe("ToolExecutor", () => {
       "conv-audit"
     );
 
-    expect(auditLogs).toHaveLength(1);
+    await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
     expect(auditLogs[0].toolName).toBe("echo");
     expect(auditLogs[0].conversationId).toBe("conv-audit");
     expect(auditLogs[0].success).toBe(true);
@@ -582,6 +606,7 @@ describe("ToolExecutor", () => {
       "conv-1"
     );
 
+    await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
     expect(auditLogs[0].arguments.api_key).toBe("[REDACTED]");
     expect(auditLogs[0].arguments.message).toBe("hi");
   });
@@ -623,9 +648,80 @@ describe("ToolExecutor", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toContain("tool-output-secret");
+    await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
     expect(auditLogs).toHaveLength(1);
     expect(JSON.stringify(auditLogs[0])).not.toContain("nested-secret");
     expect(JSON.stringify(auditLogs[0])).not.toContain("tool-output-secret");
+  });
+
+  it("returns a Tool result before the audit sink executes", async () => {
+    let resultReturned = false;
+    let auditRanBeforeResult = false;
+    const auditLogger = vi.fn(() => {
+      auditRanBeforeResult = !resultReturned;
+    });
+    const executor = new ToolExecutor({
+      tools: [echoTool],
+      workspaceRoot: "/tmp/test",
+      auditLogger,
+    });
+
+    const result = await executor.execute(
+      { id: "req-async-audit", name: "echo", arguments: { message: "test" } },
+      "conv-audit",
+    );
+    resultReturned = true;
+
+    expect(result.success).toBe(true);
+    await vi.waitFor(() => expect(auditLogger).toHaveBeenCalledTimes(1));
+    expect(auditRanBeforeResult).toBe(false);
+    expect(executor.getAuditRuntimeSnapshot()).toMatchObject({
+      queuedCount: 0,
+      dispatchedCount: 1,
+      failedCount: 0,
+    });
+  });
+
+  it("keeps the audit queue bounded without changing Tool results", async () => {
+    let releaseFirstAudit: (() => void) | undefined;
+    let markFirstAuditStarted: (() => void) | undefined;
+    const firstAuditStarted = new Promise<void>((resolve) => {
+      markFirstAuditStarted = resolve;
+    });
+    let auditCallCount = 0;
+    const executor = new ToolExecutor({
+      tools: [echoTool],
+      workspaceRoot: "/tmp/test",
+      maxAuditQueueSize: 1,
+      auditLogger: async () => {
+        auditCallCount += 1;
+        if (auditCallCount !== 1) return;
+        markFirstAuditStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirstAudit = resolve;
+        });
+      },
+    });
+
+    await executor.execute({ id: "req-audit-1", name: "echo", arguments: { message: "one" } }, "conv-audit");
+    await firstAuditStarted;
+    const second = await executor.execute({ id: "req-audit-2", name: "echo", arguments: { message: "two" } }, "conv-audit");
+    const third = await executor.execute({ id: "req-audit-3", name: "echo", arguments: { message: "three" } }, "conv-audit");
+
+    expect(second.success).toBe(true);
+    expect(third.success).toBe(true);
+    expect(executor.getAuditRuntimeSnapshot()).toMatchObject({
+      active: true,
+      queuedCount: 1,
+      maxQueueSize: 1,
+      droppedCount: 1,
+    });
+
+    releaseFirstAudit?.();
+    await vi.waitFor(() => expect(executor.getAuditRuntimeSnapshot()).toMatchObject({
+      queuedCount: 0,
+      dispatchedCount: 2,
+    }));
   });
 
   it("should execute multiple tools in parallel", async () => {
@@ -644,6 +740,89 @@ describe("ToolExecutor", () => {
     expect(results).toHaveLength(2);
     expect(results[0].output).toBe("Echo: A");
     expect(results[1].output).toBe("Echo: B");
+  });
+
+  it("should reject an oversized batch before executing any tool", async () => {
+    const execute = vi.fn(async (): Promise<ToolCallResult> => ({
+      id: "",
+      name: "counted",
+      success: true,
+      output: "unexpected",
+      durationMs: 0,
+    }));
+    const executor = new ToolExecutor({
+      tools: [{
+        definition: {
+          name: "counted",
+          description: "count executions",
+          parameters: { type: "object", properties: {} },
+        },
+        execute,
+      }],
+      workspaceRoot: "/tmp/test",
+      maxBatchToolCalls: 2,
+    });
+    const requests: ToolCallRequest[] = Array.from({ length: 3 }, (_, index) => ({
+      id: `req-batch-${index}`,
+      name: "counted",
+      arguments: {},
+    }));
+
+    const results = await executor.executeAll(requests, "conv-batch-limit");
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(results).toHaveLength(3);
+    expect(results).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        success: false,
+        failureKind: "permission_or_policy",
+        error: expect.stringContaining("batch size 3 exceeds limit 2"),
+      }),
+    ]));
+  });
+
+  it("should bound executeAll concurrency while preserving result order", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const executor = new ToolExecutor({
+      tools: [{
+        definition: {
+          name: "limited",
+          description: "track concurrent executions",
+          parameters: {
+            type: "object",
+            properties: { index: { type: "number" } },
+            required: ["index"],
+          },
+        },
+        async execute(args): Promise<ToolCallResult> {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          active -= 1;
+          return {
+            id: "",
+            name: "limited",
+            success: true,
+            output: String(args.index),
+            durationMs: 0,
+          };
+        },
+      }],
+      workspaceRoot: "/tmp/test",
+      maxBatchToolCalls: 8,
+      maxConcurrentToolCalls: 2,
+    });
+    const requests: ToolCallRequest[] = Array.from({ length: 5 }, (_, index) => ({
+      id: `req-concurrency-${index}`,
+      name: "limited",
+      arguments: { index },
+    }));
+
+    const results = await executor.executeAll(requests, "conv-concurrency-limit");
+
+    expect(maxActive).toBe(2);
+    expect(results.map((result) => result.output)).toEqual(["0", "1", "2", "3", "4"]);
   });
 
   it("should preflight-correct simple argument types before execution", async () => {
@@ -1122,6 +1301,34 @@ describe("ToolExecutor", () => {
     expect(executor.getTokenCounter("conv-1")).toBe(counter);
   });
 
+  it("releases per-conversation token counters and loaded-tool cache idempotently", () => {
+    const executor = new ToolExecutor({
+      tools: [echoTool],
+      workspaceRoot: "/tmp/test",
+    });
+    const counter = {
+      start() {},
+      stop() {
+        return { name: "test", inputTokens: 0, outputTokens: 0, totalTokens: 0, durationMs: 0 };
+      },
+      list() {
+        return [];
+      },
+      notifyUsage() {},
+      cleanup() {
+        return [];
+      },
+    };
+    executor.setTokenCounter("conv-release", counter);
+    (executor as any).loadedDeferredToolNames.set("conv-release", new Set(["fixture"]));
+
+    executor.releaseConversation("conv-release");
+    executor.releaseConversation("conv-release");
+
+    expect(executor.getTokenCounter("conv-release")).toBeUndefined();
+    expect((executor as any).loadedDeferredToolNames.has("conv-release")).toBe(false);
+  });
+
   it("should preserve multiline string arguments and trim enum values only", async () => {
     let seenArgs: { content?: string; mode?: string } = {};
     const multilineTool: Tool = {
@@ -1224,6 +1431,42 @@ describe("ToolExecutor", () => {
     await executor.loadDeferredTools("conv-1", ["write_notes"]);
 
     expect(executor.getDefinitions("default", "conv-1").map((item) => item.function.name)).toEqual(["echo", "write_notes"]);
+  });
+
+  it("does not retain empty loaded deferred selections in memory", async () => {
+    const deferredTool: Tool = {
+      definition: {
+        name: "deferred_cleanup",
+        description: "Deferred cleanup fixture",
+        loadingMode: "deferred",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return { id: "", name: "deferred_cleanup", success: true, output: "ok", durationMs: 0 };
+      },
+    };
+    const persistedSelections: string[][] = [];
+    const executor = new ToolExecutor({
+      tools: [echoTool, deferredTool],
+      workspaceRoot: "/tmp/test",
+      conversationStore: {
+        getHistory: () => [],
+        getLoadedToolNames: () => [],
+        setLoadedToolNames: (_conversationId, toolNames) => {
+          persistedSelections.push([...toolNames]);
+        },
+      } as any,
+    });
+
+    expect(executor.getLoadedDeferredToolList("conv-empty-selection")).toEqual([]);
+    expect((executor as any).loadedDeferredToolNames.has("conv-empty-selection")).toBe(false);
+
+    await executor.loadDeferredTools("conv-empty-selection", ["deferred_cleanup"]);
+    expect((executor as any).loadedDeferredToolNames.has("conv-empty-selection")).toBe(true);
+
+    await executor.clearLoadedDeferredTools("conv-empty-selection");
+    expect((executor as any).loadedDeferredToolNames.has("conv-empty-selection")).toBe(false);
+    expect(persistedSelections.at(-1)).toEqual([]);
   });
 
   it("tool_search should search deferred tools and load selected schemas into the conversation", async () => {

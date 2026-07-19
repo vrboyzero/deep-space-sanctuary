@@ -5,7 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDetailRenderFeature } from "./memory-detail-render.js";
 import { createMemoryViewerFeature } from "./memory-viewer.js";
 
-function createHarness() {
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function createHarness({
+  detailSendReq = vi.fn(),
+  detailShowNotice = vi.fn(),
+  detailLoadTaskUsageOverview = vi.fn(async () => {}),
+  detailLoadTaskDetail = vi.fn(async () => {}),
+} = {}) {
   document.body.innerHTML = `
     <div id="memoryViewerDetail"></div>
     <div id="memoryViewerStats"></div>
@@ -31,6 +44,10 @@ function createHarness() {
 
   const loadCandidateDetail = vi.fn(async () => {});
   const openExperienceCandidate = vi.fn(async () => {});
+  const openTaskFromAudit = vi.fn(async () => {});
+  const openSourcePath = vi.fn(async () => {});
+  const loadGoals = vi.fn(async () => {});
+  const switchMode = vi.fn();
   const runtime = {
     generateExperienceCandidate: vi.fn(async () => {}),
     reviewExperienceCandidate: vi.fn(async () => {}),
@@ -118,7 +135,7 @@ function createHarness() {
   const detailRenderFeature = createMemoryDetailRenderFeature({
     refs,
     isConnected: () => true,
-    sendReq: vi.fn(),
+    sendReq: detailSendReq,
     makeId: () => "req-1",
     getMemoryViewerState: () => state,
     getMemoryViewerFeature: () => viewerFeature,
@@ -127,23 +144,37 @@ function createHarness() {
     getCurrentAgentSelection: () => "default",
     renderMemoryViewerDetailEmpty: vi.fn(),
     renderMemoryViewerStats: vi.fn(),
-    loadTaskUsageOverview: vi.fn(async () => {}),
-    loadTaskDetail: vi.fn(async () => {}),
+    loadTaskUsageOverview: detailLoadTaskUsageOverview,
+    loadTaskDetail: detailLoadTaskDetail,
     loadCandidateDetail,
     openExperienceCandidate,
-    openTaskFromAudit: vi.fn(async () => {}),
+    openTaskFromAudit,
     openMemoryFromAudit: vi.fn(async () => {}),
-    openSourcePath: vi.fn(async () => {}),
-    loadGoals: vi.fn(async () => {}),
-    switchMode: vi.fn(),
+    openSourcePath,
+    loadGoals,
+    switchMode,
     openGoalTaskViewer: vi.fn(async () => {}),
-    showNotice: vi.fn(),
+    showNotice: detailShowNotice,
     escapeHtml: (value) => String(value ?? ""),
     formatDateTime: (value) => String(value ?? ""),
     t: (_key, _params, fallback) => fallback ?? "",
   });
 
-  return { refs, state, runtime, detailRenderFeature, loadCandidateDetail, openExperienceCandidate };
+  return {
+    refs,
+    state,
+    runtime,
+    detailRenderFeature,
+    detailLoadTaskDetail,
+    detailLoadTaskUsageOverview,
+    detailShowNotice,
+    loadGoals,
+    loadCandidateDetail,
+    openSourcePath,
+    openTaskFromAudit,
+    openExperienceCandidate,
+    switchMode,
+  };
 }
 
 describe("memory detail render actions", () => {
@@ -330,5 +361,190 @@ describe("memory detail render actions", () => {
 
     expect(openExperienceCandidate).toHaveBeenCalledWith("exp-method-1");
     expect(openExperienceCandidate).toHaveBeenCalledWith("exp-skill-pending");
+  });
+
+  it("routes source explanation reads through the disposable detail owner", async () => {
+    const request = createDeferred();
+    const detailSendReq = vi.fn(() => request.promise);
+    const { refs, state, detailRenderFeature } = createHarness({ detailSendReq });
+    state.selectedTask = {
+      id: "task-1",
+      conversationId: "conversation-1",
+      status: "success",
+      source: "chat",
+      title: "Task one",
+      usedMethods: [],
+      usedSkills: [],
+      activities: [],
+      toolCalls: [],
+      memoryLinks: [],
+      artifactPaths: [],
+      sourceExplanation: null,
+      sourceExplanationError: "",
+      sourceExplanationLoading: false,
+    };
+
+    detailRenderFeature.renderTaskDetail(state.selectedTask);
+    refs.memoryViewerDetailEl.querySelector("[data-load-task-source-explanation]")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    expect(detailSendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "memory.explain_sources",
+    }));
+    expect(detailRenderFeature.getRuntimeSnapshot().pendingSourceExplanationReadCount).toBe(1);
+
+    detailRenderFeature.dispose();
+    expect(state.selectedTask.sourceExplanationLoading).toBe(false);
+    request.resolve({
+      ok: true,
+      payload: { explanation: { taskId: "task-1", summary: "late explanation" } },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(state.selectedTask.sourceExplanation).toBeNull();
+    expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingSourceExplanationReadCount: 0,
+    });
+  });
+
+  it("routes usage revoke through the disposable detail action owner", async () => {
+    const request = createDeferred();
+    const detailSendReq = vi.fn(() => request.promise);
+    const {
+      state,
+      detailRenderFeature,
+      detailLoadTaskDetail,
+      detailLoadTaskUsageOverview,
+      detailShowNotice,
+    } = createHarness({ detailSendReq });
+    state.selectedTask = { id: "task-1" };
+
+    const revoke = detailRenderFeature.revokeTaskUsage("usage-1", "task-1", "skill-demo");
+    expect(state.pendingUsageRevokeId).toBe("usage-1");
+    expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+      pendingSourceExplanationReadCount: 0,
+      pendingUsageRevokeActionCount: 1,
+    });
+
+    detailRenderFeature.dispose();
+    expect(state.pendingUsageRevokeId).toBeNull();
+    request.resolve({ ok: true, payload: { revoked: true } });
+    await revoke;
+
+    expect(detailShowNotice).not.toHaveBeenCalled();
+    expect(detailLoadTaskUsageOverview).not.toHaveBeenCalled();
+    expect(detailLoadTaskDetail).not.toHaveBeenCalled();
+    expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingSourceExplanationReadCount: 0,
+      pendingUsageRevokeActionCount: 0,
+    });
+  });
+
+  it("owns stats audit jump listeners through the detail lifecycle", () => {
+    const { refs, detailRenderFeature, openTaskFromAudit } = createHarness();
+    refs.memoryViewerStatsEl.innerHTML = `
+      <button data-open-task-id="task-1">Task</button>
+      <button data-open-source="C:/workspace/source.md">Source</button>
+      <button data-open-candidate-id="candidate-1">Candidate</button>
+      <button data-open-goal-id="goal-1">Goal</button>
+    `;
+    const taskButton = refs.memoryViewerStatsEl.querySelector("[data-open-task-id]");
+
+    detailRenderFeature.bindStatsAuditJumpLinks();
+    expect(detailRenderFeature.getRuntimeSnapshot().retainedStatsAuditListenerCount).toBe(4);
+
+    detailRenderFeature.dispose();
+    taskButton.click();
+
+    expect(openTaskFromAudit).not.toHaveBeenCalled();
+    expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      retainedStatsAuditListenerCount: 0,
+    });
+  });
+
+  it("owns detail path listeners through the detail lifecycle", () => {
+    const { refs, detailRenderFeature, openSourcePath } = createHarness();
+    refs.memoryViewerDetailEl.innerHTML = `
+      <button data-open-source="C:/workspace/source.md" data-open-line="42">Source</button>
+    `;
+    const pathButton = refs.memoryViewerDetailEl.querySelector("[data-open-source]");
+
+    detailRenderFeature.bindMemoryPathLinks();
+    expect(detailRenderFeature.getRuntimeSnapshot().retainedMemoryPathListenerCount).toBe(1);
+
+    detailRenderFeature.dispose();
+    pathButton.click();
+
+    expect(openSourcePath).not.toHaveBeenCalled();
+    expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      retainedMemoryPathListenerCount: 0,
+    });
+  });
+
+  it("owns task audit listeners through the detail lifecycle", () => {
+    const { refs, detailRenderFeature, openTaskFromAudit } = createHarness();
+    refs.memoryViewerDetailEl.innerHTML = `
+      <button data-open-task-id="task-1">Task</button>
+      <button data-open-candidate-id="candidate-1">Candidate</button>
+    `;
+    const taskButton = refs.memoryViewerDetailEl.querySelector("[data-open-task-id]");
+
+    detailRenderFeature.bindTaskAuditJumpLinks();
+    expect(detailRenderFeature.getRuntimeSnapshot().retainedTaskAuditListenerCount).toBe(2);
+
+    detailRenderFeature.dispose();
+    taskButton.click();
+
+    expect(openTaskFromAudit).not.toHaveBeenCalled();
+    expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      retainedTaskAuditListenerCount: 0,
+    });
+  });
+
+  it("owns rendered usage revoke button listeners without retaining the task body", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      const { refs, state, detailRenderFeature } = createHarness();
+      state.selectedTask = {
+        id: "task-1",
+        conversationId: "conversation-1",
+        status: "success",
+        source: "chat",
+        title: "Task one",
+        usedMethods: [{
+          usageId: "usage-1",
+          taskId: "task-1",
+          assetKey: "method-demo",
+          usedVia: "tool",
+          usageCount: 1,
+        }],
+        usedSkills: [],
+        activities: [],
+        toolCalls: [],
+        memoryLinks: [],
+        artifactPaths: [],
+      };
+
+      detailRenderFeature.renderTaskDetail(state.selectedTask);
+      const revokeButton = refs.memoryViewerDetailEl.querySelector("[data-revoke-usage-id]");
+      expect(detailRenderFeature.getRuntimeSnapshot().retainedUsageRevokeButtonListenerCount).toBe(1);
+
+      detailRenderFeature.dispose();
+      revokeButton.click();
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(detailRenderFeature.getRuntimeSnapshot()).toMatchObject({
+        disposed: true,
+        retainedUsageRevokeButtonListenerCount: 0,
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 });

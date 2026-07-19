@@ -4,7 +4,33 @@ import fs from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
-import { createFileCurrentConversationBindingStore } from "./current-conversation-binding-store.js";
+import {
+  createFileCurrentConversationBindingStore,
+  type CurrentConversationBindingRecord,
+} from "./current-conversation-binding-store.js";
+
+function createRecord(input: {
+  sessionKey: string;
+  chatId: string;
+  accountId?: string;
+  updatedAt: number;
+}): CurrentConversationBindingRecord {
+  return {
+    channel: "community",
+    sessionKey: input.sessionKey,
+    sessionScope: "per-account-channel-peer",
+    legacyConversationId: `community:${input.chatId}`,
+    chatKind: "room",
+    chatId: input.chatId,
+    ...(input.accountId ? { accountId: input.accountId } : {}),
+    peerId: `peer-${input.chatId}`,
+    updatedAt: input.updatedAt,
+    target: {
+      roomId: input.chatId,
+      ...(input.accountId ? { accountId: input.accountId } : {}),
+    },
+  };
+}
 
 describe("current conversation binding store", () => {
   it("persists latest binding and resolves by channel/account scope", async () => {
@@ -58,6 +84,216 @@ describe("current conversation binding store", () => {
       await expect(reloaded.getLatestByChannel({ channel: "community", accountId: "alpha" })).resolves.toMatchObject({
         chatId: "room-1",
       });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("serializes concurrent upserts from one persisted snapshot", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-concurrent-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    const seed = createFileCurrentConversationBindingStore(filePath);
+    const store = createFileCurrentConversationBindingStore(filePath);
+    const now = Date.now();
+
+    try {
+      await seed.upsert(createRecord({ sessionKey: "community:seed", chatId: "seed", updatedAt: now }));
+      await Promise.all([
+        store.upsert(createRecord({ sessionKey: "community:first", chatId: "first", updatedAt: now + 1 })),
+        store.upsert(createRecord({ sessionKey: "community:second", chatId: "second", updatedAt: now + 2 })),
+      ]);
+
+      const reloaded = createFileCurrentConversationBindingStore(filePath);
+      await expect(reloaded.get("community:first")).resolves.toMatchObject({ chatId: "first" });
+      await expect(reloaded.get("community:second")).resolves.toMatchObject({ chatId: "second" });
+      await expect(reloaded.getLatestByChannel({ channel: "community" })).resolves.toMatchObject({ chatId: "second" });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("coalesces same-turn upserts into one atomic snapshot publish", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-coalesced-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let writeCount = 0;
+    const store = createFileCurrentConversationBindingStore(filePath, {
+      fileSystem: {
+        readFile: fs.readFile.bind(fs),
+        mkdir: fs.mkdir.bind(fs),
+        writeFile: async (...args) => {
+          writeCount += 1;
+          await fs.writeFile(...args);
+        },
+        rename: fs.rename.bind(fs),
+        rm: fs.rm.bind(fs),
+      },
+    });
+    const now = Date.now();
+
+    try {
+      await Promise.all([
+        store.upsert(createRecord({ sessionKey: "community:first", chatId: "first", updatedAt: now })),
+        store.upsert(createRecord({ sessionKey: "community:second", chatId: "second", updatedAt: now + 1 })),
+        store.upsert(createRecord({ sessionKey: "community:third", chatId: "third", updatedAt: now + 2 })),
+      ]);
+
+      expect(writeCount).toBe(1);
+      const reloaded = createFileCurrentConversationBindingStore(filePath);
+      await expect(reloaded.get("community:first")).resolves.toMatchObject({ chatId: "first" });
+      await expect(reloaded.get("community:second")).resolves.toMatchObject({ chatId: "second" });
+      await expect(reloaded.get("community:third")).resolves.toMatchObject({ chatId: "third" });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("rejects every coalesced caller and keeps the prior snapshot when publish fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-coalesced-failure-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let failNextWrite = false;
+    const store = createFileCurrentConversationBindingStore(filePath, {
+      fileSystem: {
+        readFile: fs.readFile.bind(fs),
+        mkdir: fs.mkdir.bind(fs),
+        writeFile: async (...args) => {
+          if (failNextWrite) {
+            failNextWrite = false;
+            throw new Error("simulated batch write failure");
+          }
+          await fs.writeFile(...args);
+        },
+        rename: fs.rename.bind(fs),
+        rm: fs.rm.bind(fs),
+      },
+    });
+    const now = Date.now();
+
+    try {
+      await store.upsert(createRecord({ sessionKey: "community:published", chatId: "published", updatedAt: now }));
+      failNextWrite = true;
+      const outcomes = await Promise.allSettled([
+        store.upsert(createRecord({ sessionKey: "community:first", chatId: "first", updatedAt: now + 1 })),
+        store.upsert(createRecord({ sessionKey: "community:second", chatId: "second", updatedAt: now + 2 })),
+      ]);
+      expect(outcomes).toEqual([
+        expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ message: "simulated batch write failure" }) }),
+        expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ message: "simulated batch write failure" }) }),
+      ]);
+
+      const reloaded = createFileCurrentConversationBindingStore(filePath);
+      await expect(reloaded.get("community:published")).resolves.toMatchObject({ chatId: "published" });
+      await expect(reloaded.get("community:first")).resolves.toBeUndefined();
+      await expect(reloaded.get("community:second")).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("keeps the published snapshot when atomic rename fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-rename-failure-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    const persisted = createFileCurrentConversationBindingStore(filePath);
+    const failingStore = createFileCurrentConversationBindingStore(filePath, {
+      fileSystem: {
+        readFile: fs.readFile.bind(fs),
+        mkdir: fs.mkdir.bind(fs),
+        writeFile: fs.writeFile.bind(fs),
+        rename: async () => {
+          throw new Error("simulated rename failure");
+        },
+        rm: fs.rm.bind(fs),
+      },
+    });
+
+    try {
+      await persisted.upsert(createRecord({ sessionKey: "community:published", chatId: "published", updatedAt: 1 }));
+      await expect(failingStore.upsert(
+        createRecord({ sessionKey: "community:unpublished", chatId: "unpublished", updatedAt: 2 }),
+      )).rejects.toThrow("simulated rename failure");
+
+      const reloaded = createFileCurrentConversationBindingStore(filePath);
+      await expect(reloaded.get("community:published")).resolves.toMatchObject({ chatId: "published" });
+      await expect(reloaded.get("community:unpublished")).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("does not share empty nested snapshots between store files", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-isolation-"));
+    const firstPath = path.join(stateDir, "first.json");
+    const secondPath = path.join(stateDir, "second.json");
+    const first = createFileCurrentConversationBindingStore(firstPath);
+    const second = createFileCurrentConversationBindingStore(secondPath);
+
+    try {
+      await first.upsert(createRecord({ sessionKey: "community:first", chatId: "first", updatedAt: 1 }));
+      await second.upsert(createRecord({ sessionKey: "community:second", chatId: "second", updatedAt: 2 }));
+
+      await expect(first.get("community:second")).resolves.toBeUndefined();
+      await expect(second.get("community:first")).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("prunes expired non-latest bindings but retains latest channel and account bindings", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-retention-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let now = 1_000;
+    const options = {
+      maxEntries: 10,
+      retentionMs: 100,
+      now: () => now,
+    };
+    const store = createFileCurrentConversationBindingStore(filePath, options);
+
+    try {
+      await store.upsert(createRecord({ sessionKey: "community:old-alpha", chatId: "old-alpha", accountId: "alpha", updatedAt: now }));
+      now = 1_001;
+      await store.upsert(createRecord({ sessionKey: "community:latest-alpha", chatId: "latest-alpha", accountId: "alpha", updatedAt: now }));
+      now = 1_200;
+      await store.upsert(createRecord({ sessionKey: "community:latest-beta", chatId: "latest-beta", accountId: "beta", updatedAt: now }));
+
+      const reloaded = createFileCurrentConversationBindingStore(filePath, options);
+      await expect(reloaded.get("community:old-alpha")).resolves.toBeUndefined();
+      await expect(reloaded.get("community:latest-alpha")).resolves.toMatchObject({ chatId: "latest-alpha" });
+      await expect(reloaded.getLatestByChannel({ channel: "community", accountId: "alpha" })).resolves.toMatchObject({
+        chatId: "latest-alpha",
+      });
+      await expect(reloaded.getLatestByChannel({ channel: "community", accountId: "beta" })).resolves.toMatchObject({
+        chatId: "latest-beta",
+      });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("evicts oldest non-latest bindings before latest scope bindings when capacity is exceeded", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-capacity-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let now = 1_000;
+    const options = {
+      maxEntries: 2,
+      retentionMs: 60_000,
+      now: () => now,
+    };
+    const store = createFileCurrentConversationBindingStore(filePath, options);
+
+    try {
+      await store.upsert(createRecord({ sessionKey: "community:old-alpha", chatId: "old-alpha", accountId: "alpha", updatedAt: now }));
+      now += 1;
+      await store.upsert(createRecord({ sessionKey: "community:latest-alpha", chatId: "latest-alpha", accountId: "alpha", updatedAt: now }));
+      now += 1;
+      await store.upsert(createRecord({ sessionKey: "community:latest-beta", chatId: "latest-beta", accountId: "beta", updatedAt: now }));
+      now += 1;
+      await store.upsert(createRecord({ sessionKey: "community:latest-gamma", chatId: "latest-gamma", accountId: "gamma", updatedAt: now }));
+
+      const reloaded = createFileCurrentConversationBindingStore(filePath, options);
+      await expect(reloaded.get("community:old-alpha")).resolves.toBeUndefined();
+      await expect(reloaded.get("community:latest-alpha")).resolves.toMatchObject({ chatId: "latest-alpha" });
+      await expect(reloaded.get("community:latest-beta")).resolves.toMatchObject({ chatId: "latest-beta" });
+      await expect(reloaded.get("community:latest-gamma")).resolves.toMatchObject({ chatId: "latest-gamma" });
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }

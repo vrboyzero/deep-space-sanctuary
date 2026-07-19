@@ -12,6 +12,7 @@ export function createGoalsStateRuntimeFeature({
   loadGoalCanvasData,
 }) {
   const { goalsSection } = refs;
+  let disposed = false;
 
   function getGoalById(goalId) {
     const goalsState = getGoalsState?.();
@@ -90,7 +91,7 @@ export function createGoalsStateRuntimeFeature({
   }
 
   function flushGoalUpdate(goalId) {
-    if (!goalId) return;
+    if (disposed || !goalId) return;
     const goalsState = getGoalsState?.();
     if (!goalsState) return;
     if (goalsState.liveUpdateTimers?.[goalId]) {
@@ -118,11 +119,18 @@ export function createGoalsStateRuntimeFeature({
   }
 
   function queueGoalUpdateEvent(payload) {
+    if (disposed) return;
     const goal = payload && payload.goal && typeof payload.goal === "object" ? payload.goal : null;
     const goalId = typeof goal?.id === "string" ? goal.id : "";
     if (!goalId) return;
     const goalsState = getGoalsState?.();
     if (!goalsState) return;
+    if (!goalsState.liveUpdatePending || typeof goalsState.liveUpdatePending !== "object") {
+      goalsState.liveUpdatePending = {};
+    }
+    if (!goalsState.liveUpdateTimers || typeof goalsState.liveUpdateTimers !== "object") {
+      goalsState.liveUpdateTimers = {};
+    }
     const areas = Array.isArray(payload?.areas)
       ? payload.areas.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
@@ -143,10 +151,38 @@ export function createGoalsStateRuntimeFeature({
     }, goalsState.liveUpdateDelayMs || 120);
   }
 
+  function clearLiveUpdates() {
+    const goalsState = getGoalsState?.();
+    if (!goalsState) return;
+    for (const timer of Object.values(goalsState.liveUpdateTimers || {})) {
+      clearTimeout(timer);
+    }
+    // pending goal payload 可能包含完整 objective，只在其 owner 内随 timer 一起释放。
+    goalsState.liveUpdateTimers = {};
+    goalsState.liveUpdatePending = {};
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    clearLiveUpdates();
+  }
+
+  function getRuntimeSnapshot() {
+    const goalsState = getGoalsState?.();
+    return {
+      pendingUpdateCount: Object.keys(goalsState?.liveUpdatePending || {}).length,
+      activeTimerCount: Object.keys(goalsState?.liveUpdateTimers || {}).length,
+      disposed,
+    };
+  }
+
   return {
+    dispose,
     getGoalById,
     sortGoals,
     getGoalDisplayName,
+    getRuntimeSnapshot,
     queueGoalUpdateEvent,
   };
 }

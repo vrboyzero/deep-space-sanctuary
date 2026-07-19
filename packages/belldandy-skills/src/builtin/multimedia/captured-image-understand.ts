@@ -7,6 +7,7 @@ import { guessImageMimeFromFilePath } from "./understand-shared.js";
 import {
   createMediaFingerprintFromFile,
   readCachedImageUnderstanding,
+  runMediaUnderstandingCacheSingleFlight,
   writeCachedImageUnderstanding,
 } from "./understanding-cache.js";
 
@@ -89,21 +90,33 @@ export async function understandCapturedImageArtifact(input: {
       }
     }
 
-    const result = await understandImageFile({
+    const understand = async () => understandImageFile({
       filePath: input.filePath,
       mimeType,
       abortSignal: input.abortSignal,
       focusMode: "overview",
       includeKeyRegions: true,
     });
-    if (stateDir && fingerprint) {
-      await writeCachedImageUnderstanding({
+    const result = stateDir && fingerprint
+      ? (await runMediaUnderstandingCacheSingleFlight({
         stateDir,
+        kind: "image-understanding",
         fingerprint,
-        mime: mimeType,
-        result,
-      });
-    }
+        waitSignal: input.abortSignal,
+        operation: async () => {
+          const cachedAfterJoin = await readCachedImageUnderstanding({ stateDir, fingerprint });
+          if (cachedAfterJoin?.result) return cachedAfterJoin.result;
+          const generated = await understand();
+          await writeCachedImageUnderstanding({
+            stateDir,
+            fingerprint,
+            mime: mimeType,
+            result: generated,
+          });
+          return generated;
+        },
+      })).value
+      : await understand();
     return {
       status: "completed",
       preview: buildCapturedImageUnderstandingPreview(result),

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ToolContext } from "../../types.js";
 import { PtyManager } from "../system/pty.js";
-import { BridgeSessionStore } from "./sessions.js";
+import { BridgeSessionStore, shutdownBridgeSessions } from "./sessions.js";
 import { BRIDGE_ARTIFACTS_DIR } from "./types.js";
 import {
   bridgeSessionCloseTool,
@@ -96,11 +96,7 @@ describe("agent bridge P1 session tools", () => {
   });
 
   afterEach(async () => {
-    const manager = PtyManager.getInstance();
-    for (const session of manager.list()) {
-      manager.kill(session.id);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await shutdownBridgeSessions();
     BridgeSessionStore.getInstance().clear();
     await removeDirectoryWithRetries(tempDir);
   });
@@ -319,6 +315,109 @@ describe("agent bridge P1 session tools", () => {
     expect(statusPayload.status).toBe("closed");
     expect(statusPayload.closeReason).toBe("idle-timeout");
     expect(statusPayload.artifactPath).toBeTruthy();
+  }, WINDOWS_PTY_FLOW_TEST_TIMEOUT_MS);
+
+  it("moves a naturally exited PTY into a terminal bridge record", async () => {
+    const exitConfig = {
+      version: "1.0.0",
+      targets: [
+        {
+          id: "node-exit",
+          category: "agent-cli",
+          transport: "pty",
+          enabled: true,
+          entry: { binary: process.execPath },
+          cwdPolicy: "workspace-only",
+          sessionMode: "persistent",
+          actions: {
+            interactive: {
+              template: ["-e", "process.stdout.write('natural-exit-ok')"],
+            },
+          },
+        },
+      ],
+    };
+    await fs.writeFile(path.join(tempDir, "agent-bridge.json"), JSON.stringify(exitConfig, null, 2), "utf-8");
+
+    const startResult = await bridgeSessionStartTool.execute({
+      targetId: "node-exit",
+      action: "interactive",
+    }, baseContext);
+    expect(startResult.success).toBe(true);
+    const started = JSON.parse(startResult.output) as { sessionId: string };
+
+    await vi.waitFor(() => {
+      expect(BridgeSessionStore.getInstance().get(started.sessionId)?.status).toBe("closed");
+    }, { timeout: IS_WINDOWS ? 6_000 : 2_000 });
+    const closed = BridgeSessionStore.getInstance().get(started.sessionId);
+
+    expect(PtyManager.getInstance().list()).toEqual([]);
+    expect(closed).toMatchObject({
+      status: "closed",
+      closeReason: "runtime-lost",
+    });
+    expect(closed?.artifactPath).toBeTruthy();
+    expect(BridgeSessionStore.getInstance().getTranscript(started.sessionId).some(
+      (event) => event.direction === "output" && event.content.includes("natural-exit-ok"),
+    )).toBe(true);
+  }, WINDOWS_PTY_FLOW_TEST_TIMEOUT_MS);
+
+  it("publishes a closed bridge record only after terminal artifacts are durable", async () => {
+    const store = BridgeSessionStore.getInstance();
+    const record = store.create({
+      runtimeSessionId: "runtime-atomic-close",
+      targetId: "node-exit",
+      action: "interactive",
+      transport: "pty",
+      workspaceRoot: tempDir,
+      cwd: tempDir,
+      commandPreview: "node -e exit",
+      cols: 80,
+      rows: 24,
+    });
+
+    const closing = store.close(record.id, "runtime-lost");
+
+    // terminal 状态对观察者可见时，artifact 引用也必须已经完成提交。
+    expect(store.get(record.id)).toMatchObject({ status: "active" });
+
+    const closed = await closing;
+    expect(closed).toMatchObject({
+      status: "closed",
+      closeReason: "runtime-lost",
+      artifactPath: expect.any(String),
+      transcriptPath: expect.any(String),
+    });
+    await expect(fs.stat(String(closed.artifactPath))).resolves.toBeTruthy();
+    await expect(fs.stat(String(closed.transcriptPath))).resolves.toBeTruthy();
+  });
+
+  it("shuts down every active PTY and persists closed bridge records", async () => {
+    const firstResult = await bridgeSessionStartTool.execute({
+      targetId: "node-repl",
+      action: "interactive",
+    }, baseContext);
+    const secondResult = await bridgeSessionStartTool.execute({
+      targetId: "node-repl",
+      action: "interactive",
+    }, baseContext);
+    expect(firstResult.success).toBe(true);
+    expect(secondResult.success).toBe(true);
+    const first = JSON.parse(firstResult.output) as { sessionId: string };
+    const second = JSON.parse(secondResult.output) as { sessionId: string };
+
+    const result = await shutdownBridgeSessions();
+
+    expect(result).toEqual({ runtimeSessionsClosed: 2, bridgeSessionsClosed: 2 });
+    expect(PtyManager.getInstance().list()).toEqual([]);
+    expect(BridgeSessionStore.getInstance().get(first.sessionId)).toMatchObject({
+      status: "closed",
+      closeReason: "manual",
+    });
+    expect(BridgeSessionStore.getInstance().get(second.sessionId)).toMatchObject({
+      status: "closed",
+      closeReason: "manual",
+    });
   }, WINDOWS_PTY_FLOW_TEST_TIMEOUT_MS);
 
   it("runs startupSequence after bridge session start", async () => {

@@ -44,6 +44,7 @@ type ExternalOutboundSenderRegistryLike = {
     channel: ExternalOutboundChannel;
     content: string;
     resolvedSessionKey: string;
+    idempotencyKey?: string;
   }): Promise<ExternalOutboundSendResult>;
 };
 
@@ -257,6 +258,10 @@ export function createSendChannelMessageTool(deps: SendChannelMessageDeps): Tool
         };
       }
 
+      // The confirmation and direct-send paths share one delivery identity so a replay cannot
+      // accidentally create a second platform message while the process is still alive.
+      const requestId = crypto.randomUUID().slice(0, 8).toUpperCase();
+
       if (deps.getRequireConfirmation()) {
         if (!context.broadcast) {
           return {
@@ -268,7 +273,6 @@ export function createSendChannelMessageTool(deps: SendChannelMessageDeps): Tool
             durationMs: Date.now() - startedAt,
           };
         }
-        const requestId = crypto.randomUUID().slice(0, 8).toUpperCase();
         const pending = deps.confirmationStore.create({
           requestId,
           conversationId: context.conversationId,
@@ -315,6 +319,7 @@ export function createSendChannelMessageTool(deps: SendChannelMessageDeps): Tool
         channel,
         content,
         resolvedSessionKey: resolved.resolvedSessionKey,
+        idempotencyKey: requestId,
       });
       await deps.auditStore.append({
         timestamp: Date.now(),

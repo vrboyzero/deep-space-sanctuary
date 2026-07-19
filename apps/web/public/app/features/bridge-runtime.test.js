@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createBridgeRuntimeFeature } from "./bridge-runtime.js";
 
@@ -72,7 +72,84 @@ function createHarness(sendReqImpl = vi.fn()) {
   };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("bridge runtime feature", () => {
+  it("owns polling across activate, deactivate, and dispose", async () => {
+    vi.useFakeTimers();
+    const sendReq = vi.fn(async (req) => {
+      if (req.method === "bridge.session.list") {
+        return {
+          ok: true,
+          payload: { items: [], totalCount: 0, activeCount: 0, closedCount: 0 },
+        };
+      }
+      throw new Error(`unexpected request ${req.method}`);
+    });
+    const { refs, state, feature } = createHarness(sendReq);
+
+    feature.setViewActive(true);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      viewActive: true,
+      polling: true,
+      disposed: false,
+    });
+    expect(sendReq).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(sendReq).toHaveBeenCalledTimes(2);
+
+    feature.setViewActive(false);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      viewActive: false,
+      polling: false,
+    });
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(sendReq).toHaveBeenCalledTimes(2);
+
+    feature.setViewActive(true);
+    expect(sendReq).toHaveBeenCalledTimes(3);
+    feature.dispose();
+    expect(state.viewActive).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      viewActive: false,
+      polling: false,
+      disposed: true,
+    });
+
+    refs.bridgeRefreshBtn.click();
+    feature.setViewActive(true);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(sendReq).toHaveBeenCalledTimes(3);
+  });
+
+  it("ignores a late list response after dispose", async () => {
+    let resolveList;
+    const sendReq = vi.fn(() => new Promise((resolve) => {
+      resolveList = resolve;
+    }));
+    const { state, feature } = createHarness(sendReq);
+
+    feature.setViewActive(true);
+    feature.dispose();
+    resolveList({
+      ok: true,
+      payload: {
+        items: [{ sessionId: "late-session", status: "active" }],
+        totalCount: 1,
+        activeCount: 1,
+        closedCount: 0,
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(state.items).toEqual([]);
+    expect(state.loading).toBe(false);
+  });
+
   it("loads bridge sessions, switches details, and exposes task/source actions", async () => {
     const session1 = {
       sessionId: "session-1",

@@ -8,6 +8,18 @@ function createNoopVoiceInputController() {
       return false;
     },
     updateTitle() {},
+    dispose() {},
+    getRuntimeSnapshot() {
+      return {
+        voiceButtonListenerCount: 0,
+        activeTimerCount: 0,
+        pendingMediaRequestCount: 0,
+        activeStreamCount: 0,
+        activeRecorderCount: 0,
+        activeRecognitionCount: 0,
+        pendingFileReaderCount: 0,
+      };
+    },
   };
 }
 
@@ -35,12 +47,15 @@ export function createVoiceFeature({
   t = (_key, _params, fallback) => fallback ?? "",
   getSpeechRecognitionLocale = () => "zh-CN",
 }) {
+  let disposed = false;
   let shortcutBinding = loadVoiceShortcutSetting();
   let shortcutCaptureActive = false;
   let shortcutInputEl = null;
   let shortcutStatusEl = null;
   let shortcutDefaultBtn = null;
   let shortcutClearBtn = null;
+  let globalKeyTarget = null;
+  const settingsListenerEntries = [];
   let voiceInputController = initVoiceInput();
 
   function getDefaultVoiceShortcut() {
@@ -196,6 +211,7 @@ export function createVoiceFeature({
   }
 
   function persistVoiceShortcutSetting(shortcut) {
+    if (disposed) return;
     const normalized = normalizeVoiceShortcut(shortcut);
     shortcutBinding = shortcut === null ? null : (normalized || getDefaultVoiceShortcut());
     try {
@@ -212,6 +228,7 @@ export function createVoiceFeature({
   }
 
   function shouldHandleVoiceShortcut(event) {
+    if (disposed) return false;
     if (!shortcutBinding || !voiceInputController.isSupported) return false;
     if (!matchesVoiceShortcut(event, shortcutBinding)) return false;
     if (event.defaultPrevented || event.repeat || event.isComposing) return false;
@@ -222,80 +239,120 @@ export function createVoiceFeature({
   }
 
   function bindSettingsUI({ inputEl, statusEl, defaultBtn, clearBtn }) {
+    if (disposed) return;
+    unbindSettingsUI();
     shortcutInputEl = inputEl || null;
     shortcutStatusEl = statusEl || null;
     shortcutDefaultBtn = defaultBtn || null;
     shortcutClearBtn = clearBtn || null;
 
-    if (shortcutInputEl) {
-      shortcutInputEl.addEventListener("focus", () => {
-        shortcutCaptureActive = true;
+    const handleShortcutFocus = () => {
+      if (disposed) return;
+      shortcutCaptureActive = true;
+      renderVoiceShortcutSetting(
+        t("voice.shortcutCapture", {}, "Press a new shortcut. Esc cancels, Backspace/Delete disables it."),
+      );
+    };
+    const handleShortcutBlur = () => {
+      if (disposed) return;
+      shortcutCaptureActive = false;
+      renderVoiceShortcutSetting();
+    };
+    const handleShortcutKeydown = (event) => {
+      if (disposed) return;
+      if (event.key === "Tab") {
+        shortcutCaptureActive = false;
+        renderVoiceShortcutSetting();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        shortcutCaptureActive = false;
+        shortcutInputEl.blur();
+        renderVoiceShortcutSetting();
+        return;
+      }
+      if (event.key === "Backspace" || event.key === "Delete") {
+        persistVoiceShortcutSetting(null);
+        shortcutCaptureActive = false;
+        shortcutInputEl.blur();
+        renderVoiceShortcutSetting();
+        return;
+      }
+
+      const nextShortcut = buildVoiceShortcutFromEvent(event);
+      if (!nextShortcut) {
         renderVoiceShortcutSetting(
           t("voice.shortcutCapture", {}, "Press a new shortcut. Esc cancels, Backspace/Delete disables it."),
         );
-      });
-      shortcutInputEl.addEventListener("blur", () => {
-        shortcutCaptureActive = false;
-        renderVoiceShortcutSetting();
-      });
-      shortcutInputEl.addEventListener("keydown", (event) => {
-        if (event.key === "Tab") {
-          shortcutCaptureActive = false;
-          renderVoiceShortcutSetting();
-          return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
+        return;
+      }
 
-        if (event.key === "Escape") {
-          shortcutCaptureActive = false;
-          shortcutInputEl.blur();
-          renderVoiceShortcutSetting();
-          return;
-        }
-        if (event.key === "Backspace" || event.key === "Delete") {
-          persistVoiceShortcutSetting(null);
-          shortcutCaptureActive = false;
-          shortcutInputEl.blur();
-          renderVoiceShortcutSetting();
-          return;
-        }
+      persistVoiceShortcutSetting(nextShortcut);
+      shortcutCaptureActive = false;
+      shortcutInputEl.blur();
+      renderVoiceShortcutSetting(
+        t("voice.shortcutSaved", { shortcut: formatVoiceShortcut(nextShortcut) }, "Shortcut saved as {shortcut}."),
+      );
+    };
+    const handleShortcutDefault = () => {
+      if (disposed) return;
+      persistVoiceShortcutSetting(getDefaultVoiceShortcut());
+      renderVoiceShortcutSetting(
+        t("voice.shortcutRestored", { shortcut: formatVoiceShortcut(shortcutBinding) }, "Restored default shortcut {shortcut}."),
+      );
+    };
+    const handleShortcutClear = () => {
+      if (disposed) return;
+      persistVoiceShortcutSetting(null);
+      renderVoiceShortcutSetting();
+    };
 
-        const nextShortcut = buildVoiceShortcutFromEvent(event);
-        if (!nextShortcut) {
-          renderVoiceShortcutSetting(
-            t("voice.shortcutCapture", {}, "Press a new shortcut. Esc cancels, Backspace/Delete disables it."),
-          );
-          return;
-        }
-
-        persistVoiceShortcutSetting(nextShortcut);
-        shortcutCaptureActive = false;
-        shortcutInputEl.blur();
-        renderVoiceShortcutSetting(
-          t("voice.shortcutSaved", { shortcut: formatVoiceShortcut(nextShortcut) }, "Shortcut saved as {shortcut}."),
-        );
-      });
+    if (shortcutInputEl) {
+      addSettingsListener(shortcutInputEl, "focus", handleShortcutFocus);
+      addSettingsListener(shortcutInputEl, "blur", handleShortcutBlur);
+      addSettingsListener(shortcutInputEl, "keydown", handleShortcutKeydown);
     }
-
     if (shortcutDefaultBtn) {
-      shortcutDefaultBtn.addEventListener("click", () => {
-        persistVoiceShortcutSetting(getDefaultVoiceShortcut());
-        renderVoiceShortcutSetting(
-          t("voice.shortcutRestored", { shortcut: formatVoiceShortcut(shortcutBinding) }, "Restored default shortcut {shortcut}."),
-        );
-      });
+      addSettingsListener(shortcutDefaultBtn, "click", handleShortcutDefault);
     }
-
     if (shortcutClearBtn) {
-      shortcutClearBtn.addEventListener("click", () => {
-        persistVoiceShortcutSetting(null);
-        renderVoiceShortcutSetting();
-      });
+      addSettingsListener(shortcutClearBtn, "click", handleShortcutClear);
+    }
+  }
+
+  function addSettingsListener(target, type, handler) {
+    target.addEventListener(type, handler);
+    settingsListenerEntries.push({ target, type, handler });
+  }
+
+  function unbindSettingsUI() {
+    for (const { target, type, handler } of settingsListenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    settingsListenerEntries.length = 0;
+    shortcutCaptureActive = false;
+    shortcutInputEl = null;
+    shortcutStatusEl = null;
+    shortcutDefaultBtn = null;
+    shortcutClearBtn = null;
+  }
+
+  function bindGlobalKeyTarget(target) {
+    if (disposed || target === globalKeyTarget) return;
+    if (globalKeyTarget) {
+      globalKeyTarget.removeEventListener("keydown", handleGlobalKeydown);
+    }
+    globalKeyTarget = target || null;
+    if (globalKeyTarget) {
+      globalKeyTarget.addEventListener("keydown", handleGlobalKeydown);
     }
   }
 
   function onSettingsToggle(show) {
+    if (disposed) return;
     if (show) {
       renderVoiceShortcutSetting();
       return;
@@ -304,7 +361,7 @@ export function createVoiceFeature({
   }
 
   function handleGlobalKeydown(event) {
-    if (!shouldHandleVoiceShortcut(event)) return false;
+    if (disposed || !shouldHandleVoiceShortcut(event)) return false;
     event.preventDefault();
     event.stopPropagation();
     void voiceInputController.toggle();
@@ -314,19 +371,27 @@ export function createVoiceFeature({
   function initVoiceInput() {
     if (!voiceButtonEl) return createNoopVoiceInputController();
 
-    let mediaRecorder = null;
-    let audioChunks = [];
-    let startTime = 0;
-    let timerInterval = null;
-    let isRecording = false;
-
-    const hasMediaRecorder = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-    const hasWebSpeech = !!(window.webkitSpeechRecognition || window.SpeechRecognition);
+    const MediaRecorderCtor = window.MediaRecorder;
+    const hasMediaRecorder = !!(navigator.mediaDevices?.getUserMedia && MediaRecorderCtor);
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const hasWebSpeech = !!SpeechRecognitionCtor;
 
     if (!hasMediaRecorder && !hasWebSpeech) {
       voiceButtonEl.style.display = "none";
       return createNoopVoiceInputController();
     }
+
+    let activeMediaRecorder = null;
+    let activeRecognition = null;
+    let activeStream = null;
+    let startTime = 0;
+    let timerInterval = null;
+    let isRecording = false;
+    let voiceButtonListenerBound = false;
+    let mediaGeneration = 0;
+    const pendingMediaRequests = new Set();
+    const pendingFileReaders = new Set();
+    const stoppedStreams = new WeakSet();
 
     const controller = {
       isSupported: true,
@@ -334,53 +399,128 @@ export function createVoiceFeature({
         return isRecording;
       },
       async toggle() {
-        if (isRecording) {
+        if (disposed) return false;
+        if (pendingMediaRequests.size > 0) {
+          mediaGeneration += 1;
+          return false;
+        }
+        if (isRecording || activeMediaRecorder || activeRecognition) {
           stopRecording();
           return false;
         }
-        await startRecording();
-        return true;
+        return startRecording();
       },
       updateTitle() {
+        if (disposed) return;
         const title = describeVoiceShortcutForTitle();
         voiceButtonEl.title = title;
         voiceButtonEl.setAttribute("aria-label", title);
       },
+      dispose: disposeVoiceInput,
+      getRuntimeSnapshot() {
+        return {
+          voiceButtonListenerCount: voiceButtonListenerBound ? 1 : 0,
+          activeTimerCount: timerInterval === null ? 0 : 1,
+          pendingMediaRequestCount: pendingMediaRequests.size,
+          activeStreamCount: activeStream ? 1 : 0,
+          activeRecorderCount: activeMediaRecorder ? 1 : 0,
+          activeRecognitionCount: activeRecognition ? 1 : 0,
+          pendingFileReaderCount: pendingFileReaders.size,
+        };
+      },
     };
 
-    controller.updateTitle();
-    voiceButtonEl.addEventListener("click", () => {
+    function handleVoiceButtonClick() {
+      if (disposed) return;
       void controller.toggle();
-    });
+    }
+
+    controller.updateTitle();
+    voiceButtonEl.addEventListener("click", handleVoiceButtonClick);
+    voiceButtonListenerBound = true;
+
+    function stopOwnedStream(stream) {
+      if (!stream || stoppedStreams.has(stream)) return;
+      stoppedStreams.add(stream);
+      try {
+        stream.getTracks().forEach((track) => track.stop());
+      } catch {
+        // Media cleanup is best-effort because a browser may revoke the stream concurrently.
+      }
+    }
+
+    function reportStartFailure(error, generation) {
+      if (disposed || generation !== mediaGeneration) return;
+      console.error("Failed to start recording:", error);
+      alert(t("voice.startFailed", { message: error?.message || String(error) }, "Failed to start recording: {message}"));
+      isRecording = false;
+      updateUI(false);
+    }
 
     async function startRecording() {
-      if (isRecording) return;
-      try {
-        if (hasMediaRecorder) {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (disposed || isRecording || activeMediaRecorder || activeRecognition || pendingMediaRequests.size > 0) {
+        return false;
+      }
+
+      const generation = ++mediaGeneration;
+      if (hasMediaRecorder) {
+        pendingMediaRequests.add(generation);
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (error) {
+          pendingMediaRequests.delete(generation);
+          reportStartFailure(error, generation);
+          return false;
+        }
+        pendingMediaRequests.delete(generation);
+
+        // Permission prompts cannot be cancelled; stale grants must release tracks immediately.
+        if (disposed || generation !== mediaGeneration) {
+          stopOwnedStream(stream);
+          return false;
+        }
+
+        try {
           let mimeType = "audio/webm;codecs=opus";
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
+          if (!MediaRecorderCtor.isTypeSupported(mimeType)) {
             mimeType = "audio/mp4";
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
+            if (!MediaRecorderCtor.isTypeSupported(mimeType)) {
               mimeType = "";
             }
           }
 
-          mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-          audioChunks = [];
+          const recorder = new MediaRecorderCtor(stream, mimeType ? { mimeType } : undefined);
+          const audioChunks = [];
+          activeStream = stream;
+          activeMediaRecorder = recorder;
 
-          mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              audioChunks.push(event.data);
-            }
+          recorder.ondataavailable = (event) => {
+            if (disposed || activeMediaRecorder !== recorder) return;
+            if (event.data.size > 0) audioChunks.push(event.data);
           };
 
-          mediaRecorder.onstop = () => {
-            const recorder = mediaRecorder;
-            const mime = recorder?.mimeType || "audio/webm";
+          recorder.onstop = () => {
+            stopOwnedStream(stream);
+            if (activeStream === stream) activeStream = null;
+            if (activeMediaRecorder === recorder) activeMediaRecorder = null;
+            isRecording = false;
+            updateUI(false);
+            if (disposed) {
+              audioChunks.length = 0;
+              return;
+            }
+
+            const mime = recorder.mimeType || "audio/webm";
             const blob = new Blob(audioChunks, { type: mime });
+            audioChunks.length = 0;
             const reader = new FileReader();
+            pendingFileReaders.add(reader);
             reader.onloadend = () => {
+              const wasPending = pendingFileReaders.delete(reader);
+              reader.onloadend = null;
+              if (!wasPending || disposed) return;
+
               const ext = mime.includes("mp4") ? "m4a" : (mime.includes("wav") ? "wav" : "webm");
               const fileName = `voice_${Date.now()}.${ext}`;
               const content = typeof reader.result === "string" ? reader.result : "";
@@ -400,122 +540,217 @@ export function createVoiceFeature({
                 return;
               }
 
-              addAttachment({
-                name: fileName,
-                type: "audio",
-                mimeType: mime,
-                content,
-              });
+              addAttachment({ name: fileName, type: "audio", mimeType: mime, content });
               renderAttachmentsPreview();
               onSendMessage?.();
             };
-            reader.readAsDataURL(blob);
-
-            stream.getTracks().forEach((track) => track.stop());
-            mediaRecorder = null;
+            try {
+              reader.readAsDataURL(blob);
+            } catch (error) {
+              pendingFileReaders.delete(reader);
+              reader.onloadend = null;
+              if (!disposed) console.error("Failed to read voice recording:", error);
+            }
           };
 
-          mediaRecorder.start();
+          recorder.start();
           isRecording = true;
           updateUI(true);
-          return;
+          return true;
+        } catch (error) {
+          stopOwnedStream(stream);
+          if (activeStream === stream) activeStream = null;
+          activeMediaRecorder = null;
+          reportStartFailure(error, generation);
+          return false;
         }
+      }
 
-        if (hasWebSpeech) {
-          const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-          const recognition = new SpeechRecognition();
+      if (hasWebSpeech) {
+        try {
+          const recognition = new SpeechRecognitionCtor();
           recognition.lang = getSpeechRecognitionLocale();
           recognition.interimResults = false;
           recognition.maxAlternatives = 1;
 
           recognition.onstart = () => {
+            if (disposed || activeRecognition !== recognition) return;
             isRecording = true;
             updateUI(true, "listening");
           };
-
           recognition.onresult = (event) => {
+            if (disposed || activeRecognition !== recognition) return;
             const text = event.results[0][0].transcript;
             if (promptEl.value) promptEl.value += ` ${text}`;
             else promptEl.value = text;
             syncPromptHeight?.();
           };
-
           recognition.onerror = (event) => {
+            if (disposed || activeRecognition !== recognition) return;
             console.error("Speech recognition error", event.error);
             stopRecording();
           };
-
           recognition.onend = () => {
+            if (activeRecognition !== recognition) return;
+            activeRecognition = null;
             isRecording = false;
-            mediaRecorder = null;
             updateUI(false);
           };
 
+          activeRecognition = recognition;
           recognition.start();
-          mediaRecorder = recognition;
+          return true;
+        } catch (error) {
+          activeRecognition = null;
+          reportStartFailure(error, generation);
+          return false;
         }
-      } catch (err) {
-        console.error("Failed to start recording:", err);
-        alert(t("voice.startFailed", { message: err?.message || String(err) }, "Failed to start recording: {message}"));
-        isRecording = false;
-        mediaRecorder = null;
-        updateUI(false);
       }
+      return false;
     }
 
     function stopRecording() {
-      if (!isRecording) return;
-      const activeRecorder = mediaRecorder;
+      mediaGeneration += 1;
       isRecording = false;
       updateUI(false);
 
-      if (hasMediaRecorder && activeRecorder instanceof MediaRecorder) {
-        if (activeRecorder.state !== "inactive") {
-          activeRecorder.stop();
+      const recorder = activeMediaRecorder;
+      if (recorder) {
+        try {
+          if (recorder.state !== "inactive") recorder.stop();
+        } catch {
+          stopOwnedStream(activeStream);
+          activeMediaRecorder = null;
+          activeStream = null;
         }
         return;
       }
 
-      if (hasWebSpeech && activeRecorder && typeof activeRecorder.stop === "function") {
+      const recognition = activeRecognition;
+      if (recognition && typeof recognition.stop === "function") {
         try {
-          activeRecorder.stop();
+          recognition.stop();
         } catch {
-          mediaRecorder = null;
+          activeRecognition = null;
         }
       }
     }
 
+    function clearRecordingTimer() {
+      if (timerInterval !== null) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
     function updateUI(recording, mode = "recording") {
-      if (!voiceDurationEl) return;
+      clearRecordingTimer();
       if (recording) {
-        voiceButtonEl.classList.add(mode);
-        voiceDurationEl.classList.remove("hidden");
-        startTime = Date.now();
-        voiceDurationEl.textContent = "00:00";
-        timerInterval = setInterval(() => {
-          const diff = Math.floor((Date.now() - startTime) / 1000);
-          const m = Math.floor(diff / 60).toString().padStart(2, "0");
-          const s = (diff % 60).toString().padStart(2, "0");
-          voiceDurationEl.textContent = `${m}:${s}`;
-        }, 1000);
-      } else {
         voiceButtonEl.classList.remove("recording", "listening");
-        voiceDurationEl.classList.add("hidden");
-        if (timerInterval) {
-          clearInterval(timerInterval);
-          timerInterval = null;
+        voiceButtonEl.classList.add(mode);
+        if (voiceDurationEl) {
+          voiceDurationEl.classList.remove("hidden");
+          startTime = Date.now();
+          voiceDurationEl.textContent = "00:00";
+          timerInterval = setInterval(() => {
+            if (disposed) return;
+            const diff = Math.floor((Date.now() - startTime) / 1000);
+            const m = Math.floor(diff / 60).toString().padStart(2, "0");
+            const s = (diff % 60).toString().padStart(2, "0");
+            voiceDurationEl.textContent = `${m}:${s}`;
+          }, 1000);
+        }
+        return;
+      }
+      voiceButtonEl.classList.remove("recording", "listening");
+      voiceDurationEl?.classList.add("hidden");
+    }
+
+    function disposeVoiceInput() {
+      mediaGeneration += 1;
+      clearRecordingTimer();
+      isRecording = false;
+      voiceButtonEl.classList.remove("recording", "listening");
+      voiceDurationEl?.classList.add("hidden");
+
+      if (voiceButtonListenerBound) {
+        voiceButtonEl.removeEventListener("click", handleVoiceButtonClick);
+        voiceButtonListenerBound = false;
+      }
+
+      for (const reader of pendingFileReaders) reader.onloadend = null;
+      pendingFileReaders.clear();
+
+      const recorder = activeMediaRecorder;
+      activeMediaRecorder = null;
+      if (recorder) {
+        recorder.ondataavailable = null;
+        recorder.onstop = null;
+        try {
+          if (recorder.state !== "inactive") recorder.stop();
+        } catch {
+          // The stream cleanup below remains authoritative.
         }
       }
+
+      const recognition = activeRecognition;
+      activeRecognition = null;
+      if (recognition) {
+        recognition.onstart = null;
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
+        try {
+          recognition.stop?.();
+        } catch {
+          // Recognition may already have ended between pagehide and disposal.
+        }
+      }
+
+      stopOwnedStream(activeStream);
+      activeStream = null;
     }
 
     return controller;
   }
 
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    unbindSettingsUI();
+    if (globalKeyTarget) {
+      globalKeyTarget.removeEventListener("keydown", handleGlobalKeydown);
+      globalKeyTarget = null;
+    }
+    voiceInputController.dispose();
+  }
+
+  function getRuntimeSnapshot() {
+    const inputSnapshot = voiceInputController.getRuntimeSnapshot();
+    return {
+      listenerCount:
+        settingsListenerEntries.length
+        + (globalKeyTarget ? 1 : 0)
+        + inputSnapshot.voiceButtonListenerCount,
+      activeTimerCount: inputSnapshot.activeTimerCount,
+      pendingMediaRequestCount: inputSnapshot.pendingMediaRequestCount,
+      activeStreamCount: inputSnapshot.activeStreamCount,
+      activeRecorderCount: inputSnapshot.activeRecorderCount,
+      activeRecognitionCount: inputSnapshot.activeRecognitionCount,
+      pendingFileReaderCount: inputSnapshot.pendingFileReaderCount,
+      disposed,
+    };
+  }
+
   return {
+    bindGlobalKeyTarget,
     bindSettingsUI,
+    dispose,
+    getRuntimeSnapshot,
     handleGlobalKeydown,
     onSettingsToggle,
     refreshLocale() {
+      if (disposed) return;
       renderVoiceShortcutSetting();
       voiceInputController.updateTitle();
     },

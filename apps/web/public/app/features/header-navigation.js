@@ -12,9 +12,17 @@ export function createHeaderNavigationFeature({
     goBridgePageBtn,
     goChatPageBtn,
   } = refs ?? {};
+  let disposed = false;
+  const listenerEntries = [];
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    listenerEntries.push({ target, type, handler });
+  }
 
   function refreshMultiPageLink() {
-    if (!openWebChatTabLink) return;
+    if (disposed || !openWebChatTabLink) return;
     const nextHref = typeof buildMultiPageUrl === "function"
       ? buildMultiPageUrl()
       : (globalThis.location?.href || "/");
@@ -23,40 +31,68 @@ export function createHeaderNavigationFeature({
     openWebChatTabLink.rel = "noopener noreferrer";
   }
 
-  refreshMultiPageLink();
-
-  goGoalsPageBtn?.addEventListener("click", async () => {
+  function openGoalsPage() {
+    if (disposed) return undefined;
     switchMode?.("goals");
-    await loadGoals?.(false);
-  });
+    return loadGoals?.(false);
+  }
 
-  goBridgePageBtn?.addEventListener("click", async () => {
+  function openBridgePage() {
+    if (disposed) return undefined;
     switchMode?.("bridge");
-    await loadBridgeSessions?.(false);
-  });
+    return loadBridgeSessions?.(false);
+  }
 
-  goChatPageBtn?.addEventListener("click", () => {
+  function openChatPage() {
+    if (disposed) return;
     switchMode?.("chat");
     focusPrompt?.();
-  });
+  }
 
-  openWebChatTabLink?.addEventListener("click", () => {
+  async function handleGoalsClick() {
+    await openGoalsPage();
+  }
+
+  async function handleBridgeClick() {
+    await openBridgePage();
+  }
+
+  function handleChatClick() {
+    openChatPage();
+  }
+
+  function handleMultiPageLinkClick() {
     refreshMultiPageLink();
-  });
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const { target, type, handler } of listenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    listenerEntries.length = 0;
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerEntries.length,
+      disposed,
+    };
+  }
+
+  refreshMultiPageLink();
+  addOwnedListener(goGoalsPageBtn, "click", handleGoalsClick);
+  addOwnedListener(goBridgePageBtn, "click", handleBridgeClick);
+  addOwnedListener(goChatPageBtn, "click", handleChatClick);
+  addOwnedListener(openWebChatTabLink, "click", handleMultiPageLinkClick);
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     refreshMultiPageLink,
-    openGoalsPage() {
-      switchMode?.("goals");
-      return loadGoals?.(false);
-    },
-    openBridgePage() {
-      switchMode?.("bridge");
-      return loadBridgeSessions?.(false);
-    },
-    openChatPage() {
-      switchMode?.("chat");
-      focusPrompt?.();
-    },
+    openGoalsPage,
+    openBridgePage,
+    openChatPage,
   };
 }

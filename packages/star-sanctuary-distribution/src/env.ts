@@ -239,19 +239,22 @@ export function ensureDefaultEnvFiles(
   options: ResolveDefaultEnvTemplatePathsOptions = {},
 ): EnsureDefaultEnvFilesResult {
   const paths = resolveEnvFilePaths({ envDir });
-  const templates = readDefaultEnvTemplates(options);
+  const envExists = fs.existsSync(paths.envPath);
+  const envLocalExists = fs.existsSync(paths.envLocalPath);
+  let templates: DefaultEnvTemplates | undefined;
+  const getTemplates = (): DefaultEnvTemplates => templates ??= readDefaultEnvTemplates(options);
   let createdEnv = false;
   let createdEnvLocal = false;
 
-  if (!fs.existsSync(paths.envPath)) {
+  if (!envExists) {
     fs.mkdirSync(paths.envDir, { recursive: true });
-    fs.writeFileSync(paths.envPath, templates.env, "utf-8");
+    fs.writeFileSync(paths.envPath, getTemplates().env, "utf-8");
     createdEnv = true;
   }
 
-  if (!fs.existsSync(paths.envLocalPath)) {
+  if (!envLocalExists) {
     fs.mkdirSync(paths.envDir, { recursive: true });
-    fs.writeFileSync(paths.envLocalPath, templates.envLocal, "utf-8");
+    fs.writeFileSync(paths.envLocalPath, getTemplates().envLocal, "utf-8");
     createdEnvLocal = true;
   }
 

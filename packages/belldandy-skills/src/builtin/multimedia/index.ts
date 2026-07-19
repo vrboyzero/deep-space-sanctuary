@@ -19,6 +19,7 @@ import {
   writeCachedImageUnderstanding,
   writeCachedAudioTranscription,
   readCachedVideoUnderstanding,
+  runMediaUnderstandingCacheSingleFlight,
   writeCachedVideoUnderstanding,
 } from "./understanding-cache.js";
 import type {
@@ -124,6 +125,7 @@ export {
   writeCachedImageUnderstanding,
   writeCachedAudioTranscription,
   readCachedVideoUnderstanding,
+  runMediaUnderstandingCacheSingleFlight,
   writeCachedVideoUnderstanding,
 };
 export type {

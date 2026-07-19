@@ -11,6 +11,10 @@ import {
 } from "./email-thread-binding-store.js";
 import { runAgentToCompletionWithLifecycle, type QueryRuntimeAgentUsage } from "./query-runtime-agent-run.js";
 import { sanitizeVisibleAssistantText } from "./task-auto-report.js";
+import type {
+  TopLevelConversationLease,
+  TopLevelConversationLifecycle,
+} from "./top-level-conversation-lifecycle.js";
 
 type QueryRuntimeLogger = {
   info: (module: string, message: string, data?: unknown) => void;
@@ -23,6 +27,7 @@ export type EmailInboundIngressContext = {
   agentRegistry?: AgentRegistry;
   conversationStore: ConversationStore;
   threadBindingStore: EmailThreadBindingStore;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   log: QueryRuntimeLogger;
   broadcastEvent?: (frame: GatewayEventFrame) => void;
 };
@@ -195,6 +200,43 @@ export async function ingestEmailInboundEvent(
     threadId: input.event.threadId,
   });
   const conversationId = binding?.conversationId || sessionKey;
+  const lifecycleLease = ctx.topLevelConversationLifecycle
+    ? await ctx.topLevelConversationLifecycle.acquire({
+        conversationId,
+        owners: [{
+          key: ctx.conversationStore,
+          priority: 100,
+          release: () => ctx.conversationStore.releaseConversation(conversationId),
+        }],
+      })
+    : undefined;
+
+  try {
+    return await executeEmailInboundEvent(ctx, input, {
+      binding,
+      sessionKey,
+      conversationId,
+      lifecycleLease,
+    });
+  } finally {
+    await lifecycleLease?.release();
+  }
+}
+
+async function executeEmailInboundEvent(
+  ctx: EmailInboundIngressContext,
+  input: {
+    event: NormalizedEmailInboundEvent;
+    requestedAgentId?: string;
+  },
+  runtime: {
+    binding: Awaited<ReturnType<EmailThreadBindingStore["getByThread"]>>;
+    sessionKey: string;
+    conversationId: string;
+    lifecycleLease?: TopLevelConversationLease;
+  },
+): Promise<EmailInboundIngressResult> {
+  const { binding, sessionKey, conversationId, lifecycleLease } = runtime;
   const { conversation: existingConversation, history } = await ctx.conversationStore.getConversationHistoryCompacted(conversationId);
   const resolvedAgentId = normalizeString(existingConversation?.agentId) || normalizeString(input.requestedAgentId) || "default";
   const agent = createAgent({
@@ -204,6 +246,15 @@ export async function ingestEmailInboundEvent(
   });
   if (!agent) {
     throw new Error(`Email inbound agent is unavailable: ${resolvedAgentId}`);
+  }
+  const agentOwnerKey = ctx.agentRegistry ? agent : ctx.agentFactory;
+  if (lifecycleLease && agentOwnerKey && typeof agent.releaseConversation === "function") {
+    lifecycleLease.addOwner({
+      // Registry Agent 按实例区分 profile；无 Registry 时 factory 是跨邮件稳定 owner key。
+      key: agentOwnerKey,
+      priority: 0,
+      release: () => agent.releaseConversation?.(conversationId),
+    });
   }
 
   const triage = buildEmailInboundTriage(input.event);

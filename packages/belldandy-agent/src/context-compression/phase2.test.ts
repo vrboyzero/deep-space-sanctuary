@@ -76,6 +76,22 @@ describe("Phase 2: ConversationReferenceStore", () => {
     expect(store.has(refs[4].refId)).toBe(true);
   });
 
+  it("releases only references owned by the requested conversation", () => {
+    const store = new ConversationReferenceStore();
+    const first = store.store("first", { conversationId: "conv-a" });
+    const second = store.store("second", { conversationId: "conv-a" });
+    const other = store.store("other", { conversationId: "conv-b" });
+    const unscoped = store.store("unscoped");
+
+    const result = store.releaseConversation("conv-a");
+
+    expect(result).toEqual({ prunedCount: 2, retainedCount: 2 });
+    expect(store.has(first.refId)).toBe(false);
+    expect(store.has(second.refId)).toBe(false);
+    expect(store.has(other.refId)).toBe(true);
+    expect(store.has(unscoped.refId)).toBe(true);
+  });
+
   it("generateRefId produces unique ids", () => {
     const ids = new Set<string>();
     for (let i = 0; i < 100; i++) {

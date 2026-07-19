@@ -3,6 +3,7 @@ import type { GatewayEventFrame } from "@belldandy/protocol";
 
 import type { EmailInboundTriageResult } from "./email-inbound-triage.js";
 import type { EmailFollowUpReminderRecord, EmailFollowUpReminderStore } from "./email-follow-up-reminder-store.js";
+import type { TopLevelConversationLease, TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
 
 type ReminderLogger = {
   info: (module: string, message: string, data?: unknown) => void;
@@ -67,6 +68,7 @@ export function buildEmailFollowUpReminderMessage(reminder: EmailFollowUpReminde
 export async function processDueEmailFollowUpReminders(input: {
   reminderStore?: EmailFollowUpReminderStore;
   conversationStore: ConversationStore;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   broadcastEvent?: (frame: GatewayEventFrame) => void;
   logger: ReminderLogger;
   now?: number;
@@ -77,7 +79,18 @@ export async function processDueEmailFollowUpReminders(input: {
   const reminders = await input.reminderStore.listDue(now, input.limit ?? 20);
   let delivered = 0;
   for (const reminder of reminders) {
+    let lifecycleLease: TopLevelConversationLease | undefined;
     try {
+      lifecycleLease = input.topLevelConversationLifecycle
+        ? await input.topLevelConversationLifecycle.acquire({
+            conversationId: reminder.conversationId,
+            owners: [{
+              key: input.conversationStore,
+              priority: 100,
+              release: () => input.conversationStore.releaseConversation(reminder.conversationId),
+            }],
+          })
+        : undefined;
       const text = buildEmailFollowUpReminderMessage(reminder);
       const assistantMessage = input.conversationStore.addMessage(reminder.conversationId, "assistant", text, {
         agentId: reminder.requestedAgentId || "default",
@@ -110,6 +123,8 @@ export async function processDueEmailFollowUpReminders(input: {
         conversationId: reminder.conversationId,
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      await lifecycleLease?.release();
     }
   }
   if (delivered > 0) {

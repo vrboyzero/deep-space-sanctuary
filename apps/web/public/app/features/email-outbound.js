@@ -21,9 +21,13 @@ export function createEmailOutboundController({
 
   let pendingConfirm = null;
   let confirmTimer = null;
+  let confirmRevision = 0;
+  let timerStartCount = 0;
+  let timerTickCount = 0;
+  let disposed = false;
 
   function shouldHandlePayload(payload) {
-    if (!payload || typeof payload !== "object") return false;
+    if (disposed || !payload || typeof payload !== "object") return false;
     const targetClientId = payload.targetClientId ? String(payload.targetClientId).trim() : "";
     return !targetClientId || targetClientId === clientId;
   }
@@ -63,7 +67,7 @@ export function createEmailOutboundController({
   }
 
   function stopTimer() {
-    if (confirmTimer) {
+    if (confirmTimer !== null) {
       clearInterval(confirmTimer);
       confirmTimer = null;
     }
@@ -132,7 +136,7 @@ export function createEmailOutboundController({
   }
 
   function renderModal() {
-    if (!pendingConfirm) return;
+    if (disposed || !pendingConfirm) return;
     if (emailOutboundConfirmPreviewEl) {
       emailOutboundConfirmPreviewEl.textContent = pendingConfirm.bodyPreview
         || t("emailOutbound.previewEmpty", {}, "(空文本)");
@@ -158,6 +162,7 @@ export function createEmailOutboundController({
   }
 
   function clearModal() {
+    confirmRevision += 1;
     pendingConfirm = null;
     stopTimer();
     setBusy(false);
@@ -168,16 +173,19 @@ export function createEmailOutboundController({
     if (!shouldHandlePayload(payload)) return;
     const normalized = normalizePayload(payload);
     if (!normalized) return;
+    confirmRevision += 1;
     pendingConfirm = normalized;
     setBusy(false);
     renderModal();
     if (emailOutboundConfirmModal) emailOutboundConfirmModal.classList.remove("hidden");
     stopTimer();
+    timerStartCount += 1;
     confirmTimer = setInterval(() => {
-      if (!pendingConfirm) {
+      if (disposed || !pendingConfirm) {
         stopTimer();
         return;
       }
+      timerTickCount += 1;
       renderModal();
     }, 1000);
   }
@@ -201,7 +209,7 @@ export function createEmailOutboundController({
   }
 
   async function submit(decision) {
-    if (!pendingConfirm) return;
+    if (disposed || !pendingConfirm) return;
     if (!isConnected()) {
       showNotice(
         t("emailOutbound.noticeHandleErrorTitle", {}, "无法处理确认"),
@@ -212,6 +220,7 @@ export function createEmailOutboundController({
     }
     setBusy(true);
     const currentRequest = pendingConfirm;
+    const revision = confirmRevision;
     const res = await sendReq({
       type: "req",
       id: makeId(),
@@ -222,6 +231,9 @@ export function createEmailOutboundController({
         decision,
       },
     });
+    if (disposed || revision !== confirmRevision || pendingConfirm?.requestId !== currentRequest.requestId) {
+      return;
+    }
     if (!res || res.ok === false) {
       setBusy(false);
       showNotice(
@@ -249,18 +261,36 @@ export function createEmailOutboundController({
     );
   }
 
-  if (emailOutboundConfirmApproveBtn) {
-    emailOutboundConfirmApproveBtn.addEventListener("click", () => {
-      void submit("approve");
-    });
+  const handleApproveClick = () => {
+    void submit("approve");
+  };
+  const handleRejectClick = () => {
+    void submit("reject");
+  };
+  emailOutboundConfirmApproveBtn?.addEventListener("click", handleApproveClick);
+  emailOutboundConfirmRejectBtn?.addEventListener("click", handleRejectClick);
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    clearModal();
+    emailOutboundConfirmApproveBtn?.removeEventListener("click", handleApproveClick);
+    emailOutboundConfirmRejectBtn?.removeEventListener("click", handleRejectClick);
   }
-  if (emailOutboundConfirmRejectBtn) {
-    emailOutboundConfirmRejectBtn.addEventListener("click", () => {
-      void submit("reject");
-    });
+
+  function getRuntimeSnapshot() {
+    return {
+      pendingConfirmationCount: pendingConfirm ? 1 : 0,
+      timerActive: confirmTimer !== null,
+      timerStartCount,
+      timerTickCount,
+      disposed,
+    };
   }
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     handleConfirmRequired,
     handleConfirmResolved,
   };

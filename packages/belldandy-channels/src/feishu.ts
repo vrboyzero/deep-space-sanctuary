@@ -2,10 +2,26 @@ import * as lark from "@larksuiteoapi/node-sdk";
 import type { BelldandyAgent } from "@belldandy/agent";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import type { ChatKind, ChannelRouter } from "./router/types.js";
-import type { Channel, ChannelAgentResolver, ChannelConfig, ChannelProactiveTarget } from "./types.js";
+import type {
+    Channel,
+    ChannelAgentResolver,
+    ChannelConfig,
+    ChannelLifecycleOptions,
+    ChannelLifecycleState,
+    ChannelOutboundOptions,
+    ChannelProactiveTarget,
+    ChannelConversationLease,
+} from "./types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
+import {
+    ChannelOutboundDeduplicator,
+    classifyChannelOutboundFailure,
+    combineChannelAbortSignals,
+    runChannelOutbound,
+    throwIfChannelAborted,
+} from "./channel-outbound.js";
 import {
     ChannelSafeLogger,
     createChannelApprovalPreview,
@@ -49,7 +65,13 @@ export class FeishuChannel implements Channel {
     private readonly sttTranscribe?: (opts: { buffer: Buffer; fileName: string; mime?: string }) => Promise<{ text: string } | null>;
     private readonly onChannelSecurityApprovalRequired?: FeishuChannelConfig["onChannelSecurityApprovalRequired"];
     private readonly ingressScheduler: ChannelIngressScheduler;
+    private readonly conversationLifecycle?: FeishuChannelConfig["conversationLifecycle"];
     private _running = false;
+    private _lifecycleState: ChannelLifecycleState = "stopped";
+    private startPromise?: Promise<void>;
+    private stopPromise?: Promise<void>;
+    private lifecycleAbortController = new AbortController();
+    private readonly outboundDeduplicator = new ChannelOutboundDeduplicator();
 
     // Deduplication: track processed message IDs to avoid responding multiple times
     private readonly processedMessages = new Set<string>();
@@ -58,6 +80,52 @@ export class FeishuChannel implements Channel {
     /** 渠道是否正在运行 */
     get isRunning(): boolean {
         return this._running;
+    }
+
+    get lifecycleState(): ChannelLifecycleState {
+        return this._lifecycleState;
+    }
+
+    private isStopping(): boolean {
+        return this._lifecycleState === "stopping";
+    }
+
+    private isStopped(): boolean {
+        return this._lifecycleState === "stopped";
+    }
+
+    private renewLifecycleAbortController(): void {
+        if (this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController = new AbortController();
+        }
+    }
+
+    private abortLifecycleOutbound(): void {
+        if (!this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController.abort(createLifecycleStopAbortError("Feishu channel stopped."));
+        }
+        this.outboundDeduplicator.clear();
+    }
+
+    private async runOutbound<T>(
+        operation: (signal: AbortSignal) => Promise<T>,
+        options: ChannelOutboundOptions = {},
+    ): Promise<T> {
+        const merged = combineChannelAbortSignals([
+            options.signal,
+            this.lifecycleAbortController.signal,
+        ]);
+        try {
+            return await this.outboundDeduplicator.run(
+                options.idempotencyKey,
+                () => runChannelOutbound(operation, {
+                    ...options,
+                    signal: merged.signal,
+                }),
+            );
+        } finally {
+            merged.dispose();
+        }
     }
 
     constructor(config: FeishuChannelConfig) {
@@ -71,6 +139,7 @@ export class FeishuChannel implements Channel {
         this.currentConversationBindingStore = config.currentConversationBindingStore;
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
         this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
+        this.conversationLifecycle = config.conversationLifecycle;
 
         // HTTP Client for sending messages
         this.client = new lark.Client({
@@ -201,44 +270,108 @@ export class FeishuChannel implements Channel {
 
 
 
-    async start(): Promise<void> {
+    async start(options: ChannelLifecycleOptions = {}): Promise<void> {
         if (this._running) return;
+        if (this.startPromise) {
+            await this.startPromise;
+            return;
+        }
+        if (options.signal?.aborted) {
+            throw toLifecycleAbortError(options.signal.reason);
+        }
 
-        // Create an event dispatcher
-        const eventDispatcher = new lark.EventDispatcher({}).register({
-            "im.message.receive_v1": async (data) => {
-                await this.enqueueMessage(data);
-            },
-        });
+        const startPromise = (async () => {
+            this._lifecycleState = "starting";
+            this.renewLifecycleAbortController();
+            const lifecycle = combineChannelAbortSignals([
+                options.signal,
+                this.lifecycleAbortController.signal,
+            ]);
+            const startSignal = lifecycle.signal;
+            const closeOnAbort = () => this.wsClient.close({ force: true });
+            startSignal?.addEventListener("abort", closeOnAbort, { once: true });
+            try {
+                // Each start owns one dispatcher. stop() force-closes the matching SDK client before a new start can publish.
+                const eventDispatcher = new lark.EventDispatcher({}).register({
+                    "im.message.receive_v1": async (data) => {
+                        if (this._lifecycleState !== "running" && this._lifecycleState !== "starting") return;
+                        await this.enqueueMessage(data);
+                    },
+                });
 
-        // Start WS connection with the dispatcher
-        await this.wsClient.start({
-            eventDispatcher,
-        });
+                await this.wsClient.start({
+                    eventDispatcher,
+                });
+                if (startSignal?.aborted || this.isStopping()) {
+                    this.wsClient.close({ force: true });
+                    throw toLifecycleAbortError(startSignal?.reason);
+                }
 
-        this._running = true;
-        console.log(`[${this.name}] WebSocket Channel started.`);
+                this._running = true;
+                this._lifecycleState = "running";
+                console.log(`[${this.name}] WebSocket Channel started.`);
+            } catch (error) {
+                this._running = false;
+                if (startSignal?.aborted || this.isStopping()) {
+                    if (!this.isStopped()) {
+                        await this.stop();
+                    }
+                } else {
+                    this.abortLifecycleOutbound();
+                    this.wsClient.close({ force: true });
+                    this._lifecycleState = "failed";
+                }
+                throw error;
+            } finally {
+                startSignal?.removeEventListener("abort", closeOnAbort);
+                lifecycle.dispose();
+            }
+        })();
+        this.startPromise = startPromise;
+        try {
+            await startPromise;
+        } finally {
+            if (this.startPromise === startPromise) {
+                this.startPromise = undefined;
+            }
+        }
     }
 
-    async stop(): Promise<void> {
-        if (!this._running) return;
+    async stop(_options: ChannelLifecycleOptions = {}): Promise<void> {
+        if (this.stopPromise) {
+            await this.stopPromise;
+            return;
+        }
+        if (this._lifecycleState === "stopped" && !this.startPromise) return;
 
-        try {
-            // Note: @larksuiteoapi/node-sdk WSClient 目前没有公开的 stop/close 方法
-            // 如果未来 SDK 支持，可以在这里调用
-            // await this.wsClient.stop();
-
+        const stopPromise = (async () => {
+            this._lifecycleState = "stopping";
             this._running = false;
-            this.ingressScheduler.cancelChannel(this.name);
-            this.processedMessages.clear();
-            console.log(`[${this.name}] Channel stopped.`);
-        } catch (e) {
-            channelSafeLogger.error({
-                channel: "feishu",
-                event: "stop_failed",
-                failureKind: "internal_error",
-            });
-            throw e;
+            try {
+                this.abortLifecycleOutbound();
+                // SDK v1.71.1 exposes close(); force-close also clears reconnect and liveness timers.
+                this.wsClient.close({ force: true });
+                this.ingressScheduler.cancelChannel(this.name);
+                this.processedMessages.clear();
+                this._lifecycleState = "stopped";
+                console.log(`[${this.name}] Channel stopped.`);
+            } catch (e) {
+                this._lifecycleState = "failed";
+                channelSafeLogger.error({
+                    channel: "feishu",
+                    event: "stop_failed",
+                    failureKind: "internal_error",
+                });
+                throw e;
+            }
+        })();
+        this.stopPromise = stopPromise;
+        try {
+            await stopPromise;
+        } finally {
+            if (this.stopPromise === stopPromise) {
+                this.stopPromise = undefined;
+            }
         }
     }
 
@@ -549,36 +682,33 @@ export class FeishuChannel implements Channel {
             body: text,
         });
 
-        // Run the agent
-        // We create a history context if possible, but for MVP we just send the text
-        // The agent is responsible for context via ConversationStore (not linked here yet)
-        // We pass conversationId as chatId
-
-        // [PERSISTENCE] Add User Message to Store
-        this.conversationStore.addMessage(session.legacyConversationId, "user", text, {
-            agentId: selectedAgentId,
-            channel: "feishu",
-        });
-
-        // [PERSISTENCE] Get History from Store
-        const history = this.conversationStore.getHistory(session.legacyConversationId);
-
-        const runInput = {
-            conversationId: session.legacyConversationId,
-            text: text,
-            history: history, // Provide history context
-            // We could pass sender info in meta
-            meta: {
-                from: sender,
-                messageId: msgId,
-                channel: "feishu",
-                sessionScope: session.sessionScope,
-                sessionKey: session.sessionKey,
-                legacyConversationId: session.legacyConversationId,
-            }
-        };
-
+        let lifecycleLease: ChannelConversationLease | undefined;
         try {
+            lifecycleLease = await this.conversationLifecycle?.acquire({
+                conversationId: session.legacyConversationId,
+                agent: runAgent,
+            });
+
+            // Store history and the Agent stream share one lease through reply settlement.
+            this.conversationStore.addMessage(session.legacyConversationId, "user", text, {
+                agentId: selectedAgentId,
+                channel: "feishu",
+            });
+            const history = this.conversationStore.getHistory(session.legacyConversationId);
+            const runInput = {
+                conversationId: session.legacyConversationId,
+                text: text,
+                history: history,
+                meta: {
+                    from: sender,
+                    messageId: msgId,
+                    channel: "feishu",
+                    sessionScope: session.sessionScope,
+                    sessionKey: session.sessionKey,
+                    legacyConversationId: session.legacyConversationId,
+                }
+            };
+
             const stream = runAgent.run(runInput);
             let replyText = "";
 
@@ -634,32 +764,47 @@ export class FeishuChannel implements Channel {
                 failureKind: "internal_error",
             });
             await this.reply(msgId, createChannelPublicFailureMessage());
+        } finally {
+            await lifecycleLease?.release();
         }
     }
 
-    private async reply(messageId: string, content: string) {
+    private async reply(
+        messageId: string,
+        content: string,
+        options: ChannelOutboundOptions = {},
+    ): Promise<boolean> {
         try {
-            const chunks = chunkMarkdownForOutbound(content, "feishu", {
-                config: this.replyChunkingConfig,
-            });
-            for (const chunk of chunks) {
-                await this.client.im.message.reply({
-                    path: {
-                        message_id: messageId,
-                    },
-                    data: {
-                        content: JSON.stringify({ text: chunk }),
-                        msg_type: "text",
-                    },
+            await this.runOutbound(async (signal) => {
+                const chunks = chunkMarkdownForOutbound(content, "feishu", {
+                    config: this.replyChunkingConfig,
                 });
-            }
-        } catch {
+                for (const chunk of chunks) {
+                    throwIfChannelAborted(signal);
+                    await this.client.im.message.reply({
+                        path: {
+                            message_id: messageId,
+                        },
+                        data: {
+                            content: JSON.stringify({ text: chunk }),
+                            msg_type: "text",
+                        },
+                    });
+                    throwIfChannelAborted(signal);
+                }
+            }, {
+                ...options,
+                idempotencyKey: options.idempotencyKey ?? messageId,
+            });
+            return true;
+        } catch (error) {
             channelSafeLogger.error({
                 channel: "feishu",
                 event: "reply_failed",
                 messageId,
-                failureKind: "transport_error",
+                failureKind: classifyChannelOutboundFailure({ error }),
             });
+            return false;
         }
     }
 
@@ -669,7 +814,11 @@ export class FeishuChannel implements Channel {
      * @param target - 可选，指定显式 chatId 或 canonical sessionKey；未指定时仅回退到持久化 binding
      * @returns 是否发送成功
      */
-    async sendProactiveMessage(content: string, target?: ChannelProactiveTarget): Promise<boolean> {
+    async sendProactiveMessage(
+        content: string,
+        target?: ChannelProactiveTarget,
+        options: ChannelOutboundOptions = {},
+    ): Promise<boolean> {
         const explicitChatId = typeof target === "string"
             ? target
             : typeof target?.chatId === "string"
@@ -700,30 +849,47 @@ export class FeishuChannel implements Channel {
         }
 
         try {
-            const chunks = chunkMarkdownForOutbound(content, "feishu", {
-                config: this.replyChunkingConfig,
-            });
-            for (const chunk of chunks) {
-                await this.client.im.message.create({
-                    params: {
-                        receive_id_type: "chat_id",
-                    },
-                    data: {
-                        receive_id: targetChatId,
-                        content: JSON.stringify({ text: chunk }),
-                        msg_type: "text",
-                    },
+            await this.runOutbound(async (signal) => {
+                const chunks = chunkMarkdownForOutbound(content, "feishu", {
+                    config: this.replyChunkingConfig,
                 });
-            }
+                for (const chunk of chunks) {
+                    throwIfChannelAborted(signal);
+                    await this.client.im.message.create({
+                        params: {
+                            receive_id_type: "chat_id",
+                        },
+                        data: {
+                            receive_id: targetChatId,
+                            content: JSON.stringify({ text: chunk }),
+                            msg_type: "text",
+                        },
+                    });
+                    throwIfChannelAborted(signal);
+                }
+            }, options);
             console.log(`[${this.name}] Proactive message sent to ${targetChatId}`);
             return true;
-        } catch {
+        } catch (error) {
             channelSafeLogger.error({
                 channel: "feishu",
                 event: "proactive_send_failed",
-                failureKind: "transport_error",
+                failureKind: classifyChannelOutboundFailure({ error }),
             });
             return false;
         }
     }
+}
+
+function toLifecycleAbortError(reason: unknown): Error {
+    if (reason instanceof Error) return reason;
+    const error = new Error("Channel lifecycle operation was aborted.");
+    error.name = "AbortError";
+    return error;
+}
+
+function createLifecycleStopAbortError(message: string): Error {
+    const error = new Error(message);
+    error.name = "AbortError";
+    return error;
 }

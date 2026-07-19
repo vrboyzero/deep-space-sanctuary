@@ -82,17 +82,24 @@ export function createBridgeRuntimeFeature({
   } = refs ?? {};
 
   let pollTimer = null;
+  let pollStartCount = 0;
+  let pollTickCount = 0;
+  let disposed = false;
 
   function stopPolling() {
-    if (pollTimer) {
+    if (pollTimer !== null) {
       clearInterval(pollTimer);
       pollTimer = null;
     }
   }
 
   function startPolling() {
+    if (disposed) return;
     stopPolling();
+    pollStartCount += 1;
     pollTimer = setInterval(() => {
+      if (disposed) return;
+      pollTickCount += 1;
       const state = getBridgeRuntimeState();
       if (!state?.viewActive || !isConnected?.()) {
         return;
@@ -259,6 +266,7 @@ export function createBridgeRuntimeFeature({
   }
 
   async function loadBridgeSessionDetail(sessionId, { quiet = false } = {}) {
+    if (disposed) return;
     const state = getBridgeRuntimeState();
     if (!sessionId) {
       renderBridgeDetailEmpty(t("bridge.detailSelect", {}, "选择左侧桥接会话查看详情。"));
@@ -281,7 +289,7 @@ export function createBridgeRuntimeFeature({
       },
     });
 
-    if (seq !== state.detailSeq) return;
+    if (disposed || seq !== state.detailSeq) return;
     state.detailLoading = false;
 
     if (!res || !res.ok || !res.payload?.session) {
@@ -298,7 +306,7 @@ export function createBridgeRuntimeFeature({
   }
 
   async function loadBridgeSessions(forceSelectFirst = false) {
-    if (!bridgeSection) return;
+    if (disposed || !bridgeSection) return;
     const state = getBridgeRuntimeState();
     if (!isConnected?.()) {
       state.loading = false;
@@ -319,7 +327,7 @@ export function createBridgeRuntimeFeature({
       params: {},
     });
 
-    if (seq !== state.loadSeq) return;
+    if (disposed || seq !== state.loadSeq) return;
     state.loading = false;
 
     if (!res || !res.ok || !Array.isArray(res.payload?.items)) {
@@ -361,6 +369,7 @@ export function createBridgeRuntimeFeature({
   }
 
   async function openBridgeSession(sessionId) {
+    if (disposed) return;
     const state = getBridgeRuntimeState();
     state.selectedSessionId = sessionId;
     state.selectedSession = state.items.find((item) => item?.sessionId === sessionId) || null;
@@ -370,6 +379,7 @@ export function createBridgeRuntimeFeature({
   }
 
   function refreshLocale() {
+    if (disposed) return;
     const state = getBridgeRuntimeState();
     if (!bridgeSection) return;
     if (!isConnected?.()) {
@@ -382,6 +392,7 @@ export function createBridgeRuntimeFeature({
   }
 
   function setViewActive(active) {
+    if (disposed) return;
     const state = getBridgeRuntimeState();
     state.viewActive = active === true;
     if (!state.viewActive) {
@@ -394,11 +405,38 @@ export function createBridgeRuntimeFeature({
     startPolling();
   }
 
-  bridgeRefreshBtn?.addEventListener("click", () => {
+  const handleRefreshClick = () => {
+    if (disposed) return;
     void loadBridgeSessions(true);
-  });
+  };
+  bridgeRefreshBtn?.addEventListener("click", handleRefreshClick);
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    stopPolling();
+    bridgeRefreshBtn?.removeEventListener("click", handleRefreshClick);
+    const state = getBridgeRuntimeState();
+    state.viewActive = false;
+    state.loading = false;
+    state.detailLoading = false;
+    state.loadSeq = Number(state.loadSeq || 0) + 1;
+    state.detailSeq = Number(state.detailSeq || 0) + 1;
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      viewActive: !disposed && getBridgeRuntimeState()?.viewActive === true,
+      polling: pollTimer !== null,
+      pollStartCount,
+      pollTickCount,
+      disposed,
+    };
+  }
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     loadBridgeSessions,
     openBridgeSession,
     refreshLocale,

@@ -10,7 +10,10 @@ import {
     MEMORY_FILENAME,
     getWorkspaceDocumentBody,
 } from "./workspace.js";
-import { buildCapabilityRoutingIndexLines, buildCapabilityUsageNotesLines } from "./capability-routing.js";
+import {
+    buildBoundedSkillPrompt,
+    type SkillPromptBudget,
+} from "./skill-prompt-budget.js";
 
 /**
  * System Prompt 构建参数
@@ -39,6 +42,8 @@ export type SystemPromptParams = {
         priority?: "high" | "always";
         description?: string;
     }>;
+    /** Skills section 的 UTF-8 字节硬上限；未提供时使用 64 KiB。 */
+    maxSkillPromptBytes?: number;
     /** 是否有更多按需 skills 可通过 skills_search 搜索 */
     hasSearchableSkills?: boolean;
     /** 是否支持UUID验证（告知Agent当前环境是否支持UUID） */
@@ -94,6 +99,7 @@ export type SystemPromptBuildResult = {
         truncatedSectionLabels?: string[];
         message: string;
     };
+    skillPromptBudget?: SkillPromptBudget;
     maxChars?: number;
     totalChars: number;
     finalChars: number;
@@ -196,16 +202,6 @@ function mergeSectionPriorityOverrides(
         ...(base ?? {}),
         ...(overrides ?? {}),
     };
-}
-
-function formatHighPrioritySkillSummary(skill: {
-    name: string;
-    description?: string;
-}): string {
-    const description = skill.description?.trim();
-    return description
-        ? `- \`${skill.name}\` - ${description}`
-        : `- \`${skill.name}\` - summary only; use \`skill_get\` to open the full instructions when needed.`;
 }
 
 function renderSectionsLength(sections: SystemPromptSection[]): number {
@@ -664,66 +660,18 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
     }
 
     // P7: Skills（技能指令注入）
-    if (params.skillInstructions && params.skillInstructions.length > 0) {
-        const skillLines: string[] = ["# Active Skills", ""];
-        const alwaysSkills = params.skillInstructions.filter((skill) => skill.priority === "always");
-        const highSkills = params.skillInstructions.filter((skill) => skill.priority !== "always");
-        let hasRenderedSkillContent = false;
-
-        for (const skill of alwaysSkills) {
-            const instructions = skill.instructions.trim();
-            if (!instructions) continue;
-            skillLines.push(`## [${skill.name}]`, "", instructions, "");
-            hasRenderedSkillContent = true;
-        }
-
-        if (highSkills.length > 0) {
-            if (hasRenderedSkillContent) {
-                skillLines.push("");
-            }
-            skillLines.push(
-                "## High-Priority Skill Summaries",
-                "",
-                "These skills remain visible as summaries. Open the exact one with `skill_get` once you decide to adopt it.",
-                "",
-                ...highSkills.map((skill) => formatHighPrioritySkillSummary(skill)),
-                "",
-            );
-            hasRenderedSkillContent = true;
-        }
-
-        if (params.hasSearchableSkills || highSkills.length > 0) {
-            skillLines.push(
-                ...buildCapabilityRoutingIndexLines(),
-                "",
-                ...buildCapabilityUsageNotesLines(),
-                "",
-            );
-        }
-
-        if (hasRenderedSkillContent || params.hasSearchableSkills) {
-            sections.push(createSection({
-                id: "skills",
-                label: "skills",
-                source: "skills",
-                priority: 70,
-                text: skillLines.join("\n"),
-            }));
-        }
-    } else if (params.hasSearchableSkills) {
+    const boundedSkillPrompt = buildBoundedSkillPrompt({
+        skillInstructions: params.skillInstructions,
+        hasSearchableSkills: params.hasSearchableSkills,
+        maxBytes: params.maxSkillPromptBytes,
+    });
+    if (boundedSkillPrompt.text) {
         sections.push(createSection({
             id: "skills",
             label: "skills",
             source: "skills",
             priority: 70,
-            text: [
-                "# Skills",
-                "",
-                ...buildCapabilityRoutingIndexLines(),
-                "",
-                ...buildCapabilityUsageNotesLines(),
-                "",
-            ].join("\n"),
+            text: boundedSkillPrompt.text,
         }));
     }
 
@@ -919,6 +867,9 @@ export function buildSystemPromptResult(params: SystemPromptParams): SystemPromp
         droppedSections,
         truncated: droppedSections.length > 0 || truncatedSections.length > 0,
         ...(truncationReason ? { truncationReason } : {}),
+        ...((params.skillInstructions?.length ?? 0) > 0 || params.hasSearchableSkills
+            ? { skillPromptBudget: boundedSkillPrompt.budget }
+            : {}),
         maxChars: maxChars || undefined,
         totalChars,
         finalChars: text.length,

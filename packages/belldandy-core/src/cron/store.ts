@@ -10,6 +10,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { CronJob, CronJobCreate, CronJobPatch, CronStoreFile } from "./types.js";
 import { applyCronJobRuntimeDefaults, normalizeCronJobCreateInput, normalizeCronJobPatchInput, normalizeCronStaggerMs } from "./validation.js";
+import { withCronStoreMutationLock } from "./store-mutation-queue.js";
 
 const STORE_FILENAME = "cron-jobs.json";
 const MINUTE_MS = 60_000;
@@ -63,81 +64,98 @@ export class CronStore {
 
     /** 创建新任务，返回完整 Job 对象 */
     async add(input: CronJobCreate): Promise<CronJob> {
-        const data = await this.load();
-        const now = Date.now();
+        return this.mutate(async () => {
+            const data = await this.load();
+            const now = Date.now();
 
-        const normalized = normalizeCronJobCreateInput(input);
-        const jobId = crypto.randomUUID();
-        const job: CronJob = {
-            id: jobId,
-            name: normalized.name,
-            description: normalized.description,
-            enabled: normalized.enabled ?? true,
-            deleteAfterRun: normalized.deleteAfterRun,
-            createdAtMs: now,
-            updatedAtMs: now,
-            schedule: normalized.schedule,
-            payload: normalized.payload,
-            sessionTarget: normalized.sessionTarget ?? "isolated",
-            delivery: normalized.delivery ?? { mode: "user" },
-            failureDestination: normalized.failureDestination,
-            state: {
-                nextRunAtMs: computeNextRunForJob({
-                    id: jobId,
-                    schedule: normalized.schedule,
-                }, now),
-            },
-        };
+            const normalized = normalizeCronJobCreateInput(input);
+            const jobId = crypto.randomUUID();
+            const job: CronJob = {
+                id: jobId,
+                name: normalized.name,
+                description: normalized.description,
+                enabled: normalized.enabled ?? true,
+                deleteAfterRun: normalized.deleteAfterRun,
+                createdAtMs: now,
+                updatedAtMs: now,
+                schedule: normalized.schedule,
+                payload: normalized.payload,
+                sessionTarget: normalized.sessionTarget ?? "isolated",
+                delivery: normalized.delivery ?? { mode: "user" },
+                failureDestination: normalized.failureDestination,
+                state: {
+                    nextRunAtMs: computeNextRunForJob({
+                        id: jobId,
+                        schedule: normalized.schedule,
+                    }, now),
+                },
+            };
 
-        data.jobs.push(applyCronJobRuntimeDefaults(job));
-        await this.save(data);
-        return applyCronJobRuntimeDefaults(job);
+            data.jobs.push(applyCronJobRuntimeDefaults(job));
+            await this.save(data);
+            return applyCronJobRuntimeDefaults(job);
+        });
     }
 
     /** 更新任务，返回更新后的 Job 或 undefined（未找到） */
     async update(id: string, patch: CronJobPatch): Promise<CronJob | undefined> {
-        const data = await this.load();
-        const index = data.jobs.findIndex((j) => j.id === id);
-        if (index === -1) return undefined;
+        return this.mutate(async () => {
+            const data = await this.load();
+            const index = data.jobs.findIndex((j) => j.id === id);
+            if (index === -1) return undefined;
 
-        const job = data.jobs[index];
-        const now = Date.now();
-        const normalizedPatch = normalizeCronJobPatchInput(patch, job);
+            const job = data.jobs[index];
+            const now = Date.now();
+            const normalizedPatch = normalizeCronJobPatchInput(patch, job);
 
-        // 应用 patch（只覆盖非 undefined 字段）
-        if (normalizedPatch.name !== undefined) job.name = normalizedPatch.name;
-        if ("description" in normalizedPatch) job.description = normalizedPatch.description;
-        if (normalizedPatch.enabled !== undefined) job.enabled = normalizedPatch.enabled;
-        if (normalizedPatch.deleteAfterRun !== undefined) job.deleteAfterRun = normalizedPatch.deleteAfterRun;
-        if (normalizedPatch.schedule !== undefined) {
-            job.schedule = normalizedPatch.schedule;
-            // 调度变更时重新计算下次执行时间
-            job.state.nextRunAtMs = computeNextRunForJob(job, now);
-        }
-        if (normalizedPatch.payload !== undefined) job.payload = normalizedPatch.payload;
-        if (normalizedPatch.sessionTarget !== undefined) job.sessionTarget = normalizedPatch.sessionTarget;
-        if (normalizedPatch.delivery !== undefined) job.delivery = normalizedPatch.delivery;
-        if ("failureDestination" in normalizedPatch) job.failureDestination = normalizedPatch.failureDestination;
-        job.updatedAtMs = now;
+            // 应用 patch（只覆盖非 undefined 字段）
+            if (normalizedPatch.name !== undefined) job.name = normalizedPatch.name;
+            if ("description" in normalizedPatch) job.description = normalizedPatch.description;
+            if (normalizedPatch.enabled !== undefined) job.enabled = normalizedPatch.enabled;
+            if (normalizedPatch.deleteAfterRun !== undefined) job.deleteAfterRun = normalizedPatch.deleteAfterRun;
+            if (normalizedPatch.schedule !== undefined) {
+                job.schedule = normalizedPatch.schedule;
+                // 调度变更时重新计算下次执行时间
+                job.state.nextRunAtMs = computeNextRunForJob(job, now);
+            }
+            if (normalizedPatch.payload !== undefined) job.payload = normalizedPatch.payload;
+            if (normalizedPatch.sessionTarget !== undefined) job.sessionTarget = normalizedPatch.sessionTarget;
+            if (normalizedPatch.delivery !== undefined) job.delivery = normalizedPatch.delivery;
+            if ("failureDestination" in normalizedPatch) job.failureDestination = normalizedPatch.failureDestination;
+            job.updatedAtMs = now;
 
-        data.jobs[index] = applyCronJobRuntimeDefaults(job);
-        await this.save(data);
-        return applyCronJobRuntimeDefaults(job);
+            data.jobs[index] = applyCronJobRuntimeDefaults(job);
+            await this.save(data);
+            return applyCronJobRuntimeDefaults(job);
+        });
     }
 
     /** 删除任务，返回是否成功 */
     async remove(id: string): Promise<boolean> {
-        const data = await this.load();
-        const before = data.jobs.length;
-        data.jobs = data.jobs.filter((j) => j.id !== id);
-        if (data.jobs.length === before) return false;
-        await this.save(data);
-        return true;
+        return this.mutate(async () => {
+            const data = await this.load();
+            const before = data.jobs.length;
+            data.jobs = data.jobs.filter((j) => j.id !== id);
+            if (data.jobs.length === before) return false;
+            await this.save(data);
+            return true;
+        });
     }
 
-    /** 批量更新状态（调度器 tick 后调用） */
-    async saveJobs(jobs: CronJob[]): Promise<void> {
-        await this.save({ version: 1, jobs: jobs.map((job) => applyCronJobRuntimeDefaults(job)) });
+    /** 批量更新状态（调度器 tick 后调用）；传入 baseJobs 时在锁内 rebase runtime snapshot。 */
+    async saveJobs(jobs: CronJob[], baseJobs?: CronJob[]): Promise<void> {
+        await this.mutate(async () => {
+            const normalizedJobs = jobs.map((job) => applyCronJobRuntimeDefaults(job));
+            if (!baseJobs) {
+                await this.save({ version: 1, jobs: normalizedJobs });
+                return;
+            }
+            const latest = await this.load();
+            await this.save({
+                version: 1,
+                jobs: rebaseRuntimeJobs(latest.jobs, baseJobs, normalizedJobs),
+            });
+        });
     }
 
     // ── 内部方法 ──
@@ -163,10 +181,63 @@ export class CronStore {
         const dir = path.dirname(this.filePath);
         await fs.mkdir(dir, { recursive: true });
         // 原子写入：先写临时文件再 rename
-        const tmpPath = `${this.filePath}.tmp`;
-        await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-        await fs.rename(tmpPath, this.filePath);
+        const tmpPath = `${this.filePath}.${crypto.randomUUID()}.tmp`;
+        try {
+            await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+            await fs.rename(tmpPath, this.filePath);
+        } finally {
+            await fs.unlink(tmpPath).catch(() => {});
+        }
     }
+
+    private async mutate<T>(mutation: () => Promise<T>): Promise<T> {
+        return withCronStoreMutationLock(this.filePath, mutation);
+    }
+}
+
+function rebaseRuntimeJobs(
+    latestJobs: CronJob[],
+    baseJobs: CronJob[],
+    runtimeJobs: CronJob[],
+): CronJob[] {
+    const baseById = new Map(baseJobs.map((job) => [job.id, job]));
+    const runtimeById = new Map(runtimeJobs.map((job) => [job.id, job]));
+    const rebased: CronJob[] = [];
+
+    for (const latestJob of latestJobs) {
+        const baseJob = baseById.get(latestJob.id);
+        if (!baseJob) {
+            // scheduler 读取快照后新增的 job 不属于本轮 runtime 结果，必须保留。
+            rebased.push(applyCronJobRuntimeDefaults(latestJob));
+            continue;
+        }
+
+        const runtimeJob = runtimeById.get(latestJob.id);
+        if (!runtimeJob) {
+            // 仅当管理员未改动该 job 定义时，才应用 at/deleteAfterRun 的删除结果。
+            if (!hasCronJobDefinitionChanged(latestJob, baseJob)) {
+                continue;
+            }
+            rebased.push(applyCronJobRuntimeDefaults(latestJob));
+            continue;
+        }
+
+        // 管理员在 scheduler 运行期间改过定义时，最新配置（含 nextRunAt）优先于旧运行快照。
+        rebased.push(applyCronJobRuntimeDefaults(
+            hasCronJobDefinitionChanged(latestJob, baseJob) ? latestJob : runtimeJob,
+        ));
+    }
+
+    return rebased;
+}
+
+function hasCronJobDefinitionChanged(left: CronJob, right: CronJob): boolean {
+    return JSON.stringify(toCronJobDefinition(left)) !== JSON.stringify(toCronJobDefinition(right));
+}
+
+function toCronJobDefinition(job: CronJob): Omit<CronJob, "state" | "updatedAtMs"> {
+    const { state: _state, updatedAtMs: _updatedAtMs, ...definition } = job;
+    return definition;
 }
 
 // ── 调度计算 ──

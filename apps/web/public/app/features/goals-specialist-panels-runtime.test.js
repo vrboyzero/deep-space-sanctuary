@@ -9,6 +9,16 @@ import {
   mergeGoalTrackingRuntimeIndex,
 } from "./goals-specialist-panels-runtime.js";
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 describe("goal tracking runtime helpers", () => {
   it("collects unique runtime task ids from recent nodes and the focused node", () => {
     const nodes = [
@@ -210,6 +220,17 @@ describe("goal tracking runtime helpers", () => {
       },
       preferFirst: true,
     });
+
+    feature.dispose();
+    skillNode.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(openExperienceWorkbench).toHaveBeenCalledTimes(2);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      activeGroupCount: 0,
+      activeListenerCount: 0,
+      disposed: true,
+    });
   });
 
   it("loads tracking data from goal.task_graph.read and forwards memory freshness to the tracking panel", async () => {
@@ -318,6 +339,168 @@ describe("goal tracking runtime helpers", () => {
         }),
       }),
     }));
+  });
+
+  it("settles disposed tracking source reads without checkpoint or panel commits", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalTrackingPanel"></div></div>';
+    const taskGraphRequest = createDeferred();
+    const renderGoalTrackingPanel = vi.fn();
+    const renderGoalTrackingPanelError = vi.fn();
+    const applyGoalContinuationFocus = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      trackingSeq: 0,
+      continuationFocusNode: null,
+      trackingCheckpoints: [{ id: "cp_existing" }],
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => ({
+        renderGoalTrackingPanelLoading: vi.fn(),
+        renderGoalTrackingPanel,
+        renderGoalTrackingPanelError,
+      }),
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(async () => null),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: JSON.parse,
+      sendReq: vi.fn((req) => (
+        req.method === "goal.task_graph.read"
+          ? taskGraphRequest.promise
+          : Promise.resolve({ ok: true, payload: { item: {} } })
+      )),
+      makeId: () => "req-tracking-source",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus,
+    });
+
+    const load = feature.loadGoalTrackingData({
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    });
+    feature.dispose();
+    taskGraphRequest.resolve({
+      ok: true,
+      payload: {
+        graph: { nodes: [{ id: "node_late", title: "Late node" }] },
+        checkpoints: { items: [{ id: "cp_late", nodeId: "node_late" }] },
+      },
+    });
+    await load;
+
+    expect(goalsState.trackingCheckpoints).toEqual([{ id: "cp_existing" }]);
+    expect(renderGoalTrackingPanel).not.toHaveBeenCalled();
+    expect(renderGoalTrackingPanelError).not.toHaveBeenCalled();
+    expect(applyGoalContinuationFocus).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalTrackingReadCount: 0,
+    });
+  });
+
+  it("settles a disposed tracking runtime-index read without final commits", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalTrackingPanel"></div></div>';
+    const trackingRequest = createDeferred();
+    const renderGoalTrackingPanel = vi.fn();
+    const renderGoalTrackingPanelError = vi.fn();
+    const applyGoalContinuationFocus = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      trackingSeq: 0,
+      continuationFocusNode: null,
+      trackingCheckpoints: [{ id: "cp_existing" }],
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const sendReq = vi.fn((req) => {
+      if (req.method === "goal.task_graph.read") {
+        return Promise.resolve({
+          ok: true,
+          payload: {
+            graph: {
+              nodes: [{
+                id: "node_late",
+                title: "Late node",
+                lastRunId: "run_late",
+              }],
+            },
+            checkpoints: { items: [{ id: "cp_late", nodeId: "node_late" }] },
+          },
+        });
+      }
+      return trackingRequest.promise;
+    });
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => ({
+        renderGoalTrackingPanelLoading: vi.fn(),
+        renderGoalTrackingPanel,
+        renderGoalTrackingPanelError,
+      }),
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(async () => null),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: JSON.parse,
+      sendReq,
+      makeId: (() => {
+        let count = 0;
+        return () => `req-tracking-index-${++count}`;
+      })(),
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus,
+    });
+
+    const load = feature.loadGoalTrackingData({
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    });
+    for (let attempt = 0; attempt < 20 && sendReq.mock.calls.length < 2; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(sendReq.mock.calls.map(([req]) => req.method)).toEqual([
+      "goal.task_graph.read",
+      "subtask.get",
+    ]);
+    feature.dispose();
+    trackingRequest.resolve({ ok: true, payload: { item: {} } });
+    await load;
+
+    expect(goalsState.trackingCheckpoints).toEqual([{ id: "cp_existing" }]);
+    expect(renderGoalTrackingPanel).not.toHaveBeenCalled();
+    expect(renderGoalTrackingPanelError).not.toHaveBeenCalled();
+    expect(applyGoalContinuationFocus).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalTrackingReadCount: 0,
+    });
   });
 
   it("loads capability data with governance freshness from cached or fetched governance summary", async () => {
@@ -488,5 +671,453 @@ describe("goal tracking runtime helpers", () => {
         }),
       }),
     }));
+  });
+
+  it("settles a disposed handoff read without rendering its late response", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalHandoffPanel"></div></div>';
+    const request = createDeferred();
+    const renderGoalHandoffPanelLoading = vi.fn();
+    const renderGoalHandoffPanelError = vi.fn();
+    const renderGoalHandoffPanel = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      handoffSeq: 0,
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => ({
+        renderGoalHandoffPanelLoading,
+        renderGoalHandoffPanelError,
+        renderGoalHandoffPanel,
+      }),
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(async () => null),
+      goalRuntimeFilePath: vi.fn(() => ""),
+      safeJsonParse: vi.fn(() => null),
+      sendReq: vi.fn(() => request.promise),
+      makeId: () => "req-handoff",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    const load = feature.loadGoalHandoffData({ id: "goal_alpha" });
+    expect(renderGoalHandoffPanelLoading).toHaveBeenCalledOnce();
+    feature.dispose();
+    request.resolve({
+      ok: true,
+      payload: {
+        handoff: { summary: "late handoff" },
+        continuationState: { status: "ready" },
+      },
+    });
+    await load;
+
+    expect(renderGoalHandoffPanel).not.toHaveBeenCalled();
+    expect(renderGoalHandoffPanelError).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalHandoffReadCount: 0,
+    });
+  });
+
+  it("settles a disposed progress read without rendering its late file content", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalProgressPanel"></div></div>';
+    const request = createDeferred();
+    const renderGoalProgressPanelLoading = vi.fn();
+    const renderGoalProgressPanel = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      progressSeq: 0,
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => ({
+        renderGoalProgressPanelLoading,
+        renderGoalProgressPanel,
+      }),
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(() => request.promise),
+      goalRuntimeFilePath: vi.fn(() => ""),
+      safeJsonParse: vi.fn(() => null),
+      sendReq: vi.fn(async () => ({ ok: true })),
+      makeId: () => "req-progress",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    const load = feature.loadGoalProgressData({
+      id: "goal_alpha",
+      progressPath: "progress.md",
+    });
+    expect(renderGoalProgressPanelLoading).toHaveBeenCalledOnce();
+    feature.dispose();
+    request.resolve({
+      content: "## 2026-07-19\n- event: completed\n- title: late progress",
+    });
+    await load;
+
+    expect(renderGoalProgressPanel).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalProgressReadCount: 0,
+    });
+  });
+
+  it("settles a disposed Canvas read without rendering its late board-ref content", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalCanvasPanel"></div></div>';
+    const request = createDeferred();
+    const renderGoalCanvasPanelLoading = vi.fn();
+    const renderGoalCanvasPanel = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      canvasSeq: 0,
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => ({
+        renderGoalCanvasPanelLoading,
+        renderGoalCanvasPanel,
+      }),
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn(() => request.promise),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: JSON.parse,
+      sendReq: vi.fn(async () => ({ ok: true })),
+      makeId: () => "req-canvas",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    const load = feature.loadGoalCanvasData({ id: "goal_alpha" });
+    expect(renderGoalCanvasPanelLoading).toHaveBeenCalledOnce();
+    feature.dispose();
+    request.resolve({
+      content: JSON.stringify({ boardId: "board-late", updatedAt: "2026-07-19T00:00:00.000Z" }),
+    });
+    await load;
+
+    expect(renderGoalCanvasPanel).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalCanvasReadCount: 0,
+    });
+  });
+
+  it("settles a disposed governance summary read without cache or panel commits", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalGovernancePanel"></div></div>';
+    const request = createDeferred();
+    const renderGoalReviewGovernancePanelLoading = vi.fn();
+    const renderGoalReviewGovernancePanelError = vi.fn();
+    const renderGoalReviewGovernancePanel = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      governanceSeq: 0,
+      governanceCache: {},
+      continuationFocusNode: null,
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const sendReq = vi.fn(() => request.promise);
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => ({
+        renderGoalReviewGovernancePanelLoading,
+        renderGoalReviewGovernancePanelError,
+        renderGoalReviewGovernancePanel,
+      }),
+      readSourceFile: vi.fn(async () => null),
+      goalRuntimeFilePath: vi.fn(() => ""),
+      safeJsonParse: vi.fn(() => null),
+      sendReq,
+      makeId: () => "req-governance",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    const load = feature.loadGoalReviewGovernanceData({
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    });
+    expect(renderGoalReviewGovernancePanelLoading).toHaveBeenCalledOnce();
+    feature.dispose();
+    request.resolve({
+      ok: true,
+      payload: { summary: { summary: "late governance" } },
+    });
+    await load;
+
+    expect(goalsState.governanceCache).toEqual({});
+    expect(renderGoalReviewGovernancePanel).not.toHaveBeenCalled();
+    expect(renderGoalReviewGovernancePanelError).not.toHaveBeenCalled();
+    expect(sendReq).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles a disposed governance tracking-index read without final commits", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalGovernancePanel"></div></div>';
+    const trackingRequest = createDeferred();
+    const renderGoalReviewGovernancePanel = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      governanceSeq: 0,
+      governanceCache: {},
+      continuationFocusNode: null,
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const sendReq = vi.fn((req) => {
+      if (req.method === "goal.review_governance.summary") {
+        return Promise.resolve({
+          ok: true,
+          payload: { summary: { summary: "active governance" } },
+        });
+      }
+      return trackingRequest.promise;
+    });
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => ({
+        renderGoalReviewGovernancePanelLoading: vi.fn(),
+        renderGoalReviewGovernancePanelError: vi.fn(),
+        renderGoalReviewGovernancePanel,
+      }),
+      readSourceFile: vi.fn(async () => ({
+        content: JSON.stringify({ nodes: [{ id: "node_impl", lastRunId: "run_impl" }] }),
+      })),
+      goalRuntimeFilePath: vi.fn(() => ""),
+      safeJsonParse: JSON.parse,
+      sendReq,
+      makeId: (() => {
+        let count = 0;
+        return () => `req-governance-${++count}`;
+      })(),
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+
+    const load = feature.loadGoalReviewGovernanceData({
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    });
+    for (let attempt = 0; attempt < 5 && sendReq.mock.calls.length < 2; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(sendReq.mock.calls.map(([req]) => req.method)).toEqual([
+      "goal.review_governance.summary",
+      "subtask.get",
+    ]);
+    feature.dispose();
+    trackingRequest.resolve({ ok: true, payload: { item: {} } });
+    await load;
+
+    expect(goalsState.governanceCache).toEqual({});
+    expect(renderGoalReviewGovernancePanel).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalGovernanceReadCount: 0,
+    });
+  });
+
+  it("settles disposed capability files without cache writes and cleans the public pending signal", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"></div>';
+    const tasksRequest = createDeferred();
+    const plansRequest = createDeferred();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      capabilityCache: {},
+      capabilityPending: {},
+    };
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => null,
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn((filePath) => (
+        filePath === "tasks.json" ? tasksRequest.promise : plansRequest.promise
+      )),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: JSON.parse,
+      sendReq: vi.fn(async () => ({ ok: true })),
+      makeId: () => "req-capability",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus: vi.fn(),
+    });
+    const goal = {
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    };
+
+    const load = feature.ensureGoalCapabilityCache(goal);
+    expect(goalsState.capabilityPending.goal_alpha).toBeTruthy();
+    feature.dispose();
+    tasksRequest.resolve({ content: JSON.stringify({ nodes: [{ id: "node_impl", title: "Impl" }] }) });
+    plansRequest.resolve({ content: JSON.stringify({ items: [{ id: "plan_impl", nodeId: "node_impl" }] }) });
+
+    await expect(load).resolves.toBeUndefined();
+    expect(goalsState.capabilityCache).toEqual({});
+    expect(goalsState.capabilityPending).toEqual({});
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalCapabilityCacheReadCount: 0,
+    });
+  });
+
+  it("settles a disposed capability panel chain without success or error commits", async () => {
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalCapabilityPanel"></div></div>';
+    const tasksRequest = createDeferred();
+    const plansRequest = createDeferred();
+    const governanceRequest = createDeferred();
+    const renderGoalCapabilityPanelLoading = vi.fn();
+    const renderGoalCapabilityPanelError = vi.fn();
+    const renderGoalCapabilityPanel = vi.fn();
+    const applyGoalContinuationFocus = vi.fn();
+    const goalsState = {
+      selectedId: "goal_alpha",
+      capabilitySeq: 0,
+      capabilityCache: {},
+      capabilityPending: {},
+      governanceCache: {},
+    };
+    const feature = createGoalsSpecialistPanelsRuntimeFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      getGoalsState: () => goalsState,
+      getGoalsCapabilityPanelFeature: () => ({
+        renderGoalCapabilityPanelLoading,
+        renderGoalCapabilityPanelError,
+        renderGoalCapabilityPanel,
+      }),
+      getGoalsReadonlyPanelsFeature: () => null,
+      getGoalsTrackingPanelFeature: () => null,
+      getGoalsGovernancePanelFeature: () => null,
+      readSourceFile: vi.fn((filePath) => (
+        filePath === "tasks.json" ? tasksRequest.promise : plansRequest.promise
+      )),
+      goalRuntimeFilePath: vi.fn((_goal, name) => name),
+      safeJsonParse: JSON.parse,
+      sendReq: vi.fn(() => governanceRequest.promise),
+      makeId: () => "req-capability-panel",
+      getCanvasContextFeature: () => null,
+      openSourcePath: vi.fn(async () => {}),
+      openContinuationAction: vi.fn(async () => {}),
+      generateGoalHandoff: vi.fn(async () => {}),
+      runGoalApprovalScan: vi.fn(async () => {}),
+      runGoalSuggestionReviewDecision: vi.fn(async () => {}),
+      runGoalSuggestionReviewEscalation: vi.fn(async () => {}),
+      runGoalCheckpointEscalation: vi.fn(async () => {}),
+      openExperienceWorkbench: vi.fn(async () => {}),
+      applyGoalContinuationFocus,
+    });
+    const goal = {
+      id: "goal_alpha",
+      tasksPath: "tasks.json",
+    };
+
+    const load = feature.loadGoalCapabilityData(goal);
+    expect(renderGoalCapabilityPanelLoading).toHaveBeenCalledOnce();
+    feature.dispose();
+    tasksRequest.resolve({ content: JSON.stringify({ nodes: [{ id: "node_impl", title: "Impl" }] }) });
+    plansRequest.resolve({ content: JSON.stringify({ items: [] }) });
+    governanceRequest.resolve({
+      ok: true,
+      payload: { summary: { summary: "late governance" } },
+    });
+    await load;
+
+    expect(renderGoalCapabilityPanel).not.toHaveBeenCalled();
+    expect(renderGoalCapabilityPanelError).not.toHaveBeenCalled();
+    expect(applyGoalContinuationFocus).not.toHaveBeenCalled();
+    expect(goalsState.capabilityCache).toEqual({});
+    expect(goalsState.governanceCache).toEqual({});
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingGoalCapabilityCacheReadCount: 0,
+      pendingGoalCapabilityPanelReadCount: 0,
+    });
   });
 });

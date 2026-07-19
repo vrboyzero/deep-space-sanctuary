@@ -13,11 +13,54 @@ type TimerState = {
   name: string;
   startTime: number;
   laps: number[];
+  elapsedMs?: number;
   running: boolean;
 };
 
-/** 全局计时器存储（进程内存，重启后清空） */
-const timers = new Map<string, TimerState>();
+export const MAX_TIMERS_PER_NAMESPACE = 32;
+export const MAX_LAPS_PER_TIMER = 128;
+
+type AgentTimerNamespaces = Map<string, Map<string, TimerState>>;
+
+/** Timer 只在 conversation + agent 命名空间内可见，避免跨会话读取或修改同名状态。 */
+const timers = new Map<string, AgentTimerNamespaces>();
+
+function getAgentNamespace(context: ToolContext): string {
+  return context.agentId?.trim() || "default";
+}
+
+function getTimerNamespace(context: ToolContext, create: boolean): Map<string, TimerState> | undefined {
+  let conversationTimers = timers.get(context.conversationId);
+  if (!conversationTimers && create) {
+    conversationTimers = new Map();
+    timers.set(context.conversationId, conversationTimers);
+  }
+
+  const agentNamespace = getAgentNamespace(context);
+  let namespace = conversationTimers?.get(agentNamespace);
+  if (!namespace && create) {
+    namespace = new Map();
+    conversationTimers!.set(agentNamespace, namespace);
+  }
+  return namespace;
+}
+
+function deleteTimer(context: ToolContext, name: string): void {
+  const conversationTimers = timers.get(context.conversationId);
+  const agentNamespace = getAgentNamespace(context);
+  const namespace = conversationTimers?.get(agentNamespace);
+  if (!namespace) {
+    return;
+  }
+
+  namespace.delete(name);
+  if (namespace.size === 0) {
+    conversationTimers!.delete(agentNamespace);
+  }
+  if (conversationTimers!.size === 0) {
+    timers.delete(context.conversationId);
+  }
+}
 
 /** 格式化时间（秒，保留 2 位小数） */
 function formatTime(ms: number): string {
@@ -59,7 +102,8 @@ export const timerTool: Tool = withToolContract({
     try {
       // list 操作不需要 name
       if (action === "list") {
-        if (timers.size === 0) {
+        const namespace = getTimerNamespace(context, false);
+        if (!namespace || namespace.size === 0) {
           return {
             id,
             name: "timer",
@@ -70,12 +114,10 @@ export const timerTool: Tool = withToolContract({
         }
 
         const lines: string[] = ["当前计时器列表："];
-        for (const [timerName, state] of timers.entries()) {
+        for (const [timerName, state] of namespace.entries()) {
           const elapsed = state.running
             ? performance.now() - state.startTime
-            : state.laps.length > 0
-              ? state.laps[state.laps.length - 1]
-              : 0;
+            : state.elapsedMs ?? 0;
           const status = state.running ? "运行中" : "已停止";
           const lapsInfo = state.laps.length > 0 ? ` (${state.laps.length} 个中间计时)` : "";
           lines.push(`- ${timerName}: ${formatTime(elapsed)}s [${status}]${lapsInfo}`);
@@ -104,21 +146,30 @@ export const timerTool: Tool = withToolContract({
 
       switch (action) {
         case "start": {
-          if (timers.has(name)) {
-            const existing = timers.get(name)!;
-            if (existing.running) {
-              return {
-                id,
-                name: "timer",
-                success: false,
-                output: "",
-                error: `计时器 "${name}" 已在运行中`,
-                durationMs: performance.now() - startTime,
-              };
-            }
+          const currentNamespace = getTimerNamespace(context, false);
+          const existing = currentNamespace?.get(name);
+          if (existing?.running) {
+            return {
+              id,
+              name: "timer",
+              success: false,
+              output: "",
+              error: `计时器 "${name}" 已在运行中`,
+              durationMs: performance.now() - startTime,
+            };
+          }
+          if (!existing && (currentNamespace?.size ?? 0) >= MAX_TIMERS_PER_NAMESPACE) {
+            return {
+              id,
+              name: "timer",
+              success: false,
+              output: "",
+              error: `每个会话与 Agent 最多 ${MAX_TIMERS_PER_NAMESPACE} 个计时器，请先 reset 不再需要的计时器`,
+              durationMs: performance.now() - startTime,
+            };
           }
 
-          timers.set(name, {
+          getTimerNamespace(context, true)!.set(name, {
             name,
             startTime: performance.now(),
             laps: [],
@@ -135,7 +186,7 @@ export const timerTool: Tool = withToolContract({
         }
 
         case "stop": {
-          const timer = timers.get(name);
+          const timer = getTimerNamespace(context, false)?.get(name);
           if (!timer) {
             return {
               id,
@@ -160,10 +211,10 @@ export const timerTool: Tool = withToolContract({
 
           const elapsed = performance.now() - timer.startTime;
           timer.running = false;
-          timer.laps.push(elapsed);
+          timer.elapsedMs = elapsed;
 
-          const lapsInfo = timer.laps.length > 1
-            ? `\n中间计时: ${timer.laps.slice(0, -1).map((t) => formatTime(t) + "s").join(", ")}`
+          const lapsInfo = timer.laps.length > 0
+            ? `\n中间计时: ${timer.laps.map((t) => formatTime(t) + "s").join(", ")}`
             : "";
 
           return {
@@ -176,7 +227,7 @@ export const timerTool: Tool = withToolContract({
         }
 
         case "lap": {
-          const timer = timers.get(name);
+          const timer = getTimerNamespace(context, false)?.get(name);
           if (!timer) {
             return {
               id,
@@ -199,6 +250,17 @@ export const timerTool: Tool = withToolContract({
             };
           }
 
+          if (timer.laps.length >= MAX_LAPS_PER_TIMER) {
+            return {
+              id,
+              name: "timer",
+              success: false,
+              output: "",
+              error: `每个计时器最多 ${MAX_LAPS_PER_TIMER} 个中间计时，请 stop 或 reset 后重新开始`,
+              durationMs: performance.now() - startTime,
+            };
+          }
+
           const elapsed = performance.now() - timer.startTime;
           timer.laps.push(elapsed);
 
@@ -212,7 +274,7 @@ export const timerTool: Tool = withToolContract({
         }
 
         case "reset": {
-          const timer = timers.get(name);
+          const timer = getTimerNamespace(context, false)?.get(name);
           if (!timer) {
             return {
               id,
@@ -224,7 +286,7 @@ export const timerTool: Tool = withToolContract({
             };
           }
 
-          timers.delete(name);
+          deleteTimer(context, name);
 
           return {
             id,

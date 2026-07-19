@@ -109,12 +109,26 @@ describe("video_understand", () => {
     process.env.BELLDANDY_VIDEO_UNDERSTAND_OPENAI_BASE_URL = "https://video.example.com/v1";
     process.env.BELLDANDY_VIDEO_UNDERSTAND_MODEL = "kimi-k2.5";
     const videoPath = path.join(tempDir, "clip.mp4");
-    await fs.writeFile(videoPath, Buffer.from("fake-video"));
+    const videoBuffer = Buffer.concat([
+      Buffer.from("fake-video"),
+      Buffer.alloc(128 * 1024 + 5, 0x51),
+    ]);
+    await fs.writeFile(videoPath, videoBuffer);
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: "file-video-123" }),
-    } as Response);
+    let uploadBody = Buffer.alloc(0);
+    let uploadChunkSizes: number[] = [];
+    fetchMock.mockImplementation(async (_url, init) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of init?.body as any) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      uploadChunkSizes = chunks.map((chunk) => chunk.length);
+      uploadBody = Buffer.concat(chunks);
+      return {
+        ok: true,
+        json: async () => ({ id: "file-video-123" }),
+      } as Response;
+    });
     chatCreateMock.mockResolvedValue({
       choices: [
         {
@@ -158,6 +172,13 @@ describe("video_understand", () => {
       focusMode: "overview",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const uploadHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(uploadHeaders["Content-Type"]).toMatch(/^multipart\/form-data; boundary=/);
+    expect(Number(uploadHeaders["Content-Length"])).toBe(uploadBody.length);
+    expect(uploadBody.toString("utf-8")).toContain("fake-video");
+    expect(uploadBody.toString("utf-8")).toContain('name="purpose"');
+    expect(uploadChunkSizes.length).toBeGreaterThanOrEqual(5);
+    expect(Math.max(...uploadChunkSizes)).toBeLessThanOrEqual(64 * 1024);
     expect(chatCreateMock).toHaveBeenCalledTimes(1);
     expect(context.logger?.info).toHaveBeenCalledWith(
       "video_understand completed via native_video (model=kimi-k2.5, timelineItems=2)",
@@ -219,6 +240,48 @@ describe("video_understand", () => {
       provider: "openai",
       analysisMode: "native_video",
     });
+  });
+
+  it("rejects oversized inline video before provider or frame fallback side effects", async () => {
+    process.env.BELLDANDY_VIDEO_UNDERSTAND_ENABLED = "true";
+    process.env.BELLDANDY_VIDEO_UNDERSTAND_OPENAI_API_KEY = "sk-video";
+    process.env.BELLDANDY_VIDEO_UNDERSTAND_OPENAI_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    process.env.BELLDANDY_VIDEO_UNDERSTAND_MAX_INPUT_MB = "64";
+    const videoPath = path.join(tempDir, "large-inline.mp4");
+    const handle = await fs.open(videoPath, "w");
+    try {
+      await handle.truncate(20 * 1024 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
+
+    const result = await videoUnderstandTool.execute({
+      file_path: "large-inline.mp4",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("inline video payload too large");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(chatCreateMock).not.toHaveBeenCalled();
+    expect(understandVideoFileByFrameSamplingMock).not.toHaveBeenCalled();
+  });
+
+  it("does not turn a cancelled native video request into frame sampling fallback", async () => {
+    process.env.BELLDANDY_VIDEO_UNDERSTAND_ENABLED = "true";
+    process.env.BELLDANDY_VIDEO_UNDERSTAND_OPENAI_API_KEY = "sk-video";
+    const videoPath = path.join(tempDir, "cancelled.mp4");
+    await fs.writeFile(videoPath, Buffer.from("fake-video"));
+    const controller = new AbortController();
+    controller.abort("Stopped video understanding.");
+
+    await expect(understandVideoFile({
+      filePath: videoPath,
+      mimeType: "video/mp4",
+      abortSignal: controller.signal,
+    })).rejects.toThrow("Stopped video understanding.");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(chatCreateMock).not.toHaveBeenCalled();
+    expect(understandVideoFileByFrameSamplingMock).not.toHaveBeenCalled();
   });
 
   it("treats max_timeline_items=0 as no explicit limit", async () => {

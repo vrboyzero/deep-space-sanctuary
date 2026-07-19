@@ -20,7 +20,12 @@ vi.mock("openai", () => ({
 }));
 
 import type { ToolContext } from "../../types.js";
-import { imageUnderstandTool, understandImageFile } from "./image-understand.js";
+import {
+  MAX_IMAGE_INLINE_INPUT_BYTES,
+  imageUnderstandTool,
+  readImageUnderstandConfig,
+  understandImageFile,
+} from "./image-understand.js";
 
 function createContext(workspaceRoot: string): ToolContext {
   return {
@@ -79,13 +84,33 @@ describe("image_understand", () => {
     expect(chatCreateMock).not.toHaveBeenCalled();
   });
 
+  it("caps base64-only image input and stops before reading an already aborted request", async () => {
+    process.env.BELLDANDY_IMAGE_UNDERSTAND_ENABLED = "true";
+    process.env.BELLDANDY_IMAGE_UNDERSTAND_OPENAI_API_KEY = "sk-vision";
+    process.env.BELLDANDY_IMAGE_UNDERSTAND_MAX_INPUT_MB = "64";
+    const imagePath = path.join(tempDir, "photo.png");
+    await fs.writeFile(imagePath, Buffer.from("fake-image"));
+    const controller = new AbortController();
+    controller.abort("Stopped image understanding.");
+
+    expect(readImageUnderstandConfig().maxInputBytes).toBe(MAX_IMAGE_INLINE_INPUT_BYTES);
+    await expect(understandImageFile({
+      filePath: imagePath,
+      mimeType: "image/png",
+      abortSignal: controller.signal,
+    })).rejects.toThrow("Stopped image understanding.");
+    expect(chatCreateMock).not.toHaveBeenCalled();
+  });
+
   it("returns normalized json output from the configured model", async () => {
     process.env.BELLDANDY_IMAGE_UNDERSTAND_ENABLED = "true";
     process.env.BELLDANDY_IMAGE_UNDERSTAND_OPENAI_API_KEY = "sk-vision";
     process.env.BELLDANDY_IMAGE_UNDERSTAND_OPENAI_BASE_URL = "https://vision.example.com/v1";
     process.env.BELLDANDY_IMAGE_UNDERSTAND_MODEL = "gpt-4.1-mini";
     const imagePath = path.join(tempDir, "photo.png");
-    await fs.writeFile(imagePath, Buffer.from("fake-image"));
+    const imageBuffer = Buffer.alloc(64 * 1024 + 2, 0x5a);
+    await fs.writeFile(imagePath, imageBuffer);
+    const readFileSpy = vi.spyOn(fs, "readFile");
     chatCreateMock.mockResolvedValue({
       choices: [
         {
@@ -125,6 +150,9 @@ describe("image_understand", () => {
       focusMode: "overview",
     });
     expect(chatCreateMock).toHaveBeenCalledTimes(1);
+    expect(readFileSpy).not.toHaveBeenCalled();
+    const imageUrl = chatCreateMock.mock.calls[0]?.[0]?.messages?.[1]?.content?.[1]?.image_url?.url;
+    expect(imageUrl).toBe(`data:image/png;base64,${imageBuffer.toString("base64")}`);
     expect(openAIMock).toHaveBeenCalledWith(expect.objectContaining({
       apiKey: "sk-vision",
       baseURL: "https://vision.example.com/v1",

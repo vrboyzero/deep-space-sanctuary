@@ -88,6 +88,34 @@ describe("buildGoalCapabilityPlan", () => {
     expect(plan.orchestration?.coordinationPlan?.rolePolicy.fanInStrategy).toBe("main_agent_summary");
   });
 
+  it("keeps a commander catalog profile out of execution lanes", () => {
+    const plan = buildGoalCapabilityPlan({
+      goalTitle: "Managed implementation",
+      nodeId: "node-commander",
+      nodeTitle: "实现受管功能并完成验证",
+      availableAgents: [
+        {
+          id: "ops-coordinator",
+          kind: "worker",
+          catalog: { defaultRole: "commander" },
+        },
+        {
+          id: "implementation-worker",
+          kind: "worker",
+          catalog: { defaultRole: "coder" },
+        },
+      ],
+      commanderAgentId: "ops-coordinator",
+      forceMode: "multi_agent_parallel",
+    });
+
+    expect(plan.commanderAgentId).toBe("ops-coordinator");
+    expect(plan.subAgents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId: "implementation-worker", role: "coder" }),
+    ]));
+    expect(plan.subAgents?.some((item) => item.agentId === "ops-coordinator")).toBe(false);
+  });
+
   it("defaults low-risk commander plans to agent auto completion", () => {
     const plan = buildGoalCapabilityPlan({
       goalTitle: "Lightweight commander node",

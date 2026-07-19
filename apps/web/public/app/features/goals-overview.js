@@ -26,8 +26,29 @@ export function createGoalsOverviewFeature({
     goalsListEl,
     goalsDetailEl,
   } = refs;
+  // generation 负责截止逻辑提交，Set 单独保留底层 Promise 的真实未结算数量。
+  const pendingGoalListReads = new Set();
+  const goalListListenerDisposers = new Set();
+  let goalListGeneration = 0;
+  let disposed = false;
+
+  function isCurrent(expectedGeneration) {
+    return !disposed && goalListGeneration === expectedGeneration;
+  }
+
+  function clearGoalListListeners() {
+    for (const disposeListener of goalListListenerDisposers) disposeListener();
+    goalListListenerDisposers.clear();
+  }
+
+  function addGoalListListener(node, listener) {
+    node.addEventListener("click", listener);
+    goalListListenerDisposers.add(() => node.removeEventListener("click", listener));
+  }
 
   function renderGoalsLoading(message) {
+    if (disposed) return;
+    clearGoalListListeners();
     if (goalsListEl) {
       goalsListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
     }
@@ -37,6 +58,7 @@ export function createGoalsOverviewFeature({
   }
 
   function renderGoalsSummary(items) {
+    if (disposed) return;
     if (!goalsSummaryEl) return;
     const goals = Array.isArray(items) ? items : [];
     const executingCount = goals.filter((goal) => goal?.status === "executing").length;
@@ -52,6 +74,8 @@ export function createGoalsOverviewFeature({
   }
 
   function renderGoalsEmpty(message) {
+    if (disposed) return;
+    clearGoalListListeners();
     renderGoalsSummary([]);
     if (goalsListEl) {
       goalsListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
@@ -62,7 +86,9 @@ export function createGoalsOverviewFeature({
   }
 
   function renderGoalList(items) {
+    if (disposed) return;
     if (!goalsListEl) return;
+    clearGoalListListeners();
     if (!Array.isArray(items) || items.length === 0) {
       const emptyMessage = getGoalsState()?.includeArchived === true
         ? t("goals.emptyNoGoals", {}, "There are no long tasks yet.")
@@ -108,7 +134,8 @@ export function createGoalsOverviewFeature({
     }).join("");
 
     goalsListEl.querySelectorAll("[data-goal-id]").forEach((node) => {
-      node.addEventListener("click", () => {
+      addGoalListListener(node, () => {
+        if (disposed) return;
         const goalId = node.getAttribute("data-goal-id");
         if (!goalId) return;
         goalsState.selectedId = goalId;
@@ -118,7 +145,8 @@ export function createGoalsOverviewFeature({
     });
 
     goalsListEl.querySelectorAll("[data-goal-resume]").forEach((node) => {
-      node.addEventListener("click", (event) => {
+      addGoalListListener(node, (event) => {
+        if (disposed) return;
         event.stopPropagation();
         const goalId = node.getAttribute("data-goal-resume");
         if (!goalId) return;
@@ -127,7 +155,8 @@ export function createGoalsOverviewFeature({
     });
 
     goalsListEl.querySelectorAll("[data-goal-pause]").forEach((node) => {
-      node.addEventListener("click", (event) => {
+      addGoalListListener(node, (event) => {
+        if (disposed) return;
         event.stopPropagation();
         const goalId = node.getAttribute("data-goal-pause");
         if (!goalId) return;
@@ -136,7 +165,8 @@ export function createGoalsOverviewFeature({
     });
 
     goalsListEl.querySelectorAll("[data-goal-archive]").forEach((node) => {
-      node.addEventListener("click", (event) => {
+      addGoalListListener(node, (event) => {
+        if (disposed) return;
         event.stopPropagation();
         const goalId = node.getAttribute("data-goal-archive");
         if (!goalId) return;
@@ -146,6 +176,7 @@ export function createGoalsOverviewFeature({
   }
 
   async function loadGoals(forceReload = false, preferredGoalId) {
+    if (disposed) return;
     if (!goalsSection) return;
     if (!isConnected()) {
       renderGoalsLoading(t("goals.loadingDisconnected", {}, "Disconnected"));
@@ -159,15 +190,26 @@ export function createGoalsOverviewFeature({
 
     const seq = goalsState.loadSeq + 1;
     goalsState.loadSeq = seq;
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "goal.list",
-      params: {
-        includeArchived: goalsState.includeArchived === true,
-      },
-    });
-    if (seq !== goalsState.loadSeq) return;
+    const expectedGeneration = ++goalListGeneration;
+    const pendingToken = Symbol("goal-list-read");
+    pendingGoalListReads.add(pendingToken);
+    let res;
+    try {
+      res = await sendReq({
+        type: "req",
+        id: makeId(),
+        method: "goal.list",
+        params: {
+          includeArchived: goalsState.includeArchived === true,
+        },
+      });
+    } catch (error) {
+      if (!isCurrent(expectedGeneration)) return;
+      throw error;
+    } finally {
+      pendingGoalListReads.delete(pendingToken);
+    }
+    if (!isCurrent(expectedGeneration) || seq !== goalsState.loadSeq) return;
 
     if (!res || !res.ok || !Array.isArray(res.payload?.goals)) {
       renderGoalsEmpty(t("goals.listLoadFailed", {}, "Failed to load long task list."));
@@ -198,7 +240,35 @@ export function createGoalsOverviewFeature({
     renderCanvasGoalContext();
   }
 
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    goalListGeneration += 1;
+    clearGoalListListeners();
+    const goalsState = getGoalsState?.();
+    if (goalsState) {
+      // 列表响应含完整 objective，随其 owner 一起释放，避免 pagehide 后继续保留正文。
+      goalsState.items = [];
+      goalsState.selectedId = null;
+      goalsState.loadSeq = Number(goalsState.loadSeq || 0) + 1;
+    }
+    if (goalsSummaryEl) goalsSummaryEl.innerHTML = "";
+    if (goalsListEl) goalsListEl.innerHTML = "";
+    if (goalsDetailEl) goalsDetailEl.innerHTML = "";
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      disposed,
+      goalListGeneration,
+      pendingGoalListReadCount: pendingGoalListReads.size,
+      retainedGoalListListenerCount: goalListListenerDisposers.size,
+    };
+  }
+
   return {
+    dispose,
+    getRuntimeSnapshot,
     loadGoals,
     renderGoalList,
     renderGoalsEmpty,

@@ -36,6 +36,7 @@ type MessageSendMethodContext = Pick<
   | "modelFallbacks"
   | "conversationStore"
   | "conversationRunRegistry"
+  | "topLevelConversationLifecycle"
   | "getConversationPromptSnapshot"
   | "durableExtractionRuntime"
   | "requestDurableExtraction"
@@ -173,6 +174,7 @@ export async function handleMessageSendMethod(
         agentRegistry: ctx.agentRegistry,
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
+        topLevelConversationLifecycle: ctx.topLevelConversationLifecycle,
         runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"message.send">(),
         residentAgentRuntime: ctx.residentAgentRuntime,
         getConversationPromptSnapshot: ctx.getConversationPromptSnapshot,

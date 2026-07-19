@@ -1,5 +1,5 @@
 import type { EmbeddingModel, FlagEmbedding } from "fastembed";
-import { EmbeddingProvider } from "./index.js";
+import { EmbeddingProvider, type EmbeddingRequestContext } from "./index.js";
 import { AuthenticationError, RateLimitError } from "../types.js";
 
 const FASTEMBED_MODEL_ALIASES: Record<string, string> = {
@@ -79,8 +79,10 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         return this.initPromise;
     }
 
-    async embed(text: string): Promise<number[]> {
+    async embed(text: string, context?: EmbeddingRequestContext): Promise<number[]> {
+        context?.signal?.throwIfAborted();
         await this.init();
+        context?.signal?.throwIfAborted();
         if (!this.model) throw new Error("Model not initialized");
 
         // fastembed returns a Generator of embeddings
@@ -88,6 +90,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         const embeddingsGenerator = this.model.embed([text]);
         const embeddings = [];
         for await (const batch of embeddingsGenerator) {
+            context?.signal?.throwIfAborted();
             embeddings.push(...batch);
         }
 
@@ -98,14 +101,17 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         return Array.from(embeddings[0]);
     }
 
-    async embedBatch(texts: string[]): Promise<number[][]> {
+    async embedBatch(texts: string[], context?: EmbeddingRequestContext): Promise<number[][]> {
+        context?.signal?.throwIfAborted();
         await this.init();
+        context?.signal?.throwIfAborted();
         if (!this.model) throw new Error("Model not initialized");
 
         const embeddingsGenerator = this.model.embed(texts);
         const allEmbeddings: number[][] = [];
 
         for await (const batch of embeddingsGenerator) {
+            context?.signal?.throwIfAborted();
             // batch is Float32Array[]
             for (const vec of batch) {
                 allEmbeddings.push(Array.from(vec));

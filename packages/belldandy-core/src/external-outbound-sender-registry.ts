@@ -178,6 +178,7 @@ export class ExternalOutboundSenderRegistry {
     channel: ExternalOutboundChannel;
     content: string;
     resolvedSessionKey: string;
+    idempotencyKey?: string;
   }): Promise<ExternalOutboundSendResult> {
     const channel = input.channel;
     const sender = this.senders.get(channel);
@@ -199,7 +200,10 @@ export class ExternalOutboundSenderRegistry {
       };
     }
     const resolvedSessionKey = normalizeString(input.resolvedSessionKey);
-    const sent = await sender.sendProactiveMessage(content, { sessionKey: resolvedSessionKey });
+    const idempotencyKey = normalizeString(input.idempotencyKey);
+    const sent = idempotencyKey
+      ? await sender.sendProactiveMessage(content, { sessionKey: resolvedSessionKey }, { idempotencyKey })
+      : await sender.sendProactiveMessage(content, { sessionKey: resolvedSessionKey });
     if (!sent) {
       return {
         ok: false,

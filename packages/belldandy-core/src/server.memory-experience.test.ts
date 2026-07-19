@@ -1948,10 +1948,13 @@ test("experience.candidate.synthesize.create creates a synthesized draft candida
 
   createTask("task-synthesize-create-1", "Tool Call Method Draft One", "整理工具调用信息形成 method。");
   createTask("task-synthesize-create-2", "Tool Call Method Draft Two", "继续补充工具调用 method 的边界。");
+  createTask("task-synthesize-create-3", "Tool Call Method Draft Three", "不参与本轮合成的对照草稿。");
   const candidateOne = memoryManager.promoteTaskToMethodCandidate("task-synthesize-create-1");
   const candidateTwo = memoryManager.promoteTaskToMethodCandidate("task-synthesize-create-2");
+  const candidateThree = memoryManager.promoteTaskToMethodCandidate("task-synthesize-create-3");
   expect(candidateOne?.candidate.id).toBeTruthy();
   expect(candidateTwo?.candidate.id).toBeTruthy();
+  expect(candidateThree?.candidate.id).toBeTruthy();
   await writeExperienceSynthesisTestTemplate(stateDir, "method");
   registerGlobalMemoryManager(memoryManager);
 
@@ -2004,8 +2007,10 @@ test("experience.candidate.synthesize.create creates a synthesized draft candida
     expect(storedCandidate?.metadata?.synthesis?.sourceCount).toBe(2);
     const consumedSourceOne = memoryManager.getExperienceCandidate(candidateOne!.candidate.id);
     const consumedSourceTwo = memoryManager.getExperienceCandidate(candidateTwo!.candidate.id);
+    const unselectedSourceThree = memoryManager.getExperienceCandidate(candidateThree!.candidate.id);
     expect(consumedSourceOne?.metadata?.synthesisConsumed?.consumed).toBe(true);
     expect(consumedSourceTwo?.metadata?.synthesisConsumed?.consumed).toBe(true);
+    expect(unselectedSourceThree?.metadata?.synthesisConsumed?.consumed).not.toBe(true);
     expect(consumedSourceOne?.metadata?.synthesisConsumed?.consumedByCandidateId).toBe(String(createdCandidate.id || ""));
     expect(consumedSourceTwo?.metadata?.synthesisConsumed?.consumedByCandidateId).toBe(String(createdCandidate.id || ""));
   } finally {

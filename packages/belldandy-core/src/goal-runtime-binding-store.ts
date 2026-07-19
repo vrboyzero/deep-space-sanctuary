@@ -16,7 +16,7 @@ export type GoalRuntimeBindingRecord = {
   runId?: string;
   agentId?: string;
   profileId?: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   conversationId?: string;
   parentConversationId?: string;
   sessionId?: string;
@@ -229,7 +229,7 @@ export class GoalRuntimeBindingStore {
     taskId: string;
     agentId?: string;
     profileId?: string;
-    role?: "default" | "coder" | "researcher" | "verifier";
+    role?: GoalRuntimeBindingRecord["role"];
     conversationId?: string;
     parentConversationId?: string;
     sessionId?: string;
@@ -327,6 +327,7 @@ export class GoalRuntimeBindingStore {
       agentId,
       profileId: normalizeText((value as Record<string, unknown>).profileId),
       role: (value as Record<string, unknown>).role === "default"
+        || (value as Record<string, unknown>).role === "commander"
         || (value as Record<string, unknown>).role === "coder"
         || (value as Record<string, unknown>).role === "researcher"
         || (value as Record<string, unknown>).role === "verifier"

@@ -1306,6 +1306,65 @@ describe("experience workbench capability acquisition", () => {
     );
   });
 
+  it("submits and consumes only the checked synthesis sources", async () => {
+    const candidates = [
+      {
+        id: "draft-method-1",
+        taskId: "task-method-1",
+        type: "method",
+        status: "draft",
+        title: "Method Draft One",
+        slug: "method-draft-one",
+        summary: "method summary 1",
+        content: "# Method Draft One",
+        sourceTaskSnapshot: {},
+      },
+      {
+        id: "draft-method-2",
+        taskId: "task-method-2",
+        type: "method",
+        status: "draft",
+        title: "Method Draft Two",
+        slug: "method-draft-two",
+        summary: "method summary 2",
+        content: "# Method Draft Two",
+        sourceTaskSnapshot: {},
+      },
+    ];
+    const { refs, feature, sendReq } = createHarness({ candidates });
+
+    await feature.openExperienceWorkbench({ tab: "capability-acquisition", preferFirst: false });
+    refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-capability-synthesize-candidate-id='draft-method-1']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(6);
+
+    const seedCheckbox = refs.experienceSynthesisModalListEl
+      .querySelector("[data-synthesis-source-id='draft-method-1']");
+    const relatedCheckbox = refs.experienceSynthesisModalListEl
+      .querySelector("[data-synthesis-source-id='draft-method-2']");
+    expect(seedCheckbox?.checked).toBe(true);
+    expect(seedCheckbox?.disabled).toBe(true);
+    expect(relatedCheckbox?.checked).toBe(true);
+    relatedCheckbox.checked = false;
+    relatedCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+
+    refs.experienceSynthesisModalSubmitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(10);
+
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
+      method: "experience.candidate.synthesize.create",
+      params: expect.objectContaining({
+        candidateId: "draft-method-1",
+        sourceCandidateIds: ["draft-method-1"],
+        markSourcesConsumed: true,
+      }),
+    }));
+    expect(refs.experienceWorkbenchCapabilityOverviewEl
+      .querySelector("[data-capability-open-candidate-id='draft-method-2']"))
+      .toBeTruthy();
+  });
+
   it("accepts the created synthesized draft directly from the modal shortcut", async () => {
     const candidates = [
       {

@@ -1,4 +1,4 @@
-import type { AgentUsage, BelldandyAgent } from "@belldandy/agent";
+import type { AgentBudgetExhausted, AgentUsage, BelldandyAgent } from "@belldandy/agent";
 import { registerConversationToolEventObserver } from "./query-runtime-side-effects.js";
 
 type AgentRunInput = Parameters<BelldandyAgent["run"]>[0];
@@ -84,11 +84,14 @@ export type QueryRuntimeAgentUsage = {
   compression?: AgentUsage["compression"];
 };
 
+export type QueryRuntimeAgentBudgetExhausted = Omit<AgentBudgetExhausted, "type">;
+
 export type QueryRuntimeAgentRunSummary = {
   receivedFinal: boolean;
   fullText: string;
   finalText: string;
   latestStatus?: string;
+  budgetExhausted?: QueryRuntimeAgentBudgetExhausted;
   latestUsage?: QueryRuntimeAgentUsage;
   durationMs: number;
   statusCount: number;
@@ -100,7 +103,7 @@ export type QueryRuntimeAgentRunSummary = {
 
 export type QueryRuntimeAgentRunResult = Pick<
   QueryRuntimeAgentRunSummary,
-  "finalText" | "latestUsage" | "durationMs" | "toolCallCount" | "toolResultCount" | "toolEventCount"
+  "finalText" | "budgetExhausted" | "latestUsage" | "durationMs" | "toolCallCount" | "toolResultCount" | "toolEventCount"
 >;
 
 export async function runAgentWithLifecycle(
@@ -112,6 +115,7 @@ export async function runAgentWithLifecycle(
     onDelta?: (item: { delta: string }) => void;
     onToolCall?: (item: QueryRuntimeAgentToolCall) => void;
     onToolResult?: (item: QueryRuntimeAgentToolResult) => void;
+    onBudgetExhausted?: (item: QueryRuntimeAgentBudgetExhausted) => void;
     onUsage?: (item: AgentUsage) => void;
     onFinal?: (item: { text: string }) => void;
     onToolEvent?: (detail: Record<string, unknown>) => void;
@@ -132,6 +136,7 @@ export async function runAgentWithLifecycle(
   let finalText = "";
   let receivedFinal = false;
   let latestStatus: string | undefined;
+  let budgetExhausted: QueryRuntimeAgentBudgetExhausted | undefined;
   let latestUsage: QueryRuntimeAgentUsage | undefined;
   let statusCount = 0;
   let deltaCount = 0;
@@ -184,6 +189,16 @@ export async function runAgentWithLifecycle(
           failureKind: item.failureKind,
           metadata: item.metadata,
         });
+        continue;
+      }
+
+      if (item.type === "budget_exhausted") {
+        budgetExhausted = {
+          budget: item.budget,
+          limit: item.limit,
+          observed: item.observed,
+        };
+        input.onBudgetExhausted?.(budgetExhausted);
         continue;
       }
 
@@ -252,6 +267,7 @@ export async function runAgentWithLifecycle(
       fullText,
       finalText,
       latestStatus,
+      ...(budgetExhausted ? { budgetExhausted } : {}),
       latestUsage,
       durationMs: Date.now() - runStartedAt,
       statusCount,
@@ -284,6 +300,7 @@ export async function runAgentToCompletionWithLifecycle(
     runInput: AgentRunInput;
     onToolCall?: (item: QueryRuntimeAgentToolCall) => void;
     onToolResult?: (item: QueryRuntimeAgentToolResult) => void;
+    onBudgetExhausted?: (item: QueryRuntimeAgentBudgetExhausted) => void;
     onToolEvent?: (detail: Record<string, unknown>) => void;
     onFailed?: (detail: {
       error: string;
@@ -299,6 +316,7 @@ export async function runAgentToCompletionWithLifecycle(
     runInput: input.runInput,
     onToolCall: input.onToolCall,
     onToolResult: input.onToolResult,
+    onBudgetExhausted: input.onBudgetExhausted,
     onToolEvent: input.onToolEvent,
     onFailed: (detail) => {
       input.onFailed?.({
@@ -313,6 +331,7 @@ export async function runAgentToCompletionWithLifecycle(
 
   return {
     finalText: result.finalText,
+    ...(result.budgetExhausted ? { budgetExhausted: result.budgetExhausted } : {}),
     latestUsage: result.latestUsage,
     durationMs: result.durationMs,
     toolCallCount: result.toolCallCount,

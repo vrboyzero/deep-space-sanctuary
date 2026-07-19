@@ -35,6 +35,13 @@ function createContext(workspaceRoot: string): ToolContext {
   };
 }
 
+function binaryResponse(content: Buffer, headers?: HeadersInit): Response {
+  return new Response(content, {
+    status: 200,
+    headers,
+  });
+}
+
 describe("image_generate", () => {
   let tempDir: string;
 
@@ -49,6 +56,7 @@ describe("image_generate", () => {
     delete process.env.BELLDANDY_IMAGE_MODEL;
     delete process.env.BELLDANDY_IMAGE_OUTPUT_FORMAT;
     delete process.env.BELLDANDY_IMAGE_TIMEOUT_MS;
+    delete process.env.BELLDANDY_IMAGE_MAX_OUTPUT_BYTES;
     delete process.env.BELLDANDY_OPENAI_API_KEY;
     delete process.env.BELLDANDY_OPENAI_BASE_URL;
     delete process.env.OPENAI_API_KEY;
@@ -112,10 +120,7 @@ describe("image_generate", () => {
   });
 
   it("treats BELLDANDY_IMAGE_TIMEOUT_MS=0 as no belldandy timeout override and reuses one signal for url download", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => Buffer.from("downloaded-image-bytes"),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(Buffer.from("downloaded-image-bytes")));
     vi.stubGlobal("fetch", fetchMock);
     process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
     process.env.BELLDANDY_IMAGE_TIMEOUT_MS = "0";
@@ -157,10 +162,7 @@ describe("image_generate", () => {
       ],
     });
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => Buffer.from("agnes-url-image-bytes"),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(Buffer.from("agnes-url-image-bytes")));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await imageGenerateTool.execute({
@@ -219,10 +221,7 @@ describe("image_generate", () => {
       ],
     });
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => Buffer.from("agnes-img2img-url-bytes"),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(Buffer.from("agnes-img2img-url-bytes")));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await imageGenerateTool.execute({
@@ -289,10 +288,7 @@ describe("image_generate", () => {
     });
 
     const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => jpegBytes,
-    });
+    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(jpegBytes));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await imageGenerateTool.execute({
@@ -338,5 +334,24 @@ describe("image_generate", () => {
       relativePath: expect.stringMatching(/\.webp$/),
       webPath: expect.stringMatching(/\.webp$/),
     });
+  });
+
+  it("rejects an oversized URL response without leaving a partial image", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_MAX_OUTPUT_BYTES = "8";
+    imageGenerateMock.mockResolvedValue({
+      data: [{ url: "https://images.example.invalid/oversized.png" }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(binaryResponse(Buffer.from("123456789"))));
+
+    const result = await imageGenerateTool.execute({
+      prompt: "an image that exceeds the fixture limit",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("8 byte limit");
+    const generatedDir = path.join(tempDir, "generated", "images");
+    await expect(fs.readdir(generatedDir)).resolves.toEqual([]);
   });
 });

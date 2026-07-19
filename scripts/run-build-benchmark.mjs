@@ -23,7 +23,7 @@ function parseCount(value, label, { allowZero = false } = {}) {
   return parsed;
 }
 
-function parseArgs(argv) {
+export function parseBuildBenchmarkArgs(argv) {
   const args = {
     output: defaultOutput,
     warmupRuns: 1,
@@ -33,6 +33,9 @@ function parseArgs(argv) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (argument === "--") {
+      continue;
+    }
     if (argument === "--help" || argument === "-h") {
       args.help = true;
       continue;
@@ -241,7 +244,7 @@ Options:
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseBuildBenchmarkArgs(process.argv.slice(2));
   if (args.help) {
     printHelp();
     return;

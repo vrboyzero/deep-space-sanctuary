@@ -12,6 +12,7 @@ export * from "./session-key.js";
 export * from "./current-conversation-binding-store.js";
 export * from "./channel-safe-logger.js";
 export * from "./channel-ingress-scheduler.js";
+export * from "./channel-outbound.js";
 
 // 渠道实现
 export * from "./feishu.js";

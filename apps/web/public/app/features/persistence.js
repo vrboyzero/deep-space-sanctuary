@@ -119,8 +119,20 @@ export function createCredentialSession({
   authValueEl,
   rememberSessionEl,
 }) {
+  let disposed = false;
+  let controlsBound = false;
+  let disposeHook = null;
+  const listenerEntries = [];
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    listenerEntries.push({ target, type, handler });
+  }
+
   const credentialSession = {
     restore() {
+      if (disposed) return null;
       restoreAuthFields({ storeKey, authModeEl, authValueEl });
       const rememberSession = restoreSessionAuthPreference({ rememberSessionKey, rememberSessionEl });
       const restoredToken = restoreSessionAuthToken({
@@ -133,6 +145,7 @@ export function createCredentialSession({
       return restoredToken;
     },
     persist() {
+      if (disposed) return;
       persistAuthFields({ storeKey, authModeEl });
       const rememberSession = persistSessionAuthPreference({ rememberSessionKey, rememberSessionEl });
       persistSessionAuthToken({
@@ -144,6 +157,7 @@ export function createCredentialSession({
       syncRememberSessionControl({ authModeEl, rememberSessionEl });
     },
     setCredential({ mode, value } = {}) {
+      if (disposed) return;
       const normalizedMode = ["none", "token", "password"].includes(String(mode))
         ? String(mode)
         : "none";
@@ -154,6 +168,7 @@ export function createCredentialSession({
       credentialSession.persist();
     },
     setMode(mode) {
+      if (disposed) return;
       const normalizedMode = ["none", "token", "password"].includes(String(mode))
         ? String(mode)
         : "none";
@@ -161,8 +176,89 @@ export function createCredentialSession({
       if (authValueEl) authValueEl.value = "";
       credentialSession.persist();
     },
+    bindControls({ onModeChange, onValueInput, onDispose } = {}) {
+      if (disposed || controlsBound) return;
+      controlsBound = true;
+      disposeHook = typeof onDispose === "function" ? onDispose : null;
+      addOwnedListener(authModeEl, "change", () => {
+        if (disposed) return;
+        onModeChange?.(authModeEl.value);
+        credentialSession.setMode(authModeEl.value);
+      });
+      addOwnedListener(authValueEl, "input", () => {
+        if (disposed) return;
+        onValueInput?.(authValueEl.value);
+        credentialSession.persist();
+      });
+      addOwnedListener(rememberSessionEl, "change", () => {
+        if (disposed) return;
+        credentialSession.persist();
+      });
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const { target, type, handler } of listenerEntries) {
+        target.removeEventListener(type, handler);
+      }
+      listenerEntries.length = 0;
+      // 页面生命周期结束时主动移除仍停留在 DOM input 中的敏感值。
+      if (authValueEl) authValueEl.value = "";
+      disposeHook?.();
+      disposeHook = null;
+    },
+    getRuntimeSnapshot() {
+      return {
+        listenerCount: listenerEntries.length,
+        disposed,
+      };
+    },
   };
   return credentialSession;
+}
+
+export function createModelSelectionPersistenceFeature({ select, storageKey } = {}) {
+  let disposed = false;
+  let listenerCount = 0;
+
+  function handleSelectionChange() {
+    if (disposed || !storageKey) return;
+    const selected = select?.value || "";
+    safeStorageWrite((storage) => {
+      if (selected) {
+        storage.setItem(storageKey, selected);
+        return;
+      }
+      // 空选择表示继续使用服务端默认模型，不保留过期的本地覆盖值。
+      storage.removeItem(storageKey);
+    });
+  }
+
+  if (select) {
+    select.addEventListener("change", handleSelectionChange);
+    listenerCount = 1;
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (listenerCount > 0) {
+      select.removeEventListener("change", handleSelectionChange);
+      listenerCount = 0;
+    }
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount,
+      disposed,
+    };
+  }
+
+  return {
+    dispose,
+    getRuntimeSnapshot,
+  };
 }
 
 export function restoreWorkspaceRootsField({ workspaceRootsKey, workspaceRootsEl }) {

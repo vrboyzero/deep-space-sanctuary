@@ -13,6 +13,8 @@ import { cosineSimilarity, type EmbeddingVector } from "./embeddings/index.js";
 
 /** 获取 chunk embedding 向量的回调函数 */
 export type GetVectorFn = (chunkId: string) => EmbeddingVector | null;
+/** 一次读取多个 chunk embedding 向量的可选回调，保留单项回调作为兼容回退。 */
+export type GetVectorsFn = (chunkIds: string[]) => ReadonlyMap<string, EmbeddingVector | null>;
 
 export interface RerankerOptions {
   /** core/daily/session/other 的权重乘数 */
@@ -70,7 +72,11 @@ export class ResultReranker {
    * 对搜索结果进行规则重排序。
    * 不修改原数组，返回新的排序后数组。
    */
-  rerank(results: MemorySearchResult[], getVector?: GetVectorFn): MemorySearchResult[] {
+  rerank(
+    results: MemorySearchResult[],
+    getVector?: GetVectorFn,
+    getVectors?: GetVectorsFn,
+  ): MemorySearchResult[] {
     if (results.length <= 1) return results;
 
     const now = Date.now();
@@ -117,7 +123,7 @@ export class ResultReranker {
 
     // 6. MMR 多样性去重（如果提供了 getVector 回调且 lambda < 1）
     if (getVector && this.mmrLambda < 1 && filtered.length > 1) {
-      return this.applyMMR(filtered, getVector);
+      return this.applyMMR(filtered, getVector, getVectors);
     }
 
     return filtered;
@@ -127,13 +133,21 @@ export class ResultReranker {
    * MMR (Maximal Marginal Relevance) 多样性去重。
    * 贪心选择：每次选择与已选结果最不相似、同时相关性最高的候选。
    */
-  private applyMMR(results: MemorySearchResult[], getVector: GetVectorFn): MemorySearchResult[] {
+  private applyMMR(
+    results: MemorySearchResult[],
+    getVector: GetVectorFn,
+    getVectors?: GetVectorsFn,
+  ): MemorySearchResult[] {
     if (results.length <= 1) return results;
 
     // 预加载所有向量（避免重复查询）
-    const vectors = new Map<string, EmbeddingVector | null>();
-    for (const r of results) {
-      vectors.set(r.id, getVector(r.id));
+    const vectors = getVectors
+      ? new Map(getVectors([...new Set(results.map((result) => result.id))]))
+      : new Map<string, EmbeddingVector | null>();
+    if (!getVectors) {
+      for (const r of results) {
+        vectors.set(r.id, getVector(r.id));
+      }
     }
 
     const selected: MemorySearchResult[] = [];

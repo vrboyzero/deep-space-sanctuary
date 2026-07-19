@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ResultReranker } from "./reranker.js";
 
@@ -102,5 +102,66 @@ describe("ResultReranker", () => {
     expect((results.find((item) => item.id === "session-digest")?.score ?? 0)).toBeLessThan(
       results.find((item) => item.id === "other-family")?.score ?? Number.POSITIVE_INFINITY,
     );
+  });
+
+  it("loads MMR vectors through one batch callback when provided", () => {
+    const reranker = new ResultReranker({
+      recencyHalfLifeDays: 0,
+      diversityPenalty: 0,
+      minScore: 0,
+      mmrLambda: 0.7,
+      mmrSimilarityThreshold: 0.95,
+    });
+    const getVector = vi.fn(() => null);
+    const getVectors = vi.fn((chunkIds: string[]) => new Map([
+      [chunkIds[0], [1, 0]],
+      [chunkIds[1], [1, 0]],
+      [chunkIds[2], [0, 1]],
+    ]));
+
+    const results = reranker.rerank([
+      {
+        id: "mmr-batch-first",
+        sourcePath: "memory/first.md",
+        sourceType: "manual",
+        memoryType: "other",
+        visibility: "private",
+        snippet: "first",
+        score: 0.9,
+        metadata: {},
+      },
+      {
+        id: "mmr-batch-duplicate",
+        sourcePath: "memory/duplicate.md",
+        sourceType: "manual",
+        memoryType: "other",
+        visibility: "private",
+        snippet: "duplicate",
+        score: 0.8,
+        metadata: {},
+      },
+      {
+        id: "mmr-batch-distinct",
+        sourcePath: "memory/distinct.md",
+        sourceType: "manual",
+        memoryType: "other",
+        visibility: "private",
+        snippet: "distinct",
+        score: 0.7,
+        metadata: {},
+      },
+    ], getVector, getVectors);
+
+    expect(getVectors).toHaveBeenCalledTimes(1);
+    expect(getVectors).toHaveBeenCalledWith([
+      "mmr-batch-first",
+      "mmr-batch-duplicate",
+      "mmr-batch-distinct",
+    ]);
+    expect(getVector).not.toHaveBeenCalled();
+    expect(results.map((item) => item.id)).toEqual([
+      "mmr-batch-first",
+      "mmr-batch-distinct",
+    ]);
   });
 });

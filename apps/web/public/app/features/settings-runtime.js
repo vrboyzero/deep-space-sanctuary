@@ -370,6 +370,14 @@ export function createSettingsRuntimeFeature({
   }
 
   return {
+    dispose() {
+      settingsController.dispose?.();
+      toolSettingsController.dispose?.();
+      externalOutboundController.dispose?.();
+      emailOutboundController.dispose?.();
+      commanderQuickToggleController.dispose?.();
+      pairingPendingByCode.clear();
+    },
     refreshLocale() {
       toolSettingsController.refreshLocale?.();
       commanderQuickToggleController.refreshLocale?.();

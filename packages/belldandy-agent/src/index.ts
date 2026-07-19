@@ -6,7 +6,21 @@ import type {
 } from "./prompt-budget-observability.js";
 
 export { OpenAIChatAgent, type OpenAIChatAgentOptions } from "./openai.js";
-export { ToolEnabledAgent, type ToolEnabledAgentOptions } from "./tool-agent.js";
+export {
+  DEFAULT_MAX_TOOL_CALLS,
+  DEFAULT_TOOL_LOOP_ITERATION_BUDGET,
+  ToolEnabledAgent,
+  type ConversationReleaseRuntimeSnapshot,
+  type ToolEnabledAgentOptions,
+} from "./tool-agent.js";
+export {
+  DEFAULT_MAX_HIGH_RISK_TOOL_CALLS,
+  DEFAULT_MAX_RUN_WALL_TIME_MS,
+  DEFAULT_MAX_TOTAL_TOKENS,
+  normalizeMaxHighRiskToolCalls,
+  normalizeMaxRunWallTimeMs,
+  normalizeMaxTotalTokens,
+} from "./react-run-budget.js";
 export { microcompactMessages, type MicrocompactMessage, type MicrocompactOptions, type MicrocompactResult } from "./microcompact.js";
 
 // Failover（模型容灾）
@@ -97,6 +111,7 @@ export {
   ConversationStore,
   type Conversation,
   type ConversationMessage,
+  type ConversationRuntimeSnapshot,
   type ConversationStoreOptions,
   type CompactBoundaryRecord,
   type ForcePartialCompactOptions,
@@ -221,6 +236,14 @@ export type AgentFinal = {
 export type AgentStatus = {
   type: "status";
   status: "running" | "done" | "error" | "stopped";
+};
+
+/** ReAct 硬预算耗尽时的可诊断终态；final/status 会紧随其后。 */
+export type AgentBudgetExhausted = {
+  type: "budget_exhausted";
+  budget: "tool_loop_iterations" | "tool_calls" | "wall_time_ms" | "total_tokens" | "high_risk_tool_calls";
+  limit: number;
+  observed: number;
 };
 
 export type AgentToolCall = {
@@ -364,12 +387,15 @@ export type AgentStreamItem =
   | AgentDelta
   | AgentFinal
   | AgentStatus
+  | AgentBudgetExhausted
   | AgentToolCall
   | AgentToolResult
   | AgentUsage;
 
 export interface BelldandyAgent {
   run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
+  /** 释放指定会话的纯内存状态；实现不得删除 canonical 持久化数据。 */
+  releaseConversation?(conversationId: string): void | Promise<void>;
 }
 
 export class MockAgent implements BelldandyAgent {

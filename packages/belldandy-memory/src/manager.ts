@@ -1,6 +1,11 @@
 import { MemoryStore, type TaskSummaryRecord } from "./store.js";
 import type { SqliteDatabase } from "./index.js";
-import { MemoryIndexer, type IndexerOptions } from "./indexer.js";
+import {
+    MemoryIndexer,
+    resolveWatchEventCoalesceMs,
+    type IndexerOptions,
+} from "./indexer.js";
+import { IndexCoordinator } from "./index-coordinator.js";
 import { ResultReranker, type RerankerOptions } from "./reranker.js";
 import { shouldSkipRetrieval } from "./adaptive-retrieval.js";
 import { OpenAIEmbeddingProvider } from "./embeddings/openai.js";
@@ -9,6 +14,13 @@ import {
     LocalEmbeddingProvider,
 } from "./embeddings/local-provider.js";
 import type { EmbeddingProvider } from "./embeddings/index.js";
+import {
+    isValidEmbeddingVector,
+    resolveEmbeddingDimension,
+    validateEmbeddingBatchResponse,
+} from "./embedding-sync.js";
+import { EmbeddingFailureLedger, type EmbeddingFailureReason } from "./embedding-failure-ledger.js";
+import { PendingEmbeddingCandidateCursor } from "./embedding-pending-candidates.js";
 import type {
     MemoryCategory,
     MemoryChunk,
@@ -27,6 +39,7 @@ import { shouldAutoPromoteTaskByPolicy } from "./task-auto-promotion-policy.js";
 import { buildTaskDerivedSearchResults } from "./derived-task-retrieval.js";
 import { collectDerivedSessionSearchResults } from "./derived-session-retrieval.js";
 import { buildExperienceDerivedSearchResults } from "./derived-experience-retrieval.js";
+import { createMemoryRetrievalRequest } from "./memory-retrieval-deadline.js";
 import { applySearchResultSourceRegistryHints } from "./search-result-source-registry.js";
 import {
     buildGlobalMemoryTreeNodes,
@@ -82,6 +95,7 @@ import {
     recordMemoryTreeJobLedgerSuccess,
 } from "./memory-tree-job-ledger.js";
 import { claimMemoryTreeJobRun } from "./memory-tree-job-control.js";
+import { MemoryTreeRefreshQueue } from "./memory-tree-refresh-queue.js";
 import {
     buildMemoryTreeLifecycleReport,
     type MemoryTreeLifecycleReport,
@@ -145,6 +159,7 @@ import type {
     MemoryTreeSourceRecord,
     MemoryTreeSourceRebuildResult,
 } from "./memory-tree-types.js";
+import { BackgroundAbortRegistry, BackgroundPauseGate } from "./background-job-control.js";
 import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
 import type {
     TaskActivityRecord,
@@ -168,7 +183,6 @@ import type {
     ExperienceUsage,
     ExperienceUsageListFilter,
     ExperienceUsageRecordResult,
-    ExperienceUsageSummary,
     ExperienceUsageStats,
     ExperienceUsageVia,
     TaskExperienceDetail,
@@ -639,6 +653,12 @@ export type MemorySearchNodeAssistedDiagnostics = {
     nodeBackedShare: number;
     chunkOnlyShare: number;
     topNodeHits: MemorySearchNodeAssistedHit[];
+    treeFreshness?: {
+        stale: boolean;
+        refreshScheduled: boolean;
+        dirtyKinds: ManagedMemoryTreeNodeKind[];
+        oldestRebuiltAt?: string;
+    };
 };
 
 export type MemorySearchDiagnostics = {
@@ -647,6 +667,8 @@ export type MemorySearchDiagnostics = {
     routingPolicy: MemorySearchRoutingPolicy;
     skipped: boolean;
     skipReason?: string;
+    deadlineExceeded?: boolean;
+    embeddingFallbackReason?: "deadline" | "error";
     deepRetrievalApplied: boolean;
     scoreSignalAppliedCount: number;
     sourceClassMix: Record<string, number>;
@@ -694,6 +716,7 @@ export interface MemoryManagerOptions {
     evolutionBaseUrl?: string;     // 提取 API base URL（默认继承 openaiBaseUrl）
     evolutionApiKey?: string;      // 提取 API key（默认继承 openaiApiKey）
     evolutionMinMessages?: number; // 触发提取的最少消息数（默认 4）
+    evolutionTimeoutMs?: number;   // 单次提取远端调用硬 deadline（默认 120 秒）
     /** stateDir 用于定位 memory/ 目录写入每日文件 */
     stateDir?: string;
     /** Task-aware Embedding 前缀（用于支持 task 参数的模型如 Jina/BGE） */
@@ -781,7 +804,10 @@ function toRecentTaskSummary(task: TaskSummaryRecord): RecentTaskSummary {
 
 export class MemoryManager {
     private store: MemoryStore;
+    private readonly embeddingFailureLedger: EmbeddingFailureLedger;
     private indexer: MemoryIndexer;
+    private indexCoordinator: IndexCoordinator;
+    private readonly memoryTreeRefreshQueue: MemoryTreeRefreshQueue;
     private reranker: ResultReranker;
     private embeddingProvider: EmbeddingProvider;
     private workspaceRoot: string;
@@ -789,8 +815,8 @@ export class MemoryManager {
     private additionalFiles: string[];
     private embeddingBatchSize: number;
     // 后台任务暂停控制（Agent 活跃时暂停，避免抢占 API 并发）
-    private _paused = false;
-    private _pauseResolve: (() => void) | null = null;
+    private readonly backgroundPauseGate = new BackgroundPauseGate();
+    private readonly evolutionRequests = new BackgroundAbortRegistry();
     private _summaryRunning = false;
     // L0 摘要层
     private summaryEnabled: boolean;
@@ -799,7 +825,6 @@ export class MemoryManager {
     private summaryApiKey: string;
     private summaryBatchSize: number;
     private summaryMinContentLength: number;
-    private lazyIndexingPromise: Promise<void> | null = null;
     private readonly inFlightOperations = new Set<Promise<unknown>>();
     private closed = false;
     private closePromise: Promise<void> | null = null;
@@ -809,6 +834,7 @@ export class MemoryManager {
     private evolutionBaseUrl: string;
     private evolutionApiKey: string;
     private evolutionMinMessages: number;
+    private evolutionTimeoutMs: number;
     private stateDir: string;
     /** 用于 embedding 缓存 key / 签名版本化（task-aware embedding） */
     private embeddingQueryPrefix: string;
@@ -826,6 +852,8 @@ export class MemoryManager {
     private logEmbeddingSyncSummary(stats: {
         batchCount: number;
         totalChunks: number;
+        writtenChunks: number;
+        failedChunks: number;
         cacheHits: number;
         cacheMisses: number;
         apiRequestCount: number;
@@ -834,6 +862,7 @@ export class MemoryManager {
         if (stats.batchCount <= 0 || stats.totalChunks <= 0) return;
         console.log(
             `[MemoryManager] Embedding sync processed ${stats.totalChunks} chunks in ${stats.batchCount} batch(es): `
+            + `selected=${stats.totalChunks}, written=${stats.writtenChunks}, failed=${stats.failedChunks}, `
             + `cacheHits=${stats.cacheHits}, cacheMisses=${stats.cacheMisses}, `
             + `apiRequests=${stats.apiRequestCount}, apiChunks=${stats.apiChunkCount}`,
         );
@@ -858,6 +887,7 @@ export class MemoryManager {
         }
 
         this.store = new MemoryStore(storePath);
+        this.embeddingFailureLedger = new EmbeddingFailureLedger(this.store.getDbHandleForSharedSchema());
 
         // Initialize Embedding Provider
         if (options.embeddingEnabled === false) {
@@ -894,7 +924,37 @@ export class MemoryManager {
             }
         }
 
-        this.indexer = new MemoryIndexer(this.store, options.indexerOptions);
+        const indexerOptions = options.indexerOptions ?? {};
+        this.indexCoordinator = new IndexCoordinator({
+            runFullScan: (signal) => this.runIndexWorkspaceGeneration(signal),
+            processWatchEvent: (event, signal) => this.indexer.processWatchEvent(event, signal),
+            watchCoalesceMs: resolveWatchEventCoalesceMs(indexerOptions.watchDebounceMs),
+            maxPendingWatchPaths: indexerOptions.watchMaxPendingPaths,
+            maxConcurrentWatchEvents: indexerOptions.watchMaxConcurrentEvents,
+            closeDrainTimeoutMs: indexerOptions.watchCloseDrainTimeoutMs,
+            onWatchError: (event, error) => {
+                console.error(`[WatcherFlushError] ${event.sourcePath}`, error);
+            },
+            onFullScanError: (error) => {
+                console.error("[MemoryManager] Overflow rescan failed:", error);
+            },
+        });
+        this.memoryTreeRefreshQueue = new MemoryTreeRefreshQueue({
+            run: async ({ kinds, nodeLimit, triggerSource }) => {
+                if (this.closed) return;
+                await this.ensureManagedMemoryTreeFresh({
+                    kinds,
+                    nodeLimit,
+                    rebuildSources: false,
+                    triggerSource,
+                });
+            },
+            onError: () => {
+                // 失败细节由 lifecycle ledger 保存；请求路径只保留无内容的后台失败提示。
+                console.warn("[MemoryManager] Background memory tree refresh failed.");
+            },
+        });
+        this.indexer = new MemoryIndexer(this.store, indexerOptions, this.indexCoordinator);
         this.reranker = new ResultReranker(options.rerankerOptions);
         this.embeddingBatchSize = options.embeddingBatchSize || 10;
 
@@ -912,6 +972,11 @@ export class MemoryManager {
         this.evolutionBaseUrl = options.evolutionBaseUrl || options.openaiBaseUrl || "";
         this.evolutionApiKey = options.evolutionApiKey || options.openaiApiKey || "";
         this.evolutionMinMessages = options.evolutionMinMessages ?? 4;
+        this.evolutionTimeoutMs = typeof options.evolutionTimeoutMs === "number"
+            && Number.isFinite(options.evolutionTimeoutMs)
+            && options.evolutionTimeoutMs > 0
+            ? Math.max(1, Math.floor(options.evolutionTimeoutMs))
+            : 120_000;
         this.stateDir = options.stateDir || resolveStateDir(process.env);
         this.publishStateDir = options.stateDir || workspaceStateDir;
         this.embeddingQueryPrefix = options.embeddingQueryPrefix ?? "";
@@ -941,26 +1006,33 @@ export class MemoryManager {
     /**
      * Index files in the workspace
      */
-    async indexWorkspace(): Promise<void> {
+    indexWorkspace(): Promise<void> {
         if (this.closed) {
-            return;
+            return this.closePromise ?? Promise.resolve();
         }
+        return this.indexCoordinator.runFullScan();
+    }
+
+    private async runIndexWorkspaceGeneration(signal: AbortSignal): Promise<void> {
+        if (this.closed || signal.aborted) return;
+        const runBudget = this.indexer.beginFullScan();
+
         // Index primary workspace root
-        await this.indexer.indexDirectory(this.workspaceRoot);
-        if (this.closed) {
+        await this.indexer.indexDirectory(this.workspaceRoot, this.workspaceRoot, signal, runBudget);
+        if (this.closed || signal.aborted) {
             return;
         }
 
         // Index additional roots (e.g. workspace memory files)
         for (const root of this.additionalRoots) {
-            if (this.closed) {
+            if (this.closed || signal.aborted) {
                 return;
             }
             try {
-                await this.indexer.indexDirectory(root);
+                await this.indexer.indexDirectory(root, root, signal, runBudget);
             } catch (err) {
                 const code = (err as NodeJS.ErrnoException | undefined)?.code;
-                if (code !== "ENOENT") {
+                if (!signal.aborted && code !== "ENOENT") {
                     console.warn(`[MemoryManager] Failed to index additional root ${root}:`, err);
                 }
             }
@@ -968,27 +1040,34 @@ export class MemoryManager {
 
         // Index explicit files (e.g. stateDir/MEMORY.md)
         for (const filePath of this.additionalFiles) {
-            if (this.closed) {
+            if (this.closed || signal.aborted) {
                 return;
             }
             try {
                 const stats = await fs.stat(filePath);
-                if (stats.isFile()) {
-                    await this.indexer.indexFile(filePath);
+                if (stats.isFile() && !signal.aborted) {
+                    await this.indexer.indexFile(filePath, signal, runBudget);
                 }
             } catch (err) {
                 const code = (err as NodeJS.ErrnoException | undefined)?.code;
-                if (code !== "ENOENT") {
+                if (!signal.aborted && code !== "ENOENT") {
                     console.warn(`[MemoryManager] Failed to index additional file ${filePath}:`, err);
                 }
             }
         }
 
-        if (this.closed) {
+        if (this.closed || signal.aborted) {
             return;
         }
-        await this.processPendingEmbeddings();
-        if (this.closed) {
+        const runResult = this.indexer.finishFullScan(runBudget);
+        if (runResult.deferred) {
+            console.warn(
+                `[MemoryManager] Index byte budget exhausted after ${runResult.consumedBytes} bytes; `
+                + "remaining files are deferred to the next full-scan generation.",
+            );
+        }
+        await this.processPendingEmbeddings(signal);
+        if (this.closed || signal.aborted) {
             return;
         }
 
@@ -1007,17 +1086,7 @@ export class MemoryManager {
         if (this.closed) {
             return this.closePromise ?? Promise.resolve();
         }
-        if (!this.lazyIndexingPromise) {
-            const run = this.registerInFlight(this.indexWorkspace());
-            let visible: Promise<void>;
-            visible = run.finally(() => {
-                if (this.lazyIndexingPromise === visible) {
-                    this.lazyIndexingPromise = null;
-                }
-            });
-            this.lazyIndexingPromise = visible;
-        }
-        return this.lazyIndexingPromise;
+        return this.indexCoordinator.runFullScan();
     }
 
     /**
@@ -1034,6 +1103,8 @@ export class MemoryManager {
         let retrievalMode: MemorySearchOptions["retrievalMode"] = "explicit";
         let routingPolicy: MemorySearchRoutingPolicy = this.nodeAssistedRetrievalEnabled ? "node_assisted" : "chunk_only";
         let includeContent = true;
+        let signal: AbortSignal | undefined;
+        let deadlineMs: number | undefined;
 
         if (typeof limitOrOptions === "number") {
             limit = limitOrOptions;
@@ -1043,115 +1114,174 @@ export class MemoryManager {
             retrievalMode = limitOrOptions.retrievalMode ?? "explicit";
             routingPolicy = limitOrOptions.routingPolicy ?? routingPolicy;
             includeContent = limitOrOptions.includeContent !== false;
+            signal = limitOrOptions.signal;
+            deadlineMs = limitOrOptions.deadlineMs;
         }
 
-        // 0. 自适应检索：仅对隐式召回生效，显式 memory_search / RPC 不应被跳过
-        if (retrievalMode === "implicit" && shouldSkipRetrieval(query)) {
+        const retrieval = createMemoryRetrievalRequest({ signal, deadlineMs });
+        try {
+            retrieval.throwIfCallerAborted();
+
+            // 0. 自适应检索：仅对隐式召回生效，显式 memory_search / RPC 不应被跳过
+            if (retrievalMode === "implicit" && shouldSkipRetrieval(query)) {
+                return {
+                    items: [],
+                    diagnostics: {
+                        retrievalMode,
+                        limit,
+                        routingPolicy,
+                        skipped: true,
+                        skipReason: "adaptive_retrieval_guard",
+                        deepRetrievalApplied: false,
+                        scoreSignalAppliedCount: 0,
+                        sourceClassMix: {},
+                        nodeAssisted: buildDefaultNodeAssistedDiagnostics(routingPolicy),
+                        stages: {
+                            raw: buildMemorySearchStageSnapshot([]),
+                            scoreAware: buildMemorySearchStageSnapshot([]),
+                            reranked: buildMemorySearchStageSnapshot([]),
+                            returned: buildMemorySearchStageSnapshot([]),
+                        },
+                    },
+                };
+            }
+
+            // 本地关键词和 derived surface 先启动，远端 embedding 超时后仍可稳定降级。
+            const derivedTaskResults = this.collectDerivedTaskSearchResults(query, {
+                limit,
+                filter,
+                includeContent,
+            });
+            const derivedExperienceResults = this.collectDerivedExperienceSearchResults(query, {
+                limit,
+                filter,
+                includeContent,
+            });
+            const keywordResults = this.store.searchKeyword(query, limit * 4, filter, includeContent);
+            const derivedSessionPromise = retrieval.isDeadlineExceeded()
+                ? Promise.resolve<MemorySearchResult[]>([])
+                : retrieval.waitFor(collectDerivedSessionSearchResults({
+                    stateDir: this.stateDir,
+                    query,
+                    limit,
+                    filter,
+                    includeContent,
+                    signal: retrieval.signal,
+                })).catch((error: unknown) => {
+                    retrieval.throwIfCallerAborted();
+                    if (retrieval.isDeadlineExceeded()) return [];
+                    throw error;
+                });
+
+            let embeddingFallbackReason: MemorySearchDiagnostics["embeddingFallbackReason"];
+            const embeddingPromise = retrieval.isDeadlineExceeded()
+                ? Promise.resolve<number[] | null>(null)
+                : retrieval.waitFor(Promise.resolve().then(() => (
+                    this.embeddingProvider.embedQuery
+                        ? this.embeddingProvider.embedQuery(query, { signal: retrieval.signal, deadlineMs })
+                        : this.embeddingProvider.embed(query, { signal: retrieval.signal, deadlineMs })
+                ))).catch((error: unknown) => {
+                    retrieval.throwIfCallerAborted();
+                    if (retrieval.isDeadlineExceeded()) {
+                        embeddingFallbackReason = "deadline";
+                        return null;
+                    }
+                    console.warn("Embedding failed; using keyword-only memory retrieval.");
+                    embeddingFallbackReason = "error";
+                    return null;
+                });
+            if (retrieval.isDeadlineExceeded()) {
+                embeddingFallbackReason = "deadline";
+            }
+
+            const [candidateQueryVec, derivedSessionResults] = await Promise.all([
+                embeddingPromise,
+                derivedSessionPromise,
+            ]);
+            retrieval.throwIfCallerAborted();
+            const deadlineExceeded = retrieval.isDeadlineExceeded();
+            if (deadlineExceeded) {
+                embeddingFallbackReason = "deadline";
+            }
+            const queryVec = deadlineExceeded ? null : candidateQueryVec;
+
+            // 2. Hybrid search with filter；复用并行阶段已完成的 FTS 结果。
+            const rawResults = queryVec
+                ? this.store.searchHybrid(query, queryVec, {
+                    limit: limit * 2,
+                    filter,
+                    includeContent,
+                    keywordResults,
+                })
+                : keywordResults.slice(0, limit * 2);
+            const seededResults = applySearchResultSourceRegistryHints(dedupeMemorySearchResults([
+                ...derivedTaskResults,
+                ...derivedExperienceResults,
+                ...derivedSessionResults,
+                ...rawResults,
+            ]));
+            let nodeAssisted = {
+                results: seededResults,
+                diagnostics: buildDefaultNodeAssistedDiagnostics(routingPolicy),
+            };
+            if (routingPolicy === "node_assisted" && !deadlineExceeded) {
+                try {
+                    nodeAssisted = await retrieval.waitFor(this.applyNodeAssistedRetrieval(query, {
+                        limit,
+                        filter,
+                        rawResults: seededResults,
+                        signal: retrieval.signal,
+                    }));
+                } catch (error) {
+                    retrieval.throwIfCallerAborted();
+                    if (!retrieval.isDeadlineExceeded()) throw error;
+                    embeddingFallbackReason = "deadline";
+                }
+            }
+            const sourceRegistryAwareResults = applySearchResultSourceRegistryHints(nodeAssisted.results);
+            const scoreAwareResults = this.applyMemoryTreeScoreSignals(sourceRegistryAwareResults);
+            const scoreSignalAppliedCount = scoreAwareResults.filter((item) => {
+                const memoryTree = isRecord(item.metadata?.memoryTree) ? item.metadata.memoryTree : undefined;
+                return typeof memoryTree?.scoreVersion === "string" && memoryTree.scoreVersion.trim().length > 0;
+            }).length;
+
+            // 3. Rule-based rerank (with MMR diversity if vectors available)
+            const getVector = (chunkId: string) => this.store.getChunkVector(chunkId);
+            const getVectors = (chunkIds: string[]) => this.store.getChunkVectors(chunkIds);
+            const reranked = this.reranker.rerank(scoreAwareResults, getVector, getVectors);
+
+            // 4. M-N4: 源路径聚合二次检索（仅当启用且有重复 source 时触发）
+            let items = reranked.slice(0, limit);
+            let deepRetrievalApplied = false;
+            if (this.deepRetrievalEnabled && !retrieval.isDeadlineExceeded()) {
+                items = this.applyDeepRetrieval(reranked, limit);
+                deepRetrievalApplied = true;
+            }
+
             return {
-                items: [],
+                items,
                 diagnostics: {
                     retrievalMode,
                     limit,
                     routingPolicy,
-                    skipped: true,
-                    skipReason: "adaptive_retrieval_guard",
-                    deepRetrievalApplied: false,
-                    scoreSignalAppliedCount: 0,
-                    sourceClassMix: {},
-                    nodeAssisted: buildDefaultNodeAssistedDiagnostics(routingPolicy),
+                    skipped: false,
+                    ...(retrieval.isDeadlineExceeded() ? { deadlineExceeded: true } : {}),
+                    ...(embeddingFallbackReason ? { embeddingFallbackReason } : {}),
+                    deepRetrievalApplied,
+                    scoreSignalAppliedCount,
+                    sourceClassMix: buildMemorySearchSourceClassMix(items),
+                    nodeAssisted: finalizeNodeAssistedDiagnostics(nodeAssisted.diagnostics, items),
                     stages: {
-                        raw: buildMemorySearchStageSnapshot([]),
-                        scoreAware: buildMemorySearchStageSnapshot([]),
-                        reranked: buildMemorySearchStageSnapshot([]),
-                        returned: buildMemorySearchStageSnapshot([]),
+                        raw: buildMemorySearchStageSnapshot(seededResults),
+                        scoreAware: buildMemorySearchStageSnapshot(scoreAwareResults),
+                        reranked: buildMemorySearchStageSnapshot(reranked),
+                        returned: buildMemorySearchStageSnapshot(items),
                     },
                 },
             };
+        } finally {
+            retrieval.dispose();
         }
-
-        // 1. Embed query（使用 embedQuery 以支持 task-aware embedding）
-        let queryVec: number[] | null = null;
-        try {
-            queryVec = await (this.embeddingProvider.embedQuery
-                ? this.embeddingProvider.embedQuery(query)
-                : this.embeddingProvider.embed(query));
-        } catch (err) {
-            console.warn("Embedding failed, falling back to keyword search only", err);
-        }
-
-        // 2. Hybrid search with filter
-        const derivedTaskResults = this.collectDerivedTaskSearchResults(query, {
-            limit,
-            filter,
-            includeContent,
-        });
-        const derivedExperienceResults = this.collectDerivedExperienceSearchResults(query, {
-            limit,
-            filter,
-            includeContent,
-        });
-        const rawResults = this.store.searchHybrid(query, queryVec, { limit: limit * 2, filter, includeContent });
-        const derivedSessionResults = await collectDerivedSessionSearchResults({
-            stateDir: this.stateDir,
-            query,
-            limit,
-            filter,
-            includeContent,
-        });
-        const seededResults = applySearchResultSourceRegistryHints(dedupeMemorySearchResults([
-            ...derivedTaskResults,
-            ...derivedExperienceResults,
-            ...derivedSessionResults,
-            ...rawResults,
-        ]));
-        const nodeAssisted = routingPolicy === "node_assisted"
-            ? await this.applyNodeAssistedRetrieval(query, {
-                limit,
-                filter,
-                rawResults: seededResults,
-            })
-            : {
-                results: seededResults,
-                diagnostics: buildDefaultNodeAssistedDiagnostics(routingPolicy),
-            };
-        const sourceRegistryAwareResults = applySearchResultSourceRegistryHints(nodeAssisted.results);
-        const scoreAwareResults = this.applyMemoryTreeScoreSignals(sourceRegistryAwareResults);
-        const scoreSignalAppliedCount = scoreAwareResults.filter((item) => {
-            const memoryTree = isRecord(item.metadata?.memoryTree) ? item.metadata.memoryTree : undefined;
-            return typeof memoryTree?.scoreVersion === "string" && memoryTree.scoreVersion.trim().length > 0;
-        }).length;
-
-        // 3. Rule-based rerank (with MMR diversity if vectors available)
-        const getVector = (chunkId: string) => this.store.getChunkVector(chunkId);
-        const reranked = this.reranker.rerank(scoreAwareResults, getVector);
-
-        // 4. M-N4: 源路径聚合二次检索（仅当启用且有重复 source 时触发）
-        let items = reranked.slice(0, limit);
-        let deepRetrievalApplied = false;
-        if (this.deepRetrievalEnabled) {
-            items = this.applyDeepRetrieval(reranked, limit);
-            deepRetrievalApplied = true;
-        }
-
-        return {
-            items,
-            diagnostics: {
-                retrievalMode,
-                limit,
-                routingPolicy,
-                skipped: false,
-                deepRetrievalApplied,
-                scoreSignalAppliedCount,
-                sourceClassMix: buildMemorySearchSourceClassMix(items),
-                nodeAssisted: finalizeNodeAssistedDiagnostics(nodeAssisted.diagnostics, items),
-                stages: {
-                    raw: buildMemorySearchStageSnapshot(seededResults),
-                    scoreAware: buildMemorySearchStageSnapshot(scoreAwareResults),
-                    reranked: buildMemorySearchStageSnapshot(reranked),
-                    returned: buildMemorySearchStageSnapshot(items),
-                },
-            },
-        };
     }
 
     async embedRetrievalQuery(text: string): Promise<number[] | null> {
@@ -1171,20 +1301,38 @@ export class MemoryManager {
         limit: number;
         filter?: MemorySearchFilter;
         rawResults: MemorySearchResult[];
+        signal?: AbortSignal;
     }): Promise<{
         results: MemorySearchResult[];
         diagnostics: MemorySearchNodeAssistedDiagnostics;
     }> {
         const routingPlan = resolveMemoryTreeNodeRoutingPlan(query, input.filter);
-        try {
-            await this.ensureManagedMemoryTreeFresh({
-                kinds: routingPlan.includeKinds.filter((kind) => isManagedMemoryTreeNodeKind(kind)),
+        if (input.signal?.aborted) {
+            return {
+                results: input.rawResults,
+                diagnostics: buildDefaultNodeAssistedDiagnostics("node_assisted"),
+            };
+        }
+        const managedKinds = routingPlan.includeKinds.filter((kind): kind is ManagedMemoryTreeNodeKind => (
+            isManagedMemoryTreeNodeKind(kind)
+        ));
+        const lifecycle = this.getMemoryTreeLifecycleSnapshot({ kinds: managedKinds });
+        const dirtyKinds = lifecycle.nodes
+            .filter((node) => node.dirty && !node.governance.cooldownActive)
+            .map((node) => node.kind);
+        const refresh = dirtyKinds.length > 0
+            ? this.memoryTreeRefreshQueue.enqueue({
+                kinds: dirtyKinds,
                 nodeLimit: Math.max(20, input.limit * 5),
-                rebuildSources: false,
-                triggerSource: "node-assisted preflight",
-            });
-        } catch {
-            // node-assisted 属于增强链路，生命周期补跑失败时不阻断主检索
+                triggerSource: "node-assisted background",
+            })
+            : { scheduled: false };
+        const treeFreshness = buildNodeAssistedTreeFreshness(lifecycle.nodes, refresh.scheduled);
+        if (input.signal?.aborted) {
+            return {
+                results: input.rawResults,
+                diagnostics: buildDefaultNodeAssistedDiagnostics("node_assisted"),
+            };
         }
         const nodeResults = this.searchMemoryTreeNodes(query, {
             limit: Math.max(3, input.limit),
@@ -1203,6 +1351,7 @@ export class MemoryManager {
                     preferHighLevel: routingPlan.preferHighLevel,
                     chunkLimitPerNode: routingPlan.chunkLimitPerNode,
                     fallbackApplied: true,
+                    treeFreshness,
                 },
             };
         }
@@ -1253,6 +1402,7 @@ export class MemoryManager {
                 nodeHitCount: nodeResults.length,
                 injectedChunkCount: injected.size,
                 fallbackApplied: injected.size < input.limit,
+                treeFreshness,
                 returnedMix: {
                     nodeBacked: 0,
                     chunkOnly: 0,
@@ -2044,14 +2194,27 @@ export class MemoryManager {
             reportId: current.id,
         });
         const staleFiles = Array.isArray(preview.rescan?.staleFiles) ? preview.rescan.staleFiles : [];
-        let staleChunksRemoved = 0;
-
-        for (const item of ingestResult.chunksBySourcePath) {
-            this.store.replaceSourceChunks(item.sourcePath, item.chunks);
-        }
-        for (const stale of staleFiles) {
-            staleChunksRemoved += this.store.deleteBySource(stale.path);
-        }
+        const manifestBySourcePath = new Map(preview.fileManifest.map((item) => [item.path, item] as const));
+        const transaction = this.store.applyExternalIngestBatch({
+            sourceId: preview.sourceId,
+            replacements: ingestResult.chunksBySourcePath.map((item) => ({
+                sourcePath: item.sourcePath,
+                chunks: item.chunks,
+                expectedPreviousContentHash: manifestBySourcePath.get(item.sourcePath)?.previousContentHash,
+                expectedExistingState: manifestBySourcePath.get(item.sourcePath)?.rescanState === "new"
+                    ? "missing"
+                    : manifestBySourcePath.get(item.sourcePath)?.rescanState
+                        ? "present"
+                        : undefined,
+            })),
+            staleSources: staleFiles.map((item) => ({
+                sourcePath: item.path,
+                expectedPreviousContentHash: item.previousContentHash,
+            })),
+        });
+        const staleDeletionByPath = new Map(transaction.staleDeletions.map((item) => [item.sourcePath, item] as const));
+        const staleChunksRemoved = transaction.staleDeletions.reduce((total, item) => total + item.deletedChunkCount, 0);
+        const staleFilesRemoved = transaction.staleDeletions.filter((item) => item.deletedChunkCount > 0).length;
 
         const sourceRebuild = await this.rebuildMemoryTreeSources({
             configuredSources: [preview.source],
@@ -2074,17 +2237,20 @@ export class MemoryManager {
                 skipped: true,
                 reason: item.reason,
             })),
-            ...staleFiles.map((item) => ({
-                kind: "external_ingest" as const,
-                sourcePath: item.path,
-                importedChunkCount: 0,
-                removedChunkCount: item.previousChunkCount,
-                stale: true,
-                skipped: false,
-                reason: item.reason,
-            })),
+            ...staleFiles.map((item) => {
+                const deletion = staleDeletionByPath.get(item.path);
+                return {
+                    kind: "external_ingest" as const,
+                    sourcePath: item.path,
+                    importedChunkCount: 0,
+                    removedChunkCount: deletion?.deletedChunkCount ?? 0,
+                    stale: true,
+                    skipped: Boolean(deletion?.skippedReason),
+                    reason: deletion?.skippedReason ?? item.reason,
+                };
+            }),
         ];
-        ingestResult.staleFilesRemoved = staleFiles.length;
+        ingestResult.staleFilesRemoved = staleFilesRemoved;
         ingestResult.staleChunksRemoved = staleChunksRemoved;
 
         const next: MemoryTreeReportRecord = {
@@ -2097,6 +2263,7 @@ export class MemoryManager {
                 importedFileCount: ingestResult.importedFileCount,
                 importedChunkCount: ingestResult.importedChunkCount,
                 staleFileCount: staleFiles.length,
+                staleFilesRemoved,
                 staleChunksRemoved,
                 sourceRebuildTotalSources: sourceRebuild.totalSources,
                 scoreRebuildTotalScores: scoreRebuild.totalScores,
@@ -2115,6 +2282,8 @@ export class MemoryManager {
                     importedChunkCount: ingestResult.importedChunkCount,
                     skippedFiles: ingestResult.skippedFiles,
                     staleFiles,
+                    staleDeletions: transaction.staleDeletions,
+                    staleFilesRemoved,
                     staleChunksRemoved,
                     sourceRebuild,
                     scoreRebuild,
@@ -2466,12 +2635,12 @@ export class MemoryManager {
                 ? (treeBuildResult as { sourceRecords?: MemoryTreeSourceRecord[] }).sourceRecords ?? []
                 : [];
 
-            if (sourceRecords.length > 0) {
-                this.store.upsertMemorySources(sourceRecords);
-            }
-            this.store.deleteMemoryTreeNodesByKind(kind);
-            this.store.upsertMemoryTreeNodes(nodes);
-            this.store.upsertMemoryTreeEdges(edges);
+            this.store.publishMemoryTreeKind({
+                kind,
+                nodes,
+                edges,
+                sourceRecords,
+            });
             this.recordMemoryTreeReport({
                 reportType: "tree_build_preview",
                 scope: "private",
@@ -2604,16 +2773,13 @@ export class MemoryManager {
         edges: MemoryTreeEdgeRecord[];
         inputDetails: Record<string, unknown>;
     } {
-        const tasks = this.store.listTasks(limit, { status: ["success", "partial", "failed"] });
+        const taskRecords = this.store.listTasks(limit, { status: ["success", "partial", "failed"] });
+        const tasks = this.getTaskDetails(taskRecords.map((task) => task.id));
         const nodes: MemoryTreeNodeRecord[] = [];
         const edges: MemoryTreeEdgeRecord[] = [];
 
         for (const task of tasks) {
-            const detail = this.getTaskDetail(task.id);
-            if (!detail) {
-                continue;
-            }
-            const linkedChunks = detail.memoryLinks ?? [];
+            const linkedChunks = task.memoryLinks ?? [];
             const sourceClassMix = buildMemoryTreeSourceClassMix(linkedChunks);
             nodes.push({
                 id: `task:${task.id}`,
@@ -2623,7 +2789,7 @@ export class MemoryManager {
                 agentId: task.agentId ?? undefined,
                 topicKey: task.conversationId,
                 title: task.title ?? task.objective ?? `Task ${task.id}`,
-                summary: buildMemoryTreeTaskSummary(detail),
+                summary: buildMemoryTreeTaskSummary(task),
                 summaryVersion: "p10-task-node-v1",
                 timeFrom: task.startedAt,
                 timeTo: task.finishedAt ?? task.updatedAt,
@@ -2633,9 +2799,9 @@ export class MemoryManager {
                     conversationId: task.conversationId,
                     status: task.status,
                     linkedChunkCount: linkedChunks.length,
-                    activityCount: detail.activities?.length ?? 0,
-                    usedMethodCount: detail.usedMethods?.length ?? 0,
-                    usedSkillCount: detail.usedSkills?.length ?? 0,
+                    activityCount: task.activities?.length ?? 0,
+                    usedMethodCount: task.usedMethods?.length ?? 0,
+                    usedSkillCount: task.usedSkills?.length ?? 0,
                 },
                 createdAt: rebuiltAt,
                 updatedAt: rebuiltAt,
@@ -2665,7 +2831,7 @@ export class MemoryManager {
             edges,
             inputDetails: {
                 taskLimit: limit,
-                taskCount: tasks.length,
+                taskCount: taskRecords.length,
             },
         };
     }
@@ -2836,9 +3002,9 @@ export class MemoryManager {
         inputDetails: Record<string, unknown>;
     } {
         const candidateLimit = Math.max(input.limit * 20, 200);
-        const tasks = this.store.listTasks(candidateLimit, { status: ["success", "partial", "failed"] })
-            .map((task) => this.getTaskDetail(task.id))
-            .filter((task): task is TaskExperienceDetail => Boolean(task));
+        const tasks = this.getTaskDetails(this.store
+            .listTasks(candidateLimit, { status: ["success", "partial", "failed"] })
+            .map((task) => task.id));
         const groups = new Map<string, TaskExperienceDetail[]>();
         for (const task of tasks) {
             const key = input.collectKey(task)?.trim();
@@ -2908,9 +3074,9 @@ export class MemoryManager {
     }
 
     private collectDetailedMemoryTreeTasks(limit: number): TaskExperienceDetail[] {
-        return this.store.listTasks(limit, { status: ["success", "partial", "failed"] })
-            .map((task) => this.getTaskDetail(task.id))
-            .filter((task): task is TaskExperienceDetail => Boolean(task));
+        return this.getTaskDetails(this.store
+            .listTasks(limit, { status: ["success", "partial", "failed"] })
+            .map((task) => task.id));
     }
 
     private buildTaskGroupChunkBundle(
@@ -3392,13 +3558,12 @@ export class MemoryManager {
         const fallbackCandidates = this.searchTasks(query, {
             limit: Math.max(limit * 4, 12),
             filter: input.filter,
-        })
-            .map((task) => this.getTaskDetail(task.id))
-            .filter((task): task is TaskExperienceDetail => Boolean(task));
+        });
+        const fallbackDetails = this.getTaskDetails(fallbackCandidates.map((task) => task.id));
 
         return rankTaskShortcutCandidates([
             ...recentCandidates,
-            ...fallbackCandidates,
+            ...fallbackDetails,
         ], query)
             .slice(0, limit)
             .map((item) => toTaskWorkShortcutItem(item.task, item.matchReasons));
@@ -3428,12 +3593,10 @@ export class MemoryManager {
         const query = normalizeTaskLookupQuery(input.query);
         const recentCandidates = this.collectTaskShortcutCandidates(Math.max(limit * 6, 24), input.filter);
         const fallbackCandidates = query
-            ? this.searchTasks(query, {
+            ? this.getTaskDetails(this.searchTasks(query, {
                 limit: Math.max(limit * 4, 12),
                 filter: input.filter,
-            })
-                .map((task) => this.getTaskDetail(task.id))
-                .filter((task): task is TaskExperienceDetail => Boolean(task))
+            }).map((task) => task.id))
             : [];
 
         const ranked = rankTaskShortcutCandidates([
@@ -3455,12 +3618,10 @@ export class MemoryManager {
         if (!query) return [];
 
         const limit = clampTaskLookupLimit(input.limit);
-        const searchCandidates = this.searchTasks(query, {
+        const searchCandidates = this.getTaskDetails(this.searchTasks(query, {
             limit: Math.max(limit * 5, 15),
             filter: input.filter,
-        })
-            .map((task) => this.getTaskDetail(task.id))
-            .filter((task): task is TaskExperienceDetail => Boolean(task));
+        }).map((task) => task.id));
         const recentCandidates = this.collectTaskShortcutCandidates(Math.max(limit * 4, 16), input.filter);
 
         return rankTaskShortcutCandidates([
@@ -3692,22 +3853,14 @@ export class MemoryManager {
     }
 
     getTaskDetail(taskId: string): TaskExperienceDetail | null {
-        const task = this.store.getTask(taskId);
-        if (!task) return null;
-        const usages = this.store.listExperienceUsages(100, { taskId });
-        const usedMethods = usages
-            .filter((item) => item.assetType === "method")
-            .map((item) => this.toExperienceUsageSummary(item));
-        const usedSkills = usages
-            .filter((item) => item.assetType === "skill")
-            .map((item) => this.toExperienceUsageSummary(item));
-        return {
-            ...task,
-            activities: this.store.listTaskActivities(taskId, 200),
-            memoryLinks: this.store.listTaskMemoryLinks(taskId),
-            usedMethods,
-            usedSkills,
-        };
+        if (typeof taskId !== "string" || taskId.trim() !== taskId) {
+            return null;
+        }
+        return this.getTaskDetails([taskId])[0] ?? null;
+    }
+
+    getTaskDetails(taskIds: string[]): TaskExperienceDetail[] {
+        return this.store.getTaskDetails(taskIds);
     }
 
     getRecentTasks(limit = 10, filter?: TaskSearchFilter): TaskRecord[] {
@@ -3962,20 +4115,6 @@ export class MemoryManager {
         return this.store.listExperienceUsageStats(limit, filter);
     }
 
-    private toExperienceUsageSummary(usage: ExperienceUsage): ExperienceUsageSummary {
-        const stats = this.store.getExperienceUsageStats(usage.assetType, usage.assetKey);
-        return {
-            ...stats,
-            usageId: usage.id,
-            taskId: usage.taskId,
-            assetType: usage.assetType,
-            assetKey: usage.assetKey,
-            sourceCandidateId: usage.sourceCandidateId ?? stats.sourceCandidateId,
-            usedVia: usage.usedVia,
-            createdAt: usage.createdAt,
-        };
-    }
-
     private inferExperienceSourceCandidateId(assetType: ExperienceAssetType, assetKey: string): string | undefined {
         const normalizedAssetKey = this.normalizeExperienceAssetLookupKey(assetType, assetKey);
         if (!normalizedAssetKey) return undefined;
@@ -4180,6 +4319,20 @@ export class MemoryManager {
         ].join("|");
     }
 
+    /**
+     * 失败退避不依赖 vec0 维度，确保首次真实 passage 请求在推导维度前失败时也能跨重启恢复。
+     * scope 仅保存哈希，避免把自定义 prefix 原文持久化到 SQLite。
+     */
+    private computeEmbeddingFailureScope(): string {
+        const material = [
+            "v1",
+            this.embeddingProvider.modelName ?? "unknown",
+            this.embeddingQueryPrefix,
+            this.embeddingPassagePrefix,
+        ].join("\n");
+        return `v1:${createHash("sha256").update(material).digest("hex")}`;
+    }
+
     private ensureEmbeddingSignature(signature: string): void {
         const key = "embedding_signature";
         const prev = this.store.getMeta(key);
@@ -4212,100 +4365,249 @@ export class MemoryManager {
     /**
      * Process chunks that lack embeddings (with cache support)
      */
-    private async processPendingEmbeddings(): Promise<void> {
-        if (this.closed) {
+    private async processPendingEmbeddings(signal?: AbortSignal): Promise<void> {
+        if (this.closed || signal?.aborted) {
             return;
         }
-        // Probe the model to get actual dimensions
-        let dims = 1536;
-        try {
-            const probe = await this.embeddingProvider.embed("ping");
-            if (!probe || probe.length === 0) {
-                console.log("[MemoryManager] Embedding provider returned empty vectors; skipping vector generation.");
+        const providerName = this.embeddingProvider.modelName ?? "unknown";
+        const failureScope = this.computeEmbeddingFailureScope();
+        const pendingCursor = new PendingEmbeddingCandidateCursor({
+            listPage: (limit, afterRowId) => this.store.getPendingEmbeddingCandidatePage(limit, afterRowId),
+            getBackoffChunkIds: (chunkIds) => this.embeddingFailureLedger.getBackoffChunkIds(
+                failureScope,
+                chunkIds,
+                Date.now(),
+            ),
+        });
+        const recordFailures = (chunkIds: string[], reason: EmbeddingFailureReason): void => {
+            if (chunkIds.length === 0) {
                 return;
             }
-            dims = probe.length;
-        } catch (e) {
-            console.warn("Failed to probe embedding model, skipping vector generation", e);
-            return;
-        }
-        if (this.closed) {
-            return;
-        }
-
-        // Initialize vector table (this ensures vecDims is set in store)
-        this.store.prepareVectorStore(dims);
-
-        // 版本化签名：用于 cache key & 自动重建判断
-        const signature = this.computeEmbeddingSignature(dims);
-        this.ensureEmbeddingSignature(signature);
-
-        const providerName = this.embeddingProvider.modelName ?? "unknown";
+            this.embeddingFailureLedger.recordFailures({
+                scope: failureScope,
+                chunkIds,
+                reason,
+                failedAtMs: Date.now(),
+            });
+        };
         const embeddingStats = {
             batchCount: 0,
             totalChunks: 0,
+            writtenChunks: 0,
+            failedChunks: 0,
             cacheHits: 0,
             cacheMisses: 0,
             apiRequestCount: 0,
             apiChunkCount: 0,
         };
+        let dims = resolveEmbeddingDimension(this.embeddingProvider.dimension)
+            ?? this.store.getVectorDimensions();
+        let signature: string | null = null;
+        let prefetchedVectors: ReturnType<typeof validateEmbeddingBatchResponse> | null = null;
+        let prefetchedPending: MemoryChunk[] | null = null;
+
+        const prepareEmbeddingStore = (dimensions: number): void => {
+            dims = dimensions;
+            this.store.prepareVectorStore(dimensions);
+            signature = this.computeEmbeddingSignature(dimensions);
+            this.ensureEmbeddingSignature(signature);
+        };
+
+        if (dims !== null) {
+            prepareEmbeddingStore(dims);
+        } else {
+            // 未声明维度的 Provider 直接使用首个真实 passage 响应，避免额外的可计费 probe。
+            const initialCandidates = pendingCursor.take(this.embeddingBatchSize);
+            if (initialCandidates.length === 0) {
+                return;
+            }
+            const texts = initialCandidates.map((chunk) => chunk.content.replace(/\n+/g, " ").slice(0, 8000));
+            embeddingStats.batchCount += 1;
+            embeddingStats.totalChunks += initialCandidates.length;
+            embeddingStats.cacheMisses += initialCandidates.length;
+            embeddingStats.apiRequestCount += 1;
+            embeddingStats.apiChunkCount += initialCandidates.length;
+
+            try {
+                const response = await this.embeddingProvider.embedBatch(texts, { signal });
+                if (this.closed || signal?.aborted) {
+                    return;
+                }
+                prefetchedVectors = validateEmbeddingBatchResponse(response, initialCandidates.length);
+                prefetchedPending = initialCandidates;
+                if (prefetchedVectors.dimension === null) {
+                    embeddingStats.failedChunks += prefetchedVectors.failedCount;
+                    recordFailures(initialCandidates.map((candidate) => candidate.id), "invalid_response");
+                    if (providerName === "none") {
+                        console.log("[MemoryManager] Embedding provider returned no finite vectors; skipping vector generation.");
+                    } else {
+                        console.warn(
+                            `[MemoryManager] Embedding sync stopped after a zero-progress batch `
+                            + `(selected=${initialCandidates.length}, written=0, failed=${prefetchedVectors.failedCount}).`,
+                        );
+                    }
+                    this.logEmbeddingSyncSummary(embeddingStats);
+                    return;
+                }
+                prepareEmbeddingStore(prefetchedVectors.dimension);
+            } catch {
+                if (this.closed || signal?.aborted) {
+                    return;
+                }
+                embeddingStats.failedChunks += initialCandidates.length;
+                recordFailures(initialCandidates.map((candidate) => candidate.id), "request_failed");
+                console.warn("[MemoryManager] Embedding batch request failed; stopping current sync pass.");
+                this.logEmbeddingSyncSummary(embeddingStats);
+                return;
+            }
+        }
+
+        if (dims === null || signature === null) {
+            return;
+        }
+        const embeddingDimensions = dims;
+        const embeddingSignature = signature;
 
         // Loop until no more pending chunks
-        while (!this.closed) {
-            const pending = this.store.getUnembeddedChunks(this.embeddingBatchSize);
+        while (!this.closed && !signal?.aborted) {
+            const pending = prefetchedPending ?? pendingCursor.take(this.embeddingBatchSize);
+            const validatedResponse = prefetchedVectors;
+            prefetchedPending = null;
+            prefetchedVectors = null;
             if (pending.length === 0) break;
-            embeddingStats.batchCount += 1;
-            embeddingStats.totalChunks += pending.length;
+            if (validatedResponse === null) {
+                embeddingStats.batchCount += 1;
+                embeddingStats.totalChunks += pending.length;
+            }
 
             // Normalize content for embedding and compute content hashes
             const normalized = pending.map(c => c.content.replace(/\n+/g, " ").slice(0, 8000));
             // IMPORTANT: hash 必须包含 embedding signature（模型/维度/prefix），否则升级后会错误复用旧缓存。
-            const hashes = normalized.map(t => createHash("sha256").update(signature).update("\n").update(t).digest("hex"));
+            const hashes = normalized.map(t => createHash("sha256").update(embeddingSignature).update("\n").update(t).digest("hex"));
 
             // Separate cached vs uncached
             const needEmbed: { idx: number; text: string }[] = [];
             const cachedVectors: (number[] | null)[] = new Array(pending.length).fill(null);
+            const cachedVectorWrites: Array<{ chunkId: string; embedding: number[] }> = [];
+            let batchWritten = 0;
+            let batchFailed = 0;
 
-            for (let i = 0; i < pending.length; i++) {
-                const cached = this.store.getCachedEmbedding(hashes[i]);
-                if (cached) {
-                    cachedVectors[i] = cached;
-                } else {
-                    needEmbed.push({ idx: i, text: normalized[i] });
+            if (validatedResponse === null) {
+                for (let i = 0; i < pending.length; i++) {
+                    if (this.closed || signal?.aborted) return;
+                    const cached = this.store.getCachedEmbedding(hashes[i]);
+                    if (cached && isValidEmbeddingVector(cached, embeddingDimensions)) {
+                        cachedVectors[i] = cached;
+                    } else {
+                        needEmbed.push({ idx: i, text: normalized[i] });
+                    }
+                }
+
+                const cacheHits = pending.length - needEmbed.length;
+                embeddingStats.cacheHits += cacheHits;
+                embeddingStats.cacheMisses += needEmbed.length;
+
+                // 缓存命中同样通过批量 transaction 写入 vec0，避免逐项 rowid/vec 提交。
+                for (let i = 0; i < pending.length; i++) {
+                    if (this.closed || signal?.aborted) return;
+                    if (cachedVectors[i]) {
+                        cachedVectorWrites.push({
+                            chunkId: pending[i].id,
+                            embedding: cachedVectors[i]!,
+                        });
+                    }
+                }
+                if (cachedVectorWrites.length > 0) {
+                    try {
+                        const writtenChunkIds = this.store.upsertChunkVectorsBatch(cachedVectorWrites, providerName);
+                        batchWritten += writtenChunkIds.length;
+                        this.embeddingFailureLedger.clearFailures(failureScope, writtenChunkIds);
+                    } catch {
+                        batchFailed += cachedVectorWrites.length;
+                        recordFailures(cachedVectorWrites.map((write) => write.chunkId), "storage_failed");
+                        embeddingStats.writtenChunks += batchWritten;
+                        embeddingStats.failedChunks += batchFailed;
+                        console.warn("[MemoryManager] Embedding batch write failed; stopping current sync pass.");
+                        break;
+                    }
                 }
             }
 
-            const cacheHits = pending.length - needEmbed.length;
-            embeddingStats.cacheHits += cacheHits;
-            embeddingStats.cacheMisses += needEmbed.length;
-
-            // Store cached vectors immediately
-            for (let i = 0; i < pending.length; i++) {
-                if (cachedVectors[i] && cachedVectors[i]!.length > 0) {
-                    this.store.upsertChunkVector(pending[i].id, cachedVectors[i]!, providerName);
-                }
-            }
-
-            // Embed uncached texts via API
-            if (needEmbed.length > 0) {
+            let responseValidation = validatedResponse;
+            if (responseValidation === null && needEmbed.length > 0) {
                 embeddingStats.apiRequestCount += 1;
                 embeddingStats.apiChunkCount += needEmbed.length;
                 try {
                     const texts = needEmbed.map(e => e.text);
-                    const vectors = await this.embeddingProvider.embedBatch(texts);
-
-                    for (let j = 0; j < needEmbed.length; j++) {
-                        const { idx } = needEmbed[j];
-                        const vec = vectors[j];
-                        if (vec && vec.length > 0) {
-                            this.store.upsertChunkVector(pending[idx].id, vec, providerName);
-                            this.store.cacheEmbedding(hashes[idx], vec, providerName);
-                        }
+                    const response = await this.embeddingProvider.embedBatch(texts, { signal });
+                    if (this.closed || signal?.aborted) {
+                        return;
                     }
-                } catch (err) {
-                    console.error("Failed to batch embed:", err);
+                    responseValidation = validateEmbeddingBatchResponse(response, needEmbed.length, embeddingDimensions);
+                } catch {
+                    if (this.closed || signal?.aborted) {
+                        return;
+                    }
+                    batchFailed += needEmbed.length;
+                    recordFailures(needEmbed.map(({ idx }) => pending[idx].id), "request_failed");
+                    embeddingStats.writtenChunks += batchWritten;
+                    embeddingStats.failedChunks += batchFailed;
+                    console.warn("[MemoryManager] Embedding batch request failed; stopping current sync pass.");
                     break;
                 }
+            }
+
+            if (responseValidation !== null) {
+                if (!responseValidation.responseCountMatches || responseValidation.failedCount > 0) {
+                    console.warn(
+                        `[MemoryManager] Embedding batch response validation rejected invalid entries `
+                        + `(expected=${responseValidation.expectedCount}, received=${responseValidation.receivedCount}, `
+                        + `failed=${responseValidation.failedCount}).`,
+                    );
+                }
+                const responseTargets = validatedResponse === null ? needEmbed : pending.map((_, idx) => ({ idx, text: normalized[idx] }));
+                const invalidChunkIds: string[] = [];
+                const responseVectorWrites: Array<{ chunkId: string; embedding: number[]; cacheHash: string }> = [];
+                for (let index = 0; index < responseTargets.length; index++) {
+                    if (this.closed || signal?.aborted) return;
+                    const vector = responseValidation.vectors[index];
+                    const { idx } = responseTargets[index];
+                    if (vector === null) {
+                        invalidChunkIds.push(pending[idx].id);
+                        continue;
+                    }
+                    responseVectorWrites.push({
+                        chunkId: pending[idx].id,
+                        embedding: vector,
+                        cacheHash: hashes[idx],
+                    });
+                }
+                batchFailed += responseValidation.failedCount;
+                recordFailures(invalidChunkIds, "invalid_response");
+                if (responseVectorWrites.length > 0) {
+                    try {
+                        const writtenChunkIds = this.store.upsertChunkVectorsBatch(responseVectorWrites, providerName);
+                        batchWritten += writtenChunkIds.length;
+                        this.embeddingFailureLedger.clearFailures(failureScope, writtenChunkIds);
+                    } catch {
+                        batchFailed += responseVectorWrites.length;
+                        recordFailures(responseVectorWrites.map((write) => write.chunkId), "storage_failed");
+                        embeddingStats.writtenChunks += batchWritten;
+                        embeddingStats.failedChunks += batchFailed;
+                        console.warn("[MemoryManager] Embedding batch write failed; stopping current sync pass.");
+                        break;
+                    }
+                }
+            }
+
+            embeddingStats.writtenChunks += batchWritten;
+            embeddingStats.failedChunks += batchFailed;
+            if (batchWritten === 0) {
+                console.warn(
+                    `[MemoryManager] Embedding sync stopped after a zero-progress batch `
+                    + `(selected=${pending.length}, written=0, failed=${batchFailed}).`,
+                );
+                break;
             }
 
             // 让出一次事件循环，避免大批量缓存命中时长时间占住首屏请求。
@@ -4973,13 +5275,19 @@ candidateType 必须是以下之一：user / feedback / project / reference
         if (shouldEnableMiniMaxReasoningSplit(this.evolutionBaseUrl, this.evolutionModel)) {
             requestBody.reasoning_split = true;
         }
-        const response = await fetch(buildOpenAIChatCompletionsUrl(this.evolutionBaseUrl), {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${this.evolutionApiKey}`,
-            },
-            body: JSON.stringify(requestBody),
+        const response = await this.evolutionRequests.run({
+            timeoutMs: this.evolutionTimeoutMs,
+            fallbackTimeoutMs: 120_000,
+            timeoutMessage: (timeoutMs) => `Evolution LLM call timed out after ${timeoutMs}ms.`,
+            operation: (signal) => fetch(buildOpenAIChatCompletionsUrl(this.evolutionBaseUrl), {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${this.evolutionApiKey}`,
+                },
+                body: JSON.stringify(requestBody),
+                signal,
+            }),
         });
 
         if (!response.ok) {
@@ -5022,7 +5330,7 @@ candidateType 必须是以下之一：user / feedback / project / reference
      * 由 before_agent_start hook 调用，避免与 Agent 主请求争抢 API 并发。
      */
     pause(): void {
-        this._paused = true;
+        this.backgroundPauseGate.pause();
     }
 
     /**
@@ -5030,15 +5338,11 @@ candidateType 必须是以下之一：user / feedback / project / reference
      * 由 agent_end hook 调用。
      */
     resume(): void {
-        this._paused = false;
-        if (this._pauseResolve) {
-            this._pauseResolve();
-            this._pauseResolve = null;
-        }
+        this.backgroundPauseGate.resume();
     }
 
     get isPaused(): boolean {
-        return this._paused;
+        return this.backgroundPauseGate.isPaused;
     }
 
     /**
@@ -5046,11 +5350,9 @@ candidateType 必须是以下之一：user / feedback / project / reference
      */
     private waitIfPaused(): Promise<void> {
         if (this.closed) return Promise.resolve();
-        if (!this._paused) return Promise.resolve();
+        if (!this.backgroundPauseGate.isPaused) return Promise.resolve();
         console.log("[MemoryManager] Background task paused (agent active)");
-        return new Promise<void>(resolve => {
-            this._pauseResolve = resolve;
-        });
+        return this.backgroundPauseGate.wait();
     }
 
     /**
@@ -5059,7 +5361,7 @@ candidateType 必须是以下之一：user / feedback / project / reference
      * 返回本次生成的摘要数。
      */
     async runIdleSummaries(): Promise<number> {
-        if (!this.summaryEnabled || this._paused || this._summaryRunning || this.closed) return 0;
+        if (!this.summaryEnabled || this.backgroundPauseGate.isPaused || this._summaryRunning || this.closed) return 0;
         this._summaryRunning = true;
         return this.registerInFlight((async () => {
             try {
@@ -5084,13 +5386,15 @@ candidateType 必须是以下之一：user / feedback / project / reference
             return this.closePromise;
         }
         this.closed = true;
-        if (this._pauseResolve) {
-            this._pauseResolve();
-            this._pauseResolve = null;
-        }
+        this.backgroundPauseGate.close();
+        this.evolutionRequests.abortAll("Memory manager is closing.");
+        this.indexCoordinator.stopAcceptingWatchEvents();
         this.closePromise = (async () => {
+            await this.memoryTreeRefreshQueue.close();
             await this.indexer.stopWatching().catch(console.error);
+            await this.indexCoordinator.close();
             await this.waitForInFlightOperations();
+            await this.indexer.close();
             this.store.close();
         })();
         return this.closePromise;
@@ -5113,11 +5417,10 @@ candidateType 必须是以下之一：user / feedback / project / reference
 
     private collectTaskShortcutCandidates(limit: number, filter?: TaskSearchFilter): TaskExperienceDetail[] {
         return dedupeTaskShortcutCandidates(
-            this.store
+            this.getTaskDetails(this.store
                 .listTaskSummaries(limit, filter)
                 .filter((task) => task.status !== "running")
-                .map((task) => this.getTaskDetail(task.id))
-                .filter((task): task is TaskExperienceDetail => Boolean(task)),
+                .map((task) => task.id)),
         );
     }
 
@@ -5958,6 +6261,22 @@ function finalizeNodeAssistedDiagnostics(
         returnedMix,
         nodeBackedShare: roundMemoryTreeScore(returnedMix.nodeBacked / denominator),
         chunkOnlyShare: roundMemoryTreeScore(returnedMix.chunkOnly / denominator),
+    };
+}
+
+function buildNodeAssistedTreeFreshness(
+    nodes: MemoryTreeNodeLifecycleState[],
+    refreshScheduled: boolean,
+): NonNullable<MemorySearchNodeAssistedDiagnostics["treeFreshness"]> {
+    const rebuiltAt = nodes
+        .map((node) => node.lastRebuiltAt)
+        .filter((value): value is string => Boolean(value))
+        .sort()[0];
+    return {
+        stale: nodes.some((node) => node.dirty),
+        refreshScheduled,
+        dirtyKinds: nodes.filter((node) => node.dirty).map((node) => node.kind),
+        ...(rebuiltAt ? { oldestRebuiltAt: rebuiltAt } : {}),
     };
 }
 

@@ -19,34 +19,88 @@ function buildClipboardImageFile(file) {
   return new File([file], `paste-${ts}.${ext}`, { type: file.type });
 }
 
-function readFileContent(file, asBase64) {
+function readFileContent(file, asBase64, owner) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      resolve(reader.result);
+    const entry = {
+      reader,
+      settled: false,
+      dispose: null,
     };
-    reader.onerror = () => reject(reader.error);
-    if (asBase64) {
-      reader.readAsDataURL(file);
-      return;
+    const settle = (callback, value) => {
+      if (entry.settled) return;
+      entry.settled = true;
+      reader.onload = null;
+      reader.onerror = null;
+      owner.activeFileReaders.delete(entry);
+      callback(value);
+    };
+    entry.dispose = () => {
+      if (entry.settled) return;
+      try {
+        reader.abort?.();
+      } catch {
+        // A browser may finish the read between lifecycle disposal and abort.
+      }
+      settle(reject, new Error("Attachment read disposed"));
+    };
+    owner.activeFileReaders.add(entry);
+    reader.onload = () => {
+      settle(resolve, reader.result);
+    };
+    reader.onerror = () => settle(reject, reader.error);
+    try {
+      if (asBase64) {
+        reader.readAsDataURL(file);
+        return;
+      }
+      reader.readAsText(file);
+    } catch (error) {
+      settle(reject, error);
     }
-    reader.readAsText(file);
   });
 }
 
-function loadImageElementFromFile(file) {
+function loadImageElementFromFile(file, owner) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
     const image = new Image();
-    image.onload = () => {
+    const entry = {
+      image,
+      objectUrl,
+      settled: false,
+      dispose: null,
+    };
+    const settle = (callback, value) => {
+      if (entry.settled) return;
+      entry.settled = true;
+      image.onload = null;
+      image.onerror = null;
       URL.revokeObjectURL(objectUrl);
-      resolve(image);
+      owner.activeImageLoads.delete(entry);
+      callback(value);
+    };
+    entry.dispose = () => {
+      if (entry.settled) return;
+      try {
+        image.src = "";
+      } catch {
+        // The settlement below still revokes the object URL and releases the owner entry.
+      }
+      settle(reject, new Error("Attachment image load disposed"));
+    };
+    owner.activeImageLoads.add(entry);
+    image.onload = () => {
+      settle(resolve, image);
     };
     image.onerror = (err) => {
-      URL.revokeObjectURL(objectUrl);
-      reject(err);
+      settle(reject, err);
     };
-    image.src = objectUrl;
+    try {
+      image.src = objectUrl;
+    } catch (error) {
+      settle(reject, error);
+    }
   });
 }
 
@@ -85,56 +139,75 @@ export function createAttachmentsFeature({
     maxFileBytes: defaultLimits.maxFileBytes,
     maxTotalBytes: defaultLimits.maxTotalBytes,
   };
+  let disposed = false;
+  let lifecycleGeneration = 0;
+  const listenerEntries = [];
+  const pendingOperations = new Set();
+  const activeFileReaders = new Set();
+  const activeImageLoads = new Set();
+  const dynamicMediaListeners = new Set();
+  const asyncResourceOwner = { activeFileReaders, activeImageLoads };
   const attachmentHintEl = ensureAttachmentHintElement();
 
-  if (attachBtn && fileInput) {
-    attachBtn.addEventListener("click", () => fileInput.click());
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    listenerEntries.push({ target, type, handler });
   }
 
-  if (fileInput) {
-    fileInput.addEventListener("change", () => {
-      if (fileInput.files) {
-        void handleFiles(fileInput.files);
-      }
-      fileInput.value = "";
-    });
+  function handleAttachClick() {
+    if (disposed) return;
+    fileInput?.click();
   }
 
-  if (composerSection) {
-    composerSection.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      composerSection.classList.add("drag-over");
-    });
-    composerSection.addEventListener("dragleave", () => {
-      composerSection.classList.remove("drag-over");
-    });
-    composerSection.addEventListener("drop", (event) => {
-      event.preventDefault();
-      composerSection.classList.remove("drag-over");
-      if (event.dataTransfer?.files) {
-        void handleFiles(event.dataTransfer.files);
-      }
-    });
+  function handleFileInputChange() {
+    if (disposed) return;
+    if (fileInput?.files) void handleFiles(fileInput.files);
+    fileInput.value = "";
   }
 
-  if (promptEl) {
-    promptEl.addEventListener("paste", (event) => {
-      const items = event.clipboardData?.items;
-      if (!items) return;
-      const files = [];
-      for (const item of items) {
-        if (item.kind === "file" && item.type.startsWith("image/")) {
-          const file = item.getAsFile();
-          if (file) {
-            files.push(buildClipboardImageFile(file));
-          }
+  function handleComposerDragOver(event) {
+    if (disposed) return;
+    event.preventDefault();
+    composerSection.classList.add("drag-over");
+  }
+
+  function handleComposerDragLeave() {
+    if (disposed) return;
+    composerSection.classList.remove("drag-over");
+  }
+
+  function handleComposerDrop(event) {
+    if (disposed) return;
+    event.preventDefault();
+    composerSection.classList.remove("drag-over");
+    if (event.dataTransfer?.files) void handleFiles(event.dataTransfer.files);
+  }
+
+  function handlePromptPaste(event) {
+    if (disposed) return;
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const files = [];
+    for (const item of items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          files.push(buildClipboardImageFile(file));
         }
       }
-      if (files.length === 0) return;
-      event.preventDefault();
-      void handleFiles(files);
-    });
+    }
+    if (files.length === 0) return;
+    event.preventDefault();
+    void handleFiles(files);
   }
+
+  if (attachBtn && fileInput) addOwnedListener(attachBtn, "click", handleAttachClick);
+  addOwnedListener(fileInput, "change", handleFileInputChange);
+  addOwnedListener(composerSection, "dragover", handleComposerDragOver);
+  addOwnedListener(composerSection, "dragleave", handleComposerDragLeave);
+  addOwnedListener(composerSection, "drop", handleComposerDrop);
+  addOwnedListener(promptEl, "paste", handlePromptPaste);
 
   function ensureAttachmentHintElement() {
     if (!attachmentsPreviewEl || !attachmentsPreviewEl.parentElement) return null;
@@ -157,6 +230,12 @@ export function createAttachmentsFeature({
 
   function estimatePendingAttachmentTotalBytes() {
     return pendingAttachments.reduce((sum, attachment) => sum + estimateAttachmentBytes(attachment), 0);
+  }
+
+  function isOperationCurrent(operation) {
+    return !disposed
+      && pendingOperations.has(operation)
+      && operation.generation === lifecycleGeneration;
   }
 
   function updateAttachmentHint(extraMessage) {
@@ -188,7 +267,8 @@ export function createAttachmentsFeature({
   }
 
   async function compressImageToDataUrl(file, sourceType) {
-    const image = await loadImageElementFromFile(file);
+    const image = await loadImageElementFromFile(file, asyncResourceOwner);
+    if (disposed) throw new Error("Attachment image compression disposed");
     const sourceWidth = image.naturalWidth || image.width || 1;
     const sourceHeight = image.naturalHeight || image.height || 1;
     let scale = Math.min(1, imageCompression.maxEdge / Math.max(sourceWidth, sourceHeight));
@@ -233,7 +313,8 @@ export function createAttachmentsFeature({
 
   async function readImageForAttachment(file) {
     const sourceType = (file.type || "image/png").toLowerCase();
-    const originalDataUrl = await readFileContent(file, true);
+    const originalDataUrl = await readFileContent(file, true, asyncResourceOwner);
+    if (disposed) throw new Error("Attachment image read disposed");
     const originalBytes = estimateDataUrlBytes(originalDataUrl);
 
     if (sourceType.includes("gif") || sourceType.includes("svg")) {
@@ -258,6 +339,7 @@ export function createAttachmentsFeature({
         };
       }
     } catch (err) {
+      if (disposed) throw err;
       console.warn("Image compression failed, use original file", { name: file.name, error: String(err) });
     }
 
@@ -265,6 +347,10 @@ export function createAttachmentsFeature({
   }
 
   async function handleFiles(files) {
+    if (disposed) return;
+    const operation = { generation: lifecycleGeneration };
+    pendingOperations.add(operation);
+    try {
     const rejected = [];
     let projectedTotalBytes = estimatePendingAttachmentTotalBytes();
 
@@ -315,11 +401,13 @@ export function createAttachmentsFeature({
 
         if (isImage) {
           const processed = await readImageForAttachment(file);
+          if (!isOperationCurrent(operation)) return;
           content = processed.content;
           mimeType = processed.mimeType;
           attachmentBytes = estimateDataUrlBytes(content);
         } else {
-          content = await readFileContent(file, isVideo);
+          content = await readFileContent(file, isVideo, asyncResourceOwner);
+          if (!isOperationCurrent(operation)) return;
           attachmentBytes = isVideo
             ? estimateDataUrlBytes(content)
             : estimateTextBytes(typeof content === "string" ? content : "");
@@ -361,11 +449,13 @@ export function createAttachmentsFeature({
         });
         projectedTotalBytes += attachmentBytes;
       } catch (err) {
+        if (!isOperationCurrent(operation)) return;
         console.error(`读取文件失败: ${file.name}`, err);
         rejected.push(t("attachments.readFailed", { name: file.name }, `${file.name}: failed to read`));
       }
     }
 
+    if (!isOperationCurrent(operation)) return;
     if (rejected.length > 0) {
       const lines = rejected.slice(0, 3).map((item) => `- ${item}`);
       if (rejected.length > 3) {
@@ -378,9 +468,22 @@ export function createAttachmentsFeature({
     }
 
     renderAttachmentsPreview();
+    } finally {
+      pendingOperations.delete(operation);
+    }
+  }
+
+  function clearDynamicMediaListeners() {
+    for (const entry of dynamicMediaListeners) {
+      entry.video.removeEventListener("loadeddata", entry.handleLoadedData);
+      entry.video.removeAttribute("src");
+    }
+    dynamicMediaListeners.clear();
   }
 
   function renderAttachmentsPreview(hintMessage = "") {
+    if (disposed) return;
+    clearDynamicMediaListeners();
     if (attachmentsPreviewEl) {
       attachmentsPreviewEl.textContent = "";
       const fragment = document.createDocumentFragment();
@@ -402,7 +505,11 @@ export function createAttachmentsFeature({
 
           const video = document.createElement("video");
           video.src = attachment.content;
-          video.addEventListener("loadeddata", () => {
+          const mediaEntry = { video, handleLoadedData: null };
+          const handleLoadedData = () => {
+            dynamicMediaListeners.delete(mediaEntry);
+            video.removeEventListener("loadeddata", handleLoadedData);
+            if (disposed) return;
             const canvas = document.createElement("canvas");
             canvas.width = 80;
             canvas.height = 60;
@@ -410,7 +517,10 @@ export function createAttachmentsFeature({
             if (!ctx) return;
             ctx.drawImage(video, 0, 0, 80, 60);
             thumbnail.style.backgroundImage = `url(${canvas.toDataURL()})`;
-          }, { once: true });
+          };
+          mediaEntry.handleLoadedData = handleLoadedData;
+          dynamicMediaListeners.add(mediaEntry);
+          video.addEventListener("loadeddata", handleLoadedData, { once: true });
 
           const playIcon = document.createElement("div");
           playIcon.className = "play-icon-small";
@@ -433,6 +543,7 @@ export function createAttachmentsFeature({
         removeBtn.className = "remove-btn";
         removeBtn.textContent = "×";
         removeBtn.addEventListener("click", () => {
+          if (disposed) return;
           pendingAttachments.splice(index, 1);
           renderAttachmentsPreview();
         });
@@ -448,7 +559,7 @@ export function createAttachmentsFeature({
   }
 
   function syncLimitsFromConfig(config) {
-    if (!config || typeof config !== "object") return;
+    if (disposed || !config || typeof config !== "object") return;
 
     attachmentLimits = {
       maxFileBytes: parsePositiveIntOrDefault(
@@ -464,11 +575,12 @@ export function createAttachmentsFeature({
   }
 
   function addAttachment(attachment) {
-    if (!attachment || typeof attachment !== "object") return;
+    if (disposed || !attachment || typeof attachment !== "object") return;
     pendingAttachments.push(attachment);
   }
 
   function clearPendingAttachments() {
+    if (disposed) return;
     pendingAttachments = [];
     renderAttachmentsPreview();
   }
@@ -481,12 +593,49 @@ export function createAttachmentsFeature({
     return { ...attachmentLimits };
   }
 
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    lifecycleGeneration += 1;
+    for (const { target, type, handler } of listenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    listenerEntries.length = 0;
+    for (const entry of [...activeFileReaders]) entry.dispose();
+    for (const entry of [...activeImageLoads]) entry.dispose();
+    clearDynamicMediaListeners();
+    pendingAttachments = [];
+    composerSection?.classList.remove("drag-over");
+    if (fileInput) fileInput.value = "";
+    if (attachmentsPreviewEl) attachmentsPreviewEl.textContent = "";
+    if (attachmentHintEl) {
+      attachmentHintEl.textContent = "";
+      attachmentHintEl.classList.remove("has-warning");
+    }
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerEntries.length,
+      pendingOperationCount: pendingOperations.size,
+      activeFileReaderCount: activeFileReaders.size,
+      activeImageLoadCount: activeImageLoads.size,
+      dynamicMediaListenerCount: dynamicMediaListeners.size,
+      attachmentCount: pendingAttachments.length,
+      estimatedBytes: estimatePendingAttachmentTotalBytes(),
+      generation: lifecycleGeneration,
+      disposed,
+    };
+  }
+
   return {
     addAttachment,
     clearPendingAttachments,
+    dispose,
     estimatePendingAttachmentTotalBytes,
     getAttachmentLimits,
     getPendingAttachments,
+    getRuntimeSnapshot,
     renderAttachmentsPreview,
     syncLimitsFromConfig,
   };

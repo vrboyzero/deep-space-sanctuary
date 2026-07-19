@@ -1,7 +1,15 @@
 import WebSocket from "ws";
 import type { BelldandyAgent } from "@belldandy/agent";
 import { uploadTokenUsage, type TokenUsageUploadConfig } from "@belldandy/protocol";
-import type { Channel, ChannelConfig, ChannelProactiveTarget } from "./types.js";
+import type {
+  Channel,
+  ChannelConfig,
+  ChannelLifecycleOptions,
+  ChannelLifecycleState,
+  ChannelOutboundOptions,
+  ChannelProactiveTarget,
+  ChannelConversationLease,
+} from "./types.js";
 import { ConversationStore } from "@belldandy/agent";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import { updateAgentRoom } from "./community-config.js";
@@ -12,6 +20,14 @@ import {
   ChannelSafeLogger,
   createChannelApprovalPreview,
 } from "./channel-safe-logger.js";
+import {
+  ChannelOutboundDeduplicator,
+  classifyChannelOutboundFailure,
+  combineChannelAbortSignals,
+  readBoundedChannelErrorBody,
+  runChannelOutbound,
+  throwIfChannelAborted,
+} from "./channel-outbound.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
 
@@ -82,6 +98,7 @@ interface ConnectionState {
   ws: WebSocket;
   agentConfig: CommunityAgentConfig;
   roomId: string;
+  generation: number;
   reconnectAttempts: number;
   reconnectTimer?: NodeJS.Timeout;
   /** 本地维护的房间成员列表 */
@@ -145,6 +162,7 @@ export class CommunityChannel implements Channel {
   private readonly replyChunkingConfig?: CommunityChannelConfig["replyChunkingConfig"];
   private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
   private readonly ingressScheduler: ChannelIngressScheduler;
+  private readonly conversationLifecycle?: CommunityChannelConfig["conversationLifecycle"];
   private readonly reconnectConfig: {
     enabled: boolean;
     maxRetries: number;
@@ -154,6 +172,12 @@ export class CommunityChannel implements Channel {
   private readonly ownerUserUuid?: string;
 
   private _running = false;
+  private _lifecycleState: ChannelLifecycleState = "stopped";
+  private startPromise?: Promise<void>;
+  private stopPromise?: Promise<void>;
+  private lifecycleAbortController = new AbortController();
+  private readonly outboundDeduplicator = new ChannelOutboundDeduplicator();
+  private connectionGeneration = 0;
   private connections = new Map<string, ConnectionState>(); // agentName -> ConnectionState
   private processedMessages = new Set<string>();
   private readonly MESSAGE_CACHE_SIZE = 1000;
@@ -162,6 +186,52 @@ export class CommunityChannel implements Channel {
 
   get isRunning(): boolean {
     return this._running;
+  }
+
+  get lifecycleState(): ChannelLifecycleState {
+    return this._lifecycleState;
+  }
+
+  private isStopping(): boolean {
+    return this._lifecycleState === "stopping";
+  }
+
+  private isStopped(): boolean {
+    return this._lifecycleState === "stopped";
+  }
+
+  private renewLifecycleAbortController(): void {
+    if (this.lifecycleAbortController.signal.aborted) {
+      this.lifecycleAbortController = new AbortController();
+    }
+  }
+
+  private abortLifecycleOutbound(): void {
+    if (!this.lifecycleAbortController.signal.aborted) {
+      this.lifecycleAbortController.abort(createLifecycleStopAbortError("Community channel stopped."));
+    }
+    this.outboundDeduplicator.clear();
+  }
+
+  private async runOutbound<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    options: ChannelOutboundOptions = {},
+  ): Promise<T> {
+    const merged = combineChannelAbortSignals([
+      options.signal,
+      this.lifecycleAbortController.signal,
+    ]);
+    try {
+      return await this.outboundDeduplicator.run(
+        options.idempotencyKey,
+        () => runChannelOutbound(operation, {
+          ...options,
+          signal: merged.signal,
+        }),
+      );
+    } finally {
+      merged.dispose();
+    }
   }
 
   constructor(config: CommunityChannelConfig) {
@@ -176,6 +246,7 @@ export class CommunityChannel implements Channel {
     this.replyChunkingConfig = config.replyChunkingConfig;
     this.currentConversationBindingStore = config.currentConversationBindingStore;
     this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
+    this.conversationLifecycle = config.conversationLifecycle;
     this.tokenUsageUpload = config.tokenUsageUpload;
     this.ownerUserUuid = config.ownerUserUuid;
     this.reconnectConfig = config.reconnect ?? {
@@ -200,57 +271,127 @@ export class CommunityChannel implements Channel {
     return this.agent;
   }
 
-  async start(): Promise<void> {
+  async start(options: ChannelLifecycleOptions = {}): Promise<void> {
     if (this._running) return;
+    if (this.startPromise) {
+      await this.startPromise;
+      return;
+    }
+    if (options.signal?.aborted) {
+      throw toLifecycleAbortError(options.signal.reason);
+    }
 
-    console.log(`[${this.name}] Starting community channel...`);
-
-    // 为每个配置的 Agent 建立连接
-    for (const agentConfig of this.agentConfigs) {
-      if (!agentConfig.room) {
-        console.log(`[${this.name}] Agent ${agentConfig.name} has no room configured, skipping`);
-        continue;
-      }
+    const startPromise = (async () => {
+      this._lifecycleState = "starting";
+      this.renewLifecycleAbortController();
+      const lifecycle = combineChannelAbortSignals([
+        options.signal,
+        this.lifecycleAbortController.signal,
+      ]);
+      const startSignal = lifecycle.signal;
+      console.log(`[${this.name}] Starting community channel...`);
 
       try {
-        await this.connectAgent(agentConfig);
-      } catch {
-        channelSafeLogger.error({
-          channel: "community",
-          event: "agent_connect_failed",
-          failureKind: "transport_error",
-        });
+        // 为每个配置的 Agent 建立连接
+        for (const agentConfig of this.agentConfigs) {
+          if (startSignal?.aborted || this.isStopping()) {
+            throw toLifecycleAbortError(startSignal?.reason);
+          }
+          if (!agentConfig.room) {
+            console.log(`[${this.name}] Agent ${agentConfig.name} has no room configured, skipping`);
+            continue;
+          }
+
+          try {
+            await this.connectAgent(agentConfig, { signal: startSignal });
+          } catch {
+            channelSafeLogger.error({
+              channel: "community",
+              event: "agent_connect_failed",
+              failureKind: "transport_error",
+            });
+          }
+        }
+
+        if (startSignal?.aborted || this.isStopping()) {
+          throw toLifecycleAbortError(startSignal?.reason);
+        }
+        this._running = true;
+        this._lifecycleState = "running";
+        console.log(`[${this.name}] Community channel started`);
+      } catch (error) {
+        if (startSignal?.aborted || this.isStopping()) {
+          if (!this.isStopped()) {
+            await this.stop();
+          }
+        }
+        throw error;
+      } finally {
+        lifecycle.dispose();
+      }
+    })();
+    this.startPromise = startPromise;
+    try {
+      await startPromise;
+    } catch (error) {
+      if (this._lifecycleState !== "stopping" && this._lifecycleState !== "stopped") {
+        await this.stop();
+        this._lifecycleState = "failed";
+      }
+      throw error;
+    } finally {
+      if (this.startPromise === startPromise) {
+        this.startPromise = undefined;
       }
     }
-
-    this._running = true;
-    console.log(`[${this.name}] Community channel started`);
   }
 
-  async stop(): Promise<void> {
-    if (!this._running) return;
+  async stop(_options: ChannelLifecycleOptions = {}): Promise<void> {
+    if (this.stopPromise) {
+      await this.stopPromise;
+      return;
+    }
+    if (!this._running && !this.startPromise && this._lifecycleState === "stopped") return;
 
-    console.log(`[${this.name}] Stopping community channel...`);
+    const stopPromise = (async () => {
+      this._lifecycleState = "stopping";
+      this._running = false;
+      this.abortLifecycleOutbound();
+      console.log(`[${this.name}] Stopping community channel...`);
 
-    // 关闭所有连接
-    for (const [agentName, state] of this.connections.entries()) {
-      if (state.reconnectTimer) {
-        clearTimeout(state.reconnectTimer);
+      // 关闭所有连接，并先移除监听器，避免迟到 close/error 回调为旧实例安排重连。
+      for (const state of this.connections.values()) {
+        if (state.reconnectTimer) {
+          clearTimeout(state.reconnectTimer);
+        }
+        state.ws.removeAllListeners();
+        if (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING) {
+          state.ws.terminate();
+        }
       }
-      if (state.ws.readyState === WebSocket.OPEN) {
-        state.ws.close(1000, "Channel stopped");
+
+      this.connections.clear();
+      this.ingressScheduler.cancelChannel(this.name);
+      this.pendingConnectivityDiagnostics.clear();
+      this.lastConnectivityDiagnosticAt.clear();
+      this._lifecycleState = "stopped";
+      console.log(`[${this.name}] Community channel stopped`);
+    })();
+    this.stopPromise = stopPromise;
+    try {
+      await stopPromise;
+    } finally {
+      if (this.stopPromise === stopPromise) {
+        this.stopPromise = undefined;
       }
     }
-
-    this.connections.clear();
-    this.ingressScheduler.cancelChannel(this.name);
-    this.pendingConnectivityDiagnostics.clear();
-    this.lastConnectivityDiagnosticAt.clear();
-    this._running = false;
-    console.log(`[${this.name}] Community channel stopped`);
   }
 
-  async sendProactiveMessage(content: string, target?: ChannelProactiveTarget): Promise<boolean> {
+  async sendProactiveMessage(
+    content: string,
+    target?: ChannelProactiveTarget,
+    options: ChannelOutboundOptions = {},
+  ): Promise<boolean> {
     const explicitRoomId = typeof target === "string"
       ? target
       : typeof target?.chatId === "string"
@@ -302,33 +443,49 @@ export class CommunityChannel implements Channel {
     }
 
     try {
-      const chunks = chunkMarkdownForOutbound(content, "community", {
-        accountId: state.agentConfig.name,
-        config: this.replyChunkingConfig,
-      });
-      for (const chunk of chunks) {
-        state.ws.send(JSON.stringify({
-          type: "message",
-          data: { content: chunk },
-        }));
-      }
-      return true;
-    } catch {
+      return await this.sendRoomMessage(state, content, options);
+    } catch (error) {
       channelSafeLogger.error({
         channel: "community",
         event: "proactive_send_failed",
-        failureKind: "transport_error",
+        failureKind: classifyChannelOutboundFailure({ error }),
       });
       return false;
     }
   }
 
+  /** WebSocket sends are callback-driven; keep one deadline across every outbound chunk. */
+  private async sendRoomMessage(
+    state: ConnectionState,
+    content: string,
+    options: ChannelOutboundOptions = {},
+  ): Promise<boolean> {
+    return await this.runOutbound(async (signal) => {
+      const chunks = chunkMarkdownForOutbound(content, "community", {
+        accountId: state.agentConfig.name,
+        config: this.replyChunkingConfig,
+      });
+      for (const chunk of chunks) {
+        throwIfChannelAborted(signal);
+        await sendCommunityWebSocketMessage(state.ws, JSON.stringify({
+          type: "message",
+          data: { content: chunk },
+        }), signal);
+      }
+      return true;
+    }, options);
+  }
+
   /**
    * 连接单个 Agent 到房间
    */
-  private async connectAgent(agentConfig: CommunityAgentConfig): Promise<void> {
+  private async connectAgent(
+    agentConfig: CommunityAgentConfig,
+    options: ChannelOutboundOptions = {},
+  ): Promise<void> {
     const { room } = agentConfig;
     if (!room) return;
+    throwIfChannelAborted(options.signal);
 
     console.log(`[${this.name}] Connecting agent ${agentConfig.name} to room ${room.name}...`);
 
@@ -336,22 +493,23 @@ export class CommunityChannel implements Channel {
     let roomId: string;
     const roomLookupUrl = `${this.endpoint}/api/rooms/by-name/${encodeURIComponent(room.name)}`;
     try {
-      const roomResponse = await fetch(roomLookupUrl, {
+      const roomResponse = await this.runOutbound((signal) => fetch(roomLookupUrl, {
         headers: {
           "X-API-Key": agentConfig.apiKey,
           "X-Agent-ID": encodeURIComponent(agentConfig.name),
         },
-      });
+        signal,
+      }), options);
 
       if (!roomResponse.ok) {
-        const errorText = await roomResponse.text();
+        const errorBody = await readBoundedChannelErrorBody(roomResponse);
         channelSafeLogger.error({
           channel: "community",
           event: "room_lookup_failed",
           failureKind: "transport_error",
           context: { status: roomResponse.status },
         });
-        throw new Error(`Failed to find room "${room.name}": ${roomResponse.statusText} - ${errorText}`);
+        throw new Error(`Failed to find room "${room.name}": ${formatCommunityHttpFailure(roomResponse, errorBody)}`);
       }
 
       const roomData = await roomResponse.json();
@@ -371,7 +529,7 @@ export class CommunityChannel implements Channel {
     // 2. 调用 HTTP API 加入房间
     const joinRoomUrl = `${this.endpoint}/api/rooms/${roomId}/join`;
     try {
-      const joinResponse = await fetch(joinRoomUrl, {
+      const joinResponse = await this.runOutbound((signal) => fetch(joinRoomUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -381,17 +539,18 @@ export class CommunityChannel implements Channel {
         body: JSON.stringify({
           password: room.password,
         }),
-      });
+        signal,
+      }), options);
 
       if (!joinResponse.ok) {
-        const errorText = await joinResponse.text();
+        const errorBody = await readBoundedChannelErrorBody(joinResponse);
         channelSafeLogger.error({
           channel: "community",
           event: "room_join_failed",
           failureKind: "transport_error",
           context: { status: joinResponse.status },
         });
-        throw new Error(`Failed to join room: ${joinResponse.statusText} - ${errorText}`);
+        throw new Error(`Failed to join room: ${formatCommunityHttpFailure(joinResponse, errorBody)}`);
       }
 
       console.log(`[${this.name}] Agent ${agentConfig.name} joined room ${room.name} (${roomId})`);
@@ -407,33 +566,44 @@ export class CommunityChannel implements Channel {
     }
 
     // 3. 建立 WebSocket 连接
-    await this.createWebSocketConnection(agentConfig, roomId);
+    await this.createWebSocketConnection(agentConfig, roomId, options.signal);
   }
 
   /**
    * 创建 WebSocket 连接
    */
-  private async createWebSocketConnection(agentConfig: CommunityAgentConfig, roomId: string): Promise<void> {
+  private async createWebSocketConnection(
+    agentConfig: CommunityAgentConfig,
+    roomId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    // The deployed Community protocol currently authenticates this upgrade with apiKey in the query.
+    // Keep this URL strictly transport-local; diagnostics and logs only use its redacted form.
     const wsUrl = `${this.endpoint.replace(/^http/, "ws")}/ws/room?roomId=${roomId}&apiKey=${agentConfig.apiKey}&agentName=${encodeURIComponent(agentConfig.name)}`;
 
+    throwIfChannelAborted(signal);
     const ws = new WebSocket(wsUrl);
 
     const state: ConnectionState = {
       ws,
       agentConfig,
       roomId,
+      generation: ++this.connectionGeneration,
       reconnectAttempts: 0,
       members: [],
     };
 
     this.connections.set(agentConfig.name, state);
+    const ownsConnection = () => this.connections.get(agentConfig.name) === state;
 
     ws.on("open", () => {
+      if (!ownsConnection()) return;
       console.log(`[${this.name}] WebSocket connected for agent ${agentConfig.name} in room ${roomId}`);
       state.reconnectAttempts = 0; // 重置重连计数
     });
 
     ws.on("message", async (data: WebSocket.Data) => {
+      if (!ownsConnection()) return;
       try {
         const message = JSON.parse(data.toString());
         await this.handleMessage(message, state);
@@ -447,6 +617,7 @@ export class CommunityChannel implements Channel {
     });
 
     ws.on("close", (code, reason) => {
+      if (!ownsConnection()) return;
       console.log(`[${this.name}] WebSocket closed for agent ${agentConfig.name} in room ${roomId}: ${code} - ${reason}`);
       this.connections.delete(agentConfig.name);
 
@@ -457,6 +628,7 @@ export class CommunityChannel implements Channel {
     });
 
     ws.on("error", () => {
+      if (!ownsConnection()) return;
       channelSafeLogger.error({
         channel: "community",
         event: "websocket_error",
@@ -574,18 +746,19 @@ export class CommunityChannel implements Channel {
     requestUrl: string,
     error: unknown,
   ): void {
-    if (this.pendingConnectivityDiagnostics.has(requestUrl)) {
+    const diagnosticUrl = redactCommunityCredentialUrl(requestUrl);
+    if (this.pendingConnectivityDiagnostics.has(diagnosticUrl)) {
       return;
     }
 
     const now = Date.now();
-    const lastRunAt = this.lastConnectivityDiagnosticAt.get(requestUrl) ?? 0;
+    const lastRunAt = this.lastConnectivityDiagnosticAt.get(diagnosticUrl) ?? 0;
     if (now - lastRunAt < CommunityChannel.CONNECTIVITY_DIAGNOSTIC_COOLDOWN_MS) {
       return;
     }
-    this.lastConnectivityDiagnosticAt.set(requestUrl, now);
+    this.lastConnectivityDiagnosticAt.set(diagnosticUrl, now);
 
-    const task = this.diagnoseHttpConnectivity(requestUrl, error)
+    const task = this.diagnoseHttpConnectivity(diagnosticUrl, error)
       .then((diagnostic) => {
         channelSafeLogger.error({
           channel: "community",
@@ -605,11 +778,11 @@ export class CommunityChannel implements Channel {
         });
       })
       .finally(() => {
-        if (this.pendingConnectivityDiagnostics.get(requestUrl) === task) {
-          this.pendingConnectivityDiagnostics.delete(requestUrl);
+        if (this.pendingConnectivityDiagnostics.get(diagnosticUrl) === task) {
+          this.pendingConnectivityDiagnostics.delete(diagnosticUrl);
         }
       });
-    this.pendingConnectivityDiagnostics.set(requestUrl, task);
+    this.pendingConnectivityDiagnostics.set(diagnosticUrl, task);
   }
 
   /**
@@ -854,7 +1027,12 @@ export class CommunityChannel implements Channel {
       },
     });
 
+    let lifecycleLease: ChannelConversationLease | undefined;
     try {
+      lifecycleLease = await this.conversationLifecycle?.acquire({
+        conversationId,
+        agent: runAgent,
+      });
       // 调用 Agent 处理消息（流式接口）
       const stream = runAgent.run({
         conversationId,
@@ -946,16 +1124,7 @@ export class CommunityChannel implements Channel {
 
       // 发送回复
       if (finalText) {
-        const chunks = chunkMarkdownForOutbound(finalText, "community", {
-          accountId: state.agentConfig.name,
-          config: this.replyChunkingConfig,
-        });
-        for (const chunk of chunks) {
-          state.ws.send(JSON.stringify({
-            type: "message",
-            data: { content: chunk },
-          }));
-        }
+        await this.sendRoomMessage(state, finalText, { idempotencyKey: id });
       }
     } catch {
       channelSafeLogger.error({
@@ -965,11 +1134,12 @@ export class CommunityChannel implements Channel {
         accountId: state.agentConfig.name,
         failureKind: "internal_error",
       });
-      // 发送错误提示
-      state.ws.send(JSON.stringify({
-        type: "message",
-        data: { content: "抱歉，处理消息时出现了错误。" },
-      }));
+      // 发送错误提示；原始处理失败不会携带到出站日志。
+      await this.sendRoomMessage(state, "抱歉，处理消息时出现了错误。", {
+        idempotencyKey: `${id}:error`,
+      }).catch(() => undefined);
+    } finally {
+      await lifecycleLease?.release();
     }
   }
 
@@ -994,6 +1164,9 @@ export class CommunityChannel implements Channel {
     console.log(`[${this.name}] Scheduling reconnect for room ${state.roomId} in ${delay}ms (attempt ${state.reconnectAttempts}/${this.reconnectConfig.maxRetries})`);
 
     state.reconnectTimer = setTimeout(async () => {
+      if (!this._running || this.connections.has(state.agentConfig.name)) {
+        return;
+      }
       try {
         await this.connectAgent(state.agentConfig);
       } catch {
@@ -1145,4 +1318,70 @@ export class CommunityChannel implements Channel {
       throw e;
     }
   }
+}
+
+function redactCommunityCredentialUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    for (const key of ["apiKey", "api_key", "token", "authorization"]) {
+      url.searchParams.delete(key);
+    }
+    return url.toString();
+  } catch {
+    return value.replace(/([?&](?:apiKey|api_key|token|authorization)=)[^&]*/gi, "$1[REDACTED]");
+  }
+}
+
+function toLifecycleAbortError(reason: unknown): Error {
+  if (reason instanceof Error) return reason;
+  const error = new Error("Channel lifecycle operation was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function createLifecycleStopAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function sendCommunityWebSocketMessage(
+  ws: WebSocket,
+  payload: string,
+  signal: AbortSignal,
+): Promise<void> {
+  throwIfChannelAborted(signal);
+  // Minimal test/fallback transports only expose the synchronous send form. The production ws
+  // client exposes a callback, which lets stop/deadline settle the caller without queuing chunks.
+  if (ws.send.length < 2) {
+    ws.send(payload);
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onAbort = () => settle(toLifecycleAbortError(signal.reason));
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      ws.send(payload, (error?: Error) => settle(error));
+    } catch (error) {
+      settle(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+function formatCommunityHttpFailure(
+  response: Response,
+  body: { text: string; truncated: boolean },
+): string {
+  const status = response.statusText?.trim() || `HTTP ${response.status}`;
+  const detail = body.text.trim();
+  if (!detail) return status;
+  return `${status} - ${detail}${body.truncated ? " (body truncated)" : ""}`;
 }

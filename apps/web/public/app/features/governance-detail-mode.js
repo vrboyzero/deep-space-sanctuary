@@ -59,3 +59,66 @@ export function setGovernanceDetailMode(value) {
   }
   return mode;
 }
+
+export function createGovernanceDetailModeRefreshFeature({
+  eventTarget = getRuntimeRoot(),
+  sections = {},
+  reloaders = {},
+} = {}) {
+  const {
+    memoryViewerSection,
+    experienceWorkbenchSection,
+    goalsSection,
+  } = sections;
+  const {
+    loadMemoryViewer,
+    loadExperienceWorkbench,
+    loadGoals,
+  } = reloaders;
+  let disposed = false;
+  let listenerCount = 0;
+
+  function isVisible(section) {
+    return Boolean(section && !section.classList.contains("hidden"));
+  }
+
+  function handleModeChanged() {
+    if (disposed) return;
+    // 详情模式变化只刷新当前可见面板，避免后台面板产生额外请求。
+    if (isVisible(memoryViewerSection)) {
+      void loadMemoryViewer?.(false);
+    }
+    if (isVisible(experienceWorkbenchSection)) {
+      void loadExperienceWorkbench?.(false);
+    }
+    if (isVisible(goalsSection)) {
+      void loadGoals?.(false);
+    }
+  }
+
+  if (eventTarget && typeof eventTarget.addEventListener === "function") {
+    eventTarget.addEventListener(GOVERNANCE_DETAIL_MODE_CHANGED_EVENT, handleModeChanged);
+    listenerCount = 1;
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (listenerCount > 0 && typeof eventTarget?.removeEventListener === "function") {
+      eventTarget.removeEventListener(GOVERNANCE_DETAIL_MODE_CHANGED_EVENT, handleModeChanged);
+      listenerCount = 0;
+    }
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount,
+      disposed,
+    };
+  }
+
+  return {
+    dispose,
+    getRuntimeSnapshot,
+  };
+}

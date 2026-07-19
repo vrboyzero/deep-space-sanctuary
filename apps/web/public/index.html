@@ -1794,9 +1794,29 @@
             <div class="form-help" data-i18n="settings.maxOutputTokensHelp">单次模型调用最大输出 token，建议在长工具调用场景中适当调大。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgMaxToolCalls" data-i18n="settings.maxToolCallsLabel">Max Tool Calls</label>
+            <input id="cfgMaxToolCalls" class="input" inputmode="numeric" placeholder="32" />
+            <div class="form-help" data-i18n="settings.maxToolCallsHelp">单次运行最多执行的工具调用数。留空使用安全默认值 32；`0` 表示拒绝执行工具调用。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgMaxRunWallTimeMs" data-i18n="settings.maxRunWallTimeMsLabel">Max Run Wall Time (ms)</label>
+            <input id="cfgMaxRunWallTimeMs" class="input" inputmode="numeric" placeholder="300000" />
+            <div class="form-help" data-i18n="settings.maxRunWallTimeMsHelp">单次 ReAct run 的最长执行时间。留空使用安全默认值 300000ms；`0` 或非法值会回退到默认值。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgMaxTotalTokens" data-i18n="settings.maxTotalTokensLabel">Max Total Tokens</label>
+            <input id="cfgMaxTotalTokens" class="input" inputmode="numeric" placeholder="128000" />
+            <div class="form-help" data-i18n="settings.maxTotalTokensHelp">单次 ReAct run 累计 token 上限。留空使用安全默认值 128000；`0` 或非法值会回退到默认值。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgMaxHighRiskToolCalls" data-i18n="settings.maxHighRiskToolCallsLabel">Max High-Risk Tool Calls</label>
+            <input id="cfgMaxHighRiskToolCalls" class="input" inputmode="numeric" placeholder="4" />
+            <div class="form-help" data-i18n="settings.maxHighRiskToolCallsHelp">单次 ReAct run 可实际执行的 high/critical Tool 次数。留空使用安全默认值 4；`0` 表示禁止高风险 Tool。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" data-i18n="settings.toolLoopIterationBudgetLabel">Tool Loop Iteration Budget</label>
             <input id="cfgToolLoopIterationBudget" class="input" inputmode="numeric" placeholder="8" />
-            <div class="form-help" data-i18n="settings.toolLoopIterationBudgetHelp">单次工具循环最多允许多少轮模型调用。接近上限时会注入收敛提示，超限后会先尝试强制压缩再阻断。</div>
+            <div class="form-help" data-i18n="settings.toolLoopIterationBudgetHelp">单次工具循环最多允许多少轮模型调用。留空使用安全默认值 8；显式 `0` 保持兼容的不限轮次语义。接近上限时会注入收敛提示，超限后会先尝试强制压缩再阻断。</div>
           </div>
           <div class="form-group">
             <label class="form-label" data-i18n="settings.toolLoopWarningFractionLabel">Tool Loop Warning Fraction</label>
@@ -1974,6 +1994,11 @@
             <label class="form-label" for="cfgWorkflowAgentTimeoutMs" data-i18n="settings.workflowAgentTimeoutMsLabel">Workflow Agent Timeout (ms)</label>
             <input id="cfgWorkflowAgentTimeoutMs" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowAgentTimeoutMsPlaceholder" placeholder="300000" />
             <div class="form-help" data-i18n="settings.workflowAgentTimeoutMsHelp">动态工作流内部单次 agent 调用的默认超时时间。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgWorkflowMaxTokens" data-i18n="settings.workflowMaxTokensLabel">Workflow Max Tokens</label>
+            <input id="cfgWorkflowMaxTokens" class="input" inputmode="numeric" data-i18n-placeholder="settings.workflowMaxTokensPlaceholder" placeholder="128000" />
+            <div class="form-help" data-i18n="settings.workflowMaxTokensHelp">单次动态工作流累计 token 硬上限；留空表示不额外限制。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgWorkflowMaxAgentCalls" data-i18n="settings.workflowMaxAgentCallsLabel">Workflow Max Agent Calls</label>

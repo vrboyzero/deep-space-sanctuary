@@ -1,5 +1,5 @@
 import type { AgentProfile } from "@belldandy/agent";
-import type { ToolContract, ToolContractFamily } from "@belldandy/skills";
+import type { ToolContract, ToolContractFamily, ToolRuntimeLaunchSpec } from "@belldandy/skills";
 
 const COMMANDER_HARD_BLOCK_FAMILIES = new Set<ToolContractFamily>([
   "workspace-write",
@@ -9,11 +9,12 @@ const COMMANDER_HARD_BLOCK_FAMILIES = new Set<ToolContractFamily>([
 
 export function isAgentToolAllowed(input: {
   agentId: string;
+  role?: ToolRuntimeLaunchSpec["role"];
   toolName: string;
   contract?: ToolContract;
   profile?: Pick<AgentProfile, "toolWhitelist">;
 }): boolean {
-  if (input.agentId === "commander" && input.contract && COMMANDER_HARD_BLOCK_FAMILIES.has(input.contract.family)) {
+  if (input.role === "commander" && input.contract && COMMANDER_HARD_BLOCK_FAMILIES.has(input.contract.family)) {
     return false;
   }
 

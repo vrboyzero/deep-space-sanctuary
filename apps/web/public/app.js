@@ -1,5 +1,6 @@
 import {
   createCredentialSession,
+  createModelSelectionPersistenceFeature,
   persistConnectionFields,
   persistUuidField,
   persistWorkspaceRootsField,
@@ -37,6 +38,8 @@ import {
 import { createAttachmentsFeature } from "./app/features/attachments.js";
 import { createAgentRuntimeFeature } from "./app/features/agent-runtime.js";
 import { createAgentSessionCacheFeature } from "./app/features/agent-session-cache.js";
+import { createTaskTokenHistoryCache } from "./app/features/task-token-history-cache.js";
+import { createTaskTokenResultPanelFeature } from "./app/features/task-token-result-panel.js";
 import { createChatEventsFeature } from "./app/features/chat-events.js";
 import { createChatNetworkFeature } from "./app/features/chat-network.js";
 import { createChatUiFeature } from "./app/features/chat-ui.js";
@@ -46,6 +49,8 @@ import { createWebchatPerformanceObservability } from "./app/features/webchat-pe
 import { createAppShellFeature } from "./app/features/app-shell.js";
 import { createEmailInboundSessionBannerFeature } from "./app/features/email-inbound-session-banner.js";
 import { createGoalsDetailFeature } from "./app/features/goals-detail.js";
+import { createGoalModalControlsFeature } from "./app/features/goal-modal-controls.js";
+import { createGoalSubtaskListControlsFeature } from "./app/features/goal-subtask-list-controls.js";
 import { createGoalsGovernancePanelFeature } from "./app/features/goals-governance-panel.js";
 import { createGoalsCapabilityPanelFeature } from "./app/features/goals-capability-panel.js";
 import { createGoalsActionsRuntimeFeature } from "./app/features/goals-actions-runtime.js";
@@ -58,8 +63,15 @@ import { createGoalsTrackingPanelFeature } from "./app/features/goals-tracking-p
 import { createBridgeRuntimeFeature } from "./app/features/bridge-runtime.js";
 import { createHeaderNavigationFeature } from "./app/features/header-navigation.js";
 import { createMemoryDetailRenderFeature } from "./app/features/memory-detail-render.js";
+import { createMemoryDreamControlsFeature } from "./app/features/memory-dream-controls.js";
+import { createMemoryQueryFilterControlsFeature } from "./app/features/memory-query-filter-controls.js";
+import { createMemorySharedReviewFilterControlsFeature } from "./app/features/memory-shared-review-filter-controls.js";
+import { createMemoryViewerControlsFeature } from "./app/features/memory-viewer-controls.js";
+import { createMainViewNavigationFeature } from "./app/features/main-view-navigation.js";
+import { createEmailThreadAdviceRetention } from "./app/features/email-thread-advice-retention.js";
 import { createMemoryRuntimeFeature } from "./app/features/memory-runtime.js";
 import { createMemoryViewerFeature } from "./app/features/memory-viewer.js";
+import { createExperienceWorkbenchControlsFeature } from "./app/features/experience-workbench-controls.js";
 import { createExperienceWorkbenchFeature } from "./app/features/experience-workbench.js";
 import { createSessionNavigationFeature } from "./app/features/session-navigation.js";
 import { createSessionDigestFeature } from "./app/features/session-digest.js";
@@ -70,14 +82,23 @@ import { createSubtasksRuntimeFeature } from "./app/features/subtasks-runtime.js
 import { createLocaleController } from "./app/features/locale.js";
 import { initPromptController } from "./app/features/prompt.js";
 import { createPanelVisibilityFeature } from "./app/features/panel-visibility.js";
+import { createPrimaryChatControlsFeature } from "./app/features/primary-chat-controls.js";
 import { createCostBudgetTracker, readCostBudgetConfig } from "./app/features/cost-budget.js";
 import { updateTokenUsageObservability } from "./app/features/token-usage-observability.js";
 import { createThemeController } from "./app/features/theme.js";
+import { createUuidIdentityFeature } from "./app/features/uuid-identity.js";
 import { createVoiceFeature } from "./app/features/voice.js";
-import { GOVERNANCE_DETAIL_MODE_CHANGED_EVENT } from "./app/features/governance-detail-mode.js";
-import { consumeSessionAuthHandoff, createSessionAuthHandoffUrl } from "./app/features/session-auth-handoff.js";
+import { createGovernanceDetailModeRefreshFeature } from "./app/features/governance-detail-mode.js";
+import {
+  consumeSessionAuthHandoff,
+  createSessionAuthHandoffUrl,
+  disposeSessionAuthHandoffs,
+} from "./app/features/session-auth-handoff.js";
+import { createServerConfigCache } from "./app/features/server-config-cache.js";
+import { createSetupGuidanceFeature } from "./app/features/setup-guidance.js";
 import { applyWebConfigLinks } from "./app/features/web-config-links.js";
 import { createWorkspaceFeature } from "./app/features/workspace.js";
+import { createWorkspaceRootsSaveFeature } from "./app/features/workspace-roots-save.js";
 import { LOCALE_DICTIONARIES, LOCALE_META } from "./app/i18n/index.js";
 
 await awaitWebAssetsReady();
@@ -420,12 +441,20 @@ let renderedConversationMessageState = {
   keys: [],
 };
 const residentAgentRosterEnabled = window.BELLDANDY_WEB_CONFIG?.residentAgentRosterEnabled !== false;
-const CONFIG_CACHE_TTL_MS = 2000;
-let configCacheData = null;
-let configCacheLoadedAt = 0;
-let configCachePromise = null;
-const taskTokenHistoryByConversation = new Map();
 const TASK_TOKEN_HISTORY_LIMIT = 1;
+const taskTokenHistoryByConversation = createTaskTokenHistoryCache({
+  maxRecordsPerConversation: TASK_TOKEN_HISTORY_LIMIT,
+});
+const taskTokenResultPanelFeature = createTaskTokenResultPanelFeature({
+  enabled: false,
+  panel: taskTokenUsagePanelEl,
+  valueElements: taskTokenValueEls,
+  formatTokenCount,
+  recordResult: (payload) => {
+    prependTaskTokenHistory(String(payload.conversationId), payload);
+  },
+});
+const serverConfigCache = createServerConfigCache();
 let transientUrlToken = null;
 const clientId = resolveClientId();
 const credentialSession = createCredentialSession({
@@ -471,6 +500,9 @@ const webchatPerformanceObservability = createWebchatPerformanceObservability({
 webchatPerformanceObservability.start();
 window.addEventListener("pagehide", () => {
   webchatPerformanceObservability.dispose();
+  taskTokenResultPanelFeature.dispose();
+  taskTokenHistoryByConversation.dispose();
+  serverConfigCache.dispose();
 }, { once: true });
 
 function withWebchatPerformance(payload) {
@@ -670,11 +702,208 @@ const panelVisibilityFeature = createPanelVisibilityFeature({
   onContentPanelVisibleChange: (visible) => workspaceFeature?.handleSidebarVisibilityChange?.(visible),
   t: localeController.t,
 });
+const governanceDetailModeRefreshFeature = createGovernanceDetailModeRefreshFeature({
+  eventTarget: window,
+  sections: {
+    memoryViewerSection,
+    experienceWorkbenchSection,
+    goalsSection,
+  },
+  reloaders: {
+    loadMemoryViewer,
+    loadExperienceWorkbench,
+    loadGoals,
+  },
+});
+const primaryChatControlsFeature = createPrimaryChatControlsFeature({
+  connectButton: connectBtn,
+  sendButton: sendBtn,
+  onConnect: () => connect(),
+  onComposerPrimaryAction: () => handleComposerPrimaryAction(),
+});
+const modelSelectionPersistenceFeature = createModelSelectionPersistenceFeature({
+  select: modelSelectEl,
+  storageKey: MODEL_ID_KEY,
+});
+const mainViewNavigationFeature = createMainViewNavigationFeature({
+  refs: {
+    switchMemoryBtn,
+    switchExperienceBtn,
+    switchGoalsBtn,
+    switchSubtasksBtn,
+    openChannelSettingsBtn,
+    switchCanvasBtn,
+  },
+  actions: {
+    openMemory: async () => {
+      switchMode("memory");
+      await loadMemoryViewer(false);
+    },
+    openExperience: async () => {
+      switchMode("experience");
+      await loadExperienceWorkbench(true);
+    },
+    openGoals: async () => {
+      switchMode("goals");
+      await loadGoals(false);
+    },
+    openSubtasks: async () => {
+      switchMode("subtasks");
+      await loadSubtasks(false);
+    },
+    openChannels: () => settingsRuntimeFeature?.openChannels?.(),
+    openCanvas: async () => {
+      if (!window._canvasApp) return;
+      switchMode("canvas");
+      await window._canvasApp.showBoardList();
+    },
+  },
+});
+const goalSubtaskListControlsFeature = createGoalSubtaskListControlsFeature({
+  refs: {
+    goalsRefreshBtn,
+    goalsShowArchivedEl,
+    subtasksRefreshBtn,
+    subtasksShowArchivedEl,
+  },
+  goalsState,
+  subtasksState,
+  loadGoals,
+  loadSubtasks,
+});
+const goalModalControlsFeature = createGoalModalControlsFeature({
+  refs: {
+    goalCreateBtn,
+    goalCreateCloseBtn,
+    goalCreateCancelBtn,
+    goalCreateSubmitBtn,
+    goalCheckpointActionCloseBtn,
+    goalCheckpointActionCancelBtn,
+  },
+  actions: {
+    openGoalCreate: () => toggleGoalCreateModal(true),
+    closeGoalCreate: () => toggleGoalCreateModal(false),
+    submitGoalCreate: () => submitGoalCreateForm(),
+    closeGoalCheckpointAction: () => toggleGoalCheckpointActionModal(false),
+  },
+});
+const experienceWorkbenchControlsFeature = createExperienceWorkbenchControlsFeature({
+  refreshButton: experienceWorkbenchRefreshBtn,
+  loadExperienceWorkbench,
+});
+const memoryDreamControlsFeature = createMemoryDreamControlsFeature({
+  refs: {
+    memoryDreamRefreshBtn,
+    memoryDreamRunBtn,
+    memoryDreamHistoryToggleBtn,
+    memoryDreamHistoryRefreshBtn,
+  },
+  getMemoryViewerFeature: () => memoryViewerFeature,
+});
+const memoryViewerControlsFeature = createMemoryViewerControlsFeature({
+  refs: {
+    memoryViewerRefreshBtn,
+    memoryTabTasksBtn,
+    memoryTabMemoriesBtn,
+    memoryTabSharedReviewBtn,
+    memoryTabOutboundAuditBtn,
+    memoryOutboundAuditFocusAllBtn,
+    memoryOutboundAuditFocusThreadsBtn,
+    memorySearchBtn,
+    memoryDedupPreviewBtn,
+  },
+  loadMemoryViewer,
+  switchMemoryViewerTab,
+  getMemoryViewerFeature: () => memoryViewerFeature,
+});
+const memoryQueryFilterControlsFeature = createMemoryQueryFilterControlsFeature({
+  refs: {
+    memoryTaskGoalFilterClearBtn,
+    memorySearchInputEl,
+    memoryTaskStatusFilterEl,
+    memoryTaskSourceFilterEl,
+    memoryChunkTypeFilterEl,
+    memoryChunkVisibilityFilterEl,
+    memoryChunkGovernanceFilterEl,
+    memoryChunkCategoryFilterEl,
+  },
+  getActiveTab: () => memoryViewerState.tab,
+  loadMemoryViewer,
+  clearMemoryTaskGoalFilter,
+});
+const memorySharedReviewFilterControlsFeature = createMemorySharedReviewFilterControlsFeature({
+  refs: {
+    memorySharedReviewFocusFilterEl,
+    memorySharedReviewTargetFilterEl,
+    memorySharedReviewClaimedByFilterEl,
+    memorySharedReviewClearFiltersBtn,
+  },
+  state: memoryViewerState,
+  createDefaultSharedReviewFilters,
+  getMemoryViewerFeature: () => memoryViewerFeature,
+  loadMemoryViewer,
+});
 
 let attachmentsFeature = null;
 let agentRuntimeFeature = null;
+let voiceFeature = null;
+let headerNavigationFeature = null;
+let webConfigLinksFeature = null;
 const agentSessionCacheFeature = createAgentSessionCacheFeature();
+const emailThreadAdviceRetention = createEmailThreadAdviceRetention();
+window.addEventListener("pagehide", () => {
+  agentSessionCacheFeature.dispose();
+  emailThreadAdviceRetention.dispose();
+  chatEventsFeature?.dispose();
+  chatNetworkFeature?.dispose();
+  chatUiFeature?.dispose();
+  bridgeRuntimeFeature?.dispose();
+  settingsRuntimeFeature?.dispose();
+  appShellFeature?.dispose();
+  workspaceFeature?.dispose();
+  workspaceRootsSaveFeature?.dispose();
+  goalsStateRuntimeFeature?.dispose();
+  goalsOverviewFeature?.dispose();
+  subtasksOverviewFeature?.dispose();
+  uuidIdentityFeature?.dispose();
+  setupGuidanceFeature?.dispose();
+  voiceFeature?.dispose();
+  agentRuntimeFeature?.dispose();
+  promptController.dispose();
+  credentialSession.dispose();
+  disposeSessionAuthHandoffs();
+  headerNavigationFeature?.dispose();
+  webConfigLinksFeature?.dispose();
+  panelVisibilityFeature.dispose();
+  governanceDetailModeRefreshFeature.dispose();
+  primaryChatControlsFeature.dispose();
+  modelSelectionPersistenceFeature.dispose();
+  mainViewNavigationFeature.dispose();
+  goalSubtaskListControlsFeature.dispose();
+  goalModalControlsFeature.dispose();
+  goalsActionsRuntimeFeature?.dispose();
+  goalsRuntimeFeature?.dispose();
+  goalsSpecialistPanelsFeature?.dispose();
+  experienceWorkbenchControlsFeature.dispose();
+  experienceWorkbenchFeature?.dispose();
+  canvasContextFeature?.dispose();
+  memoryDreamControlsFeature.dispose();
+  memoryViewerControlsFeature.dispose();
+  memoryQueryFilterControlsFeature.dispose();
+  memorySharedReviewFilterControlsFeature.dispose();
+  memoryRuntimeFeature?.dispose();
+  memoryDetailRenderFeature?.dispose();
+  memoryViewerFeature?.dispose();
+  emailInboundSessionBannerFeature?.dispose();
+  attachmentsFeature?.dispose();
+  sessionDigestFeature?.dispose();
+  sessionPlanFeature?.dispose();
+  themeController.dispose();
+  localeController.dispose();
+}, { once: true });
 let workspaceFeature = null;
+let workspaceRootsSaveFeature = null;
+let uuidIdentityFeature = null;
 let chatEventsFeature = null;
 let chatNetworkFeature = null;
 let chatUiFeature = null;
@@ -706,6 +935,8 @@ function setActiveConversationIdValue(conversationId) {
   const normalized = typeof conversationId === "string" ? conversationId : "";
   const changed = activeConversationId !== normalized;
   activeConversationId = normalized;
+  agentSessionCacheFeature.setActiveConversation(normalized);
+  taskTokenHistoryByConversation.setActiveConversation(normalized);
   renderComposerPrimaryAction();
   if (changed) {
     sessionDigestFeature?.clear?.();
@@ -751,13 +982,25 @@ const appShellFeature = createAppShellFeature({
   renderCanvasGoalContext: () => renderCanvasGoalContext(),
 });
 const showNotice = (...args) => appShellFeature.showNotice(...args);
+const setupGuidanceFeature = createSetupGuidanceFeature({
+  openGuidance: () => {
+    if (settingsRuntimeFeature?.hasPendingPairing?.()) {
+      void settingsRuntimeFeature.openPairingPending?.({ skipLoad: true });
+    } else {
+      toggleSettings(true);
+    }
+    const guideMsg = appendMessage("bot", "👋 欢迎使用 Star Sanctuary！\n\n检测到默认模型配置尚未完成。请继续使用当前设置弹窗补齐 API Key 与默认模型，然后点击 Save 保存。");
+    if (guideMsg) guideMsg.style.whiteSpace = "pre-wrap";
+  },
+});
 const switchMode = (mode) => {
   const result = appShellFeature.switchMode(mode);
   bridgeRuntimeFeature?.setViewActive?.(mode === "bridge");
+  experienceWorkbenchFeature?.setViewActive?.(mode === "experience");
   return result;
 };
 const updateSidebarModeButtons = (...args) => appShellFeature.updateSidebarModeButtons(...args);
-createHeaderNavigationFeature({
+headerNavigationFeature = createHeaderNavigationFeature({
   refs: {
     openWebChatTabLink,
     goGoalsPageBtn,
@@ -797,7 +1040,7 @@ emailInboundSessionBannerFeature = createEmailInboundSessionBannerFeature({
   t: localeController.t,
 });
 
-const voiceFeature = createVoiceFeature({
+voiceFeature = createVoiceFeature({
   storageKey: VOICE_SHORTCUT_KEY,
   disabledValue: VOICE_SHORTCUT_DISABLED_VALUE,
   defaultShortcut: DEFAULT_VOICE_SHORTCUT,
@@ -824,8 +1067,10 @@ const voiceFeature = createVoiceFeature({
   t: localeController.t,
   getSpeechRecognitionLocale: () => localeController.getSpeechRecognitionLocale(),
 });
+voiceFeature.bindGlobalKeyTarget(document);
 
 localeController.subscribe(() => {
+  emailThreadAdviceRetention.clearGeneration();
   themeController.refreshLabels?.();
   panelVisibilityFeature.refreshLocale?.();
   voiceFeature.refreshLocale?.();
@@ -842,7 +1087,7 @@ localeController.subscribe(() => {
   refreshSubtasksLocale();
   refreshBridgeLocale();
   agentRuntimeFeature?.refreshLocale?.();
-  syncSaveWorkspaceRootsButton();
+  workspaceRootsSaveFeature?.refreshLocale();
   renderTaskTokenHistory();
   renderComposerPrimaryAction();
 });
@@ -924,35 +1169,15 @@ if (handedOffAuth?.mode === "token" && handedOffAuth.value) {
 restoreWorkspaceRootsField({ workspaceRootsKey: WORKSPACE_ROOTS_KEY, workspaceRootsEl });
 restoreUuidField({ uuidKey: UUID_KEY, userUuidEl });
 
-// 监听 UUID 保存按钮
-if (saveUuidBtn && userUuidEl) {
-  saveUuidBtn.addEventListener("click", () => {
-    const uuid = userUuidEl.value.trim();
-    debugLog("[UUID] Saving UUID", { hasUuid: Boolean(uuid) });
-    persistUuidField({ uuidKey: UUID_KEY, userUuidEl });
-    // 如果 WebSocket 已连接，重新连接以更新 UUID
-    if (ws && isReady) {
-      debugLog("[UUID] UUID changed, reconnecting");
-      teardown();
-      setTimeout(() => connect(), 100);
-    } else {
-      debugLog("[UUID] WebSocket not connected, will use UUID on next connect");
-    }
-  });
-}
-
-// 监听 UUID 输入框的变化，自动保存并重新连接（备用方案）
-if (userUuidEl) {
-  userUuidEl.addEventListener("blur", () => {
-    persistUuidField({ uuidKey: UUID_KEY, userUuidEl });
-    // 如果 WebSocket 已连接，重新连接以更新 UUID
-    if (ws && isReady) {
-      debugLog("[UUID] UUID changed (blur), reconnecting");
-      teardown();
-      setTimeout(() => connect(), 100);
-    }
-  });
-}
+uuidIdentityFeature = createUuidIdentityFeature({
+  input: userUuidEl,
+  saveButton: saveUuidBtn,
+  persistUuid: () => persistUuidField({ uuidKey: UUID_KEY, userUuidEl }),
+  isConnected: () => Boolean(ws && isReady),
+  teardown,
+  connect,
+  debugLog,
+});
 
 // [NEW] Allow ?token=... param to override/set auth
 const urlToken = consumeUrlTokenParam();
@@ -967,192 +1192,6 @@ markWebchatStartup("app.bootstrap.ready", {
   hasTransientUrlToken: Boolean(transientUrlToken),
 });
 
-connectBtn.addEventListener("click", () => connect());
-sendBtn.addEventListener("click", () => handleComposerPrimaryAction());
-if (memoryViewerRefreshBtn) {
-  memoryViewerRefreshBtn.addEventListener("click", () => loadMemoryViewer(true));
-}
-if (experienceWorkbenchRefreshBtn) {
-  experienceWorkbenchRefreshBtn.addEventListener("click", () => loadExperienceWorkbench(true));
-}
-if (memoryDreamRefreshBtn) {
-  memoryDreamRefreshBtn.addEventListener("click", () => {
-    void memoryViewerFeature?.loadDreamRuntimeStatus?.();
-    void memoryViewerFeature?.loadDreamCommonsStatus?.();
-  });
-}
-if (memoryDreamRunBtn) {
-  memoryDreamRunBtn.addEventListener("click", () => {
-    void memoryViewerFeature?.runDream?.();
-  });
-}
-if (memoryDreamHistoryToggleBtn) {
-  memoryDreamHistoryToggleBtn.addEventListener("click", () => {
-    memoryViewerFeature?.toggleDreamHistory?.();
-  });
-}
-if (memoryDreamHistoryRefreshBtn) {
-  memoryDreamHistoryRefreshBtn.addEventListener("click", () => {
-    void memoryViewerFeature?.loadDreamHistory?.(false);
-  });
-}
-if (memoryTabTasksBtn) {
-  memoryTabTasksBtn.addEventListener("click", () => switchMemoryViewerTab("tasks"));
-}
-if (memoryTabMemoriesBtn) {
-  memoryTabMemoriesBtn.addEventListener("click", () => switchMemoryViewerTab("memories"));
-}
-if (memoryTabSharedReviewBtn) {
-  memoryTabSharedReviewBtn.addEventListener("click", () => switchMemoryViewerTab("sharedReview"));
-}
-if (memoryTabOutboundAuditBtn) {
-  memoryTabOutboundAuditBtn.addEventListener("click", () => switchMemoryViewerTab("outboundAudit"));
-}
-if (memoryOutboundAuditFocusAllBtn) {
-  memoryOutboundAuditFocusAllBtn.addEventListener("click", () => memoryViewerFeature?.switchOutboundAuditFocus("all"));
-}
-if (memoryOutboundAuditFocusThreadsBtn) {
-  memoryOutboundAuditFocusThreadsBtn.addEventListener("click", () => memoryViewerFeature?.switchOutboundAuditFocus("threads"));
-}
-if (memorySearchBtn) {
-  memorySearchBtn.addEventListener("click", () => loadMemoryViewer(true));
-}
-if (memoryDedupPreviewBtn) {
-  memoryDedupPreviewBtn.addEventListener("click", () => {
-    void memoryViewerFeature?.openDedupModal?.();
-  });
-}
-if (goalsRefreshBtn) {
-  goalsRefreshBtn.addEventListener("click", () => loadGoals(true));
-}
-if (goalsShowArchivedEl) {
-  goalsShowArchivedEl.checked = goalsState.includeArchived === true;
-  goalsShowArchivedEl.addEventListener("change", () => {
-    goalsState.includeArchived = goalsShowArchivedEl.checked === true;
-    void loadGoals(true);
-  });
-}
-if (subtasksRefreshBtn) {
-  subtasksRefreshBtn.addEventListener("click", () => loadSubtasks(true));
-}
-if (subtasksShowArchivedEl) {
-  subtasksShowArchivedEl.checked = subtasksState.includeArchived === true;
-  subtasksShowArchivedEl.addEventListener("change", () => {
-    subtasksState.includeArchived = subtasksShowArchivedEl.checked === true;
-    void loadSubtasks(true);
-  });
-}
-if (goalCreateBtn) {
-  goalCreateBtn.addEventListener("click", () => {
-    toggleGoalCreateModal(true);
-  });
-}
-if (goalCreateCloseBtn) {
-  goalCreateCloseBtn.addEventListener("click", () => toggleGoalCreateModal(false));
-}
-if (goalCreateCancelBtn) {
-  goalCreateCancelBtn.addEventListener("click", () => toggleGoalCreateModal(false));
-}
-if (goalCreateSubmitBtn) {
-  goalCreateSubmitBtn.addEventListener("click", () => {
-    void submitGoalCreateForm();
-  });
-}
-if (goalCheckpointActionCloseBtn) {
-  goalCheckpointActionCloseBtn.addEventListener("click", () => toggleGoalCheckpointActionModal(false));
-}
-if (goalCheckpointActionCancelBtn) {
-  goalCheckpointActionCancelBtn.addEventListener("click", () => toggleGoalCheckpointActionModal(false));
-}
-if (memoryTaskGoalFilterClearBtn) {
-  memoryTaskGoalFilterClearBtn.addEventListener("click", () => {
-    void clearMemoryTaskGoalFilter();
-  });
-}
-if (memorySearchInputEl) {
-  memorySearchInputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      loadMemoryViewer(true);
-    }
-  });
-}
-if (memoryTaskStatusFilterEl) {
-  memoryTaskStatusFilterEl.addEventListener("change", () => {
-    if (memoryViewerState.tab === "tasks") loadMemoryViewer(true);
-  });
-}
-if (memoryTaskSourceFilterEl) {
-  memoryTaskSourceFilterEl.addEventListener("change", () => {
-    if (memoryViewerState.tab === "tasks") loadMemoryViewer(true);
-  });
-}
-if (memoryChunkTypeFilterEl) {
-  memoryChunkTypeFilterEl.addEventListener("change", () => {
-    if (memoryViewerState.tab === "memories") loadMemoryViewer(true);
-  });
-}
-if (memoryChunkVisibilityFilterEl) {
-  memoryChunkVisibilityFilterEl.addEventListener("change", () => {
-    if (memoryViewerState.tab === "memories") loadMemoryViewer(true);
-  });
-}
-if (memoryChunkGovernanceFilterEl) {
-  memoryChunkGovernanceFilterEl.addEventListener("change", () => {
-    if (memoryViewerState.tab === "memories" || memoryViewerState.tab === "sharedReview") loadMemoryViewer(true);
-  });
-}
-if (memoryChunkCategoryFilterEl) {
-  memoryChunkCategoryFilterEl.addEventListener("change", () => {
-    if (memoryViewerState.tab === "memories") loadMemoryViewer(true);
-  });
-}
-if (memorySharedReviewFocusFilterEl) {
-  memorySharedReviewFocusFilterEl.addEventListener("change", () => {
-    const next = String(memorySharedReviewFocusFilterEl.value || "").trim();
-    memoryViewerState.sharedReviewFilters = {
-      ...createDefaultSharedReviewFilters(),
-      ...memoryViewerState.sharedReviewFilters,
-      focus: next === "actionable" || next === "mine" ? next : "",
-      claimedByAgentId: "",
-    };
-    memoryViewerFeature?.syncSharedReviewFilterUi?.();
-    if (memoryViewerState.tab === "sharedReview") loadMemoryViewer(true);
-  });
-}
-if (memorySharedReviewTargetFilterEl) {
-  memorySharedReviewTargetFilterEl.addEventListener("change", () => {
-    memoryViewerState.sharedReviewFilters = {
-      ...createDefaultSharedReviewFilters(),
-      ...memoryViewerState.sharedReviewFilters,
-      targetAgentId: String(memorySharedReviewTargetFilterEl.value || "").trim(),
-    };
-    if (memoryViewerState.tab === "sharedReview") loadMemoryViewer(true);
-  });
-}
-if (memorySharedReviewClaimedByFilterEl) {
-  memorySharedReviewClaimedByFilterEl.addEventListener("change", () => {
-    memoryViewerState.sharedReviewFilters = {
-      ...createDefaultSharedReviewFilters(),
-      ...memoryViewerState.sharedReviewFilters,
-      focus: "",
-      claimedByAgentId: String(memorySharedReviewClaimedByFilterEl.value || "").trim(),
-    };
-    memoryViewerFeature?.syncSharedReviewFilterUi?.();
-    if (memoryViewerState.tab === "sharedReview") loadMemoryViewer(true);
-  });
-}
-if (memorySharedReviewClearFiltersBtn) {
-  memorySharedReviewClearFiltersBtn.addEventListener("click", () => {
-    memoryViewerState.sharedReviewFilters = createDefaultSharedReviewFilters();
-    memoryViewerFeature?.syncSharedReviewFilterUi?.();
-    if (memoryViewerState.tab === "sharedReview") loadMemoryViewer(true);
-  });
-}
-document.addEventListener("keydown", (event) => {
-  voiceFeature.handleGlobalKeydown(event);
-});
-
 function setStatus(text) {
   statusEl.textContent = text;
   // Clear error hint if exists (it will be re-added by close handler if needed)
@@ -1161,50 +1200,30 @@ function setStatus(text) {
 }
 
 function invalidateServerConfigCache() {
-  configCacheData = null;
-  configCacheLoadedAt = 0;
-  configCachePromise = null;
+  serverConfigCache.clearGeneration();
 }
 
 async function loadServerConfig(options = {}) {
   const { force = false } = options;
   if (!ws || !isReady) return null;
-
-  const now = Date.now();
-  if (!force && configCacheData && now - configCacheLoadedAt < CONFIG_CACHE_TTL_MS) {
-    return configCacheData;
-  }
-  if (!force && configCachePromise) {
-    return configCachePromise;
-  }
-
-  const promise = (async () => {
-    const res = await sendReq({ type: "req", id: makeId(), method: "config.read" });
-    if (res?.ok === false && res.error?.code === "pairing_required") {
-      const message = typeof res.error?.message === "string" ? res.error.message : "Pairing required.";
-      const codeMatch = message.match(/Code:\s*([A-Z0-9-]+)/i);
-      settingsRuntimeFeature?.handlePairingRequired?.({
-        code: codeMatch ? codeMatch[1] : "",
-        message,
-      });
-      return null;
-    }
-    if (!(res && res.ok && res.payload && res.payload.config)) {
-      return null;
-    }
-    configCacheData = res.payload.config;
-    configCacheLoadedAt = Date.now();
-    return configCacheData;
-  })();
-
-  configCachePromise = promise;
-  try {
-    return await promise;
-  } finally {
-    if (configCachePromise === promise) {
-      configCachePromise = null;
-    }
-  }
+  return serverConfigCache.load(
+    () => sendReq({ type: "req", id: makeId(), method: "config.read" }),
+    {
+      force,
+      transform: (res) => {
+        if (res?.ok === false && res.error?.code === "pairing_required") {
+          const message = typeof res.error?.message === "string" ? res.error.message : "Pairing required.";
+          const codeMatch = message.match(/Code:\s*([A-Z0-9-]+)/i);
+          settingsRuntimeFeature?.handlePairingRequired?.({
+            code: codeMatch ? codeMatch[1] : "",
+            message,
+          });
+          return null;
+        }
+        return res?.ok && res?.payload?.config ? res.payload.config : null;
+      },
+    },
+  );
 }
 
 async function syncWorkspaceRoots() {
@@ -1241,7 +1260,7 @@ function handleHelloOk(frame) {
 
   sessionTotalTokens = 0;
   costBudgetTracker.reset();
-  taskTokenHistoryByConversation.clear();
+  taskTokenHistoryByConversation.clearGeneration();
   Object.values(tokenUsageValueEls).forEach((el) => {
     if (el) el.textContent = "--";
   });
@@ -1257,15 +1276,9 @@ function handleHelloOk(frame) {
   flushQueuedText();
 
   if (frame.configOk === false) {
-    setTimeout(() => {
-      if (settingsRuntimeFeature?.hasPendingPairing?.()) {
-        void settingsRuntimeFeature.openPairingPending?.({ skipLoad: true });
-      } else {
-        toggleSettings(true);
-      }
-      const guideMsg = appendMessage("bot", "👋 欢迎使用 Star Sanctuary！\n\n检测到默认模型配置尚未完成。请继续使用当前设置弹窗补齐 API Key 与默认模型，然后点击 Save 保存。");
-      if (guideMsg) guideMsg.style.whiteSpace = "pre-wrap";
-    }, 500);
+    setupGuidanceFeature.schedule();
+  } else {
+    setupGuidanceFeature.clear();
   }
 
   if (restartOverlayEl) restartOverlayEl.classList.add("hidden");
@@ -1358,6 +1371,11 @@ chatNetworkFeature = createChatNetworkFeature({
   onEvent: (event, payload) => handleEvent(event, payload),
   onConnectionStateChanged: ({ ready }) => {
     if (!ready) {
+      agentSessionCacheFeature.clearGeneration();
+      taskTokenHistoryByConversation.clearGeneration();
+      serverConfigCache.clearGeneration();
+      emailThreadAdviceRetention.clearGeneration();
+      chatEventsFeature?.clearGeneration();
       clearComposerRunState();
     } else {
       renderComposerPrimaryAction();
@@ -1853,6 +1871,7 @@ memoryViewerFeature = createMemoryViewerFeature({
   bindMemoryPathLinks: () => memoryDetailRenderFeature.bindMemoryPathLinks(),
   bindTaskAuditJumpLinks: () => memoryDetailRenderFeature.bindTaskAuditJumpLinks(),
   openConversationSession,
+  emailThreadAdviceRetention,
   showNotice,
   t: localeController.t,
 });
@@ -2088,10 +2107,15 @@ function getCurrentAgentLabel() {
 
 function resetMemoryViewerStateForAgent(agentId = getCurrentAgentSelection()) {
   const previousAgentId = String(memoryViewerState.activeAgentId || "default").trim() || "default";
+  const nextAgentId = String(agentId || "default").trim() || "default";
   const fallbackTab = memoryViewerState.tab;
   memoryViewerFeature?.captureAgentViewState?.(previousAgentId);
   memoryViewerState.requestToken = Number(memoryViewerState.requestToken || 0) + 1;
-  memoryViewerState.activeAgentId = String(agentId || "default").trim() || "default";
+  if (previousAgentId !== nextAgentId) {
+    emailThreadAdviceRetention.clearGeneration();
+    memoryDetailRenderFeature?.clearGeneration?.();
+  }
+  memoryViewerState.activeAgentId = nextAgentId;
   memoryViewerFeature?.applyAgentViewState?.(memoryViewerState.activeAgentId, fallbackTab);
   memoryViewerState.stats = null;
   memoryViewerState.items = [];
@@ -2248,71 +2272,20 @@ function renderAgentRightPanel() {
   return agentRuntimeFeature?.renderAgentRightPanel();
 }
 
-if (modelSelectEl) {
-  modelSelectEl.addEventListener("change", () => {
-    const selected = modelSelectEl.value || "";
-    if (selected) {
-      localStorage.setItem(MODEL_ID_KEY, selected);
-    } else {
-      localStorage.removeItem(MODEL_ID_KEY);
-    }
-  });
-}
-
-// 保存按钮点击事件
-let saveWorkspaceRootsButtonState = "default";
-let saveWorkspaceRootsResetTimer = null;
-
-function syncSaveWorkspaceRootsButton() {
-  if (!saveWorkspaceRootsBtn) return;
-  const key = saveWorkspaceRootsButtonState === "saved" ? "common.saved" : "common.save";
-  const fallback = saveWorkspaceRootsButtonState === "saved" ? "Saved" : "Save";
-  const label = document.createElement("u");
-  label.textContent = localeController.t(key, {}, fallback);
-  saveWorkspaceRootsBtn.replaceChildren(label);
-}
-
-syncSaveWorkspaceRootsButton();
-
-if (saveWorkspaceRootsBtn) {
-  saveWorkspaceRootsBtn.addEventListener("click", async () => {
-    if (!ws || !isReady) {
-      alert(localeController.t("panel.saveWorkspaceNotConnected", {}, "Please connect to the server first"));
-      return;
-    }
-
-    const value = workspaceRootsEl ? workspaceRootsEl.value.trim() : "";
-
-    // 保存到 localStorage
-    persistWorkspaceRootsField({ workspaceRootsKey: WORKSPACE_ROOTS_KEY, workspaceRootsEl });
-
-    // 更新 .env
-    const id = makeId();
-    const res = await sendReq({
-      type: "req",
-      id,
-      method: "config.update",
-      params: { updates: { "BELLDANDY_EXTRA_WORKSPACE_ROOTS": value } }
-    });
-
-    if (res && res.ok) {
-      invalidateServerConfigCache();
-      saveWorkspaceRootsButtonState = "saved";
-      syncSaveWorkspaceRootsButton();
-      if (saveWorkspaceRootsResetTimer) {
-        clearTimeout(saveWorkspaceRootsResetTimer);
-      }
-      saveWorkspaceRootsResetTimer = setTimeout(() => {
-        saveWorkspaceRootsButtonState = "default";
-        syncSaveWorkspaceRootsButton();
-        saveWorkspaceRootsResetTimer = null;
-      }, 1500);
-    } else {
-      const msg = res && res.error ? res.error.message : localeController.t("settings.failed", {}, "Failed");
-      alert(localeController.t("panel.saveWorkspaceFailed", { message: msg }, "Save failed: {message}"));
-    }
-  });
-}
+workspaceRootsSaveFeature = createWorkspaceRootsSaveFeature({
+  button: saveWorkspaceRootsBtn,
+  input: workspaceRootsEl,
+  isConnected: () => Boolean(ws && isReady),
+  persistWorkspaceRoots: () => persistWorkspaceRootsField({
+    workspaceRootsKey: WORKSPACE_ROOTS_KEY,
+    workspaceRootsEl,
+  }),
+  sendReq,
+  makeId,
+  invalidateServerConfigCache,
+  alertUser: (message) => alert(message),
+  t: localeController.t,
+});
 
 function connect() {
   return chatNetworkFeature?.connect();
@@ -2807,7 +2780,7 @@ async function sendMessage(options = {}) {
 // 暴露给 WebView 等环境的接口
 window.__BELLDANDY_WEBCHAT_READY__ = true;
 
-applyWebConfigLinks(
+webConfigLinksFeature = applyWebConfigLinks(
   {
     recommendApiLink,
     aliyunOneKeyLink,
@@ -2851,18 +2824,6 @@ settingsRuntimeFeature = createSettingsRuntimeFeature({
 function toggleSettings(show) {
   settingsRuntimeFeature?.toggleSettings(show);
 }
-
-window.addEventListener(GOVERNANCE_DETAIL_MODE_CHANGED_EVENT, () => {
-  if (memoryViewerSection && !memoryViewerSection.classList.contains("hidden")) {
-    void loadMemoryViewer(false);
-  }
-  if (experienceWorkbenchSection && !experienceWorkbenchSection.classList.contains("hidden")) {
-    void loadExperienceWorkbench(false);
-  }
-  if (goalsSection && !goalsSection.classList.contains("hidden")) {
-    void loadGoals(false);
-  }
-});
 
 chatEventsFeature = createChatEventsFeature({
   appendMessage,
@@ -2997,8 +2958,7 @@ function prependTaskTokenHistory(conversationId, item) {
   if (!conversationId) return;
   const normalized = normalizeTaskTokenRecord(item);
   if (!normalized) return;
-  const current = taskTokenHistoryByConversation.get(conversationId) || [];
-  taskTokenHistoryByConversation.set(conversationId, [normalized, ...current].slice(0, TASK_TOKEN_HISTORY_LIMIT));
+  taskTokenHistoryByConversation.prepend(conversationId, normalized);
   if (conversationId === activeConversationId) {
     renderTaskTokenHistory();
   }
@@ -3147,7 +3107,7 @@ async function loadConversationMeta(conversationId, options = {}) {
 function renderTaskTokenHistory() {
   if (!taskTokenHistoryEl) return;
   const items = activeConversationId
-    ? (taskTokenHistoryByConversation.get(activeConversationId) || [])
+    ? taskTokenHistoryByConversation.get(activeConversationId)
     : [];
   const latestItems = items.slice(0, 1);
 
@@ -3271,43 +3231,8 @@ function updateTokenUsage(payload) {
   if (tokenUsageEl) tokenUsageEl.classList.remove("updating");
 }
 
-let taskTokenHideTimer = null;
-const TASK_TOKEN_TRANSIENT_PANEL_ENABLED = false;
-
 function showTaskTokenResult(payload) {
-  if (!payload) return;
-
-  if (payload.conversationId) {
-    prependTaskTokenHistory(String(payload.conversationId), payload);
-  }
-
-  if (!TASK_TOKEN_TRANSIENT_PANEL_ENABLED) {
-    if (taskTokenHideTimer) {
-      clearTimeout(taskTokenHideTimer);
-      taskTokenHideTimer = null;
-    }
-    if (taskTokenUsagePanelEl) taskTokenUsagePanelEl.style.display = "none";
-    return;
-  }
-
-  if (!taskTokenUsagePanelEl) return;
-
-  const set = (id, val) => {
-    const el = taskTokenValueEls[id];
-    if (el) el.textContent = typeof val === "number" ? formatTokenCount(val) : String(val ?? "--");
-  };
-  set("taskName", payload.name);
-  set("taskIn", payload.inputTokens);
-  set("taskOut", payload.outputTokens);
-  set("taskTotal", payload.totalTokens);
-
-  taskTokenUsagePanelEl.style.display = "flex";
-
-  // 8 秒后自动隐藏
-  if (taskTokenHideTimer) clearTimeout(taskTokenHideTimer);
-  taskTokenHideTimer = setTimeout(() => {
-    taskTokenUsagePanelEl.style.display = "none";
-  }, 8000);
+  taskTokenResultPanelFeature.showTaskTokenResult(payload);
 }
 
 function flushQueuedText() {
@@ -3384,46 +3309,6 @@ function estimateDataUrlBytes(dataUrl) {
   const comma = dataUrl.indexOf(",");
   if (comma < 0) return 0;
   return estimateBase64DecodedBytes(dataUrl.slice(comma + 1));
-}
-
-if (switchMemoryBtn) {
-  switchMemoryBtn.addEventListener("click", async () => {
-    switchMode("memory");
-    await loadMemoryViewer(false);
-  });
-}
-if (switchExperienceBtn) {
-  switchExperienceBtn.addEventListener("click", async () => {
-    switchMode("experience");
-    await loadExperienceWorkbench(true);
-  });
-}
-if (switchGoalsBtn) {
-  switchGoalsBtn.addEventListener("click", async () => {
-    switchMode("goals");
-    await loadGoals(false);
-  });
-}
-if (switchSubtasksBtn) {
-  switchSubtasksBtn.addEventListener("click", async () => {
-    switchMode("subtasks");
-    await loadSubtasks(false);
-  });
-}
-if (openChannelSettingsBtn) {
-  openChannelSettingsBtn.addEventListener("click", () => {
-    void settingsRuntimeFeature?.openChannels?.();
-  });
-}
-
-// 画布工作区按钮
-if (switchCanvasBtn) {
-  switchCanvasBtn.addEventListener("click", async () => {
-    if (window._canvasApp) {
-      switchMode("canvas");
-      await window._canvasApp.showBoardList();
-    }
-  });
 }
 
 function renderAttachmentsPreview(hintMessage = "") {
@@ -3972,22 +3857,23 @@ function consumeUrlTokenParam() {
   }
 }
 
-if (authModeEl) {
-  authModeEl.addEventListener("change", () => {
-    if (authModeEl.value !== "token") transientUrlToken = null;
-    credentialSession.setMode(authModeEl.value);
-  });
-}
-if (authValueEl) {
-  authValueEl.addEventListener("input", () => {
-    if (transientUrlToken && authValueEl.value.trim() !== transientUrlToken) {
+credentialSession.bindControls({
+  onModeChange: (mode) => {
+    if (mode !== "token") transientUrlToken = null;
+    agentSessionCacheFeature.clearGeneration();
+    taskTokenHistoryByConversation.clearGeneration();
+    serverConfigCache.clearGeneration();
+    emailThreadAdviceRetention.clearGeneration();
+    chatEventsFeature?.clearGeneration();
+  },
+  onValueInput: (value) => {
+    if (transientUrlToken && value.trim() !== transientUrlToken) {
       transientUrlToken = null;
     }
-    credentialSession.persist();
-  });
-}
-rememberSessionAuthEl?.addEventListener("change", () => {
-  credentialSession.persist();
+  },
+  onDispose: () => {
+    transientUrlToken = null;
+  },
 });
 
 function configureMarkedOnce() {

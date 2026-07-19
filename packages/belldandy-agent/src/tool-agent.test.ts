@@ -204,6 +204,7 @@ describe("before_agent_start system prompt overrides", () => {
       usage: { prompt_tokens: 1, completion_tokens: 1 },
     }));
 
+    let hookAbortSignal: AbortSignal | undefined;
     const agent = new ToolEnabledAgent({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "test-key",
@@ -211,9 +212,10 @@ describe("before_agent_start system prompt overrides", () => {
       systemPrompt: "base-system-prompt",
       toolExecutor: createToolExecutor(),
       hookRunner: {
-        runBeforeAgentStart: async () => ({
-          systemPrompt: "hook-system-prompt",
-        }),
+        runBeforeAgentStart: async (_event: unknown, ctx: { abortSignal?: AbortSignal }) => {
+          hookAbortSignal = ctx.abortSignal;
+          return { systemPrompt: "hook-system-prompt" };
+        },
         runAgentEnd: async () => {},
         runBeforeToolCall: async () => undefined,
         runAfterToolCall: async () => {},
@@ -221,12 +223,15 @@ describe("before_agent_start system prompt overrides", () => {
       } as any,
     });
 
+    const controller = new AbortController();
     const items = await collectItems(agent.run({
       conversationId: "conv-hook-system-prompt",
       text: "hello",
+      abortSignal: controller.signal,
     }));
 
     expect(items).toContainEqual({ type: "final", text: "done" });
+    expect(hookAbortSignal).toBe(controller.signal);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const requestInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
     const payload = JSON.parse(String(requestInit?.body ?? "{}"));
@@ -630,15 +635,24 @@ describe("before_agent_start system prompt overrides", () => {
     ]));
   });
 
-  it("defaults the tool-loop iteration budget to unlimited when unset", () => {
+  it("uses bounded tool-loop defaults while preserving the explicit unlimited iteration override", () => {
     const agent = new ToolEnabledAgent({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "test-key",
       model: "gpt-test",
       toolExecutor: createToolExecutor(),
     });
+    const unlimitedIterationAgent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      toolExecutor: createToolExecutor(),
+    });
 
-    expect((agent as any).opts.toolLoopIterationBudget).toBe(0);
+    expect((agent as any).opts.toolLoopIterationBudget).toBe(8);
+    expect((agent as any).opts.maxToolCalls).toBe(32);
+    expect((unlimitedIterationAgent as any).opts.toolLoopIterationBudget).toBe(0);
   });
 
   it("stops before exceeding the tool-loop iteration budget and force-compacts context", async () => {
@@ -699,8 +713,220 @@ describe("before_agent_start system prompt overrides", () => {
     const finalItem = items.find((item) => item.type === "final");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(summarizer).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "tool_loop_iterations",
+      limit: 1,
+      observed: 2,
+    });
     expect(finalItem?.text).toContain("工具调用迭代预算超限（最大 1 轮）");
     expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
+  });
+
+  it("emits a structured terminal event before rejecting a tool-call batch over budget", async () => {
+    const execute = vi.fn(async () => ({
+      id: "unexpected",
+      name: "echo",
+      success: true,
+      output: "unexpected",
+      durationMs: 0,
+    }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "echo", arguments: "{}" },
+            },
+            {
+              id: "call-2",
+              type: "function",
+              function: { name: "echo", arguments: "{}" },
+            },
+          ],
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxToolCalls: 1,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "echo",
+            description: "echo",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        execute,
+      }),
+      logger: { error: vi.fn() },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-tool-call-budget-stop",
+      text: "use tools",
+    }));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "tool_calls",
+      limit: 1,
+      observed: 2,
+    });
+    expect(items.find((item) => item.type === "final")?.text).toContain("工具调用次数超限（最大 1 次）");
+    expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
+  });
+
+  it("blocks a high-risk tool before ToolExecutor execution when its run budget is exhausted", async () => {
+    const execute = vi.fn(async () => ({
+      id: "unexpected",
+      name: "workspace_write",
+      success: true,
+      output: "unexpected",
+      durationMs: 0,
+    }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [{
+            id: "call-high-risk",
+            type: "function",
+            function: { name: "workspace_write", arguments: "{}" },
+          }],
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolLoopIterationBudget: 0,
+      maxHighRiskToolCalls: 0,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "workspace_write",
+            description: "write workspace",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        getRegisteredToolContract: () => ({
+          name: "workspace_write",
+          riskLevel: "high",
+        }),
+        execute,
+      }),
+      logger: { error: vi.fn() },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-high-risk-budget-stop",
+      text: "write workspace",
+    }));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "high_risk_tool_calls",
+      limit: 0,
+      observed: 1,
+    });
+    expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
+  });
+
+  it("emits usage before the structured terminal event when provider token usage exceeds the run budget", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
+      choices: [{
+        message: { content: "done" },
+      }],
+      usage: { prompt_tokens: 8, completion_tokens: 3 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxTotalTokens: 10,
+      toolExecutor: createToolExecutor(),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-total-token-budget-stop",
+      text: "answer briefly",
+    }));
+
+    const budgetIndex = items.findIndex((item) => item.type === "budget_exhausted");
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "total_tokens",
+      limit: 10,
+      observed: 11,
+    });
+    expect(items[budgetIndex - 1]?.type).toBe("usage");
+    expect(items[budgetIndex + 1]).toEqual(expect.objectContaining({ type: "final" }));
+    expect(items[budgetIndex + 2]).toEqual({ type: "status", status: "error" });
+  });
+
+  it("aborts a pending model request when the wall-time budget expires", async () => {
+    vi.useFakeTimers();
+    try {
+      let requestSignal: AbortSignal | undefined;
+      vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+        requestSignal = (init as RequestInit).signal ?? undefined;
+        const rejectAbort = () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        };
+        if (requestSignal?.aborted) {
+          rejectAbort();
+          return;
+        }
+        requestSignal?.addEventListener("abort", rejectAbort, { once: true });
+      }));
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "test-key",
+        model: "gpt-test",
+        maxRunWallTimeMs: 50,
+        toolExecutor: createToolExecutor(),
+      });
+      const iterator = agent.run({
+        conversationId: "conv-wall-time-budget-stop",
+        text: "wait for the provider",
+      })[Symbol.asyncIterator]();
+
+      expect((await iterator.next()).value).toEqual({ type: "status", status: "running" });
+      const firstTerminalItem = iterator.next();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requestSignal).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(requestSignal?.aborted).toBe(true);
+      expect((await firstTerminalItem).value).toEqual(expect.objectContaining({ type: "usage" }));
+      expect((await iterator.next()).value).toEqual({
+        type: "budget_exhausted",
+        budget: "wall_time_ms",
+        limit: 50,
+        observed: 50,
+      });
+      expect((await iterator.next()).value).toEqual(expect.objectContaining({ type: "final" }));
+      expect((await iterator.next()).value).toEqual({ type: "status", status: "error" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("injects launch-spec role and tool-selection deltas into the effective system prompt", async () => {
@@ -1262,6 +1488,10 @@ describe("compaction observability hooks", () => {
         usage: { prompt_tokens: 1, completion_tokens: 1 },
       }));
     const conversationStore = new ConversationStore();
+    const recordToolArtifacts = vi.spyOn(conversationStore, "recordToolArtifacts");
+    const recordToolDigest = vi.spyOn(conversationStore, "recordToolDigest");
+    const recordRecentToolResult = vi.spyOn(conversationStore, "recordRecentToolResult");
+    const upsertCarryoverContext = vi.spyOn(conversationStore, "upsertCarryoverContext");
     const agent = new ToolEnabledAgent({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "test-key",
@@ -1304,6 +1534,10 @@ describe("compaction observability hooks", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(recordToolArtifacts).toHaveBeenCalledTimes(1);
+    expect(recordToolDigest).not.toHaveBeenCalled();
+    expect(recordRecentToolResult).not.toHaveBeenCalled();
+    expect(upsertCarryoverContext).not.toHaveBeenCalled();
     expect(recent).toHaveLength(1);
     expect(recent[0]).toMatchObject({
       toolCallId: "call-1",
@@ -2300,7 +2534,9 @@ describe("ToolEnabledAgent hook timeouts", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
+      expect.objectContaining({
+        abortSignal: expect.any(AbortSignal),
+      }),
     );
     expect(loggerWarn).toHaveBeenCalledWith(
       "agent",
@@ -2366,11 +2602,14 @@ describe("ToolEnabledAgent hook timeouts", () => {
       durationMs: 0,
     }));
     const loggerWarn = vi.fn();
+    const conversationStore = new ConversationStore();
+    const recordToolArtifacts = vi.spyOn(conversationStore, "recordToolArtifacts");
     const agent = new ToolEnabledAgent({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "test-key",
       model: "gpt-test",
       toolCallRepairLevel: "dedupe",
+      conversationStore,
       toolExecutor: createToolExecutor({
         getDefinitions: () => [{
           type: "function" as const,
@@ -2400,6 +2639,16 @@ describe("ToolEnabledAgent hook timeouts", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(execute).toHaveBeenCalledTimes(1);
+    expect(recordToolArtifacts).toHaveBeenCalledTimes(2);
+    expect(recordToolArtifacts).toHaveBeenLastCalledWith(
+      "conv-tool-call-dedupe",
+      expect.objectContaining({
+        recentToolResult: expect.objectContaining({
+          toolCallId: "call-2",
+          isSynthetic: true,
+        }),
+      }),
+    );
     expect(items).toContainEqual({
       type: "tool_result",
       id: "call-2",
@@ -2884,7 +3133,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
       undefined,
       undefined,
       undefined,
-      {
+      expect.objectContaining({
         launchSpec: {
           cwd: "/tmp/worktree",
           toolSet: ["echo"],
@@ -2898,7 +3147,8 @@ describe("ToolEnabledAgent hook timeouts", () => {
           },
         },
         channel: "web",
-      },
+        abortSignal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -4466,14 +4716,160 @@ describe("OpenAI-compatible reasoning config", () => {
       },
     });
   });
+
+  describe("conversation release", () => {
+    it("clears idle notify state and delegates ToolExecutor cleanup", () => {
+      const releaseConversation = vi.fn();
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "test-model",
+        toolExecutor: createToolExecutor({ releaseConversation }),
+      });
+      (agent as any).starweaverActiveNotifyLastRunAt.set("conv-release", 1);
+      (agent as any).starweaverVisibleNotifyFingerprint.set("conv-release", "fingerprint");
+
+      agent.releaseConversation("conv-release");
+      agent.releaseConversation("conv-release");
+
+      expect((agent as any).starweaverActiveNotifyLastRunAt.has("conv-release")).toBe(false);
+      expect((agent as any).starweaverVisibleNotifyFingerprint.has("conv-release")).toBe(false);
+      expect(releaseConversation).toHaveBeenCalledTimes(2);
+      expect(releaseConversation).toHaveBeenLastCalledWith("conv-release");
+    });
+
+    it("defers cleanup for an active chain and does not clear a newer run", async () => {
+      const releaseConversation = vi.fn();
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "test-model",
+        toolExecutor: createToolExecutor({ releaseConversation }),
+      });
+      let releaseOld: (() => void) | undefined;
+      const oldChain = new Promise<void>((resolve) => {
+        releaseOld = resolve;
+      });
+      const newChain = new Promise<void>(() => {});
+      (agent as any).conversationRunChains.set("conv-active", oldChain);
+      (agent as any).starweaverActiveNotifyLastRunAt.set("conv-active", 1);
+
+      const pendingRelease = agent.releaseConversation("conv-active");
+      expect(releaseConversation).not.toHaveBeenCalled();
+
+      (agent as any).conversationRunChains.set("conv-active", newChain);
+      releaseOld?.();
+      await oldChain;
+      await pendingRelease;
+
+      expect((agent as any).starweaverActiveNotifyLastRunAt.has("conv-active")).toBe(true);
+      expect(releaseConversation).not.toHaveBeenCalled();
+
+      (agent as any).conversationRunChains.delete("conv-active");
+      await agent.releaseConversation("conv-active");
+      expect((agent as any).starweaverActiveNotifyLastRunAt.has("conv-active")).toBe(false);
+      expect(releaseConversation).toHaveBeenCalledOnce();
+    });
+
+    it("releases supported compression references and exposes content-free totals", async () => {
+      const releaseReferences = vi.fn(() => ({ prunedCount: 2, retainedCount: 1 }));
+      const referenceStore = {
+        releaseConversation: releaseReferences,
+        size: vi.fn(() => 1),
+      };
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "test-model",
+        toolExecutor: createToolExecutor(),
+        compressionPipeline: {
+          getReferenceStore: () => referenceStore,
+        } as any,
+      });
+
+      await agent.releaseConversation("conv-reference-release");
+
+      expect(releaseReferences).toHaveBeenCalledWith("conv-reference-release");
+      expect(agent.getConversationReleaseRuntimeSnapshot()).toEqual({
+        pendingConversationReleaseCount: 0,
+        compressionReferences: {
+          releaseCount: 1,
+          prunedCount: 2,
+          currentRetainedCount: 1,
+          unsupportedReleaseCount: 0,
+          failureCount: 0,
+        },
+      });
+    });
+
+    it("keeps legacy reference stores compatible without falling back to prune", async () => {
+      const prune = vi.fn();
+      const referenceStore = {
+        prune,
+        size: vi.fn(() => 2),
+      };
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "test-model",
+        toolExecutor: createToolExecutor(),
+        compressionPipeline: {
+          getReferenceStore: () => referenceStore,
+        } as any,
+      });
+
+      await agent.releaseConversation("conv-legacy-reference-store");
+
+      expect(prune).not.toHaveBeenCalled();
+      expect(agent.getConversationReleaseRuntimeSnapshot().compressionReferences).toEqual({
+        releaseCount: 0,
+        prunedCount: 0,
+        currentRetainedCount: 2,
+        unsupportedReleaseCount: 1,
+        failureCount: 0,
+      });
+    });
+
+    it("isolates compression reference release failures from other cleanup", async () => {
+      const releaseConversation = vi.fn(() => {
+        throw new Error("reference release failed");
+      });
+      const toolReleaseConversation = vi.fn();
+      const agent = new ToolEnabledAgent({
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "test-key",
+        model: "test-model",
+        toolExecutor: createToolExecutor({ releaseConversation: toolReleaseConversation }),
+        compressionPipeline: {
+          getReferenceStore: () => ({
+            releaseConversation,
+            size: () => 3,
+          }),
+        } as any,
+      });
+
+      await expect(agent.releaseConversation("conv-reference-failure")).resolves.toBeUndefined();
+
+      expect(toolReleaseConversation).toHaveBeenCalledWith("conv-reference-failure");
+      expect(agent.getConversationReleaseRuntimeSnapshot().compressionReferences).toEqual({
+        releaseCount: 0,
+        prunedCount: 0,
+        currentRetainedCount: 3,
+        unsupportedReleaseCount: 0,
+        failureCount: 1,
+      });
+    });
+  });
 });
 
 function createToolExecutor(overrides: Record<string, unknown> = {}): any {
   return {
     getDefinitions: () => [],
+    getRegisteredToolContract: () => undefined,
     consumeLoadedDeferredToolsForNextTurn: vi.fn(async () => []),
     setTokenCounter: vi.fn(),
     clearTokenCounter: vi.fn(),
+    releaseConversation: vi.fn(),
     execute: vi.fn(),
     ...overrides,
   };

@@ -22,6 +22,73 @@ describe("QqChannel", () => {
         vi.unstubAllGlobals();
     });
 
+    it("fails a proactive delivery when its outbound deadline expires", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => {
+            await sleep(30);
+            return { ok: true, text: async () => "" };
+        }));
+        const binding = {
+            channel: "qq" as const,
+            sessionKey: "channel=qq:chat=channel-a",
+            sessionScope: "per-channel-peer" as const,
+            legacyConversationId: "qq_channel-a",
+            chatKind: "channel" as const,
+            chatId: "channel-a",
+            updatedAt: Date.now(),
+            target: {
+                channelId: "channel-a",
+                guildId: "guild-a",
+                messageId: "message-a",
+                eventType: "MESSAGE_CREATE",
+            },
+        };
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { run: vi.fn() } as any,
+            conversationStore: new ConversationStore(),
+            currentConversationBindingStore: {
+                upsert: vi.fn(async () => {}),
+                get: vi.fn(async () => binding),
+                getLatestByChannel: vi.fn(async () => binding),
+            },
+        });
+
+        const sent = await (channel as any).sendProactiveMessage(
+            "manual",
+            { sessionKey: binding.sessionKey },
+            { timeoutMs: 5, idempotencyKey: "deadline-fixture" },
+        );
+
+        expect(sent).toBe(false);
+    });
+
+    it("does not revive a stopped channel when WebSocket startup completes late", async () => {
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { run: vi.fn() } as any,
+            conversationStore: new ConversationStore(),
+        });
+        let releaseConnect!: () => void;
+        const pendingConnect = new Promise<void>((resolve) => {
+            releaseConnect = resolve;
+        });
+        vi.spyOn(channel as any, "fetchAccessToken").mockResolvedValue(undefined);
+        const connectSpy = vi.spyOn(channel as any, "connectWebSocket").mockImplementation(() => pendingConnect);
+
+        const starting = channel.start();
+        await vi.waitFor(() => expect(connectSpy).toHaveBeenCalledTimes(1));
+        await channel.stop();
+        releaseConnect();
+
+        await expect(starting).rejects.toThrow("QQ channel stopped.");
+        expect(channel.lifecycleState).toBe("stopped");
+        expect(channel.isRunning).toBe(false);
+    });
+
   it("keeps reply context isolated for concurrent messages", async () => {
         const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
             ok: true,

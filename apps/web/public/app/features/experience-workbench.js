@@ -1,5 +1,9 @@
 import { extractCandidateContextTargets } from "./memory-viewer.js";
 import { isCompactGovernanceDetailMode } from "./governance-detail-mode.js";
+import { createExperienceWorkbenchCleanupFeature } from "./experience-workbench-cleanup.js";
+import { createExperienceWorkbenchSkillFreshnessFeature } from "./experience-workbench-skill-freshness.js";
+import { createExperienceWorkbenchSynthesisSourcesFeature } from "./experience-workbench-synthesis-sources.js";
+import { createExperienceWorkbenchViewLifecycleFeature } from "./experience-workbench-view-lifecycle.js";
 
 const EXPERIENCE_CANDIDATE_PAGE_SIZE = 100;
 const EXPERIENCE_CANDIDATE_MAX_PAGES = 50;
@@ -222,7 +226,47 @@ export function createExperienceWorkbenchFeature({
   } = refs;
 
   let uiBound = false;
+  const listenerEntries = [];
+  const pendingGenerateTokens = new Set();
+  const pendingReviewTokens = new Set();
+  const pendingBulkRejectTokens = new Set();
+  const pendingSynthesisPreviewTokens = new Set();
+  const pendingSynthesisCreateTokens = new Set();
+  const pendingSynthesisAcceptTokens = new Set();
   let pendingGenerateActionKey = "";
+  let actionGeneration = 0;
+  let synthesisPreviewGeneration = 0;
+  let disposed = false;
+  const viewLifecycleFeature = createExperienceWorkbenchViewLifecycleFeature({
+    closeSynthesisModal: (options) => closeExperienceSynthesisModal(options),
+    getMemoryViewerState,
+    getWorkbenchState: getExperienceWorkbenchState,
+    initialViewActive: experienceWorkbenchSection
+      ? !experienceWorkbenchSection.classList.contains("hidden")
+      : true,
+    invalidateActionGeneration: () => {
+      actionGeneration += 1;
+    },
+    setPendingGenerateActionKey: (value) => {
+      pendingGenerateActionKey = value;
+    },
+    syncGenerateControls,
+  });
+  const synthesisSourcesFeature = createExperienceWorkbenchSynthesisSourcesFeature({
+    root: experienceSynthesisModalListEl,
+    escapeHtml,
+    onSelectionChange: () => renderExperienceSynthesisModal(),
+  });
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    const guardedHandler = (event) => {
+      if (disposed) return;
+      handler(event);
+    };
+    target.addEventListener(type, guardedHandler);
+    listenerEntries.push({ target, type, handler: guardedHandler });
+  }
 
   function getSynthesisModalState() {
     const state = getExperienceWorkbenchState();
@@ -314,8 +358,18 @@ export function createExperienceWorkbenchFeature({
 
   function isRequestCurrent(requestContext) {
     const state = getExperienceWorkbenchState();
-    return Number(state.requestToken || 0) === Number(requestContext?.requestToken || 0)
+    return !disposed
+      && viewLifecycleFeature.isActive()
+      && Number(state.requestToken || 0) === Number(requestContext?.requestToken || 0)
       && String(state.activeAgentId || "default").trim() === String(requestContext?.agentId || "default").trim();
+  }
+
+  function isActionCurrent(generation) {
+    return !disposed && viewLifecycleFeature.isActive() && generation === actionGeneration;
+  }
+
+  function isSynthesisPreviewCurrent(generation, previewGeneration) {
+    return isActionCurrent(generation) && previewGeneration === synthesisPreviewGeneration;
   }
 
   function getPendingActionKey() {
@@ -1209,7 +1263,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function loadExperienceWorkbenchUsageOverview() {
-    if (!experienceWorkbenchUsageOverviewEl) return;
+    if (disposed || !experienceWorkbenchUsageOverviewEl) return;
     if (!isConnected?.()) {
       renderExperienceWorkbenchUsageOverviewEmpty(t("experience.disconnected", {}, "Connect to the server to view experience candidates."));
       return;
@@ -1218,9 +1272,14 @@ export function createExperienceWorkbenchFeature({
       renderExperienceWorkbenchUsageOverviewEmpty(t("memory.usageOverviewEmpty", {}, "No usage data yet"));
       return;
     }
+    const requestContext = {
+      requestToken: Number(getExperienceWorkbenchState().requestToken || 0),
+      agentId: getActiveAgentId(),
+    };
     const pending = loadTaskUsageOverview();
     renderExperienceWorkbenchUsageOverviewPanel();
     await pending;
+    if (!isRequestCurrent(requestContext)) return;
     renderExperienceWorkbenchUsageOverviewPanel();
   }
 
@@ -1501,6 +1560,7 @@ export function createExperienceWorkbenchFeature({
     const sourceCandidateIds = Array.isArray(preview?.sourceCandidateIds)
       ? preview.sourceCandidateIds.map((item) => normalizeText(item)).filter(Boolean)
       : [];
+    const sourceSelection = synthesisSourcesFeature.getSelectionSnapshot();
     const sameFamilyCount = Number(preview?.sameFamilyCount);
     const similarCount = Number(preview?.similarCount);
     const selectedSameFamilyCount = Number(preview?.selectedSameFamilyCount);
@@ -1526,18 +1586,26 @@ export function createExperienceWorkbenchFeature({
     const effectiveSimilarCount = Number.isFinite(similarCount) && similarCount >= 0
       ? similarCount
       : derivedSimilarCount;
-    const effectiveSelectedSourceCount = Number.isFinite(selectedSourceCount) && selectedSourceCount > 0
-      ? selectedSourceCount
-      : sourceCandidateIds.length;
-    const effectiveSelectedSameFamilyCount = Number.isFinite(selectedSameFamilyCount) && selectedSameFamilyCount >= 0
-      ? selectedSameFamilyCount
-      : Math.min(effectiveSameFamilyCount, Math.max(0, effectiveSelectedSourceCount - 1));
-    const effectiveSelectedSimilarCount = Number.isFinite(selectedSimilarCount) && selectedSimilarCount >= 0
-      ? selectedSimilarCount
-      : Math.max(0, Math.max(0, effectiveSelectedSourceCount - 1) - effectiveSelectedSameFamilyCount);
-    const effectiveMaxSimilarSourceCount = Number.isFinite(maxSimilarSourceCount) && maxSimilarSourceCount > 0
-      ? maxSimilarSourceCount
-      : Math.max(0, effectiveSelectedSameFamilyCount + effectiveSelectedSimilarCount);
+    const effectiveSelectedSourceCount = sourceSelection.initialized
+      ? sourceSelection.selectedSourceCount
+      : Number.isFinite(selectedSourceCount) && selectedSourceCount > 0
+        ? selectedSourceCount
+        : sourceCandidateIds.length;
+    const effectiveSelectedSameFamilyCount = sourceSelection.initialized
+      ? sourceSelection.selectedSameFamilyCount
+      : Number.isFinite(selectedSameFamilyCount) && selectedSameFamilyCount >= 0
+        ? selectedSameFamilyCount
+        : Math.min(effectiveSameFamilyCount, Math.max(0, effectiveSelectedSourceCount - 1));
+    const effectiveSelectedSimilarCount = sourceSelection.initialized
+      ? sourceSelection.selectedSimilarCount
+      : Number.isFinite(selectedSimilarCount) && selectedSimilarCount >= 0
+        ? selectedSimilarCount
+        : Math.max(0, Math.max(0, effectiveSelectedSourceCount - 1) - effectiveSelectedSameFamilyCount);
+    const effectiveMaxSimilarSourceCount = sourceSelection.initialized
+      ? sourceSelection.maxRelatedSourceCount
+      : Number.isFinite(maxSimilarSourceCount) && maxSimilarSourceCount > 0
+        ? maxSimilarSourceCount
+        : Math.max(0, effectiveSelectedSameFamilyCount + effectiveSelectedSimilarCount);
     const statusText = modalState.loading
       ? t("experience.synthesizeModalLoading", {}, "正在检索同类与近似草稿…")
       : modalState.error
@@ -1681,6 +1749,11 @@ export function createExperienceWorkbenchFeature({
               <div class="experience-synthesis-row-summary">${escapeHtml(normalizeText(seedCandidate.summary) || t("experience.listNoSummary", {}, "No summary yet."))}</div>
             </div>
             <div class="experience-synthesis-row-side">
+              ${synthesisSourcesFeature.renderCheckbox({
+                candidateId: seedCandidate.id,
+                label: t("experience.synthesizeSourceRequired", {}, "必选"),
+                disabled: modalState.submitting || Boolean(createdCandidateId),
+              })}
               <span class="memory-badge experience-synthesized-badge">${escapeHtml(t("experience.synthesizeModalSeedLabel", {}, "种子草稿"))}</span>
             </div>
           </div>
@@ -1700,6 +1773,11 @@ export function createExperienceWorkbenchFeature({
               <div class="experience-synthesis-row-summary">${escapeHtml(normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet."))}</div>
             </div>
             <div class="experience-synthesis-row-side">
+              ${synthesisSourcesFeature.renderCheckbox({
+                candidateId: item?.candidateId,
+                label: t("experience.synthesizeSourceInclude", {}, "参与"),
+                disabled: modalState.submitting || Boolean(createdCandidateId),
+              })}
               <span class="memory-badge">${escapeHtml(formatSynthesisRelationLabel(item?.relation))}</span>
             </div>
           </div>
@@ -1725,7 +1803,7 @@ export function createExperienceWorkbenchFeature({
           : t("experience.synthesizeSubmitMethod", {}, "合成 Method")));
     experienceSynthesisModalSubmitBtn.disabled = modalState.loading
       || modalState.submitting
-      || (!createdCandidateId && !sourceCandidateIds.length);
+      || (!createdCandidateId && effectiveSelectedSourceCount <= 0);
     experienceSynthesisModalCancelBtn.disabled = modalState.submitting;
     experienceSynthesisModalCloseBtn.disabled = modalState.submitting;
   }
@@ -1736,6 +1814,11 @@ export function createExperienceWorkbenchFeature({
     if (modalState.submitting && !force) {
       return;
     }
+    synthesisPreviewGeneration += 1;
+    const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    if (normalizeText(memoryViewerState?.pendingExperienceActionKey).startsWith("synthesize-preview:")) {
+      memoryViewerState.pendingExperienceActionKey = null;
+    }
     modalState.open = false;
     modalState.loading = false;
     modalState.submitting = false;
@@ -1745,12 +1828,14 @@ export function createExperienceWorkbenchFeature({
     modalState.preview = null;
     modalState.markSourcesConsumed = true;
     modalState.createdCandidate = null;
+    synthesisSourcesFeature.clear();
     renderExperienceSynthesisModal();
   }
 
-  async function openExperienceSynthesisModal(candidateId) {
-    const normalizedCandidateId = normalizeText(candidateId);
-    if (!normalizedCandidateId) return null;
+  async function openExperienceSynthesisPreview(input = {}) {
+    const normalizedCandidateId = normalizeText(input.candidateId);
+    const normalizedAssetPath = normalizeText(input.assetPath);
+    if (!normalizedCandidateId && !normalizedAssetPath) return null;
     if (!isConnected?.()) {
       showNotice(
         t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败"),
@@ -1760,69 +1845,21 @@ export function createExperienceWorkbenchFeature({
       return null;
     }
     if (getPendingActionKey()) return null;
+    const generation = actionGeneration;
+    const previewGeneration = synthesisPreviewGeneration;
+    if (!isSynthesisPreviewCurrent(generation, previewGeneration)) return null;
+    const pendingToken = Symbol("experience-synthesis-preview");
+    const pendingKey = normalizedCandidateId
+      ? `synthesize-preview:${normalizedCandidateId}`
+      : `synthesize-preview:asset:${normalizedAssetPath}`;
 
     const modalState = getSynthesisModalState();
+    synthesisSourcesFeature.clear();
     modalState.open = true;
     modalState.loading = true;
     modalState.submitting = false;
     modalState.error = "";
     modalState.seedCandidateId = normalizedCandidateId;
-    modalState.seedAssetPath = "";
-    modalState.preview = null;
-    modalState.markSourcesConsumed = true;
-    modalState.createdCandidate = null;
-    renderExperienceSynthesisModal();
-
-    const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
-    if (memoryViewerState) {
-      memoryViewerState.pendingExperienceActionKey = `synthesize-preview:${normalizedCandidateId}`;
-    }
-    renderExperienceWorkbenchCapabilityOverviewPanel();
-    syncGenerateControls();
-
-    try {
-      const res = await requestExperienceCandidateSynthesizePreview(normalizedCandidateId);
-      if (!res || !res.ok) {
-        modalState.error = res?.error?.message || t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败");
-        showNotice(
-          t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败"),
-          modalState.error,
-          "error",
-        );
-        return null;
-      }
-      modalState.preview = res.payload ?? null;
-      return res.payload ?? null;
-    } finally {
-      modalState.loading = false;
-      if (memoryViewerState) {
-        memoryViewerState.pendingExperienceActionKey = null;
-      }
-      renderExperienceWorkbenchCapabilityOverviewPanel();
-      syncGenerateControls();
-      renderExperienceSynthesisModal();
-    }
-  }
-
-  async function openExperienceSynthesisModalByAssetPath(assetPath) {
-    const normalizedAssetPath = normalizeText(assetPath);
-    if (!normalizedAssetPath) return null;
-    if (!isConnected?.()) {
-      showNotice(
-        t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败"),
-        t("experience.disconnected", {}, "Connect to the server to view experience candidates."),
-        "error",
-      );
-      return null;
-    }
-    if (getPendingActionKey()) return null;
-
-    const modalState = getSynthesisModalState();
-    modalState.open = true;
-    modalState.loading = true;
-    modalState.submitting = false;
-    modalState.error = "";
-    modalState.seedCandidateId = "";
     modalState.seedAssetPath = normalizedAssetPath;
     modalState.preview = null;
     modalState.markSourcesConsumed = true;
@@ -1830,23 +1867,27 @@ export function createExperienceWorkbenchFeature({
     renderExperienceSynthesisModal();
 
     const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    pendingSynthesisPreviewTokens.add(pendingToken);
     if (memoryViewerState) {
-      memoryViewerState.pendingExperienceActionKey = `synthesize-preview:asset:${normalizedAssetPath}`;
+      memoryViewerState.pendingExperienceActionKey = pendingKey;
     }
     renderExperienceWorkbenchCapabilityOverviewPanel();
     syncGenerateControls();
 
     try {
-      const res = await sendReq({
-        type: "req",
-        id: makeId(),
-        method: "experience.candidate.synthesize.preview",
-        params: {
-          assetPath: normalizedAssetPath,
-          agentId: getActiveAgentId(),
-          limit: 50,
-        },
-      });
+      const res = normalizedCandidateId
+        ? await requestExperienceCandidateSynthesizePreview(normalizedCandidateId)
+        : await sendReq({
+          type: "req",
+          id: makeId(),
+          method: "experience.candidate.synthesize.preview",
+          params: {
+            assetPath: normalizedAssetPath,
+            agentId: getActiveAgentId(),
+            limit: 50,
+          },
+        });
+      if (!isSynthesisPreviewCurrent(generation, previewGeneration)) return null;
       if (!res || !res.ok) {
         modalState.error = res?.error?.message || t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败");
         showNotice(
@@ -1856,17 +1897,45 @@ export function createExperienceWorkbenchFeature({
         );
         return null;
       }
+      if (!isSynthesisPreviewCurrent(generation, previewGeneration)) return null;
+      synthesisSourcesFeature.setPreview(res.payload);
       modalState.preview = res.payload ?? null;
       return res.payload ?? null;
+    } catch (error) {
+      if (!isSynthesisPreviewCurrent(generation, previewGeneration)) return null;
+      modalState.error = error instanceof Error && error.message
+        ? error.message
+        : t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败");
+      showNotice(
+        t("experience.synthesizePreviewFailedTitle", {}, "合成预览失败"),
+        modalState.error,
+        "error",
+      );
+      return null;
     } finally {
-      modalState.loading = false;
-      if (memoryViewerState) {
-        memoryViewerState.pendingExperienceActionKey = null;
+      try {
+        if (isSynthesisPreviewCurrent(generation, previewGeneration)) {
+          modalState.loading = false;
+          if (memoryViewerState) {
+            memoryViewerState.pendingExperienceActionKey = null;
+          }
+          renderExperienceWorkbenchCapabilityOverviewPanel();
+          syncGenerateControls();
+          renderExperienceSynthesisModal();
+        }
+      } finally {
+        // Modal owner 可以先关闭，pending token 仍需等到底层预览请求真正结算。
+        pendingSynthesisPreviewTokens.delete(pendingToken);
       }
-      renderExperienceWorkbenchCapabilityOverviewPanel();
-      syncGenerateControls();
-      renderExperienceSynthesisModal();
     }
+  }
+
+  async function openExperienceSynthesisModal(candidateId) {
+    return openExperienceSynthesisPreview({ candidateId });
+  }
+
+  async function openExperienceSynthesisModalByAssetPath(assetPath) {
+    return openExperienceSynthesisPreview({ assetPath });
   }
 
   async function submitExperienceSynthesis() {
@@ -1878,14 +1947,16 @@ export function createExperienceWorkbenchFeature({
     const createdCandidateId = normalizeText(modalState.createdCandidate?.id);
     const candidateId = normalizeText(modalState.seedCandidateId);
     const assetPath = normalizeText(modalState.seedAssetPath);
-    const sourceCandidateIds = Array.isArray(preview?.sourceCandidateIds)
-      ? preview.sourceCandidateIds.map((item) => normalizeText(item)).filter(Boolean)
-      : [];
+    const sourceCandidateIds = synthesisSourcesFeature.getSelectedSourceIds();
     const markSourcesConsumed = modalState.markSourcesConsumed !== false;
     if (createdCandidateId) {
       if (!isConnected?.() || getPendingActionKey()) {
         return null;
       }
+      const generation = actionGeneration;
+      if (!isActionCurrent(generation)) return null;
+      const pendingToken = Symbol("experience-synthesis-accept");
+      pendingSynthesisAcceptTokens.add(pendingToken);
       modalState.submitting = true;
       modalState.error = "";
       renderExperienceWorkbenchCapabilityOverviewPanel();
@@ -1898,16 +1969,25 @@ export function createExperienceWorkbenchFeature({
             confirmMessage: buildExperienceOverwriteConfirmMessage(createdCandidateRecord, assetPath),
           }
           : {});
+        if (!isActionCurrent(generation)) return null;
         if (acceptedCandidate) {
+          if (!isActionCurrent(generation)) return null;
           closeExperienceSynthesisModal({ force: true });
           return acceptedCandidate;
         }
         return null;
       } finally {
-        modalState.submitting = false;
-        renderExperienceWorkbenchCapabilityOverviewPanel();
-        syncGenerateControls();
-        renderExperienceSynthesisModal();
+        try {
+          if (isActionCurrent(generation)) {
+            modalState.submitting = false;
+            renderExperienceWorkbenchCapabilityOverviewPanel();
+            syncGenerateControls();
+            renderExperienceSynthesisModal();
+          }
+        } finally {
+          // Wrapper token 覆盖 review RPC 及其后续 loader 的完整结算周期。
+          pendingSynthesisAcceptTokens.delete(pendingToken);
+        }
       }
     }
     if ((!candidateId && !assetPath) || !sourceCandidateIds.length) {
@@ -1922,8 +2002,12 @@ export function createExperienceWorkbenchFeature({
       return null;
     }
     if (getPendingActionKey()) return null;
+    const generation = actionGeneration;
+    if (!isActionCurrent(generation)) return null;
+    const pendingToken = Symbol("experience-synthesis-create");
 
     const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    pendingSynthesisCreateTokens.add(pendingToken);
     if (memoryViewerState) {
       memoryViewerState.pendingExperienceActionKey = candidateId
         ? `synthesize-create:${candidateId}`
@@ -1949,6 +2033,7 @@ export function createExperienceWorkbenchFeature({
           markSourcesConsumed,
         },
       });
+      if (!isActionCurrent(generation)) return null;
       if (!res || !res.ok) {
         modalState.error = res?.error?.message || t("experience.synthesizeCreateFailedTitle", {}, "合成失败");
         showNotice(
@@ -1960,6 +2045,7 @@ export function createExperienceWorkbenchFeature({
       }
 
       const createdCandidate = res.payload?.candidate ?? null;
+      if (!isActionCurrent(generation)) return null;
       modalState.createdCandidate = createdCandidate;
       modalState.error = "";
       const consumedSourceCount = Number(res.payload?.consumedSourceCount);
@@ -1983,20 +2069,42 @@ export function createExperienceWorkbenchFeature({
         2800,
       );
       if (createdCandidate?.id) {
+        if (!isActionCurrent(generation)) return null;
         applyCreatedExperienceCandidate(createdCandidate);
+        if (!isActionCurrent(generation)) return null;
         await syncExperienceWorkbenchUi({ preferFirst: false, loadDetailIfNeeded: false });
+        if (!isActionCurrent(generation)) return null;
       }
       await loadExperienceWorkbench(false);
+      if (!isActionCurrent(generation)) return null;
       renderExperienceSynthesisModal();
       return createdCandidate;
+    } catch (error) {
+      if (!isActionCurrent(generation)) return null;
+      modalState.error = error instanceof Error && error.message
+        ? error.message
+        : t("experience.synthesizeCreateFailedTitle", {}, "合成失败");
+      showNotice(
+        t("experience.synthesizeCreateFailedTitle", {}, "合成失败"),
+        modalState.error,
+        "error",
+      );
+      return null;
     } finally {
-      modalState.submitting = false;
-      if (memoryViewerState) {
-        memoryViewerState.pendingExperienceActionKey = null;
+      try {
+        if (isActionCurrent(generation)) {
+          modalState.submitting = false;
+          if (memoryViewerState) {
+            memoryViewerState.pendingExperienceActionKey = null;
+          }
+          renderExperienceWorkbenchCapabilityOverviewPanel();
+          syncGenerateControls();
+          renderExperienceSynthesisModal();
+        }
+      } finally {
+        // UI owner 可以先失效，token 只在 create RPC 的真实结算后释放。
+        pendingSynthesisCreateTokens.delete(pendingToken);
       }
-      renderExperienceWorkbenchCapabilityOverviewPanel();
-      syncGenerateControls();
-      renderExperienceSynthesisModal();
     }
   }
 
@@ -2091,6 +2199,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function loadPublishedExperienceAssetDetail(assetPath, requestContext = null) {
+    if (disposed) return;
     const state = ensurePublishedAssetState();
     const normalizedAssetPath = normalizeText(assetPath);
     if (!normalizedAssetPath) {
@@ -2134,6 +2243,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function loadExperienceCandidateDetail(candidateId, requestContext = null) {
+    if (disposed) return;
     const state = getExperienceWorkbenchState();
     const normalizedCandidateId = typeof candidateId === "string" ? candidateId.trim() : "";
     if (!normalizedCandidateId) {
@@ -2181,6 +2291,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function syncExperienceWorkbenchUi(options = {}) {
+    if (disposed) return;
     const state = getExperienceWorkbenchState();
     ensurePublishedAssetState();
     const preferFirst = options.preferFirst !== false;
@@ -2238,6 +2349,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function loadExperienceWorkbench(forceSelectFirst = false) {
+    if (disposed) return;
     syncExperienceWorkbenchHeaderTitle();
     syncFilterUi();
     syncExperienceWorkbenchTabUi();
@@ -2368,6 +2480,8 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function openExperienceWorkbench(options = {}) {
+    if (disposed) return;
+    setViewActive(true);
     const candidateId = normalizeText(options.candidateId);
     applyExperienceWorkbenchContext(options);
     await loadExperienceWorkbench(candidateId ? false : options.preferFirst !== false);
@@ -2377,6 +2491,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function reviewExperienceCandidate(candidateId, decision, options = {}) {
+    if (disposed) return null;
     const normalizedCandidateId = typeof candidateId === "string" ? candidateId.trim() : "";
     const normalizedDecision = decision === "accept" || decision === "reject" ? decision : "";
     const publishTargetPath = normalizeText(options.publishTargetPath);
@@ -2390,10 +2505,13 @@ export function createExperienceWorkbenchFeature({
       return null;
     }
     if (getPendingActionKey()) return null;
+    const generation = actionGeneration;
+    const pendingToken = Symbol("experience-review");
     const currentCandidate = findExperienceCandidateInState(normalizedCandidateId);
     const previousCandidateStatus = normalizeCandidateStatus(currentCandidate?.status);
 
     const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    pendingReviewTokens.add(pendingToken);
     if (memoryViewerState) {
       memoryViewerState.pendingExperienceActionKey = `candidate:${normalizedCandidateId}:${normalizedDecision}`;
     }
@@ -2411,12 +2529,14 @@ export function createExperienceWorkbenchFeature({
         if (!confirmed) {
           return null;
         }
+        if (!isActionCurrent(generation)) return null;
         res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision, {
           confirmed: true,
           publishTargetPath,
         });
       } else {
         res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision);
+        if (!isActionCurrent(generation)) return null;
         if (
           normalizedDecision === "accept"
           && res
@@ -2426,11 +2546,14 @@ export function createExperienceWorkbenchFeature({
           const confirmed = typeof window === "object" && typeof window.confirm === "function"
             ? window.confirm(buildExperiencePublishConfirmMessage(currentCandidate))
             : true;
+          if (!isActionCurrent(generation)) return null;
           if (confirmed) {
             res = await requestExperienceCandidateReview(normalizedCandidateId, normalizedDecision, { confirmed: true });
+            if (!isActionCurrent(generation)) return null;
           }
         }
       }
+      if (!isActionCurrent(generation)) return null;
       if (!res || !res.ok) {
         showNotice(
           t("experience.reviewFailedTitle", {}, "Candidate action failed"),
@@ -2439,6 +2562,7 @@ export function createExperienceWorkbenchFeature({
         );
         return null;
       }
+      if (!isActionCurrent(generation)) return null;
       showNotice(
         normalizedDecision === "accept"
           ? t("experience.reviewAcceptSuccessTitle", {}, "Candidate accepted")
@@ -2451,18 +2575,36 @@ export function createExperienceWorkbenchFeature({
       );
       reviewedCandidate = res.payload?.candidate ?? null;
       return reviewedCandidate;
+    } catch (error) {
+      if (!isActionCurrent(generation)) return null;
+      showNotice(
+        t("experience.reviewFailedTitle", {}, "Candidate action failed"),
+        error instanceof Error && error.message
+          ? error.message
+          : t("experience.reviewFailedTitle", {}, "Candidate action failed"),
+        "error",
+      );
+      return null;
     } finally {
-      if (memoryViewerState) {
-        memoryViewerState.pendingExperienceActionKey = null;
+      try {
+        if (isActionCurrent(generation)) {
+          if (memoryViewerState) {
+            memoryViewerState.pendingExperienceActionKey = null;
+          }
+          if (reviewedCandidate) {
+            applyReviewedExperienceCandidate(reviewedCandidate, previousCandidateStatus);
+            await syncExperienceWorkbenchUi({ preferFirst: false, loadDetailIfNeeded: false });
+          } else {
+            renderExperienceWorkbenchCapabilityOverviewPanel();
+          }
+          if (isActionCurrent(generation)) {
+            syncGenerateControls();
+            await loadExperienceWorkbench(false);
+          }
+        }
+      } finally {
+        pendingReviewTokens.delete(pendingToken);
       }
-      if (reviewedCandidate) {
-        applyReviewedExperienceCandidate(reviewedCandidate, previousCandidateStatus);
-        await syncExperienceWorkbenchUi({ preferFirst: false, loadDetailIfNeeded: false });
-      } else {
-        renderExperienceWorkbenchCapabilityOverviewPanel();
-      }
-      syncGenerateControls();
-      await loadExperienceWorkbench(false);
     }
   }
 
@@ -2501,8 +2643,12 @@ export function createExperienceWorkbenchFeature({
     if (!confirmed) {
       return null;
     }
+    const generation = actionGeneration;
+    if (!isActionCurrent(generation)) return null;
+    const pendingToken = Symbol("experience-bulk-reject");
 
     const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    pendingBulkRejectTokens.add(pendingToken);
     if (memoryViewerState) {
       memoryViewerState.pendingExperienceActionKey = `bulk-reject:${normalizedCandidateType}`;
     }
@@ -2512,6 +2658,7 @@ export function createExperienceWorkbenchFeature({
     let rejectedCount = 0;
     try {
       const res = await requestExperienceCandidateBulkReject(normalizedCandidateType);
+      if (!isActionCurrent(generation)) return null;
       if (!res || !res.ok) {
         showNotice(
           t("experience.reviewFailedTitle", {}, "Candidate action failed"),
@@ -2520,6 +2667,7 @@ export function createExperienceWorkbenchFeature({
         );
         return null;
       }
+      if (!isActionCurrent(generation)) return null;
       rejectedCount = Math.max(0, Number(res.payload?.count) || 0);
       if (!rejectedCount) {
         showNotice(
@@ -2530,8 +2678,11 @@ export function createExperienceWorkbenchFeature({
         );
         return res.payload ?? null;
       }
+      if (!isActionCurrent(generation)) return null;
       applyBulkRejectedExperienceCandidates(normalizedCandidateType, rejectedCount);
+      if (!isActionCurrent(generation)) return null;
       await syncExperienceWorkbenchUi({ preferFirst: false, loadDetailIfNeeded: false });
+      if (!isActionCurrent(generation)) return null;
       showNotice(
         t("experience.capabilityBulkRejectSuccessTitle", {}, "批量拒绝完成"),
         t("experience.capabilityBulkRejectSuccessMessage", { count: String(rejectedCount), type: typeLabel }, `已批量拒绝 ${rejectedCount} 个 ${typeLabel} draft 候选。`),
@@ -2539,80 +2690,90 @@ export function createExperienceWorkbenchFeature({
         2600,
       );
       return res.payload ?? null;
+    } catch (error) {
+      if (!isActionCurrent(generation)) return null;
+      showNotice(
+        t("experience.reviewFailedTitle", {}, "Candidate action failed"),
+        error instanceof Error && error.message
+          ? error.message
+          : t("experience.reviewFailedTitle", {}, "Candidate action failed"),
+        "error",
+      );
+      return null;
     } finally {
-      if (memoryViewerState) {
-        memoryViewerState.pendingExperienceActionKey = null;
+      try {
+        if (isActionCurrent(generation)) {
+          if (memoryViewerState) {
+            memoryViewerState.pendingExperienceActionKey = null;
+          }
+          syncGenerateControls();
+          await loadExperienceWorkbench(false);
+        }
+      } finally {
+        // UI owner 可以先失效，pending token 仍需等到底层请求真正结算。
+        pendingBulkRejectTokens.delete(pendingToken);
       }
-      syncGenerateControls();
-      await loadExperienceWorkbench(false);
     }
   }
 
-  async function updateSkillFreshnessStaleMark(input = {}) {
-    const sourceCandidateId = normalizeText(input.sourceCandidateId);
-    const skillKey = normalizeText(input.skillKey);
-    const candidateId = normalizeText(input.candidateId);
-    const stale = input.stale !== false;
-    if (!sourceCandidateId && !skillKey) return null;
-    if (!isConnected?.()) {
+  const skillFreshnessFeature = createExperienceWorkbenchSkillFreshnessFeature({
+    getGeneration: () => actionGeneration,
+    getPendingActionKey,
+    isConnected,
+    isOwnerCurrent: isActionCurrent,
+    loadCandidateDetail: loadExperienceCandidateDetail,
+    notifyDisconnected: () => {
       showNotice(
         t("experience.skillFreshnessUpdateFailedTitle", {}, "Skill freshness update failed"),
         t("experience.disconnected", {}, "Connect to the server to view experience candidates."),
         "error",
       );
-      return null;
-    }
-    if (getPendingActionKey()) return null;
-
-    const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
-    const pendingKey = `skill-freshness:${sourceCandidateId || skillKey}:${stale ? "stale" : "active"}`;
-    if (memoryViewerState) {
-      memoryViewerState.pendingExperienceActionKey = pendingKey;
-    }
-    renderSelectedExperienceCandidate();
-    syncGenerateControls();
-
-    try {
-      const res = await sendReq({
-        type: "req",
-        id: makeId(),
-        method: "experience.skill.freshness.update",
-        params: {
-          ...(sourceCandidateId ? { sourceCandidateId } : {}),
-          ...(skillKey ? { skillKey } : {}),
-          stale,
-          agentId: getActiveAgentId(),
-        },
-      });
-      if (!res || !res.ok) {
-        showNotice(
-          t("experience.skillFreshnessUpdateFailedTitle", {}, "Skill freshness update failed"),
-          res?.error?.message || t("experience.skillFreshnessUpdateFailedTitle", {}, "Skill freshness update failed"),
-          "error",
-        );
-        return null;
-      }
+    },
+    notifyFailure: (message) => {
+      showNotice(
+        t("experience.skillFreshnessUpdateFailedTitle", {}, "Skill freshness update failed"),
+        message || t("experience.skillFreshnessUpdateFailedTitle", {}, "Skill freshness update failed"),
+        "error",
+      );
+    },
+    notifySuccess: () => {
       showNotice(
         t("experience.skillFreshnessUpdatedTitle", {}, "Skill freshness updated"),
         t("experience.skillFreshnessUpdatedMessage", {}, "The freshness state for this candidate has been refreshed."),
         "success",
         2200,
       );
-      return res.payload ?? null;
-    } finally {
+    },
+    renderSelectedCandidate: renderSelectedExperienceCandidate,
+    requestUpdate: ({ sourceCandidateId, skillKey, stale }) => sendReq({
+      type: "req",
+      id: makeId(),
+      method: "experience.skill.freshness.update",
+      params: {
+        ...(sourceCandidateId ? { sourceCandidateId } : {}),
+        ...(skillKey ? { skillKey } : {}),
+        stale,
+        agentId: getActiveAgentId(),
+      },
+    }),
+    setPendingActionKey: (pendingActionKey) => {
+      const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
       if (memoryViewerState) {
-        memoryViewerState.pendingExperienceActionKey = null;
+        memoryViewerState.pendingExperienceActionKey = pendingActionKey;
       }
+    },
+    syncPendingUi: () => {
+      renderSelectedExperienceCandidate();
       syncGenerateControls();
-      if (candidateId) {
-        await loadExperienceCandidateDetail(candidateId);
-      } else {
-        renderSelectedExperienceCandidate();
-      }
-    }
+    },
+  });
+
+  async function updateSkillFreshnessStaleMark(input = {}) {
+    return skillFreshnessFeature.updateSkillFreshnessStaleMark(input);
   }
 
   async function handleGenerateExperience(candidateType) {
+    if (disposed) return null;
     const state = getExperienceWorkbenchState();
     const taskId = normalizeText(state.generateTaskId);
     if (!taskId) {
@@ -2628,167 +2789,248 @@ export function createExperienceWorkbenchFeature({
       return null;
     }
     pendingGenerateActionKey = `generate:${candidateType}:${taskId}`;
+    const generation = actionGeneration;
+    const pendingToken = Symbol("experience-generate");
+    pendingGenerateTokens.add(pendingToken);
     syncGenerateControls();
     try {
       const candidate = await generateExperienceCandidate?.(taskId, candidateType);
+      if (disposed || generation !== actionGeneration) return null;
       await loadExperienceWorkbench(false);
+      if (disposed || generation !== actionGeneration) return null;
       if (candidate?.id) {
         const nextState = getExperienceWorkbenchState();
         nextState.selectedId = String(candidate.id);
         nextState.selectedCandidate = candidate;
         await syncExperienceWorkbenchUi({ preferFirst: false, loadDetailIfNeeded: true });
+        if (disposed || generation !== actionGeneration) return null;
         return candidate;
       }
       await syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+      if (disposed || generation !== actionGeneration) return null;
       return null;
     } finally {
-      pendingGenerateActionKey = "";
-      syncGenerateControls();
-    }
-  }
-
-  function bindUi() {
-    if (uiBound) return;
-    uiBound = true;
-    if (experienceWorkbenchQueryEl) {
-      experienceWorkbenchQueryEl.addEventListener("input", () => {
-        setFilters({ query: experienceWorkbenchQueryEl.value });
-        void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
-      });
-    }
-    if (experienceWorkbenchTypeFilterEl) {
-      experienceWorkbenchTypeFilterEl.addEventListener("change", () => {
-        setFilters({ type: experienceWorkbenchTypeFilterEl.value });
-        void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
-      });
-    }
-    if (experienceWorkbenchStatusFilterEl) {
-      experienceWorkbenchStatusFilterEl.addEventListener("change", () => {
-        setFilters({ status: experienceWorkbenchStatusFilterEl.value });
-        void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
-      });
-    }
-    if (experienceWorkbenchResetFiltersBtn) {
-      experienceWorkbenchResetFiltersBtn.addEventListener("click", () => {
-        setFilters({ query: "", type: "", status: "" });
-        syncFilterUi();
-        void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
-      });
-    }
-    if (experienceWorkbenchCleanupConsumedBtn) {
-      experienceWorkbenchCleanupConsumedBtn.addEventListener("click", () => {
-        void cleanupConsumedExperienceCandidates();
-      });
-    }
-    if (experienceGenerateTaskIdEl) {
-      experienceGenerateTaskIdEl.addEventListener("input", () => {
-        const state = getExperienceWorkbenchState();
-        state.generateTaskId = experienceGenerateTaskIdEl.value;
+      pendingGenerateTokens.delete(pendingToken);
+      if (!disposed && generation === actionGeneration) {
+        pendingGenerateActionKey = "";
         syncGenerateControls();
-      });
-    }
-    if (experienceGenerateMethodBtn) {
-      experienceGenerateMethodBtn.addEventListener("click", () => {
-        void handleGenerateExperience("method");
-      });
-    }
-    if (experienceGenerateSkillBtn) {
-      experienceGenerateSkillBtn.addEventListener("click", () => {
-        void handleGenerateExperience("skill");
-      });
-    }
-    if (experienceWorkbenchTabCandidatesBtn) {
-      experienceWorkbenchTabCandidatesBtn.addEventListener("click", () => {
-        setActiveTab("candidates");
-        syncExperienceWorkbenchTabUi();
-      });
-    }
-    if (experienceWorkbenchTabCapabilityAcquisitionBtn) {
-      experienceWorkbenchTabCapabilityAcquisitionBtn.addEventListener("click", () => {
-        setActiveTab("capability-acquisition");
-        syncExperienceWorkbenchTabUi();
-        renderExperienceWorkbenchCapabilityOverviewPanel();
-      });
-    }
-    if (experienceWorkbenchTabAssetsBtn) {
-      experienceWorkbenchTabAssetsBtn.addEventListener("click", () => {
-        setActiveTab("assets");
-        syncExperienceWorkbenchTabUi();
-        void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
-      });
-    }
-    if (experienceWorkbenchTabUsageOverviewBtn) {
-      experienceWorkbenchTabUsageOverviewBtn.addEventListener("click", () => {
-        setActiveTab("usage-overview");
-        syncExperienceWorkbenchTabUi();
-        void loadExperienceWorkbenchUsageOverview();
-      });
-    }
-    if (experienceSynthesisModalCloseBtn) {
-      experienceSynthesisModalCloseBtn.addEventListener("click", () => {
-        closeExperienceSynthesisModal();
-      });
-    }
-    if (experienceSynthesisModalCancelBtn) {
-      experienceSynthesisModalCancelBtn.addEventListener("click", () => {
-        closeExperienceSynthesisModal();
-      });
-    }
-    if (experienceSynthesisModalSubmitBtn) {
-      experienceSynthesisModalSubmitBtn.addEventListener("click", () => {
-        void submitExperienceSynthesis();
-      });
-    }
-    if (experienceSynthesisModalConsumeSourcesEl) {
-      experienceSynthesisModalConsumeSourcesEl.addEventListener("change", () => {
-        getSynthesisModalState().markSourcesConsumed = experienceSynthesisModalConsumeSourcesEl.checked !== false;
-      });
-    }
-    if (experienceSynthesisModalEl) {
-      experienceSynthesisModalEl.addEventListener("click", (event) => {
-        if (event.target === experienceSynthesisModalEl) {
-          closeExperienceSynthesisModal();
-        }
-      });
+      }
     }
   }
 
-  async function cleanupConsumedExperienceCandidates() {
-    const consumedDraftCount = getConsumedDraftCount();
-    if (consumedDraftCount <= 0) return null;
-    if (!isConnected?.()) {
+  const cleanupFeature = createExperienceWorkbenchCleanupFeature({
+    confirmCleanup: (count) => {
+      const message = `确认清理 ${count} 个已消化旧草稿？此操作会删除这些 draft 候选。`;
+      return typeof window === "object" && typeof window.confirm === "function"
+        ? window.confirm(message)
+        : true;
+    },
+    getConsumedDraftCount,
+    getGeneration: () => actionGeneration,
+    getPendingActionKey,
+    isConnected,
+    isOwnerCurrent: isActionCurrent,
+    loadExperienceWorkbench,
+    notifyDisconnected: () => {
       showNotice(
         "清理旧稿失败",
         t("experience.disconnected", {}, "Connect to the server to view experience candidates."),
         "error",
       );
-      return null;
-    }
-    const confirmed = window.confirm(`确认清理 ${consumedDraftCount} 个已消化旧草稿？此操作会删除这些 draft 候选。`);
-    if (!confirmed) return null;
+    },
+    notifyFailure: (message) => {
+      showNotice("清理旧稿失败", message || "未能清理已消化旧草稿。", "error");
+    },
+    notifySuccess: (count) => {
+      showNotice("旧稿已清理", `已清理 ${count} 个已消化旧草稿。`, "success", 2600);
+    },
+    requestCleanup: requestExperienceCandidateCleanupConsumed,
+    setPendingActionKey: (pendingActionKey) => {
+      const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+      if (memoryViewerState) {
+        memoryViewerState.pendingExperienceActionKey = pendingActionKey;
+      }
+    },
+    syncExperienceWorkbenchUi,
+    syncPendingUi: () => {
+      syncCleanupConsumedButton();
+      syncGenerateControls();
+    },
+  });
 
-    const res = await requestExperienceCandidateCleanupConsumed();
-    if (!res || !res.ok) {
-      showNotice(
-        "清理旧稿失败",
-        res?.error?.message || "未能清理已消化旧草稿。",
-        "error",
-      );
-      return null;
-    }
+  function bindUi() {
+    if (disposed || uiBound) return;
+    uiBound = true;
+    synthesisSourcesFeature.bind();
+    addOwnedListener(experienceWorkbenchQueryEl, "input", () => {
+      setFilters({ query: experienceWorkbenchQueryEl.value });
+      void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+    });
+    addOwnedListener(experienceWorkbenchTypeFilterEl, "change", () => {
+      setFilters({ type: experienceWorkbenchTypeFilterEl.value });
+      void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+    });
+    addOwnedListener(experienceWorkbenchStatusFilterEl, "change", () => {
+      setFilters({ status: experienceWorkbenchStatusFilterEl.value });
+      void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+    });
+    addOwnedListener(experienceWorkbenchResetFiltersBtn, "click", () => {
+      setFilters({ query: "", type: "", status: "" });
+      syncFilterUi();
+      void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+    });
+    addOwnedListener(experienceWorkbenchCleanupConsumedBtn, "click", () => {
+      void cleanupFeature.cleanupConsumedExperienceCandidates();
+    });
+    addOwnedListener(experienceGenerateTaskIdEl, "input", () => {
+      const state = getExperienceWorkbenchState();
+      state.generateTaskId = experienceGenerateTaskIdEl.value;
+      syncGenerateControls();
+    });
+    addOwnedListener(experienceGenerateMethodBtn, "click", () => {
+      void handleGenerateExperience("method");
+    });
+    addOwnedListener(experienceGenerateSkillBtn, "click", () => {
+      void handleGenerateExperience("skill");
+    });
+    addOwnedListener(experienceWorkbenchTabCandidatesBtn, "click", () => {
+      setActiveTab("candidates");
+      syncExperienceWorkbenchTabUi();
+    });
+    addOwnedListener(experienceWorkbenchTabCapabilityAcquisitionBtn, "click", () => {
+      setActiveTab("capability-acquisition");
+      syncExperienceWorkbenchTabUi();
+      renderExperienceWorkbenchCapabilityOverviewPanel();
+    });
+    addOwnedListener(experienceWorkbenchTabAssetsBtn, "click", () => {
+      setActiveTab("assets");
+      syncExperienceWorkbenchTabUi();
+      void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
+    });
+    addOwnedListener(experienceWorkbenchTabUsageOverviewBtn, "click", () => {
+      setActiveTab("usage-overview");
+      syncExperienceWorkbenchTabUi();
+      void loadExperienceWorkbenchUsageOverview();
+    });
+    addOwnedListener(experienceSynthesisModalCloseBtn, "click", () => {
+      closeExperienceSynthesisModal();
+    });
+    addOwnedListener(experienceSynthesisModalCancelBtn, "click", () => {
+      closeExperienceSynthesisModal();
+    });
+    addOwnedListener(experienceSynthesisModalSubmitBtn, "click", () => {
+      void submitExperienceSynthesis();
+    });
+    addOwnedListener(experienceSynthesisModalConsumeSourcesEl, "change", () => {
+      getSynthesisModalState().markSourcesConsumed = experienceSynthesisModalConsumeSourcesEl.checked !== false;
+    });
+    addOwnedListener(experienceSynthesisModalEl, "click", (event) => {
+      if (event.target === experienceSynthesisModalEl) {
+        closeExperienceSynthesisModal();
+      }
+    });
+  }
 
-    await loadExperienceWorkbench(false);
-    await syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
-    showNotice(
-      "旧稿已清理",
-      `已清理 ${Number(res.payload?.count) || 0} 个已消化旧草稿。`,
-      "success",
-      2600,
-    );
-    return res.payload ?? null;
+  function setViewActive(active) {
+    viewLifecycleFeature.setViewActive(active);
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    viewLifecycleFeature.dispose();
+    synthesisSourcesFeature.dispose();
+    for (const { target, type, handler } of listenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    listenerEntries.length = 0;
+    uiBound = false;
+    pendingGenerateActionKey = "";
+    const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    if (memoryViewerState) {
+      memoryViewerState.pendingExperienceActionKey = null;
+    }
+    actionGeneration += 1;
+    synthesisPreviewGeneration += 1;
+    const state = getExperienceWorkbenchState();
+    state.requestToken = Number(state.requestToken || 0) + 1;
+    state.items = [];
+    state.draftItems = [];
+    state.draftItemsLoading = false;
+    state.draftItemsError = "";
+    state.publishedAssets = [];
+    state.publishedAssetsLoading = false;
+    state.publishedAssetsError = "";
+    state.selectedId = null;
+    state.selectedCandidate = null;
+    state.selectedAssetPath = "";
+    state.selectedAsset = null;
+    state.selectedAssetLoading = false;
+    state.selectedAssetError = "";
+    state.stats = null;
+    state.filters = { query: "", type: "", status: "" };
+    state.generateTaskId = "";
+    state.resynthesizeAssetPath = "";
+    state.synthesisModal = {
+      open: false,
+      loading: false,
+      submitting: false,
+      error: "",
+      seedCandidateId: "",
+      seedAssetPath: "",
+      preview: null,
+      markSourcesConsumed: true,
+      createdCandidate: null,
+    };
+    for (const element of [
+      experienceWorkbenchStatsEl,
+      experienceWorkbenchListEl,
+      experienceWorkbenchDetailEl,
+      experienceWorkbenchCapabilityOverviewEl,
+      experienceWorkbenchAssetsListEl,
+      experienceWorkbenchAssetsDetailEl,
+      experienceWorkbenchUsageOverviewEl,
+      experienceSynthesisModalSummaryEl,
+      experienceSynthesisModalStatusEl,
+      experienceSynthesisModalListEl,
+    ]) {
+      element?.replaceChildren();
+    }
+    if (experienceWorkbenchQueryEl) experienceWorkbenchQueryEl.value = "";
+    if (experienceWorkbenchTypeFilterEl) experienceWorkbenchTypeFilterEl.value = "";
+    if (experienceWorkbenchStatusFilterEl) experienceWorkbenchStatusFilterEl.value = "";
+    if (experienceGenerateTaskIdEl) experienceGenerateTaskIdEl.value = "";
+    if (experienceSynthesisModalConsumeSourcesEl) experienceSynthesisModalConsumeSourcesEl.checked = true;
+    experienceSynthesisModalEl?.classList.add("hidden");
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerEntries.length,
+      pendingGenerateCount: pendingGenerateTokens.size,
+      pendingReviewCount: pendingReviewTokens.size,
+      pendingBulkRejectCount: pendingBulkRejectTokens.size,
+      pendingSynthesisPreviewCount: pendingSynthesisPreviewTokens.size,
+      pendingSynthesisCreateCount: pendingSynthesisCreateTokens.size,
+      pendingSynthesisAcceptCount: pendingSynthesisAcceptTokens.size,
+      pendingCleanupCount: cleanupFeature.getPendingCount(),
+      pendingSkillFreshnessCount: skillFreshnessFeature.getPendingCount(),
+      selectedSynthesisSourceCount: synthesisSourcesFeature.getSelectionSnapshot().selectedSourceCount,
+      viewActive: viewLifecycleFeature.isActive(),
+      disposed,
+    };
   }
 
   function resetExperienceWorkbenchStateForAgent(agentId = getActiveAgentId()) {
+    if (disposed) return;
+    synthesisSourcesFeature.clear();
+    actionGeneration += 1;
+    synthesisPreviewGeneration += 1;
+    pendingGenerateActionKey = "";
+    const memoryViewerState = typeof getMemoryViewerState === "function" ? getMemoryViewerState() : null;
+    if (memoryViewerState) {
+      memoryViewerState.pendingExperienceActionKey = null;
+    }
     const state = getExperienceWorkbenchState();
     state.requestToken = Number(state.requestToken || 0) + 1;
     state.activeAgentId = String(agentId || "default").trim() || "default";
@@ -2819,6 +3061,7 @@ export function createExperienceWorkbenchFeature({
   }
 
   async function refreshExperienceWorkbenchForAgentSwitch(agentId = getActiveAgentId()) {
+    if (disposed) return;
     resetExperienceWorkbenchStateForAgent(agentId);
     syncExperienceWorkbenchHeaderTitle();
     syncFilterUi();
@@ -2841,5 +3084,8 @@ export function createExperienceWorkbenchFeature({
     refreshExperienceWorkbenchForAgentSwitch,
     syncExperienceWorkbenchHeaderTitle,
     syncExperienceWorkbenchUi,
+    setViewActive,
+    dispose,
+    getRuntimeSnapshot,
   };
 }

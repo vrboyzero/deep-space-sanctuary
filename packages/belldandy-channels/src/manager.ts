@@ -24,30 +24,35 @@ import type { Channel, ChannelManager } from "./types.js";
  */
 export class DefaultChannelManager implements ChannelManager {
     private readonly channels = new Map<string, Channel>();
+    private lifecycleQueue: Promise<void> = Promise.resolve();
 
     /**
      * 注册渠道
      */
-    register(channel: Channel): void {
-        if (this.channels.has(channel.name)) {
-            console.warn(`[ChannelManager] Channel "${channel.name}" already registered, replacing.`);
-        }
-        this.channels.set(channel.name, channel);
-        console.log(`[ChannelManager] Registered channel: ${channel.name}`);
+    async register(channel: Channel): Promise<void> {
+        await this.enqueueLifecycle(async () => {
+            const previous = this.channels.get(channel.name);
+            if (previous === channel) return;
+            if (previous) {
+                console.warn(`[ChannelManager] Channel "${channel.name}" already registered, stopping previous owner before replacement.`);
+                await previous.stop();
+            }
+            this.channels.set(channel.name, channel);
+            console.log(`[ChannelManager] Registered channel: ${channel.name}`);
+        });
     }
 
     /**
      * 注销渠道
      */
-    unregister(channelName: string): void {
-        const channel = this.channels.get(channelName);
-        if (channel) {
-            if (channel.isRunning) {
-                console.warn(`[ChannelManager] Unregistering running channel "${channelName}". Consider stopping it first.`);
-            }
+    async unregister(channelName: string): Promise<void> {
+        await this.enqueueLifecycle(async () => {
+            const channel = this.channels.get(channelName);
+            if (!channel) return;
+            await channel.stop();
             this.channels.delete(channelName);
             console.log(`[ChannelManager] Unregistered channel: ${channelName}`);
-        }
+        });
     }
 
     /**
@@ -75,28 +80,32 @@ export class DefaultChannelManager implements ChannelManager {
      * 启动所有渠道
      */
     async startAll(): Promise<void> {
-        const promises = Array.from(this.channels.values()).map(async (channel) => {
-            try {
-                await channel.start();
-            } catch (e) {
-                console.error(`[ChannelManager] Failed to start channel "${channel.name}":`, e);
-            }
+        await this.enqueueLifecycle(async () => {
+            const promises = Array.from(this.channels.values()).map(async (channel) => {
+                try {
+                    await channel.start();
+                } catch (e) {
+                    console.error(`[ChannelManager] Failed to start channel "${channel.name}":`, e);
+                }
+            });
+            await Promise.all(promises);
         });
-        await Promise.all(promises);
     }
 
     /**
      * 停止所有渠道
      */
     async stopAll(): Promise<void> {
-        const promises = Array.from(this.channels.values()).map(async (channel) => {
-            try {
-                await channel.stop();
-            } catch (e) {
-                console.error(`[ChannelManager] Failed to stop channel "${channel.name}":`, e);
-            }
+        await this.enqueueLifecycle(async () => {
+            const promises = Array.from(this.channels.values()).map(async (channel) => {
+                try {
+                    await channel.stop();
+                } catch (e) {
+                    console.error(`[ChannelManager] Failed to stop channel "${channel.name}":`, e);
+                }
+            });
+            await Promise.all(promises);
         });
-        await Promise.all(promises);
     }
 
     /**
@@ -128,5 +137,18 @@ export class DefaultChannelManager implements ChannelManager {
             name: channel.name,
             running: channel.isRunning,
         }));
+    }
+
+    /**
+     * 同一 Manager 内的 replace/unregister/start/stop 不能交叉执行，否则旧连接可能在
+     * 新 owner 发布后才关闭。失败不会阻塞后续操作，但会原样返回给当前调用方。
+     */
+    private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+        const pending = this.lifecycleQueue.then(operation, operation);
+        this.lifecycleQueue = pending.then(
+            () => undefined,
+            () => undefined,
+        );
+        return pending;
     }
 }

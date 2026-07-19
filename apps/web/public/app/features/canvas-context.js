@@ -19,6 +19,9 @@ export function createCanvasContextFeature({
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
   const { canvasContextBarEl } = refs;
+  const pendingCapabilityRequests = new Set();
+  let capabilityRequestGeneration = 0;
+  let disposed = false;
 
   function goalBaseConversationId(goalId) {
     return `goal:${goalId}`;
@@ -53,7 +56,7 @@ export function createCanvasContextFeature({
   }
 
   function renderCanvasGoalContext() {
-    if (!canvasContextBarEl) return;
+    if (disposed || !canvasContextBarEl) return;
 
     const canvasApp = getCanvasApp?.();
     const activeConversationId = getActiveConversationId?.() || "";
@@ -200,7 +203,19 @@ export function createCanvasContextFeature({
     });
 
     if (goal && goalId && (!capabilityEntry || (nodeId && !capabilityPlan)) && !goalsState.capabilityPending?.[goalId]) {
-      void ensureGoalCapabilityCache(goal, { forceReload: Boolean(capabilityEntry) }).then(() => {
+      const requestToken = {};
+      const requestGeneration = capabilityRequestGeneration;
+      pendingCapabilityRequests.add(requestToken);
+      let capabilityRequest;
+      try {
+        capabilityRequest = ensureGoalCapabilityCache(goal, { forceReload: Boolean(capabilityEntry) });
+      } catch {
+        pendingCapabilityRequests.delete(requestToken);
+        return;
+      }
+      void Promise.resolve(capabilityRequest).then(() => {
+        // 当前上下文与 owner 都有效时才允许异步能力结果触发二次渲染。
+        if (disposed || requestGeneration !== capabilityRequestGeneration) return;
         const latestCanvasApp = getCanvasApp?.();
         const latestBoardId = normalizeGoalBoardId(latestCanvasApp?.currentBoardId);
         const latestConversation = parseGoalConversationContext(getActiveConversationId?.() || "");
@@ -208,8 +223,27 @@ export function createCanvasContextFeature({
         if (latestGoalId === goalId) {
           renderCanvasGoalContext();
         }
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        pendingCapabilityRequests.delete(requestToken);
+      });
     }
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    capabilityRequestGeneration += 1;
+    if (!canvasContextBarEl) return;
+    canvasContextBarEl.classList.add("hidden");
+    canvasContextBarEl.innerHTML = "";
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      capabilityRequestGeneration,
+      disposed,
+      pendingCapabilityRequestCount: pendingCapabilityRequests.size,
+    };
   }
 
   async function openGoalCanvasList(goalId) {
@@ -275,6 +309,8 @@ export function createCanvasContextFeature({
     isConversationForGoal,
     parseGoalConversationContext,
     renderCanvasGoalContext,
+    dispose,
+    getRuntimeSnapshot,
     refreshLocale() {
       renderCanvasGoalContext();
     },

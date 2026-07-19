@@ -1,4 +1,4 @@
-import type { EmbeddingProvider, EmbeddingVector } from "./index.js";
+import type { EmbeddingProvider, EmbeddingRequestContext, EmbeddingVector } from "./index.js";
 import OpenAI from "openai";
 
 export interface OpenAIEmbeddingOptions {
@@ -37,31 +37,31 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         console.log(`[Embedding] Initialized OpenAI provider with model: ${this.modelName}${this.queryPrefix ? ` (task-aware)` : ""}`);
     }
 
-    async embed(text: string): Promise<EmbeddingVector> {
-        return this.embedQuery(text);
+    async embed(text: string, context?: EmbeddingRequestContext): Promise<EmbeddingVector> {
+        return this.embedQuery(text, context);
     }
 
-    async embedQuery(text: string): Promise<EmbeddingVector> {
+    async embedQuery(text: string, context?: EmbeddingRequestContext): Promise<EmbeddingVector> {
         const input = this.queryPrefix ? this.queryPrefix + text : text;
         const response = await this.openai.embeddings.create({
             model: this.modelName,
             input,
             dimensions: this.modelName.includes("text-embedding-3") ? this.dimension : undefined,
-        });
+        }, context?.signal ? { signal: context.signal } : undefined);
         return response.data[0].embedding;
     }
 
-    async embedPassage(text: string): Promise<EmbeddingVector> {
+    async embedPassage(text: string, context?: EmbeddingRequestContext): Promise<EmbeddingVector> {
         const input = this.passagePrefix ? this.passagePrefix + text : text;
         const response = await this.openai.embeddings.create({
             model: this.modelName,
             input,
             dimensions: this.modelName.includes("text-embedding-3") ? this.dimension : undefined,
-        });
+        }, context?.signal ? { signal: context.signal } : undefined);
         return response.data[0].embedding;
     }
 
-    async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+    async embedBatch(texts: string[], context?: EmbeddingRequestContext): Promise<EmbeddingVector[]> {
         // embedBatch 用于索引，默认使用 passage 前缀
         const inputs = this.passagePrefix
             ? texts.map(t => this.passagePrefix + t)
@@ -70,7 +70,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
             model: this.modelName,
             input: inputs,
             dimensions: this.modelName.includes("text-embedding-3") ? this.dimension : undefined,
-        });
+        }, context?.signal ? { signal: context.signal } : undefined);
         return response.data.map(d => d.embedding);
     }
 }

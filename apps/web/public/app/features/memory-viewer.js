@@ -15,6 +15,20 @@ import {
   normalizeOutboundAuditFocus,
 } from "./email-thread-organizer-view.js";
 import { buildDreamHistoryPanelView } from "./memory-viewer-dream-history.js";
+import { createEmailThreadAdviceRetention } from "./email-thread-advice-retention.js";
+import { createMemoryViewerRequestLifecycle } from "./memory-viewer-request-lifecycle.js";
+import { createMemoryViewerRetainedStateLifecycle } from "./memory-viewer-retained-state.js";
+import { createMemoryViewerModalControls } from "./memory-viewer-modal-controls.js";
+import { createMemoryViewerDedupActions } from "./memory-viewer-dedup-actions.js";
+import { createMemoryViewerDreamHistoryLifecycle } from "./memory-viewer-dream-history-lifecycle.js";
+import { createMemoryViewerDreamConsolidationActions } from "./memory-viewer-dream-consolidation-actions.js";
+import { createMemoryViewerDreamRuntimeLifecycle } from "./memory-viewer-dream-runtime-lifecycle.js";
+import { createMemoryViewerDreamRunAction } from "./memory-viewer-dream-run-action.js";
+import { createMemoryViewerSharePromoteAction } from "./memory-viewer-share-promote-action.js";
+import { createMemoryViewerShareClaimAction } from "./memory-viewer-share-claim-action.js";
+import { createMemoryViewerShareReviewAction } from "./memory-viewer-share-review-action.js";
+import { createMemoryViewerShareBatchAction } from "./memory-viewer-share-batch-action.js";
+import { createMemoryViewerIngressLifecycle } from "./memory-viewer-ingress-lifecycle.js";
 import { renderSkillFreshnessDetail } from "./skill-freshness-view.js";
 import { isCompactGovernanceDetailMode, renderGovernanceFullOnly } from "./governance-detail-mode.js";
 
@@ -779,6 +793,7 @@ export function createMemoryViewerFeature({
   bindMemoryPathLinks,
   bindTaskAuditJumpLinks,
   openConversationSession,
+  emailThreadAdviceRetention = createEmailThreadAdviceRetention(),
   showNotice,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -837,8 +852,146 @@ export function createMemoryViewerFeature({
     memoryDedupModalCancelBtn,
     memoryDedupModalSubmitBtn,
   } = refs;
-  const autoRequestedEmailThreadAdvice = new Set();
   let dreamModalOpen = false;
+  const ingressLifecycle = createMemoryViewerIngressLifecycle();
+  const requestLifecycle = createMemoryViewerRequestLifecycle({
+    invalidateRequestContext: () => {
+      const memoryViewerState = getMemoryViewerState();
+      memoryViewerState.requestToken = Number(memoryViewerState.requestToken || 0) + 1;
+    },
+  });
+  const retainedStateLifecycle = createMemoryViewerRetainedStateLifecycle({
+    getState: getMemoryViewerState,
+    refs: {
+      memoryViewerTitleEl,
+      memoryViewerStatsEl,
+      memoryViewerListEl,
+      memoryViewerDetailEl,
+      memorySharedReviewBatchBarEl,
+      memoryDreamModalEl,
+      memoryDreamModalTitleEl,
+      memoryDreamBarEl,
+      memoryDreamStatusEl,
+      memoryDreamMetaEl,
+      memoryDreamObsidianEl,
+      memoryDreamSummaryEl,
+      memoryDreamHistoryStatusEl,
+      memoryDreamHistoryListEl,
+      memoryDreamHistoryDetailEl,
+      memoryDedupModalEl,
+      memoryDedupModalTitleEl,
+      memoryDedupModalSummaryEl,
+      memoryDedupModalStatusEl,
+      memoryDedupModalWarningEl,
+      memoryDedupModalListEl,
+    },
+  });
+  const dedupActions = createMemoryViewerDedupActions({
+    getModalState: getDedupModalState,
+    isConnected,
+    sendReq,
+    makeId,
+    getActiveAgentId,
+    buildFilter: buildCurrentMemoryDedupFilter,
+    render: renderDedupModal,
+    showNotice,
+    loadMemoryViewer,
+    t,
+  });
+  const sharePromoteAction = createMemoryViewerSharePromoteAction({
+    getState: getMemoryViewerState,
+    sendReq,
+    makeId,
+    getActiveAgentId,
+    promptAction: (message, initialValue) => window.prompt(message, initialValue),
+    showNotice,
+    loadMemoryViewer,
+    loadMemoryDetail,
+    t,
+  });
+  const shareClaimAction = createMemoryViewerShareClaimAction({
+    getState: getMemoryViewerState,
+    sendRequest: sendMemoryShareClaimRequest,
+    showNotice,
+    loadMemoryViewer,
+    loadMemoryDetail,
+    t,
+  });
+  const shareReviewAction = createMemoryViewerShareReviewAction({
+    getState: getMemoryViewerState,
+    sendRequest: sendMemoryShareReviewRequest,
+    promptAction: (message, initialValue) => window.prompt(message, initialValue),
+    showNotice,
+    loadMemoryViewer,
+    loadMemoryDetail,
+    t,
+  });
+  const shareBatchAction = createMemoryViewerShareBatchAction({
+    getState: getMemoryViewerState,
+    getSelectedIds: getSelectedSharedReviewIds,
+    getActiveAgentId,
+    buildBatchState: buildSharedReviewBatchActionState,
+    promptAction: (message, initialValue) => window.prompt(message, initialValue),
+    sendClaimRequest: sendMemoryShareClaimRequest,
+    sendReviewRequest: sendMemoryShareReviewRequest,
+    render: renderSharedReviewBatchBar,
+    formatActionLabel: formatSharedReviewBatchActionLabel,
+    formatCount,
+    showNotice,
+    loadMemoryViewer,
+    loadMemoryDetail,
+    t,
+  });
+  const dreamHistoryLifecycle = createMemoryViewerDreamHistoryLifecycle();
+  const dreamRuntimeLifecycle = createMemoryViewerDreamRuntimeLifecycle();
+  const dreamRunAction = createMemoryViewerDreamRunAction({
+    getState: getMemoryViewerState,
+    isConnected,
+    sendReq,
+    makeId,
+    getActiveAgentId,
+    normalizeRuntime: normalizeDreamRuntimeView,
+    render: renderDreamRuntimeBar,
+    showNotice,
+    loadDreamHistory,
+    loadDreamRuntimeStatus,
+    t,
+  });
+  const dreamConsolidationActions = createMemoryViewerDreamConsolidationActions({
+    getState: getMemoryViewerState,
+    sendReq,
+    makeId,
+    getActiveAgentId,
+    promptAction: (message, initialValue) => window.prompt(message, initialValue),
+    confirmAction: (message) => window.confirm(message),
+    showNotice,
+    loadDreamHistory,
+    loadDreamHistoryDetail,
+    loadDreamRuntimeStatus,
+    t,
+  });
+  const modalControls = createMemoryViewerModalControls({
+    refs: {
+      memoryDedupModalEl,
+      memoryDedupModalCloseBtn,
+      memoryDedupModalCancelBtn,
+      memoryDedupModalSubmitBtn,
+      memoryDreamHistoryListEl,
+      memoryDreamHistoryDetailEl,
+      memoryDreamModalTriggerBtn,
+      memoryDreamModalCloseBtn,
+      memoryDreamModalEl,
+    },
+    documentTarget: document,
+    getDreamModalOpen: () => dreamModalOpen,
+    closeDedupModal,
+    applyDedupFromModal,
+    loadDreamHistoryDetail,
+    reviewDreamConsolidation,
+    applyDreamConsolidation,
+    openDreamModal,
+    closeDreamModal,
+  });
 
   function getActiveAgentId() {
     const agentId = typeof getSelectedAgentId === "function" ? String(getSelectedAgentId() || "").trim() : "";
@@ -1110,106 +1263,12 @@ export function createMemoryViewerFeature({
     memoryDedupModalCloseBtn.disabled = modalState.applying;
   }
 
-  if (memoryDedupModalCloseBtn) {
-    memoryDedupModalCloseBtn.addEventListener("click", () => {
-      closeDedupModal();
-    });
-  }
-  if (memoryDedupModalCancelBtn) {
-    memoryDedupModalCancelBtn.addEventListener("click", () => {
-      closeDedupModal();
-    });
-  }
-  if (memoryDedupModalSubmitBtn) {
-    memoryDedupModalSubmitBtn.addEventListener("click", () => {
-      void applyDedupFromModal();
-    });
-  }
-  if (memoryDedupModalEl) {
-    memoryDedupModalEl.addEventListener("click", (event) => {
-      if (event.target === memoryDedupModalEl) {
-        closeDedupModal();
-      }
-    });
+  function openDedupModal() {
+    return dedupActions.openPreview();
   }
 
-  async function openDedupModal() {
-    const modalState = getDedupModalState();
-    modalState.open = true;
-    modalState.loading = true;
-    modalState.applying = false;
-    modalState.error = "";
-    modalState.report = null;
-    modalState.result = null;
-    renderDedupModal();
-
-    if (!isConnected()) {
-      modalState.loading = false;
-      modalState.error = t("memory.dedupPreviewDisconnected", {}, "当前未连接到服务器，无法执行重复预检。");
-      renderDedupModal();
-      return null;
-    }
-
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "memory.dedup.preview",
-      params: {
-        agentId: getActiveAgentId(),
-        filter: buildCurrentMemoryDedupFilter(),
-      },
-    });
-    modalState.loading = false;
-    if (!res?.ok) {
-      modalState.error = res?.error?.message || t("memory.dedupPreviewFailed", {}, "重复预检失败。");
-      renderDedupModal();
-      return null;
-    }
-    modalState.report = res.payload?.report ?? null;
-    renderDedupModal();
-    return modalState.report;
-  }
-
-  async function applyDedupFromModal() {
-    const modalState = getDedupModalState();
-    const report = modalState.report && typeof modalState.report === "object" ? modalState.report : null;
-    if (!report || modalState.loading || modalState.applying || modalState.result) {
-      return null;
-    }
-    if (!Array.isArray(report.groups) || report.groups.length <= 0) {
-      modalState.error = t("memory.dedupApplyNothing", {}, "当前没有可清理的重复组。");
-      renderDedupModal();
-      return null;
-    }
-    modalState.applying = true;
-    modalState.error = "";
-    renderDedupModal();
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "memory.dedup.apply",
-      params: {
-        agentId: getActiveAgentId(),
-        filter: buildCurrentMemoryDedupFilter(),
-        confirmed: true,
-      },
-    });
-    modalState.applying = false;
-    if (!res?.ok) {
-      modalState.error = res?.error?.message || t("memory.dedupApplyFailed", {}, "重复清理失败。");
-      renderDedupModal();
-      return null;
-    }
-    modalState.result = res.payload?.result ?? null;
-    renderDedupModal();
-    showNotice?.(
-      t("memory.dedupNoticeTitle", {}, "记忆重复清理已完成"),
-      modalState.result?.backupPath || "已生成备份并完成清理。",
-      "success",
-      3200,
-    );
-    await loadMemoryViewer(true);
-    return modalState.result;
+  function applyDedupFromModal() {
+    return dedupActions.apply();
   }
 
   function ensureListPageByTab() {
@@ -1323,10 +1382,14 @@ export function createMemoryViewerFeature({
   }
 
   async function requestEmailThreadConversationAdvice(conversationId, item) {
+    return requestLifecycle.run(({ isCurrent }) => (
+      requestEmailThreadConversationAdviceCurrent(conversationId, item, isCurrent)
+    ));
+  }
+
+  async function requestEmailThreadConversationAdviceCurrent(conversationId, item, isCurrent) {
     const normalizedConversationId = typeof conversationId === "string" ? conversationId.trim() : "";
-    if (!normalizedConversationId || autoRequestedEmailThreadAdvice.has(normalizedConversationId)) {
-      return;
-    }
+    if (!normalizedConversationId) return;
     if (typeof isConnected === "function" && !isConnected()) {
       showNotice?.(
         t("memory.emailThreadOrganizerAdviceRequestOfflineTitle", {}, "未连接到服务器"),
@@ -1335,7 +1398,8 @@ export function createMemoryViewerFeature({
       );
       return;
     }
-    autoRequestedEmailThreadAdvice.add(normalizedConversationId);
+    const adviceRequest = emailThreadAdviceRetention.begin(normalizedConversationId);
+    if (!adviceRequest) return;
     try {
       const res = await sendReq({
         type: "req",
@@ -1355,16 +1419,20 @@ export function createMemoryViewerFeature({
           attachments: [],
         },
       });
+      if (!isCurrent()) return;
       if (res?.ok === false) {
-        autoRequestedEmailThreadAdvice.delete(normalizedConversationId);
+        emailThreadAdviceRetention.fail(adviceRequest);
         showNotice?.(
           t("memory.emailThreadOrganizerAdviceRequestFailedTitle", {}, "线程建议请求失败"),
           res?.error?.message || t("memory.emailThreadOrganizerAdviceRequestFailedMessage", {}, "message.send 调用失败。"),
           "error",
         );
+        return;
       }
+      emailThreadAdviceRetention.succeed(adviceRequest);
     } catch (error) {
-      autoRequestedEmailThreadAdvice.delete(normalizedConversationId);
+      if (!isCurrent()) return;
+      emailThreadAdviceRetention.fail(adviceRequest);
       showNotice?.(
         t("memory.emailThreadOrganizerAdviceRequestFailedTitle", {}, "线程建议请求失败"),
         error instanceof Error ? error.message : String(error),
@@ -1715,7 +1783,7 @@ export function createMemoryViewerFeature({
   }
 
   function isMemoryViewerRequestCurrent(requestContext) {
-    if (!requestContext) return false;
+    if (!requestLifecycle.isActive() || !requestContext) return false;
     const memoryViewerState = getMemoryViewerState();
     const activeAgentId = String(memoryViewerState.activeAgentId || getActiveAgentId()).trim() || "default";
     return Number(memoryViewerState.requestToken || 0) === Number(requestContext.requestToken)
@@ -2213,7 +2281,7 @@ export function createMemoryViewerFeature({
     }
   }
 
-  async function loadDreamHistoryDetail(dreamId, agentId = getActiveAgentId()) {
+  async function loadDreamHistoryDetailInternal(dreamId, agentId = getActiveAgentId()) {
     const normalizedDreamId = typeof dreamId === "string" ? dreamId.trim() : "";
     const memoryViewerState = getMemoryViewerState();
     if (!normalizedDreamId || !isConnected()) {
@@ -2269,7 +2337,11 @@ export function createMemoryViewerFeature({
     return res.payload;
   }
 
-  async function loadDreamHistory(forceSelectFirst = false, agentId = getActiveAgentId()) {
+  function loadDreamHistoryDetail(dreamId, agentId = getActiveAgentId()) {
+    return dreamHistoryLifecycle.run("detail", () => loadDreamHistoryDetailInternal(dreamId, agentId));
+  }
+
+  async function loadDreamHistoryInternal(forceSelectFirst = false, agentId = getActiveAgentId()) {
     const memoryViewerState = getMemoryViewerState();
     memoryViewerState.dreamHistoryOpen = true;
     if (!isConnected()) {
@@ -2352,162 +2424,17 @@ export function createMemoryViewerFeature({
     }
   }
 
-  async function reviewDreamConsolidation(decision) {
-    const memoryViewerState = getMemoryViewerState();
-    const dreamId = typeof memoryViewerState.selectedDreamHistoryId === "string" ? memoryViewerState.selectedDreamHistoryId.trim() : "";
-    const selectedItem = memoryViewerState.selectedDreamHistoryItem;
-    if (!dreamId || !selectedItem) return;
-    const note = window.prompt(
-      decision === "approved"
-        ? t("memory.dreamConsolidationReviewApprovePrompt", {}, "可选备注：为什么批准这些低风险画像 patch？")
-        : t("memory.dreamConsolidationReviewRejectPrompt", {}, "可选备注：为什么拒绝这批整理建议？"),
-      "",
-    );
-    if (note === null) return;
-    const approvedCandidatePaths = decision === "approved"
-      ? (Array.isArray(selectedItem?.consolidation?.profilePatchCandidates)
-        ? selectedItem.consolidation.profilePatchCandidates
-          .map((candidate) => typeof candidate?.profilePath === "string" ? candidate.profilePath.trim() : "")
-          .filter(Boolean)
-        : [])
-      : [];
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "dream.consolidation.review",
-      params: {
-        agentId: getActiveAgentId(),
-        dreamId,
-        decision,
-        note,
-        approvedCandidatePaths,
-      },
-    });
-    if (!res?.ok) {
-      showNotice?.(
-        t("memory.dreamConsolidationReviewFailedTitle", {}, "Dream 整理审批失败"),
-        res?.error?.message || t("memory.dreamConsolidationReviewFailedMessage", {}, "无法更新 Dream consolidation review。"),
-        "error",
-        4200,
-      );
-      return;
-    }
-    showNotice?.(
-      t("memory.dreamConsolidationReviewSuccessTitle", {}, "Dream 整理审批已更新"),
-      res.payload?.record?.consolidation?.review?.status || t("memory.dreamConsolidationReviewSuccessMessage", {}, "Dream consolidation review 已更新。"),
-      "success",
-      2600,
-    );
-    await loadDreamHistory(false, getActiveAgentId());
-    await loadDreamHistoryDetail(dreamId, getActiveAgentId());
+  function loadDreamHistory(forceSelectFirst = false, agentId = getActiveAgentId()) {
+    return dreamHistoryLifecycle.run("list", () => loadDreamHistoryInternal(forceSelectFirst, agentId));
   }
 
-  async function applyDreamConsolidation() {
-    const memoryViewerState = getMemoryViewerState();
-    const dreamId = typeof memoryViewerState.selectedDreamHistoryId === "string" ? memoryViewerState.selectedDreamHistoryId.trim() : "";
-    if (!dreamId) return;
-    const confirmed = window.confirm(
-      t("memory.dreamConsolidationApplyConfirm", {}, "这会写入 canonical profile state。是否继续应用已批准的低风险画像 patch？"),
-    );
-    if (!confirmed) return;
-    const note = window.prompt(
-      t("memory.dreamConsolidationApplyPrompt", {}, "可选备注：本次 Dream consolidation apply 的说明"),
-      "",
-    );
-    if (note === null) return;
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "dream.consolidation.apply",
-      params: {
-        agentId: getActiveAgentId(),
-        dreamId,
-        confirmed: true,
-        note,
-      },
-    });
-    if (!res?.ok) {
-      showNotice?.(
-        t("memory.dreamConsolidationApplyFailedTitle", {}, "Dream 整理应用失败"),
-        res?.error?.message || t("memory.dreamConsolidationApplyFailedMessage", {}, "无法应用 Dream consolidation patch。"),
-        "error",
-        4200,
-      );
-      return;
-    }
-    showNotice?.(
-      t("memory.dreamConsolidationApplySuccessTitle", {}, "Dream 整理 patch 已应用"),
-      t(
-        "memory.dreamConsolidationApplySuccessMessage",
-        { count: String(res.payload?.appliedPatchCount || 0) },
-        `已应用 ${String(res.payload?.appliedPatchCount || 0)} 条低风险画像 patch。`,
-      ),
-      "success",
-      2600,
-    );
-    await loadDreamHistory(false, getActiveAgentId());
-    await loadDreamHistoryDetail(dreamId, getActiveAgentId());
-    void loadDreamRuntimeStatus({
-      requestToken: Number(memoryViewerState.requestToken || 0),
-      agentId: getActiveAgentId(),
-    });
+  function reviewDreamConsolidation(decision) {
+    return dreamConsolidationActions.review(decision);
   }
 
-  if (memoryDreamHistoryListEl) {
-    memoryDreamHistoryListEl.addEventListener("click", (event) => {
-      const target = event.target instanceof Element
-        ? event.target.closest("[data-dream-history-id]")
-        : null;
-      const dreamId = target?.getAttribute("data-dream-history-id");
-      if (!dreamId) return;
-      void loadDreamHistoryDetail(dreamId);
-    });
+  function applyDreamConsolidation() {
+    return dreamConsolidationActions.apply();
   }
-  if (memoryDreamHistoryDetailEl) {
-    memoryDreamHistoryDetailEl.addEventListener("click", (event) => {
-      const target = event.target instanceof Element
-        ? event.target.closest("[data-dream-consolidation-action]")
-        : null;
-      const action = target?.getAttribute("data-dream-consolidation-action");
-      if (!action) return;
-      if (action === "approve") {
-        void reviewDreamConsolidation("approved");
-        return;
-      }
-      if (action === "reject") {
-        void reviewDreamConsolidation("rejected");
-        return;
-      }
-      if (action === "apply") {
-        void applyDreamConsolidation();
-      }
-    });
-  }
-
-  if (memoryDreamModalTriggerBtn) {
-    memoryDreamModalTriggerBtn.addEventListener("click", () => {
-      openDreamModal();
-    });
-  }
-
-  if (memoryDreamModalCloseBtn) {
-    memoryDreamModalCloseBtn.addEventListener("click", () => {
-      closeDreamModal();
-    });
-  }
-
-  if (memoryDreamModalEl) {
-    memoryDreamModalEl.addEventListener("click", (event) => {
-      if (event.target === memoryDreamModalEl) {
-        closeDreamModal();
-      }
-    });
-  }
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !dreamModalOpen) return;
-    closeDreamModal();
-  });
 
   function formatTaskStatusLabel(status) {
     const normalized = typeof status === "string" ? status.trim().toLowerCase() : "";
@@ -2648,7 +2575,7 @@ export function createMemoryViewerFeature({
     void loadMemoryViewer(true);
   }
 
-  async function loadMemoryViewer(forceSelectFirst = false) {
+  async function loadMemoryViewerInternal(forceSelectFirst = false) {
     if (!memoryViewerSection) return;
     syncMemoryViewerUi();
     const requestContext = createMemoryViewerRequestContext();
@@ -2677,7 +2604,7 @@ export function createMemoryViewerFeature({
     const memoryViewerState = getMemoryViewerState();
     const dreamLoadPromise = Promise.all([
       loadDreamRuntimeStatus(requestContext),
-      loadDreamCommonsStatus(),
+      loadDreamCommonsStatus(requestContext),
     ]);
     if (memoryViewerState.tab === "tasks") {
       await Promise.all([
@@ -2710,6 +2637,12 @@ export function createMemoryViewerFeature({
   }
 
   async function loadDreamRuntimeStatus(requestContext = null) {
+    return (await dreamRuntimeLifecycle.run("status", ({ isCurrent }) => (
+      loadDreamRuntimeStatusCurrent(requestContext, isCurrent)
+    ))) ?? null;
+  }
+
+  async function loadDreamRuntimeStatusCurrent(requestContext, isLifecycleCurrent) {
     const activeRequest = createMemoryViewerRequestContext(requestContext);
     const memoryViewerState = getMemoryViewerState();
     const agentId = activeRequest.agentId;
@@ -2727,7 +2660,7 @@ export function createMemoryViewerFeature({
         agentId,
       },
     });
-    if (!isMemoryViewerRequestCurrent(activeRequest)) {
+    if (!isLifecycleCurrent() || !isMemoryViewerRequestCurrent(activeRequest)) {
       return null;
     }
     if (res?.ok) {
@@ -2749,7 +2682,14 @@ export function createMemoryViewerFeature({
     return memoryViewerState.dreamRuntime;
   }
 
-  async function loadDreamCommonsStatus() {
+  async function loadDreamCommonsStatus(requestContext = null) {
+    return (await dreamRuntimeLifecycle.run("commons", ({ isCurrent }) => (
+      loadDreamCommonsStatusCurrent(requestContext, isCurrent)
+    ))) ?? null;
+  }
+
+  async function loadDreamCommonsStatusCurrent(requestContext, isLifecycleCurrent) {
+    const activeRequest = createMemoryViewerRequestContext(requestContext);
     const memoryViewerState = getMemoryViewerState();
     if (!isConnected()) {
       memoryViewerState.dreamCommons = null;
@@ -2762,6 +2702,9 @@ export function createMemoryViewerFeature({
       method: "dream.commons.status.get",
       params: {},
     });
+    if (!isLifecycleCurrent() || !isMemoryViewerRequestCurrent(activeRequest)) {
+      return null;
+    }
     if (res?.ok) {
       memoryViewerState.dreamCommons = normalizeDreamCommonsView(res.payload);
     } else {
@@ -2778,66 +2721,7 @@ export function createMemoryViewerFeature({
   }
 
   async function runDream() {
-    const memoryViewerState = getMemoryViewerState();
-    if (memoryViewerState.dreamBusy) {
-      return null;
-    }
-    if (!isConnected()) {
-      showNotice?.(
-        t("memory.dreamRunDisconnectedTitle", {}, "Dream 运行失败"),
-        t("memory.dreamRunDisconnectedMessage", {}, "当前未连接到服务器，无法触发 dream.run。"),
-        "error",
-      );
-      return null;
-    }
-
-    const agentId = getActiveAgentId();
-    memoryViewerState.dreamBusy = true;
-    renderDreamRuntimeBar();
-    try {
-      const res = await sendReq({
-        type: "req",
-        id: makeId(),
-        method: "dream.run",
-        params: {
-          agentId,
-        },
-      });
-      if (!res?.ok) {
-        showNotice?.(
-          t("memory.dreamRunFailedTitle", {}, "Dream 运行失败"),
-          res?.error?.message || t("memory.dreamRunFailedMessage", {}, "dream.run 调用失败。"),
-          "error",
-        );
-        return null;
-      }
-      const previousConversationId = memoryViewerState.dreamRuntime?.requested?.defaultConversationId ?? null;
-      memoryViewerState.dreamRuntime = {
-        ...normalizeDreamRuntimeView(res.payload, agentId),
-        requested: {
-          agentId,
-          defaultConversationId: previousConversationId,
-        },
-      };
-      renderDreamRuntimeBar();
-      showNotice?.(
-        t("memory.dreamRunSuccessTitle", {}, "Dream 已运行"),
-        res.payload?.record?.summary || t("memory.dreamRunSuccessMessage", {}, "已生成新的 dream 记录。"),
-        res.payload?.record?.status === "failed" ? "warn" : "success",
-        2600,
-      );
-      if (memoryViewerState.dreamHistoryOpen) {
-        void loadDreamHistory(true, agentId);
-      }
-      void loadDreamRuntimeStatus({
-        requestToken: Number(memoryViewerState.requestToken || 0),
-        agentId,
-      });
-      return res.payload;
-    } finally {
-      memoryViewerState.dreamBusy = false;
-      renderDreamRuntimeBar();
-    }
+    return dreamRunAction.run();
   }
 
   function getExternalOutboundAuditItemId(item, index = 0) {
@@ -3052,18 +2936,21 @@ export function createMemoryViewerFeature({
       method: "external_outbound.audit.list",
       params: { limit: 50 },
     });
+    if (!isMemoryViewerRequestCurrent(requestContext)) return;
     const emailRes = await sendReq({
       type: "req",
       id: makeId(),
       method: "email_outbound.audit.list",
       params: { limit: 50 },
     });
+    if (!isMemoryViewerRequestCurrent(requestContext)) return;
     const inboundRes = await sendReq({
       type: "req",
       id: makeId(),
       method: "email_inbound.audit.list",
       params: { limit: 50 },
     });
+    if (!isMemoryViewerRequestCurrent(requestContext)) return;
     const reminderRes = await sendReq({
       type: "req",
       id: makeId(),
@@ -3156,54 +3043,12 @@ export function createMemoryViewerFeature({
     renderMemoryViewerStats(memoryViewerState.stats);
   }
 
+  async function loadMemoryViewer(forceSelectFirst = false) {
+    return requestLifecycle.run(() => loadMemoryViewerInternal(forceSelectFirst));
+  }
+
   async function promoteSelectedMemoryToShared(item) {
-    if (!item?.id) return;
-    const reason = window.prompt(
-      t("memory.sharePromotePrompt", {}, "Enter the reason for promoting this memory to the shared layer."),
-      t("memory.sharePromotePromptDefault", {}, "Manual promotion from memory viewer"),
-    );
-    if (reason === null) return;
-
-    const trimmedReason = String(reason || "").trim();
-    if (!trimmedReason) {
-      showNotice?.(
-        t("memory.sharePromoteFailedTitle", {}, "Shared Promotion Failed"),
-        t("memory.sharePromotePrompt", {}, "Enter the reason for promoting this memory to the shared layer."),
-        "error",
-      );
-      return;
-    }
-
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "memory.share.promote",
-      params: buildScopedParams({
-        chunkId: item.id,
-        reason: trimmedReason,
-      }),
-    });
-    if (!res || !res.ok) {
-      showNotice?.(
-        t("memory.sharePromoteFailedTitle", {}, "Shared Promotion Failed"),
-        res?.error?.message || t("memory.memoryReadFailed", {}, "Failed to read memory data."),
-        "error",
-        4200,
-      );
-      return;
-    }
-
-    showNotice?.(
-      t("memory.sharePromoteSuccessTitle", {}, "Shared Promotion Complete"),
-      t("memory.sharePromoteSuccessMessage", { count: Number(res.payload?.promotedCount) || 0 }, "The shared copy has been written and the private copy is kept."),
-      "success",
-      2600,
-    );
-
-    await loadMemoryViewer(false);
-    if (getMemoryViewerState().selectedId) {
-      await loadMemoryDetail(getMemoryViewerState().selectedId);
-    }
+    return sharePromoteAction.promote(item);
   }
 
   async function sendMemoryShareReviewRequest(item, decision, note = "", scope = "chunk") {
@@ -3244,161 +3089,15 @@ export function createMemoryViewerFeature({
   }
 
   async function runSharedReviewBatchAction(action) {
-    const memoryViewerState = getMemoryViewerState();
-    if (memoryViewerState.sharedReviewBatchBusy === true) return;
-    const batchState = buildSharedReviewBatchActionState(
-      memoryViewerState.items,
-      getSelectedSharedReviewIds(),
-      getActiveAgentId(),
-    );
-    const eligibleItems = batchState.actions[action] || [];
-    if (!eligibleItems.length) return;
-
-    let note = "";
-    if (action === "approved" || action === "rejected" || action === "revoked") {
-      const promptKey = action === "approved"
-        ? "memory.shareReviewPromptApprove"
-        : action === "rejected"
-          ? "memory.shareReviewPromptReject"
-          : "memory.shareReviewPromptRevoke";
-      const promptValue = window.prompt(
-        t(promptKey, {}, "Optional note"),
-        "",
-      );
-      if (promptValue === null) return;
-      note = String(promptValue || "").trim();
-    }
-
-    memoryViewerState.sharedReviewBatchBusy = true;
-    renderSharedReviewBatchBar();
-
-    let successCount = 0;
-    const errors = [];
-    for (const item of eligibleItems) {
-      let res;
-      if (action === "claim" || action === "release") {
-        res = await sendMemoryShareClaimRequest(item, action, "chunk");
-      } else {
-        res = await sendMemoryShareReviewRequest(item, action, note, "chunk");
-      }
-      if (res?.ok) {
-        successCount += 1;
-        continue;
-      }
-      errors.push(res?.error?.message || t("memory.memoryReadFailed", {}, "Failed to read memory data."));
-    }
-
-    memoryViewerState.sharedReviewBatchBusy = false;
-    if (successCount > 0) {
-      const successTitle = action === "claim" || action === "release"
-        ? t("memory.shareClaimSuccessTitle", {}, "Shared Claim Updated")
-        : t("memory.shareReviewSuccessTitle", {}, "Shared Review Updated");
-      showNotice?.(
-        successTitle,
-        t(
-          "memory.sharedReviewBatchSuccessMessage",
-          {
-            action: formatSharedReviewBatchActionLabel(action),
-            count: formatCount(successCount),
-            skipped: formatCount(batchState.selectedCount - successCount),
-          },
-          `${action} applied to ${formatCount(successCount)} selected item(s).`,
-        ),
-        errors.length ? "info" : "success",
-        3200,
-      );
-    }
-    if (!successCount && errors.length) {
-      showNotice?.(
-        t("memory.sharedReviewBatchFailedTitle", {}, "Batch Shared Review Failed"),
-        errors[0],
-        "error",
-        4200,
-      );
-    }
-
-    await loadMemoryViewer(false);
-    if (getMemoryViewerState().selectedId) {
-      await loadMemoryDetail(getMemoryViewerState().selectedId);
-    }
+    return shareBatchAction.run(action);
   }
 
   async function reviewSelectedMemoryShare(item, decision, scope = "chunk") {
-    if (!item?.id) return;
-    const promptKey = decision === "approved"
-      ? "memory.shareReviewPromptApprove"
-      : decision === "rejected"
-        ? "memory.shareReviewPromptReject"
-        : "memory.shareReviewPromptRevoke";
-    const note = window.prompt(
-      t(promptKey, {}, "Optional note"),
-      "",
-    );
-    if (note === null) return;
-    const res = await sendMemoryShareReviewRequest(item, decision, note, scope);
-    if (!res || !res.ok) {
-      showNotice?.(
-        t("memory.shareReviewFailedTitle", {}, "Failed to Update Shared Review"),
-        res?.error?.message || t("memory.memoryReadFailed", {}, "Failed to read memory data."),
-        "error",
-        4200,
-      );
-      return;
-    }
-
-    showNotice?.(
-      t("memory.shareReviewSuccessTitle", {}, "Shared Review Updated"),
-      t(
-        "memory.shareReviewSuccessMessage",
-        {
-          decision,
-          count: Number(res.payload?.reviewedCount) || 0,
-          scope: res.payload?.mode || scope,
-        },
-        "Shared status has been updated.",
-      ),
-      "success",
-      2600,
-    );
-
-    await loadMemoryViewer(false);
-    if (getMemoryViewerState().selectedId) {
-      await loadMemoryDetail(getMemoryViewerState().selectedId);
-    }
+    return shareReviewAction.review(item, decision, scope);
   }
 
   async function claimSelectedMemoryShare(item, action, scope = "chunk") {
-    if (!item?.id) return;
-    const res = await sendMemoryShareClaimRequest(item, action, scope);
-    if (!res || !res.ok) {
-      showNotice?.(
-        t("memory.shareClaimFailedTitle", {}, "Failed to Update Shared Claim"),
-        res?.error?.message || t("memory.memoryReadFailed", {}, "Failed to read memory data."),
-        "error",
-        4200,
-      );
-      return;
-    }
-
-    showNotice?.(
-      t("memory.shareClaimSuccessTitle", {}, "Shared Claim Updated"),
-      t(
-        "memory.shareClaimSuccessMessage",
-        {
-          action,
-          count: Number(res.payload?.claimedCount) || 0,
-          scope: res.payload?.mode || scope,
-        },
-        "Shared review claim has been updated.",
-      ),
-      "success",
-      2600,
-    );
-
-    await loadMemoryViewer(false);
-    if (getMemoryViewerState().selectedId) {
-      await loadMemoryDetail(getMemoryViewerState().selectedId);
-    }
+    return shareClaimAction.claim(item, action, scope);
   }
 
   function bindMemoryDetailActions(item) {
@@ -3462,6 +3161,10 @@ export function createMemoryViewerFeature({
   }
 
   async function openSharedReviewContextForItem(item) {
+    return requestLifecycle.run(() => openSharedReviewContextForItemCurrent(item));
+  }
+
+  async function openSharedReviewContextForItemCurrent(item) {
     const targetAgentId = getMemoryShareTargetAgentId(item);
     const queueStatus = normalizeMemorySharePromotionStatus(item);
     const memoryViewerState = getMemoryViewerState();
@@ -4797,45 +4500,94 @@ export function createMemoryViewerFeature({
     bindMemoryDetailActions(item);
   }
 
+  function dispose() {
+    ingressLifecycle.dispose();
+    dreamModalOpen = false;
+    modalControls.dispose();
+    dedupActions.dispose();
+    dreamHistoryLifecycle.dispose();
+    dreamConsolidationActions.dispose();
+    dreamRuntimeLifecycle.dispose();
+    dreamRunAction.dispose();
+    sharePromoteAction.dispose();
+    shareClaimAction.dispose();
+    shareReviewAction.dispose();
+    shareBatchAction.dispose();
+    requestLifecycle.dispose();
+    retainedStateLifecycle.dispose();
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      ...requestLifecycle.getRuntimeSnapshot(),
+      ...retainedStateLifecycle.getRuntimeSnapshot(),
+      ...modalControls.getRuntimeSnapshot(),
+      ...dedupActions.getRuntimeSnapshot(),
+      ...dreamHistoryLifecycle.getRuntimeSnapshot(),
+      ...dreamConsolidationActions.getRuntimeSnapshot(),
+      ...dreamRuntimeLifecycle.getRuntimeSnapshot(),
+      ...dreamRunAction.getRuntimeSnapshot(),
+      ...sharePromoteAction.getRuntimeSnapshot(),
+      ...shareClaimAction.getRuntimeSnapshot(),
+      ...shareReviewAction.getRuntimeSnapshot(),
+      ...shareBatchAction.getRuntimeSnapshot(),
+      ...ingressLifecycle.getRuntimeSnapshot(),
+    };
+  }
+
   return {
-    applyAgentViewState,
-    captureAgentViewState,
-    clearDreamHistoryState,
-    closeDreamModal,
-    loadDreamCommonsStatus,
-    loadDreamHistory,
-    loadDreamHistoryDetail,
-    loadDreamRuntimeStatus,
-    loadExternalOutboundAuditViewer,
-    loadMemoryChunkViewer,
-    loadMemoryViewer,
-    loadMemoryViewerStats,
-    loadSharedReviewQueue,
-    loadTaskUsageOverview,
-    loadTaskViewer,
-    renderCandidateDetailPanel,
-    renderCandidateOnlyDetail,
-    renderExternalOutboundAuditDetail,
-    renderExternalOutboundAuditList,
-    renderDreamHistoryPanel,
-    renderDreamModal,
-    renderDreamRuntimeBar,
-    renderDedupModal,
-    renderMemoryList,
-    renderSharedReviewList,
-    renderMemoryDetail,
-    renderMemoryViewerStats,
-    renderTaskList,
-    openDedupModal,
-    applyDedupFromModal,
-    closeDedupModal,
-    runDream,
-    syncSharedReviewFilterUi,
-    syncMemoryViewerHeaderTitle,
-    toggleDreamHistory,
-    openDreamModal,
-    switchOutboundAuditFocus,
-    switchMemoryViewerTab,
-    syncMemoryViewerUi,
+    applyAgentViewState: ingressLifecycle.guard(applyAgentViewState),
+    captureAgentViewState: ingressLifecycle.guard(captureAgentViewState),
+    clearDreamHistoryState: ingressLifecycle.guard(clearDreamHistoryState),
+    closeDreamModal: ingressLifecycle.guard(closeDreamModal),
+    loadDreamCommonsStatus: ingressLifecycle.guardAsync(loadDreamCommonsStatus),
+    loadDreamHistory: ingressLifecycle.guardAsync(loadDreamHistory),
+    loadDreamHistoryDetail: ingressLifecycle.guardAsync(loadDreamHistoryDetail),
+    loadDreamRuntimeStatus: ingressLifecycle.guardAsync(loadDreamRuntimeStatus),
+    loadExternalOutboundAuditViewer: ingressLifecycle.guardAsync((...args) => (
+      requestLifecycle.run(() => loadExternalOutboundAuditViewer(...args))
+    )),
+    loadMemoryChunkViewer: ingressLifecycle.guardAsync((...args) => (
+      requestLifecycle.run(() => loadMemoryChunkViewer(...args))
+    )),
+    loadMemoryViewer: ingressLifecycle.guardAsync(loadMemoryViewer),
+    loadMemoryViewerStats: ingressLifecycle.guardAsync((...args) => (
+      requestLifecycle.run(() => loadMemoryViewerStats(...args))
+    )),
+    loadSharedReviewQueue: ingressLifecycle.guardAsync((...args) => (
+      requestLifecycle.run(() => loadSharedReviewQueue(...args))
+    )),
+    loadTaskUsageOverview: ingressLifecycle.guardAsync((...args) => (
+      requestLifecycle.run(() => loadTaskUsageOverview(...args))
+    )),
+    loadTaskViewer: ingressLifecycle.guardAsync((...args) => (
+      requestLifecycle.run(() => loadTaskViewer(...args))
+    )),
+    renderCandidateDetailPanel: ingressLifecycle.guard(renderCandidateDetailPanel, ""),
+    renderCandidateOnlyDetail: ingressLifecycle.guard(renderCandidateOnlyDetail),
+    renderExternalOutboundAuditDetail: ingressLifecycle.guard(renderExternalOutboundAuditDetail),
+    renderExternalOutboundAuditList: ingressLifecycle.guard(renderExternalOutboundAuditList),
+    renderDreamHistoryPanel: ingressLifecycle.guard(renderDreamHistoryPanel),
+    renderDreamModal: ingressLifecycle.guard(renderDreamModal),
+    renderDreamRuntimeBar: ingressLifecycle.guard(renderDreamRuntimeBar),
+    renderDedupModal: ingressLifecycle.guard(renderDedupModal),
+    renderMemoryList: ingressLifecycle.guard(renderMemoryList),
+    renderSharedReviewList: ingressLifecycle.guard(renderSharedReviewList),
+    renderMemoryDetail: ingressLifecycle.guard(renderMemoryDetail),
+    renderMemoryViewerStats: ingressLifecycle.guard(renderMemoryViewerStats),
+    renderTaskList: ingressLifecycle.guard(renderTaskList),
+    openDedupModal: ingressLifecycle.guardAsync(openDedupModal),
+    applyDedupFromModal: ingressLifecycle.guardAsync(applyDedupFromModal),
+    closeDedupModal: ingressLifecycle.guard(closeDedupModal),
+    runDream: ingressLifecycle.guardAsync(runDream),
+    syncSharedReviewFilterUi: ingressLifecycle.guard(syncSharedReviewFilterUi),
+    syncMemoryViewerHeaderTitle: ingressLifecycle.guard(syncMemoryViewerHeaderTitle),
+    toggleDreamHistory: ingressLifecycle.guard(toggleDreamHistory),
+    openDreamModal: ingressLifecycle.guard(openDreamModal),
+    switchOutboundAuditFocus: ingressLifecycle.guard(switchOutboundAuditFocus),
+    switchMemoryViewerTab: ingressLifecycle.guard(switchMemoryViewerTab),
+    syncMemoryViewerUi: ingressLifecycle.guard(syncMemoryViewerUi),
+    dispose,
+    getRuntimeSnapshot,
   };
 }

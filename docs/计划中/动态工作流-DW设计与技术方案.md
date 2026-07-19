@@ -669,7 +669,7 @@ Then WorkflowRuntime 拒绝执行，并返回可诊断错误。
    - `WorkflowBudgetGuard` 类：`check()` / `consume(tokens, calls)` / `consumeRetry()` / `isExceeded()` / `getUsage()` / `reset()`
    - `WorkflowBudgetExceededError` 携带 reason 和 usage
    - `resolveWorkflowBudgetFromEnv(readEnv)` 从环境变量读取默认值
-   - 4 个环境变量：`BELLDANDY_WORKFLOW_MAX_AGENT_CALLS`(50) / `BELLDANDY_WORKFLOW_MAX_RETRIES`(2) / `BELLDANDY_WORKFLOW_TIMEOUT_MS`(600000) / `BELLDANDY_WORKFLOW_MAX_CONCURRENT`(6)
+    - 5 个环境变量：`BELLDANDY_WORKFLOW_MAX_AGENT_CALLS`(50) / `BELLDANDY_WORKFLOW_MAX_TOKENS`(可选) / `BELLDANDY_WORKFLOW_MAX_RETRIES`(2) / `BELLDANDY_WORKFLOW_TIMEOUT_MS`(600000) / `BELLDANDY_WORKFLOW_MAX_CONCURRENT`(6)
    - abort/warn 两种超限模式
 
 ##### 验证结果

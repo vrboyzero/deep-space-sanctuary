@@ -44,6 +44,11 @@ import {
   buildFailureToolCallResult,
   normalizeToolCallResultFailureKind,
 } from "./failure-kind.js";
+import {
+  ToolAuditDispatcher,
+  type ToolAuditDispatcherSnapshot,
+  type ToolAuditSink,
+} from "./tool-audit-dispatcher.js";
 
 /** 默认策略（最小权限） */
 export const DEFAULT_POLICY: ToolPolicy = {
@@ -59,6 +64,16 @@ export const DEFAULT_POLICY: ToolPolicy = {
     nonInteractive: { enabled: true },
   },
 };
+
+export const DEFAULT_MAX_BATCH_TOOL_CALLS = 32;
+export const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 4;
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
 
 /** Logger 接口，供工具在 context 中使用 */
 export type ToolExecutorLogger = {
@@ -78,15 +93,22 @@ export type ToolExecutorOptions = {
   /** 始终可用的保留工具名（不受 disabled 开关影响） */
   alwaysEnabledTools?: string[];
   policy?: Partial<ToolPolicy>;
-  auditLogger?: (log: ToolAuditLog) => void;
+  /** 审计旁路 sink；允许异步实现，但不会阻塞 Tool 执行结果。 */
+  auditLogger?: ToolAuditSink;
+  /** 审计 sink 等待期间最多保留的事件数。 */
+  maxAuditQueueSize?: number;
   agentCapabilities?: AgentCapabilities;
   goalCapabilities?: GoalCapabilities;
   /** 可选：传入后注入到 ToolContext，供工具使用 */
   logger?: ToolExecutorLogger;
   /** 可选：运行时判断工具是否被禁用（用于调用设置开关） */
   isToolDisabled?: (toolName: string) => boolean;
-  /** 可选：运行时判断工具是否允许给指定 Agent 使用（用于 per-agent toolWhitelist） */
-  isToolAllowedForAgent?: (toolName: string, agentId?: string) => boolean;
+  /** 可选：运行时判断工具是否允许给指定 Agent 使用（用于 per-agent toolWhitelist 与运行角色限制） */
+  isToolAllowedForAgent?: (
+    toolName: string,
+    agentId?: string,
+    role?: ToolRuntimeLaunchSpec["role"],
+  ) => boolean;
   /** 可选：运行时判断工具是否允许在指定会话中使用（用于 goal channel 等场景） */
   isToolAllowedInConversation?: (toolName: string, conversationId: string, agentId?: string) => boolean;
   /** 可选：按 Agent 返回轻量能力偏好目录（仅用于搜索排序等软路由） */
@@ -117,6 +139,10 @@ export type ToolExecutorOptions = {
   initialToolOrigin?: ToolRegistrationOrigin;
   /** 可选：按会话延迟加载的工具名 */
   deferredToolNames?: string[];
+  /** executeAll 单批最多接收的 Tool Call 数量。 */
+  maxBatchToolCalls?: number;
+  /** executeAll 单批最多并行执行的 Tool Call 数量。 */
+  maxConcurrentToolCalls?: number;
 };
 
 export type ToolRegistrationOrigin =
@@ -770,12 +796,16 @@ export class ToolExecutor {
   private readonly extraWorkspaceRoots: string[];
   private readonly alwaysEnabledTools: Set<string>;
   private readonly policy: ToolPolicy;
-  private readonly auditLogger?: (log: ToolAuditLog) => void;
+  private readonly auditDispatcher?: ToolAuditDispatcher;
   private agentCapabilities?: AgentCapabilities;
   private goalCapabilities?: GoalCapabilities;
   private readonly logger?: ToolExecutorLogger;
   private readonly isToolDisabled?: (toolName: string) => boolean;
-  private readonly isToolAllowedForAgent?: (toolName: string, agentId?: string) => boolean;
+  private readonly isToolAllowedForAgent?: (
+    toolName: string,
+    agentId?: string,
+    role?: ToolRuntimeLaunchSpec["role"],
+  ) => boolean;
   private readonly isToolAllowedInConversation?: (toolName: string, conversationId: string, agentId?: string) => boolean;
   private readonly getAgentCatalogPreferences?: (agentId?: string) => { methods?: string[]; skills?: string[] } | undefined;
   private readonly contractAccessPolicy?: ToolContractAccessPolicy;
@@ -795,6 +825,8 @@ export class ToolExecutor {
     toolName: string;
   }) => void;
   private readonly onTokenCounterSet?: (conversationId: string, counter: ITokenCounterService) => void;
+  private readonly maxBatchToolCalls: number;
+  private readonly maxConcurrentToolCalls: number;
 
   constructor(options: ToolExecutorOptions) {
     this.tools = new Map();
@@ -803,7 +835,9 @@ export class ToolExecutor {
     this.extraWorkspaceRoots = options.extraWorkspaceRoots ?? [];
     this.alwaysEnabledTools = new Set(options.alwaysEnabledTools ?? []);
     this.policy = { ...DEFAULT_POLICY, ...options.policy };
-    this.auditLogger = options.auditLogger;
+    this.auditDispatcher = options.auditLogger
+      ? new ToolAuditDispatcher(options.auditLogger, { maxQueueSize: options.maxAuditQueueSize })
+      : undefined;
     this.agentCapabilities = options.agentCapabilities;
     this.goalCapabilities = options.goalCapabilities;
     this.logger = options.logger;
@@ -821,6 +855,14 @@ export class ToolExecutor {
     this.bridgeSessionGovernance = options.bridgeSessionGovernance;
     this.broadcastObserver = options.broadcastObserver;
     this.onTokenCounterSet = options.onTokenCounterSet;
+    this.maxBatchToolCalls = normalizePositiveInteger(
+      options.maxBatchToolCalls,
+      DEFAULT_MAX_BATCH_TOOL_CALLS,
+    );
+    this.maxConcurrentToolCalls = normalizePositiveInteger(
+      options.maxConcurrentToolCalls,
+      DEFAULT_MAX_CONCURRENT_TOOL_CALLS,
+    );
 
     for (const tool of options.tools) {
       this.registerTool(tool, { origin: options.initialToolOrigin ?? "builtin" });
@@ -901,6 +943,15 @@ export class ToolExecutor {
    */
   clearTokenCounter(conversationId: string): void {
     this.tokenCounters.delete(conversationId);
+  }
+
+  /**
+   * 释放会话级纯内存状态。持久化的 loaded selection 仍由 ConversationStore 拥有，
+   * 后续恢复同一会话时可重新加载，不能在这里写入空 selection 改变用户状态。
+   */
+  releaseConversation(conversationId: string): void {
+    this.tokenCounters.delete(conversationId);
+    this.loadedDeferredToolNames.delete(conversationId);
   }
 
   /**
@@ -1088,6 +1139,9 @@ export class ToolExecutor {
     const persisted = this.conversationStore?.getLoadedToolNames?.(conversationId) ?? [];
     const cached = this.loadedDeferredToolNames.get(conversationId);
     if (cached && persisted.length === 0) {
+      if (cached.size === 0) {
+        this.loadedDeferredToolNames.delete(conversationId);
+      }
       return new Set(cached);
     }
     const merged = new Set<string>([
@@ -1095,7 +1149,11 @@ export class ToolExecutor {
       ...(cached ? Array.from(cached) : []),
     ]);
     const normalized = this.normalizeLoadedDeferredToolNames(conversationId, merged);
-    this.loadedDeferredToolNames.set(conversationId, normalized);
+    if (normalized.size > 0) {
+      this.loadedDeferredToolNames.set(conversationId, normalized);
+    } else {
+      this.loadedDeferredToolNames.delete(conversationId);
+    }
     return new Set(normalized);
   }
 
@@ -1114,7 +1172,12 @@ export class ToolExecutor {
     }
     const normalized = Array.from(this.normalizeLoadedDeferredToolNames(conversationId, next))
       .sort((left, right) => left.localeCompare(right));
-    this.loadedDeferredToolNames.set(conversationId, new Set(normalized));
+    if (normalized.length > 0) {
+      this.loadedDeferredToolNames.set(conversationId, new Set(normalized));
+    } else {
+      // 空选择仍持久化到 store，但不应为只读或已清空的高基数会话保留内存项。
+      this.loadedDeferredToolNames.delete(conversationId);
+    }
     await this.conversationStore?.setLoadedToolNames?.(conversationId, normalized);
     return normalized;
   }
@@ -1262,6 +1325,11 @@ export class ToolExecutor {
       ...(options?.originId ? { originId: options.originId } : {}),
     });
     this.catalogGeneration += 1;
+  }
+
+  /** 返回不含审计正文的旁路水位，供运行诊断识别 sink 故障或背压。 */
+  getAuditRuntimeSnapshot(): ToolAuditDispatcherSnapshot | undefined {
+    return this.auditDispatcher?.getSnapshot();
   }
 
   /** 动态注销工具 */
@@ -1426,7 +1494,7 @@ export class ToolExecutor {
     }
   }
 
-  /** 批量执行（并行） */
+  /** 批量执行：整批先校验容量，再用有序 worker pool 限制并行数。 */
   async executeAll(
     requests: ToolCallRequest[],
     conversationId: string,
@@ -1436,23 +1504,58 @@ export class ToolExecutor {
     roomContext?: any,
     runtimeContext?: ToolExecutionRuntimeContext,
   ): Promise<ToolCallResult[]> {
-    return Promise.all(requests.map((req) => this.execute(
-      req,
-      conversationId,
-      agentId,
-      userUuid,
-      senderInfo,
-      roomContext,
-      runtimeContext,
-    )));
+    if (requests.length > this.maxBatchToolCalls) {
+      const error = `Tool batch size ${requests.length} exceeds limit ${this.maxBatchToolCalls}.`;
+      return requests.map((request) => {
+        const result = buildFailureToolCallResult({
+          id: request.id,
+          name: request.name,
+          start: Date.now(),
+          error,
+          failureKind: "permission_or_policy",
+          metadata: {
+            batchRejected: true,
+            batchSize: requests.length,
+            batchLimit: this.maxBatchToolCalls,
+          },
+        });
+        this.audit(result, conversationId, request.arguments);
+        return result;
+      });
+    }
+
+    const results = new Array<ToolCallResult>(requests.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(this.maxConcurrentToolCalls, requests.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= requests.length) {
+          return;
+        }
+        const request = requests[index]!;
+        results[index] = await this.execute(
+          request,
+          conversationId,
+          agentId,
+          userUuid,
+          senderInfo,
+          roomContext,
+          runtimeContext,
+        );
+      }
+    });
+    await Promise.all(workers);
+    return results;
   }
 
   private audit(result: ToolCallResult, conversationId: string, args: JsonObject): void {
-    if (!this.auditLogger) return;
+    if (!this.auditDispatcher) return;
 
-    // 审计是旁路观测：不得把嵌套凭据写入 sink，也不能让 sink 故障改变 Tool 结果。
+    // 审计事件先在当前调用栈完成有界脱敏，再交给旁路 dispatcher 异步投递。
     try {
-      this.auditLogger({
+      this.auditDispatcher.enqueue({
         timestamp: new Date().toISOString(),
         conversationId,
         toolName: result.name,
@@ -1546,7 +1649,7 @@ export class ToolExecutor {
       };
     }
 
-    if (!bypassAgentWhitelist && this.isToolAllowedForAgent && !this.isToolAllowedForAgent(toolName, agentId)) {
+    if (!bypassAgentWhitelist && this.isToolAllowedForAgent && !this.isToolAllowedForAgent(toolName, agentId, launchSpec?.role)) {
       return {
         ...this.buildAvailabilityState(toolName, alwaysEnabled, false, "not-in-agent-whitelist"),
         allowed: false,

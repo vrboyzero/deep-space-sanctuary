@@ -3,6 +3,48 @@ import { describe, expect, it } from "vitest";
 import { normalizeAgentLaunchSpec, normalizeAgentLaunchSpecWithCatalog } from "./launch-spec.js";
 
 describe("normalizeAgentLaunchSpec", () => {
+  it("preserves the commander runtime role for a custom agent id", () => {
+    const spec = normalizeAgentLaunchSpec({
+      instruction: "Coordinate the delegated work and prepare the final decision.",
+      parentConversationId: "conv-commander",
+      agentId: "ops-coordinator",
+      profileId: "ops-coordinator",
+      role: "commander",
+    });
+
+    expect(spec.agentId).toBe("ops-coordinator");
+    expect(spec.profileId).toBe("ops-coordinator");
+    expect(spec.role).toBe("commander");
+  });
+
+  it("applies commander catalog defaults to a custom profile id", () => {
+    const spec = normalizeAgentLaunchSpecWithCatalog({
+      instruction: "Coordinate the delegated work and prepare the final decision.",
+      parentConversationId: "conv-commander-catalog",
+      agentId: "ops-coordinator",
+      profileId: "ops-coordinator",
+    }, {
+      agentRegistry: {
+        getProfile: (id: string) => id === "ops-coordinator"
+          ? {
+            id,
+            defaultRole: "commander",
+          } as any
+          : undefined,
+      },
+    });
+
+    expect(spec.role).toBe("commander");
+    expect(spec.permissionMode).toBe("confirm");
+    expect(spec.allowedToolFamilies).toEqual([
+      "workspace-read",
+      "browser",
+      "memory",
+      "goal-governance",
+      "session-orchestration",
+    ]);
+  });
+
   it("normalizes structured delegation constraints for launch spec runtime visibility", () => {
     const spec = normalizeAgentLaunchSpec({
       instruction: "  Patch the failing bootstrap path.  ",

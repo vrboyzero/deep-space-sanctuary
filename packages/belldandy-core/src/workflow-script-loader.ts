@@ -75,6 +75,8 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bnew\s+Date\s*\(\s*\)/m, reason: "new Date() 无参数非确定性，禁止" },
 ];
 
+const WORKFLOW_SOURCE_READ_CHUNK_BYTES = 64 * 1024;
+
 export function scanInlineScriptSafety(code: string): { safe: boolean; violations: string[] } {
   const violations = new Set<string>();
   for (const { pattern, reason } of FORBIDDEN_PATTERNS) {
@@ -140,17 +142,62 @@ async function compileTsToMjs(tsCode: string, cacheDir: string, hashKey: string)
     target: "es2022",
     platform: "node",
   });
-  fs.writeFileSync(tempPath, result.code, "utf-8");
+  await fs.promises.writeFile(tempPath, result.code, "utf-8");
   return tempPath;
 }
 
-function getWorkflowCacheDir(stateDir?: string): string {
+async function getWorkflowCacheDir(stateDir?: string): Promise<string> {
   const base = stateDir ?? path.join(os.homedir(), ".star_sanctuary");
   const cacheDir = path.join(base, "workflow-cache");
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true });
-  }
+  await fs.promises.mkdir(cacheDir, { recursive: true });
   return cacheDir;
+}
+
+type BoundedWorkflowSource = {
+  content: string;
+  byteLength: number;
+};
+
+/**
+ * 只保留策略允许范围内的原始字节；额外读取一个字节以防 stat/read 间文件增长绕过限额。
+ */
+async function readBoundedWorkflowSource(filePath: string, maxBytes: number): Promise<BoundedWorkflowSource> {
+  const limit = Number.isSafeInteger(maxBytes) && maxBytes >= 0 ? maxBytes : 0;
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    const buffer = Buffer.allocUnsafe(Math.min(WORKFLOW_SOURCE_READ_CHUNK_BYTES, Math.max(1, limit + 1)));
+
+    while (true) {
+      const remaining = limit + 1 - byteLength;
+      if (remaining <= 0) {
+        throw new WorkflowScriptLoadError("file_too_large", "Workflow source exceeds the approved size limit.");
+      }
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, remaining), null);
+      if (bytesRead === 0) {
+        break;
+      }
+      byteLength += bytesRead;
+      if (byteLength > limit) {
+        throw new WorkflowScriptLoadError("file_too_large", "Workflow source exceeds the approved size limit.");
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    }
+
+    return {
+      content: Buffer.concat(chunks, byteLength).toString("utf-8"),
+      byteLength,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function createVersionedModuleUrl(modulePath: string, sourceSha256: string): string {
+  const moduleUrl = pathToFileURL(modulePath);
+  moduleUrl.searchParams.set("workflow-source-sha256", sourceSha256);
+  return moduleUrl.href;
 }
 
 // ─── 加载器 ───────────────────────────────────────────────────────────────
@@ -209,8 +256,17 @@ async function loadFile(source: { kind: "file"; path: string }, opts: LoadScript
     throw new WorkflowScriptLoadError("file_outside_root", "Workflow file is outside the approved source root.");
   }
   const relativePath = path.relative(workflowRoot.rootPath, filePath).split(path.sep).join("/");
-  const content = fs.readFileSync(filePath, "utf-8");
-  workflowRoot.assertByteLength(Buffer.byteLength(content), "workflow source");
+  let sourceFile: BoundedWorkflowSource;
+  try {
+    sourceFile = await readBoundedWorkflowSource(filePath, opts.policy.maxFileBytes);
+  } catch (error) {
+    if (error instanceof WorkflowScriptLoadError) {
+      throw error;
+    }
+    throw new WorkflowScriptLoadError("file_read_failed", "Workflow source could not be read.");
+  }
+  const { content } = sourceFile;
+  workflowRoot.assertByteLength(sourceFile.byteLength, "workflow source");
   const ext = path.extname(filePath).toLowerCase();
   const workflowName = path.basename(filePath, ext);
   const workflowVersion = "1.0.0";
@@ -223,7 +279,7 @@ async function loadFile(source: { kind: "file"; path: string }, opts: LoadScript
 
   let modulePath: string;
   if (ext === ".ts") {
-    const cacheDir = getWorkflowCacheDir(opts.stateDir);
+    const cacheDir = await getWorkflowCacheDir(opts.stateDir);
     modulePath = await compileTsToMjs(content, cacheDir, scriptHash.slice(0, 16));
   } else if (ext === ".mjs" || ext === ".js") {
     modulePath = filePath;
@@ -231,7 +287,7 @@ async function loadFile(source: { kind: "file"; path: string }, opts: LoadScript
     throw new WorkflowScriptLoadError("unsupported_extension", `Unsupported file extension: ${ext}`);
   }
 
-  const mod = await import(pathToFileURL(modulePath).href);
+  const mod = await import(createVersionedModuleUrl(modulePath, contentSha256));
   if (typeof mod.default !== "function") {
     throw new WorkflowScriptLoadError("no_default_export", `Workflow script must have a default export function: ${filePath}`);
   }
@@ -256,9 +312,9 @@ async function loadInline(source: { kind: "inline"; code: string; name?: string 
   const workflowName = source.name ?? "inline-workflow";
   const workflowVersion = "1.0.0";
   const scriptHash = computeScriptHash(source.code, workflowName, workflowVersion);
-  const cacheDir = getWorkflowCacheDir(opts.stateDir);
+  const cacheDir = await getWorkflowCacheDir(opts.stateDir);
   const modulePath = await compileTsToMjs(source.code, cacheDir, scriptHash.slice(0, 16));
-  const mod = await import(pathToFileURL(modulePath).href);
+  const mod = await import(createVersionedModuleUrl(modulePath, scriptHash));
   if (typeof mod.default !== "function") {
     throw new WorkflowScriptLoadError("no_default_export", "Inline workflow script must have a default export function");
   }

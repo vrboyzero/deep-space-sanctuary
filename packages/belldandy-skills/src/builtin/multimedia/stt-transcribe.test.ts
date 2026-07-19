@@ -276,4 +276,32 @@ describe("stt-transcribe", () => {
             await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
         }
     });
+
+    it("should single-flight concurrent cache misses for the same audio fingerprint", async () => {
+        const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-stt-single-flight-"));
+        let release: ((value: { text: string; provider: string; model: string }) => void) | undefined;
+        const transcribe = vi.fn(() => new Promise<{ text: string; provider: string; model: string }>((resolve) => {
+            release = resolve;
+        }));
+
+        try {
+            const createRequest = () => transcribeSpeechWithCache({
+                stateDir,
+                buffer: mockBuffer,
+                fileName: "voice.webm",
+                mime: "audio/webm",
+                transcribe,
+            });
+            const first = createRequest();
+            const second = createRequest();
+            await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
+            release?.({ text: "single-flight", provider: "mock", model: "mock-stt" });
+
+            await expect(first).resolves.toMatchObject({ cacheHit: false });
+            await expect(second).resolves.toMatchObject({ cacheHit: true });
+            expect(transcribe).toHaveBeenCalledTimes(1);
+        } finally {
+            await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+        }
+    });
 });

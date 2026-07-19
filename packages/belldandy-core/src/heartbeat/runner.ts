@@ -7,6 +7,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { BackgroundRunClaimCoordinator } from "../background-run-coordinator.js";
 import {
     isHeartbeatContentEffectivelyEmpty,
     isHeartbeatOkResponse,
@@ -32,6 +33,8 @@ export interface HeartbeatRunnerOptions {
     timezone?: string;
     /** 系统是否忙碌（防止插队） */
     isBusy?: () => boolean;
+    /** 跨 Cron / Heartbeat 的进程内背景运行预算 */
+    runCoordinator?: BackgroundRunClaimCoordinator;
     /** 日志函数 */
     log?: (message: string) => void;
     /** 运行态事件（用于统一 background continuation ledger） */
@@ -41,6 +44,8 @@ export interface HeartbeatRunnerOptions {
 export interface HeartbeatRunnerHandle {
     /** 停止心跳 */
     stop: () => void;
+    /** 停止接收新运行，并等待已接受的心跳结束 */
+    stopAndDrain: () => Promise<void>;
     /** 立即触发一次心跳（用于测试） */
     runOnce: () => Promise<HeartbeatResult>;
 }
@@ -187,15 +192,17 @@ export function startHeartbeatRunner(
         activeHours,
         timezone,
         isBusy,
+        runCoordinator,
         log = console.log,
         onRunEvent,
     } = options;
 
     let timer: ReturnType<typeof setInterval> | null = null;
     let stopped = false;
-    let intervalRunInFlight = false;
+    let activeRun: Promise<HeartbeatResult> | undefined;
+    let drainPromise: Promise<void> | undefined;
 
-    const runOnce = async (): Promise<HeartbeatResult> => {
+    const executeHeartbeat = async (): Promise<HeartbeatResult> => {
         const startedAt = Date.now();
         const runId = `heartbeat-run-${startedAt}`;
         const conversationId = `heartbeat-${startedAt}`;
@@ -386,38 +393,83 @@ export function startHeartbeatRunner(
         return result;
     };
 
+    // interval 与公开 runOnce 共用单一 claim，避免手动恢复与自动心跳重复调用 Agent/投递。
+    const runOnce = (): Promise<HeartbeatResult> => {
+        if (stopped) {
+            return Promise.resolve({ status: "skipped", reason: "runner-stopped" });
+        }
+        if (activeRun) {
+            log(`[heartbeat] skipped: previous run still in flight`);
+            return Promise.resolve({ status: "skipped", reason: "already-running" });
+        }
+
+        let releaseCoordinator: (() => void) | undefined;
+        if (runCoordinator) {
+            const coordinatorClaim = runCoordinator.tryClaim({ kind: "heartbeat", key: "heartbeat" });
+            if ("reason" in coordinatorClaim) {
+                log(`[heartbeat] skipped: ${coordinatorClaim.reason}`);
+                return Promise.resolve({ status: "skipped", reason: coordinatorClaim.reason });
+            }
+            releaseCoordinator = coordinatorClaim.release;
+        }
+
+        const run = executeHeartbeat();
+        activeRun = run;
+        void run.then(
+            () => {
+                releaseCoordinator?.();
+                if (activeRun === run) {
+                    activeRun = undefined;
+                }
+            },
+            () => {
+                releaseCoordinator?.();
+                if (activeRun === run) {
+                    activeRun = undefined;
+                }
+            },
+        );
+        return run;
+    };
+
     const scheduleNext = () => {
         if (stopped) return;
-        timer = setInterval(async () => {
+        timer = setInterval(() => {
             if (stopped) return;
-            if (intervalRunInFlight) {
-                log(`[heartbeat] skipped: previous run still in flight`);
-                return;
-            }
-            intervalRunInFlight = true;
-            try {
-                await runOnce();
-            } catch (err) {
+            void runOnce().catch((err) => {
                 const message = err instanceof Error ? err.message : String(err);
                 log(`[heartbeat] error: ${message}`);
-            } finally {
-                intervalRunInFlight = false;
-            }
+            });
         }, intervalMs);
     };
 
     log(`[heartbeat] started, interval: ${Math.round(intervalMs / 1000 / 60)}m`);
     scheduleNext();
 
+    const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+        log(`[heartbeat] stopped`);
+    };
+
+    const stopAndDrain = (): Promise<void> => {
+        stop();
+        if (!drainPromise) {
+            const acceptedRun = activeRun;
+            drainPromise = acceptedRun
+                ? acceptedRun.then(() => undefined, () => undefined)
+                : Promise.resolve();
+        }
+        return drainPromise;
+    };
+
     return {
-        stop: () => {
-            stopped = true;
-            if (timer) {
-                clearInterval(timer);
-                timer = null;
-            }
-            log(`[heartbeat] stopped`);
-        },
+        stop,
+        stopAndDrain,
         runOnce,
     };
 }

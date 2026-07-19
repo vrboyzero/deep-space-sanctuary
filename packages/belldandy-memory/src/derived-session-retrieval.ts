@@ -49,7 +49,9 @@ export async function collectDerivedSessionSearchResults(input: {
   limit?: number;
   filter?: MemorySearchFilter;
   includeContent?: boolean;
+  signal?: AbortSignal;
 }): Promise<MemorySearchResult[]> {
+  input.signal?.throwIfAborted();
   const normalizedQuery = normalizeQuery(input.query);
   if (!normalizedQuery) {
     return [];
@@ -62,7 +64,7 @@ export async function collectDerivedSessionSearchResults(input: {
   }
 
   const sessionsDir = path.join(input.stateDir, "sessions");
-  const candidates = await listSessionArtifactCandidates(sessionsDir);
+  const candidates = await listSessionArtifactCandidates(sessionsDir, input.signal);
   if (candidates.length <= 0) {
     return [];
   }
@@ -76,6 +78,7 @@ export async function collectDerivedSessionSearchResults(input: {
         candidate,
         query: normalizedQuery,
         filter: input.filter,
+        signal: input.signal,
       })),
   ))
     .filter((item): item is SessionDerivedSurface => Boolean(item))
@@ -121,12 +124,18 @@ export async function collectDerivedSessionSearchResults(input: {
   });
 }
 
-async function listSessionArtifactCandidates(sessionsDir: string): Promise<SessionArtifactCandidate[]> {
+async function listSessionArtifactCandidates(
+  sessionsDir: string,
+  signal?: AbortSignal,
+): Promise<SessionArtifactCandidate[]> {
   try {
+    signal?.throwIfAborted();
     const entries = await fs.readdir(sessionsDir, { withFileTypes: true });
+    signal?.throwIfAborted();
     const groups = new Map<string, SessionArtifactCandidate>();
 
     await Promise.all(entries.map(async (entry) => {
+      signal?.throwIfAborted();
       if (!entry.isFile()) return;
       const fileName = entry.name;
       const suffix = resolveArtifactSuffix(fileName);
@@ -139,8 +148,10 @@ async function listSessionArtifactCandidates(sessionsDir: string): Promise<Sessi
       let newestFileMs = 0;
       try {
         const stat = await fs.stat(filePath);
+        signal?.throwIfAborted();
         newestFileMs = Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : 0;
       } catch {
+        signal?.throwIfAborted();
         newestFileMs = 0;
       }
 
@@ -171,12 +182,14 @@ async function listSessionArtifactCandidates(sessionsDir: string): Promise<Sessi
       }
       groups.set(safeConversationId, candidate);
     }));
+    signal?.throwIfAborted();
 
     return [...groups.values()]
       .filter((item) => item.hasDigest || item.hasSessionMemory)
       .sort((left, right) => right.newestFileMs - left.newestFileMs)
       .slice(0, DEFAULT_SESSION_SCAN_LIMIT);
   } catch (error) {
+    signal?.throwIfAborted();
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT") {
       return [];
@@ -208,16 +221,19 @@ async function buildBestSessionSurface(input: {
   candidate: SessionArtifactCandidate;
   query: string;
   filter?: MemorySearchFilter;
+  signal?: AbortSignal;
 }): Promise<SessionDerivedSurface | null> {
+  input.signal?.throwIfAborted();
   const [sessionDigest, sessionMemory] = await Promise.all([
     input.candidate.digestPath
-      ? readJsonFile<DreamSessionDigest>(input.candidate.digestPath)
+      ? readJsonFile<DreamSessionDigest>(input.candidate.digestPath, input.signal)
       : Promise.resolve(undefined),
     input.candidate.sessionMemoryPath
-      ? readJsonFile<DreamSessionMemory>(input.candidate.sessionMemoryPath)
+      ? readJsonFile<DreamSessionMemory>(input.candidate.sessionMemoryPath, input.signal)
       : Promise.resolve(undefined),
   ]);
-  const conversationId = await resolveConversationId(input.candidate, sessionDigest);
+  input.signal?.throwIfAborted();
+  const conversationId = await resolveConversationId(input.candidate, sessionDigest, input.signal);
 
   const surfaces = buildSessionSurfaces({
     candidate: input.candidate,
@@ -523,11 +539,14 @@ function isWithinDateRange(updatedAt: string | undefined, filter?: MemorySearchF
   return true;
 }
 
-async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
+async function readJsonFile<T>(filePath: string, signal?: AbortSignal): Promise<T | undefined> {
   try {
-    const raw = await fs.readFile(filePath, "utf-8");
+    signal?.throwIfAborted();
+    const raw = await fs.readFile(filePath, { encoding: "utf-8", signal });
+    signal?.throwIfAborted();
     return JSON.parse(raw) as T;
   } catch {
+    signal?.throwIfAborted();
     return undefined;
   }
 }
@@ -535,14 +554,16 @@ async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
 async function resolveConversationId(
   candidate: SessionArtifactCandidate,
   sessionDigest?: DreamSessionDigest,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const fromDigest = normalizeText(sessionDigest?.conversationId);
   if (fromDigest) {
     return fromDigest;
   }
 
   if (candidate.metaPath) {
-    const parsedMeta = await readJsonFile<{ conversationId?: unknown }>(candidate.metaPath);
+    const parsedMeta = await readJsonFile<{ conversationId?: unknown }>(candidate.metaPath, signal);
     const fromMeta = normalizeText(parsedMeta?.conversationId);
     if (fromMeta) {
       return fromMeta;
@@ -554,7 +575,9 @@ async function resolveConversationId(
       continue;
     }
     try {
-      const raw = await fs.readFile(transcriptPath, "utf-8");
+      signal?.throwIfAborted();
+      const raw = await fs.readFile(transcriptPath, { encoding: "utf-8", signal });
+      signal?.throwIfAborted();
       const firstLine = raw.split(/\r?\n/).find((line) => line.trim());
       if (!firstLine) {
         continue;
@@ -565,6 +588,7 @@ async function resolveConversationId(
         return fromTranscript;
       }
     } catch {
+      signal?.throwIfAborted();
       continue;
     }
   }

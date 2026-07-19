@@ -159,6 +159,131 @@ describe("ConversationStore", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("should release all conversation-level memory while preserving canonical history", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-release-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const id = "conv-release-canonical";
+        const store = new ConversationStore({ dataDir });
+
+        store.addMessage(id, "user", "persist me");
+        await store.waitForPendingPersistence(id);
+        await store.getSessionDigest(id);
+        expect(store.getConversationRuntimeSnapshot(id)).toMatchObject({
+            retainedConversation: true,
+            retainedCompactionState: true,
+            retainedSessionDigestState: true,
+            retainedSessionMemory: true,
+        });
+
+        await store.releaseConversation(id);
+
+        expect(store.getConversationRuntimeSnapshot(id)).toEqual({
+            retainedConversation: false,
+            retainedCompactionState: false,
+            retainedSessionDigestState: false,
+            retainedSessionMemory: false,
+            activeGeneration: false,
+            pendingPersistenceLaneCount: 0,
+            releasing: false,
+        });
+        expect(store.getHistory(id)).toEqual([{ role: "user", content: "persist me" }]);
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("should ignore a session-memory result that completes after release", async () => {
+        let resolveSummary!: (value: string) => void;
+        const summaryPending = new Promise<string>((resolve) => {
+            resolveSummary = resolve;
+        });
+        const summarizer = vi.fn(() => summaryPending);
+        const id = "conv-release-late-session-memory";
+        const store = new ConversationStore({
+            summarizer,
+            compaction: {
+                enabled: true,
+                tokenThreshold: 1,
+                keepRecentCount: 1,
+            },
+        });
+        store.addMessage(id, "user", "summarize before release");
+
+        const refresh = store.refreshSessionMemory(id, { force: true });
+        await vi.waitFor(() => expect(summarizer).toHaveBeenCalledTimes(1));
+        await store.releaseConversation(id);
+        resolveSummary(JSON.stringify({ summary: "late result" }));
+
+        await expect(refresh).resolves.toMatchObject({ updated: false });
+        expect(store.getConversationRuntimeSnapshot(id)).toMatchObject({
+            retainedSessionMemory: false,
+            activeGeneration: false,
+        });
+    });
+
+    it("should ignore a request-compaction result that completes after release", async () => {
+        let resolveSummary!: (value: string) => void;
+        const summaryPending = new Promise<string>((resolve) => {
+            resolveSummary = resolve;
+        });
+        const summarizer = vi.fn(() => summaryPending);
+        const id = "conv-release-late-compaction";
+        const store = new ConversationStore({
+            summarizer,
+            compaction: {
+                enabled: true,
+                tokenThreshold: 1,
+                keepRecentCount: 1,
+            },
+        });
+        store.addMessage(id, "user", "first message");
+        store.addMessage(id, "assistant", "second message");
+        store.addMessage(id, "user", "third message");
+
+        const compact = store.getConversationHistoryCompacted(id);
+        await vi.waitFor(() => expect(summarizer).toHaveBeenCalledTimes(1));
+        await store.releaseConversation(id);
+        resolveSummary("late compacted summary");
+
+        await expect(compact).resolves.toMatchObject({ compacted: false });
+        expect(store.getConversationRuntimeSnapshot(id)).toMatchObject({
+            retainedConversation: true,
+            retainedCompactionState: false,
+            activeGeneration: false,
+        });
+        expect(store.getHistory(id)).toHaveLength(3);
+    });
+
+    it("should keep nested digest refresh on the generation captured before release", async () => {
+        let resolveSummary!: (value: string) => void;
+        const summaryPending = new Promise<string>((resolve) => {
+            resolveSummary = resolve;
+        });
+        const summarizer = vi.fn(() => summaryPending);
+        const id = "conv-release-late-digest";
+        const store = new ConversationStore({
+            summarizer,
+            compaction: {
+                enabled: true,
+                tokenThreshold: 1,
+                keepRecentCount: 1,
+            },
+        });
+        store.addMessage(id, "user", "refresh digest before release");
+
+        const refresh = store.refreshSessionDigest(id, { force: true, threshold: 1 });
+        await vi.waitFor(() => expect(summarizer).toHaveBeenCalledTimes(1));
+        await store.releaseConversation(id);
+        resolveSummary(JSON.stringify({ summary: "late digest result" }));
+
+        await expect(refresh).resolves.toMatchObject({ updated: false });
+        expect(store.getConversationRuntimeSnapshot(id)).toMatchObject({
+            retainedCompactionState: false,
+            retainedSessionDigestState: false,
+            retainedSessionMemory: false,
+            activeGeneration: false,
+        });
+    });
+
     it("should persist session transcript events for accepted user and assistant messages", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
         const dataDir = path.join(tempDir, "sessions");
@@ -1195,6 +1320,70 @@ describe("ConversationStore", () => {
         ]);
         expect(store.getRecentToolResults(id, { toolCallId: "call-1" })).toHaveLength(1);
         expect(store.getRecentToolResults(id, { toolName: "run_command", success: false, query: "eperm" })).toHaveLength(1);
+    });
+
+    it("should persist combined tool artifacts in one final meta snapshot", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-artifacts-"));
+        const dataDir = path.join(tempDir, "sessions");
+        try {
+            const store = new ConversationStore({ dataDir });
+            const persistSpy = vi.spyOn(store as any, "persistConversationMeta");
+
+            store.recordToolArtifacts("conv-tool-artifacts", {
+                toolDigest: {
+                    toolName: "file_read",
+                    success: true,
+                    summary: "file_read succeeded | target=src/app.ts | result=answer=42",
+                    target: "src/app.ts",
+                    keyResult: "answer=42",
+                    toolCallId: "call-artifacts-1",
+                },
+                recentToolResult: {
+                    toolCallId: "call-artifacts-1",
+                    toolName: "file_read",
+                    success: true,
+                    summary: "file_read succeeded | target=src/app.ts | result=answer=42",
+                    content: "export const answer = 42;",
+                    target: "src/app.ts",
+                    args: { path: "src/app.ts" },
+                },
+                carryoverContext: {
+                    sourceType: "file_read",
+                    sourceKey: "file_read:src/app.ts",
+                    title: "file_read: src/app.ts",
+                    summary: "读取 src/app.ts，确认 answer=42。",
+                    keyFacts: ["target: src/app.ts", "result: answer=42"],
+                    tokenEstimate: 24,
+                    lastUsedAt: 100,
+                    priority: 6,
+                },
+            });
+
+            expect(persistSpy).toHaveBeenCalledTimes(1);
+            expect(store.getToolDigests("conv-tool-artifacts")).toMatchObject([
+                expect.objectContaining({ toolCallId: "call-artifacts-1", target: "src/app.ts" }),
+            ]);
+            expect(store.getRecentToolResults("conv-tool-artifacts")).toMatchObject([
+                expect.objectContaining({ toolCallId: "call-artifacts-1", content: "export const answer = 42;" }),
+            ]);
+            expect(store.getCarryoverContext("conv-tool-artifacts")).toMatchObject([
+                expect.objectContaining({ sourceKey: "file_read:src/app.ts", priority: 6 }),
+            ]);
+
+            // 重建 Store，确认单次写入的最终快照可用于进程重启后的恢复。
+            const reloaded = new ConversationStore({ dataDir });
+            expect(reloaded.getToolDigests("conv-tool-artifacts")).toMatchObject([
+                expect.objectContaining({ toolCallId: "call-artifacts-1", target: "src/app.ts" }),
+            ]);
+            expect(reloaded.getRecentToolResults("conv-tool-artifacts")).toMatchObject([
+                expect.objectContaining({ toolCallId: "call-artifacts-1", content: "export const answer = 42;" }),
+            ]);
+            expect(reloaded.getCarryoverContext("conv-tool-artifacts")).toMatchObject([
+                expect.objectContaining({ sourceKey: "file_read:src/app.ts", priority: 6 }),
+            ]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it("should normalize oversized recent tool args without dropping key diagnostic fields", async () => {

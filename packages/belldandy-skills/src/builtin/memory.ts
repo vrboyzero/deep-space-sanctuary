@@ -203,7 +203,13 @@ export const memorySearchTool: Tool = withToolContract({
             }
 
             const hasFilter = Object.keys(filter).length > 0;
-            const results = await manager.search(query, hasFilter ? { limit, filter } : limit);
+            const results = await manager.search(query, context.abortSignal
+                ? {
+                    limit,
+                    ...(hasFilter ? { filter } : {}),
+                    signal: context.abortSignal,
+                }
+                : hasFilter ? { limit, filter } : limit);
             manager.linkTaskMemories(context.conversationId, results.map((item) => item.id), "used");
 
             // Format results based on detail_level

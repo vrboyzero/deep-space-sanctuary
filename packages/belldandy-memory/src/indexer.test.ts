@@ -120,7 +120,7 @@ describe("MemoryIndexer", () => {
 
       await vi.advanceTimersByTimeAsync(20);
       expect(indexSpy).toHaveBeenCalledTimes(1);
-      expect(indexSpy).toHaveBeenCalledWith(path.resolve(filePath));
+      expect(indexSpy).toHaveBeenCalledWith(path.resolve(filePath), expect.any(AbortSignal));
     } finally {
       vi.useRealTimers();
     }
@@ -146,5 +146,40 @@ describe("MemoryIndexer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the final added content after change, unlink, and add coalesce together", async () => {
+    indexer = new MemoryIndexer(store, {
+      watchDebounceMs: 40,
+    });
+    await fs.writeFile(filePath, "# Guide\nold watch content\n", "utf-8");
+    await indexer.indexFile(filePath);
+
+    await fs.writeFile(filePath, "# Guide\nfinal watch content\n", "utf-8");
+    (indexer as any).scheduleWatchEvent(filePath, "upsert");
+    (indexer as any).scheduleWatchEvent(filePath, "remove");
+    (indexer as any).scheduleWatchEvent(filePath, "upsert");
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await indexer.stopWatching();
+
+    const chunks = store.getChunksBySource(path.resolve(filePath), 10);
+    expect(chunks.some((item) => item.content?.includes("final watch content"))).toBe(true);
+    expect(chunks.every((item) => !item.content?.includes("old watch content"))).toBe(true);
+  });
+
+  it("keeps last-known-good chunks when a file grows beyond the hard byte limit", async () => {
+    indexer = new MemoryIndexer(store, {
+      maxFileBytes: 64,
+    });
+    await fs.writeFile(filePath, "# Guide\nsmall indexed content\n", "utf-8");
+    await indexer.indexFile(filePath);
+
+    await fs.writeFile(filePath, `# Guide\n${"oversized-content ".repeat(20)}\n`, "utf-8");
+    await indexer.indexFile(filePath);
+
+    const chunks = store.getChunksBySource(filePath, 10);
+    expect(chunks.some((item) => item.content?.includes("small indexed content"))).toBe(true);
+    expect(chunks.every((item) => !item.content?.includes("oversized-content"))).toBe(true);
   });
 });

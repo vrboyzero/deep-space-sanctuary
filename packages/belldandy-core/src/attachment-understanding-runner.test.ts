@@ -106,6 +106,10 @@ vi.mock("@belldandy/skills", () => ({
   readCachedImageUnderstanding: readCachedImageUnderstandingMock,
   writeCachedImageUnderstanding: writeCachedImageUnderstandingMock,
   readCachedVideoUnderstanding: readCachedVideoUnderstandingMock,
+  runMediaUnderstandingCacheSingleFlight: async (input: { operation: () => Promise<unknown> }) => ({
+    value: await input.operation(),
+    joined: false,
+  }),
   writeCachedVideoUnderstanding: writeCachedVideoUnderstandingMock,
 }));
 

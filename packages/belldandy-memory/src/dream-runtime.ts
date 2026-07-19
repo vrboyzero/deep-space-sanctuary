@@ -584,7 +584,7 @@ export class DreamRuntime {
   private readonly profileStateDelegate?: DreamRuntimeOptions["profileStateDelegate"];
   private readonly logger?: DreamRuntimeOptions["logger"];
   private readonly nowProvider: () => Date;
-  private activeRun: Promise<DreamRunResult> | null = null;
+  private runReserved = false;
 
   constructor(options: DreamRuntimeOptions) {
     this.agentId = normalizeText(options.agentId) ?? "default";
@@ -684,7 +684,7 @@ export class DreamRuntime {
   }
 
   async run(input: DreamRunOptions = {}): Promise<DreamRunResult> {
-    if (this.activeRun) {
+    if (!this.tryReserveRun()) {
       const state = await this.getState();
       const runningRecord = state.recentRuns.find((item) => item.id === state.lastRunId);
       return {
@@ -700,22 +700,21 @@ export class DreamRuntime {
         state,
       };
     }
-
-    const task = this.runInternal(input).finally(() => {
-      this.activeRun = null;
-    });
-    this.activeRun = task;
-    return task;
+    try {
+      return await this.runInternal(input);
+    } finally {
+      this.releaseRunReservation();
+    }
   }
 
   async maybeAutoRun(input: DreamRunOptions = {}): Promise<DreamAutoRunResult> {
     const triggerMode = input.triggerMode === "cron" ? "cron" : "heartbeat";
     const availability = this.getAvailability();
-    const state = await this.getState();
     const now = this.nowProvider();
     const nowMs = now.getTime();
     const attemptedAt = now.toISOString();
     if (!availability.enabled) {
+      const state = await this.getState();
       const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
         triggerMode,
         attemptedAt,
@@ -731,7 +730,8 @@ export class DreamRuntime {
         skipReason: availability.reason ?? "dream runtime unavailable",
       };
     }
-    if (this.activeRun || state.status === "running") {
+    if (!this.tryReserveRun()) {
+      const state = await this.getState();
       const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
         triggerMode,
         attemptedAt,
@@ -747,105 +747,133 @@ export class DreamRuntime {
         skipReason: "dream runtime already running",
       };
     }
-    if (isFutureIso(state.failureBackoffUntil, nowMs)) {
-      const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
-        triggerMode,
-        attemptedAt,
-        executed: false,
-        skipCode: "failure_backoff_active",
-        skipReason: `failure backoff active until ${state.failureBackoffUntil}`,
-      }));
-      return {
-        executed: false,
-        triggerMode,
-        state: nextState,
-        skipCode: "failure_backoff_active",
-        skipReason: `failure backoff active until ${state.failureBackoffUntil}`,
-      };
-    }
-    if (isFutureIso(state.cooldownUntil, nowMs)) {
-      const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
-        triggerMode,
-        attemptedAt,
-        executed: false,
-        skipCode: "cooldown_active",
-        skipReason: `cooldown active until ${state.cooldownUntil}`,
-      }));
-      return {
-        executed: false,
-        triggerMode,
-        state: nextState,
-        skipCode: "cooldown_active",
-        skipReason: `cooldown active until ${state.cooldownUntil}`,
-      };
-    }
+    try {
+      const state = await this.getState();
+      if (state.status === "running") {
+        const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
+          triggerMode,
+          attemptedAt,
+          executed: false,
+          skipCode: "already_running",
+          skipReason: "dream runtime already running",
+        }));
+        return {
+          executed: false,
+          triggerMode,
+          state: nextState,
+          skipCode: "already_running",
+          skipReason: "dream runtime already running",
+        };
+      }
+      if (isFutureIso(state.failureBackoffUntil, nowMs)) {
+        const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
+          triggerMode,
+          attemptedAt,
+          executed: false,
+          skipCode: "failure_backoff_active",
+          skipReason: `failure backoff active until ${state.failureBackoffUntil}`,
+        }));
+        return {
+          executed: false,
+          triggerMode,
+          state: nextState,
+          skipCode: "failure_backoff_active",
+          skipReason: `failure backoff active until ${state.failureBackoffUntil}`,
+        };
+      }
+      if (isFutureIso(state.cooldownUntil, nowMs)) {
+        const nextState = await this.store.recordAutoTrigger(buildAutoTriggerState({
+          triggerMode,
+          attemptedAt,
+          executed: false,
+          skipCode: "cooldown_active",
+          skipReason: `cooldown active until ${state.cooldownUntil}`,
+        }));
+        return {
+          executed: false,
+          triggerMode,
+          state: nextState,
+          skipCode: "cooldown_active",
+          skipReason: `cooldown active until ${state.cooldownUntil}`,
+        };
+      }
 
-    const snapshot = await this.buildInputSnapshot({
-      agentId: this.agentId,
-      conversationId: normalizeText(input.conversationId),
-      now,
-    });
-    await this.store.updateLastInput(snapshot);
-    const nextState = await this.store.getState();
-    const baselineAt = state.lastDreamAt || snapshot.windowStartedAt;
-    const signal = buildAutoSignalSummary(snapshot, baselineAt, state.lastDreamCursor);
-    const gate = resolveSignalGate(signal);
-    if (!gate.ok) {
-      this.logger?.debug?.("dream auto-run skipped", {
+      const snapshot = await this.buildInputSnapshot({
         agentId: this.agentId,
-        triggerMode,
-        reason: gate.reason,
-        signal,
+        conversationId: normalizeText(input.conversationId),
+        now,
       });
-      const skippedState = await this.store.recordAutoTrigger(buildAutoTriggerState({
+      await this.store.updateLastInput(snapshot);
+      const baselineAt = state.lastDreamAt || snapshot.windowStartedAt;
+      const signal = buildAutoSignalSummary(snapshot, baselineAt, state.lastDreamCursor);
+      const gate = resolveSignalGate(signal);
+      if (!gate.ok) {
+        this.logger?.debug?.("dream auto-run skipped", {
+          agentId: this.agentId,
+          triggerMode,
+          reason: gate.reason,
+          signal,
+        });
+        const skippedState = await this.store.recordAutoTrigger(buildAutoTriggerState({
+          triggerMode,
+          attemptedAt,
+          executed: false,
+          skipCode: "insufficient_signal",
+          signalGateCode: gate.code,
+          skipReason: gate.reason,
+          signal,
+        }));
+        return {
+          executed: false,
+          triggerMode,
+          state: skippedState,
+          skipCode: "insufficient_signal",
+          skipReason: gate.reason,
+          signal,
+        };
+      }
+
+      const result = await this.runInternal({
+        ...input,
+        triggerMode,
+      }, {
+        now,
+        snapshot,
+      });
+      const executedState = await this.store.recordAutoTrigger(buildAutoTriggerState({
         triggerMode,
         attemptedAt,
-        executed: false,
-        skipCode: "insufficient_signal",
+        executed: true,
+        runId: result.record.id,
+        status: result.record.status,
         signalGateCode: gate.code,
-        skipReason: gate.reason,
         signal,
       }));
       return {
-        executed: false,
+        executed: true,
         triggerMode,
-        state: skippedState,
-        skipCode: "insufficient_signal",
-        skipReason: gate.reason,
+        state: executedState,
+        record: result.record,
+        draft: result.draft,
+        markdown: result.markdown,
+        indexMarkdown: result.indexMarkdown,
         signal,
       };
+    } finally {
+      this.releaseRunReservation();
     }
+  }
 
-    const task = this.runInternal({
-      ...input,
-      triggerMode,
-    }, {
-      now,
-      snapshot,
-    }).finally(() => {
-      this.activeRun = null;
-    });
-    this.activeRun = task;
-    const result = await task;
-    const executedState = await this.store.recordAutoTrigger(buildAutoTriggerState({
-      triggerMode,
-      attemptedAt,
-      executed: true,
-      runId: result.record.id,
-      status: result.record.status,
-      signalGateCode: gate.code,
-      signal,
-    }));
-    return {
-      executed: true,
-      triggerMode,
-      state: executedState,
-      record: result.record,
-      draft: result.draft,
-      markdown: result.markdown,
-      indexMarkdown: result.indexMarkdown,
-      signal,
-    };
+  private tryReserveRun(): boolean {
+    if (this.runReserved) {
+      return false;
+    }
+    this.runReserved = true;
+    return true;
+  }
+
+  private releaseRunReservation(): void {
+    this.runReserved = false;
   }
 
   private async runInternal(

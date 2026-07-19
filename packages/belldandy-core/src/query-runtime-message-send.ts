@@ -16,8 +16,12 @@ import type { MemoryRuntimeBudgetGuard, MemoryRuntimeUsageAccounting } from "./m
 import { preparePromptWithAttachments, type AttachmentPromptLimits } from "./attachment-understanding-runner.js";
 import { detectChatCommanderTrigger, buildChatCommanderHintText } from "./chat-commander-trigger.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
-import { runAgentWithLifecycle } from "./query-runtime-agent-run.js";
+import { runAgentWithLifecycle, type QueryRuntimeAgentBudgetExhausted } from "./query-runtime-agent-run.js";
 import { QueryRuntime, type QueryRuntimeObserver } from "./query-runtime.js";
+import type {
+  TopLevelConversationLease,
+  TopLevelConversationLifecycle,
+} from "./top-level-conversation-lifecycle.js";
 import {
   appendAutoTaskReport,
   consumeAutoTaskReport,
@@ -59,6 +63,7 @@ export type MessageSendQueryRuntimeContext = {
     agentRegistry?: AgentRegistry;
     conversationStore: ConversationStore;
     conversationRunRegistry: ConversationRunRegistry;
+    topLevelConversationLifecycle?: TopLevelConversationLifecycle;
     runtimeObserver?: QueryRuntimeObserver<"message.send">;
     residentAgentRuntime?: ResidentAgentRuntimeRegistry;
     getConversationPromptSnapshot?: (input: {
@@ -218,6 +223,18 @@ export async function handleMessageSendWithQueryRuntime(
       },
     });
 
+    const lifecycleLease = runtimeDeps.topLevelConversationLifecycle
+      ? await runtimeDeps.topLevelConversationLifecycle.acquire({
+          conversationId,
+          owners: [{
+            key: runtimeDeps.conversationStore,
+            priority: 100,
+            release: () => runtimeDeps.conversationStore.releaseConversation(conversationId),
+          }],
+        })
+      : undefined;
+    let lifecycleLeaseTransferred = false;
+    try {
     const agent = createAgent({
       agentFactory: runtimeDeps.agentFactory,
       agentRegistry: runtimeDeps.agentRegistry,
@@ -278,6 +295,15 @@ export async function handleMessageSendWithQueryRuntime(
           message: `会话已绑定 Agent "${existingConv.agentId}"，不能使用 "${requestedAgentId}"。请新建会话。`,
         },
       };
+    }
+
+    if (lifecycleLease && typeof agent.releaseConversation === "function") {
+      lifecycleLease.addOwner({
+        // Registry Agent 按实例区分 model override；无 Registry 时 factory 是稳定的替换 key。
+        key: runtimeDeps.agentRegistry ? agent : runtimeDeps.agentFactory,
+        priority: 0,
+        release: () => agent.releaseConversation?.(conversationId),
+      });
     }
 
     if (autoStopPreviousRun) {
@@ -397,10 +423,12 @@ export async function handleMessageSendWithQueryRuntime(
       },
     });
 
+    lifecycleLeaseTransferred = true;
     void runAgentInBackground({
       ctx,
       queryRuntime,
       agent,
+      lifecycleLease,
       abortController,
       conversationId,
       requestedAgentId,
@@ -455,6 +483,11 @@ export async function handleMessageSendWithQueryRuntime(
         messageMeta: io.toChatMessageMeta(userMessage.timestamp, true),
       },
     };
+    } finally {
+      if (!lifecycleLeaseTransferred) {
+        await lifecycleLease?.release();
+      }
+    }
   });
 }
 
@@ -573,6 +606,7 @@ type MessageSendBackgroundInput = {
   ctx: MessageSendQueryRuntimeContext;
   queryRuntime: QueryRuntime<"message.send">;
   agent: BelldandyAgent;
+  lifecycleLease?: TopLevelConversationLease;
   abortController: AbortController;
   conversationId: string;
   requestedAgentId?: string;
@@ -1351,6 +1385,7 @@ function createMessageSendStreamAdapter(input: {
 }): {
   handlers: {
     onStatus: (item: { status: string }) => void;
+    onBudgetExhausted: (item: QueryRuntimeAgentBudgetExhausted) => void;
     onToolCall: (item: { id: string; name: string; arguments?: unknown }) => void;
     onToolResult: (item: { id: string; name: string; success: boolean; output?: unknown; error?: string; failureKind?: string; metadata?: unknown }) => void;
     onToolEvent: (detail: Record<string, unknown>) => void;
@@ -1562,6 +1597,20 @@ function createMessageSendStreamAdapter(input: {
           },
         });
       },
+      onBudgetExhausted: (item) => {
+        input.ctx.io.sendEvent(input.ctx.request.ws, {
+          type: "event",
+          event: "agent.budget_exhausted",
+          payload: {
+            agentId: input.agentId,
+            conversationId: input.conversationId,
+            runId: input.runId,
+            budget: item.budget,
+            limit: item.limit,
+            observed: item.observed,
+          },
+        });
+      },
     },
   };
 }
@@ -1674,6 +1723,10 @@ function wasMessageSendStopped(input: {
   );
 }
 
+function isMessageSendAgentRunFailed(runResult: MessageSendRunResult): boolean {
+  return Boolean(runResult.budgetExhausted || runResult.latestStatus === "error");
+}
+
 function applyMessageSendCompletionPolicy(input: {
   ctx: MessageSendQueryRuntimeContext;
   queryRuntime: QueryRuntime<"message.send">;
@@ -1762,6 +1815,18 @@ async function finalizeMessageSendSuccess(input: {
       requestedAgentId: input.requestedAgentId,
       partialText: runResult.fullText,
       reason: readMessageSendStopReason(input.abortController.signal),
+    });
+    return;
+  }
+  if (isMessageSendAgentRunFailed(runResult)) {
+    consumeAutoTaskReport(input.conversationId);
+    finalizeMessageSendAgentRunFailure({
+      ctx,
+      queryRuntime,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      requestedAgentId: input.requestedAgentId,
+      runResult,
     });
     return;
   }
@@ -1963,6 +2028,48 @@ function finalizeMessageSendFailure(input: {
   });
 }
 
+/** 已正常结束的 Agent 流仍可报告 error；不能让 final item 将其覆盖为 completed。 */
+function finalizeMessageSendAgentRunFailure(input: {
+  ctx: MessageSendQueryRuntimeContext;
+  queryRuntime: QueryRuntime<"message.send">;
+  conversationId: string;
+  runId: string;
+  requestedAgentId?: string;
+  runResult: MessageSendRunResult;
+}): void {
+  const errorText = input.runResult.finalText || input.runResult.fullText || "Agent reported an error.";
+  const budgetExhausted = input.runResult.budgetExhausted;
+  const errorTimestamp = Date.now();
+  input.ctx.runtime.log.warn("agent", "Agent run reached an error terminal state", {
+    conversationId: input.conversationId,
+    runId: input.runId,
+    latestStatus: input.runResult.latestStatus ?? null,
+    ...(budgetExhausted ? { budgetExhausted } : {}),
+  });
+
+  applyMessageSendCompletionPolicy({
+    ctx: input.ctx,
+    queryRuntime: input.queryRuntime,
+    policy: {
+      conversationId: input.conversationId,
+      runId: input.runId,
+      agentId: input.requestedAgentId ?? "default",
+      finalText: sanitizeVisibleAssistantText(errorText),
+      finalTimestampMs: errorTimestamp,
+      ...(input.runResult.latestStatus === "error" ? {} : { statusBeforeFinal: "error" }),
+      terminalStage: "failed",
+      terminalDetail: {
+        error: errorText,
+        source: "agent_stream",
+        ...(input.runResult.latestStatus ? { latestStatus: input.runResult.latestStatus } : {}),
+        ...(budgetExhausted ? { budgetExhausted } : {}),
+      },
+      digestSource: "message.agent_error",
+      digestWarningMessage: "Auto refresh after agent stream failure failed",
+    },
+  });
+}
+
 async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<void> {
   const { ctx, queryRuntime } = input;
   const state = createMessageSendBackgroundRunState();
@@ -1996,6 +2103,7 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
       conversationId: input.conversationId,
       runInput,
       onStatus: streamAdapter.handlers.onStatus,
+      onBudgetExhausted: streamAdapter.handlers.onBudgetExhausted,
       onToolEvent: streamAdapter.handlers.onToolEvent,
       onToolCall: streamAdapter.handlers.onToolCall,
       onToolResult: streamAdapter.handlers.onToolResult,
@@ -2021,6 +2129,7 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
       state,
     });
 
+    const agentRunFailed = isMessageSendAgentRunFailed(runResult);
     await finalizeMessageSendSuccess({
       ctx,
       queryRuntime,
@@ -2031,7 +2140,7 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
       runResult,
       state,
     });
-    ctx.runtime.residentAgentRuntime?.markStatus(input.requestedAgentId ?? "default", "idle");
+    ctx.runtime.residentAgentRuntime?.markStatus(input.requestedAgentId ?? "default", agentRunFailed ? "error" : "idle");
   } catch (error) {
     if (wasMessageSendStopped({
       abortSignal: input.abortController.signal,
@@ -2059,5 +2168,6 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
     }
   } finally {
     ctx.runtime.conversationRunRegistry.clear(input.conversationId, input.runId);
+    await input.lifecycleLease?.release();
   }
 }

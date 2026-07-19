@@ -8,6 +8,7 @@ import { DEFAULT_STATE_DIR_DISPLAY } from "@belldandy/protocol";
 
 import type { BelldandyLogger } from "./logger/index.js";
 import type { QueryRuntimeTraceStore } from "./query-runtime-trace.js";
+import type { TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
 import {
   handleCommunityMessageWithQueryRuntime,
   handleWebhookReceiveWithQueryRuntime,
@@ -96,6 +97,7 @@ export type RegisterGatewayHttpRoutesContext = {
     error: (scope: string, message: string, meta?: unknown) => void;
   } | BelldandyLogger;
   getConversationStore: () => ConversationStore;
+  getTopLevelConversationLifecycle: () => TopLevelConversationLifecycle;
   getQueryRuntimeTraceStore: () => QueryRuntimeTraceStore;
   requestToFormData: (req: Request) => Promise<FormData>;
   isAuthorizedAvatarUpload: (req: Request, auth: GatewayServerOptions["auth"]) => boolean;
@@ -350,6 +352,7 @@ export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesCo
       agentFactory: ctx.agentFactory,
       agentRegistry: ctx.agentRegistry,
       conversationStore,
+      topLevelConversationLifecycle: ctx.getTopLevelConversationLifecycle(),
       log: ctx.log,
       runtimeObserver: queryRuntimeTraceStore.createObserver<"api.message">(),
       onChannelSecurityApprovalRequired: ctx.onChannelSecurityApprovalRequired,
@@ -425,6 +428,7 @@ export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesCo
         webhookConfig: ctx.webhookConfig,
         webhookIdempotency: ctx.webhookIdempotency,
         conversationStore,
+        topLevelConversationLifecycle: ctx.getTopLevelConversationLifecycle(),
         log: ctx.log,
         runtimeObserver: queryRuntimeTraceStore.createObserver<"webhook.receive">(),
         emitAutoRunTaskTokenResult: (store, payload) => {

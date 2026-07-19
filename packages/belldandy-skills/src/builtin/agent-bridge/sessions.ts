@@ -45,6 +45,7 @@ export class BridgeSessionStore {
   private static instance?: BridgeSessionStore;
   private records = new Map<string, BridgeSessionRecord>();
   private idleTimers = new Map<string, NodeJS.Timeout>();
+  private closePromises = new Map<string, Promise<BridgeSessionRecord>>();
   private transcripts = new Map<string, BridgeSessionTranscriptEvent[]>();
   private loadedWorkspaceRoot?: string;
   private loadPromise?: Promise<void>;
@@ -173,6 +174,25 @@ export class BridgeSessionStore {
     sessionId: string,
     reason: BridgeSessionRecord["closeReason"] = "manual",
   ): Promise<BridgeSessionRecord> {
+    const existing = this.closePromises.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    let tracked: Promise<BridgeSessionRecord>;
+    const closing = this.closeInternal(sessionId, reason);
+    tracked = closing.finally(() => {
+      if (this.closePromises.get(sessionId) === tracked) {
+        this.closePromises.delete(sessionId);
+      }
+    });
+    this.closePromises.set(sessionId, tracked);
+    return tracked;
+  }
+
+  private async closeInternal(
+    sessionId: string,
+    reason: BridgeSessionRecord["closeReason"],
+  ): Promise<BridgeSessionRecord> {
     const current = this.records.get(sessionId);
     if (!current) {
       throw new Error(`Bridge session 不存在: ${sessionId}`);
@@ -191,7 +211,6 @@ export class BridgeSessionStore {
       idleDeadlineAt: undefined,
       closeReason: reason,
     };
-    this.records.set(sessionId, next);
     this.clearIdleTimer(sessionId);
     const transcript = this.getTranscript(sessionId);
     const artifacts = await persistBridgeSessionArtifacts(next, transcript);
@@ -200,6 +219,7 @@ export class BridgeSessionStore {
       artifactPath: artifacts.artifactPath,
       transcriptPath: artifacts.transcriptPath,
     };
+    // closed 对外可见时必须同时具备 durable artifact 引用，避免观察到半提交 terminal record。
     this.records.set(sessionId, finalized);
     await this.persistSessionState(sessionId);
     return finalized;
@@ -210,6 +230,7 @@ export class BridgeSessionStore {
       clearTimeout(timer);
     }
     this.idleTimers.clear();
+    this.closePromises.clear();
     this.records.clear();
     this.transcripts.clear();
     this.loadedWorkspaceRoot = undefined;
@@ -235,7 +256,7 @@ export class BridgeSessionStore {
         return;
       }
       try {
-        PtyManager.getInstance().kill(current.runtimeSessionId);
+        PtyManager.getInstance().kill(current.runtimeSessionId, "idle-timeout");
       } catch {
         // ignore cleanup race
       }
@@ -334,6 +355,23 @@ export class BridgeSessionStore {
       return [];
     }
   }
+}
+
+export async function shutdownBridgeSessions(): Promise<{
+  runtimeSessionsClosed: number;
+  bridgeSessionsClosed: number;
+}> {
+  const manager = PtyManager.getInstance();
+  const store = BridgeSessionStore.getInstance();
+  const activeRecords = store.list().filter((record) => record.status === "active");
+  const runtimeSessionsClosed = manager.shutdownAll();
+  for (const record of activeRecords) {
+    await store.close(record.id, "manual");
+  }
+  return {
+    runtimeSessionsClosed,
+    bridgeSessionsClosed: activeRecords.length,
+  };
 }
 
 export async function loadRuntimeLostBridgeSessions(

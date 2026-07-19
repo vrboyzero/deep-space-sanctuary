@@ -3,6 +3,7 @@ import {
   readCachedAudioTranscription as readSharedCachedAudioTranscription,
   readCachedImageUnderstanding as readSharedCachedImageUnderstanding,
   readCachedVideoUnderstanding as readSharedCachedVideoUnderstanding,
+  runMediaUnderstandingCacheSingleFlight as runSharedMediaUnderstandingCacheSingleFlight,
   writeCachedAudioTranscription as writeSharedCachedAudioTranscription,
   writeCachedImageUnderstanding as writeSharedCachedImageUnderstanding,
   writeCachedVideoUnderstanding as writeSharedCachedVideoUnderstanding,
@@ -20,6 +21,8 @@ export function createAttachmentFingerprint(input: {
 }): string {
   return createMediaFingerprint(input);
 }
+
+export const runMediaUnderstandingCacheSingleFlight = runSharedMediaUnderstandingCacheSingleFlight;
 
 export {
   clearMediaUnderstandingCache,

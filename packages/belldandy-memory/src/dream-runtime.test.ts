@@ -933,6 +933,64 @@ describe("dream runtime", () => {
     });
   });
 
+  it("reserves an automatic run before awaiting its input snapshot", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-dream-runtime-reservation-"));
+    tempDirs.push(stateDir);
+    let releaseSnapshot!: () => void;
+    const snapshotBlocked = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    let snapshotCalls = 0;
+    const buildInputSnapshot = vi.fn(async () => {
+      snapshotCalls += 1;
+      if (snapshotCalls === 1) {
+        await snapshotBlocked;
+      }
+      return createSnapshot();
+    });
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      async json() {
+        return {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                headline: "single reserved dream",
+                stableInsights: ["reservation prevents duplicate billing"],
+                corrections: [],
+                openQuestions: [],
+                shareCandidates: [],
+                nextFocus: ["keep one owner"],
+              }),
+            },
+          }],
+        };
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = new DreamRuntime({
+      stateDir,
+      agentId: "coder",
+      model: "gpt-test",
+      baseUrl: "https://example.com/v1",
+      apiKey: "sk-test",
+      now: () => new Date("2026-04-19T12:00:00.000Z"),
+      buildInputSnapshot,
+    });
+
+    const firstPromise = runtime.maybeAutoRun({ triggerMode: "heartbeat" });
+    await vi.waitFor(() => expect(buildInputSnapshot).toHaveBeenCalledTimes(1));
+    const secondPromise = runtime.maybeAutoRun({ triggerMode: "cron" });
+    releaseSnapshot();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(first.executed).toBe(true);
+    expect(second.executed).toBe(false);
+    expect(second.skipCode).toBe("already_running");
+    expect(buildInputSnapshot).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("runs automatic fallback dream when model config is missing", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-dream-runtime-auto-fallback-"));
     tempDirs.push(stateDir);

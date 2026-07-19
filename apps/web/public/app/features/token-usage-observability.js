@@ -76,6 +76,20 @@ export function scheduleTokenUsageObservabilityPopoverSync(container, target = c
   });
 }
 
+export function cancelTokenUsageObservabilityPopoverSync(container) {
+  if (!container) return;
+  const frameHandle = container.__tokenUsageObservabilityFrame;
+  if (
+    typeof frameHandle === "number"
+    && frameHandle
+    && typeof window !== "undefined"
+    && typeof window.cancelAnimationFrame === "function"
+  ) {
+    window.cancelAnimationFrame(frameHandle);
+  }
+  container.__tokenUsageObservabilityFrame = 0;
+}
+
 export function buildTokenUsageObservabilitySegments(
   payload,
   t = (_key, _params, fallback) => fallback ?? "",

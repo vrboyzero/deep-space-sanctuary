@@ -4,6 +4,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMemoryRuntimeFeature } from "./memory-runtime.js";
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 function createHarness(sendReq) {
   const state = {
     tab: "tasks",
@@ -77,7 +87,67 @@ afterEach(() => {
   delete globalThis.BELLDANDY_WEB_CONFIG;
 });
 
+describe("memory runtime read lifecycle", () => {
+  it("settles a stale task read through the main lifecycle wiring", async () => {
+    const request = createDeferred();
+    const { feature, state } = createHarness(vi.fn(() => request.promise));
+    const read = feature.loadTaskDetail("task-2");
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeTaskReadCount).toBe(1);
+
+    feature.dispose();
+    request.resolve({ ok: true, payload: { task: { id: "task-2" } } });
+    await read;
+
+    expect(state.selectedTask).toEqual({ id: "task-1" });
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeReadCount).toBe(0);
+  });
+
+  it.each([
+    [
+      "memory",
+      (feature) => feature.loadMemoryDetail("chunk-2"),
+      "pendingMemoryRuntimeMemoryReadCount",
+      { ok: true, payload: { item: { id: "chunk-2" } } },
+    ],
+    [
+      "candidate",
+      (feature) => feature.loadCandidateDetail("candidate-2"),
+      "pendingMemoryRuntimeCandidateReadCount",
+      { ok: true, payload: { candidate: { id: "candidate-2" } } },
+    ],
+  ])("settles a stale %s read through the main lifecycle wiring", async (_kind, start, pendingKey, response) => {
+    const request = createDeferred();
+    const { feature, state } = createHarness(vi.fn(() => request.promise));
+    const read = start(feature);
+    expect(feature.getRuntimeSnapshot()[pendingKey]).toBe(1);
+
+    feature.dispose();
+    request.resolve(response);
+    await read;
+
+    expect(state.selectedCandidate).toBeNull();
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeReadCount).toBe(0);
+  });
+});
+
 describe("memory runtime duplicate precheck", () => {
+  it("settles a disposed generation preflight through the main action owner", async () => {
+    const request = createDeferred();
+    const { feature, showNotice, state } = createHarness(vi.fn(() => request.promise));
+
+    const generate = feature.generateExperienceCandidate("task-1", "method");
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeExperienceGenerateActionCount).toBe(1);
+    expect(state.pendingExperienceActionKey).toBe("generate:method:task-1");
+
+    feature.dispose();
+    expect(state.pendingExperienceActionKey).toBeNull();
+    request.resolve({ ok: true, payload: { decision: "no_match" } });
+    await expect(generate).resolves.toBeNull();
+
+    expect(showNotice).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeExperienceGenerateActionCount).toBe(0);
+  });
+
   it("opens existing candidate when duplicate_existing is confirmed", async () => {
     const sendReq = vi.fn(async (req) => {
       if (req.method === "experience.candidate.check_duplicate") {
@@ -295,5 +365,47 @@ describe("memory runtime duplicate precheck", () => {
       "success",
       2200,
     );
+  });
+});
+
+describe("memory runtime review lifecycle", () => {
+  it("settles a disposed review through the main action owner", async () => {
+    const request = createDeferred();
+    const { feature, showNotice, state } = createHarness(vi.fn(() => request.promise));
+
+    const review = feature.reviewExperienceCandidate("candidate-1", "accept", { taskId: "task-1" });
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeExperienceReviewActionCount).toBe(1);
+    expect(state.pendingExperienceActionKey).toBe("candidate:candidate-1:accept");
+
+    feature.dispose();
+    expect(state.pendingExperienceActionKey).toBeNull();
+    request.resolve({ ok: true, payload: { candidate: { id: "candidate-1" } } });
+    await expect(review).resolves.toBeNull();
+
+    expect(showNotice).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeExperienceReviewActionCount).toBe(0);
+  });
+});
+
+describe("memory runtime skill freshness lifecycle", () => {
+  it("settles a disposed freshness update through the main action owner", async () => {
+    const request = createDeferred();
+    const { feature, showNotice, state } = createHarness(vi.fn(() => request.promise));
+
+    const update = feature.updateSkillFreshnessStaleMark({
+      skillKey: "skill-demo",
+      taskId: "task-1",
+      candidateId: "candidate-1",
+    });
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeSkillFreshnessActionCount).toBe(1);
+    expect(state.pendingExperienceActionKey).toBe("skill-freshness:skill-demo:stale");
+
+    feature.dispose();
+    expect(state.pendingExperienceActionKey).toBeNull();
+    request.resolve({ ok: true, payload: { skillFreshness: { stale: true } } });
+    await expect(update).resolves.toBeNull();
+
+    expect(showNotice).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot().pendingMemoryRuntimeSkillFreshnessActionCount).toBe(0);
   });
 });

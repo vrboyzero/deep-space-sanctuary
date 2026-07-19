@@ -323,7 +323,7 @@ type SubTaskTeamLaneStateView = {
   taskId?: string;
   sessionId?: string;
   agentId?: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: SubTaskRecord["launchSpec"]["role"];
   identityLabel?: string;
   authorityRelationToManager?: "self" | "superior" | "peer" | "subordinate" | "unknown";
   reportsTo?: string[];

@@ -9,6 +9,12 @@ import {
   throwIfAborted,
   toAbortError,
 } from "../../abort-utils.js";
+import {
+  parsePositiveByteLimit,
+  persistBoundedResponseToFile,
+} from "../remote-response-file.js";
+
+const DEFAULT_TTS_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
 
 export type SynthesizeResult = {
   webPath: string;
@@ -37,6 +43,10 @@ export async function synthesizeSpeech(opts: SynthesizeOptions): Promise<Synthes
   const provider = (opts.provider?.trim() || envProvider || "edge").toLowerCase();
   const shouldUseEnvVoice = !opts.provider || envProvider === provider;
   const model = resolveTtsModel(provider, opts.model);
+  const maxOutputBytes = parsePositiveByteLimit(
+    process.env.BELLDANDY_TTS_MAX_OUTPUT_BYTES,
+    DEFAULT_TTS_MAX_OUTPUT_BYTES,
+  );
 
   let voice = opts.voice;
   if (!voice) {
@@ -61,9 +71,9 @@ export async function synthesizeSpeech(opts: SynthesizeOptions): Promise<Synthes
     const filepath = path.join(generatedDir, filename);
 
     if (provider === "openai") {
-      await synthesizeOpenAI(filepath, text, voice!, model, opts.abortSignal);
+      await synthesizeOpenAI(filepath, text, voice!, model, maxOutputBytes, opts.abortSignal);
     } else if (provider === "dashscope") {
-      await synthesizeDashScope(filepath, text, voice!, model, opts.abortSignal);
+      await synthesizeDashScope(filepath, text, voice!, model, maxOutputBytes, opts.abortSignal);
     } else {
       await synthesizeEdge(filepath, text, voice!, opts.abortSignal);
     }
@@ -80,7 +90,14 @@ export async function synthesizeSpeech(opts: SynthesizeOptions): Promise<Synthes
   }
 }
 
-async function synthesizeOpenAI(filepath: string, text: string, voice: string, model: string, abortSignal?: AbortSignal): Promise<void> {
+async function synthesizeOpenAI(
+  filepath: string,
+  text: string,
+  voice: string,
+  model: string,
+  maxOutputBytes: number,
+  abortSignal?: AbortSignal,
+): Promise<void> {
   const apiKey = readOptionalEnv(
     "BELLDANDY_TTS_OPENAI_API_KEY",
     "BELLDANDY_OPENAI_API_KEY",
@@ -107,12 +124,24 @@ async function synthesizeOpenAI(filepath: string, text: string, voice: string, m
     }),
     abortSignal,
   );
-  const buffer = Buffer.from(await readAudioResponseBuffer(mp3));
-  throwIfAborted(abortSignal);
-  await fs.writeFile(filepath, buffer);
+  await persistBoundedResponseToFile({
+    response: requireReadableResponse(mp3, "OpenAI TTS"),
+    targetPath: filepath,
+    maxBytes: maxOutputBytes,
+    label: "OpenAI TTS audio",
+    abortSignal,
+    overwrite: true,
+  });
 }
 
-async function synthesizeDashScope(filepath: string, text: string, voice: string, model: string, abortSignal?: AbortSignal): Promise<void> {
+async function synthesizeDashScope(
+  filepath: string,
+  text: string,
+  voice: string,
+  model: string,
+  maxOutputBytes: number,
+  abortSignal?: AbortSignal,
+): Promise<void> {
   const apiKey = process.env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error("DASHSCOPE_API_KEY required for DashScope provider.");
 
@@ -154,11 +183,19 @@ async function synthesizeDashScope(filepath: string, text: string, voice: string
       const audioRes = await fetch(audioUrl, { signal: abortSignal });
       if (!audioRes.ok) throw new Error(`Failed to download audio (${audioRes.status})`);
 
-      const buffer = Buffer.from(await audioRes.arrayBuffer());
-      if (buffer.length < 100) throw new Error(`Audio too small (${buffer.length} bytes)`);
-
-      throwIfAborted(abortSignal);
-      await fs.writeFile(filepath, buffer);
+      await persistBoundedResponseToFile({
+        response: audioRes,
+        targetPath: filepath,
+        maxBytes: maxOutputBytes,
+        label: "DashScope TTS audio",
+        abortSignal,
+        overwrite: true,
+        validate: ({ byteLength }) => {
+          if (byteLength < 100) {
+            throw new Error(`Audio too small (${byteLength} bytes)`);
+          }
+        },
+      });
       return; // success
     } catch (err) {
       if (isAbortError(err) || abortSignal?.aborted) {
@@ -205,15 +242,21 @@ async function synthesizeEdge(filepath: string, text: string, voice: string, abo
   throw new Error(`EdgeTTS failed after ${maxRetries} attempts. Last: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-async function readAudioResponseBuffer(value: unknown): Promise<ArrayBuffer> {
+function requireReadableResponse(value: unknown, label: string): Pick<Response, "body" | "headers"> {
   if (!value || typeof value !== "object") {
-    throw new Error("OpenAI TTS response missing arrayBuffer()");
+    throw new Error(`${label} response has no readable body.`);
   }
-  const candidate = value as { arrayBuffer?: unknown };
-  if (typeof candidate.arrayBuffer !== "function") {
-    throw new Error("OpenAI TTS response missing arrayBuffer()");
+  const candidate = value as Partial<Pick<Response, "body" | "headers">>;
+  if (!candidate.body
+    || typeof candidate.body.getReader !== "function"
+    || !candidate.headers
+    || typeof candidate.headers.get !== "function") {
+    throw new Error(`${label} response has no readable body.`);
   }
-  return await candidate.arrayBuffer.call(value) as ArrayBuffer;
+  return {
+    body: candidate.body,
+    headers: candidate.headers,
+  };
 }
 
 function readOptionalEnv(...keys: string[]): string | undefined {

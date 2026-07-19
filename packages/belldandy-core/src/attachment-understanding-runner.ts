@@ -21,6 +21,7 @@ import {
   createAttachmentFingerprint,
   readCachedImageUnderstanding,
   readCachedVideoUnderstanding,
+  runMediaUnderstandingCacheSingleFlight,
   writeCachedImageUnderstanding,
   writeCachedVideoUnderstanding,
 } from "./attachment-understanding-cache.js";
@@ -594,44 +595,44 @@ async function maybeUnderstandImageAttachment(input: {
   }
 
   try {
-    const cached = await readCachedImageUnderstanding({
+    const flight = await runMediaUnderstandingCacheSingleFlight({
       stateDir: input.stateDir,
+      kind: "image-understanding",
       fingerprint: input.fingerprint,
-    });
-    if (cached?.result) {
-      input.log.info("message", "Image attachment auto understanding completed", {
-        name: input.attachment.name,
-        mime: input.attachment.type,
-        cacheHit: true,
-        provider: cached.result.provider,
-        model: cached.result.model,
-      });
-      return {
-        result: cached.result,
-        cacheHit: true,
-      };
-    }
+      operation: async () => {
+        const cached = await readCachedImageUnderstanding({
+          stateDir: input.stateDir,
+          fingerprint: input.fingerprint,
+        });
+        if (cached?.result) {
+          return { result: cached.result, cacheHit: true };
+        }
 
-    const result = await understandImageFile({
-      filePath: input.savePath,
-      mimeType: input.attachment.type,
+        const result = await understandImageFile({
+          filePath: input.savePath,
+          mimeType: input.attachment.type,
+        });
+        await writeCachedImageUnderstanding({
+          stateDir: input.stateDir,
+          fingerprint: input.fingerprint,
+          mime: input.attachment.type,
+          result,
+        });
+        return { result, cacheHit: false };
+      },
     });
-    await writeCachedImageUnderstanding({
-      stateDir: input.stateDir,
-      fingerprint: input.fingerprint,
-      mime: input.attachment.type,
-      result,
-    });
+    const cacheHit = flight.joined || flight.value.cacheHit;
+    const { result } = flight.value;
     input.log.info("message", "Image attachment auto understanding completed", {
       name: input.attachment.name,
       mime: input.attachment.type,
-      cacheHit: false,
+      cacheHit,
       provider: result.provider,
       model: result.model,
     });
     return {
       result,
-      cacheHit: false,
+      cacheHit,
     };
   } catch (error) {
     input.log.warn("message", "Image attachment auto understanding failed", {
@@ -736,116 +737,127 @@ async function maybeUnderstandVideoAttachment(input: {
   }
 
   try {
-    const cached = await readCachedVideoUnderstanding({
+    const flight = await runMediaUnderstandingCacheSingleFlight({
       stateDir: input.stateDir,
+      kind: "video-understanding",
       fingerprint: input.fingerprint,
-    });
-    if (cached?.result) {
-      if (shouldRefreshLegacyFallbackVideoCache(cached.result, config)) {
-        input.log.info("message", "Refreshing legacy frame fallback video cache because native video is now available", {
-          name: input.attachment.name,
-          mime: input.attachment.type,
-          provider: cached.result.provider,
-          model: cached.result.model,
-          analysisMode: cached.result.analysisMode ?? "native_video",
+      operation: async () => {
+        const cached = await readCachedVideoUnderstanding({
+          stateDir: input.stateDir,
+          fingerprint: input.fingerprint,
         });
-        try {
-          const refreshed = await understandVideoFile({
-            filePath: input.savePath,
-            mimeType: input.attachment.type,
-            focusMode: renderConfig.timelineItemsLimit === 0 ? "timeline" : undefined,
-            maxTimelineItems: renderConfig.timelineItemsLimit,
-          });
-          if (refreshed.analysisMode === "frame_sampling_fallback" && refreshed.nativeErrorMessage) {
-            input.log.warn("message", "Video attachment native understanding fell back to frame sampling", {
+        if (cached?.result) {
+          if (shouldRefreshLegacyFallbackVideoCache(cached.result, config)) {
+            input.log.info("message", "Refreshing legacy frame fallback video cache because native video is now available", {
               name: input.attachment.name,
               mime: input.attachment.type,
-              error: refreshed.nativeErrorMessage,
+              provider: cached.result.provider,
+              model: cached.result.model,
+              analysisMode: cached.result.analysisMode ?? "native_video",
             });
+            try {
+              const refreshed = await understandVideoFile({
+                filePath: input.savePath,
+                mimeType: input.attachment.type,
+                focusMode: renderConfig.timelineItemsLimit === 0 ? "timeline" : undefined,
+                maxTimelineItems: renderConfig.timelineItemsLimit,
+              });
+              if (refreshed.analysisMode === "frame_sampling_fallback" && refreshed.nativeErrorMessage) {
+                input.log.warn("message", "Video attachment native understanding fell back to frame sampling", {
+                  name: input.attachment.name,
+                  mime: input.attachment.type,
+                  error: refreshed.nativeErrorMessage,
+                });
+              }
+              await writeCachedVideoUnderstanding({
+                stateDir: input.stateDir,
+                fingerprint: input.fingerprint,
+                mime: input.attachment.type,
+                result: refreshed,
+              });
+              input.log.info("message", "Video attachment auto understanding completed", {
+                name: input.attachment.name,
+                mime: input.attachment.type,
+                cacheHit: false,
+                provider: refreshed.provider,
+                model: refreshed.model,
+                analysisMode: refreshed.analysisMode ?? "native_video",
+                timelineItems: refreshed.timeline.length,
+                ...(refreshed.analysisMode === "frame_sampling_fallback" && refreshed.nativeErrorMessage
+                  ? { nativeErrorMessage: refreshed.nativeErrorMessage }
+                  : {}),
+              });
+              return {
+                result: refreshed,
+                cacheHit: false,
+              };
+            } catch (refreshError) {
+              input.log.warn("message", "Refreshing legacy frame fallback video cache failed; reusing cached fallback result", {
+                name: input.attachment.name,
+                mime: input.attachment.type,
+                error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+              });
+            }
           }
-          await writeCachedVideoUnderstanding({
-            stateDir: input.stateDir,
-            fingerprint: input.fingerprint,
-            mime: input.attachment.type,
-            result: refreshed,
-          });
+
           input.log.info("message", "Video attachment auto understanding completed", {
             name: input.attachment.name,
             mime: input.attachment.type,
-            cacheHit: false,
-            provider: refreshed.provider,
-            model: refreshed.model,
-            analysisMode: refreshed.analysisMode ?? "native_video",
-            timelineItems: refreshed.timeline.length,
-            ...(refreshed.analysisMode === "frame_sampling_fallback" && refreshed.nativeErrorMessage
-              ? { nativeErrorMessage: refreshed.nativeErrorMessage }
+            cacheHit: true,
+            provider: cached.result.provider,
+            model: cached.result.model,
+            analysisMode: cached.result.analysisMode ?? "native_video",
+            timelineItems: Array.isArray(cached.result.timeline) ? cached.result.timeline.length : 0,
+            ...(cached.result.analysisMode === "frame_sampling_fallback" && cached.result.nativeErrorMessage
+              ? { nativeErrorMessage: cached.result.nativeErrorMessage }
               : {}),
           });
           return {
-            result: refreshed,
-            cacheHit: false,
+            result: cached.result,
+            cacheHit: true,
           };
-        } catch (refreshError) {
-          input.log.warn("message", "Refreshing legacy frame fallback video cache failed; reusing cached fallback result", {
+        }
+
+        const result = await understandVideoFile({
+          filePath: input.savePath,
+          mimeType: input.attachment.type,
+          focusMode: renderConfig.timelineItemsLimit === 0 ? "timeline" : undefined,
+          maxTimelineItems: renderConfig.timelineItemsLimit,
+        });
+        if (result.analysisMode === "frame_sampling_fallback" && result.nativeErrorMessage) {
+          input.log.warn("message", "Video attachment native understanding fell back to frame sampling", {
             name: input.attachment.name,
             mime: input.attachment.type,
-            error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+            error: result.nativeErrorMessage,
           });
         }
-      }
-
-      input.log.info("message", "Video attachment auto understanding completed", {
-        name: input.attachment.name,
-        mime: input.attachment.type,
-        cacheHit: true,
-        provider: cached.result.provider,
-        model: cached.result.model,
-        analysisMode: cached.result.analysisMode ?? "native_video",
-        timelineItems: Array.isArray(cached.result.timeline) ? cached.result.timeline.length : 0,
-        ...(cached.result.analysisMode === "frame_sampling_fallback" && cached.result.nativeErrorMessage
-          ? { nativeErrorMessage: cached.result.nativeErrorMessage }
-          : {}),
-      });
-      return {
-        result: cached.result,
-        cacheHit: true,
-      };
-    }
-
-    const result = await understandVideoFile({
-      filePath: input.savePath,
-      mimeType: input.attachment.type,
-      focusMode: renderConfig.timelineItemsLimit === 0 ? "timeline" : undefined,
-      maxTimelineItems: renderConfig.timelineItemsLimit,
-    });
-    if (result.analysisMode === "frame_sampling_fallback" && result.nativeErrorMessage) {
-      input.log.warn("message", "Video attachment native understanding fell back to frame sampling", {
-        name: input.attachment.name,
-        mime: input.attachment.type,
-        error: result.nativeErrorMessage,
-      });
-    }
-    await writeCachedVideoUnderstanding({
-      stateDir: input.stateDir,
-      fingerprint: input.fingerprint,
-      mime: input.attachment.type,
-      result,
-    });
-    input.log.info("message", "Video attachment auto understanding completed", {
-      name: input.attachment.name,
-      mime: input.attachment.type,
-      cacheHit: false,
-      provider: result.provider,
-      model: result.model,
-      analysisMode: result.analysisMode ?? "native_video",
-      timelineItems: result.timeline.length,
-      ...(result.analysisMode === "frame_sampling_fallback" && result.nativeErrorMessage
-        ? { nativeErrorMessage: result.nativeErrorMessage }
-        : {}),
+        await writeCachedVideoUnderstanding({
+          stateDir: input.stateDir,
+          fingerprint: input.fingerprint,
+          mime: input.attachment.type,
+          result,
+        });
+        input.log.info("message", "Video attachment auto understanding completed", {
+          name: input.attachment.name,
+          mime: input.attachment.type,
+          cacheHit: false,
+          provider: result.provider,
+          model: result.model,
+          analysisMode: result.analysisMode ?? "native_video",
+          timelineItems: result.timeline.length,
+          ...(result.analysisMode === "frame_sampling_fallback" && result.nativeErrorMessage
+            ? { nativeErrorMessage: result.nativeErrorMessage }
+            : {}),
+        });
+        return {
+          result,
+          cacheHit: false,
+        };
+      },
     });
     return {
-      result,
-      cacheHit: false,
+      result: flight.value.result,
+      cacheHit: flight.joined || flight.value.cacheHit,
     };
   } catch (error) {
     input.log.warn("message", "Video attachment auto understanding failed", {

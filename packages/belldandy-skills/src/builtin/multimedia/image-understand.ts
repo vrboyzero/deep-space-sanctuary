@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { Tool, ToolCallResult, ToolContext } from "../../types.js";
@@ -17,11 +16,13 @@ import {
   parseTimeoutMs,
   stripMarkdownCodeFences,
 } from "./understand-shared.js";
+import { readMediaFileAsBase64 } from "./media-file-stream.js";
 
 const DEFAULT_IMAGE_UNDERSTAND_MODEL = "gpt-4.1-mini";
 const DEFAULT_IMAGE_UNDERSTAND_PROMPT = "请准确描述这张图片，提炼关键内容，并尽量识别可见文字。";
 const DEFAULT_MAX_INPUT_MB = 10;
 const DEFAULT_KEY_REGION_ITEMS = 4;
+export const MAX_IMAGE_INLINE_INPUT_BYTES = 20 * 1024 * 1024;
 
 export type ImageUnderstandFocusMode = "overview" | "detail_query";
 
@@ -106,7 +107,7 @@ export function readImageUnderstandConfig(): ImageUnderstandConfig {
     model: normalizeOptionalString(process.env.BELLDANDY_IMAGE_UNDERSTAND_MODEL) ?? DEFAULT_IMAGE_UNDERSTAND_MODEL,
     timeoutMs: parseTimeoutMs(process.env.BELLDANDY_IMAGE_UNDERSTAND_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     prompt: normalizeOptionalString(process.env.BELLDANDY_IMAGE_UNDERSTAND_PROMPT) ?? DEFAULT_IMAGE_UNDERSTAND_PROMPT,
-    maxInputBytes: maxInputMb * 1024 * 1024,
+    maxInputBytes: Math.min(maxInputMb * 1024 * 1024, MAX_IMAGE_INLINE_INPUT_BYTES),
   };
 }
 
@@ -231,35 +232,31 @@ export async function understandImageFile(input: ImageUnderstandOptions): Promis
   }
 
   const filePath = path.resolve(input.filePath);
-  const stat = await fs.stat(filePath);
-  if (!stat.isFile()) {
-    throw new Error(`Path is not a file: ${filePath}`);
-  }
-  if (stat.size > config.maxInputBytes) {
-    throw new Error(`Image file too large (${stat.size} bytes > ${config.maxInputBytes} bytes).`);
-  }
-
-  const mimeType = normalizeOptionalString(input.mimeType) ?? guessImageMimeFromFilePath(filePath);
-  if (!mimeType.startsWith("image/")) {
-    throw new Error(`Unsupported image mime type: ${mimeType}`);
-  }
-  const focusMode = normalizeFocusMode(input.focusMode);
-  const includeKeyRegions = input.includeKeyRegions !== false;
-  const maxKeyRegions = Math.max(1, Math.min(8, input.maxKeyRegions ?? DEFAULT_KEY_REGION_ITEMS));
-
-  const encoded = (await fs.readFile(filePath)).toString("base64");
   const linkedAbort = createLinkedAbortController({
     signal: input.abortSignal,
     timeoutMs: config.timeoutMs > 0 ? config.timeoutMs : undefined,
     timeoutReason: config.timeoutMs > 0 ? `Image understanding timed out after ${config.timeoutMs}ms.` : undefined,
   });
-  const openai = createOpenAIClient({
-    apiKey: config.apiKey,
-    baseURL: config.baseURL,
-    timeoutMs: config.timeoutMs,
-  });
 
   try {
+    const mimeType = normalizeOptionalString(input.mimeType) ?? guessImageMimeFromFilePath(filePath);
+    if (!mimeType.startsWith("image/")) {
+      throw new Error(`Unsupported image mime type: ${mimeType}`);
+    }
+    const focusMode = normalizeFocusMode(input.focusMode);
+    const includeKeyRegions = input.includeKeyRegions !== false;
+    const maxKeyRegions = Math.max(1, Math.min(8, input.maxKeyRegions ?? DEFAULT_KEY_REGION_ITEMS));
+    const encoded = await readMediaFileAsBase64({
+      filePath,
+      maxBytes: config.maxInputBytes,
+      label: "Image file",
+      abortSignal: linkedAbort.controller.signal,
+    });
+    const openai = createOpenAIClient({
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+      timeoutMs: config.timeoutMs,
+    });
     const response = await openai.chat.completions.create({
       model: config.model,
       messages: [

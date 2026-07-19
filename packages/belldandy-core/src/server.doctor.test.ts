@@ -2890,6 +2890,7 @@ test("system.doctor exposes delegation observability summary", async () => {
     status: "done",
     output: "legacy task done",
   });
+  await subTaskRuntimeStore.archiveTask(plainTask.id, "Archived for retention observation.");
 
   const server = await startGatewayServer({
     port: 0,
@@ -2940,10 +2941,37 @@ test("system.doctor exposes delegation observability summary", async () => {
         expectedDeliverableSummary: "Ship a patch",
       }),
     ]));
+    expect(res.payload?.subtaskRuntimeRetention?.summary).toMatchObject({
+      totalCount: 2,
+      activeCount: 1,
+      terminalCount: 1,
+      archivedCount: 1,
+      archivedTerminalCount: 1,
+      archivedActiveCount: 0,
+      unarchivedTerminalCount: 0,
+      statusCounts: {
+        pending: 0,
+        running: 1,
+        done: 1,
+        error: 0,
+        timeout: 0,
+        stopped: 0,
+      },
+      oldestArchivedAt: expect.any(Number),
+      newestArchivedAt: expect.any(Number),
+      oldestArchivedAgeMs: expect.any(Number),
+    });
+    expect(res.payload?.subtaskRuntimeRetention).not.toHaveProperty("items");
+    expect(JSON.stringify(res.payload?.subtaskRuntimeRetention)).not.toContain("legacy task done");
     expect(res.payload?.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "delegation_protocol",
         name: "Delegation Protocol",
+        status: "pass",
+      }),
+      expect.objectContaining({
+        id: "subtask_runtime_retention",
+        name: "SubTask Runtime Retention",
         status: "pass",
       }),
     ]));

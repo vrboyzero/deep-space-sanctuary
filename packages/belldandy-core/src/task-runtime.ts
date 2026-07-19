@@ -23,6 +23,23 @@ import {
   summarizeDelegationProtocol,
   type SubTaskDelegationSummary,
 } from "./subtask-result-envelope.js";
+import {
+  claimSubTaskCommand,
+  createSubTaskCommandIdempotencyKey,
+  isSubTaskCommandGenerationCurrent,
+  normalizeSubTaskCommandClaim,
+  releaseSubTaskCommandClaim,
+  SubTaskCommandClaimError,
+  type SubTaskCommandClaim,
+} from "./subtask-command-claim.js";
+import {
+  createSubTaskRuntimeQuarantineStatus,
+  parseSubTaskRuntimeRegistry,
+  SubTaskRuntimeStateLoadError,
+  SubTaskRuntimeStoreQuarantinedError,
+  type SubTaskRuntimeQuarantineStatus,
+} from "./subtask-runtime-state-quarantine.js";
+import { SubTaskRuntimeStoreLifecycle } from "./subtask-runtime-store-lifecycle.js";
 import { parseGoalSessionKey } from "./goals/session.js";
 import { GoalRuntimeBindingStore, type GoalRuntimeBindingSource } from "./goal-runtime-binding-store.js";
 import { getGoalRegistryEntry } from "./goals/registry.js";
@@ -133,7 +150,7 @@ export type SubTaskLaunchSpec = {
   background: boolean;
   timeoutMs: number;
   channel: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   cwd?: string;
   resolvedCwd?: string;
   toolSet?: string[];
@@ -180,6 +197,8 @@ export type SubTaskRecord = {
   outputPreview?: string;
   error?: string;
   bridgeSessionRuntime?: SubTaskBridgeSessionRuntimeState;
+  commandGeneration?: number;
+  activeCommandClaim?: SubTaskCommandClaim;
   steering: SubTaskSteeringRecord[];
   takeover: SubTaskTakeoverRecord[];
   resume: SubTaskResumeRecord[];
@@ -216,6 +235,7 @@ type CompleteSubTaskInput = {
   sessionId?: string;
   output?: string;
   error?: string;
+  commandGeneration?: number;
   bridgeSessionRuntime?: Partial<SubTaskBridgeSessionRuntimeState>;
 };
 
@@ -237,6 +257,7 @@ const RENAME_RETRIES = 3;
 const RENAME_RETRY_DELAY_MS = 50;
 const SCRATCH_NOTIFICATION_WINDOW = 6;
 const SCRATCH_PROGRESS_WINDOW = 6;
+const SUBTASK_RUNTIME_INSTANCE_ID = crypto.randomUUID();
 
 type RuntimeArtifact = {
   taskId: string;
@@ -249,10 +270,6 @@ function truncateText(value: string, maxLength = 240): string {
   const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
   if (!normalized) return "";
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
-}
-
-function stripUtf8Bom(raw: string): string {
-  return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
 }
 
 function sanitizeArtifactSegment(value: string | undefined, fallback: string): string {
@@ -718,6 +735,7 @@ function cloneRecord(record: SubTaskRecord): SubTaskRecord {
       delegation: cloneDelegationSummary(record.launchSpec.delegation),
     },
     bridgeSessionRuntime: record.bridgeSessionRuntime ? { ...record.bridgeSessionRuntime } : undefined,
+    activeCommandClaim: record.activeCommandClaim ? { ...record.activeCommandClaim } : undefined,
     progress: { ...record.progress },
     scratchPath: record.scratchPath,
     reviewPath: record.reviewPath,
@@ -770,7 +788,7 @@ function resolveGoalBindingFromTaskRecord(record: SubTaskRecord): {
   taskId: string;
   agentId?: string;
   profileId?: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   conversationId?: string;
   parentConversationId?: string;
   sessionId?: string;
@@ -828,9 +846,11 @@ export class SubTaskRuntimeStore {
   private readonly listeners = new Set<(event: SubTaskChangeEvent) => void>();
   private readonly dirtyScratchTaskIds = new Set<string>();
   private readonly dirtyPostRunArtifactTaskIds = new Set<string>();
+  private readonly lifecycle = new SubTaskRuntimeStoreLifecycle();
   private writeChain = Promise.resolve();
   private loadPromise: Promise<void> | null = null;
   private deferredPersistTimer: NodeJS.Timeout | null = null;
+  private quarantineStatus: SubTaskRuntimeQuarantineStatus | undefined;
 
   constructor(stateDir: string, logger?: RuntimeLogger, bindingStore?: GoalRuntimeBindingStore) {
     this.stateDir = stateDir;
@@ -849,24 +869,61 @@ export class SubTaskRuntimeStore {
       await fs.mkdir(this.runtimeDir, { recursive: true });
       this.records.clear();
       this.sessionToTask.clear();
+      let recoveredInterruptedClaims = false;
       try {
         const raw = await fs.readFile(this.statePath, "utf-8");
-        const parsed = JSON.parse(stripUtf8Bom(raw)) as Partial<SubTaskRuntimeState>;
-        for (const item of Array.isArray(parsed.items) ? parsed.items : []) {
+        const parsed = parseSubTaskRuntimeRegistry(raw);
+        for (const item of parsed.items) {
           const record = this.normalizeRecord(item);
-          if (!record) continue;
+          if (!record || this.records.has(record.id)) {
+            throw new SubTaskRuntimeStateLoadError("invalid_item");
+          }
+          recoveredInterruptedClaims = this.recoverInterruptedCommandClaim(record) || recoveredInterruptedClaims;
           this.records.set(record.id, record);
           if (record.sessionId) {
             this.sessionToTask.set(record.sessionId, record.id);
           }
         }
       } catch (error) {
-        if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
-          this.logger?.warn?.("Failed to load subtask runtime state, starting fresh.", error);
+        if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+          return;
+        }
+        this.records.clear();
+        this.sessionToTask.clear();
+        this.quarantineStatus = createSubTaskRuntimeQuarantineStatus(this.statePath, error);
+        this.logger?.warn?.("Subtask runtime registry entered read-only quarantine.", {
+          statePath: this.quarantineStatus.statePath,
+          kind: this.quarantineStatus.kind,
+        });
+        return;
+      }
+      if (recoveredInterruptedClaims) {
+        try {
+          await this.persist();
+        } catch (error) {
+          this.logger?.warn?.("Failed to persist recovered subtask command claims.", error);
         }
       }
     })();
     return this.loadPromise;
+  }
+
+  getQuarantineStatus(): SubTaskRuntimeQuarantineStatus | undefined {
+    return this.quarantineStatus ? { ...this.quarantineStatus } : undefined;
+  }
+
+  async flushAndClose(): Promise<void> {
+    return this.lifecycle.close(async () => {
+      await this.load();
+      this.cancelDeferredPersist();
+      await this.writeChain;
+      if (this.quarantineStatus) {
+        return;
+      }
+      const run = this.writeChain.then(() => this.persist());
+      this.writeChain = run.catch(() => {});
+      await run;
+    });
   }
 
   subscribe(listener: (event: SubTaskChangeEvent) => void): () => void {
@@ -898,6 +955,7 @@ export class SubTaskRuntimeStore {
         },
         createdAt: now,
         updatedAt: now,
+        commandGeneration: 0,
         steering: [],
         takeover: [],
         resume: [],
@@ -942,6 +1000,7 @@ export class SubTaskRuntimeStore {
         },
         createdAt: now,
         updatedAt: now,
+        commandGeneration: 0,
         steering: [],
         takeover: [],
         resume: [],
@@ -1043,12 +1102,42 @@ export class SubTaskRuntimeStore {
     });
   }
 
-  async markQueued(taskId: string, position: number): Promise<SubTaskRecord | undefined> {
+  async markQueued(
+    taskId: string,
+    position: number,
+    session?: {
+      sessionId?: string;
+      agentId?: string;
+      profileId?: string;
+      commandClaim?: SubTaskCommandClaim;
+    },
+  ): Promise<SubTaskRecord | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
       if (!record) return undefined;
+      if (session?.commandClaim && !isSubTaskCommandGenerationCurrent(record, session.commandClaim)) {
+        return cloneRecord(record);
+      }
+      // 排队回调可能晚于停止请求；此时不能把 terminal/stop_requested 状态重置回 pending。
+      if (isTerminalStatus(record.status) || record.stopRequestedAt) {
+        return cloneRecord(record);
+      }
       const now = Date.now();
+      if (session?.sessionId) {
+        if (record.sessionId && record.sessionId !== session.sessionId) {
+          this.sessionToTask.delete(record.sessionId);
+        }
+        record.sessionId = session.sessionId;
+        this.sessionToTask.set(session.sessionId, taskId);
+      }
+      if (session?.agentId?.trim()) {
+        record.agentId = session.agentId.trim();
+        record.launchSpec.agentId = session.agentId.trim();
+      }
+      if (session?.profileId?.trim()) {
+        record.launchSpec.profileId = session.profileId.trim();
+      }
       record.status = "pending";
       record.updatedAt = now;
       record.progress = {
@@ -1152,11 +1241,15 @@ export class SubTaskRuntimeStore {
     sessionId: string,
     agentId?: string,
     profileId?: string,
+    commandClaim?: SubTaskCommandClaim,
   ): Promise<SubTaskRecord | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
       if (!record) return undefined;
+      if (commandClaim && !isSubTaskCommandGenerationCurrent(record, commandClaim)) {
+        return cloneRecord(record);
+      }
       const now = Date.now();
       if (record.sessionId && record.sessionId !== sessionId) {
         this.sessionToTask.delete(record.sessionId);
@@ -1231,6 +1324,22 @@ export class SubTaskRuntimeStore {
     return this.mutate(async () => {
       const record = this.records.get(taskId);
       if (!record) return undefined;
+      if (input.commandGeneration !== undefined && input.commandGeneration !== record.commandGeneration) {
+        return cloneRecord(record);
+      }
+      // command 交接期间，旧 session 的完成事件不能抢先写入终态。
+      if (record.activeCommandClaim && input.commandGeneration === undefined) {
+        return cloneRecord(record);
+      }
+      const activeCommandClaim = record.activeCommandClaim;
+      if (activeCommandClaim && activeCommandClaim.generation === input.commandGeneration) {
+        // 某些 orchestrator 可能在未回调 onSessionCreated 时直接返回终态；此时由同代 completion 释放 claim，避免永久阻塞后续命令。
+        releaseSubTaskCommandClaim(
+          record,
+          activeCommandClaim.kind,
+          activeCommandClaim.commandId,
+        );
+      }
       if (record.sessionId && input.sessionId && input.sessionId !== record.sessionId) {
         return cloneRecord(record);
       }
@@ -1299,8 +1408,14 @@ export class SubTaskRuntimeStore {
     message: string,
     input: {
       sessionId?: string;
+      idempotencyKey?: string;
     } = {},
-  ): Promise<{ item: SubTaskRecord; steering: SubTaskSteeringRecord } | undefined> {
+  ): Promise<{
+    item: SubTaskRecord;
+    steering: SubTaskSteeringRecord;
+    commandClaim: SubTaskCommandClaim;
+    claimOwner: boolean;
+  } | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
@@ -1315,6 +1430,34 @@ export class SubTaskRuntimeStore {
         requestedAt: now,
         requestedSessionId: input.sessionId?.trim() || record.sessionId,
       };
+      const claimResult = claimSubTaskCommand(record, {
+        kind: "steering",
+        commandId: steering.id,
+        idempotencyKey: input.idempotencyKey?.trim() || createSubTaskCommandIdempotencyKey({
+          taskId,
+          kind: "steering",
+          message: normalizedMessage,
+          sessionId: steering.requestedSessionId,
+        }),
+        requestedAt: now,
+        expectedSessionId: steering.requestedSessionId,
+        ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
+      });
+      if (claimResult.status === "rejected") {
+        throw new SubTaskCommandClaimError(claimResult.reason);
+      }
+      if (claimResult.status === "replayed") {
+        const existing = record.steering.find((item) => item.id === claimResult.claim.commandId);
+        if (!existing) {
+          throw new SubTaskCommandClaimError("Subtask steering claim is missing its accepted record.");
+        }
+        return {
+          item: cloneRecord(record),
+          steering: { ...existing },
+          commandClaim: { ...claimResult.claim },
+          claimOwner: false,
+        };
+      }
       record.updatedAt = now;
       record.steering.push(steering);
       if (record.steering.length > MAX_STEERING_RECORDS) {
@@ -1326,6 +1469,8 @@ export class SubTaskRuntimeStore {
       return {
         item: cloneRecord(record),
         steering: { ...steering },
+        commandClaim: { ...claimResult.claim },
+        claimOwner: true,
       };
     });
   }
@@ -1343,6 +1488,9 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       const steering = record.steering.find((item) => item.id === steeringId);
       if (!steering) return cloneRecord(record);
+      if (record.activeCommandClaim && !releaseSubTaskCommandClaim(record, "steering", steeringId)) {
+        return cloneRecord(record);
+      }
       steering.status = "delivered";
       steering.deliveredAt = Date.now();
       steering.deliveredSessionId = input.sessionId?.trim() || record.sessionId;
@@ -1362,6 +1510,9 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       const steering = record.steering.find((item) => item.id === steeringId);
       if (!steering) return cloneRecord(record);
+      if (record.activeCommandClaim && !releaseSubTaskCommandClaim(record, "steering", steeringId)) {
+        return cloneRecord(record);
+      }
       steering.status = "failed";
       steering.error = truncateText(reason, 300);
       record.updatedAt = Date.now();
@@ -1377,8 +1528,14 @@ export class SubTaskRuntimeStore {
     message: string,
     input: {
       sessionId?: string;
+      idempotencyKey?: string;
     } = {},
-  ): Promise<{ item: SubTaskRecord; resume: SubTaskResumeRecord } | undefined> {
+  ): Promise<{
+    item: SubTaskRecord;
+    resume: SubTaskResumeRecord;
+    commandClaim: SubTaskCommandClaim;
+    claimOwner: boolean;
+  } | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
@@ -1392,6 +1549,34 @@ export class SubTaskRuntimeStore {
         requestedAt: now,
         requestedSessionId: input.sessionId?.trim() || record.sessionId,
       };
+      const claimResult = claimSubTaskCommand(record, {
+        kind: "resume",
+        commandId: resume.id,
+        idempotencyKey: input.idempotencyKey?.trim() || createSubTaskCommandIdempotencyKey({
+          taskId,
+          kind: "resume",
+          message: normalizedMessage,
+          sessionId: resume.requestedSessionId,
+        }),
+        requestedAt: now,
+        expectedSessionId: resume.requestedSessionId,
+        ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
+      });
+      if (claimResult.status === "rejected") {
+        throw new SubTaskCommandClaimError(claimResult.reason);
+      }
+      if (claimResult.status === "replayed") {
+        const existing = record.resume.find((item) => item.id === claimResult.claim.commandId);
+        if (!existing) {
+          throw new SubTaskCommandClaimError("Subtask resume claim is missing its accepted record.");
+        }
+        return {
+          item: cloneRecord(record),
+          resume: { ...existing },
+          commandClaim: { ...claimResult.claim },
+          claimOwner: false,
+        };
+      }
       record.updatedAt = now;
       record.resume.push(resume);
       if (record.resume.length > MAX_RESUME_RECORDS) {
@@ -1403,6 +1588,8 @@ export class SubTaskRuntimeStore {
       return {
         item: cloneRecord(record),
         resume: { ...resume },
+        commandClaim: { ...claimResult.claim },
+        claimOwner: true,
       };
     });
   }
@@ -1414,8 +1601,14 @@ export class SubTaskRuntimeStore {
     input: {
       sessionId?: string;
       mode?: SubTaskTakeoverMode;
+      idempotencyKey?: string;
     } = {},
-  ): Promise<{ item: SubTaskRecord; takeover: SubTaskTakeoverRecord } | undefined> {
+  ): Promise<{
+    item: SubTaskRecord;
+    takeover: SubTaskTakeoverRecord;
+    commandClaim: SubTaskCommandClaim;
+    claimOwner: boolean;
+  } | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
@@ -1433,6 +1626,37 @@ export class SubTaskRuntimeStore {
         requestedAt: now,
         requestedSessionId: input.sessionId?.trim() || record.sessionId,
       };
+      const claimResult = claimSubTaskCommand(record, {
+        kind: "takeover",
+        commandId: takeover.id,
+        idempotencyKey: input.idempotencyKey?.trim() || createSubTaskCommandIdempotencyKey({
+          taskId,
+          kind: "takeover",
+          message: normalizedMessage,
+          sessionId: takeover.requestedSessionId,
+          agentId: normalizedAgentId,
+          mode: takeover.mode,
+        }),
+        requestedAt: now,
+        expectedSessionId: takeover.requestedSessionId,
+        takeoverMode: takeover.mode,
+        ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
+      });
+      if (claimResult.status === "rejected") {
+        throw new SubTaskCommandClaimError(claimResult.reason);
+      }
+      if (claimResult.status === "replayed") {
+        const existing = record.takeover.find((item) => item.id === claimResult.claim.commandId);
+        if (!existing) {
+          throw new SubTaskCommandClaimError("Subtask takeover claim is missing its accepted record.");
+        }
+        return {
+          item: cloneRecord(record),
+          takeover: { ...existing },
+          commandClaim: { ...claimResult.claim },
+          claimOwner: false,
+        };
+      }
       record.updatedAt = now;
       record.takeover.push(takeover);
       if (record.takeover.length > MAX_TAKEOVER_RECORDS) {
@@ -1449,6 +1673,8 @@ export class SubTaskRuntimeStore {
       return {
         item: cloneRecord(record),
         takeover: { ...takeover },
+        commandClaim: { ...claimResult.claim },
+        claimOwner: true,
       };
     });
   }
@@ -1467,6 +1693,9 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       const takeover = record.takeover.find((item) => item.id === takeoverId);
       if (!takeover) return cloneRecord(record);
+      if (record.activeCommandClaim && !releaseSubTaskCommandClaim(record, "takeover", takeoverId)) {
+        return cloneRecord(record);
+      }
       takeover.status = "delivered";
       takeover.deliveredAt = Date.now();
       takeover.deliveredSessionId = input.sessionId?.trim() || record.sessionId;
@@ -1493,6 +1722,9 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       const takeover = record.takeover.find((item) => item.id === takeoverId);
       if (!takeover) return cloneRecord(record);
+      if (record.activeCommandClaim && !releaseSubTaskCommandClaim(record, "takeover", takeoverId)) {
+        return cloneRecord(record);
+      }
       takeover.status = "failed";
       takeover.error = truncateText(reason, 300);
       record.updatedAt = Date.now();
@@ -1521,6 +1753,9 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       const resume = record.resume.find((item) => item.id === resumeId);
       if (!resume) return cloneRecord(record);
+      if (record.activeCommandClaim && !releaseSubTaskCommandClaim(record, "resume", resumeId)) {
+        return cloneRecord(record);
+      }
       resume.status = "delivered";
       resume.deliveredAt = Date.now();
       resume.deliveredSessionId = input.sessionId?.trim() || record.sessionId;
@@ -1541,6 +1776,9 @@ export class SubTaskRuntimeStore {
       if (!record) return undefined;
       const resume = record.resume.find((item) => item.id === resumeId);
       if (!resume) return cloneRecord(record);
+      if (record.activeCommandClaim && !releaseSubTaskCommandClaim(record, "resume", resumeId)) {
+        return cloneRecord(record);
+      }
       resume.status = "failed";
       resume.error = truncateText(reason, 300);
       record.updatedAt = Date.now();
@@ -1707,6 +1945,12 @@ export class SubTaskRuntimeStore {
         })
         .slice(-MAX_TAKEOVER_RECORDS)
       : [];
+    const activeCommandClaim = normalizeSubTaskCommandClaim(value.activeCommandClaim);
+    const commandGeneration = Math.max(
+      0,
+      Math.floor(Number(value.commandGeneration) || 0),
+      activeCommandClaim?.generation ?? 0,
+    );
     const kind = value.kind === "bridge_session" ? "bridge_session" : "sub_agent";
     return {
       id,
@@ -1818,6 +2062,8 @@ export class SubTaskRuntimeStore {
       outputPreview: typeof value.outputPreview === "string" ? value.outputPreview : undefined,
       error: typeof value.error === "string" ? value.error : undefined,
       bridgeSessionRuntime: normalizeBridgeSessionRuntimeState(value.bridgeSessionRuntime),
+      commandGeneration,
+      activeCommandClaim,
       steering,
       takeover,
       resume,
@@ -1877,10 +2123,18 @@ export class SubTaskRuntimeStore {
     }
   }
 
+  private assertWritable(): void {
+    if (this.quarantineStatus) {
+      throw new SubTaskRuntimeStoreQuarantinedError(this.quarantineStatus);
+    }
+  }
+
   private async mutate<T>(
     mutator: () => Promise<T>,
     options: { persist?: "immediate" | "deferred" } = {},
   ): Promise<T> {
+    this.lifecycle.assertMutationAllowed();
+    this.assertWritable();
     let result!: T;
     const run = this.writeChain.then(async () => {
       result = await mutator();
@@ -1897,6 +2151,9 @@ export class SubTaskRuntimeStore {
   }
 
   private scheduleDeferredPersist(): void {
+    if (!this.lifecycle.isOpen()) {
+      return;
+    }
     if (this.deferredPersistTimer) {
       return;
     }
@@ -1918,7 +2175,33 @@ export class SubTaskRuntimeStore {
     this.deferredPersistTimer = null;
   }
 
+  private recoverInterruptedCommandClaim(record: SubTaskRecord): boolean {
+    const claim = record.activeCommandClaim;
+    if (!claim || claim.ownerInstanceId === SUBTASK_RUNTIME_INSTANCE_ID) {
+      return false;
+    }
+    const command = claim.kind === "steering"
+      ? record.steering.find((item) => item.id === claim.commandId)
+      : claim.kind === "resume"
+        ? record.resume.find((item) => item.id === claim.commandId)
+        : record.takeover.find((item) => item.id === claim.commandId);
+    if (command && command.status === "accepted") {
+      command.status = "failed";
+      command.error = "Command claim was interrupted by a previous runtime instance. Retry the command.";
+    }
+    record.activeCommandClaim = undefined;
+    record.updatedAt = Math.max(record.updatedAt, Date.now());
+    const notificationKind = claim.kind === "steering"
+      ? "steering_failed"
+      : claim.kind === "resume"
+        ? "resume_failed"
+        : "takeover_failed";
+    this.pushNotification(record, notificationKind, "A pending command claim was interrupted by a previous runtime instance and can be retried.");
+    return true;
+  }
+
   private async persist(): Promise<void> {
+    this.assertWritable();
     const scratchArtifacts = await this.prepareDirtyScratchArtifacts();
     const postRunArtifacts = await this.prepareDirtyPostRunArtifacts();
     const state: SubTaskRuntimeState = {
@@ -2548,12 +2831,17 @@ export function createSubTaskAgentCapabilities(input: {
 
       const spawnOptions: SpawnWithCallbacks = {
         launchSpec: resolvedLaunchSpec,
+        abortSignal: opts.abortSignal,
         shouldAbortBeforeStart: async () => {
           const current = await input.runtimeStore.getTask(task.id);
           return Boolean(current && (current.status === "stopped" || current.stopRequestedAt));
         },
-        onQueued: (position: number) => {
-          void input.runtimeStore.markQueued(task.id, position).catch((error) => {
+        onQueued: (position: number, sessionId?: string, resolvedAgentId?: string) => {
+          void input.runtimeStore.markQueued(task.id, position, {
+            sessionId,
+            agentId: resolvedAgentId,
+            profileId: resolvedLaunchSpec.profileId,
+          }).catch((error) => {
             input.logger?.warn?.("Failed to mark queued subtask.", error);
           });
         },
@@ -2762,8 +3050,12 @@ export function createSubTaskUpdateController(input: {
     if (!accepted) {
       throw new Error(`Failed to record subtask steering: ${taskId}`);
     }
+    if (!accepted.claimOwner) {
+      return accepted.item;
+    }
 
     const steeringId = accepted.steering.id;
+    const commandClaim = accepted.commandClaim;
     const priorHistory = extractConversationHistoryMessages(input.conversationStore.get(current.sessionId));
     await input.orchestrator.stopSession(current.sessionId, "Steering update requested. Relaunching with updated guidance.");
 
@@ -2775,8 +3067,13 @@ export function createSubTaskUpdateController(input: {
       },
       history: priorHistory,
       resumedFromSessionId: current.sessionId,
-      onQueued: (position: number) => {
-        void input.runtimeStore.markQueued(taskId, position).catch((error) => {
+      onQueued: (position: number, sessionId?: string, resolvedAgentId?: string) => {
+        void input.runtimeStore.markQueued(taskId, position, {
+          sessionId,
+          agentId: resolvedAgentId,
+          profileId: session.launchSpec.profileId,
+          commandClaim,
+        }).catch((error) => {
           input.logger?.warn?.("Failed to mark queued steering continuation.", {
             taskId,
             position,
@@ -2791,6 +3088,7 @@ export function createSubTaskUpdateController(input: {
           sessionId,
           resolvedAgentId,
           session.launchSpec.profileId,
+          commandClaim,
         ).catch((error) => {
           input.logger?.warn?.("Failed to attach steering continuation session.", {
             taskId,
@@ -2815,6 +3113,7 @@ export function createSubTaskUpdateController(input: {
       sessionId: result.sessionId ?? attachedSessionId,
       output: result.output,
       error: result.error,
+      commandGeneration: commandClaim.generation,
     })).catch(async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await input.runtimeStore.markSteeringFailed(taskId, steeringId, errorMessage);
@@ -2823,6 +3122,7 @@ export function createSubTaskUpdateController(input: {
           status: /timed out/i.test(errorMessage) ? "timeout" : "error",
           output: "",
           error: errorMessage,
+          commandGeneration: commandClaim.generation,
         });
       }
     });
@@ -2886,8 +3186,12 @@ export function createSubTaskResumeController(input: {
     if (!accepted) {
       throw new Error(`Failed to record subtask resume: ${taskId}`);
     }
+    if (!accepted.claimOwner) {
+      return accepted.item;
+    }
 
     const resumeId = accepted.resume.id;
+    const commandClaim = accepted.commandClaim;
     const priorHistory = current.sessionId
       ? extractConversationHistoryMessages(input.conversationStore.get(current.sessionId))
       : [];
@@ -2913,8 +3217,13 @@ export function createSubTaskResumeController(input: {
       launchSpec,
       history: priorHistory,
       resumedFromSessionId: current.sessionId,
-      onQueued: (position: number) => {
-        void input.runtimeStore.markQueued(taskId, position).catch((error) => {
+      onQueued: (position: number, sessionId?: string, resolvedAgentId?: string) => {
+        void input.runtimeStore.markQueued(taskId, position, {
+          sessionId,
+          agentId: resolvedAgentId,
+          profileId: launchSpec.profileId,
+          commandClaim,
+        }).catch((error) => {
           input.logger?.warn?.("Failed to mark queued subtask resume.", {
             taskId,
             position,
@@ -2929,6 +3238,7 @@ export function createSubTaskResumeController(input: {
           sessionId,
           resolvedAgentId,
           launchSpec.profileId,
+          commandClaim,
         ).catch((error) => {
           input.logger?.warn?.("Failed to attach resumed subtask session.", {
             taskId,
@@ -2954,6 +3264,7 @@ export function createSubTaskResumeController(input: {
       sessionId: result.sessionId ?? attachedSessionId,
       output: result.output,
       error: result.error,
+      commandGeneration: commandClaim.generation,
     })).catch(async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (!attachedSessionId) {
@@ -2965,6 +3276,7 @@ export function createSubTaskResumeController(input: {
         sessionId: attachedSessionId,
         output: "",
         error: errorMessage,
+        commandGeneration: commandClaim.generation,
       });
     });
 
@@ -3020,8 +3332,12 @@ export function createSubTaskTakeoverController(input: {
     if (!accepted) {
       throw new Error(`Failed to record subtask takeover: ${taskId}`);
     }
+    if (!accepted.claimOwner) {
+      return accepted.item;
+    }
 
     const takeoverId = accepted.takeover.id;
+    const commandClaim = accepted.commandClaim;
     const priorHistory = current.sessionId
       ? extractConversationHistoryMessages(input.conversationStore.get(current.sessionId))
       : [];
@@ -3054,8 +3370,13 @@ export function createSubTaskTakeoverController(input: {
       launchSpec,
       history: priorHistory,
       resumedFromSessionId: current.sessionId,
-      onQueued: (position: number) => {
-        void input.runtimeStore.markQueued(taskId, position).catch((error) => {
+      onQueued: (position: number, sessionId?: string, resolvedAgentId?: string) => {
+        void input.runtimeStore.markQueued(taskId, position, {
+          sessionId,
+          agentId: resolvedAgentId,
+          profileId: launchSpec.profileId,
+          commandClaim,
+        }).catch((error) => {
           input.logger?.warn?.("Failed to mark queued subtask takeover.", {
             taskId,
             position,
@@ -3070,6 +3391,7 @@ export function createSubTaskTakeoverController(input: {
           sessionId,
           resolvedAgentId,
           launchSpec.profileId,
+          commandClaim,
         ).catch((error) => {
           input.logger?.warn?.("Failed to attach taken-over subtask session.", {
             taskId,
@@ -3095,6 +3417,7 @@ export function createSubTaskTakeoverController(input: {
       sessionId: result.sessionId ?? attachedSessionId,
       output: result.output,
       error: result.error,
+      commandGeneration: commandClaim.generation,
     })).catch(async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (!attachedSessionId) {
@@ -3106,6 +3429,7 @@ export function createSubTaskTakeoverController(input: {
         sessionId: attachedSessionId,
         output: "",
         error: errorMessage,
+        commandGeneration: commandClaim.generation,
       });
     });
 

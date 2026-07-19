@@ -57,19 +57,59 @@ describe("MemoryManager guardrails", () => {
     expect(recent.some((item) => item.sourcePath === extraDocPath)).toBe(true);
   });
 
-  it("starts lazy indexing only once when first accessed", async () => {
+  it("shares one full scan between lazy and manual indexing callers", async () => {
     manager = createManager({
       workspaceRoot: sessionsDir,
       stateDir,
     });
 
-    const indexSpy = vi.spyOn(manager, "indexWorkspace").mockResolvedValue(undefined);
+    let releaseScan!: () => void;
+    const scanGate = new Promise<void>((resolve) => {
+      releaseScan = resolve;
+    });
+    const indexSpy = vi.spyOn((manager as any).indexer, "indexDirectory")
+      .mockImplementation(async () => await scanGate);
     const first = manager.startLazyIndexing();
-    const second = manager.startLazyIndexing();
+    const second = manager.indexWorkspace();
+    const third = manager.startLazyIndexing();
 
     expect(first).toBe(second);
-    await Promise.all([first, second]);
+    expect(second).toBe(third);
     expect(indexSpy).toHaveBeenCalledTimes(1);
+
+    releaseScan();
+    await Promise.all([first, second, third]);
+
+    await manager.indexWorkspace();
+    expect(indexSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("continues a byte-limited full scan from the deferred file on later generations", async () => {
+    const files = ["a.md", "b.md", "c.md"].map((name) => path.join(docsDir, name));
+    for (const [index, sourcePath] of files.entries()) {
+      await fs.writeFile(sourcePath, `# ${index}\n${String(index).repeat(40)}`, "utf-8");
+    }
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      indexerOptions: {
+        maxFileBytes: 128,
+        maxRunBytes: 70,
+      },
+    });
+
+    const indexedCount = () => files.filter((sourcePath) => (
+      (manager as any).store.getChunksBySource(sourcePath, 10).length > 0
+    )).length;
+
+    await manager.indexWorkspace();
+    expect(indexedCount()).toBe(1);
+
+    await manager.indexWorkspace();
+    expect(indexedCount()).toBe(2);
+
+    await manager.indexWorkspace();
+    expect(indexedCount()).toBe(3);
   });
 
   it("allows fire-and-forget close to drain in-flight lazy indexing before closing the store", async () => {
@@ -93,6 +133,38 @@ describe("MemoryManager guardrails", () => {
     void manager.close();
 
     await expect(lazy).resolves.toBeUndefined();
+  });
+
+  it("releases every paused background waiter on resume", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+    });
+    manager.pause();
+
+    const first = (manager as any).waitIfPaused() as Promise<void>;
+    const second = (manager as any).waitIfPaused() as Promise<void>;
+    const settled: string[] = [];
+    void first.then(() => settled.push("first"));
+    void second.then(() => settled.push("second"));
+
+    manager.resume();
+    await Promise.all([first, second]);
+
+    expect(settled.sort()).toEqual(["first", "second"]);
+  });
+
+  it("releases every paused background waiter while closing", async () => {
+    manager = createManager({
+      workspaceRoot: sessionsDir,
+      stateDir,
+    });
+    manager.pause();
+
+    const first = (manager as any).waitIfPaused() as Promise<void>;
+    const second = (manager as any).waitIfPaused() as Promise<void>;
+
+    await Promise.all([first, second, manager.close()]);
   });
 
   it("skips missing optional additional roots without warning noise", async () => {
@@ -1312,6 +1384,61 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("uses one task detail batch for each memory tree build branch", () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "tree-batch-chunk-a",
+      sourcePath: path.join(docsDir, "tree-batch-a.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "task memory tree batch projection A",
+    });
+    store.upsertChunk({
+      id: "tree-batch-chunk-b",
+      sourcePath: path.join(docsDir, "tree-batch-b.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "task memory tree batch projection B",
+    });
+    for (const [id, conversationId, startedAt] of [
+      ["tree-batch-task-a", "tree-batch-conversation", "2026-05-22T09:00:00.000Z"],
+      ["tree-batch-task-b", "tree-batch-conversation", "2026-05-22T10:00:00.000Z"],
+    ] as const) {
+      store.createTask({
+        id,
+        conversationId,
+        sessionKey: conversationId,
+        source: "chat",
+        status: "partial",
+        title: `Task ${id}`,
+        summary: `Summary ${id}`,
+        startedAt,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      });
+      store.linkTaskMemory(id, id.endsWith("a") ? "tree-batch-chunk-a" : "tree-batch-chunk-b", "used");
+    }
+
+    const batchSpy = vi.spyOn(store, "getTaskDetails");
+
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "task" }).totalNodes).toBe(2);
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+
+    batchSpy.mockClear();
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "conversation" }).totalNodes).toBe(1);
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+
+    batchSpy.mockClear();
+    expect(manager.rebuildMemoryTreeNodes({ limit: 10, kind: "profile" }).totalNodes).toBeGreaterThan(0);
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("rebuilds real profile/global nodes instead of falling back to task nodes", async () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -2012,6 +2139,93 @@ describe("MemoryManager guardrails", () => {
     } finally {
       store.searchHybrid = originalSearchHybrid;
     }
+  });
+
+  it("returns last-known-good node-assisted results before a dirty managed tree refresh runs", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      nodeAssistedRetrievalEnabled: true,
+    });
+
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "node-refresh-tree-chunk",
+      sourcePath: path.join(docsDir, "node-refresh-tree.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "profile overview last known good memory",
+    });
+    store.upsertMemoryTreeNodes([{
+      id: "profile:node-refresh",
+      level: 1,
+      kind: "profile",
+      scope: "private",
+      title: "Profile overview",
+      summary: "Profile overview last known good snapshot",
+      createdAt: "2026-05-22T09:00:00.000Z",
+      updatedAt: "2026-05-22T09:00:00.000Z",
+    }]);
+    store.upsertMemoryTreeEdges([{
+      id: "edge:profile:node-refresh:chunk:node-refresh-tree-chunk",
+      parentNodeId: "profile:node-refresh",
+      childType: "chunk",
+      childId: "node-refresh-tree-chunk",
+      relation: "contains",
+      position: 0,
+      weight: 1,
+      createdAt: "2026-05-22T09:00:00.000Z",
+    }]);
+    const rebuildSpy = vi.spyOn(manager, "rebuildMemoryTreeNodes");
+    const result = await (manager as any).applyNodeAssistedRetrieval("profile overview", {
+      limit: 2,
+      rawResults: [
+        {
+          id: "node-refresh-raw",
+          sourcePath: path.join(docsDir, "node-refresh.md"),
+          sourceType: "file",
+          memoryType: "other",
+          snippet: "fallback profile memory",
+          summary: "fallback profile memory",
+          score: 0.8,
+          metadata: {},
+          updatedAt: "2026-05-22T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(rebuildSpy).not.toHaveBeenCalled();
+    expect(result.results.map((item: { id: string }) => item.id)).toEqual([
+      "node-refresh-tree-chunk",
+      "node-refresh-raw",
+    ]);
+    expect(result.diagnostics.treeFreshness).toMatchObject({
+      stale: true,
+      refreshScheduled: true,
+      dirtyKinds: expect.arrayContaining(["profile"]),
+    });
+    expect(result.diagnostics.nodeHitCount).toBeGreaterThanOrEqual(1);
+    expect(result.results[0]?.id).toBe("node-refresh-tree-chunk");
+
+    await vi.waitFor(() => expect(rebuildSpy).toHaveBeenCalledTimes(2));
+  });
+
+  it("drops a scheduled node-assisted refresh when the manager closes", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      nodeAssistedRetrievalEnabled: true,
+    });
+
+    const rebuildSpy = vi.spyOn(manager, "rebuildMemoryTreeNodes");
+    await (manager as any).applyNodeAssistedRetrieval("profile overview", {
+      limit: 2,
+      rawResults: [],
+    });
+    await manager.close();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(rebuildSpy).not.toHaveBeenCalled();
   });
 
   it("expands topic evidence chunks when high-level topic routing is not enough", async () => {
@@ -2746,6 +2960,126 @@ describe("MemoryManager guardrails", () => {
     ).resolves.toEqual([]);
   });
 
+  it("returns completed keyword results at the retrieval deadline and aborts embedding", async () => {
+    const filePath = path.join(docsDir, "deadline-fallback.md");
+    await fs.writeFile(filePath, "# Deadline\ndeadline keyword fallback marker\n", "utf-8");
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    await manager.indexWorkspace();
+
+    let observedSignal: AbortSignal | undefined;
+    let observedDeadlineMs: number | undefined;
+    (manager as any).embeddingProvider = {
+      modelName: "never-settling-embedding",
+      embed: async () => await new Promise<number[]>(() => {}),
+      embedBatch: async () => [],
+      embedQuery: async (_query: string, context?: { signal?: AbortSignal; deadlineMs?: number }) => {
+        observedSignal = context?.signal;
+        observedDeadlineMs = context?.deadlineMs;
+        return await new Promise<number[]>(() => {});
+      },
+    };
+
+    const startedAt = Date.now();
+    const deadlineMs = startedAt + 25;
+    const execution = await manager.searchWithDiagnostics("deadline keyword fallback marker", {
+      limit: 3,
+      routingPolicy: "chunk_only",
+      deadlineMs,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(observedDeadlineMs).toBe(deadlineMs);
+    expect(execution.items.some((item) => item.sourcePath === filePath)).toBe(true);
+    expect(execution.diagnostics).toMatchObject({
+      deadlineExceeded: true,
+      embeddingFallbackReason: "deadline",
+    });
+  });
+
+  it("does not start embedding when the absolute retrieval deadline already passed", async () => {
+    const filePath = path.join(docsDir, "expired-deadline.md");
+    await fs.writeFile(filePath, "# Expired\nexpired deadline keyword marker\n", "utf-8");
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    await manager.indexWorkspace();
+    const embedQuery = vi.fn(async () => [0.1]);
+    (manager as any).embeddingProvider = {
+      modelName: "expired-deadline-embedding",
+      embed: async () => [0.1],
+      embedBatch: async () => [],
+      embedQuery,
+    };
+
+    const execution = await manager.searchWithDiagnostics("expired deadline keyword marker", {
+      limit: 3,
+      routingPolicy: "chunk_only",
+      deadlineMs: Date.now() - 1,
+    });
+
+    expect(embedQuery).not.toHaveBeenCalled();
+    expect(execution.items.some((item) => item.sourcePath === filePath)).toBe(true);
+    expect(execution.diagnostics).toMatchObject({
+      deadlineExceeded: true,
+      embeddingFallbackReason: "deadline",
+    });
+  });
+
+  it("rejects caller cancellation and ignores a late embedding result", async () => {
+    const filePath = path.join(docsDir, "cancelled-retrieval.md");
+    await fs.writeFile(filePath, "# Cancelled\ncancelled retrieval marker\n", "utf-8");
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    await manager.indexWorkspace();
+
+    let resolveEmbedding!: (vector: number[]) => void;
+    let observedSignal: AbortSignal | undefined;
+    (manager as any).embeddingProvider = {
+      modelName: "late-embedding",
+      embed: async () => [0.1],
+      embedBatch: async () => [],
+      embedQuery: async (_query: string, context?: { signal?: AbortSignal }) => {
+        observedSignal = context?.signal;
+        return await new Promise<number[]>((resolve) => {
+          resolveEmbedding = resolve;
+        });
+      },
+    };
+    const keywordSpy = vi.spyOn((manager as any).store, "searchKeyword");
+    const hybridSpy = vi.spyOn((manager as any).store, "searchHybrid");
+    const controller = new AbortController();
+    const search = manager.search("cancelled retrieval marker", {
+      limit: 3,
+      routingPolicy: "chunk_only",
+      signal: controller.signal,
+    });
+
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+    controller.abort(new Error("caller stopped"));
+    await expect(search).rejects.toMatchObject({ name: "AbortError" });
+    resolveEmbedding([0.9]);
+    await Promise.resolve();
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(keywordSpy).toHaveBeenCalledTimes(1);
+    expect(hybridSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not log query or provider error content when embedding falls back", async () => {
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    (manager as any).embeddingProvider = {
+      modelName: "failing-embedding",
+      embed: async () => { throw new Error("provider included secret query marker"); },
+      embedBatch: async () => [],
+      embedQuery: async () => { throw new Error("provider included secret query marker"); },
+    };
+
+    await manager.search("secret query marker", { limit: 1, routingPolicy: "chunk_only" });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toBe("Embedding failed; using keyword-only memory retrieval.");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("secret query marker");
+  });
+
   it("preserves chunk and source visibility after reindex", async () => {
     const chunkFilePath = path.join(docsDir, "chunk-visibility.md");
     const sourceFilePath = path.join(docsDir, "source-visibility.md");
@@ -3244,6 +3578,79 @@ describe("MemoryManager guardrails", () => {
     expect(items[0].matchReasons).toEqual(expect.arrayContaining(["标题/目标", "摘要/复盘", "最近活动"]));
   });
 
+  it("hydrates shortcut candidates through batch projection instead of per-task detail reads", () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    const store = (manager as any).store;
+    seedTaskShortcut(store, {
+      taskId: "task-shortcut-batch-1",
+      conversationId: "conv-shortcut-batch-1",
+      status: "success",
+      objective: "完成 task batch projection 接线",
+      summary: "已批量读取 task detail，等待 shortcut 回归验证。",
+      updatedAt: "2026-04-18T10:00:00.000Z",
+      activities: [
+        createShortcutActivity({
+          id: "activity-shortcut-batch-1",
+          taskId: "task-shortcut-batch-1",
+          conversationId: "conv-shortcut-batch-1",
+          sequence: 0,
+          kind: "file_changed",
+          state: "completed",
+          happenedAt: "2026-04-18T09:58:00.000Z",
+          title: "已新增 task-detail-batch.ts",
+        }),
+      ],
+    });
+    seedTaskShortcut(store, {
+      taskId: "task-shortcut-batch-2",
+      conversationId: "conv-shortcut-batch-2",
+      status: "partial",
+      objective: "继续 task batch projection 回归",
+      summary: "继续验证 task detail 的批量投影字段。",
+      updatedAt: "2026-04-18T11:00:00.000Z",
+      activities: [
+        createShortcutActivity({
+          id: "activity-shortcut-batch-2",
+          taskId: "task-shortcut-batch-2",
+          conversationId: "conv-shortcut-batch-2",
+          sequence: 0,
+          kind: "tool_called",
+          state: "completed",
+          happenedAt: "2026-04-18T10:58:00.000Z",
+          title: "已执行 task detail regression",
+        }),
+      ],
+    });
+
+    const batchSpy = vi.spyOn(store, "getTaskDetails");
+    const getTaskSpy = vi.spyOn(store, "getTask");
+    const activitySpy = vi.spyOn(store, "listTaskActivities");
+    const memoryLinkSpy = vi.spyOn(store, "listTaskMemoryLinks");
+    const usageSpy = vi.spyOn(store, "listExperienceUsages");
+    const usageStatsSpy = vi.spyOn(store, "getExperienceUsageStats");
+
+    const items = manager.findSimilarPastWork({
+      query: "task batch projection",
+      limit: 3,
+    });
+
+    expect(items.map((item) => item.taskId)).toEqual(expect.arrayContaining([
+      "task-shortcut-batch-1",
+      "task-shortcut-batch-2",
+    ]));
+    expect(batchSpy).toHaveBeenCalledTimes(2);
+    expect(getTaskSpy).not.toHaveBeenCalled();
+    expect(activitySpy).not.toHaveBeenCalled();
+    expect(memoryLinkSpy).not.toHaveBeenCalled();
+    expect(usageSpy).not.toHaveBeenCalled();
+    expect(usageStatsSpy).not.toHaveBeenCalled();
+  });
+
   it("returns durable memory guidance with accepted and rejected policy summary", () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -3267,6 +3674,77 @@ describe("MemoryManager guardrails", () => {
       "debug_recipe",
       "policy_rule",
     ]));
+  });
+
+  it("aborts an evolution request when its deadline expires", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      evolutionEnabled: true,
+      evolutionModel: "test-evolution-model",
+      evolutionBaseUrl: "https://example.invalid/v1",
+      evolutionApiKey: "test-evolution-key",
+      evolutionMinMessages: 2,
+      evolutionTimeoutMs: 25,
+    });
+    let requestSignal: AbortSignal | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), { once: true });
+      });
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const result = await manager.extractMemoriesFromConversation("evolution-timeout", [
+        { role: "user", content: "remember this preference" },
+        { role: "assistant", content: "acknowledged" },
+      ]);
+
+      expect(requestSignal?.aborted).toBe(true);
+      expect(result.summary).toContain("timed out after 25ms");
+      expect(manager.isSessionMemoryExtracted("evolution-timeout")).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("aborts an evolution request during close even when fetch ignores the signal", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      evolutionEnabled: true,
+      evolutionModel: "test-evolution-model",
+      evolutionBaseUrl: "https://example.invalid/v1",
+      evolutionApiKey: "test-evolution-key",
+      evolutionMinMessages: 2,
+      evolutionTimeoutMs: 60_000,
+    });
+    let requestSignal: AbortSignal | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>(() => {});
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const extraction = manager.extractMemoriesFromConversation("evolution-close", [
+        { role: "user", content: "remember this preference" },
+        { role: "assistant", content: "acknowledged" },
+      ]);
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+      const close = manager.close();
+      const [result] = await Promise.all([extraction, close]);
+
+      expect(requestSignal?.aborted).toBe(true);
+      expect(result.summary).toContain("Memory manager is closing");
+    } finally {
+      errorSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
   });
 
   it("filters code-like and path-like extraction candidates before writing durable memory", async () => {
@@ -3579,6 +4057,244 @@ describe("MemoryManager guardrails", () => {
     expect(body).not.toHaveProperty("reasoning_split");
 
     fetchSpy.mockRestore();
+  });
+
+  it("records invalid embedding results and advances healthy chunks without retrying the failed prefix", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      embeddingBatchSize: 2,
+    });
+
+    const store = (manager as any).store;
+    const embed = vi.fn(async () => [0.1, 0.2]);
+    const embedBatch = vi.fn(async (texts: string[]) => texts.map((text) => (
+      text.includes("poison embedding") ? [Number.NaN, 0.2] : [0.1, 0.2]
+    )));
+    (manager as any).embeddingProvider = {
+      modelName: "response-validation-test",
+      dimension: 2,
+      embed,
+      embedBatch,
+    };
+
+    for (const [id, content] of [
+      ["embedding-poison", "poison embedding"],
+      ["embedding-healthy-one", "healthy embedding one"],
+      ["embedding-healthy-two", "healthy embedding two"],
+    ]) {
+      store.upsertChunk({
+        id,
+        sourcePath: path.join(docsDir, `${id}.md`),
+        sourceType: "file",
+        memoryType: "working",
+        content,
+      });
+    }
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await (manager as any).processPendingEmbeddings();
+
+      expect(embed).not.toHaveBeenCalled();
+      expect(embedBatch).toHaveBeenCalledTimes(2);
+      expect(store.getChunkVector("embedding-poison")).toBeNull();
+      expect(store.getChunkVector("embedding-healthy-one")).toEqual([
+        expect.closeTo(0.1, 5),
+        expect.closeTo(0.2, 5),
+      ]);
+      expect(store.getChunkVector("embedding-healthy-two")).toEqual([
+        expect.closeTo(0.1, 5),
+        expect.closeTo(0.2, 5),
+      ]);
+      expect(store.getVectorStatus().cached).toBe(2);
+      const failureScope = (manager as any).computeEmbeddingFailureScope();
+      const ledger = (manager as any).embeddingFailureLedger;
+      expect(ledger.getRecord(failureScope, "embedding-poison")).toMatchObject({
+        failureCount: 1,
+        lastFailureReason: "invalid_response",
+        nextRetryAt: expect.any(Number),
+      });
+      const warningOutput = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warningOutput).not.toContain("zero-progress batch");
+      expect(warningOutput).not.toContain("poison embedding");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("derives an undeclared provider dimension from the first real passage batch", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "embedding-derived-dimension",
+      sourcePath: path.join(docsDir, "embedding-derived-dimension.md"),
+      sourceType: "file",
+      memoryType: "working",
+      content: "derive dimensions from passage",
+    });
+    const embed = vi.fn(async () => [0.1, 0.2]);
+    const embedBatch = vi.fn(async () => [[0.1, 0.2]]);
+    (manager as any).embeddingProvider = {
+      modelName: "undeclared-dimension-test",
+      embed,
+      embedBatch,
+    };
+
+    await (manager as any).processPendingEmbeddings();
+
+    expect(embed).not.toHaveBeenCalled();
+    expect(embedBatch).toHaveBeenCalledWith(
+      ["derive dimensions from passage"],
+      { signal: undefined },
+    );
+    expect(store.getChunkVector("embedding-derived-dimension")).toEqual([
+      expect.closeTo(0.1, 5),
+      expect.closeTo(0.2, 5),
+    ]);
+  });
+
+  it("stops failed embedding requests without logging provider errors or passage content", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "embedding-failed-request",
+      sourcePath: path.join(docsDir, "embedding-failed-request.md"),
+      sourceType: "file",
+      memoryType: "working",
+      content: "private passage marker",
+    });
+    (manager as any).embeddingProvider = {
+      modelName: "failed-request-test",
+      dimension: 2,
+      embed: async () => [0.1, 0.2],
+      embedBatch: async () => {
+        throw new Error("provider error marker");
+      },
+    };
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await (manager as any).processPendingEmbeddings();
+
+      expect(store.getChunkVector("embedding-failed-request")).toBeNull();
+      expect(store.getVectorStatus().cached).toBe(0);
+      const warningOutput = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warningOutput).toContain("Embedding batch request failed");
+      expect(warningOutput).not.toContain("private passage marker");
+      expect(warningOutput).not.toContain("provider error marker");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("does not write a partial embedding response to vec0 or cache", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      embeddingBatchSize: 2,
+    });
+
+    const store = (manager as any).store;
+    for (const id of ["embedding-partial-one", "embedding-partial-two"]) {
+      store.upsertChunk({
+        id,
+        sourcePath: path.join(docsDir, `${id}.md`),
+        sourceType: "file",
+        memoryType: "working",
+        content: id,
+      });
+    }
+    const embedBatch = vi.fn(async () => [[0.1, 0.2]]);
+    (manager as any).embeddingProvider = {
+      modelName: "partial-response-test",
+      dimension: 2,
+      embed: async () => [0.1, 0.2],
+      embedBatch,
+    };
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await (manager as any).processPendingEmbeddings();
+
+      expect(embedBatch).toHaveBeenCalledTimes(1);
+      expect(store.getChunkVector("embedding-partial-one")).toBeNull();
+      expect(store.getChunkVector("embedding-partial-two")).toBeNull();
+      expect(store.getVectorStatus().cached).toBe(0);
+      const warningOutput = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(warningOutput).toContain("expected=2, received=1, failed=2");
+      expect(warningOutput).toContain("zero-progress batch");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("persists a failed chunk backoff across restart without blocking later chunks", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      embeddingBatchSize: 1,
+    });
+
+    const firstStore = (manager as any).store;
+    firstStore.upsertChunk({
+      id: "embedding-backoff-poison",
+      sourcePath: path.join(docsDir, "embedding-backoff-poison.md"),
+      sourceType: "file",
+      memoryType: "working",
+      content: "poison before restart",
+    });
+    const firstEmbedBatch = vi.fn(async () => [[Number.NaN, 0.2]]);
+    (manager as any).embeddingProvider = {
+      modelName: "persistent-backoff-test",
+      dimension: 2,
+      embed: async () => [0.1, 0.2],
+      embedBatch: firstEmbedBatch,
+    };
+
+    await (manager as any).processPendingEmbeddings();
+    expect(firstEmbedBatch).toHaveBeenCalledTimes(1);
+    expect(firstStore.getChunkVector("embedding-backoff-poison")).toBeNull();
+
+    await manager.close();
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      embeddingBatchSize: 1,
+    });
+    const secondStore = (manager as any).store;
+    secondStore.upsertChunk({
+      id: "embedding-backoff-healthy",
+      sourcePath: path.join(docsDir, "embedding-backoff-healthy.md"),
+      sourceType: "file",
+      memoryType: "working",
+      content: "healthy after restart",
+    });
+    const secondEmbedBatch = vi.fn(async () => [[0.1, 0.2]]);
+    (manager as any).embeddingProvider = {
+      modelName: "persistent-backoff-test",
+      dimension: 2,
+      embed: async () => [0.1, 0.2],
+      embedBatch: secondEmbedBatch,
+    };
+
+    await (manager as any).processPendingEmbeddings();
+
+    expect(secondEmbedBatch).toHaveBeenCalledTimes(1);
+    expect(secondEmbedBatch).toHaveBeenCalledWith(["healthy after restart"], { signal: undefined });
+    expect(secondStore.getChunkVector("embedding-backoff-poison")).toBeNull();
+    expect(secondStore.getChunkVector("embedding-backoff-healthy")).toEqual([
+      expect.closeTo(0.1, 5),
+      expect.closeTo(0.2, 5),
+    ]);
   });
 
   it("aggregates embedding cache and API logs into a single summary per sync run", async () => {

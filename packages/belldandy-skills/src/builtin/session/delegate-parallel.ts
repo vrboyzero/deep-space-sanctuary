@@ -1,8 +1,9 @@
-import type { Tool, ToolCallResult } from "../../types.js";
+import type { SpawnSubAgentOptions, SubAgentResult, Tool, ToolCallResult } from "../../types.js";
 import crypto from "node:crypto";
 import { withToolContract } from "../../tool-contract.js";
 import { buildSubAgentLaunchSpec } from "../../subagent-launch.js";
 import { buildFailureToolCallResult } from "../../failure-kind.js";
+import { isAbortError, readAbortReason, throwIfAborted } from "../../abort-utils.js";
 import {
     buildDelegationResultFollowUpStrategy,
     DELEGATION_CONTRACT_PARAMETER_PROPERTIES,
@@ -12,6 +13,10 @@ import {
     readStructuredDelegationContractArgs,
 } from "./delegation-contract.js";
 import type { DelegationTeamMetadata, DelegationTeamMode } from "../../delegation-protocol.js";
+
+export const DEFAULT_DELEGATE_PARALLEL_MAX_TASKS = 8;
+export const DEFAULT_DELEGATE_PARALLEL_MAX_CONCURRENT = 4;
+export const DEFAULT_DELEGATE_PARALLEL_MAX_AGGREGATE_BYTES = 128 * 1024;
 
 /**
  * delegate_parallel — 并行委托多个任务给子 Agent
@@ -73,6 +78,10 @@ export const delegateParallelTool: Tool = withToolContract({
             ...(failureKind ? { failureKind } : {}),
         });
 
+        if (context.abortSignal?.aborted) {
+            return makeError(readAbortReason(context.abortSignal), "", "environment_error");
+        }
+
         if (!context.agentCapabilities?.spawnParallel) {
             return makeError(
                 "Error: Parallel sub-agent orchestration is not available (capability missing).",
@@ -87,6 +96,13 @@ export const delegateParallelTool: Tool = withToolContract({
                 "Error: tasks must be a non-empty array.",
                 "Error: tasks must be a non-empty array.",
                 "input_error",
+            );
+        }
+        if (tasks.length > DEFAULT_DELEGATE_PARALLEL_MAX_TASKS) {
+            return makeError(
+                `Error: delegate_parallel accepts at most ${DEFAULT_DELEGATE_PARALLEL_MAX_TASKS} tasks per call (received ${tasks.length}).`,
+                "",
+                "permission_or_policy",
             );
         }
 
@@ -130,7 +146,12 @@ export const delegateParallelTool: Tool = withToolContract({
         });
 
         try {
-            const results = await context.agentCapabilities.spawnParallel(normalized);
+            const results = await spawnParallelInBatches(
+                context.agentCapabilities.spawnParallel,
+                normalized,
+                DEFAULT_DELEGATE_PARALLEL_MAX_CONCURRENT,
+                context.abortSignal,
+            );
             const reviewed = results.map((result, index) => {
                 const gate = result.success
                     ? evaluateDelegationResultGate({
@@ -152,23 +173,6 @@ export const delegateParallelTool: Tool = withToolContract({
                 };
             });
 
-            const lines = reviewed.map(({ result, accepted, gateReport, gateError }, i) => {
-                const taskLabel = normalized[i].agentId ?? "default";
-                const status = accepted ? "ACCEPTED" : gateError ? "REJECTED" : "FAILED";
-                const body = accepted
-                    ? result.output
-                    : gateError
-                        ? `${result.output}\n\n${gateError}`.trim()
-                        : (result.error ?? "unknown error");
-                const meta = [
-                    gateReport ?? "",
-                    result.taskId ? `Task ID: ${result.taskId}` : "",
-                    result.sessionId ? `Session ID: ${result.sessionId}` : "",
-                    result.outputPath ? `Output Path: ${result.outputPath}` : "",
-                ].filter(Boolean).join("\n");
-                return `[Task ${i + 1} / ${taskLabel}] ${status}\n${body}${meta ? `\n${meta}` : ""}`;
-            });
-
             const workerSuccessCount = reviewed.filter(({ result }) => result.success).length;
             const acceptedCount = reviewed.filter(({ accepted }) => accepted).length;
             const gateRejectedCount = reviewed.filter(({ result, gate }) => result.success && gate?.enforced && !gate.accepted).length;
@@ -188,31 +192,81 @@ export const delegateParallelTool: Tool = withToolContract({
                 outputPath: result.outputPath,
                 acceptanceGate: gate,
             }));
+            const maxAggregateBytes = resolveMaxAggregateBytes(context.policy.maxResponseBytes);
+            const outputBuilder = new BoundedUtf8TextBuilder(maxAggregateBytes);
+            outputBuilder.append(
+                `[delegate_parallel] ${results.length} tasks completed (${workerSuccessCount} worker succeeded, ${acceptedCount} accepted, ${gateRejectedCount} rejected by acceptance gate).`,
+            );
+            reviewed.forEach(({ result, accepted, gateReport, gateError }, index) => {
+                const taskLabel = normalized[index]?.agentId ?? "default";
+                const status = accepted ? "ACCEPTED" : gateError ? "REJECTED" : "FAILED";
+                outputBuilder.append("\n\n---\n\n");
+                outputBuilder.append(`[Task ${index + 1} / ${taskLabel}] ${status}\n`);
+                if (accepted) {
+                    outputBuilder.append(result.output);
+                } else if (gateError) {
+                    outputBuilder.append(result.output);
+                    outputBuilder.append("\n\n");
+                    outputBuilder.append(gateError);
+                } else {
+                    outputBuilder.append(result.error ?? "unknown error");
+                }
+                const meta = [
+                    gateReport ?? "",
+                    result.taskId ? `Task ID: ${result.taskId}` : "",
+                    result.sessionId ? `Session ID: ${result.sessionId}` : "",
+                    result.outputPath ? `Output Path: ${result.outputPath}` : "",
+                ].filter(Boolean).join("\n");
+                if (meta) {
+                    outputBuilder.append("\n");
+                    outputBuilder.append(meta);
+                }
+            });
+            const output = outputBuilder.finish(
+                `\n\n[delegate_parallel output truncated at ${maxAggregateBytes} bytes; use Task ID, Session ID, or Output Path metadata to inspect full results.]`,
+            );
+            const delegationMetadata = buildDelegationResultToolMetadata({
+                delegationResults,
+                acceptedCount,
+                gateRejectedCount,
+                workerSuccessCount,
+                followUpStrategy: buildDelegationResultFollowUpStrategy({
+                    toolName: "delegate_parallel",
+                    requestArguments: args as Record<string, unknown>,
+                    delegationResults,
+                }),
+                team: sharedTeamMetadata,
+            });
 
             return {
                 id,
                 name,
                 success: allSuccess,
-                output: `[delegate_parallel] ${results.length} tasks completed (${workerSuccessCount} worker succeeded, ${acceptedCount} accepted, ${gateRejectedCount} rejected by acceptance gate).\n\n${lines.join("\n\n---\n\n")}`,
+                output,
                 ...(!allSuccess
                     ? { failureKind: gateRejectedCount > 0 ? "business_logic_error" : "environment_error" }
                     : {}),
                 durationMs: Date.now() - start,
-                metadata: buildDelegationResultToolMetadata({
-                    delegationResults,
-                    acceptedCount,
-                    gateRejectedCount,
-                    workerSuccessCount,
-                    followUpStrategy: buildDelegationResultFollowUpStrategy({
-                        toolName: "delegate_parallel",
-                        requestArguments: args as Record<string, unknown>,
-                        delegationResults,
-                    }),
-                    team: sharedTeamMetadata,
-                }),
+                metadata: {
+                    ...delegationMetadata,
+                    delegationBudget: {
+                        maxTasks: DEFAULT_DELEGATE_PARALLEL_MAX_TASKS,
+                        maxConcurrent: DEFAULT_DELEGATE_PARALLEL_MAX_CONCURRENT,
+                        maxAggregateBytes,
+                        taskCount: tasks.length,
+                        outputBytesObserved: outputBuilder.observedBytes,
+                        outputBytesReturned: Buffer.byteLength(output, "utf-8"),
+                        truncated: outputBuilder.wasTruncated,
+                    },
+                },
             };
         } catch (err) {
-            return makeError(err instanceof Error ? err.message : String(err), "", "environment_error");
+            const cancelled = isAbortError(err) || context.abortSignal?.aborted;
+            return makeError(
+                cancelled ? readAbortReason(context.abortSignal) : (err instanceof Error ? err.message : String(err)),
+                "",
+                "environment_error",
+            );
         }
     },
 }, {
@@ -230,6 +284,81 @@ export const delegateParallelTool: Tool = withToolContract({
     },
     outputPersistencePolicy: "conversation",
 });
+
+async function spawnParallelInBatches(
+    spawnParallel: (tasks: SpawnSubAgentOptions[]) => Promise<SubAgentResult[]>,
+    tasks: SpawnSubAgentOptions[],
+    maxConcurrent: number,
+    signal?: AbortSignal,
+): Promise<SubAgentResult[]> {
+    const results: SubAgentResult[] = [];
+    for (let start = 0; start < tasks.length; start += maxConcurrent) {
+        throwIfAborted(signal);
+        const batch = tasks.slice(start, start + maxConcurrent);
+        results.push(...await spawnParallel(batch));
+    }
+    return results;
+}
+
+class BoundedUtf8TextBuilder {
+    private readonly chunks: string[] = [];
+    private returnedBytes = 0;
+    private truncated = false;
+    observedBytes = 0;
+
+    constructor(private readonly maxBytes: number) {}
+
+    get wasTruncated(): boolean {
+        return this.truncated;
+    }
+
+    append(value: string): void {
+        const bytes = Buffer.byteLength(value, "utf-8");
+        this.observedBytes += bytes;
+        const remaining = this.maxBytes - this.returnedBytes;
+        if (remaining <= 0) {
+            this.truncated = this.truncated || bytes > 0;
+            return;
+        }
+        if (bytes <= remaining) {
+            this.chunks.push(value);
+            this.returnedBytes += bytes;
+            return;
+        }
+        const prefix = takeUtf8Prefix(value, remaining);
+        this.chunks.push(prefix);
+        this.returnedBytes += Buffer.byteLength(prefix, "utf-8");
+        this.truncated = true;
+    }
+
+    finish(truncationMarker: string): string {
+        const output = this.chunks.join("");
+        if (!this.truncated) return output;
+        const markerBytes = Buffer.byteLength(truncationMarker, "utf-8");
+        if (markerBytes >= this.maxBytes) {
+            return takeUtf8Prefix(truncationMarker, this.maxBytes);
+        }
+        return `${takeUtf8Prefix(output, this.maxBytes - markerBytes)}${truncationMarker}`;
+    }
+}
+
+function resolveMaxAggregateBytes(policyLimit: number): number {
+    const normalizedPolicyLimit = Number.isFinite(policyLimit) && policyLimit > 0
+        ? Math.floor(policyLimit)
+        : DEFAULT_DELEGATE_PARALLEL_MAX_AGGREGATE_BYTES;
+    return Math.min(DEFAULT_DELEGATE_PARALLEL_MAX_AGGREGATE_BYTES, normalizedPolicyLimit);
+}
+
+function takeUtf8Prefix(value: string, maxBytes: number): string {
+    if (maxBytes <= 0) return "";
+    const buffer = Buffer.from(value, "utf-8");
+    if (buffer.length <= maxBytes) return value;
+    let end = maxBytes;
+    while (end > 0 && (buffer[end] & 0xc0) === 0x80) {
+        end -= 1;
+    }
+    return buffer.subarray(0, end).toString("utf-8");
+}
 
 function buildParallelTeamMetadata(input: {
     managerAgentId?: string;

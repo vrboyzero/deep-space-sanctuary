@@ -1,4 +1,64 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+
+const channelMocks = vi.hoisted(() => {
+  const discordInstances: Array<{
+    start: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
+  }> = [];
+  const discordConfigs: unknown[] = [];
+  const qqConfigs: unknown[] = [];
+  class DiscordChannel {
+    readonly name = "discord";
+    isRunning = false;
+    lifecycleState: "stopped" | "running" = "stopped";
+    readonly start = vi.fn(async () => {
+      this.isRunning = true;
+      this.lifecycleState = "running" as const;
+    });
+    readonly stop = vi.fn(async () => {
+      this.isRunning = false;
+      this.lifecycleState = "stopped" as const;
+    });
+    async sendProactiveMessage() {
+      return true;
+    }
+
+    constructor(config: unknown) {
+      discordInstances.push(this);
+      discordConfigs.push(config);
+    }
+  }
+  class QqChannel {
+    readonly name = "qq";
+    isRunning = false;
+    lifecycleState: "stopped" | "running" = "stopped";
+    readonly start = vi.fn(async () => {
+      this.isRunning = true;
+      this.lifecycleState = "running" as const;
+    });
+    readonly stop = vi.fn(async () => {
+      this.isRunning = false;
+      this.lifecycleState = "stopped" as const;
+    });
+    async sendProactiveMessage() {
+      return true;
+    }
+
+    constructor(config: unknown) {
+      qqConfigs.push(config);
+    }
+  }
+  return { DiscordChannel, QqChannel, discordInstances, discordConfigs, qqConfigs };
+});
+
+vi.mock("@belldandy/channels", async () => {
+  const actual = await vi.importActual<typeof import("@belldandy/channels")>("@belldandy/channels");
+  return {
+    ...actual,
+    DiscordChannel: channelMocks.DiscordChannel,
+    QqChannel: channelMocks.QqChannel,
+  };
+});
 
 import { createGatewayChannelsRuntime } from "./gateway-channels-runtime.js";
 
@@ -47,4 +107,129 @@ test("gateway channel runtime exposes the configured shared ingress scheduler sn
       aggregate: true,
     },
   ]);
+});
+
+test("gateway channel runtime drains managed channels and removes their external sender", async () => {
+  channelMocks.discordInstances.length = 0;
+  channelMocks.discordConfigs.length = 0;
+  const externalOutboundSenderRegistry = {
+    register: vi.fn(),
+  };
+  const runtime = createGatewayChannelsRuntime({
+    stateDir: "state-dir",
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    channelRouterEnabled: false,
+    channelRouterConfigPath: "channels-routing.json",
+    channelRouterDefaultAgentId: "default",
+    channelSecurityConfigPath: "channel-security.json",
+    channelReplyChunkingConfigPath: "channel-reply-chunking.json",
+    createAgent: () => ({}) as any,
+    conversationStore: {} as any,
+    currentConversationBindingStore: {} as any,
+    externalOutboundSenderRegistry: externalOutboundSenderRegistry as any,
+    toolsEnabled: false,
+    toolExecutor: {} as any,
+    sttTranscribe: async () => null,
+    qqSandbox: true,
+    discordEnabled: true,
+    discordBotToken: "discord-token",
+    readEnv: () => undefined,
+  });
+
+  await runtime.startChannels();
+  const channel = channelMocks.discordInstances[0];
+  expect(channel?.start).toHaveBeenCalledTimes(1);
+  expect(externalOutboundSenderRegistry.register).toHaveBeenCalledWith("discord", channel);
+
+  await runtime.stopChannels();
+
+  expect(channel?.stop).toHaveBeenCalledTimes(1);
+  expect(externalOutboundSenderRegistry.register).toHaveBeenLastCalledWith("discord", undefined);
+});
+
+test("gateway channel runtime injects the shared conversation lifecycle into QQ", async () => {
+  channelMocks.qqConfigs.length = 0;
+  const runtime = createGatewayChannelsRuntime({
+    stateDir: "state-dir",
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    channelRouterEnabled: false,
+    channelRouterConfigPath: "channels-routing.json",
+    channelRouterDefaultAgentId: "default",
+    channelSecurityConfigPath: "channel-security.json",
+    channelReplyChunkingConfigPath: "channel-reply-chunking.json",
+    createAgent: () => ({}) as any,
+    conversationStore: {} as any,
+    topLevelConversationLifecycle: {} as any,
+    currentConversationBindingStore: {} as any,
+    externalOutboundSenderRegistry: { register: vi.fn() } as any,
+    toolsEnabled: false,
+    toolExecutor: {} as any,
+    sttTranscribe: async () => null,
+    qqAppId: "qq-app-id",
+    qqAppSecret: "qq-app-secret",
+    qqSandbox: true,
+    discordEnabled: false,
+    readEnv: () => undefined,
+  });
+
+  await runtime.startChannels();
+
+  expect(channelMocks.qqConfigs).toHaveLength(1);
+  expect(channelMocks.qqConfigs[0]).toEqual(expect.objectContaining({
+    conversationLifecycle: expect.objectContaining({
+      acquire: expect.any(Function),
+    }),
+  }));
+  await runtime.stopChannels();
+});
+
+test("gateway channel runtime injects the shared conversation lifecycle into Discord", async () => {
+  channelMocks.discordInstances.length = 0;
+  channelMocks.discordConfigs.length = 0;
+  const runtime = createGatewayChannelsRuntime({
+    stateDir: "state-dir",
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    channelRouterEnabled: false,
+    channelRouterConfigPath: "channels-routing.json",
+    channelRouterDefaultAgentId: "default",
+    channelSecurityConfigPath: "channel-security.json",
+    channelReplyChunkingConfigPath: "channel-reply-chunking.json",
+    createAgent: () => ({}) as any,
+    conversationStore: {} as any,
+    topLevelConversationLifecycle: {} as any,
+    currentConversationBindingStore: {} as any,
+    externalOutboundSenderRegistry: { register: vi.fn() } as any,
+    toolsEnabled: false,
+    toolExecutor: {} as any,
+    sttTranscribe: async () => null,
+    qqSandbox: true,
+    discordEnabled: true,
+    discordBotToken: "discord-token",
+    readEnv: () => undefined,
+  });
+
+  await runtime.startChannels();
+
+  expect(channelMocks.discordConfigs).toHaveLength(1);
+  expect(channelMocks.discordConfigs[0]).toEqual(expect.objectContaining({
+    conversationLifecycle: expect.objectContaining({
+      acquire: expect.any(Function),
+    }),
+  }));
+  await runtime.stopChannels();
 });

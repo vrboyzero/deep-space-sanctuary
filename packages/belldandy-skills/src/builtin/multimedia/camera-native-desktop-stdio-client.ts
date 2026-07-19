@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
-import readline from "node:readline";
 
 import {
   createLinkedAbortController,
@@ -50,11 +49,14 @@ import {
   resolveNativeDesktopHelperLaunch,
   type NativeDesktopHelperLaunchResolution,
 } from "./camera-native-desktop-launch.js";
+import { ProcessLease, shouldDetachProcessTree } from "../system/process-lease.js";
+import { BoundedLineReader } from "./bounded-line-reader.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_IDLE_SHUTDOWN_MS = 2_000;
 const MAX_STDERR_LINES = 40;
+const MAX_STDIO_LINE_BYTES = 1024 * 1024;
 
 export const BELLDANDY_CAMERA_NATIVE_HELPER_COMMAND_ENV = "BELLDANDY_CAMERA_NATIVE_HELPER_COMMAND";
 export const BELLDANDY_CAMERA_NATIVE_HELPER_ARGS_JSON_ENV = "BELLDANDY_CAMERA_NATIVE_HELPER_ARGS_JSON";
@@ -73,6 +75,8 @@ type PendingRequest = {
   reject: (error: Error) => void;
   cleanup: () => void;
 };
+
+type DetachedPendingRequest = Pick<PendingRequest, "reject">;
 
 type NativeDesktopStdioClientOptions = {
   env?: NodeJS.ProcessEnv;
@@ -241,14 +245,16 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
   private readonly launchEnv: NodeJS.ProcessEnv;
   private readonly spawnProcess: typeof spawn;
   private child: ChildProcessWithoutNullStreams | null = null;
-  private stdoutReader: readline.Interface | null = null;
-  private stderrReader: readline.Interface | null = null;
+  private childLease: ProcessLease | null = null;
+  private stdoutReader: BoundedLineReader | null = null;
+  private stderrReader: BoundedLineReader | null = null;
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private ensureReadyPromise: Promise<void> | null = null;
   private lastHelloResponse: CameraNativeDesktopHelperHelloResponse | null = null;
   private stderrLines: string[] = [];
   private generation = 0;
   private idleShutdownTimer: NodeJS.Timeout | null = null;
+  private cleanupPromise: Promise<void> | null = null;
 
   constructor(
     config: CameraNativeDesktopHelperConfig,
@@ -349,22 +355,7 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
   }
 
   async close(): Promise<void> {
-    const child = this.child;
-    this.child = null;
-    this.lastHelloResponse = null;
-    this.ensureReadyPromise = null;
-    this.clearIdleShutdownTimer();
-    this.stdoutReader?.close();
-    this.stderrReader?.close();
-    this.stdoutReader = null;
-    this.stderrReader = null;
-    this.rejectPendingRequests(new Error("native_desktop helper client closed."));
-    if (!child) {
-      return;
-    }
-    if (!child.killed) {
-      child.kill();
-    }
+    await this.cleanupCurrentGeneration(new Error("native_desktop helper client closed."));
   }
 
   private getStartupTimeoutMs(): number {
@@ -409,6 +400,53 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
 
   private isChildUsable(): boolean {
     return Boolean(this.child && !this.child.killed && this.child.exitCode === null);
+  }
+
+  private detachPendingRequests(): DetachedPendingRequest[] {
+    const pendingRequests = [...this.pendingRequests.values()];
+    this.pendingRequests.clear();
+    for (const pending of pendingRequests) {
+      pending.cleanup();
+    }
+    return pendingRequests;
+  }
+
+  private cleanupCurrentGeneration(error: Error): Promise<void> {
+    if (this.cleanupPromise) {
+      return this.cleanupPromise;
+    }
+
+    const child = this.child;
+    const childLease = this.childLease;
+    const pendingRequests = this.detachPendingRequests();
+    this.child = null;
+    this.childLease = null;
+    this.lastHelloResponse = null;
+    this.ensureReadyPromise = null;
+    this.clearIdleShutdownTimer();
+    this.stdoutReader?.close();
+    this.stderrReader?.close();
+    this.stdoutReader = null;
+    this.stderrReader = null;
+
+    const cleanup = (async () => {
+      if (childLease) {
+        await childLease.terminate();
+      } else if (child && !child.killed) {
+        child.kill();
+      }
+      for (const pending of pendingRequests) {
+        pending.reject(error);
+      }
+    })();
+    let tracked: Promise<void>;
+    tracked = cleanup.finally(() => {
+      if (this.cleanupPromise === tracked) {
+        this.cleanupPromise = null;
+      }
+    });
+    this.cleanupPromise = tracked;
+    return tracked;
   }
 
   private async validateLaunchConfig(): Promise<NativeDesktopHelperLaunchResolution> {
@@ -463,6 +501,9 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
   }
 
   private async ensureSpawned(context: CameraProviderContext): Promise<void> {
+    if (this.cleanupPromise) {
+      await this.cleanupPromise;
+    }
     if (this.isChildUsable()) {
       this.clearIdleShutdownTimer();
       return;
@@ -470,6 +511,7 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
     throwIfAborted(context.abortSignal);
     const resolvedLaunch = await this.validateLaunchConfig();
     this.generation += 1;
+    const generation = this.generation;
     const child = this.spawnProcess(resolvedLaunch.effectiveCommand, resolvedLaunch.effectiveArgs, {
       cwd: this.config.cwd,
       env: {
@@ -479,27 +521,56 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
       stdio: "pipe",
       windowsHide: true,
       shell: false,
+      detached: shouldDetachProcessTree(),
     });
+    const childLease = new ProcessLease(child);
     this.child = child;
+    this.childLease = childLease;
     this.stderrLines = [];
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    this.stdoutReader = readline.createInterface({
+    this.stdoutReader = new BoundedLineReader({
       input: child.stdout,
-      crlfDelay: Infinity,
+      maxLineBytes: MAX_STDIO_LINE_BYTES,
+      onLine: (line) => {
+        void this.handleStdoutLine(line, context, generation, child);
+      },
+      onLimitExceeded: (observedBytes) => {
+        void this.handleProcessFailure(
+          new Error(`native_desktop helper stdout line exceeded ${MAX_STDIO_LINE_BYTES} bytes (observed at least ${observedBytes}).`),
+          context,
+          generation,
+          child,
+        );
+      },
+      onError: (error) => {
+        void this.handleProcessFailure(
+          new Error(`native_desktop helper stdout stream failed: ${error.message}`),
+          context,
+          generation,
+          child,
+        );
+      },
     });
-    this.stderrReader = readline.createInterface({
+    this.stderrReader = new BoundedLineReader({
       input: child.stderr,
-      crlfDelay: Infinity,
-    });
-
-    this.stdoutReader.on("line", (line) => {
-      void this.handleStdoutLine(line, context);
-    });
-    this.stderrReader.on("line", (line) => {
-      this.handleStderrLine(line, context);
+      maxLineBytes: MAX_STDIO_LINE_BYTES,
+      onLine: (line) => this.handleStderrLine(line, context),
+      onLimitExceeded: (observedBytes) => {
+        void this.handleProcessFailure(
+          new Error(`native_desktop helper stderr line exceeded ${MAX_STDIO_LINE_BYTES} bytes (observed at least ${observedBytes}).`),
+          context,
+          generation,
+          child,
+        );
+      },
+      onError: (error) => {
+        void this.handleProcessFailure(
+          new Error(`native_desktop helper stderr stream failed: ${error.message}`),
+          context,
+          generation,
+          child,
+        );
+      },
     });
 
     child.on("error", (error) => {
@@ -512,22 +583,26 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
         : spawnError.code === "EACCES"
           ? `native_desktop helper process error: command "${this.config.command}" is not executable. ${launchHint}`
           : `native_desktop helper process error: ${error.message}. ${launchHint}`;
-      this.handleProcessFailure(
+      void this.handleProcessFailure(
         formatProcessFailure({
           message: processErrorMessage,
           stderrLines: this.stderrLines,
         }),
         context,
+        generation,
+        child,
       );
     });
     child.on("exit", (code, signal) => {
       const launchHint = buildStartupHint(this.config, resolvedLaunch);
-      this.handleProcessFailure(
+      void this.handleProcessFailure(
         formatProcessFailure({
           message: `native_desktop helper exited before request completed (code=${code ?? "null"}, signal=${signal ?? "null"}). ${launchHint}`,
           stderrLines: this.stderrLines,
         }),
         context,
+        generation,
+        child,
       );
     });
   }
@@ -582,7 +657,12 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
   private async handleStdoutLine(
     line: string,
     context: CameraProviderContext,
+    generation: number,
+    child: ChildProcessWithoutNullStreams,
   ): Promise<void> {
+    if (generation !== this.generation || child !== this.child) {
+      return;
+    }
     const trimmed = line.trim();
     if (!trimmed) {
       return;
@@ -591,22 +671,26 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
     try {
       message = JSON.parse(trimmed) as CameraNativeDesktopHelperMessage;
     } catch (error) {
-      this.handleProcessFailure(
+      await this.handleProcessFailure(
         formatProcessFailure({
           message: `native_desktop helper emitted invalid JSON: ${error instanceof Error ? error.message : String(error)}.`,
           stderrLines: this.stderrLines,
         }),
         context,
+        generation,
+        child,
       );
       return;
     }
     if ((message as { protocol?: unknown }).protocol !== CAMERA_NATIVE_DESKTOP_PROTOCOL_ID) {
-      this.handleProcessFailure(
+      await this.handleProcessFailure(
         formatProcessFailure({
           message: `native_desktop helper protocol mismatch: expected ${CAMERA_NATIVE_DESKTOP_PROTOCOL_ID}, received ${String((message as { protocol?: unknown }).protocol ?? "<missing>")}.`,
           stderrLines: this.stderrLines,
         }),
         context,
+        generation,
+        child,
       );
       return;
     }
@@ -618,12 +702,14 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
       return;
     }
     if ((message as { kind?: unknown }).kind !== "response") {
-      this.handleProcessFailure(
+      await this.handleProcessFailure(
         formatProcessFailure({
           message: "native_desktop helper emitted a message that is not a response/event envelope.",
           stderrLines: this.stderrLines,
         }),
         context,
+        generation,
+        child,
       );
       return;
     }
@@ -633,14 +719,17 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
       context.logger?.debug?.(`[camera-native-desktop] dropping late or unknown response ${response.id}`);
       return;
     }
-    this.pendingRequests.delete(response.id);
-    pending.cleanup();
     if (!isNativeDesktopHelperMethod(response.method) || response.method !== pending.method) {
-      pending.reject(new Error(
-        `native_desktop helper response method mismatch: expected ${pending.method}, received ${String(response.method)}.`,
-      ));
+      await this.handleProcessFailure(
+        new Error(`native_desktop helper response method mismatch: expected ${pending.method}, received ${String(response.method)}.`),
+        context,
+        generation,
+        child,
+      );
       return;
     }
+    this.pendingRequests.delete(response.id);
+    pending.cleanup();
     if (response.ok) {
       pending.resolve(response.result);
       return;
@@ -690,31 +779,17 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
     context.logger?.warn?.(`[camera-native-desktop][stderr] ${line}`);
   }
 
-  private handleProcessFailure(
+  private async handleProcessFailure(
     error: Error,
     context: CameraProviderContext,
-  ): void {
-    if (!this.child && !this.stdoutReader && !this.stderrReader) {
+    generation: number,
+    child: ChildProcessWithoutNullStreams,
+  ): Promise<void> {
+    if (generation !== this.generation || child !== this.child) {
       return;
     }
     context.logger?.error?.(`[camera-native-desktop] ${error.message}`);
-    this.child = null;
-    this.lastHelloResponse = null;
-    this.ensureReadyPromise = null;
-    this.clearIdleShutdownTimer();
-    this.stdoutReader?.close();
-    this.stderrReader?.close();
-    this.stdoutReader = null;
-    this.stderrReader = null;
-    this.rejectPendingRequests(error);
-  }
-
-  private rejectPendingRequests(error: Error): void {
-    for (const [requestId, pending] of this.pendingRequests.entries()) {
-      this.pendingRequests.delete(requestId);
-      pending.cleanup();
-      pending.reject(error);
-    }
+    await this.cleanupCurrentGeneration(error);
   }
 
   private async sendRequest<TMethod extends CameraNativeDesktopHelperMethod>(
@@ -730,18 +805,27 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
       throw new Error("native_desktop helper is not running.");
     }
     throwIfAborted(context.abortSignal);
+    const generation = this.generation;
     this.clearIdleShutdownTimer();
     const timeoutMs = this.getRequestTimeoutMs(options.timeoutMs);
     const request = createNativeDesktopHelperRequest(method, params);
     return await new Promise<CameraNativeDesktopHelperResponseResult[TMethod]>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        cleanup();
-        reject(new Error(`native_desktop helper ${method} timed out after ${timeoutMs}ms.`));
+        void this.handleProcessFailure(
+          new Error(`native_desktop helper ${method} timed out after ${timeoutMs}ms.`),
+          context,
+          generation,
+          child,
+        );
       }, timeoutMs);
 
       const onAbort = () => {
-        cleanup();
-        reject(toAbortError(readAbortReason(context.abortSignal)));
+        void this.handleProcessFailure(
+          toAbortError(readAbortReason(context.abortSignal)),
+          context,
+          generation,
+          child,
+        );
       };
 
       const cleanup = () => {
@@ -758,13 +842,21 @@ export class NativeDesktopStdioHelperClient implements CameraNativeDesktopHelper
         reject,
         cleanup,
       });
+      if (context.abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
 
       child.stdin.write(`${JSON.stringify(request)}\n`, "utf8", (error) => {
         if (!error) {
           return;
         }
-        cleanup();
-        reject(new Error(`Failed to write ${method} request to native_desktop helper: ${error.message}`));
+        void this.handleProcessFailure(
+          new Error(`Failed to write ${method} request to native_desktop helper: ${error.message}`),
+          context,
+          generation,
+          child,
+        );
       });
     });
   }

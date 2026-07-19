@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { runCommandTool } from "./exec.js";
 import type { ToolContext } from "../../types.js";
 import { getToolContract } from "../../tool-contract.js";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const workspaceRoot = process.platform === "win32"
@@ -87,6 +89,115 @@ describe("run_command (Platform-aware Safelist)", () => {
         expect(result.error).toBe("Stopped by user.");
         expect(result.failureKind).toBe("environment_error");
         expect(result.output).not.toContain("late-output");
+    });
+
+    it("should terminate shell descendants before resolving an aborted command", async () => {
+        const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-run-command-tree-"));
+        const fixturePath = path.join(workspace, "spawn-descendant.mjs");
+        const readyPath = path.join(workspace, "ready.txt");
+        const descendantPidPath = path.join(workspace, "descendant.pid");
+        const markerPath = path.join(workspace, "descendant-survived.txt");
+        await fs.writeFile(fixturePath, [
+            'import { spawn } from "node:child_process";',
+            'const [, , readyPath, descendantPidPath, markerPath] = process.argv;',
+            'const script = "const fs=require(\'node:fs\');fs.writeFileSync(process.argv[2],String(process.pid));fs.writeFileSync(process.argv[3],\'ready\');setTimeout(()=>fs.writeFileSync(process.argv[1],\'survived\'),5000)";',
+            'spawn(process.execPath, ["-e", script, markerPath, descendantPidPath, readyPath], { stdio: "ignore" });',
+            'setTimeout(() => {}, 6000);',
+        ].join("\n"), "utf-8");
+        const controller = new AbortController();
+
+        try {
+            const resultPromise = runCommandTool.execute({
+                command: `node "${fixturePath}" "${readyPath}" "${descendantPidPath}" "${markerPath}"`,
+            }, {
+                ...mockContext,
+                workspaceRoot: workspace,
+                policy: {
+                    ...mockContext.policy,
+                    maxTimeoutMs: 5_000,
+                },
+                abortSignal: controller.signal,
+            });
+            await vi.waitFor(async () => {
+                await expect(fs.readFile(readyPath, "utf-8")).resolves.toBe("ready");
+            }, { timeout: 2_000 });
+            const descendantPid = Number(await fs.readFile(descendantPidPath, "utf-8"));
+            expect(Number.isSafeInteger(descendantPid)).toBe(true);
+
+            controller.abort("Stopped by user.");
+            const result = await resultPromise;
+            await vi.waitFor(() => {
+                let alive = true;
+                try {
+                    process.kill(descendantPid, 0);
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+                    alive = false;
+                }
+                expect(alive).toBe(false);
+            }, { timeout: 3_000 });
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Stopped by user.");
+            await expect(fs.access(markerPath)).rejects.toThrow();
+        } finally {
+            // 红灯实现会让 fixture 短暂持有 cwd；仅在锁未释放时重试清理。
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+                try {
+                    await fs.rm(workspace, { recursive: true, force: true });
+                    break;
+                } catch (error) {
+                    if (attempt === 4) throw error;
+                    await new Promise((resolve) => setTimeout(resolve, 200));
+                }
+            }
+        }
+    });
+
+    it("should cap the requested timeout at policy.maxTimeoutMs", async () => {
+        const result = await runCommandTool.execute({
+            command: 'node -e "setTimeout(() => {}, 1000)"',
+            timeoutMs: 5_000,
+        }, {
+            ...mockContext,
+            workspaceRoot: process.cwd(),
+            policy: {
+                ...mockContext.policy,
+                maxTimeoutMs: 50,
+            },
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.failureKind).toBe("environment_error");
+        expect(result.error).toContain("Timeout after 50ms");
+        // Windows 需要为 taskkill 与 close drain 保留完整的有界终止预算。
+        expect(result.durationMs).toBeLessThan(2_000);
+        expect(result.metadata).toMatchObject({
+            processTerminationReason: "timeout",
+            processCloseObserved: true,
+        });
+    });
+
+    it("should bound captured stdout by policy.maxResponseBytes", async () => {
+        const result = await runCommandTool.execute({
+            command: 'node -e "process.stdout.write(\'x\'.repeat(4096))"',
+        }, {
+            ...mockContext,
+            workspaceRoot: process.cwd(),
+            policy: {
+                ...mockContext.policy,
+                maxTimeoutMs: 5_000,
+                maxResponseBytes: 256,
+            },
+        });
+
+        expect(result.success).toBe(true);
+        expect(Buffer.byteLength(result.output, "utf-8")).toBeLessThanOrEqual(256);
+        expect(result.metadata).toMatchObject({
+            outputTruncated: true,
+            outputLimitBytes: 256,
+            outputBytesObserved: 4096,
+        });
     });
 
     it("should allow common 'git' command on all platforms", async () => {

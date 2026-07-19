@@ -653,6 +653,8 @@ export async function searchResidentMemory(input: {
   limit: number;
   filter?: MemorySearchFilter;
   includeContent: boolean;
+  signal?: AbortSignal;
+  deadlineMs?: number;
 }): Promise<MemorySearchResult[]> {
   return (await searchResidentMemoryWithDiagnostics(input)).items;
 }
@@ -665,6 +667,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
   limit: number;
   filter?: MemorySearchFilter;
   includeContent: boolean;
+  signal?: AbortSignal;
+  deadlineMs?: number;
 }): Promise<{
   items: MemorySearchResult[];
   diagnostics: ResidentMemorySearchDiagnostics;
@@ -681,6 +685,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
         limit,
         filter: cloneFilterWithScope(filter, "shared"),
         includeContent,
+        signal: input.signal,
+        deadlineMs: input.deadlineMs,
       });
       const items = filterVisibleSharedItems(shared.items);
       return {
@@ -716,6 +722,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
       limit,
       filter: cloneFilterWithScope(filter, "shared"),
       includeContent,
+      signal: input.signal,
+      deadlineMs: input.deadlineMs,
     });
     const items = filterVisibleSharedItems(unified.items);
     return {
@@ -740,6 +748,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
       limit,
       filter: cloneFilterWithScope(filter, "private"),
       includeContent,
+      signal: input.signal,
+      deadlineMs: input.deadlineMs,
     });
     return {
       items: privateSearch.items,
@@ -763,6 +773,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
       limit,
       filter,
       includeContent,
+      signal: input.signal,
+      deadlineMs: input.deadlineMs,
     });
     return {
       items: unified.items,
@@ -785,6 +797,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
     limit,
     filter: cloneFilterWithScope(filter, "private"),
     includeContent,
+    signal: input.signal,
+    deadlineMs: input.deadlineMs,
   });
   const privateItems = privateSearch.items;
   if (!sharedManager) {
@@ -809,6 +823,8 @@ export async function searchResidentMemoryWithDiagnostics(input: {
     limit,
     filter: cloneFilterWithScope(filter, "shared"),
     includeContent,
+    signal: input.signal,
+    deadlineMs: input.deadlineMs,
   });
   const sharedItems = filterVisibleSharedItems(sharedSearch.items);
   const deduped = dedupeMemoryResults([...privateItems, ...sharedItems]);
@@ -846,6 +862,8 @@ async function runMemorySearch(
     limit: number;
     filter?: MemorySearchFilter;
     includeContent: boolean;
+    signal?: AbortSignal;
+    deadlineMs?: number;
   },
 ): Promise<MemorySearchExecution> {
   if (typeof manager.searchWithDiagnostics === "function") {

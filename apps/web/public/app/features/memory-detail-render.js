@@ -10,6 +10,12 @@ import {
   renderSkillFreshnessDetail,
 } from "./skill-freshness-view.js";
 import { isCompactGovernanceDetailMode, renderGovernanceFullOnly } from "./governance-detail-mode.js";
+import { createMemoryDetailPathListenerLifecycle } from "./memory-detail-path-listener-lifecycle.js";
+import { createMemoryDetailSourceExplanationLifecycle } from "./memory-detail-source-explanation-lifecycle.js";
+import { createMemoryDetailStatsListenerLifecycle } from "./memory-detail-stats-listener-lifecycle.js";
+import { createMemoryDetailTaskAuditListenerLifecycle } from "./memory-detail-task-audit-listener-lifecycle.js";
+import { createMemoryDetailUsageRevokeAction } from "./memory-detail-usage-revoke-action.js";
+import { createMemoryDetailUsageRevokeListenerLifecycle } from "./memory-detail-usage-revoke-listener-lifecycle.js";
 
 export function buildTaskSourceExplanationItems(
   explanation,
@@ -110,6 +116,58 @@ export function createMemoryDetailRenderFeature({
     memoryViewerStatsEl,
     memoryChunkCategoryFilterEl,
   } = refs;
+  const sourceExplanationLifecycle = createMemoryDetailSourceExplanationLifecycle({
+    isConnected,
+    sendReq,
+    makeId,
+    getMemoryViewerState,
+    getCurrentAgentSelection,
+    renderTaskDetail: (task) => renderTaskDetail(task),
+    showNotice,
+    t,
+  });
+  const usageRevokeAction = createMemoryDetailUsageRevokeAction({
+    getState: getMemoryViewerState,
+    isConnected,
+    sendReq,
+    makeId,
+    getActiveAgentId: getCurrentAgentSelection,
+    showNotice,
+    renderTaskDetail: (task) => renderTaskDetail(task),
+    renderMemoryViewerStats,
+    loadTaskUsageOverview,
+    loadTaskDetail,
+    t,
+  });
+  const statsListenerLifecycle = createMemoryDetailStatsListenerLifecycle({
+    openTaskFromAudit,
+    openSourcePath,
+    loadCandidateDetail,
+    switchMode,
+    loadGoals,
+  });
+  const pathListenerLifecycle = createMemoryDetailPathListenerLifecycle({ openSourcePath });
+  const taskAuditListenerLifecycle = createMemoryDetailTaskAuditListenerLifecycle({
+    getState: getMemoryViewerStateValue,
+    getMemoryRuntimeFeature: getMemoryRuntimeFeatureValue,
+    openTaskFromAudit,
+    loadCandidateDetail,
+    openExperienceCandidate,
+    switchMode,
+    loadGoals,
+    openGoalTaskViewer,
+    renderTaskDetail: (task) => renderTaskDetail(task),
+    renderDetailEmpty: renderMemoryViewerDetailEmpty,
+    openMemoryFromAudit,
+    loadTaskSourceExplanation: (taskId, conversationId) => loadTaskSourceExplanation(taskId, conversationId),
+    t,
+  });
+  const usageRevokeListenerLifecycle = createMemoryDetailUsageRevokeListenerLifecycle({
+    getState: getMemoryViewerState,
+    confirmAction: (message) => window.confirm(message),
+    revokeTaskUsage: (usageId, taskId, assetKey) => revokeTaskUsage(usageId, taskId, assetKey),
+    t,
+  });
 
   function getMemoryViewerStateValue() {
     return getMemoryViewerState?.() ?? {};
@@ -469,71 +527,7 @@ export function createMemoryDetailRenderFeature({
   }
 
   async function loadTaskSourceExplanation(taskId, conversationId = "") {
-    const normalizedTaskId = typeof taskId === "string" ? taskId.trim() : "";
-    const normalizedConversationId = typeof conversationId === "string" ? conversationId.trim() : "";
-    const memoryViewerState = getMemoryViewerStateValue();
-    const selectedTask = memoryViewerState.selectedTask;
-    if (!selectedTask || (!normalizedTaskId && !normalizedConversationId)) return;
-    if (!isConnected?.()) {
-      showNotice(
-        t("memory.taskSourceExplanationLoadFailedTitle", {}, "来源解释加载失败"),
-        t("memory.disconnectedDetail", {}, "连接完成后可查看任务与记忆。"),
-        "error",
-      );
-      return;
-    }
-
-    const sameTask = normalizedTaskId
-      ? selectedTask.id === normalizedTaskId
-      : selectedTask.conversationId === normalizedConversationId;
-    if (!sameTask || selectedTask.sourceExplanationLoading) return;
-
-    selectedTask.sourceExplanationLoading = true;
-    selectedTask.sourceExplanationError = "";
-    renderTaskDetail(selectedTask);
-
-    try {
-      const requestAgentId = String(memoryViewerState.activeAgentId || getCurrentAgentSelection()).trim() || "default";
-      const id = makeId();
-      const res = await sendReq({
-        type: "req",
-        id,
-        method: "memory.explain_sources",
-        params: {
-          ...(normalizedTaskId ? { taskId: normalizedTaskId } : {}),
-          ...(normalizedConversationId ? { conversationId: normalizedConversationId } : {}),
-          agentId: requestAgentId,
-        },
-      });
-      const latestTask = getMemoryViewerStateValue().selectedTask;
-      if (!latestTask) return;
-      const stillSameTask = normalizedTaskId
-        ? latestTask.id === normalizedTaskId
-        : latestTask.conversationId === normalizedConversationId;
-      if (!stillSameTask) return;
-      if (!res || !res.ok) {
-        latestTask.sourceExplanation = null;
-        latestTask.sourceExplanationError = res?.error?.message
-          || t("memory.taskSourceExplanationLoadFailed", {}, "来源解释加载失败。");
-        return;
-      }
-      latestTask.sourceExplanation = res.payload?.explanation ?? null;
-      latestTask.sourceExplanationError = "";
-    } catch (error) {
-      const latestTask = getMemoryViewerStateValue().selectedTask;
-      if (latestTask && (latestTask.id === normalizedTaskId || latestTask.conversationId === normalizedConversationId)) {
-        latestTask.sourceExplanation = null;
-        latestTask.sourceExplanationError = error instanceof Error
-          ? error.message
-          : String(error);
-      }
-    } finally {
-      const latestTask = getMemoryViewerStateValue().selectedTask;
-      if (latestTask && (latestTask.id === normalizedTaskId || latestTask.conversationId === normalizedConversationId)) {
-        latestTask.sourceExplanationLoading = false;
-        renderTaskDetail(latestTask);
-      }
-    }
+    return sourceExplanationLifecycle.loadTaskSourceExplanation(taskId, conversationId);
   }
 
   function renderTaskDetail(task) {
@@ -876,223 +870,48 @@ export function createMemoryDetailRenderFeature({
   }
 
   function bindMemoryPathLinks() {
-    if (!memoryViewerDetailEl) return;
-    memoryViewerDetailEl.querySelectorAll("[data-open-source]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const sourcePath = node.getAttribute("data-open-source");
-        const lineRaw = node.getAttribute("data-open-line");
-        const startLine = lineRaw ? Number.parseInt(lineRaw, 10) : undefined;
-        await openSourcePath(sourcePath, { startLine });
-      });
-    });
+    pathListenerLifecycle.bindMemoryPathLinks(memoryViewerDetailEl);
   }
 
   function bindStatsAuditJumpLinks() {
-    if (!memoryViewerStatsEl) return;
-    memoryViewerStatsEl.querySelectorAll("[data-open-task-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const taskId = node.getAttribute("data-open-task-id");
-        await openTaskFromAudit(taskId);
-      });
-    });
-    memoryViewerStatsEl.querySelectorAll("[data-open-source]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const sourcePath = node.getAttribute("data-open-source");
-        await openSourcePath(sourcePath);
-      });
-    });
-    memoryViewerStatsEl.querySelectorAll("[data-open-candidate-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const candidateId = node.getAttribute("data-open-candidate-id");
-        await loadCandidateDetail(candidateId);
-      });
-    });
-    memoryViewerStatsEl.querySelectorAll("[data-open-goal-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const goalId = node.getAttribute("data-open-goal-id");
-        if (!goalId) return;
-        switchMode("goals");
-        await loadGoals(true, goalId);
-      });
-    });
+    statsListenerLifecycle.bindStatsAuditJumpLinks(memoryViewerStatsEl);
   }
 
   function bindTaskAuditJumpLinks() {
-    if (!memoryViewerDetailEl) return;
-    memoryViewerDetailEl.querySelectorAll("[data-open-task-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const taskId = node.getAttribute("data-open-task-id");
-        await openTaskFromAudit(taskId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-open-candidate-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const candidateId = node.getAttribute("data-open-candidate-id");
-        await loadCandidateDetail(candidateId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-open-experience-candidate-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const candidateId = node.getAttribute("data-open-experience-candidate-id");
-        await openExperienceCandidate?.(candidateId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-open-goal-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const goalId = node.getAttribute("data-open-goal-id");
-        if (!goalId) return;
-        switchMode("goals");
-        await loadGoals(true, goalId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-open-goal-tasks]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const goalId = node.getAttribute("data-open-goal-tasks");
-        if (!goalId) return;
-        await openGoalTaskViewer(goalId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-close-candidate-panel]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const memoryViewerState = getMemoryViewerStateValue();
-        memoryViewerState.selectedCandidate = null;
-        if (memoryViewerState.selectedTask) {
-          renderTaskDetail(memoryViewerState.selectedTask);
-        } else {
-          renderMemoryViewerDetailEmpty(t("memory.selectTask", {}, "Please select a task."));
-        }
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-open-memory-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const chunkId = node.getAttribute("data-open-memory-id");
-        await openMemoryFromAudit(chunkId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-load-task-source-explanation]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const taskId = node.getAttribute("data-load-task-source-explanation");
-        const conversationId = node.getAttribute("data-load-task-conversation-id");
-        await loadTaskSourceExplanation(taskId, conversationId);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-generate-experience-type]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const taskId = node.getAttribute("data-generate-experience-task-id");
-        const candidateType = node.getAttribute("data-generate-experience-type");
-        await getMemoryRuntimeFeatureValue()?.generateExperienceCandidate?.(taskId, candidateType);
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-review-candidate-action]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const candidateId = node.getAttribute("data-review-candidate-id");
-        const taskId = node.getAttribute("data-review-candidate-task-id");
-        const action = node.getAttribute("data-review-candidate-action");
-        await getMemoryRuntimeFeatureValue()?.reviewExperienceCandidate?.(candidateId, action, { taskId });
-      });
-    });
-    memoryViewerDetailEl.querySelectorAll("[data-skill-freshness-stale-action]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const action = node.getAttribute("data-skill-freshness-stale-action");
-        const sourceCandidateId = node.getAttribute("data-skill-freshness-source-candidate-id");
-        const skillKey = node.getAttribute("data-skill-freshness-skill-key");
-        const taskId = node.getAttribute("data-skill-freshness-task-id");
-        const candidateId = node.getAttribute("data-skill-freshness-candidate-id");
-        await getMemoryRuntimeFeatureValue()?.updateSkillFreshnessStaleMark?.({
-          sourceCandidateId,
-          skillKey,
-          taskId,
-          candidateId,
-          stale: action !== "clear",
-        });
-      });
-    });
+    taskAuditListenerLifecycle.bindTaskAuditJumpLinks(memoryViewerDetailEl);
   }
 
   function bindTaskUsageRevokeButtons(task) {
-    if (!memoryViewerDetailEl || !task) return;
-    memoryViewerDetailEl.querySelectorAll("[data-revoke-usage-id]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const usageId = node.getAttribute("data-revoke-usage-id");
-        const taskId = node.getAttribute("data-revoke-task-id") || task.id;
-        const assetKey = node.getAttribute("data-revoke-asset-key") || "";
-        if (!usageId || !taskId) return;
-        const memoryViewerState = getMemoryViewerStateValue();
-        if (memoryViewerState.pendingUsageRevokeId) return;
-
-        const confirmed = window.confirm(
-          t(
-            "memory.usageRevokeConfirm",
-            { target: assetKey || usageId },
-            `Confirm revoking this usage record?\n\n${assetKey || usageId}`,
-          ),
-        );
-        if (!confirmed) return;
-
-        await revokeTaskUsage(usageId, taskId, assetKey);
-      });
-    });
+    usageRevokeListenerLifecycle.bindTaskUsageRevokeButtons(memoryViewerDetailEl, task?.id);
   }
 
   async function revokeTaskUsage(usageId, taskId, assetKey = "") {
-    if (!(typeof isConnected === "function" ? isConnected() : isConnected)) {
-      showNotice(
-        t("memory.usageRevokeUnavailableTitle", {}, "Unable to revoke usage"),
-        t("memory.disconnectedList", {}, "Not connected to the server."),
-        "error",
-      );
-      return;
-    }
+    return usageRevokeAction.revoke(usageId, taskId, assetKey);
+  }
 
-    const memoryViewerState = getMemoryViewerStateValue();
-    memoryViewerState.pendingUsageRevokeId = usageId;
-    if (memoryViewerState.selectedTask?.id === taskId) {
-      renderTaskDetail(memoryViewerState.selectedTask);
-    }
+  function clearGeneration() {
+    sourceExplanationLifecycle.clearGeneration();
+    usageRevokeAction.clearGeneration();
+  }
 
-    try {
-      const id = makeId();
-      const res = await sendReq({
-        type: "req",
-        id,
-        method: "experience.usage.revoke",
-        params: { usageId, agentId: getCurrentAgentSelection() },
-      });
+  function dispose() {
+    sourceExplanationLifecycle.dispose();
+    usageRevokeAction.dispose();
+    statsListenerLifecycle.dispose();
+    pathListenerLifecycle.dispose();
+    taskAuditListenerLifecycle.dispose();
+    usageRevokeListenerLifecycle.dispose();
+  }
 
-      if (!res || !res.ok || !res.payload?.revoked) {
-        showNotice(
-          t("memory.usageRevokeFailedTitle", {}, "Revoke failed"),
-          res?.error?.message || t("memory.usageRevokeFailedMessage", {}, "Usage was not revoked."),
-          "error",
-        );
-        return;
-      }
-
-      showNotice(
-        t("memory.usageRevokedTitle", {}, "Usage revoked"),
-        assetKey
-          ? t("memory.usageRevokedWithAsset", { assetKey }, `${assetKey} was removed from the current task usage record.`)
-          : t("memory.usageRevokedMessage", {}, "This experience usage record has been revoked."),
-        "success",
-        2200,
-      );
-      await Promise.all([
-        loadTaskUsageOverview(),
-        loadTaskDetail(taskId),
-      ]);
-    } catch (error) {
-      showNotice(
-        t("memory.usageRevokeFailedTitle", {}, "Revoke failed"),
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
-    } finally {
-      memoryViewerState.pendingUsageRevokeId = null;
-      if (memoryViewerState.selectedTask?.id === taskId) {
-        renderTaskDetail(memoryViewerState.selectedTask);
-      }
-      renderMemoryViewerStats(memoryViewerState.stats);
-    }
+  function getRuntimeSnapshot() {
+    return {
+      ...sourceExplanationLifecycle.getRuntimeSnapshot(),
+      ...usageRevokeAction.getRuntimeSnapshot(),
+      ...statsListenerLifecycle.getRuntimeSnapshot(),
+      ...pathListenerLifecycle.getRuntimeSnapshot(),
+      ...taskAuditListenerLifecycle.getRuntimeSnapshot(),
+      ...usageRevokeListenerLifecycle.getRuntimeSnapshot(),
+    };
   }
 
   return {
@@ -1115,5 +934,8 @@ export function createMemoryDetailRenderFeature({
     revokeTaskUsage,
     summarizeSourcePath,
     buildTaskSourceExplanationItems,
+    clearGeneration,
+    dispose,
+    getRuntimeSnapshot,
   };
 }

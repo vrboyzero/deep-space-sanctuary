@@ -14,12 +14,15 @@ import {
   ChannelIngressScheduler,
   CommunityChannel,
   createChannelRouter,
+  DefaultChannelManager,
   DiscordChannel,
   FeishuChannel,
   getCommunityConfigPath,
   loadCommunityConfig,
   loadReplyChunkingConfig,
   QqChannel,
+  type Channel,
+  type ChannelConversationLifecycle,
   type ChannelSecurityApprovalRequestInput,
   type CurrentConversationBindingStore,
 } from "@belldandy/channels";
@@ -30,7 +33,12 @@ import {
   parseAssistantExternalDeliveryPreference,
 } from "../assistant-mode-runtime.js";
 import { upsertChannelSecurityApprovalRequest } from "../channel-security-store.js";
-import type { ExternalOutboundSenderRegistry } from "../external-outbound-sender-registry.js";
+import { createChannelConversationLifecycle } from "../channel-conversation-lifecycle.js";
+import type {
+  ExternalOutboundChannel,
+  ExternalOutboundSenderRegistry,
+} from "../external-outbound-sender-registry.js";
+import type { TopLevelConversationLifecycle } from "../top-level-conversation-lifecycle.js";
 
 type GatewayChannelsRuntimeInput = {
   stateDir: string;
@@ -43,6 +51,7 @@ type GatewayChannelsRuntimeInput = {
   agentRegistry?: AgentRegistry;
   createAgent?: () => BelldandyAgent;
   conversationStore: ResidentConversationStore;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   currentConversationBindingStore: CurrentConversationBindingStore;
   externalOutboundSenderRegistry: ExternalOutboundSenderRegistry;
   toolsEnabled: boolean;
@@ -77,6 +86,50 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
     maxPayloadBytes: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_PAYLOAD_BYTES"),
     maxQueuedPayloadBytes: readPositiveInt(input.readEnv, "BELLDANDY_CHANNEL_INGRESS_MAX_QUEUED_PAYLOAD_BYTES"),
   });
+  const channelManager = new DefaultChannelManager();
+  const conversationLifecycle: ChannelConversationLifecycle | undefined = input.topLevelConversationLifecycle
+    ? createChannelConversationLifecycle({
+        lifecycle: input.topLevelConversationLifecycle,
+        conversationStore: input.conversationStore,
+      })
+    : undefined;
+  const managedChannels = new Map<ExternalOutboundChannel, Channel>();
+  const backgroundStartTasks = new Map<ExternalOutboundChannel, Promise<void>>();
+  let channelsConfigured = false;
+  let stopChannelsPromise: Promise<void> | undefined;
+
+  const registerManagedChannel = async (channelKind: ExternalOutboundChannel, channel: Channel): Promise<void> => {
+    await channelManager.register(channel);
+    managedChannels.set(channelKind, channel);
+  };
+
+  const startManagedChannel = (channelKind: ExternalOutboundChannel, channel: Channel): void => {
+    const task = channel.start()
+      .then(() => {
+        // A stopped/replaced instance may complete startup late; it must not reclaim outbound ownership.
+        if (channelManager.get(channel.name) !== channel) return;
+        input.externalOutboundSenderRegistry.register(channelKind, channel);
+      })
+      .catch(async (error: unknown) => {
+        input.logger.error(channelKind, "Channel Error", error);
+        if (channelManager.get(channel.name) === channel) {
+          try {
+            await channelManager.unregister(channel.name);
+          } catch (stopError) {
+            input.logger.error(channelKind, "Failed to clean up channel after startup error", stopError);
+          }
+        }
+        if (managedChannels.get(channelKind) === channel) {
+          managedChannels.delete(channelKind);
+        }
+      })
+      .finally(() => {
+        if (backgroundStartTasks.get(channelKind) === task) {
+          backgroundStartTasks.delete(channelKind);
+        }
+      });
+    backgroundStartTasks.set(channelKind, task);
+  };
   const communityConfigured = Boolean(input.createAgent && fs.existsSync(getCommunityConfigPath()));
   const requiredSecurityChannels = [
     input.feishuAppId && input.feishuAppSecret ? "feishu" : undefined,
@@ -181,6 +234,11 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
   };
 
   const startChannels = async (): Promise<void> => {
+    if (channelsConfigured) return;
+    if (stopChannelsPromise) {
+      await stopChannelsPromise;
+    }
+    channelsConfigured = true;
     let feishuChannel: FeishuChannel | undefined;
     if (input.feishuAppId && input.feishuAppSecret && input.createAgent) {
       try {
@@ -199,16 +257,15 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           agentResolver: resolveChannelAgent,
           onChannelSecurityApprovalRequired: recordChannelSecurityApprovalRequest,
           conversationStore: input.conversationStore,
+          conversationLifecycle,
           sttTranscribe: async (opts) => {
             const result = await input.sttTranscribe(opts);
             if (result) input.logger.info("feishu", `Transcribed audio (${result.durationSec?.toFixed(1) ?? "?"}s) from ${result.provider}`);
             return result;
           },
         });
-        input.externalOutboundSenderRegistry.register("feishu", feishuChannel);
-        feishuChannel.start().catch((error: unknown) => {
-          input.logger.error("feishu", "Channel Error", error);
-        });
+        await registerManagedChannel("feishu", feishuChannel);
+        startManagedChannel("feishu", feishuChannel);
       } catch {
         input.logger.warn("feishu", "Agent creation failed (likely missing config), skipping Feishu startup.");
       }
@@ -236,6 +293,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           agentResolver: resolveChannelAgent,
           onChannelSecurityApprovalRequired: recordChannelSecurityApprovalRequest,
           conversationStore: input.conversationStore,
+          conversationLifecycle,
           sttTranscribe: async (opts: TranscribeOptions) => {
             const result = await input.sttTranscribe(opts);
             if (result) input.logger.info("qq", `Transcribed audio (${result.durationSec?.toFixed(1) ?? "?"}s) from ${result.provider}`);
@@ -248,13 +306,11 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           },
         } as ConstructorParameters<typeof QqChannel>[0];
         qqChannel = new QqChannel(qqChannelConfig);
-        input.externalOutboundSenderRegistry.register("qq", qqChannel);
+        await registerManagedChannel("qq", qqChannel);
         if (String(input.readEnv("BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_ENABLED") ?? "false").toLowerCase() === "true") {
           input.logger.info("qq", `QQ event sample capture enabled: ${input.readEnv("BELLDANDY_QQ_EVENT_SAMPLE_CAPTURE_DIR")?.trim() || path.join(input.stateDir, "tmp", "qq-event-samples")}`);
         }
-        qqChannel.start().catch((error: unknown) => {
-          input.logger.error("qq", "Channel Error", error);
-        });
+        startManagedChannel("qq", qqChannel);
       } catch {
         input.logger.warn("qq", "Agent creation failed (likely missing config), skipping QQ startup.");
       }
@@ -274,6 +330,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           currentConversationBindingStore: input.currentConversationBindingStore,
           ingressScheduler: channelIngressScheduler,
           agentResolver: resolveChannelAgent,
+          conversationLifecycle,
           sttTranscribe: async (opts) => {
             const result = await input.sttTranscribe(opts);
             if (result) input.logger.info("discord", `Transcribed audio (${result.durationSec?.toFixed(1) ?? "?"}s) from ${result.provider}`);
@@ -281,10 +338,8 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           },
           onChannelSecurityApprovalRequired: recordChannelSecurityApprovalRequest,
         });
-        input.externalOutboundSenderRegistry.register("discord", discordChannel);
-        discordChannel.start().catch((error: unknown) => {
-          input.logger.error("discord", "Channel Error", error);
-        });
+        await registerManagedChannel("discord", discordChannel);
+        startManagedChannel("discord", discordChannel);
         input.logger.info("discord", "Discord channel initialized");
       } catch (error) {
         input.logger.warn("discord", "Failed to initialize Discord channel", error);
@@ -329,9 +384,10 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           reconnect: communityConfig.reconnect,
           tokenUsageUpload: communityTokenUsageUploadConfig,
           ownerUserUuid: communityOwnerUserUuid,
+          conversationLifecycle,
         });
 
-        input.externalOutboundSenderRegistry.register("community", communityChannel);
+        await registerManagedChannel("community", communityChannel);
         if (input.toolsEnabled) {
           input.toolExecutor.registerTool(createLeaveRoomTool(communityChannel), { origin: "channel", silentReplace: true });
           input.logger.info("community", "Registered leave_room tool with channel instance");
@@ -339,13 +395,54 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           input.logger.info("community", "Registered join_room tool with channel instance");
         }
 
-        communityChannel.start().catch((error: unknown) => {
-          input.logger.error("community", "Channel Error", error);
-        });
+        startManagedChannel("community", communityChannel);
         input.logger.info("community", `Started with ${communityConfig.agents.length} agent(s)`);
       }
     } catch (error) {
       input.logger.warn("community", "Failed to load community config, skipping startup:", error);
+    }
+  };
+
+  const stopChannels = async (): Promise<void> => {
+    if (stopChannelsPromise) {
+      await stopChannelsPromise;
+      return;
+    }
+
+    const stopPromise = (async () => {
+      const entries = Array.from(managedChannels.entries());
+      // Remove the send route before awaiting stop so background jobs cannot target an instance being drained.
+      for (const [channelKind] of entries) {
+        input.externalOutboundSenderRegistry.register(channelKind, undefined);
+      }
+
+      const failures: unknown[] = [];
+      await Promise.all(entries.map(async ([channelKind, channel]) => {
+        try {
+          await channelManager.unregister(channel.name);
+          if (managedChannels.get(channelKind) === channel) {
+            managedChannels.delete(channelKind);
+          }
+        } catch (error) {
+          failures.push(error);
+          input.logger.error(channelKind, "Failed to stop managed channel", error);
+        }
+      }));
+      await Promise.all(Array.from(backgroundStartTasks.values()));
+      backgroundStartTasks.clear();
+
+      if (failures.length > 0) {
+        throw failures[0];
+      }
+      channelsConfigured = false;
+    })();
+    stopChannelsPromise = stopPromise;
+    try {
+      await stopPromise;
+    } finally {
+      if (stopChannelsPromise === stopPromise) {
+        stopChannelsPromise = undefined;
+      }
     }
   };
 
@@ -356,6 +453,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
     recordChannelSecurityApprovalRequest,
     logChannelRuntimeConfiguration,
     startChannels,
+    stopChannels,
     getRuntimeResourceQueueSnapshots: () => channelIngressScheduler.getRuntimeSnapshots(),
   };
 }

@@ -85,4 +85,57 @@ describe("list_files", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("越界");
   });
+
+  it("returns valid bounded JSON when directory entries exceed the response budget", async () => {
+    for (let index = 0; index < 24; index += 1) {
+      await fs.mkdir(path.join(stateDir, `directory-${String(index).padStart(2, "0")}-${"x".repeat(32)}`));
+    }
+
+    const result = await listFilesTool.execute({ path: "." }, {
+      ...baseContext,
+      policy: {
+        ...baseContext.policy,
+        maxResponseBytes: 768,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(Buffer.byteLength(result.output, "utf-8")).toBeLessThanOrEqual(768);
+    const payload = JSON.parse(result.output) as {
+      truncated?: boolean;
+      entries: Array<{ name: string }>;
+      limits?: { maxResponseBytes?: number };
+    };
+    expect(payload.truncated).toBe(true);
+    expect(payload.entries.length).toBeLessThan(24);
+    expect(payload.limits?.maxResponseBytes).toBe(768);
+  });
+
+  it("stops traversal at the hard entry limit", async () => {
+    const totalEntries = 1_005;
+    for (let offset = 0; offset < totalEntries; offset += 100) {
+      await Promise.all(Array.from(
+        { length: Math.min(100, totalEntries - offset) },
+        (_, index) => fs.mkdir(path.join(stateDir, `entry-${String(offset + index).padStart(4, "0")}`)),
+      ));
+    }
+
+    const result = await listFilesTool.execute({ path: "." }, {
+      ...baseContext,
+      policy: {
+        ...baseContext.policy,
+        maxResponseBytes: 10 * 1024 * 1024,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const payload = JSON.parse(result.output) as {
+      truncated?: boolean;
+      entries: Array<{ name: string }>;
+      limits?: { maxEntries?: number };
+    };
+    expect(payload.truncated).toBe(true);
+    expect(payload.entries).toHaveLength(1_000);
+    expect(payload.limits?.maxEntries).toBe(1_000);
+  });
 });

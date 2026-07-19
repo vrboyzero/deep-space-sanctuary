@@ -181,6 +181,39 @@ describe("loadWorkflowScript", () => {
     expect(result).toBe("file result");
   });
 
+  it("file 模式在内容变更后加载新的 .mjs 模块版本", async () => {
+    const filePath = path.join(tempDir, "reloadable-wf.mjs");
+    await fs.writeFile(filePath, `export default async function(ctx) { return "first version"; }\n`, "utf-8");
+    const first = await loadWorkflowScript(
+      { kind: "file", path: filePath },
+      { stateDir: tempDir, policy: createWorkflowPolicy(tempDir) },
+    );
+
+    await fs.writeFile(filePath, `export default async function(ctx) { return "second version"; }\n`, "utf-8");
+    const second = await loadWorkflowScript(
+      { kind: "file", path: filePath },
+      { stateDir: tempDir, policy: createWorkflowPolicy(tempDir) },
+    );
+
+    await expect(first.default({} as any)).resolves.toBe("first version");
+    await expect(second.default({} as any)).resolves.toBe("second version");
+    expect(second.scriptHash).not.toBe(first.scriptHash);
+  });
+
+  it("file 模式以稳定错误拒绝超过策略上限的脚本", async () => {
+    const filePath = path.join(tempDir, "oversized-wf.mjs");
+    await fs.writeFile(
+      filePath,
+      `export default async function(ctx) { return "too large"; }\n// ${"x".repeat(2_048)}\n`,
+      "utf-8",
+    );
+
+    await expect(loadWorkflowScript(
+      { kind: "file", path: filePath },
+      { stateDir: tempDir, policy: createWorkflowPolicy(tempDir, { maxFileBytes: 1_024 }) },
+    )).rejects.toMatchObject({ code: "file_too_large" });
+  });
+
   it("file 模式支持 slash-separated 绝对路径导入", async () => {
     const filePath = path.join(tempDir, "slash-path-wf.mjs");
     await fs.writeFile(filePath, `export default async function(ctx) { return "slash path result"; }\n`, "utf-8");

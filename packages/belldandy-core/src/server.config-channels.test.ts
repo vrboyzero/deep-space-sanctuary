@@ -125,6 +125,7 @@ test("config.update accepts system and model env settings and redacts auth/video
           BELLDANDY_OPENAI_PROXY_URL: "http://127.0.0.1:7890",
           BELLDANDY_OPENAI_SYSTEM_PROMPT: "follow house rules",
           BELLDANDY_AGENT_TIMEOUT_MS: "150000",
+          BELLDANDY_WORKFLOW_MAX_TOKENS: "80000",
           BELLDANDY_AGENT_PROTOCOL: "anthropic",
           BELLDANDY_VIDEO_FILE_API_URL: "https://api.moonshot.cn/v1",
           BELLDANDY_VIDEO_FILE_API_KEY: "video-secret",
@@ -154,6 +155,7 @@ test("config.update accepts system and model env settings and redacts auth/video
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_REASONING_EFFORT).toBe("max");
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_PROXY_URL).toBe("http://127.0.0.1:7890");
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_SYSTEM_PROMPT).toBe("follow house rules");
+    expect(readRes.payload?.config?.BELLDANDY_WORKFLOW_MAX_TOKENS).toBe("80000");
     expect(readRes.payload?.config?.BELLDANDY_AGENT_PROTOCOL).toBe("anthropic");
     expect(readRes.payload?.config?.BELLDANDY_VIDEO_FILE_API_URL).toBe("https://api.moonshot.cn/v1");
     expect(readRes.payload?.config?.BELLDANDY_AUTH_TOKEN).toBe("[REDACTED]");
@@ -163,6 +165,7 @@ test("config.update accepts system and model env settings and redacts auth/video
     expect(envLocalContent).toContain('BELLDANDY_AUTH_MODE="token"');
     expect(envLocalContent).toContain('BELLDANDY_AUTH_TOKEN="setup-test-token"');
     expect(envLocalContent).toContain('BELLDANDY_OPENAI_WIRE_API="responses"');
+    expect(envLocalContent).toContain('BELLDANDY_WORKFLOW_MAX_TOKENS="80000"');
     expect(envLocalContent).toContain('BELLDANDY_VIDEO_FILE_API_KEY="video-secret"');
   } finally {
     ws.close();
@@ -959,6 +962,10 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
           BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_TTL_MS: "86400000",
           BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES: "64",
           BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
+          BELLDANDY_MAX_TOOL_CALLS: "32",
+          BELLDANDY_MAX_RUN_WALL_TIME_MS: "300000",
+          BELLDANDY_MAX_TOTAL_TOKENS: "128000",
+          BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS: "4",
           BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
           BELLDANDY_DANGEROUS_TOOLS_ENABLED: "true",
           BELLDANDY_TOOLS_POLICY_FILE: "~/.star_sanctuary/tools-policy.json",
@@ -1024,6 +1031,10 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(readRes.payload?.config?.BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES).toBe("64");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_ITERATION_BUDGET).toBe("8");
+    expect(readRes.payload?.config?.BELLDANDY_MAX_TOOL_CALLS).toBe("32");
+    expect(readRes.payload?.config?.BELLDANDY_MAX_RUN_WALL_TIME_MS).toBe("300000");
+    expect(readRes.payload?.config?.BELLDANDY_MAX_TOTAL_TOKENS).toBe("128000");
+    expect(readRes.payload?.config?.BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS).toBe("4");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_LOOP_WARNING_FRACTION).toBe("0.75");
     expect(readRes.payload?.config?.BELLDANDY_DANGEROUS_TOOLS_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_TTS_MODEL).toBe("qwen3-tts-plus");
@@ -1053,6 +1064,10 @@ test("config.update accepts final cleanup prompt and multimedia env settings", a
     expect(envLocalContent).toContain('BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_STORE="true"');
     expect(envLocalContent).toContain('BELLDANDY_COMPRESSION_PERSISTENT_REFERENCE_MAX_ENTRIES="64"');
     expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_ITERATION_BUDGET="8"');
+    expect(envLocalContent).toContain('BELLDANDY_MAX_TOOL_CALLS="32"');
+    expect(envLocalContent).toContain('BELLDANDY_MAX_RUN_WALL_TIME_MS="300000"');
+    expect(envLocalContent).toContain('BELLDANDY_MAX_TOTAL_TOKENS="128000"');
+    expect(envLocalContent).toContain('BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS="4"');
     expect(envLocalContent).toContain('BELLDANDY_TOOL_LOOP_WARNING_FRACTION="0.75"');
     expect(envLocalContent).toContain('BELLDANDY_DANGEROUS_TOOLS_ENABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_TTS_MODEL="qwen3-tts-plus"');

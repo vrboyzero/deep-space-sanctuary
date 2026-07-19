@@ -5,6 +5,96 @@ import { describe, expect, it, vi } from "vitest";
 import { createChatEventsFeature } from "./chat-events.js";
 
 describe("chat events pairing", () => {
+  it("bounds tool notice dedupe keys and resets them with the connection generation", () => {
+    const showNotice = vi.fn();
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => document.createElement("div")),
+      showNotice,
+      dedupeMaxEntries: 2,
+      getCanvasApp: () => null,
+    });
+    const switchFacet = (runId) => feature.handleEvent("tool_result", {
+      runId,
+      success: true,
+      name: "switch_facet",
+      output: "ok",
+      metadata: {
+        facetName: "coder",
+        targetLabel: "root",
+      },
+    });
+
+    switchFacet("run-1");
+    switchFacet("run-2");
+    switchFacet("run-3");
+    switchFacet("run-3");
+    switchFacet("run-1");
+
+    expect(showNotice).toHaveBeenCalledTimes(4);
+    expect(feature.getRetentionSnapshot()).toMatchObject({
+      renderedToolResultPreviewKeyCount: 0,
+      handledToolNoticeKeyCount: 2,
+      evictedDedupeKeyCount: 2,
+      generationClearCount: 0,
+      disposed: false,
+    });
+
+    feature.clearGeneration();
+    switchFacet("run-3");
+    expect(showNotice).toHaveBeenCalledTimes(5);
+    expect(feature.getRetentionSnapshot()).toMatchObject({
+      handledToolNoticeKeyCount: 1,
+      generationClearCount: 1,
+    });
+
+    feature.dispose();
+    expect(feature.getRetentionSnapshot()).toMatchObject({
+      renderedToolResultPreviewKeyCount: 0,
+      handledToolNoticeKeyCount: 0,
+      disposed: true,
+    });
+  });
+
+  it("cancels the pending frame flush when clearing the connection generation", () => {
+    const cancelAnimationFrame = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 42));
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => document.createElement("div")),
+      queueGoalUpdateEvent: vi.fn(),
+    });
+
+    feature.handleEvent("goal.update", { goal: { id: "goal-pending" } });
+    expect(feature.getRetentionSnapshot()).toMatchObject({
+      pendingGoalUpdateCount: 1,
+      pendingFrameFlush: true,
+    });
+
+    feature.clearGeneration();
+
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
+    expect(feature.getRetentionSnapshot()).toMatchObject({
+      pendingGoalUpdateCount: 0,
+      pendingSubtaskUpdateCount: 0,
+      pendingFrameFlush: false,
+    });
+  });
+
+  it("consumes structured budget exhaustion before the following error final", () => {
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => document.createElement("div")),
+    });
+
+    const handled = feature.handleEvent("agent.budget_exhausted", {
+      conversationId: "conv-budget",
+      budget: "tool_calls",
+      limit: 32,
+      observed: 33,
+    });
+
+    expect(handled).toBe(true);
+  });
+
   it("delegates pairing.required to the provided WebChat approval handler", () => {
     const target = { innerHTML: "" };
     const appendMessage = vi.fn(() => target);

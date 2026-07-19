@@ -923,7 +923,10 @@ function summarizeList(values: readonly string[] | undefined, maxItems: number):
   return `${selected.join(", ")} (+${omittedCount} more)`;
 }
 
-const ROLE_EXECUTION_POLICY_TEXT: Record<"coder" | "researcher" | "verifier", string> = {
+const ROLE_EXECUTION_POLICY_TEXT: Partial<Record<
+  Exclude<NonNullable<ToolRuntimeLaunchSpec["role"]>, "default">,
+  string
+>> = {
   coder: [
     "## Role Execution Policy (coder)",
     "",

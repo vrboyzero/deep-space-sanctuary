@@ -15,7 +15,7 @@ import type { ModelProfile } from "./failover-client.js";
 const AGENT_PROFILE_KINDS = ["resident", "worker"] as const;
 const AGENT_WORKSPACE_BINDINGS = ["current", "custom"] as const;
 const AGENT_MEMORY_MODES = ["shared", "isolated", "hybrid"] as const;
-const AGENT_DEFAULT_ROLES = ["default", "coder", "researcher", "verifier"] as const;
+const AGENT_DEFAULT_ROLES = ["default", "commander", "coder", "researcher", "verifier"] as const;
 const AGENT_PERMISSION_MODES = ["plan", "acceptEdits", "confirm"] as const;
 const AGENT_HANDOFF_STYLES = ["summary", "structured"] as const;
 
@@ -89,6 +89,16 @@ export type AgentProfile = {
   maxInputTokens?: number;
   /** 单次模型调用最大输出 token 数覆盖（调大可避免长输出被截断导致工具调用 JSON 损坏） */
   maxOutputTokens?: number;
+  /** 单次 run 的工具调用总数上限覆盖；0 表示不允许执行工具调用。 */
+  maxToolCalls?: number;
+  /** 工具循环模型调用轮数上限覆盖；0 保持兼容的无限轮次语义。 */
+  toolLoopIterationBudget?: number;
+  /** 单次 ReAct run 的 wall-time 上限（毫秒）覆盖。 */
+  maxRunWallTimeMs?: number;
+  /** 单次 ReAct run 的累计 token 上限覆盖。 */
+  maxTotalTokens?: number;
+  /** 单次 ReAct run 可实际执行的高风险 Tool 次数覆盖；0 表示禁止高风险 Tool。 */
+  maxHighRiskToolCalls?: number;
 };
 
 /**
@@ -141,18 +151,21 @@ function stripUtf8Bom(raw: string): string {
 }
 
 const ROLE_DEFAULT_ALLOWED_TOOL_FAMILIES: Partial<Record<AgentProfileDefaultRole, ToolContractFamily[]>> = {
+  commander: ["workspace-read", "browser", "memory", "goal-governance", "session-orchestration"],
   coder: ["workspace-read", "workspace-write", "patch", "command-exec", "memory", "goal-governance"],
   researcher: ["network-read", "workspace-read", "browser", "memory", "goal-governance"],
   verifier: ["workspace-read", "command-exec", "browser", "memory", "goal-governance"],
 };
 
 const ROLE_DEFAULT_PERMISSION_MODE: Partial<Record<AgentProfileDefaultRole, AgentProfileDefaultPermissionMode>> = {
+  commander: "confirm",
   researcher: "plan",
   coder: "confirm",
   verifier: "confirm",
 };
 
 const ROLE_DEFAULT_MAX_RISK_LEVEL: Partial<Record<AgentProfileDefaultRole, ToolContractRiskLevel>> = {
+  commander: "high",
   researcher: "medium",
   coder: "high",
   verifier: "high",
@@ -171,7 +184,7 @@ const BUILTIN_WORKER_PROFILES: readonly AgentProfile[] = [
       "需要拆解复杂任务并协调多个 Agent 分工",
       "需要在实现、审查、返工、验收之间做编排与收口",
     ],
-    defaultRole: "default",
+    defaultRole: "commander",
     defaultPermissionMode: "confirm",
     defaultAllowedToolFamilies: [
       "workspace-read",
@@ -262,6 +275,7 @@ export function resolveAgentProfileDefaultRole(
   profile: Pick<AgentProfile, "defaultRole">,
 ): AgentProfileDefaultRole {
   return profile.defaultRole === "coder"
+    || profile.defaultRole === "commander"
     || profile.defaultRole === "researcher"
     || profile.defaultRole === "verifier"
     ? profile.defaultRole
@@ -385,6 +399,21 @@ export async function loadAgentProfiles(filePath: string): Promise<AgentProfile[
         toolWhitelist: Array.isArray(obj.toolWhitelist) ? obj.toolWhitelist.filter((s): s is string => typeof s === "string") : undefined,
         maxInputTokens: typeof obj.maxInputTokens === "number" && obj.maxInputTokens > 0 ? obj.maxInputTokens : undefined,
         maxOutputTokens: typeof obj.maxOutputTokens === "number" && obj.maxOutputTokens > 0 ? obj.maxOutputTokens : undefined,
+        maxToolCalls: typeof obj.maxToolCalls === "number" && Number.isFinite(obj.maxToolCalls) && obj.maxToolCalls >= 0
+          ? Math.floor(obj.maxToolCalls)
+          : undefined,
+        toolLoopIterationBudget: typeof obj.toolLoopIterationBudget === "number" && Number.isFinite(obj.toolLoopIterationBudget) && obj.toolLoopIterationBudget >= 0
+          ? Math.floor(obj.toolLoopIterationBudget)
+          : undefined,
+        maxRunWallTimeMs: typeof obj.maxRunWallTimeMs === "number" && Number.isFinite(obj.maxRunWallTimeMs) && obj.maxRunWallTimeMs > 0
+          ? Math.floor(obj.maxRunWallTimeMs)
+          : undefined,
+        maxTotalTokens: typeof obj.maxTotalTokens === "number" && Number.isFinite(obj.maxTotalTokens) && obj.maxTotalTokens > 0
+          ? Math.floor(obj.maxTotalTokens)
+          : undefined,
+        maxHighRiskToolCalls: typeof obj.maxHighRiskToolCalls === "number" && Number.isFinite(obj.maxHighRiskToolCalls) && obj.maxHighRiskToolCalls >= 0
+          ? Math.floor(obj.maxHighRiskToolCalls)
+          : undefined,
       });
     }
 

@@ -70,7 +70,21 @@ export function createAgentRuntimeFeature({
     agentCreateSystemPromptEl,
   } = refs;
 
+  const ownedListeners = [];
+  const pendingAgentCreateRequests = new Set();
+  const pendingAvatarUploadRequests = new Set();
+  const pendingModelCatalogRequests = new Set();
+  const pendingObservabilityNavigations = new Set();
+  const pendingResidentEnsureRequests = new Set();
+  const pendingSystemRestartRequests = new Set();
+  let agentCreateActionGeneration = 0;
+  let avatarUploadGeneration = 0;
+  let createModalGeneration = 0;
+  let disposed = false;
+  let observabilityNavigationGeneration = 0;
+  let residentSessionGeneration = 0;
   let residentAgentActivationSeq = 0;
+  let systemRestartGeneration = 0;
   let agentPanelUploadInput = null;
   let agentPanelUploadTargetAgentId = "";
   let agentPanelUploadBusyAgentId = "";
@@ -79,10 +93,42 @@ export function createAgentRuntimeFeature({
   let defaultAgentName = initialIdentity.defaultAgentName || currentAgentName;
   let defaultAgentAvatar = initialIdentity.defaultAgentAvatar || currentAgentAvatar;
   let agentCreateBusy = false;
+  let observabilityModalBinding = null;
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    ownedListeners.push({ target, type, handler });
+  }
+
+  function isCurrentCreateModal(generation) {
+    return !disposed && generation === createModalGeneration;
+  }
+
+  function isCurrentAgentCreate(generation) {
+    return !disposed && generation === agentCreateActionGeneration;
+  }
+
+  function isCurrentAvatarUpload(generation) {
+    return !disposed && generation === avatarUploadGeneration;
+  }
+
+  function isCurrentResidentSession(generation) {
+    return !disposed && generation === residentSessionGeneration;
+  }
+
+  function isCurrentObservabilityNavigation(generation) {
+    return !disposed && generation === observabilityNavigationGeneration;
+  }
+
+  function isCurrentSystemRestart(generation) {
+    return !disposed && generation === systemRestartGeneration;
+  }
 
   function closeAgentCreateModal(options = {}) {
     if (!agentCreateModalEl) return;
     if (agentCreateBusy && !options.force) return;
+    createModalGeneration += 1;
     agentCreateModalEl.classList.add("hidden");
   }
 
@@ -115,34 +161,53 @@ export function createAgentRuntimeFeature({
   }
 
   async function openAgentCreateModal() {
-    if (!agentCreateModalEl) return;
+    if (disposed || !agentCreateModalEl) return;
+    const generation = ++createModalGeneration;
     resetAgentCreateForm();
     renderAgentCreateModelOptions(null);
     agentCreateModalEl.classList.remove("hidden");
     agentCreateIdEl?.focus();
 
+    const requestToken = Symbol("agent-create-model-catalog");
+    pendingModelCatalogRequests.add(requestToken);
     try {
       const modelCatalog = await requestModelCatalog?.();
+      if (!isCurrentCreateModal(generation)) return;
       renderAgentCreateModelOptions(modelCatalog);
     } catch {
+      if (!isCurrentCreateModal(generation)) return;
       renderAgentCreateModelOptions(null);
+    } finally {
+      pendingModelCatalogRequests.delete(requestToken);
     }
   }
 
   async function triggerSystemRestart(reason) {
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "system.restart",
-      params: typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {},
-    });
-    if (!res?.ok) {
-      throw new Error(res?.error?.message || t("agentPanel.restartFailedMessage"));
+    if (disposed) return;
+    const generation = systemRestartGeneration;
+    const requestToken = Symbol("agent-system-restart");
+    pendingSystemRestartRequests.add(requestToken);
+    try {
+      const res = await sendReq({
+        type: "req",
+        id: makeId(),
+        method: "system.restart",
+        params: typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {},
+      });
+      if (!isCurrentSystemRestart(generation)) return;
+      if (!res?.ok) {
+        throw new Error(res?.error?.message || t("agentPanel.restartFailedMessage"));
+      }
+    } catch (error) {
+      if (!isCurrentSystemRestart(generation)) return;
+      throw error;
+    } finally {
+      pendingSystemRestartRequests.delete(requestToken);
     }
   }
 
   async function submitAgentCreate() {
-    if (agentCreateBusy) return;
+    if (disposed || agentCreateBusy) return;
     const id = String(agentCreateIdEl?.value || "").trim();
     const displayName = String(agentCreateDisplayNameEl?.value || "").trim();
     const model = String(agentCreateModelEl?.value || "").trim() || "primary";
@@ -159,6 +224,9 @@ export function createAgentRuntimeFeature({
     }
 
     agentCreateBusy = true;
+    const generation = ++agentCreateActionGeneration;
+    const requestToken = Symbol("agent-create");
+    pendingAgentCreateRequests.add(requestToken);
     if (agentCreateSubmitBtn) {
       agentCreateSubmitBtn.disabled = true;
     }
@@ -175,6 +243,7 @@ export function createAgentRuntimeFeature({
           systemPromptOverride,
         },
       });
+      if (!isCurrentAgentCreate(generation)) return;
       if (!res?.ok) {
         showNotice(
           t("agentPanel.createFailedTitle"),
@@ -208,6 +277,7 @@ export function createAgentRuntimeFeature({
       );
       openAgentConfigFile(id);
     } catch (error) {
+      if (!isCurrentAgentCreate(generation)) return;
       showNotice(
         t("agentPanel.createFailedTitle"),
         error instanceof Error ? error.message : String(error),
@@ -215,6 +285,8 @@ export function createAgentRuntimeFeature({
         0,
       );
     } finally {
+      pendingAgentCreateRequests.delete(requestToken);
+      if (!isCurrentAgentCreate(generation)) return;
       agentCreateBusy = false;
       if (agentCreateSubmitBtn) {
         agentCreateSubmitBtn.disabled = false;
@@ -240,6 +312,7 @@ export function createAgentRuntimeFeature({
   }
 
   function applyHelloIdentity(frame = {}) {
+    if (disposed) return;
     if (frame.agentName) {
       currentAgentName = frame.agentName;
       defaultAgentName = frame.agentName;
@@ -273,7 +346,7 @@ export function createAgentRuntimeFeature({
   }
 
   function syncAgentRuntimeEntry(agentId, patch = {}) {
-    if (!agentId) return null;
+    if (disposed || !agentId) return null;
     const existing = agentCatalog.get(agentId);
     if (!existing) return null;
     const next = {
@@ -285,36 +358,47 @@ export function createAgentRuntimeFeature({
   }
 
   async function ensureResidentAgentSession(agentId) {
-    if (!residentAgentRosterEnabled || !agentId) return null;
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "agent.session.ensure",
-      params: { agentId },
-    });
-    if (!res || !res.ok || !res.payload?.conversationId) {
-      return null;
-    }
+    if (disposed || !residentAgentRosterEnabled || !agentId) return null;
+    const generation = residentSessionGeneration;
+    const requestToken = Symbol("resident-agent-session-ensure");
+    pendingResidentEnsureRequests.add(requestToken);
+    try {
+      const res = await sendReq({
+        type: "req",
+        id: makeId(),
+        method: "agent.session.ensure",
+        params: { agentId },
+      });
+      if (!isCurrentResidentSession(generation)) return null;
+      if (!res || !res.ok || !res.payload?.conversationId) {
+        return null;
+      }
 
-    const mainConversationId = typeof res.payload.mainConversationId === "string" && res.payload.mainConversationId.trim()
-      ? res.payload.mainConversationId.trim()
-      : String(res.payload.conversationId);
-    const lastConversationId = typeof res.payload.lastConversationId === "string" && res.payload.lastConversationId.trim()
-      ? res.payload.lastConversationId.trim()
-      : String(res.payload.conversationId);
-    agentSessionCacheFeature.bindAgentConversation(agentId, mainConversationId, { main: true });
-    agentSessionCacheFeature.bindAgentConversation(agentId, lastConversationId);
-    syncAgentRuntimeEntry(agentId, {
-      status: typeof res.payload.status === "string" ? res.payload.status : "idle",
-      mainConversationId,
-      lastConversationId,
-      lastActiveAt: typeof res.payload.lastActiveAt === "number" ? res.payload.lastActiveAt : undefined,
-    });
-    return res.payload;
+      const mainConversationId = typeof res.payload.mainConversationId === "string" && res.payload.mainConversationId.trim()
+        ? res.payload.mainConversationId.trim()
+        : String(res.payload.conversationId);
+      const lastConversationId = typeof res.payload.lastConversationId === "string" && res.payload.lastConversationId.trim()
+        ? res.payload.lastConversationId.trim()
+        : String(res.payload.conversationId);
+      agentSessionCacheFeature.bindAgentConversation(agentId, mainConversationId, { main: true });
+      agentSessionCacheFeature.bindAgentConversation(agentId, lastConversationId);
+      syncAgentRuntimeEntry(agentId, {
+        status: typeof res.payload.status === "string" ? res.payload.status : "idle",
+        mainConversationId,
+        lastConversationId,
+        lastActiveAt: typeof res.payload.lastActiveAt === "number" ? res.payload.lastActiveAt : undefined,
+      });
+      return res.payload;
+    } catch (error) {
+      if (!isCurrentResidentSession(generation)) return null;
+      throw error;
+    } finally {
+      pendingResidentEnsureRequests.delete(requestToken);
+    }
   }
 
   async function activateResidentAgentConversation(agentId, options = {}) {
-    if (!agentId) return;
+    if (disposed || !agentId) return;
     const activationSeq = ++residentAgentActivationSeq;
     const forceEnsure = options.forceEnsure === true;
     const switchToChat = options.switchToChat !== false;
@@ -325,7 +409,7 @@ export function createAgentRuntimeFeature({
 
     if (!conversationId || forceEnsure) {
       const ensured = await ensureResidentAgentSession(agentId);
-      if (activationSeq !== residentAgentActivationSeq) return;
+      if (disposed || activationSeq !== residentAgentActivationSeq) return;
       conversationId = typeof ensured?.conversationId === "string" ? ensured.conversationId : conversationId;
     }
 
@@ -360,6 +444,7 @@ export function createAgentRuntimeFeature({
   }
 
   function syncSelectedAgentIdentity() {
+    if (disposed) return null;
     const selectedAgent = agentCatalog.get(getCurrentAgentSelection());
     if (!selectedAgent) return null;
     const fallbackAgent = agentCatalog.get("default");
@@ -375,6 +460,7 @@ export function createAgentRuntimeFeature({
   }
 
   function updateAgentCatalogAvatar(agentId, avatarPath) {
+    if (disposed) return null;
     const targetAgentId = agentId && agentId !== "default" ? agentId : "default";
     const existing = agentCatalog.get(targetAgentId);
     if (existing) {
@@ -394,6 +480,7 @@ export function createAgentRuntimeFeature({
   }
 
   function applyUploadedAgentAvatarChange({ agentId, avatarPath }) {
+    if (disposed) return;
     const bustedPath = `${avatarPath}${avatarPath.includes("?") ? "&" : "?"}v=${Date.now()}`;
     const targetAgentId = agentId && typeof agentId === "string" ? agentId : getCurrentAgentSelection();
     const updatedAgentId = updateAgentCatalogAvatar(targetAgentId, bustedPath);
@@ -404,31 +491,34 @@ export function createAgentRuntimeFeature({
     renderAgentRightPanel();
   }
 
+  function handleAgentPanelAvatarUploadChange() {
+    const selectedFile = agentPanelUploadInput?.files?.[0];
+    const targetAgentId = agentPanelUploadTargetAgentId;
+    agentPanelUploadTargetAgentId = "";
+    if (agentPanelUploadInput) {
+      agentPanelUploadInput.value = "";
+    }
+    if (disposed || !selectedFile || !targetAgentId) return;
+    void uploadAgentPanelAvatar(targetAgentId, selectedFile);
+  }
+
   function ensureAgentPanelAvatarUploadInput() {
+    if (disposed) return null;
     if (agentPanelUploadInput) return agentPanelUploadInput;
 
     agentPanelUploadInput = document.createElement("input");
     agentPanelUploadInput.type = "file";
     agentPanelUploadInput.accept = "image/png,image/jpeg,image/gif,image/webp";
     agentPanelUploadInput.className = "hidden";
-    agentPanelUploadInput.addEventListener("change", () => {
-      const selectedFile = agentPanelUploadInput?.files?.[0];
-      const targetAgentId = agentPanelUploadTargetAgentId;
-      agentPanelUploadTargetAgentId = "";
-      if (agentPanelUploadInput) {
-        agentPanelUploadInput.value = "";
-      }
-      if (!selectedFile || !targetAgentId) return;
-      void uploadAgentPanelAvatar(targetAgentId, selectedFile);
-    });
+    agentPanelUploadInput.addEventListener("change", handleAgentPanelAvatarUploadChange);
     document.body.appendChild(agentPanelUploadInput);
     return agentPanelUploadInput;
   }
 
   function openAgentPanelAvatarPicker(agentId) {
-    if (!agentId || agentPanelUploadBusyAgentId) return;
+    if (disposed || !agentId || agentPanelUploadBusyAgentId) return;
     agentPanelUploadTargetAgentId = agentId;
-    ensureAgentPanelAvatarUploadInput().click();
+    ensureAgentPanelAvatarUploadInput()?.click();
   }
 
   function openAgentConfigFile(agentId) {
@@ -440,8 +530,11 @@ export function createAgentRuntimeFeature({
   }
 
   async function uploadAgentPanelAvatar(agentId, file) {
-    if (!agentId || !file || agentPanelUploadBusyAgentId) return;
+    if (disposed || !agentId || !file || agentPanelUploadBusyAgentId) return;
 
+    const generation = ++avatarUploadGeneration;
+    const requestToken = Symbol("agent-avatar-upload");
+    pendingAvatarUploadRequests.add(requestToken);
     agentPanelUploadBusyAgentId = agentId;
     renderAgentRightPanel();
 
@@ -458,7 +551,9 @@ export function createAgentRuntimeFeature({
         body: formData,
         headers: getHttpAuthHeaders(),
       });
+      if (!isCurrentAvatarUpload(generation)) return;
       const payload = await res.json().catch(() => null);
+      if (!isCurrentAvatarUpload(generation)) return;
       if (!res.ok || !payload?.ok) {
         const message = payload?.error?.message || t("agentPanel.avatarUploadFailedMessage");
         showNotice(
@@ -490,6 +585,7 @@ export function createAgentRuntimeFeature({
         2200,
       );
     } catch (error) {
+      if (!isCurrentAvatarUpload(generation)) return;
       showNotice(
         t("agentPanel.avatarUploadFailedTitle"),
         error instanceof Error ? error.message : String(error),
@@ -497,12 +593,15 @@ export function createAgentRuntimeFeature({
         3800,
       );
     } finally {
+      pendingAvatarUploadRequests.delete(requestToken);
+      if (!isCurrentAvatarUpload(generation)) return;
       agentPanelUploadBusyAgentId = "";
       renderAgentRightPanel();
     }
   }
 
   function syncAgentCatalog(agents = [], selectedAgentId = "") {
+    if (disposed) return;
     agentCatalog.clear();
     for (const agent of Array.isArray(agents) ? agents : []) {
       if (!agent || typeof agent !== "object" || !agent.id) continue;
@@ -595,6 +694,7 @@ export function createAgentRuntimeFeature({
   }
 
   async function focusAgentObservabilityTarget(agentId) {
+    if (disposed) return;
     const targetAgentId = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "default";
     if (agentSelectEl && agentSelectEl.value !== targetAgentId) {
       agentSelectEl.value = targetAgentId;
@@ -612,12 +712,14 @@ export function createAgentRuntimeFeature({
   }
 
   function clearGoalContinuationFocus() {
+    if (disposed) return;
     goalsDetailEl?.querySelectorAll(".is-continuation-focus").forEach((node) => {
       node.classList.remove("is-continuation-focus");
     });
   }
 
   function applyGoalContinuationFocus(goalId = getGoalsState()?.selectedId) {
+    if (disposed) return false;
     clearGoalContinuationFocus();
     const goalsState = getGoalsState?.();
     const focus = goalsState?.continuationFocusNode;
@@ -641,7 +743,7 @@ export function createAgentRuntimeFeature({
 
   async function openContinuationAction(action = {}) {
     const kind = typeof action?.kind === "string" ? action.kind : "";
-    if (!kind) return;
+    if (disposed || !kind) return;
 
     const goalsState = getGoalsState?.();
     const subtasksState = getSubtasksState?.();
@@ -729,52 +831,92 @@ export function createAgentRuntimeFeature({
 
   async function openAgentObservabilityAction(agentId, action = {}) {
     const kind = typeof action?.kind === "string" ? action.kind : "";
-    if (!kind) return;
+    if (disposed || !kind) return;
+    const generation = ++observabilityNavigationGeneration;
+    const navigationToken = Symbol("agent-observability-navigation");
+    pendingObservabilityNavigations.add(navigationToken);
+    try {
+      await focusAgentObservabilityTarget(agentId);
+      if (!isCurrentObservabilityNavigation(generation)) return;
 
-    await focusAgentObservabilityTarget(agentId);
-
-    switch (kind) {
-      case "task":
-        if (!action.taskId) return;
-        switchMode("memory");
-        await openTaskFromAudit(action.taskId);
-        return;
-      case "tasks":
-        switchMode("memory");
-        if (getMemoryViewerState?.()?.tab !== "tasks") {
-          switchMemoryViewerTab("tasks");
-        } else {
-          await loadMemoryViewer(true);
-        }
-        return;
-      case "subtask":
-        if (!action.taskId) return;
-        await openSubtaskById(action.taskId);
-        return;
-      case "subtasks":
-        switchMode("subtasks");
-        await loadSubtasks(true);
-        return;
-      case "sharedReview":
-        switchMode("memory");
-        if (getMemoryViewerState?.()?.tab !== "sharedReview") {
-          switchMemoryViewerTab("sharedReview");
-        } else {
-          await loadMemoryViewer(true);
-        }
-        return;
-      case "goal":
-      case "node":
-      case "session":
-      case "conversation":
-        await openContinuationAction(action);
-        return;
-      default:
-        return;
+      switch (kind) {
+        case "task":
+          if (!action.taskId) return;
+          switchMode("memory");
+          await openTaskFromAudit(action.taskId);
+          if (!isCurrentObservabilityNavigation(generation)) return;
+          return;
+        case "tasks":
+          switchMode("memory");
+          if (getMemoryViewerState?.()?.tab !== "tasks") {
+            switchMemoryViewerTab("tasks");
+          } else {
+            await loadMemoryViewer(true);
+            if (!isCurrentObservabilityNavigation(generation)) return;
+          }
+          return;
+        case "subtask":
+          if (!action.taskId) return;
+          await openSubtaskById(action.taskId);
+          if (!isCurrentObservabilityNavigation(generation)) return;
+          return;
+        case "subtasks":
+          switchMode("subtasks");
+          await loadSubtasks(true);
+          if (!isCurrentObservabilityNavigation(generation)) return;
+          return;
+        case "sharedReview":
+          switchMode("memory");
+          if (getMemoryViewerState?.()?.tab !== "sharedReview") {
+            switchMemoryViewerTab("sharedReview");
+          } else {
+            await loadMemoryViewer(true);
+            if (!isCurrentObservabilityNavigation(generation)) return;
+          }
+          return;
+        case "goal":
+        case "node":
+        case "session":
+        case "conversation":
+          await openContinuationAction(action);
+          if (!isCurrentObservabilityNavigation(generation)) return;
+          return;
+        default:
+          return;
+      }
+    } catch (error) {
+      if (!isCurrentObservabilityNavigation(generation)) return;
+      throw error;
+    } finally {
+      pendingObservabilityNavigations.delete(navigationToken);
     }
   }
 
+  function closeAgentObservabilityModal({ clearContent = false } = {}) {
+    const modalOverlay = observabilityModalBinding?.modalOverlay
+      || document.getElementById("agentObservabilityModal");
+    const modalClose = observabilityModalBinding?.modalClose
+      || document.getElementById("agentObservabilityModalClose");
+    if (observabilityModalBinding) {
+      modalOverlay?.removeEventListener("click", observabilityModalBinding.backdropHandler);
+      if (modalClose?.onclick === observabilityModalBinding.closeHandler) {
+        modalClose.onclick = null;
+      }
+      observabilityModalBinding = null;
+    } else if (modalClose && clearContent) {
+      modalClose.onclick = null;
+    }
+    modalOverlay?.classList.add("hidden");
+    if (!clearContent) return;
+    const modalTitle = document.getElementById("agentObservabilityModalTitle");
+    const modalBody = document.getElementById("agentObservabilityModalBody");
+    if (modalTitle) modalTitle.textContent = "";
+    if (modalBody) modalBody.textContent = "";
+  }
+
   function openAgentObservabilityModal(agent, observability) {
+    if (disposed) return;
+    closeAgentObservabilityModal();
     const modalOverlay = document.getElementById("agentObservabilityModal");
     const modalTitle = document.getElementById("agentObservabilityModalTitle");
     const modalBody = document.getElementById("agentObservabilityModalBody");
@@ -809,7 +951,7 @@ export function createAgentRuntimeFeature({
         rowBtn.className = "agent-observability-modal-row";
         rowBtn.title = row.value || row.label || "";
         rowBtn.addEventListener("click", () => {
-          modalOverlay.classList.add("hidden");
+          closeAgentObservabilityModal();
           void openAgentObservabilityAction(agent.id, row.action);
         });
 
@@ -830,19 +972,24 @@ export function createAgentRuntimeFeature({
 
     modalOverlay.classList.remove("hidden");
 
-    const closeHandler = () => {
-      modalOverlay.classList.add("hidden");
+    const closeHandler = () => closeAgentObservabilityModal();
+    const backdropHandler = (event) => {
+      if (event.target === modalOverlay) closeAgentObservabilityModal();
     };
     if (modalClose) {
       modalClose.onclick = closeHandler;
     }
-    modalOverlay.addEventListener("click", (event) => {
-      if (event.target === modalOverlay) closeHandler();
-    }, { once: true });
+    modalOverlay.addEventListener("click", backdropHandler);
+    observabilityModalBinding = {
+      backdropHandler,
+      closeHandler,
+      modalClose,
+      modalOverlay,
+    };
   }
 
   function renderAgentRightPanel() {
-    if (!agentRightPanelEl) return;
+    if (disposed || !agentRightPanelEl) return;
 
     const agents = [...agentCatalog.values()];
     agentRightPanelEl.textContent = "";
@@ -1004,6 +1151,7 @@ export function createAgentRuntimeFeature({
   }
 
   async function handleAgentSelectionChange() {
+    if (disposed) return;
     const selectedAgentId = agentSelectEl?.value || "default";
     localStorage.setItem(storageKey, selectedAgentId);
     syncSelectedAgentIdentity();
@@ -1042,7 +1190,7 @@ export function createAgentRuntimeFeature({
   }
 
   function cacheOutgoingUserMessage({ conversationId, displayText, timestampMs, agentId }) {
-    if (!residentAgentRosterEnabled || !conversationId) return;
+    if (disposed || !residentAgentRosterEnabled || !conversationId) return;
     const targetAgentId = typeof agentId === "string" && agentId.trim() ? agentId.trim() : getCurrentAgentSelection();
     agentSessionCacheFeature.bindAgentConversation(targetAgentId, conversationId, {
       main: conversationId === agentCatalog.get(targetAgentId)?.mainConversationId,
@@ -1055,7 +1203,7 @@ export function createAgentRuntimeFeature({
 
   function handleMessageSendConversationBound({ conversationId, agentId }) {
     const normalizedConversationId = typeof conversationId === "string" ? conversationId.trim() : "";
-    if (!residentAgentRosterEnabled || !normalizedConversationId) return;
+    if (disposed || !residentAgentRosterEnabled || !normalizedConversationId) return;
     const targetAgentId = typeof agentId === "string" && agentId.trim() ? agentId.trim() : getCurrentAgentSelection();
     agentSessionCacheFeature.bindAgentConversation(targetAgentId, normalizedConversationId, {
       main: normalizedConversationId === agentCatalog.get(targetAgentId)?.mainConversationId,
@@ -1067,6 +1215,7 @@ export function createAgentRuntimeFeature({
   }
 
   function handleAgentStatusPayload(payload) {
+    if (disposed) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     const agentId = typeof payload?.agentId === "string"
       ? payload.agentId
@@ -1082,6 +1231,7 @@ export function createAgentRuntimeFeature({
   }
 
   function handleConversationDeltaPayload(payload) {
+    if (disposed) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     const delta = typeof payload?.delta === "string" ? payload.delta : "";
     if (!conversationId || !delta) return;
@@ -1091,6 +1241,7 @@ export function createAgentRuntimeFeature({
   }
 
   function handleConversationFinalPayload(payload) {
+    if (disposed) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     if (!conversationId) return;
     agentSessionCacheFeature.finalizeAssistantMessage(conversationId, payload?.text || "", {
@@ -1101,6 +1252,7 @@ export function createAgentRuntimeFeature({
   }
 
   function handleConversationStoppedPayload(payload) {
+    if (disposed) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     if (!conversationId) return;
     const currentMessages = agentSessionCacheFeature.getConversationMessages(conversationId);
@@ -1119,21 +1271,87 @@ export function createAgentRuntimeFeature({
   }
 
   function setConversationMessages(conversationId, messages) {
-    if (!conversationId || !Array.isArray(messages)) return;
+    if (disposed || !conversationId || !Array.isArray(messages)) return;
     agentSessionCacheFeature.setConversationMessages(conversationId, messages);
   }
 
-  if (agentSelectEl) {
-    agentSelectEl.addEventListener("change", () => {
-      void handleAgentSelectionChange();
-    });
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    createModalGeneration += 1;
+    agentCreateActionGeneration += 1;
+    avatarUploadGeneration += 1;
+    residentSessionGeneration += 1;
+    residentAgentActivationSeq += 1;
+    observabilityNavigationGeneration += 1;
+    systemRestartGeneration += 1;
+    for (const { target, type, handler } of ownedListeners) {
+      target.removeEventListener(type, handler);
+    }
+    ownedListeners.length = 0;
+    agentCreateModalEl?.classList.add("hidden");
+    agentCreateBusy = false;
+    if (agentCreateSubmitBtn) {
+      agentCreateSubmitBtn.disabled = false;
+    }
+    resetAgentCreateForm();
+    if (agentCreateModelEl) {
+      agentCreateModelEl.innerHTML = "";
+    }
+    if (agentRightPanelEl) {
+      // 清空动态节点即可释放其按钮 listener 与闭包正文。
+      agentRightPanelEl.textContent = "";
+    }
+    agentPanelUploadTargetAgentId = "";
+    agentPanelUploadBusyAgentId = "";
+    if (agentPanelUploadInput) {
+      agentPanelUploadInput.removeEventListener("change", handleAgentPanelAvatarUploadChange);
+      agentPanelUploadInput.value = "";
+      agentPanelUploadInput.remove();
+      agentPanelUploadInput = null;
+    }
+    closeAgentObservabilityModal({ clearContent: true });
+    setAgentPanelHasContent?.(false);
   }
 
-  agentCreateModalCloseBtn?.addEventListener("click", () => closeAgentCreateModal());
-  agentCreateCancelBtn?.addEventListener("click", () => closeAgentCreateModal());
-  agentCreateSubmitBtn?.addEventListener("click", () => {
+  function getRuntimeSnapshot() {
+    return {
+      createModalDisposed: disposed,
+      createModalGeneration,
+      agentCreateActionGeneration,
+      agentCreateBusy,
+      avatarUploadBusy: Boolean(agentPanelUploadBusyAgentId),
+      avatarUploadGeneration,
+      hasAvatarUploadInput: Boolean(agentPanelUploadInput),
+      observabilityModalListenerCount: observabilityModalBinding ? 1 : 0,
+      observabilityNavigationGeneration,
+      ownedListenerCount: ownedListeners.length,
+      pendingAgentCreateRequestCount: pendingAgentCreateRequests.size,
+      pendingAvatarUploadRequestCount: pendingAvatarUploadRequests.size,
+      pendingModelCatalogRequestCount: pendingModelCatalogRequests.size,
+      pendingObservabilityNavigationCount: pendingObservabilityNavigations.size,
+      pendingResidentEnsureRequestCount: pendingResidentEnsureRequests.size,
+      pendingSystemRestartRequestCount: pendingSystemRestartRequests.size,
+      residentSessionGeneration,
+      systemRestartGeneration,
+    };
+  }
+
+  const handleAgentSelectionChangeEvent = () => {
+    if (disposed) return;
+    void handleAgentSelectionChange();
+  };
+  const handleAgentCreateModalClose = () => closeAgentCreateModal();
+  const handleAgentCreateCancel = () => closeAgentCreateModal();
+  const handleAgentCreateSubmit = () => {
+    if (disposed) return;
     void submitAgentCreate();
-  });
+  };
+
+  addOwnedListener(agentSelectEl, "change", handleAgentSelectionChangeEvent);
+  addOwnedListener(agentCreateModalCloseBtn, "click", handleAgentCreateModalClose);
+  addOwnedListener(agentCreateCancelBtn, "click", handleAgentCreateCancel);
+  addOwnedListener(agentCreateSubmitBtn, "click", handleAgentCreateSubmit);
 
   return {
     getAgentProfile,
@@ -1162,6 +1380,8 @@ export function createAgentRuntimeFeature({
     handleConversationFinalPayload,
     handleConversationStoppedPayload,
     setConversationMessages,
+    dispose,
+    getRuntimeSnapshot,
     refreshLocale() {
       renderAgentRightPanel();
     },

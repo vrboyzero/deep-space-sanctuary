@@ -59,7 +59,9 @@ export function createLocaleController({
   const availableLocales = Object.keys(dictionaries);
   const fallbackLocale = normalizePreferredLocale(defaultLocale, DEFAULT_LOCALE, availableLocales);
   const subscribers = new Set();
-  const boundSelects = new Set();
+  const boundSelectListeners = new Map();
+  let localeChangeCount = 0;
+  let disposed = false;
 
   let activeLocale = normalizePreferredLocale(
     document.documentElement.dataset.locale ||
@@ -124,8 +126,9 @@ export function createLocaleController({
   }
 
   function notify() {
+    if (disposed) return;
     applyStaticTranslations(document);
-    for (const selectEl of boundSelects) {
+    for (const selectEl of boundSelectListeners.keys()) {
       refreshBoundSelect(selectEl);
     }
     for (const subscriber of subscribers) {
@@ -134,12 +137,14 @@ export function createLocaleController({
   }
 
   function setLocale(nextLocale, options = {}) {
+    if (disposed) return activeLocale;
     const normalized = normalizePreferredLocale(nextLocale, fallbackLocale, availableLocales);
     if (normalized === activeLocale && options.force !== true) {
       return activeLocale;
     }
-
+    const changed = normalized !== activeLocale;
     activeLocale = normalized;
+    if (changed) localeChangeCount += 1;
     applyLocaleToRoot(activeLocale);
     writeStoredLocale(storageKey, activeLocale);
     notify();
@@ -147,19 +152,39 @@ export function createLocaleController({
   }
 
   function bindSelect(selectEl) {
-    if (!selectEl || boundSelects.has(selectEl)) return;
-    boundSelects.add(selectEl);
+    if (disposed || !selectEl || boundSelectListeners.has(selectEl)) return;
     refreshBoundSelect(selectEl);
-    selectEl.addEventListener("change", () => {
+    const handleChange = () => {
       setLocale(selectEl.value);
-    });
+    };
+    boundSelectListeners.set(selectEl, handleChange);
+    selectEl.addEventListener("change", handleChange);
   }
 
   function subscribe(listener) {
-    if (typeof listener !== "function") return () => {};
+    if (disposed || typeof listener !== "function") return () => {};
     subscribers.add(listener);
     return () => {
       subscribers.delete(listener);
+    };
+  }
+
+  function dispose() {
+    if (disposed) return;
+    for (const [selectEl, handleChange] of boundSelectListeners) {
+      selectEl.removeEventListener("change", handleChange);
+    }
+    boundSelectListeners.clear();
+    subscribers.clear();
+    disposed = true;
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      subscriberCount: subscribers.size,
+      boundSelectCount: boundSelectListeners.size,
+      localeChangeCount,
+      disposed,
     };
   }
 
@@ -175,6 +200,8 @@ export function createLocaleController({
     getSpeechRecognitionLocale: () => localeMeta[activeLocale]?.speechRecognitionLocale || activeLocale,
     setLocale,
     subscribe,
+    dispose,
+    getRuntimeSnapshot,
     t,
   };
 }

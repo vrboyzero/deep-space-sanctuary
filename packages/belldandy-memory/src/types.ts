@@ -57,6 +57,10 @@ export interface MemorySearchOptions {
   retrievalMode?: MemoryRetrievalMode;
   routingPolicy?: MemorySearchRoutingPolicy;
   includeContent?: boolean;
+  /** 调用方取消信号；取消后检索拒绝并丢弃迟到的 Provider 结果。 */
+  signal?: AbortSignal;
+  /** 绝对 Unix epoch 毫秒 deadline；到期时使用已完成的本地关键词结果降级。 */
+  deadlineMs?: number;
 }
 
 /** 检索结果 */

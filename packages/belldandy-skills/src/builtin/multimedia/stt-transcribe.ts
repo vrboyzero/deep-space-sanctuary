@@ -28,6 +28,7 @@ import {
 import {
     createMediaFingerprint,
     readCachedAudioTranscription,
+    runMediaUnderstandingCacheSingleFlight,
     writeCachedAudioTranscription,
 } from "./understanding-cache.js";
 
@@ -141,27 +142,44 @@ export async function transcribeSpeechWithCache(
         };
     }
 
-    const result = await (input.transcribe ?? transcribeSpeech)({
-        buffer: input.buffer,
-        fileName: input.fileName,
-        mime: input.mime,
-        provider: input.provider,
-        model: input.model,
-        language: input.language,
-        prompt: input.prompt,
-        abortSignal: input.abortSignal,
+    const flight = await runMediaUnderstandingCacheSingleFlight({
+        stateDir: input.stateDir,
+        kind: "audio-transcription",
+        fingerprint,
+        waitSignal: input.abortSignal,
+        operation: async () => {
+            const cachedAfterJoin = await readCachedAudioTranscription({
+                stateDir: input.stateDir,
+                fingerprint,
+            });
+            if (cachedAfterJoin?.result) {
+                return { result: cachedAfterJoin.result, cacheHit: true };
+            }
+
+            const result = await (input.transcribe ?? transcribeSpeech)({
+                buffer: input.buffer,
+                fileName: input.fileName,
+                mime: input.mime,
+                provider: input.provider,
+                model: input.model,
+                language: input.language,
+                prompt: input.prompt,
+                abortSignal: input.abortSignal,
+            });
+            if (result?.text) {
+                await writeCachedAudioTranscription({
+                    stateDir: input.stateDir,
+                    fingerprint,
+                    mime: input.mime,
+                    result,
+                });
+            }
+            return { result, cacheHit: false };
+        },
     });
-    if (result?.text) {
-        await writeCachedAudioTranscription({
-            stateDir: input.stateDir,
-            fingerprint,
-            mime: input.mime,
-            result,
-        });
-    }
     return {
-        result,
-        cacheHit: false,
+        result: flight.value.result,
+        cacheHit: flight.joined || flight.value.cacheHit,
         fingerprint,
     };
 }

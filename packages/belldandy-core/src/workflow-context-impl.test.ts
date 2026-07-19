@@ -212,6 +212,25 @@ describe("createWorkflowContext", () => {
       expect(rows.some((r) => r.status === "error")).toBe(true);
     });
 
+    it("error journal 记录不会作为 cache hit，后续相同调用会重新执行", async () => {
+      let attempts = 0;
+      const f = await setupContext({
+        journalId: "journal-retry-error",
+        orchestratorBehavior: () => {
+          attempts += 1;
+          return attempts === 1 ? errorResult("agent timeout") : successResult("recovered result");
+        },
+      });
+      fixtures.push(f.cleanup);
+
+      await expect(f.ctx.agent("扫描", { callKey: "scan/0" })).rejects.toThrow(/Workflow agent\(\) failed/);
+      await expect(f.ctx.agent("扫描", { callKey: "scan/0" })).resolves.toBe("recovered result");
+
+      expect(f.orchestrator.spawn).toHaveBeenCalledTimes(2);
+      const [row] = f.journal.listByJournal("journal-retry-error");
+      expect(row).toMatchObject({ status: "done", cacheHitCount: 0, result: "recovered result" });
+    });
+
     it("budget 熔断时抛 WorkflowBudgetExceededError", async () => {
       const f = await setupContext({ journalId: "journal-budget" });
       fixtures.push(f.cleanup);

@@ -6,7 +6,7 @@ import {
 import type { RuntimeResilienceDoctorReport } from "./runtime-resilience.js";
 import { buildRuntimeResilienceDiagnosticSummary } from "./runtime-resilience-diagnostics.js";
 
-type LaunchRole = "default" | "coder" | "researcher" | "verifier";
+type LaunchRole = "default" | "commander" | "coder" | "researcher" | "verifier";
 type LaunchRiskLevel = "low" | "medium" | "high" | "critical";
 type HandoffStyle = "summary" | "structured";
 

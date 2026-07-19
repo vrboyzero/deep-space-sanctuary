@@ -29,6 +29,11 @@ import {
   type WorkflowBudgetUsage,
 } from "./workflow-budget-guard.js";
 import { createWorkflowContext, type WorkflowContextCallbacks } from "./workflow-context-impl.js";
+import {
+  createWorkflowRunController,
+  resolveWorkflowRunBudget,
+  type WorkflowRunController,
+} from "./workflow-run-controller.js";
 import { computeMigrationFingerprint } from "./workflow-fingerprint.js";
 import {
   loadWorkflowScript,
@@ -38,11 +43,15 @@ import {
 } from "./workflow-script-loader.js";
 import type { WorkflowExecutionPolicy } from "./workflow-execution-policy.js";
 
+const DEFAULT_WORKFLOW_MAX_QUEUE_SIZE = 20;
+
 // ─── Types ────────────────────────────────────────────────────────────────
 
 export type WorkflowRunOptions = {
   source: WorkflowScriptSource;
   args?: Record<string, unknown>;
+  /** 父工作流的取消信号；嵌套 workflow 用它与父级终止保持一致。 */
+  abortSignal?: AbortSignal;
   budget?: WorkflowBudget;
   maxConcurrent?: number;
   parentConversationId: string;
@@ -156,11 +165,22 @@ type ActiveRun = {
   budgetGuard: WorkflowBudgetGuard;
   journal: WorkflowJournal;
   orchestrator: SubAgentOrchestrator;
-  abortController: AbortController;
+  runController: WorkflowRunController;
   budgetBaseline: WorkflowBudgetUsage;
   error?: string;
   startedAt: number;
 };
+
+function readWorkflowAbortReason(signal: AbortSignal): string {
+  const reason = signal.reason;
+  if (typeof reason === "string" && reason.trim()) {
+    return reason.trim();
+  }
+  if (reason instanceof Error && reason.message.trim()) {
+    return reason.message.trim();
+  }
+  return "Workflow stopped by user";
+}
 
 export class WorkflowRuntime {
   private readonly db: SqliteDatabase;
@@ -222,11 +242,11 @@ export class WorkflowRuntime {
       );
     }
 
-    // 3. 创建 BudgetGuard（环境变量默认值 + opts.budget 覆盖）
+    // 3. 环境预算是硬上限；单次请求只能收紧，不能放宽。
     const envBudget = resolveWorkflowBudgetFromEnv(this.readEnv);
-    const budget = mergeBudget(envBudget, opts.budget);
+    const budget = resolveWorkflowRunBudget(envBudget, opts.budget);
     const budgetGuard = opts.sharedBudgetGuard ?? new WorkflowBudgetGuard(budget);
-
+    const budgetStartedAt = Date.now();
     // 4. 创建独立 orchestrator 实例
     const maxConcurrent = Math.min(
       opts.maxConcurrent ?? budget.maxConcurrent ?? envBudget.maxConcurrent ?? 6,
@@ -236,7 +256,12 @@ export class WorkflowRuntime {
       agentRegistry: this.agentRegistry,
       conversationStore: this.conversationStore,
       maxConcurrent,
-      maxQueueSize: 20,
+      // 既有公开配置必须实际成为该 Workflow 专用 orchestrator 的队列上限。
+      maxQueueSize: readPositiveEnvInteger(
+        this.readEnv,
+        "BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE",
+        DEFAULT_WORKFLOW_MAX_QUEUE_SIZE,
+      ),
       sessionTimeoutMs: parseInt(this.readEnv("BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS") ?? "300000", 10),
       maxDepth: parseInt(this.readEnv("BELLDANDY_WORKFLOW_MAX_DEPTH") ?? "2", 10),
       logger: this.logger ? {
@@ -247,9 +272,15 @@ export class WorkflowRuntime {
       } : undefined,
       onEvent: (event) => opts.callbacks?.onAgentEvent?.(event),
     });
+    const runController = createWorkflowRunController({
+      parentSignal: opts.abortSignal,
+      deadlineMs: budget.maxWallClockMs,
+      onDeadline: () => budgetGuard.markExceeded(
+        `wall clock budget exceeded (${Date.now() - budgetStartedAt}ms/${budget.maxWallClockMs}ms)`,
+      ),
+    });
 
     // 5. 注册 active run
-    const abortController = new AbortController();
     const activeRun: ActiveRun = {
       journalId,
       status: "running",
@@ -259,65 +290,80 @@ export class WorkflowRuntime {
       budgetGuard,
       journal,
       orchestrator,
-      abortController,
+      runController,
       budgetBaseline: budgetGuard.getUsage(),
       startedAt,
     };
     this.activeRuns.set(journalId, activeRun);
 
-    // 6. 构建 WorkflowContext
-    const ctx: WorkflowContext = createWorkflowContext({
-      orchestrator,
-      journal,
-      budgetGuard,
-      args: opts.args ?? {},
-      scriptHash: script.scriptHash,
-      workflowName: script.workflowName,
-      workflowVersion: script.workflowVersion,
-      parentConversationId: opts.parentConversationId,
-      channel: opts.channel,
-      journalId,
-      maxConcurrent,
-      callbacks: opts.callbacks ? {
-        ...opts.callbacks,
-        // started/completed/thought_delta 已由 orchestrator.onEvent 统一推送。
-        // 这里避免 ctx.agent() 再次重复发事件。
-        onAgentEvent: undefined,
-      } : undefined,
-      resolveAgentExecutionFingerprintInputs: opts.resolveAgentExecutionFingerprintInputs
-        ?? this.resolveAgentExecutionFingerprintInputs,
-      resolveWorkflowAgentLaunchSpec: opts.resolveWorkflowAgentLaunchSpec
-        ?? this.resolveWorkflowAgentLaunchSpec,
-      // workflow() 嵌套支持：传入 runtime 引用和深度
-      runtime: this,
-      depth: opts.depth ?? 0,
-      maxDepth: 1,
-      stateDir: opts.stateDir,
-    });
-
-    // 7. 执行脚本
+    // 6. 构建 WorkflowContext 并执行脚本。
     let output = "";
     let success = true;
     let error: string | undefined;
     let finalStatus: WorkflowRuntimeStatus = "done";
 
     try {
+      const ctx: WorkflowContext = createWorkflowContext({
+        orchestrator,
+        journal,
+        budgetGuard,
+        args: opts.args ?? {},
+        scriptHash: script.scriptHash,
+        workflowName: script.workflowName,
+        workflowVersion: script.workflowVersion,
+        parentConversationId: opts.parentConversationId,
+        channel: opts.channel,
+        journalId,
+        maxConcurrent,
+        abortSignal: runController.signal,
+        callbacks: opts.callbacks ? {
+          ...opts.callbacks,
+          // started/completed/thought_delta 已由 orchestrator.onEvent 统一推送。
+          // 这里避免 ctx.agent() 再次重复发事件。
+          onAgentEvent: undefined,
+        } : undefined,
+        resolveAgentExecutionFingerprintInputs: opts.resolveAgentExecutionFingerprintInputs
+          ?? this.resolveAgentExecutionFingerprintInputs,
+        resolveWorkflowAgentLaunchSpec: opts.resolveWorkflowAgentLaunchSpec
+          ?? this.resolveWorkflowAgentLaunchSpec,
+        // workflow() 嵌套支持：传入 runtime 引用和深度
+        runtime: this,
+        depth: opts.depth ?? 0,
+        maxDepth: 1,
+        stateDir: opts.stateDir,
+      });
+      if (runController.signal.aborted) {
+        throw new Error(readWorkflowAbortReason(runController.signal));
+      }
       budgetGuard.check(); // 启动前检查
-      output = await script.default(ctx);
-      finalStatus = "done";
+      output = await runController.race(Promise.resolve().then(() => script.default(ctx)));
+      if (runController.signal.aborted) {
+        success = false;
+        if (runController.signal.reason instanceof WorkflowBudgetExceededError) {
+          finalStatus = "budget_exceeded";
+          error = runController.signal.reason.reason;
+        } else {
+          finalStatus = "partial";
+          error = readWorkflowAbortReason(runController.signal);
+        }
+      } else {
+        finalStatus = "done";
+      }
     } catch (err) {
       success = false;
       if (err instanceof WorkflowBudgetExceededError) {
         finalStatus = "budget_exceeded";
         error = err.reason;
-      } else if (abortController.signal.aborted) {
+      } else if (runController.signal.aborted) {
         finalStatus = "partial";
-        error = "Workflow stopped by user";
+        error = readWorkflowAbortReason(runController.signal);
       } else {
         finalStatus = "error";
         error = err instanceof Error ? err.message : String(err);
       }
       this.logger?.error("workflow:execution_failed", { journalId, error, finalStatus });
+    } finally {
+      runController.dispose();
     }
 
     // 8. 收集统计
@@ -333,7 +379,7 @@ export class WorkflowRuntime {
       // 保留 activeRun 供查询，但标记为非 running
     }
 
-    return {
+    const result = {
       success,
       output,
       journalId,
@@ -348,6 +394,7 @@ export class WorkflowRuntime {
       },
       error,
     };
+    return result;
   }
 
   /**
@@ -359,7 +406,7 @@ export class WorkflowRuntime {
     if (run.status !== "running") return false;
 
     run.status = "stopping";
-    run.abortController.abort(reason);
+    run.runController.abort(reason);
 
     // 尝试停止 orchestrator 中正在运行的 session
     // orchestrator.stopSession 需要 sessionId，这里通过 listSessions 找到当前运行中的
@@ -530,18 +577,6 @@ export class WorkflowRuntime {
 
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────
 
-function mergeBudget(env: WorkflowBudget, override?: WorkflowBudget): WorkflowBudget {
-  if (!override) return env;
-  return {
-    maxTokens: override.maxTokens ?? env.maxTokens,
-    maxAgentCalls: override.maxAgentCalls ?? env.maxAgentCalls,
-    maxRetries: override.maxRetries ?? env.maxRetries,
-    maxWallClockMs: override.maxWallClockMs ?? env.maxWallClockMs,
-    maxConcurrent: override.maxConcurrent ?? env.maxConcurrent,
-    onExceeded: override.onExceeded ?? env.onExceeded,
-  };
-}
-
 function diffBudgetUsage(current: WorkflowBudgetUsage, baseline: WorkflowBudgetUsage): WorkflowBudgetUsage {
   return {
     tokens: Math.max(0, current.tokens - baseline.tokens),
@@ -551,4 +586,15 @@ function diffBudgetUsage(current: WorkflowBudgetUsage, baseline: WorkflowBudgetU
     exceeded: current.exceeded,
     exceededReason: current.exceededReason,
   };
+}
+
+function readPositiveEnvInteger(
+  readEnv: (name: string) => string | undefined,
+  name: string,
+  fallback: number,
+): number {
+  const raw = readEnv(name)?.trim() ?? "";
+  // 拒绝 parseInt() 可接受的 "1junk"，避免配置拼写错误意外收紧队列。
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

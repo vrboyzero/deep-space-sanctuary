@@ -2,7 +2,12 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildDoctorChatSummary, renderDoctorObservabilityCards } from "./doctor-observability.js";
+import {
+  buildDoctorChatSummary,
+  disposeDoctorObservabilityCardRendering,
+  getDoctorObservabilityCardRenderSnapshot,
+  renderDoctorObservabilityCards,
+} from "./doctor-observability.js";
 import { enUS } from "../i18n/en-US.js";
 import { zhCN } from "../i18n/zh-CN.js";
 
@@ -2045,6 +2050,29 @@ describe("doctor observability rendering", () => {
     flushAnimationFrames(callbacks);
 
     expect(container.children.length).toBe(0);
+  });
+
+  it("cancels a pending doctor card batch when its container is disposed", () => {
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const container = document.createElement("div");
+
+    renderDoctorObservabilityCards(container, createRenderPayload());
+    const retainedCallback = callbacks.find((callback) => typeof callback === "function");
+    const initialCount = container.children.length;
+    disposeDoctorObservabilityCardRendering(container);
+    retainedCallback?.();
+
+    expect(container.children.length).toBe(initialCount);
+    expect(getDoctorObservabilityCardRenderSnapshot(container)).toMatchObject({
+      pendingDoctorCardRenderJobCount: 0,
+      activeDoctorCardRenderFrameCount: 0,
+      retainedDoctorCardItemCount: 0,
+    });
   });
 
   it("renders external outbound runtime as pass after later recovery even if historical failures remain", () => {

@@ -527,6 +527,7 @@ export function createSubtasksOverviewFeature({
     subtasksListEl,
     subtasksDetailEl,
   } = refs;
+  let liveUpdateDisposed = false;
 
   function getEmptyStateMessage(subtasksState) {
     if (subtasksState?.includeArchived === true) {
@@ -1693,14 +1694,15 @@ export function createSubtasksOverviewFeature({
   }
 
   function flushSubtaskUpdate(taskId) {
+    if (liveUpdateDisposed) return;
     const subtasksState = getSubtasksState();
-    const pending = subtasksState.liveUpdatePending?.[taskId];
-    if (!pending?.item) return;
-    delete subtasksState.liveUpdatePending[taskId];
     if (subtasksState.liveUpdateTimers?.[taskId]) {
       clearTimeout(subtasksState.liveUpdateTimers[taskId]);
       delete subtasksState.liveUpdateTimers[taskId];
     }
+    const pending = subtasksState.liveUpdatePending?.[taskId];
+    if (!pending?.item) return;
+    delete subtasksState.liveUpdatePending[taskId];
 
     const item = pending.item;
     const includeArchived = subtasksState.includeArchived === true;
@@ -1769,6 +1771,7 @@ export function createSubtasksOverviewFeature({
   }
 
   function handleSubtaskUpdate(payload) {
+    if (liveUpdateDisposed) return;
     const item = payload && payload.item && typeof payload.item === "object" ? payload.item : null;
     const taskId = typeof item?.id === "string" ? item.id : "";
     if (!taskId) return;
@@ -1788,7 +1791,34 @@ export function createSubtasksOverviewFeature({
     }, subtasksState.liveUpdateDelayMs || 120);
   }
 
+  function clearLiveUpdates() {
+    const subtasksState = getSubtasksState();
+    for (const timer of Object.values(subtasksState.liveUpdateTimers || {})) {
+      clearTimeout(timer);
+    }
+    // pending item 带有完整输出元数据，必须与其 debounce timer 在同一 owner 内释放。
+    subtasksState.liveUpdateTimers = {};
+    subtasksState.liveUpdatePending = {};
+  }
+
+  function dispose() {
+    if (liveUpdateDisposed) return;
+    liveUpdateDisposed = true;
+    clearLiveUpdates();
+  }
+
+  function getRuntimeSnapshot() {
+    const subtasksState = getSubtasksState();
+    return {
+      pendingUpdateCount: Object.keys(subtasksState.liveUpdatePending || {}).length,
+      activeTimerCount: Object.keys(subtasksState.liveUpdateTimers || {}).length,
+      disposed: liveUpdateDisposed,
+    };
+  }
+
   return {
+    dispose,
+    getRuntimeSnapshot,
     loadSubtasks,
     loadSubtaskDetail,
     refreshLocale,

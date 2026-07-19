@@ -1,4 +1,12 @@
 import { decodeContinuationAction } from "./continuation-targets.js";
+import { createGoalsSpecialistCapabilityCacheReadLifecycle } from "./goals-specialist-capability-cache-read-lifecycle.js";
+import { createGoalsSpecialistCapabilityPanelReadLifecycle } from "./goals-specialist-capability-panel-read-lifecycle.js";
+import { createGoalsSpecialistCanvasReadLifecycle } from "./goals-specialist-canvas-read-lifecycle.js";
+import { createGoalsSpecialistGovernanceReadLifecycle } from "./goals-specialist-governance-read-lifecycle.js";
+import { createGoalsSpecialistHandoffReadLifecycle } from "./goals-specialist-handoff-read-lifecycle.js";
+import { createGoalsSpecialistPanelControlsFeature } from "./goals-specialist-panel-controls.js";
+import { createGoalsSpecialistProgressReadLifecycle } from "./goals-specialist-progress-read-lifecycle.js";
+import { createGoalsSpecialistTrackingReadLifecycle } from "./goals-specialist-tracking-read-lifecycle.js";
 
 function parseStringList(value) {
   if (!Array.isArray(value)) return [];
@@ -741,6 +749,14 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
   applyGoalContinuationFocus,
 }) {
   const { goalsDetailEl } = refs;
+  const capabilityCacheReadLifecycle = createGoalsSpecialistCapabilityCacheReadLifecycle();
+  const capabilityPanelReadLifecycle = createGoalsSpecialistCapabilityPanelReadLifecycle();
+  const canvasReadLifecycle = createGoalsSpecialistCanvasReadLifecycle();
+  const governanceReadLifecycle = createGoalsSpecialistGovernanceReadLifecycle();
+  const handoffReadLifecycle = createGoalsSpecialistHandoffReadLifecycle();
+  const panelControls = createGoalsSpecialistPanelControlsFeature();
+  const progressReadLifecycle = createGoalsSpecialistProgressReadLifecycle();
+  const trackingReadLifecycle = createGoalsSpecialistTrackingReadLifecycle();
 
   function renderGoalCapabilityPanelLoading() {
     return getGoalsCapabilityPanelFeature?.()?.renderGoalCapabilityPanelLoading();
@@ -762,87 +778,85 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   async function ensureGoalCapabilityCache(goal, options = {}) {
     if (!goal?.id) return null;
+    if (capabilityCacheReadLifecycle.isDisposed()) return undefined;
     const goalsState = getGoalsState();
     const goalId = goal.id;
     const forceReload = options.forceReload === true;
     const cached = getCachedGoalCapabilityEntry(goalId);
     if (cached && !forceReload) return cached;
-    if (!forceReload && goalsState.capabilityPending?.[goalId]) {
-      return goalsState.capabilityPending[goalId];
-    }
-
-    const pending = (async () => {
-      const [tasksFile, capabilityPlansFile] = await Promise.all([
-        readSourceFile(goal.tasksPath),
-        readSourceFile(goalRuntimeFilePath(goal, "capability-plans.json")),
-      ]);
-      const rawGraph = tasksFile?.content ? safeJsonParse(tasksFile.content) : null;
-      const rawPlans = capabilityPlansFile?.content ? safeJsonParse(capabilityPlansFile.content) : null;
-      const nodes = parseGoalGraphNodes(rawGraph);
-      const entry = {
-        plans: parseGoalCapabilityPlans(rawPlans),
-        nodeMap: Object.fromEntries(nodes.map((node) => [node.id, node.title])),
-        capabilityPath: goalRuntimeFilePath(goal, "capability-plans.json"),
-        loadedAt: new Date().toISOString(),
-        readError: !tasksFile && !capabilityPlansFile,
-      };
-      goalsState.capabilityCache[goalId] = entry;
-      return entry;
-    })();
-
-    goalsState.capabilityPending[goalId] = pending;
-    try {
-      return await pending;
-    } finally {
-      delete goalsState.capabilityPending[goalId];
-    }
+    return capabilityCacheReadLifecycle.run({
+      goalId,
+      forceReload,
+      pendingState: goalsState.capabilityPending,
+      read: async () => {
+        const [tasksFile, capabilityPlansFile] = await Promise.all([
+          readSourceFile(goal.tasksPath),
+          readSourceFile(goalRuntimeFilePath(goal, "capability-plans.json")),
+        ]);
+        const rawGraph = tasksFile?.content ? safeJsonParse(tasksFile.content) : null;
+        const rawPlans = capabilityPlansFile?.content ? safeJsonParse(capabilityPlansFile.content) : null;
+        const nodes = parseGoalGraphNodes(rawGraph);
+        return {
+          plans: parseGoalCapabilityPlans(rawPlans),
+          nodeMap: Object.fromEntries(nodes.map((node) => [node.id, node.title])),
+          capabilityPath: goalRuntimeFilePath(goal, "capability-plans.json"),
+          loadedAt: new Date().toISOString(),
+          readError: !tasksFile && !capabilityPlansFile,
+        };
+      },
+      commit: (entry) => {
+        goalsState.capabilityCache[goalId] = entry;
+      },
+    });
   }
 
   async function loadGoalCapabilityData(goal) {
     if (!goal || !goalsDetailEl) return;
-    const goalsState = getGoalsState();
-    const trackingGoalId = goal.id;
-    const seq = goalsState.capabilitySeq + 1;
-    goalsState.capabilitySeq = seq;
-    renderGoalCapabilityPanelLoading();
+    return capabilityPanelReadLifecycle.run(async ({ isCurrent }) => {
+      const goalsState = getGoalsState();
+      const trackingGoalId = goal.id;
+      const seq = goalsState.capabilitySeq + 1;
+      goalsState.capabilitySeq = seq;
+      renderGoalCapabilityPanelLoading();
 
-    const governanceCached = goalsState.governanceCache?.[goal.id] || null;
-    const capabilityPromise = ensureGoalCapabilityCache(goal, { forceReload: true });
-    const governancePromise = governanceCached
-      ? Promise.resolve(governanceCached)
-      : typeof sendReq === "function" && typeof makeId === "function"
-        ? sendReq({
-          type: "req",
-          id: makeId(),
-          method: "goal.review_governance.summary",
-          params: { goalId: goal.id },
-        }).then((res) => {
-          if (!res?.ok || !res.payload?.summary) return null;
-          const parsed = parseGoalReviewGovernanceSummary(res.payload.summary, parseGoalCheckpoints);
-          return {
-            ...parsed,
-            memoryFreshness: parseMemoryFreshness(res.payload.memoryFreshness),
-          };
-        }).catch(() => null)
-        : Promise.resolve(null);
-    const [entry, governanceEntry] = await Promise.all([capabilityPromise, governancePromise]);
-    if (goalsState.capabilitySeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      const governanceCached = goalsState.governanceCache?.[goal.id] || null;
+      const capabilityPromise = ensureGoalCapabilityCache(goal, { forceReload: true });
+      const governancePromise = governanceCached
+        ? Promise.resolve(governanceCached)
+        : typeof sendReq === "function" && typeof makeId === "function"
+          ? sendReq({
+            type: "req",
+            id: makeId(),
+            method: "goal.review_governance.summary",
+            params: { goalId: goal.id },
+          }).then((res) => {
+            if (!res?.ok || !res.payload?.summary) return null;
+            const parsed = parseGoalReviewGovernanceSummary(res.payload.summary, parseGoalCheckpoints);
+            return {
+              ...parsed,
+              memoryFreshness: parseMemoryFreshness(res.payload.memoryFreshness),
+            };
+          }).catch(() => null)
+          : Promise.resolve(null);
+      const [entry, governanceEntry] = await Promise.all([capabilityPromise, governancePromise]);
+      if (!isCurrent() || goalsState.capabilitySeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
-    if (!entry || entry.readError) {
-      renderGoalCapabilityPanelError("无法读取 tasks.json / capability-plans.json。若使用了自定义路径，请确认该路径已加入可操作区。");
-      return;
-    }
+      if (!entry || entry.readError) {
+        renderGoalCapabilityPanelError("无法读取 tasks.json / capability-plans.json。若使用了自定义路径，请确认该路径已加入可操作区。");
+        return;
+      }
 
-    if (governanceEntry && goalsState.governanceCache && !governanceCached) {
-      goalsState.governanceCache[goal.id] = governanceEntry;
-    }
+      if (governanceEntry && goalsState.governanceCache && !governanceCached) {
+        goalsState.governanceCache[goal.id] = governanceEntry;
+      }
 
-    renderGoalCapabilityPanel(goal, {
-      plans: entry.plans,
-      nodeMap: entry.nodeMap,
-      memoryFreshness: governanceEntry?.memoryFreshness ?? governanceCached?.memoryFreshness ?? null,
+      renderGoalCapabilityPanel(goal, {
+        plans: entry.plans,
+        nodeMap: entry.nodeMap,
+        memoryFreshness: governanceEntry?.memoryFreshness ?? governanceCached?.memoryFreshness ?? null,
+      });
+      applyGoalContinuationFocus?.(goal.id);
     });
-    applyGoalContinuationFocus?.(goal.id);
   }
 
   function renderGoalCanvasPanelLoading() {
@@ -855,23 +869,25 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   async function loadGoalCanvasData(goal) {
     if (!goal || !goalsDetailEl) return;
-    const goalsState = getGoalsState();
-    const trackingGoalId = goal.id;
-    const seq = goalsState.canvasSeq + 1;
-    goalsState.canvasSeq = seq;
-    renderGoalCanvasPanelLoading();
+    return canvasReadLifecycle.run(async ({ isCurrent }) => {
+      const goalsState = getGoalsState();
+      const trackingGoalId = goal.id;
+      const seq = goalsState.canvasSeq + 1;
+      goalsState.canvasSeq = seq;
+      renderGoalCanvasPanelLoading();
 
-    const boardRefFile = await readSourceFile(goalRuntimeFilePath(goal, "board-ref.json"));
-    if (goalsState.canvasSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      const boardRefFile = await readSourceFile(goalRuntimeFilePath(goal, "board-ref.json"));
+      if (!isCurrent() || goalsState.canvasSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
-    const rawBoardRef = boardRefFile?.content ? safeJsonParse(boardRefFile.content) : null;
-    const parsed = parseGoalBoardRef(rawBoardRef);
+      const rawBoardRef = boardRefFile?.content ? safeJsonParse(boardRefFile.content) : null;
+      const parsed = parseGoalBoardRef(rawBoardRef);
 
-    renderGoalCanvasPanel(goal, {
-      runtimeBoardId: parsed.boardId,
-      linkedAt: parsed.linkedAt,
-      updatedAt: parsed.updatedAt,
-      readError: !boardRefFile,
+      renderGoalCanvasPanel(goal, {
+        runtimeBoardId: parsed.boardId,
+        linkedAt: parsed.linkedAt,
+        updatedAt: parsed.updatedAt,
+        readError: !boardRefFile,
+      });
     });
   }
 
@@ -948,63 +964,65 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   async function loadGoalTrackingData(goal) {
     if (!goal || !goalsDetailEl) return;
-    const goalsState = getGoalsState();
-    const trackingGoalId = goal.id;
-    const seq = goalsState.trackingSeq + 1;
-    goalsState.trackingSeq = seq;
-    renderGoalTrackingPanelLoading();
+    return trackingReadLifecycle.run(async ({ isCurrent }) => {
+      const goalsState = getGoalsState();
+      const trackingGoalId = goal.id;
+      const seq = goalsState.trackingSeq + 1;
+      goalsState.trackingSeq = seq;
+      renderGoalTrackingPanelLoading();
 
-    const [taskGraphRes, tasksFile, checkpointsFile, capabilityEntry] = await Promise.all([
-      typeof sendReq === "function" && typeof makeId === "function"
-        ? sendReq({
-          type: "req",
-          id: makeId(),
-          method: "goal.task_graph.read",
-          params: { goalId: goal.id },
-        }).catch(() => null)
-        : Promise.resolve(null),
-      readSourceFile(goal.tasksPath),
-      readSourceFile(goalRuntimeFilePath(goal, "checkpoints.json")),
-      ensureGoalCapabilityCache(goal),
-    ]);
+      const [taskGraphRes, tasksFile, checkpointsFile, capabilityEntry] = await Promise.all([
+        typeof sendReq === "function" && typeof makeId === "function"
+          ? sendReq({
+            type: "req",
+            id: makeId(),
+            method: "goal.task_graph.read",
+            params: { goalId: goal.id },
+          }).catch(() => null)
+          : Promise.resolve(null),
+        readSourceFile(goal.tasksPath),
+        readSourceFile(goalRuntimeFilePath(goal, "checkpoints.json")),
+        ensureGoalCapabilityCache(goal),
+      ]);
 
-    if (goalsState.trackingSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      if (!isCurrent() || goalsState.trackingSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
-    const taskGraphPayload = taskGraphRes?.ok && taskGraphRes.payload && typeof taskGraphRes.payload === "object"
-      ? taskGraphRes.payload
-      : null;
-    const rawGraph = taskGraphPayload?.graph ?? (tasksFile?.content ? safeJsonParse(tasksFile.content) : null);
-    const rawCheckpoints = taskGraphPayload?.checkpoints ?? (checkpointsFile?.content ? safeJsonParse(checkpointsFile.content) : null);
-    const memoryFreshness = parseMemoryFreshness(taskGraphPayload?.memoryFreshness);
+      const taskGraphPayload = taskGraphRes?.ok && taskGraphRes.payload && typeof taskGraphRes.payload === "object"
+        ? taskGraphRes.payload
+        : null;
+      const rawGraph = taskGraphPayload?.graph ?? (tasksFile?.content ? safeJsonParse(tasksFile.content) : null);
+      const rawCheckpoints = taskGraphPayload?.checkpoints ?? (checkpointsFile?.content ? safeJsonParse(checkpointsFile.content) : null);
+      const memoryFreshness = parseMemoryFreshness(taskGraphPayload?.memoryFreshness);
 
-    if (!taskGraphPayload && !tasksFile && !checkpointsFile) {
-      goalsState.trackingCheckpoints = [];
-      renderGoalTrackingPanelError("无法读取 tasks.json / checkpoints.json。若使用了自定义路径，请确认该路径已加入可操作区。");
-      return;
-    }
+      if (!taskGraphPayload && !tasksFile && !checkpointsFile) {
+        goalsState.trackingCheckpoints = [];
+        renderGoalTrackingPanelError("无法读取 tasks.json / checkpoints.json。若使用了自定义路径，请确认该路径已加入可操作区。");
+        return;
+      }
 
-    const focusNodeId = goalsState.continuationFocusNode?.goalId === trackingGoalId
-      ? goalsState.continuationFocusNode?.nodeId || ""
-      : "";
-    const parsedNodes = parseGoalGraphNodes(rawGraph);
-    const trackingRuntimeIndex = await loadGoalTrackingRuntimeIndex(
-      collectGoalTrackingRuntimeTaskIds(parsedNodes, focusNodeId),
-    );
-    if (goalsState.trackingSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      const focusNodeId = goalsState.continuationFocusNode?.goalId === trackingGoalId
+        ? goalsState.continuationFocusNode?.nodeId || ""
+        : "";
+      const parsedNodes = parseGoalGraphNodes(rawGraph);
+      const trackingRuntimeIndex = await loadGoalTrackingRuntimeIndex(
+        collectGoalTrackingRuntimeTaskIds(parsedNodes, focusNodeId),
+      );
+      if (!isCurrent() || goalsState.trackingSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
-    const parsedCheckpoints = parseGoalCheckpoints(rawCheckpoints).map((item) => ({
-      ...item,
-      goalId: item.goalId || trackingGoalId,
-    }));
-    goalsState.trackingCheckpoints = parsedCheckpoints;
-    renderGoalTrackingPanel(goal, {
-      nodes: mergeGoalTrackingRuntimeIndex(parsedNodes, trackingRuntimeIndex),
-      checkpoints: parsedCheckpoints,
-      capabilityPlans: capabilityEntry?.plans || [],
-      focusNodeId,
-      memoryFreshness,
+      const parsedCheckpoints = parseGoalCheckpoints(rawCheckpoints).map((item) => ({
+        ...item,
+        goalId: item.goalId || trackingGoalId,
+      }));
+      goalsState.trackingCheckpoints = parsedCheckpoints;
+      renderGoalTrackingPanel(goal, {
+        nodes: mergeGoalTrackingRuntimeIndex(parsedNodes, trackingRuntimeIndex),
+        checkpoints: parsedCheckpoints,
+        capabilityPlans: capabilityEntry?.plans || [],
+        focusNodeId,
+        memoryFreshness,
+      });
+      applyGoalContinuationFocus?.(goal.id);
     });
-    applyGoalContinuationFocus?.(goal.id);
   }
 
   function renderGoalProgressPanelLoading() {
@@ -1017,16 +1035,18 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   async function loadGoalProgressData(goal) {
     if (!goal || !goalsDetailEl) return;
-    const goalsState = getGoalsState();
-    const trackingGoalId = goal.id;
-    const seq = (goalsState.progressSeq || 0) + 1;
-    goalsState.progressSeq = seq;
-    renderGoalProgressPanelLoading();
+    return progressReadLifecycle.run(async ({ isCurrent }) => {
+      const goalsState = getGoalsState();
+      const trackingGoalId = goal.id;
+      const seq = (goalsState.progressSeq || 0) + 1;
+      goalsState.progressSeq = seq;
+      renderGoalProgressPanelLoading();
 
-    const progressFile = await readSourceFile(goal.progressPath);
-    if (goalsState.progressSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      const progressFile = await readSourceFile(goal.progressPath);
+      if (!isCurrent() || goalsState.progressSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
 
-    renderGoalProgressPanel(parseGoalProgressEntries(progressFile?.content || ""));
+      renderGoalProgressPanel(parseGoalProgressEntries(progressFile?.content || ""));
+    });
   }
 
   function renderGoalHandoffPanelLoading() {
@@ -1035,28 +1055,32 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   function bindGoalHandoffPanelActions(goal) {
     const panel = goalsDetailEl?.querySelector("#goalHandoffPanel");
-    if (!panel || !goal) return;
-    panel.querySelectorAll("[data-continuation-action]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const action = decodeContinuationAction(node.getAttribute("data-continuation-action") || "");
-        if (!action) return;
-        void openContinuationAction(action);
-      });
-    });
-    panel.querySelectorAll("[data-goal-generate-handoff]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const goalId = node.getAttribute("data-goal-generate-handoff") || goal.id;
-        if (!goalId) return;
-        void generateGoalHandoff(goalId);
-      });
-    });
-    panel.querySelectorAll("[data-open-source]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const sourcePath = node.getAttribute("data-open-source");
-        if (!sourcePath) return;
-        void openSourcePath(sourcePath);
-      });
-    });
+    return panelControls.replaceGroup("handoff", panel, goal ? [
+      {
+        selector: "[data-continuation-action]",
+        onClick: (node) => {
+          const action = decodeContinuationAction(node.getAttribute("data-continuation-action") || "");
+          if (!action) return;
+          void openContinuationAction(action);
+        },
+      },
+      {
+        selector: "[data-goal-generate-handoff]",
+        onClick: (node) => {
+          const goalId = node.getAttribute("data-goal-generate-handoff") || goal.id;
+          if (!goalId) return;
+          void generateGoalHandoff(goalId);
+        },
+      },
+      {
+        selector: "[data-open-source]",
+        onClick: (node) => {
+          const sourcePath = node.getAttribute("data-open-source");
+          if (!sourcePath) return;
+          void openSourcePath(sourcePath);
+        },
+      },
+    ] : []);
   }
 
   function renderGoalHandoffPanelError(goal, message) {
@@ -1069,23 +1093,25 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   async function loadGoalHandoffData(goal) {
     if (!goal || !goalsDetailEl) return;
-    const goalsState = getGoalsState();
-    const trackingGoalId = goal.id;
-    const seq = (goalsState.handoffSeq || 0) + 1;
-    goalsState.handoffSeq = seq;
-    renderGoalHandoffPanelLoading();
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "goal.handoff.get",
-      params: { goalId: goal.id },
+    return handoffReadLifecycle.run(async ({ isCurrent }) => {
+      const goalsState = getGoalsState();
+      const trackingGoalId = goal.id;
+      const seq = (goalsState.handoffSeq || 0) + 1;
+      goalsState.handoffSeq = seq;
+      renderGoalHandoffPanelLoading();
+      const res = await sendReq({
+        type: "req",
+        id: makeId(),
+        method: "goal.handoff.get",
+        params: { goalId: goal.id },
+      });
+      if (!isCurrent() || goalsState.handoffSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      if (!res?.ok || !res.payload?.handoff) {
+        renderGoalHandoffPanelError(goal, res?.error?.message || "无法读取 goal handoff snapshot。");
+        return;
+      }
+      renderGoalHandoffPanel(goal, res.payload.handoff, res.payload.continuationState || null);
     });
-    if (goalsState.handoffSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
-    if (!res?.ok || !res.payload?.handoff) {
-      renderGoalHandoffPanelError(goal, res?.error?.message || "无法读取 goal handoff snapshot。");
-      return;
-    }
-    renderGoalHandoffPanel(goal, res.payload.handoff, res.payload.continuationState || null);
   }
 
   function renderGoalReviewGovernancePanelLoading() {
@@ -1102,115 +1128,143 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   function bindGoalReviewGovernanceActions(goal) {
     const panel = goalsDetailEl?.querySelector("#goalGovernancePanel");
-    if (!panel || !goal) return;
-    panel.querySelectorAll("[data-goal-approval-scan]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const goalId = node.getAttribute("data-goal-approval-scan") || goal.id;
-        if (!goalId) return;
-        void runGoalApprovalScan(goalId, { autoEscalate: node.getAttribute("data-goal-auto-escalate") !== "false" });
-      });
-    });
-    panel.querySelectorAll("[data-goal-suggestion-decision]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const goalId = node.getAttribute("data-goal-suggestion-goal-id") || goal.id;
-        const reviewId = node.getAttribute("data-goal-suggestion-review-id");
-        const decision = node.getAttribute("data-goal-suggestion-decision");
-        const suggestionType = node.getAttribute("data-goal-suggestion-type");
-        const suggestionId = node.getAttribute("data-goal-suggestion-id");
-        if (!goalId || !reviewId || !decision) return;
-        void runGoalSuggestionReviewDecision(goalId, {
-          reviewId,
-          decision,
-          suggestionType,
-          suggestionId,
-        });
-      });
-    });
-    panel.querySelectorAll("[data-goal-suggestion-escalate]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const goalId = node.getAttribute("data-goal-suggestion-goal-id") || goal.id;
-        const reviewId = node.getAttribute("data-goal-suggestion-review-id");
-        const suggestionType = node.getAttribute("data-goal-suggestion-type");
-        const suggestionId = node.getAttribute("data-goal-suggestion-id");
-        if (!goalId || !reviewId) return;
-        void runGoalSuggestionReviewEscalation(goalId, {
-          reviewId,
-          suggestionType,
-          suggestionId,
-        });
-      });
-    });
-    panel.querySelectorAll("[data-goal-open-experience]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const candidateId = node.getAttribute("data-goal-open-experience-candidate-id");
-        const type = node.getAttribute("data-goal-open-experience-type");
-        const query = node.getAttribute("data-goal-open-experience-query");
-        void openExperienceWorkbench?.({
-          candidateId,
-          filters: {
-            type,
-            query,
-          },
-          preferFirst: true,
-        });
-      });
-    });
-    panel.querySelectorAll("[data-goal-checkpoint-escalate]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const goalId = node.getAttribute("data-goal-checkpoint-goal-id") || goal.id;
-        const nodeId = node.getAttribute("data-goal-checkpoint-node-id");
-        const checkpointId = node.getAttribute("data-goal-checkpoint-id");
-        if (!goalId || !nodeId || !checkpointId) return;
-        void runGoalCheckpointEscalation(goalId, nodeId, checkpointId);
-      });
-    });
+    return panelControls.replaceGroup("governance", panel, goal ? [
+      {
+        selector: "[data-goal-approval-scan]",
+        onClick: (node) => {
+          const goalId = node.getAttribute("data-goal-approval-scan") || goal.id;
+          if (!goalId) return;
+          void runGoalApprovalScan(goalId, { autoEscalate: node.getAttribute("data-goal-auto-escalate") !== "false" });
+        },
+      },
+      {
+        selector: "[data-goal-suggestion-decision]",
+        onClick: (node) => {
+          const goalId = node.getAttribute("data-goal-suggestion-goal-id") || goal.id;
+          const reviewId = node.getAttribute("data-goal-suggestion-review-id");
+          const decision = node.getAttribute("data-goal-suggestion-decision");
+          const suggestionType = node.getAttribute("data-goal-suggestion-type");
+          const suggestionId = node.getAttribute("data-goal-suggestion-id");
+          if (!goalId || !reviewId || !decision) return;
+          void runGoalSuggestionReviewDecision(goalId, {
+            reviewId,
+            decision,
+            suggestionType,
+            suggestionId,
+          });
+        },
+      },
+      {
+        selector: "[data-goal-suggestion-escalate]",
+        onClick: (node) => {
+          const goalId = node.getAttribute("data-goal-suggestion-goal-id") || goal.id;
+          const reviewId = node.getAttribute("data-goal-suggestion-review-id");
+          const suggestionType = node.getAttribute("data-goal-suggestion-type");
+          const suggestionId = node.getAttribute("data-goal-suggestion-id");
+          if (!goalId || !reviewId) return;
+          void runGoalSuggestionReviewEscalation(goalId, {
+            reviewId,
+            suggestionType,
+            suggestionId,
+          });
+        },
+      },
+      {
+        selector: "[data-goal-open-experience]",
+        onClick: (node) => {
+          const candidateId = node.getAttribute("data-goal-open-experience-candidate-id");
+          const type = node.getAttribute("data-goal-open-experience-type");
+          const query = node.getAttribute("data-goal-open-experience-query");
+          void openExperienceWorkbench?.({
+            candidateId,
+            filters: {
+              type,
+              query,
+            },
+            preferFirst: true,
+          });
+        },
+      },
+      {
+        selector: "[data-goal-checkpoint-escalate]",
+        onClick: (node) => {
+          const goalId = node.getAttribute("data-goal-checkpoint-goal-id") || goal.id;
+          const nodeId = node.getAttribute("data-goal-checkpoint-node-id");
+          const checkpointId = node.getAttribute("data-goal-checkpoint-id");
+          if (!goalId || !nodeId || !checkpointId) return;
+          void runGoalCheckpointEscalation(goalId, nodeId, checkpointId);
+        },
+      },
+    ] : []);
   }
 
   async function loadGoalReviewGovernanceData(goal) {
     if (!goal || !goalsDetailEl) return;
-    const goalsState = getGoalsState();
-    const trackingGoalId = goal.id;
-    const seq = (goalsState.governanceSeq || 0) + 1;
-    goalsState.governanceSeq = seq;
-    renderGoalReviewGovernancePanelLoading();
-    const [res, tasksFile] = await Promise.all([
-      sendReq({
-        type: "req",
-        id: makeId(),
-        method: "goal.review_governance.summary",
-        params: { goalId: goal.id },
-      }),
-      readSourceFile(goal.tasksPath),
-    ]);
-    if (goalsState.governanceSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
-    if (!res?.ok || !res.payload?.summary) {
-      renderGoalReviewGovernancePanelError(res?.error?.message || "无法读取 review governance summary。");
-      return;
-    }
-    const parsed = parseGoalReviewGovernanceSummary(res.payload.summary, parseGoalCheckpoints);
-    const rawGraph = tasksFile?.content ? safeJsonParse(tasksFile.content) : null;
-    const focusNodeId = goalsState.continuationFocusNode?.goalId === trackingGoalId
-      ? goalsState.continuationFocusNode?.nodeId || ""
-      : "";
-    const parsedNodes = parseGoalGraphNodes(rawGraph);
-    const trackingRuntimeIndex = await loadGoalTrackingRuntimeIndex(
-      collectGoalTrackingRuntimeTaskIds(parsedNodes, focusNodeId),
-    );
-    if (goalsState.governanceSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
-    const bridgeGovernanceSummary = buildGoalBridgeGovernanceSummary(
-      mergeGoalTrackingRuntimeIndex(parsedNodes, trackingRuntimeIndex),
-    );
-    const merged = {
-      ...parsed,
-      memoryFreshness: parseMemoryFreshness(res.payload.memoryFreshness),
-      ...(bridgeGovernanceSummary ? { bridgeGovernanceSummary } : {}),
-    };
-    goalsState.governanceCache[goal.id] = merged;
-    renderGoalReviewGovernancePanel(goal, merged);
-    bindGoalReviewGovernanceActions(goal);
+    return governanceReadLifecycle.run(async ({ isCurrent }) => {
+      const goalsState = getGoalsState();
+      const trackingGoalId = goal.id;
+      const seq = (goalsState.governanceSeq || 0) + 1;
+      goalsState.governanceSeq = seq;
+      renderGoalReviewGovernancePanelLoading();
+      const [res, tasksFile] = await Promise.all([
+        sendReq({
+          type: "req",
+          id: makeId(),
+          method: "goal.review_governance.summary",
+          params: { goalId: goal.id },
+        }),
+        readSourceFile(goal.tasksPath),
+      ]);
+      if (!isCurrent() || goalsState.governanceSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      if (!res?.ok || !res.payload?.summary) {
+        renderGoalReviewGovernancePanelError(res?.error?.message || "无法读取 review governance summary。");
+        return;
+      }
+      const parsed = parseGoalReviewGovernanceSummary(res.payload.summary, parseGoalCheckpoints);
+      const rawGraph = tasksFile?.content ? safeJsonParse(tasksFile.content) : null;
+      const focusNodeId = goalsState.continuationFocusNode?.goalId === trackingGoalId
+        ? goalsState.continuationFocusNode?.nodeId || ""
+        : "";
+      const parsedNodes = parseGoalGraphNodes(rawGraph);
+      const trackingRuntimeIndex = await loadGoalTrackingRuntimeIndex(
+        collectGoalTrackingRuntimeTaskIds(parsedNodes, focusNodeId),
+      );
+      if (!isCurrent() || goalsState.governanceSeq !== seq || goalsState.selectedId !== trackingGoalId) return;
+      const bridgeGovernanceSummary = buildGoalBridgeGovernanceSummary(
+        mergeGoalTrackingRuntimeIndex(parsedNodes, trackingRuntimeIndex),
+      );
+      const merged = {
+        ...parsed,
+        memoryFreshness: parseMemoryFreshness(res.payload.memoryFreshness),
+        ...(bridgeGovernanceSummary ? { bridgeGovernanceSummary } : {}),
+      };
+      goalsState.governanceCache[goal.id] = merged;
+      renderGoalReviewGovernancePanel(goal, merged);
+      bindGoalReviewGovernanceActions(goal);
+    });
   }
 
   return {
+    dispose: () => {
+      panelControls.dispose();
+      capabilityCacheReadLifecycle.dispose();
+      capabilityPanelReadLifecycle.dispose();
+      canvasReadLifecycle.dispose();
+      governanceReadLifecycle.dispose();
+      handoffReadLifecycle.dispose();
+      progressReadLifecycle.dispose();
+      trackingReadLifecycle.dispose();
+    },
+    getRuntimeSnapshot: () => ({
+      ...panelControls.getRuntimeSnapshot(),
+      ...capabilityCacheReadLifecycle.getRuntimeSnapshot(),
+      ...capabilityPanelReadLifecycle.getRuntimeSnapshot(),
+      ...canvasReadLifecycle.getRuntimeSnapshot(),
+      ...governanceReadLifecycle.getRuntimeSnapshot(),
+      ...handoffReadLifecycle.getRuntimeSnapshot(),
+      ...progressReadLifecycle.getRuntimeSnapshot(),
+      ...trackingReadLifecycle.getRuntimeSnapshot(),
+    }),
     renderGoalCapabilityPanelLoading,
     renderGoalCapabilityPanelError,
     renderGoalCapabilityPanel,

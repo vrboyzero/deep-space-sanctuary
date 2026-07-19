@@ -1,4 +1,5 @@
 import type { BelldandyAgent } from "@belldandy/agent";
+import type { BackgroundRunClaimCoordinator } from "../background-run-coordinator.js";
 import type { BelldandyLogger } from "../logger/index.js";
 import type { ResidentConversationStore } from "../resident-conversation-store.js";
 import { deliverAutoMessageToResidentChannel } from "../auto-chat-delivery.js";
@@ -53,6 +54,7 @@ export async function startHeartbeatRuntime(input: {
   deliverToLatestBoundExternalChannel: (source: "heartbeat" | "cron", message: string) => Promise<boolean>;
   backgroundContinuationLedger: BackgroundContinuationLedger;
   backgroundRecoveryRuntime?: Pick<BackgroundRecoveryRuntime, "maybeRecover">;
+  runCoordinator?: BackgroundRunClaimCoordinator;
   isBusy: () => boolean;
   onFinalizedRun?: (input: {
     status: "ran" | "skipped" | "failed";
@@ -110,6 +112,7 @@ export async function startHeartbeatRuntime(input: {
       activeHours,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       isBusy: input.isBusy,
+      runCoordinator: input.runCoordinator,
       log: (message) => input.logger.info("heartbeat", message),
       onRunEvent: async (event) => {
         if (event.phase === "started") {
@@ -171,6 +174,7 @@ export async function startCronRuntime(input: {
   backgroundContinuationLedger: BackgroundContinuationLedger;
   backgroundRecoveryRuntime?: Pick<BackgroundRecoveryRuntime, "maybeRecover">;
   goalManager: GoalManager;
+  runCoordinator?: BackgroundRunClaimCoordinator;
   isBusy: () => boolean;
   onFinalizedRun?: (input: {
     status: "ok" | "skipped" | "error";
@@ -307,6 +311,7 @@ export async function startCronRuntime(input: {
     activeHours,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     isBusy: input.isBusy,
+    runCoordinator: input.runCoordinator,
     log: (message) => input.logger.info("cron", message),
     onExecutionEvent: async (event) => {
       if (event.phase === "started") {

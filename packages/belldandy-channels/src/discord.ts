@@ -1,11 +1,28 @@
 import { Client, GatewayIntentBits, Message, TextChannel } from "discord.js";
 import type { BelldandyAgent } from "@belldandy/agent";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
-import type { Channel, ChannelConfig, ChannelEventListener, ChannelProactiveTarget } from "./types.js";
+import type {
+    Channel,
+    ChannelConfig,
+    ChannelConversationLease,
+    ChannelEventListener,
+    ChannelLifecycleOptions,
+    ChannelLifecycleState,
+    ChannelOutboundOptions,
+    ChannelProactiveTarget,
+} from "./types.js";
 import type { ChannelRouter } from "./router/types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
+import {
+    ChannelOutboundDeduplicator,
+    classifyChannelOutboundFailure,
+    combineChannelAbortSignals,
+    runChannelOutbound,
+    sleepWithChannelAbort,
+    throwIfChannelAborted,
+} from "./channel-outbound.js";
 import {
     ChannelSafeLogger,
     createChannelApprovalPreview,
@@ -41,12 +58,17 @@ export class DiscordChannel implements Channel {
     private listeners: ChannelEventListener[] = [];
     private processedMessages = new Set<string>();
     private _running = false;
+    private _lifecycleState: ChannelLifecycleState = "stopped";
+    private stopPromise: Promise<void> | null = null;
+    private lifecycleAbortController = new AbortController();
+    private readonly outboundDeduplicator = new ChannelOutboundDeduplicator();
     private readonly router?: ChannelRouter;
     private readonly replyChunkingConfig?: DiscordChannelConfig["replyChunkingConfig"];
     private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
     private readonly sttTranscribe?: DiscordChannelConfig["sttTranscribe"];
     private readonly onChannelSecurityApprovalRequired?: DiscordChannelConfig["onChannelSecurityApprovalRequired"];
     private readonly ingressScheduler: ChannelIngressScheduler;
+    private readonly conversationLifecycle?: DiscordChannelConfig["conversationLifecycle"];
 
     constructor(config: DiscordChannelConfig) {
         this.agent = config.agent;
@@ -57,6 +79,7 @@ export class DiscordChannel implements Channel {
         this.sttTranscribe = config.sttTranscribe;
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
         this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
+        this.conversationLifecycle = config.conversationLifecycle;
     }
 
     private resolveAgent(agentId?: string): BelldandyAgent {
@@ -78,7 +101,48 @@ export class DiscordChannel implements Channel {
         return this._running && this.client !== null && this.client.isReady();
     }
 
-    async start(): Promise<void> {
+    get lifecycleState(): ChannelLifecycleState {
+        return this._lifecycleState;
+    }
+
+    private renewLifecycleAbortController(): void {
+        if (this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController = new AbortController();
+        }
+    }
+
+    private abortLifecycleOutbound(): void {
+        if (!this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController.abort(createLifecycleStopAbortError("Discord channel stopped."));
+        }
+        this.outboundDeduplicator.clear();
+    }
+
+    private async runOutbound<T>(
+        operation: (signal: AbortSignal) => Promise<T>,
+        options: ChannelOutboundOptions = {},
+    ): Promise<T> {
+        const merged = combineChannelAbortSignals([
+            options.signal,
+            this.lifecycleAbortController.signal,
+        ]);
+        try {
+            return await this.outboundDeduplicator.run(
+                options.idempotencyKey,
+                () => runChannelOutbound(operation, {
+                    ...options,
+                    signal: merged.signal,
+                }),
+            );
+        } finally {
+            merged.dispose();
+        }
+    }
+
+    async start(options: ChannelLifecycleOptions = {}): Promise<void> {
+        if (options.signal?.aborted) {
+            throw toLifecycleAbortError(options.signal.reason);
+        }
         if (this._running) {
             console.warn("[Discord] Already running");
             return;
@@ -98,6 +162,12 @@ export class DiscordChannel implements Channel {
         const client = new Client({ intents });
         const session = ++this.clientSession;
         this.client = client;
+        this._lifecycleState = "starting";
+        this.renewLifecycleAbortController();
+        const stopOnAbort = () => {
+            void this.stop();
+        };
+        options.signal?.addEventListener("abort", stopOnAbort, { once: true });
 
         client.once("clientReady", () => {
             if (this.client !== client || this.clientSession !== session) {
@@ -105,6 +175,7 @@ export class DiscordChannel implements Channel {
             }
             console.log(`[Discord] Logged in as ${client.user!.tag}`);
             this._running = true;
+            this._lifecycleState = "running";
             this.emit({ type: "started", channel: this.name });
         });
 
@@ -137,6 +208,7 @@ export class DiscordChannel implements Channel {
                 if (this.client === client && this.clientSession === session) {
                     this.client = null;
                     this._running = false;
+                    this._lifecycleState = "failed";
                 }
                 throw error;
             }
@@ -144,27 +216,48 @@ export class DiscordChannel implements Channel {
         this.startPromise = startPromise;
         try {
             await startPromise;
+            if (options.signal?.aborted) {
+                throw toLifecycleAbortError(options.signal.reason);
+            }
         } finally {
+            options.signal?.removeEventListener("abort", stopOnAbort);
             if (this.startPromise === startPromise) {
                 this.startPromise = null;
             }
         }
     }
 
-    async stop(): Promise<void> {
+    async stop(_options: ChannelLifecycleOptions = {}): Promise<void> {
+        if (this.stopPromise) {
+            await this.stopPromise;
+            return;
+        }
         const client = this.client;
         const session = this.clientSession;
-        if (!client && !this.startPromise) return;
-        this.client = null;
-        this.clientSession = session + 1;
-        this._running = false;
-        this.ingressScheduler.cancelChannel(this.name);
-        this.processedMessages.clear();
-        if (client) {
-            client.destroy();
+        if (!client && !this.startPromise && this._lifecycleState === "stopped") return;
+        const stopPromise = (async () => {
+            this._lifecycleState = "stopping";
+            this.client = null;
+            this.clientSession = session + 1;
+            this._running = false;
+            this.abortLifecycleOutbound();
+            this.ingressScheduler.cancelChannel(this.name);
+            this.processedMessages.clear();
+            if (client) {
+                client.destroy();
+            }
+            this._lifecycleState = "stopped";
+            console.log("[Discord] Stopped");
+            this.emit({ type: "stopped", channel: this.name });
+        })();
+        this.stopPromise = stopPromise;
+        try {
+            await stopPromise;
+        } finally {
+            if (this.stopPromise === stopPromise) {
+                this.stopPromise = null;
+            }
         }
-        console.log("[Discord] Stopped");
-        this.emit({ type: "stopped", channel: this.name });
     }
 
     private async buildAudioAttachmentText(attachment: { name?: string | null; url: string; contentType?: string | null }): Promise<AudioAttachmentResolution> {
@@ -451,12 +544,18 @@ export class DiscordChannel implements Channel {
             },
         });
 
-        // 显示 "正在输入..." 状态
-        if (message.channel.isTextBased() && 'sendTyping' in message.channel) {
-            await message.channel.sendTyping();
-        }
-
+        let lifecycleLease: ChannelConversationLease | undefined;
         try {
+            lifecycleLease = await this.conversationLifecycle?.acquire({
+                conversationId: session.legacyConversationId,
+                agent: runAgent,
+            });
+
+            // Typing、Agent stream 与 outbound settlement 共享同一个顶层会话 lease。
+            if (message.channel.isTextBased() && 'sendTyping' in message.channel) {
+                await message.channel.sendTyping();
+            }
+
             // 调用 Agent 处理
             const stream = runAgent.run({
                 text: message.content || "",
@@ -496,7 +595,10 @@ export class DiscordChannel implements Channel {
 
             // 发送最终回复
             if (fullResponse) {
-                await this.sendLongMessage(message.channel as TextChannel, fullResponse);
+                await this.runOutbound(
+                    (signal) => this.sendLongMessage(message.channel as TextChannel, fullResponse, signal),
+                    { idempotencyKey: message.id },
+                );
                 this.emit({ type: "message_sent", channel: this.name, chatId });
             }
         } catch (error) {
@@ -506,22 +608,29 @@ export class DiscordChannel implements Channel {
                 messageId: message.id,
                 failureKind: "internal_error",
             });
-            await message.reply(createChannelPublicFailureMessage());
+            await this.runOutbound(
+                () => message.reply(createChannelPublicFailureMessage()),
+                { idempotencyKey: `${message.id}:error` },
+            ).catch(() => undefined);
             this.emit({ type: "error", channel: this.name, error: new Error("channel_agent_failed") });
+        } finally {
+            await lifecycleLease?.release();
         }
     }
 
     /**
      * 处理 Discord 2000 字符单条消息限制，自动分段发送
      */
-    private async sendLongMessage(channel: TextChannel, content: string): Promise<void> {
+    private async sendLongMessage(channel: TextChannel, content: string, signal?: AbortSignal): Promise<void> {
         const chunks = chunkMarkdownForOutbound(content, "discord", {
             config: this.replyChunkingConfig,
         });
         for (const chunk of chunks) {
+            throwIfChannelAborted(signal);
             await channel.send(chunk);
+            throwIfChannelAborted(signal);
             if (chunks.length > 1) {
-                await new Promise((resolve) => setTimeout(resolve, 500)); // 防止速率限制
+                await sleepWithChannelAbort(500, signal); // 防止速率限制
             }
         }
     }
@@ -529,7 +638,11 @@ export class DiscordChannel implements Channel {
     /**
      * 主动发送消息
      */
-    async sendProactiveMessage(content: string, target?: ChannelProactiveTarget): Promise<boolean> {
+    async sendProactiveMessage(
+        content: string,
+        target?: ChannelProactiveTarget,
+        options: ChannelOutboundOptions = {},
+    ): Promise<boolean> {
         if (!this.isRunning) {
             console.error("[Discord] Cannot send message: client not running");
             return false;
@@ -564,22 +677,30 @@ export class DiscordChannel implements Channel {
             return false;
         }
 
+        const client = this.client;
+        if (!client) return false;
+
         try {
-            const channel = await this.client!.channels.fetch(targetChannelId);
+            return await this.runOutbound(async (signal) => {
+                const channel = await client.channels.fetch(targetChannelId);
+                throwIfChannelAborted(signal);
+                if (this.client !== client) {
+                    throw new Error("Discord channel ownership changed during outbound delivery.");
+                }
 
-            if (!channel || !channel.isTextBased()) {
-                console.error("[Discord] Invalid channel:", targetChannelId);
-                return false;
-            }
+                if (!channel || !channel.isTextBased()) {
+                    return false;
+                }
 
-            await this.sendLongMessage(channel as TextChannel, content);
-            this.emit({ type: "message_sent", channel: this.name, chatId: targetChannelId });
-            return true;
+                await this.sendLongMessage(channel as TextChannel, content, signal);
+                this.emit({ type: "message_sent", channel: this.name, chatId: targetChannelId });
+                return true;
+            }, options);
         } catch (error) {
             channelSafeLogger.error({
                 channel: "discord",
                 event: "proactive_send_failed",
-                failureKind: "transport_error",
+                failureKind: classifyChannelOutboundFailure({ error }),
             });
             this.emit({ type: "error", channel: this.name, error: error as Error });
             return false;
@@ -613,4 +734,17 @@ export class DiscordChannel implements Channel {
             }
         }
     }
+}
+
+function toLifecycleAbortError(reason: unknown): Error {
+    if (reason instanceof Error) return reason;
+    const error = new Error("Channel lifecycle operation was aborted.");
+    error.name = "AbortError";
+    return error;
+}
+
+function createLifecycleStopAbortError(message: string): Error {
+    const error = new Error(message);
+    error.name = "AbortError";
+    return error;
 }

@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   getForegroundPidFile,
   preflightGatewayCleanup,
+  resolveGatewayPortFromEnv,
   type GatewayPreflightRunner,
 } from "./gateway-preflight.js";
 import { guardedRemovePath } from "./sandbox-paths.js";
@@ -104,4 +105,9 @@ test("preflight reads BELLDANDY_PORT from env files and blocks unknown external 
   })).rejects.toThrow("Port 38889 is already in use by PID 9988");
 
   expect(seenPort).toBe(38889);
+});
+
+test("resolves a gateway port from an already loaded environment", () => {
+  expect(resolveGatewayPortFromEnv({ BELLDANDY_PORT: "38889" })).toBe(38889);
+  expect(resolveGatewayPortFromEnv({ BELLDANDY_PORT: "not-a-port" })).toBe(28889);
 });

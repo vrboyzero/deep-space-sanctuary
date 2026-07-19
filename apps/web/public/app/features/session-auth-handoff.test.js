@@ -2,7 +2,12 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { consumeSessionAuthHandoff, createSessionAuthHandoffUrl } from "./session-auth-handoff.js";
+import {
+  consumeSessionAuthHandoff,
+  createSessionAuthHandoffUrl,
+  disposeSessionAuthHandoffs,
+  getSessionAuthHandoffRuntimeSnapshot,
+} from "./session-auth-handoff.js";
 
 class FakeBroadcastChannel {
   static channels = new Map();
@@ -22,6 +27,10 @@ class FakeBroadcastChannel {
 
   addEventListener(type, listener) {
     if (type === "message") this.listeners.add(listener);
+  }
+
+  removeEventListener(type, listener) {
+    if (type === "message") this.listeners.delete(listener);
   }
 
   postMessage(data) {
@@ -131,5 +140,55 @@ describe("session auth handoff", () => {
     expect(localStorage.getItem("belldandy.webchat.authHandoff.expired")).toBeNull();
     expect(localStorage.getItem("belldandy.webchat.authHandoff.unused")).toBeNull();
     expect(localStorage.getItem("unrelated")).toBe("keep-me");
+  });
+
+  it("disposes producer and pending consumer resources without exposing credentials", async () => {
+    createSessionAuthHandoffUrl({
+      currentUrl: "http://127.0.0.1:28889/",
+      authMode: "token",
+      authValue: "runtime-token-dispose",
+      now: 1000,
+      idFactory: () => "handoff-dispose",
+    });
+    history.replaceState({}, "", "/?authHandoff=handoff-missing");
+    const pendingConsume = consumeSessionAuthHandoff({ now: 1200, waitMs: 10_000 });
+
+    const activeSnapshot = getSessionAuthHandoffRuntimeSnapshot();
+    expect(activeSnapshot.activeProducerCount).toBeGreaterThanOrEqual(1);
+    expect(activeSnapshot.pendingConsumerCount).toBe(1);
+    expect(activeSnapshot.channelCount).toBeGreaterThanOrEqual(2);
+    expect(activeSnapshot.listenerCount).toBeGreaterThanOrEqual(2);
+    expect(activeSnapshot.timerCount).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(activeSnapshot)).not.toContain("runtime-token");
+
+    disposeSessionAuthHandoffs();
+    await expect(pendingConsume).resolves.toBeNull();
+    expect(getSessionAuthHandoffRuntimeSnapshot()).toEqual({
+      activeProducerCount: 0,
+      pendingConsumerCount: 0,
+      delayedCloseCount: 0,
+      channelCount: 0,
+      listenerCount: 0,
+      timerCount: 0,
+      disposed: true,
+    });
+    expect(FakeBroadcastChannel.channels.size).toBe(0);
+    expect(createSessionAuthHandoffUrl({
+      currentUrl: "http://127.0.0.1:28889/",
+      authMode: "token",
+      authValue: "runtime-token-after-dispose",
+      idFactory: () => "handoff-after-dispose",
+    })).toBe("http://127.0.0.1:28889/");
+
+    localStorage.setItem("belldandy.webchat.authHandoff.handoff-after-dispose", JSON.stringify({
+      handoffId: "handoff-after-dispose",
+      mode: "token",
+      value: "legacy-token-after-dispose",
+      createdAt: 1200,
+    }));
+    history.replaceState({}, "", "/?authHandoff=handoff-after-dispose");
+    await expect(consumeSessionAuthHandoff({ now: 1300, waitMs: 1 })).resolves.toBeNull();
+    expect(localStorage.getItem("belldandy.webchat.authHandoff.handoff-after-dispose")).toBeNull();
+    expect(window.location.search).toBe("");
   });
 });

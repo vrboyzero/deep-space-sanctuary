@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DelegationProtocol } from "@belldandy/skills";
 import { SubAgentOrchestrator, type OrchestratorOptions } from "./orchestrator.js";
@@ -86,6 +89,168 @@ describe("SubAgentOrchestrator", () => {
       expect(result.success).toBe(true);
       expect(result.output).toBe("default response");
       expect(result.sessionId).toMatch(/^sub_/);
+    });
+
+    it("releases optional agent conversation state after the stream finalizes", async () => {
+      let finalized = false;
+      const releaseConversation = vi.fn(() => {
+        expect(finalized).toBe(true);
+      });
+      const agent: BelldandyAgent = {
+        async *run(): AsyncIterable<AgentStreamItem> {
+          try {
+            yield { type: "final", text: "released response" };
+          } finally {
+            finalized = true;
+          }
+        },
+        releaseConversation,
+      };
+      const registry = new AgentRegistry(() => agent);
+      registry.register(defaultProfile);
+      const conversationStore = new ConversationStore();
+      const orchestrator = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore,
+      });
+
+      const result = await orchestrator.spawn({
+        parentConversationId: "parent-release",
+        instruction: "Release after completion",
+      });
+
+      expect(result.success).toBe(true);
+      expect(releaseConversation).toHaveBeenCalledOnce();
+      expect(releaseConversation).toHaveBeenCalledWith(result.sessionId);
+    });
+
+    it("preserves the spawn result when asynchronous conversation release fails", async () => {
+      const warn = vi.fn();
+      const agent: BelldandyAgent = {
+        async *run(): AsyncIterable<AgentStreamItem> {
+          yield { type: "final", text: "release failure is isolated" };
+        },
+        async releaseConversation(): Promise<void> {
+          throw new Error("release failed");
+        },
+      };
+      const registry = new AgentRegistry(() => agent);
+      registry.register(defaultProfile);
+      const conversationStore = new ConversationStore();
+      const storeRelease = vi.spyOn(conversationStore, "releaseConversation");
+      const orchestrator = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore,
+        logger: {
+          info: vi.fn(),
+          warn,
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      });
+
+      const result = await orchestrator.spawn({
+        parentConversationId: "parent-release-error",
+        instruction: "Keep the result",
+      });
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(storeRelease).toHaveBeenCalledWith(result.sessionId));
+
+      expect(result).toMatchObject({
+        success: true,
+        output: "release failure is isolated",
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("conversation release failed"),
+        expect.objectContaining({ error: expect.any(Error) }),
+      );
+    });
+
+    it("releases ConversationStore only after session_end and agent release settle", async () => {
+      let resolveSessionEnd!: () => void;
+      const sessionEndPending = new Promise<void>((resolve) => {
+        resolveSessionEnd = resolve;
+      });
+      let resolveAgentRelease!: () => void;
+      const agentReleasePending = new Promise<void>((resolve) => {
+        resolveAgentRelease = resolve;
+      });
+      const agent: BelldandyAgent = {
+        async *run(): AsyncIterable<AgentStreamItem> {
+          yield { type: "final", text: "barrier response" };
+        },
+        releaseConversation: vi.fn(() => agentReleasePending),
+      };
+      const registry = new AgentRegistry(() => agent);
+      registry.register(defaultProfile);
+      const conversationStore = new ConversationStore();
+      const storeRelease = vi.spyOn(conversationStore, "releaseConversation");
+      const orchestrator = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore,
+        hookRunner: {
+          runSessionStart: vi.fn(async () => {}),
+          runSessionEnd: vi.fn(() => sessionEndPending),
+        },
+      });
+
+      const result = await orchestrator.spawn({
+        parentConversationId: "parent-store-release-barrier",
+        instruction: "Wait for both barrier branches",
+      });
+
+      expect(result.success).toBe(true);
+      expect(storeRelease).not.toHaveBeenCalled();
+      resolveSessionEnd();
+      await Promise.resolve();
+      expect(storeRelease).not.toHaveBeenCalled();
+      resolveAgentRelease();
+
+      await vi.waitFor(() => expect(storeRelease).toHaveBeenCalledOnce());
+      expect(storeRelease).toHaveBeenCalledWith(result.sessionId);
+    });
+
+    it("does not block the next queued spawn while the completion barrier is pending", async () => {
+      let resolveFirstSessionEnd!: () => void;
+      const firstSessionEndPending = new Promise<void>((resolve) => {
+        resolveFirstSessionEnd = resolve;
+      });
+      let sessionEndCalls = 0;
+      const registry = new AgentRegistry(() => createMockAgent("queue drain response"));
+      registry.register(defaultProfile);
+      const conversationStore = new ConversationStore();
+      const storeRelease = vi.spyOn(conversationStore, "releaseConversation");
+      const orchestrator = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore,
+        maxConcurrent: 1,
+        hookRunner: {
+          runSessionStart: vi.fn(async () => {}),
+          runSessionEnd: vi.fn(() => {
+            sessionEndCalls += 1;
+            return sessionEndCalls === 1 ? firstSessionEndPending : Promise.resolve();
+          }),
+        },
+      });
+
+      const first = orchestrator.spawn({
+        parentConversationId: "parent-barrier-queue-first",
+        instruction: "First barrier run",
+      });
+      const second = orchestrator.spawn({
+        parentConversationId: "parent-barrier-queue-second",
+        instruction: "Second barrier run",
+      });
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstResult.success).toBe(true);
+      expect(secondResult.success).toBe(true);
+      expect(sessionEndCalls).toBe(2);
+      expect(storeRelease).toHaveBeenCalledWith(secondResult.sessionId);
+      expect(storeRelease).not.toHaveBeenCalledWith(firstResult.sessionId);
+
+      resolveFirstSessionEnd();
+      await vi.waitFor(() => expect(storeRelease).toHaveBeenCalledWith(firstResult.sessionId));
     });
 
     it("should spawn with a specific agent ID", async () => {
@@ -445,6 +610,7 @@ describe("SubAgentOrchestrator", () => {
     }, 10_000);
 
     it("should keep timeout terminal state and avoid late completion overwrite", async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-orchestrator-timeout-"));
       const events: any[] = [];
       const lateAgent: BelldandyAgent = {
         async *run(_input: AgentRunInput): AsyncIterable<AgentStreamItem> {
@@ -456,7 +622,7 @@ describe("SubAgentOrchestrator", () => {
       };
       const registry = new AgentRegistry(() => lateAgent);
       registry.register(defaultProfile);
-      const conversationStore = new ConversationStore();
+      const conversationStore = new ConversationStore({ dataDir: path.join(tempDir, "sessions") });
 
       const orch = new SubAgentOrchestrator({
         agentRegistry: registry,
@@ -488,6 +654,151 @@ describe("SubAgentOrchestrator", () => {
         sessionId: result.sessionId,
         success: false,
       });
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("aborts a never-settling agent when the session times out", async () => {
+      let observedSignal: AbortSignal | undefined;
+      let releaseAgent: (() => void) | undefined;
+      const agentRelease = new Promise<void>((resolve) => {
+        releaseAgent = resolve;
+      });
+      const neverSettlingAgent: BelldandyAgent = {
+        async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
+          observedSignal = input.abortSignal;
+          yield { type: "status", status: "running" };
+          await agentRelease;
+        },
+      };
+      const registry = new AgentRegistry(() => neverSettlingAgent);
+      registry.register(defaultProfile);
+      const conversationStore = new ConversationStore();
+      const storeRelease = vi.spyOn(conversationStore, "releaseConversation");
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore,
+        sessionTimeoutMs: 20,
+      });
+
+      const result = await orch.spawn({
+        parentConversationId: "p-timeout-abort",
+        instruction: "Wait forever",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("timed out");
+      expect(observedSignal?.aborted).toBe(true);
+      expect(orch.getSession(result.sessionId)?.status).toBe("timeout");
+      expect(storeRelease).not.toHaveBeenCalled();
+      releaseAgent?.();
+      await vi.waitFor(() => expect(storeRelease).toHaveBeenCalledWith(result.sessionId));
+    });
+
+    it("stops a never-settling agent without waiting for its iterator to close", async () => {
+      let observedSignal: AbortSignal | undefined;
+      let releaseAgentWork: (() => void) | undefined;
+      const agentWork = new Promise<void>((resolve) => {
+        releaseAgentWork = resolve;
+      });
+      let releaseAgentFinalizer: (() => void) | undefined;
+      const agentFinalizer = new Promise<void>((resolve) => {
+        releaseAgentFinalizer = resolve;
+      });
+      let resolveStarted: ((sessionId: string) => void) | undefined;
+      const started = new Promise<string>((resolve) => {
+        resolveStarted = resolve;
+      });
+      const neverSettlingAgent: BelldandyAgent = {
+        async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
+          observedSignal = input.abortSignal;
+          try {
+            yield { type: "status", status: "running" };
+            await agentWork;
+          } finally {
+            await agentFinalizer;
+          }
+        },
+      };
+      const registry = new AgentRegistry(() => neverSettlingAgent);
+      registry.register(defaultProfile);
+      const conversationStore = new ConversationStore();
+      const storeRelease = vi.spyOn(conversationStore, "releaseConversation");
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore,
+        sessionTimeoutMs: 5_000,
+      });
+
+      const pending = orch.spawn({
+        parentConversationId: "p-stop-abort",
+        instruction: "Wait forever",
+        onSessionCreated: (sessionId) => resolveStarted?.(sessionId),
+      });
+      const sessionId = await started;
+
+      await expect(orch.stopSession(sessionId, "Stopped for test.")).resolves.toBe(true);
+      const result = await pending;
+
+      expect(result).toMatchObject({
+        success: false,
+        sessionId,
+        error: "Stopped for test.",
+      });
+      expect(observedSignal?.aborted).toBe(true);
+      expect(observedSignal?.reason).toBe("Stopped for test.");
+      expect(orch.getSession(sessionId)?.status).toBe("stopped");
+      expect(storeRelease).not.toHaveBeenCalled();
+      releaseAgentWork?.();
+      await Promise.resolve();
+      expect(storeRelease).not.toHaveBeenCalled();
+      releaseAgentFinalizer?.();
+      await vi.waitFor(() => expect(storeRelease).toHaveBeenCalledWith(sessionId));
+    });
+
+    it("forwards a parent abort signal to the running sub-agent", async () => {
+      const parentController = new AbortController();
+      let observedSignal: AbortSignal | undefined;
+      let releaseAgent: (() => void) | undefined;
+      const agentRelease = new Promise<void>((resolve) => {
+        releaseAgent = resolve;
+      });
+      let resolveStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        resolveStarted = resolve;
+      });
+      const neverSettlingAgent: BelldandyAgent = {
+        async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
+          observedSignal = input.abortSignal;
+          resolveStarted?.();
+          yield { type: "status", status: "running" };
+          await agentRelease;
+        },
+      };
+      const registry = new AgentRegistry(() => neverSettlingAgent);
+      registry.register(defaultProfile);
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+        sessionTimeoutMs: 5_000,
+      });
+
+      const pending = orch.spawn({
+        parentConversationId: "p-parent-abort",
+        instruction: "Wait for parent stop",
+        abortSignal: parentController.signal,
+      });
+      await started;
+      parentController.abort("Workflow stopped by user.");
+
+      const result = await pending;
+      expect(result).toMatchObject({
+        success: false,
+        error: "Workflow stopped by user.",
+      });
+      expect(observedSignal?.aborted).toBe(true);
+      expect(observedSignal?.reason).toBe("Workflow stopped by user.");
+      expect(orch.getSession(result.sessionId)?.status).toBe("stopped");
+      releaseAgent?.();
     });
   });
 
@@ -585,6 +896,122 @@ describe("SubAgentOrchestrator", () => {
       expect(cleaned).toBe(0);
       expect(orchestrator.listSessions()).toHaveLength(1);
     });
+
+    it("uses the configured retention window when no cleanup override is provided", async () => {
+      const now = vi.spyOn(Date, "now").mockReturnValue(3_000);
+      try {
+        const { orchestrator } = setup({ terminalSessionRetentionMs: 1_000 });
+        await orchestrator.spawn({ parentConversationId: "p1", instruction: "Configured retention" });
+
+        now.mockReturnValue(3_999);
+        expect(orchestrator.cleanup()).toBe(0);
+        now.mockReturnValue(4_000);
+        expect(orchestrator.cleanup()).toBe(1);
+      } finally {
+        now.mockRestore();
+      }
+    });
+  });
+
+  describe("terminal session retention", () => {
+    it("evicts the oldest terminal sessions when the retention capacity is exceeded", async () => {
+      const { orchestrator } = setup({
+        terminalSessionMaxEntries: 2,
+        terminalSessionRetentionMs: 60_000,
+      });
+
+      const first = await orchestrator.spawn({ parentConversationId: "p1", instruction: "First" });
+      const second = await orchestrator.spawn({ parentConversationId: "p1", instruction: "Second" });
+      const third = await orchestrator.spawn({ parentConversationId: "p1", instruction: "Third" });
+
+      expect(orchestrator.getSession(first.sessionId)).toBeUndefined();
+      expect(orchestrator.listSessions().map((session) => session.id)).toEqual([
+        second.sessionId,
+        third.sessionId,
+      ]);
+      expect(orchestrator.getRuntimeSnapshot()).toMatchObject({
+        retainedTerminalCount: 2,
+        maxRetainedTerminalCount: 2,
+        evictedTerminalCount: 1,
+        oldestRetainedTerminalAgeMs: expect.any(Number),
+      });
+    });
+
+    it("expires terminal sessions by finished time when retention is observed", async () => {
+      const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+      try {
+        const { orchestrator } = setup({
+          terminalSessionMaxEntries: 4,
+          terminalSessionRetentionMs: 100,
+        });
+        const result = await orchestrator.spawn({ parentConversationId: "p1", instruction: "Expire" });
+
+        now.mockReturnValue(1_101);
+
+        expect(orchestrator.getSession(result.sessionId)).toBeUndefined();
+        expect(orchestrator.getRuntimeSnapshot()).toMatchObject({
+          retainedTerminalCount: 0,
+          evictedTerminalCount: 1,
+          oldestRetainedTerminalAgeMs: 0,
+        });
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it("pins running and pending sessions while expired terminal sessions are pruned", async () => {
+      const now = vi.spyOn(Date, "now").mockReturnValue(2_000);
+      let releaseRunning: (() => void) | undefined;
+      const running = new Promise<void>((resolve) => {
+        releaseRunning = resolve;
+      });
+      let createdAgents = 0;
+      const registry = new AgentRegistry(() => {
+        createdAgents++;
+        if (createdAgents === 1) {
+          return createMockAgent("terminal");
+        }
+        return {
+          async *run(): AsyncIterable<AgentStreamItem> {
+            yield { type: "status", status: "running" };
+            await running;
+            yield { type: "final", text: "released" };
+          },
+        } satisfies BelldandyAgent;
+      });
+      registry.register(defaultProfile);
+      const orchestrator = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+        maxConcurrent: 1,
+        terminalSessionMaxEntries: 2,
+        terminalSessionRetentionMs: 100,
+      });
+
+      try {
+        await orchestrator.spawn({ parentConversationId: "p1", instruction: "Terminal" });
+        const active = orchestrator.spawn({ parentConversationId: "p1", instruction: "Active" });
+        const pending = orchestrator.spawn({ parentConversationId: "p1", instruction: "Pending" });
+
+        now.mockReturnValue(2_101);
+        expect(orchestrator.getRuntimeSnapshot()).toMatchObject({
+          activeCount: 1,
+          queuedCount: 1,
+          retainedTerminalCount: 0,
+          evictedTerminalCount: 1,
+        });
+        expect(orchestrator.listSessions().map((session) => session.status).sort()).toEqual([
+          "pending",
+          "running",
+        ]);
+
+        releaseRunning?.();
+        await Promise.all([active, pending]);
+      } finally {
+        releaseRunning?.();
+        now.mockRestore();
+      }
+    });
   });
 
   describe("onEvent callback", () => {
@@ -629,6 +1056,61 @@ describe("SubAgentOrchestrator", () => {
   });
 
   describe("queue", () => {
+    it("assigns a real session id to queued work and stops it before execution", async () => {
+      let releaseFirst: (() => void) | undefined;
+      const firstCompleted = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let createdAgents = 0;
+      const registry = new AgentRegistry(() => {
+        createdAgents++;
+        if (createdAgents === 1) {
+          return {
+            async *run(): AsyncIterable<AgentStreamItem> {
+              yield { type: "status", status: "running" };
+              await firstCompleted;
+              yield { type: "final", text: "first done" };
+            },
+          } satisfies BelldandyAgent;
+        }
+        return createMockAgent("queued agent should not run");
+      });
+      registry.register(defaultProfile);
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: registry,
+        conversationStore: new ConversationStore(),
+        maxConcurrent: 1,
+        sessionTimeoutMs: 5_000,
+      });
+
+      const first = orch.spawn({
+        parentConversationId: "p-queue-stop",
+        instruction: "Hold the only slot",
+      });
+      let queuedSessionId: string | undefined;
+      const queued = orch.spawn({
+        parentConversationId: "p-queue-stop",
+        instruction: "Do not start",
+        onQueued: (_position, sessionId) => {
+          queuedSessionId = sessionId;
+        },
+      });
+
+      expect(queuedSessionId).toMatch(/^sub_/);
+      expect(orch.getSession(queuedSessionId!)?.status).toBe("pending");
+      await expect(orch.stopSession(queuedSessionId!, "Cancelled while queued.")).resolves.toBe(true);
+
+      await expect(queued).resolves.toMatchObject({
+        success: false,
+        sessionId: queuedSessionId,
+        error: "Cancelled while queued.",
+      });
+      expect(createdAgents).toBe(1);
+
+      releaseFirst?.();
+      await expect(first).resolves.toMatchObject({ success: true });
+    });
+
     it("should reject when queue is full", async () => {
       const slowRegistry = new AgentRegistry(() => createSlowAgent(500));
       slowRegistry.register(defaultProfile);
@@ -710,6 +1192,40 @@ describe("SubAgentOrchestrator", () => {
   });
 
   describe("hookRunner integration", () => {
+    it("passes the session abort signal to hooks", async () => {
+      const mockHookRunner = {
+        runSessionStart: vi.fn(async () => {}),
+        runSessionEnd: vi.fn(async () => {}),
+      };
+      const slowRegistry = new AgentRegistry(() => createSlowAgent(50));
+      slowRegistry.register(defaultProfile);
+      const orch = new SubAgentOrchestrator({
+        agentRegistry: slowRegistry,
+        conversationStore: new ConversationStore(),
+        hookRunner: mockHookRunner,
+        sessionTimeoutMs: 10_000,
+      });
+      let resolveSessionId: ((sessionId: string) => void) | undefined;
+      const sessionStarted = new Promise<string>((resolve) => {
+        resolveSessionId = resolve;
+      });
+
+      const pending = orch.spawn({
+        parentConversationId: "p-hook-abort",
+        instruction: "Stop hook test",
+        onSessionCreated: (sessionId) => resolveSessionId?.(sessionId),
+      });
+      const sessionId = await sessionStarted;
+      const startCall = mockHookRunner.runSessionStart.mock.calls[0] as unknown[];
+      const hookSignal = (startCall[1] as { abortSignal?: AbortSignal }).abortSignal;
+
+      await orch.stopSession(sessionId, "Stop hook test.");
+      await pending;
+
+      expect(hookSignal?.aborted).toBe(true);
+      expect(hookSignal?.reason).toBe("Stop hook test.");
+    });
+
     it("should call session_start and session_end hooks", async () => {
       const hookCalls: string[] = [];
       const mockHookRunner = {

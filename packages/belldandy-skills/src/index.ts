@@ -70,7 +70,13 @@ export type {
   EligibilityContext,
   EligibilityResult,
 } from "./skill-types.js";
-export { loadSkillFromDir, loadSkillsFromDir, parseSkillMd, SkillDirectoryError } from "./skill-loader.js";
+export {
+  MAX_SKILL_FILE_BYTES,
+  loadSkillFromDir,
+  loadSkillsFromDir,
+  parseSkillMd,
+  SkillDirectoryError,
+} from "./skill-loader.js";
 export { checkEligibility, checkEligibilityBatch } from "./skill-eligibility.js";
 export {
   SkillRegistry,
@@ -183,6 +189,7 @@ export {
   peekBridgeSessionRuntimeView,
   loadRuntimeLostBridgeSessions,
   loadRecoveredBridgeSessions,
+  shutdownBridgeSessions,
 } from "./builtin/agent-bridge/index.js";
 export type {
   BridgeSessionPeekView,
@@ -217,6 +224,7 @@ export {
   writeCachedImageUnderstanding,
   writeCachedAudioTranscription,
   readCachedVideoUnderstanding,
+  runMediaUnderstandingCacheSingleFlight,
   writeCachedVideoUnderstanding,
   synthesizeSpeech,
   transcribeSpeech,

@@ -1,6 +1,5 @@
-import fs from "node:fs/promises";
-
 import OpenAI from "openai";
+import { createMultipartFileUpload } from "./media-file-stream.js";
 
 export const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -85,28 +84,24 @@ export async function uploadFileToOpenAICompatible(input: {
   maxBytes: number;
   abortSignal?: AbortSignal;
 }): Promise<string> {
-  const stat = await fs.stat(input.filePath);
-  if (!stat.isFile()) {
-    throw new Error(`Path is not a file: ${input.filePath}`);
-  }
-  if (stat.size > input.maxBytes) {
-    throw new Error(`File too large (${stat.size} bytes > ${input.maxBytes} bytes).`);
-  }
-
-  const fileName = input.filePath.split(/[\\/]/u).pop() ?? "upload.bin";
-  const buffer = await fs.readFile(input.filePath);
-  const form = new FormData();
-  form.append("file", new Blob([buffer]), fileName);
-  form.append("purpose", input.purpose);
+  const upload = await createMultipartFileUpload({
+    filePath: input.filePath,
+    purpose: input.purpose,
+    maxBytes: input.maxBytes,
+    abortSignal: input.abortSignal,
+  });
 
   const response = await fetch(buildVersionedApiUrl(input.baseURL, "/files"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": upload.contentType,
+      "Content-Length": String(upload.contentLength),
     },
-    body: form,
+    body: upload.body as any,
+    duplex: "half",
     signal: input.abortSignal,
-  });
+  } as RequestInit & { duplex: "half" });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`Upload failed: ${response.status} ${text}`.trim());

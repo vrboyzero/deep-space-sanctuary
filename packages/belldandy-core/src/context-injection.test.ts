@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildContextInjectionPrelude, type ContextInjectionMemoryProvider } from "./context-injection.js";
 import { MemoryManager } from "../../belldandy-memory/src/manager.js";
@@ -10,6 +10,88 @@ import { createTaskWorkSurface } from "../../belldandy-memory/src/task-work-surf
 import type { TaskActivityRecord, TaskRecord } from "../../belldandy-memory/src/task-types.js";
 
 describe("buildContextInjectionPrelude", () => {
+  it("aborts the underlying auto-recall work when its deadline expires", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => null,
+      findSimilarPastWork: () => [],
+      search: async () => [],
+      searchWithDiagnostics: async (_query, input) => {
+        observedSignal = input.signal;
+        return await new Promise((_resolve, reject) => {
+          input.signal?.addEventListener("abort", () => reject(input.signal?.reason), { once: true });
+        });
+      },
+    };
+
+    const result = await buildContextInjectionPrelude(
+      memoryManager,
+      { prompt: "deadline recall marker", userInput: "deadline recall marker", messages: [] },
+      { agentId: "default", sessionKey: "conv-auto-recall-deadline" },
+      {
+        contextInjectionEnabled: false,
+        contextInjectionLimit: 0,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 0,
+        contextInjectionAllowedCategories: [],
+        autoRecallEnabled: true,
+        autoRecallLimit: 3,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 20,
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
+  it("forwards caller cancellation into auto-recall instead of reporting a timeout", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const memoryManager: ContextInjectionMemoryProvider = {
+      getContextInjectionMemories: () => [],
+      getRecentTaskSummaries: () => [],
+      getRecentWork: () => [],
+      getResumeContext: () => null,
+      findSimilarPastWork: () => [],
+      search: async (_query, input) => {
+        observedSignal = input.signal;
+        return await new Promise((_resolve, reject) => {
+          input.signal?.addEventListener("abort", () => reject(input.signal?.reason), { once: true });
+        });
+      },
+    };
+    const controller = new AbortController();
+    const prelude = buildContextInjectionPrelude(
+      memoryManager,
+      { prompt: "cancel recall marker", userInput: "cancel recall marker", messages: [] },
+      {
+        agentId: "default",
+        sessionKey: "conv-auto-recall-cancel",
+        abortSignal: controller.signal,
+      },
+      {
+        contextInjectionEnabled: false,
+        contextInjectionLimit: 0,
+        contextInjectionIncludeSession: false,
+        contextInjectionTaskLimit: 0,
+        contextInjectionAllowedCategories: [],
+        autoRecallEnabled: true,
+        autoRecallLimit: 3,
+        autoRecallMinScore: 0.3,
+        autoRecallTimeoutMs: 1000,
+      },
+    );
+
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+    controller.abort();
+
+    await expect(prelude).rejects.toMatchObject({ name: "AbortError" });
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
   it("keeps distinct memories across recent-memory and auto-recall while removing duplicates already present in history", async () => {
     const duplicateFromHistory = "Release memory marker: gateway retry window 20 minutes; avoid duplicate webhook execution.";
     const recentDistinct = "Release memory marker: gateway retry window 20 minutes; rotate tool transcript snapshots daily.";

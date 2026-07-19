@@ -67,7 +67,7 @@ describe("WorkflowJournal", () => {
     expect(journal.lookup(journalId, fingerprint)).toBeNull();
   });
 
-  it("recordError 后 lookup 返回 error 状态", () => {
+  it("recordError 后 lookup 不返回可复用的 cache hit", () => {
     const journalId = "journal-3";
     const fingerprint = "fp-err";
     journal.recordPending({
@@ -79,12 +79,10 @@ describe("WorkflowJournal", () => {
       optsJson: "{}",
     });
     journal.recordError(journalId, fingerprint, "agent timeout");
-    const hit = journal.lookup(journalId, fingerprint);
-    expect(hit).not.toBeNull();
-    expect(hit?.status).toBe("error");
+    expect(journal.lookup(journalId, fingerprint)).toBeNull();
   });
 
-  it("markSkipped 后 lookup 返回 skipped 状态", () => {
+  it("markSkipped 后 lookup 不返回可复用的 cache hit", () => {
     const journalId = "journal-4";
     const fingerprint = "fp-skip";
     journal.recordPending({
@@ -96,9 +94,7 @@ describe("WorkflowJournal", () => {
       optsJson: "{}",
     });
     journal.markSkipped(journalId, fingerprint);
-    const hit = journal.lookup(journalId, fingerprint);
-    expect(hit).not.toBeNull();
-    expect(hit?.status).toBe("skipped");
+    expect(journal.lookup(journalId, fingerprint)).toBeNull();
   });
 
   it("UNIQUE(journal_id, fingerprint) 约束：重复 recordPending 不报错（幂等）", () => {

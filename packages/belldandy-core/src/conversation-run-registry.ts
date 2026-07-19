@@ -24,6 +24,11 @@ export type ConversationRunStopResult = {
   state: "stop_requested" | "not_found" | "run_mismatch";
 };
 
+export type ConversationRunRuntimeSnapshot = {
+  activeCount: number;
+  stopRequestedCount: number;
+};
+
 export class ConversationRunRegistry {
   private readonly handles = new Map<string, Map<string, ConversationRunHandle>>();
 
@@ -111,6 +116,24 @@ export class ConversationRunRegistry {
       return;
     }
     this.handles.set(conversationId, scoped);
+  }
+
+  /** 仅返回运行态总数，供后台调度避让前台 Agent 工作。 */
+  getRuntimeSnapshot(): ConversationRunRuntimeSnapshot {
+    let activeCount = 0;
+    let stopRequestedCount = 0;
+    for (const scoped of this.handles.values()) {
+      for (const handle of scoped.values()) {
+        if (handle.state !== "running" && handle.state !== "stop_requested") {
+          continue;
+        }
+        activeCount++;
+        if (handle.state === "stop_requested") {
+          stopRequestedCount++;
+        }
+      }
+    }
+    return { activeCount, stopRequestedCount };
   }
 
   private selectLatestHandle(

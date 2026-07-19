@@ -16,6 +16,10 @@ import {
   resolveAutoTaskReportForOutput,
   sanitizeVisibleAssistantText,
 } from "./task-auto-report.js";
+import type {
+  TopLevelConversationLease,
+  TopLevelConversationLifecycle,
+} from "./top-level-conversation-lifecycle.js";
 import type { WebhookConfig, WebhookRequestParams, IdempotencyManager, WebhookResponse } from "./webhook/index.js";
 import { findWebhookRule, generateConversationId, generatePromptFromPayload, verifyWebhookToken } from "./webhook/index.js";
 
@@ -43,6 +47,7 @@ export type CommunityMessageQueryRuntimeContext = {
   agentFactory?: () => BelldandyAgent;
   agentRegistry?: AgentRegistry;
   conversationStore: ConversationStore;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   log: QueryRuntimeLogger;
   runtimeObserver?: QueryRuntimeObserver<"api.message">;
   onChannelSecurityApprovalRequired?: (input: ChannelSecurityApprovalRequestInput) => void | Promise<void>;
@@ -71,6 +76,7 @@ export type WebhookReceiveQueryRuntimeContext = {
   webhookConfig?: WebhookConfig;
   webhookIdempotency?: IdempotencyManager;
   conversationStore: ConversationStore;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   log: QueryRuntimeLogger;
   runtimeObserver?: QueryRuntimeObserver<"webhook.receive">;
   emitAutoRunTaskTokenResult: (
@@ -96,6 +102,7 @@ export async function handleCommunityMessageWithQueryRuntime(
     observer: ctx.runtimeObserver,
   });
   let conversationIdForCleanup: string | undefined;
+  let lifecycleLease: TopLevelConversationLease | undefined;
 
   try {
     return await runtime.run(async (queryRuntime) => {
@@ -278,6 +285,15 @@ export async function handleCommunityMessageWithQueryRuntime(
         };
       }
 
+      lifecycleLease = await acquireHttpConversationLifecycle({
+        lifecycle: ctx.topLevelConversationLifecycle,
+        conversationId,
+        conversationStore: ctx.conversationStore,
+        agent,
+        agentFactory: ctx.agentFactory,
+        agentRegistry: ctx.agentRegistry,
+      });
+
       queryRuntime.mark("agent_created", {
         conversationId,
         detail: {
@@ -402,6 +418,8 @@ export async function handleCommunityMessageWithQueryRuntime(
         },
       },
     };
+  } finally {
+    await lifecycleLease?.release();
   }
 }
 
@@ -416,6 +434,7 @@ export async function handleWebhookReceiveWithQueryRuntime(
 
   let ownedIdempotency = false;
   let conversationIdForCleanup: string | undefined;
+  let lifecycleLease: TopLevelConversationLease | undefined;
 
   try {
     return await runtime.run(async (queryRuntime) => {
@@ -650,6 +669,15 @@ export async function handleWebhookReceiveWithQueryRuntime(
         };
       }
 
+      lifecycleLease = await acquireHttpConversationLifecycle({
+        lifecycle: ctx.topLevelConversationLifecycle,
+        conversationId,
+        conversationStore: ctx.conversationStore,
+        agent,
+        agentFactory: ctx.agentFactory,
+        agentRegistry: ctx.agentRegistry,
+      });
+
       queryRuntime.mark("agent_created", {
         conversationId,
         detail: {
@@ -791,6 +819,8 @@ export async function handleWebhookReceiveWithQueryRuntime(
         },
       },
     };
+  } finally {
+    await lifecycleLease?.release();
   }
 }
 
@@ -803,6 +833,36 @@ function createAgent(input: {
     return input.agentRegistry.create(input.requestedAgentId);
   }
   return input.agentFactory?.();
+}
+
+async function acquireHttpConversationLifecycle(input: {
+  lifecycle?: TopLevelConversationLifecycle;
+  conversationId: string;
+  conversationStore: ConversationStore;
+  agent: BelldandyAgent;
+  agentFactory?: () => BelldandyAgent;
+  agentRegistry?: AgentRegistry;
+}): Promise<TopLevelConversationLease | undefined> {
+  if (!input.lifecycle) return undefined;
+
+  const lease = await input.lifecycle.acquire({
+    conversationId: input.conversationId,
+    owners: [{
+      key: input.conversationStore,
+      priority: 100,
+      release: () => input.conversationStore.releaseConversation(input.conversationId),
+    }],
+  });
+  const agentOwnerKey = input.agentRegistry ? input.agent : input.agentFactory;
+  if (agentOwnerKey && typeof input.agent.releaseConversation === "function") {
+    lease.addOwner({
+      // Registry Agent 按实例区分 profile；无 Registry 时 factory 是跨请求稳定的替换 key。
+      key: agentOwnerKey,
+      priority: 0,
+      release: () => input.agent.releaseConversation?.(input.conversationId),
+    });
+  }
+  return lease;
 }
 
 function isBearerAuthorized(authorization: string | undefined, expectedToken: string): boolean {

@@ -6,16 +6,28 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { SkillRegistry } from "./skill-registry.js";
 
-async function writeSkill(root: string, directory: string, name: string): Promise<void> {
+async function writeSkill(
+  root: string,
+  directory: string,
+  name: string,
+  options: {
+    priority?: "low" | "normal" | "high" | "always";
+    eligibilityFiles?: string[];
+  } = {},
+): Promise<void> {
   const skillDir = path.join(root, directory);
   await fs.mkdir(skillDir, { recursive: true });
+  const eligibilityLines = options.eligibilityFiles && options.eligibilityFiles.length > 0
+    ? ["eligibility:", `  files: [${options.eligibilityFiles.join(", ")}]`]
+    : [];
   await fs.writeFile(
     path.join(skillDir, "SKILL.md"),
     [
       "---",
       `name: ${name}`,
       `description: ${name} description`,
-      "priority: normal",
+      `priority: ${options.priority ?? "normal"}`,
+      ...eligibilityLines,
       "---",
       `${name} instructions`,
       "",
@@ -65,6 +77,52 @@ describe("SkillRegistry", () => {
       catalogGeneration: 2,
       shadowedNames: ["shared-skill"],
     });
+  });
+
+  it("classifies only the active source and never falls back to a shadowed eligible skill", async () => {
+    const bundledDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-skill-registry-active-bundled-"));
+    const pluginDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-skill-registry-active-plugin-"));
+    const userDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-skill-registry-active-user-"));
+    const emptyUserDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-skill-registry-active-empty-user-"));
+    tempDirs.push(bundledDir, pluginDir, userDir, emptyUserDir);
+    await writeSkill(bundledDir, "bundled", "active-shared", { priority: "always" });
+    await writeSkill(pluginDir, "plugin", "active-shared", { priority: "always" });
+    await writeSkill(userDir, "user", "active-shared", {
+      priority: "always",
+      eligibilityFiles: ["missing-active-skill-marker"],
+    });
+
+    const registry = new SkillRegistry();
+    await registry.loadBundledSkills(bundledDir);
+    await registry.loadPluginSkills(new Map([["plugin-one", [pluginDir]]]));
+    await registry.loadUserSkills(userDir);
+    await registry.refreshEligibility({
+      registeredTools: [],
+      activeMcpServers: [],
+      workspaceRoot: userDir,
+    });
+
+    expect(registry.listSkills()).toHaveLength(3);
+    expect(registry.listActiveSkills()).toHaveLength(1);
+    expect(registry.getSkill("active-shared")?.source.type).toBe("user");
+    expect(registry.getEligibilityResult("active-shared")).toEqual({
+      eligible: false,
+      reasons: ["missing file: missing-active-skill-marker"],
+    });
+    expect(registry.getEligibleSkills()).toEqual([]);
+    expect(registry.getPromptSkills()).toEqual([]);
+    expect(registry.searchSkills("active-shared")).toEqual([]);
+
+    // Reloading an empty user source reveals the plugin owner without exposing bundled duplicates.
+    await registry.loadUserSkills(emptyUserDir);
+    await registry.refreshEligibility({
+      registeredTools: [],
+      activeMcpServers: [],
+      workspaceRoot: userDir,
+    });
+    expect(registry.getSkill("active-shared")?.source).toEqual({ type: "plugin", pluginId: "plugin-one" });
+    expect(registry.getEligibleSkills()).toEqual([expect.objectContaining({ name: "active-shared" })]);
+    expect(registry.getPromptSkills()).toEqual([expect.objectContaining({ name: "active-shared" })]);
   });
 
   it("accepts a missing optional user directory but rejects an invalid declared plugin directory", async () => {

@@ -4,7 +4,7 @@ import { resolveAgentProfileCatalogMetadata, type AgentProfileCatalogMetadata } 
 
 export const DEFAULT_AGENT_LAUNCH_TIMEOUT_MS = 120_000;
 
-export type AgentLaunchRole = "default" | "coder" | "researcher" | "verifier";
+export type AgentLaunchRole = "default" | "commander" | "coder" | "researcher" | "verifier";
 
 export type AgentLaunchSpec = {
   instruction: string;
@@ -101,7 +101,7 @@ function normalizeToolSet(value: unknown): string[] | undefined {
 }
 
 function normalizeRole(value: unknown): AgentLaunchRole | undefined {
-  if (value !== "default" && value !== "coder" && value !== "researcher" && value !== "verifier") {
+  if (value !== "default" && value !== "commander" && value !== "coder" && value !== "researcher" && value !== "verifier") {
     return undefined;
   }
   return value;
@@ -151,7 +151,7 @@ function normalizeDelegationToolFamilies(
 function normalizeDelegationTeamRole(
   value: unknown,
 ): NonNullable<DelegationProtocol["team"]>["memberRoster"][number]["role"] | undefined {
-  if (value !== "default" && value !== "coder" && value !== "researcher" && value !== "verifier") {
+  if (value !== "default" && value !== "commander" && value !== "coder" && value !== "researcher" && value !== "verifier") {
     return undefined;
   }
   return value;

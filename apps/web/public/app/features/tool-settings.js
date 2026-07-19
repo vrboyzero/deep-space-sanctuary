@@ -35,7 +35,15 @@ export function createToolSettingsController({
   let toolSettingsLoadSeq = 0;
   let pendingToolSettingsConfirm = null;
   let toolSettingsConfirmTimer = null;
+  let toolSettingsConfirmRevision = 0;
+  let toolSettingsConfirmTimerStartCount = 0;
+  let toolSettingsConfirmTimerTickCount = 0;
+  let toolSettingsConfirmationDisposed = false;
   let saveButtonState = "default";
+  let saveFeedbackTimer = null;
+  let saveRevision = 0;
+  let toolSettingsDisposed = false;
+  const toolTabClickHandlers = new Map();
 
   function normalizeToolSettingsTab(tab) {
     const normalized = typeof tab === "string" ? tab.trim() : "";
@@ -358,40 +366,37 @@ export function createToolSettingsController({
     `;
   }
 
-  if (openToolSettingsBtn) {
-    openToolSettingsBtn.addEventListener("click", () => {
-      void toggle(true);
-    });
+  function handleOpenToolSettingsClick() {
+    void toggle(true);
   }
-  if (closeToolSettingsBtn) {
-    closeToolSettingsBtn.addEventListener("click", () => {
-      void toggle(false);
-    });
+  function handleCloseToolSettingsClick() {
+    void toggle(false);
   }
-  if (saveToolSettingsBtn) {
-    saveToolSettingsBtn.addEventListener("click", () => {
-      void saveToolSettings();
-    });
+  function handleSaveToolSettingsClick() {
+    void saveToolSettings();
   }
-  if (toolSettingsConfirmApproveBtn) {
-    toolSettingsConfirmApproveBtn.addEventListener("click", () => {
-      void submitToolSettingsConfirm("approve");
-    });
+  openToolSettingsBtn?.addEventListener("click", handleOpenToolSettingsClick);
+  closeToolSettingsBtn?.addEventListener("click", handleCloseToolSettingsClick);
+  saveToolSettingsBtn?.addEventListener("click", handleSaveToolSettingsClick);
+  function handleToolSettingsConfirmApproveClick() {
+    void submitToolSettingsConfirm("approve");
   }
-  if (toolSettingsConfirmRejectBtn) {
-    toolSettingsConfirmRejectBtn.addEventListener("click", () => {
-      void submitToolSettingsConfirm("reject");
-    });
+  function handleToolSettingsConfirmRejectClick() {
+    void submitToolSettingsConfirm("reject");
   }
+  toolSettingsConfirmApproveBtn?.addEventListener("click", handleToolSettingsConfirmApproveClick);
+  toolSettingsConfirmRejectBtn?.addEventListener("click", handleToolSettingsConfirmRejectClick);
 
   for (const tab of toolTabButtons || []) {
-    tab.addEventListener("click", () => {
+    const handleTabClick = () => {
       setActiveToolSettingsTab(tab.dataset.tab, { render: true });
-    });
+    };
+    toolTabClickHandlers.set(tab, handleTabClick);
+    tab.addEventListener("click", handleTabClick);
   }
 
   async function toggle(show, options = {}) {
-    if (!toolSettingsModal) return;
+    if (toolSettingsDisposed || !toolSettingsModal) return;
     if (show) {
       setActiveToolSettingsTab(options.tab ?? toolSettingsActiveTab, { render: false });
       toolSettingsModal.classList.remove("hidden");
@@ -407,7 +412,7 @@ export function createToolSettingsController({
   }
 
   function shouldHandleToolSettingsConfirmPayload(payload) {
-    if (!payload || typeof payload !== "object") return false;
+    if (toolSettingsConfirmationDisposed || !payload || typeof payload !== "object") return false;
     const targetClientId = payload.targetClientId ? String(payload.targetClientId).trim() : "";
     return !targetClientId || targetClientId === clientId;
   }
@@ -441,7 +446,7 @@ export function createToolSettingsController({
   }
 
   function stopToolSettingsConfirmTimer() {
-    if (toolSettingsConfirmTimer) {
+    if (toolSettingsConfirmTimer !== null) {
       clearInterval(toolSettingsConfirmTimer);
       toolSettingsConfirmTimer = null;
     }
@@ -465,7 +470,7 @@ export function createToolSettingsController({
   }
 
   function renderToolSettingsConfirmModal() {
-    if (!pendingToolSettingsConfirm || !toolSettingsConfirmModal) return;
+    if (toolSettingsConfirmationDisposed || !pendingToolSettingsConfirm || !toolSettingsConfirmModal) return;
     if (toolSettingsConfirmImpactEl) {
       toolSettingsConfirmImpactEl.textContent = pendingToolSettingsConfirm.impact;
     }
@@ -483,6 +488,7 @@ export function createToolSettingsController({
   }
 
   function clearToolSettingsConfirmModal() {
+    toolSettingsConfirmRevision += 1;
     pendingToolSettingsConfirm = null;
     stopToolSettingsConfirmTimer();
     setToolSettingsConfirmBusy(false);
@@ -548,7 +554,8 @@ export function createToolSettingsController({
     ].filter(Boolean).join("\n");
   }
 
-  async function notifyAgentOfToolSettingsConfirm(request, decision) {
+  async function notifyAgentOfToolSettingsConfirm(request, decision, revision) {
+    if (toolSettingsConfirmationDisposed) return;
     const conversationId = typeof request?.conversationId === "string" ? request.conversationId.trim() : "";
     if (!conversationId) return;
     const res = await sendReq({
@@ -567,6 +574,7 @@ export function createToolSettingsController({
         },
       },
     });
+    if (toolSettingsConfirmationDisposed || revision !== toolSettingsConfirmRevision) return;
     if (!res || res.ok === false) {
       showNotice(
         t("toolSettings.noticeAgentNotifyFailedTitle", {}, "Unable to notify Agent"),
@@ -580,16 +588,19 @@ export function createToolSettingsController({
     if (!shouldHandleToolSettingsConfirmPayload(payload)) return;
     const normalized = normalizeToolSettingsConfirmPayload(payload);
     if (!normalized) return;
+    toolSettingsConfirmRevision += 1;
     pendingToolSettingsConfirm = normalized;
     setToolSettingsConfirmBusy(false);
     renderToolSettingsConfirmModal();
     if (toolSettingsConfirmModal) toolSettingsConfirmModal.classList.remove("hidden");
     stopToolSettingsConfirmTimer();
+    toolSettingsConfirmTimerStartCount += 1;
     toolSettingsConfirmTimer = setInterval(() => {
-      if (!pendingToolSettingsConfirm) {
+      if (toolSettingsConfirmationDisposed || !pendingToolSettingsConfirm) {
         stopToolSettingsConfirmTimer();
         return;
       }
+      toolSettingsConfirmTimerTickCount += 1;
       renderToolSettingsConfirmModal();
     }, 1000);
   }
@@ -613,7 +624,7 @@ export function createToolSettingsController({
   }
 
   async function submitToolSettingsConfirm(decision) {
-    if (!pendingToolSettingsConfirm) return;
+    if (toolSettingsConfirmationDisposed || !pendingToolSettingsConfirm) return;
     if (!isConnected()) {
       showNotice(
         t("toolSettings.noticeHandleErrorTitle", {}, "Unable to process confirmation"),
@@ -624,6 +635,7 @@ export function createToolSettingsController({
     }
     setToolSettingsConfirmBusy(true);
     const currentRequest = pendingToolSettingsConfirm;
+    const revision = toolSettingsConfirmRevision;
     const res = await sendReq({
       type: "req",
       id: makeId(),
@@ -634,6 +646,11 @@ export function createToolSettingsController({
         decision,
       },
     });
+    if (toolSettingsConfirmationDisposed
+      || revision !== toolSettingsConfirmRevision
+      || pendingToolSettingsConfirm?.requestId !== currentRequest.requestId) {
+      return;
+    }
     if (!res || res.ok === false) {
       setToolSettingsConfirmBusy(false);
       showNotice(
@@ -659,10 +676,29 @@ export function createToolSettingsController({
       decision === "approve" ? "success" : "info",
       2600,
     );
-    void notifyAgentOfToolSettingsConfirm(currentRequest, decision);
+    void notifyAgentOfToolSettingsConfirm(currentRequest, decision, toolSettingsConfirmRevision);
+  }
+
+  function disposeConfirmation() {
+    if (toolSettingsConfirmationDisposed) return;
+    toolSettingsConfirmationDisposed = true;
+    clearToolSettingsConfirmModal();
+    toolSettingsConfirmApproveBtn?.removeEventListener("click", handleToolSettingsConfirmApproveClick);
+    toolSettingsConfirmRejectBtn?.removeEventListener("click", handleToolSettingsConfirmRejectClick);
+  }
+
+  function getConfirmationRuntimeSnapshot() {
+    return {
+      pendingConfirmationCount: pendingToolSettingsConfirm ? 1 : 0,
+      timerActive: toolSettingsConfirmTimer !== null,
+      timerStartCount: toolSettingsConfirmTimerStartCount,
+      timerTickCount: toolSettingsConfirmTimerTickCount,
+      disposed: toolSettingsConfirmationDisposed,
+    };
   }
 
   async function loadToolSettings() {
+    if (toolSettingsDisposed) return;
     const seq = ++toolSettingsLoadSeq;
     if (!isConnected()) {
       renderEmpty("toolSettings.emptyDisconnected", "Disconnected");
@@ -684,7 +720,7 @@ export function createToolSettingsController({
     }
 
     const res = await sendReq({ type: "req", id: makeId(), method: "tools.list", params });
-    if (seq !== toolSettingsLoadSeq) return;
+    if (toolSettingsDisposed || seq !== toolSettingsLoadSeq) return;
     if (res && res.ok && res.payload) {
       toolSettingsData = res.payload;
       renderToolSettingsTab();
@@ -947,8 +983,9 @@ export function createToolSettingsController({
   }
 
   async function saveToolSettings() {
-    if (!isConnected() || !toolSettingsData) return;
+    if (toolSettingsDisposed || !isConnected() || !toolSettingsData) return;
     if (toolSettingsActiveTab === "methods") return;
+    const revision = ++saveRevision;
     if (saveToolSettingsBtn) {
       saveButtonState = "saving";
       updateSaveButton();
@@ -961,13 +998,17 @@ export function createToolSettingsController({
       method: "tools.update",
       params: { disabled: toolSettingsData.disabled },
     });
+    if (toolSettingsDisposed || revision !== saveRevision) return;
 
     if (res && res.ok) {
       if (saveToolSettingsBtn) {
         saveButtonState = "saved";
         updateSaveButton();
       }
-      setTimeout(() => {
+      if (saveFeedbackTimer !== null) clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = setTimeout(() => {
+        saveFeedbackTimer = null;
+        if (toolSettingsDisposed || revision !== saveRevision) return;
         if (saveToolSettingsBtn) {
           saveButtonState = "default";
           updateSaveButton();
@@ -986,6 +1027,7 @@ export function createToolSettingsController({
   }
 
   function handleToolsConfigUpdated(payload) {
+    if (toolSettingsDisposed) return;
     if (toolSettingsModal && !toolSettingsModal.classList.contains("hidden")) {
       void loadToolSettings();
       return;
@@ -999,8 +1041,48 @@ export function createToolSettingsController({
     }
   }
 
+  function dispose() {
+    if (toolSettingsDisposed) return;
+    toolSettingsDisposed = true;
+    disposeConfirmation();
+    toolSettingsLoadSeq += 1;
+    saveRevision += 1;
+    if (saveFeedbackTimer !== null) {
+      clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = null;
+    }
+    openToolSettingsBtn?.removeEventListener("click", handleOpenToolSettingsClick);
+    closeToolSettingsBtn?.removeEventListener("click", handleCloseToolSettingsClick);
+    saveToolSettingsBtn?.removeEventListener("click", handleSaveToolSettingsClick);
+    for (const [tab, handleTabClick] of toolTabClickHandlers) {
+      tab.removeEventListener("click", handleTabClick);
+    }
+    toolTabClickHandlers.clear();
+    toolSettingsData = null;
+    toolSettingsModal?.classList.add("hidden");
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      loadedDataCount: toolSettingsData ? 1 : 0,
+      saveFeedbackTimerActive: saveFeedbackTimer !== null,
+      panelListenerCount: toolSettingsDisposed
+        ? 0
+        : Number(Boolean(openToolSettingsBtn))
+          + Number(Boolean(closeToolSettingsBtn))
+          + Number(Boolean(saveToolSettingsBtn))
+          + toolTabClickHandlers.size,
+      disposed: toolSettingsDisposed,
+    };
+  }
+
   return {
+    dispose,
+    disposeConfirmation,
+    getConfirmationRuntimeSnapshot,
+    getRuntimeSnapshot,
     refreshLocale() {
+      if (toolSettingsDisposed) return;
       updateSaveButton();
       renderToolSettingsConfirmModal();
       if (toolSettingsData) {

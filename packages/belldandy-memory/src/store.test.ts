@@ -72,6 +72,109 @@ describe("MemoryStore", () => {
     expect(remainingChunks.every((item) => item.content?.includes("old content"))).toBe(true);
   });
 
+  it("reads chunk vectors in one batch while preserving missing and duplicate ids", () => {
+    store.upsertChunk({
+      id: "batch-vector-a",
+      sourcePath: "/tmp/batch-vector-a.md",
+      sourceType: "file",
+      memoryType: "other",
+      content: "batch vector a",
+    });
+    store.upsertChunk({
+      id: "batch-vector-b",
+      sourcePath: "/tmp/batch-vector-b.md",
+      sourceType: "file",
+      memoryType: "other",
+      content: "batch vector b",
+    });
+    store.prepareVectorStore(2);
+    store.upsertChunkVector("batch-vector-a", [0.1, 0.2], "test-model");
+
+    const vectors = store.getChunkVectors([
+      "batch-vector-a",
+      "batch-vector-b",
+      "batch-vector-missing",
+      "batch-vector-a",
+    ]);
+
+    expect([...vectors.keys()]).toEqual([
+      "batch-vector-a",
+      "batch-vector-b",
+      "batch-vector-missing",
+    ]);
+    expect(vectors.get("batch-vector-a")).toEqual([
+      expect.closeTo(0.1, 5),
+      expect.closeTo(0.2, 5),
+    ]);
+    expect(vectors.get("batch-vector-b")).toBeNull();
+    expect(vectors.get("batch-vector-missing")).toBeNull();
+  });
+
+  it("writes chunk vectors and cache entries in one batch transaction", () => {
+    for (const id of ["batch-write-a", "batch-write-b"]) {
+      store.upsertChunk({
+        id,
+        sourcePath: `/tmp/${id}.md`,
+        sourceType: "file",
+        memoryType: "other",
+        content: id,
+      });
+    }
+
+    const writtenChunkIds = store.upsertChunkVectorsBatch([
+      { chunkId: "batch-write-a", embedding: [0.1, 0.2], cacheHash: "batch-write-cache-a" },
+      { chunkId: "batch-write-b", embedding: [0.3, 0.4], cacheHash: "batch-write-cache-b" },
+    ], "test-model");
+
+    expect(writtenChunkIds).toEqual(["batch-write-a", "batch-write-b"]);
+    expect(store.getChunkVector("batch-write-a")).toEqual([
+      expect.closeTo(0.1, 5),
+      expect.closeTo(0.2, 5),
+    ]);
+    expect(store.getChunkVector("batch-write-b")).toEqual([
+      expect.closeTo(0.3, 5),
+      expect.closeTo(0.4, 5),
+    ]);
+    expect(store.getCachedEmbedding("batch-write-cache-a")).toEqual([
+      expect.closeTo(0.1, 5),
+      expect.closeTo(0.2, 5),
+    ]);
+    expect(store.getCachedEmbedding("batch-write-cache-b")).toEqual([
+      expect.closeTo(0.3, 5),
+      expect.closeTo(0.4, 5),
+    ]);
+  });
+
+  it("rolls back every vector and cache write when one cache insert fails", () => {
+    for (const id of ["batch-rollback-a", "batch-rollback-b"]) {
+      store.upsertChunk({
+        id,
+        sourcePath: `/tmp/${id}.md`,
+        sourceType: "file",
+        memoryType: "other",
+        content: id,
+      });
+    }
+    store.getDbHandleForSharedSchema().exec(`
+      CREATE TRIGGER fail_batch_embedding_cache
+      BEFORE INSERT ON embedding_cache
+      WHEN NEW.content_hash = 'batch-rollback-cache-b'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced embedding cache failure');
+      END;
+    `);
+
+    expect(() => store.upsertChunkVectorsBatch([
+      { chunkId: "batch-rollback-a", embedding: [0.1, 0.2], cacheHash: "batch-rollback-cache-a" },
+      { chunkId: "batch-rollback-b", embedding: [0.3, 0.4], cacheHash: "batch-rollback-cache-b" },
+    ], "test-model")).toThrow("forced embedding cache failure");
+
+    expect(store.getChunkVector("batch-rollback-a")).toBeNull();
+    expect(store.getChunkVector("batch-rollback-b")).toBeNull();
+    expect(store.getCachedEmbedding("batch-rollback-cache-a")).toBeNull();
+    expect(store.getCachedEmbedding("batch-rollback-cache-b")).toBeNull();
+  });
+
   it("tracks task and memory change sequences", () => {
     expect(store.getTaskChangeSeq()).toBe(0);
     expect(store.getMemoryChangeSeq()).toBe(0);

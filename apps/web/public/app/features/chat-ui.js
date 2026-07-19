@@ -19,6 +19,8 @@ export function createChatUiFeature({
   const { messagesEl, chatSection } = refs;
   let markedConfigured = false;
   let copyDelegationBound = false;
+  const copyFeedbackEntries = new Map();
+  let disposed = false;
   let avatarUploadInput = null;
   let avatarUploadBusy = false;
   let restoreScrollBehaviorHandle = null;
@@ -555,53 +557,86 @@ export function createChatUiFeature({
   }
 
   async function copyTextWithFeedback(button, text) {
-    if (!button) return;
+    if (disposed || !button) return;
     try {
       await navigator.clipboard.writeText(text);
-      const originalHtml = button.innerHTML;
+      if (disposed) return;
+      const previousEntry = copyFeedbackEntries.get(button);
+      const originalHtml = previousEntry?.originalHtml ?? button.innerHTML;
+      if (previousEntry) clearTimeout(previousEntry.timer);
       button.innerHTML = escapeHtml(t("chat.copied", {}, "Copied"));
-      setTimeout(() => {
-        button.innerHTML = originalHtml;
+      const entry = { originalHtml, timer: null };
+      entry.timer = setTimeout(() => {
+        if (copyFeedbackEntries.get(button) !== entry) return;
+        copyFeedbackEntries.delete(button);
+        if (!disposed && button.isConnected) button.innerHTML = originalHtml;
       }, 2000);
+      copyFeedbackEntries.set(button, entry);
     } catch (error) {
       console.error("复制失败", error);
     }
   }
 
+  async function handleCopyDelegationClick(event) {
+    if (disposed) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const codeBtn = target.closest(".copy-code-btn");
+    if (codeBtn) {
+      const wrapper = codeBtn.closest(".code-block-wrapper");
+      const codeEl = wrapper?.querySelector("code");
+      if (codeEl) {
+        await copyTextWithFeedback(codeBtn, codeEl.textContent || "");
+      }
+      return;
+    }
+
+    const msgBtn = target.closest(".copy-msg-btn");
+    if (msgBtn) {
+      const wrapper = msgBtn.closest(".msg-content-wrapper");
+      const bubble = wrapper?.querySelector(".msg");
+      if (bubble) {
+        const messageText = bubble.dataset.messageText || bubble.querySelector(".msg-body")?.dataset.messageText || bubble.textContent || "";
+        await copyTextWithFeedback(msgBtn, messageText);
+      }
+    }
+  }
+
   function initCopyButtonDelegation() {
-    if (copyDelegationBound) return;
+    if (disposed || copyDelegationBound) return;
     copyDelegationBound = true;
+    document.addEventListener("click", handleCopyDelegationClick);
+  }
 
-    document.addEventListener("click", async (event) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const [button, entry] of copyFeedbackEntries) {
+      clearTimeout(entry.timer);
+      if (button.isConnected) button.innerHTML = entry.originalHtml;
+    }
+    copyFeedbackEntries.clear();
+    if (copyDelegationBound) {
+      document.removeEventListener("click", handleCopyDelegationClick);
+      copyDelegationBound = false;
+    }
+  }
 
-      const codeBtn = target.closest(".copy-code-btn");
-      if (codeBtn) {
-        const wrapper = codeBtn.closest(".code-block-wrapper");
-        const codeEl = wrapper?.querySelector("code");
-        if (codeEl) {
-          await copyTextWithFeedback(codeBtn, codeEl.textContent || "");
-        }
-        return;
-      }
-
-      const msgBtn = target.closest(".copy-msg-btn");
-      if (msgBtn) {
-        const wrapper = msgBtn.closest(".msg-content-wrapper");
-        const bubble = wrapper?.querySelector(".msg");
-        if (bubble) {
-          const messageText = bubble.dataset.messageText || bubble.querySelector(".msg-body")?.dataset.messageText || bubble.textContent || "";
-          await copyTextWithFeedback(msgBtn, messageText);
-        }
-      }
-    });
+  function getRuntimeSnapshot() {
+    return {
+      copyFeedbackTimerCount: copyFeedbackEntries.size,
+      copyDelegationListenerCount: copyDelegationBound ? 1 : 0,
+      disposed,
+    };
   }
 
   return {
     appendMessage,
     configureMarkedOnce,
+    dispose,
     forceScrollToBottom,
+    getRuntimeSnapshot,
     initCopyButtonDelegation,
     openMediaModal,
     processMediaInMessage,

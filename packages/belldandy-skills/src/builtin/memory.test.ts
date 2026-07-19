@@ -78,6 +78,22 @@ const agentContext: ToolContext = {
 };
 
 describe("memory tools", () => {
+  it("memory_search should forward the current Tool abort signal", async () => {
+    manager.search.mockResolvedValue([]);
+    const controller = new AbortController();
+
+    const result = await mod.memorySearchTool.execute({ query: "abortable memory" }, {
+      ...baseContext,
+      abortSignal: controller.signal,
+    });
+
+    expect(result.success).toBe(true);
+    expect(manager.search).toHaveBeenCalledWith("abortable memory", {
+      limit: 5,
+      signal: controller.signal,
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     manager.getStatus.mockReturnValue({

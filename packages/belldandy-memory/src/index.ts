@@ -4,7 +4,7 @@ export { MemoryStore } from "./store.js";
 /** better-sqlite3 的 Database 实例类型，供同进程治理模块（如 WorkflowJournal）共享 db 句柄时使用 */
 export type SqliteDatabase = InstanceType<typeof Database>;
 export { MemoryIndexer } from "./indexer.js";
-export { ResultReranker, type RerankerOptions, type GetVectorFn } from "./reranker.js";
+export { ResultReranker, type RerankerOptions, type GetVectorFn, type GetVectorsFn } from "./reranker.js";
 export {
   MEMORY_CLASS_VALUES,
   MEMORY_CLASS_ORDER,
@@ -312,4 +312,16 @@ export * from "./team-memory.js";
 export { TaskProcessor, type TaskProcessorOptions } from "./task-processor.js";
 export { TaskSummarizer, type TaskSummarizerOptions, type TaskSummaryPayload } from "./task-summarizer.js";
 export { OpenAIEmbeddingProvider, type OpenAIEmbeddingOptions } from "./embeddings/openai.js";
-export type { EmbeddingProvider } from "./embeddings/types.js";
+export type {
+  EmbeddingModel,
+  EmbeddingProvider,
+  EmbeddingRequestContext,
+  EmbeddingVector,
+} from "./embeddings/index.js";
+export type {
+  EmbeddingAdapterRequest,
+  EmbeddingAdapterResponse,
+  EmbeddingAdapterResult,
+  EmbeddingProviderConfig,
+  LegacyEmbeddingProvider,
+} from "./embeddings/types.js";

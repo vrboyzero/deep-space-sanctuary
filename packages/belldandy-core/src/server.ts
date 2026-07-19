@@ -119,6 +119,7 @@ import { ResidentConversationStore } from "./resident-conversation-store.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
 import { notifyConversationToolEvent } from "./query-runtime-side-effects.js";
 import { buildDelegationObservabilitySnapshot } from "./subtask-result-envelope.js";
+import { getToolAuditRuntimeResourceQueueSnapshots } from "./tool-audit-runtime-resource.js";
 import type { ToolExecutor, TranscribeOptions, TranscribeResult, SkillRegistry, WorkflowRuntimeCapabilities } from "@belldandy/skills";
 import type { ToolExecutionRuntimeContext } from "@belldandy/skills";
 import { listToolContractsV2, TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
@@ -172,6 +173,10 @@ import type { ChannelSecurityApprovalRequestInput } from "@belldandy/channels";
 import type { BackgroundContinuationRuntimeDoctorReport } from "./background-continuation-runtime.js";
 import type { CronRuntimeDoctorReport } from "./cron/observability.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
+import {
+  TopLevelConversationLifecycle,
+  type TopLevelConversationLifecycleSnapshot,
+} from "./top-level-conversation-lifecycle.js";
 
 export type GatewayServerOptions = {
   port: number;
@@ -210,6 +215,8 @@ export type GatewayServerOptions = {
   conversationStoreOptions?: { maxHistory?: number; ttlSeconds?: number };
   conversationStore?: ConversationStore; // [NEW] Allow passing shared instance
   conversationRunRegistry?: ConversationRunRegistry;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
+  topLevelConversationLifecycleOptions?: ConstructorParameters<typeof TopLevelConversationLifecycle>[0];
   getCompactionRuntimeReport?: () => CompactionRuntimeReport | undefined;
   getRuntimeResilienceReport?: () => RuntimeResilienceDoctorReport | undefined;
   onActivity?: () => void;
@@ -378,6 +385,7 @@ export type GatewayServer = {
     threshold?: number;
     force?: boolean;
   }) => Promise<void>;
+  getTopLevelConversationLifecycleSnapshot: () => TopLevelConversationLifecycleSnapshot;
 };
 
 type GatewayLog = {
@@ -800,6 +808,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       startupObservability: opts.startupObservability,
     },
     getConversationStore: () => conversationStore,
+    getTopLevelConversationLifecycle: () => topLevelConversationLifecycle,
     getQueryRuntimeTraceStore: () => queryRuntimeTraceStore,
     getGovernanceDetailMode: getRuntimeGovernanceDetailMode,
     setGovernanceDetailMode: setRuntimeGovernanceDetailMode,
@@ -838,6 +847,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     opts.agentRegistry?.list().filter((profile) => isResidentAgentProfile(profile)).map((profile) => profile.id) ?? ["default"],
   );
   const conversationRunRegistry = opts.conversationRunRegistry ?? new ConversationRunRegistry();
+  const topLevelConversationLifecycle = opts.topLevelConversationLifecycle
+    ?? new TopLevelConversationLifecycle(opts.topLevelConversationLifecycleOptions);
   const memoryUsageAccounting = new MemoryRuntimeUsageAccounting({
     stateDir,
     logger: {
@@ -1251,6 +1262,19 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
         const snapshot = websocketRuntime?.getRuntimeSnapshot();
         return snapshot ? [{ id: "websocket", queuedCount: 0, ...snapshot }] : [];
       },
+      () => {
+        const snapshot = topLevelConversationLifecycle.getRuntimeSnapshot();
+        return [{
+          id: "top_level_conversation_lifecycle",
+          activeCount: snapshot.activeLeaseCount,
+          queuedCount: snapshot.pendingReleaseCount,
+          retainedCount: snapshot.retainedConversationCount,
+          evictedCount: snapshot.evictedCount,
+          failureCount: snapshot.releaseFailureCount,
+          oldestAgeMs: snapshot.oldestIdleAgeMs,
+        }];
+      },
+      () => getToolAuditRuntimeResourceQueueSnapshots(opts.toolExecutor),
     ],
   });
   const handleWebSocketRequest = createGatewayWebSocketRequestHandler({
@@ -1270,6 +1294,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     modelConfigPath: opts.modelConfigPath,
     conversationStore,
     conversationRunRegistry,
+    topLevelConversationLifecycle,
     durableExtractionRuntime,
     resolveDreamRuntime,
     resolveDreamDefaultConversationId,
@@ -1436,6 +1461,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       conversationStore,
       conversationRunRegistry,
       residentAgentRuntime,
+      topLevelConversationLifecycle,
       broadcast: broadcastEvent,
       log,
     });
@@ -1453,8 +1479,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       detachSubTaskBroadcast?.();
       detachDurableExtractionBroadcast?.();
       runtimeResourceObservability.stop();
-      await websocketRuntime?.close();
-      await new Promise<void>((resolve, reject) => {
+      // 先启动 HTTP 关闭与 force-close timer；活跃 WebSocket 不能阻止后续 socket 收敛。
+      const closeHttpServer = new Promise<void>((resolve, reject) => {
         const forceCloseTimer = setTimeout(() => {
           server.closeIdleConnections?.();
           server.closeAllConnections?.();
@@ -1476,6 +1502,9 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
         });
         server.closeIdleConnections?.();
       });
+      await websocketRuntime?.close();
+      await closeHttpServer;
+      await topLevelConversationLifecycle.dispose();
       await durableExtractionRuntime?.close();
       await memoryUsageAccounting.flush();
     },
@@ -1485,6 +1514,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     resolveDreamRuntime,
     resolveDreamDefaultConversationId,
     requestDurableExtractionFromDigest,
+    getTopLevelConversationLifecycleSnapshot: () => topLevelConversationLifecycle.getRuntimeSnapshot(),
   };
 }
 
@@ -1837,6 +1867,7 @@ async function handleReq(
         modelFallbacks: ctx.modelFallbacks,
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
+        topLevelConversationLifecycle: ctx.topLevelConversationLifecycle,
         getConversationPromptSnapshot: ctx.getConversationPromptSnapshot,
         durableExtractionRuntime: ctx.durableExtractionRuntime,
         requestDurableExtraction: ctx.requestDurableExtraction,

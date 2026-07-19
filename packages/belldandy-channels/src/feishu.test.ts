@@ -4,6 +4,8 @@ const larkMock = vi.hoisted(() => {
   const createMessage = vi.fn(async () => ({}));
   const replyMessage = vi.fn(async () => ({}));
   const getMessageResource = vi.fn(async () => Buffer.from("mock-audio"));
+  const closeWsClient = vi.fn();
+  const startWsClient = vi.fn(async () => {});
   class Client {
     public im = {
       message: {
@@ -20,17 +22,31 @@ const larkMock = vi.hoisted(() => {
 
   class WSClient {
     constructor(_config: unknown) {}
-    start() {}
-    stop() {}
+    start() {
+      return startWsClient();
+    }
+    close() {
+      closeWsClient();
+    }
+  }
+
+  class EventDispatcher {
+    constructor(_config: unknown) {}
+    register() {
+      return this;
+    }
   }
 
   return {
     Client,
     WSClient,
+    EventDispatcher,
     LoggerLevel: { info: "info" },
     createMessage,
     replyMessage,
     getMessageResource,
+    closeWsClient,
+    startWsClient,
   };
 });
 
@@ -41,6 +57,46 @@ import { ConversationStore } from "@belldandy/agent";
 import { FeishuChannel } from "./feishu.js";
 
 describe("FeishuChannel", () => {
+  it("force-closes the SDK WebSocket exactly once for concurrent stop calls", async () => {
+    larkMock.closeWsClient.mockClear();
+    const channel = new FeishuChannel({
+      appId: "app-id",
+      appSecret: "app-secret",
+      conversationStore: new ConversationStore(),
+      agent: { run: vi.fn() } as any,
+    });
+
+    await channel.start();
+    await Promise.all([channel.stop(), channel.stop()]);
+
+    expect(larkMock.closeWsClient).toHaveBeenCalledTimes(1);
+    expect(channel.lifecycleState).toBe("stopped");
+    expect(channel.isRunning).toBe(false);
+  });
+
+  it("does not revive a WebSocket owner when startup completes after stop", async () => {
+    let releaseStart!: () => void;
+    const pendingStart = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    larkMock.startWsClient.mockImplementationOnce(() => pendingStart);
+    const channel = new FeishuChannel({
+      appId: "app-id",
+      appSecret: "app-secret",
+      conversationStore: new ConversationStore(),
+      agent: { run: vi.fn() } as any,
+    });
+
+    const starting = channel.start();
+    await Promise.resolve();
+    await channel.stop();
+    releaseStart();
+
+    await expect(starting).rejects.toThrow("Feishu channel stopped.");
+    expect(channel.lifecycleState).toBe("stopped");
+    expect(channel.isRunning).toBe(false);
+  });
+
   it("cascades audio events through download, STT, agent, and reply while reusing cached channel transcription", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const conversationStore = new ConversationStore();

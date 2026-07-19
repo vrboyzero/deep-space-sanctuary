@@ -13,7 +13,11 @@ export {
   listBridgeSessionRuntimeViews,
   peekBridgeSessionRuntimeView,
 } from "./query.js";
-export { loadRuntimeLostBridgeSessions, loadRecoveredBridgeSessions } from "./sessions.js";
+export {
+  loadRuntimeLostBridgeSessions,
+  loadRecoveredBridgeSessions,
+  shutdownBridgeSessions,
+} from "./sessions.js";
 export type {
   BridgeActionConfig,
   BridgeCategory,

@@ -64,7 +64,14 @@ export function resolveWorkflowBudgetFromEnv(readEnv: (name: string) => string |
     const parsed = parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
   };
+  const parseOptionalPositiveInt = (name: string): number | undefined => {
+    const raw = readEnv(name);
+    if (!raw) return undefined;
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  };
   return {
+    maxTokens: parseOptionalPositiveInt("BELLDANDY_WORKFLOW_MAX_TOKENS"),
     maxAgentCalls: parseIntWithDefault("BELLDANDY_WORKFLOW_MAX_AGENT_CALLS", DEFAULT_WORKFLOW_MAX_AGENT_CALLS),
     maxRetries: parseIntWithDefault("BELLDANDY_WORKFLOW_MAX_RETRIES", DEFAULT_WORKFLOW_MAX_RETRIES),
     maxWallClockMs: parseIntWithDefault("BELLDANDY_WORKFLOW_TIMEOUT_MS", DEFAULT_WORKFLOW_TIMEOUT_MS),
@@ -103,10 +110,9 @@ export class WorkflowBudgetGuard {
   check(): void {
     const reason = this.findExceededReason();
     if (!reason) return;
-    this.exceeded = true;
-    this.exceededReason = reason;
+    const error = this.markExceeded(reason);
     if (this.onExceededMode === "abort") {
-      throw new WorkflowBudgetExceededError(reason, this.getUsage());
+      throw error;
     }
     // warn 模式：只记录，不抛错；调用方应通过 isExceeded() 自行决定是否跳过
   }
@@ -127,10 +133,9 @@ export class WorkflowBudgetGuard {
     const limit = this.maxRetries;
     if (limit !== undefined && this.retries > limit) {
       const reason = `max retries exceeded (${this.retries}/${limit})`;
-      this.exceeded = true;
-      this.exceededReason = reason;
+      const error = this.markExceeded(reason);
       if (this.onExceededMode === "abort") {
-        throw new WorkflowBudgetExceededError(reason, this.getUsage());
+        throw error;
       }
     }
   }
@@ -142,14 +147,22 @@ export class WorkflowBudgetGuard {
     if (this.exceeded) return true;
     const reason = this.findExceededReason();
     if (reason) {
-      this.exceeded = true;
-      this.exceededReason = reason;
+      this.markExceeded(reason);
     }
     return this.exceeded;
   }
 
   getExceededReason(): string | undefined {
     return this.exceededReason;
+  }
+
+  /**
+   * 供主动 deadline owner 标记预算终态；调用方决定如何传播该错误。
+   */
+  markExceeded(reason: string): WorkflowBudgetExceededError {
+    this.exceeded = true;
+    this.exceededReason = reason;
+    return new WorkflowBudgetExceededError(reason, this.getUsage());
   }
 
   getUsage(): WorkflowBudgetUsage {

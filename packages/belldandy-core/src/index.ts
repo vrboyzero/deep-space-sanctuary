@@ -1,6 +1,14 @@
 export { startGatewayServer } from "./server.js";
 export type { GatewayServer, GatewayServerOptions } from "./server.js";
 export {
+  DEFAULT_TOP_LEVEL_CONVERSATION_IDLE_TTL_MS,
+  DEFAULT_TOP_LEVEL_CONVERSATION_MAX_IDLE,
+  TopLevelConversationLifecycle,
+  type TopLevelConversationLease,
+  type TopLevelConversationLifecycleSnapshot,
+  type TopLevelConversationReleaseOwner,
+} from "./top-level-conversation-lifecycle.js";
+export {
   createEmptyInstalledExtensionLedger,
   createEmptyKnownMarketplaceLedger,
   getInstalledExtension,

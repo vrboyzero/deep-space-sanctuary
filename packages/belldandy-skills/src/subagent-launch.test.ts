@@ -115,6 +115,25 @@ describe("buildSubAgentLaunchSpec delegation protocol", () => {
     });
   });
 
+  it("applies the commander capability envelope by runtime role", () => {
+    const spec = buildSubAgentLaunchSpec(createContext({ launchSpec: undefined }), {
+      instruction: "Coordinate the workers and return a consolidated decision.",
+      agentId: "commander",
+      channel: "goal",
+      role: "commander",
+    });
+
+    expect(spec.permissionMode).toBe("confirm");
+    expect(spec.allowedToolFamilies).toEqual([
+      "workspace-read",
+      "browser",
+      "memory",
+      "goal-governance",
+      "session-orchestration",
+    ]);
+    expect(spec.maxToolRiskLevel).toBe("high");
+  });
+
   it("wraps worker instructions with role and launch constraints", () => {
     const spec = buildSubAgentLaunchSpec(createContext(), {
       instruction: "Review the changed files and report the top risks.",

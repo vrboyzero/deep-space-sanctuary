@@ -72,4 +72,32 @@ describe("query-runtime-artifact", () => {
     });
     expect(revealArtifactPath).not.toHaveBeenCalled();
   });
+
+  it("rejects generated artifacts whose canonical target escapes through a directory link", async () => {
+    const outsideDir = path.join(tempDir, "outside");
+    const linkPath = path.join(generatedDir, "escape");
+    await fs.mkdir(outsideDir, { recursive: true });
+    await fs.writeFile(path.join(outsideDir, "secret.png"), Buffer.from("secret"));
+    await fs.symlink(outsideDir, linkPath, process.platform === "win32" ? "junction" : "dir");
+    const revealArtifactPath = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handleArtifactRevealWithQueryRuntime({
+      requestId: "artifact-reveal-canonical-escape",
+      generatedDir,
+      isUnderRoot: (root, target) => {
+        const relative = path.relative(root, target);
+        return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+      },
+      revealArtifactPath,
+    }, {
+      path: "/generated/escape/secret.png",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("expected artifact.reveal to reject a canonical escape");
+    }
+    expect(result.error).toMatchObject({ code: "invalid_path" });
+    expect(revealArtifactPath).not.toHaveBeenCalled();
+  });
 });

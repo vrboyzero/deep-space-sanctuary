@@ -1,4 +1,7 @@
-import { scheduleTokenUsageObservabilityPopoverSync } from "./token-usage-observability.js";
+import {
+  cancelTokenUsageObservabilityPopoverSync,
+  scheduleTokenUsageObservabilityPopoverSync,
+} from "./token-usage-observability.js";
 
 function readStoredBoolean(storageKey, defaultValue) {
   if (!storageKey) return defaultValue;
@@ -24,21 +27,13 @@ function writeStoredBoolean(storageKey, value) {
   }
 }
 
-function bindKeyboardToggle(element, handler) {
-  if (!element || typeof handler !== "function") return;
-  element.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    handler();
-  });
-}
-
 export function createPanelVisibilityFeature({
   refs,
   storageKeys,
   defaults = {},
   onContentPanelVisibleChange,
   t = (_key, _params, fallback) => fallback ?? "",
+  windowRef = typeof window !== "undefined" ? window : null,
 } = {}) {
   const {
     tokenUsageEl,
@@ -61,9 +56,17 @@ export function createPanelVisibilityFeature({
   let controlPanelVisible = readStoredBoolean(controlPanelVisibleKey, defaults.controlPanelVisible ?? false);
   let agentPanelVisible = readStoredBoolean(agentPanelVisibleKey, defaults.agentPanelVisible ?? false);
   let agentPanelHasContent = false;
+  let disposed = false;
+  const listenerEntries = [];
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    listenerEntries.push({ target, type, handler });
+  }
 
   function refreshTokenUsageState() {
-    if (!tokenUsageEl) return;
+    if (disposed || !tokenUsageEl) return;
     tokenUsageEl.classList.toggle("is-collapsed", tokenUsageCollapsed);
     tokenUsageEl.setAttribute("role", "button");
     tokenUsageEl.tabIndex = 0;
@@ -77,6 +80,7 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshContentPanelState() {
+    if (disposed) return;
     sidebarEl?.classList.toggle("hidden", !contentPanelVisible);
     if (!toggleContentPanelBtn) return;
     toggleContentPanelBtn.classList.toggle("is-active", contentPanelVisible);
@@ -90,6 +94,7 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshControlPanelState() {
+    if (disposed) return;
     controlPanelEl?.classList.toggle("hidden", !controlPanelVisible);
     document.body.classList.toggle("control-panel-hidden", !controlPanelVisible);
     if (!toggleControlPanelBtn) return;
@@ -104,6 +109,7 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshAgentPanelState() {
+    if (disposed) return;
     agentRightPanelEl?.classList.toggle("hidden", !agentPanelVisible);
     agentRightPanelEl?.classList.toggle("is-empty", !agentPanelHasContent);
     if (!toggleAgentPanelBtn) return;
@@ -118,12 +124,14 @@ export function createPanelVisibilityFeature({
   }
 
   function setTokenUsageCollapsed(nextValue) {
+    if (disposed) return;
     tokenUsageCollapsed = Boolean(nextValue);
     writeStoredBoolean(tokenUsageCollapsedKey, tokenUsageCollapsed);
     refreshTokenUsageState();
   }
 
   function setContentPanelVisible(nextValue) {
+    if (disposed) return;
     contentPanelVisible = Boolean(nextValue);
     writeStoredBoolean(contentPanelVisibleKey, contentPanelVisible);
     refreshContentPanelState();
@@ -131,41 +139,70 @@ export function createPanelVisibilityFeature({
   }
 
   function setControlPanelVisible(nextValue) {
+    if (disposed) return;
     controlPanelVisible = Boolean(nextValue);
     writeStoredBoolean(controlPanelVisibleKey, controlPanelVisible);
     refreshControlPanelState();
   }
 
   function setAgentPanelVisible(nextValue) {
+    if (disposed) return;
     agentPanelVisible = Boolean(nextValue);
     writeStoredBoolean(agentPanelVisibleKey, agentPanelVisible);
     refreshAgentPanelState();
   }
 
-  tokenUsageEl?.addEventListener("click", () => {
+  function handleTokenUsageClick() {
     setTokenUsageCollapsed(!tokenUsageCollapsed);
-  });
-  bindKeyboardToggle(tokenUsageEl, () => {
-    setTokenUsageCollapsed(!tokenUsageCollapsed);
-  });
-
-  if (typeof window !== "undefined") {
-    window.addEventListener("resize", () => {
-      scheduleTokenUsageObservabilityPopoverSync(tokenUsageEl);
-    });
   }
 
-  toggleContentPanelBtn?.addEventListener("click", () => {
+  function handleTokenUsageKeydown(event) {
+    if (disposed || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    setTokenUsageCollapsed(!tokenUsageCollapsed);
+  }
+
+  function handleWindowResize() {
+    if (disposed) return;
+    scheduleTokenUsageObservabilityPopoverSync(tokenUsageEl);
+  }
+
+  function handleContentPanelClick() {
     setContentPanelVisible(!contentPanelVisible);
-  });
+  }
 
-  toggleControlPanelBtn?.addEventListener("click", () => {
+  function handleControlPanelClick() {
     setControlPanelVisible(!controlPanelVisible);
-  });
+  }
 
-  toggleAgentPanelBtn?.addEventListener("click", () => {
+  function handleAgentPanelClick() {
     setAgentPanelVisible(!agentPanelVisible);
-  });
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const { target, type, handler } of listenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    listenerEntries.length = 0;
+    cancelTokenUsageObservabilityPopoverSync(tokenUsageEl);
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerEntries.length,
+      pendingFrameCount: tokenUsageEl?.__tokenUsageObservabilityFrame ? 1 : 0,
+      disposed,
+    };
+  }
+
+  addOwnedListener(tokenUsageEl, "click", handleTokenUsageClick);
+  addOwnedListener(tokenUsageEl, "keydown", handleTokenUsageKeydown);
+  addOwnedListener(windowRef, "resize", handleWindowResize);
+  addOwnedListener(toggleContentPanelBtn, "click", handleContentPanelClick);
+  addOwnedListener(toggleControlPanelBtn, "click", handleControlPanelClick);
+  addOwnedListener(toggleAgentPanelBtn, "click", handleAgentPanelClick);
 
   refreshTokenUsageState();
   refreshContentPanelState();
@@ -173,6 +210,8 @@ export function createPanelVisibilityFeature({
   refreshAgentPanelState();
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     getState() {
       return {
         tokenUsageCollapsed,
@@ -183,10 +222,12 @@ export function createPanelVisibilityFeature({
       };
     },
     setAgentPanelHasContent(hasContent) {
+      if (disposed) return;
       agentPanelHasContent = Boolean(hasContent);
       refreshAgentPanelState();
     },
     refreshLocale() {
+      if (disposed) return;
       refreshTokenUsageState();
       refreshContentPanelState();
       refreshControlPanelState();

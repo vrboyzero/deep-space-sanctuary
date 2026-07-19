@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createPanelVisibilityFeature } from "./panel-visibility.js";
 
-function createHarness() {
+function createHarness(options = {}) {
   localStorage.clear();
   document.body.innerHTML = `
     <div id="tokenUsage">
@@ -20,6 +20,7 @@ function createHarness() {
         <span class="token-label">NXT</span>
         <span class="token-val" id="tuNxt">23.1k</span>
       </span>
+      <span class="token-usage-observability"></span>
     </div>
     <aside id="sidebar"></aside>
     <button id="toggleContentPanelBtn" type="button">Content</button>
@@ -54,10 +55,15 @@ function createHarness() {
       agentPanelVisible: false,
     },
     t: (_key, _params, fallback) => fallback ?? "",
+    ...options,
   });
 
   return { refs, feature };
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("panel visibility feature", () => {
   it("starts with a lightweight default layout", () => {
@@ -121,5 +127,51 @@ describe("panel visibility feature", () => {
     expect(refs.agentRightPanelEl.classList.contains("is-empty")).toBe(false);
     expect(refs.toggleAgentPanelBtn.classList.contains("is-active")).toBe(true);
     expect(localStorage.getItem("test.agent.visible")).toBe("1");
+  });
+
+  it("releases panel listeners and its pending observability frame", () => {
+    let nextFrameHandle = 1;
+    const frames = new Map();
+    const requestAnimationFrame = vi.fn((callback) => {
+      const handle = nextFrameHandle++;
+      frames.set(handle, callback);
+      return handle;
+    });
+    const cancelAnimationFrame = vi.fn((handle) => frames.delete(handle));
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
+    const windowRef = new EventTarget();
+    const { refs, feature } = createHarness({ windowRef });
+
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 6,
+      pendingFrameCount: 1,
+      disposed: false,
+    });
+    windowRef.dispatchEvent(new Event("resize"));
+    expect(feature.getRuntimeSnapshot().pendingFrameCount).toBe(1);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(cancelAnimationFrame).toHaveBeenCalledTimes(1);
+
+    const stateBeforeDispose = feature.getState();
+    feature.dispose();
+    feature.dispose();
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 0,
+      pendingFrameCount: 0,
+      disposed: true,
+    });
+    expect(frames.size).toBe(0);
+
+    refs.tokenUsageEl.click();
+    refs.tokenUsageEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    refs.toggleContentPanelBtn.click();
+    refs.toggleControlPanelBtn.click();
+    refs.toggleAgentPanelBtn.click();
+    windowRef.dispatchEvent(new Event("resize"));
+    feature.setContentPanelVisible(true);
+    feature.setAgentPanelHasContent(true);
+    expect(feature.getState()).toEqual(stateBeforeDispose);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
   });
 });

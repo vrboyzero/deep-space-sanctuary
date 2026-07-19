@@ -717,6 +717,7 @@ If the user explicitly asked for analysis only, you may stop after inspection wi
         includesTtsMode: isTtsEnabled(),
         hasProfileOverride: Boolean(profile.systemPromptOverride),
         ...(typeof baseBuild.maxChars === "number" ? { systemPromptMaxChars: baseBuild.maxChars } : {}),
+        ...(baseBuild.skillPromptBudget ? { skillPromptBudget: { ...baseBuild.skillPromptBudget } } : {}),
         baseFinalChars: baseBuild.finalChars,
         baseSectionCount: baseBuild.sections.length,
         finalSectionCount: promptExperimentResult.sections.length,

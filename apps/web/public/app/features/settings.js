@@ -1,4 +1,7 @@
-import { renderDoctorObservabilityCards } from "./doctor-observability.js";
+import {
+  disposeDoctorObservabilityCardRendering,
+  renderDoctorObservabilityCards,
+} from "./doctor-observability.js";
 import { setExperienceDraftGenerateNoticeEnabled } from "./experience-draft-notice-mode.js";
 import { setGovernanceDetailMode } from "./governance-detail-mode.js";
 import {
@@ -99,6 +102,10 @@ export function createSettingsController({
     cfgToolGroups,
     cfgMaxInputTokens,
     cfgMaxOutputTokens,
+    cfgMaxToolCalls,
+    cfgMaxRunWallTimeMs,
+    cfgMaxTotalTokens,
+    cfgMaxHighRiskToolCalls,
     cfgToolLoopIterationBudget,
     cfgToolLoopWarningFraction,
     cfgWebAllowPrivilegedSafeScope,
@@ -113,6 +120,7 @@ export function createSettingsController({
     cfgWorkflowMaxQueueSize,
     cfgWorkflowTimeoutMs,
     cfgWorkflowAgentTimeoutMs,
+    cfgWorkflowMaxTokens,
     cfgWorkflowMaxAgentCalls,
     cfgWorkflowMaxDepth,
     cfgMemoryEnabled,
@@ -457,6 +465,9 @@ export function createSettingsController({
   let lastLoadedConfiguredMemorySourcesContent = "[]\n";
   let lastConfiguredMemoryPreviewPayload = null;
   let doctorRequestVersion = 0;
+  let saveFeedbackTimer = null;
+  let saveFeedbackRevision = 0;
+  let disposed = false;
   const tabButtons = Array.isArray(settingsTabButtons) ? settingsTabButtons.filter(Boolean) : [];
   const tabPanels = Array.isArray(settingsTabPanels) ? settingsTabPanels.filter(Boolean) : [];
   const conversationKindCheckboxes = {
@@ -848,6 +859,10 @@ export function createSettingsController({
     if (cfgToolGroups) cfgToolGroups.value = c["BELLDANDY_TOOL_GROUPS"] || "";
     if (cfgMaxInputTokens) cfgMaxInputTokens.value = c["BELLDANDY_MAX_INPUT_TOKENS"] || "";
     if (cfgMaxOutputTokens) cfgMaxOutputTokens.value = c["BELLDANDY_MAX_OUTPUT_TOKENS"] || "";
+    if (cfgMaxToolCalls) cfgMaxToolCalls.value = c["BELLDANDY_MAX_TOOL_CALLS"] || "";
+    if (cfgMaxRunWallTimeMs) cfgMaxRunWallTimeMs.value = c["BELLDANDY_MAX_RUN_WALL_TIME_MS"] || "";
+    if (cfgMaxTotalTokens) cfgMaxTotalTokens.value = c["BELLDANDY_MAX_TOTAL_TOKENS"] || "";
+    if (cfgMaxHighRiskToolCalls) cfgMaxHighRiskToolCalls.value = c["BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS"] || "";
     if (cfgToolLoopIterationBudget) cfgToolLoopIterationBudget.value = c["BELLDANDY_TOOL_LOOP_ITERATION_BUDGET"] || "";
     if (cfgToolLoopWarningFraction) cfgToolLoopWarningFraction.value = c["BELLDANDY_TOOL_LOOP_WARNING_FRACTION"] || "";
     if (cfgWebAllowPrivilegedSafeScope) cfgWebAllowPrivilegedSafeScope.checked = c["BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE"] === "true";
@@ -862,6 +877,7 @@ export function createSettingsController({
     if (cfgWorkflowMaxQueueSize) cfgWorkflowMaxQueueSize.value = c["BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE"] || "";
     if (cfgWorkflowTimeoutMs) cfgWorkflowTimeoutMs.value = c["BELLDANDY_WORKFLOW_TIMEOUT_MS"] || "";
     if (cfgWorkflowAgentTimeoutMs) cfgWorkflowAgentTimeoutMs.value = c["BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS"] || "";
+    if (cfgWorkflowMaxTokens) cfgWorkflowMaxTokens.value = c["BELLDANDY_WORKFLOW_MAX_TOKENS"] || "";
     if (cfgWorkflowMaxAgentCalls) cfgWorkflowMaxAgentCalls.value = c["BELLDANDY_WORKFLOW_MAX_AGENT_CALLS"] || "";
     if (cfgWorkflowMaxDepth) cfgWorkflowMaxDepth.value = c["BELLDANDY_WORKFLOW_MAX_DEPTH"] || "";
     if (cfgMemoryEnabled) cfgMemoryEnabled.checked = c["BELLDANDY_MEMORY_ENABLED"] !== "false";
@@ -2017,6 +2033,12 @@ export function createSettingsController({
   }
 
   async function saveConfig() {
+    if (disposed) return;
+    if (saveFeedbackTimer !== null) {
+      clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = null;
+    }
+    const feedbackRevision = ++saveFeedbackRevision;
     if (!isConnected()) {
       alert(t("settings.notConnectedError", {}, "Error: Not connected to server.\nPlease refresh the page or check if the Gateway is running."));
       return;
@@ -2089,6 +2111,10 @@ export function createSettingsController({
     if (cfgToolGroups) updates["BELLDANDY_TOOL_GROUPS"] = cfgToolGroups.value.trim();
     if (cfgMaxInputTokens) updates["BELLDANDY_MAX_INPUT_TOKENS"] = cfgMaxInputTokens.value.trim();
     if (cfgMaxOutputTokens) updates["BELLDANDY_MAX_OUTPUT_TOKENS"] = cfgMaxOutputTokens.value.trim();
+    if (cfgMaxToolCalls) updates["BELLDANDY_MAX_TOOL_CALLS"] = cfgMaxToolCalls.value.trim();
+    if (cfgMaxRunWallTimeMs) updates["BELLDANDY_MAX_RUN_WALL_TIME_MS"] = cfgMaxRunWallTimeMs.value.trim();
+    if (cfgMaxTotalTokens) updates["BELLDANDY_MAX_TOTAL_TOKENS"] = cfgMaxTotalTokens.value.trim();
+    if (cfgMaxHighRiskToolCalls) updates["BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS"] = cfgMaxHighRiskToolCalls.value.trim();
     if (cfgToolLoopIterationBudget) updates["BELLDANDY_TOOL_LOOP_ITERATION_BUDGET"] = cfgToolLoopIterationBudget.value.trim();
     if (cfgToolLoopWarningFraction) updates["BELLDANDY_TOOL_LOOP_WARNING_FRACTION"] = cfgToolLoopWarningFraction.value.trim();
     if (cfgWebAllowPrivilegedSafeScope) updates["BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE"] = cfgWebAllowPrivilegedSafeScope.checked ? "true" : "false";
@@ -2103,6 +2129,7 @@ export function createSettingsController({
     if (cfgWorkflowMaxQueueSize) updates["BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE"] = cfgWorkflowMaxQueueSize.value.trim();
     if (cfgWorkflowTimeoutMs) updates["BELLDANDY_WORKFLOW_TIMEOUT_MS"] = cfgWorkflowTimeoutMs.value.trim();
     if (cfgWorkflowAgentTimeoutMs) updates["BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS"] = cfgWorkflowAgentTimeoutMs.value.trim();
+    if (cfgWorkflowMaxTokens) updates["BELLDANDY_WORKFLOW_MAX_TOKENS"] = cfgWorkflowMaxTokens.value.trim();
     if (cfgWorkflowMaxAgentCalls) updates["BELLDANDY_WORKFLOW_MAX_AGENT_CALLS"] = cfgWorkflowMaxAgentCalls.value.trim();
     if (cfgWorkflowMaxDepth) updates["BELLDANDY_WORKFLOW_MAX_DEPTH"] = cfgWorkflowMaxDepth.value.trim();
     if (cfgMemoryEnabled) updates["BELLDANDY_MEMORY_ENABLED"] = cfgMemoryEnabled.checked ? "true" : "false";
@@ -2502,7 +2529,9 @@ export function createSettingsController({
       if (res.payload?.restartRequired !== true) {
         if (saveSettingsBtn) {
           saveSettingsBtn.disabled = false;
-          setTimeout(() => {
+          saveFeedbackTimer = setTimeout(() => {
+            saveFeedbackTimer = null;
+            if (disposed || feedbackRevision !== saveFeedbackRevision) return;
             saveSettingsBtn.textContent = t("settings.save", {}, "Save");
           }, 1200);
         }
@@ -2578,7 +2607,28 @@ export function createSettingsController({
     onOpenCommunityConfig();
   }
 
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    disposeDoctorObservabilityCardRendering(doctorStatusEl);
+    saveFeedbackRevision += 1;
+    if (saveFeedbackTimer !== null) {
+      clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = null;
+    }
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      saveFeedbackTimerActive: saveFeedbackTimer !== null,
+      saveFeedbackRevision,
+      disposed,
+    };
+  }
+
   return {
+    dispose,
+    getRuntimeSnapshot,
     toggle,
     renderPairingPending,
     loadConfig,

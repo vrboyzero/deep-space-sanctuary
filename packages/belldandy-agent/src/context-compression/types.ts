@@ -186,6 +186,8 @@ export interface CompressionReferenceStore {
   retrieve(refId: string): { found: boolean; content?: string; status?: ReferenceStatus; metadata?: Record<string, unknown> };
   invalidate(refId: string): boolean;
   prune(predicate: (ref: StoredReference) => boolean): number;
+  /** 可选会话释放能力；持久化 Store 可不实现，以保留冷恢复引用。 */
+  releaseConversation?(conversationId: string): { prunedCount: number; retainedCount: number };
   has(refId: string): boolean;
   size(): number;
   clear(): void;

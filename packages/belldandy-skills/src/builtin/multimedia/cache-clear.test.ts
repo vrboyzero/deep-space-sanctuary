@@ -99,4 +99,15 @@ describe("multimedia_cache_clear", () => {
       fingerprint: imageFingerprint,
     })).toBeUndefined();
   });
+
+  it("does not remove generated assets when clearing all understanding caches", async () => {
+    const generatedPath = path.join(tempDir, "generated", "images", "kept.png");
+    await fs.mkdir(path.dirname(generatedPath), { recursive: true });
+    await fs.writeFile(generatedPath, "generated-asset");
+
+    const result = await multimediaCacheClearTool.execute({ scope: "all" }, createContext(tempDir));
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(generatedPath, "utf-8")).resolves.toBe("generated-asset");
+  });
 });

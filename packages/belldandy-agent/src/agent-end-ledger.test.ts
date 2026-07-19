@@ -23,11 +23,17 @@ describe("AgentEndLedger", () => {
     });
   });
 
-  it("bounds long streams while preserving the final and terminal status", () => {
+  it("bounds long streams while preserving budget exhaustion, final and terminal status", () => {
     const ledger = new AgentEndLedger({ headEvents: 2, tailEvents: 2, maxItemBytes: 32 });
     for (let index = 0; index < 10; index += 1) {
       ledger.record({ type: "delta", delta: `delta-${index}` });
     }
+    ledger.record({
+      type: "budget_exhausted",
+      budget: "tool_loop_iterations",
+      limit: 8,
+      observed: 9,
+    });
     ledger.record({ type: "final", text: "final response" });
     ledger.record({ type: "status", status: "done" });
 
@@ -35,11 +41,17 @@ describe("AgentEndLedger", () => {
 
     expect(snapshot.summary).toMatchObject({
       truncated: true,
-      eventCount: 12,
+      eventCount: 13,
       droppedEventCount: 8,
       totalDeltaChars: 70,
     });
     expect(snapshot.items).toContainEqual({ type: "final", text: "final response" });
+    expect(snapshot.items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "tool_loop_iterations",
+      limit: 8,
+      observed: 9,
+    });
     expect(snapshot.items).toContainEqual({ type: "status", status: "done" });
   });
 

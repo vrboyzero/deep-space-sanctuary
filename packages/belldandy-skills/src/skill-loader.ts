@@ -10,6 +10,33 @@ import path from "node:path";
 import type { SkillDefinition, SkillSource, SkillPriority, SkillEligibility } from "./skill-types.js";
 
 const SKILL_FILENAME = "SKILL.md";
+export const MAX_SKILL_FILE_BYTES = 256 * 1024;
+
+class SkillFileTooLargeError extends Error {
+  constructor() {
+    super(`SKILL.md exceeds the ${MAX_SKILL_FILE_BYTES} bytes limit.`);
+    this.name = "SkillFileTooLargeError";
+  }
+}
+
+async function readBoundedSkillFile(filePath: string): Promise<string> {
+  const handle = await fs.open(filePath, "r");
+  const buffer = Buffer.allocUnsafe(MAX_SKILL_FILE_BYTES + 1);
+  let offset = 0;
+  try {
+    while (offset < buffer.byteLength) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.byteLength - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+  if (offset > MAX_SKILL_FILE_BYTES) {
+    throw new SkillFileTooLargeError();
+  }
+  return buffer.subarray(0, offset).toString("utf-8");
+}
 
 export class SkillDirectoryError extends Error {
   constructor(message: string) {
@@ -33,8 +60,13 @@ export async function loadSkillFromDir(
   const filePath = path.join(dirPath, SKILL_FILENAME);
   let content: string;
   try {
-    content = await fs.readFile(filePath, "utf-8");
-  } catch {
+    content = await readBoundedSkillFile(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return null;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[skill-loader] Failed to read ${filePath}: ${message}`);
     return null;
   }
 

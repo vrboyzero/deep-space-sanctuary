@@ -73,6 +73,7 @@ export function buildGatewayServerOptions(input: GatewayServerRuntimeInput): Gat
     modelConfigPath: input.modelConfigPath,
     residentMemoryManagers: input.residentMemoryManagers,
     conversationStore: input.conversationStore,
+    conversationRunRegistry: input.conversationRunRegistry,
     getCompactionRuntimeReport: input.getCompactionRuntimeReport,
     getRuntimeResilienceReport: input.getRuntimeResilienceReport,
     onActivity: input.onActivity,

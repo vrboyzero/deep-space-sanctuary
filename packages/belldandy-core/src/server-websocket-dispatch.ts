@@ -13,6 +13,7 @@ import type { WebSocket } from "ws";
 
 import type { BackgroundContinuationRuntimeDoctorReport } from "./background-continuation-runtime.js";
 import type { ConversationRunRegistry } from "./conversation-run-registry.js";
+import type { TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
 import type { CronRuntimeDoctorReport } from "./cron/observability.js";
 import type { DreamRuntime, DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableExtractionRuntime } from "@belldandy/memory";
 import type { ExtensionHostState } from "./extension-host.js";
@@ -72,6 +73,7 @@ export type GatewayWebSocketRequestContext = {
   modelConfigPath?: string;
   conversationStore: ConversationStore;
   conversationRunRegistry: ConversationRunRegistry;
+  topLevelConversationLifecycle: TopLevelConversationLifecycle;
   durableExtractionRuntime?: DurableExtractionRuntime;
   resolveDreamRuntime?: (agentId?: string) => DreamRuntime | null;
   resolveDreamDefaultConversationId?: (agentId?: string) => string;
@@ -179,6 +181,7 @@ export function buildGatewayWebSocketRequestContext(
     modelConfigPath: options.modelConfigPath,
     conversationStore: options.conversationStore,
     conversationRunRegistry: options.conversationRunRegistry,
+    topLevelConversationLifecycle: options.topLevelConversationLifecycle,
     durableExtractionRuntime: options.durableExtractionRuntime,
     resolveDreamRuntime: options.resolveDreamRuntime,
     resolveDreamDefaultConversationId: options.resolveDreamDefaultConversationId,

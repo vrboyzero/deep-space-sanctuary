@@ -7,6 +7,7 @@ import {
   isResidentAgentProfile,
   type AgentRegistry,
   type CompactionRuntimeReport,
+  type ConversationRuntimeSnapshot,
   type ConversationStoreOptions,
   type PersistedConversationSummary,
 } from "@belldandy/agent";
@@ -30,6 +31,13 @@ type ResidentConversationStoreOptions = Omit<ConversationStoreOptions, "dataDir"
 };
 
 type PersistedConversationListOptions = Parameters<ConversationStore["listPersistedConversations"]>[0];
+
+type ResidentStoreEntry = {
+  store: ConversationStore;
+  activeCalls: number;
+  conversationRevisions: Map<string, number>;
+  evictionRequested: boolean;
+};
 
 function toSafeConversationFileId(id: string): string {
   const encodeChar = (char: string): string => {
@@ -64,7 +72,7 @@ export class ResidentConversationStore extends ConversationStore {
   private readonly storeOptions: ConversationStoreOptions;
   private readonly globalStore: ConversationStore;
   private readonly globalSessionsDir: string;
-  private readonly residentStores = new Map<string, ConversationStore>();
+  private readonly residentStores = new Map<string, ResidentStoreEntry>();
   private readonly migratedResidentConversationIds = new Set<string>();
 
   constructor(options: ResidentConversationStoreOptions) {
@@ -90,11 +98,68 @@ export class ResidentConversationStore extends ConversationStore {
   }
 
   clear(id: string): void {
-    const store = this.resolveConversationStore(id);
-    store.clear(id);
-    if (store !== this.globalStore) {
-      this.globalStore.clear(id);
+    this.withConversationStore(id, (store) => {
+      store.clear(id);
+      if (store !== this.globalStore) {
+        this.globalStore.clear(id);
+      }
+    });
+  }
+
+  async releaseConversation(id: string): Promise<void> {
+    const residentAgentId = parseResidentAgentId(id);
+    if (!residentAgentId) {
+      await this.globalStore.releaseConversation(id);
+      return;
     }
+
+    const residentSessionsDir = this.getResidentSessionsDir(residentAgentId);
+    if (path.resolve(residentSessionsDir) === path.resolve(this.globalSessionsDir)) {
+      await this.globalStore.releaseConversation(id);
+      this.migratedResidentConversationIds.delete(id);
+      return;
+    }
+
+    const entry = this.residentStores.get(residentSessionsDir);
+    if (!entry) {
+      this.migratedResidentConversationIds.delete(id);
+      return;
+    }
+
+    const releaseRevision = entry.conversationRevisions.get(id) ?? 0;
+    await entry.store.releaseConversation(id);
+    if ((entry.conversationRevisions.get(id) ?? 0) !== releaseRevision) {
+      return;
+    }
+
+    entry.conversationRevisions.delete(id);
+    entry.evictionRequested = true;
+    this.migratedResidentConversationIds.delete(id);
+    this.evictResidentStoreIfIdle(residentSessionsDir, entry);
+  }
+
+  getConversationRuntimeSnapshot(id: string): ConversationRuntimeSnapshot {
+    const residentAgentId = parseResidentAgentId(id);
+    if (!residentAgentId) {
+      return this.globalStore.getConversationRuntimeSnapshot(id);
+    }
+
+    const residentSessionsDir = this.getResidentSessionsDir(residentAgentId);
+    if (path.resolve(residentSessionsDir) === path.resolve(this.globalSessionsDir)) {
+      return this.globalStore.getConversationRuntimeSnapshot(id);
+    }
+    const entry = this.residentStores.get(residentSessionsDir);
+    return entry
+      ? entry.store.getConversationRuntimeSnapshot(id)
+      : {
+        retainedConversation: false,
+        retainedCompactionState: false,
+        retainedSessionDigestState: false,
+        retainedSessionMemory: false,
+        activeGeneration: false,
+        pendingPersistenceLaneCount: 0,
+        releasing: false,
+      };
   }
 
   getPartialCompactionView(id: string): ReturnType<ConversationStore["getPartialCompactionView"]> {
@@ -237,6 +302,11 @@ export class ResidentConversationStore extends ConversationStore {
     this.withConversationStore(conversationId, (store) => store.recordRecentToolResult(conversationId, record, limit));
   }
 
+  recordToolArtifacts(...args: Parameters<ConversationStore["recordToolArtifacts"]>): void {
+    const [conversationId, artifacts] = args;
+    this.withConversationStore(conversationId, (store) => store.recordToolArtifacts(conversationId, artifacts));
+  }
+
   getRecentToolResults(...args: Parameters<ConversationStore["getRecentToolResults"]>): ReturnType<ConversationStore["getRecentToolResults"]> {
     const [conversationId, options] = args;
     return this.withConversationStore(conversationId, (store) => store.getRecentToolResults(conversationId, options));
@@ -308,7 +378,35 @@ export class ResidentConversationStore extends ConversationStore {
   }
 
   private withConversationStore<T>(conversationId: string, handler: (store: ConversationStore) => T): T {
-    return handler(this.resolveConversationStore(conversationId));
+    const store = this.resolveConversationStore(conversationId);
+    const entryBinding = this.getResidentStoreEntryBinding(conversationId, store);
+    if (!entryBinding) {
+      return handler(store);
+    }
+
+    const { residentSessionsDir, entry } = entryBinding;
+    entry.activeCalls += 1;
+    entry.conversationRevisions.set(
+      conversationId,
+      (entry.conversationRevisions.get(conversationId) ?? 0) + 1,
+    );
+
+    let result: T;
+    try {
+      result = handler(store);
+    } catch (error) {
+      this.finishResidentStoreCall(residentSessionsDir, entry);
+      throw error;
+    }
+
+    if (result && typeof (result as unknown as PromiseLike<unknown>).then === "function") {
+      return Promise.resolve(result).finally(() => {
+        this.finishResidentStoreCall(residentSessionsDir, entry);
+      }) as T;
+    }
+
+    this.finishResidentStoreCall(residentSessionsDir, entry);
+    return result;
   }
 
   private resolveConversationStore(conversationId: string): ConversationStore {
@@ -329,14 +427,19 @@ export class ResidentConversationStore extends ConversationStore {
     }
     const existing = this.residentStores.get(residentSessionsDir);
     if (existing) {
-      return existing;
+      return existing.store;
     }
 
     const store = new ConversationStore({
       ...this.storeOptions,
       dataDir: residentSessionsDir,
     });
-    this.residentStores.set(residentSessionsDir, store);
+    this.residentStores.set(residentSessionsDir, {
+      store,
+      activeCalls: 0,
+      conversationRevisions: new Map(),
+      evictionRequested: false,
+    });
     return store;
   }
 
@@ -378,26 +481,47 @@ export class ResidentConversationStore extends ConversationStore {
   }
 
   private getKnownResidentStores(): ConversationStore[] {
+    const stores = [...this.residentStores.values()].map((entry) => entry.store);
     const residentSessionDirs = new Set<string>(this.residentStores.keys());
     for (const profile of this.agentRegistry?.list() ?? []) {
       if (!isResidentAgentProfile(profile)) continue;
       const residentSessionsDir = this.getResidentSessionsDir(profile.id);
-      if (path.resolve(residentSessionsDir) !== path.resolve(this.globalSessionsDir)) {
-        residentSessionDirs.add(residentSessionsDir);
-      }
-    }
-    return [...residentSessionDirs.values()].map((residentSessionsDir) => {
-      const existing = this.residentStores.get(residentSessionsDir);
-      if (existing) {
-        return existing;
-      }
-      const store = new ConversationStore({
+      if (path.resolve(residentSessionsDir) === path.resolve(this.globalSessionsDir)) continue;
+      if (residentSessionDirs.has(residentSessionsDir)) continue;
+      residentSessionDirs.add(residentSessionsDir);
+      // 列表扫描不取得长期 owner，避免仅查看历史就永久缓存所有 resident Store。
+      stores.push(new ConversationStore({
         ...this.storeOptions,
         dataDir: residentSessionsDir,
-      });
-      this.residentStores.set(residentSessionsDir, store);
-      return store;
-    });
+      }));
+    }
+    return stores;
+  }
+
+  private getResidentStoreEntryBinding(
+    conversationId: string,
+    store: ConversationStore,
+  ): { residentSessionsDir: string; entry: ResidentStoreEntry } | undefined {
+    const residentAgentId = parseResidentAgentId(conversationId);
+    if (!residentAgentId || store === this.globalStore) return undefined;
+
+    const residentSessionsDir = this.getResidentSessionsDir(residentAgentId);
+    const entry = this.residentStores.get(residentSessionsDir);
+    return entry ? { residentSessionsDir, entry } : undefined;
+  }
+
+  private finishResidentStoreCall(residentSessionsDir: string, entry: ResidentStoreEntry): void {
+    entry.activeCalls = Math.max(0, entry.activeCalls - 1);
+    this.evictResidentStoreIfIdle(residentSessionsDir, entry);
+  }
+
+  private evictResidentStoreIfIdle(residentSessionsDir: string, entry: ResidentStoreEntry): void {
+    if (!entry.evictionRequested || entry.activeCalls > 0 || entry.conversationRevisions.size > 0) {
+      return;
+    }
+    if (this.residentStores.get(residentSessionsDir) === entry) {
+      this.residentStores.delete(residentSessionsDir);
+    }
   }
 
   private hasPersistedConversationFiles(dataDir: string, conversationId: string): boolean {

@@ -6,12 +6,28 @@ import { WebSocket } from "ws";
 import type { BelldandyAgent, ConversationStore } from "@belldandy/agent";
 import { FilesystemCapability, assertSafeFilesystemBasename } from "@belldandy/protocol";
 import type { ChatKind, ChannelRouter } from "./router/types.js";
-import type { Channel, ChannelConfig, ChannelProactiveTarget } from "./types.js";
+import type {
+    Channel,
+    ChannelConfig,
+    ChannelConversationLease,
+    ChannelLifecycleOptions,
+    ChannelLifecycleState,
+    ChannelOutboundOptions,
+    ChannelProactiveTarget,
+} from "./types.js";
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
 import { readBoundedMediaBuffer } from "./media-reader.js";
+import {
+    ChannelOutboundDeduplicator,
+    classifyChannelOutboundFailure,
+    combineChannelAbortSignals,
+    readBoundedChannelErrorBody,
+    runChannelOutbound,
+    throwIfChannelAborted,
+} from "./channel-outbound.js";
 import {
     ChannelSafeLogger,
     createChannelApprovalPreview,
@@ -120,8 +136,14 @@ export class QqChannel implements Channel {
     private readonly sttTranscribe?: QqChannelConfig["sttTranscribe"];
     private readonly eventSampleCapture?: QqChannelConfig["eventSampleCapture"];
     private readonly ingressScheduler: ChannelIngressScheduler;
+    private readonly conversationLifecycle?: QqChannelConfig["conversationLifecycle"];
 
     private _running = false;
+    private _lifecycleState: ChannelLifecycleState = "stopped";
+    private startPromise?: Promise<void>;
+    private stopPromise?: Promise<void>;
+    private lifecycleAbortController = new AbortController();
+    private readonly outboundDeduplicator = new ChannelOutboundDeduplicator();
     private readonly replyContextByChatId = new Map<string, QqReplyContext>();
 
     private readonly processedMessages = new Set<string>();
@@ -140,9 +162,56 @@ export class QqChannel implements Channel {
     private sequence: number = 0;
     private gatewayUrl?: string;
     private suppressCloseReconnect = false;
+    private connectionGeneration = 0;
 
     get isRunning(): boolean {
         return this._running;
+    }
+
+    get lifecycleState(): ChannelLifecycleState {
+        return this._lifecycleState;
+    }
+
+    private isStopping(): boolean {
+        return this._lifecycleState === "stopping";
+    }
+
+    private isStopped(): boolean {
+        return this._lifecycleState === "stopped";
+    }
+
+    private renewLifecycleAbortController(): void {
+        if (this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController = new AbortController();
+        }
+    }
+
+    private abortLifecycleOutbound(): void {
+        if (!this.lifecycleAbortController.signal.aborted) {
+            this.lifecycleAbortController.abort(createLifecycleStopAbortError("QQ channel stopped."));
+        }
+        this.outboundDeduplicator.clear();
+    }
+
+    private async runOutbound<T>(
+        operation: (signal: AbortSignal) => Promise<T>,
+        options: ChannelOutboundOptions = {},
+    ): Promise<T> {
+        const merged = combineChannelAbortSignals([
+            options.signal,
+            this.lifecycleAbortController.signal,
+        ]);
+        try {
+            return await this.outboundDeduplicator.run(
+                options.idempotencyKey,
+                () => runChannelOutbound(operation, {
+                    ...options,
+                    signal: merged.signal,
+                }),
+            );
+        } finally {
+            merged.dispose();
+        }
     }
 
     constructor(private readonly config: QqChannelConfig) {
@@ -157,6 +226,7 @@ export class QqChannel implements Channel {
         this.sttTranscribe = config.sttTranscribe;
         this.eventSampleCapture = config.eventSampleCapture?.enabled ? config.eventSampleCapture : undefined;
         this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
+        this.conversationLifecycle = config.conversationLifecycle;
     }
 
     private resolveAgent(agentId?: string): BelldandyAgent {
@@ -765,9 +835,9 @@ export class QqChannel implements Channel {
     /**
      * 获取 AccessToken
      */
-    private async fetchAccessToken(): Promise<void> {
+    private async fetchAccessToken(options: ChannelOutboundOptions = {}): Promise<void> {
         try {
-            const response = await fetch("https://bots.qq.com/app/getAppAccessToken", {
+            const response = await this.runOutbound((signal) => fetch("https://bots.qq.com/app/getAppAccessToken", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -776,16 +846,17 @@ export class QqChannel implements Channel {
                     appId: this.config.appId,
                     clientSecret: this.config.appSecret,
                 }),
-            });
+                signal,
+            }), options);
+            throwIfChannelAborted(options.signal);
 
             if (!response.ok) {
-                const text = await response.text();
-                throw new Error(`Failed to fetch AccessToken: ${response.status} ${text}`);
+                throw await createQqOutboundHttpError(response as Response, "Failed to fetch AccessToken");
             }
 
             const data = await response.json();
             if (!data.access_token) {
-                throw new Error(`Invalid AccessToken response: ${JSON.stringify(data)}`);
+                throw new Error("Invalid AccessToken response");
             }
 
             this.accessToken = data.access_token;
@@ -800,7 +871,10 @@ export class QqChannel implements Channel {
             channelSafeLogger.error({
                 channel: "qq",
                 event: "access_token_fetch_failed",
-                failureKind: "transport_error",
+                failureKind: classifyChannelOutboundFailure({
+                    error,
+                    status: getOutboundHttpStatus(error),
+                }),
             });
             throw error;
         }
@@ -863,26 +937,27 @@ export class QqChannel implements Channel {
     /**
      * 获取 Gateway URL
      */
-    private async fetchGatewayUrl(): Promise<string> {
+    private async fetchGatewayUrl(options: ChannelOutboundOptions = {}): Promise<string> {
         const baseUrl = this.config.sandbox
             ? "https://sandbox.api.sgroup.qq.com"
             : "https://api.sgroup.qq.com";
 
-        const response = await fetch(`${baseUrl}/gateway/bot`, {
+        const response = await this.runOutbound((signal) => fetch(`${baseUrl}/gateway/bot`, {
             headers: {
                 Authorization: `QQBot ${this.accessToken}`,
                 "Content-Type": "application/json",
             },
-        });
+            signal,
+        }), options);
+        throwIfChannelAborted(options.signal);
 
         if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Failed to fetch gateway URL: ${response.status} ${text}`);
+            throw await createQqOutboundHttpError(response as Response, "Failed to fetch gateway URL");
         }
 
         const data = await response.json();
         if (!data.url) {
-            throw new Error(`Invalid gateway response: ${JSON.stringify(data)}`);
+            throw new Error("Invalid gateway response");
         }
 
         return data.url;
@@ -891,22 +966,29 @@ export class QqChannel implements Channel {
     /**
      * 建立 WebSocket 连接
      */
-    private async connectWebSocket(): Promise<void> {
+    private async connectWebSocket(options: ChannelOutboundOptions = {}): Promise<void> {
+        throwIfChannelAborted(options.signal);
         if (!this.gatewayUrl) {
-            this.gatewayUrl = await this.fetchGatewayUrl();
+            this.gatewayUrl = await this.fetchGatewayUrl(options);
         }
+        throwIfChannelAborted(options.signal);
 
         console.log(`[${this.name}] Connecting to ${this.gatewayUrl}`);
 
-        this.ws = new WebSocket(this.gatewayUrl);
+        const ws = new WebSocket(this.gatewayUrl);
+        const generation = ++this.connectionGeneration;
+        this.ws = ws;
+        const ownsConnection = () => this.ws === ws && this.connectionGeneration === generation;
 
-        this.ws.on("open", () => {
+        ws.on("open", () => {
+            if (!ownsConnection()) return;
             this.clearReconnectTimer();
             this.suppressCloseReconnect = false;
             console.log(`[${this.name}] WebSocket connected`);
         });
 
-        this.ws.on("message", (data: Buffer) => {
+        ws.on("message", (data: Buffer) => {
+            if (!ownsConnection()) return;
             try {
                 const payload: WsPayload = JSON.parse(data.toString());
                 // 记录所有收到的消息（除了心跳ACK）
@@ -931,7 +1013,8 @@ export class QqChannel implements Channel {
             }
         });
 
-        this.ws.on("close", (code, reason) => {
+        ws.on("close", (code, reason) => {
+            if (!ownsConnection()) return;
             console.log(`[${this.name}] WebSocket closed: ${code} ${reason.toString()}`);
 
             // 清理心跳定时器
@@ -973,7 +1056,8 @@ export class QqChannel implements Channel {
             this.scheduleReconnect(delay);
         });
 
-        this.ws.on("error", () => {
+        ws.on("error", () => {
+            if (!ownsConnection()) return;
             channelSafeLogger.error({
                 channel: "qq",
                 event: "websocket_error",
@@ -1357,17 +1441,20 @@ export class QqChannel implements Channel {
         // 获取或创建会话
         const conversationId = session.legacyConversationId;
 
-        // 添加用户消息到会话历史
-        this.conversationStore.addMessage(conversationId, "user", content, {
-            agentId: selectedAgentId,
-            channel: this.name,
-        });
-
-        // 获取会话历史
-        const history = this.conversationStore.getHistory(conversationId);
-
-        // 调用 Agent 处理
+        let lifecycleLease: ChannelConversationLease | undefined;
         try {
+            lifecycleLease = await this.conversationLifecycle?.acquire({
+                conversationId,
+                agent: runAgent,
+            });
+
+            // Store history and the routed Agent stream share one lease through reply settlement.
+            this.conversationStore.addMessage(conversationId, "user", content, {
+                agentId: selectedAgentId,
+                channel: this.name,
+            });
+            const history = this.conversationStore.getHistory(conversationId);
+
             for await (const item of runAgent.run({
                 conversationId,
                 text: content,
@@ -1398,16 +1485,22 @@ export class QqChannel implements Channel {
                 failureKind: "internal_error",
             });
             await this.sendReply("抱歉，处理消息时出错了。", replyContext);
+        } finally {
+            await lifecycleLease?.release();
         }
     }
 
     /**
      * 发送回复
      */
-    private async sendReply(content: string, replyContext: QqReplyContext): Promise<void> {
+    private async sendReply(
+        content: string,
+        replyContext: QqReplyContext,
+        options: ChannelOutboundOptions = {},
+    ): Promise<boolean> {
         if (!replyContext) {
             console.warn(`[${this.name}] No reply context available`);
-            return;
+            return false;
         }
 
         const { channelId, guildId, groupOpenId, userOpenId, messageId, eventType } = replyContext;
@@ -1452,81 +1545,165 @@ export class QqChannel implements Channel {
                 };
             }
 
-            const chunks = chunkMarkdownForOutbound(content, "qq", {
-                config: this.replyChunkingConfig,
-            });
-            for (const chunk of chunks) {
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: {
-                        Authorization: `QQBot ${this.accessToken}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        ...body,
-                        content: chunk,
-                    }),
+            await this.runOutbound(async (signal) => {
+                const chunks = chunkMarkdownForOutbound(content, "qq", {
+                    config: this.replyChunkingConfig,
                 });
+                for (const chunk of chunks) {
+                    throwIfChannelAborted(signal);
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: {
+                            Authorization: `QQBot ${this.accessToken}`,
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                            ...body,
+                            content: chunk,
+                        }),
+                        signal,
+                    });
+                    throwIfChannelAborted(signal);
 
-                if (!response.ok) {
-                    const text = await response.text();
-                    throw new Error(`Failed to send message: ${response.status} ${text}`);
+                    if (!response.ok) {
+                        throw await createQqOutboundHttpError(response as Response, "Failed to send message");
+                    }
                 }
-            }
+            }, {
+                ...options,
+                idempotencyKey: options.idempotencyKey ?? replyContext.messageId,
+            });
 
             console.log(`[${this.name}] Message sent successfully`);
-        } catch {
+            return true;
+        } catch (error) {
             channelSafeLogger.error({
                 channel: "qq",
                 event: "reply_failed",
-                failureKind: "transport_error",
+                failureKind: classifyChannelOutboundFailure({
+                    error,
+                    status: getOutboundHttpStatus(error),
+                }),
             });
+            return false;
         }
     }
 
-    async start(): Promise<void> {
+    async start(options: ChannelLifecycleOptions = {}): Promise<void> {
         if (this._running) return;
+        if (this.startPromise) {
+            await this.startPromise;
+            return;
+        }
+        if (options.signal?.aborted) {
+            throw toLifecycleAbortError(options.signal.reason);
+        }
 
-        // 获取 AccessToken
-        await this.fetchAccessToken();
+        const startPromise = (async () => {
+            this._lifecycleState = "starting";
+            this.renewLifecycleAbortController();
+            const lifecycle = combineChannelAbortSignals([
+                options.signal,
+                this.lifecycleAbortController.signal,
+            ]);
+            const startSignal = lifecycle.signal;
+            try {
+            // 获取 AccessToken
+            await this.fetchAccessToken({ signal: startSignal });
+            if (startSignal?.aborted || this.isStopping()) {
+                throw toLifecycleAbortError(startSignal?.reason);
+            }
 
-        // 连接 WebSocket
-        await this.connectWebSocket();
+            // 连接 WebSocket
+            await this.connectWebSocket({ signal: startSignal });
+            if (startSignal?.aborted || this.isStopping()) {
+                throw toLifecycleAbortError(startSignal?.reason);
+            }
 
-        this._running = true;
-        console.log(`[${this.name}] WebSocket Channel started. (Sandbox: ${this.config.sandbox ?? true})`);
+            this._running = true;
+            this._lifecycleState = "running";
+            console.log(`[${this.name}] WebSocket Channel started. (Sandbox: ${this.config.sandbox ?? true})`);
+            } catch (error) {
+                if (startSignal?.aborted || this.isStopping()) {
+                    if (!this.isStopped()) {
+                        await this.stop();
+                    }
+                }
+                throw error;
+            } finally {
+                lifecycle.dispose();
+            }
+        })();
+        this.startPromise = startPromise;
+        try {
+            await startPromise;
+        } catch (error) {
+            if (this._lifecycleState !== "stopping" && this._lifecycleState !== "stopped") {
+                await this.stop();
+                this._lifecycleState = "failed";
+            }
+            throw error;
+        } finally {
+            if (this.startPromise === startPromise) {
+                this.startPromise = undefined;
+            }
+        }
     }
 
-    async stop(): Promise<void> {
-        if (!this._running) return;
-
-        this._running = false;
-        this.ingressScheduler.cancelChannel(this.name);
-        this.suppressCloseReconnect = false;
-
-        // 清理定时器
-        if (this.tokenRefreshTimer) {
-            clearTimeout(this.tokenRefreshTimer);
-            this.tokenRefreshTimer = undefined;
+    async stop(_options: ChannelLifecycleOptions = {}): Promise<void> {
+        if (this.stopPromise) {
+            await this.stopPromise;
+            return;
         }
-        this.clearReconnectTimer();
-        if (this.heartbeatInterval) {
-            clearInterval(this.heartbeatInterval);
-            this.heartbeatInterval = undefined;
-        }
+        if (!this._running && !this.startPromise && this._lifecycleState === "stopped") return;
 
-        // 关闭 WebSocket
-        if (this.ws) {
-            this.ws.close();
+        const stopPromise = (async () => {
+            this._lifecycleState = "stopping";
+            this._running = false;
+            this.abortLifecycleOutbound();
+            this.ingressScheduler.cancelChannel(this.name);
+            this.suppressCloseReconnect = true;
+
+            // 清理定时器
+            if (this.tokenRefreshTimer) {
+                clearTimeout(this.tokenRefreshTimer);
+                this.tokenRefreshTimer = undefined;
+            }
+            this.clearReconnectTimer();
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+                this.heartbeatInterval = undefined;
+            }
+
+            // 摘除监听器后终止 socket，旧实例的迟到事件不能触发新的 reconnect。
+            const ws = this.ws;
+            this.connectionGeneration++;
             this.ws = undefined;
-        }
+            if (ws) {
+                ws.removeAllListeners();
+                ws.terminate();
+            }
 
-        this.processedMessages.clear();
-        this.replyContextByChatId.clear();
-        console.log(`[${this.name}] Channel stopped.`);
+            this.processedMessages.clear();
+            this.replyContextByChatId.clear();
+            this._lifecycleState = "stopped";
+            console.log(`[${this.name}] Channel stopped.`);
+        })();
+        this.stopPromise = stopPromise;
+        try {
+            await stopPromise;
+        } finally {
+            if (this.stopPromise === stopPromise) {
+                this.stopPromise = undefined;
+            }
+        }
     }
 
-    async sendProactiveMessage(content: string, target?: ChannelProactiveTarget): Promise<boolean> {
+    async sendProactiveMessage(
+        content: string,
+        target?: ChannelProactiveTarget,
+        options: ChannelOutboundOptions = {},
+    ): Promise<boolean> {
         const explicitChatId = typeof target === "string"
             ? target
             : typeof target?.chatId === "string"
@@ -1577,7 +1754,8 @@ export class QqChannel implements Channel {
         }
 
         try {
-            await this.sendReply(content, targetContext);
+            const sent = await this.sendReply(content, targetContext, options);
+            if (!sent) return false;
             console.log(`[${this.name}] Proactive message sent to ${targetChatId}`);
             return true;
         } catch {
@@ -1589,4 +1767,29 @@ export class QqChannel implements Channel {
             return false;
         }
     }
+}
+
+function toLifecycleAbortError(reason: unknown): Error {
+    if (reason instanceof Error) return reason;
+    const error = new Error("Channel lifecycle operation was aborted.");
+    error.name = "AbortError";
+    return error;
+}
+
+function createLifecycleStopAbortError(message: string): Error {
+    const error = new Error(message);
+    error.name = "AbortError";
+    return error;
+}
+
+async function createQqOutboundHttpError(response: Response, prefix: string): Promise<Error> {
+    const body = await readBoundedChannelErrorBody(response);
+    const error = new Error(`${prefix}: HTTP ${response.status}${body.truncated ? " (body truncated)" : ""}`) as Error & { status?: number };
+    error.status = response.status;
+    return error;
+}
+
+function getOutboundHttpStatus(error: unknown): number | undefined {
+    const status = (error as { status?: unknown } | undefined)?.status;
+    return typeof status === "number" ? status : undefined;
 }

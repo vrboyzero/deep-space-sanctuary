@@ -1,7 +1,19 @@
 function createNoopPromptController() {
+  let disposed = false;
   return {
     syncHeight() {},
     restoreText() {},
+    dispose() {
+      disposed = true;
+    },
+    getRuntimeSnapshot() {
+      return {
+        listenerCount: 0,
+        pendingFrameCount: 0,
+        pendingFontReadyCount: 0,
+        disposed,
+      };
+    },
   };
 }
 
@@ -10,13 +22,22 @@ export function initPromptController({
   maxHeightPx = 120,
   onSubmit,
   documentRef = globalThis.document,
-  requestAnimationFrameFn = globalThis.requestAnimationFrame?.bind(globalThis) ?? ((callback) => setTimeout(callback, 0)),
+  requestAnimationFrameFn = globalThis.requestAnimationFrame?.bind(globalThis),
+  cancelAnimationFrameFn = globalThis.cancelAnimationFrame?.bind(globalThis),
 }) {
   if (!promptEl) return createNoopPromptController();
 
+  const scheduleFrame = requestAnimationFrameFn ?? ((callback) => setTimeout(callback, 0));
+  const cancelFrame = cancelAnimationFrameFn ?? ((handle) => clearTimeout(handle));
+  let disposed = false;
+  let listenerBound = true;
+  let frameScheduled = false;
+  let scheduledFrameHandle = null;
+  let fontReadyPending = false;
   let promptBaseHeightPx = 0;
 
   function measurePromptBaseHeight() {
+    if (disposed) return;
     const computed = globalThis.getComputedStyle(promptEl);
     const lineHeight = Number.parseFloat(computed.lineHeight) || 24;
     const paddingTop = Number.parseFloat(computed.paddingTop) || 0;
@@ -30,6 +51,7 @@ export function initPromptController({
   }
 
   function syncHeight() {
+    if (disposed) return;
     const baseHeight = promptBaseHeightPx || promptEl.scrollHeight;
     const hasText = Boolean(promptEl.value);
     if (!hasText) {
@@ -44,36 +66,87 @@ export function initPromptController({
   }
 
   function initialize() {
+    if (disposed) return;
     measurePromptBaseHeight();
     syncHeight();
   }
 
   function restoreText(text) {
-    if (!text) return;
+    if (disposed || !text) return;
     promptEl.value = text;
     syncHeight();
   }
 
-  promptEl.addEventListener("keydown", (event) => {
+  function scheduleHeightSync() {
+    if (disposed || frameScheduled) return;
+    frameScheduled = true;
+    const handle = scheduleFrame(() => {
+      frameScheduled = false;
+      scheduledFrameHandle = null;
+      syncHeight();
+    });
+    // A test or polyfill may execute synchronously; do not retain an already-settled handle.
+    if (frameScheduled) scheduledFrameHandle = handle;
+  }
+
+  function handleKeydown(event) {
+    if (disposed) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       onSubmit?.();
     }
-    requestAnimationFrameFn(syncHeight);
-  });
+    scheduleHeightSync();
+  }
 
-  promptEl.addEventListener("input", () => {
+  function handleInput() {
+    if (disposed) return;
     syncHeight();
-  });
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (frameScheduled) {
+      frameScheduled = false;
+      if (scheduledFrameHandle !== null) cancelFrame(scheduledFrameHandle);
+      scheduledFrameHandle = null;
+    }
+    if (listenerBound) {
+      promptEl.removeEventListener("keydown", handleKeydown);
+      promptEl.removeEventListener("input", handleInput);
+      listenerBound = false;
+    }
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerBound ? 2 : 0,
+      pendingFrameCount: frameScheduled ? 1 : 0,
+      pendingFontReadyCount: fontReadyPending ? 1 : 0,
+      disposed,
+    };
+  }
+
+  promptEl.addEventListener("keydown", handleKeydown);
+  promptEl.addEventListener("input", handleInput);
 
   initialize();
   if (documentRef?.fonts?.ready) {
-    documentRef.fonts.ready.then(() => {
-      initialize();
-    }).catch(() => {});
+    fontReadyPending = true;
+    Promise.resolve(documentRef.fonts.ready).then(
+      () => {
+        fontReadyPending = false;
+        initialize();
+      },
+      () => {
+        fontReadyPending = false;
+      },
+    );
   }
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     syncHeight,
     restoreText,
   };

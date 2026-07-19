@@ -102,6 +102,15 @@ export class ConversationReferenceStore implements CompressionReferenceStore {
     return pruned;
   }
 
+  releaseConversation(conversationId: string): { prunedCount: number; retainedCount: number } {
+    // 无归属 metadata 的旧引用不能推断 owner，必须保留到原有容量淘汰路径。
+    const prunedCount = this.prune((record) => record.metadata.conversationId === conversationId);
+    return {
+      prunedCount,
+      retainedCount: this.refs.size,
+    };
+  }
+
   has(refId: string): boolean {
     return this.refs.has(refId);
   }

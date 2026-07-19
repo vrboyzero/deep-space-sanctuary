@@ -290,6 +290,51 @@ describe("chat ui rich text rendering", () => {
     expect(messageButton?.innerHTML).toContain("Copy");
   });
 
+  it("replaces copy feedback timers and disposes document delegation", async () => {
+    vi.useFakeTimers();
+    let clickHandler = null;
+    const addEventListenerSpy = vi.spyOn(document, "addEventListener").mockImplementation((type, handler) => {
+      if (type === "click") clickHandler = handler;
+    });
+    const removeEventListenerSpy = vi.spyOn(document, "removeEventListener").mockImplementation(() => {});
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: clipboard,
+    });
+    installMarkedStub((text, renderer) => {
+      const match = text.match(/```(\w+)\n([\s\S]*?)```/);
+      return match && renderer?.code ? renderer.code(match[2], match[1]) : text;
+    });
+    const { bubble, feature } = createFeature();
+    feature.initCopyButtonDelegation();
+    feature.renderAssistantMessage(bubble, "```ts\nconst value = 1;\n```");
+    const button = bubble.querySelector(".copy-code-btn");
+
+    await clickHandler({ target: button });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await clickHandler({ target: button });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(button.innerHTML).toBe("Copied");
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      copyFeedbackTimerCount: 1,
+      copyDelegationListenerCount: 1,
+      disposed: false,
+    });
+
+    feature.dispose();
+    expect(button.innerHTML).toContain("Copy");
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      copyFeedbackTimerCount: 0,
+      copyDelegationListenerCount: 0,
+      disposed: true,
+    });
+    expect(removeEventListenerSpy).toHaveBeenCalledWith("click", clickHandler);
+    await clickHandler({ target: button });
+    expect(clipboard.writeText).toHaveBeenCalledTimes(2);
+    expect(addEventListenerSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("opens image and video media modals from rewritten thumbnails", () => {
     installMarkedStub((text) => text);
     const { bubble, feature } = createFeature();

@@ -16,6 +16,7 @@ import type { EmailFollowUpReminderStore } from "./email-follow-up-reminder-stor
 import { buildEmailInboundTriage } from "./email-inbound-triage.js";
 import type { EmailThreadBindingStore } from "./email-thread-binding-store.js";
 import { ingestEmailInboundEvent } from "./email-inbound-ingress.js";
+import type { TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
 
 type QueryRuntimeLogger = {
   info: (module: string, message: string, data?: unknown) => void;
@@ -48,6 +49,7 @@ export type ImapPollingEmailInboundRuntimeOptions = {
   agentFactory?: () => BelldandyAgent;
   agentRegistry?: AgentRegistry;
   conversationStore: ConversationStore;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   threadBindingStore: EmailThreadBindingStore;
   checkpointStore: EmailInboundCheckpointStore;
   auditStore?: EmailInboundAuditStore;
@@ -722,6 +724,7 @@ export async function startImapPollingEmailInboundRuntime(
     await processDueEmailFollowUpReminders({
       reminderStore: options.reminderStore,
       conversationStore: options.conversationStore,
+      topLevelConversationLifecycle: options.topLevelConversationLifecycle,
       broadcastEvent: options.broadcastEvent,
       logger: options.logger,
     });
@@ -883,6 +886,7 @@ export async function startImapPollingEmailInboundRuntime(
           agentFactory: options.agentFactory,
           agentRegistry: options.agentRegistry,
           conversationStore: options.conversationStore,
+          topLevelConversationLifecycle: options.topLevelConversationLifecycle,
           threadBindingStore: options.threadBindingStore,
           log: options.logger,
           broadcastEvent: options.broadcastEvent,

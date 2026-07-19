@@ -59,6 +59,8 @@ export type WorkflowContextDeps = {
   orchestrator: SubAgentOrchestrator;
   journal: WorkflowJournal;
   budgetGuard: WorkflowBudgetGuard;
+  /** 父工作流的终止信号；会透传到每次 ctx.agent() 调用。 */
+  abortSignal?: AbortSignal;
   /** 工作流启动参数（确定性锚点） */
   args: Record<string, unknown>;
   /** 脚本内容 hash */
@@ -137,6 +139,7 @@ export interface WorkflowRuntimeLike {
     sharedBudgetGuard?: WorkflowBudgetGuard;
     resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
     resolveWorkflowAgentLaunchSpec?: WorkflowContextDeps["resolveWorkflowAgentLaunchSpec"];
+    abortSignal?: AbortSignal;
     depth?: number;
   }): Promise<WorkflowRunResultLike>;
 }
@@ -152,19 +155,45 @@ export interface WorkflowRunResultLike {
 
 class Semaphore {
   private current = 0;
-  private waiters: Array<() => void> = [];
+  private waiters: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+    cleanup: () => void;
+  }> = [];
 
   constructor(private readonly max: number) {}
 
-  async acquire(): Promise<void> {
+  async acquire(abortSignal?: AbortSignal): Promise<void> {
+    throwIfWorkflowAborted(abortSignal);
     if (this.current < this.max) {
       this.current++;
       return;
     }
-    // 等待槽位：release 时若有 waiter 会直接转交槽位（current 不变），
-    // 因此被唤醒后不需要再 current++
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
+    // 等待槽位：release 时直接转交；取消时移除 waiter，避免队列滞留。
+    await new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve: () => {
+          waiter.cleanup();
+          resolve();
+        },
+        reject: (error: Error) => {
+          waiter.cleanup();
+          reject(error);
+        },
+        cleanup: () => abortSignal?.removeEventListener("abort", onAbort),
+      };
+      const onAbort = () => {
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) {
+          this.waiters.splice(index, 1);
+        }
+        waiter.reject(createWorkflowAbortError(abortSignal));
+      };
+      this.waiters.push(waiter);
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+      }
     });
   }
 
@@ -172,7 +201,7 @@ class Semaphore {
     const next = this.waiters.shift();
     if (next) {
       // 槽位直接转交给下一个 waiter，current 保持不变
-      next();
+      next.resolve();
     } else {
       this.current--;
     }
@@ -201,6 +230,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     stateDir,
     resolveAgentExecutionFingerprintInputs,
     resolveWorkflowAgentLaunchSpec,
+    abortSignal,
   } = deps;
 
   let agentCallIndex = 0;
@@ -208,8 +238,10 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
 
   const ctx: WorkflowContext = {
     args,
+    abortSignal,
 
     async agent(prompt, opts): Promise<string> {
+      throwIfWorkflowAborted(abortSignal);
       const callKey = opts?.callKey ?? `${phaseId}/${agentCallIndex}`;
       agentCallIndex++;
 
@@ -329,6 +361,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
           ...resolvedLaunchSpec,
           context: { _workflowJournalId: journalId, _workflowCallKey: callKey },
         },
+        abortSignal,
         onSessionCreated: (sid, agentId) => {
           callbacks?.onAgentEvent?.({
             type: "started",
@@ -342,6 +375,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
       const startMs = Date.now();
       const result = await orchestrator.spawn(spawnOpts);
       const durationMs = Date.now() - startMs;
+      // stop/deadline 已发生时不得把迟到的 Agent 结果写入 Journal。
+      throwIfWorkflowAborted(abortSignal);
 
       if (result.success) {
         // 估算 token（简化：用 output 长度 / 4 粗估；P2 会接入真实 tokenCounter）
@@ -353,6 +388,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
           result: result.output,
           tokenCount: estimatedTokens,
         });
+        // 当前调用的实际 token 已知后立即收敛终态，避免最后一个调用越限仍成功返回。
+        budgetGuard.check();
         callbacks?.onAgentEvent?.({
           type: "completed",
           sessionId: result.sessionId,
@@ -380,8 +417,9 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         tasks.map(async (task, index) => {
           const taskId = `task_${index}_${randomUUID().slice(0, 8)}`;
           const startMs = Date.now();
-          await semaphore.acquire();
+          await semaphore.acquire(abortSignal);
           try {
+            throwIfWorkflowAborted(abortSignal);
             const value = await task();
             return {
               ok: true as const,
@@ -415,8 +453,9 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         items.map(async (item, index) => {
           const taskId = `map_${index}_${randomUUID().slice(0, 8)}`;
           const startMs = Date.now();
-          await semaphore.acquire();
+          await semaphore.acquire(abortSignal);
           try {
+            throwIfWorkflowAborted(abortSignal);
             const value = await mapper(item, index, ctx);
             return {
               ok: true as const,
@@ -477,8 +516,9 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
           let current: any = item;
           try {
             for (let s = 0; s < stages.length; s++) {
-              await semaphore.acquire();
+              await semaphore.acquire(abortSignal);
               try {
+                throwIfWorkflowAborted(abortSignal);
                 current = await stages[s](current, ctx);
               } finally {
                 semaphore.release();
@@ -511,6 +551,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
      * 和 budget 透传）。嵌套深度限制 1 层。
      */
     async workflow(nameOrRef, callArgs): Promise<string> {
+      throwIfWorkflowAborted(abortSignal);
       if (!runtime) {
         throw new Error("workflow() is not available: no WorkflowRuntime reference in this context");
       }
@@ -550,6 +591,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         maxConcurrent,
         sharedBudgetGuard: budgetGuard,
         resolveAgentExecutionFingerprintInputs,
+        abortSignal,
         // 子工作流深度 +1，runtime 会把它传给子 ctx，
         // 子 ctx 的 depth=1 >= maxDepth=1，禁止再次嵌套
         depth: depth + 1,
@@ -563,14 +605,31 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     },
 
     phase(title: string): void {
+      if (abortSignal?.aborted) return;
       phaseId = title;
       callbacks?.onPhase?.(title);
     },
 
     log(msg: string): void {
+      if (abortSignal?.aborted) return;
       callbacks?.onLog?.(msg);
     },
   };
 
   return ctx;
+}
+
+function throwIfWorkflowAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw createWorkflowAbortError(signal);
+}
+
+function createWorkflowAbortError(signal: AbortSignal | undefined): Error {
+  if (signal?.reason instanceof Error) {
+    return signal.reason;
+  }
+  if (typeof signal?.reason === "string" && signal.reason.trim()) {
+    return new Error(signal.reason.trim());
+  }
+  return new Error("Workflow stopped by user.");
 }

@@ -63,6 +63,7 @@ export function normalizeLaunchIsolationMode(value: unknown): LaunchIsolationMod
 export function normalizeLaunchRole(value: unknown): ToolRuntimeLaunchSpec["role"] | undefined {
   switch (normalizeOptionalString(value)) {
     case "default":
+    case "commander":
     case "coder":
     case "researcher":
     case "verifier":

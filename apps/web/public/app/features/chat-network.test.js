@@ -6,6 +6,7 @@ import {
   formatModelOptionLabel,
   formatModelProviderGroupLabel,
   createChatNetworkFeature,
+  MANUAL_MODEL_SENTINEL,
   PENDING_AGENT_SELECTION_KEY,
   modelMatchesCatalogFilter,
   normalizeRequestFrame,
@@ -15,6 +16,7 @@ import {
   shouldClearTransientSetupTokenOnClose,
   syncAgentSelectOptions,
 } from "./chat-network.js";
+import { createAgentSessionCacheFeature } from "./agent-session-cache.js";
 
 describe("chat network agent selection", () => {
   const agents = [
@@ -218,7 +220,7 @@ describe("chat network transient setup token recovery", () => {
   });
 });
 
-function createConnectionHarness() {
+function createConnectionHarness(options = {}) {
   const previousLocation = globalThis.location;
   const previousStartup = globalThis.__SS_WEBCHAT_STARTUP__;
   const previousWebSocket = globalThis.WebSocket;
@@ -242,6 +244,12 @@ function createConnectionHarness() {
           registered.push(listener);
           listeners.set(type, registered);
         },
+        removeEventListener(type, listener) {
+          const registered = listeners.get(type) ?? [];
+          const next = registered.filter((candidate) => candidate !== listener);
+          if (next.length > 0) listeners.set(type, next);
+          else listeners.delete(type);
+        },
         send(data) {
           this.sent.push(data);
         },
@@ -252,6 +260,14 @@ function createConnectionHarness() {
           for (const listener of listeners.get(type) ?? []) {
             listener(event);
           }
+        },
+        getRetainedListener(type) {
+          return (listeners.get(type) ?? [])[0];
+        },
+        getListenerCount() {
+          let count = 0;
+          for (const registered of listeners.values()) count += registered.length;
+          return count;
         },
       };
       sockets.push(socket);
@@ -285,9 +301,9 @@ function createConnectionHarness() {
       workspaceRootsEl: { value: "" },
       userUuidEl: { value: "" },
       agentSelectEl: null,
-      modelPickerEl: null,
-      modelFilterEl: null,
-      modelSelectEl: null,
+      modelPickerEl: options.modelPickerEl ?? null,
+      modelFilterEl: options.modelFilterEl ?? null,
+      modelSelectEl: options.modelSelectEl ?? null,
     },
     keys: {
       storeKey: "store",
@@ -311,6 +327,8 @@ function createConnectionHarness() {
     setStatus: () => {},
     safeJsonParse: JSON.parse,
     makeId: () => `req-${++requestId}`,
+    onConnectionStateChanged: options.onConnectionStateChanged,
+    onEvent: options.onEvent,
   });
 
   return {
@@ -347,7 +365,72 @@ function createConnectionHarness() {
   };
 }
 
+function createModelControlHarness(value = "") {
+  const listeners = new Map();
+  const retainedListeners = new Map();
+  const classes = new Set();
+  return {
+    value,
+    options: [],
+    classList: {
+      add(name) {
+        classes.add(name);
+      },
+      contains(name) {
+        return classes.has(name);
+      },
+      toggle(name, force) {
+        if (force) classes.add(name);
+        else classes.delete(name);
+      },
+    },
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+      retainedListeners.set(type, listener);
+    },
+    removeEventListener(type, listener) {
+      if (listeners.get(type) === listener) listeners.delete(type);
+    },
+    getRetainedListener(type) {
+      return retainedListeners.get(type);
+    },
+    getListenerCount() {
+      return listeners.size;
+    },
+  };
+}
+
 describe("chat network connection close", () => {
+  it("clears conversation cache state at connection generation boundaries", () => {
+    const sessionCache = createAgentSessionCacheFeature();
+    const harness = createConnectionHarness({
+      onConnectionStateChanged: ({ ready }) => {
+        if (!ready) sessionCache.clearGeneration();
+      },
+    });
+
+    try {
+      sessionCache.bindAgentConversation("agent-stale", "conv-stale", { main: true });
+      sessionCache.setConversationMessages("conv-stale", [{ role: "user", content: "stale" }]);
+
+      harness.feature.connect();
+
+      expect(sessionCache.getAgentConversation("agent-stale")).toBe("");
+      expect(sessionCache.getConversationMessages("conv-stale")).toEqual([]);
+
+      sessionCache.bindAgentConversation("agent-current", "conv-current", { main: true });
+      sessionCache.setConversationMessages("conv-current", [{ role: "user", content: "current" }]);
+      harness.sockets[0].dispatch("message", { data: JSON.stringify({ type: "hello-ok" }) });
+      expect(sessionCache.getConversationMessages("conv-current")).toHaveLength(1);
+
+      harness.sockets[0].dispatch("close", { code: 4403, reason: "token required" });
+      expect(sessionCache.getAgentConversation("agent-current")).toBe("");
+      expect(sessionCache.getConversationMessages("conv-current")).toEqual([]);
+    } finally {
+      harness.restore();
+    }
+  });
+
   it("handles a websocket close without raising a page error", () => {
     const harness = createConnectionHarness();
 
@@ -374,12 +457,20 @@ describe("chat network connection close", () => {
       void request.then((value) => {
         result = value;
       });
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        pendingChatNetworkGenerationCount: 1,
+        pendingChatNetworkRequestCount: 1,
+      });
 
       harness.sockets[0].dispatch("close", { code: 4403, reason: "token required" });
       await Promise.resolve();
 
       expect(result).toBeNull();
       expect(vi.getTimerCount()).toBe(0);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        pendingChatNetworkGenerationCount: 0,
+        pendingChatNetworkRequestCount: 0,
+      });
     } finally {
       harness.restore();
     }
@@ -442,6 +533,114 @@ describe("chat network connection close", () => {
       expect(vi.getTimerCount()).toBe(1);
     } finally {
       harness.restore();
+    }
+  });
+
+  it("unbinds a replaced socket and ignores its retained late message handler", () => {
+    const onEvent = vi.fn();
+    const harness = createConnectionHarness({ onEvent });
+
+    try {
+      harness.feature.connect();
+      const oldSocket = harness.sockets[0];
+      const retainedOldMessage = oldSocket.getRetainedListener("message");
+
+      harness.feature.connect();
+      const currentSocket = harness.sockets[1];
+      retainedOldMessage({
+        data: JSON.stringify({ type: "event", event: "chat", payload: { generation: "old" } }),
+      });
+      currentSocket.dispatch("message", {
+        data: JSON.stringify({ type: "event", event: "chat", payload: { generation: "current" } }),
+      });
+
+      expect(oldSocket.closeCalls).toBe(1);
+      expect(oldSocket.getListenerCount()).toBe(0);
+      expect(currentSocket.getListenerCount()).toBe(4);
+      expect(onEvent).toHaveBeenCalledTimes(1);
+      expect(onEvent).toHaveBeenCalledWith("chat", { generation: "current" });
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("disposes socket listeners, pending requests, and reconnect work", async () => {
+    const onEvent = vi.fn();
+    const harness = createConnectionHarness({ onEvent });
+
+    try {
+      harness.feature.connect();
+      const socket = harness.sockets[0];
+      const retainedMessage = socket.getRetainedListener("message");
+      let requestResult = "unsettled";
+      void harness.feature.sendReq({
+        type: "req",
+        id: "pending-dispose",
+        method: "system.doctor",
+      }).then((value) => {
+        requestResult = value;
+      });
+      socket.dispatch("close", { code: 1006, reason: "" });
+      expect(vi.getTimerCount()).toBe(1);
+
+      harness.feature.dispose();
+      retainedMessage({
+        data: JSON.stringify({ type: "event", event: "chat", payload: { late: true } }),
+      });
+      await Promise.resolve();
+      await vi.runAllTimersAsync();
+
+      expect(requestResult).toBeNull();
+      expect(onEvent).not.toHaveBeenCalled();
+      expect(socket.getListenerCount()).toBe(0);
+      expect(harness.sockets).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        disposed: true,
+        activeChatNetworkConnectionCount: 0,
+        activeChatNetworkSocketListenerCount: 0,
+        activeChatNetworkReconnectTimerCount: 0,
+        pendingChatNetworkGenerationCount: 0,
+        pendingChatNetworkRequestCount: 0,
+      });
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("unbinds model controls and blocks a retained prompt handler after dispose", () => {
+    const previousPrompt = globalThis.prompt;
+    const previousLocalStorage = globalThis.localStorage;
+    const prompt = vi.fn(() => "");
+    const modelSelectEl = createModelControlHarness(MANUAL_MODEL_SENTINEL);
+    const modelFilterEl = createModelControlHarness("");
+    const modelPickerEl = createModelControlHarness("");
+    Object.defineProperty(globalThis, "prompt", { configurable: true, value: prompt });
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: { getItem: () => "", setItem: () => {} },
+    });
+    const harness = createConnectionHarness({ modelSelectEl, modelFilterEl, modelPickerEl });
+
+    try {
+      const retainedChange = modelSelectEl.getRetainedListener("change");
+
+      harness.feature.dispose();
+      retainedChange({ type: "change" });
+
+      expect(prompt).not.toHaveBeenCalled();
+      expect(modelSelectEl.getListenerCount()).toBe(0);
+      expect(modelFilterEl.getListenerCount()).toBe(0);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        disposed: true,
+        activeChatNetworkModelControlListenerCount: 0,
+      });
+    } finally {
+      harness.restore();
+      if (previousPrompt === undefined) delete globalThis.prompt;
+      else Object.defineProperty(globalThis, "prompt", { configurable: true, value: previousPrompt });
+      if (previousLocalStorage === undefined) delete globalThis.localStorage;
+      else Object.defineProperty(globalThis, "localStorage", { configurable: true, value: previousLocalStorage });
     }
   });
 });

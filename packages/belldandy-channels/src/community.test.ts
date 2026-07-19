@@ -34,6 +34,67 @@ describe("community token usage upload", () => {
     vi.restoreAllMocks();
   });
 
+  it("does not revive a stopped channel when an agent connection completes late", async () => {
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [{
+        name: "agent-a",
+        apiKey: "test-key",
+        room: { name: "room-a" },
+      }],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+    });
+    let releaseConnect!: () => void;
+    const pendingConnect = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const connectSpy = vi.spyOn(channel as any, "connectAgent").mockImplementation(() => pendingConnect);
+
+    const starting = channel.start();
+    await vi.waitFor(() => expect(connectSpy).toHaveBeenCalledTimes(1));
+    await channel.stop();
+    releaseConnect();
+
+    await expect(starting).rejects.toThrow("Community channel stopped.");
+    expect(channel.lifecycleState).toBe("stopped");
+    expect(channel.isRunning).toBe(false);
+  });
+
+  it("coalesces concurrent proactive sends with the same explicit idempotency key", async () => {
+    const send = vi.fn();
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+    });
+    (channel as any).connections.set("agent-a", {
+      ws: {
+        readyState: 1,
+        send,
+      },
+      agentConfig: { name: "agent-a", apiKey: "test-key" },
+      roomId: "room-a",
+      reconnectAttempts: 0,
+      members: [],
+    });
+
+    const first = (channel as any).sendProactiveMessage(
+      "manual",
+      { chatId: "room-a" },
+      { idempotencyKey: "community-dedupe" },
+    );
+    const second = (channel as any).sendProactiveMessage(
+      "manual",
+      { chatId: "room-a" },
+      { idempotencyKey: "community-dedupe" },
+    );
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("uploads cumulative usage deltas to the agent owner", async () => {
     const wsSend = vi.fn();
     const agent = {

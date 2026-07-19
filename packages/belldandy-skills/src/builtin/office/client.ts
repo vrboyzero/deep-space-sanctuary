@@ -1,10 +1,12 @@
-import crypto from "node:crypto";
 import * as fsSync from "node:fs";
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { resolveStateDir } from "@belldandy/protocol";
 import type { ToolContext } from "../../types.js";
 import { throwIfAborted, toAbortError } from "../../abort-utils.js";
+import {
+  persistBoundedResponseToFile,
+  type BoundedResponseFileResult,
+} from "../remote-response-file.js";
 
 export type OfficeCommunityAgentConfig = {
   name: string;
@@ -205,11 +207,6 @@ export function normalizeWorkshopCategory(input: string): string {
   return aliases[value] ?? value;
 }
 
-export async function sha256File(filePath: string): Promise<string> {
-  const buffer = await fs.readFile(filePath);
-  return crypto.createHash("sha256").update(buffer).digest("hex");
-}
-
 export class OfficeSiteClient {
   private readonly endpoint: string;
   private readonly agentConfig: OfficeCommunityAgentConfig;
@@ -282,7 +279,11 @@ export class OfficeSiteClient {
     });
   }
 
-  async download(apiPath: string): Promise<{ buffer: Buffer; contentType: string | null }> {
+  async downloadToFile(apiPath: string, input: {
+    targetPath: string;
+    maxBytes: number;
+    overwrite: boolean;
+  }): Promise<BoundedResponseFileResult> {
     throwIfAborted(this.abortSignal);
     let res: Response;
     try {
@@ -302,12 +303,14 @@ export class OfficeSiteClient {
       throw await this.buildResponseError(res);
     }
 
-    throwIfAborted(this.abortSignal);
-    const arrayBuffer = await res.arrayBuffer();
-    return {
-      buffer: Buffer.from(arrayBuffer),
-      contentType: res.headers.get("content-type"),
-    };
+    return await persistBoundedResponseToFile({
+      response: res,
+      targetPath: input.targetPath,
+      maxBytes: input.maxBytes,
+      label: "Office download",
+      abortSignal: this.abortSignal,
+      overwrite: input.overwrite,
+    });
   }
 
   private loadConfig(): OfficeCommunityConfig {

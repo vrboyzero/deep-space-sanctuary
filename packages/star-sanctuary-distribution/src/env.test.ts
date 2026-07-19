@@ -1,9 +1,10 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import {
   ensureDefaultEnvFile,
@@ -123,6 +124,22 @@ test("ensureDefaultEnvFiles prefers explicit runtime templates over bundle-relat
   expect(envLocalContent).toContain("BELLDANDY_OPENAI_MODEL=runtime-local-model");
   expect(envLocalContent).not.toContain("Star Sanctuary local overrides");
   expect(envLocalContent).toMatch(/BELLDANDY_AUTH_TOKEN=setup-[A-Za-z0-9_-]{43}(?:\r?\n|$)/);
+});
+
+test("ensureDefaultEnvFiles skips template reads when both target files already exist", async () => {
+  const envDir = await createTempDir();
+  await fs.writeFile(path.join(envDir, ".env"), "BELLDANDY_PORT=38889\n", "utf-8");
+  await fs.writeFile(path.join(envDir, ".env.local"), "BELLDANDY_AUTH_MODE=token\n", "utf-8");
+  const readFileSyncSpy = vi.spyOn(fsSync, "readFileSync");
+
+  try {
+    const result = ensureDefaultEnvFiles(envDir);
+
+    expect(result).toMatchObject({ createdEnv: false, createdEnvLocal: false });
+    expect(readFileSyncSpy).not.toHaveBeenCalled();
+  } finally {
+    readFileSyncSpy.mockRestore();
+  }
 });
 
 test("loadRuntimeEnvFiles preserves explicit base env values over .env defaults", async () => {

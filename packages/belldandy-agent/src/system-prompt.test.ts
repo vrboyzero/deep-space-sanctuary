@@ -425,6 +425,110 @@ describe("system prompt sections", () => {
     expect(text).toContain("Open the exact one with `skill_get` once you decide to adopt it.");
   });
 
+  it("bounds the skill section by UTF-8 bytes and degrades overflow always skills", () => {
+    const workspace = {
+      files: [
+        createMissingWorkspaceFile("AGENTS.md"),
+        createMissingWorkspaceFile("SOUL.md"),
+        createMissingWorkspaceFile("TOOLS.md"),
+        createMissingWorkspaceFile("IDENTITY.md"),
+        createMissingWorkspaceFile("USER.md"),
+        createMissingWorkspaceFile("HEARTBEAT.md"),
+        createMissingWorkspaceFile("BOOTSTRAP.md"),
+        createMissingWorkspaceFile("MEMORY.md"),
+      ],
+      ...baseWorkspace,
+      hasSoul: false,
+      hasIdentity: false,
+      hasUser: false,
+      hasAgents: false,
+      hasTools: false,
+    };
+    const firstSkill = {
+      name: "utf8-always",
+      priority: "always" as const,
+      description: "UTF-8 bounded fixture",
+      instructions: `关键步骤-${"你".repeat(64)}`,
+    };
+    const baseline = buildSystemPromptResult({
+      workspace,
+      skillInstructions: [firstSkill],
+      maxSkillPromptBytes: 1024 * 1024,
+    });
+    const exactBytes = baseline.skillPromptBudget?.renderedBytes ?? 0;
+
+    const exact = buildSystemPromptResult({
+      workspace,
+      skillInstructions: [firstSkill],
+      maxSkillPromptBytes: exactBytes,
+    });
+    const below = buildSystemPromptResult({
+      workspace,
+      skillInstructions: [firstSkill],
+      maxSkillPromptBytes: exactBytes - 1,
+    });
+
+    expect(exact.text).toContain(firstSkill.instructions);
+    expect(exact.skillPromptBudget).toMatchObject({
+      maxBytes: exactBytes,
+      deferredInstructionCount: 0,
+    });
+    expect(below.text).not.toContain(firstSkill.instructions);
+    expect(below.text).toContain("`utf8-always` - UTF-8 bounded fixture");
+    expect(below.skillPromptBudget?.deferredInstructionCount).toBe(1);
+    expect(below.skillPromptBudget?.renderedBytes).toBeLessThanOrEqual(exactBytes - 1);
+  });
+
+  it("keeps aggregate always-skill prompt content within one shared budget", () => {
+    const skillInstructions = [
+      {
+        name: "first-always",
+        priority: "always" as const,
+        description: "first summary",
+        instructions: `FIRST-FULL-${"a".repeat(256)}`,
+      },
+      {
+        name: "second-always",
+        priority: "always" as const,
+        description: "second summary",
+        instructions: `SECOND-FULL-${"b".repeat(256)}`,
+      },
+    ];
+    const firstOnly = buildSystemPromptResult({
+      skillInstructions: [skillInstructions[0]],
+      maxSkillPromptBytes: 1024 * 1024,
+    });
+    const sharedBudget = firstOnly.skillPromptBudget?.renderedBytes ?? 0;
+
+    const result = buildSystemPromptResult({
+      skillInstructions,
+      maxSkillPromptBytes: sharedBudget,
+    });
+
+    expect(result.text).toContain("FIRST-FULL-");
+    expect(result.text).not.toContain("SECOND-FULL-");
+    expect(result.skillPromptBudget?.deferredInstructionCount).toBe(1);
+    expect(result.skillPromptBudget?.renderedBytes).toBeLessThanOrEqual(sharedBudget);
+  });
+
+  it("applies the default 64 KiB skill budget when no override is provided", () => {
+    const result = buildSystemPromptResult({
+      skillInstructions: [{
+        name: "oversized-default",
+        priority: "always",
+        description: "default budget fixture",
+        instructions: "x".repeat(80 * 1024),
+      }],
+    });
+
+    expect(result.text).not.toContain("x".repeat(80 * 1024));
+    expect(result.skillPromptBudget).toMatchObject({
+      maxBytes: 64 * 1024,
+      deferredInstructionCount: 1,
+    });
+    expect(result.skillPromptBudget?.renderedBytes).toBeLessThanOrEqual(64 * 1024);
+  });
+
   it("promotes routing sections ahead of low-priority runtime sections when maxChars mode is enabled", () => {
     const result = buildSystemPromptResult({
       workspace: {

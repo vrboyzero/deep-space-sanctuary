@@ -97,8 +97,29 @@ export function createControlPanelCommanderToggleController({
 
   let busy = false;
   let currentConfig = null;
+  let disposed = false;
+  let listenerBound = false;
+  let operationGeneration = 0;
+  const pendingOperations = new Set();
+
+  function beginOperation() {
+    const operation = { generation: ++operationGeneration };
+    pendingOperations.add(operation);
+    return operation;
+  }
+
+  function isOperationCurrent(operation) {
+    return !disposed
+      && pendingOperations.has(operation)
+      && operation.generation === operationGeneration;
+  }
+
+  function finishOperation(operation) {
+    pendingOperations.delete(operation);
+  }
 
   function render() {
+    if (disposed) return;
     const enabled = isCommanderPresetActive(currentConfig || {});
     if (commanderQuickToggleEl) {
       commanderQuickToggleEl.checked = enabled;
@@ -122,19 +143,26 @@ export function createControlPanelCommanderToggleController({
   }
 
   async function syncFromConfig(config = undefined) {
-    const nextConfig = config ?? await loadServerConfig?.();
-    if (!nextConfig) {
+    if (disposed) return null;
+    const operation = beginOperation();
+    try {
+      const nextConfig = config ?? await loadServerConfig?.();
+      if (!isOperationCurrent(operation)) return null;
+      if (!nextConfig) {
+        render();
+        return null;
+      }
+      currentConfig = { ...nextConfig };
+      applyCommanderConfigToRefs(refs, currentConfig);
       render();
-      return null;
+      return currentConfig;
+    } finally {
+      finishOperation(operation);
     }
-    currentConfig = { ...nextConfig };
-    applyCommanderConfigToRefs(refs, currentConfig);
-    render();
-    return currentConfig;
   }
 
   async function handleToggleChange() {
-    if (busy || !commanderQuickToggleEl) return;
+    if (disposed || busy || !commanderQuickToggleEl) return;
 
     const shouldEnable = commanderQuickToggleEl.checked;
     if (!isConnected?.()) {
@@ -151,38 +179,40 @@ export function createControlPanelCommanderToggleController({
 
     busy = true;
     render();
-
-    const loadedConfig = await loadServerConfig?.({ force: true });
-    if (!loadedConfig) {
-      busy = false;
-      commanderQuickToggleEl.checked = isCommanderPresetActive(currentConfig || {});
-      render();
-      showNotice?.(
-        t("panel.commanderQuickToggleLoadFailedTitle", {}, "Unable to load config"),
-        t("panel.commanderQuickToggleLoadFailed", {}, "The current server configuration could not be read, so commander mode cannot be changed right now."),
-        "error",
-        3600,
-      );
-      return;
-    }
-
-    currentConfig = { ...loadedConfig };
-    const restoreSnapshot = readRestoreSnapshot();
-    const updates = shouldEnable
-      ? COMMANDER_PRESET
-      : restoreSnapshot || DEFAULT_RESTORE_CONFIG;
-
-    if (shouldEnable && !isCommanderPresetActive(currentConfig)) {
-      writeRestoreSnapshot(currentConfig);
-    }
+    const operation = beginOperation();
 
     try {
+      const loadedConfig = await loadServerConfig?.({ force: true });
+      if (!isOperationCurrent(operation)) return;
+      if (!loadedConfig) {
+        commanderQuickToggleEl.checked = isCommanderPresetActive(currentConfig || {});
+        render();
+        showNotice?.(
+          t("panel.commanderQuickToggleLoadFailedTitle", {}, "Unable to load config"),
+          t("panel.commanderQuickToggleLoadFailed", {}, "The current server configuration could not be read, so commander mode cannot be changed right now."),
+          "error",
+          3600,
+        );
+        return;
+      }
+
+      currentConfig = { ...loadedConfig };
+      const restoreSnapshot = readRestoreSnapshot();
+      const updates = shouldEnable
+        ? COMMANDER_PRESET
+        : restoreSnapshot || DEFAULT_RESTORE_CONFIG;
+
+      if (shouldEnable && !isCommanderPresetActive(currentConfig)) {
+        writeRestoreSnapshot(currentConfig);
+      }
+
       const res = await sendReq?.({
         type: "req",
         id: makeId?.(),
         method: "config.update",
         params: { updates },
       });
+      if (!isOperationCurrent(operation)) return;
       if (!res?.ok) {
         throw new Error(
           res?.error?.message
@@ -210,6 +240,7 @@ export function createControlPanelCommanderToggleController({
         4200,
       );
     } catch (error) {
+      if (!isOperationCurrent(operation)) return;
       commanderQuickToggleEl.checked = isCommanderPresetActive(currentConfig || {});
       showNotice?.(
         t("panel.commanderQuickToggleUnavailableTitle", {}, "Unable to change commander mode"),
@@ -218,19 +249,53 @@ export function createControlPanelCommanderToggleController({
         4200,
       );
     } finally {
-      busy = false;
-      render();
+      finishOperation(operation);
+      if (!disposed) {
+        busy = false;
+        render();
+      }
     }
   }
 
-  commanderQuickToggleEl?.addEventListener("change", () => {
+  function handleToggleChangeEvent() {
+    if (disposed) return;
     void handleToggleChange();
-  });
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    operationGeneration += 1;
+    busy = false;
+    currentConfig = null;
+    if (listenerBound) {
+      commanderQuickToggleEl.removeEventListener("change", handleToggleChangeEvent);
+      listenerBound = false;
+    }
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerBound ? 1 : 0,
+      pendingOperationCount: pendingOperations.size,
+      busy,
+      generation: operationGeneration,
+      disposed,
+    };
+  }
+
+  if (commanderQuickToggleEl) {
+    commanderQuickToggleEl.addEventListener("change", handleToggleChangeEvent);
+    listenerBound = true;
+  }
 
   render();
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     refreshLocale() {
+      if (disposed) return;
       render();
     },
     syncFromConfig,

@@ -13,6 +13,7 @@
 
 import type { CronGoalApprovalScanPayload, CronJob } from "./types.js";
 import { CronStore, computeNextRunForJob } from "./store.js";
+import type { BackgroundRunClaimCoordinator } from "../background-run-coordinator.js";
 
 /** 调度器轮询间隔：30 秒 */
 const TICK_INTERVAL_MS = 30_000;
@@ -31,6 +32,8 @@ export interface CronSchedulerOptions {
     deliverToUser?: (message: string) => Promise<void>;
     /** 系统是否忙碌 */
     isBusy?: () => boolean;
+    /** 跨 Cron / Heartbeat 的进程内背景运行预算 */
+    runCoordinator?: BackgroundRunClaimCoordinator;
     /** 活跃时段（如 { start: "08:00", end: "23:00" }） */
     activeHours?: { start: string; end: string };
     /** 用户时区 */
@@ -44,6 +47,8 @@ export interface CronSchedulerOptions {
 export interface CronSchedulerHandle {
     /** 停止调度器 */
     stop: () => void;
+    /** 停止接收新运行，并等待已接受的 Cron 运行结束 */
+    stopAndDrain: () => Promise<void>;
     /** 获取当前状态 */
     status: () => CronSchedulerStatus;
     /** 立即执行指定 job（用于最小恢复链路） */
@@ -116,6 +121,7 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
         runGoalApprovalScan,
         deliverToUser,
         isBusy,
+        runCoordinator,
         activeHours,
         timezone,
         log = console.log,
@@ -127,6 +133,58 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
     let activeRuns = 0;
     let lastTickAtMs: number | undefined;
     let tickInFlight = false;
+    let drainPromise: Promise<void> | undefined;
+    const activeJobIds = new Set<string>();
+    const activeOperations = new Set<Promise<unknown>>();
+
+    // 仅记录已经进入 scheduler 的运行；stop 后不会再有新 operation 加入，便于上层等待局部 drain。
+    const trackActiveOperation = <T>(operation: Promise<T>): Promise<T> => {
+        activeOperations.add(operation);
+        void operation.then(
+            () => {
+                activeOperations.delete(operation);
+            },
+            () => {
+                activeOperations.delete(operation);
+            },
+        );
+        return operation;
+    };
+
+    // tick 与手动运行共享同一进程内 claim；跨进程锁和全局 shutdown 编排由后续 coordinator 切片处理。
+    const tryClaimRun = (jobId: string): { release: () => void } | { reason: string } => {
+        if (stopped) {
+            return { reason: "Cron scheduler is stopped." };
+        }
+        if (activeJobIds.has(jobId)) {
+            return { reason: `Cron job ${jobId} is already running.` };
+        }
+        if (activeRuns >= MAX_CONCURRENT_RUNS) {
+            return { reason: "Cron scheduler has reached its concurrent run limit." };
+        }
+
+        let releaseCoordinator: (() => void) | undefined;
+        if (runCoordinator) {
+            const coordinatorClaim = runCoordinator.tryClaim({ kind: "cron", key: jobId });
+            if ("reason" in coordinatorClaim) {
+                return { reason: coordinatorClaim.reason };
+            }
+            releaseCoordinator = coordinatorClaim.release;
+        }
+
+        activeJobIds.add(jobId);
+        activeRuns++;
+        let released = false;
+        return {
+            release: () => {
+                if (released) return;
+                released = true;
+                activeJobIds.delete(jobId);
+                activeRuns = Math.max(0, activeRuns - 1);
+                releaseCoordinator?.();
+            },
+        };
+    };
 
     const markJobsSkipped = async (jobs: CronJob[], now: number, reason: string): Promise<boolean> => {
         let changed = false;
@@ -342,13 +400,17 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
 
             // 加载任务列表
             let jobs: CronJob[];
+            let baseJobs: CronJob[];
             try {
                 jobs = await store.list();
+                baseJobs = cloneCronJobSnapshot(jobs);
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 log(`[cron] 加载任务失败: ${msg}`);
                 return;
             }
+            // stop 可能发生在 Store 读取期间；此时不再接纳或写入新的 tick 工作。
+            if (stopped) return;
 
             if (jobs.length === 0) return;
 
@@ -363,7 +425,7 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
             if (!isWithinActiveHours(now)) {
                 const changed = await markJobsSkipped(dueJobs, now, "Skipped: outside active hours.");
                 if (changed) {
-                    await store.saveJobs(jobs);
+                    await store.saveJobs(jobs, baseJobs);
                 }
                 return;
             }
@@ -372,29 +434,35 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
             if (isBusy?.()) {
                 const changed = await markJobsSkipped(dueJobs, now, "Skipped: scheduler is busy.");
                 if (changed) {
-                    await store.saveJobs(jobs);
+                    await store.saveJobs(jobs, baseJobs);
                 }
                 return;
             }
 
-            // 限制并发
-            const toRun = dueJobs.slice(0, MAX_CONCURRENT_RUNS - activeRuns);
-            if (toRun.length === 0) return;
+            // 维持每 tick 的既有执行上限，同时跳过已被手动路径持有的 job claim。
+            const availableRunSlots = Math.max(0, MAX_CONCURRENT_RUNS - activeRuns);
+            if (availableRunSlots === 0) return;
+            let claimedRunCount = 0;
 
             // 顺序执行（避免 Agent 并发问题）
-            for (const job of toRun) {
+            for (const job of dueJobs) {
                 if (stopped) break;
-                activeRuns++;
+                if (claimedRunCount >= availableRunSlots) break;
+                const claim = tryClaimRun(job.id);
+                if ("reason" in claim) {
+                    continue;
+                }
+                claimedRunCount++;
                 try {
                     await executeJob(job, jobs);
                 } finally {
-                    activeRuns--;
+                    claim.release();
                 }
             }
 
             // 持久化状态
             try {
-                await store.saveJobs(jobs);
+                await store.saveJobs(jobs, baseJobs);
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 log(`[cron] 保存状态失败: ${msg}`);
@@ -408,22 +476,36 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
     log(`[cron] scheduler started, tick interval: ${TICK_INTERVAL_MS / 1000}s`);
     timer = setInterval(() => {
         if (!stopped) {
-            tick().catch((err) => {
+            const tickOperation = trackActiveOperation(tick());
+            void tickOperation.catch((err) => {
                 const msg = err instanceof Error ? err.message : String(err);
                 log(`[cron] tick error: ${msg}`);
             });
         }
     }, TICK_INTERVAL_MS);
 
+    const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+        log("[cron] scheduler stopped");
+    };
+
+    const stopAndDrain = (): Promise<void> => {
+        stop();
+        if (!drainPromise) {
+            // stop 先关闭 intake；随后快照的 operation 即为本地已接受、仍需结算的运行。
+            drainPromise = Promise.allSettled([...activeOperations]).then(() => undefined);
+        }
+        return drainPromise;
+    };
+
     return {
-        stop: () => {
-            stopped = true;
-            if (timer) {
-                clearInterval(timer);
-                timer = null;
-            }
-            log("[cron] scheduler stopped");
-        },
+        stop,
+        stopAndDrain,
         status: () => {
             // 同步获取状态（异步读 store 会阻塞，这里返回缓存值）
             return {
@@ -443,18 +525,34 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
                 return { status: "skipped" as const, reason: "Cron job id is required." };
             }
             const jobs = await store.list();
+            if (stopped) {
+                return { status: "skipped" as const, reason: "Cron scheduler is stopped." };
+            }
+            const baseJobs = cloneCronJobSnapshot(jobs);
             const job = jobs.find((item) => item.id === normalizedJobId);
             if (!job || !job.enabled) {
                 return { status: "skipped" as const, reason: `Cron job ${normalizedJobId} is not available.` };
             }
-            activeRuns++;
-            try {
-                const result = await executeJob(job, jobs);
-                await store.saveJobs(jobs);
-                return result;
-            } finally {
-                activeRuns = Math.max(0, activeRuns - 1);
+            const claim = tryClaimRun(job.id);
+            if ("reason" in claim) {
+                return { status: "skipped" as const, reason: claim.reason };
             }
+            // 先登记 operation，再进入可能同步重入 stopAndDrain() 的 started event 回调。
+            const operation = Promise.resolve().then(async () => {
+                try {
+                    const result = await executeJob(job, jobs);
+                    await store.saveJobs(jobs, baseJobs);
+                    return result;
+                } finally {
+                    claim.release();
+                }
+            });
+            return trackActiveOperation(operation);
         },
     };
+}
+
+function cloneCronJobSnapshot(jobs: CronJob[]): CronJob[] {
+    // CronJob 是 JSON 持久化数据；执行外部调用前保留独立 base，供短锁内 rebase 使用。
+    return JSON.parse(JSON.stringify(jobs)) as CronJob[];
 }

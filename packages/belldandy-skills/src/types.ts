@@ -252,6 +252,8 @@ export type BridgeSessionGovernanceCapabilities = {
 
 export type SpawnSubAgentOptions = {
   instruction: string;
+  /** 调用方运行时取消信号；不得持久化到 launch spec。 */
+  abortSignal?: AbortSignal;
   agentId?: string;
   profileId?: string;
   background?: boolean;
@@ -264,7 +266,7 @@ export type SpawnSubAgentOptions = {
   isolationMode?: string;
   parentTaskId?: string;
   parentConversationId?: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
   policySummary?: string;
@@ -284,7 +286,7 @@ export type ToolRuntimeLaunchSpec = {
   permissionMode?: string;
   isolationMode?: string;
   parentTaskId?: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
   policySummary?: string;

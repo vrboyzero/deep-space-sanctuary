@@ -16,7 +16,15 @@ import { generateGoalSkillCandidates } from "./skill-candidates.js";
 import { generateGoalFlowPatterns } from "./flow-patterns.js";
 import { generateCrossGoalFlowPatterns } from "./cross-goal-flow-patterns.js";
 import { runGoalReviewScanLearningReview } from "../learning-review-runner.js";
-import { getGoalRegistryEntry, listGoalRegistryEntries, removeGoalRegistryEntry, upsertGoalRegistryEntry } from "./registry.js";
+import {
+  getGoalRegistryEntry,
+  listGoalRegistryEntries,
+  loadGoalRegistry,
+  removeGoalRegistryEntry,
+  upsertGoalRegistryEntry,
+  upsertGoalRegistryEntryUnderLock,
+} from "./registry.js";
+import { withGoalRegistryMutationLock } from "./goal-registry-mutation-queue.js";
 import { scaffoldGoalFiles } from "./scaffold.js";
 import {
   prepareGoalStorageOwnership,
@@ -192,10 +200,19 @@ export class GoalManager {
       activeConversationId: createGoalConversationId(id),
     };
 
-    await prepareGoalStorageOwnership({ stateDir: this.stateDir, goal });
-    await scaffoldGoalFiles(goal);
-    await upsertGoalRegistryEntry(this.stateDir, goal);
-    return goal;
+    return withGoalRegistryMutationLock(this.stateDir, async () => {
+      const registry = await loadGoalRegistry(this.stateDir);
+      const existing = registry.goals.find((candidate) => candidate.id === goal.id || candidate.slug === goal.slug);
+      if (existing) {
+        throw new Error(`Goal "${goal.id}" is already registered.`);
+      }
+
+      await prepareGoalStorageOwnership({ stateDir: this.stateDir, goal });
+      await scaffoldGoalFiles(goal);
+      // 创建路径已在同一临界区预留，registry 最后发布，避免失败时暴露半登记 Goal。
+      await upsertGoalRegistryEntryUnderLock(this.stateDir, goal);
+      return goal;
+    });
   }
 
   async listGoals(options: { includeArchived?: boolean } = {}): Promise<LongTermGoal[]> {

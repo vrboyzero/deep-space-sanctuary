@@ -5,11 +5,8 @@ import {
   RESTART_DELAY_MS,
   RESTART_EXIT_CODE,
 } from "./gateway-supervisor-lifecycle.js";
+import { createGatewayLaunchConfig } from "./gateway-launch-config.js";
 import {
-  ensureDefaultEnvFiles,
-  loadRuntimeEnvFiles,
-  readTrimmedEnv,
-  resolveRuntimeEnvDir,
   preflightGatewayCleanup,
   removeForegroundPid,
   writeForegroundPid,
@@ -26,17 +23,6 @@ export type GatewaySupervisorParams = {
   env: NodeJS.ProcessEnv;
 };
 
-function reloadSupervisorEnv(baseEnv: NodeJS.ProcessEnv, stateDir: string): NodeJS.ProcessEnv {
-  const envDir = resolveRuntimeEnvDir({
-    baseEnv,
-    fallbackEnvDir: stateDir,
-  });
-  ensureDefaultEnvFiles(envDir);
-  const env = loadRuntimeEnvFiles(baseEnv, envDir);
-  env.AUTO_OPEN_BROWSER = readTrimmedEnv(env, "AUTO_OPEN_BROWSER") ?? "true";
-  return env;
-}
-
 export async function startGatewaySupervisor(params: GatewaySupervisorParams): Promise<void> {
   const { label, gatewayEntry, runtimeExecutable, cwd, stateDir, env } = params;
   const lifecycle = createGatewaySupervisorLifecycle({
@@ -47,12 +33,13 @@ export async function startGatewaySupervisor(params: GatewaySupervisorParams): P
     removeForegroundPid: () => removeForegroundPid(stateDir),
     onExit: (exitCode) => process.exit(exitCode),
     launch: async () => {
-      const launchEnv = reloadSupervisorEnv(env, stateDir);
+      const launchConfig = createGatewayLaunchConfig(env, stateDir);
       await preflightGatewayCleanup({
         label,
         stateDir,
-        env: launchEnv,
+        env: launchConfig.env,
         ownershipTokens: [gatewayEntry],
+        port: launchConfig.port,
       });
       console.log(`[${label}] Starting Gateway...`);
       fs.mkdirSync(cwd, { recursive: true });
@@ -60,7 +47,7 @@ export async function startGatewaySupervisor(params: GatewaySupervisorParams): P
       const child = spawn(runtimeExecutable ?? process.execPath, [gatewayEntry], {
         stdio: "inherit",
         cwd,
-        env: launchEnv,
+        env: launchConfig.env,
       });
       if (child.pid) {
         writeForegroundPid(stateDir, child.pid);

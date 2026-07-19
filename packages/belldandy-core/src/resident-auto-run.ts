@@ -6,7 +6,11 @@ import type { GatewayEventFrame } from "@belldandy/protocol";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
 import { runAgentWithLifecycle } from "./query-runtime-agent-run.js";
 import { ensureResidentAgentSession } from "./query-runtime-agent-sessions.js";
-import { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
+import { buildResidentMainConversationId, ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
+import type {
+  TopLevelConversationLease,
+  TopLevelConversationLifecycle,
+} from "./top-level-conversation-lifecycle.js";
 
 type ResidentAutoRunLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -19,7 +23,7 @@ function sanitizeVisibleAssistantText(text: string): string {
   return typeof text === "string" ? text.trim() : "";
 }
 
-export async function autoRunResidentAgent(input: {
+type ResidentAutoRunInput = {
   agentId?: string;
   conversationId?: string;
   text: string;
@@ -31,14 +35,53 @@ export async function autoRunResidentAgent(input: {
   conversationStore: ConversationStore;
   conversationRunRegistry: ConversationRunRegistry;
   residentAgentRuntime: ResidentAgentRuntimeRegistry;
+  topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   broadcast: (frame: GatewayEventFrame) => void;
   log: ResidentAutoRunLogger;
-}): Promise<{ conversationId: string; runId: string }> {
+};
+
+export async function autoRunResidentAgent(
+  input: ResidentAutoRunInput,
+): Promise<{ conversationId: string; runId: string }> {
   const resolvedAgentId = typeof input.agentId === "string" && input.agentId.trim()
     ? input.agentId.trim()
     : "default";
-  const resolvedConversationId = typeof input.conversationId === "string" && input.conversationId.trim()
+  const requestedConversationId = typeof input.conversationId === "string" && input.conversationId.trim()
     ? input.conversationId.trim()
+    : undefined;
+  const conversationIdForLease = requestedConversationId ?? buildResidentMainConversationId(resolvedAgentId);
+  const lifecycleLease = input.topLevelConversationLifecycle
+    ? await input.topLevelConversationLifecycle.acquire({
+        conversationId: conversationIdForLease,
+        owners: [{
+          key: input.conversationStore,
+          priority: 100,
+          release: () => input.conversationStore.releaseConversation(conversationIdForLease),
+        }],
+      })
+    : undefined;
+
+  try {
+    return await executeResidentAutoRun({
+      input,
+      resolvedAgentId,
+      requestedConversationId,
+      lifecycleLease,
+    });
+  } finally {
+    await lifecycleLease?.release();
+  }
+}
+
+async function executeResidentAutoRun(runtime: {
+  input: ResidentAutoRunInput;
+  resolvedAgentId: string;
+  requestedConversationId?: string;
+  lifecycleLease?: TopLevelConversationLease;
+}): Promise<{ conversationId: string; runId: string }> {
+  const { input, resolvedAgentId, requestedConversationId, lifecycleLease } = runtime;
+  const resolvedConversationId = requestedConversationId
+    ? requestedConversationId
     : ensureResidentAgentSession({
       agentId: resolvedAgentId,
       agentRegistry: input.agentRegistry,
@@ -96,6 +139,15 @@ export async function autoRunResidentAgent(input: {
 
   const { history } = await input.conversationStore.getConversationHistoryCompacted(resolvedConversationId);
   const agent = input.createAgent();
+  const agentOwnerKey = input.agentRegistry ? agent : input.createAgent;
+  if (lifecycleLease && typeof agent.releaseConversation === "function") {
+    lifecycleLease.addOwner({
+      // Registry Agent 按实例区分 profile；无 Registry 时 createAgent 是跨 run 稳定 owner key。
+      key: agentOwnerKey,
+      priority: 0,
+      release: () => agent.releaseConversation?.(resolvedConversationId),
+    });
+  }
 
   input.conversationRunRegistry.register({
     conversationId: resolvedConversationId,

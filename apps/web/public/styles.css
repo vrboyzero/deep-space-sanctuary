@@ -1369,6 +1369,33 @@ body.control-panel-hidden .main-content {
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.experience-synthesis-source-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--memory-badge-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--memory-card-bg);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.experience-synthesis-source-select input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.experience-synthesis-source-select:has(input:disabled) {
+  cursor: default;
+  opacity: 0.68;
 }
 
 .experience-candidate-synthesized {

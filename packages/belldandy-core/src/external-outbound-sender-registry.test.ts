@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Channel } from "@belldandy/channels";
 
@@ -8,6 +8,7 @@ function createChannel(): Channel {
   return {
     name: "mock",
     isRunning: true,
+    lifecycleState: "running",
     async start() {},
     async stop() {},
     async sendProactiveMessage() {
@@ -125,5 +126,35 @@ describe("external outbound sender registry", () => {
     if (result.ok) return;
     expect(result.code).toBe("channel_unavailable");
     expect(result.attemptedChannels).toEqual(["feishu", "qq"]);
+  });
+
+  it("forwards an explicit idempotency key to the managed channel", async () => {
+    const sendProactiveMessage = vi.fn(async () => true);
+    const registry = new ExternalOutboundSenderRegistry({
+      async get() {
+        return undefined;
+      },
+      async getLatestByChannel() {
+        return undefined;
+      },
+    });
+    registry.register("feishu", {
+      ...createChannel(),
+      sendProactiveMessage,
+    });
+
+    const result = await registry.sendResolvedText({
+      channel: "feishu",
+      content: "hello",
+      resolvedSessionKey: "channel=feishu:chat=chat-1",
+      idempotencyKey: "OUTBOUND-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendProactiveMessage).toHaveBeenCalledWith(
+      "hello",
+      { sessionKey: "channel=feishu:chat=chat-1" },
+      { idempotencyKey: "OUTBOUND-1" },
+    );
   });
 });

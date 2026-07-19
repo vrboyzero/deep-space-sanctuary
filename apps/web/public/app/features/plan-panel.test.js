@@ -60,6 +60,8 @@ function createHarness(activeConversationId = "conversation:plan") {
       sessionPlanPanelEl: document.getElementById("sessionPlanPanel"),
       sessionPlanSummaryEl: document.getElementById("sessionPlanSummary"),
       sessionPlanModalEl: document.getElementById("sessionPlanModal"),
+      sessionPlanModalTitleEl: document.getElementById("sessionPlanModalTitle"),
+      sessionPlanModalMetaEl: document.getElementById("sessionPlanModalMeta"),
       sessionPlanModalContentEl: document.getElementById("sessionPlanModalContent"),
     },
   };
@@ -240,5 +242,61 @@ describe("plan panel feature", () => {
 
     expect(refs.sessionPlanPanelEl.classList.contains("hidden")).toBe(true);
     expect(refs.sessionPlanSummaryEl.textContent).toBe("");
+  });
+
+  it("releases root listeners and retained plan content after dispose", () => {
+    const { feature, refs } = createHarness();
+
+    feature.setPlanState({
+      title: "Disposable plan body",
+      status: "active",
+      mode: "agent",
+      revision: 1,
+      updatedAt: 1,
+      updatedBy: "agent",
+      currentStepId: "step-a",
+      steps: [{ id: "step-a", title: "Retained step body", status: "in_progress", updatedAt: 1 }],
+    }, {
+      conversationId: "conversation:plan",
+      source: "load",
+    });
+    refs.sessionPlanSummaryEl.querySelector(".session-plan-card")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 5,
+      modalOpen: true,
+      disposed: false,
+    });
+    expect(refs.sessionPlanModalContentEl.textContent).toContain("Retained step body");
+
+    feature.dispose();
+    feature.dispose();
+
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 0,
+      modalOpen: false,
+      disposed: true,
+    });
+    expect(refs.sessionPlanPanelEl.classList.contains("hidden")).toBe(true);
+    expect(refs.sessionPlanSummaryEl.textContent).toBe("");
+    expect(refs.sessionPlanModalEl.classList.contains("hidden")).toBe(true);
+    expect(refs.sessionPlanModalTitleEl.textContent).toBe("");
+    expect(refs.sessionPlanModalMetaEl.textContent).toBe("");
+    expect(refs.sessionPlanModalContentEl.textContent).toBe("");
+
+    feature.setPlanState({ title: "Late plan body", steps: [] }, {
+      conversationId: "conversation:plan",
+      source: "event",
+    });
+    feature.handlePlanUpdated({
+      conversationId: "conversation:plan",
+      planState: { title: "Late event body", steps: [] },
+    });
+    feature.refreshLocale();
+    feature.setFocusedStep("late-step");
+    feature.setFocusedRef("late-ref");
+    expect(refs.sessionPlanSummaryEl.textContent).toBe("");
+    expect(refs.sessionPlanModalContentEl.textContent).toBe("");
   });
 });

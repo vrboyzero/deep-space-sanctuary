@@ -3,6 +3,26 @@ import fs from "node:fs";
 import Database from "better-sqlite3";
 import type { MemoryCategory, MemoryChunk, MemorySearchResult, MemoryIndexStatus, MemoryType, MemorySearchFilter, MemorySharedPromotionStatus, MemoryVisibility } from "./types.js";
 import {
+  readChunkVectorsBatch,
+  resolveChunkVectorBatchDimensions,
+  writeChunkVectorsBatch,
+  type ChunkVectorWrite,
+} from "./chunk-vector-batch.js";
+import {
+  listPendingEmbeddingCandidates,
+  type PendingEmbeddingCandidate,
+} from "./embedding-pending-candidates.js";
+import {
+  applyExternalIngestBatchTransaction,
+  type ExternalIngestBatchInput,
+  type ExternalIngestBatchResult,
+} from "./external-ingest-transaction.js";
+import {
+  publishMemoryTreeKindTransaction,
+  type MemoryTreeKindPublication,
+} from "./memory-tree-publication.js";
+import { readTaskDetailBatchRows } from "./task-detail-batch.js";
+import {
   buildMemoryExactDedupApplyPlan,
   buildMemoryExactDedupPreviewReport,
   ensureMemoryDedupBackupFile,
@@ -41,8 +61,10 @@ import type {
   ExperienceSourceTaskSnapshot,
   ExperienceUsage,
   ExperienceUsageListFilter,
+  ExperienceUsageSummary,
   ExperienceUsageStats,
   ExperienceUsageVia,
+  TaskExperienceDetail,
 } from "./experience-types.js";
 import { buildTaskRecapArtifacts } from "./task-recap.js";
 import { cosineSimilarity, vectorToBuffer, vectorFromBuffer, type EmbeddingVector } from "./embeddings/index.js";
@@ -661,6 +683,19 @@ export class MemoryStore {
     }
   }
 
+  /** external ingest 的跨 source 发布由相邻 transaction owner 处理，Store 只保留状态与 change-seq 接线。 */
+  applyExternalIngestBatch(input: ExternalIngestBatchInput): ExternalIngestBatchResult {
+    this.ensureOpen();
+    const result = applyExternalIngestBatchTransaction({
+      db: this.db,
+      vectorStoreReady: this.vecDims !== null,
+      changeSequenceMetaKey: MEMORY_CHANGE_SEQ_META_KEY,
+      now: new Date().toISOString(),
+      ...input,
+    });
+    return result;
+  }
+
   /** 删除所有 chunks */
   deleteAll(): number {
     this.ensureOpen();
@@ -1059,6 +1094,35 @@ export class MemoryStore {
     return row ? rowToTaskRecord(row) : null;
   }
 
+  /**
+   * 将 task、activity、memory link 和 experience usage 合并为有界批量投影。
+   * 返回顺序按首次出现的有效 task id 保持，缺失 task 不占位。
+   */
+  getTaskDetails(taskIds: string[]): TaskExperienceDetail[] {
+    this.ensureOpen();
+    const batch = readTaskDetailBatchRows(this.db, taskIds);
+    const details: TaskExperienceDetail[] = [];
+
+    for (const taskId of batch.taskIds) {
+      const taskRow = batch.taskRowsById.get(taskId);
+      if (!taskRow) continue;
+      const usages = (batch.usageRowsByTaskId.get(taskId) ?? []).map(rowToExperienceUsage);
+      const toUsageSummary = (usage: ExperienceUsage): ExperienceUsageSummary => {
+        const statsRow = batch.usageStatsRowsByAssetType.get(usage.assetType)?.get(usage.assetKey);
+        return toTaskExperienceUsageSummary(usage, statsRow);
+      };
+      details.push({
+        ...rowToTaskRecord(taskRow),
+        activities: (batch.activityRowsByTaskId.get(taskId) ?? []).map(rowToTaskActivityRecord),
+        memoryLinks: (batch.memoryLinkRowsByTaskId.get(taskId) ?? []).map(rowToTaskMemoryLink),
+        usedMethods: usages.filter((usage) => usage.assetType === "method").map(toUsageSummary),
+        usedSkills: usages.filter((usage) => usage.assetType === "skill").map(toUsageSummary),
+      });
+    }
+
+    return details;
+  }
+
   getTaskByConversation(conversationId: string): TaskRecord | null {
     this.ensureOpen();
     const stmt = this.db.prepare(`
@@ -1201,14 +1265,7 @@ export class MemoryStore {
       LEFT JOIN chunks c ON c.id = l.chunk_id
       WHERE l.task_id = ?
     `);
-    return (stmt.all(taskId) as Array<{ chunk_id: string; relation: string; source_path?: string | null; memory_type?: string | null; visibility?: string | null; content?: string | null }>).map((row) => ({
-      chunkId: row.chunk_id,
-      relation: row.relation as TaskMemoryRelation,
-      sourcePath: row.source_path ?? undefined,
-      memoryType: row.memory_type ?? undefined,
-      visibility: row.visibility === "shared" ? "shared" : row.visibility === "private" ? "private" : undefined,
-      snippet: row.content ? truncateContent(row.content, 120) : undefined,
-    }));
+    return (stmt.all(taskId) as Record<string, unknown>[]).map(rowToTaskMemoryLink);
   }
 
   upsertProfileStateEntry(input: UpsertProfileStateEntryInput): ProfileStateEntry {
@@ -1701,6 +1758,12 @@ export class MemoryStore {
       `).run(...ids);
     });
     tx();
+  }
+
+  /** Memory Tree kind 快照由相邻 transaction owner 一次发布，避免 delete/insert 分离提交。 */
+  publishMemoryTreeKind(input: MemoryTreeKindPublication): void {
+    this.ensureOpen();
+    publishMemoryTreeKindTransaction(this.db, input);
   }
 
   upsertMemoryTreeEdges(records: MemoryTreeEdgeRecord[]): void {
@@ -3164,6 +3227,26 @@ export class MemoryStore {
     this.ensureVectorTable(dimensions);
   }
 
+  /** 返回已存在 vec0 表的维度，供未知 Provider 避免额外 probe 请求。 */
+  getVectorDimensions(): number | null {
+    this.ensureOpen();
+    return this.vecDims;
+  }
+
+  /**
+   * 首次没有 vec0 表时，从真实待索引内容获取一批候选，供 Provider 响应推导维度。
+   */
+  getInitialEmbeddingCandidates(limit = 10): MemoryChunk[] {
+    this.ensureOpen();
+    const rows = this.db.prepare(`
+      SELECT c.*
+      FROM chunks c
+      ORDER BY c.rowid
+      LIMIT ?
+    `).all(limit) as any[];
+    return this.mapMemoryChunkRows(rows);
+  }
+
   /**
    * 获取未向量化的 chunks
    */
@@ -3175,14 +3258,31 @@ export class MemoryStore {
     // NOTE: vec0 table uses rowid matching usually.
     // We strictly use JOIN on rowid.
     const stmt = this.db.prepare(`
-        SELECT c.* 
+        SELECT c.*
         FROM chunks c
         LEFT JOIN chunks_vec v ON c.rowid = v.rowid
         WHERE v.rowid IS NULL
+        ORDER BY c.rowid
         LIMIT ?
     `);
 
     const rows = stmt.all(limit) as any[];
+    return this.mapMemoryChunkRows(rows);
+  }
+
+  /**
+   * 向 embedding 同步提供带稳定 rowid 游标的待处理页；具体 SQL 保持在相邻模块中，避免扩大 Store。
+   */
+  getPendingEmbeddingCandidatePage(limit = 10, afterRowId = 0): PendingEmbeddingCandidate[] {
+    this.ensureOpen();
+    return listPendingEmbeddingCandidates(this.db, {
+      limit,
+      afterRowId,
+      vectorStoreReady: this.vecDims !== null,
+    });
+  }
+
+  private mapMemoryChunkRows(rows: any[]): MemoryChunk[] {
     return rows.map(row => ({
       id: row.id,
       sourcePath: row.source_path,
@@ -3288,6 +3388,27 @@ export class MemoryStore {
   }
 
   /**
+   * 以结构化参数批量读取 vec0 向量，供 reranker 避免按候选重复 rowid/vec 查询。
+   */
+  getChunkVectors(chunkIds: string[]): Map<string, EmbeddingVector | null> {
+    this.ensureOpen();
+    return readChunkVectorsBatch(this.db, this.vecDims !== null, chunkIds);
+  }
+
+  /**
+   * 在同一 transaction 中写入多条 vec0 和对应 embedding cache，返回实际写入的 chunk id。
+   */
+  upsertChunkVectorsBatch(writes: ChunkVectorWrite[], model: string): string[] {
+    this.ensureOpen();
+    const dimensions = resolveChunkVectorBatchDimensions(writes);
+    if (dimensions === null) {
+      return [];
+    }
+    this.ensureVectorTable(dimensions);
+    return writeChunkVectorsBatch(this.db, writes, model);
+  }
+
+  /**
    * 缓存 embedding（按内容 hash）
    */
   cacheEmbedding(contentHash: string, embedding: EmbeddingVector, model: string): void {
@@ -3375,12 +3496,15 @@ export class MemoryStore {
       textWeight?: number;
       filter?: MemorySearchFilter;
       includeContent?: boolean;
+      /** deadline 路径可复用已完成的关键词结果，避免正常融合重复执行 FTS。 */
+      keywordResults?: MemorySearchResult[];
     } = {}
   ): MemorySearchResult[] {
     const { limit = 10, vectorWeight = 0.7, textWeight = 0.3, filter, includeContent = true } = options;
 
     // 获取关键词搜索结果
-    const keywordResults = this.searchKeyword(query, limit * 2, filter, includeContent);
+    const keywordResults = options.keywordResults
+      ?? this.searchKeyword(query, limit * 2, filter, includeContent);
 
     // 如果没有向量，只返回关键词结果
     if (!queryVec || queryVec.length === 0) {
@@ -3837,6 +3961,28 @@ function rowToTaskActivityRecord(row: Record<string, unknown>): TaskActivityReco
   };
 }
 
+function rowToTaskMemoryLink(row: Record<string, unknown>): {
+  chunkId: string;
+  relation: TaskMemoryRelation;
+  sourcePath?: string;
+  memoryType?: string;
+  visibility?: MemoryVisibility;
+  snippet?: string;
+} {
+  const sourcePath = typeof row.source_path === "string" ? row.source_path : undefined;
+  const memoryType = typeof row.memory_type === "string" ? row.memory_type : undefined;
+  const visibility = typeof row.visibility === "string" ? row.visibility : undefined;
+  const content = typeof row.content === "string" ? row.content : undefined;
+  return {
+    chunkId: String(row.chunk_id),
+    relation: String(row.relation) as TaskMemoryRelation,
+    sourcePath,
+    memoryType,
+    visibility: visibility === "shared" ? "shared" : visibility === "private" ? "private" : undefined,
+    snippet: content ? truncateContent(content, 120) : undefined,
+  };
+}
+
 function rowToTaskRecord(row: Record<string, unknown>): TaskRecord {
   return {
     id: String(row.id),
@@ -3937,6 +4083,27 @@ function rowToExperienceUsageStats(row: Record<string, unknown>): ExperienceUsag
     usageCount: optionalNumber(row.usage_count) ?? 0,
     lastUsedAt: optionalString(row.last_used_at),
     lastUsedTaskId: optionalString(row.last_used_task_id),
+  };
+}
+
+function toTaskExperienceUsageSummary(
+  usage: ExperienceUsage,
+  statsRow?: Record<string, unknown>,
+): ExperienceUsageSummary {
+  const stats = rowToExperienceUsageStats(statsRow ?? {
+    asset_type: usage.assetType,
+    asset_key: usage.assetKey,
+    usage_count: 0,
+  });
+  return {
+    ...stats,
+    usageId: usage.id,
+    taskId: usage.taskId,
+    assetType: usage.assetType,
+    assetKey: usage.assetKey,
+    sourceCandidateId: usage.sourceCandidateId ?? stats.sourceCandidateId,
+    usedVia: usage.usedVia,
+    createdAt: usage.createdAt,
   };
 }
 

@@ -126,6 +126,81 @@ test("gateway handshake and message.send streams chat", async () => {
   await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
+test("message.send keeps budget exhaustion as a failed terminal state", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-budget-terminal-"));
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield { type: "status" as const, status: "running" };
+      yield {
+        type: "budget_exhausted" as const,
+        budget: "tool_loop_iterations" as const,
+        limit: 8,
+        observed: 9,
+      };
+      yield { type: "final" as const, text: "工具调用迭代预算超限（最大 8 轮）" };
+      yield { type: "status" as const, status: "error" };
+    },
+  };
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    agentFactory: () => agent,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-send-budget-terminal",
+      method: "message.send",
+      params: {
+        conversationId: "conv-budget-terminal",
+        text: "continue forever",
+      },
+    }));
+
+    await waitFor(() => frames.some((frame) => frame.type === "event" && frame.event === "chat.final"));
+    const budgetEvent = frames.find((frame) => frame.type === "event" && frame.event === "agent.budget_exhausted");
+    expect(budgetEvent?.payload).toMatchObject({
+      conversationId: "conv-budget-terminal",
+      budget: "tool_loop_iterations",
+      limit: 8,
+      observed: 9,
+    });
+    const statuses = frames
+      .filter((frame) => frame.type === "event" && frame.event === "agent.status")
+      .map((frame) => frame.payload?.status);
+    expect(statuses).toContain("error");
+    expect(statuses).not.toContain("done");
+
+    ws.send(JSON.stringify({ type: "req", id: "budget-terminal-doctor", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === "budget-terminal-doctor"));
+    const doctor = frames.find((frame) => frame.type === "res" && frame.id === "budget-terminal-doctor");
+    const trace = doctor?.payload?.queryRuntime?.traces?.find(
+      (item: any) => item.traceId === "message-send-budget-terminal",
+    );
+    expect(trace).toMatchObject({
+      method: "message.send",
+      status: "failed",
+      conversationId: "conv-budget-terminal",
+    });
+    expect(trace?.stages.map((item: any) => item.stage)).toContain("failed");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("startup observability captures static page, bootstrap asset and websocket startup milestones", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-startup-observability-"));
   const firstStaticRequest = vi.fn();

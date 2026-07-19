@@ -21,6 +21,12 @@ function sourceScopeKey(source: SkillDefinition["source"]): string {
   return source.type;
 }
 
+const SKILL_SOURCE_PRECEDENCE: Record<SkillDefinition["source"]["type"], number> = {
+  bundled: 0,
+  plugin: 1,
+  user: 2,
+};
+
 export type SkillRegistryInventoryEntry = {
   name: string;
   source: SkillDefinition["source"]["type"];
@@ -105,20 +111,24 @@ export class SkillRegistry {
     return [...this.skills.values()];
   }
 
+  /** 按 user > plugin > bundled 解析每个名称唯一生效的 Skill。 */
+  listActiveSkills(): SkillDefinition[] {
+    const activeByName = new Map<string, SkillDefinition>();
+    for (const skill of this.skills.values()) {
+      const current = activeByName.get(skill.name);
+      if (!current || SKILL_SOURCE_PRECEDENCE[skill.source.type] > SKILL_SOURCE_PRECEDENCE[current.source.type]) {
+        activeByName.set(skill.name, skill);
+      }
+    }
+    return [...activeByName.values()];
+  }
+
   /**
    * 按名称获取 skill
    * 优先级：user > plugin > bundled
    */
   getSkill(name: string): SkillDefinition | undefined {
-    // 按优先级查找
-    for (const sourceType of ["user", "plugin", "bundled"] as const) {
-      for (const skill of this.skills.values()) {
-        if (skill.name === name && skill.source.type === sourceType) {
-          return skill;
-        }
-      }
-    }
-    return undefined;
+    return this.listActiveSkills().find((skill) => skill.name === name);
   }
 
   /** 获取已加载的 skill 数量 */
@@ -167,14 +177,14 @@ export class SkillRegistry {
    * 执行 eligibility 检查并缓存结果
    */
   async refreshEligibility(ctx: EligibilityContext): Promise<void> {
-    const all = this.listSkills();
-    const results = await checkEligibilityBatch(all, ctx, makeKey);
+    const active = this.listActiveSkills();
+    const results = await checkEligibilityBatch(active, ctx, makeKey);
     this.eligibilityCache = results;
   }
 
   /** 获取所有通过 eligibility 检查的 skills */
   getEligibleSkills(): SkillDefinition[] {
-    return this.listSkills().filter(s => {
+    return this.listActiveSkills().filter(s => {
       const result = this.getEligibilityForSkill(s);
       return result ? result.eligible : true; // 未检查的默认 eligible
     });

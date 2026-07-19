@@ -11,7 +11,7 @@ import {
   type JsonObject,
 } from "@belldandy/protocol";
 import type { ToolExecutionRuntimeContext, ToolExecutor, ToolCallRequest, ToolFailureKind } from "@belldandy/skills";
-import type { AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
+import type { AgentBudgetExhausted, AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
 import { AgentEndLedger } from "./agent-end-ledger.js";
 import type { AfterCompactionEvent, BeforeCompactionEvent, HookAgentContext, HookToolContext, HookToolResultPersistContext } from "./hooks.js";
@@ -98,6 +98,14 @@ import {
   readPrefixComparableSnapshot,
 } from "./prompt-budget-observability.js";
 import { selectToolMessagesForCompression } from "./tool-result-adaptive-keep.js";
+import {
+  createReActRunAbortController,
+  normalizeMaxHighRiskToolCalls,
+  normalizeMaxRunWallTimeMs,
+  normalizeMaxTotalTokens,
+  ReActRunBudgetTracker,
+  type ReActRunAbortController,
+} from "./react-run-budget.js";
 
 type ApiProtocol = "openai" | "anthropic";
 type CacheSupport = "supported" | "unsupported" | "unknown";
@@ -110,6 +118,9 @@ const MIN_HUGE_TEXT_ATTACHMENT_TIMEOUT_MS = 300_000;
 const DATA_URI_BASE64_PREFIX_RE = /^data:([^;]+);base64,/i;
 const BASE64_FIELD_KEY_RE = /^(base64|data)$/i;
 const DEFAULT_REASONING_TRANSCRIPT_CHAR_LIMIT = 4_000;
+/** 默认值只覆盖未配置场景；显式 iteration=0 仍保留旧版无限语义。 */
+export const DEFAULT_TOOL_LOOP_ITERATION_BUDGET = 8;
+export const DEFAULT_MAX_TOOL_CALLS = 32;
 const MIN_REASONING_DEDUPE_CHARS = 96;
 const STOP_REQUESTED_ERROR = "__BELLDANDY_STOP_REQUESTED__";
 const CARRYOVER_CONTEXT_TOOL_LIMIT = 12;
@@ -175,7 +186,14 @@ export type ToolEnabledAgentOptions = {
   model: string;
   toolExecutor: ToolExecutor;
   timeoutMs?: number;
+  /** 单次 run 可执行的工具调用总数上限，0 表示不允许执行工具调用。 */
   maxToolCalls?: number;
+  /** 单次 ReAct run 的 wall-time 上限（毫秒）；非正或非法值回退到安全默认值。 */
+  maxRunWallTimeMs?: number;
+  /** 单次 ReAct run 的累计 token 上限；非正或非法值回退到安全默认值。 */
+  maxTotalTokens?: number;
+  /** 单次 ReAct run 可实际执行的高风险 Tool 次数；0 表示禁止高风险 Tool。 */
+  maxHighRiskToolCalls?: number;
   /** 工具循环的模型调用轮次预算（<=0 关闭） */
   toolLoopIterationBudget?: number;
   /** 工具循环预算告警阈值（0-1，默认 0.7） */
@@ -994,9 +1012,16 @@ function readRunStopReason(signal?: AbortSignal): string {
 
 function normalizeToolLoopIterationBudget(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
+    return DEFAULT_TOOL_LOOP_ITERATION_BUDGET;
   }
   return value <= 0 ? 0 : Math.max(1, Math.floor(value));
+}
+
+function normalizeMaxToolCalls(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MAX_TOOL_CALLS;
+  }
+  return Math.max(0, Math.floor(value));
 }
 
 function normalizeToolLoopWarningFraction(value: number | undefined): number {
@@ -1167,15 +1192,15 @@ function recordToolResultArtifacts(input: {
       argsWithMetadata.pageUrl = pageUrl;
     }
   }
-  input.conversationStore.recordToolDigest(input.conversationId, buildToolDigestRecord({
+  const toolDigest = buildToolDigestRecord({
     toolName: input.toolName,
     args: argsWithMetadata,
     success: input.success,
     output: input.output,
     error: input.error,
     toolCallId: input.toolCallId,
-  }));
-  input.conversationStore.recordRecentToolResult(input.conversationId, buildRecentToolResultRecord({
+  });
+  const recentToolResult = buildRecentToolResultRecord({
     toolName: input.toolName,
     args: argsWithMetadata,
     success: input.success,
@@ -1184,7 +1209,7 @@ function recordToolResultArtifacts(input: {
     failureKind: input.failureKind,
     toolCallId: input.toolCallId,
     isSynthetic: input.isSynthetic,
-  }));
+  });
   const carryoverRecord = buildCarryoverContextRecord({
     toolName: input.toolName,
     args: argsWithMetadata,
@@ -1193,13 +1218,16 @@ function recordToolResultArtifacts(input: {
     error: input.error,
     toolCallId: input.toolCallId,
   });
-  if (carryoverRecord) {
-    input.conversationStore.upsertCarryoverContext(
-      input.conversationId,
-      carryoverRecord,
-      CARRYOVER_CONTEXT_TOOL_LIMIT,
-    );
-  }
+  input.conversationStore.recordToolArtifacts(input.conversationId, {
+    toolDigest,
+    recentToolResult,
+    ...(carryoverRecord
+      ? {
+          carryoverContext: carryoverRecord,
+          carryoverContextLimit: CARRYOVER_CONTEXT_TOOL_LIMIT,
+        }
+      : {}),
+  });
 }
 
 function buildRecoveredDuplicateToolResult(input: {
@@ -1325,12 +1353,31 @@ function detectCrossToolThrash(
   };
 }
 
+export type ConversationReleaseRuntimeSnapshot = {
+  pendingConversationReleaseCount: number;
+  compressionReferences: {
+    releaseCount: number;
+    prunedCount: number;
+    currentRetainedCount: number;
+    unsupportedReleaseCount: number;
+    failureCount: number;
+  };
+};
+
 export class ToolEnabledAgent implements BelldandyAgent {
   private conversationRunChains = new Map<string, Promise<void>>();
+  private pendingConversationReleases = new Map<string, Promise<void>>();
   private starweaverActiveNotifyLastRunAt = new Map<string, number>();
   private starweaverVisibleNotifyFingerprint = new Map<string, string>();
-  private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
-    Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
+  private readonly compressionReferenceReleaseRuntime = {
+    releaseCount: 0,
+    prunedCount: 0,
+    currentRetainedCount: 0,
+    unsupportedReleaseCount: 0,
+    failureCount: 0,
+  };
+  private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "maxRunWallTimeMs" | "maxTotalTokens" | "maxHighRiskToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
+    Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "maxRunWallTimeMs" | "maxTotalTokens" | "maxHighRiskToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
   private readonly failoverClient: FailoverClient;
   /** 统一上下文压缩管线（Phase 1 + Phase 2） */
   private readonly compressionPipeline: ContextCompressionPipeline | undefined;
@@ -1355,7 +1402,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
     this.opts = {
       ...opts,
       timeoutMs: opts.timeoutMs ?? 120_000,
-      maxToolCalls: opts.maxToolCalls ?? 999999,
+      maxToolCalls: normalizeMaxToolCalls(opts.maxToolCalls),
+      maxRunWallTimeMs: normalizeMaxRunWallTimeMs(opts.maxRunWallTimeMs),
+      maxTotalTokens: normalizeMaxTotalTokens(opts.maxTotalTokens),
+      maxHighRiskToolCalls: normalizeMaxHighRiskToolCalls(opts.maxHighRiskToolCalls),
       toolLoopIterationBudget: normalizeToolLoopIterationBudget(opts.toolLoopIterationBudget),
       toolLoopWarningFraction: normalizeToolLoopWarningFraction(opts.toolLoopWarningFraction),
       wireApi: opts.wireApi ?? "chat_completions",
@@ -1418,6 +1468,81 @@ export class ToolEnabledAgent implements BelldandyAgent {
     } else {
       this.compressionPipeline = undefined;
       this.compressionReferenceStore = undefined;
+    }
+  }
+
+  async releaseConversation(conversationId: string): Promise<void> {
+    if (!conversationId) return;
+
+    const activeChain = this.conversationRunChains.get(conversationId);
+    if (!activeChain) {
+      this.releaseConversationState(conversationId);
+      return;
+    }
+    const pendingRelease = this.pendingConversationReleases.get(conversationId);
+    if (pendingRelease) {
+      await pendingRelease;
+      return;
+    }
+
+    const release = activeChain.catch(() => undefined).then(() => {
+      // 旧 run 结束后若已有新 run 接管同一会话，必须由新 run 的终态再次触发释放。
+      if (!this.conversationRunChains.has(conversationId)) {
+        this.releaseConversationState(conversationId);
+      }
+    });
+    this.pendingConversationReleases.set(conversationId, release);
+    try {
+      await release;
+    } finally {
+      if (this.pendingConversationReleases.get(conversationId) === release) {
+        this.pendingConversationReleases.delete(conversationId);
+      }
+    }
+  }
+
+  getConversationReleaseRuntimeSnapshot(): ConversationReleaseRuntimeSnapshot {
+    return {
+      pendingConversationReleaseCount: this.pendingConversationReleases.size,
+      compressionReferences: { ...this.compressionReferenceReleaseRuntime },
+    };
+  }
+
+  private releaseConversationState(conversationId: string): void {
+    this.starweaverActiveNotifyLastRunAt.delete(conversationId);
+    this.starweaverVisibleNotifyFingerprint.delete(conversationId);
+    this.releaseCompressionReferences(conversationId);
+    this.opts.toolExecutor.releaseConversation(conversationId);
+  }
+
+  private releaseCompressionReferences(conversationId: string): void {
+    const store = this.compressionReferenceStore;
+    if (!store) return;
+
+    if (typeof store.releaseConversation !== "function") {
+      // 不以通用 prune() 猜测外部 Store 的生命周期语义。
+      this.compressionReferenceReleaseRuntime.unsupportedReleaseCount += 1;
+      this.updateCompressionReferenceRetainedCount(store);
+      return;
+    }
+
+    try {
+      const result = store.releaseConversation(conversationId);
+      this.compressionReferenceReleaseRuntime.releaseCount += 1;
+      this.compressionReferenceReleaseRuntime.prunedCount += result.prunedCount;
+      this.compressionReferenceReleaseRuntime.currentRetainedCount = result.retainedCount;
+    } catch {
+      // 清理能力失败不能阻断 ToolExecutor 与其它会话状态释放。
+      this.compressionReferenceReleaseRuntime.failureCount += 1;
+      this.updateCompressionReferenceRetainedCount(store);
+    }
+  }
+
+  private updateCompressionReferenceRetainedCount(store: CompressionReferenceStore): void {
+    try {
+      this.compressionReferenceReleaseRuntime.currentRetainedCount = store.size();
+    } catch {
+      this.compressionReferenceReleaseRuntime.failureCount += 1;
     }
   }
 
@@ -1813,9 +1938,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
     const agentHookCtx: HookAgentContext = {
       agentId: resolvedAgentId,
       sessionKey: input.conversationId,
+      abortSignal: input.abortSignal,
     };
 
     const releaseConversationRunSlot = await this.acquireConversationRunSlot(input.conversationId);
+    let runAbortController: ReActRunAbortController | undefined;
     try {
       // Hook: beforeRun / before_agent_start
       // 优先使用新版 hookRunner，向后兼容旧版 hooks
@@ -1899,6 +2026,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
       }
 
       yield { type: "status", status: "running" };
+
+      // Wall-time 从 ReAct 实际开始计量，并将父级停止与本轮 deadline 合并到同一信号。
+      const runBudgetStartedAt = Date.now();
+      const maxRunWallTimeMs = this.opts.maxRunWallTimeMs;
+      const activeRunAbortController = createReActRunAbortController(
+        input.abortSignal,
+        maxRunWallTimeMs,
+      );
+      runAbortController = activeRunAbortController;
+      input = { ...input, abortSignal: activeRunAbortController.signal };
 
       let content: string | Array<any> = input.content || input.text;
 
@@ -2055,6 +2192,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
     const generatedItems = new AgentEndLedger();
     let runSuccess = true;
     let runError: string | undefined;
+    const runBudget = new ReActRunBudgetTracker({
+      maxTotalTokens: this.opts.maxTotalTokens,
+      maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
+    });
 
     // ReAct 循环内压缩状态
     let loopCompactionState: CompactionState = createEmptyCompactionState();
@@ -2207,6 +2348,38 @@ export class ToolEnabledAgent implements BelldandyAgent {
       yield* yieldItem({ type: "status", status: "stopped" });
     };
 
+    // 预算终态必须在 final/status 前输出，供 Gateway 保持失败语义而非成功收尾。
+    const emitBudgetExhausted = async function* (
+      budget: AgentBudgetExhausted["budget"],
+      limit: number,
+      observed: number,
+      error: string,
+    ) {
+      runSuccess = false;
+      runError = error;
+      yield* yieldItem(buildUsageItem());
+      yield* yieldItem({ type: "budget_exhausted", budget, limit, observed });
+      yield* yieldItem({ type: "final", text: error });
+      yield* yieldItem({ type: "status", status: "error" });
+    };
+
+    const emitRunAbort = async function* () {
+      if (activeRunAbortController.isWallTimeExceeded()) {
+        const observed = Math.max(
+          maxRunWallTimeMs,
+          Date.now() - runBudgetStartedAt,
+        );
+        yield* emitBudgetExhausted(
+          "wall_time_ms",
+          maxRunWallTimeMs,
+          observed,
+          `单次运行 wall-time 预算超限（最大 ${maxRunWallTimeMs}ms）。已停止后续模型和工具调用；请拆分任务，或仅为受控 Profile 提高预算后继续。`,
+        );
+        return;
+      }
+      yield* emitStopped();
+    };
+
     const logDebug = (msg: string, data?: unknown) => {
       this.opts.logger?.debug?.("agent", msg, data);
     };
@@ -2224,7 +2397,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       try {
       while (true) {
         if (isRunStopRequested(input.abortSignal)) {
-          yield* emitStopped();
+          yield* emitRunAbort();
           return;
         }
         const nextModelCallIndex = modelCallCount + 1;
@@ -2264,11 +2437,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 agentId: resolvedAgentId,
               });
             }
-            runSuccess = false;
-            runError = `工具调用迭代预算超限（最大 ${iterationBudget} 轮）。已在阻断前尝试压缩当前上下文，请收敛任务、分解问题，或开启新一轮继续。`;
-            yield* yieldItem(buildUsageItem());
-            yield* yieldItem({ type: "final", text: runError });
-            yield* yieldItem({ type: "status", status: "error" });
+            yield* emitBudgetExhausted(
+              "tool_loop_iterations",
+              iterationBudget,
+              nextModelCallIndex,
+              `工具调用迭代预算超限（最大 ${iterationBudget} 轮）。已在阻断前尝试压缩当前上下文，请收敛任务、分解问题，或开启新一轮继续。`,
+            );
             return;
           }
         }
@@ -2477,7 +2651,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         });
 
         if (isRunStopRequested(input.abortSignal)) {
-          yield* emitStopped();
+          yield* emitRunAbort();
           return;
         }
 
@@ -2533,7 +2707,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
         if (!response.ok) {
           if (response.error === STOP_REQUESTED_ERROR) {
-            yield* emitStopped();
+            yield* emitRunAbort();
             return;
           }
           runSuccess = false;
@@ -2541,6 +2715,33 @@ export class ToolEnabledAgent implements BelldandyAgent {
           yield* yieldItem(buildUsageItem());
           yield* yieldItem({ type: "final", text: response.error });
           yield* yieldItem({ type: "status", status: "error" });
+          return;
+        }
+
+        // 供应商没有 usage 时，才用本轮请求形状和返回载荷做本地估算。
+        // 估算仅用于预算兜底，不覆盖 Provider 已报告的 usage/cached token。
+        const fallbackOutputTokenSource = [
+          response.content,
+          response.reasoning_content,
+          response.toolCalls?.map((toolCall) => JSON.stringify(toolCall)).join("\n"),
+        ].filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
+        const totalTokenBudgetExhausted = runBudget.recordModelUsage({
+          providerUsageAvailable: response.usage !== undefined,
+          inputTokens: response.usage?.input_tokens ?? 0,
+          outputTokens: response.usage?.output_tokens ?? 0,
+          cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
+          cacheCreationTokens: response.usage?.cache_creation_input_tokens ?? 0,
+          fallbackInputTokens: lastLocalPromptEstimate?.totalPromptTokens
+            ?? estimateMessagesTotal(requestMessages, dispatchTokenEstimateContext),
+          fallbackOutputTokens: estimateTokens(fallbackOutputTokenSource, dispatchTokenEstimateContext),
+        });
+        if (totalTokenBudgetExhausted) {
+          yield* emitBudgetExhausted(
+            totalTokenBudgetExhausted.budget,
+            totalTokenBudgetExhausted.limit,
+            totalTokenBudgetExhausted.observed,
+            `累计 token 预算超限（最大 ${totalTokenBudgetExhausted.limit} token，已累计 ${totalTokenBudgetExhausted.observed}）。请拆分任务、收敛上下文，或仅为受控 Profile 提高预算后继续。`,
+          );
           return;
         }
 
@@ -2586,11 +2787,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
         // 防止无限循环
         toolCallCount += toolCalls.length;
         if (toolCallCount > this.opts.maxToolCalls) {
-          runSuccess = false;
-          runError = `工具调用次数超限（最大 ${this.opts.maxToolCalls} 次）`;
-          yield* yieldItem(buildUsageItem());
-          yield* yieldItem({ type: "final", text: runError });
-          yield* yieldItem({ type: "status", status: "error" });
+          yield* emitBudgetExhausted(
+            "tool_calls",
+            this.opts.maxToolCalls,
+            toolCallCount,
+            `工具调用次数超限（最大 ${this.opts.maxToolCalls} 次）`,
+          );
           return;
         }
 
@@ -2609,7 +2811,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         // 执行工具调用
         for (const tc of toolCalls) {
           if (isRunStopRequested(input.abortSignal)) {
-            yield* emitStopped();
+            yield* emitRunAbort();
             return;
           }
           const parsedArguments = parseToolCallArguments(tc.function.arguments, this.opts.toolCallRepairLevel);
@@ -3187,6 +3389,26 @@ export class ToolEnabledAgent implements BelldandyAgent {
             }
           }
 
+          if (isRunStopRequested(input.abortSignal)) {
+            yield* emitRunAbort();
+            return;
+          }
+
+          // 仅在真实 execute 前预留配额，Hook 阻断、结果复用和 repair 合成结果都不计入。
+          const toolRiskLevel = this.opts.toolExecutor.getRegisteredToolContract(request.name)?.riskLevel;
+          if (toolRiskLevel === "high" || toolRiskLevel === "critical") {
+            const highRiskBudgetExhausted = runBudget.reserveHighRiskToolCall();
+            if (highRiskBudgetExhausted) {
+              yield* emitBudgetExhausted(
+                highRiskBudgetExhausted.budget,
+                highRiskBudgetExhausted.limit,
+                highRiskBudgetExhausted.observed,
+                `高风险工具调用次数超限（最大 ${highRiskBudgetExhausted.limit} 次）。已在执行前阻断 ${request.name}；请拆分任务，或仅为受控 Profile 提高预算后继续。`,
+              );
+              return;
+            }
+          }
+
           // 广播工具调用事件
           yield* yieldItem({
             type: "tool_call",
@@ -3208,6 +3430,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
             input.roomContext,
             toolRuntimeContext,
           );
+
+          // 非协作 Tool 可能在 deadline 已过后才返回；此时丢弃迟到结果，避免覆盖预算终态。
+          // 用户主动 stop 仍保留既有的“已完成结果后在安全点停止”语义。
+          if (activeRunAbortController.isWallTimeExceeded()) {
+            yield* emitRunAbort();
+            return;
+          }
           const toolDurationMs = Date.now() - toolStartTime;
 
           // Hook: afterToolCall / after_tool_call
@@ -3246,6 +3475,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
             } catch (err) {
               logError(`Hook afterToolCall failed: ${err}`);
             }
+          }
+
+          if (activeRunAbortController.isWallTimeExceeded()) {
+            yield* emitRunAbort();
+            return;
           }
 
           // 广播工具结果事件
@@ -3314,7 +3548,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             recentToolCallTraces.shift();
           }
           if (isRunStopRequested(input.abortSignal)) {
-            yield* emitStopped();
+            yield* emitRunAbort();
             return;
           }
         }
@@ -3372,6 +3606,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       this.opts.toolExecutor.clearTokenCounter(input.conversationId ?? "");
       }
     } finally {
+      runAbortController?.dispose();
       releaseConversationRunSlot();
     }
   }

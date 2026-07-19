@@ -77,6 +77,8 @@ export type RuntimePayloadPaths = {
   runtimeSourceDir: string;
 };
 
+const SHA256_FILE_BUFFER_BYTES = 64 * 1024;
+
 export type RuntimeInstallationValidation = {
   ok: boolean;
   reason?: string;
@@ -350,7 +352,18 @@ function normalizeRelativePath(filePath: string): string {
 
 function sha256File(filePath: string): string {
   const hash = crypto.createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
+  const buffer = Buffer.allocUnsafe(SHA256_FILE_BUFFER_BYTES);
+  const fileDescriptor = fs.openSync(filePath, "r");
+  try {
+    for (;;) {
+      const bytesRead = fs.readSync(fileDescriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      // 只将实际读取的字节送入 hash，避免大文件在启动完整性校验中形成等大小 Buffer 峰值。
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
   return hash.digest("hex");
 }
 
@@ -394,19 +407,17 @@ function validateInstalledRuntimeManifestEntries(params: {
       entryPath: entry.path,
     });
 
-    if (!fs.existsSync(absolutePath)) {
-      invalidPaths.push({ path: entry.path, reason: "missing" });
-      continue;
-    }
-
     if (entry.type === "file") {
       let stat: fs.Stats;
       try {
         stat = fs.statSync(absolutePath);
       } catch (error) {
+        const errorCode = (error as NodeJS.ErrnoException | undefined)?.code;
         invalidPaths.push({
           path: entry.path,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: errorCode === "ENOENT" || errorCode === "ENOTDIR"
+            ? "missing"
+            : error instanceof Error ? error.message : String(error),
         });
         continue;
       }
@@ -427,6 +438,11 @@ function validateInstalledRuntimeManifestEntries(params: {
       if (entry.sha256 && sha256File(absolutePath) !== entry.sha256) {
         invalidPaths.push({ path: entry.path, reason: "sha256_mismatch" });
       }
+      continue;
+    }
+
+    if (!fs.existsSync(absolutePath)) {
+      invalidPaths.push({ path: entry.path, reason: "missing" });
       continue;
     }
 

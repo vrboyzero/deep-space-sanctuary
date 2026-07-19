@@ -126,13 +126,16 @@ async function waitForProcessExit(pid: number, timeoutMs: number, runner?: Gatew
   return !isProcessRunning(pid, runner);
 }
 
-function resolveGatewayPort(baseEnv: NodeJS.ProcessEnv, stateDir: string, explicitPort?: number): number {
+export function resolveGatewayPortFromEnv(env: NodeJS.ProcessEnv, explicitPort?: number): number {
   if (Number.isFinite(explicitPort) && explicitPort && explicitPort > 0) {
     return explicitPort;
   }
-  const env = loadRuntimeEnvFiles(baseEnv, stateDir);
   const portValue = Number.parseInt(readTrimmedEnv(env, "BELLDANDY_PORT") ?? String(DEFAULT_GATEWAY_PORT), 10);
   return Number.isFinite(portValue) && portValue > 0 ? portValue : DEFAULT_GATEWAY_PORT;
+}
+
+function resolveGatewayPort(baseEnv: NodeJS.ProcessEnv, stateDir: string, explicitPort?: number): number {
+  return resolveGatewayPortFromEnv(loadRuntimeEnvFiles(baseEnv, stateDir), explicitPort);
 }
 
 function stringifyCommandForLog(commandLine: string | null | undefined): string {

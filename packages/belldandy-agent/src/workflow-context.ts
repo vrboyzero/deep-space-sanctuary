@@ -67,6 +67,9 @@ export type PipelineStage<In, Out> = (item: In, ctx: WorkflowContext) => Promise
 // ─── WorkflowContext ──────────────────────────────────────────────────────
 
 export type WorkflowContext = {
+  /** 当前 run 的协作式取消信号；脚本应在长等待或批处理边界主动检查。 */
+  abortSignal?: AbortSignal;
+
   /** 启动一个子 Agent 并等待结果（支持缓存命中跳过） */
   agent(prompt: string, opts?: AgentCallOptions): Promise<string>;
 

@@ -68,6 +68,18 @@ function createSnapshot(input: {
 describe("gateway prompt inspection runtime", () => {
   it("derives fine-grained prefix drift reasons from previous snapshot metadata", () => {
     const promptSnapshotStore = new PromptSnapshotStore({ maxSnapshots: 8 });
+    const boundedBaseBuild: SystemPromptBuildResult = {
+      ...createBaseBuild("base prompt"),
+      skillPromptBudget: {
+        maxBytes: 64 * 1024,
+        renderedBytes: 1024,
+        fullInstructionCount: 1,
+        deferredInstructionCount: 2,
+        renderedSummaryCount: 2,
+        omittedSummaryCount: 0,
+        routingOmitted: false,
+      },
+    };
     const runtime = createGatewayPromptInspectionRuntime({
       stateDir: "E:/state",
       logger: {
@@ -82,7 +94,7 @@ describe("gateway prompt inspection runtime", () => {
       agentWorkspaceCache: new Map<string, {
         build: SystemPromptBuildResult;
       }>([
-        ["default", { build: createBaseBuild("base prompt") }],
+        ["default", { build: boundedBaseBuild }],
       ]),
       dynamicSystemPromptBuild: createBaseBuild("dynamic base"),
       toolExecutor: createToolExecutor(),
@@ -142,6 +154,12 @@ describe("gateway prompt inspection runtime", () => {
       status: "mismatch",
       reason: "cache_family_changed_since_previous_snapshot",
     });
+    const agentInspection = runtime.buildEffectiveAgentPromptInspection({
+      id: "default",
+      displayName: "Default Agent",
+      model: "test-model",
+    } as any);
+    expect(agentInspection.metadata.skillPromptBudget).toEqual(boundedBaseBuild.skillPromptBudget);
   });
 
   it("reports ordering guard risk for runtime-composed prompt snapshots", () => {

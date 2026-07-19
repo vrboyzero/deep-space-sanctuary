@@ -86,28 +86,40 @@ type FileEntry = {
     size?: number;
 };
 
+const MAX_LIST_FILE_ENTRIES = 1_000;
+const DEFAULT_LIST_FILES_RESPONSE_BYTES = 512_000;
+
+type DirectoryListingState = {
+    entries: FileEntry[];
+    maxEntries: number;
+    truncated: boolean;
+};
+
 async function listDirectory(
     dir: string,
     workspaceRoot: string,
     recursive: boolean,
     maxDepth: number,
     currentDepth: number,
-    entries: FileEntry[],
+    state: DirectoryListingState,
     signal?: AbortSignal,
 ): Promise<void> {
     if (currentDepth > maxDepth) return;
     throwIfAborted(signal);
 
     try {
-        const items = await fs.readdir(dir, { withFileTypes: true });
-
-        for (const item of items) {
+        const directory = await fs.opendir(dir);
+        for await (const item of directory) {
             throwIfAborted(signal);
+            if (state.entries.length >= state.maxEntries) {
+                state.truncated = true;
+                return;
+            }
             const fullPath = path.join(dir, item.name);
             const relativePath = path.relative(workspaceRoot, fullPath).replace(/\\/g, "/");
 
             if (item.isDirectory()) {
-                entries.push({
+                state.entries.push({
                     name: item.name,
                     path: relativePath,
                     type: "directory",
@@ -120,14 +132,17 @@ async function listDirectory(
                         recursive,
                         maxDepth,
                         currentDepth + 1,
-                        entries,
+                        state,
                         signal,
                     );
+                    if (state.truncated) {
+                        return;
+                    }
                 }
             } else if (item.isFile()) {
                 try {
                     const stat = await fs.stat(fullPath);
-                    entries.push({
+                    state.entries.push({
                         name: item.name,
                         path: relativePath,
                         type: "file",
@@ -135,7 +150,7 @@ async function listDirectory(
                     });
                 } catch {
                     // 忽略无法访问的文件
-                    entries.push({
+                    state.entries.push({
                         name: item.name,
                         path: relativePath,
                         type: "file",
@@ -149,6 +164,61 @@ async function listDirectory(
         }
         // 忽略无法访问的目录
     }
+}
+
+function normalizeResponseByteLimit(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) {
+        return DEFAULT_LIST_FILES_RESPONSE_BYTES;
+    }
+    return Math.max(1, Math.floor(value));
+}
+
+function buildBoundedListingOutput(input: {
+    path: string;
+    recursive: boolean;
+    depth: number;
+    entries: FileEntry[];
+    traversalTruncated: boolean;
+    maxEntries: number;
+    maxResponseBytes: number;
+}): string | undefined {
+    const buildPayload = (entryCount: number, truncated: boolean): string => JSON.stringify({
+        path: input.path,
+        totalEntries: entryCount,
+        recursive: input.recursive,
+        depth: input.depth,
+        ...(truncated
+            ? {
+                truncated: true,
+                limits: {
+                    maxEntries: input.maxEntries,
+                    maxResponseBytes: input.maxResponseBytes,
+                },
+            }
+            : {}),
+        entries: input.entries.slice(0, entryCount),
+    });
+
+    const complete = buildPayload(input.entries.length, input.traversalTruncated);
+    if (Buffer.byteLength(complete, "utf-8") <= input.maxResponseBytes) {
+        return complete;
+    }
+
+    // 二分查找可保留的最大条目数，确保截断后仍是完整可解析的 JSON。
+    let low = 0;
+    let high = input.entries.length;
+    let best: string | undefined;
+    while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const candidate = buildPayload(middle, true);
+        if (Buffer.byteLength(candidate, "utf-8") <= input.maxResponseBytes) {
+            best = candidate;
+            low = middle + 1;
+        } else {
+            high = middle - 1;
+        }
+    }
+    return best;
 }
 
 export const listFilesTool: Tool = withToolContract({
@@ -220,36 +290,48 @@ export const listFilesTool: Tool = withToolContract({
                 return makeError(`路径不是目录：${relative}`);
             }
 
-            const entries: FileEntry[] = [];
+            const listingState: DirectoryListingState = {
+                entries: [],
+                maxEntries: MAX_LIST_FILE_ENTRIES,
+                truncated: false,
+            };
             await listDirectory(
                 absolute,
                 effectiveRoot,
                 recursive,
                 depth,
                 1,
-                entries,
+                listingState,
                 context.abortSignal,
             );
 
             // 按类型和名称排序
-            entries.sort((a, b) => {
+            listingState.entries.sort((a, b) => {
                 if (a.type !== b.type) {
                     return a.type === "directory" ? -1 : 1;
                 }
                 return a.name.localeCompare(b.name);
             });
 
+            const maxResponseBytes = normalizeResponseByteLimit(context.policy.maxResponseBytes);
+            const output = buildBoundedListingOutput({
+                path: relative || ".",
+                recursive,
+                depth,
+                entries: listingState.entries,
+                traversalTruncated: listingState.truncated,
+                maxEntries: listingState.maxEntries,
+                maxResponseBytes,
+            });
+            if (!output) {
+                return makeError(`响应预算过小：list_files 至少需要容纳基础 JSON 元数据（当前 ${maxResponseBytes} bytes）`);
+            }
+
             return {
                 id,
                 name,
                 success: true,
-                output: JSON.stringify({
-                    path: relative || ".",
-                    totalEntries: entries.length,
-                    recursive,
-                    depth,
-                    entries,
-                }),
+                output,
                 durationMs: Date.now() - start,
             };
         } catch (err) {

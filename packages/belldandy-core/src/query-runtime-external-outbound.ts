@@ -150,6 +150,7 @@ export async function handleExternalOutboundConfirmWithQueryRuntime(
       channel: pending.channel,
       content: pending.content,
       resolvedSessionKey: pending.resolvedSessionKey,
+      idempotencyKey: pending.requestId,
     });
     if (!sent.ok) {
       await ctx.auditStore.append({

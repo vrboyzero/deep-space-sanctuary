@@ -1,4 +1,9 @@
 import { isExperienceDraftGenerateNoticeEnabled } from "./experience-draft-notice-mode.js";
+import { createMemoryRuntimeExperienceGenerateAction } from "./memory-runtime-experience-generate-action.js";
+import { createMemoryRuntimeExperienceReviewAction } from "./memory-runtime-experience-review-action.js";
+import { createMemoryRuntimeIngressLifecycle } from "./memory-runtime-ingress-lifecycle.js";
+import { createMemoryRuntimeReadLifecycle } from "./memory-runtime-read-lifecycle.js";
+import { createMemoryRuntimeSkillFreshnessAction } from "./memory-runtime-skill-freshness-action.js";
 
 export function createMemoryRuntimeFeature({
   refs,
@@ -29,6 +34,49 @@ export function createMemoryRuntimeFeature({
     memoryTaskGoalFilterBarEl,
     memoryTaskGoalFilterLabelEl,
   } = refs;
+  const ingressLifecycle = createMemoryRuntimeIngressLifecycle();
+  const readLifecycle = createMemoryRuntimeReadLifecycle();
+  const experienceGenerateAction = createMemoryRuntimeExperienceGenerateAction({
+    getState: getMemoryViewerState,
+    isConnected: isConnectedNow,
+    sendReq,
+    makeId,
+    getActiveAgentId: getCurrentAgentSelection,
+    confirmAction: (message) => (typeof window !== "undefined" && typeof window.confirm === "function"
+      ? window.confirm(message)
+      : true),
+    showNotice,
+    rerender: rerenderExperienceDetail,
+    loadTaskDetail,
+    loadCandidateDetail,
+    isDraftNoticeEnabled: isExperienceDraftGenerateNoticeEnabled,
+    t,
+  });
+  const experienceReviewAction = createMemoryRuntimeExperienceReviewAction({
+    getState: getMemoryViewerState,
+    isConnected: isConnectedNow,
+    sendReq,
+    makeId,
+    getActiveAgentId: getCurrentAgentSelection,
+    showNotice,
+    rerender: rerenderExperienceDetail,
+    loadTaskDetail,
+    loadCandidateDetail,
+    t,
+  });
+  const skillFreshnessAction = createMemoryRuntimeSkillFreshnessAction({
+    getState: getMemoryViewerState,
+    isConnected: isConnectedNow,
+    sendReq,
+    makeId,
+    getActiveAgentId: getCurrentAgentSelection,
+    showNotice,
+    rerender: rerenderExperienceDetail,
+    loadTaskUsageOverview,
+    loadTaskDetail,
+    loadCandidateDetail,
+    t,
+  });
 
   function getFeature() {
     return getMemoryViewerFeature?.();
@@ -136,6 +184,12 @@ export function createMemoryRuntimeFeature({
   }
 
   async function loadTaskDetail(taskId, requestContext = null) {
+    return readLifecycle.run("task", ({ isCurrent }) => (
+      loadTaskDetailCurrent(taskId, requestContext, isCurrent)
+    ));
+  }
+
+  async function loadTaskDetailCurrent(taskId, requestContext, isLifecycleCurrent) {
     const memoryViewerState = getMemoryViewerState();
     const previousSelectedTask = memoryViewerState.selectedTask?.id === taskId
       ? memoryViewerState.selectedTask
@@ -155,7 +209,8 @@ export function createMemoryRuntimeFeature({
     const id = makeId();
     const res = await sendReq({ type: "req", id, method: "memory.task.get", params: { taskId, agentId: requestAgentId } });
     if (
-      Number(memoryViewerState.requestToken || 0) !== requestToken
+      !isLifecycleCurrent()
+      || Number(memoryViewerState.requestToken || 0) !== requestToken
       || (String(memoryViewerState.activeAgentId || getCurrentAgentSelection()).trim() || "default") !== requestAgentId
     ) {
       return;
@@ -191,6 +246,12 @@ export function createMemoryRuntimeFeature({
   }
 
   async function loadMemoryDetail(chunkId, requestContext = null, options = {}) {
+    return readLifecycle.run("memory", ({ isCurrent }) => (
+      loadMemoryDetailCurrent(chunkId, requestContext, options, isCurrent)
+    ));
+  }
+
+  async function loadMemoryDetailCurrent(chunkId, requestContext, options, isLifecycleCurrent) {
     const memoryViewerState = getMemoryViewerState();
     if (!chunkId) {
       renderMemoryViewerDetailEmpty(t("memory.selectMemory", {}, "Please select a memory."));
@@ -209,7 +270,8 @@ export function createMemoryRuntimeFeature({
     const id = makeId();
     const res = await sendReq({ type: "req", id, method: "memory.get", params: { chunkId, agentId: requestAgentId } });
     if (
-      Number(memoryViewerState.requestToken || 0) !== requestToken
+      !isLifecycleCurrent()
+      || Number(memoryViewerState.requestToken || 0) !== requestToken
       || (String(memoryViewerState.activeAgentId || getCurrentAgentSelection()).trim() || "default") !== requestAgentId
     ) {
       return;
@@ -287,6 +349,12 @@ export function createMemoryRuntimeFeature({
   }
 
   async function loadCandidateDetail(candidateId) {
+    return readLifecycle.run("candidate", ({ isCurrent }) => (
+      loadCandidateDetailCurrent(candidateId, isCurrent)
+    ));
+  }
+
+  async function loadCandidateDetailCurrent(candidateId, isLifecycleCurrent) {
     const memoryViewerState = getMemoryViewerState();
     if (!candidateId || !isConnected()) return;
     const requestToken = Number(memoryViewerState.requestToken || 0);
@@ -294,7 +362,8 @@ export function createMemoryRuntimeFeature({
     const id = makeId();
     const res = await sendReq({ type: "req", id, method: "experience.candidate.get", params: { candidateId, agentId: requestAgentId } });
     if (
-      Number(memoryViewerState.requestToken || 0) !== requestToken
+      !isLifecycleCurrent()
+      || Number(memoryViewerState.requestToken || 0) !== requestToken
       || (String(memoryViewerState.activeAgentId || getCurrentAgentSelection()).trim() || "default") !== requestAgentId
     ) {
       return;
@@ -319,323 +388,16 @@ export function createMemoryRuntimeFeature({
     }
   }
 
-  function formatExperienceDedupMatchLabel(match) {
-    if (!match || typeof match !== "object") return "";
-    return String(match.title || match.key || match.candidateId || "").trim();
+  function generateExperienceCandidate(taskId, candidateType) {
+    return experienceGenerateAction.generate(taskId, candidateType);
   }
 
-  function buildExperienceDedupConfirmMessage(result, candidateType) {
-    const typeLabel = candidateType === "method"
-      ? t("memory.candidateDedupTypeMethod", {}, "method")
-      : t("memory.candidateDedupTypeSkill", {}, "skill");
-    if (!result || typeof result !== "object") return "";
-
-    if (result.decision === "duplicate_existing") {
-      const exactLabel = formatExperienceDedupMatchLabel(result.exactMatch);
-      return t(
-        "memory.candidateDedupDuplicateConfirm",
-        { type: typeLabel, target: exactLabel || "-" },
-        `检测到已有重复 ${typeLabel} 候选：${exactLabel || "-" }\n\n点击“确定”将直接打开现有候选；点击“取消”则停止本次生成。`,
-      );
-    }
-
-    if (result.decision === "similar_existing") {
-      const topMatches = Array.isArray(result.similarMatches)
-        ? result.similarMatches
-          .slice(0, 3)
-          .map((item) => formatExperienceDedupMatchLabel(item))
-          .filter(Boolean)
-        : [];
-      return t(
-        "memory.candidateDedupSimilarConfirm",
-        { type: typeLabel, targets: topMatches.join(" / ") || "-" },
-        `检测到已有相似 ${typeLabel}：${topMatches.join(" / ") || "-"}\n\n点击“确定”继续生成新的候选；点击“取消”则停止本次生成。`,
-      );
-    }
-
-    return "";
+  function reviewExperienceCandidate(candidateId, decision, options = {}) {
+    return experienceReviewAction.review(candidateId, decision, options);
   }
 
-  async function checkExperienceCandidateDuplicate(taskId, candidateType) {
-    const id = makeId();
-    const res = await sendReq({
-      type: "req",
-      id,
-      method: "experience.candidate.check_duplicate",
-      params: {
-        taskId,
-        candidateType,
-        agentId: getCurrentAgentSelection(),
-      },
-    });
-    if (!res || !res.ok) {
-      showNotice(
-        t("memory.candidateDedupCheckFailedTitle", {}, "生成前去重预检失败"),
-        res?.error?.message || t("memory.candidateDedupCheckFailedMessage", {}, "experience.candidate.check_duplicate 调用失败。"),
-        "error",
-      );
-      return null;
-    }
-    return res.payload ?? null;
-  }
-
-  async function generateExperienceCandidate(taskId, candidateType) {
-    if (!isConnectedNow()) {
-      showNotice(
-        t("memory.candidateGenerateUnavailableTitle", {}, "无法生成经验候选"),
-        t("memory.disconnectedList", {}, "Not connected to the server."),
-        "error",
-      );
-      return null;
-    }
-
-    const normalizedTaskId = typeof taskId === "string" ? taskId.trim() : "";
-    const normalizedType = candidateType === "method" || candidateType === "skill" ? candidateType : "";
-    if (!normalizedTaskId || !normalizedType) return null;
-
-    const memoryViewerState = getMemoryViewerState();
-    const pendingKey = `generate:${normalizedType}:${normalizedTaskId}`;
-    if (memoryViewerState.pendingExperienceActionKey) return null;
-    memoryViewerState.pendingExperienceActionKey = pendingKey;
-    rerenderExperienceDetail(normalizedTaskId);
-
-    try {
-      const duplicateCheck = await checkExperienceCandidateDuplicate(normalizedTaskId, normalizedType);
-      if (!duplicateCheck) {
-        return null;
-      }
-
-      if (duplicateCheck.decision === "duplicate_existing") {
-        const confirmed = typeof window !== "undefined" && typeof window.confirm === "function"
-          ? window.confirm(buildExperienceDedupConfirmMessage(duplicateCheck, normalizedType))
-          : true;
-        if (!confirmed) {
-          return null;
-        }
-        if (duplicateCheck.exactMatch?.candidateId) {
-          await loadCandidateDetail(duplicateCheck.exactMatch.candidateId);
-          showNotice(
-            t("memory.candidateDedupOpenedExistingTitle", {}, "已打开现有候选"),
-            formatExperienceDedupMatchLabel(duplicateCheck.exactMatch)
-            || t("memory.candidateGenerateReusedTitle", {}, "已打开现有经验候选"),
-            "info",
-            2200,
-          );
-          return memoryViewerState.selectedCandidate ?? null;
-        }
-      } else if (duplicateCheck.decision === "similar_existing") {
-        const confirmed = typeof window !== "undefined" && typeof window.confirm === "function"
-          ? window.confirm(buildExperienceDedupConfirmMessage(duplicateCheck, normalizedType))
-          : true;
-        if (!confirmed) {
-          return null;
-        }
-      }
-
-      const id = makeId();
-      const res = await sendReq({
-        type: "req",
-        id,
-        method: "experience.candidate.generate",
-        params: {
-          taskId: normalizedTaskId,
-          candidateType: normalizedType,
-          agentId: getCurrentAgentSelection(),
-        },
-      });
-      if (!res || !res.ok) {
-        showNotice(
-          t("memory.candidateGenerateFailedTitle", {}, "生成经验候选失败"),
-          res?.error?.message || t("memory.candidateGenerateFailedMessage", {}, "experience.candidate.generate 调用失败。"),
-          "error",
-        );
-        return null;
-      }
-
-      const candidate = res.payload?.candidate ?? null;
-      const shouldShowDraftGenerateNotice = isExperienceDraftGenerateNoticeEnabled();
-      if (res.payload?.reusedExisting || shouldShowDraftGenerateNotice) {
-        const isSkill = normalizedType === "skill";
-        showNotice(
-          res.payload?.reusedExisting
-            ? t("memory.candidateGenerateReusedTitle", {}, "已打开现有经验候选")
-            : (isSkill
-              ? t("memory.skillDraftGenerateSuccessTitle", {}, "Skill Draft 已生成")
-              : t("memory.methodDraftGenerateSuccessTitle", {}, "Method Draft 已生成")),
-          candidate?.title
-            ? String(candidate.title)
-            : res.payload?.reusedExisting
-              ? t("memory.candidateGenerateSuccessMessage", {}, "已为当前任务准备经验候选。")
-              : (isSkill
-                ? t("memory.skillDraftGenerateSuccessMessage", {}, "已为当前任务生成新的 Skill Draft。")
-                : t("memory.methodDraftGenerateSuccessMessage", {}, "已为当前任务生成新的 Method Draft。")),
-          "success",
-          2200,
-        );
-      }
-
-      await loadTaskDetail(normalizedTaskId);
-      if (candidate?.id) {
-        await loadCandidateDetail(candidate.id);
-      }
-      return candidate;
-    } catch (error) {
-      showNotice(
-        t("memory.candidateGenerateFailedTitle", {}, "生成经验候选失败"),
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
-      return null;
-    } finally {
-      memoryViewerState.pendingExperienceActionKey = null;
-      rerenderExperienceDetail(normalizedTaskId);
-    }
-  }
-
-  async function reviewExperienceCandidate(candidateId, decision, options = {}) {
-    if (!isConnectedNow()) {
-      showNotice(
-        t("memory.candidateReviewUnavailableTitle", {}, "无法提交候选审核"),
-        t("memory.disconnectedList", {}, "Not connected to the server."),
-        "error",
-      );
-      return null;
-    }
-
-    const normalizedCandidateId = typeof candidateId === "string" ? candidateId.trim() : "";
-    const normalizedDecision = decision === "accept" || decision === "reject" ? decision : "";
-    const taskId = typeof options?.taskId === "string" ? options.taskId.trim() : "";
-    if (!normalizedCandidateId || !normalizedDecision) return null;
-
-    const memoryViewerState = getMemoryViewerState();
-    const pendingKey = `candidate:${normalizedCandidateId}:${normalizedDecision}`;
-    if (memoryViewerState.pendingExperienceActionKey) return null;
-    memoryViewerState.pendingExperienceActionKey = pendingKey;
-    rerenderExperienceDetail(taskId, normalizedCandidateId);
-
-    try {
-      const id = makeId();
-      const res = await sendReq({
-        type: "req",
-        id,
-        method: normalizedDecision === "accept" ? "experience.candidate.accept" : "experience.candidate.reject",
-        params: {
-          candidateId: normalizedCandidateId,
-          agentId: getCurrentAgentSelection(),
-        },
-      });
-      if (!res || !res.ok) {
-        showNotice(
-          t("memory.candidateReviewFailedTitle", {}, "候选审核失败"),
-          res?.error?.message || t("memory.candidateReviewFailedMessage", {}, "经验候选状态更新失败。"),
-          "error",
-        );
-        return null;
-      }
-
-      const candidate = res.payload?.candidate ?? null;
-      showNotice(
-        normalizedDecision === "accept"
-          ? t("memory.candidateAcceptSuccessTitle", {}, "候选已接受")
-          : t("memory.candidateRejectSuccessTitle", {}, "候选已拒绝"),
-        candidate?.title
-          ? String(candidate.title)
-          : t("memory.candidateReviewSuccessMessage", {}, "经验候选状态已更新。"),
-        "success",
-        2200,
-      );
-
-      if (taskId) {
-        await loadTaskDetail(taskId);
-      }
-      await loadCandidateDetail(normalizedCandidateId);
-      return candidate;
-    } catch (error) {
-      showNotice(
-        t("memory.candidateReviewFailedTitle", {}, "候选审核失败"),
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
-      return null;
-    } finally {
-      memoryViewerState.pendingExperienceActionKey = null;
-      rerenderExperienceDetail(taskId, normalizedCandidateId);
-    }
-  }
-
-  async function updateSkillFreshnessStaleMark(input = {}) {
-    if (!isConnectedNow()) {
-      showNotice(
-        t("memory.skillFreshnessUpdateUnavailableTitle", {}, "无法更新 Skill Freshness"),
-        t("memory.disconnectedList", {}, "Not connected to the server."),
-        "error",
-      );
-      return null;
-    }
-
-    const sourceCandidateId = typeof input.sourceCandidateId === "string" ? input.sourceCandidateId.trim() : "";
-    const skillKey = typeof input.skillKey === "string" ? input.skillKey.trim() : "";
-    const taskId = typeof input.taskId === "string" ? input.taskId.trim() : "";
-    const candidateId = typeof input.candidateId === "string" ? input.candidateId.trim() : "";
-    const stale = input.stale !== false;
-    if (!sourceCandidateId && !skillKey) return null;
-
-    const memoryViewerState = getMemoryViewerState();
-    const pendingKey = `skill-freshness:${sourceCandidateId || skillKey}:${stale ? "stale" : "active"}`;
-    if (memoryViewerState.pendingExperienceActionKey) return null;
-    memoryViewerState.pendingExperienceActionKey = pendingKey;
-    rerenderExperienceDetail(taskId, candidateId);
-
-    try {
-      const id = makeId();
-      const res = await sendReq({
-        type: "req",
-        id,
-        method: "experience.skill.freshness.update",
-        params: {
-          ...(sourceCandidateId ? { sourceCandidateId } : {}),
-          ...(skillKey ? { skillKey } : {}),
-          stale,
-          agentId: getCurrentAgentSelection(),
-        },
-      });
-      if (!res || !res.ok) {
-        showNotice(
-          t("memory.skillFreshnessUpdateFailedTitle", {}, "Skill Freshness 更新失败"),
-          res?.error?.message || t("memory.skillFreshnessUpdateFailedMessage", {}, "无法更新 stale 标记。"),
-          "error",
-        );
-        return null;
-      }
-
-      showNotice(
-        stale
-          ? t("memory.skillFreshnessMarkedStaleTitle", {}, "已标记 stale")
-          : t("memory.skillFreshnessClearedStaleTitle", {}, "已取消 stale"),
-        skillKey || sourceCandidateId || t("memory.skillFreshnessUpdateSuccessMessage", {}, "Skill Freshness 已更新。"),
-        "success",
-        2200,
-      );
-
-      await loadTaskUsageOverview();
-      if (taskId) {
-        await loadTaskDetail(taskId);
-      }
-      if (candidateId) {
-        await loadCandidateDetail(candidateId);
-      }
-      return res.payload?.skillFreshness ?? null;
-    } catch (error) {
-      showNotice(
-        t("memory.skillFreshnessUpdateFailedTitle", {}, "Skill Freshness 更新失败"),
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
-      return null;
-    } finally {
-      memoryViewerState.pendingExperienceActionKey = null;
-      rerenderExperienceDetail(taskId, candidateId);
-    }
+  function updateSkillFreshnessStaleMark(input = {}) {
+    return skillFreshnessAction.update(input);
   }
 
   function refreshMemoryLocale() {
@@ -677,27 +439,47 @@ export function createMemoryRuntimeFeature({
     renderMemoryViewerDetailEmpty(t("memory.selectMemory", {}, "Please select a memory."));
   }
 
+  function dispose() {
+    ingressLifecycle.dispose();
+    skillFreshnessAction.dispose();
+    experienceReviewAction.dispose();
+    experienceGenerateAction.dispose();
+    readLifecycle.dispose();
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      ...ingressLifecycle.getRuntimeSnapshot(),
+      ...readLifecycle.getRuntimeSnapshot(),
+      ...experienceGenerateAction.getRuntimeSnapshot(),
+      ...experienceReviewAction.getRuntimeSnapshot(),
+      ...skillFreshnessAction.getRuntimeSnapshot(),
+    };
+  }
+
   return {
-    clearMemoryTaskGoalFilter,
-    loadCandidateDetail,
-    loadMemoryChunkViewer,
-    loadMemoryDetail,
-    loadMemoryViewer,
-    loadMemoryViewerStats,
-    loadTaskDetail,
-    loadTaskUsageOverview,
-    loadTaskViewer,
-    generateExperienceCandidate,
-    openGoalTaskViewer,
-    openMemoryFromAudit,
-    openTaskFromAudit,
-    refreshMemoryLocale,
-    reviewExperienceCandidate,
-    resolveMemoryDetailTargetAgentId,
-    switchMemoryViewerTab,
-    syncMemoryTaskGoalFilterUi,
-    syncMemoryViewerUi,
-    updateSkillFreshnessStaleMark,
+    clearMemoryTaskGoalFilter: ingressLifecycle.guardAsync(clearMemoryTaskGoalFilter),
+    loadCandidateDetail: ingressLifecycle.guardAsync(loadCandidateDetail),
+    loadMemoryChunkViewer: ingressLifecycle.guardAsync(loadMemoryChunkViewer),
+    loadMemoryDetail: ingressLifecycle.guardAsync(loadMemoryDetail),
+    loadMemoryViewer: ingressLifecycle.guardAsync(loadMemoryViewer),
+    loadMemoryViewerStats: ingressLifecycle.guardAsync(loadMemoryViewerStats),
+    loadTaskDetail: ingressLifecycle.guardAsync(loadTaskDetail),
+    loadTaskUsageOverview: ingressLifecycle.guardAsync(loadTaskUsageOverview),
+    loadTaskViewer: ingressLifecycle.guardAsync(loadTaskViewer),
+    generateExperienceCandidate: ingressLifecycle.guardAsync(generateExperienceCandidate),
+    openGoalTaskViewer: ingressLifecycle.guardAsync(openGoalTaskViewer),
+    openMemoryFromAudit: ingressLifecycle.guardAsync(openMemoryFromAudit),
+    openTaskFromAudit: ingressLifecycle.guardAsync(openTaskFromAudit),
+    refreshMemoryLocale: ingressLifecycle.guard(refreshMemoryLocale),
+    reviewExperienceCandidate: ingressLifecycle.guardAsync(reviewExperienceCandidate),
+    resolveMemoryDetailTargetAgentId: ingressLifecycle.guard(resolveMemoryDetailTargetAgentId),
+    switchMemoryViewerTab: ingressLifecycle.guard(switchMemoryViewerTab),
+    syncMemoryTaskGoalFilterUi: ingressLifecycle.guard(syncMemoryTaskGoalFilterUi),
+    syncMemoryViewerUi: ingressLifecycle.guard(syncMemoryViewerUi),
+    updateSkillFreshnessStaleMark: ingressLifecycle.guardAsync(updateSkillFreshnessStaleMark),
     getCurrentAgentLabel,
+    dispose,
+    getRuntimeSnapshot,
   };
 }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,25 +27,32 @@ function createMockAgent(responseText: string): BelldandyAgent {
   };
 }
 
-function createMockAgentRegistry(responseText: string): AgentRegistry {
+function createMockAgentRegistry(responseText: string, agentFactory?: () => BelldandyAgent): AgentRegistry {
   const defaultProfile: AgentProfile = {
     id: "default",
     displayName: "Default",
     model: "primary",
   };
-  const registry = new AgentRegistry(() => createMockAgent(responseText));
+  const registry = new AgentRegistry(() => agentFactory?.() ?? createMockAgent(responseText));
   registry.register(defaultProfile);
   return registry;
 }
 
 // ─── 测试夹具 ─────────────────────────────────────────────────────────────
 
-async function setupRuntime(responseText = "mock agent response", options: { allowInline?: boolean } = {}) {
+async function setupRuntime(
+  responseText = "mock agent response",
+  options: {
+    allowInline?: boolean;
+    agentFactory?: () => BelldandyAgent;
+    readEnv?: (name: string) => string | undefined;
+  } = {},
+) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `belldandy-wf-runtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`));
   const dbPath = path.join(tempDir, "memory.db");
   const store = new MemoryStore(dbPath);
   const conversationStore = new ConversationStore();
-  const agentRegistry = createMockAgentRegistry(responseText);
+  const agentRegistry = createMockAgentRegistry(responseText, options.agentFactory);
   const runtime = new WorkflowRuntime({
     db: store.getDbHandleForSharedSchema(),
     agentRegistry,
@@ -58,6 +65,8 @@ async function setupRuntime(responseText = "mock agent response", options: { all
       maxFileBytes: 1024 * 1024,
     },
     readEnv: (name) => {
+      const configuredValue = options.readEnv?.(name);
+      if (configuredValue !== undefined) return configuredValue;
       if (name === "BELLDANDY_WORKFLOW_MAX_AGENT_CALLS") return "50";
       if (name === "BELLDANDY_WORKFLOW_MAX_CONCURRENT") return "6";
       if (name === "BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS") return "300000";
@@ -84,6 +93,7 @@ describe("WorkflowRuntime", () => {
 
   beforeEach(() => { cleanups = []; });
   afterEach(async () => {
+    vi.useRealTimers();
     for (const c of cleanups) await c();
     cleanups = [];
     clearBuiltinWorkflows();
@@ -187,6 +197,95 @@ describe("WorkflowRuntime", () => {
     expect(started[0]?.sessionId).toBe(completed[0]?.sessionId);
   });
 
+  it("停止 workflow 时会取消正在运行的 sub-agent", async () => {
+    let observedSignal: AbortSignal | undefined;
+    let resolveAgentStarted: (() => void) | undefined;
+    const agentStarted = new Promise<void>((resolve) => {
+      resolveAgentStarted = resolve;
+    });
+    const f = await setupRuntime("unused", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE" ? "1" : undefined,
+      agentFactory: () => ({
+        async *run(input): AsyncIterable<AgentStreamItem> {
+          observedSignal = input.abortSignal;
+          resolveAgentStarted?.();
+          yield { type: "status", status: "running" };
+          await new Promise<void>((resolve) => {
+            if (input.abortSignal?.aborted) {
+              resolve();
+              return;
+            }
+            input.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield { type: "status", status: "stopped" };
+        },
+      } satisfies BelldandyAgent),
+    });
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "stoppable-workflow",
+      scriptHash: "stoppable-workflow-v1",
+      default: async (ctx) => ctx.agent("wait for stop"),
+    });
+
+    const journalId = "wf-stop-propagation";
+    const pending = f.runtime.run({
+      source: { kind: "builtin", name: "stoppable-workflow" },
+      parentConversationId: "conv-stop-propagation",
+      channel: "test",
+      resumeJournalId: journalId,
+    });
+    await agentStarted;
+    expect(f.runtime.getRuntimeSnapshot().maxQueuedAgentCount).toBe(1);
+
+    await expect(f.runtime.stop(journalId, "Workflow stop requested.")).resolves.toBe(true);
+    const result = await pending;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Workflow stop requested.");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(observedSignal?.reason).toBe("Workflow stop requested.");
+    expect(f.runtime.getStatus(journalId)?.status).toBe("partial");
+  });
+
+  it("非法 workflow queue cap 会回退为默认上限", async () => {
+    let resolveAgentStarted: (() => void) | undefined;
+    const agentStarted = new Promise<void>((resolve) => {
+      resolveAgentStarted = resolve;
+    });
+    const f = await setupRuntime("unused", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_QUEUE_SIZE" ? "1junk" : undefined,
+      agentFactory: () => ({
+        async *run(input): AsyncIterable<AgentStreamItem> {
+          resolveAgentStarted?.();
+          yield { type: "status", status: "running" };
+          await new Promise<void>((resolve) => {
+            input.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      } satisfies BelldandyAgent),
+    });
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "invalid-queue-cap-workflow",
+      scriptHash: "invalid-queue-cap-workflow-v1",
+      default: async (ctx) => ctx.agent("wait for stop"),
+    });
+
+    const journalId = "wf-invalid-queue-cap";
+    const pending = f.runtime.run({
+      source: { kind: "builtin", name: "invalid-queue-cap-workflow" },
+      parentConversationId: "conv-invalid-queue-cap",
+      channel: "test",
+      resumeJournalId: journalId,
+    });
+    await agentStarted;
+
+    expect(f.runtime.getRuntimeSnapshot().maxQueuedAgentCount).toBe(20);
+    await f.runtime.stop(journalId, "Workflow stop requested.");
+    await pending;
+  });
+
   it("resume 命中缓存跳过 agent 调用", async () => {
     const f = await setupRuntime("cached response");
     cleanups.push(f.cleanup);
@@ -243,6 +342,88 @@ describe("WorkflowRuntime", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/budget exceeded/);
+  });
+
+  it("调用方不能把 workflow 请求预算提高到环境硬上限之上", async () => {
+    const f = await setupRuntime("hard-cap result", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_AGENT_CALLS" ? "2" : undefined,
+    });
+    cleanups.push(f.cleanup);
+    const wfPath = await writeFile(f.tempDir, "hard-cap-wf.mjs", `
+      export default async function(ctx) {
+        await ctx.agent("step 1", { callKey: "hard-cap/0" });
+        await ctx.agent("step 2", { callKey: "hard-cap/1" });
+        await ctx.agent("step 3", { callKey: "hard-cap/2" });
+        return "should not complete";
+      }
+    `);
+
+    const result = await f.runtime.run({
+      source: { kind: "file", path: wfPath },
+      budget: { maxAgentCalls: 20, onExceeded: "warn" },
+      parentConversationId: "conv-hard-cap",
+      channel: "test",
+      stateDir: f.tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("agent call budget exceeded (2/2)");
+  });
+
+  it("最后一次 agent 调用的实际 token 超过环境上限时仍会收敛为预算终态", async () => {
+    const f = await setupRuntime("12345678", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_TOKENS" ? "1" : undefined,
+    });
+    cleanups.push(f.cleanup);
+    const wfPath = await writeFile(f.tempDir, "token-hard-cap-wf.mjs", `
+      export default async function(ctx) {
+        return await ctx.agent("single oversized result", { callKey: "token-hard-cap/0" });
+      }
+    `);
+
+    const result = await f.runtime.run({
+      source: { kind: "file", path: wfPath },
+      parentConversationId: "conv-token-hard-cap",
+      channel: "test",
+      stateDir: f.tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("token budget exceeded (2/1)");
+  });
+
+  it("wall-clock deadline 会主动结束协作式 workflow", async () => {
+    vi.useFakeTimers();
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const f = await setupRuntime("unused", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_TIMEOUT_MS" ? "25" : undefined,
+    });
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "deadline-workflow",
+      scriptHash: "deadline-workflow-v1",
+      default: async (ctx) => new Promise<string>((resolve) => {
+        markStarted?.();
+        ctx.abortSignal?.addEventListener("abort", () => resolve("late result"), { once: true });
+      }),
+    });
+
+    const pending = f.runtime.run({
+      source: { kind: "builtin", name: "deadline-workflow" },
+      parentConversationId: "conv-deadline",
+      channel: "test",
+      resumeJournalId: "wf-deadline",
+    });
+    await started;
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await pending;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("wall clock budget exceeded");
+    expect(f.runtime.getStatus("wf-deadline")?.status).toBe("budget_exceeded");
   });
 
   it("getStatus 查询运行状态", async () => {

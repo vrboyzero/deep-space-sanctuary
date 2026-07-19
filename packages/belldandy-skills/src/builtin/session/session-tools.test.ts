@@ -204,6 +204,128 @@ describe("session tools launchSpec wiring", () => {
     ]);
   });
 
+  it("delegate_parallel should reject oversized batches before spawning any sub-agent", async () => {
+    const spawnParallel = vi.fn(async () => []);
+    const context = createContext({
+      agentCapabilities: { spawnParallel },
+    });
+
+    const result = await delegateParallelTool.execute({
+      tasks: Array.from({ length: 9 }, (_, index) => ({ instruction: `Task ${index + 1}` })),
+    }, context);
+
+    expect(result.success).toBe(false);
+    expect(result.failureKind).toBe("permission_or_policy");
+    expect(result.error).toContain("at most 8 tasks");
+    expect(spawnParallel).not.toHaveBeenCalled();
+  });
+
+  it("delegate_parallel should launch at most four tasks per ordered batch", async () => {
+    const controller = new AbortController();
+    let resultIndex = 0;
+    const spawnParallel = vi.fn(async (tasks) => tasks.map(() => {
+      resultIndex += 1;
+      return {
+        success: true,
+        output: `done-${resultIndex}`,
+        sessionId: `sub_${resultIndex}`,
+        taskId: `task_${resultIndex}`,
+      };
+    }));
+    const context = createContext({
+      abortSignal: controller.signal,
+      agentCapabilities: { spawnParallel },
+    });
+
+    const result = await delegateParallelTool.execute({
+      tasks: Array.from({ length: 6 }, (_, index) => ({ instruction: `Task ${index + 1}` })),
+    }, context);
+
+    expect(result.success).toBe(true);
+    expect(spawnParallel).toHaveBeenCalledTimes(2);
+    expect(spawnParallel.mock.calls[0][0]).toHaveLength(4);
+    expect(spawnParallel.mock.calls[1][0]).toHaveLength(2);
+    expect(spawnParallel.mock.calls[0][0][0]).toMatchObject({ abortSignal: controller.signal });
+    expect(result.output.indexOf("done-1")).toBeLessThan(result.output.indexOf("done-6"));
+  });
+
+  it("delegate_parallel should bound aggregate output and retain result references in metadata", async () => {
+    const spawnParallel = vi.fn(async () => ([
+      {
+        success: true,
+        output: "a".repeat(1_000),
+        sessionId: "sub_large_1",
+        taskId: "task_large_1",
+        outputPath: "/tmp/task_large_1/result.md",
+      },
+      {
+        success: true,
+        output: "b".repeat(1_000),
+        sessionId: "sub_large_2",
+        taskId: "task_large_2",
+        outputPath: "/tmp/task_large_2/result.md",
+      },
+    ]));
+    const context = createContext({
+      policy: {
+        ...createContext().policy,
+        maxResponseBytes: 512,
+      },
+      agentCapabilities: { spawnParallel },
+    });
+
+    const result = await delegateParallelTool.execute({
+      tasks: [
+        { instruction: "Large task A" },
+        { instruction: "Large task B" },
+      ],
+    }, context);
+
+    expect(result.success).toBe(true);
+    expect(Buffer.byteLength(result.output, "utf-8")).toBeLessThanOrEqual(512);
+    expect(result.output).toContain("delegate_parallel output truncated");
+    expect(result.metadata).toMatchObject({
+      delegationBudget: {
+        maxTasks: 8,
+        maxConcurrent: 4,
+        maxAggregateBytes: 512,
+        taskCount: 2,
+        truncated: true,
+      },
+      delegationResults: [
+        expect.objectContaining({
+          taskId: "task_large_1",
+          sessionId: "sub_large_1",
+          outputPath: "/tmp/task_large_1/result.md",
+        }),
+        expect.objectContaining({
+          taskId: "task_large_2",
+          sessionId: "sub_large_2",
+          outputPath: "/tmp/task_large_2/result.md",
+        }),
+      ],
+    });
+  });
+
+  it("delegate_parallel should reject an already aborted call without spawning", async () => {
+    const controller = new AbortController();
+    controller.abort("Stopped delegation.");
+    const spawnParallel = vi.fn(async () => []);
+    const context = createContext({
+      abortSignal: controller.signal,
+      agentCapabilities: { spawnParallel },
+    });
+
+    const result = await delegateParallelTool.execute({
+      tasks: [{ instruction: "Should not start" }],
+    }, context);
+
+    expect(result.success).toBe(false);
+    expect(result.failureKind).toBe("environment_error");
+    expect(result.error).toBe("Stopped delegation.");
+    expect(spawnParallel).not.toHaveBeenCalled();
+  });
+
   it("delegate_parallel should preserve per-task structured delegation contracts", async () => {
     const spawnParallel = vi.fn(async () => ([
       {

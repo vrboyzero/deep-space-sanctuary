@@ -75,6 +75,13 @@ star-sanctuary/
 - `scripts/normalize-osv-report.mjs`: 将固定 OSV-Scanner 输出收敛为 dependency governance 报告，供 Quality Gate fixture 与仓库依赖扫描复用
 - `scripts/evaluate-dependency-audit-gate.mjs`: 对依赖扫描报告执行 findings/failure/freshness 的 fail-closed Gate 判定
 - `scripts/run-build-benchmark.mjs`: 运行 B00 TypeScript forced/incremental BuildGraph 基准并输出不设性能阈值的 JSON 报告
+- `scripts/run-memory-sqlite-benchmark.mjs`: 使用临时确定性 MemoryStore SQLite fixture 运行 B00 关键词检索、vec0/cache batch read/write warm-path 基准，并输出不设性能阈值的 JSON 报告
+- `scripts/run-agent-mock-benchmark.mjs`: 使用严格本地 mock Provider 运行 B00 ToolEnabledAgent 10/100/1000 history × 0/10/100/500 Tool catalog 的 prompt/request warm-path 基准，并输出不设性能阈值的 JSON 报告
+- `scripts/run-channel-ingress-benchmark.mjs`: 使用内存 fake adapter 运行 B00 ChannelIngressScheduler 100/1,000 条入站 burst 的调度/完成基准，并输出不设性能阈值的 JSON 报告
+- `scripts/run-tool-catalog-benchmark.mjs`: 使用真实 ToolExecutor 与纯合成 Tool 运行 B00 10/100/500/1,000 Tool catalog scan 基准，校验 definition count/catalog generation 并输出不设性能阈值的 JSON 报告
+- `scripts/run-mcp-in-memory-benchmark.mjs`: 使用 SDK linked in-memory transport 连接真实 MCPClient/McpServer，运行 B00 connect/discover、Tool call、Resource read 与 disconnect 生命周期基准
+- `scripts/run-browser-relay-benchmark.mjs`: 使用确定性 fake timer 与内存 fake WebSocket 运行 B00 Browser Relay controller lifecycle、消息、发送、旧 socket 事件和重连基准
+- `scripts/run-webchat-fixed-fixture-benchmark.mjs`: 使用仅绑定 loopback 的 headless Chromium fixture 运行 B00 WebChat full-shell 冷/热启动与 100/1,000 条固定消息渲染基准
 - `docs/Star Sanctuary使用手册.md`: 当前版用户手册，聚焦 Agent / 工具 / Agent Teams 的使用与配置说明
 - `docs/指挥模式与动态工作流使用说明.md`: 指挥模式与动态工作流（DW）的使用说明、脚本编写、API 参考
 
@@ -82,20 +89,29 @@ star-sanctuary/
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
 - `packages/belldandy-core/src/cli/main.ts`: CLI 根命令定义
 - `packages/belldandy-core/src/bin/gateway.ts`: Gateway 开发态 bootstrap 入口（先做 dev/runtime 旧 `dist` 预检，再加载主装配）
-- `packages/belldandy-core/src/bin/gateway-main.ts`: Gateway 总装配入口
+- `packages/belldandy-core/src/bin/gateway-main.ts`: Gateway 总装配入口，以及配置重启时 Channel/Agent Bridge owner 的并行 drain 接线
 - `packages/belldandy-core/src/bin/gateway-prompt-sections.ts`: Agent runtime prompt sections 组装，包含 Team / identity governance 静态 section
-- `packages/belldandy-core/src/server.ts`: Gateway 主服务与方法分发中心
+- `packages/belldandy-core/src/server.ts`: Gateway 主服务与方法分发中心；关闭时先启动 HTTP/socket 强制收敛，再等待 WebSocket runtime，避免活跃升级连接阻塞关服
 - `packages/belldandy-core/src/server-methods/`: RPC 方法分域处理
 - `packages/belldandy-core/src/runtime-resource-observability.ts`: Gateway 低频、有界的 event-loop、进程内存与聚合队列快照采样，供 `system.doctor` 使用
+- `packages/belldandy-core/src/tool-audit-runtime-resource.ts`: 将 Tool audit 的无正文 backlog 快照映射为 `tool_audit` 通用资源水位，不向 Doctor 扩散审计正文或 sink 失败详情
 
 ### Agent / Runtime
-- `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime
+- `packages/belldandy-agent/src/tool-agent.ts`: 带工具调用的主 Agent runtime，接线 ReAct model-call / tool-call / wall-time / total-token / high-risk-Tool 预算与 `budget_exhausted` 终态
+- `packages/belldandy-agent/src/react-run-budget.ts`: ReAct 单次运行的无 I/O 预算归一化、Provider usage 优先计量、高风险 Tool 预留和父级取消/wall-time deadline 合并
+- `packages/belldandy-agent/src/agent-profile.ts`: Agent Profile 解析，含 per-profile token、tool-call、tool-loop、wall-time 与 high-risk-Tool 预算覆盖
+- `packages/belldandy-agent/src/agent-end-ledger.ts`: 面向 hook 的有界 Agent 终态账本，保留 usage、预算耗尽、final 与 status 证据
 - `packages/belldandy-agent/src/openai.ts`: OpenAI chat agent
 - `packages/belldandy-agent/src/system-prompt.ts`: system prompt 组装
 - `packages/belldandy-agent/src/prompt-snapshot.ts`: prompt snapshot / delta / provider-native system blocks
 - `packages/belldandy-agent/src/runtime-prompt-deltas.ts`: run 级 launchSpec prompt delta 构建、tool-result follow-up delta、`failureKind` 恢复策略路由、Team topology / handoff / fan-in / completion gate delta
-- `packages/belldandy-agent/src/conversation.ts`: 对话、转录、压缩、持久化
-- `packages/belldandy-agent/src/orchestrator.ts`: sub-agent 编排
+- `packages/belldandy-agent/src/conversation.ts`: 对话、转录、压缩、持久化；cold restore 仅装配有界 tail reader，`recordToolArtifacts()` 将同一 Tool Result 的 digest、recent result 与 carryover 合并为单次 meta 快照；会话 release 保留 canonical 文件并清理可恢复内存态
+- `packages/belldandy-agent/src/conversation-lifecycle.ts`: ConversationStore 的四类 persistence lane、generation fence、幂等 release 与无正文资源快照
+- `packages/belldandy-agent/src/tool-agent.ts` / `context-compression/reference-store.ts`: Agent run-chain pin、会话级 Tool/notify release，以及按 conversation owner 精确释放纯内存压缩引用；持久化 reference 保留独立冷恢复生命周期
+- `packages/belldandy-agent/src/conversation-tail-reader.ts`: 带 metadata 会话 cold restore 的尾部完整行读取、64 KiB 分块与 4 MiB 总字节预算
+- `packages/belldandy-agent/src/orchestrator.ts`: sub-agent 编排、pending session、端到端 `AbortSignal`、timeout/stop terminal latch、非阻塞 completion barrier 与终态 Store release
+- `packages/belldandy-core/src/resident-conversation-store.ts`: global/resident ConversationStore 路由、legacy session migration、调用 activity/revision 跟踪与空闲 resident Store 回收
+- `packages/belldandy-core/src/top-level-conversation-lifecycle.ts`: WebSocket、HTTP 与 resident 顶层 conversation 共用的请求全程 lease、active pin、空闲 TTL/LRU、pending cleanup 接管、owner 释放顺序与无正文资源快照
 - `packages/belldandy-agent/src/agent-registry.ts`: 多 Agent profile 注册表
 
 ### Frontend
@@ -122,21 +138,104 @@ star-sanctuary/
 - `packages/belldandy-core/src/server.ts`: RPC 请求分发总入口
 - `packages/belldandy-core/src/server-methods/`: `models` / `goal` / `memory` / `dream` / `tools` / `workspace` / `subtask`
 - `packages/belldandy-core/src/server-http-routes.ts`: `/health`、`/api/message`、webhook、静态资源，以及 WebChat enforced CSP 与基础浏览器安全响应头
-- `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，本地打开保存目录/定位文件
-- `packages/belldandy-core/src/query-runtime-message-send.ts`: `message.send` 主执行链、tool result metadata / `failureKind` / follow-up runtime marks 透传
+- `packages/belldandy-core/src/query-runtime-http.ts`: community/webhook 鉴权与 Agent 执行链；有效 owner 请求复用 Gateway 顶层 lifecycle，重复 webhook 不重复计租
+- `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，先验证 canonical target 仍在 generated root 内，再本地打开保存目录/定位文件
+- `packages/belldandy-core/src/query-runtime-message-send.ts`: `message.send` 主执行链、从 history 准备到后台 finalizer 的顶层 lifecycle lease、tool result metadata / `failureKind` / follow-up runtime marks 透传，以及 `budget_exhausted` 的失败终态收尾
+- `packages/belldandy-core/src/resident-auto-run.ts`: resident 主动运行与 reminder-only 写入；在首次 Store 访问前取得共享顶层 lease，并在完整 run 或同步写入完成后归还
 - `packages/belldandy-core/src/attachment-understanding-runner.ts`: 附件落盘、图片/视频自动识别摘要注入、音频转写缓存复用
 - `packages/belldandy-core/src/preflight-compression-config.ts` / `preflight-compression-sidecar.ts` / `preflight-compression-governance.ts`: 发送前附件预压缩配置、sidecar 原文回取、TTL/最大条目清理治理与 doctor 观测
-- `packages/belldandy-agent/src/tool-result-adaptive-keep.ts` / `persistent-compression-reference-store.ts`: 工具结果 adaptive keep 选择、压缩后工具原文持久 reference 与清理治理
+- `packages/belldandy-agent/src/tool-result-adaptive-keep.ts` / `persistent-compression-reference-store.ts`: 工具结果 adaptive keep 选择、压缩后工具原文持久 reference 与 TTL/容量清理治理；不跟随单次 session release 删除，以支持冷恢复
 
 ### UI / WebChat
 - `apps/web/public/app.js`: 前端总装配
-- `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示
+- `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示；button-keyed copy feedback timer、document delegation dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/chat-events.js`: 服务端事件归并与聊天流状态；tool result/notice 去重 key 的固定容量窗口、connection/auth generation 清理、pagehide dispose 和无正文 retention snapshot
 - `apps/web/public/app/features/rich-content-renderer.js`: DOMPurify 富内容清理、媒体 URL allowlist 与受限 TrustedHTML policy
-- `apps/web/public/app/features/chat-network.js`: WebSocket 请求/响应、模型/Agent 选择
+- `apps/web/public/app/features/chat-network-connection-lifecycle.js`: WebSocket connection owner；socket listener 解绑、close-once、单一 reconnect timer、generation replacement、dispose guard 与无正文 runtime snapshot
+- `apps/web/public/app/features/chat-network-model-controls.js`: ChatNetwork model controls owner；model select/filter 固定 listener、dispose 后 retained callback guard 与 listener 计数 snapshot
+- `apps/web/public/app/features/chat-network-request-lifecycle.js`: WebSocket request pending owner；connection generation 隔离、单请求 deadline、response/close settlement、dispose 与无正文 pending snapshot
+- `apps/web/public/app/features/chat-network.js`: WebSocket 连接/请求转发、模型/Agent 选择；connection/request/model-control lifecycle 仅保留相邻 owner 的协议/交互策略装配、转发与合并 snapshot
+- `apps/web/public/app/features/agent-session-cache.js`: resident Agent 会话导航与消息 cache；visible/streaming pin、inactive LRU/近似字节预算、generation clear/dispose 和无正文 retention snapshot
+- `apps/web/public/app/features/agent-runtime.js`: Agent roster/身份/创建/头像/会话激活编排；create modal 固定 listener，model catalog/agent.create/avatar upload/resident ensure/observability navigation/system restart generation 与物理 pending，file input/busy/表单正文清理、activation sequence 失效、modal 单一 listener/正文释放、同步 ingress fence、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/task-token-history-cache.js`: task token 最近记录的 visible pin、inactive LRU/近似字节预算、generation clear/dispose 与无正文 retention snapshot
+- `apps/web/public/app/features/task-token-result-panel.js`: task token transient metric panel owner；disabled inert/history forwarding、可选 auto-hide timer、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/email-thread-advice-retention.js`: 邮件线程建议请求的 pending pin、成功终态 LRU 容量、失败重试、generation settlement 隔离、dispose 与无正文 retention snapshot
+- `apps/web/public/app/features/email-inbound-session-banner.js`: Email 入站会话 audit read 与动态 banner DOM owner；latest-only generation、物理 pending、retained banner 清理、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/server-config-cache.js`: WebChat 服务端配置的单项 TTL/singleflight cache、force supersede、connection/auth/config generation 隔离、dispose 与无正文 runtime snapshot
+- `apps/web/public/app/features/setup-guidance.js`: config-incomplete 引导的单一 500ms timer、hello generation replacement、config recovery clear、pagehide dispose 与无正文 snapshot
+- `apps/web/public/app/features/canvas-context.js`: Canvas/Goal 上下文投影与动态 action 接线；capability cache Promise 的 generation fence、物理 pending、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/prompt.js`: Composer textarea 提交与高度同步；keydown/input listener、单帧 RAF、字体就绪 settlement、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/header-navigation.js`: Header goals/bridge/chat/multi-page link 命令接线、可释放 listener、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/web-config-links.js`: Web config 外链 href/target/rel 与受控 window.open 接线、可释放 listener、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/panel-visibility.js` / `token-usage-observability.js`: Header/content/control/agent panel 可见性与本地持久化；固定 listener、window resize、DOM-owned popover RAF cancel、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/governance-detail-mode.js`: 治理详情模式 normalize/set/event 与可见面板刷新；全局 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/primary-chat-controls.js`: WebChat Connect/Send 主命令接线；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/main-view-navigation.js`: Memory/Experience/Goals/Subtasks/Channels/Canvas 主视图入口接线；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/goal-subtask-list-controls.js`: Goal/Subtask 列表 refresh 与 archived filter 接线；状态投影、固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/goal-modal-controls.js`: Goal create/checkpoint action modal 的 App 级按钮命令接线；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-panel-controls.js`: Goal handoff/governance specialist panel 动态 click listener owner；group replacement、真实解绑、dispose retained callback guard 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-capability-cache-read-lifecycle.js`: Goal capability 双文件 per-goal cache/pending owner；dedupe、forceReload identity replacement、物理 pending、dispose cache fence 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-capability-panel-read-lifecycle.js`: Goal capability 外层 render-chain read owner；latest-only generation、物理 pending、dispose 后 governance cache/render/focus fence 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-canvas-read-lifecycle.js`: Goal board-ref.json 单文件 read owner；latest-only generation、物理 pending、dispose rejection suppression 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-governance-read-lifecycle.js`: Goal review governance summary/tasks/tracking-index read-chain owner；latest-only generation、物理 pending、两阶段 dispose fence 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-handoff-read-lifecycle.js`: Goal handoff 单 RPC read owner；latest-only generation、物理 pending、dispose rejection suppression 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-progress-read-lifecycle.js`: Goal progress.md 单文件 read owner；latest-only generation、物理 pending、dispose rejection suppression 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-specialist-tracking-read-lifecycle.js`: Goal task graph/tasks/checkpoints/capability/tracking-index read-chain owner；latest-only generation、物理 pending、两阶段 dispose fence 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-actions-runtime.js`: Goal action RPC 与 create/checkpoint modal 内部交互；固定 listener、create focus timer、approval/review/checkpoint/governance/commander/handoff/resume/pause/archive/create/delete preview/commit generation 与物理 pending、表单正文/submit busy 清理、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-overview.js`: Goal list summary/read/selection/action DOM owner；latest-only generation、物理 pending、动态 listener 与 retained state/正文清理、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/goals-runtime.js`: Goal 列表/详情转发与 checkpoint action modal 状态；focus timer、pending request generation、正文清理、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/experience-workbench-controls.js`: ExperienceWorkbench refresh 命令接线；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/experience-workbench-cleanup.js`: ExperienceWorkbench 已消化草稿 cleanup action；确认后请求、action generation fence、物理 pending、loader/UI sync 顺序和成功/失败通知
+- `apps/web/public/app/features/experience-workbench-skill-freshness.js`: ExperienceWorkbench skill freshness 写操作；断连/忙碌入口、action generation fence、物理 pending、详情刷新和成功/失败通知
+- `apps/web/public/app/features/experience-workbench-synthesis-sources.js`: ExperienceWorkbench synthesis source selection owner；seed pin、related 选择上限、delegated checkbox listener、modal generation clear/dispose 与无正文 snapshot
+- `apps/web/public/app/features/experience-workbench-view-lifecycle.js`: ExperienceWorkbench panel visibility owner；deactivate generation/request fence、pending UI 与 synthesis transient 清理、幂等 reactivate/dispose
+- `apps/web/public/app/features/experience-workbench.js`: Experience candidate/capability/assets/usage 工作台；静态 listener owner、动态 render 接线、requestToken 读取隔离、view deactivate、synthesis source selection、generate/review/bulk/synthesis preview/create/accept/cleanup/freshness action 的 generation 与物理 pending、retained state/正文清理和 pagehide dispose
+- `apps/web/public/app/features/memory-dream-controls.js`: Memory Dream status/run/history 主命令接线；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/memory-viewer-controls.js`: Memory refresh/tab/outbound focus/search/dedup 主命令接线；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/memory-detail-source-explanation-lifecycle.js`: Task source explanation read owner；selected task/Agent generation、物理 pending、active success/failure 提交、pagehide dispose 与无正文 snapshot
+- `apps/web/public/app/features/memory-detail-usage-revoke-action.js`: Experience usage revoke action owner；Agent/action generation、物理 pending、busy、notice、usage/task reload 分段截止、pagehide dispose 与无正文 snapshot
+- `apps/web/public/app/features/memory-detail-stats-listener-lifecycle.js`: Memory stats task/source/candidate/goal audit jump 动态 click listener owner；重复 bind replacement、pagehide dispose 与无正文计数 snapshot
+- `apps/web/public/app/features/memory-detail-path-listener-lifecycle.js`: Memory detail source path 动态 click listener owner；startLine 转发、重复 bind replacement、pagehide dispose 与无正文计数 snapshot
+- `apps/web/public/app/features/memory-detail-task-audit-listener-lifecycle.js`: Memory task detail audit/action 动态 click listener owner；十类跳转/读写参数、Goal 顺序、candidate close 回退、重复 bind replacement、pagehide dispose 与无正文计数 snapshot
+- `apps/web/public/app/features/memory-detail-usage-revoke-listener-lifecycle.js`: Usage revoke button 动态 click listener owner；仅持有 taskId、busy/confirm/参数转发、重复 bind replacement、pagehide dispose 与无正文计数 snapshot
+- `apps/web/public/app/features/memory-detail-render.js`: Memory task/detail/stats 渲染与动态 action 装配；source explanation/usage revoke/stats/path/task-audit/revoke-button listener 仅保留相邻 owner 转发、Agent generation/pagehide dispose 和合并 snapshot
+- `apps/web/public/app/features/memory-viewer-request-lifecycle.js`: MemoryViewer top-level load 的 lifecycle generation、physical pending、pagehide requestToken 失效与无正文 runtime snapshot
+- `apps/web/public/app/features/memory-viewer-retained-state.js`: MemoryViewer items/detail/query/usage/shared review/Dream/dedup 正文 state、batch bar 动态 listener DOM 的 pagehide 清理、序列失效及无正文 retention snapshot
+- `apps/web/public/app/features/memory-viewer-modal-controls.js`: MemoryViewer dedup/Dream modal、Dream history delegation 与 document Escape 的 10 个固定 listener owner、pagehide dispose 和无正文 snapshot
+- `apps/web/public/app/features/memory-viewer-dedup-actions.js`: Memory dedup preview/apply 的 action generation、physical pending、modal busy/error/result 提交、reload settlement 与 dispose 隔离
+- `apps/web/public/app/features/memory-viewer-dream-history-lifecycle.js`: Dream history list/detail 请求的 owner generation、分类型 physical pending、dispose 入口与无正文 snapshot
+- `apps/web/public/app/features/memory-viewer-dream-consolidation-actions.js`: Dream consolidation review/apply 的输入 fence、action generation、physical pending、notice 与 history/detail/runtime reload settlement
+- `apps/web/public/app/features/memory-viewer-dream-runtime-lifecycle.js`: Dream status/Commons read 的分类型 latest-only generation、physical pending、request-context 提交 fence 与无正文 snapshot
+- `apps/web/public/app/features/memory-viewer-dream-run-action.js`: `dream.run` 的 action generation、physical pending、busy/runtime/notice/history/status refresh settlement 与 dispose 隔离
+- `apps/web/public/app/features/memory-viewer-share-promote-action.js`: `memory.share.promote` 的输入 fence、action generation、physical pending、notice 与列表/详情 reload settlement
+- `apps/web/public/app/features/memory-viewer-share-claim-action.js`: 单项 `memory.share.claim` claim/release 的 action generation、physical pending、notice 与列表/详情 reload settlement
+- `apps/web/public/app/features/memory-viewer-share-review-action.js`: 单项 `memory.share.review` approve/reject/revoke 的输入 fence、action generation、physical pending、notice 与列表/详情 reload settlement
+- `apps/web/public/app/features/memory-viewer-share-batch-action.js`: Shared review batch 的 selected snapshot、逐项 claim/review、部分失败 notice、busy、action generation、physical pending 与 reload settlement
+- `apps/web/public/app/features/memory-viewer-ingress-lifecycle.js`: MemoryViewer 对外同步/异步命令的统一 dispose guard、Promise 契约与无正文 snapshot
+- `apps/web/public/app/features/memory-query-filter-controls.js`: Memory task/chunk query filter 与 Enter search 接线；active-tab 条件、固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/memory-shared-review-filter-controls.js`: SharedReview focus/target/claimedBy/clear filter 状态迁移；固定 listener owner、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/control-panel-commander-toggle.js`: Commander 快捷 preset/restore 配置；change listener、config load/update generation settlement、SettingsRuntime dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/attachments.js`: Composer 附件选择/拖放/粘贴、大小预算、图片压缩与预览；固定 listener、FileReader/Image/video callback、批次 generation、正文清理、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/session-digest.js`: Session digest/continuation 摘要、刷新与 history action modal；固定 listener、请求 settlement、正文清理、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/plan-panel.js`: Conversation planState 摘要、step/ref action 与 workflow status modal；固定 listener、迟到 workflow settlement、正文清理、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/app-shell.js`: WebChat 主视图切换与 notice stack；notice timer/listener/action closure 的统一移除、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/locale.js`: WebChat locale 翻译与 select/subscriber registry；可移除 DOM listener、pagehide dispose 和无正文 lifecycle snapshot
+- `apps/web/public/app/features/theme.js`: WebChat theme persistence、transition timer replacement、toggle listener、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/voice.js`: Voice shortcut、MediaRecorder/WebSpeech 输入与附件提交；统一 listener/interval/media/permission/FileReader owner、迟到 settlement 隔离、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/bridge-runtime.js`: Bridge session panel 的 list/detail 投影、activate/deactivate polling、pagehide dispose、迟到响应隔离和无正文 timer snapshot
+- `apps/web/public/app/features/goals-state-runtime.js`: Goal live-update debounce、pending payload 合并、settled entry 删除、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/subtasks-overview.js`: Subtask 列表/详情与 live-update debounce；pending payload 合并、settled entry 删除、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/email-outbound.js`: 邮件外发确认 modal、pending countdown、批准/拒绝 settlement、迟到提交隔离、listener dispose 与无正文 timer snapshot
+- `apps/web/public/app/features/external-outbound.js`: 渠道消息外发确认 modal、pending countdown、批准/拒绝 settlement、迟到提交隔离、listener dispose 与无正文 timer snapshot
+- `apps/web/public/app/features/tool-settings.js`: Tool settings 面板、save feedback timer、可释放 panel/confirmation listener、list/save/Agent follow-up 迟到 settlement 隔离与无正文 lifecycle snapshot
 - `apps/web/public/app/features/webchat-performance-observability.js`: 本页有界启动、流式渲染、Long Task 与交互性能采样，不持久化或上传内容
 - `apps/web/public/app/features/settings-runtime.js`: 设置面板运行时桥接
-- `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、P15 configured external sources、Preflight Compression 配置/preview）
-- `apps/web/public/app/features/workspace.js`: 文件树和编辑器
+- `apps/web/public/app/features/settings.js`: 设置面板主体（含模型 fallback、渠道安全、ReAct 工具预算、P15 configured external sources、Preflight Compression 配置/preview）；save feedback timer replacement/dispose 与无正文 snapshot
+- `apps/web/public/app/features/workspace.js`: 文件树和编辑器；save response/edit revision、500ms finalize timer、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/workspace-roots-save.js`: workspace roots 配置保存、latest-only UI commit、反馈 timer、按钮 listener、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/uuid-identity.js`: UUID 本地持久化、save/blur listener、单一 reconnect timer、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/session-auth-handoff.js`: 多页面短期 token 的 nonce/BroadcastChannel handoff；producer/consumer channel、listener、expiry/wait/delayed-close timer、pagehide dispose 与无敏感内容 lifecycle snapshot
+- `apps/web/public/app/features/doctor-card-render-lifecycle.js`: Doctor card batched render owner；container job replacement、RAF/timeout 取消、dispose retained callback guard 与无正文 runtime snapshot
 - `apps/web/public/app/features/doctor-observability.js`: doctor / observability UI（含 Query Runtime、运行资源、WebChat 性能、Dream Runtime、Preflight Compression 治理卡片）
 
 ### State / Workspace / Persistence
@@ -144,25 +243,46 @@ star-sanctuary/
 - `packages/belldandy-protocol/src/filesystem-capability.ts`: canonical root、realpath containment、safe relative/basename 与字节上限的共享文件系统能力
 - `packages/belldandy-protocol/src/identity.ts`: `IDENTITY.md` authority profile 解析、owner UUID 读取、运行态 authority relation 评估
 - `packages/belldandy-agent/src/workspace.ts`: `SOUL.md` / `IDENTITY.md` / `USER.md` / `AGENTS.md` 等 workspace 文件加载
-- `apps/web/public/app/features/persistence.js`: 前端 localStorage 持久化
+- `apps/web/public/app/features/persistence.js`: 前端 local/sessionStorage 持久化、CredentialSession auth control/敏感输入 lifecycle，以及 model selection listener/pagehide dispose 与无正文 snapshot
 - `apps/web/public/app/bootstrap/state.js`: goals / memory / subtasks 前端状态
 
 ### Memory / Task / Experience
-- `packages/belldandy-memory/src/store.ts`: SQLite schema、FTS、task/experience 持久化
-- `packages/belldandy-memory/src/manager.ts`: MemoryManager、global registry、durable extraction 策略、P12-P15 记忆树治理/来源治理
+- `packages/belldandy-memory/src/store.ts`: SQLite schema、FTS、task/experience 持久化、task detail batch projection、单 kind Memory Tree 原子发布，以及 vec0 batch read/write 与带稳定 `rowid` 的 embedding 候选分页转发
+- `packages/belldandy-memory/src/manager.ts`: MemoryManager、global registry、前台 retrieval deadline/关键词降级、derived task/shortcut batch projection、reranker batch vector read、embedding response 校验、失败 ledger/backoff 与零进度断路、node-assisted Memory Tree 的 last-known-good/background refresh、durable extraction deadline/close 取消、P12-P15 记忆树治理/来源治理
+- `packages/belldandy-memory/src/reranker.ts`: 规则重排与 MMR，多向量候选通过可选 batch callback 预加载并兼容单项回调
+- `packages/belldandy-memory/src/chunk-vector-batch.ts`: vec0 批量读写、结构化 ID 参数绑定、缺失向量降级、分批解码与 vec/cache 原子提交
+- `packages/belldandy-memory/src/task-detail-batch.ts`: task、activity、memory link、usage 及 asset usage stats 的有界 SQLite 批量投影，保留每 task 的旧详情上限与输入排序
+- `packages/belldandy-memory/src/embedding-sync.ts`: embedding Provider/缓存向量的有限数值、维度和批次位置校验；首个真实 passage 响应的维度推导
+- `packages/belldandy-memory/src/embeddings/index.ts` / `types.ts`: package-root canonical EmbeddingProvider、signal/deadline request context，以及显式 legacy structured-response adapter DTO
+- `packages/belldandy-memory/src/embedding-failure-ledger.ts`: 独立 additive SQLite failure ledger、指数退避、固定失败分类与成功清除
+- `packages/belldandy-memory/src/embedding-pending-candidates.ts`: 未向量化 chunk 的稳定 `rowid` 页读取与跳过 backoff 前缀的同步游标
+- `packages/belldandy-memory/src/memory-retrieval-deadline.ts`: 前台检索的调用方取消、绝对 deadline、忽略 signal 的迟到结果隔离与 listener/timer owner
+- `packages/belldandy-memory/src/index-coordinator.ts`: full/lazy/manual scan singleflight、full scan/watch 排他顺序、latest-wins 有界 watch 队列、overflow rescan 与 close drain/abort owner
+- `packages/belldandy-memory/src/bounded-index-file.ts`: 索引文本的 handle 内 size 预检、max+1 哨兵读取、UTF-8 增量解码与取消安全关闭
+- `packages/belldandy-memory/src/derived-session-retrieval.ts`: 可取消的 session digest/session-memory 派生检索与有界候选扫描
+- `packages/belldandy-memory/src/background-job-control.ts`: Memory 后台任务的 pause waiter Set、远端调用 deadline race 与 close abort owner
 - `packages/belldandy-memory/src/memory-tree-lifecycle.ts` / `memory-tree-lifecycle-report.ts` / `memory-tree-job-report.ts` / `memory-source-inventory-governance.ts` / `memory-dedup-governance.ts` / `external-memory-ingest-governance.ts`: 记忆树 lifecycle 脏状态、失败冷却账本、作业视图、来源家族治理摘要、chunk/source/external ingest 去重建议分层、report/doctor 可读视图
-- `packages/belldandy-memory/src/indexer.ts`: 索引构建
-- `packages/belldandy-memory/src/external-memory-ingest.ts`: P15 外来源 ingest adapter（首版 Obsidian Markdown 目录 preview/apply）
+- `packages/belldandy-memory/src/memory-tree-publication.ts`: 单一 managed tree kind 的 source/node/edge SQLite 原子发布；任一序列化或写入失败时保留旧快照
+- `packages/belldandy-memory/src/memory-tree-refresh-queue.ts`: topic/profile/global dirty tree 的请求外合并 refresh、运行中 kind 去重与 close 前未启动任务丢弃
+- `packages/belldandy-memory/src/indexer.ts`: ignore/hash/mtime/chunk 索引构建、单文件字节硬限与跨 generation 轮转 run budget
+- `packages/belldandy-memory/src/external-memory-ingest.ts` / `external-ingest-transaction.ts`: P15 外来源 ingest adapter；Obsidian/单 Markdown preview/apply 的 canonical root/file identity、realpath 复核、深度/文件/字节/chunk 硬限、保守 stale 判定与跨 source SQLite 原子发布/lineage recheck
 - `packages/belldandy-memory/src/task-processor.ts`: 任务沉淀处理
-- `packages/belldandy-memory/src/dream-store.ts` / `dream-input.ts` / `dream-prompt.ts` / `dream-writer.ts` / `dream-runtime.ts` / `dream-obsidian-sync.ts` / `obsidian-sync-paths.ts` / `commons-exporter.ts`: dream 状态层、输入聚合、模型提示、SS 内部写回、Obsidian 私有镜像、Commons Markdown 导出、sync 路径解析
+- `packages/belldandy-memory/src/dream-store.ts` / `dream-input.ts` / `dream-prompt.ts` / `dream-writer.ts` / `dream-runtime.ts` / `dream-obsidian-sync.ts` / `obsidian-sync-paths.ts` / `commons-exporter.ts`: dream 状态层、输入聚合、auto-run 原子 reservation、模型提示、SS 内部写回、Obsidian 私有镜像、Commons Markdown 导出、sync 路径解析
 - `packages/belldandy-core/src/obsidian-commons-runtime.ts`: Commons 导出运行时，负责扫描已审批 shared memory 并写入 Obsidian 公共租界
+- `packages/belldandy-core/src/context-injection.ts`: recent memory/task prelude 与 auto-recall；2 秒默认 deadline 会取消底层 Memory retrieval，并转发 Agent run 取消信号
 - `packages/belldandy-core/src/dream-automation-runtime.ts`: automatic dream 触发桥，承接 heartbeat / cron 完成事件并把触发请求送入 dream gate
 - `packages/belldandy-core/src/server-methods/dreams.ts`: `dream.run` / `dream.status.get` / `dream.history.list` / `dream.get` / `dream.commons.export_now` RPC
-- `apps/web/public/app/features/memory-runtime.js`: 前端 memory 主流程
-- `apps/web/public/app/features/memory-viewer.js`: memory viewer UI（含 dream 状态条、手动触发最小接线）
+- `apps/web/public/app/features/memory-runtime.js`: 前端 memory 主流程；装配 task/memory/candidate read lifecycle，并由 app pagehide 转发 dispose
+- `apps/web/public/app/features/memory-runtime-ingress-lifecycle.js`: MemoryRuntime 公开 sync/async command 的 dispose guard 与无正文 snapshot
+- `apps/web/public/app/features/memory-runtime-read-lifecycle.js`: `memory.task.get` / `memory.get` / `experience.candidate.get` 的分类型 latest-only generation、physical pending 与无正文 snapshot
+- `apps/web/public/app/features/memory-runtime-experience-generate-action.js`: Experience candidate duplicate preflight / generate / reload 链的 action generation、physical pending、dispose 截止与无正文 snapshot
+- `apps/web/public/app/features/memory-runtime-experience-review-action.js`: Experience candidate accept/reject / reload 链的 action generation、physical pending、dispose 截止与无正文 snapshot
+- `apps/web/public/app/features/memory-runtime-skill-freshness-action.js`: Skill freshness update / usage / task / candidate reload 链的 action generation、physical pending、dispose 截止与无正文 snapshot
+- `apps/web/public/app/features/memory-viewer.js`: memory viewer UI（含 dream 状态条、手动触发最小接线，以及 request/retained-state/modal-controls/dedup/Dream lifecycle owner 的装配/转发）
 
 ### Goals / Long-running Work
 - `packages/belldandy-core/src/goals/manager.ts`: goal 主状态机与治理中心
+- `packages/belldandy-core/src/goals/registry.ts` / `goal-registry-mutation-queue.ts`: 原子 JSON registry 与按规范化 stateDir 串行的进程内 mutation owner；Goal 创建先预留同 slug，再发布 registry
 - `packages/belldandy-core/src/goals/storage-policy.ts`: Goal 默认目录 owner marker、删除预览与受限物理清理策略
 - `packages/belldandy-core/src/goals/capability-acceptance-gate.ts`: verifier / goals fan-in 结构化 contract gate
 - `packages/belldandy-core/src/goals/task-graph.ts`: goal task graph
@@ -171,31 +291,37 @@ star-sanctuary/
 - `apps/web/public/app/features/goals-specialist-panels-runtime.js`: capability / tracking / handoff / governance 面板
 
 ### Subtasks / Delegation / Background Continuation
-- `packages/belldandy-agent/src/orchestrator.ts`: sub-agent 编排
+- `packages/belldandy-agent/src/orchestrator.ts`: sub-agent 编排、真实 queued session id、timeout/stop 取消与迟到结果隔离
 - `packages/belldandy-agent/src/launch-spec.ts`: launch spec 归一化、catalog 默认值补丁、结构化 delegation contract / team metadata 注入
-- `packages/belldandy-skills/src/subagent-launch.ts`: 子 Agent launch spec、worker instruction 包装、Team topology / teammate handoff / reporting envelope
+- `packages/belldandy-skills/src/subagent-launch.ts`: 子 Agent launch spec、worker instruction 包装、Team topology / teammate handoff / reporting envelope，以及不进入持久 launch spec 的父级 `AbortSignal` 透传
 - `packages/belldandy-skills/src/builtin/session/delegation-contract.ts`: delegation tool 结构化 contract schema、result metadata、team-aware gate / follow-up serialization
 - `packages/belldandy-skills/src/delegation-protocol.ts`: delegation protocol、ownership/acceptance/deliverable contract、Team metadata
-- `packages/belldandy-skills/src/builtin/session/delegate-parallel.ts`: parallel lane team metadata、manager-mediated handoff / verifier lane 推断
+- `packages/belldandy-skills/src/builtin/session/delegate-parallel.ts`: parallel lane team metadata、manager-mediated handoff / verifier lane 推断，以及 8 项 fan-out、每批 4 项和 128 KiB aggregate output 硬预算
 - `packages/belldandy-agent/src/runtime-prompt-deltas.ts`: run-level role/tool/team delta、delegation result review、team handoff / fan-in triage / completion gate、runtime identity authority
 - `packages/belldandy-core/src/team-identity-governance.ts`: Team metadata identity enrichment，给 roster 派生 authority relation / reportsTo / mayDirect
-- `packages/belldandy-core/src/task-runtime.ts`: subtask runtime、resume/takeover/update
+- `packages/belldandy-core/src/task-runtime.ts` / `subtask-command-claim.ts` / `subtask-runtime-state-quarantine.ts` / `subtask-runtime-store-lifecycle.ts` / `subtask-runtime-retention-observability.ts`: subtask runtime、排队 session 持久化、runtime-only 取消信号转发，以及按 generation 的 steering/resume/takeover command claim、重试复用与迟到 completion 隔离；损坏 registry 进入只读 quarantine 且保留原文件，`flushAndClose()` 可 drain deferred persist，Doctor 仅输出 archived/terminal 体量与年龄聚合
 - `packages/belldandy-core/src/query-runtime-subtask.ts`: `subtask.get` query runtime、acceptance gate、Team shared state / identity authority / fan-in summary / completion gate view
 - `packages/belldandy-core/src/bridge-subtask-runtime.ts`: bridge-aware subtask 治理
 - `packages/belldandy-core/src/background-continuation-runtime.ts`: 后台 continuation 账本
+- `packages/belldandy-core/src/background-run-coordinator.ts`: Cron/Heartbeat 的进程内全局/分组运行预算、foreground 活动避让与无内容 aggregate snapshot
+- `packages/belldandy-core/src/conversation-run-registry.ts`: conversation run 的停止控制及不含会话身份的运行态聚合
+- `packages/belldandy-core/src/cron/store.ts` / `store-mutation-queue.ts`: Cron JSON 的进程内按规范化文件路径串行 mutation、随机 staging、失败清理，以及 scheduler runtime snapshot 的短锁 rebase
+- `packages/belldandy-core/src/cron/scheduler.ts`: Cron tick 与 `runJobNow()` 的共享进程内 job claim、全局运行上限、活跃时段和投递调度，以及停止 intake 后等待已接受运行结算的 local `stopAndDrain()`
+- `packages/belldandy-core/src/heartbeat/runner.ts`: Heartbeat interval 与公开 `runOnce()` 的共享单飞 claim、活跃时段、去重与投递运行时，以及可等待已接受 run 的 local `stopAndDrain()`
 - `apps/web/public/app/features/subtasks-runtime.js`: subtasks 前端流程
 - `apps/web/public/app/features/subtasks-overview.js`: subtask 详情页、delegation protocol、Team shared state / lane roster / completion gate / identity authority UI
 - `apps/web/public/app/features/prompt-snapshot-detail.js`: prompt snapshot detail、active sections / deltas、Team coordination / Identity Authority 摘要
 
 ### Dynamic Workflows（DW）
-- `packages/belldandy-agent/src/workflow-context.ts`: `WorkflowContext` 类型定义（agent / parallel / parallelMap / pipeline / workflow / phase / log / args）
-- `packages/belldandy-core/src/workflow-context-impl.ts`: `createWorkflowContext()` 工厂实现、Semaphore、pipeline 无屏障流水线、workflow composition 嵌套调用
-- `packages/belldandy-core/src/workflow-runtime.ts`: `WorkflowRuntime` 执行引擎（脚本加载、Journal 创建/恢复、BudgetGuard、orchestrator、跨版本 migration）
-- `packages/belldandy-core/src/workflow-journal.ts`: `WorkflowJournal` 事件溯源（CRUD、migration 查询、统计）
+- `packages/belldandy-agent/src/workflow-context.ts`: `WorkflowContext` 类型定义（agent / parallel / parallelMap / pipeline / workflow / phase / log / args / abortSignal）
+- `packages/belldandy-core/src/workflow-context-impl.ts`: `createWorkflowContext()` 工厂实现、可取消 Semaphore、pipeline 无屏障流水线、workflow composition 嵌套调用与父级取消信号透传
+- `packages/belldandy-core/src/workflow-runtime.ts`: `WorkflowRuntime` 执行引擎（脚本加载、Journal 创建/恢复、BudgetGuard、orchestrator、主动 deadline 与父/子 workflow 取消桥接、跨版本 migration）
+- `packages/belldandy-core/src/workflow-run-controller.ts`: 单次 Workflow 的 deadline/父级取消 owner，以及环境硬上限与调用请求的预算合并
+- `packages/belldandy-core/src/workflow-journal.ts`: `WorkflowJournal` 事件溯源；只有 `done` 记录可作为 cache hit，error/skipped/pending 保留为可诊断、可重试状态
 - `packages/belldandy-core/src/workflow-fingerprint.ts`: 稳定指纹计算、`computeMigrationFingerprint()`
 - `packages/belldandy-core/src/workflow-budget-guard.ts`: 预算熔断
 - `packages/belldandy-core/src/workflow-execution-policy.ts`: 启动期 Workflow source trust policy、批准 manifest 与 inline/file 迁移开关
-- `packages/belldandy-core/src/workflow-script-loader.ts`: 脚本加载器（file / builtin / inline + AST 安全扫描），按 canonical root 与批准 hash 加载文件 source
+- `packages/belldandy-core/src/workflow-script-loader.ts`: 脚本加载器（file / builtin / inline + AST 安全扫描），按 canonical root 与批准 hash 加载文件 source，以有界异步读取和内容版本化 ESM URL 避免超限/旧模块缓存
 - `packages/belldandy-core/src/workflow-builtin-registry.ts`: 内置工作流注册表
 - `packages/belldandy-core/src/workflow-builtin-code-audit.ts`: `code-audit` 内置工作流（3 阶段安全审计）
 - `packages/belldandy-core/src/workflow-builtin-parallel-research.ts`: `parallel-research` 内置工作流（2 阶段并行研究）
@@ -204,7 +330,14 @@ star-sanctuary/
 - `docs/指挥模式与动态工作流使用说明.md`: 使用说明（快速上手、脚本编写、API 参考、断点续传、预算控制）
 
 ### Tools / Skills / Plugins / MCP
-- `packages/belldandy-skills/src/executor.ts`: ToolExecutor
+- `packages/belldandy-skills/src/executor.ts`: ToolExecutor、整批拒绝的 batch 上限、保持结果顺序的有界并发 worker pool、空 deferred selection 的会话内存回收，以及有界异步 Tool audit 接线
+- `packages/belldandy-skills/src/tool-audit-dispatcher.ts`: 已脱敏 Tool audit 的单飞异步投递、等待队列上限和无正文运行水位
+- `packages/belldandy-skills/src/builtin/timer.ts`: 按 conversation/agent 隔离的进程内 Timer owner、每 namespace timer 上限与单 timer lap history 上限
+- `packages/belldandy-skills/src/builtin/system/exec.ts`: `run_command` 命令策略、timeout/输出硬上限、跨平台 process-tree 终止与有界 close drain
+- `packages/belldandy-skills/src/builtin/system/process-lease.ts`: Unix process group 与 Windows `taskkill /T /F` 的幂等终止 owner、hard-kill fallback 和 close 观测
+- `packages/belldandy-skills/src/builtin/system/pty.ts`: PTY active session owner、总数/空闲 TTL/输出硬上限、有界 terminal snapshot ring 与 shutdown-all
+- `packages/belldandy-skills/src/builtin/agent-bridge/sessions.ts` / `runtime-pty.ts`: PTY terminal snapshot 到 Bridge closed record/artifact 的单飞、原子发布收敛，以及 Gateway 可调用的统一 Bridge shutdown seam
+- `packages/belldandy-skills/src/builtin/list-files.ts`: `list_files` 流式目录遍历、entry 上限与有效 JSON 响应字节裁剪
 - `packages/belldandy-skills/src/failure-kind.ts`: 工具失败分类 taxonomy、normalization、fallback inference
 - `packages/belldandy-skills/src/faqi.ts`: FAQI（法器）定义解析、状态文件读写、currentFaqi -> toolWhitelist 解析
 - `packages/belldandy-skills/src/tool-contract-v2.ts`: 工具治理契约与 V2 聚合
@@ -213,22 +346,34 @@ star-sanctuary/
 - `packages/belldandy-skills/src/builtin/list-faqis.ts`: 列出全局 FAQI 法器库、标记当前 Agent 的 currentFaqi
 - `packages/belldandy-skills/src/builtin/switch-faqi.ts`: 当前 Agent 自助切换 currentFaqi，并提示重启生效
 - `packages/belldandy-skills/src/builtin/multimedia/`: 图片生成、图片识别、视频识别、TTS/STT、摄像头与屏幕截图工具
-- `packages/belldandy-skills/src/skill-registry.ts`: skills 汇总与 eligibility
+- `packages/belldandy-skills/src/builtin/remote-response-file.ts`: image/TTS/Office 共用的响应字节上限、流式 SHA-256、可取消同目录 staging 与原子提交 owner
+- `packages/belldandy-skills/src/builtin/multimedia/media-file-stream.ts`: understanding fingerprint、base64 与 multipart upload 的有界可取消文件流，避免整文件 Buffer/Blob 多副本
+- `packages/belldandy-skills/src/builtin/multimedia/understanding-cache.ts`: 音频/图片/视频共享的 v2 cache record、TTL/条目数/总字节 LRU、单 fingerprint 单飞与原子写治理
+- `packages/belldandy-skills/src/builtin/multimedia/camera-native-desktop-stdio-client.ts`: native camera helper 的 stdio 协议、generation/child 所有权、请求 deadline/取消与返回前 process-tree drain
+- `packages/belldandy-skills/src/builtin/multimedia/bounded-line-reader.ts`: 按原始 UTF-8 字节切行的有界流读取器，用于阻止 helper 无换行输出导致单行无界累积
+- `packages/belldandy-skills/src/skill-registry.ts`: bundled/user/plugin 完整 inventory、user > plugin > bundled 唯一 active set，以及 source-key eligibility/prompt/search 分类
+- `packages/belldandy-skills/src/skill-loader.ts`: `SKILL.md` 的 256 KiB 有界文件读取、frontmatter/Markdown 解析与来源目录扫描
+- `packages/belldandy-agent/src/skill-prompt-budget.ts`: always/high Skill section 的 64 KiB UTF-8 总预算、全文降级摘要与无正文诊断计数
 - `packages/belldandy-plugins/src/registry.ts`: Plugin staging 加载、Tool/Hook/Skill 所有权、unload/dispose 生命周期，以及不保留调用内容的有界 Hook 耗时/结果诊断
 - `packages/belldandy-core/src/extension-host.ts` / `extension-integrity.ts`: Marketplace 扩展加载 seam、物化目录内容 hash 与真实路径/manifest identity 校验
 - `packages/belldandy-mcp/src/client.ts`: MCP 操作 deadline、调用方取消与 transport/child lease 清理
 - `packages/belldandy-mcp/src/manager.ts`: MCP server 连接管理
 
 ### Channels / Community / External Delivery
-- `packages/belldandy-channels/src/manager.ts`: channel manager
+- `packages/belldandy-channels/src/manager.ts`: 串行 Channel owner replace/unregister 与 start/stop 生命周期管理器
+- `packages/belldandy-channels/src/channel-outbound.ts`: 共享出站 deadline、AbortSignal 传播、有限错误响应体、失败分类和哈希化幂等单飞/短缓存
+- `packages/belldandy-channels/src/current-conversation-binding-store.ts`: 当前会话绑定 JSON Store；单进程加载、同轮微任务批量写入和 staging rename 原子发布，读取返回隔离快照
 - `packages/belldandy-channels/src/channel-ingress-scheduler.ts`: 按 history owner 保序、跨 session 公平、全局/渠道并发与有界 pending 的共享入站调度器；快照不含会话或正文
 - `packages/belldandy-channels/src/media-reader.ts`: 已批准媒体请求的 deadline 与总字节上限读取器
 - `packages/belldandy-channels/src/community.ts`: community 长连接与房间消息处理
 - `packages/belldandy-channels/src/feishu.ts`: 飞书渠道
-- `packages/belldandy-channels/src/qq.ts`: QQ 渠道
-- `packages/belldandy-channels/src/discord.ts`: Discord 渠道
+- `packages/belldandy-channels/src/qq.ts` / `qq-conversation-lifecycle.test.ts`: QQ 渠道，以及 route 后覆盖 Store、Agent stream、正常/异常 reply settlement 的共享 conversation lease fixture
+- `packages/belldandy-channels/src/discord.ts` / `discord-conversation-lifecycle.test.ts`: Discord 渠道，以及 route 后覆盖 typing、Agent stream、正常/异常 outbound settlement 的共享 conversation lease fixture
 - `packages/belldandy-channels/src/router/`: 安全 ingress preflight、路由规则与渠道策略加载
-- `packages/belldandy-core/src/bin/gateway-channels-runtime.ts`: 从环境装配一个共享 ChannelIngressScheduler，注入四个渠道并向 Core 资源观测提供聚合快照
+- `packages/belldandy-channels/src/types.ts` / `packages/belldandy-core/src/channel-conversation-lifecycle.ts`: Channel 包无关 conversation lease capability，以及 Core 对 Gateway manager、Agent、ConversationStore owner 的顺序桥接
+- `packages/belldandy-core/src/bin/gateway-channels-runtime.ts`: 从环境装配共享 ChannelIngressScheduler、conversation lifecycle bridge 和 Channel owner；在配置重启前撤销外发 sender、drain 受管渠道，并向 Core 资源观测提供聚合快照
+- `packages/belldandy-core/src/email-inbound-ingress.ts` / `email-inbound-imap-runtime.ts`: Email thread 绑定、外部输入 prompt 与 Agent 执行；复用 Gateway 顶层 lifecycle，IMAP runtime 仅负责轮询和依赖透传
+- `packages/belldandy-core/src/email-follow-up-reminder-runtime.ts`: 到期邮件跟进提醒的逐条 Store-only lease、同步写入/广播与 pending 重试隔离
 - `packages/belldandy-core/src/query-runtime-email-outbound.ts`: 邮件外发
 - `packages/belldandy-core/src/query-runtime-external-outbound.ts`: 外部消息外发审批/执行
 
@@ -239,15 +384,18 @@ star-sanctuary/
 - `packages/belldandy-skills/src/builtin/browser/`: 浏览器工具
 
 ### Config / Runtime / Distribution
+- `package.json`: 根构建命令；默认 `build` 走 TypeScript 增量图，`build:force` 保留强制重建入口
 - `install.ps1` / `install.sh`: 命令安装器；验证 Release manifest/checksum、下载上限和受限归档条目后才替换 `current/`
 - `packages/star-sanctuary-distribution/scripts/build-portable.mjs`: 从 workspace 构建 Windows portable runtime，并通过共享 ArtifactContract 复制 package 非 `dist` bin
 - `packages/star-sanctuary-distribution/scripts/build-single-exe.mjs`: 消费已通过 ArtifactContract/Relay probe 的 full portable 构建 single-exe
 - `packages/star-sanctuary-distribution/scripts/verify-portable-artifacts.mjs`: 校验 portable 或 single-exe 已提取 runtime 的 package/manifest/recovery 契约，并在隔离目录执行 Relay CLI loopback probe
 - `packages/star-sanctuary-distribution/src/bootstrap-auth-token.ts`: Core/portable/single-exe 共用的 256-bit setup token 生成入口
-- `packages/star-sanctuary-distribution/src/runtime-manifest.ts`: portable/single-exe runtime manifest 与 version descriptor 的有界解析、路径和完整性校验
+- `packages/star-sanctuary-distribution/src/runtime-manifest.ts`: portable/single-exe runtime manifest 与 version descriptor 的有界解析、路径和完整性校验；运行时文件以固定缓冲区流式 SHA-256 校验
 - `packages/star-sanctuary-distribution/src/runtime-paths.ts`: runtime/env/web root 解析
 - `packages/star-sanctuary-distribution/src/portable-runtime.ts`: portable runtime
 - `packages/star-sanctuary-distribution/src/runtime-extract.ts`: single-exe 解包
+- `packages/star-sanctuary-distribution/src/gateway-launch-config.ts`: 每轮 supervisor launch 生成唯一的 env/port 快照，供 preflight 与 child spawn 复用
+- `packages/star-sanctuary-distribution/src/gateway-preflight.ts`: 旧 PID 清理、端口 owner 校验与受控终止
 - `packages/star-sanctuary-distribution/src/gateway-supervisor-lifecycle.ts`: portable/single-exe 与 Core `bdd start/dev` 共用的 child 单终态、signal 转发和有界重启 lifecycle
 - `packages/belldandy-core/src/gateway-config.ts`: Gateway env/config 读取
 - `packages/belldandy-core/src/tools-config.ts`: 工具配置管理

@@ -132,9 +132,18 @@ export function createSessionDigestFeature({
     lastCompacted: false,
     modalOpen: false,
   };
+  let disposed = false;
+  const listenerEntries = [];
+  const pendingRequests = new Set();
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    listenerEntries.push({ target, type, handler });
+  }
 
   function setRefreshButtonState() {
-    if (!sessionDigestRefreshBtn) return;
+    if (disposed || !sessionDigestRefreshBtn) return;
     const conversationId = getActiveConversationId();
     sessionDigestRefreshBtn.disabled = !isConnected() || !conversationId || state.loading || state.refreshing;
     sessionDigestRefreshBtn.textContent = state.refreshing
@@ -217,7 +226,7 @@ export function createSessionDigestFeature({
   }
 
   function renderModal() {
-    if (!sessionDigestModalEl) return;
+    if (disposed || !sessionDigestModalEl) return;
 
     const shouldOpen = state.modalOpen && canOpenModal();
     sessionDigestModalEl.classList.toggle("hidden", !shouldOpen);
@@ -302,18 +311,20 @@ export function createSessionDigestFeature({
   }
 
   function closeModal() {
+    if (disposed) return;
     state.modalOpen = false;
     renderModal();
   }
 
   function openModal() {
+    if (disposed) return;
     if (!canOpenModal()) return;
     state.modalOpen = true;
     renderModal();
   }
 
   function renderEmpty(message) {
-    if (!sessionDigestSummaryEl) return;
+    if (disposed || !sessionDigestSummaryEl) return;
     closeModal();
     const empty = document.createElement("div");
     empty.className = "task-token-history-empty";
@@ -326,12 +337,12 @@ export function createSessionDigestFeature({
   }
 
   function renderContinuationSummary() {
-    if (!sessionContinuationSummaryEl) return;
+    if (disposed || !sessionContinuationSummaryEl) return;
     sessionContinuationSummaryEl.replaceChildren();
   }
 
   function renderDigest() {
-    if (!sessionDigestSummaryEl) return;
+    if (disposed || !sessionDigestSummaryEl) return;
 
     if (!isConnected()) {
       renderEmpty(t("panel.sessionDigestDisconnected", {}, "Disconnected"));
@@ -385,6 +396,7 @@ export function createSessionDigestFeature({
   }
 
   async function loadSessionDigest(conversationId = getActiveConversationId(), options = {}) {
+    if (disposed) return null;
     const force = options.force === true;
     const notify = options.notify === true;
 
@@ -411,6 +423,9 @@ export function createSessionDigestFeature({
     state.refreshing = force;
     renderDigest();
 
+    const request = { seq };
+    pendingRequests.add(request);
+    try {
     const res = await sendReq({
       type: "req",
       id: makeId(),
@@ -418,7 +433,7 @@ export function createSessionDigestFeature({
       params: force ? { conversationId, force: true } : { conversationId },
     });
 
-    if (seq !== state.loadSeq) return null;
+    if (disposed || seq !== state.loadSeq) return null;
 
     state.loading = false;
     state.refreshing = false;
@@ -453,9 +468,13 @@ export function createSessionDigestFeature({
     }
 
     return state.digest;
+    } finally {
+      pendingRequests.delete(request);
+    }
   }
 
   function handleDigestUpdated(payload) {
+    if (disposed) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     if (!conversationId || conversationId !== getActiveConversationId()) return;
     state.conversationId = conversationId;
@@ -469,6 +488,7 @@ export function createSessionDigestFeature({
   }
 
   function clear() {
+    if (disposed) return;
     state.conversationId = null;
     state.digest = null;
     state.continuationState = null;
@@ -482,6 +502,7 @@ export function createSessionDigestFeature({
   }
 
   function setContinuationState(payload, options = {}) {
+    if (disposed) return;
     const conversationId = options.conversationId || getActiveConversationId();
     if (conversationId && conversationId !== getActiveConversationId()) return;
     state.continuationState = payload && typeof payload === "object" ? payload : null;
@@ -490,6 +511,7 @@ export function createSessionDigestFeature({
   }
 
   function handleContinuationActionEvent(event) {
+    if (disposed) return;
     const trigger = event.target instanceof Element ? event.target.closest("[data-continuation-action]") : null;
     if (!trigger || typeof onOpenContinuationAction !== "function") return;
     const action = decodeContinuationAction(trigger.getAttribute("data-continuation-action") || "");
@@ -497,78 +519,112 @@ export function createSessionDigestFeature({
     void onOpenContinuationAction(action);
   }
 
-  if (sessionDigestRefreshBtn) {
-    sessionDigestRefreshBtn.addEventListener("click", () => {
-      const conversationId = getActiveConversationId();
-      if (!conversationId) return;
-      void loadSessionDigest(conversationId, { force: true, notify: true });
-    });
+  function handleRefreshClick() {
+    if (disposed) return;
+    const conversationId = getActiveConversationId();
+    if (!conversationId) return;
+    void loadSessionDigest(conversationId, { force: true, notify: true });
   }
 
-  if (sessionDigestSummaryEl) {
-    sessionDigestSummaryEl.addEventListener("click", (event) => {
-      const trigger = event.target instanceof Element ? event.target.closest(".session-digest-card.is-interactive") : null;
-      if (!trigger) return;
-      openModal();
-    });
-    sessionDigestSummaryEl.addEventListener("keydown", (event) => {
-      const trigger = event.target instanceof Element ? event.target.closest(".session-digest-card.is-interactive") : null;
-      if (!trigger) return;
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      openModal();
-    });
+  function handleSummaryClick(event) {
+    if (disposed) return;
+    const trigger = event.target instanceof Element ? event.target.closest(".session-digest-card.is-interactive") : null;
+    if (!trigger) return;
+    openModal();
   }
 
-  if (sessionContinuationSummaryEl) {
-    sessionContinuationSummaryEl.addEventListener("click", handleContinuationActionEvent);
+  function handleSummaryKeydown(event) {
+    if (disposed) return;
+    const trigger = event.target instanceof Element ? event.target.closest(".session-digest-card.is-interactive") : null;
+    if (!trigger || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    openModal();
   }
 
-  if (sessionDigestModalContentEl) {
-    sessionDigestModalContentEl.addEventListener("click", handleContinuationActionEvent);
-  }
-
-  if (sessionDigestModalCloseBtn) {
-    sessionDigestModalCloseBtn.addEventListener("click", () => {
-      closeModal();
-    });
-  }
-
-  if (sessionDigestModalEl) {
-    sessionDigestModalEl.addEventListener("click", (event) => {
-      if (event.target === sessionDigestModalEl) {
-        closeModal();
-      }
-    });
-  }
-
-  if (sessionDigestModalActionsEl) {
-    sessionDigestModalActionsEl.addEventListener("click", (event) => {
-      const trigger = event.target instanceof Element ? event.target.closest("[data-history-action]") : null;
-      if (!trigger || typeof onSendHistoryAction !== "function") return;
-      const actionId = trigger.getAttribute("data-history-action") || "";
-      if (!actionId) return;
-      closeModal();
-      onSendHistoryAction({
-        actionId,
-        conversationId: getActiveConversationId?.() || "",
-      });
-    });
-  }
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !state.modalOpen) return;
+  function handleModalCloseClick() {
     closeModal();
-  });
+  }
+
+  function handleModalBackdropClick(event) {
+    if (disposed || event.target !== sessionDigestModalEl) return;
+    closeModal();
+  }
+
+  function handleModalActionsClick(event) {
+    if (disposed) return;
+    const trigger = event.target instanceof Element ? event.target.closest("[data-history-action]") : null;
+    if (!trigger || typeof onSendHistoryAction !== "function") return;
+    const actionId = trigger.getAttribute("data-history-action") || "";
+    if (!actionId) return;
+    closeModal();
+    onSendHistoryAction({
+      actionId,
+      conversationId: getActiveConversationId?.() || "",
+    });
+  }
+
+  function handleDocumentKeydown(event) {
+    if (disposed || event.key !== "Escape" || !state.modalOpen) return;
+    closeModal();
+  }
+
+  addOwnedListener(sessionDigestRefreshBtn, "click", handleRefreshClick);
+  addOwnedListener(sessionDigestSummaryEl, "click", handleSummaryClick);
+  addOwnedListener(sessionDigestSummaryEl, "keydown", handleSummaryKeydown);
+  addOwnedListener(sessionContinuationSummaryEl, "click", handleContinuationActionEvent);
+  addOwnedListener(sessionDigestModalContentEl, "click", handleContinuationActionEvent);
+  addOwnedListener(sessionDigestModalCloseBtn, "click", handleModalCloseClick);
+  addOwnedListener(sessionDigestModalEl, "click", handleModalBackdropClick);
+  addOwnedListener(sessionDigestModalActionsEl, "click", handleModalActionsClick);
+  addOwnedListener(document, "keydown", handleDocumentKeydown);
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    state.loadSeq += 1;
+    state.conversationId = null;
+    state.digest = null;
+    state.continuationState = null;
+    state.loading = false;
+    state.refreshing = false;
+    state.lastSource = "";
+    state.lastUpdated = false;
+    state.lastCompacted = false;
+    state.modalOpen = false;
+    for (const { target, type, handler } of listenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    listenerEntries.length = 0;
+    sessionDigestSummaryEl?.replaceChildren();
+    sessionContinuationSummaryEl?.replaceChildren();
+    sessionDigestModalTitleEl?.replaceChildren();
+    sessionDigestModalMetaEl?.replaceChildren();
+    sessionDigestModalActionsEl?.replaceChildren();
+    sessionDigestModalContentEl?.replaceChildren();
+    sessionDigestModalEl?.classList.add("hidden");
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerEntries.length,
+      pendingRequestCount: pendingRequests.size,
+      loadSeq: state.loadSeq,
+      modalOpen: state.modalOpen,
+      disposed,
+    };
+  }
 
   renderDigest();
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     loadSessionDigest,
     handleDigestUpdated,
     setContinuationState,
     clear,
     refreshLocale() {
+      if (disposed) return;
       renderDigest();
       renderContinuationSummary();
       renderModal();

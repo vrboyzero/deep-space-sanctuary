@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import type { ToolCallResult, ToolContext } from "../../types.js";
-import { PtyManager } from "../system/pty.js";
+import { PtyManager, type PtyTerminalSnapshot } from "../system/pty.js";
 import {
   buildBridgeCommandTokens,
   resolveBridgeWorkingDirectory,
@@ -270,6 +270,29 @@ async function completeGovernedBridgeSession(
   });
 }
 
+async function finalizeTerminalBridgeSession(
+  sessionId: string,
+  snapshot: PtyTerminalSnapshot,
+  store: BridgeSessionStore,
+  context: Pick<ToolContext, "bridgeSessionGovernance">,
+): Promise<void> {
+  const current = store.get(sessionId);
+  if (!current || current.status !== "active") {
+    return;
+  }
+  if (snapshot.output) {
+    store.appendTranscript(sessionId, "output", snapshot.output);
+    await recordBridgeSessionOutput(context, sessionId, snapshot.output);
+  }
+  const closeReason = snapshot.reason === "idle-timeout"
+    ? "idle-timeout"
+    : snapshot.reason === "process-exit"
+      ? "runtime-lost"
+      : "manual";
+  const closed = await store.close(sessionId, closeReason);
+  await completeGovernedBridgeSession(context, closed);
+}
+
 function buildSessionFirstTurnNextStep(record: Pick<
   BridgeSessionRecord,
   "firstTurnStrategy" | "firstTurnPromptProvided" | "firstTurnWriteObservedAt"
@@ -404,6 +427,11 @@ export async function startBridgeSession(
     await store.persistSessionState(record.id);
     await runStartupSequence(record.id, action, store, ptyManager, context.abortSignal);
     const startupOutput = await captureStartupOutput(record.id, action, store, ptyManager, context.abortSignal);
+    ptyManager.onTerminal(runtimeSessionId, (snapshot) => {
+      void finalizeTerminalBridgeSession(record.id, snapshot, store, context).catch(() => {
+        // Gateway 恢复时仍会把未完成记录归类为 runtime-lost。
+      });
+    });
     const hydratedRecord = store.get(record.id) ?? record;
     const firstTurnGuidance = buildFirstTurnGuidance(hydratedRecord);
 

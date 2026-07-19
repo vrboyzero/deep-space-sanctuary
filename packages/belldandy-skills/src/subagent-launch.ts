@@ -25,7 +25,7 @@ type BuildSubAgentLaunchSpecOptions = {
   permissionMode?: string;
   isolationMode?: string;
   parentTaskId?: string;
-  role?: "default" | "coder" | "researcher" | "verifier";
+  role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   policySummary?: string;
   delegationSource?: DelegationSource;
   expectedDeliverableSummary?: string;
@@ -75,6 +75,7 @@ const ROLE_TOOL_FAMILIES: Partial<Record<
   NonNullable<BuildSubAgentLaunchSpecOptions["role"]>,
   ToolContractFamily[]
 >> = {
+  commander: ["workspace-read", "browser", "memory", "goal-governance", "session-orchestration"],
   coder: ["workspace-read", "workspace-write", "patch", "command-exec", "memory", "goal-governance"],
   researcher: ["network-read", "workspace-read", "browser", "memory", "goal-governance"],
   verifier: ["workspace-read", "command-exec", "browser", "memory", "goal-governance"],
@@ -84,6 +85,7 @@ const ROLE_PERMISSION_MODE: Partial<Record<
   NonNullable<BuildSubAgentLaunchSpecOptions["role"]>,
   NonNullable<SpawnSubAgentOptions["permissionMode"]>
 >> = {
+  commander: "confirm",
   researcher: "plan",
   coder: "confirm",
   verifier: "confirm",
@@ -93,6 +95,7 @@ const ROLE_MAX_RISK_LEVEL: Partial<Record<
   NonNullable<BuildSubAgentLaunchSpecOptions["role"]>,
   ToolContractRiskLevel
 >> = {
+  commander: "high",
   researcher: "medium",
   coder: "high",
   verifier: "high",
@@ -437,6 +440,7 @@ export function buildSubAgentLaunchSpec(
   });
   return {
     instruction,
+    ...(context.abortSignal ? { abortSignal: context.abortSignal } : {}),
     agentId: options.agentId,
     profileId: options.profileId,
     background: options.background ?? inherited?.background,

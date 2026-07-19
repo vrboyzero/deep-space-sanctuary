@@ -1,3 +1,7 @@
+import { createChatNetworkConnectionLifecycle } from "./chat-network-connection-lifecycle.js";
+import { createChatNetworkModelControls } from "./chat-network-model-controls.js";
+import { createChatNetworkRequestLifecycle } from "./chat-network-request-lifecycle.js";
+
 function buildWebSocketUrl() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}`;
@@ -302,7 +306,8 @@ export function createChatNetworkFeature({
     clientId,
   } = keys;
 
-  const pendingReqByGeneration = new Map();
+  const connectionLifecycle = createChatNetworkConnectionLifecycle();
+  const requestLifecycle = createChatNetworkRequestLifecycle();
   const socketGenerations = new WeakMap();
   let nextConnectionGeneration = 0;
   let currentStatus = {
@@ -405,14 +410,7 @@ export function createChatNetworkFeature({
   }
 
   function teardown() {
-    const socket = getSocket();
-    if (socket) {
-      try {
-        socket.close();
-      } catch {
-        // ignore close failures
-      }
-    }
+    connectionLifecycle.teardown();
     setSocket(null);
     setReady(false);
   }
@@ -426,17 +424,6 @@ export function createChatNetworkFeature({
       }
     } catch {
       // ignore storage failures
-    }
-  }
-
-  function settlePendingRequests(generation) {
-    // 连接关闭后立即释放调用方与 deadline，避免所有请求继续悬挂到默认 30 秒超时。
-    const pendingReq = pendingReqByGeneration.get(generation);
-    if (!pendingReq) return;
-    pendingReqByGeneration.delete(generation);
-    for (const inflight of pendingReq.values()) {
-      clearTimeout(inflight.timeoutHandle);
-      inflight.resolve(null);
     }
   }
 
@@ -485,26 +472,14 @@ export function createChatNetworkFeature({
       debugLog?.("[ws] dropped invalid request frame", frame);
       return Promise.resolve(null);
     }
-    const rawTimeoutMs = Number(normalizedFrame.timeoutMs);
-    const timeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
-      ? rawTimeoutMs
-      : 30_000;
+    const timeoutMs = normalizedFrame.timeoutMs;
     delete normalizedFrame.timeoutMs;
 
     socket.send(JSON.stringify(normalizedFrame));
-    const pendingReq = pendingReqByGeneration.get(generation) ?? new Map();
-    pendingReqByGeneration.set(generation, pendingReq);
-    return new Promise((resolve) => {
-      const timeoutHandle = setTimeout(() => {
-        const inflight = pendingReq.get(normalizedFrame.id);
-        if (inflight?.resolve !== resolve) return;
-        pendingReq.delete(normalizedFrame.id);
-        if (pendingReq.size === 0) {
-          pendingReqByGeneration.delete(generation);
-        }
-        resolve(null);
-      }, timeoutMs);
-      pendingReq.set(normalizedFrame.id, { resolve, timeoutHandle });
+    return requestLifecycle.trackRequest({
+      generation,
+      requestId: normalizedFrame.id,
+      timeoutMs,
     });
   }
 
@@ -671,6 +646,7 @@ export function createChatNetworkFeature({
   }
 
   function connect() {
+    if (connectionLifecycle.isDisposed()) return;
     const url = buildWebSocketUrl();
     markStartupObservability("chat-network.connect.called", {
       url,
@@ -694,7 +670,6 @@ export function createChatNetworkFeature({
     markStartupObservability("chat-network.websocket.create", { url });
     const socket = new WebSocket(url);
     const generation = ++nextConnectionGeneration;
-    let closeHandled = false;
     socketGenerations.set(socket, generation);
     setSocket(socket);
     setReady(false);
@@ -705,110 +680,98 @@ export function createChatNetworkFeature({
     }
     setLocalizedStatus("status.connecting", {}, "connecting");
 
-    socket.addEventListener("open", () => {
-      markStartupObservability("chat-network.websocket.open", { url });
-      setLocalizedStatus("status.awaitingChallenge", {}, "connected (awaiting challenge)");
-    });
-
-    socket.addEventListener("error", () => {
-      markStartupObservability("chat-network.websocket.error", { url });
-    });
-
-    socket.addEventListener("close", (event) => {
-      if (closeHandled) return;
-      closeHandled = true;
-      markStartupObservability("chat-network.websocket.close", {
-        url,
-        code: Number(event?.code) || 0,
-        reason: typeof event?.reason === "string" ? event.reason : "",
-      });
-      settlePendingRequests(generation);
-      if (getSocket() !== socket) return;
-      setReady(false);
-      onConnectionStateChanged?.({ connected: false, ready: false });
-      if (sendBtn) {
-        sendBtn.disabled = true;
-      }
-      if (isAuthRejectedClose(event)) {
-        if (shouldClearTransientSetupTokenOnClose({
-          event,
-          authMode: authModeEl?.value || "",
-          authValue: authValueEl?.value || "",
-        })) {
-          clearTransientSetupTokenAuth();
-        }
-        const reason = formatCloseReason(event, "token required");
-        setLocalizedStatus(
-          "status.authRequired",
-          { reason },
-          `connection rejected (authentication required: ${reason})`,
-        );
-        ensureDisconnectHint(statusEl, getStatusHintMessage("status.authRequired"));
-        return;
-      }
-
-      const reconnectUrl = buildWebSocketUrl();
-      setLocalizedStatus(
-        "status.disconnectedRetrying",
-        { url: reconnectUrl },
-        `disconnected (retrying ${reconnectUrl} in 3s...)`,
-      );
-      ensureDisconnectHint(statusEl, getStatusHintMessage("status.disconnectedRetrying"));
-      setTimeout(() => {
-        const currentSocket = getSocket();
-        if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED) {
-          connect();
-        }
-      }, 3000);
-    });
-
-    socket.addEventListener("message", (evt) => {
-      const frame = safeJsonParse(evt.data);
-      if (!frame || typeof frame !== "object") return;
-
-      if (frame.type === "connect.challenge") {
-        markStartupObservability("chat-network.connect.challenge", { url });
-        sendConnect();
-        return;
-      }
-
-      if (frame.type === "hello-ok") {
-        markStartupObservability("chat-network.hello.ok", {
+    connectionLifecycle.replaceConnection({
+      socket,
+      generation,
+      onRelease: () => requestLifecycle.settleGeneration(generation),
+      onReconnect: connect,
+      onOpen: () => {
+        markStartupObservability("chat-network.websocket.open", { url });
+        setLocalizedStatus("status.awaitingChallenge", {}, "connected (awaiting challenge)");
+      },
+      onError: () => {
+        markStartupObservability("chat-network.websocket.error", { url });
+      },
+      onClose: (event) => {
+        markStartupObservability("chat-network.websocket.close", {
           url,
-          clientId: frame.clientId || "",
+          code: Number(event?.code) || 0,
+          reason: typeof event?.reason === "string" ? event.reason : "",
         });
-        setReady(true);
-        onConnectionStateChanged?.({ connected: true, ready: true });
+        if (getSocket() !== socket) return false;
+        setReady(false);
+        onConnectionStateChanged?.({ connected: false, ready: false });
         if (sendBtn) {
-          sendBtn.disabled = false;
+          sendBtn.disabled = true;
         }
-        setLocalizedStatus("status.ready", {}, "ready");
-        onHelloOk?.(frame);
-        return;
-      }
-
-      if (frame.type === "res") {
-        const pendingReq = pendingReqByGeneration.get(generation);
-        const inflight = pendingReq?.get(frame.id);
-        if (inflight) {
-          pendingReq.delete(frame.id);
-          if (pendingReq.size === 0) {
-            pendingReqByGeneration.delete(generation);
+        if (isAuthRejectedClose(event)) {
+          if (shouldClearTransientSetupTokenOnClose({
+            event,
+            authMode: authModeEl?.value || "",
+            authValue: authValueEl?.value || "",
+          })) {
+            clearTransientSetupTokenAuth();
           }
-          clearTimeout(inflight.timeoutHandle);
-          inflight.resolve(frame);
+          const reason = formatCloseReason(event, "token required");
+          setLocalizedStatus(
+            "status.authRequired",
+            { reason },
+            `connection rejected (authentication required: ${reason})`,
+          );
+          ensureDisconnectHint(statusEl, getStatusHintMessage("status.authRequired"));
+          return false;
         }
-        return;
-      }
 
-      if (frame.type === "event") {
-        onEvent?.(frame.event, frame.payload || {});
-      }
+        const reconnectUrl = buildWebSocketUrl();
+        setLocalizedStatus(
+          "status.disconnectedRetrying",
+          { url: reconnectUrl },
+          `disconnected (retrying ${reconnectUrl} in 3s...)`,
+        );
+        ensureDisconnectHint(statusEl, getStatusHintMessage("status.disconnectedRetrying"));
+        return true;
+      },
+      onMessage: (evt) => {
+        const frame = safeJsonParse(evt.data);
+        if (!frame || typeof frame !== "object") return;
+
+        if (frame.type === "connect.challenge") {
+          markStartupObservability("chat-network.connect.challenge", { url });
+          sendConnect();
+          return;
+        }
+
+        if (frame.type === "hello-ok") {
+          markStartupObservability("chat-network.hello.ok", {
+            url,
+            clientId: frame.clientId || "",
+          });
+          setReady(true);
+          onConnectionStateChanged?.({ connected: true, ready: true });
+          if (sendBtn) {
+            sendBtn.disabled = false;
+          }
+          setLocalizedStatus("status.ready", {}, "ready");
+          onHelloOk?.(frame);
+          return;
+        }
+
+        if (frame.type === "res") {
+          requestLifecycle.resolveResponse(generation, frame);
+          return;
+        }
+
+        if (frame.type === "event") {
+          onEvent?.(frame.event, frame.payload || {});
+        }
+      },
     });
   }
 
-  if (modelSelectEl) {
-    modelSelectEl.addEventListener("change", () => {
+  const modelControls = createChatNetworkModelControls({
+    modelSelectEl,
+    modelFilterEl,
+    onModelSelectChange: () => {
       if (modelSelectEl.value !== MANUAL_MODEL_SENTINEL) return;
       const manualValue = promptManualModelValue();
       if (manualValue) {
@@ -823,11 +786,8 @@ export function createChatNetworkFeature({
         lastModelListState?.manualEntrySupported !== false,
       );
       modelSelectEl.value = fallbackValue;
-    });
-  }
-
-  if (modelFilterEl) {
-    modelFilterEl.addEventListener("input", () => {
+    },
+    onModelFilterInput: () => {
       if (!lastModelListState) return;
       renderModelOptions(
         lastModelListState.models,
@@ -835,13 +795,30 @@ export function createChatNetworkFeature({
         lastModelListState.preferredProviderIds,
         lastModelListState.manualEntrySupported,
       );
-    });
-  }
+    },
+  });
 
   syncModelPickerVisibility();
 
+  function dispose() {
+    modelControls.dispose();
+    connectionLifecycle.dispose();
+    requestLifecycle.dispose();
+    setSocket(null);
+    setReady(false);
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      ...connectionLifecycle.getRuntimeSnapshot(),
+      ...modelControls.getRuntimeSnapshot(),
+      ...requestLifecycle.getRuntimeSnapshot(),
+    };
+  }
+
   return {
     connect,
+    dispose,
     isConnected,
     loadAgentList,
     loadModelList,
@@ -864,6 +841,7 @@ export function createChatNetworkFeature({
         onAgentListLoaded?.(lastAgentListState, agentSelectEl?.value || lastAgentListState[0]?.id || "");
       }
     },
+    getRuntimeSnapshot,
     sendReq,
     teardown,
   };

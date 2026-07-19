@@ -13,9 +13,10 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function createFeatureHarness() {
+function createFeatureHarness(options = {}) {
   document.body.innerHTML = `
     <div id="sessionDigestSummary"></div>
+    <div id="sessionContinuationSummary"></div>
     <button id="sessionDigestRefresh">刷新摘要</button>
     <div id="sessionDigestModal" class="hidden">
       <span id="sessionDigestModalTitle"></span>
@@ -27,10 +28,11 @@ function createFeatureHarness() {
   `;
 
   const onOpenContinuationAction = vi.fn();
+  const showNotice = options.showNotice || vi.fn();
   const feature = createSessionDigestFeature({
     refs: {
       sessionDigestSummaryEl: document.getElementById("sessionDigestSummary"),
-      sessionContinuationSummaryEl: null,
+      sessionContinuationSummaryEl: document.getElementById("sessionContinuationSummary"),
       sessionDigestRefreshBtn: document.getElementById("sessionDigestRefresh"),
       sessionDigestModalEl: document.getElementById("sessionDigestModal"),
       sessionDigestModalTitleEl: document.getElementById("sessionDigestModalTitle"),
@@ -40,26 +42,35 @@ function createFeatureHarness() {
       sessionDigestModalCloseBtn: document.getElementById("sessionDigestModalClose"),
     },
     isConnected: () => true,
-    sendReq: vi.fn(),
+    sendReq: options.sendReq || vi.fn(),
     makeId: () => "req-1",
     getActiveConversationId: () => "conversation:current",
     onSendHistoryAction: vi.fn(),
     onOpenContinuationAction,
     escapeHtml,
     formatDateTime: () => "2026-04-21 09:30:00",
-    showNotice: vi.fn(),
+    showNotice,
     t: (_key, _params, fallback) => fallback ?? "",
   });
 
   return {
     feature,
     onOpenContinuationAction,
+    showNotice,
     refs: {
       sessionDigestSummaryEl: document.getElementById("sessionDigestSummary"),
       sessionDigestModalEl: document.getElementById("sessionDigestModal"),
       sessionDigestModalContentEl: document.getElementById("sessionDigestModalContent"),
     },
   };
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe("session digest modal continuation details", () => {
@@ -120,5 +131,51 @@ describe("session digest modal continuation details", () => {
       kind: "conversation",
       conversationId: "conversation:follow-up",
     });
+  });
+
+  it("releases root listeners and ignores a late digest response after dispose", async () => {
+    const response = createDeferred();
+    const sendReq = vi.fn(() => response.promise);
+    const { feature, refs, showNotice } = createFeatureHarness({ sendReq });
+    const loadPromise = feature.loadSessionDigest("conversation:current", { force: true, notify: true });
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 9,
+      pendingRequestCount: 1,
+      modalOpen: false,
+      disposed: false,
+    });
+
+    feature.handleDigestUpdated({
+      conversationId: "conversation:current",
+      source: "event",
+      digest: { status: "ready", rollingSummary: "retained digest body" },
+    });
+    expect(refs.sessionDigestSummaryEl.textContent).toContain("retained digest body");
+    feature.dispose();
+    feature.dispose();
+    response.resolve({
+      ok: true,
+      payload: {
+        updated: true,
+        digest: { status: "ready", rollingSummary: "late digest body" },
+      },
+    });
+    await loadPromise;
+
+    expect(refs.sessionDigestSummaryEl.textContent).toBe("");
+    expect(refs.sessionDigestModalContentEl.textContent).toBe("");
+    expect(showNotice).not.toHaveBeenCalled();
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 0,
+      pendingRequestCount: 0,
+      loadSeq: 2,
+      modalOpen: false,
+      disposed: true,
+    });
+    feature.handleDigestUpdated({
+      conversationId: "conversation:current",
+      digest: { rollingSummary: "after dispose" },
+    });
+    expect(refs.sessionDigestSummaryEl.textContent).toBe("");
   });
 });

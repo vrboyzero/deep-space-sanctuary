@@ -302,10 +302,19 @@ export function createPlanPanelFeature({
     focusedRefKey: "",
     workflowStatusByJournalId: {},
   };
+  let disposed = false;
+  const listenerEntries = [];
+
+  function addOwnedListener(target, type, handler) {
+    if (!target) return;
+    target.addEventListener(type, handler);
+    listenerEntries.push({ target, type, handler });
+  }
 
   function hasRenderablePlan() {
     return Boolean(
-      isConnected()
+      !disposed
+      && isConnected()
       && getActiveConversationId()
       && state.planState
       && typeof state.planState === "object",
@@ -313,6 +322,7 @@ export function createPlanPanelFeature({
   }
 
   function syncVisibility() {
+    if (disposed) return false;
     const visible = hasRenderablePlan();
     sessionPlanPanelEl?.classList.toggle("hidden", !visible);
     if (!visible) {
@@ -322,18 +332,20 @@ export function createPlanPanelFeature({
   }
 
   function closeModal() {
+    if (disposed) return;
     state.modalOpen = false;
     renderModal();
   }
 
   function openModal() {
+    if (disposed) return;
     if (!hasRenderablePlan()) return;
     state.modalOpen = true;
     renderModal();
   }
 
   function renderModal() {
-    if (!sessionPlanModalEl) return;
+    if (disposed || !sessionPlanModalEl) return;
     const visible = syncVisibility();
     const shouldOpen = visible && state.modalOpen;
     sessionPlanModalEl.classList.toggle("hidden", !shouldOpen);
@@ -501,7 +513,7 @@ export function createPlanPanelFeature({
   }
 
   function render() {
-    if (!sessionPlanSummaryEl) return;
+    if (disposed || !sessionPlanSummaryEl) return;
     const visible = syncVisibility();
     if (!visible) {
       sessionPlanSummaryEl.replaceChildren();
@@ -551,6 +563,7 @@ export function createPlanPanelFeature({
   }
 
   function clear() {
+    if (disposed) return;
     state.conversationId = null;
     state.planState = null;
     state.modalOpen = false;
@@ -562,6 +575,7 @@ export function createPlanPanelFeature({
   }
 
   function setPlanState(planState, options = {}) {
+    if (disposed) return;
     const activeConversationId = getActiveConversationId();
     const conversationId = typeof options?.conversationId === "string"
       ? options.conversationId
@@ -586,6 +600,7 @@ export function createPlanPanelFeature({
   }
 
   function setFocusedStep(stepId) {
+    if (disposed) return;
     state.focusedStepId = typeof stepId === "string" ? stepId.trim() : "";
     if (state.focusedStepId) {
       state.focusedRefKey = "";
@@ -594,15 +609,19 @@ export function createPlanPanelFeature({
   }
 
   function setFocusedRef(refKey) {
+    if (disposed) return;
     state.focusedRefKey = typeof refKey === "string" ? refKey.trim() : "";
     renderModal();
   }
 
   async function loadWorkflowStatus(journalId) {
+    if (disposed) return;
     const normalizedJournalId = typeof journalId === "string" ? journalId.trim() : "";
     if (!normalizedJournalId) return;
     if (typeof onLoadWorkflowStatus !== "function") return;
     const workflowState = await onLoadWorkflowStatus({ journalId: normalizedJournalId });
+    // 底层 Promise 无法取消时，退出后的结果也不能重新持有 workflow 正文或触发渲染。
+    if (disposed) return;
     state.workflowStatusByJournalId = {
       ...state.workflowStatusByJournalId,
       [normalizedJournalId]: workflowState && typeof workflowState === "object"
@@ -616,6 +635,7 @@ export function createPlanPanelFeature({
   }
 
   async function handlePlanAction(action) {
+    if (disposed) return;
     const kind = typeof action?.kind === "string" ? action.kind : "";
     if (!kind) return;
     if (kind === "step") {
@@ -638,6 +658,7 @@ export function createPlanPanelFeature({
   }
 
   function handlePlanUpdated(payload) {
+    if (disposed) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     if (!conversationId || conversationId !== getActiveConversationId()) return;
     setPlanState(payload?.cleared === true ? null : payload?.planState || null, {
@@ -646,54 +667,90 @@ export function createPlanPanelFeature({
     });
   }
 
-  if (sessionPlanSummaryEl) {
-    sessionPlanSummaryEl.addEventListener("click", (event) => {
-      const trigger = event.target instanceof Element ? event.target.closest(".session-plan-card.is-interactive") : null;
-      if (!trigger) return;
-      openModal();
-    });
-    sessionPlanSummaryEl.addEventListener("keydown", (event) => {
-      const trigger = event.target instanceof Element ? event.target.closest(".session-plan-card.is-interactive") : null;
-      if (!trigger) return;
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      openModal();
-    });
+  function handleSummaryClick(event) {
+    if (disposed) return;
+    const trigger = event.target instanceof Element ? event.target.closest(".session-plan-card.is-interactive") : null;
+    if (!trigger) return;
+    openModal();
   }
 
-  if (sessionPlanModalCloseBtn) {
-    sessionPlanModalCloseBtn.addEventListener("click", () => {
-      closeModal();
-    });
+  function handleSummaryKeydown(event) {
+    if (disposed) return;
+    const trigger = event.target instanceof Element ? event.target.closest(".session-plan-card.is-interactive") : null;
+    if (!trigger || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    openModal();
   }
 
-  if (sessionPlanModalEl) {
-    sessionPlanModalEl.addEventListener("click", (event) => {
-      const trigger = event.target instanceof Element ? event.target.closest("[data-plan-action]") : null;
-      if (trigger) {
-        const action = parsePlanAction(trigger.getAttribute("data-plan-action") || "");
-        if (action) {
-          void handlePlanAction(action);
-        }
-        return;
-      }
-      if (event.target === sessionPlanModalEl) {
-        closeModal();
-      }
-    });
-  }
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !state.modalOpen) return;
+  function handleModalCloseClick() {
     closeModal();
-  });
+  }
+
+  function handleModalClick(event) {
+    if (disposed) return;
+    const trigger = event.target instanceof Element ? event.target.closest("[data-plan-action]") : null;
+    if (trigger) {
+      const action = parsePlanAction(trigger.getAttribute("data-plan-action") || "");
+      if (action) {
+        void handlePlanAction(action);
+      }
+      return;
+    }
+    if (event.target === sessionPlanModalEl) {
+      closeModal();
+    }
+  }
+
+  function handleDocumentKeydown(event) {
+    if (disposed || event.key !== "Escape" || !state.modalOpen) return;
+    closeModal();
+  }
+
+  addOwnedListener(sessionPlanSummaryEl, "click", handleSummaryClick);
+  addOwnedListener(sessionPlanSummaryEl, "keydown", handleSummaryKeydown);
+  addOwnedListener(sessionPlanModalCloseBtn, "click", handleModalCloseClick);
+  addOwnedListener(sessionPlanModalEl, "click", handleModalClick);
+  addOwnedListener(document, "keydown", handleDocumentKeydown);
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    state.conversationId = null;
+    state.planState = null;
+    state.modalOpen = false;
+    state.lastSource = "";
+    state.focusedStepId = "";
+    state.focusedRefKey = "";
+    state.workflowStatusByJournalId = {};
+    for (const { target, type, handler } of listenerEntries) {
+      target.removeEventListener(type, handler);
+    }
+    listenerEntries.length = 0;
+    sessionPlanPanelEl?.classList.add("hidden");
+    sessionPlanSummaryEl?.replaceChildren();
+    sessionPlanModalEl?.classList.add("hidden");
+    sessionPlanModalTitleEl?.replaceChildren();
+    sessionPlanModalMetaEl?.replaceChildren();
+    sessionPlanModalContentEl?.replaceChildren();
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      listenerCount: listenerEntries.length,
+      modalOpen: state.modalOpen,
+      disposed,
+    };
+  }
 
   render();
 
   return {
     clear,
+    dispose,
+    getRuntimeSnapshot,
     handlePlanUpdated,
     refreshLocale() {
+      if (disposed) return;
       render();
     },
     setPlanState,

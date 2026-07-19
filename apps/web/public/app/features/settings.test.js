@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./doctor-observability.js", () => ({
+  disposeDoctorObservabilityCardRendering: vi.fn(),
   renderDoctorObservabilityCards: vi.fn(),
 }));
 
-import { renderDoctorObservabilityCards } from "./doctor-observability.js";
+import {
+  disposeDoctorObservabilityCardRendering,
+  renderDoctorObservabilityCards,
+} from "./doctor-observability.js";
 import { createSettingsController } from "./settings.js";
 
 class FakeHTMLElement {}
@@ -245,6 +249,10 @@ function createSettingsRefs(overrides = {}) {
     cfgToolGroups: overrides.cfgToolGroups || createInput(""),
     cfgMaxInputTokens: overrides.cfgMaxInputTokens || createInput(""),
     cfgMaxOutputTokens: overrides.cfgMaxOutputTokens || createInput(""),
+    cfgMaxToolCalls: overrides.cfgMaxToolCalls || createInput(""),
+    cfgMaxRunWallTimeMs: overrides.cfgMaxRunWallTimeMs || createInput(""),
+    cfgMaxTotalTokens: overrides.cfgMaxTotalTokens || createInput(""),
+    cfgMaxHighRiskToolCalls: overrides.cfgMaxHighRiskToolCalls || createInput(""),
     cfgToolLoopIterationBudget: overrides.cfgToolLoopIterationBudget || createInput(""),
     cfgToolLoopWarningFraction: overrides.cfgToolLoopWarningFraction || createInput(""),
     cfgWebAllowPrivilegedSafeScope: overrides.cfgWebAllowPrivilegedSafeScope || createCheckbox(false),
@@ -617,6 +625,39 @@ describe("settings controller", () => {
     delete globalThis.document;
     delete globalThis.alert;
     delete globalThis.confirm;
+  });
+
+  it("owns and replaces the save feedback timer until dispose", async () => {
+    const sendReq = vi.fn(async (frame) => {
+      if (frame.method === "config.update") {
+        return { ok: true, payload: { restartRequired: false } };
+      }
+      return { ok: true, payload: {} };
+    });
+    const { controller, refs } = createController({ sendReq });
+
+    await controller.saveConfig();
+    expect(refs.saveSettingsBtn.textContent).toBe("Saved");
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      saveFeedbackTimerActive: true,
+      disposed: false,
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+    await controller.saveConfig();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(refs.saveSettingsBtn.textContent).toBe("Saved");
+    expect(vi.getTimerCount()).toBe(1);
+
+    controller.dispose();
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      saveFeedbackTimerActive: false,
+      disposed: true,
+    });
+    expect(disposeDoctorObservabilityCardRendering).toHaveBeenCalledWith(refs.doctorStatusEl);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect(refs.saveSettingsBtn.textContent).toBe("Saved");
   });
 
   it("renders pairing approvals inside settings", () => {
@@ -1876,6 +1917,10 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
       BELLDANDY_COMPACTION_API_KEY: "[REDACTED]",
       BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
+      BELLDANDY_MAX_TOOL_CALLS: "32",
+      BELLDANDY_MAX_RUN_WALL_TIME_MS: "300000",
+      BELLDANDY_MAX_TOTAL_TOKENS: "128000",
+      BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS: "4",
       BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
       BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE: "true",
       BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS: "gateway,cli,web",
@@ -1963,6 +2008,10 @@ describe("settings controller", () => {
     expect(refs.cfgCompactionBaseUrl.value).toBe("https://compaction.example.com/v1");
     expect(refs.cfgCompactionApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgToolLoopIterationBudget.value).toBe("8");
+    expect(refs.cfgMaxToolCalls.value).toBe("32");
+    expect(refs.cfgMaxRunWallTimeMs.value).toBe("300000");
+    expect(refs.cfgMaxTotalTokens.value).toBe("128000");
+    expect(refs.cfgMaxHighRiskToolCalls.value).toBe("4");
     expect(refs.cfgToolLoopWarningFraction.value).toBe("0.75");
     expect(refs.cfgWebAllowPrivilegedSafeScope.checked).toBe(true);
     expect(refs.cfgPrivilegedWorkspaceWriteChannels.value).toBe("gateway,cli,web");
@@ -2388,6 +2437,10 @@ describe("settings controller", () => {
       cfgCompactionBaseUrl: createInput(" https://compaction.example.com/v1 "),
       cfgCompactionApiKey: createInput("compaction-secret"),
       cfgToolLoopIterationBudget: createInput(" 8 "),
+      cfgMaxToolCalls: createInput(" 32 "),
+      cfgMaxRunWallTimeMs: createInput(" 300000 "),
+      cfgMaxTotalTokens: createInput(" 128000 "),
+      cfgMaxHighRiskToolCalls: createInput(" 4 "),
       cfgToolLoopWarningFraction: createInput(" 0.75 "),
       cfgWebAllowPrivilegedSafeScope: createCheckbox(true),
       cfgPrivilegedWorkspaceWriteChannels: createInput(" gateway,cli,web "),
@@ -2516,6 +2569,10 @@ describe("settings controller", () => {
       BELLDANDY_COMPACTION_BASE_URL: "https://compaction.example.com/v1",
       BELLDANDY_COMPACTION_API_KEY: "compaction-secret",
       BELLDANDY_TOOL_LOOP_ITERATION_BUDGET: "8",
+      BELLDANDY_MAX_TOOL_CALLS: "32",
+      BELLDANDY_MAX_RUN_WALL_TIME_MS: "300000",
+      BELLDANDY_MAX_TOTAL_TOKENS: "128000",
+      BELLDANDY_MAX_HIGH_RISK_TOOL_CALLS: "4",
       BELLDANDY_TOOL_LOOP_WARNING_FRACTION: "0.75",
       BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE: "true",
       BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS: "gateway,cli,web",

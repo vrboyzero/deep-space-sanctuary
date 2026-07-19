@@ -3,6 +3,8 @@ const HANDOFF_STORAGE_PREFIX = "belldandy.webchat.authHandoff.";
 const HANDOFF_CHANNEL_PREFIX = "belldandy.webchat.authHandoff.channel.";
 const HANDOFF_MAX_AGE_MS = 60 * 1000;
 const activeHandoffs = new Map();
+const activeHandoffReceivers = new Set();
+let disposed = false;
 
 function safeLocalStorageRead(readFn) {
   try {
@@ -58,6 +60,7 @@ function closeActiveHandoff(handoffId) {
   if (!active) return;
   activeHandoffs.delete(handoffId);
   clearTimeout(active.timeoutHandle);
+  active.channel.removeEventListener?.("message", active.handleMessage);
   active.channel.close();
 }
 
@@ -78,6 +81,7 @@ function createSecureHandoffId() {
 }
 
 function createInMemoryHandoff({ handoffId, mode, value, createdAt }) {
+  if (disposed) return false;
   const BroadcastChannelCtor = globalThis.BroadcastChannel;
   if (typeof BroadcastChannelCtor !== "function") return false;
 
@@ -88,11 +92,8 @@ function createInMemoryHandoff({ handoffId, mode, value, createdAt }) {
   } catch {
     return false;
   }
-  const timeoutHandle = setTimeout(() => closeActiveHandoff(handoffId), HANDOFF_MAX_AGE_MS);
-  timeoutHandle?.unref?.();
-  activeHandoffs.set(handoffId, { channel, timeoutHandle });
   let delivered = false;
-  channel.addEventListener("message", (event) => {
+  const handleMessage = (event) => {
     const request = event?.data;
     if (request?.handoffId !== handoffId) return;
     if (request.type === "received" && delivered) {
@@ -102,7 +103,11 @@ function createInMemoryHandoff({ handoffId, mode, value, createdAt }) {
     if (request.type !== "request" || delivered) return;
     delivered = true;
     channel.postMessage({ type: "credential", handoffId, mode, value, createdAt });
-  });
+  };
+  const timeoutHandle = setTimeout(() => closeActiveHandoff(handoffId), HANDOFF_MAX_AGE_MS);
+  timeoutHandle?.unref?.();
+  activeHandoffs.set(handoffId, { channel, handleMessage, timeoutHandle });
+  channel.addEventListener("message", handleMessage);
   return true;
 }
 
@@ -118,6 +123,7 @@ function normalizeHandoffPayload(payload, { handoffId, now, maxAgeMs }) {
 }
 
 function requestInMemoryHandoff({ handoffId, now, maxAgeMs, waitMs }) {
+  if (disposed) return Promise.resolve(null);
   const BroadcastChannelCtor = globalThis.BroadcastChannel;
   if (typeof BroadcastChannelCtor !== "function") return Promise.resolve(null);
 
@@ -129,21 +135,62 @@ function requestInMemoryHandoff({ handoffId, now, maxAgeMs, waitMs }) {
   }
 
   return new Promise((resolve) => {
-    let settled = false;
+    const receiver = {
+      channel,
+      closeTimer: null,
+      handleMessage: null,
+      listenerBound: false,
+      settled: false,
+      waitTimer: null,
+      dispose: null,
+    };
+
+    const closeReceiver = () => {
+      if (!activeHandoffReceivers.has(receiver)) return;
+      activeHandoffReceivers.delete(receiver);
+      if (receiver.waitTimer !== null) {
+        clearTimeout(receiver.waitTimer);
+        receiver.waitTimer = null;
+      }
+      if (receiver.closeTimer !== null) {
+        clearTimeout(receiver.closeTimer);
+        receiver.closeTimer = null;
+      }
+      if (receiver.listenerBound) {
+        channel.removeEventListener?.("message", receiver.handleMessage);
+        receiver.listenerBound = false;
+      }
+      channel.close();
+    };
+
     const finish = (value, closeDelayMs = 0) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutHandle);
-      if (closeDelayMs > 0) {
-        const closeTimer = setTimeout(() => channel.close(), closeDelayMs);
-        closeTimer?.unref?.();
+      if (receiver.settled) return;
+      receiver.settled = true;
+      if (receiver.waitTimer !== null) {
+        clearTimeout(receiver.waitTimer);
+        receiver.waitTimer = null;
+      }
+      if (receiver.listenerBound) {
+        channel.removeEventListener?.("message", receiver.handleMessage);
+        receiver.listenerBound = false;
+      }
+      if (closeDelayMs > 0 && !disposed) {
+        receiver.closeTimer = setTimeout(closeReceiver, closeDelayMs);
+        receiver.closeTimer?.unref?.();
       } else {
-        channel.close();
+        closeReceiver();
       }
       resolve(value);
     };
-    const timeoutHandle = setTimeout(() => finish(null), Math.max(0, Number(waitMs) || 0));
-    channel.addEventListener("message", (event) => {
+
+    receiver.dispose = () => {
+      if (!receiver.settled) {
+        receiver.settled = true;
+        resolve(null);
+      }
+      closeReceiver();
+    };
+    receiver.handleMessage = (event) => {
       const payload = event?.data;
       if (payload?.type !== "credential") return;
       const normalized = normalizeHandoffPayload(payload, { handoffId, now, maxAgeMs });
@@ -151,9 +198,48 @@ function requestInMemoryHandoff({ handoffId, now, maxAgeMs, waitMs }) {
         channel.postMessage({ type: "received", handoffId });
         finish(normalized, 50);
       }
-    });
-    channel.postMessage({ type: "request", handoffId });
+    };
+    receiver.listenerBound = true;
+    channel.addEventListener("message", receiver.handleMessage);
+    activeHandoffReceivers.add(receiver);
+    receiver.waitTimer = setTimeout(() => finish(null), Math.max(0, Number(waitMs) || 0));
+    receiver.waitTimer?.unref?.();
+    try {
+      channel.postMessage({ type: "request", handoffId });
+    } catch {
+      finish(null);
+    }
   });
+}
+
+export function disposeSessionAuthHandoffs() {
+  if (disposed) return;
+  disposed = true;
+  for (const handoffId of [...activeHandoffs.keys()]) closeActiveHandoff(handoffId);
+  for (const receiver of [...activeHandoffReceivers]) receiver.dispose();
+}
+
+export function getSessionAuthHandoffRuntimeSnapshot() {
+  let pendingConsumerCount = 0;
+  let delayedCloseCount = 0;
+  let receiverListenerCount = 0;
+  let receiverTimerCount = 0;
+  for (const receiver of activeHandoffReceivers) {
+    if (!receiver.settled) pendingConsumerCount += 1;
+    if (receiver.closeTimer !== null) delayedCloseCount += 1;
+    if (receiver.listenerBound) receiverListenerCount += 1;
+    if (receiver.waitTimer !== null) receiverTimerCount += 1;
+    if (receiver.closeTimer !== null) receiverTimerCount += 1;
+  }
+  return {
+    activeProducerCount: activeHandoffs.size,
+    pendingConsumerCount,
+    delayedCloseCount,
+    channelCount: activeHandoffs.size + activeHandoffReceivers.size,
+    listenerCount: activeHandoffs.size + receiverListenerCount,
+    timerCount: activeHandoffs.size + receiverTimerCount,
+    disposed,
+  };
 }
 
 export function createSessionAuthHandoffUrl({
@@ -203,6 +289,7 @@ export async function consumeSessionAuthHandoff({
     const raw = safeLocalStorageRead((storage) => storage.getItem(storageKey));
     safeLocalStorageWrite((storage) => storage.removeItem(storageKey));
     stripHandoffParam(location, history);
+    if (disposed) return null;
 
     if (raw) {
       const legacyPayload = normalizeHandoffPayload(JSON.parse(raw), { handoffId, now, maxAgeMs });

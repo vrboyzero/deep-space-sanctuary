@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { Tool, ToolCallResult, ToolContext } from "../../types.js";
 import { buildFailureToolCallResult } from "../../failure-kind.js";
-import { createLinkedAbortController } from "../../abort-utils.js";
+import { createLinkedAbortController, isAbortError, toAbortError } from "../../abort-utils.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import {
   DEFAULT_OPENAI_BASE_URL,
@@ -19,12 +19,17 @@ import {
   uploadFileToOpenAICompatible,
 } from "./understand-shared.js";
 import { understandVideoFileByFrameSampling } from "./video-frame-fallback.js";
+import {
+  MediaFileLimitError,
+  readMediaFileAsBase64,
+} from "./media-file-stream.js";
 
 const DEFAULT_VIDEO_UNDERSTAND_MODEL = "kimi-k2.5";
 const DEFAULT_VIDEO_UNDERSTAND_PROMPT = "请准确概括这个视频的主要内容、动作过程、场景变化，并尽量识别画面中的可见文字。";
 const DEFAULT_MAX_INPUT_MB = 100;
 const DEFAULT_TIMELINE_ITEMS = 5;
 const DEFAULT_VIDEO_TRANSPORT = "auto";
+export const MAX_INLINE_VIDEO_INPUT_BYTES = 20 * 1024 * 1024;
 
 export type VideoUnderstandFocusMode = "overview" | "timeline" | "timestamp_query";
 export type VideoUnderstandTransport = "auto" | "openai_files" | "inline_data_url";
@@ -298,7 +303,12 @@ async function buildNativeVideoContentPart(input: {
 }): Promise<{ type: "video_url"; video_url: { url: string; fps?: number } }> {
   const transport = resolveVideoTransport(input.config);
   if (transport === "inline_data_url") {
-    const encoded = (await fs.readFile(input.filePath)).toString("base64");
+    const encoded = await readMediaFileAsBase64({
+      filePath: input.filePath,
+      maxBytes: Math.min(input.config.maxInputBytes, MAX_INLINE_VIDEO_INPUT_BYTES),
+      label: "inline video payload",
+      abortSignal: input.abortSignal,
+    });
     return {
       type: "video_url",
       video_url: {
@@ -349,6 +359,11 @@ export async function understandVideoFile(input: VideoUnderstandOptions): Promis
   const mimeType = normalizeOptionalString(input.mimeType) ?? guessVideoMimeFromFilePath(filePath);
   if (!mimeType.startsWith("video/")) {
     throw new Error(`Unsupported video mime type: ${mimeType}`);
+  }
+  if (resolveVideoTransport(config) === "inline_data_url" && stat.size > MAX_INLINE_VIDEO_INPUT_BYTES) {
+    throw new Error(
+      `inline video payload too large (${stat.size} bytes > ${MAX_INLINE_VIDEO_INPUT_BYTES} bytes); use openai_files transport for larger videos.`,
+    );
   }
   const focusMode = normalizeFocusMode(input.focusMode);
   const includeTimeline = input.includeTimeline !== false;
@@ -414,6 +429,12 @@ export async function understandVideoFile(input: VideoUnderstandOptions): Promis
       });
       return result;
     } catch (nativeError) {
+      if (linkedAbort.controller.signal.aborted) {
+        throw toAbortError(linkedAbort.controller.signal.reason);
+      }
+      if (isAbortError(nativeError) || nativeError instanceof MediaFileLimitError) {
+        throw nativeError;
+      }
       const fallback = await understandVideoFileByFrameSampling({
         filePath,
         mimeType,

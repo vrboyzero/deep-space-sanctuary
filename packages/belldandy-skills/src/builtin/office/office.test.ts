@@ -37,6 +37,7 @@ describe("office tools", () => {
   let context: ToolContext;
   let fetchMock: ReturnType<typeof vi.fn>;
   let originalStateDir: string | undefined;
+  let originalMaxDownloadBytes: string | undefined;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-office-test-"));
@@ -44,7 +45,9 @@ describe("office tools", () => {
     await fs.mkdir(stateDir, { recursive: true });
 
     originalStateDir = process.env.BELLDANDY_STATE_DIR;
+    originalMaxDownloadBytes = process.env.BELLDANDY_OFFICE_MAX_DOWNLOAD_BYTES;
     process.env.BELLDANDY_STATE_DIR = stateDir;
+    delete process.env.BELLDANDY_OFFICE_MAX_DOWNLOAD_BYTES;
 
     await fs.writeFile(
       path.join(stateDir, "community.json"),
@@ -84,6 +87,11 @@ describe("office tools", () => {
       delete process.env.BELLDANDY_STATE_DIR;
     } else {
       process.env.BELLDANDY_STATE_DIR = originalStateDir;
+    }
+    if (originalMaxDownloadBytes === undefined) {
+      delete process.env.BELLDANDY_OFFICE_MAX_DOWNLOAD_BYTES;
+    } else {
+      process.env.BELLDANDY_OFFICE_MAX_DOWNLOAD_BYTES = originalMaxDownloadBytes;
     }
     await fs.rm(tempDir, { recursive: true, force: true });
   });
@@ -242,6 +250,67 @@ describe("office tools", () => {
     const saved = await fs.readFile(path.join(tempDir, "agent-downloads", "configured.txt"), "utf-8");
     expect(saved).toBe("configured download dir");
   });
+
+  it("should preserve an existing workshop file when a chunked download exceeds its limit", async () => {
+    process.env.BELLDANDY_OFFICE_MAX_DOWNLOAD_BYTES = "8";
+    const downloadDir = path.join(tempDir, "downloads");
+    const targetPath = path.join(downloadDir, "stable.txt");
+    await fs.mkdir(downloadDir, { recursive: true });
+    await fs.writeFile(targetPath, "stable", "utf-8");
+    let chunkIndex = 0;
+    const chunks = [Buffer.from("1234"), Buffer.from("56789")];
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[chunkIndex];
+        chunkIndex += 1;
+        if (chunk) {
+          controller.enqueue(chunk);
+          return;
+        }
+        controller.close();
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        id: "item-limit",
+        title: "限额测试",
+        fileName: "stable.txt",
+        fileHash: null,
+      }))
+      .mockResolvedValueOnce(new Response(body, { status: 200 }));
+
+    const result = await officeWorkshopDownloadTool.execute(
+      { agent_name: "贝露丹蒂", item_id: "item-limit", target_dir: "downloads", overwrite: true },
+      context,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("8 byte limit");
+    await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("stable");
+    await expect(fs.readdir(downloadDir)).resolves.toEqual(["stable.txt"]);
+  });
+
+  it.each(["../escape.txt", "safe.txt:stream"])(
+    "should reject unsafe workshop download file name %s",
+    async (fileName) => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({
+        id: "item-unsafe-name",
+        title: "文件名测试",
+        fileName,
+        fileHash: null,
+      }));
+
+      const result = await officeWorkshopDownloadTool.execute(
+        { agent_name: "贝露丹蒂", item_id: "item-unsafe-name", target_dir: "downloads", overwrite: true },
+        context,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("文件名无效");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await expect(fs.access(path.join(tempDir, "escape.txt"))).rejects.toThrow();
+    },
+  );
 
   it("should block publish when file path escapes workspace", async () => {
     const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-office-outside-"));

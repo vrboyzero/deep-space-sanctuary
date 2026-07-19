@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const createSettingsControllerMock = vi.fn(() => ({
+  dispose: vi.fn(),
   toggle: vi.fn(),
   renderPairingPending: vi.fn(),
   refreshChannelSecurityPending: vi.fn(),
@@ -10,20 +11,25 @@ const createSettingsControllerMock = vi.fn(() => ({
   markPairingRequired: vi.fn(),
 }));
 const createToolSettingsControllerMock = vi.fn(() => ({
+  dispose: vi.fn(),
+  disposeConfirmation: vi.fn(),
   refreshLocale: vi.fn(),
   handleConfirmRequired: vi.fn(),
   handleConfirmResolved: vi.fn(),
   handleToolsConfigUpdated: vi.fn(),
 }));
 const createExternalOutboundControllerMock = vi.fn(() => ({
+  dispose: vi.fn(),
   handleConfirmRequired: vi.fn(),
   handleConfirmResolved: vi.fn(),
 }));
 const createEmailOutboundControllerMock = vi.fn(() => ({
+  dispose: vi.fn(),
   handleConfirmRequired: vi.fn(),
   handleConfirmResolved: vi.fn(),
 }));
 const createControlPanelCommanderToggleControllerMock = vi.fn(() => ({
+  dispose: vi.fn(),
   refreshLocale: vi.fn(),
   syncFromConfig: vi.fn(),
 }));
@@ -163,5 +169,35 @@ describe("settings runtime feature", () => {
 
     expect(createControlPanelCommanderToggleControllerMock).toHaveBeenCalledTimes(1);
     expect(createControlPanelCommanderToggleControllerMock.mock.calls[0][0].refs).toBe(refs);
+  });
+
+  it("disposes the tool, external, and email outbound confirmation owners", () => {
+    const feature = createSettingsRuntimeFeature({
+      refs: createRefs(),
+      isConnected: () => true,
+      sendReq: vi.fn(),
+      makeId: () => "req-1",
+      setStatus: vi.fn(),
+      loadServerConfig: vi.fn(),
+      invalidateServerConfigCache: vi.fn(),
+      syncAttachmentLimitsFromConfig: vi.fn(),
+      localeController: { t: (_key, _params, fallback) => fallback ?? "" },
+      getConnectionAuthMode: () => "token",
+      clientId: "client-1",
+      getSelectedAgentId: () => null,
+      getActiveConversationId: () => null,
+      getSelectedSubtaskId: () => null,
+      isSubtasksViewActive: () => false,
+      escapeHtml: (value) => String(value ?? ""),
+      showNotice: vi.fn(),
+    });
+
+    feature.dispose();
+
+    expect(createSettingsControllerMock.mock.results[0].value.dispose).toHaveBeenCalledTimes(1);
+    expect(createToolSettingsControllerMock.mock.results[0].value.dispose).toHaveBeenCalledTimes(1);
+    expect(createExternalOutboundControllerMock.mock.results[0].value.dispose).toHaveBeenCalledTimes(1);
+    expect(createEmailOutboundControllerMock.mock.results[0].value.dispose).toHaveBeenCalledTimes(1);
+    expect(createControlPanelCommanderToggleControllerMock.mock.results[0].value.dispose).toHaveBeenCalledTimes(1);
   });
 });

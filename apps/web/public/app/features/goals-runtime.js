@@ -157,6 +157,20 @@ export function createGoalsRuntimeFeature({
   } = refs;
 
   let pendingGoalCheckpointAction = null;
+  let checkpointFocusTimer = null;
+  const pendingRequestTokens = new Set();
+  let lifecycleGeneration = 0;
+  let disposed = false;
+
+  function clearCheckpointFocusTimer() {
+    if (checkpointFocusTimer === null) return;
+    clearTimeout(checkpointFocusTimer);
+    checkpointFocusTimer = null;
+  }
+
+  function isCurrentLifecycle(generation) {
+    return !disposed && generation === lifecycleGeneration;
+  }
 
   function renderGoalsLoading(message) {
     getGoalsOverviewFeature?.()?.renderGoalsLoading(message);
@@ -283,11 +297,12 @@ export function createGoalsRuntimeFeature({
   }
 
   function toggleGoalCheckpointActionModal(show, context = null) {
-    if (!goalCheckpointActionModal) return;
+    if (disposed || !goalCheckpointActionModal) return;
     if (show) {
       const nextContext = context && typeof context === "object" ? { ...context } : null;
       const config = nextContext ? getGoalCheckpointActionConfig(nextContext.action) : null;
       if (!nextContext || !config) return;
+      clearCheckpointFocusTimer();
       pendingGoalCheckpointAction = nextContext;
       resetGoalCheckpointActionForm();
       if (goalCheckpointActionTitleEl) goalCheckpointActionTitleEl.textContent = t(config.modalTitleKey, {}, config.modalTitleFallback);
@@ -312,7 +327,9 @@ export function createGoalsRuntimeFeature({
       renderGoalCheckpointActionContext(nextContext);
       setGoalCheckpointActionBusy(false);
       goalCheckpointActionModal.classList.remove("hidden");
-      setTimeout(() => {
+      checkpointFocusTimer = setTimeout(() => {
+        checkpointFocusTimer = null;
+        if (disposed || goalCheckpointActionModal.classList.contains("hidden")) return;
         if (config.noteRequired) {
           goalCheckpointActionNoteEl?.focus();
         } else {
@@ -323,6 +340,7 @@ export function createGoalsRuntimeFeature({
       return;
     }
 
+    clearCheckpointFocusTimer();
     pendingGoalCheckpointAction = null;
     resetGoalCheckpointActionForm();
     setGoalCheckpointActionBusy(false);
@@ -330,6 +348,7 @@ export function createGoalsRuntimeFeature({
   }
 
   async function runGoalCheckpointAction(goalId, nodeId, checkpointId, action) {
+    if (disposed) return;
     if (!isConnected()) {
       showNotice(t("goals.checkpointActionFailedTitle", {}, "Checkpoint action failed"), t("goals.notConnected", {}, "Not connected to the server."), "error");
       return;
@@ -360,7 +379,7 @@ export function createGoalsRuntimeFeature({
   }
 
   async function submitGoalCheckpointActionForm() {
-    if (!pendingGoalCheckpointAction) return;
+    if (disposed || !pendingGoalCheckpointAction) return;
     if (!isConnected()) {
       showNotice(t("goals.checkpointActionFailedTitle", {}, "Checkpoint action failed"), t("goals.notConnected", {}, "Not connected to the server."), "error");
       return;
@@ -389,6 +408,9 @@ export function createGoalsRuntimeFeature({
       return;
     }
 
+    const generation = lifecycleGeneration;
+    const requestToken = Symbol("goal-checkpoint-action");
+    pendingRequestTokens.add(requestToken);
     setGoalCheckpointActionBusy(true);
     try {
       const res = await sendReq({
@@ -410,6 +432,7 @@ export function createGoalsRuntimeFeature({
           note: note || undefined,
         },
       });
+      if (!isCurrentLifecycle(generation)) return;
       if (!res || !res.ok) {
         showNotice(t("goals.checkpointActionFailedTitle", {}, "Checkpoint action failed"), res?.error?.message || t("goals.unknownError", {}, "Unknown error."), "error");
         return;
@@ -417,6 +440,7 @@ export function createGoalsRuntimeFeature({
 
       toggleGoalCheckpointActionModal(false);
       await loadGoals(true, context.goalId);
+      if (!isCurrentLifecycle(generation)) return;
       showNotice(
         t(config.successTitleKey, {}, config.successTitleFallback),
         t("goals.checkpointActionUpdatedMessage", { goalId: context.goalId, nodeId: context.nodeId }, `${context.goalId} / ${context.nodeId} updated.`),
@@ -424,12 +448,34 @@ export function createGoalsRuntimeFeature({
         2200,
       );
     } catch (error) {
+      if (!isCurrentLifecycle(generation)) return;
       showNotice(t("goals.checkpointActionFailedTitle", {}, "Checkpoint action failed"), error instanceof Error ? error.message : String(error), "error");
     } finally {
-      if (pendingGoalCheckpointAction) {
+      pendingRequestTokens.delete(requestToken);
+      if (isCurrentLifecycle(generation) && pendingGoalCheckpointAction) {
         setGoalCheckpointActionBusy(false);
       }
     }
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    lifecycleGeneration += 1;
+    clearCheckpointFocusTimer();
+    pendingGoalCheckpointAction = null;
+    resetGoalCheckpointActionForm();
+    setGoalCheckpointActionBusy(false);
+    goalCheckpointActionModal?.classList.add("hidden");
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      focusTimerPending: checkpointFocusTimer !== null,
+      pendingRequestCount: pendingRequestTokens.size,
+      hasPendingAction: pendingGoalCheckpointAction !== null,
+      disposed,
+    };
   }
 
   function bindGoalDetailActions(goal) {
@@ -534,5 +580,7 @@ export function createGoalsRuntimeFeature({
     runGoalCheckpointAction,
     submitGoalCheckpointActionForm,
     toggleGoalCheckpointActionModal,
+    dispose,
+    getRuntimeSnapshot,
   };
 }

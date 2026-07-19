@@ -72,6 +72,11 @@
 - `toolWhitelist`: Agent 可用工具白名单；仅这些工具对该 Agent 可见且可执行。
 - `maxInputTokens`: 覆盖该 Agent 的最大输入 token 数。
 - `maxOutputTokens`: 覆盖该 Agent 的最大输出 token 数。
+- `maxToolCalls`: 覆盖该 Agent 单次 run 的工具调用总数上限。`0` 表示拒绝执行工具调用。
+- `maxRunWallTimeMs`: 覆盖该 Agent 单次 ReAct run 的 wall-time 上限（毫秒）。必须为正整数；未填写、`0` 或非法值使用全局安全默认值 `300000`。
+- `maxTotalTokens`: 覆盖该 Agent 单次 ReAct run 的累计 token 上限。必须为正整数；未填写、`0` 或非法值使用全局安全默认值 `128000`。
+- `maxHighRiskToolCalls`: 覆盖该 Agent 单次 ReAct run 可实际执行的 `high` / `critical` Tool 次数。`0` 表示禁止高风险 Tool；未填写或非法值使用全局安全默认值 `4`。
+- `toolLoopIterationBudget`: 覆盖该 Agent 单次工具循环的模型调用轮数上限。`0` 保持兼容的不限轮次语义，仅应为受控长任务显式配置。
 
 ## 3. 默认值与隐式行为
 
@@ -299,7 +304,12 @@
         "camera_snap", // 调用摄像头拍照
         "camera_device_memory" // 管理摄像头别名与常用设备记忆
       ],
-      "maxOutputTokens": 16384 // 覆盖默认最大输出 token，避免长输出被截断
+      "maxOutputTokens": 16384, // 覆盖默认最大输出 token，避免长输出被截断
+      "maxToolCalls": 96, // 代码任务可显式提高工具调用上限
+      "maxRunWallTimeMs": 600000, // 仅对受控代码任务提高最长运行时间
+      "maxTotalTokens": 256000, // 仅对受控代码任务提高累计 token 上限
+      "maxHighRiskToolCalls": 8, // 仅对受控代码任务提高高风险 Tool 执行次数
+      "toolLoopIterationBudget": 24 // 代码任务可显式提高模型调用轮数
     },
     {
       "id": "researcher", // 调研专用 Agent 的 ID

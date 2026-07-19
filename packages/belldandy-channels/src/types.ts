@@ -11,6 +11,26 @@ import type { ReplyChunkingConfig } from "./reply-chunking-config.js";
 import type { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 
 export type ChannelAgentResolver = (agentId?: string) => BelldandyAgent;
+export type ChannelConversationLease = {
+    release(): Promise<void>;
+};
+export type ChannelConversationLifecycle = {
+    /** Core 注入 owner 细节；adapter 只负责覆盖自身 Agent run 的可观察生命周期。 */
+    acquire(input: { conversationId: string; agent: BelldandyAgent }): Promise<ChannelConversationLease>;
+};
+export type ChannelLifecycleState = "stopped" | "starting" | "running" | "stopping" | "failed";
+export type ChannelLifecycleOptions = {
+    /** 关闭或替换运行实例时由 Manager/Gateway 传入，适配器应尽快停止建立新连接。 */
+    signal?: AbortSignal;
+};
+export type ChannelOutboundOptions = {
+    /** 调用方取消会与 Channel 自身停止信号合并。 */
+    signal?: AbortSignal;
+    /** 单次出站调用的总 deadline；未提供时使用 Channel 默认值。 */
+    timeoutMs?: number;
+    /** 仅显式提供时参与本地单飞和平台支持的幂等投递。 */
+    idempotencyKey?: string;
+};
 export type ChannelProactiveTarget = string | {
     chatId?: string;
     sessionKey?: string;
@@ -46,6 +66,8 @@ export interface ChannelConfig {
     onChannelSecurityApprovalRequired?: (input: ChannelSecurityApprovalRequestInput) => void | Promise<void>;
     /** 可选：Gateway 注入的共享入站调度器；独立渠道实例会创建本地 fallback。 */
     ingressScheduler?: ChannelIngressScheduler;
+    /** 可选：Gateway 注入的 conversation lifecycle capability，包内不依赖具体实现。 */
+    conversationLifecycle?: ChannelConversationLifecycle;
 }
 
 /**
@@ -89,19 +111,22 @@ export interface Channel {
      */
     readonly isRunning: boolean;
 
+    /** 当前生命周期终态/过渡态，供 Manager 在替换和诊断时判断所有权。 */
+    readonly lifecycleState: ChannelLifecycleState;
+
     /**
      * 启动渠道
      * - 建立连接（WebSocket/HTTP Long Polling 等）
      * - 开始监听消息
      */
-    start(): Promise<void>;
+    start(options?: ChannelLifecycleOptions): Promise<void>;
 
     /**
      * 停止渠道
      * - 断开连接
      * - 清理资源
      */
-    stop(): Promise<void>;
+    stop(options?: ChannelLifecycleOptions): Promise<void>;
 
     /**
      * 主动发送消息（非回复）
@@ -111,7 +136,11 @@ export interface Channel {
      * @param target - 可选，指定发送目标。支持旧 `chatId` 字符串，也支持 `{ sessionKey }`
      * @returns 是否发送成功
      */
-    sendProactiveMessage(content: string, target?: ChannelProactiveTarget): Promise<boolean>;
+    sendProactiveMessage(
+        content: string,
+        target?: ChannelProactiveTarget,
+        options?: ChannelOutboundOptions,
+    ): Promise<boolean>;
 
     /**
      * 添加事件监听器（可选实现）
@@ -132,12 +161,12 @@ export interface ChannelManager {
     /**
      * 注册渠道
      */
-    register(channel: Channel): void;
+    register(channel: Channel): Promise<void>;
 
     /**
      * 注销渠道
      */
-    unregister(channelName: string): void;
+    unregister(channelName: string): Promise<void>;
 
     /**
      * 获取渠道

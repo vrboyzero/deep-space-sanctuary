@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -119,6 +120,15 @@ async function removeDirWithRetries(dir: string, retries = 8, delayMs = 50): Pro
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -299,6 +309,120 @@ describe("camera native desktop stdio client", () => {
     await client.close();
   });
 
+  it("terminates the helper before rejecting an aborted request", async () => {
+    const helperPath = await createHelperScript(`
+      import fs from "node:fs";
+      import readline from "node:readline";
+      fs.writeFileSync(process.env.HELPER_PID_PATH, String(process.pid));
+      const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+      rl.on("line", (line) => {
+        const message = JSON.parse(line);
+        if (message.method === "hello") {
+          process.stdout.write(JSON.stringify({
+            kind: "response",
+            protocol: "camera-native-desktop/v1",
+            id: message.id,
+            method: "hello",
+            ok: true,
+            result: {
+              protocol: "camera-native-desktop/v1",
+              helperVersion: "0.1.0",
+              platform: "windows",
+              transport: "stdio",
+              helperStatus: "ready",
+              capabilities: {
+                diagnose: true, list: true, snapshot: true, clip: false, audio: false,
+                hotplug: true, background: true, stillFormats: ["png"], clipFormats: [],
+                selectionByStableKey: true, deviceChangeEvents: true
+              }
+            }
+          }) + "\\n");
+        }
+      });
+      setTimeout(() => process.exit(0), 1500);
+    `);
+    const pidPath = path.join(path.dirname(helperPath), "abort-helper.pid");
+    const client = new NativeDesktopStdioHelperClient({
+      protocol: "camera-native-desktop/v1",
+      transport: "stdio",
+      command: process.execPath,
+      args: [helperPath],
+      env: { HELPER_PID_PATH: pidPath },
+      startupTimeoutMs: 2_000,
+      requestTimeoutMs: 2_000,
+    });
+    const controller = new AbortController();
+    const request = client.listDevices({}, {
+      ...createContext(),
+      abortSignal: controller.signal,
+    });
+    await waitFor(() => Boolean((client as any).lastHelloResponse)
+      && (client as any).pendingRequests.size > 0);
+
+    controller.abort("Stopped camera request.");
+    await expect(request).rejects.toThrow("Stopped camera request.");
+    const helperPid = Number(await fs.readFile(pidPath, "utf-8"));
+
+    expect(isProcessAlive(helperPid)).toBe(false);
+    expect((client as any).child).toBeNull();
+  });
+
+  it("kills and waits for the helper before rejecting invalid JSON", async () => {
+    const helperPath = await createHelperScript(`
+      import fs from "node:fs";
+      import readline from "node:readline";
+      fs.writeFileSync(process.env.HELPER_PID_PATH, String(process.pid));
+      const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+      rl.once("line", () => {
+        process.stdout.write("not-json\\n");
+        setTimeout(() => process.exit(0), 500);
+      });
+    `);
+    const pidPath = path.join(path.dirname(helperPath), "helper.pid");
+    const client = new NativeDesktopStdioHelperClient({
+      protocol: "camera-native-desktop/v1",
+      transport: "stdio",
+      command: process.execPath,
+      args: [helperPath],
+      env: { HELPER_PID_PATH: pidPath },
+      startupTimeoutMs: 2_000,
+      requestTimeoutMs: 2_000,
+    });
+
+    await expect(client.listDevices({}, createContext())).rejects.toThrow("emitted invalid JSON");
+    const helperPid = Number(await fs.readFile(pidPath, "utf-8"));
+
+    expect(isProcessAlive(helperPid)).toBe(false);
+    expect((client as any).child).toBeNull();
+  });
+
+  it("rejects and terminates a helper that exceeds the stdout line byte limit", async () => {
+    const helperPath = await createHelperScript(`
+      import readline from "node:readline";
+      const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+      rl.once("line", () => {
+        process.stdout.write("x".repeat(1024 * 1024 + 1));
+        setTimeout(() => process.exit(0), 800);
+      });
+    `);
+    const client = new NativeDesktopStdioHelperClient({
+      protocol: "camera-native-desktop/v1",
+      transport: "stdio",
+      command: process.execPath,
+      args: [helperPath],
+      startupTimeoutMs: 2_000,
+      requestTimeoutMs: 200,
+    });
+
+    try {
+      await expect(client.listDevices({}, createContext())).rejects.toThrow(
+        "stdout line exceeded 1048576 bytes",
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
   it("fails fast when hello response uses the wrong protocol version", async () => {
     const helperPath = await createHelperScript(`
       import readline from "node:readline";
@@ -462,7 +586,7 @@ describe("camera native desktop stdio client", () => {
       const stdout = new PassThrough();
       const stderr = new PassThrough();
       const stdin = new PassThrough();
-      const child = {
+      const child = Object.assign(new EventEmitter(), {
         stdout,
         stderr,
         stdin,
@@ -470,15 +594,15 @@ describe("camera native desktop stdio client", () => {
         exitCode: null,
         kill() {
           this.killed = true;
+          this.exitCode = 1;
+          queueMicrotask(() => this.emit("close", 1, null));
           return true;
         },
-        on(event: string, listener: (...args: unknown[]) => void) {
-          if (event === "error") {
-            setTimeout(() => listener(Object.assign(new Error("spawn missing-helper ENOENT"), { code: "ENOENT" })), 10);
-          }
-          return this;
-        },
-      };
+      });
+      setTimeout(() => child.emit(
+        "error",
+        Object.assign(new Error("spawn missing-helper ENOENT"), { code: "ENOENT" }),
+      ), 10);
       return child as unknown as import("node:child_process").ChildProcessWithoutNullStreams;
     };
 
@@ -694,7 +818,7 @@ describe("camera native desktop stdio client", () => {
           newlineIndex = buffer.indexOf("\n");
         }
       });
-      const child = {
+      const child = Object.assign(new EventEmitter(), {
         stdout,
         stderr,
         stdin,
@@ -702,12 +826,11 @@ describe("camera native desktop stdio client", () => {
         exitCode: null,
         kill() {
           this.killed = true;
+          this.exitCode = 0;
+          queueMicrotask(() => this.emit("close", 0, null));
           return true;
         },
-        on() {
-          return this;
-        },
-      };
+      });
       return child as unknown as import("node:child_process").ChildProcessWithoutNullStreams;
     };
 

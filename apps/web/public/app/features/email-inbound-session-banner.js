@@ -155,33 +155,81 @@ export function createEmailInboundSessionBannerFeature({
   sendReq,
   t,
 }) {
+  const pendingReads = new Set();
+  const retainedBanners = new Set();
+  let generation = 0;
+  let disposed = false;
+
+  function isCurrent(expectedGeneration) {
+    return !disposed && generation === expectedGeneration;
+  }
+
   async function loadBannerText(conversationId) {
+    if (disposed) return "";
     const parsed = parseEmailThreadConversationId(conversationId);
     if (!parsed || typeof sendReq !== "function") {
       return "";
     }
+    const readGeneration = ++generation;
+    const token = Symbol("email-inbound-banner-read");
+    pendingReads.add(token);
     let auditItem = null;
     try {
-      const res = await sendReq({
-        type: "req",
-        id: `email-inbound-banner-${Date.now()}`,
-        method: "email_inbound.audit.list",
-        params: { limit: 50 },
-      });
-      const items = Array.isArray(res?.payload?.items) ? res.payload.items : [];
-      auditItem = selectLatestEmailInboundAuditForConversation(items, conversationId);
-    } catch {
-      auditItem = null;
+      try {
+        const res = await sendReq({
+          type: "req",
+          id: `email-inbound-banner-${Date.now()}`,
+          method: "email_inbound.audit.list",
+          params: { limit: 50 },
+        });
+        if (!isCurrent(readGeneration)) return "";
+        const items = Array.isArray(res?.payload?.items) ? res.payload.items : [];
+        auditItem = selectLatestEmailInboundAuditForConversation(items, conversationId);
+      } catch {
+        // Active failure keeps the basic thread banner; stale failure only settles physically.
+        if (!isCurrent(readGeneration)) return "";
+        auditItem = null;
+      }
+      return isCurrent(readGeneration)
+        ? buildEmailInboundSessionBanner({ conversationId, auditItem, t })
+        : "";
+    } finally {
+      pendingReads.delete(token);
     }
-    return buildEmailInboundSessionBanner({
-      conversationId,
-      auditItem,
-      t,
-    });
+  }
+
+  function renderBanner(container, text) {
+    if (disposed) return null;
+    const existing = container instanceof Element
+      ? container.querySelector(EMAIL_INBOUND_SESSION_BANNER_SELECTOR)
+      : null;
+    const banner = renderEmailInboundSessionBanner(container, text);
+    if (existing && !existing.parentNode) retainedBanners.delete(existing);
+    if (banner) retainedBanners.add(banner);
+    return banner;
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    generation += 1;
+    for (const banner of retainedBanners) banner.remove();
+    retainedBanners.clear();
+  }
+
+  function getRuntimeSnapshot() {
+    return {
+      disposed,
+      emailInboundBannerGeneration: generation,
+      pendingEmailInboundBannerReadCount: pendingReads.size,
+      retainedEmailInboundBannerCount: retainedBanners.size,
+    };
   }
 
   return {
+    dispose,
+    getRuntimeSnapshot,
     loadBannerText,
-    renderBanner: renderEmailInboundSessionBanner,
+    renderBanner,
   };
 }

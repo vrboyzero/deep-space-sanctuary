@@ -6,7 +6,13 @@ import * as chokidar from "chokidar";
 import { MemoryStore } from "./store.js";
 import { Chunker, type ChunkOptions } from "./chunker.js";
 import type { MemoryChunk, MemoryType } from "./types.js";
-import { extractTextFromSession } from "./session-loader.js";
+import { extractTextFromSessionContent } from "./session-loader.js";
+import { readUtf8FileBounded } from "./bounded-index-file.js";
+import {
+    IndexCoordinator,
+    type IndexWatchEvent,
+    type IndexWatchEventKind,
+} from "./index-coordinator.js";
 
 export interface IndexerOptions {
     extensions?: string[];
@@ -14,7 +20,41 @@ export interface IndexerOptions {
     ignorePatterns?: string[];
     watch?: boolean;
     watchDebounceMs?: number;
+    watchMaxPendingPaths?: number;
+    watchMaxConcurrentEvents?: number;
+    watchCloseDrainTimeoutMs?: number;
+    maxFileBytes?: number;
+    maxRunBytes?: number;
     verboseWatchEvents?: boolean;
+}
+
+export type IndexRunBudget = {
+    maxBytes: number;
+    consumedBytes: number;
+    visitedFiles: number;
+    skipFiles: number;
+    exhausted: boolean;
+    nextCursor: number | null;
+};
+
+export type IndexRunResult = {
+    consumedBytes: number;
+    visitedFiles: number;
+    deferred: boolean;
+};
+
+function normalizeByteLimit(value: number | undefined, fallback: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return fallback;
+    }
+    return Math.max(1, Math.floor(value));
+}
+
+export function resolveWatchEventCoalesceMs(watchDebounceMs?: number): number {
+    const debounceMs = typeof watchDebounceMs === "number" && Number.isFinite(watchDebounceMs)
+        ? watchDebounceMs
+        : 1000;
+    return Math.min(200, Math.max(25, Math.floor(debounceMs / 4)));
 }
 
 export function resolveVerboseWatchEvents(option?: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -34,10 +74,13 @@ export class MemoryIndexer {
     private options: Required<IndexerOptions>;
     private watcher: chokidar.FSWatcher | null = null;
     private watchRoots: string[] = [];
-    private pendingWatchEvents = new Map<string, { kind: "upsert" | "remove"; timer: NodeJS.Timeout }>();
+    private readonly watchCoordinator: IndexCoordinator;
+    private readonly ownsWatchCoordinator: boolean;
+    private watchStopped = false;
     private stopped = false;
+    private fullScanCursor = 0;
 
-    constructor(store: MemoryStore, options: IndexerOptions = {}) {
+    constructor(store: MemoryStore, options: IndexerOptions = {}, watchCoordinator?: IndexCoordinator) {
         this.store = store;
         this.chunker = new Chunker(options.chunkOptions);
         this.options = {
@@ -46,13 +89,57 @@ export class MemoryIndexer {
             ignorePatterns: options.ignorePatterns ?? ["node_modules", ".git", "dist", "build", ".star_sanctuary", ".belldandy"],
             watch: options.watch ?? false,
             watchDebounceMs: options.watchDebounceMs ?? 1000,
+            watchMaxPendingPaths: options.watchMaxPendingPaths ?? 1_024,
+            watchMaxConcurrentEvents: options.watchMaxConcurrentEvents ?? 4,
+            watchCloseDrainTimeoutMs: options.watchCloseDrainTimeoutMs ?? 5_000,
+            maxFileBytes: normalizeByteLimit(options.maxFileBytes, 16 * 1024 * 1024),
+            maxRunBytes: normalizeByteLimit(options.maxRunBytes, 256 * 1024 * 1024),
             verboseWatchEvents: resolveVerboseWatchEvents(options.verboseWatchEvents),
+        };
+        this.ownsWatchCoordinator = !watchCoordinator;
+        this.watchCoordinator = watchCoordinator ?? new IndexCoordinator({
+            runFullScan: async () => {},
+            processWatchEvent: (event, signal) => this.processWatchEvent(event, signal),
+            watchCoalesceMs: resolveWatchEventCoalesceMs(this.options.watchDebounceMs),
+            maxPendingWatchPaths: this.options.watchMaxPendingPaths,
+            maxConcurrentWatchEvents: this.options.watchMaxConcurrentEvents,
+            closeDrainTimeoutMs: this.options.watchCloseDrainTimeoutMs,
+            onWatchError: (event, error) => {
+                console.error(`[WatcherFlushError] ${event.sourcePath}`, error);
+            },
+        });
+    }
+
+    beginFullScan(): IndexRunBudget {
+        return {
+            maxBytes: Math.max(1, Math.floor(this.options.maxRunBytes)),
+            consumedBytes: 0,
+            visitedFiles: 0,
+            skipFiles: this.fullScanCursor,
+            exhausted: false,
+            nextCursor: null,
+        };
+    }
+
+    finishFullScan(budget: IndexRunBudget): IndexRunResult {
+        this.fullScanCursor = budget.exhausted && budget.nextCursor !== null
+            ? budget.nextCursor
+            : 0;
+        return {
+            consumedBytes: budget.consumedBytes,
+            visitedFiles: budget.visitedFiles,
+            deferred: budget.exhausted,
         };
     }
 
     /** 索引指定目录（递归） */
-    async indexDirectory(dirPath: string, scanRoot = dirPath): Promise<void> {
-        if (this.stopped) {
+    async indexDirectory(
+        dirPath: string,
+        scanRoot = dirPath,
+        signal?: AbortSignal,
+        runBudget?: IndexRunBudget,
+    ): Promise<void> {
+        if (this.stopped || signal?.aborted) {
             return;
         }
 
@@ -61,18 +148,20 @@ export class MemoryIndexer {
             entries = await fs.readdir(dirPath, { withFileTypes: true });
         } catch (err) {
             const code = (err as NodeJS.ErrnoException | undefined)?.code;
-            if (this.stopped || code === "ENOENT") {
+            if (this.stopped || signal?.aborted || code === "ENOENT") {
                 return;
             }
             throw err;
         }
 
-        if (this.stopped) {
+        if (this.stopped || signal?.aborted) {
             return;
         }
+        // full-scan cursor 依赖稳定 ordinal；不要使用平台未承诺顺序的原始 readdir 结果。
+        entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
 
         for (const entry of entries) {
-            if (this.stopped) {
+            if (this.stopped || signal?.aborted) {
                 return;
             }
             const fullPath = path.join(dirPath, entry.name);
@@ -82,30 +171,51 @@ export class MemoryIndexer {
             }
 
             if (entry.isDirectory()) {
-                await this.indexDirectory(fullPath, scanRoot);
+                await this.indexDirectory(fullPath, scanRoot, signal, runBudget);
             } else if (entry.isFile()) {
                 const ext = path.extname(entry.name).toLowerCase();
                 if (this.options.extensions.includes(ext)) {
-                    await this.indexFile(fullPath);
+                    await this.indexFile(fullPath, signal, runBudget);
                 }
             }
         }
     }
 
     /** 索引单个文件 */
-    async indexFile(filePath: string): Promise<void> {
-        if (this.stopped) {
+    async indexFile(filePath: string, signal?: AbortSignal, runBudget?: IndexRunBudget): Promise<void> {
+        if (this.stopped || signal?.aborted) {
             return;
+        }
+        const runOrdinal = runBudget?.visitedFiles ?? -1;
+        if (runBudget) {
+            runBudget.visitedFiles += 1;
+            if (runOrdinal < runBudget.skipFiles || runBudget.exhausted) {
+                return;
+            }
         }
         try {
             const stats = await fs.stat(filePath);
-            if (this.stopped) {
+            if (this.stopped || signal?.aborted) {
                 return;
+            }
+            const maxFileBytes = this.options.maxFileBytes;
+            if (stats.size > maxFileBytes) {
+                return;
+            }
+            let readLimit = maxFileBytes;
+            if (runBudget) {
+                const remainingBytes = runBudget.maxBytes - runBudget.consumedBytes;
+                if (stats.size > remainingBytes) {
+                    runBudget.exhausted = true;
+                    runBudget.nextCursor = runOrdinal;
+                    return;
+                }
+                readLimit = Math.min(readLimit, remainingBytes);
             }
             const mtime = stats.mtime.toISOString();
             const ext = path.extname(filePath).toLowerCase();
             const fileMeta = this.store.getFileMetadata(filePath);
-            let loaded = null as { content: string; memoryType: MemoryType } | null;
+            let loaded = null as { content: string; memoryType: MemoryType; bytesRead: number } | null;
 
             // 增量判定优先看 mtime；若 mtime 未前进或发生回拨，再回退到内容 hash 校验。
             // 这样既保留了大多数场景下的轻量快速路径，也能兜住测试里这类“内容变了但 mtime 不可靠”的情况。
@@ -114,8 +224,12 @@ export class MemoryIndexer {
                 if (Number.isFinite(previousMtime.getTime()) && previousMtime < stats.mtime) {
                     // 文件 mtime 确认变新，继续重建索引，不需要额外 hash 校验。
                 } else {
-                    loaded = await loadIndexableContent(filePath, ext);
-                    if (this.stopped) {
+                    loaded = await loadIndexableContent(filePath, ext, readLimit, signal);
+                    if (!loaded) {
+                        this.markRunBudgetReadOverflow(runBudget, runOrdinal, readLimit);
+                        return;
+                    }
+                    if (this.stopped || signal?.aborted) {
                         return;
                     }
                     const nextHash = computeContentHash(loaded.content);
@@ -126,10 +240,17 @@ export class MemoryIndexer {
             }
 
             if (!loaded) {
-                loaded = await loadIndexableContent(filePath, ext);
-                if (this.stopped) {
+                loaded = await loadIndexableContent(filePath, ext, readLimit, signal);
+                if (!loaded) {
+                    this.markRunBudgetReadOverflow(runBudget, runOrdinal, readLimit);
                     return;
                 }
+                if (this.stopped || signal?.aborted) {
+                    return;
+                }
+            }
+            if (runBudget) {
+                runBudget.consumedBytes += loaded.bytesRead;
             }
             const { content, memoryType } = loaded;
 
@@ -170,7 +291,7 @@ export class MemoryIndexer {
             }
 
             // 使用单事务替换同一 source 的索引内容，避免先删后写的中间态暴露给查询方。
-            if (this.stopped) {
+            if (this.stopped || signal?.aborted) {
                 return;
             }
             this.store.replaceSourceChunks(filePath, chunks);
@@ -180,28 +301,47 @@ export class MemoryIndexer {
 
         } catch (err) {
             const code = (err as NodeJS.ErrnoException | undefined)?.code;
-            if (this.stopped || code === "ENOENT") {
+            if (this.stopped || signal?.aborted || code === "ENOENT" || code === "ABORT_ERR") {
                 return;
             }
             console.error(`Failed to index file: ${filePath}`, err);
         }
     }
+
+    private markRunBudgetReadOverflow(
+        runBudget: IndexRunBudget | undefined,
+        runOrdinal: number,
+        readLimit: number,
+    ): void {
+        if (!runBudget || readLimit >= this.options.maxFileBytes) {
+            return;
+        }
+        runBudget.consumedBytes = runBudget.maxBytes;
+        runBudget.exhausted = true;
+        runBudget.nextCursor = runOrdinal;
+    }
     /** 停止监听 */
     async stopWatching(): Promise<void> {
-        this.stopped = true;
-        for (const pending of this.pendingWatchEvents.values()) {
-            clearTimeout(pending.timer);
-        }
-        this.pendingWatchEvents.clear();
+        this.watchStopped = true;
+        this.watchCoordinator.stopAcceptingWatchEvents();
         if (this.watcher) {
             await this.watcher.close();
             this.watcher = null;
         }
+        if (this.ownsWatchCoordinator) {
+            await this.watchCoordinator.close();
+        }
+    }
+
+    /** Manager 在 coordinator drain 后调用，阻止任何迟到的索引提交。 */
+    async close(): Promise<void> {
+        await this.stopWatching();
+        this.stopped = true;
     }
 
     /** 启动目录监听（支持单目录或多目录） */
     async startWatching(dirPaths: string | string[]): Promise<void> {
-        if (this.stopped || !this.options.watch) return;
+        if (this.stopped || this.watchStopped || !this.options.watch) return;
         if (this.watcher) return;
 
         const paths = Array.isArray(dirPaths) ? dirPaths : [dirPaths];
@@ -294,41 +434,34 @@ export class MemoryIndexer {
         });
     }
 
-    private scheduleWatchEvent(filePath: string, kind: "upsert" | "remove"): void {
+    private scheduleWatchEvent(filePath: string, kind: IndexWatchEventKind): void {
         const resolvedPath = path.resolve(filePath);
-        const existing = this.pendingWatchEvents.get(resolvedPath);
-        if (existing) {
-            clearTimeout(existing.timer);
-        }
-        const timer = setTimeout(() => {
-            this.pendingWatchEvents.delete(resolvedPath);
-            void this.flushWatchEvent(resolvedPath, kind);
-        }, this.getWatchEventCoalesceMs());
-        this.pendingWatchEvents.set(resolvedPath, { kind, timer });
+        this.watchCoordinator.enqueueWatchEvent(resolvedPath, kind);
     }
 
-    private getWatchEventCoalesceMs(): number {
-        return Math.min(200, Math.max(25, Math.floor(this.options.watchDebounceMs / 4)));
-    }
-
-    private async flushWatchEvent(filePath: string, kind: "upsert" | "remove"): Promise<void> {
-        if (this.stopped) {
+    async processWatchEvent(event: IndexWatchEvent, signal?: AbortSignal): Promise<void> {
+        if (this.stopped || signal?.aborted) {
             return;
         }
+        const { sourcePath: filePath, kind } = event;
         if (this.options.verboseWatchEvents) {
             console.log(kind === "remove" ? `[FileRemoved] ${filePath}` : `[FileChanged] ${filePath}`);
         }
         try {
             if (kind === "remove") {
-                this.store.deleteBySource(filePath);
+                if (!signal?.aborted) {
+                    this.store.deleteBySource(filePath);
+                }
                 return;
             }
-            await this.indexFile(filePath);
+            await this.indexFile(filePath, signal);
         } catch (error) {
-            if (this.stopped || (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+            if (this.stopped
+                || signal?.aborted
+                || (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
                 return;
             }
-            console.error(`[WatcherFlushError] ${filePath}`, error);
+            throw error;
         }
     }
 }
@@ -371,15 +504,19 @@ function normalizePathSegments(input: string): string[] {
 async function loadIndexableContent(
     filePath: string,
     ext: string,
-): Promise<{ content: string; memoryType: MemoryType }> {
-    if (ext === ".jsonl") {
-        return {
-            content: await extractTextFromSession(filePath),
-            memoryType: "session",
-        };
+    maxBytes: number,
+    signal?: AbortSignal,
+): Promise<{ content: string; memoryType: MemoryType; bytesRead: number } | null> {
+    const loaded = await readUtf8FileBounded(filePath, maxBytes, signal);
+    if (loaded.status === "too_large") {
+        return null;
     }
-
-    const content = await fs.readFile(filePath, "utf-8");
+    const content = ext === ".jsonl"
+        ? extractTextFromSessionContent(loaded.content)
+        : loaded.content;
+    if (ext === ".jsonl") {
+        return { content, memoryType: "session", bytesRead: loaded.bytesRead };
+    }
     const fileName = path.basename(filePath);
     const parentDir = path.basename(path.dirname(filePath));
     const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
@@ -395,7 +532,7 @@ async function loadIndexableContent(
         memoryType = "daily";
     }
 
-    return { content, memoryType };
+    return { content, memoryType, bytesRead: loaded.bytesRead };
 }
 
 function computeContentHash(content: string): string {

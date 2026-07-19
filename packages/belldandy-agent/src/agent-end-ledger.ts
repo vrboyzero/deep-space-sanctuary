@@ -1,6 +1,6 @@
 import { redactSensitiveText, redactSensitiveValue, type JsonObject } from "@belldandy/protocol";
 
-import type { AgentFinal, AgentStatus, AgentStreamItem, AgentUsage } from "./index.js";
+import type { AgentBudgetExhausted, AgentFinal, AgentStatus, AgentStreamItem, AgentUsage } from "./index.js";
 
 export type AgentEndLedgerSummary = {
   truncated: boolean;
@@ -37,6 +37,7 @@ export class AgentEndLedger {
   private readonly tail: AgentStreamItem[] = [];
   private latestFinal?: AgentFinal;
   private latestStatus?: AgentStatus;
+  private latestBudgetExhausted?: AgentBudgetExhausted;
   private latestUsage?: AgentUsage;
   private eventCount = 0;
   private totalDeltaChars = 0;
@@ -64,11 +65,13 @@ export class AgentEndLedger {
 
     if (bounded.type === "final") this.latestFinal = bounded;
     if (bounded.type === "status") this.latestStatus = bounded;
+    if (bounded.type === "budget_exhausted") this.latestBudgetExhausted = bounded;
     if (bounded.type === "usage") this.latestUsage = bounded;
   }
 
   snapshot(): AgentEndLedgerSnapshot {
     const items = [...this.head, ...this.tail];
+    this.appendTerminalItem(items, this.latestBudgetExhausted);
     this.appendTerminalItem(items, this.latestFinal);
     this.appendTerminalItem(items, this.latestUsage);
     this.appendTerminalItem(items, this.latestStatus);

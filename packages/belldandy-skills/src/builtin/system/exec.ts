@@ -1,11 +1,12 @@
 import type { Tool, ToolCallResult, ToolExecPolicy } from "../../types.js";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
 import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
 import { buildFailureToolCallResult, inferToolFailureKindFromError } from "../../failure-kind.js";
+import { ProcessLease, type ProcessTerminationResult, shouldDetachProcessTree } from "./process-lease.js";
 
 // 安全策略配置
 const BLOCKLIST = new Set([
@@ -101,6 +102,9 @@ const DEFAULT_EXEC_POLICY: Required<ToolExecPolicy> = {
         rules: {},
     },
 };
+
+const DEFAULT_COMMAND_POLICY_TIMEOUT_MS = 30_000;
+const DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES = 512_000;
 
 const ENV_FILE_PATTERN = /\.env(\.|$)/i;
 const ENV_READ_KEYWORDS = ["cat", "type", "more", "less", "head", "tail", "grep", "rg", "sed", "awk", "get-content"];
@@ -258,25 +262,59 @@ function determineTimeoutMs(command: string, provided: number | undefined, polic
     return policy.quickTimeoutMs;
 }
 
-function killChildProcess(child: ChildProcess): void {
-    try {
-        child.kill("SIGKILL");
-        return;
-    } catch {
-        // ignore
+function normalizePositiveLimit(value: number, fallback: number): number {
+    if (!Number.isFinite(value) || value <= 0) {
+        return fallback;
     }
-    try {
-        child.kill();
-    } catch {
-        // ignore
-    }
-    if (child.pid) {
-        try {
-            process.kill(child.pid, "SIGKILL");
-        } catch {
-            // ignore
-        }
-    }
+    return Math.max(1, Math.floor(value));
+}
+
+type ProcessOutputStream = "stdout" | "stderr";
+
+/** 共享单一字节预算持续排空 stdout/stderr，避免子进程输出在内存中无界累积。 */
+function createProcessOutputCollector(limitBytes: number): {
+    append: (stream: ProcessOutputStream, data: unknown) => void;
+    read: (stream: ProcessOutputStream) => string;
+    metadata: () => ToolCallResult["metadata"];
+} {
+    const chunks: Record<ProcessOutputStream, Buffer[]> = { stdout: [], stderr: [] };
+    const capturedBytes: Record<ProcessOutputStream, number> = { stdout: 0, stderr: 0 };
+    const observedBytes: Record<ProcessOutputStream, number> = { stdout: 0, stderr: 0 };
+    let remainingBytes = limitBytes;
+
+    return {
+        append(stream, data) {
+            const chunk = Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf-8");
+            observedBytes[stream] += chunk.byteLength;
+            if (remainingBytes <= 0) {
+                return;
+            }
+            const captured = chunk.subarray(0, remainingBytes);
+            if (captured.byteLength > 0) {
+                chunks[stream].push(captured);
+                capturedBytes[stream] += captured.byteLength;
+                remainingBytes -= captured.byteLength;
+            }
+        },
+        read(stream) {
+            return Buffer.concat(chunks[stream], capturedBytes[stream]).toString("utf-8");
+        },
+        metadata() {
+            const totalObserved = observedBytes.stdout + observedBytes.stderr;
+            const totalCaptured = capturedBytes.stdout + capturedBytes.stderr;
+            if (totalObserved <= limitBytes) {
+                return undefined;
+            }
+            return {
+                outputTruncated: true,
+                outputLimitBytes: limitBytes,
+                outputBytesObserved: totalObserved,
+                outputBytesCaptured: totalCaptured,
+                stdoutBytesObserved: observedBytes.stdout,
+                stderrBytesObserved: observedBytes.stderr,
+            };
+        },
+    };
 }
 
 function isAbsoluteLike(input: string): boolean {
@@ -898,6 +936,7 @@ export const runCommandTool: Tool = withToolContract({
             output: string,
             error?: string,
             failureKind?: ToolCallResult["failureKind"],
+            metadata?: ToolCallResult["metadata"],
         ): ToolCallResult => (
             success
                 ? {
@@ -906,6 +945,7 @@ export const runCommandTool: Tool = withToolContract({
                     success,
                     output,
                     durationMs: Date.now() - start,
+                    ...(metadata ? { metadata } : {}),
                 }
                 : buildFailureToolCallResult({
                     id,
@@ -914,6 +954,7 @@ export const runCommandTool: Tool = withToolContract({
                     output,
                     error: error ?? "",
                     ...(failureKind ? { failureKind } : {}),
+                    ...(metadata ? { metadata } : {}),
                 })
         );
 
@@ -985,7 +1026,15 @@ export const runCommandTool: Tool = withToolContract({
             }
         }
 
-        const timeoutMs = determineTimeoutMs(command, args.timeoutMs as number | undefined, execPolicy);
+        const requestedTimeoutMs = determineTimeoutMs(command, args.timeoutMs as number | undefined, execPolicy);
+        const timeoutMs = Math.min(
+            requestedTimeoutMs,
+            normalizePositiveLimit(context.policy.maxTimeoutMs, DEFAULT_COMMAND_POLICY_TIMEOUT_MS),
+        );
+        const outputLimitBytes = normalizePositiveLimit(
+            context.policy.maxResponseBytes,
+            DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        );
 
         context.logger?.info(`[exec] Run: ${command} in ${cwd}`);
         try {
@@ -998,15 +1047,34 @@ export const runCommandTool: Tool = withToolContract({
             const child = spawn(command, {
                 cwd,
                 shell: true,
+                detached: shouldDetachProcessTree(),
                 env: { ...process.env, FORCE_COLOR: "0" }, // 禁用颜色代码
+                windowsHide: true,
             });
+            const processLease = new ProcessLease(child);
             // run_command 当前不支持向子进程写入 stdin；显式结束 stdin，
             // 避免非交互 CLI 在拿到参数后继续等待 EOF。
             child.stdin?.end();
 
-            let stdout = "";
-            let stderr = "";
+            const outputCollector = createProcessOutputCollector(outputLimitBytes);
             let settled = false;
+            let terminationIntent: "abort" | "timeout" | null = null;
+
+            const buildMetadata = (
+                termination?: ProcessTerminationResult,
+            ): ToolCallResult["metadata"] => {
+                const outputMetadata = outputCollector.metadata();
+                if (!termination) {
+                    return outputMetadata;
+                }
+                return {
+                    ...(outputMetadata ?? {}),
+                    processTerminationReason: terminationIntent ?? "unknown",
+                    processTerminationMethod: termination.method,
+                    processHardKillUsed: termination.hardKillUsed,
+                    processCloseObserved: termination.closeObserved,
+                };
+            };
 
             const finalize = (result: ToolCallResult) => {
                 if (settled) {
@@ -1018,40 +1086,86 @@ export const runCommandTool: Tool = withToolContract({
                 resolve(result);
             };
 
-            const onAbort = () => {
-                killChildProcess(child);
-                finalize(makeResult(false, stdout, readAbortReason(context.abortSignal), "environment_error"));
+            const terminateAndFinalize = (
+                reason: "abort" | "timeout",
+                error: () => string,
+            ) => {
+                if (settled || terminationIntent) {
+                    return;
+                }
+                terminationIntent = reason;
+                clearTimeout(timeoutTimer);
+                context.abortSignal?.removeEventListener("abort", onAbort);
+                void processLease.terminate().then((termination) => {
+                    finalize(makeResult(
+                        false,
+                        outputCollector.read("stdout"),
+                        error(),
+                        "environment_error",
+                        buildMetadata(termination),
+                    ));
+                });
             };
 
+            const onAbort = () => terminateAndFinalize(
+                "abort",
+                () => readAbortReason(context.abortSignal),
+            );
+
             const timeoutTimer = setTimeout(() => {
-                killChildProcess(child);
-                finalize(makeResult(false, stdout, `Timeout after ${timeoutMs}ms\nStderr: ${stderr}`, "environment_error"));
+                terminateAndFinalize(
+                    "timeout",
+                    () => `Timeout after ${timeoutMs}ms\nStderr: ${outputCollector.read("stderr")}`,
+                );
             }, timeoutMs);
             context.abortSignal?.addEventListener("abort", onAbort, { once: true });
+            if (context.abortSignal?.aborted) {
+                onAbort();
+            }
 
             child.stdout.on("data", (data) => {
-                stdout += data.toString();
+                if (!settled) {
+                    outputCollector.append("stdout", data);
+                }
             });
 
             child.stderr.on("data", (data) => {
-                stderr += data.toString();
+                if (!settled) {
+                    outputCollector.append("stderr", data);
+                }
             });
 
             child.on("close", (code) => {
+                if (terminationIntent) {
+                    return;
+                }
+                const stdout = outputCollector.read("stdout");
+                const stderr = outputCollector.read("stderr");
+                const metadata = buildMetadata();
                 if (code === 0) {
-                    finalize(makeResult(true, stdout));
+                    finalize(makeResult(true, stdout, undefined, undefined, metadata));
                 } else {
                     finalize(makeResult(
                         false,
                         stdout,
                         `Process exited with code ${code}\nStderr: ${stderr}`,
                         inferToolFailureKindFromError(stderr || `Process exited with code ${code}`),
+                        metadata,
                     ));
                 }
             });
 
             child.on("error", (err) => {
-                finalize(makeResult(false, stdout, `Spawn error: ${err.message}`, "environment_error"));
+                if (terminationIntent) {
+                    return;
+                }
+                finalize(makeResult(
+                    false,
+                    outputCollector.read("stdout"),
+                    `Spawn error: ${err.message}`,
+                    "environment_error",
+                    outputCollector.metadata(),
+                ));
             });
         });
     },

@@ -53,6 +53,8 @@ export interface HookAgentContext {
   workspaceDir?: string;
   /** 消息提供者（如 discord、feishu 等） */
   messageProvider?: string;
+  /** 当前 Agent run 的调用方取消信号；支持取消的前置 Hook 应停止自身等待。 */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -101,6 +103,8 @@ export interface HookSessionContext {
   agentId?: string;
   /** 会话 ID */
   sessionId: string;
+  /** 会话终止信号；支持取消的 Hook 应及时停止自身等待或外部 I/O。 */
+  abortSignal?: AbortSignal;
 }
 
 /**

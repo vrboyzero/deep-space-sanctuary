@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { getGoalsRegistryPath } from "./paths.js";
+import { withGoalRegistryMutationLock } from "./goal-registry-mutation-queue.js";
 import type { GoalRegistry, GoalRegistryEntry } from "./types.js";
 
 const RENAME_RETRIES = 3;
@@ -79,7 +80,7 @@ export async function loadGoalRegistry(stateDir: string): Promise<GoalRegistry> 
   }
 }
 
-export async function saveGoalRegistry(stateDir: string, registry: GoalRegistry): Promise<void> {
+async function saveGoalRegistryUnlocked(stateDir: string, registry: GoalRegistry): Promise<void> {
   const registryPath = getGoalsRegistryPath(stateDir);
   await atomicWriteJson(registryPath, {
     ...registry,
@@ -88,7 +89,18 @@ export async function saveGoalRegistry(stateDir: string, registry: GoalRegistry)
   } satisfies GoalRegistry);
 }
 
+export async function saveGoalRegistry(stateDir: string, registry: GoalRegistry): Promise<void> {
+  await withGoalRegistryMutationLock(stateDir, () => saveGoalRegistryUnlocked(stateDir, registry));
+}
+
 export async function upsertGoalRegistryEntry(stateDir: string, entry: GoalRegistryEntry): Promise<GoalRegistry> {
+  return withGoalRegistryMutationLock(stateDir, () => upsertGoalRegistryEntryUnderLock(stateDir, entry));
+}
+
+/**
+ * 调用方必须已持有 withGoalRegistryMutationLock(stateDir, ...)；用于把 Goal 创建的目录预留与最终发布放进同一临界区。
+ */
+export async function upsertGoalRegistryEntryUnderLock(stateDir: string, entry: GoalRegistryEntry): Promise<GoalRegistry> {
   const registry = await loadGoalRegistry(stateDir);
   const nextGoals = registry.goals.filter((goal) => goal.id !== entry.id);
   nextGoals.push(entry);
@@ -97,7 +109,7 @@ export async function upsertGoalRegistryEntry(stateDir: string, entry: GoalRegis
     goals: nextGoals.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     updatedAt: new Date().toISOString(),
   };
-  await saveGoalRegistry(stateDir, nextRegistry);
+  await saveGoalRegistryUnlocked(stateDir, nextRegistry);
   return nextRegistry;
 }
 
@@ -116,6 +128,10 @@ export async function listGoalRegistryEntries(stateDir: string): Promise<GoalReg
 }
 
 export async function removeGoalRegistryEntry(stateDir: string, goalId: string): Promise<GoalRegistry> {
+  return withGoalRegistryMutationLock(stateDir, () => removeGoalRegistryEntryUnderLock(stateDir, goalId));
+}
+
+async function removeGoalRegistryEntryUnderLock(stateDir: string, goalId: string): Promise<GoalRegistry> {
   const registry = await loadGoalRegistry(stateDir);
   const nextGoals = registry.goals.filter((goal) => goal.id !== goalId);
   if (nextGoals.length === registry.goals.length) {
@@ -126,7 +142,7 @@ export async function removeGoalRegistryEntry(stateDir: string, goalId: string):
     goals: nextGoals,
     updatedAt: new Date().toISOString(),
   };
-  await saveGoalRegistry(stateDir, nextRegistry);
+  await saveGoalRegistryUnlocked(stateDir, nextRegistry);
   return nextRegistry;
 }
 

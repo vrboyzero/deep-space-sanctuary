@@ -1,8 +1,10 @@
-import crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool, ToolCallResult } from "../../types.js";
-import { OfficeSiteClient, normalizeWorkshopCategory, resolveWritableDir, sha256File } from "./client.js";
+import { parsePositiveByteLimit } from "../remote-response-file.js";
+import { OfficeSiteClient, normalizeWorkshopCategory, resolveWritableDir } from "./client.js";
+
+const DEFAULT_OFFICE_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
 
 type WorkshopListResponse = {
   items: Array<Record<string, unknown>>;
@@ -30,6 +32,22 @@ type WorkshopItemDetail = {
   appManifest?: string | null;
   author?: Record<string, unknown>;
 };
+
+function normalizeDownloadedFileName(value: string): string {
+  const normalized = value.trim().replaceAll("\\", "/");
+  const fileName = path.posix.basename(normalized);
+  const hasWindowsReservedSyntax = /[<>:"|?*\u0000-\u001f]/u.test(fileName)
+    || /[. ]$/u.test(fileName)
+    || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(fileName);
+  if (!fileName
+    || fileName === "."
+    || fileName === ".."
+    || fileName !== normalized
+    || hasWindowsReservedSyntax) {
+    throw new Error("工坊下载文件名无效");
+  }
+  return fileName;
+}
 
 function makeResult(name: string, start: number, success: boolean, payload: unknown, error?: string): ToolCallResult {
   return {
@@ -153,7 +171,8 @@ export const officeWorkshopDownloadTool: Tool = {
         : client.getDownloadDir(context);
 
       await fs.mkdir(targetDir, { recursive: true });
-      const targetPath = path.join(targetDir, item.fileName);
+      const fileName = normalizeDownloadedFileName(item.fileName);
+      const targetPath = path.join(targetDir, fileName);
       try {
         await fs.access(targetPath);
         if (!overwrite) {
@@ -162,18 +181,27 @@ export const officeWorkshopDownloadTool: Tool = {
       } catch {
       }
 
-      const downloaded = await client.download(`/api/workshop/items/${encodeURIComponent(itemId)}/download`);
-      await fs.writeFile(targetPath, downloaded.buffer);
-      const actualHash = await sha256File(targetPath);
+      const downloaded = await client.downloadToFile(
+        `/api/workshop/items/${encodeURIComponent(itemId)}/download`,
+        {
+          targetPath,
+          maxBytes: parsePositiveByteLimit(
+            process.env.BELLDANDY_OFFICE_MAX_DOWNLOAD_BYTES,
+            DEFAULT_OFFICE_MAX_DOWNLOAD_BYTES,
+          ),
+          overwrite,
+        },
+      );
+      const actualHash = downloaded.sha256;
       const expectedHash = item.fileHash || null;
 
       return makeResult(name, start, true, {
         success: true,
         itemId,
         title: item.title,
-        fileName: item.fileName,
+        fileName,
         targetPath,
-        fileSize: downloaded.buffer.byteLength,
+        fileSize: downloaded.byteLength,
         expectedHash,
         actualHash,
         hashMatched: expectedHash ? expectedHash === actualHash : null,

@@ -14,6 +14,14 @@ function flushTasks() {
   });
 }
 
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function createRefs() {
   document.body.innerHTML = `
     <div class="control-panel-commander-card">
@@ -165,5 +173,84 @@ describe("control panel commander toggle controller", () => {
     expect(refs.cfgCommanderMode.value).toBe("off");
     expect(refs.cfgGoalExecutionMode.value).toBe("single_agent");
     expect(refs.cfgGoalGovernanceMode.value).toBe("direct");
+  });
+
+  it("removes the listener and ignores a late config sync after dispose", async () => {
+    const refs = createRefs();
+    const deferredConfig = createDeferred();
+    const loadServerConfig = vi.fn(() => deferredConfig.promise);
+    const controller = createControlPanelCommanderToggleController({
+      refs,
+      isConnected: () => true,
+      sendReq: vi.fn(),
+      makeId: () => "req-late-sync",
+      loadServerConfig,
+      invalidateServerConfigCache: vi.fn(),
+      showNotice: vi.fn(),
+      t: createTranslator(),
+    });
+    const syncPromise = controller.syncFromConfig();
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 1,
+      pendingOperationCount: 1,
+      disposed: false,
+    });
+
+    controller.dispose();
+    refs.commanderQuickToggleEl.click();
+    deferredConfig.resolve({
+      BELLDANDY_COMMANDER_MODE: "on",
+      BELLDANDY_GOAL_EXECUTION_MODE: "multi_agent_parallel",
+      BELLDANDY_GOAL_GOVERNANCE_MODE: "commander",
+    });
+    await syncPromise;
+    expect(refs.cfgCommanderMode.value).toBe("auto");
+    expect(loadServerConfig).toHaveBeenCalledTimes(1);
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 0,
+      pendingOperationCount: 0,
+      busy: false,
+      disposed: true,
+    });
+  });
+
+  it("ignores a late update settlement after dispose", async () => {
+    const refs = createRefs();
+    const updateResponse = createDeferred();
+    const invalidateServerConfigCache = vi.fn();
+    const showNotice = vi.fn();
+    const sendReq = vi.fn(() => updateResponse.promise);
+    const controller = createControlPanelCommanderToggleController({
+      refs,
+      isConnected: () => true,
+      sendReq,
+      makeId: () => "req-late-update",
+      loadServerConfig: vi.fn().mockResolvedValue({
+        BELLDANDY_COMMANDER_MODE: "off",
+        BELLDANDY_GOAL_EXECUTION_MODE: "single_agent",
+        BELLDANDY_GOAL_GOVERNANCE_MODE: "direct",
+      }),
+      invalidateServerConfigCache,
+      showNotice,
+      t: createTranslator(),
+    });
+
+    refs.commanderQuickToggleEl.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendReq).toHaveBeenCalledTimes(1);
+    expect(controller.getRuntimeSnapshot().pendingOperationCount).toBe(1);
+    controller.dispose();
+    updateResponse.resolve({ ok: true, payload: { restartRequired: false } });
+    await flushTasks();
+
+    expect(invalidateServerConfigCache).not.toHaveBeenCalled();
+    expect(showNotice).not.toHaveBeenCalled();
+    expect(refs.cfgCommanderMode.value).toBe("auto");
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      pendingOperationCount: 0,
+      busy: false,
+      disposed: true,
+    });
   });
 });

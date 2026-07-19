@@ -3,7 +3,7 @@
  *
  * 复用 MemoryStore 的 better-sqlite3 db 句柄，在同一个 SQLite 文件中维护
  * `workflow_journal` 表。每条记录对应一次 ctx.agent() 调用的指纹与结果，
- * 用于断点续传：相同 journalId + 相同 fingerprint 命中时直接返回缓存。
+ * 用于断点续传：只有已完成的相同 journalId + fingerprint 才能命中缓存。
  *
  * 设计要点：
  * - schema 由本类自行安装，不污染 MemoryStore 的 schema 常量
@@ -71,7 +71,7 @@ export type WorkflowJournalHit = {
   result: string;
   resultJson: string | null;
   tokenCount: number | null;
-  status: WorkflowJournalStatus;
+  status: "done";
 };
 
 export type WorkflowJournalPendingInput = {
@@ -295,13 +295,12 @@ export class WorkflowJournal {
   }
 
   /**
-   * 查询某次运行中是否已有该 fingerprint 的已完成记录。
-   * 只返回 done / skipped / error 状态的记录（pending 不视为命中）。
+   * 查询某次运行中是否已有该 fingerprint 的成功记录。
+   * error/skipped/pending 都必须重新执行，不能以空 result 伪装成 cache hit。
    */
   lookup(journalId: string, fingerprint: string): WorkflowJournalHit | null {
     const row = this.stmtLookup.get({ journal_id: journalId, fingerprint });
-    if (!row) return null;
-    if (row.status === "pending") return null;
+    if (!row || row.status !== "done") return null;
     return {
       fingerprint: row.fingerprint,
       result: row.result ?? "",

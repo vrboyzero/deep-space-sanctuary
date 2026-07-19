@@ -40,7 +40,7 @@ afterEach(() => {
   delete globalThis.BELLDANDY_WEB_CONFIG;
 });
 
-function createDedupHarness(sendReqImpl = vi.fn()) {
+function createDedupHarness(sendReqImpl = vi.fn(), options = {}) {
   document.body.innerHTML = `
     <section id="memoryViewerSection">
       <div id="memoryViewerTitle"></div>
@@ -195,6 +195,7 @@ function createDedupHarness(sendReqImpl = vi.fn()) {
   };
 
   const sendReq = typeof sendReqImpl === "function" ? sendReqImpl : vi.fn(sendReqImpl);
+  const showNotice = vi.fn();
   const feature = createMemoryViewerFeature({
     refs,
     isConnected: () => true,
@@ -232,14 +233,386 @@ function createDedupHarness(sendReqImpl = vi.fn()) {
     bindMemoryPathLinks: vi.fn(),
     bindTaskAuditJumpLinks: vi.fn(),
     openConversationSession: vi.fn(),
-    showNotice: vi.fn(),
+    emailThreadAdviceRetention: options.emailThreadAdviceRetention,
+    showNotice,
     t: (_key, _params, fallback) => fallback ?? "",
   });
 
-  return { refs, state, sendReq, feature };
+  return { refs, state, sendReq, showNotice, feature };
 }
 
+describe("memory viewer load lifecycle", () => {
+  it("forwards dispose into the top-level load owner", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => {
+      resolveRequest = resolve;
+    });
+    const { feature, state } = createDedupHarness(vi.fn(() => request));
+
+    const load = feature.loadMemoryViewer();
+    expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(1);
+    const requestTokenBeforeDispose = state.requestToken;
+
+    feature.dispose();
+    expect(state.requestToken).toBe(requestTokenBeforeDispose + 1);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      pendingLoadRequestCount: 1,
+    });
+
+    resolveRequest({ ok: false });
+    await load;
+    expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(0);
+  });
+
+  it("clears retained MemoryViewer bodies through the main dispose wiring", () => {
+    const { feature, refs, state } = createDedupHarness();
+    state.items = [{ id: "private-item", content: "private body" }];
+    state.selectedId = "private-item";
+    state.selectedDreamHistoryContent = "private dream body";
+    state.dreamHistoryItems = [{ id: "private-dream" }];
+    refs.memoryViewerListEl.textContent = "private list";
+    refs.memoryViewerDetailEl.textContent = "private detail";
+    refs.memoryDreamHistoryDetailEl.textContent = "private dream detail";
+
+    feature.dispose();
+
+    expect(state.items).toEqual([]);
+    expect(state.selectedId).toBeNull();
+    expect(state.selectedDreamHistoryContent).toBe("");
+    expect(refs.memoryViewerListEl.textContent).toBe("");
+    expect(refs.memoryViewerDetailEl.textContent).toBe("");
+    expect(refs.memoryDreamHistoryDetailEl.textContent).toBe("");
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      disposed: true,
+      retainedItemCount: 0,
+      retainedDreamHistoryItemCount: 0,
+      populatedDomCount: 0,
+    });
+  });
+
+  it("settles stale Dream history load through the main lifecycle wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, state } = createDedupHarness(vi.fn(() => request));
+    const load = feature.loadDreamHistory();
+    expect(feature.getRuntimeSnapshot().pendingDreamHistoryListRequestCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { items: [{ id: "dream-late" }] } });
+    await load;
+
+    expect(state.dreamHistoryItems).toEqual([]);
+    expect(feature.getRuntimeSnapshot().pendingDreamHistoryRequestCount).toBe(0);
+  });
+
+  it("settles stale Dream Commons status through the main lifecycle wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, state } = createDedupHarness(vi.fn(() => request));
+    const load = feature.loadDreamCommonsStatus();
+    expect(feature.getRuntimeSnapshot().pendingDreamRuntimeCommonsRequestCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { headline: "late Commons body" } });
+    await load;
+
+    expect(state.dreamCommons).toBeNull();
+    expect(feature.getRuntimeSnapshot().pendingDreamRuntimeRequestCount).toBe(0);
+  });
+
+  it("settles stale Dream run through the main action wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, state } = createDedupHarness(vi.fn(() => request));
+    const run = feature.runDream();
+    expect(feature.getRuntimeSnapshot().pendingDreamRunActionCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { record: { summary: "late Dream" } } });
+    await run;
+
+    expect(state.dreamRuntime).toBeNull();
+    expect(state.dreamBusy).toBe(false);
+    expect(feature.getRuntimeSnapshot().pendingDreamRunActionCount).toBe(0);
+  });
+
+  it("settles stale shared promotion through the real detail action wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, sendReq } = createDedupHarness(vi.fn(() => request));
+    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("manual promotion");
+    try {
+      feature.renderMemoryDetail({
+        id: "chunk-1",
+        content: "private memory",
+        visibility: "private",
+        sourceView: { scope: "private" },
+      });
+      document.querySelector("[data-memory-share-promote]").click();
+      expect(feature.getRuntimeSnapshot().pendingMemorySharePromoteActionCount).toBe(1);
+
+      feature.dispose();
+      resolveRequest({ ok: true, payload: { promotedCount: 1 } });
+      await vi.waitFor(() => {
+        expect(feature.getRuntimeSnapshot().pendingMemorySharePromoteActionCount).toBe(0);
+      });
+
+      expect(sendReq).toHaveBeenCalledTimes(1);
+    } finally {
+      promptSpy.mockRestore();
+    }
+  });
+
+  it("settles stale shared claim through the real detail action wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, sendReq } = createDedupHarness(vi.fn(() => request));
+    feature.renderMemoryDetail({
+      id: "chunk-1",
+      content: "pending shared memory",
+      visibility: "private",
+      sourceView: { scope: "private" },
+      metadata: { sharedPromotion: { status: "pending" } },
+    });
+    document.querySelector('[data-memory-share-claim="claim"]').click();
+    expect(feature.getRuntimeSnapshot().pendingMemoryShareClaimActionCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { claimedCount: 1 } });
+    await vi.waitFor(() => {
+      expect(feature.getRuntimeSnapshot().pendingMemoryShareClaimActionCount).toBe(0);
+    });
+
+    expect(sendReq).toHaveBeenCalledTimes(1);
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({ method: "memory.share.claim" }));
+  });
+
+  it("settles stale shared review through the real detail action wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, sendReq } = createDedupHarness(vi.fn(() => request));
+    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("review note");
+    try {
+      feature.renderMemoryDetail({
+        id: "chunk-1",
+        content: "pending shared memory",
+        visibility: "private",
+        sourceView: { scope: "private" },
+        metadata: { sharedPromotion: { status: "pending" } },
+      });
+      document.querySelector('[data-memory-share-decision="approved"]').click();
+      expect(feature.getRuntimeSnapshot().pendingMemoryShareReviewActionCount).toBe(1);
+
+      feature.dispose();
+      resolveRequest({ ok: true, payload: { reviewedCount: 1 } });
+      await vi.waitFor(() => {
+        expect(feature.getRuntimeSnapshot().pendingMemoryShareReviewActionCount).toBe(0);
+      });
+
+      expect(sendReq).toHaveBeenCalledTimes(1);
+      expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({ method: "memory.share.review" }));
+    } finally {
+      promptSpy.mockRestore();
+    }
+  });
+
+  it("settles stale shared batch action through the real batch bar wiring", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, sendReq, state } = createDedupHarness(vi.fn(() => request));
+    state.tab = "sharedReview";
+    state.items = [{
+      id: "chunk-1",
+      reviewStatus: "pending",
+      actionableByReviewer: true,
+    }];
+    state.selectedSharedReviewIds = ["chunk-1"];
+    feature.syncMemoryViewerUi();
+    document.querySelector('[data-shared-review-batch-action="claim"]').click();
+    expect(feature.getRuntimeSnapshot().pendingMemoryShareBatchActionCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { claimedCount: 1 } });
+    await vi.waitFor(() => {
+      expect(feature.getRuntimeSnapshot().pendingMemoryShareBatchActionCount).toBe(0);
+    });
+
+    expect(state.sharedReviewBatchBusy).toBe(false);
+    expect(sendReq).toHaveBeenCalledTimes(1);
+    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({ method: "memory.share.claim" }));
+  });
+
+  it("clears the batch bar and blocks every public ingress after dispose", async () => {
+    const { feature, refs, sendReq, state } = createDedupHarness();
+    state.tab = "sharedReview";
+    state.items = [{ id: "chunk-1", reviewStatus: "pending", actionableByReviewer: true }];
+    state.selectedSharedReviewIds = ["chunk-1"];
+    feature.syncMemoryViewerUi();
+    expect(refs.memorySharedReviewBatchBarEl.textContent).not.toBe("");
+
+    feature.dispose();
+    expect(refs.memorySharedReviewBatchBarEl.textContent).toBe("");
+    const stateAfterDispose = JSON.stringify(state);
+    const requestTokenAfterDispose = state.requestToken;
+    const statsAfterDispose = refs.memoryViewerStatsEl.innerHTML;
+    const sharedFiltersAfterDispose = refs.memorySharedReviewTargetFilterEl.innerHTML;
+
+    feature.applyAgentViewState("late-agent", "memories");
+    feature.captureAgentViewState("late-agent");
+    feature.clearDreamHistoryState({ preserveOpen: false });
+    feature.closeDreamModal();
+    feature.closeDedupModal();
+    feature.openDreamModal();
+    feature.switchMemoryViewerTab("memories");
+    feature.switchOutboundAuditFocus("threads");
+    feature.syncMemoryViewerUi();
+    feature.syncMemoryViewerHeaderTitle();
+    feature.syncSharedReviewFilterUi();
+    feature.toggleDreamHistory();
+    feature.renderCandidateOnlyDetail(null);
+    feature.renderExternalOutboundAuditDetail(null);
+    feature.renderExternalOutboundAuditList([]);
+    feature.renderDreamHistoryPanel();
+    feature.renderDreamModal();
+    feature.renderDreamRuntimeBar();
+    feature.renderDedupModal();
+    feature.renderMemoryDetail(null);
+    feature.renderMemoryList([]);
+    feature.renderMemoryViewerStats({ files: 99 });
+    feature.renderSharedReviewList([]);
+    feature.renderTaskList([]);
+    expect(feature.renderCandidateDetailPanel({ id: "late-candidate" })).toBe("");
+
+    await Promise.all([
+      feature.applyDedupFromModal(),
+      feature.loadDreamCommonsStatus(),
+      feature.loadDreamHistory(),
+      feature.loadDreamHistoryDetail("dream-late"),
+      feature.loadDreamRuntimeStatus(),
+      feature.loadExternalOutboundAuditViewer(),
+      feature.loadMemoryChunkViewer(),
+      feature.loadMemoryViewer(),
+      feature.loadMemoryViewerStats(),
+      feature.loadSharedReviewQueue(),
+      feature.loadTaskUsageOverview(),
+      feature.loadTaskViewer(),
+      feature.openDedupModal(),
+      feature.runDream(),
+    ]);
+
+    expect(JSON.stringify(state)).toBe(stateAfterDispose);
+    expect(state.requestToken).toBe(requestTokenAfterDispose);
+    expect(refs.memoryViewerStatsEl.innerHTML).toBe(statsAfterDispose);
+    expect(refs.memorySharedReviewTargetFilterEl.innerHTML).toBe(sharedFiltersAfterDispose);
+    expect(sendReq).not.toHaveBeenCalled();
+  });
+
+  it("tracks a direct public loader through stale physical settlement", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, state } = createDedupHarness(vi.fn(() => request));
+    const load = feature.loadTaskViewer();
+    expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { items: [{ id: "task-late" }] } });
+    await load;
+
+    expect(state.items).toEqual([]);
+    expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(0);
+  });
+
+  it("tracks shared review context navigation through stale physical settlement", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const { feature, state } = createDedupHarness(vi.fn(() => request));
+    feature.renderMemoryDetail({
+      id: "chunk-1",
+      content: "pending shared memory",
+      visibility: "private",
+      sourceView: { scope: "private" },
+      metadata: { sharedPromotion: { status: "pending" } },
+    });
+    document.querySelector("[data-memory-open-shared-review-context]").click();
+    expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: true, payload: { items: [{ id: "chunk-late" }] } });
+    await vi.waitFor(() => {
+      expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(0);
+    });
+
+    expect(state.items).toEqual([]);
+    expect(state.selectedId).toBeNull();
+  });
+});
+
 describe("memory viewer shared review filters", () => {
+  it("settles email thread advice retention through the real click path", async () => {
+    const lease = { conversationId: "conversation-email-1", generation: 0, token: 1 };
+    const retention = {
+      begin: vi.fn(() => lease),
+      succeed: vi.fn(),
+      fail: vi.fn(),
+    };
+    const sendReq = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, error: { message: "retry" } });
+    const { refs, feature } = createDedupHarness(sendReq, {
+      emailThreadAdviceRetention: retention,
+    });
+    const item = {
+      auditKind: "email_thread_organizer",
+      conversationId: "conversation-email-1",
+      latestSubject: "Re: Retention",
+    };
+
+    feature.renderExternalOutboundAuditDetail(item);
+    refs.memoryViewerDetailEl.querySelector("[data-open-email-thread-conversation]").click();
+    await Promise.resolve();
+
+    expect(retention.begin).toHaveBeenCalledWith("conversation-email-1");
+    expect(retention.succeed).toHaveBeenCalledWith(lease);
+    expect(retention.fail).not.toHaveBeenCalled();
+
+    refs.memoryViewerDetailEl.querySelector("[data-open-email-thread-conversation]").click();
+    await Promise.resolve();
+
+    expect(retention.fail).toHaveBeenCalledWith(lease);
+  });
+
+  it("settles stale email thread advice without retention or notice side effects", async () => {
+    let resolveRequest;
+    const request = new Promise((resolve) => { resolveRequest = resolve; });
+    const lease = { conversationId: "conversation-email-1", generation: 0, token: 1 };
+    const retention = {
+      begin: vi.fn(() => lease),
+      succeed: vi.fn(),
+      fail: vi.fn(),
+    };
+    const { refs, feature, showNotice } = createDedupHarness(vi.fn(() => request), {
+      emailThreadAdviceRetention: retention,
+    });
+    feature.renderExternalOutboundAuditDetail({
+      auditKind: "email_thread_organizer",
+      conversationId: "conversation-email-1",
+      latestSubject: "Re: Lifecycle",
+    });
+    refs.memoryViewerDetailEl.querySelector("[data-open-email-thread-conversation]").click();
+    expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(1);
+
+    feature.dispose();
+    resolveRequest({ ok: false, error: { message: "late failure" } });
+    await vi.waitFor(() => {
+      expect(feature.getRuntimeSnapshot().pendingLoadRequestCount).toBe(0);
+    });
+
+    expect(retention.succeed).not.toHaveBeenCalled();
+    expect(retention.fail).not.toHaveBeenCalled();
+    expect(showNotice).not.toHaveBeenCalled();
+  });
+
   it("builds an explicit advice request prompt for opened email thread conversations", () => {
     const prompt = buildEmailThreadConversationAdvicePrompt({
       latestSubject: "Re: Kickoff",
