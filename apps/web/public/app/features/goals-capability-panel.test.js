@@ -159,6 +159,25 @@ describe("goals capability panel", () => {
       summary: "Ready to close",
       note: "Reviewed in WebChat",
     }));
+
+    document.getElementById("goalCapabilityPanel").remove();
+    feature.renderGoalCapabilityPanelLoading();
+    saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(onSaveGovernanceSettings).toHaveBeenCalledTimes(1);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      activeGroupCount: 0,
+      activeListenerCount: 0,
+      disposed: false,
+    });
+
+    feature.dispose();
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      activeGroupCount: 0,
+      activeListenerCount: 0,
+      disposed: true,
+    });
   });
 
   it("renders governance freshness summary when capability payload includes memory freshness", () => {

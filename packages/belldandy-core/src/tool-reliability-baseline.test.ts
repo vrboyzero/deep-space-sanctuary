@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../../belldandy-agent/src/model-request-transport.js", () => ({
+  requestModelTransport: (options: { url: string | URL; init: RequestInit }) => (
+    fetch(options.url, options.init)
+  ),
+}));
+
 import { ToolEnabledAgent } from "../../belldandy-agent/src/tool-agent.js";
 import { ToolExecutor } from "../../belldandy-skills/src/executor.js";
 import { createToolSearchTool } from "../../belldandy-skills/src/builtin/tool-search.js";

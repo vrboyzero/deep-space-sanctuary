@@ -8,6 +8,7 @@ import {
     OutboundRequestPolicyError,
     redactSensitiveText,
     redactSensitiveUrl,
+    type OutboundRequestPolicyOptions,
 } from "@belldandy/protocol";
 import { withToolContract } from "../../tool-contract.js";
 import { raceWithAbort, sleepWithAbort, throwIfAborted, toAbortError } from "../../abort-utils.js";
@@ -191,13 +192,12 @@ export async function waitForPreferredPageSelection<T extends PageLike>(input: {
     return undefined;
 }
 
-// [SECURITY] 域名控制（双模式）
-const ALLOWED_DOMAINS_RAW = process.env.BELLDANDY_BROWSER_ALLOWED_DOMAINS;
-const DENIED_DOMAINS_RAW = process.env.BELLDANDY_BROWSER_DENIED_DOMAINS;
-const ALLOWED_DOMAINS = ALLOWED_DOMAINS_RAW?.split(",").map(d => d.trim().toLowerCase()).filter(Boolean) || [];
-const DENIED_DOMAINS = DENIED_DOMAINS_RAW?.split(",").map(d => d.trim().toLowerCase()).filter(Boolean) || [];
-
 type BrowserUrlPolicy = Pick<OutboundRequestPolicy, "resolveAllowedAddresses">;
+export type BrowserOutboundProfile = "public-web" | "privileged-local-browser";
+type BrowserOutboundRequestPolicyOverrides = Omit<
+    OutboundRequestPolicyOptions,
+    "allowPrivateNetwork"
+>;
 
 export async function validateBrowserUrl(
     urlStr: string,
@@ -214,13 +214,36 @@ export async function validateBrowserUrl(
     }
 }
 
-function createBrowserOutboundRequestPolicy(): OutboundRequestPolicy {
+export function resolveBrowserOutboundProfile(
+    value: string | undefined = process.env.BELLDANDY_BROWSER_OUTBOUND_PROFILE,
+): BrowserOutboundProfile {
+    return value?.trim().toLowerCase() === "privileged-local-browser"
+        ? "privileged-local-browser"
+        : "public-web";
+}
+
+export function createBrowserOutboundRequestPolicy(
+    profile: BrowserOutboundProfile = resolveBrowserOutboundProfile(),
+    overrides: BrowserOutboundRequestPolicyOverrides = {},
+): OutboundRequestPolicy {
     return new OutboundRequestPolicy({
-        allowedHosts: ALLOWED_DOMAINS,
-        deniedHosts: DENIED_DOMAINS,
-        allowInsecureHttp: isExplicitlyEnabled("BELLDANDY_BROWSER_ALLOW_INSECURE_HTTP"),
-        allowPrivateNetwork: isExplicitlyEnabled("BELLDANDY_BROWSER_ALLOW_PRIVATE_NETWORK"),
+        ...overrides,
+        allowedHosts: overrides.allowedHosts
+            ?? readBrowserHostRules("BELLDANDY_BROWSER_ALLOWED_DOMAINS"),
+        deniedHosts: overrides.deniedHosts
+            ?? readBrowserHostRules("BELLDANDY_BROWSER_DENIED_DOMAINS"),
+        allowInsecureHttp: overrides.allowInsecureHttp
+            ?? isExplicitlyEnabled("BELLDANDY_BROWSER_ALLOW_INSECURE_HTTP"),
+        // 私网能力只能由命名 profile 提升，不能由任意 policy override 绕过。
+        allowPrivateNetwork: profile === "privileged-local-browser",
     });
+}
+
+function readBrowserHostRules(name: string): string[] {
+    return (process.env[name] ?? "")
+        .split(",")
+        .map((domain) => domain.trim().toLowerCase())
+        .filter(Boolean);
 }
 
 function formatBrowserUrlPolicyError(error: OutboundRequestPolicyError): string {

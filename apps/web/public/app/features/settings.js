@@ -32,6 +32,7 @@ export function createSettingsController({
   onConfigSaved,
   onOpenContinuationAction,
   getWebchatPerformanceSummary,
+  getWebchatLifecycleSummary,
   redactedPlaceholder = "[REDACTED]",
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -95,6 +96,7 @@ export function createSettingsController({
     cfgStarweaverActiveNotifyPollIntervalMs,
     cfgBrowserRelayEnabled,
     cfgRelayPort,
+    cfgBrowserOutboundProfile,
     cfgMcpEnabled,
     cfgBrowserAllowedDomains,
     cfgBrowserDeniedDomains,
@@ -852,6 +854,7 @@ export function createSettingsController({
     applyAssistantModeCopy({ settings: assistantModeSettings });
     if (cfgBrowserRelayEnabled) cfgBrowserRelayEnabled.checked = c["BELLDANDY_BROWSER_RELAY_ENABLED"] === "true";
     if (cfgRelayPort) cfgRelayPort.value = c["BELLDANDY_RELAY_PORT"] || "";
+    if (cfgBrowserOutboundProfile) cfgBrowserOutboundProfile.value = c["BELLDANDY_BROWSER_OUTBOUND_PROFILE"] || "public-web";
     if (cfgMcpEnabled) cfgMcpEnabled.checked = c["BELLDANDY_MCP_ENABLED"] === "true";
     if (cfgBrowserAllowedDomains) cfgBrowserAllowedDomains.value = c["BELLDANDY_BROWSER_ALLOWED_DOMAINS"] || "";
     if (cfgBrowserDeniedDomains) cfgBrowserDeniedDomains.value = c["BELLDANDY_BROWSER_DENIED_DOMAINS"] || "";
@@ -1868,17 +1871,23 @@ export function createSettingsController({
   }
 
   function attachLocalDoctorObservability(payload) {
-    if (!payload || typeof payload !== "object" || typeof getWebchatPerformanceSummary !== "function") {
-      return payload;
+    if (!payload || typeof payload !== "object") return payload;
+    let attached = payload;
+    for (const [key, getSummary] of [
+      ["webchatPerformance", getWebchatPerformanceSummary],
+      ["webchatLifecycle", getWebchatLifecycleSummary],
+    ]) {
+      if (typeof getSummary !== "function") continue;
+      try {
+        const summary = getSummary();
+        if (summary && typeof summary === "object") {
+          attached = { ...attached, [key]: summary };
+        }
+      } catch {
+        // 本地诊断失败不能覆盖 Gateway Doctor 结果。
+      }
     }
-    try {
-      const webchatPerformance = getWebchatPerformanceSummary();
-      return webchatPerformance && typeof webchatPerformance === "object"
-        ? { ...payload, webchatPerformance }
-        : payload;
-    } catch {
-      return payload;
-    }
+    return attached;
   }
 
   function renderDoctorPayload(payload, options = {}) {
@@ -2104,6 +2113,7 @@ export function createSettingsController({
     }));
     if (cfgBrowserRelayEnabled) updates["BELLDANDY_BROWSER_RELAY_ENABLED"] = cfgBrowserRelayEnabled.checked ? "true" : "false";
     if (cfgRelayPort) updates["BELLDANDY_RELAY_PORT"] = cfgRelayPort.value.trim();
+    if (cfgBrowserOutboundProfile) updates["BELLDANDY_BROWSER_OUTBOUND_PROFILE"] = cfgBrowserOutboundProfile.value || "public-web";
     if (cfgMcpEnabled) updates["BELLDANDY_MCP_ENABLED"] = cfgMcpEnabled.checked ? "true" : "false";
     if (cfgBrowserAllowedDomains) updates["BELLDANDY_BROWSER_ALLOWED_DOMAINS"] = cfgBrowserAllowedDomains.value.trim();
     if (cfgBrowserDeniedDomains) updates["BELLDANDY_BROWSER_DENIED_DOMAINS"] = cfgBrowserDeniedDomains.value.trim();

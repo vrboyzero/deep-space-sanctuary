@@ -65,6 +65,39 @@ describe("task token history cache retention", () => {
     });
   });
 
+  it("evicts expired inactive records while retaining active records until unpinned", () => {
+    let now = 0;
+    const cache = createTaskTokenHistoryCache({
+      inactiveTtlMs: 100,
+      maxConversationEntries: 10,
+      maxApproxBytes: 1024 * 1024,
+      now: () => now,
+    });
+    cache.setActiveConversation("conv-active");
+    cache.set("conv-active", [record("active")]);
+    cache.set("conv-inactive", [record("inactive")]);
+
+    now = 101;
+
+    expect(cache.get("conv-active")).toHaveLength(1);
+    expect(cache.get("conv-inactive")).toEqual([]);
+    expect(cache.get("conv-inactive")).toEqual([]);
+    expect(cache.getRuntimeSnapshot()).toMatchObject({
+      retainedConversationCount: 1,
+      activeConversationCount: 1,
+      evictedConversationCount: 1,
+      inactiveTtlMs: 100,
+    });
+
+    cache.setActiveConversation("");
+    now = 202;
+    expect(cache.get("conv-active")).toEqual([]);
+    expect(cache.getRuntimeSnapshot()).toMatchObject({
+      retainedConversationCount: 0,
+      evictedConversationCount: 2,
+    });
+  });
+
   it("prepends within the record limit and clears generation state", () => {
     const cache = createTaskTokenHistoryCache({ maxRecordsPerConversation: 1 });
     cache.set("conv-a", [record("old")]);

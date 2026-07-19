@@ -276,6 +276,7 @@ test("config.update accepts memory and tool env settings", async () => {
       method: "config.update",
       params: {
         updates: {
+          BELLDANDY_BROWSER_OUTBOUND_PROFILE: "privileged-local-browser",
           BELLDANDY_BROWSER_ALLOWED_DOMAINS: "github.com,developer.mozilla.org",
           BELLDANDY_BROWSER_DENIED_DOMAINS: "mail.google.com",
           BELLDANDY_AGENT_BRIDGE_ENABLED: "true",
@@ -314,6 +315,7 @@ test("config.update accepts memory and tool env settings", async () => {
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-read-memory-tools"));
     const readRes = frames.find((f) => f.type === "res" && f.id === "config-read-memory-tools");
     expect(readRes.ok).toBe(true);
+    expect(readRes.payload?.config?.BELLDANDY_BROWSER_OUTBOUND_PROFILE).toBe("privileged-local-browser");
     expect(readRes.payload?.config?.BELLDANDY_BROWSER_ALLOWED_DOMAINS).toBe("github.com,developer.mozilla.org");
     expect(readRes.payload?.config?.BELLDANDY_TOOL_GROUPS).toBe("browser,system");
     expect(readRes.payload?.config?.BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE).toBe("true");
@@ -326,6 +328,7 @@ test("config.update accepts memory and tool env settings", async () => {
 
     const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
     expect(envLocalContent).toContain('BELLDANDY_AGENT_BRIDGE_ENABLED="true"');
+    expect(envLocalContent).toContain('BELLDANDY_BROWSER_OUTBOUND_PROFILE="privileged-local-browser"');
     expect(envLocalContent).toContain('BELLDANDY_MAX_OUTPUT_TOKENS="8192"');
     expect(envLocalContent).toContain('BELLDANDY_WEB_ALLOW_PRIVILEGED_SAFE_SCOPE="true"');
     expect(envLocalContent).toContain('BELLDANDY_PRIVILEGED_WORKSPACE_WRITE_CHANNELS="gateway,cli,web"');

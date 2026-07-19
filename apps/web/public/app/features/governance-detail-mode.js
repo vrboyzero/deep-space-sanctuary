@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export const GOVERNANCE_DETAIL_MODE_COMPACT = "compact";
 export const GOVERNANCE_DETAIL_MODE_FULL = "full";
 export const GOVERNANCE_DETAIL_MODE_CHANGED_EVENT = "belldandy:governance-detail-mode-changed";
@@ -75,15 +77,14 @@ export function createGovernanceDetailModeRefreshFeature({
     loadExperienceWorkbench,
     loadGoals,
   } = reloaders;
-  let disposed = false;
-  let listenerCount = 0;
+  const taskScope = createPanelTaskScope();
 
   function isVisible(section) {
     return Boolean(section && !section.classList.contains("hidden"));
   }
 
   function handleModeChanged() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     // 详情模式变化只刷新当前可见面板，避免后台面板产生额外请求。
     if (isVisible(memoryViewerSection)) {
       void loadMemoryViewer?.(false);
@@ -96,28 +97,33 @@ export function createGovernanceDetailModeRefreshFeature({
     }
   }
 
-  if (eventTarget && typeof eventTarget.addEventListener === "function") {
-    eventTarget.addEventListener(GOVERNANCE_DETAIL_MODE_CHANGED_EVENT, handleModeChanged);
-    listenerCount = 1;
+  function activate() {
+    if (!taskScope.activate()) return false;
+    taskScope.addEventListener(eventTarget, GOVERNANCE_DETAIL_MODE_CHANGED_EVENT, handleModeChanged);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
   }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    if (listenerCount > 0 && typeof eventTarget?.removeEventListener === "function") {
-      eventTarget.removeEventListener(GOVERNANCE_DETAIL_MODE_CHANGED_EVENT, handleModeChanged);
-      listenerCount = 0;
-    }
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

@@ -1,42 +1,56 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createChatNetworkModelControls({
   modelSelectEl,
   modelFilterEl,
   onModelSelectChange,
   onModelFilterInput,
 } = {}) {
-  const bindings = [];
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
-  function bind(target, type, callback) {
-    if (!target || typeof callback !== "function") return;
-    const listener = (event) => {
-      // retained handler 仍可能已进入事件队列，dispose guard 负责阻断迟到副作用。
-      if (disposed) return;
-      callback(event);
-    };
-    target.addEventListener(type, listener);
-    bindings.push({ target, type, listener });
+  function handleModelSelectChange(event) {
+    // retained handler 仍可能已进入事件队列，active fence 同时覆盖 deactivate/dispose。
+    if (!taskScope.isActive()) return;
+    onModelSelectChange?.(event);
   }
 
-  bind(modelSelectEl, "change", onModelSelectChange);
-  bind(modelFilterEl, "input", onModelFilterInput);
+  function handleModelFilterInput(event) {
+    if (!taskScope.isActive()) return;
+    onModelFilterInput?.(event);
+  }
+
+  function activate() {
+    if (!taskScope.activate()) return false;
+    if (typeof onModelSelectChange === "function") {
+      taskScope.addEventListener(modelSelectEl, "change", handleModelSelectChange);
+    }
+    if (typeof onModelFilterInput === "function") {
+      taskScope.addEventListener(modelFilterEl, "input", handleModelFilterInput);
+    }
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, type, listener } of bindings.splice(0)) {
-      target.removeEventListener(type, listener);
-    }
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      disposed,
-      activeChatNetworkModelControlListenerCount: bindings.length,
+      disposed: snapshot.disposed,
+      activeChatNetworkModelControlListenerCount: snapshot.listenerCount,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

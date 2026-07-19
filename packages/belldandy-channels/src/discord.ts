@@ -1,5 +1,6 @@
 import { Client, GatewayIntentBits, Message, TextChannel } from "discord.js";
 import type { BelldandyAgent } from "@belldandy/agent";
+import { OutboundRequestPolicy } from "@belldandy/protocol";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
 import type {
     Channel,
@@ -28,11 +29,17 @@ import {
     createChannelApprovalPreview,
     createChannelPublicFailureMessage,
 } from "./channel-safe-logger.js";
+import {
+    readBoundedMediaBuffer,
+    type BoundedMediaRequestPolicy,
+} from "./media-reader.js";
 
 export interface DiscordChannelConfig extends ChannelConfig {
     botToken: string;
     intents?: number;
     sttTranscribe?: (opts: { buffer: Buffer; fileName: string; mime?: string }) => Promise<{ text: string } | null>;
+    /** 测试或宿主可注入同契约 policy；生产默认使用仅公网 HTTPS 的安全 profile。 */
+    outboundRequestPolicy?: BoundedMediaRequestPolicy;
 }
 
 type AudioAttachmentResolution = {
@@ -47,6 +54,8 @@ function formatAudioTranscript(text: string): string {
 }
 
 const channelSafeLogger = new ChannelSafeLogger();
+const DISCORD_AUDIO_DOWNLOAD_TIMEOUT_MS = 15_000;
+const DISCORD_AUDIO_MAX_BYTES = 16 * 1024 * 1024;
 
 export class DiscordChannel implements Channel {
     readonly name = "discord";
@@ -66,6 +75,7 @@ export class DiscordChannel implements Channel {
     private readonly replyChunkingConfig?: DiscordChannelConfig["replyChunkingConfig"];
     private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
     private readonly sttTranscribe?: DiscordChannelConfig["sttTranscribe"];
+    private readonly outboundRequestPolicy: BoundedMediaRequestPolicy;
     private readonly onChannelSecurityApprovalRequired?: DiscordChannelConfig["onChannelSecurityApprovalRequired"];
     private readonly ingressScheduler: ChannelIngressScheduler;
     private readonly conversationLifecycle?: DiscordChannelConfig["conversationLifecycle"];
@@ -77,6 +87,7 @@ export class DiscordChannel implements Channel {
         this.replyChunkingConfig = config.replyChunkingConfig;
         this.currentConversationBindingStore = config.currentConversationBindingStore;
         this.sttTranscribe = config.sttTranscribe;
+        this.outboundRequestPolicy = config.outboundRequestPolicy ?? new OutboundRequestPolicy();
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
         this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
         this.conversationLifecycle = config.conversationLifecycle;
@@ -274,11 +285,14 @@ export class DiscordChannel implements Channel {
         }
 
         try {
-            const response = await fetch(attachment.url);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const buffer = Buffer.from(await response.arrayBuffer());
+            const buffer = await readBoundedMediaBuffer({
+                url: attachment.url,
+                label: "Discord audio attachment",
+                timeoutMs: DISCORD_AUDIO_DOWNLOAD_TIMEOUT_MS,
+                maxBytes: DISCORD_AUDIO_MAX_BYTES,
+                signal: this.lifecycleAbortController.signal,
+                requestPolicy: this.outboundRequestPolicy,
+            });
             const transcript = await this.sttTranscribe({
                 buffer,
                 fileName,

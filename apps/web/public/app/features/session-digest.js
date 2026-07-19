@@ -4,6 +4,7 @@ import {
   encodeContinuationAction,
   formatContinuationTargetLabel,
 } from "./continuation-targets.js";
+import { createPanelTaskScope } from "./panel-task-scope.js";
 
 function formatDigestStatus(status, t) {
   switch (status) {
@@ -132,18 +133,14 @@ export function createSessionDigestFeature({
     lastCompacted: false,
     modalOpen: false,
   };
-  let disposed = false;
-  const listenerEntries = [];
-  const pendingRequests = new Set();
+  const taskScope = createPanelTaskScope();
 
   function addOwnedListener(target, type, handler) {
-    if (!target) return;
-    target.addEventListener(type, handler);
-    listenerEntries.push({ target, type, handler });
+    taskScope.addEventListener(target, type, handler);
   }
 
   function setRefreshButtonState() {
-    if (disposed || !sessionDigestRefreshBtn) return;
+    if (!taskScope.isActive() || !sessionDigestRefreshBtn) return;
     const conversationId = getActiveConversationId();
     sessionDigestRefreshBtn.disabled = !isConnected() || !conversationId || state.loading || state.refreshing;
     sessionDigestRefreshBtn.textContent = state.refreshing
@@ -226,7 +223,7 @@ export function createSessionDigestFeature({
   }
 
   function renderModal() {
-    if (disposed || !sessionDigestModalEl) return;
+    if (!taskScope.isActive() || !sessionDigestModalEl) return;
 
     const shouldOpen = state.modalOpen && canOpenModal();
     sessionDigestModalEl.classList.toggle("hidden", !shouldOpen);
@@ -311,20 +308,20 @@ export function createSessionDigestFeature({
   }
 
   function closeModal() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     state.modalOpen = false;
     renderModal();
   }
 
   function openModal() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     if (!canOpenModal()) return;
     state.modalOpen = true;
     renderModal();
   }
 
   function renderEmpty(message) {
-    if (disposed || !sessionDigestSummaryEl) return;
+    if (!taskScope.isActive() || !sessionDigestSummaryEl) return;
     closeModal();
     const empty = document.createElement("div");
     empty.className = "task-token-history-empty";
@@ -337,12 +334,12 @@ export function createSessionDigestFeature({
   }
 
   function renderContinuationSummary() {
-    if (disposed || !sessionContinuationSummaryEl) return;
+    if (!taskScope.isActive() || !sessionContinuationSummaryEl) return;
     sessionContinuationSummaryEl.replaceChildren();
   }
 
   function renderDigest() {
-    if (disposed || !sessionDigestSummaryEl) return;
+    if (!taskScope.isActive() || !sessionDigestSummaryEl) return;
 
     if (!isConnected()) {
       renderEmpty(t("panel.sessionDigestDisconnected", {}, "Disconnected"));
@@ -396,7 +393,7 @@ export function createSessionDigestFeature({
   }
 
   async function loadSessionDigest(conversationId = getActiveConversationId(), options = {}) {
-    if (disposed) return null;
+    if (!taskScope.isActive()) return null;
     const force = options.force === true;
     const notify = options.notify === true;
 
@@ -417,14 +414,13 @@ export function createSessionDigestFeature({
       return null;
     }
 
-    const seq = state.loadSeq + 1;
-    state.loadSeq = seq;
+    state.loadSeq += 1;
     state.loading = !force;
     state.refreshing = force;
     renderDigest();
 
-    const request = { seq };
-    pendingRequests.add(request);
+    const requestTask = taskScope.beginTask();
+    if (!requestTask) return null;
     try {
     const res = await sendReq({
       type: "req",
@@ -433,7 +429,7 @@ export function createSessionDigestFeature({
       params: force ? { conversationId, force: true } : { conversationId },
     });
 
-    if (disposed || seq !== state.loadSeq) return null;
+    if (!requestTask.isCurrent()) return null;
 
     state.loading = false;
     state.refreshing = false;
@@ -469,12 +465,12 @@ export function createSessionDigestFeature({
 
     return state.digest;
     } finally {
-      pendingRequests.delete(request);
+      requestTask.settle();
     }
   }
 
   function handleDigestUpdated(payload) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     if (!conversationId || conversationId !== getActiveConversationId()) return;
     state.conversationId = conversationId;
@@ -488,7 +484,7 @@ export function createSessionDigestFeature({
   }
 
   function clear() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     state.conversationId = null;
     state.digest = null;
     state.continuationState = null;
@@ -502,7 +498,7 @@ export function createSessionDigestFeature({
   }
 
   function setContinuationState(payload, options = {}) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const conversationId = options.conversationId || getActiveConversationId();
     if (conversationId && conversationId !== getActiveConversationId()) return;
     state.continuationState = payload && typeof payload === "object" ? payload : null;
@@ -511,7 +507,7 @@ export function createSessionDigestFeature({
   }
 
   function handleContinuationActionEvent(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest("[data-continuation-action]") : null;
     if (!trigger || typeof onOpenContinuationAction !== "function") return;
     const action = decodeContinuationAction(trigger.getAttribute("data-continuation-action") || "");
@@ -520,21 +516,21 @@ export function createSessionDigestFeature({
   }
 
   function handleRefreshClick() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const conversationId = getActiveConversationId();
     if (!conversationId) return;
     void loadSessionDigest(conversationId, { force: true, notify: true });
   }
 
   function handleSummaryClick(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest(".session-digest-card.is-interactive") : null;
     if (!trigger) return;
     openModal();
   }
 
   function handleSummaryKeydown(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest(".session-digest-card.is-interactive") : null;
     if (!trigger || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
@@ -546,12 +542,12 @@ export function createSessionDigestFeature({
   }
 
   function handleModalBackdropClick(event) {
-    if (disposed || event.target !== sessionDigestModalEl) return;
+    if (!taskScope.isActive() || event.target !== sessionDigestModalEl) return;
     closeModal();
   }
 
   function handleModalActionsClick(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest("[data-history-action]") : null;
     if (!trigger || typeof onSendHistoryAction !== "function") return;
     const actionId = trigger.getAttribute("data-history-action") || "";
@@ -564,23 +560,27 @@ export function createSessionDigestFeature({
   }
 
   function handleDocumentKeydown(event) {
-    if (disposed || event.key !== "Escape" || !state.modalOpen) return;
+    if (!taskScope.isActive() || event.key !== "Escape" || !state.modalOpen) return;
     closeModal();
   }
 
-  addOwnedListener(sessionDigestRefreshBtn, "click", handleRefreshClick);
-  addOwnedListener(sessionDigestSummaryEl, "click", handleSummaryClick);
-  addOwnedListener(sessionDigestSummaryEl, "keydown", handleSummaryKeydown);
-  addOwnedListener(sessionContinuationSummaryEl, "click", handleContinuationActionEvent);
-  addOwnedListener(sessionDigestModalContentEl, "click", handleContinuationActionEvent);
-  addOwnedListener(sessionDigestModalCloseBtn, "click", handleModalCloseClick);
-  addOwnedListener(sessionDigestModalEl, "click", handleModalBackdropClick);
-  addOwnedListener(sessionDigestModalActionsEl, "click", handleModalActionsClick);
-  addOwnedListener(document, "keydown", handleDocumentKeydown);
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedListener(sessionDigestRefreshBtn, "click", handleRefreshClick);
+    addOwnedListener(sessionDigestSummaryEl, "click", handleSummaryClick);
+    addOwnedListener(sessionDigestSummaryEl, "keydown", handleSummaryKeydown);
+    addOwnedListener(sessionContinuationSummaryEl, "click", handleContinuationActionEvent);
+    addOwnedListener(sessionDigestModalContentEl, "click", handleContinuationActionEvent);
+    addOwnedListener(sessionDigestModalCloseBtn, "click", handleModalCloseClick);
+    addOwnedListener(sessionDigestModalEl, "click", handleModalBackdropClick);
+    addOwnedListener(sessionDigestModalActionsEl, "click", handleModalActionsClick);
+    addOwnedListener(document, "keydown", handleDocumentKeydown);
+    renderDigest();
+    return true;
+  }
 
-  function dispose() {
-    if (disposed) return;
-    disposed = true;
+  function deactivate() {
+    if (!taskScope.deactivate()) return false;
     state.loadSeq += 1;
     state.conversationId = null;
     state.digest = null;
@@ -591,10 +591,6 @@ export function createSessionDigestFeature({
     state.lastUpdated = false;
     state.lastCompacted = false;
     state.modalOpen = false;
-    for (const { target, type, handler } of listenerEntries) {
-      target.removeEventListener(type, handler);
-    }
-    listenerEntries.length = 0;
     sessionDigestSummaryEl?.replaceChildren();
     sessionContinuationSummaryEl?.replaceChildren();
     sessionDigestModalTitleEl?.replaceChildren();
@@ -602,21 +598,31 @@ export function createSessionDigestFeature({
     sessionDigestModalActionsEl?.replaceChildren();
     sessionDigestModalContentEl?.replaceChildren();
     sessionDigestModalEl?.classList.add("hidden");
+    return true;
+  }
+
+  function dispose() {
+    if (taskScope.getRuntimeSnapshot().disposed) return false;
+    deactivate();
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      pendingRequestCount: pendingRequests.size,
+      listenerCount: snapshot.listenerCount,
+      pendingRequestCount: snapshot.pendingTaskCount,
       loadSeq: state.loadSeq,
       modalOpen: state.modalOpen,
-      disposed,
+      disposed: snapshot.disposed,
     };
   }
 
-  renderDigest();
+  activate();
 
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     loadSessionDigest,
@@ -624,7 +630,7 @@ export function createSessionDigestFeature({
     setContinuationState,
     clear,
     refreshLocale() {
-      if (disposed) return;
+      if (!taskScope.isActive()) return;
       renderDigest();
       renderContinuationSummary();
       renderModal();

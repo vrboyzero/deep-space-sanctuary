@@ -6,6 +6,17 @@ import { gzipSync } from "node:zlib";
 import { resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
 import { resolveDistributionPolicySummary } from "./distribution-policy.mjs";
 import { renderPortableGuide } from "./distribution-user-guide.mjs";
+import {
+  createRuntimeDependencyInstallArgs,
+  createRuntimeRootPackageJson,
+  sanitizeRuntimeWorkspacePackageJson,
+} from "./runtime-dependency-assembler-policy.mjs";
+import {
+  assertRuntimeDependencySnapshot,
+  createRuntimeDependencySnapshotArtifactIdentity,
+} from "./runtime-dependency-snapshot-policy.mjs";
+import { createRuntimeDependencyStoreSnapshot } from "./runtime-dependency-store-snapshot-policy.mjs";
+import { resolveRuntimeBuildScriptPolicy } from "./runtime-build-script-policy.mjs";
 import { assertPathInsideRoots, guardedRemovePath } from "./sandbox-paths.mjs";
 import { copyPackageNonDistBinArtifacts } from "../../../scripts/artifact-contract.mjs";
 
@@ -24,6 +35,10 @@ const sqliteVecVersion = String(memoryPackageJson.dependencies?.["sqlite-vec"] |
 const portableArtifactsRoot = path.join(workspaceRoot, "artifacts", "portable");
 const portableCacheRoot = path.join(workspaceRoot, "artifacts", "_cache");
 const portablePnpmStoreDir = path.join(portableCacheRoot, "pnpm-store-portable", mode);
+const portablePrefetchRoot = path.join(portableCacheRoot, "portable-prefetch", mode);
+const portablePrefetchRuntimeRoot = path.join(portablePrefetchRoot, "runtime");
+const portablePrefetchLockfilePath = path.join(portablePrefetchRuntimeRoot, "pnpm-lock.yaml");
+const portablePrefetchSnapshotPath = path.join(portablePrefetchRoot, "runtime-dependency-snapshot.json");
 const portableRoot = resolvePortableArtifactRoot({
   workspaceRoot,
   platform,
@@ -328,6 +343,22 @@ function writePortableRuntimeCheckScript() {
     path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "sandbox-paths.mjs"),
     path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "sandbox-paths.mjs"),
   );
+  copyFile(
+    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "runtime-dependency-report-policy.mjs"),
+    path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "runtime-dependency-report-policy.mjs"),
+  );
+  copyFile(
+    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "runtime-dependency-module-load-policy.mjs"),
+    path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "runtime-dependency-module-load-policy.mjs"),
+  );
+  copyFile(
+    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "runtime-native-matrix-policy.mjs"),
+    path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "runtime-native-matrix-policy.mjs"),
+  );
+  copyFile(
+    path.join(workspaceRoot, "packages", "star-sanctuary-distribution", "scripts", "runtime-dependency-target-policy.mjs"),
+    path.join(runtimePackagesRoot, "star-sanctuary-distribution", "dist", "runtime-dependency-target-policy.mjs"),
+  );
 }
 
 function normalizeRelativePath(filePath) {
@@ -494,49 +525,17 @@ function prunePortableRuntimeTree(rootDir) {
 }
 
 function writeRuntimePackageJson() {
-  const runtimePackageJson = {
-    name: "star-sanctuary-portable-runtime",
-    private: true,
-    type: "module",
+  const runtimePackageJson = createRuntimeRootPackageJson({
     packageManager: rootPackageJson.packageManager,
     engines: rootPackageJson.engines,
-    dependencies: {
-      "sqlite-vec-windows-x64": sqliteVecVersion,
-    },
-  };
+    pnpm: rootPackageJson.pnpm,
+    sqliteVecVersion,
+  });
   fs.writeFileSync(
     path.join(runtimeRoot, "package.json"),
     `${JSON.stringify(runtimePackageJson, null, 2)}\n`,
     "utf-8",
   );
-}
-
-function stripRuntimeTypeExportConditions(value) {
-  if (Array.isArray(value)) {
-    return value.map(stripRuntimeTypeExportConditions);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const runtimeValue = {};
-  for (const [key, nested] of Object.entries(value)) {
-    if (key === "types") continue;
-    runtimeValue[key] = stripRuntimeTypeExportConditions(nested);
-  }
-  return runtimeValue;
-}
-
-function sanitizeRuntimeWorkspacePackageJson(packageJson) {
-  const sanitized = { ...packageJson };
-  delete sanitized.devDependencies;
-  delete sanitized.scripts;
-  // Portable 会裁剪声明文件，runtime manifest 同步移除仅供 TypeScript 使用的出口。
-  delete sanitized.types;
-  if (sanitized.exports) {
-    sanitized.exports = stripRuntimeTypeExportConditions(sanitized.exports);
-  }
-  return sanitized;
 }
 
 function copyRuntimePackageJson(src, dest) {
@@ -548,6 +547,26 @@ function copyRuntimePackageJson(src, dest) {
     "utf-8",
   );
   return packageJson;
+}
+
+function copyRuntimeDependencyPatches() {
+  const patchedDependencies = rootPackageJson.pnpm?.patchedDependencies ?? {};
+  for (const patchPath of Object.values(patchedDependencies)) {
+    if (typeof patchPath !== "string" || !patchPath.trim()) {
+      throw new Error(`Invalid runtime dependency patch path: ${String(patchPath)}`);
+    }
+    const sourcePath = assertPathInsideRoots(
+      path.resolve(workspaceRoot, patchPath),
+      [workspaceRoot],
+      "copy runtime dependency patch source",
+    );
+    const destinationPath = assertPathInsideRoots(
+      path.resolve(runtimeRoot, patchPath),
+      [runtimeRoot],
+      "copy runtime dependency patch destination",
+    );
+    copyFile(sourcePath, destinationPath);
+  }
 }
 
 function copyPackage(packageName) {
@@ -622,7 +641,7 @@ function writePortableLauncher() {
   );
 }
 
-function writeRuntimeManifest() {
+function writeRuntimeManifest(dependencySnapshot) {
   const entries = collectFileEntries(runtimeRoot);
   const fileEntries = entries.filter((entry) => entry.type === "file");
   const payload = {
@@ -634,6 +653,7 @@ function writeRuntimeManifest() {
     builtAt: new Date().toISOString(),
     includeOptionalNative,
     distributionPolicy,
+    dependencySnapshot,
     runtimeDir: "runtime",
     summary: {
       fileCount: fileEntries.length,
@@ -651,7 +671,7 @@ function writeRuntimeManifest() {
   };
 }
 
-function writeVersionFile(executableName, runtimeManifest, pruneStats) {
+function writeVersionFile(executableName, runtimeManifest, pruneStats, dependencySnapshot) {
   const executablePath = path.join(portableRoot, executableName);
   const startBatPath = path.join(portableRoot, "start.bat");
   const startPs1Path = path.join(portableRoot, "start.ps1");
@@ -664,6 +684,7 @@ function writeVersionFile(executableName, runtimeManifest, pruneStats) {
     builtAt: new Date().toISOString(),
     includeOptionalNative,
     distributionPolicy,
+    dependencySnapshot,
     runtimeDir: "runtime",
     entryScript: "runtime/packages/star-sanctuary-distribution/dist/portable-entry.js",
     runtimeSummary: runtimeManifest.summary,
@@ -739,43 +760,58 @@ function copyNodeRuntime() {
 }
 
 function installRuntimeDependencies() {
-  ensureDir(portablePnpmStoreDir);
   removePortableBuildPath(path.join(runtimeRoot, ".pnpm-store-portable"), {
     allowedRoots: [runtimeRoot],
     label: "reset portable runtime local pnpm store",
   });
-  const sharedArgs = [
-    "--store-dir",
-    portablePnpmStoreDir,
-    "--config.package-import-method=copy",
-    "--child-concurrency=1",
-    "--network-concurrency=1",
-  ];
-  const fetchArgs = [
-    "pnpm",
-    "fetch",
-    "--prod",
-    "--prefer-offline",
-    ...sharedArgs,
-  ];
-  const installArgs = [
-    "pnpm",
-    "install",
-    "--prod",
-    // GitHub Windows runners may miss package metadata in the local pnpm mirror
-    // even after fetch, which breaks strict offline install for sqlite-vec platform
-    // packages. Prefer offline cache first, but allow registry metadata fallback.
-    "--prefer-offline",
-    "--no-frozen-lockfile",
-    ...sharedArgs,
-  ];
-  if (!includeOptionalNative) {
-    fetchArgs.push("--no-optional");
-    installArgs.push("--no-optional");
+  const installArgs = createRuntimeDependencyInstallArgs({
+    includeOptionalNative,
+    storeDir: portablePnpmStoreDir,
+  });
+  runPortablePnpmCommandWithRetry("install", installArgs);
+}
+
+async function readVerifiedRuntimeDependencySnapshot() {
+  if (
+    !fs.existsSync(portablePrefetchSnapshotPath)
+    || !fs.existsSync(portablePrefetchLockfilePath)
+    || !fs.existsSync(portablePnpmStoreDir)
+  ) {
+    throw new Error(
+      `Portable dependency snapshot is missing for mode=${mode}. `
+      + `Run 'corepack pnpm prefetch:portable${mode === "full" ? ":full" : ""}' before building.`,
+    );
   }
 
-  runPortablePnpmCommandWithRetry("fetch", fetchArgs);
-  runPortablePnpmCommandWithRetry("install", installArgs);
+  let snapshot;
+  try {
+    snapshot = JSON.parse(fs.readFileSync(portablePrefetchSnapshotPath, "utf-8"));
+  } catch {
+    throw new Error(`Portable dependency snapshot descriptor is invalid for mode=${mode}. Run prefetch again.`);
+  }
+  resolveRuntimeBuildScriptPolicy({ cwd: portablePrefetchRuntimeRoot, mode });
+  const runtimeLockfile = fs.readFileSync(portablePrefetchLockfilePath);
+  const runtimeWorkspaceConfig = fs.readFileSync(
+    path.join(portablePrefetchRuntimeRoot, "pnpm-workspace.yaml"),
+  );
+  const storeSnapshot = await createRuntimeDependencyStoreSnapshot(portablePnpmStoreDir);
+  assertRuntimeDependencySnapshot(snapshot, {
+    target: {
+      mode,
+      platform,
+      arch,
+      nodeAbi: process.versions.modules,
+    },
+    sourceLockfile: fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml")),
+    runtimeLockfile,
+    runtimeWorkspaceConfig,
+    storeSnapshot,
+  });
+  return {
+    runtimeLockfile,
+    runtimeWorkspaceConfig,
+    artifactIdentity: createRuntimeDependencySnapshotArtifactIdentity(snapshot),
+  };
 }
 
 function wireSqliteVecPlatformPackage() {
@@ -805,10 +841,11 @@ function prunePortableRuntime() {
   };
 }
 
-function main() {
+async function main() {
   if (platform !== "win32") {
     throw new Error(`Portable build currently only targets Windows. Current platform: ${platform}`);
   }
+  const runtimeDependencySnapshot = await readVerifiedRuntimeDependencySnapshot();
 
   ensureDir(portableArtifactsRoot);
   let archivedPortableRoot;
@@ -833,8 +870,15 @@ function main() {
     ensureDir(runtimeAppsRoot);
 
     writeRuntimePackageJson();
-    copyFile(path.join(workspaceRoot, "pnpm-workspace.yaml"), path.join(runtimeRoot, "pnpm-workspace.yaml"));
-    copyFile(path.join(workspaceRoot, "pnpm-lock.yaml"), path.join(runtimeRoot, "pnpm-lock.yaml"));
+    fs.writeFileSync(
+      path.join(runtimeRoot, "pnpm-workspace.yaml"),
+      runtimeDependencySnapshot.runtimeWorkspaceConfig,
+    );
+    fs.writeFileSync(
+      path.join(runtimeRoot, "pnpm-lock.yaml"),
+      runtimeDependencySnapshot.runtimeLockfile,
+    );
+    copyRuntimeDependencyPatches();
 
     for (const packageName of packageNames) {
       copyPackage(packageName);
@@ -875,8 +919,13 @@ function main() {
     writePortableReadme(executableName);
     writeStartBat(executableName);
     writeStartPs1(executableName);
-    const runtimeManifest = writeRuntimeManifest();
-    writeVersionFile(executableName, runtimeManifest, pruneStats);
+    const runtimeManifest = writeRuntimeManifest(runtimeDependencySnapshot.artifactIdentity);
+    writeVersionFile(
+      executableName,
+      runtimeManifest,
+      pruneStats,
+      runtimeDependencySnapshot.artifactIdentity,
+    );
     const recoveryPayload = writePortableRecoveryPayload(runtimeManifest);
 
     if (archivedPortableRoot) {
@@ -909,4 +958,7 @@ function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

@@ -22,6 +22,26 @@ function readDockerWorkflow(): string {
   );
 }
 
+function readDependabotConfig(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const workspaceRoot = path.resolve(currentDir, "..", "..", "..");
+  return fs.readFileSync(path.join(workspaceRoot, ".github", "dependabot.yml"), "utf-8");
+}
+
+function readWorkflowJob(workflow: string, jobName: string): string {
+  const normalized = workflow.replace(/\r\n/g, "\n");
+  const marker = `  ${jobName}:\n`;
+  const start = normalized.indexOf(marker);
+  if (start < 0) {
+    throw new Error(`Workflow job not found: ${jobName}`);
+  }
+  const afterMarker = normalized.slice(start + marker.length);
+  const nextJobOffset = afterMarker.search(/^  [a-zA-Z0-9_-]+:\n/m);
+  return nextJobOffset < 0
+    ? normalized.slice(start)
+    : normalized.slice(start, start + marker.length + nextJobOffset);
+}
+
 function readDockerfile(): string {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   const workspaceRoot = path.resolve(currentDir, "..", "..", "..");
@@ -46,6 +66,79 @@ test("quality gate builds the workspace and runs the full test suite on pull req
   expect(workflow).toContain("run: pnpm install --frozen-lockfile");
   expect(workflow).toContain("run: pnpm build");
   expect(workflow).toContain("run: pnpm test");
+});
+
+test("quality gate pins every remote action to a full commit SHA", () => {
+  const workflow = readQualityGatesWorkflow();
+  const actionRefs = Array.from(workflow.matchAll(/^\s*uses:\s*([^\s#]+)\s*$/gm), (match) => match[1]);
+
+  expect(actionRefs.length).toBeGreaterThan(0);
+  for (const actionRef of actionRefs) {
+    expect(actionRef).toMatch(/^[^@\s]+@[0-9a-f]{40}$/);
+  }
+});
+
+test("Docker workflow grants repository write permission only to the GitHub Release job", () => {
+  const workflow = readDockerWorkflow();
+  const buildAndTestJob = readWorkflowJob(workflow, "build-and-test");
+  const dockerHubPublishJob = readWorkflowJob(workflow, "publish");
+  const githubReleaseJob = readWorkflowJob(workflow, "release");
+  const windowsAssetsJob = readWorkflowJob(workflow, "release-windows-assets");
+
+  for (const job of [buildAndTestJob, dockerHubPublishJob, windowsAssetsJob]) {
+    expect(job).toMatch(/permissions:\s*\n\s+contents: read/);
+    expect(job).not.toMatch(/\b(?:contents|packages|actions|attestations|id-token): write\b/);
+  }
+  expect(githubReleaseJob).toMatch(/permissions:\s*\n\s+contents: write/);
+  expect(githubReleaseJob).not.toMatch(/\b(?:packages|actions|attestations|id-token): write\b/);
+});
+
+test("Docker workflow pins every remote action to a full commit SHA", () => {
+  const workflow = readDockerWorkflow();
+  const actionRefs = Array.from(workflow.matchAll(/^\s*uses:\s*([^\s#]+)\s*$/gm), (match) => match[1]);
+
+  expect(actionRefs.length).toBeGreaterThan(0);
+  for (const actionRef of actionRefs) {
+    expect(actionRef).toMatch(/^[^@\s]+@[0-9a-f]{40}$/);
+  }
+});
+
+test("Dependabot keeps pinned GitHub Actions on a bounded weekly update path", () => {
+  const config = readDependabotConfig();
+  const githubActionsOwners = config.match(/package-ecosystem:\s*["']github-actions["']/g) ?? [];
+
+  expect(config).toMatch(/^version:\s*2\s*$/m);
+  expect(githubActionsOwners).toHaveLength(1);
+  expect(config).toMatch(/directory:\s*["']\/["']/);
+  expect(config).toMatch(/interval:\s*["']weekly["']/);
+  expect(config).toMatch(/open-pull-requests-limit:\s*5\s*$/m);
+});
+
+test("Docker publishers share a full workspace test gate before image construction", () => {
+  const workflow = readDockerWorkflow();
+  const buildAndTestJob = readWorkflowJob(workflow, "build-and-test");
+  const dockerHubPublishJob = readWorkflowJob(workflow, "publish");
+  const githubReleaseJob = readWorkflowJob(workflow, "release");
+
+  expect(buildAndTestJob).toContain(
+    "uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa",
+  );
+  expect(buildAndTestJob).toContain("version: 10.23.0");
+  expect(buildAndTestJob).toContain(
+    "uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+  );
+  expect(buildAndTestJob).toContain("node-version: 22");
+
+  const installIndex = buildAndTestJob.indexOf("run: pnpm install --frozen-lockfile");
+  const buildIndex = buildAndTestJob.indexOf("run: pnpm build");
+  const testIndex = buildAndTestJob.indexOf("run: pnpm test");
+  const imageBuildIndex = buildAndTestJob.indexOf("- name: Build Docker image (test)");
+  expect(installIndex).toBeGreaterThan(-1);
+  expect(buildIndex).toBeGreaterThan(installIndex);
+  expect(testIndex).toBeGreaterThan(buildIndex);
+  expect(imageBuildIndex).toBeGreaterThan(testIndex);
+  expect(dockerHubPublishJob).toContain("needs: build-and-test");
+  expect(githubReleaseJob).toContain("needs: build-and-test");
 });
 
 test("quality gate exposes stable WebChat, CSP/Trusted Types, and Distribution contract checks", () => {
@@ -138,11 +231,32 @@ test("Docker runtime starts the built CLI without invoking the dev-only asset bu
   expect(dockerfile).not.toContain('CMD ["pnpm", "start"]');
 });
 
+test("Dockerfile pins every external base image to a readable tag and manifest digest", () => {
+  const dockerfile = readDockerfile();
+  const declaredStages = new Set<string>();
+  const externalBaseImages: string[] = [];
+
+  for (const match of dockerfile.matchAll(/^FROM\s+(\S+)\s+AS\s+(\S+)\s*$/gm)) {
+    const [, imageRef, stageName] = match;
+    if (!declaredStages.has(imageRef)) {
+      externalBaseImages.push(imageRef);
+    }
+    declaredStages.add(stageName);
+  }
+
+  expect(externalBaseImages).toHaveLength(2);
+  for (const imageRef of externalBaseImages) {
+    expect(imageRef).toMatch(/^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$/);
+  }
+});
+
 test("Docker dependency stages copy pnpm patches before frozen installs", () => {
   const dockerfile = readDockerfile();
   const depsStart = dockerfile.indexOf("FROM base AS deps");
   const builderStart = dockerfile.indexOf("FROM base AS builder");
-  const runtimeStart = dockerfile.indexOf("FROM node:22-bookworm-slim AS runtime");
+  const runtimeStart = dockerfile.indexOf(
+    "FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime",
+  );
 
   expect(depsStart).toBeGreaterThan(-1);
   expect(builderStart).toBeGreaterThan(depsStart);
@@ -191,7 +305,9 @@ test("tag release-light stays independent from Docker Hub publishing while Windo
   // Docker Hub README synchronization needs an optional Delete scope; image publishing must not depend on it.
   expect(descriptionStep).toContain("continue-on-error: true");
   expect(descriptionStep.indexOf("continue-on-error: true")).toBeLessThan(
-    descriptionStep.indexOf("uses: peter-evans/dockerhub-description@v4"),
+    descriptionStep.indexOf(
+      "uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77",
+    ),
   );
   expect(releaseJob).toContain("needs: build-and-test");
   expect(releaseJob).not.toContain("needs: publish");
@@ -209,12 +325,14 @@ test("tag release probes the packaged portable Relay before winget staging", () 
   expect(rootPackage.scripts?.["verify:portable-artifacts"]).toBe(
     "node packages/star-sanctuary-distribution/scripts/verify-portable-artifacts.mjs",
   );
+  const portablePrefetchIndex = workflow.indexOf("pnpm prefetch:portable");
   const portableBuildIndex = workflow.indexOf("pnpm build:portable");
   const relayProbeIndex = workflow.indexOf("pnpm verify:portable-artifacts");
   const portableSmokeIndex = workflow.indexOf("pnpm smoke:portable");
   const wingetBuildIndex = workflow.indexOf("pnpm build:winget");
 
-  expect(portableBuildIndex).toBeGreaterThan(-1);
+  expect(portablePrefetchIndex).toBeGreaterThan(-1);
+  expect(portableBuildIndex).toBeGreaterThan(portablePrefetchIndex);
   expect(relayProbeIndex).toBeGreaterThan(portableBuildIndex);
   expect(portableSmokeIndex).toBeGreaterThan(relayProbeIndex);
   expect(wingetBuildIndex).toBeGreaterThan(portableSmokeIndex);

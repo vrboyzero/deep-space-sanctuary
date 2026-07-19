@@ -1,6 +1,13 @@
 import WebSocket from "ws";
 import type { BelldandyAgent } from "@belldandy/agent";
-import { uploadTokenUsage, type TokenUsageUploadConfig } from "@belldandy/protocol";
+import {
+  OutboundRequestPolicy,
+  OutboundRequestPolicyError,
+  uploadTokenUsage,
+  type OutboundAddress,
+  type OutboundRequestInit,
+  type TokenUsageUploadConfig,
+} from "@belldandy/protocol";
 import type {
   Channel,
   ChannelConfig,
@@ -30,6 +37,7 @@ import {
 } from "./channel-outbound.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
+import type { LookupFunction } from "node:net";
 
 const channelSafeLogger = new ChannelSafeLogger();
 
@@ -79,6 +87,10 @@ export interface CommunityChannelConfig extends ChannelConfig {
   tokenUsageUpload?: TokenUsageUploadConfig;
   /** 主人 UUID（用于 strict uuid 模式） */
   ownerUserUuid?: string;
+  /** Community HTTP 使用实例 endpoint 对应的零 redirect pinned profile。 */
+  httpOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
+  /** Community WebSocket upgrade 使用实例 endpoint 对应的 pinned profile。 */
+  webSocketOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "resolveAllowedAddresses">;
 }
 
 /**
@@ -150,6 +162,7 @@ function isCommunityMentioned(text: string, accountName: string, fallbackAgentId
 export class CommunityChannel implements Channel {
   readonly name = "community";
   private static readonly CONNECTIVITY_DIAGNOSTIC_COOLDOWN_MS = 15_000;
+  private static readonly HTTP_IDLE_TIMEOUT_MS = 15_000;
 
   private readonly endpoint: string;
   private readonly agentConfigs: CommunityAgentConfig[];
@@ -170,6 +183,8 @@ export class CommunityChannel implements Channel {
   };
   private readonly tokenUsageUpload?: TokenUsageUploadConfig;
   private readonly ownerUserUuid?: string;
+  private readonly httpOutboundRequestPolicy: Pick<OutboundRequestPolicy, "request">;
+  private readonly webSocketOutboundRequestPolicy: Pick<OutboundRequestPolicy, "resolveAllowedAddresses">;
 
   private _running = false;
   private _lifecycleState: ChannelLifecycleState = "stopped";
@@ -249,11 +264,36 @@ export class CommunityChannel implements Channel {
     this.conversationLifecycle = config.conversationLifecycle;
     this.tokenUsageUpload = config.tokenUsageUpload;
     this.ownerUserUuid = config.ownerUserUuid;
+    this.httpOutboundRequestPolicy = config.httpOutboundRequestPolicy ?? new OutboundRequestPolicy({
+      allowedHosts: [new URL(config.endpoint).hostname],
+      maxRedirects: 0,
+    });
+    this.webSocketOutboundRequestPolicy = config.webSocketOutboundRequestPolicy ?? new OutboundRequestPolicy({
+      allowedHosts: [new URL(config.endpoint).hostname],
+      maxRedirects: 0,
+    });
     this.reconnectConfig = config.reconnect ?? {
       enabled: true,
       maxRetries: 10,
       backoffMs: 5000,
     };
+  }
+
+  private async requestCommunityHttp(
+    url: string,
+    init: OutboundRequestInit,
+    timeoutMs?: number,
+  ): Promise<Response> {
+    const idleTimeoutMs = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.floor(timeoutMs)
+      : CommunityChannel.HTTP_IDLE_TIMEOUT_MS;
+    // API key 属于实例凭据，固定 endpoint 请求不允许 redirect 到任何第二跳。
+    return (await this.httpOutboundRequestPolicy.request({
+      url,
+      ...init,
+      maxRedirects: 0,
+      idleTimeoutMs,
+    })).response;
   }
 
   private resolveAgent(agentId?: string): BelldandyAgent {
@@ -493,13 +533,13 @@ export class CommunityChannel implements Channel {
     let roomId: string;
     const roomLookupUrl = `${this.endpoint}/api/rooms/by-name/${encodeURIComponent(room.name)}`;
     try {
-      const roomResponse = await this.runOutbound((signal) => fetch(roomLookupUrl, {
+      const roomResponse = await this.runOutbound((signal) => this.requestCommunityHttp(roomLookupUrl, {
         headers: {
           "X-API-Key": agentConfig.apiKey,
           "X-Agent-ID": encodeURIComponent(agentConfig.name),
         },
         signal,
-      }), options);
+      }, options.timeoutMs), options);
 
       if (!roomResponse.ok) {
         const errorBody = await readBoundedChannelErrorBody(roomResponse);
@@ -516,7 +556,8 @@ export class CommunityChannel implements Channel {
       roomId = roomData.room.id;
       console.log(`[${this.name}] Resolved room "${room.name}" to ID: ${roomId}`);
     } catch (error) {
-      if (!(error instanceof Error && error.message.startsWith(`Failed to find room "${room.name}":`))) {
+      if (!isCommunityHttpAdmissionFailure(error)
+        && !(error instanceof Error && error.message.startsWith(`Failed to find room "${room.name}":`))) {
         this.scheduleConnectivityDiagnostic(
           `Failed to resolve room name "${room.name}" (network):`,
           roomLookupUrl,
@@ -529,7 +570,7 @@ export class CommunityChannel implements Channel {
     // 2. 调用 HTTP API 加入房间
     const joinRoomUrl = `${this.endpoint}/api/rooms/${roomId}/join`;
     try {
-      const joinResponse = await this.runOutbound((signal) => fetch(joinRoomUrl, {
+      const joinResponse = await this.runOutbound((signal) => this.requestCommunityHttp(joinRoomUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -540,7 +581,7 @@ export class CommunityChannel implements Channel {
           password: room.password,
         }),
         signal,
-      }), options);
+      }, options.timeoutMs), options);
 
       if (!joinResponse.ok) {
         const errorBody = await readBoundedChannelErrorBody(joinResponse);
@@ -555,7 +596,8 @@ export class CommunityChannel implements Channel {
 
       console.log(`[${this.name}] Agent ${agentConfig.name} joined room ${room.name} (${roomId})`);
     } catch (error) {
-      if (!(error instanceof Error && error.message.startsWith("Failed to join room:"))) {
+      if (!isCommunityHttpAdmissionFailure(error)
+        && !(error instanceof Error && error.message.startsWith("Failed to join room:"))) {
         this.scheduleConnectivityDiagnostic(
           `Failed to join room ${room.name} (network):`,
           joinRoomUrl,
@@ -577,12 +619,23 @@ export class CommunityChannel implements Channel {
     roomId: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    // The deployed Community protocol currently authenticates this upgrade with apiKey in the query.
-    // Keep this URL strictly transport-local; diagnostics and logs only use its redacted form.
-    const wsUrl = `${this.endpoint.replace(/^http/, "ws")}/ws/room?roomId=${roomId}&apiKey=${agentConfig.apiKey}&agentName=${encodeURIComponent(agentConfig.name)}`;
-
     throwIfChannelAborted(signal);
-    const ws = new WebSocket(wsUrl);
+    const endpointUrl = parseCommunityWebSocketEndpoint(this.endpoint);
+    const addresses = await this.webSocketOutboundRequestPolicy.resolveAllowedAddresses(endpointUrl);
+    throwIfChannelAborted(signal);
+    const selectedAddress = addresses[0];
+    if (!selectedAddress) {
+      throw new OutboundRequestPolicyError("dns_unavailable", "Community WebSocket DNS did not return a usable address.");
+    }
+
+    // Community 当前通过 query 认证 upgrade；URL 只进入 transport，日志与诊断不得持有凭据。
+    const wsUrl = buildCommunityWebSocketUrl(endpointUrl, agentConfig, roomId);
+    const webSocketOptions = {
+      followRedirects: false,
+      handshakeTimeout: 10_000,
+      lookup: createPinnedCommunityWebSocketLookup(selectedAddress),
+    } as WebSocket.ClientOptions & { lookup: LookupFunction };
+    const ws = new WebSocket(wsUrl.toString(), webSocketOptions);
 
     const state: ConnectionState = {
       ws,
@@ -1332,6 +1385,51 @@ function redactCommunityCredentialUrl(value: string): string {
   }
 }
 
+function parseCommunityWebSocketEndpoint(value: string): URL {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new OutboundRequestPolicyError("invalid_url", "Community WebSocket endpoint is invalid.");
+  }
+  if (endpoint.protocol !== "https:") {
+    throw new OutboundRequestPolicyError("insecure_scheme", "Community WebSocket requires an HTTPS endpoint.");
+  }
+  if (endpoint.username || endpoint.password) {
+    throw new OutboundRequestPolicyError("userinfo_not_allowed", "Community WebSocket endpoint must not include userinfo.");
+  }
+  if (!endpoint.hostname) {
+    throw new OutboundRequestPolicyError("invalid_url", "Community WebSocket endpoint hostname is required.");
+  }
+  return endpoint;
+}
+
+function buildCommunityWebSocketUrl(
+  endpoint: URL,
+  agentConfig: CommunityAgentConfig,
+  roomId: string,
+): URL {
+  const wsUrl = new URL(endpoint.toString());
+  wsUrl.protocol = "wss:";
+  wsUrl.pathname = `${wsUrl.pathname.replace(/\/$/, "")}/ws/room`;
+  wsUrl.search = "";
+  wsUrl.hash = "";
+  wsUrl.searchParams.set("roomId", roomId);
+  wsUrl.searchParams.set("apiKey", agentConfig.apiKey);
+  wsUrl.searchParams.set("agentName", agentConfig.name);
+  return wsUrl;
+}
+
+function createPinnedCommunityWebSocketLookup(address: OutboundAddress): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address: address.address, family: address.family }]);
+      return;
+    }
+    callback(null, address.address, address.family);
+  };
+}
+
 function toLifecycleAbortError(reason: unknown): Error {
   if (reason instanceof Error) return reason;
   const error = new Error("Channel lifecycle operation was aborted.");
@@ -1374,6 +1472,11 @@ function sendCommunityWebSocketMessage(
       settle(error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+function isCommunityHttpAdmissionFailure(error: unknown): boolean {
+  if (!(error instanceof OutboundRequestPolicyError)) return false;
+  return error.code !== "dns_unavailable" && error.code !== "idle_timeout";
 }
 
 function formatCommunityHttpFailure(

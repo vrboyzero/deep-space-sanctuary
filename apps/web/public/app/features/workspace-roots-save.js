@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createWorkspaceRootsSaveFeature({
   button,
   input,
@@ -10,13 +12,10 @@ export function createWorkspaceRootsSaveFeature({
   t,
 }) {
   let buttonState = "default";
-  let feedbackTimer = null;
-  let requestRevision = 0;
-  let pendingRequestCount = 0;
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
   function renderButton() {
-    if (!button || disposed) return;
+    if (!button || !taskScope.isActive()) return;
     const saved = buttonState === "saved";
     const label = document.createElement("u");
     label.textContent = saved
@@ -25,18 +24,12 @@ export function createWorkspaceRootsSaveFeature({
     button.replaceChildren(label);
   }
 
-  function clearFeedbackTimer() {
-    if (feedbackTimer === null) return;
-    clearTimeout(feedbackTimer);
-    feedbackTimer = null;
-  }
-
   function showSaveFailure(message) {
     alertUser(t("panel.saveWorkspaceFailed", { message }, "Save failed: {message}"));
   }
 
   async function save() {
-    if (disposed) return null;
+    if (!taskScope.isActive()) return null;
     if (!isConnected()) {
       alertUser(t("panel.saveWorkspaceNotConnected", {}, "Please connect to the server first"));
       return null;
@@ -44,8 +37,8 @@ export function createWorkspaceRootsSaveFeature({
 
     const value = input ? input.value.trim() : "";
     persistWorkspaceRoots();
-    const revision = ++requestRevision;
-    pendingRequestCount += 1;
+    const requestTask = taskScope.beginTask();
+    if (!requestTask) return null;
     let response;
     try {
       response = await sendReq({
@@ -53,26 +46,26 @@ export function createWorkspaceRootsSaveFeature({
         id: makeId(),
         method: "config.update",
         params: { updates: { BELLDANDY_EXTRA_WORKSPACE_ROOTS: value } },
+      }, {
+        signal: requestTask.signal,
       });
     } catch (error) {
-      if (!disposed && revision === requestRevision) {
+      requestTask.commit(() => {
         showSaveFailure(error instanceof Error ? error.message : String(error));
-      }
+      });
       return null;
     } finally {
-      pendingRequestCount = Math.max(0, pendingRequestCount - 1);
+      requestTask.settle();
     }
 
-    // 请求可以在页面退出或后续保存之后才结算，只允许当前代次更新可见 UI。
-    if (disposed || revision !== requestRevision) return response;
+    // Scope 同时校验激活代次和最新任务，迟到结果不得更新当前面板。
+    if (!requestTask.isCurrent()) return response;
     if (response?.ok) {
       invalidateServerConfigCache();
       buttonState = "saved";
       renderButton();
-      clearFeedbackTimer();
-      feedbackTimer = setTimeout(() => {
-        feedbackTimer = null;
-        if (disposed || revision !== requestRevision) return;
+      taskScope.replaceTimeout("save-feedback", () => {
+        if (!requestTask.isCurrent()) return;
         buttonState = "default";
         renderButton();
       }, 1_500);
@@ -88,28 +81,42 @@ export function createWorkspaceRootsSaveFeature({
     void save();
   }
 
-  button?.addEventListener("click", handleSaveClick);
-  renderButton();
+  function activate() {
+    if (!taskScope.activate()) return false;
+    taskScope.addEventListener(button, "click", handleSaveClick);
+    renderButton();
+    return true;
+  }
+
+  function deactivate() {
+    if (!taskScope.isActive()) return false;
+    buttonState = "default";
+    renderButton();
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    requestRevision += 1;
-    clearFeedbackTimer();
-    button?.removeEventListener("click", handleSaveClick);
+    if (taskScope.getRuntimeSnapshot().disposed) return false;
     buttonState = "default";
+    renderButton();
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      activeTimerCount: feedbackTimer === null ? 0 : 1,
-      pendingRequestCount,
-      listenerCount: disposed || !button ? 0 : 1,
-      disposed,
+      activeTimerCount: snapshot.activeTimerCount,
+      pendingRequestCount: snapshot.pendingTaskCount,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     refreshLocale: renderButton,

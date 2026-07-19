@@ -2,6 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolveSingleExeArtifactRoot } from "./distribution-mode.mjs";
+import {
+  assertRuntimeDependencyReport,
+  createRuntimeDependencyReportTarget,
+} from "./runtime-dependency-report-policy.mjs";
+import {
+  assertRuntimeDependencySnapshotArtifactIdentityEqual,
+} from "./runtime-dependency-snapshot-policy.mjs";
 import { guardedRemovePath } from "./sandbox-paths.mjs";
 import {
   checkHealth,
@@ -171,6 +178,26 @@ async function runExtractedRuntimeCheck() {
   return JSON.parse(fs.readFileSync(reportPath, "utf-8"));
 }
 
+function verifyExtractedRuntimeDependencySnapshotIdentity() {
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
+  const versionRootDir = path.join(singleExeHome, "runtime", buildVersionKey(metadata));
+  const versionPath = path.join(versionRootDir, "version.json");
+  const runtimeManifestPath = path.join(versionRootDir, "runtime-manifest.json");
+  ensureArtifactExists(versionPath, "extracted runtime version metadata");
+  ensureArtifactExists(runtimeManifestPath, "extracted runtime manifest");
+
+  const versionFile = JSON.parse(fs.readFileSync(versionPath, "utf-8"));
+  const runtimeManifest = JSON.parse(fs.readFileSync(runtimeManifestPath, "utf-8"));
+  assertRuntimeDependencySnapshotArtifactIdentityEqual(
+    metadata.dependencySnapshot,
+    versionFile.dependencySnapshot,
+  );
+  assertRuntimeDependencySnapshotArtifactIdentityEqual(
+    metadata.dependencySnapshot,
+    runtimeManifest.dependencySnapshot,
+  );
+}
+
 function runExtractedRelayArtifactVerifier() {
   const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8"));
   const versionRootDir = path.join(singleExeHome, "runtime", buildVersionKey(metadata));
@@ -197,33 +224,20 @@ function runExtractedRelayArtifactVerifier() {
   }
 }
 
-function assertReport(report) {
-  const nodePtyOk = mode !== "full"
-    || (report.nodePty?.installed && report.nodePty?.backend === "node-pty");
-
-  if (
-    !report.betterSqlite3?.ok
-    || !report.sqliteVec?.ok
-    || !nodePtyOk
-    || !report.protobufjs?.ok
-    || !report.launcher?.openModule?.ok
-    || !report.browserToolchain?.puppeteerCore?.ok
-    || !report.browserToolchain?.browserToolsModule?.ok
-    || !report.browserToolchain?.readability?.ok
-    || !report.browserToolchain?.turndown?.ok
-  ) {
-    throw new Error(`Single-exe dependency verification reported failures.\n${JSON.stringify(report, null, 2)}`);
-  }
-}
-
 async function main() {
   if (!fs.existsSync(executablePath) || !fs.existsSync(metadataPath)) {
     throw new Error(`Single-exe artifact is missing for mode=${mode}. Run 'corepack pnpm build:single-exe${mode === "full" ? ":full" : ""}' first.`);
   }
 
   await runSingleExeForExtraction();
+  verifyExtractedRuntimeDependencySnapshotIdentity();
   const report = await runExtractedRuntimeCheck();
-  assertReport(report);
+  assertRuntimeDependencyReport(report, createRuntimeDependencyReportTarget({
+    mode,
+    platform,
+    arch,
+    nodeAbi: process.versions.modules,
+  }));
   runExtractedRelayArtifactVerifier();
 
   console.log(`[single-exe-verify] Dependency report (${mode}) written to ${reportPath}`);

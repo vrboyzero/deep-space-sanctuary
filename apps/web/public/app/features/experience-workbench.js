@@ -2861,7 +2861,7 @@ export function createExperienceWorkbenchFeature({
   function bindUi() {
     if (disposed || uiBound) return;
     uiBound = true;
-    synthesisSourcesFeature.bind();
+    if (viewLifecycleFeature.isActive()) synthesisSourcesFeature.activate();
     addOwnedListener(experienceWorkbenchQueryEl, "input", () => {
       setFilters({ query: experienceWorkbenchQueryEl.value });
       void syncExperienceWorkbenchUi({ preferFirst: true, loadDetailIfNeeded: true });
@@ -2933,6 +2933,11 @@ export function createExperienceWorkbenchFeature({
 
   function setViewActive(active) {
     viewLifecycleFeature.setViewActive(active);
+    if (uiBound && viewLifecycleFeature.isActive()) {
+      synthesisSourcesFeature.activate();
+    } else {
+      synthesisSourcesFeature.deactivate();
+    }
   }
 
   function dispose() {

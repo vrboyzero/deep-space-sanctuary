@@ -35,6 +35,17 @@ export type CurrentConversationBindingStore = {
   }): Promise<CurrentConversationBindingRecord | undefined>;
 };
 
+export type CurrentConversationBindingStoreMaintenance = CurrentConversationBindingStore & {
+  prune(): Promise<void>;
+  getRuntimeSnapshot(): Promise<CurrentConversationBindingStoreRuntimeSnapshot>;
+};
+
+export type CurrentConversationBindingStoreRuntimeSnapshot = {
+  retainedBindingCount: number;
+  latestScopeCount: number;
+  pendingMutationCount: number;
+};
+
 export type CurrentConversationBindingStoreFileSystem = Pick<
   typeof fs,
   "readFile" | "mkdir" | "writeFile" | "rename" | "rm"
@@ -50,6 +61,16 @@ export type CurrentConversationBindingStoreOptions = {
   /** 仅用于可重复的 retention 验证；生产默认使用 Date.now。 */
   now?: () => number;
 };
+
+type PendingMutationCompletion = {
+  resolve: () => void;
+  reject: (error: unknown) => void;
+};
+
+type PendingMutation = PendingMutationCompletion & (
+  | { kind: "upsert"; record: CurrentConversationBindingRecord }
+  | { kind: "prune" }
+);
 
 function createEmptySnapshot(): CurrentConversationBindingSnapshot {
   return {
@@ -267,7 +288,7 @@ function isAvailableBinding(input: {
 export function createFileCurrentConversationBindingStore(
   filePath: string,
   options: CurrentConversationBindingStoreOptions = {},
-): CurrentConversationBindingStore {
+): CurrentConversationBindingStoreMaintenance {
   const fileSystem = options.fileSystem ?? fs;
   const retentionMs = normalizePositiveInteger(
     options.retentionMs,
@@ -280,12 +301,9 @@ export function createFileCurrentConversationBindingStore(
   const getNow = options.now ?? Date.now;
   let snapshot: CurrentConversationBindingSnapshot | undefined;
   let loadPromise: Promise<CurrentConversationBindingSnapshot> | undefined;
-  const pendingUpserts: Array<{
-    record: CurrentConversationBindingRecord;
-    resolve: () => void;
-    reject: (error: unknown) => void;
-  }> = [];
-  let upsertDrainScheduled = false;
+  const pendingMutations: PendingMutation[] = [];
+  let mutationDrainScheduled = false;
+  let activeMutationCount = 0;
 
   async function ensureLoaded(): Promise<CurrentConversationBindingSnapshot> {
     if (snapshot) return snapshot;
@@ -317,45 +335,50 @@ export function createFileCurrentConversationBindingStore(
     }
   }
 
-  async function publishUpsertBatch(entries: typeof pendingUpserts): Promise<void> {
+  async function publishMutationBatch(entries: PendingMutation[]): Promise<void> {
     const loaded = await ensureLoaded();
     const nextSnapshot = cloneSnapshot(loaded);
     pruneSnapshot({ snapshot: nextSnapshot, now: getNow(), retentionMs, maxEntries });
     for (const entry of entries) {
-      applyUpsert(nextSnapshot, entry.record);
+      if (entry.kind === "upsert") {
+        applyUpsert(nextSnapshot, entry.record);
+      }
     }
     pruneSnapshot({ snapshot: nextSnapshot, now: getNow(), retentionMs, maxEntries });
     await persist(nextSnapshot);
-    // 一个批次中的所有 binding 只有在同一份 staging snapshot 成功发布后才对读取端可见。
+    // 一个批次中的 upsert/prune 只有在同一份 staging snapshot 成功发布后才对读取端可见。
     snapshot = nextSnapshot;
   }
 
-  async function drainPendingUpserts(): Promise<void> {
+  async function drainPendingMutations(): Promise<void> {
     try {
-      while (pendingUpserts.length > 0) {
-        const entries = pendingUpserts.splice(0);
+      while (pendingMutations.length > 0) {
+        const entries = pendingMutations.splice(0);
+        activeMutationCount += entries.length;
         try {
-          await publishUpsertBatch(entries);
+          await publishMutationBatch(entries);
           for (const entry of entries) entry.resolve();
         } catch (error) {
           for (const entry of entries) entry.reject(error);
+        } finally {
+          activeMutationCount = Math.max(0, activeMutationCount - entries.length);
         }
       }
     } finally {
-      upsertDrainScheduled = false;
-      if (pendingUpserts.length > 0) {
-        schedulePendingUpsertDrain();
+      mutationDrainScheduled = false;
+      if (pendingMutations.length > 0) {
+        schedulePendingMutationDrain();
       }
     }
   }
 
-  function schedulePendingUpsertDrain(): void {
-    if (upsertDrainScheduled) return;
-    upsertDrainScheduled = true;
-    // 让同一事件循环轮次内的 ingress 合并到一个原子文件发布，且不延迟已 await 的调用者到定时器窗口。
+  function schedulePendingMutationDrain(): void {
+    if (mutationDrainScheduled) return;
+    mutationDrainScheduled = true;
+    // 让同一事件循环轮次内的 ingress/prune 合并到一个原子文件发布，且不延迟调用者到定时器窗口。
     queueMicrotask(() => {
-      void drainPendingUpserts().catch((error) => {
-        const entries = pendingUpserts.splice(0);
+      void drainPendingMutations().catch((error) => {
+        const entries = pendingMutations.splice(0);
         for (const entry of entries) entry.reject(error);
       });
     });
@@ -365,8 +388,15 @@ export function createFileCurrentConversationBindingStore(
     upsert(record) {
       const nextRecord = normalizeUpsertRecord(record);
       return new Promise<void>((resolve, reject) => {
-        pendingUpserts.push({ record: nextRecord, resolve, reject });
-        schedulePendingUpsertDrain();
+        pendingMutations.push({ kind: "upsert", record: nextRecord, resolve, reject });
+        schedulePendingMutationDrain();
+      });
+    },
+
+    prune() {
+      return new Promise<void>((resolve, reject) => {
+        pendingMutations.push({ kind: "prune", resolve, reject });
+        schedulePendingMutationDrain();
       });
     },
 
@@ -385,6 +415,17 @@ export function createFileCurrentConversationBindingStore(
       const sessionKey = loaded.latestByScope[exactScopeKey] ?? loaded.latestByScope[fallbackScopeKey];
       if (!sessionKey) return undefined;
       return cloneRecord(loaded.bindings[sessionKey]);
+    },
+
+    async getRuntimeSnapshot() {
+      const loaded = await ensureLoaded();
+      const logicalSnapshot = cloneSnapshot(loaded);
+      pruneSnapshot({ snapshot: logicalSnapshot, now: getNow(), retentionMs, maxEntries });
+      return {
+        retainedBindingCount: Object.keys(logicalSnapshot.bindings).length,
+        latestScopeCount: Object.keys(logicalSnapshot.latestByScope).length,
+        pendingMutationCount: pendingMutations.length + activeMutationCount,
+      };
     },
   };
 }

@@ -1,6 +1,7 @@
 const DEFAULT_MAX_CONVERSATION_ENTRIES = 64;
 const DEFAULT_MAX_APPROX_BYTES = 256 * 1024;
 const DEFAULT_MAX_RECORDS_PER_CONVERSATION = 1;
+const DEFAULT_INACTIVE_TTL_MS = 30 * 60 * 1000;
 const CONVERSATION_ENTRY_OVERHEAD_BYTES = 64;
 
 export function createTaskTokenHistoryCache(options = {}) {
@@ -17,6 +18,10 @@ export function createTaskTokenHistoryCache(options = {}) {
   const maxRecordsPerConversation = normalizeNonNegativeInteger(
     options.maxRecordsPerConversation,
     DEFAULT_MAX_RECORDS_PER_CONVERSATION,
+  );
+  const inactiveTtlMs = normalizeNonNegativeInteger(
+    options.inactiveTtlMs,
+    DEFAULT_INACTIVE_TTL_MS,
   );
   const now = typeof options.now === "function" ? options.now : Date.now;
   let activeConversationId = "";
@@ -40,7 +45,16 @@ export function createTaskTokenHistoryCache(options = {}) {
       || retainedApproxBytes > maxApproxBytes;
   }
 
+  function pruneExpiredInactiveConversations(currentTime = now()) {
+    for (const [conversationId, retention] of retentionByConversation) {
+      if (conversationId === activeConversationId) continue;
+      if (currentTime - retention.lastAccessedAt < inactiveTtlMs) continue;
+      deleteConversation(conversationId);
+    }
+  }
+
   function prune() {
+    pruneExpiredInactiveConversations();
     while (isOverBudget()) {
       const candidate = [...retentionByConversation.entries()]
         .filter(([conversationId]) => conversationId !== activeConversationId)
@@ -86,6 +100,7 @@ export function createTaskTokenHistoryCache(options = {}) {
 
   function get(conversationId) {
     if (disposed) return [];
+    pruneExpiredInactiveConversations();
     const records = recordsByConversation.get(conversationId);
     const retention = retentionByConversation.get(conversationId);
     if (retention) retention.lastAccessedAt = now();
@@ -120,6 +135,7 @@ export function createTaskTokenHistoryCache(options = {}) {
 
   function getRuntimeSnapshot() {
     const currentTime = now();
+    pruneExpiredInactiveConversations(currentTime);
     let retainedRecordCount = 0;
     let oldestInactiveAgeMs = 0;
     for (const [conversationId, records] of recordsByConversation) {
@@ -140,6 +156,7 @@ export function createTaskTokenHistoryCache(options = {}) {
       maxConversationEntries,
       maxApproxBytes,
       maxRecordsPerConversation,
+      inactiveTtlMs,
       evictedConversationCount,
       generationClearCount,
       oldestInactiveAgeMs,

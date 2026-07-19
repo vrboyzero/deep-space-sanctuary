@@ -1,10 +1,17 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
   collectPackageArtifactFailures,
   resolveReleaseVersion,
 } from "./artifact-contract.mjs";
+import {
+  assertReleaseContentManifest,
+  sha256File,
+} from "./release-content-manifest.mjs";
+import {
+  assertReleaseIdentityMatches,
+  resolveReleaseIdentity,
+} from "./release-identity.mjs";
 
 const workspaceRoot = process.cwd();
 const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
@@ -52,12 +59,6 @@ function assertExists(targetPath) {
   }
 }
 
-function sha256File(filePath) {
-  const hash = crypto.createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest("hex");
-}
-
 function collectStagedPackageArtifactFailures() {
   const failures = [];
   const packagesDir = path.join(packageRoot, "packages");
@@ -103,11 +104,26 @@ function main() {
   if (manifest.version !== version) {
     throw new Error(`release-light manifest version mismatch: expected ${version}, got ${String(manifest.version)}`);
   }
+  assertReleaseIdentityMatches(
+    manifest.releaseIdentity,
+    resolveReleaseIdentity({ version, workspaceRoot }),
+  );
   if (manifest.releaseKind !== "light") {
     throw new Error(`release-light manifest kind mismatch: ${String(manifest.releaseKind)}`);
   }
   if (manifest.includesRuntime !== false || manifest.includesNodeModules !== false) {
     throw new Error("release-light manifest flags must declare no runtime and no node_modules.");
+  }
+  const contentSummary = assertReleaseContentManifest({
+    rootPath: packageRoot,
+    expectedFiles: manifest.content?.files,
+    label: "release-light content",
+  });
+  if (manifest.content?.fileCount !== contentSummary.fileCount) {
+    throw new Error("release-light content file count does not match its file inventory.");
+  }
+  if (manifest.content?.totalBytes !== contentSummary.totalBytes) {
+    throw new Error("release-light content byte total does not match its file inventory.");
   }
 
   const shaLines = fs.readFileSync(sha256Path, "utf-8")

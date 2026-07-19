@@ -28,6 +28,9 @@ const gatewayRuntimeState = vi.hoisted(() => ({
   requests: [] as Array<Record<string, unknown>>,
 }));
 
+const gatewayRuntimeReachabilityMock = vi.hoisted(() => vi.fn());
+const legacyFetchMock = vi.hoisted(() => vi.fn());
+
 function nextPromptResponse(): string | boolean {
   if (promptState.responses.length === 0) {
     throw new Error("Missing mocked prompt response");
@@ -157,7 +160,16 @@ vi.mock("ws", () => {
   };
 });
 
+vi.mock("./gateway-runtime-reachability.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./gateway-runtime-reachability.js")>();
+  return {
+    ...actual,
+    checkGatewayRuntimeReachability: gatewayRuntimeReachabilityMock,
+  };
+});
+
 import { runAdvancedModulesWizard } from "./advanced-modules.js";
+import { resolveGatewayBaseUrl } from "./gateway-runtime-reachability.js";
 
 const tempRoots: string[] = [];
 
@@ -198,9 +210,14 @@ describe("advanced-modules interaction smoke", () => {
     gatewayRuntimeState.backgroundContinuationRecentEntries = [];
     gatewayRuntimeState.lastRequest = null;
     gatewayRuntimeState.requests = [];
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: gatewayRuntimeState.mode === "success",
-    })));
+    gatewayRuntimeReachabilityMock.mockReset();
+    gatewayRuntimeReachabilityMock.mockImplementation(async (envValues: ReadonlyMap<string, string>) => ({
+      reachable: gatewayRuntimeState.mode === "success",
+      healthUrl: `${resolveGatewayBaseUrl(envValues).replace(/\/+$/, "")}/health`,
+    }));
+    legacyFetchMock.mockReset();
+    legacyFetchMock.mockRejectedValue(new Error("legacy fetch must not run"));
+    vi.stubGlobal("fetch", legacyFetchMock);
   });
 
   afterEach(async () => {
@@ -2366,6 +2383,8 @@ describe("advanced-modules interaction smoke", () => {
     expect(runNowNote?.message).toContain("Executed \"Job Run Live\" immediately via runtime.");
     expect(runNowNote?.message).toContain("Summary: systemEvent completed");
     expect(runNowNote?.message).toContain("Run id: cron-run-live");
+    expect(gatewayRuntimeReachabilityMock).toHaveBeenCalledWith(expect.any(Map));
+    expect(legacyFetchMock).not.toHaveBeenCalled();
     expect(gatewayRuntimeState.lastRequest).toMatchObject({
       method: "cron.run_now",
       params: { jobId: "job-run-live" },

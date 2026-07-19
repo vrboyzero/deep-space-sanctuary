@@ -7,6 +7,7 @@ import type { BelldandyAgent, AgentRegistry, ConversationStore } from "@belldand
 import { DEFAULT_STATE_DIR_DISPLAY } from "@belldandy/protocol";
 
 import type { BelldandyLogger } from "./logger/index.js";
+import { createGeneratedArtifactHttpHandler } from "./generated-artifact-http.js";
 import type { QueryRuntimeTraceStore } from "./query-runtime-trace.js";
 import type { TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
 import {
@@ -176,11 +177,15 @@ export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesCo
   if (ctx.generatedDir) {
     try {
       await fsp.mkdir(ctx.generatedDir, { recursive: true });
-    } catch {
-      // ignore
+      ctx.app.use("/generated", createGeneratedArtifactHttpHandler({
+        generatedDir: ctx.generatedDir,
+      }));
+      ctx.log.info("gateway", `Static: serving /generated -> ${ctx.generatedDir}`);
+    } catch (error) {
+      ctx.log.error("gateway", "Static: unable to initialize /generated", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    ctx.app.use("/generated", express.static(ctx.generatedDir));
-    ctx.log.info("gateway", `Static: serving /generated -> ${ctx.generatedDir}`);
   }
 
   ctx.app.use("/avatar", express.static(ctx.avatarDir));

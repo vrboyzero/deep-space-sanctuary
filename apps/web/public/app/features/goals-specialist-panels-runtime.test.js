@@ -1054,6 +1054,7 @@ describe("goal tracking runtime helpers", () => {
     const renderGoalCapabilityPanelLoading = vi.fn();
     const renderGoalCapabilityPanelError = vi.fn();
     const renderGoalCapabilityPanel = vi.fn();
+    const disposeCapabilityPanel = vi.fn();
     const applyGoalContinuationFocus = vi.fn();
     const goalsState = {
       selectedId: "goal_alpha",
@@ -1071,6 +1072,7 @@ describe("goal tracking runtime helpers", () => {
         renderGoalCapabilityPanelLoading,
         renderGoalCapabilityPanelError,
         renderGoalCapabilityPanel,
+        dispose: disposeCapabilityPanel,
       }),
       getGoalsReadonlyPanelsFeature: () => null,
       getGoalsTrackingPanelFeature: () => null,
@@ -1101,6 +1103,7 @@ describe("goal tracking runtime helpers", () => {
     const load = feature.loadGoalCapabilityData(goal);
     expect(renderGoalCapabilityPanelLoading).toHaveBeenCalledOnce();
     feature.dispose();
+    expect(disposeCapabilityPanel).toHaveBeenCalledOnce();
     tasksRequest.resolve({ content: JSON.stringify({ nodes: [{ id: "node_impl", title: "Impl" }] }) });
     plansRequest.resolve({ content: JSON.stringify({ items: [] }) });
     governanceRequest.resolve({

@@ -10,7 +10,7 @@ describe("model selection persistence lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("persists model changes until dispose", () => {
+  it("persists model changes only while its listener is active", () => {
     document.body.innerHTML = `
       <select id="model">
         <option value="">Default</option>
@@ -32,11 +32,28 @@ describe("model selection persistence lifecycle", () => {
     expect(localStorage.getItem("test.model")).toBeNull();
 
     localStorage.setItem("test.model", "retained");
+    expect(feature.deactivate()).toBe(true);
+    expect(feature.deactivate()).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
+    select.value = "model-a";
+    select.dispatchEvent(new Event("change"));
+    expect(localStorage.getItem("test.model")).toBe("retained");
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 1, disposed: false });
+    select.dispatchEvent(new Event("change"));
+    expect(localStorage.getItem("test.model")).toBe("model-a");
+    select.value = "";
+    select.dispatchEvent(new Event("change"));
+    expect(localStorage.getItem("test.model")).toBeNull();
+
+    localStorage.setItem("test.model", "retained-after-reactivate");
     feature.dispose();
     feature.dispose();
+    expect(feature.activate()).toBe(false);
     select.value = "model-a";
     select.dispatchEvent(new Event("change"));
     expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
-    expect(localStorage.getItem("test.model")).toBe("retained");
+    expect(localStorage.getItem("test.model")).toBe("retained-after-reactivate");
   });
 });

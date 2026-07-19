@@ -4,10 +4,77 @@ import fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConversationStore } from "@belldandy/agent";
+import { OutboundRequestPolicy } from "@belldandy/protocol";
 
-const { uploadTokenUsageMock } = vi.hoisted(() => ({
+const { uploadTokenUsageMock, webSocketConstructMock } = vi.hoisted(() => ({
   uploadTokenUsageMock: vi.fn(),
+  webSocketConstructMock: vi.fn(),
 }));
+
+vi.mock("ws", () => {
+  class MockWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+
+    readonly send = vi.fn();
+    readyState = MockWebSocket.CONNECTING;
+    private readonly listeners = new Map<string, Array<{ listener: (...args: any[]) => void; once: boolean }>>();
+
+    constructor(url: string, options?: unknown) {
+      webSocketConstructMock(url, options, this);
+      queueMicrotask(() => {
+        if (this.readyState !== MockWebSocket.CONNECTING) return;
+        this.readyState = MockWebSocket.OPEN;
+        this.emit("open");
+      });
+    }
+
+    on(event: string, listener: (...args: any[]) => void): this {
+      this.addListener(event, listener, false);
+      return this;
+    }
+
+    once(event: string, listener: (...args: any[]) => void): this {
+      this.addListener(event, listener, true);
+      return this;
+    }
+
+    removeAllListeners(): this {
+      this.listeners.clear();
+      return this;
+    }
+
+    terminate(): void {
+      this.readyState = MockWebSocket.CLOSED;
+    }
+
+    close(code = 1000, reason = ""): void {
+      this.readyState = MockWebSocket.CLOSED;
+      this.emit("close", code, Buffer.from(reason));
+    }
+
+    private addListener(event: string, listener: (...args: any[]) => void, once: boolean): void {
+      const listeners = this.listeners.get(event) ?? [];
+      listeners.push({ listener, once });
+      this.listeners.set(event, listeners);
+    }
+
+    private emit(event: string, ...args: any[]): void {
+      const listeners = [...(this.listeners.get(event) ?? [])];
+      for (const entry of listeners) {
+        if (entry.once) {
+          const current = this.listeners.get(event) ?? [];
+          this.listeners.set(event, current.filter((candidate) => candidate !== entry));
+        }
+        entry.listener(...args);
+      }
+    }
+  }
+
+  return { default: MockWebSocket };
+});
 
 vi.mock("@belldandy/protocol", async () => {
   const actual = await vi.importActual<typeof import("@belldandy/protocol")>("@belldandy/protocol");
@@ -24,9 +91,26 @@ import { normalizeChannelSecurityConfig } from "./router/security-config.js";
 import { normalizeReplyChunkingConfig } from "./reply-chunking-config.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
 
+function createCommunityHttpRequestPolicy(
+  fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<unknown>,
+): OutboundRequestPolicy {
+  return new OutboundRequestPolicy({
+    allowedHosts: ["office.goddess.ai"],
+    maxRedirects: 0,
+    dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestAdapter: async ({ url, init }) => await fetchImpl(url.toString(), {
+      method: init.method,
+      headers: init.headers,
+      body: init.body as BodyInit | undefined,
+      signal: init.signal,
+    }) as Response,
+  });
+}
+
 describe("community token usage upload", () => {
   beforeEach(() => {
     uploadTokenUsageMock.mockReset();
+    webSocketConstructMock.mockReset();
   });
 
   afterEach(() => {
@@ -356,6 +440,257 @@ describe("community token usage upload", () => {
     });
   });
 
+  it("routes community room lookup and join HTTP calls through the pinned policy", async () => {
+    const legacyFetch = vi.fn(async () => {
+      throw new Error("legacy fetch must not run");
+    });
+    vi.stubGlobal("fetch", legacyFetch);
+    const request = vi.fn(async (input: {
+      url: string | URL;
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string | Uint8Array;
+      signal?: AbortSignal;
+      maxRedirects?: number;
+    }) => {
+      const url = new URL(input.url.toString());
+      return {
+        response: url.pathname.includes("/by-name/")
+          ? Response.json({ room: { id: "room-policy-id" } })
+          : new Response(null, { status: 204 }),
+        url,
+        addresses: [{ address: "93.184.216.34", family: 4 as const }],
+        redirectCount: 0,
+      };
+    });
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      httpOutboundRequestPolicy: { request },
+    });
+    const createWebSocketConnection = vi.spyOn(channel as any, "createWebSocketConnection").mockResolvedValue(undefined);
+
+    await expect((channel as any).connectAgent({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+      room: { name: "vrboyzero", password: "room-password" },
+    })).resolves.toBeUndefined();
+
+    expect(legacyFetch).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(([input]) => new URL(input.url.toString()).pathname)).toEqual([
+      "/api/rooms/by-name/vrboyzero",
+      "/api/rooms/room-policy-id/join",
+    ]);
+    for (const [input] of request.mock.calls) {
+      expect(input).toEqual(expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        maxRedirects: 0,
+      }));
+      expect(input.headers).toEqual(expect.objectContaining({ "X-API-Key": "gro_test_key" }));
+    }
+    expect(createWebSocketConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "贝露丹蒂" }),
+      "room-policy-id",
+      undefined,
+    );
+  });
+
+  it("rejects private DNS for community HTTP before transport", async () => {
+    const legacyFetch = vi.fn(async () => {
+      throw new Error("legacy fetch must not run");
+    });
+    vi.stubGlobal("fetch", legacyFetch);
+    const transport = vi.fn(async () => Response.json({ room: { id: "unsafe-room" } }));
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      httpOutboundRequestPolicy: new OutboundRequestPolicy({
+        allowedHosts: ["office.goddess.ai"],
+        dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        requestAdapter: transport,
+      }),
+    });
+    const scheduleConnectivityDiagnostic = vi.spyOn(channel as any, "scheduleConnectivityDiagnostic").mockImplementation(() => {});
+
+    await expect((channel as any).connectAgent({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+      room: { name: "vrboyzero" },
+    })).rejects.toMatchObject({ code: "private_network_not_allowed" });
+    expect(legacyFetch).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+    expect(scheduleConnectivityDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("does not replay community API keys across HTTP redirects", async () => {
+    const legacyFetch = vi.fn(async () => {
+      throw new Error("legacy fetch must not run");
+    });
+    vi.stubGlobal("fetch", legacyFetch);
+    const transport = vi.fn(async (_input: unknown) => new Response(null, {
+      status: 307,
+      headers: { location: "https://office.goddess.ai/credential-sink" },
+    }));
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      httpOutboundRequestPolicy: new OutboundRequestPolicy({
+        allowedHosts: ["office.goddess.ai"],
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        requestAdapter: transport,
+      }),
+    });
+    const scheduleConnectivityDiagnostic = vi.spyOn(channel as any, "scheduleConnectivityDiagnostic").mockImplementation(() => {});
+
+    await expect((channel as any).connectAgent({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+      room: { name: "vrboyzero" },
+    })).rejects.toMatchObject({ code: "redirect_limit" });
+    expect(legacyFetch).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(scheduleConnectivityDiagnostic).not.toHaveBeenCalled();
+    expect(transport.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      url: new URL("https://office.goddess.ai/api/rooms/by-name/vrboyzero"),
+      init: expect.objectContaining({
+        headers: expect.objectContaining({ "X-API-Key": "gro_test_key" }),
+      }),
+    }));
+  });
+
+  it("pins community WebSocket upgrades to a policy-approved public address", async () => {
+    const resolveAllowedAddresses = vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]);
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      webSocketOutboundRequestPolicy: { resolveAllowedAddresses },
+    } as any);
+
+    await expect((channel as any).createWebSocketConnection({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+    }, "room-pinned")).resolves.toBeUndefined();
+
+    expect(resolveAllowedAddresses).toHaveBeenCalledWith(new URL("https://office.goddess.ai"));
+    expect(webSocketConstructMock).toHaveBeenCalledTimes(1);
+    const [rawUrl, options, socket] = webSocketConstructMock.mock.calls[0] as [string, any, any];
+    const wsUrl = new URL(rawUrl);
+    expect(wsUrl.protocol).toBe("wss:");
+    expect(wsUrl.hostname).toBe("office.goddess.ai");
+    expect(wsUrl.pathname).toBe("/ws/room");
+    expect(wsUrl.searchParams.get("roomId")).toBe("room-pinned");
+    expect(wsUrl.searchParams.get("apiKey")).toBe("gro_test_key");
+    expect(options).toEqual(expect.objectContaining({
+      followRedirects: false,
+      handshakeTimeout: 10_000,
+      lookup: expect.any(Function),
+    }));
+
+    const lookupCallback = vi.fn();
+    options.lookup("office.goddess.ai", {}, lookupCallback);
+    expect(lookupCallback).toHaveBeenCalledWith(null, "93.184.216.34", 4);
+    await expect(channel.sendProactiveMessage("hello", { chatId: "room-pinned" })).resolves.toBe(true);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects mixed private WebSocket DNS before constructing a socket", async () => {
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      webSocketOutboundRequestPolicy: new OutboundRequestPolicy({
+        allowedHosts: ["office.goddess.ai"],
+        dnsLookup: async () => [
+          { address: "93.184.216.34", family: 4 },
+          { address: "127.0.0.1", family: 4 },
+        ],
+      }),
+    } as any);
+
+    await expect((channel as any).createWebSocketConnection({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+    }, "room-private")).rejects.toMatchObject({ code: "private_network_not_allowed" });
+    expect(webSocketConstructMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects insecure community WebSocket endpoints before DNS or socket construction", async () => {
+    const resolveAllowedAddresses = vi.fn();
+    const channel = new CommunityChannel({
+      endpoint: "http://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      webSocketOutboundRequestPolicy: { resolveAllowedAddresses },
+    } as any);
+
+    await expect((channel as any).createWebSocketConnection({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+    }, "room-insecure")).rejects.toMatchObject({ code: "insecure_scheme" });
+    expect(resolveAllowedAddresses).not.toHaveBeenCalled();
+    expect(webSocketConstructMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a community WebSocket host outside its pinned profile", async () => {
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      webSocketOutboundRequestPolicy: new OutboundRequestPolicy({
+        allowedHosts: ["community.example.com"],
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      }),
+    } as any);
+
+    await expect((channel as any).createWebSocketConnection({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+    }, "room-denied-host")).rejects.toMatchObject({ code: "host_not_allowed" });
+    expect(webSocketConstructMock).not.toHaveBeenCalled();
+  });
+
+  it("does not construct a community WebSocket after lifecycle abort during DNS admission", async () => {
+    let releaseDns!: () => void;
+    const pendingDns = new Promise<void>((resolve) => {
+      releaseDns = resolve;
+    });
+    const resolveAllowedAddresses = vi.fn(async () => {
+      await pendingDns;
+      return [{ address: "93.184.216.34", family: 4 as const }];
+    });
+    const channel = new CommunityChannel({
+      endpoint: "https://office.goddess.ai",
+      agents: [],
+      agent: { run: vi.fn() } as any,
+      conversationStore: new ConversationStore(),
+      webSocketOutboundRequestPolicy: { resolveAllowedAddresses },
+    } as any);
+    const controller = new AbortController();
+
+    const pending = (channel as any).createWebSocketConnection({
+      name: "贝露丹蒂",
+      apiKey: "gro_test_key",
+    }, "room-aborted", controller.signal);
+    await vi.waitFor(() => expect(resolveAllowedAddresses).toHaveBeenCalledTimes(1));
+    controller.abort(new Error("community stopped during DNS admission"));
+    releaseDns();
+
+    await expect(pending).rejects.toThrow("community stopped during DNS admission");
+    expect(webSocketConstructMock).not.toHaveBeenCalled();
+  });
+
   it("records bounded connectivity state when room lookup fails at network layer", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
     vi.stubGlobal("fetch", fetchMock);
@@ -365,6 +700,7 @@ describe("community token usage upload", () => {
       agents: [],
       agent: { run: vi.fn() } as any,
       conversationStore: new ConversationStore(),
+      httpOutboundRequestPolicy: createCommunityHttpRequestPolicy(fetchMock),
     });
 
     let resolveDiagnostic!: (value: unknown) => void;
@@ -422,6 +758,7 @@ describe("community token usage upload", () => {
       agents: [],
       agent: { run: vi.fn() } as any,
       conversationStore: new ConversationStore(),
+      httpOutboundRequestPolicy: createCommunityHttpRequestPolicy(fetchMock),
     });
 
     let resolveDiagnostic!: (value: unknown) => void;
@@ -478,6 +815,7 @@ describe("community token usage upload", () => {
       agents: [],
       agent: { run: vi.fn() } as any,
       conversationStore: new ConversationStore(),
+      httpOutboundRequestPolicy: createCommunityHttpRequestPolicy(fetchMock),
     });
 
     const diagnoseSpy = vi.spyOn(channel as any, "diagnoseHttpConnectivity");

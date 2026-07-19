@@ -47,6 +47,8 @@ describe("workspace roots save lifecycle", () => {
       id: "request-1",
       method: "config.update",
       params: { updates: { BELLDANDY_EXTRA_WORKSPACE_ROOTS: "E:\\workspace" } },
+    }, {
+      signal: expect.any(AbortSignal),
     });
     expect(dependencies.invalidateServerConfigCache).toHaveBeenCalledTimes(1);
     expect(button.textContent).toBe("Saved");
@@ -95,5 +97,50 @@ describe("workspace roots save lifecycle", () => {
       pendingRequestCount: 0,
       disposed: true,
     });
+  });
+
+  it("deactivates an old save generation and can activate a fresh listener", async () => {
+    let firstRequestSignal;
+    const sendReq = vi.fn()
+      .mockImplementationOnce((_frame, { signal }) => {
+        firstRequestSignal = signal;
+        return new Promise((resolve) => {
+          signal.addEventListener("abort", () => resolve(null), { once: true });
+        });
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const { button, dependencies, feature } = createHarness({ sendReq });
+
+    button.click();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 1,
+      pendingRequestCount: 1,
+      disposed: false,
+    });
+    expect(firstRequestSignal.aborted).toBe(false);
+
+    expect(feature.deactivate()).toBe(true);
+    button.click();
+    expect(sendReq).toHaveBeenCalledTimes(1);
+    expect(firstRequestSignal.aborted).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      activeTimerCount: 0,
+      listenerCount: 0,
+      pendingRequestCount: 0,
+      disposed: false,
+    });
+
+    expect(dependencies.invalidateServerConfigCache).not.toHaveBeenCalled();
+    expect(button.textContent).toBe("Save");
+
+    expect(feature.activate()).toBe(true);
+    button.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendReq).toHaveBeenCalledTimes(2);
+    expect(dependencies.invalidateServerConfigCache).toHaveBeenCalledTimes(1);
+    expect(button.textContent).toBe("Saved");
   });
 });

@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 function safeStorageRead(readFn) {
   try {
     return readFn(globalThis.localStorage);
@@ -218,11 +220,10 @@ export function createCredentialSession({
 }
 
 export function createModelSelectionPersistenceFeature({ select, storageKey } = {}) {
-  let disposed = false;
-  let listenerCount = 0;
+  const taskScope = createPanelTaskScope();
 
   function handleSelectionChange() {
-    if (disposed || !storageKey) return;
+    if (!taskScope.isActive() || !storageKey) return;
     const selected = select?.value || "";
     safeStorageWrite((storage) => {
       if (selected) {
@@ -234,28 +235,33 @@ export function createModelSelectionPersistenceFeature({ select, storageKey } = 
     });
   }
 
-  if (select) {
-    select.addEventListener("change", handleSelectionChange);
-    listenerCount = 1;
+  function activate() {
+    if (!taskScope.activate()) return false;
+    taskScope.addEventListener(select, "change", handleSelectionChange);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
   }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    if (listenerCount > 0) {
-      select.removeEventListener("change", handleSelectionChange);
-      listenerCount = 0;
-    }
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

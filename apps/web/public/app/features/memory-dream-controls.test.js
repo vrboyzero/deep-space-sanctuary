@@ -9,7 +9,7 @@ describe("memory dream controls lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("forwards dream commands until dispose", () => {
+  it("forwards dream commands only while the controls are active", () => {
     document.body.innerHTML = `
       <button id="refresh"></button>
       <button id="run"></button>
@@ -43,16 +43,40 @@ describe("memory dream controls lifecycle", () => {
     expect(memoryViewer.toggleDreamHistory).toHaveBeenCalledTimes(1);
     expect(memoryViewer.loadDreamHistory).toHaveBeenCalledWith(false);
 
-    feature.dispose();
-    feature.dispose();
+    expect(feature.deactivate()).toBe(true);
     for (const button of document.querySelectorAll("button")) {
       button.click();
     }
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
     expect(memoryViewer.loadDreamRuntimeStatus).toHaveBeenCalledTimes(1);
     expect(memoryViewer.loadDreamCommonsStatus).toHaveBeenCalledTimes(1);
     expect(memoryViewer.runDream).toHaveBeenCalledTimes(1);
     expect(memoryViewer.toggleDreamHistory).toHaveBeenCalledTimes(1);
     expect(memoryViewer.loadDreamHistory).toHaveBeenCalledTimes(1);
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 4, disposed: false });
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(memoryViewer.loadDreamRuntimeStatus).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.loadDreamCommonsStatus).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.runDream).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.toggleDreamHistory).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.loadDreamHistory).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.loadDreamHistory).toHaveBeenLastCalledWith(false);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(memoryViewer.loadDreamRuntimeStatus).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.loadDreamCommonsStatus).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.runDream).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.toggleDreamHistory).toHaveBeenCalledTimes(2);
+    expect(memoryViewer.loadDreamHistory).toHaveBeenCalledTimes(2);
   });
 });

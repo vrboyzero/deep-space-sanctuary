@@ -97,6 +97,7 @@ vi.mock("discord.js", () => ({
   TextChannel: class {},
 }));
 
+import { OutboundRequestPolicy } from "@belldandy/protocol";
 import { DiscordChannel } from "./discord.js";
 
 describe("DiscordChannel", () => {
@@ -117,6 +118,19 @@ describe("DiscordChannel", () => {
         run: vi.fn(),
       } as any,
     });
+  }
+
+  function createMediaRequestPolicy(body = "discord-audio") {
+    const request = vi.fn(async (input: { url: string | URL }) => ({
+      response: new Response(body, {
+        status: 200,
+        headers: { "content-length": String(Buffer.byteLength(body)) },
+      }),
+      url: new URL(input.url.toString()),
+      addresses: [{ address: "93.184.216.34", family: 4 as const }],
+      redirectCount: 0,
+    }));
+    return { policy: { request }, request };
   }
 
   it("deduplicates concurrent start calls before ready", async () => {
@@ -351,20 +365,14 @@ describe("DiscordChannel", () => {
         text: `收到文本：${input.text}`,
       };
     });
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      arrayBuffer: async () => Buffer.from("discord-audio").buffer.slice(
-        Buffer.from("discord-audio").byteOffset,
-        Buffer.from("discord-audio").byteOffset + Buffer.from("discord-audio").byteLength,
-      ),
-    }));
-    vi.stubGlobal("fetch", fetchMock);
+    const mediaRequest = createMediaRequestPolicy();
     const sttTranscribe = vi.fn(async () => null);
 
     const channel = new DiscordChannel({
       botToken: "discord-token",
       agent: { run } as any,
       sttTranscribe,
+      outboundRequestPolicy: mediaRequest.policy,
       currentConversationBindingStore: {
         async upsert() {},
         async get() {
@@ -429,14 +437,7 @@ describe("DiscordChannel", () => {
         text: `收到：${input.content[0]?.text ?? ""}`,
       };
     });
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      arrayBuffer: async () => Buffer.from("discord-audio").buffer.slice(
-        Buffer.from("discord-audio").byteOffset,
-        Buffer.from("discord-audio").byteOffset + Buffer.from("discord-audio").byteLength,
-      ),
-    }));
-    vi.stubGlobal("fetch", fetchMock);
+    const mediaRequest = createMediaRequestPolicy();
 
     const sttTranscribe = vi.fn(async () => ({
       text: "这是语音转写",
@@ -446,6 +447,7 @@ describe("DiscordChannel", () => {
       botToken: "discord-token",
       agent: { run } as any,
       sttTranscribe,
+      outboundRequestPolicy: mediaRequest.policy,
       currentConversationBindingStore: {
         async upsert() {},
         async get() {
@@ -488,7 +490,10 @@ describe("DiscordChannel", () => {
 
     await (channel as any).handleMessage(message);
 
-    expect(fetchMock).toHaveBeenCalledWith("https://cdn.example.com/voice.ogg");
+    expect(mediaRequest.request).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://cdn.example.com/voice.ogg",
+      signal: expect.any(AbortSignal),
+    }));
     expect(sttTranscribe).toHaveBeenCalledWith({
       buffer: expect.any(Buffer),
       fileName: "voice.ogg",
@@ -505,9 +510,45 @@ describe("DiscordChannel", () => {
     expect(send).toHaveBeenCalledWith("收到：[音频转写]\n这是语音转写");
   });
 
+  it("rejects a private audio attachment before transport or STT", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const legacyFetch = vi.fn(async () => new Response("unsafe-audio", { status: 200 }));
+    vi.stubGlobal("fetch", legacyFetch);
+    const requestAdapter = vi.fn(async () => new Response("unsafe-audio", { status: 200 }));
+    const sttTranscribe = vi.fn(async () => ({ text: "must not run" }));
+    const reply = vi.fn(async () => {});
+    const channel = new DiscordChannel({
+      botToken: "discord-token",
+      agent: { async *run() {} } as any,
+      sttTranscribe,
+      outboundRequestPolicy: new OutboundRequestPolicy({ requestAdapter }),
+    });
+    const message = {
+      id: "discord-private-audio",
+      author: { id: "user-private", username: "Private", bot: false },
+      content: "",
+      channelId: "dm-private",
+      guildId: null,
+      attachments: new Map([["att-1", {
+        name: "voice.ogg",
+        url: "https://127.0.0.1/voice.ogg",
+        contentType: "audio/ogg",
+      }]]),
+      mentions: { users: [], has: () => false },
+      channel: { isTextBased: () => true, sendTyping: vi.fn(), send: vi.fn() },
+      reply,
+    };
+
+    await (channel as any).handleMessage(message);
+
+    expect(legacyFetch).not.toHaveBeenCalled();
+    expect(requestAdapter).not.toHaveBeenCalled();
+    expect(sttTranscribe).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("未能完成转写"));
+  });
+
   it("runs ingress admission before fetching an audio attachment", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    const mediaRequest = createMediaRequestPolicy();
     const router = {
       admitIngress: vi.fn(() => ({ allow: false, reason: "channel_security:policy_missing" })),
       decide: vi.fn(),
@@ -517,6 +558,7 @@ describe("DiscordChannel", () => {
       agent: { async *run() {} } as any,
       router: router as any,
       sttTranscribe: vi.fn(),
+      outboundRequestPolicy: mediaRequest.policy,
     });
     const message = {
       id: "discord-blocked-audio",
@@ -540,7 +582,7 @@ describe("DiscordChannel", () => {
       channel: "discord",
       text: "",
     }));
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mediaRequest.request).not.toHaveBeenCalled();
     expect(router.decide).not.toHaveBeenCalled();
   });
 });

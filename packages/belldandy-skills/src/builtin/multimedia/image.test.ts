@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  OutboundRequestPolicy,
+  type OutboundRequestAdapter,
+} from "@belldandy/protocol";
 
-import { imageGenerateTool } from "./image.js";
+import { createImageGenerateTool, imageGenerateTool } from "./image.js";
 import type { ToolContext } from "../../types.js";
 
 const { imageGenerateMock, openAIMock } = vi.hoisted(() => ({
@@ -42,6 +46,16 @@ function binaryResponse(content: Buffer, headers?: HeadersInit): Response {
   });
 }
 
+function createImageToolWithAssetTransport(requestAdapter: OutboundRequestAdapter) {
+  return createImageGenerateTool({
+    createAssetOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+      ...options,
+      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      requestAdapter,
+    }),
+  });
+}
+
 describe("image_generate", () => {
   let tempDir: string;
 
@@ -57,6 +71,7 @@ describe("image_generate", () => {
     delete process.env.BELLDANDY_IMAGE_OUTPUT_FORMAT;
     delete process.env.BELLDANDY_IMAGE_TIMEOUT_MS;
     delete process.env.BELLDANDY_IMAGE_MAX_OUTPUT_BYTES;
+    delete process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS;
     delete process.env.BELLDANDY_OPENAI_API_KEY;
     delete process.env.BELLDANDY_OPENAI_BASE_URL;
     delete process.env.OPENAI_API_KEY;
@@ -119,10 +134,18 @@ describe("image_generate", () => {
     }));
   });
 
-  it("treats BELLDANDY_IMAGE_TIMEOUT_MS=0 as no belldandy timeout override and reuses one signal for url download", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(Buffer.from("downloaded-image-bytes")));
-    vi.stubGlobal("fetch", fetchMock);
+  it("downloads a provider-host URL through the asset policy and reuses the generation signal", async () => {
+    const legacyFetch = vi.fn();
+    vi.stubGlobal("fetch", legacyFetch);
+    const requestAdapter = vi.fn(async () => binaryResponse(Buffer.from("downloaded-image-bytes")));
+    const createAssetOutboundRequestPolicy = vi.fn((options) => new OutboundRequestPolicy({
+      ...options,
+      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      requestAdapter,
+    }));
+    const testTool = createImageGenerateTool({ createAssetOutboundRequestPolicy });
     process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://images.example.invalid/v1";
     process.env.BELLDANDY_IMAGE_TIMEOUT_MS = "0";
     imageGenerateMock.mockImplementation(async (_input: unknown, options?: { signal?: AbortSignal }) => ({
       data: [
@@ -133,7 +156,7 @@ describe("image_generate", () => {
       _signal: options?.signal,
     }));
 
-    const result = await imageGenerateTool.execute({
+    const result = await testTool.execute({
       prompt: "a sanctuary garden at dawn",
       output_format: "png",
     }, createContext(tempDir));
@@ -143,17 +166,129 @@ describe("image_generate", () => {
       timeout: 2147483647,
     }));
     expect(imageGenerateMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(createAssetOutboundRequestPolicy).toHaveBeenCalledWith(expect.objectContaining({
+      allowedHosts: ["images.example.invalid"],
+      maxRedirects: 3,
+    }));
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
+    expect(legacyFetch).not.toHaveBeenCalled();
     const generateSignal = imageGenerateMock.mock.calls[0]?.[1]?.signal;
-    const fetchSignal = fetchMock.mock.calls[0]?.[1]?.signal;
+    const assetRequest = requestAdapter.mock.calls[0]?.[0];
     expect(generateSignal).toBeInstanceOf(AbortSignal);
-    expect(fetchSignal).toBe(generateSignal);
+    expect(assetRequest?.init.signal).toBe(generateSignal);
+    expect(assetRequest?.init.maxRedirects).toBe(3);
+    expect(assetRequest?.init.idleTimeoutMs).toBe(15_000);
+  });
+
+  it("rejects a provider-host URL resolving to a private address before transport or file commit", async () => {
+    const legacyFetch = vi.fn();
+    vi.stubGlobal("fetch", legacyFetch);
+    const requestAdapter = vi.fn(async () => binaryResponse(Buffer.from("private-image")));
+    const testTool = createImageGenerateTool({
+      createAssetOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+        ...options,
+        dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        requestAdapter,
+      }),
+    });
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://images.example.invalid/v1";
+    imageGenerateMock.mockResolvedValue({
+      data: [{ url: "https://images.example.invalid/private.png" }],
+    });
+
+    const result = await testTool.execute({
+      prompt: "a private target fixture",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("private or reserved");
+    expect(requestAdapter).not.toHaveBeenCalled();
+    expect(legacyFetch).not.toHaveBeenCalled();
+    await expect(fs.readdir(path.join(tempDir, "generated", "images"))).resolves.toEqual([]);
+  });
+
+  it("rejects a public-looking asset host outside the provider and configured allowlist", async () => {
+    const legacyFetch = vi.fn();
+    vi.stubGlobal("fetch", legacyFetch);
+    const dnsLookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]);
+    const requestAdapter = vi.fn(async () => binaryResponse(Buffer.from("untrusted-image")));
+    const testTool = createImageGenerateTool({
+      createAssetOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+        ...options,
+        dnsLookup,
+        requestAdapter,
+      }),
+    });
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://images.example.invalid/v1";
+    imageGenerateMock.mockResolvedValue({
+      data: [{ url: "https://attacker.example/generated.png" }],
+    });
+
+    const result = await testTool.execute({
+      prompt: "an untrusted host fixture",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("not in the allowlist");
+    expect(dnsLookup).not.toHaveBeenCalled();
+    expect(requestAdapter).not.toHaveBeenCalled();
+    expect(legacyFetch).not.toHaveBeenCalled();
+    await expect(fs.readdir(path.join(tempDir, "generated", "images"))).resolves.toEqual([]);
+  });
+
+  it("revalidates a redirect before a private second-hop asset transport", async () => {
+    const legacyFetch = vi.fn();
+    vi.stubGlobal("fetch", legacyFetch);
+    const requestAdapter = vi.fn(async ({ url }) => {
+      if (url.hostname === "images.example.invalid") {
+        return new Response(null, {
+          status: 307,
+          headers: { location: "https://127.0.0.1/private.png" },
+        });
+      }
+      return binaryResponse(Buffer.from("private-second-hop"));
+    });
+    const testTool = createImageGenerateTool({
+      createAssetOutboundRequestPolicy: (options) => new OutboundRequestPolicy({
+        ...options,
+        dnsLookup: async (hostname) => [{
+          address: hostname === "127.0.0.1" ? "127.0.0.1" : "93.184.216.34",
+          family: 4,
+        }],
+        requestAdapter,
+      }),
+    });
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://images.example.invalid/v1";
+    process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS = "127.0.0.1";
+    imageGenerateMock.mockResolvedValue({
+      data: [{ url: "https://images.example.invalid/redirect.png" }],
+    });
+
+    const result = await testTool.execute({
+      prompt: "a redirect fixture",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("private or reserved");
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
+    expect(requestAdapter.mock.calls[0]?.[0].url.toString()).toBe(
+      "https://images.example.invalid/redirect.png",
+    );
+    expect(legacyFetch).not.toHaveBeenCalled();
+    await expect(fs.readdir(path.join(tempDir, "generated", "images"))).resolves.toEqual([]);
   });
 
   it("sends Agnes text-to-image URL output requests with extra_body.response_format", async () => {
     process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
     process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
     process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS = "images.example.invalid";
     imageGenerateMock.mockResolvedValue({
       data: [
         {
@@ -162,10 +297,11 @@ describe("image_generate", () => {
       ],
     });
 
-    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(Buffer.from("agnes-url-image-bytes")));
-    vi.stubGlobal("fetch", fetchMock);
+    const testTool = createImageToolWithAssetTransport(
+      vi.fn(async () => binaryResponse(Buffer.from("agnes-url-image-bytes"))),
+    );
 
-    const result = await imageGenerateTool.execute({
+    const result = await testTool.execute({
       prompt: "a floating sanctuary above clouds",
       size: "1024x768",
       response_transport: "url",
@@ -213,6 +349,7 @@ describe("image_generate", () => {
     process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
     process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
     process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
+    process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS = "images.example.invalid";
     imageGenerateMock.mockResolvedValue({
       data: [
         {
@@ -221,10 +358,11 @@ describe("image_generate", () => {
       ],
     });
 
-    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(Buffer.from("agnes-img2img-url-bytes")));
-    vi.stubGlobal("fetch", fetchMock);
+    const testTool = createImageToolWithAssetTransport(
+      vi.fn(async () => binaryResponse(Buffer.from("agnes-img2img-url-bytes"))),
+    );
 
-    const result = await imageGenerateTool.execute({
+    const result = await testTool.execute({
       prompt: "turn this into a neon cyberpunk night while preserving composition",
       size: "1024x768",
       input_images: ["https://example.com/input.png"],
@@ -279,6 +417,7 @@ describe("image_generate", () => {
     process.env.BELLDANDY_IMAGE_OPENAI_BASE_URL = "https://apihub.agnes-ai.com/v1";
     process.env.BELLDANDY_IMAGE_MODEL = "agnes-image-2.1-flash";
     process.env.BELLDANDY_IMAGE_OUTPUT_FORMAT = "png";
+    process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS = "images.example.invalid";
     imageGenerateMock.mockResolvedValue({
       data: [
         {
@@ -288,10 +427,11 @@ describe("image_generate", () => {
     });
 
     const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
-    const fetchMock = vi.fn().mockResolvedValue(binaryResponse(jpegBytes));
-    vi.stubGlobal("fetch", fetchMock);
+    const testTool = createImageToolWithAssetTransport(
+      vi.fn(async () => binaryResponse(jpegBytes)),
+    );
 
-    const result = await imageGenerateTool.execute({
+    const result = await testTool.execute({
       prompt: "a brass observatory in warm sunset light",
       response_transport: "url",
     }, createContext(tempDir));
@@ -336,15 +476,39 @@ describe("image_generate", () => {
     });
   });
 
+  it("rejects an oversized declared URL response without creating an image file", async () => {
+    process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
+    process.env.BELLDANDY_IMAGE_MAX_OUTPUT_BYTES = "8";
+    process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS = "images.example.invalid";
+    imageGenerateMock.mockResolvedValue({
+      data: [{ url: "https://images.example.invalid/declared-oversized.png" }],
+    });
+    const testTool = createImageToolWithAssetTransport(
+      vi.fn(async () => binaryResponse(Buffer.from("tiny"), { "Content-Length": "9" })),
+    );
+
+    const result = await testTool.execute({
+      prompt: "a declared oversized fixture",
+      response_transport: "url",
+    }, createContext(tempDir));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Content-Length: 9");
+    await expect(fs.readdir(path.join(tempDir, "generated", "images"))).resolves.toEqual([]);
+  });
+
   it("rejects an oversized URL response without leaving a partial image", async () => {
     process.env.BELLDANDY_IMAGE_OPENAI_API_KEY = "sk-image";
     process.env.BELLDANDY_IMAGE_MAX_OUTPUT_BYTES = "8";
+    process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS = "images.example.invalid";
     imageGenerateMock.mockResolvedValue({
       data: [{ url: "https://images.example.invalid/oversized.png" }],
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(binaryResponse(Buffer.from("123456789"))));
+    const testTool = createImageToolWithAssetTransport(
+      vi.fn(async () => binaryResponse(Buffer.from("123456789"))),
+    );
 
-    const result = await imageGenerateTool.execute({
+    const result = await testTool.execute({
       prompt: "an image that exceeds the fixture limit",
       response_transport: "url",
     }, createContext(tempDir));

@@ -2324,30 +2324,9 @@ test("experience.candidate.synthesize.create accepts chat completion content arr
   const originalFetch = globalThis.fetch;
 
   try {
-    globalThis.fetch = (async () => ({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: [{
-                type: "text",
-                text: JSON.stringify({
-                  title: "Tool Call Method Array Unified",
-                  summary: "把 content array 形式的推理模型输出解析为合成 draft。",
-                  content: buildValidSynthesizedMethodContent(
-                    "Tool Call Method Array Unified",
-                    "把 content array 形式的推理模型输出解析为合成 draft。",
-                  ),
-                }),
-              }],
-            },
-            finish_reason: "stop",
-          },
-        ],
-      }),
-      text: async () => "",
-    })) as unknown as typeof fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("legacy fetch must not run");
+    }) as typeof fetch;
 
     const createRes = await handleMemoryExperienceMethod({
       type: "req",
@@ -2364,6 +2343,33 @@ test("experience.candidate.synthesize.create accepts chat completion content arr
         baseUrl: "https://example.test/v1",
         apiKey: "test-api-key",
         model: "reasoning-model",
+      },
+      experienceSynthesisOutboundRequestPolicy: {
+        request: async (input) => ({
+          response: Response.json({
+            choices: [
+              {
+                message: {
+                  content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                      title: "Tool Call Method Array Unified",
+                      summary: "把 content array 形式的推理模型输出解析为合成 draft。",
+                      content: buildValidSynthesizedMethodContent(
+                        "Tool Call Method Array Unified",
+                        "把 content array 形式的推理模型输出解析为合成 draft。",
+                      ),
+                    }),
+                  }],
+                },
+                finish_reason: "stop",
+              },
+            ],
+          }),
+          url: new URL(input.url),
+          addresses: [{ address: "93.184.216.34", family: 4 }],
+          redirectCount: 0,
+        }),
       },
     });
 

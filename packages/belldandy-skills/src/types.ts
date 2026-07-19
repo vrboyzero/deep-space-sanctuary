@@ -2321,17 +2321,35 @@ export interface Tool {
   definition: ToolDefinition;
   contract?: ToolContract;
   execute(args: JsonObject, context: ToolContext): Promise<ToolCallResult>;
+  /** 释放该 Tool 持有的会话级纯内存状态；实现必须同步、幂等且不得改变持久化业务状态。 */
+  releaseConversation?(conversationId: string): void;
 }
 
 /** 工具审计日志 */
+export type ToolAuditContentSummary = {
+  bytes: number;
+  sha256: string;
+};
+
+export type ToolAuditSafeArguments = {
+  ackMatched?: boolean;
+};
+
 export type ToolAuditLog = {
   timestamp: string;
   conversationId: string;
   toolName: string;
-  arguments: JsonObject;
+  /** 兼容旧 audit sink 的输入字段；ToolExecutor 不再生成参数正文。 */
+  arguments?: JsonObject;
+  safeArguments?: ToolAuditSafeArguments;
+  argumentsSummary?: ToolAuditContentSummary;
   success: boolean;
+  /** 兼容旧 audit sink 的输入字段；ToolExecutor 不再生成正文。 */
   output?: string;
+  /** 兼容旧 audit sink 的输入字段；ToolExecutor 不再生成正文。 */
   error?: string;
+  outputSummary?: ToolAuditContentSummary;
+  errorSummary?: ToolAuditContentSummary;
   failureKind?: ToolFailureKind;
   durationMs: number;
 };

@@ -35,6 +35,7 @@ import { buildDeploymentBackendsDoctorReport } from "../../deployment-backends.j
 import { buildOptionalCapabilitiesDoctorReport } from "../../optional-capabilities-doctor.js";
 import { readRuntimeResilienceDoctorReport } from "../../runtime-resilience.js";
 import { buildRuntimeResilienceDiagnosticSummary } from "../../runtime-resilience-diagnostics.js";
+import { requestModelConnectivityCheck } from "../../model-connectivity-check.js";
 
 interface CheckResult {
   name: string;
@@ -312,39 +313,21 @@ async function checkModelConnectivity(): Promise<CheckResult> {
   }
 
   try {
-    const trimmedBase = baseUrl.replace(/\/+$/, "");
-    const base = /\/v\d+$/.test(trimmedBase) ? trimmedBase : `${trimmedBase}/v1`;
-    const url = wireApi === "responses" ? `${base}/responses` : `${base}/chat/completions`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    const requestBody = wireApi === "responses"
-      ? {
-        model,
-        input: "hi",
-        max_output_tokens: 1,
-      }
-      : {
-        model,
-        messages: [{ role: "user", content: "hi" }],
-        max_tokens: 1,
-      };
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
+    const result = await requestModelConnectivityCheck({
+      baseUrl,
+      apiKey,
+      model,
+      wireApi,
+      timeoutMs: 10_000,
     });
-    clearTimeout(timeout);
-
-    if (res.ok) {
+    if (result.ok) {
       return { name: "Model connectivity", status: "pass", message: `${model} reachable` };
     }
-    const responseText = await res.text().catch(() => "");
-    return { name: "Model connectivity", status: "fail", message: `HTTP ${res.status}: ${responseText.slice(0, 100)}` };
+    return {
+      name: "Model connectivity",
+      status: "fail",
+      message: `HTTP ${result.status}: ${result.responseBody.slice(0, 100)}`,
+    };
   } catch (err) {
     return {
       name: "Model connectivity",

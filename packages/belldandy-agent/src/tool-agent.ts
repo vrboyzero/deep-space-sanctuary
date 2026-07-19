@@ -2047,7 +2047,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const profiles = this.failoverClient.getProfiles();
       const profile = profiles.find(p => p.id === "primary") || profiles[0];
       if (profile) {
-        const result = await preprocessMultimodalContent(content, profile, this.opts.videoUploadConfig);
+        const result = await preprocessMultimodalContent(
+          content,
+          profile,
+          this.opts.videoUploadConfig,
+          { abortSignal: input.abortSignal },
+        );
         content = result.content;
       }
     }

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./model-request-transport.js", () => ({
+  requestModelTransport: (options: { url: string | URL; init: RequestInit }) => (
+    fetch(options.url, options.init)
+  ),
+}));
+
 import { OpenAIChatAgent } from "./openai.js";
 import type { SystemPromptSection } from "./system-prompt.js";
 

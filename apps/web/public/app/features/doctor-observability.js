@@ -6,6 +6,7 @@ import { buildExternalOutboundDiagnosis } from "./external-outbound-diagnosis.js
 import { buildAgentWorkSummary } from "./agent-work-summary.js";
 import { buildTokenUsageDiagnosticsSegments } from "./token-usage-observability.js";
 import { buildRuntimeResourceQueuePressure } from "./runtime-resource-queue-pressure.js";
+import { buildWebchatLifecycleCard } from "./doctor-webchat-lifecycle-card.js";
 
 function tr(t, key, params, fallback) {
   return typeof t === "function" ? t(key, params ?? {}, fallback) : fallback;
@@ -4371,6 +4372,7 @@ export function renderDoctorObservabilityCards(container, payload, t, handlers =
     buildQueryRuntimeCard(payload, t),
     buildRuntimeResourcesCard(payload, t),
     buildWebchatPerformanceCard(payload, t),
+    buildWebchatLifecycleCard(payload, t),
     buildToolBehaviorCard(payload, t),
     buildToolContractV2Card(payload, t),
     buildResidentAgentsCard(payload, t),
@@ -4459,6 +4461,14 @@ export function buildDoctorChatSummary(payload, t) {
     lines.push(`${webchatPerformanceCard.title}:`);
     lines.push(...webchatPerformanceCard.badges.map((badge) => `- ${badge}`));
     lines.push(...webchatPerformanceCard.notes.map((note) => `- ${formatNote(note)}`));
+  }
+
+  const webchatLifecycleCard = buildWebchatLifecycleCard(payload, t);
+  if (webchatLifecycleCard) {
+    lines.push(``);
+    lines.push(`${webchatLifecycleCard.title}:`);
+    lines.push(...webchatLifecycleCard.badges.map((badge) => `- ${badge}`));
+    lines.push(...webchatLifecycleCard.notes.map((note) => `- ${formatNote(note)}`));
   }
 
   const toolContractV2Card = buildToolContractV2Card(payload, t);

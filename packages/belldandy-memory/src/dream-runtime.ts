@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { syncDreamToObsidian } from "./dream-obsidian-sync.js";
 import { isAllowedDurableProfileStatePath } from "./durable-profile-state.js";
 import { buildDreamRuleSkeleton } from "./dream-input.js";
-import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
+import { requestDreamModel } from "./dream-model-request.js";
 import { buildDreamPromptBundle, parseDreamModelOutput, summarizeDreamModelOutput } from "./dream-prompt.js";
 import { DreamStore, toDreamInputMeta } from "./dream-store.js";
 import type {
@@ -1219,42 +1219,12 @@ export class DreamRuntime {
       reasoningEffort: this.reasoningEffort,
     });
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response: Response;
-    try {
-      response = await fetch(buildOpenAIChatCompletionsUrl(this.baseUrl), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (error && typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError") {
-        throw new Error(`Dream LLM call timed out after ${this.timeoutMs}ms`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`Dream LLM call failed: ${response.status} ${truncateText(text, 200) ?? ""}`.trim());
-    }
-
-    const data = await response.json() as {
-      choices?: Array<{
-        finish_reason?: string | null;
-        message?: {
-          content?: string | null;
-          reasoning_content?: string | null;
-        };
-      }>;
-    };
+    const data = await requestDreamModel({
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      payload,
+      timeoutMs: this.timeoutMs,
+    });
     const choice = data.choices?.[0];
     const content = normalizeText(choice?.message?.content);
     const reasoningContent = normalizeText(choice?.message?.reasoning_content);

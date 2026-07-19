@@ -93,13 +93,31 @@ function isSafeAssistantLinkUrl(value) {
   }
 }
 
+function isExternalHttpsLinkUrl(value) {
+  try {
+    const parsed = new URL(value, window.location.origin);
+    return parsed.origin !== window.location.origin && parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function constrainRichContentUrls(root) {
   root.querySelectorAll("a[href]").forEach((link) => {
     const href = link.getAttribute("href") || "";
     if (!isSafeAssistantLinkUrl(href)) {
       link.removeAttribute("href");
     }
-    if (link.getAttribute("target") === "_blank") {
+
+    if (link.hasAttribute("target") && link.getAttribute("target") !== "_blank") {
+      link.removeAttribute("target");
+    }
+    if (isExternalHttpsLinkUrl(href)) {
+      // 外链固定在隔离 context 打开，模型不能选择 _top/_parent 覆盖 WebChat。
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+      link.setAttribute("referrerpolicy", "no-referrer");
+    } else if (link.getAttribute("target") === "_blank") {
       link.setAttribute("rel", "noopener noreferrer");
     }
   });

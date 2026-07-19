@@ -664,6 +664,7 @@ BELLDANDY_COMPACTION_ARCHIVAL_THRESHOLD=2000
 ```env
 BELLDANDY_BROWSER_RELAY_ENABLED=true
 BELLDANDY_RELAY_PORT=28892
+BELLDANDY_BROWSER_OUTBOUND_PROFILE=public-web
 
 # Browser domain scope limits (recommended together with Relay)
 # BELLDANDY_BROWSER_ALLOWED_DOMAINS=github.com,developer.mozilla.org,docs.example.com

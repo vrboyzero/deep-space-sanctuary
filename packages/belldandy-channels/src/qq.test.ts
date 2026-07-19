@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { ConversationStore } from "@belldandy/agent";
+import { OutboundRequestPolicy } from "@belldandy/protocol";
 
 import { QqChannel } from "./qq.js";
 import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
@@ -13,6 +14,38 @@ import { buildChannelSessionDescriptor } from "./session-key.js";
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createQqMediaRequestPolicy(
+    fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<unknown>,
+): OutboundRequestPolicy {
+    return new OutboundRequestPolicy({
+        allowedHosts: ["multimedia.nt.qq.com.cn", "qqbot.ugcimg.cn"],
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        requestAdapter: async ({ url, init }) => await fetchImpl(url.toString(), {
+            method: init.method,
+            headers: init.headers,
+            body: init.body as BodyInit | undefined,
+            signal: init.signal,
+        }) as Response,
+    });
+}
+
+function createQqRestRequestPolicy(
+    fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<unknown> =
+        async (input, init) => await fetch(input, init),
+): OutboundRequestPolicy {
+    return new OutboundRequestPolicy({
+        allowedHosts: ["bots.qq.com", "api.sgroup.qq.com", "sandbox.api.sgroup.qq.com"],
+        maxRedirects: 0,
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        requestAdapter: async ({ url, init }) => await fetchImpl(url.toString(), {
+            method: init.method,
+            headers: init.headers,
+            body: init.body as BodyInit | undefined,
+            signal: init.signal,
+        }) as Response,
+    });
 }
 
 describe("QqChannel", () => {
@@ -48,6 +81,7 @@ describe("QqChannel", () => {
             sandbox: true,
             agent: { run: vi.fn() } as any,
             conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(),
             currentConversationBindingStore: {
                 upsert: vi.fn(async () => {}),
                 get: vi.fn(async () => binding),
@@ -62,6 +96,209 @@ describe("QqChannel", () => {
         );
 
         expect(sent).toBe(false);
+    });
+
+    it("routes qq token, gateway, and reply REST calls through the pinned policy", async () => {
+        const legacyFetch = vi.fn(async () => {
+            throw new Error("legacy fetch must not run");
+        });
+        vi.stubGlobal("fetch", legacyFetch);
+        const request = vi.fn(async (input: {
+            url: string | URL;
+            method?: string;
+            headers?: Record<string, string>;
+            body?: string | Uint8Array;
+            signal?: AbortSignal;
+            maxRedirects?: number;
+        }) => {
+            const url = new URL(input.url.toString());
+            let response: Response;
+            if (url.hostname === "bots.qq.com") {
+                response = Response.json({ access_token: "policy-token", expires_in: 7200 });
+            } else if (url.pathname === "/gateway/bot") {
+                response = Response.json({ url: "wss://gateway.qq.example/ws" });
+            } else {
+                response = new Response(null, { status: 204 });
+            }
+            return {
+                response,
+                url,
+                addresses: [{ address: "93.184.216.34", family: 4 as const }],
+                redirectCount: 0,
+            };
+        });
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: { request },
+        });
+
+        try {
+            await (channel as any).fetchAccessToken();
+            await expect((channel as any).fetchGatewayUrl()).resolves.toBe("wss://gateway.qq.example/ws");
+            await expect((channel as any).sendReply("policy reply", {
+                channelId: "channel-a",
+                guildId: "guild-a",
+                messageId: "message-a",
+                eventType: "MESSAGE_CREATE",
+            })).resolves.toBe(true);
+
+            expect(legacyFetch).not.toHaveBeenCalled();
+            expect(request).toHaveBeenCalledTimes(3);
+            expect(request.mock.calls.map(([input]) => new URL(input.url.toString()).pathname)).toEqual([
+                "/app/getAppAccessToken",
+                "/gateway/bot",
+                "/channels/channel-a/messages",
+            ]);
+            for (const [input] of request.mock.calls) {
+                expect(input).toEqual(expect.objectContaining({
+                    signal: expect.any(AbortSignal),
+                    maxRedirects: 0,
+                }));
+            }
+        } finally {
+            await channel.stop();
+        }
+    });
+
+    it("rejects private DNS for qq REST endpoints before transport", async () => {
+        const legacyFetch = vi.fn(async () => {
+            throw new Error("legacy fetch must not run");
+        });
+        vi.stubGlobal("fetch", legacyFetch);
+        const transport = vi.fn(async () => Response.json({ access_token: "unsafe", expires_in: 7200 }));
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: new OutboundRequestPolicy({
+                allowedHosts: ["bots.qq.com", "api.sgroup.qq.com", "sandbox.api.sgroup.qq.com"],
+                dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+                requestAdapter: transport,
+            }),
+        });
+
+        await expect((channel as any).fetchAccessToken()).rejects.toMatchObject({
+            code: "private_network_not_allowed",
+        });
+        expect(legacyFetch).not.toHaveBeenCalled();
+        expect(transport).not.toHaveBeenCalled();
+    });
+
+    it("does not replay qq REST credentials across redirects", async () => {
+        const legacyFetch = vi.fn(async () => {
+            throw new Error("legacy fetch must not run");
+        });
+        vi.stubGlobal("fetch", legacyFetch);
+        const transport = vi.fn(async (_input: unknown) => new Response(null, {
+            status: 307,
+            headers: { location: "https://api.sgroup.qq.com/credential-sink" },
+        }));
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: new OutboundRequestPolicy({
+                allowedHosts: ["bots.qq.com", "api.sgroup.qq.com", "sandbox.api.sgroup.qq.com"],
+                dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+                requestAdapter: transport,
+            }),
+        });
+
+        await expect((channel as any).fetchAccessToken()).rejects.toMatchObject({ code: "redirect_limit" });
+        expect(legacyFetch).not.toHaveBeenCalled();
+        expect(transport).toHaveBeenCalledTimes(1);
+        expect(transport.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            url: new URL("https://bots.qq.com/app/getAppAccessToken"),
+            init: expect.objectContaining({
+                body: expect.stringContaining('"clientSecret":"app-secret"'),
+            }),
+        }));
+    });
+
+    it("cancels an access token success body whose declared JSON length exceeds 256 KiB", async () => {
+        const cancelBody = vi.fn();
+        const response = new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode(JSON.stringify({
+                    access_token: "oversized-token",
+                    expires_in: 7200,
+                })));
+                controller.close();
+            },
+            cancel: cancelBody,
+        }), {
+            status: 200,
+            headers: { "content-length": String(256 * 1024 + 1) },
+        });
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: {
+                request: vi.fn(async () => ({
+                    response,
+                    url: new URL("https://bots.qq.com/app/getAppAccessToken"),
+                    addresses: [{ address: "93.184.216.34", family: 4 as const }],
+                    redirectCount: 0,
+                })),
+            },
+        });
+
+        try {
+            await expect((channel as any).fetchAccessToken())
+                .rejects.toThrow("QQ REST JSON response exceeds 262144 byte limit");
+            expect(cancelBody).toHaveBeenCalledTimes(1);
+            expect((channel as any).accessToken).toBe("");
+        } finally {
+            await channel.stop();
+        }
+    });
+
+    it("cancels a pending gateway JSON reader with the caller abort reason", async () => {
+        const cancelBody = vi.fn();
+        const response = new Response(new ReadableStream<Uint8Array>({
+            pull() {
+                return new Promise<void>(() => {});
+            },
+            cancel: cancelBody,
+        }));
+        const request = vi.fn(async () => ({
+            response,
+            url: new URL("https://sandbox.api.sgroup.qq.com/gateway/bot"),
+            addresses: [{ address: "93.184.216.34", family: 4 as const }],
+            redirectCount: 0,
+        }));
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: { request },
+        });
+        (channel as any).accessToken = "active-token";
+        const controller = new AbortController();
+
+        try {
+            const reading = (channel as any).fetchGatewayUrl({ signal: controller.signal });
+            await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+            controller.abort(new Error("Stop QQ gateway read."));
+
+            await expect(reading).rejects.toThrow("Stop QQ gateway read.");
+            await vi.waitFor(() => expect(cancelBody).toHaveBeenCalledTimes(1));
+        } finally {
+            await channel.stop();
+        }
     });
 
     it("does not revive a stopped channel when WebSocket startup completes late", async () => {
@@ -89,6 +326,31 @@ describe("QqChannel", () => {
         expect(channel.isRunning).toBe(false);
     });
 
+    it("clears the bounded reply context owner when the channel stops", async () => {
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { run: vi.fn() } as any,
+            conversationStore: new ConversationStore(),
+        });
+        const replyContext = {
+            channelId: "channel-stop",
+            guildId: "guild-stop",
+            messageId: "message-stop",
+            eventType: "MESSAGE_CREATE",
+        };
+
+        (channel as any).rememberReplyContext("channel-stop", replyContext);
+        expect((channel as any).getReplyContext("channel-stop")).toEqual(replyContext);
+        expect((channel as any).replyContextByChatId.getSnapshot()).toEqual({ entryCount: 1 });
+
+        (channel as any)._running = true;
+        await channel.stop();
+
+        expect((channel as any).replyContextByChatId.getSnapshot()).toEqual({ entryCount: 0 });
+    });
+
   it("keeps reply context isolated for concurrent messages", async () => {
         const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
             ok: true,
@@ -114,6 +376,7 @@ describe("QqChannel", () => {
             sandbox: true,
             agent: agent as any,
             conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
 
         (channel as any).accessToken = "qq-token";
@@ -291,6 +554,7 @@ describe("QqChannel", () => {
             sandbox: true,
             agent: { async *run() {} } as any,
             conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
 
         (channel as any).accessToken = "qq-token";
@@ -345,6 +609,7 @@ describe("QqChannel", () => {
             sandbox: true,
             agent: { async *run() {} } as any,
             conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
             replyChunkingConfig: normalizeReplyChunkingConfig({
                 channels: {
                     qq: {
@@ -396,6 +661,7 @@ describe("QqChannel", () => {
             sandbox: true,
             agent: { async *run() {} } as any,
             conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
             currentConversationBindingStore: createFileCurrentConversationBindingStore(path.join(stateDir, "bindings.json")),
         });
 
@@ -440,6 +706,7 @@ describe("QqChannel", () => {
             sandbox: true,
             agent: { async *run() {} } as any,
             conversationStore: new ConversationStore(),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
             currentConversationBindingStore: createFileCurrentConversationBindingStore(path.join(stateDir, "bindings.json")),
         });
 
@@ -621,19 +888,22 @@ describe("QqChannel", () => {
 
     it("rejects an oversized qq voice attachment before reading its response body", async () => {
         const readBody = vi.fn(async () => new ArrayBuffer(0));
-        vi.stubGlobal("fetch", vi.fn(async () => ({
+        const fetchMock = vi.fn(async () => ({
             ok: true,
             status: 200,
             headers: new Headers({ "content-length": String(16 * 1024 * 1024 + 1) }),
             body: null,
             arrayBuffer: readBody,
-        })) as any);
+        }));
+        vi.stubGlobal("fetch", fetchMock as any);
         const channel = new QqChannel({
             appId: "app-id",
             appSecret: "app-secret",
             sandbox: true,
             agent: { async *run() {} } as any,
             conversationStore: new ConversationStore(),
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
 
         await expect((channel as any).downloadVoiceAttachmentBuffer(
@@ -641,6 +911,83 @@ describe("QqChannel", () => {
             "oversized voice",
         )).rejects.toThrow(/byte limit/i);
         expect(readBody).not.toHaveBeenCalled();
+    });
+
+    it("routes a normal qq voice download through the media outbound policy", async () => {
+        const legacyFetch = vi.fn(async () => ({
+            ok: true,
+            arrayBuffer: async () => Uint8Array.from([9, 9, 9]).buffer,
+        }));
+        vi.stubGlobal("fetch", legacyFetch as any);
+        const request = vi.fn(async (input: { url: string | URL }) => ({
+            response: new Response(Uint8Array.from([1, 2, 3]), { status: 200 }),
+            url: new URL(input.url.toString()),
+            addresses: [{ address: "93.184.216.34", family: 4 as const }],
+            redirectCount: 0,
+        }));
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() {} } as any,
+            conversationStore: new ConversationStore(),
+            mediaOutboundRequestPolicy: { request },
+        });
+
+        await expect((channel as any).downloadVoiceAttachmentBuffer(
+            "https://multimedia.nt.qq.com.cn/download?id=normal",
+            "normal voice",
+        )).resolves.toEqual(Buffer.from([1, 2, 3]));
+
+        expect(legacyFetch).not.toHaveBeenCalled();
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: "https://multimedia.nt.qq.com.cn/download?id=normal",
+            signal: expect.any(AbortSignal),
+        }));
+    });
+
+    it("rejects a private qq voice attachment before media fetch or STT", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchMock = vi.fn(async (input: string | URL | Request) => {
+            if (String(input).startsWith("https://127.0.0.1/")) {
+                return {
+                    ok: true,
+                    arrayBuffer: async () => Uint8Array.from(Buffer.from("unsafe-voice")).buffer,
+                };
+            }
+            return { ok: true, text: async () => "" };
+        });
+        vi.stubGlobal("fetch", fetchMock as any);
+        const sttTranscribe = vi.fn(async () => ({ text: "must not run" }));
+        const channel = new QqChannel({
+            appId: "app-id",
+            appSecret: "app-secret",
+            sandbox: true,
+            agent: { async *run() { yield { type: "final" as const, text: "fallback" }; } } as any,
+            conversationStore: new ConversationStore(),
+            sttTranscribe,
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
+        });
+        (channel as any).accessToken = "qq-token";
+
+        await (channel as any).handleWsMessage({
+            op: 0,
+            s: 2,
+            t: "C2C_MESSAGE_CREATE",
+            id: "C2C_MESSAGE_CREATE:private-audio",
+            d: {
+                content: "",
+                attachments: [{
+                    content_type: "voice",
+                    filename: "voice.amr",
+                    url: "https://127.0.0.1/voice.amr",
+                }],
+                author: { id: "user-private", username: "Private" },
+            },
+        });
+
+        expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("https://127.0.0.1/"))).toBe(false);
+        expect(sttTranscribe).not.toHaveBeenCalled();
     });
 
     it("rejects traversal file names before writing a qq ffmpeg temporary input", async () => {
@@ -700,6 +1047,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
 
         (channel as any).accessToken = "qq-token";
@@ -790,6 +1139,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
         const transcodeSpy = vi.spyOn(channel as any, "transcodeAmrBufferToWav");
 
@@ -874,6 +1225,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
         const normalizeSpy = vi.spyOn(channel as any, "normalizeVoiceBufferToWav")
             .mockResolvedValue(Buffer.from("qq-normalized-wav-audio"));
@@ -966,6 +1319,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
         const transcodeSpy = vi.spyOn(channel as any, "transcodeAmrBufferToWav").mockResolvedValue(Buffer.from("qq-normalized-wav-audio"));
         const normalizeSpy = vi.spyOn(channel as any, "normalizeVoiceBufferToWav")
@@ -1064,6 +1419,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
         vi.spyOn(channel as any, "transcodeAmrBufferToWav").mockResolvedValue(Buffer.from("qq-wav-audio"));
 
@@ -1142,6 +1499,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
         vi.spyOn(channel as any, "transcodeAmrBufferToWav").mockResolvedValue(Buffer.from("qq-wav-audio"));
 
@@ -1218,6 +1577,8 @@ describe("QqChannel", () => {
             agent: agent as any,
             conversationStore: new ConversationStore(),
             sttTranscribe,
+            mediaOutboundRequestPolicy: createQqMediaRequestPolicy(fetchMock),
+            restOutboundRequestPolicy: createQqRestRequestPolicy(fetchMock),
         });
         const transcodeSpy = vi.spyOn(channel as any, "transcodeAmrBufferToWav");
 

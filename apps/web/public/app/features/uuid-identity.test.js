@@ -50,12 +50,45 @@ describe("UUID identity reconnect lifecycle", () => {
     expect(feature.getRuntimeSnapshot().activeTimerCount).toBe(0);
   });
 
-  it("cancels reconnect and unbinds identity listeners on dispose", async () => {
+  it("owns reconnect and identity listeners across activation cycles", async () => {
     vi.useFakeTimers();
     const { input, saveButton, dependencies, feature } = createHarness();
 
     saveButton.click();
+    expect(feature.deactivate()).toBe(true);
+    expect(feature.deactivate()).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      activeTimerCount: 0,
+      listenerCount: 0,
+      disposed: false,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    input.dispatchEvent(new Event("blur"));
+    saveButton.click();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(dependencies.persistUuid).toHaveBeenCalledTimes(1);
+    expect(dependencies.teardown).toHaveBeenCalledTimes(1);
+    expect(dependencies.connect).not.toHaveBeenCalled();
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      activeTimerCount: 0,
+      listenerCount: 2,
+      disposed: false,
+    });
+    input.dispatchEvent(new Event("blur"));
+    saveButton.click();
+    expect(dependencies.persistUuid).toHaveBeenCalledTimes(3);
+    expect(dependencies.teardown).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(dependencies.connect).toHaveBeenCalledTimes(1);
+
+    saveButton.click();
     feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
     expect(feature.getRuntimeSnapshot()).toMatchObject({
       activeTimerCount: 0,
       listenerCount: 0,
@@ -66,7 +99,8 @@ describe("UUID identity reconnect lifecycle", () => {
     input.dispatchEvent(new Event("blur"));
     saveButton.click();
     await vi.advanceTimersByTimeAsync(200);
-    expect(dependencies.persistUuid).toHaveBeenCalledTimes(1);
-    expect(dependencies.connect).not.toHaveBeenCalled();
+    expect(dependencies.persistUuid).toHaveBeenCalledTimes(4);
+    expect(dependencies.teardown).toHaveBeenCalledTimes(4);
+    expect(dependencies.connect).toHaveBeenCalledTimes(1);
   });
 });

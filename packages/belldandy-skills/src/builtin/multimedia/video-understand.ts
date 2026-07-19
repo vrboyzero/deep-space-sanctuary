@@ -17,6 +17,7 @@ import {
   parseTimeoutMs,
   stripMarkdownCodeFences,
   uploadFileToOpenAICompatible,
+  type OpenAICompatibleUploadOutboundRequestPolicy,
 } from "./understand-shared.js";
 import { understandVideoFileByFrameSampling } from "./video-frame-fallback.js";
 import {
@@ -59,6 +60,10 @@ export type VideoUnderstandOptions = {
   targetTimestamp?: string;
   includeTimeline?: boolean;
   maxTimelineItems?: number;
+};
+
+export type VideoUnderstandDependencies = {
+  uploadOutboundRequestPolicy?: OpenAICompatibleUploadOutboundRequestPolicy;
 };
 
 export type VideoTimelineEntry = {
@@ -300,6 +305,7 @@ async function buildNativeVideoContentPart(input: {
   filePath: string;
   mimeType: string;
   abortSignal?: AbortSignal;
+  dependencies: VideoUnderstandDependencies;
 }): Promise<{ type: "video_url"; video_url: { url: string; fps?: number } }> {
   const transport = resolveVideoTransport(input.config);
   if (transport === "inline_data_url") {
@@ -325,6 +331,7 @@ async function buildNativeVideoContentPart(input: {
     purpose: "video",
     maxBytes: input.config.maxInputBytes,
     abortSignal: input.abortSignal,
+    outboundRequestPolicy: input.dependencies.uploadOutboundRequestPolicy,
   });
   return {
     type: "video_url",
@@ -335,7 +342,10 @@ async function buildNativeVideoContentPart(input: {
   };
 }
 
-export async function understandVideoFile(input: VideoUnderstandOptions): Promise<VideoUnderstandResult> {
+export async function understandVideoFile(
+  input: VideoUnderstandOptions,
+  dependencies: VideoUnderstandDependencies = {},
+): Promise<VideoUnderstandResult> {
   const config = readVideoUnderstandConfig();
   if (!config.enabled) {
     throw new Error("BELLDANDY_VIDEO_UNDERSTAND_ENABLED is false.");
@@ -387,6 +397,7 @@ export async function understandVideoFile(input: VideoUnderstandOptions): Promis
         filePath,
         mimeType,
         abortSignal: linkedAbort.controller.signal,
+        dependencies,
       });
 
       const response = await openai.chat.completions.create({
@@ -499,7 +510,8 @@ function resolveVideoPath(
   return { ok: true, absolutePath: candidate };
 }
 
-export const videoUnderstandTool: Tool = {
+export function createVideoUnderstandTool(dependencies: VideoUnderstandDependencies = {}): Tool {
+  return {
   definition: {
     name: "video_understand",
     description: "Analyze a video file with the configured standalone video understanding model.",
@@ -572,7 +584,7 @@ export const videoUnderstandTool: Tool = {
         includeTimeline: typeof args.include_timeline === "boolean" ? args.include_timeline : undefined,
         maxTimelineItems: typeof args.max_timeline_items === "number" ? args.max_timeline_items : undefined,
         abortSignal: context.abortSignal,
-      });
+      }, dependencies);
       if (result.analysisMode === "frame_sampling_fallback" && result.nativeErrorMessage) {
         context.logger?.warn(
           `video_understand native path failed; falling back to frame sampling: ${result.nativeErrorMessage}`,
@@ -604,4 +616,7 @@ export const videoUnderstandTool: Tool = {
       });
     }
   },
-};
+  };
+}
+
+export const videoUnderstandTool: Tool = createVideoUnderstandTool();

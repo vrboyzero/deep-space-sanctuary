@@ -23,6 +23,7 @@ function clearLatestFlags(items) {
 
 const DEFAULT_MAX_CONVERSATION_ENTRIES = 24;
 const DEFAULT_MAX_APPROX_BYTES = 4 * 1024 * 1024;
+const DEFAULT_INACTIVE_TTL_MS = 30 * 60 * 1000;
 const CONVERSATION_ENTRY_OVERHEAD_BYTES = 64;
 const MESSAGE_OVERHEAD_BYTES = 128;
 
@@ -37,6 +38,10 @@ export function createAgentSessionCacheFeature(options = {}) {
   const maxApproxBytes = normalizeNonNegativeInteger(
     options.maxApproxBytes,
     DEFAULT_MAX_APPROX_BYTES,
+  );
+  const inactiveTtlMs = normalizeNonNegativeInteger(
+    options.inactiveTtlMs,
+    DEFAULT_INACTIVE_TTL_MS,
   );
   const now = typeof options.now === "function" ? options.now : Date.now;
   let activeConversationId = "";
@@ -71,7 +76,16 @@ export function createAgentSessionCacheFeature(options = {}) {
       || retainedApproxBytes > maxApproxBytes;
   }
 
+  function pruneExpiredInactiveConversations(currentTime = now()) {
+    for (const [conversationId, retention] of conversationRetention) {
+      if (conversationId === activeConversationId || isStreamingConversation(conversationId)) continue;
+      if (currentTime - retention.lastAccessedAt < inactiveTtlMs) continue;
+      deleteCachedConversation(conversationId);
+    }
+  }
+
   function pruneConversationMessages() {
+    pruneExpiredInactiveConversations();
     while (isOverBudget()) {
       const candidate = [...conversationRetention.entries()]
         .filter(([conversationId]) => (
@@ -139,6 +153,7 @@ export function createAgentSessionCacheFeature(options = {}) {
 
   function getConversationMessages(conversationId) {
     if (disposed) return [];
+    pruneExpiredInactiveConversations();
     const items = conversationMessagesCache.get(conversationId);
     if (Array.isArray(items)) touchConversation(conversationId);
     return Array.isArray(items) ? items.map((item) => ({ ...item })) : [];
@@ -250,6 +265,7 @@ export function createAgentSessionCacheFeature(options = {}) {
 
   function getRuntimeSnapshot() {
     const currentTime = now();
+    pruneExpiredInactiveConversations(currentTime);
     let pendingConversationCount = 0;
     let oldestInactiveAgeMs = 0;
     for (const [conversationId, retention] of conversationRetention) {
@@ -271,6 +287,7 @@ export function createAgentSessionCacheFeature(options = {}) {
       retainedApproxBytes,
       maxConversationEntries,
       maxApproxBytes,
+      inactiveTtlMs,
       evictedConversationCount,
       generationClearCount,
       oldestInactiveAgeMs,

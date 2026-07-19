@@ -1,48 +1,54 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createPrimaryChatControlsFeature({
   connectButton,
   sendButton,
   onConnect,
   onComposerPrimaryAction,
 } = {}) {
-  let disposed = false;
-  const listenerEntries = [];
+  const taskScope = createPanelTaskScope();
 
   function addOwnedListener(target, type, handler) {
     if (!target) return;
-    target.addEventListener(type, handler);
-    listenerEntries.push({ target, type, handler });
+    taskScope.addEventListener(target, type, handler);
   }
 
   function handleConnectClick() {
-    if (disposed) return;
     onConnect?.();
   }
 
   function handleSendClick() {
-    if (disposed) return;
     onComposerPrimaryAction?.();
   }
 
-  addOwnedListener(connectButton, "click", handleConnectClick);
-  addOwnedListener(sendButton, "click", handleSendClick);
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedListener(connectButton, "click", handleConnectClick);
+    addOwnedListener(sendButton, "click", handleSendClick);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, type, handler } of listenerEntries) {
-      target.removeEventListener(type, handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

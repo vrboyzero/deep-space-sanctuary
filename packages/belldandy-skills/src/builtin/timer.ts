@@ -62,6 +62,28 @@ function deleteTimer(context: ToolContext, name: string): void {
   }
 }
 
+/** 只暴露资源计数，供 lifecycle 验收确认会话释放后 registry 真正归零。 */
+export function getTimerConversationResourceSnapshot(conversationId: string): {
+  namespaces: number;
+  timers: number;
+  laps: number;
+} {
+  const conversationTimers = timers.get(conversationId);
+  let timerCount = 0;
+  let lapCount = 0;
+  for (const namespace of conversationTimers?.values() ?? []) {
+    timerCount += namespace.size;
+    for (const timer of namespace.values()) {
+      lapCount += timer.laps.length;
+    }
+  }
+  return {
+    namespaces: conversationTimers?.size ?? 0,
+    timers: timerCount,
+    laps: lapCount,
+  };
+}
+
 /** 格式化时间（秒，保留 2 位小数） */
 function formatTime(ms: number): string {
   return (ms / 1000).toFixed(2);
@@ -91,6 +113,10 @@ export const timerTool: Tool = withToolContract({
         { required: ["action"] },          // list 不需要 name
       ],
     },
+  },
+
+  releaseConversation(conversationId: string): void {
+    timers.delete(conversationId);
   },
 
   async execute(args: JsonObject, context: ToolContext): Promise<ToolCallResult> {

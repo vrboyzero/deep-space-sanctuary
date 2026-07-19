@@ -17,12 +17,15 @@ export function createChatNetworkRequestLifecycle({
     pendingRequests.delete(requestId);
     pruneGeneration(generation, pendingRequests);
     cancelTimeout(inflight.timeoutHandle);
+    if (inflight.signal && inflight.abortHandler) {
+      inflight.signal.removeEventListener("abort", inflight.abortHandler);
+    }
     inflight.resolve(value);
     return true;
   }
 
-  function trackRequest({ generation, requestId, timeoutMs } = {}) {
-    if (disposed || generation === undefined || !requestId) return Promise.resolve(null);
+  function trackRequest({ generation, requestId, timeoutMs, signal } = {}) {
+    if (disposed || generation === undefined || !requestId || signal?.aborted) return Promise.resolve(null);
     const rawTimeoutMs = Number(timeoutMs);
     const effectiveTimeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
       ? rawTimeoutMs
@@ -39,7 +42,24 @@ export function createChatNetworkRequestLifecycle({
         if (inflight?.resolve !== resolve) return;
         settleEntry(generation, pendingRequests, requestId, null);
       }, effectiveTimeoutMs);
-      pendingRequests.set(requestId, { resolve, timeoutHandle });
+      const inflight = {
+        resolve,
+        timeoutHandle,
+        signal: null,
+        abortHandler: null,
+      };
+      pendingRequests.set(requestId, inflight);
+      if (signal && typeof signal.addEventListener === "function") {
+        inflight.signal = signal;
+        inflight.abortHandler = () => {
+          const current = pendingRequests.get(requestId);
+          if (current?.resolve !== resolve) return;
+          settleEntry(generation, pendingRequests, requestId, null);
+        };
+        signal.addEventListener("abort", inflight.abortHandler, { once: true });
+        // 覆盖 pre-check 与 listener 注册之间发生取消的竞态窗口。
+        if (signal.aborted) inflight.abortHandler();
+      }
     });
   }
 

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -88,6 +89,88 @@ test("release-light asset keeps default env templates complete", async () => {
 
   expect(artifactEnv).toBe(sourceEnv);
   expect(artifactEnvLocal).toBe(sourceEnvLocal);
+}, 120_000);
+
+test("release-light verifier rejects staged file content identity drift", async () => {
+  const stagedReadmePath = path.join(
+    releaseRoot,
+    `v${version}`,
+    `star-sanctuary-dist-v${version}`,
+    "README-release-light.md",
+  );
+  const original = await fsp.readFile(stagedReadmePath);
+  await fsp.appendFile(stagedReadmePath, "\ntampered-after-manifest\n");
+
+  try {
+    const result = spawnSync(process.execPath, ["scripts/verify-release-light-assets.mjs"], {
+      cwd: workspaceRoot,
+      env: releaseLightEnvironment(),
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "release-light content SHA-256 mismatch for README-release-light.md",
+    );
+  } finally {
+    await fsp.writeFile(stagedReadmePath, original);
+  }
+}, 120_000);
+
+test("release-light verifier rejects another source or BuildGraph identity with a valid outer manifest hash", async () => {
+  const versionRoot = path.join(releaseRoot, `v${version}`);
+  const packageRootName = `star-sanctuary-dist-v${version}`;
+  const manifestName = `${packageRootName}.manifest.json`;
+  const manifestPath = path.join(versionRoot, manifestName);
+  const sha256Path = path.join(versionRoot, `${packageRootName}.sha256`);
+  const originalManifest = await fsp.readFile(manifestPath);
+  const originalSha256 = await fsp.readFile(sha256Path);
+  const manifest = JSON.parse(originalManifest.toString("utf-8"));
+  const currentCommitSha = String(manifest.releaseIdentity?.commitSha || "");
+  const currentBuildGraphSha256 = String(manifest.releaseIdentity?.buildGraphSha256 || "");
+
+  // 同步外层 hash，确保失败由 ReleaseIdentity owner 而不是 sha256 文件抢先触发。
+  const writeManifestWithOuterHash = async () => {
+    const content = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+    const contentSha256 = crypto.createHash("sha256").update(content).digest("hex");
+    const sha256 = originalSha256.toString("utf-8")
+      .split(/\r?\n/)
+      .map((line) => line.endsWith(`  ${manifestName}`) ? `${contentSha256}  ${manifestName}` : line)
+      .join("\n");
+    await Promise.all([
+      fsp.writeFile(manifestPath, content),
+      fsp.writeFile(sha256Path, sha256),
+    ]);
+  };
+  const runVerifier = () => spawnSync(process.execPath, ["scripts/verify-release-light-assets.mjs"], {
+    cwd: workspaceRoot,
+    env: releaseLightEnvironment(),
+    encoding: "utf-8",
+  });
+
+  try {
+    manifest.releaseIdentity.commitSha = (currentCommitSha.startsWith("0") ? "1" : "0")
+      .repeat(currentCommitSha.length);
+    await writeManifestWithOuterHash();
+    const sourceResult = runVerifier();
+
+    expect(sourceResult.status).toBe(1);
+    expect(sourceResult.stderr).toContain("Release identity commit SHA mismatch");
+
+    manifest.releaseIdentity.commitSha = currentCommitSha;
+    manifest.releaseIdentity.buildGraphSha256 = (currentBuildGraphSha256.startsWith("0") ? "1" : "0")
+      .repeat(currentBuildGraphSha256.length);
+    await writeManifestWithOuterHash();
+    const buildGraphResult = runVerifier();
+
+    expect(buildGraphResult.status).toBe(1);
+    expect(buildGraphResult.stderr).toContain("Release identity BuildGraph SHA-256 mismatch");
+  } finally {
+    await Promise.all([
+      fsp.writeFile(manifestPath, originalManifest),
+      fsp.writeFile(sha256Path, originalSha256),
+    ]);
+  }
 }, 120_000);
 
 test("release-light verifier rejects a staged package with a missing manifest bin", async () => {

@@ -34,7 +34,7 @@ function createPanel(entries = {}) {
 }
 
 describe("goals specialist panel controls", () => {
-  it("replaces one panel group and blocks a retained listener from the old panel", () => {
+  it("owns one replaced panel group across activation cycles", () => {
     const controls = createGoalsSpecialistPanelControlsFeature();
     const oldNode = createNode();
     const newNode = createNode();
@@ -62,6 +62,40 @@ describe("goals specialist panel controls", () => {
       activeListenerCount: 1,
       disposed: false,
     });
+
+    const retainedNewListener = newNode.getRetainedListener();
+    newAction.mockClear();
+    expect(controls.deactivate()).toBe(true);
+    expect(controls.deactivate()).toBe(false);
+    retainedNewListener({ type: "click" });
+    expect(newAction).not.toHaveBeenCalled();
+    expect(newNode.listenerCount).toBe(0);
+    expect(controls.getRuntimeSnapshot()).toEqual({
+      activeGroupCount: 0,
+      activeListenerCount: 0,
+      disposed: false,
+    });
+
+    const inactiveNode = createNode();
+    expect(controls.replaceGroup("handoff", createPanel({ "[data-action]": [inactiveNode] }), [{
+      selector: "[data-action]",
+      onClick: newAction,
+    }])).toBe(false);
+    expect(inactiveNode.listenerCount).toBe(0);
+
+    expect(controls.activate()).toBe(true);
+    const reactivatedNode = createNode();
+    controls.replaceGroup("handoff", createPanel({ "[data-action]": [reactivatedNode] }), [{
+      selector: "[data-action]",
+      onClick: newAction,
+    }]);
+    reactivatedNode.dispatch();
+    expect(newAction).toHaveBeenCalledOnce();
+    expect(controls.getRuntimeSnapshot()).toMatchObject({
+      activeGroupCount: 1,
+      activeListenerCount: 1,
+      disposed: false,
+    });
   });
 
   it("owns independent handoff and governance groups until dispose", () => {
@@ -82,7 +116,9 @@ describe("goals specialist panel controls", () => {
     const retainedHandoffListener = handoffNodes[0].getRetainedListener();
     const retainedGovernanceListener = governanceNode.getRetainedListener();
 
-    controls.dispose();
+    expect(controls.dispose()).toBe(true);
+    expect(controls.dispose()).toBe(false);
+    expect(controls.activate()).toBe(false);
     retainedHandoffListener({ type: "click" });
     retainedGovernanceListener({ type: "click" });
 

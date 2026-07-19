@@ -9,7 +9,7 @@ describe("memory query filter controls lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("reloads only for filters owned by the active tab until dispose", () => {
+  it("reloads only for active controls and filters owned by the active tab", () => {
     document.body.innerHTML = `
       <button id="goal-clear"></button>
       <input id="search" />
@@ -64,13 +64,36 @@ describe("memory query filter controls lifecycle", () => {
     expect(loadMemoryViewer).toHaveBeenCalledTimes(8);
     expect(loadMemoryViewer).toHaveBeenCalledWith(true);
 
-    feature.dispose();
-    feature.dispose();
+    expect(feature.deactivate()).toBe(true);
     document.getElementById("goal-clear").click();
-    document.getElementById("search").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    const inactiveEnterKey = new KeyboardEvent("keydown", { key: "Enter", cancelable: true });
+    document.getElementById("search").dispatchEvent(inactiveEnterKey);
     document.getElementById("chunk-governance").dispatchEvent(new Event("change"));
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(inactiveEnterKey.defaultPrevented).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
     expect(clearMemoryTaskGoalFilter).toHaveBeenCalledTimes(1);
     expect(loadMemoryViewer).toHaveBeenCalledTimes(8);
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 8, disposed: false });
+    activeTab = "tasks";
+    document.getElementById("goal-clear").click();
+    const reactivatedEnterKey = new KeyboardEvent("keydown", { key: "Enter", cancelable: true });
+    document.getElementById("search").dispatchEvent(reactivatedEnterKey);
+    document.getElementById("task-status").dispatchEvent(new Event("change"));
+    document.getElementById("chunk-type").dispatchEvent(new Event("change"));
+    expect(reactivatedEnterKey.defaultPrevented).toBe(true);
+    expect(clearMemoryTaskGoalFilter).toHaveBeenCalledTimes(2);
+    expect(loadMemoryViewer).toHaveBeenCalledTimes(10);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    document.getElementById("goal-clear").click();
+    document.getElementById("search").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    document.getElementById("task-status").dispatchEvent(new Event("change"));
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(clearMemoryTaskGoalFilter).toHaveBeenCalledTimes(2);
+    expect(loadMemoryViewer).toHaveBeenCalledTimes(10);
   });
 });

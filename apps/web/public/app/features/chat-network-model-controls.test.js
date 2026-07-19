@@ -51,7 +51,7 @@ describe("chat network model controls", () => {
     });
   });
 
-  it("unbinds controls and ignores retained callbacks after dispose", () => {
+  it("owns controls and retained callbacks across activation cycles", () => {
     const modelSelectEl = createControl();
     const modelFilterEl = createControl();
     const onModelSelectChange = vi.fn();
@@ -65,13 +65,41 @@ describe("chat network model controls", () => {
     const retainedChange = modelSelectEl.getRetainedListener("change");
     const retainedInput = modelFilterEl.getRetainedListener("input");
 
-    controls.dispose();
-    controls.dispose();
-    retainedChange({ type: "change" });
-    retainedInput({ type: "input" });
-
+    expect(controls.deactivate()).toBe(true);
+    expect(controls.deactivate()).toBe(false);
+    modelSelectEl.dispatch("change", { type: "inactive-change" });
+    modelFilterEl.dispatch("input", { type: "inactive-input" });
+    retainedChange({ type: "retained-inactive-change" });
+    retainedInput({ type: "retained-inactive-input" });
     expect(onModelSelectChange).not.toHaveBeenCalled();
     expect(onModelFilterInput).not.toHaveBeenCalled();
+    expect(modelSelectEl.getListenerCount()).toBe(0);
+    expect(modelFilterEl.getListenerCount()).toBe(0);
+    expect(controls.getRuntimeSnapshot()).toEqual({
+      disposed: false,
+      activeChatNetworkModelControlListenerCount: 0,
+    });
+
+    expect(controls.activate()).toBe(true);
+    modelSelectEl.dispatch("change", { type: "reactivated-change" });
+    modelFilterEl.dispatch("input", { type: "reactivated-input" });
+    expect(onModelSelectChange).toHaveBeenCalledTimes(1);
+    expect(onModelFilterInput).toHaveBeenCalledTimes(1);
+    expect(controls.getRuntimeSnapshot()).toEqual({
+      disposed: false,
+      activeChatNetworkModelControlListenerCount: 2,
+    });
+
+    const reactivatedChange = modelSelectEl.getRetainedListener("change");
+    const reactivatedInput = modelFilterEl.getRetainedListener("input");
+    controls.dispose();
+    controls.dispose();
+    expect(controls.activate()).toBe(false);
+    reactivatedChange({ type: "change" });
+    reactivatedInput({ type: "input" });
+
+    expect(onModelSelectChange).toHaveBeenCalledTimes(1);
+    expect(onModelFilterInput).toHaveBeenCalledTimes(1);
     expect(modelSelectEl.getListenerCount()).toBe(0);
     expect(modelFilterEl.getListenerCount()).toBe(0);
     expect(controls.getRuntimeSnapshot()).toEqual({

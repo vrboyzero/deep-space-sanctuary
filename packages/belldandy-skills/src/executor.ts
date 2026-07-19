@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { redactSensitiveValue, type JsonObject } from "@belldandy/protocol";
+import { redactSensitiveText, redactSensitiveValue, type JsonObject } from "@belldandy/protocol";
 import type {
   Tool,
   ToolCallRequest,
@@ -952,6 +952,21 @@ export class ToolExecutor {
   releaseConversation(conversationId: string): void {
     this.tokenCounters.delete(conversationId);
     this.loadedDeferredToolNames.delete(conversationId);
+
+    // Tool 自己拥有内部 registry；单个清理失败不能阻断其他 owner 或顶层会话释放。
+    for (const tool of this.tools.values()) {
+      if (!tool.releaseConversation) {
+        continue;
+      }
+      try {
+        tool.releaseConversation(conversationId);
+      } catch (error) {
+        const failureKind = error instanceof Error ? error.name : "unknown_error";
+        this.logger?.warn(
+          `Tool conversation cleanup failed for ${tool.definition.name}: ${failureKind}`,
+        );
+      }
+    }
   }
 
   /**
@@ -1555,20 +1570,22 @@ export class ToolExecutor {
 
     // 审计事件先在当前调用栈完成有界脱敏，再交给旁路 dispatcher 异步投递。
     try {
+      const redactedArguments = redactSensitiveValue(args, {
+        maxDepth: 6,
+        maxKeys: 50,
+        maxArrayEntries: 50,
+        maxStringBytes: 1024,
+        maxTotalBytes: 4096,
+      }) as JsonObject;
       this.auditDispatcher.enqueue({
         timestamp: new Date().toISOString(),
         conversationId,
         toolName: result.name,
-        arguments: redactSensitiveValue(args, {
-          maxDepth: 6,
-          maxKeys: 50,
-          maxArrayEntries: 50,
-          maxStringBytes: 1024,
-          maxTotalBytes: 4096,
-        }) as JsonObject,
+        argumentsSummary: summarizeAuditText(JSON.stringify(redactedArguments)),
+        safeArguments: projectSafeAuditArguments(args),
         success: result.success,
-        output: redactAuditText(result.output),
-        error: result.error ? redactAuditText(result.error) : undefined,
+        outputSummary: summarizeAuditText(result.output),
+        errorSummary: result.error ? summarizeAuditText(result.error) : undefined,
         failureKind: result.failureKind,
         durationMs: result.durationMs,
       });
@@ -1963,9 +1980,16 @@ export class ToolExecutor {
   }
 }
 
-function redactAuditText(value: string): string {
-  return redactSensitiveValue(value, {
-    maxStringBytes: 1024,
-    maxTotalBytes: 1024,
-  }) as string;
+function summarizeAuditText(value: string): { bytes: number; sha256: string } {
+  const redacted = redactSensitiveText(value);
+  return {
+    bytes: Buffer.byteLength(redacted, "utf-8"),
+    sha256: crypto.createHash("sha256").update(redacted, "utf-8").digest("hex"),
+  };
+}
+
+function projectSafeAuditArguments(args: JsonObject): { ackMatched?: boolean } | undefined {
+  return typeof args.ackMatched === "boolean"
+    ? { ackMatched: args.ackMatched }
+    : undefined;
 }

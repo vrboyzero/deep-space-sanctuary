@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { ToolExecutor } from "../executor.js";
 import type { ToolContext } from "../types.js";
 import {
+  getTimerConversationResourceSnapshot,
   MAX_LAPS_PER_TIMER,
   MAX_TIMERS_PER_NAMESPACE,
   timerTool,
@@ -34,6 +36,37 @@ async function executeTimer(
 }
 
 describe("timerTool", () => {
+  it("releases only the target conversation through ToolExecutor and clears its registry", async () => {
+    const executor = new ToolExecutor({
+      tools: [timerTool],
+      workspaceRoot: "/tmp/timer-test",
+    });
+
+    await executor.execute({ id: "timer-release-a", name: "timer", arguments: { action: "start", name: "shared" } }, "timer-release-a", "agent-a");
+    await executor.execute({ id: "timer-release-b", name: "timer", arguments: { action: "start", name: "shared" } }, "timer-release-b", "agent-a");
+
+    expect(getTimerConversationResourceSnapshot("timer-release-a")).toEqual({
+      namespaces: 1,
+      timers: 1,
+      laps: 0,
+    });
+    executor.releaseConversation("timer-release-a");
+    executor.releaseConversation("timer-release-a");
+
+    expect(getTimerConversationResourceSnapshot("timer-release-a")).toEqual({
+      namespaces: 0,
+      timers: 0,
+      laps: 0,
+    });
+    expect(getTimerConversationResourceSnapshot("timer-release-b").timers).toBe(1);
+    expect((await executor.execute({ id: "timer-list-a", name: "timer", arguments: { action: "list" } }, "timer-release-a", "agent-a")).output)
+      .toBe("当前没有活动的计时器");
+    expect((await executor.execute({ id: "timer-list-b", name: "timer", arguments: { action: "list" } }, "timer-release-b", "agent-a")).output)
+      .toContain("shared");
+
+    executor.releaseConversation("timer-release-b");
+  });
+
   it("isolates same-name timers by conversation and agent namespace", async () => {
     const firstConversation = createContext("timer-isolation-a", "agent-a");
     const secondConversation = createContext("timer-isolation-b", "agent-a");

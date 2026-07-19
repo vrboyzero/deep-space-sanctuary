@@ -7,6 +7,8 @@
 
 import { readResponseTextBounded } from "@belldandy/protocol";
 
+import { requestModelTransport } from "./model-request-transport.js";
+
 // ─── Types ───────────────────────────────────────────────────────────────
 
 /** 模型 Profile：描述一个可用的 API 端点 */
@@ -560,10 +562,6 @@ export class FailoverClient {
                             ...init,
                             signal: controller.signal,
                         };
-                        const dispatcher = await getProxyDispatcher(profile.proxyUrl);
-                        if (dispatcher) {
-                            (requestInit as any).dispatcher = dispatcher;
-                        }
 
                         this.logger?.debug?.("failover", "Dispatching model request", {
                             profileId,
@@ -576,7 +574,12 @@ export class FailoverClient {
                             url,
                         });
 
-                        const response = await fetch(url, requestInit);
+                        const response = await requestModelTransport({
+                            url,
+                            init: requestInit,
+                            idleTimeoutMs: resolvedTimeoutMs,
+                            proxyUrl: profile.proxyUrl,
+                        });
                         const responseDurationMs = Date.now() - attemptStartedAt;
                         this.logger?.debug?.("failover", "Model request resolved", {
                             profileId,
@@ -861,8 +864,6 @@ export class FailoverClient {
 
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────
 
-const proxyDispatcherCache = new Map<string, unknown>();
-
 function normalizePositiveInt(value: unknown): number | undefined {
     if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
     const rounded = Math.floor(value);
@@ -938,25 +939,6 @@ function toAbortError(reason?: unknown): Error {
     const error = new Error(typeof reason === "string" && reason.trim() ? reason : "The operation was aborted.");
     error.name = "AbortError";
     return error;
-}
-
-async function getProxyDispatcher(proxyUrl?: string): Promise<unknown | undefined> {
-    if (!proxyUrl || !proxyUrl.trim()) return undefined;
-    const normalized = proxyUrl.trim();
-    const cached = proxyDispatcherCache.get(normalized);
-    if (cached) return cached;
-
-    try {
-        const moduleName = ["undici"].join("");
-        const undici = await import(moduleName);
-        const ProxyAgentCtor = (undici as any).ProxyAgent;
-        if (typeof ProxyAgentCtor !== "function") return undefined;
-        const dispatcher = new ProxyAgentCtor(normalized);
-        proxyDispatcherCache.set(normalized, dispatcher);
-        return dispatcher;
-    } catch {
-        return undefined;
-    }
 }
 
 /**

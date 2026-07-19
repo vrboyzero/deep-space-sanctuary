@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createMemoryDreamControlsFeature({ refs = {}, getMemoryViewerFeature } = {}) {
   const {
     memoryDreamRefreshBtn,
@@ -5,50 +7,54 @@ export function createMemoryDreamControlsFeature({ refs = {}, getMemoryViewerFea
     memoryDreamHistoryToggleBtn,
     memoryDreamHistoryRefreshBtn,
   } = refs;
-  const listenerEntries = [];
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
   function addOwnedCommand(target, command) {
     if (!target) return;
-    const handler = () => {
-      if (disposed) return;
+    taskScope.addEventListener(target, "click", () => {
       command(getMemoryViewerFeature?.());
-    };
-    target.addEventListener("click", handler);
-    listenerEntries.push({ target, handler });
+    });
   }
 
-  addOwnedCommand(memoryDreamRefreshBtn, (feature) => {
-    void feature?.loadDreamRuntimeStatus?.();
-    void feature?.loadDreamCommonsStatus?.();
-  });
-  addOwnedCommand(memoryDreamRunBtn, (feature) => {
-    void feature?.runDream?.();
-  });
-  addOwnedCommand(memoryDreamHistoryToggleBtn, (feature) => {
-    feature?.toggleDreamHistory?.();
-  });
-  addOwnedCommand(memoryDreamHistoryRefreshBtn, (feature) => {
-    void feature?.loadDreamHistory?.(false);
-  });
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedCommand(memoryDreamRefreshBtn, (feature) => {
+      void feature?.loadDreamRuntimeStatus?.();
+      void feature?.loadDreamCommonsStatus?.();
+    });
+    addOwnedCommand(memoryDreamRunBtn, (feature) => {
+      void feature?.runDream?.();
+    });
+    addOwnedCommand(memoryDreamHistoryToggleBtn, (feature) => {
+      feature?.toggleDreamHistory?.();
+    });
+    addOwnedCommand(memoryDreamHistoryRefreshBtn, (feature) => {
+      void feature?.loadDreamHistory?.(false);
+    });
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, handler } of listenerEntries) {
-      target.removeEventListener("click", handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
+import type {
+  MemoryEvolutionModelRequestOptions,
+  MemoryEvolutionModelResponse,
+} from "./memory-evolution-model-request.js";
 import { MemoryManager } from "./manager.js";
 import { clearMemoryTreeJobInflightForTest } from "./memory-tree-job-control.js";
 import {
@@ -13,6 +17,14 @@ import {
 import { buildTaskRecapArtifacts } from "./task-recap.js";
 import type { TaskActivityRecord, TaskRecord } from "./task-types.js";
 
+const requestMemoryEvolutionModelMock = vi.hoisted(() => vi.fn<(
+  options: MemoryEvolutionModelRequestOptions,
+) => Promise<MemoryEvolutionModelResponse>>());
+
+vi.mock("./memory-evolution-model-request.js", () => ({
+  requestMemoryEvolutionModel: requestMemoryEvolutionModelMock,
+}));
+
 describe("MemoryManager guardrails", () => {
   let rootDir: string;
   let stateDir: string;
@@ -21,6 +33,22 @@ describe("MemoryManager guardrails", () => {
   let manager: MemoryManager | null;
 
   beforeEach(async () => {
+    requestMemoryEvolutionModelMock.mockImplementation(async (options) => {
+      const response = await fetch(options.baseUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify(options.payload),
+        signal: options.signal,
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(`Evolution LLM call failed: ${response.status} ${detail.slice(0, 200)}`);
+      }
+      return await response.json() as MemoryEvolutionModelResponse;
+    });
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-manager-"));
     stateDir = path.join(rootDir, "state");
     sessionsDir = path.join(stateDir, "sessions");
@@ -32,6 +60,7 @@ describe("MemoryManager guardrails", () => {
 
   afterEach(async () => {
     await manager?.close();
+    requestMemoryEvolutionModelMock.mockReset();
     clearMemoryTreeJobInflightForTest();
     await fs.rm(rootDir, { recursive: true, force: true }).catch(() => { });
   });
@@ -4002,27 +4031,26 @@ describe("MemoryManager guardrails", () => {
       evolutionMinMessages: 2,
     });
 
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: "[]",
-            },
-          },
-        ],
-      }),
-    } as Response);
+    const legacyFetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("legacy fetch must not run"));
+    requestMemoryEvolutionModelMock.mockResolvedValue({
+      choices: [{ message: { content: "[]" } }],
+    });
 
     await (manager as any).callLLMForExtraction("请沉淀这轮对话中的长期信息。");
 
-    const firstCall = fetchSpy.mock.calls[0] as [unknown, RequestInit | undefined] | undefined;
-    const request = firstCall?.[1];
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
-    expect(body.reasoning_split).toBe(true);
+    expect(requestMemoryEvolutionModelMock).toHaveBeenCalledWith({
+      baseUrl: "https://api.minimaxi.com/v1",
+      apiKey: "test-evolution-key",
+      payload: expect.objectContaining({
+        model: "MiniMax-M2.5",
+        reasoning_split: true,
+      }),
+      signal: expect.any(AbortSignal),
+      idleTimeoutMs: 120_000,
+    });
+    expect(legacyFetch).not.toHaveBeenCalled();
 
-    fetchSpy.mockRestore();
+    legacyFetch.mockRestore();
   });
 
   it("keeps generic OpenAI-compatible evolution requests unchanged for non-MiniMax providers", async () => {
@@ -4036,27 +4064,20 @@ describe("MemoryManager guardrails", () => {
       evolutionMinMessages: 2,
     });
 
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: "[]",
-            },
-          },
-        ],
-      }),
-    } as Response);
+    const legacyFetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("legacy fetch must not run"));
+    requestMemoryEvolutionModelMock.mockResolvedValue({
+      choices: [{ message: { content: "[]" } }],
+    });
 
     await (manager as any).callLLMForExtraction("请沉淀这轮对话中的长期信息。");
 
-    const firstCall = fetchSpy.mock.calls[0] as [unknown, RequestInit | undefined] | undefined;
-    const request = firstCall?.[1];
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
-    expect(body).not.toHaveProperty("reasoning_split");
+    expect(requestMemoryEvolutionModelMock).toHaveBeenCalledTimes(1);
+    const request = requestMemoryEvolutionModelMock.mock.calls[0]?.[0];
+    expect(request?.payload).toMatchObject({ model: "gpt-4o-mini" });
+    expect(request?.payload).not.toHaveProperty("reasoning_split");
+    expect(legacyFetch).not.toHaveBeenCalled();
 
-    fetchSpy.mockRestore();
+    legacyFetch.mockRestore();
   });
 
   it("records invalid embedding results and advances healthy chunks without retrying the failed prefix", async () => {

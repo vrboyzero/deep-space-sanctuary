@@ -213,6 +213,7 @@ describe("experience workbench static UI lifecycle", () => {
       <button id="tab-assets"></button>
       <button id="tab-usage"></button>
       <div id="synthesis-modal"></div>
+      <div id="synthesis-list"></div>
       <button id="synthesis-close"></button>
       <button id="synthesis-cancel"></button>
       <button id="synthesis-submit"></button>
@@ -251,6 +252,7 @@ describe("experience workbench static UI lifecycle", () => {
         experienceWorkbenchTabAssetsBtn: document.getElementById("tab-assets"),
         experienceWorkbenchTabUsageOverviewBtn: document.getElementById("tab-usage"),
         experienceSynthesisModalEl: document.getElementById("synthesis-modal"),
+        experienceSynthesisModalListEl: document.getElementById("synthesis-list"),
         experienceSynthesisModalCloseBtn: document.getElementById("synthesis-close"),
         experienceSynthesisModalCancelBtn: document.getElementById("synthesis-cancel"),
         experienceSynthesisModalSubmitBtn: document.getElementById("synthesis-submit"),
@@ -269,8 +271,13 @@ describe("experience workbench static UI lifecycle", () => {
       showNotice: vi.fn(),
     });
 
+    const synthesisListEl = document.getElementById("synthesis-list");
+    const synthesisAddListenerSpy = vi.spyOn(synthesisListEl, "addEventListener");
+    feature.setViewActive(true);
+    expect(synthesisAddListenerSpy).not.toHaveBeenCalled();
     feature.bindUi();
     feature.bindUi();
+    expect(synthesisAddListenerSpy).toHaveBeenCalledTimes(1);
     expect(feature.getRuntimeSnapshot()).toEqual({
       listenerCount: 17,
       pendingGenerateCount: 0,
@@ -1519,9 +1526,12 @@ describe("experience workbench static UI lifecycle", () => {
     expect(feature.getRuntimeSnapshot().selectedSynthesisSourceCount).toBe(0);
     expect(memoryViewerState.pendingExperienceActionKey).toBe("synthesize-preview:candidate-1");
     const requestTokenBeforeDeactivate = state.requestToken;
+    const synthesisListEl = document.getElementById("synthesis-list");
+    const removeListenerSpy = vi.spyOn(synthesisListEl, "removeEventListener");
 
     feature.setViewActive(false);
 
+    expect(removeListenerSpy).toHaveBeenCalledWith("change", expect.any(Function), undefined);
     expect(feature.getRuntimeSnapshot()).toMatchObject({
       viewActive: false,
       pendingSynthesisPreviewCount: 1,
@@ -1548,7 +1558,9 @@ describe("experience workbench static UI lifecycle", () => {
     expect(state.synthesisModal).toMatchObject({ open: false, loading: false, preview: null });
     expect(showNotice).not.toHaveBeenCalled();
     const requestCountBeforeActivate = sendReq.mock.calls.length;
+    const addListenerSpy = vi.spyOn(synthesisListEl, "addEventListener");
     feature.setViewActive(true);
+    expect(addListenerSpy).toHaveBeenCalledWith("change", expect.any(Function), undefined);
     expect(feature.getRuntimeSnapshot().viewActive).toBe(true);
     expect(sendReq).toHaveBeenCalledTimes(requestCountBeforeActivate);
   });

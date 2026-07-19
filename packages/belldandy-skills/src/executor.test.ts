@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { describe, it, expect, vi } from "vitest";
 import type { Tool, ToolCallRequest, ToolContext, ToolCallResult } from "./types.js";
 import { ToolExecutor, DEFAULT_POLICY } from "./executor.js";
@@ -593,7 +594,7 @@ describe("ToolExecutor", () => {
     expect(auditLogs[0].success).toBe(true);
   });
 
-  it("should sanitize sensitive arguments in audit log", async () => {
+  it("should fingerprint redacted sensitive arguments without retaining the raw object", async () => {
     const auditLogs: any[] = [];
     const executor = new ToolExecutor({
       tools: [echoTool],
@@ -607,8 +608,13 @@ describe("ToolExecutor", () => {
     );
 
     await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
-    expect(auditLogs[0].arguments.api_key).toBe("[REDACTED]");
-    expect(auditLogs[0].arguments.message).toBe("hi");
+    const redactedArguments = JSON.stringify({ message: "hi", api_key: "[REDACTED]" });
+    expect(auditLogs[0]).not.toHaveProperty("arguments");
+    expect(auditLogs[0].argumentsSummary).toEqual({
+      bytes: Buffer.byteLength(redactedArguments, "utf-8"),
+      sha256: crypto.createHash("sha256").update(redactedArguments, "utf-8").digest("hex"),
+    });
+    expect(JSON.stringify(auditLogs[0])).not.toContain("secret123");
   });
 
   it("deeply redacts audit data and keeps a completed tool result when the audit consumer throws", async () => {
@@ -652,6 +658,153 @@ describe("ToolExecutor", () => {
     expect(auditLogs).toHaveLength(1);
     expect(JSON.stringify(auditLogs[0])).not.toContain("nested-secret");
     expect(JSON.stringify(auditLogs[0])).not.toContain("tool-output-secret");
+  });
+
+  it("redacts non-Bearer headers and URL userinfo from audit text without changing the Tool result", async () => {
+    const auditLogs: any[] = [];
+    const credentialOutput = [
+      "Authorization: Basic dXNlcjpwYXNz",
+      "request failed at https://owner:url-password@example.test/private",
+    ].join("\n");
+    const credentialError = 'Proxy-Authorization: Digest username="owner", response="digest-secret"';
+    const credentialTool: Tool = {
+      definition: {
+        name: "credential_diagnostic",
+        description: "returns a credential-shaped diagnostic result",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "credential_diagnostic",
+          success: false,
+          output: credentialOutput,
+          error: credentialError,
+          failureKind: "environment_error",
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [credentialTool],
+      workspaceRoot: "/tmp/test",
+      auditLogger: (log) => auditLogs.push(log),
+    });
+
+    const result = await executor.execute({
+      id: "req-audit-credential-schemes",
+      name: "credential_diagnostic",
+      arguments: {},
+    }, "conv-audit");
+
+    expect(result.output).toBe(credentialOutput);
+    expect(result.error).toBe(credentialError);
+    await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
+    const serializedAudit = JSON.stringify(auditLogs[0]);
+    expect(serializedAudit).not.toContain("dXNlcjpwYXNz");
+    expect(serializedAudit).not.toContain("digest-secret");
+    expect(serializedAudit).not.toContain("url-password");
+  });
+
+  it("fingerprints audit output and errors without retaining unknown business secrets", async () => {
+    const auditLogs: any[] = [];
+    const output = "tenantOpaqueValue=customer-private-output";
+    const error = "internalMarker=customer-private-error";
+    const diagnosticTool: Tool = {
+      definition: {
+        name: "opaque_diagnostic",
+        description: "returns opaque business diagnostics",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "opaque_diagnostic",
+          success: false,
+          output,
+          error,
+          failureKind: "business_logic_error",
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [diagnosticTool],
+      workspaceRoot: "/tmp/test",
+      auditLogger: (log) => auditLogs.push(log),
+    });
+
+    const result = await executor.execute({
+      id: "req-audit-opaque-content",
+      name: "opaque_diagnostic",
+      arguments: {},
+    }, "conv-audit");
+
+    expect(result.output).toBe(output);
+    expect(result.error).toBe(error);
+    await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
+    expect(auditLogs[0]).not.toHaveProperty("output");
+    expect(auditLogs[0]).not.toHaveProperty("error");
+    expect(auditLogs[0]).toMatchObject({
+      outputSummary: {
+        bytes: Buffer.byteLength(output, "utf-8"),
+        sha256: crypto.createHash("sha256").update(output, "utf-8").digest("hex"),
+      },
+      errorSummary: {
+        bytes: Buffer.byteLength(error, "utf-8"),
+        sha256: crypto.createHash("sha256").update(error, "utf-8").digest("hex"),
+      },
+      failureKind: "business_logic_error",
+    });
+    expect(JSON.stringify(auditLogs[0])).not.toContain("customer-private");
+  });
+
+  it("fingerprints audit arguments and retains only the ackMatched routing flag", async () => {
+    const auditLogs: any[] = [];
+    const argumentsValue = {
+      ackMatched: true,
+      tenantOpaqueValue: "customer-private-argument",
+    };
+    const serializedArguments = JSON.stringify(argumentsValue);
+    const argumentTool: Tool = {
+      definition: {
+        name: "argument_diagnostic",
+        description: "accepts opaque business diagnostics",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "argument_diagnostic",
+          success: true,
+          output: "ok",
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [argumentTool],
+      workspaceRoot: "/tmp/test",
+      auditLogger: (log) => auditLogs.push(log),
+    });
+
+    const result = await executor.execute({
+      id: "req-audit-opaque-arguments",
+      name: "argument_diagnostic",
+      arguments: argumentsValue,
+    }, "conv-audit");
+
+    expect(result.success).toBe(true);
+    await vi.waitFor(() => expect(auditLogs).toHaveLength(1));
+    expect(auditLogs[0]).not.toHaveProperty("arguments");
+    expect(auditLogs[0]).toMatchObject({
+      safeArguments: { ackMatched: true },
+      argumentsSummary: {
+        bytes: Buffer.byteLength(serializedArguments, "utf-8"),
+        sha256: crypto.createHash("sha256").update(serializedArguments, "utf-8").digest("hex"),
+      },
+    });
+    expect(JSON.stringify(auditLogs[0])).not.toContain("customer-private-argument");
   });
 
   it("returns a Tool result before the audit sink executes", async () => {
@@ -1327,6 +1480,49 @@ describe("ToolExecutor", () => {
 
     expect(executor.getTokenCounter("conv-release")).toBeUndefined();
     expect((executor as any).loadedDeferredToolNames.has("conv-release")).toBe(false);
+  });
+
+  it("isolates tool conversation cleanup failures and continues releasing state", () => {
+    const logger = { warn: vi.fn() };
+    const successfulRelease = vi.fn();
+    const failingTool = {
+      ...echoTool,
+      definition: { ...echoTool.definition, name: "failing_release" },
+      releaseConversation() {
+        throw new Error("fixture release failure");
+      },
+    } as Tool & { releaseConversation(conversationId: string): void };
+    const successfulTool = {
+      ...echoTool,
+      definition: { ...echoTool.definition, name: "successful_release" },
+      releaseConversation: successfulRelease,
+    } as Tool & { releaseConversation(conversationId: string): void };
+    const executor = new ToolExecutor({
+      tools: [failingTool, successfulTool],
+      workspaceRoot: "/tmp/test",
+      logger,
+    });
+    const counter = {
+      start() {},
+      stop() {
+        return { name: "test", inputTokens: 0, outputTokens: 0, totalTokens: 0, durationMs: 0 };
+      },
+      list() {
+        return [];
+      },
+      notifyUsage() {},
+      cleanup() {
+        return [];
+      },
+    };
+    executor.setTokenCounter("conv-tool-release", counter);
+
+    expect(() => executor.releaseConversation("conv-tool-release")).not.toThrow();
+
+    expect(executor.getTokenCounter("conv-tool-release")).toBeUndefined();
+    expect(successfulRelease).toHaveBeenCalledWith("conv-tool-release");
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("failing_release: Error"));
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("fixture release failure"));
   });
 
   it("should preserve multiline string arguments and trim enum values only", async () => {

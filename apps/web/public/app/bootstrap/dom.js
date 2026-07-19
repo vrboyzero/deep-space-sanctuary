@@ -307,6 +307,7 @@ export const APP_DOM_REFS = {
   cfgStarweaverActiveNotifyPollIntervalMs: byId("cfgStarweaverActiveNotifyPollIntervalMs"),
   cfgBrowserRelayEnabled: byId("cfgBrowserRelayEnabled"),
   cfgRelayPort: byId("cfgRelayPort"),
+  cfgBrowserOutboundProfile: byId("cfgBrowserOutboundProfile"),
   cfgMcpEnabled: byId("cfgMcpEnabled"),
   cfgBrowserAllowedDomains: byId("cfgBrowserAllowedDomains"),
   cfgBrowserDeniedDomains: byId("cfgBrowserDeniedDomains"),

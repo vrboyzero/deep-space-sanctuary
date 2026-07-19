@@ -18,6 +18,7 @@
  */
 
 import OpenAI, { toFile } from "openai";
+import { OutboundRequestPolicy } from "@belldandy/protocol";
 import {
     isAbortError,
     raceWithAbort,
@@ -51,6 +52,10 @@ export type TranscribeOptions = {
     prompt?: string;
     /** 协作式中断信号 */
     abortSignal?: AbortSignal;
+    /** DashScope submit/poll 固定 REST 的独立出站策略。 */
+    dashScopeRestOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
+    /** DashScope 返回转录 JSON 的独立出站策略；主要用于受控宿主与测试 transport。 */
+    dashScopeAssetOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
 };
 
 export type TranscribeResult = {
@@ -74,6 +79,12 @@ type TranscriptionResponse = {
     text: string;
     durationSec?: number;
 };
+
+const DASHSCOPE_ASSET_MAX_REDIRECTS = 3;
+const DASHSCOPE_ASSET_IDLE_TIMEOUT_MS = 15_000;
+const DASHSCOPE_TRANSCRIPTION_MAX_BYTES = 1024 * 1024;
+const DASHSCOPE_REST_MAX_REDIRECTS = 0;
+const DASHSCOPE_REST_IDLE_TIMEOUT_MS = 15_000;
 
 // ─── 主入口 ─────────────────────────────────────────────────
 
@@ -105,7 +116,16 @@ export async function transcribeSpeech(
             case "groq":
                 return await transcribeGroq(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal);
             case "dashscope":
-                return await transcribeDashScope(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal);
+                return await transcribeDashScope(
+                    opts.buffer,
+                    opts.fileName,
+                    language,
+                    model,
+                    opts.prompt,
+                    opts.abortSignal,
+                    opts.dashScopeRestOutboundRequestPolicy,
+                    opts.dashScopeAssetOutboundRequestPolicy,
+                );
             case "openai":
             default:
                 return await transcribeOpenAI(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal);
@@ -165,6 +185,8 @@ export async function transcribeSpeechWithCache(
                 language: input.language,
                 prompt: input.prompt,
                 abortSignal: input.abortSignal,
+                dashScopeRestOutboundRequestPolicy: input.dashScopeRestOutboundRequestPolicy,
+                dashScopeAssetOutboundRequestPolicy: input.dashScopeAssetOutboundRequestPolicy,
             });
             if (result?.text) {
                 await writeCachedAudioTranscription({
@@ -289,6 +311,8 @@ async function transcribeDashScope(
     model: string,
     prompt?: string,
     abortSignal?: AbortSignal,
+    restOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">,
+    assetOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">,
 ): Promise<TranscribeResult> {
     const apiKey = process.env.DASHSCOPE_API_KEY?.trim();
     if (!apiKey) throw new Error("DASHSCOPE_API_KEY 未设置，无法使用 DashScope STT");
@@ -296,11 +320,16 @@ async function transcribeDashScope(
     throwIfAborted(abortSignal);
     const submitUrl =
         "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription";
+    const restPolicy = restOutboundRequestPolicy ?? new OutboundRequestPolicy({
+        allowedHosts: ["dashscope.aliyuncs.com"],
+        maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
+    });
 
     const mime = guessMime(fileName);
     const dataUri = `data:${mime};base64,${buffer.toString("base64")}`;
 
-    const submitRes = await fetch(submitUrl, {
+    const { response: submitRes } = await restPolicy.request({
+        url: submitUrl,
         method: "POST",
         headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -317,6 +346,8 @@ async function transcribeDashScope(
             },
         }),
         signal: abortSignal,
+        maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
+        idleTimeoutMs: DASHSCOPE_REST_IDLE_TIMEOUT_MS,
     });
 
     if (!submitRes.ok) {
@@ -333,7 +364,13 @@ async function transcribeDashScope(
         );
     }
 
-    const text = await pollDashScopeResult(apiKey, taskId, abortSignal);
+    const text = await pollDashScopeResult(
+        apiKey,
+        taskId,
+        restPolicy,
+        abortSignal,
+        assetOutboundRequestPolicy,
+    );
 
     return {
         text: text.trim(),
@@ -349,7 +386,9 @@ async function transcribeDashScope(
 async function pollDashScopeResult(
     apiKey: string,
     taskId: string,
+    restOutboundRequestPolicy: Pick<OutboundRequestPolicy, "request">,
     abortSignal?: AbortSignal,
+    assetOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">,
 ): Promise<string> {
     const pollUrl = `https://dashscope.aliyuncs.com/api/v1/tasks/${taskId}`;
     const maxWaitMs = 60_000;
@@ -359,9 +398,13 @@ async function pollDashScopeResult(
     while (Date.now() - startTime < maxWaitMs) {
         await sleepWithAbort(pollIntervalMs, abortSignal);
 
-        const res = await fetch(pollUrl, {
+        const { response: res } = await restOutboundRequestPolicy.request({
+            url: pollUrl,
+            method: "GET",
             headers: { Authorization: `Bearer ${apiKey}` },
             signal: abortSignal,
+            maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
+            idleTimeoutMs: DASHSCOPE_REST_IDLE_TIMEOUT_MS,
         });
 
         if (!res.ok) {
@@ -376,13 +419,29 @@ async function pollDashScopeResult(
             if (Array.isArray(results) && results.length > 0) {
                 const transcriptionUrl = results[0]?.transcription_url;
                 if (transcriptionUrl) {
-                    const trRes = await fetch(transcriptionUrl, { signal: abortSignal });
+                    const assetPolicy = assetOutboundRequestPolicy ?? new OutboundRequestPolicy({
+                        // DashScope signed transcription results are served from Alibaba Cloud service hosts.
+                        allowedHosts: ["aliyuncs.com"],
+                        maxRedirects: DASHSCOPE_ASSET_MAX_REDIRECTS,
+                    });
+                    const { response: trRes } = await assetPolicy.request({
+                        url: transcriptionUrl,
+                        signal: abortSignal,
+                        maxRedirects: DASHSCOPE_ASSET_MAX_REDIRECTS,
+                        idleTimeoutMs: DASHSCOPE_ASSET_IDLE_TIMEOUT_MS,
+                    });
                     if (trRes.ok) {
-                        const trData: any = await trRes.json();
+                        const trData: any = await readBoundedJsonResponse(
+                            trRes,
+                            DASHSCOPE_TRANSCRIPTION_MAX_BYTES,
+                            abortSignal,
+                        );
                         const transcripts = trData?.transcripts || trData?.result?.transcripts;
                         if (Array.isArray(transcripts) && transcripts.length > 0) {
                             return transcripts.map((t: any) => t.text || "").join(" ");
                         }
+                    } else {
+                        await cancelResponseBody(trRes);
                     }
                 }
                 const directText = results[0]?.text;
@@ -403,6 +462,65 @@ async function pollDashScopeResult(
     }
 
     throw new Error(`DashScope 转录超时 (${maxWaitMs / 1000}s)`);
+}
+
+async function readBoundedJsonResponse(
+    response: Pick<Response, "body" | "headers">,
+    maxBytes: number,
+    abortSignal?: AbortSignal,
+): Promise<unknown> {
+    const body = response.body;
+    if (!body) throw new Error("DashScope 转录结果无可读正文");
+
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null) {
+        if (!/^\d+$/u.test(declaredLength.trim())) {
+            await cancelResponseBody(response);
+            throw new Error("DashScope 转录结果 Content-Length 无效");
+        }
+        if (Number(declaredLength) > maxBytes) {
+            await cancelResponseBody(response);
+            throw new Error(`DashScope 转录结果超过 ${maxBytes} 字节上限`);
+        }
+    }
+
+    const reader = body.getReader();
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    let completed = false;
+    try {
+        while (true) {
+            throwIfAborted(abortSignal);
+            const next = await raceWithAbort(reader.read(), abortSignal);
+            if (next.done) {
+                completed = true;
+                break;
+            }
+            const chunk = Buffer.from(next.value.buffer, next.value.byteOffset, next.value.byteLength);
+            byteLength += chunk.length;
+            if (byteLength > maxBytes) {
+                throw new Error(`DashScope 转录结果超过 ${maxBytes} 字节上限`);
+            }
+            chunks.push(chunk);
+        }
+    } catch (error) {
+        if (!completed) {
+            await reader.cancel(error).catch(() => undefined);
+        }
+        throw error;
+    } finally {
+        reader.releaseLock();
+    }
+    throwIfAborted(abortSignal);
+    return JSON.parse(Buffer.concat(chunks, byteLength).toString("utf8"));
+}
+
+async function cancelResponseBody(response: Pick<Response, "body">): Promise<void> {
+    try {
+        await response.body?.cancel();
+    } catch {
+        // 正文已决定不再消费，取消失败不得覆盖原始 policy 或字节限额结果。
+    }
 }
 
 // ─── 工具函数 ───────────────────────────────────────────────

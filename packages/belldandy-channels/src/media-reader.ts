@@ -1,10 +1,15 @@
+import type { OutboundRequestPolicy } from "@belldandy/protocol";
+
 export type BoundedMediaFetch = (input: string, init?: RequestInit) => Promise<Response>;
+export type BoundedMediaRequestPolicy = Pick<OutboundRequestPolicy, "request">;
 
 export type BoundedMediaReadOptions = {
   url: string;
   label: string;
   timeoutMs: number;
   maxBytes: number;
+  signal?: AbortSignal;
+  requestPolicy?: BoundedMediaRequestPolicy;
   fetchImpl?: BoundedMediaFetch;
 };
 
@@ -24,7 +29,7 @@ function readDeclaredContentLength(response: Response): number | undefined {
 
 /**
  * 使用响应体流而非 `arrayBuffer()` 累积远端媒体，避免 header 到达后失去总 deadline 或突破内存上限。
- * URL/host 信任策略由上层 Adapter 决定；本模块只负责已批准请求的时间和字节边界。
+ * URL/host 信任策略由上层 Adapter 注入；本模块负责总 deadline、idle timeout 和字节边界。
  */
 export async function readBoundedMediaBuffer(options: BoundedMediaReadOptions): Promise<Buffer> {
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
@@ -35,16 +40,32 @@ export async function readBoundedMediaBuffer(options: BoundedMediaReadOptions): 
   }
 
   const controller = new AbortController();
+  const forwardAbort = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) {
+    forwardAbort();
+  } else {
+    options.signal?.addEventListener("abort", forwardAbort, { once: true });
+  }
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const fetchImpl = options.fetchImpl ?? fetch;
   try {
-    const response = await fetchImpl(options.url, { signal: controller.signal });
+    const response = options.requestPolicy
+      ? (await options.requestPolicy.request({
+          url: options.url,
+          signal: controller.signal,
+          idleTimeoutMs: options.timeoutMs,
+        })).response
+      : await fetchImpl(options.url, { signal: controller.signal });
     if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
       throw new Error(`Failed to read ${options.label}: HTTP ${response.status}`);
     }
 
     const declaredContentLength = readDeclaredContentLength(response);
     if (declaredContentLength !== undefined) {
+      if (declaredContentLength > options.maxBytes) {
+        await response.body?.cancel().catch(() => undefined);
+      }
       assertByteLimit(declaredContentLength, options);
     }
 
@@ -81,5 +102,6 @@ export async function readBoundedMediaBuffer(options: BoundedMediaReadOptions): 
     }
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener("abort", forwardAbort);
   }
 }

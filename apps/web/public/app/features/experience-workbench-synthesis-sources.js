@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -19,14 +21,17 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
   escapeHtml = (value) => String(value ?? ""),
   onSelectionChange,
 } = {}) {
+  const taskScope = createPanelTaskScope();
   let availableSourceIds = [];
   let selectedSourceIds = new Set();
   let relationBySourceId = new Map();
   let seedSourceId = "";
   let maxRelatedSourceCount = 0;
   let initialized = false;
-  let bound = false;
-  let disposed = false;
+
+  function isDisposed() {
+    return taskScope.getRuntimeSnapshot().disposed;
+  }
 
   function resetSelectionState() {
     availableSourceIds = [];
@@ -38,7 +43,7 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
   }
 
   function setPreview(preview) {
-    if (disposed || !preview || typeof preview !== "object") return;
+    if (isDisposed() || !preview || typeof preview !== "object") return;
     const items = Array.isArray(preview.items) ? preview.items : [];
     const requestedSourceIds = Array.isArray(preview.sourceCandidateIds)
       ? preview.sourceCandidateIds
@@ -77,11 +82,12 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
   }
 
   function getSelectedSourceIds() {
-    if (disposed || !initialized) return [];
+    if (isDisposed() || !initialized) return [];
     return availableSourceIds.filter((candidateId) => selectedSourceIds.has(candidateId));
   }
 
   function getSelectionSnapshot() {
+    const runtimeSnapshot = taskScope.getRuntimeSnapshot();
     const selectedIds = getSelectedSourceIds();
     let selectedSameFamilyCount = 0;
     let selectedSimilarCount = 0;
@@ -94,14 +100,15 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
       }
     }
     return {
-      availableSourceCount: disposed ? 0 : availableSourceIds.length,
+      availableSourceCount: runtimeSnapshot.disposed ? 0 : availableSourceIds.length,
       selectedSourceCount: selectedIds.length,
       selectedSameFamilyCount,
       selectedSimilarCount,
-      maxRelatedSourceCount: disposed ? 0 : maxRelatedSourceCount,
-      initialized: initialized && !disposed,
-      bound,
-      disposed,
+      maxRelatedSourceCount: runtimeSnapshot.disposed ? 0 : maxRelatedSourceCount,
+      initialized: initialized && !runtimeSnapshot.disposed,
+      bound: runtimeSnapshot.active,
+      listenerCount: runtimeSnapshot.listenerCount,
+      disposed: runtimeSnapshot.disposed,
     };
   }
 
@@ -112,7 +119,7 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
     const required = normalizedCandidateId === seedSourceId;
     const selectedRelatedCount = selectedSourceIds.size - (seedSourceId && selectedSourceIds.has(seedSourceId) ? 1 : 0);
     const capacityReached = !selected && selectedRelatedCount >= maxRelatedSourceCount;
-    const inputDisabled = disabled || required || capacityReached || disposed;
+    const inputDisabled = disabled || required || capacityReached || isDisposed();
     const safeLabel = escapeHtml(normalizeText(label));
     return `
       <label class="experience-synthesis-source-select${required ? " is-required" : ""}">
@@ -129,7 +136,7 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
   }
 
   function handleChange(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const target = event?.target;
     const candidateId = normalizeText(target?.getAttribute?.("data-synthesis-source-id"));
     if (!candidateId || !availableSourceIds.includes(candidateId)) return;
@@ -152,28 +159,37 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
     if (root) root.scrollTop = scrollTop;
   }
 
+  function activate() {
+    if (taskScope.isActive() || !root || typeof root.addEventListener !== "function") return false;
+    if (!taskScope.activate()) return false;
+    taskScope.addEventListener(root, "change", handleChange);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
+
   function bind() {
-    if (disposed || bound || !root) return;
-    root.addEventListener("change", handleChange);
-    bound = true;
+    return activate();
   }
 
   function clear() {
-    if (disposed) return;
+    if (isDisposed()) return;
     resetSelectionState();
   }
 
   function dispose() {
-    if (disposed) return;
-    if (bound && root) root.removeEventListener("change", handleChange);
-    bound = false;
+    if (!taskScope.dispose()) return false;
     resetSelectionState();
-    disposed = true;
+    return true;
   }
 
   return {
+    activate,
     bind,
     clear,
+    deactivate,
     dispose,
     getSelectedSourceIds,
     getSelectionSnapshot,

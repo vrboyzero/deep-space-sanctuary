@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createMemorySharedReviewFilterControlsFeature({
   refs = {},
   state,
@@ -11,13 +13,11 @@ export function createMemorySharedReviewFilterControlsFeature({
     memorySharedReviewClaimedByFilterEl,
     memorySharedReviewClearFiltersBtn,
   } = refs;
-  const listenerEntries = [];
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
   function addOwnedListener(target, type, handler) {
     if (!target) return;
-    target.addEventListener(type, handler);
-    listenerEntries.push({ target, type, handler });
+    taskScope.addEventListener(target, type, handler);
   }
 
   function mergeCurrentFilters(updates) {
@@ -34,56 +34,60 @@ export function createMemorySharedReviewFilterControlsFeature({
     }
   }
 
-  addOwnedListener(memorySharedReviewFocusFilterEl, "change", () => {
-    if (disposed) return;
-    const next = String(memorySharedReviewFocusFilterEl.value || "").trim();
-    mergeCurrentFilters({
-      focus: next === "actionable" || next === "mine" ? next : "",
-      claimedByAgentId: "",
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedListener(memorySharedReviewFocusFilterEl, "change", () => {
+      const next = String(memorySharedReviewFocusFilterEl.value || "").trim();
+      mergeCurrentFilters({
+        focus: next === "actionable" || next === "mine" ? next : "",
+        claimedByAgentId: "",
+      });
+      getMemoryViewerFeature?.()?.syncSharedReviewFilterUi?.();
+      reloadIfActive();
     });
-    getMemoryViewerFeature?.()?.syncSharedReviewFilterUi?.();
-    reloadIfActive();
-  });
-  addOwnedListener(memorySharedReviewTargetFilterEl, "change", () => {
-    if (disposed) return;
-    mergeCurrentFilters({
-      targetAgentId: String(memorySharedReviewTargetFilterEl.value || "").trim(),
+    addOwnedListener(memorySharedReviewTargetFilterEl, "change", () => {
+      mergeCurrentFilters({
+        targetAgentId: String(memorySharedReviewTargetFilterEl.value || "").trim(),
+      });
+      reloadIfActive();
     });
-    reloadIfActive();
-  });
-  addOwnedListener(memorySharedReviewClaimedByFilterEl, "change", () => {
-    if (disposed) return;
-    mergeCurrentFilters({
-      focus: "",
-      claimedByAgentId: String(memorySharedReviewClaimedByFilterEl.value || "").trim(),
+    addOwnedListener(memorySharedReviewClaimedByFilterEl, "change", () => {
+      mergeCurrentFilters({
+        focus: "",
+        claimedByAgentId: String(memorySharedReviewClaimedByFilterEl.value || "").trim(),
+      });
+      getMemoryViewerFeature?.()?.syncSharedReviewFilterUi?.();
+      reloadIfActive();
     });
-    getMemoryViewerFeature?.()?.syncSharedReviewFilterUi?.();
-    reloadIfActive();
-  });
-  addOwnedListener(memorySharedReviewClearFiltersBtn, "click", () => {
-    if (disposed) return;
-    state.sharedReviewFilters = createDefaultSharedReviewFilters();
-    getMemoryViewerFeature?.()?.syncSharedReviewFilterUi?.();
-    reloadIfActive();
-  });
+    addOwnedListener(memorySharedReviewClearFiltersBtn, "click", () => {
+      state.sharedReviewFilters = createDefaultSharedReviewFilters();
+      getMemoryViewerFeature?.()?.syncSharedReviewFilterUi?.();
+      reloadIfActive();
+    });
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, type, handler } of listenerEntries) {
-      target.removeEventListener(type, handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

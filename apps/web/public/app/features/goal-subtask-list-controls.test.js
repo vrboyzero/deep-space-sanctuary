@@ -37,7 +37,11 @@ describe("goal and subtask list controls lifecycle", () => {
     const subtasksArchived = document.getElementById("subtasks-archived");
     expect(goalsArchived.checked).toBe(true);
     expect(subtasksArchived.checked).toBe(false);
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 4, disposed: false });
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: true,
+      listenerCount: 4,
+      disposed: false,
+    });
 
     document.getElementById("goals-refresh").click();
     document.getElementById("subtasks-refresh").click();
@@ -53,19 +57,60 @@ describe("goal and subtask list controls lifecycle", () => {
     expect(loadSubtasks).toHaveBeenCalledTimes(2);
     expect(loadSubtasks).toHaveBeenCalledWith(true);
 
-    feature.dispose();
-    feature.dispose();
+    expect(feature.deactivate()).toBe(true);
     goalsArchived.checked = true;
     subtasksArchived.checked = false;
     document.getElementById("goals-refresh").click();
     document.getElementById("subtasks-refresh").click();
     goalsArchived.dispatchEvent(new Event("change"));
     subtasksArchived.dispatchEvent(new Event("change"));
-
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: false,
+      listenerCount: 0,
+      disposed: false,
+    });
     expect(goalsState.includeArchived).toBe(false);
     expect(subtasksState.includeArchived).toBe(true);
     expect(loadGoals).toHaveBeenCalledTimes(2);
     expect(loadSubtasks).toHaveBeenCalledTimes(2);
+
+    expect(feature.activate()).toBe(true);
+    expect(goalsArchived.checked).toBe(false);
+    expect(subtasksArchived.checked).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: true,
+      listenerCount: 4,
+      disposed: false,
+    });
+    document.getElementById("goals-refresh").click();
+    document.getElementById("subtasks-refresh").click();
+    goalsArchived.checked = true;
+    goalsArchived.dispatchEvent(new Event("change"));
+    subtasksArchived.checked = false;
+    subtasksArchived.dispatchEvent(new Event("change"));
+    expect(goalsState.includeArchived).toBe(true);
+    expect(subtasksState.includeArchived).toBe(false);
+    expect(loadGoals).toHaveBeenCalledTimes(4);
+    expect(loadSubtasks).toHaveBeenCalledTimes(4);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    goalsArchived.checked = false;
+    subtasksArchived.checked = true;
+    document.getElementById("goals-refresh").click();
+    document.getElementById("subtasks-refresh").click();
+    goalsArchived.dispatchEvent(new Event("change"));
+    subtasksArchived.dispatchEvent(new Event("change"));
+
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: false,
+      listenerCount: 0,
+      disposed: true,
+    });
+    expect(goalsState.includeArchived).toBe(true);
+    expect(subtasksState.includeArchived).toBe(false);
+    expect(loadGoals).toHaveBeenCalledTimes(4);
+    expect(loadSubtasks).toHaveBeenCalledTimes(4);
   });
 });

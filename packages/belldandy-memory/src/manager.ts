@@ -160,7 +160,8 @@ import type {
     MemoryTreeSourceRebuildResult,
 } from "./memory-tree-types.js";
 import { BackgroundAbortRegistry, BackgroundPauseGate } from "./background-job-control.js";
-import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
+import { requestMemoryChunkSummaryModel } from "./memory-chunk-summary-model-request.js";
+import { requestMemoryEvolutionModel } from "./memory-evolution-model-request.js";
 import type {
     TaskActivityRecord,
     TaskConversationStore,
@@ -4837,13 +4838,11 @@ export class MemoryManager {
     private async callLLMForSummary(content: string): Promise<string | null> {
         const truncated = content.length > 4000 ? content.slice(0, 4000) + "..." : content;
 
-        const response = await fetch(buildOpenAIChatCompletionsUrl(this.summaryBaseUrl), {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${this.summaryApiKey}`,
-            },
-            body: JSON.stringify({
+        const data = await requestMemoryChunkSummaryModel({
+            baseUrl: this.summaryBaseUrl,
+            apiKey: this.summaryApiKey,
+            timeoutMs: 120_000,
+            payload: {
                 model: this.summaryModel,
                 messages: [
                     {
@@ -4857,17 +4856,8 @@ export class MemoryManager {
                 ],
                 max_tokens: 150,
                 temperature: 0.3,
-            }),
+            },
         });
-
-        if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            throw new Error(`Summary LLM call failed: ${response.status} ${text.slice(0, 200)}`);
-        }
-
-        const data = await response.json() as {
-            choices?: Array<{ message?: { content?: string } }>;
-        };
         const result = data.choices?.[0]?.message?.content?.trim();
         return result || null;
     }
@@ -5275,29 +5265,18 @@ candidateType 必须是以下之一：user / feedback / project / reference
         if (shouldEnableMiniMaxReasoningSplit(this.evolutionBaseUrl, this.evolutionModel)) {
             requestBody.reasoning_split = true;
         }
-        const response = await this.evolutionRequests.run({
+        const data = await this.evolutionRequests.run({
             timeoutMs: this.evolutionTimeoutMs,
             fallbackTimeoutMs: 120_000,
             timeoutMessage: (timeoutMs) => `Evolution LLM call timed out after ${timeoutMs}ms.`,
-            operation: (signal) => fetch(buildOpenAIChatCompletionsUrl(this.evolutionBaseUrl), {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${this.evolutionApiKey}`,
-                },
-                body: JSON.stringify(requestBody),
+            operation: (signal) => requestMemoryEvolutionModel({
+                baseUrl: this.evolutionBaseUrl,
+                apiKey: this.evolutionApiKey,
+                payload: requestBody,
                 signal,
+                idleTimeoutMs: this.evolutionTimeoutMs,
             }),
         });
-
-        if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            throw new Error(`Evolution LLM call failed: ${response.status} ${text.slice(0, 200)}`);
-        }
-
-        const data = await response.json() as {
-            choices?: Array<{ message?: { content?: string } }>;
-        };
         const raw = data.choices?.[0]?.message?.content?.trim();
         if (!raw) return null;
 

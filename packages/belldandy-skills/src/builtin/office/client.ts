@@ -1,12 +1,22 @@
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { resolveStateDir } from "@belldandy/protocol";
+import {
+  OutboundRequestPolicy,
+  resolveStateDir,
+  type OutboundRequestInit,
+  type OutboundRequestPolicyOptions,
+} from "@belldandy/protocol";
 import type { ToolContext } from "../../types.js";
 import { throwIfAborted, toAbortError } from "../../abort-utils.js";
 import {
   persistBoundedResponseToFile,
   type BoundedResponseFileResult,
 } from "../remote-response-file.js";
+import {
+  readBoundedOfficeJsonResponse,
+  readBoundedOfficeResponseText,
+} from "./response-reader.js";
+import { serializeOfficeMultipartForm } from "./multipart-form.js";
 
 export type OfficeCommunityAgentConfig = {
   name: string;
@@ -27,6 +37,34 @@ type OfficeApiErrorBody = {
   message?: string;
 };
 
+export type OfficeRequestPolicyFactory = (
+  options: OutboundRequestPolicyOptions,
+) => Pick<OutboundRequestPolicy, "request">;
+
+export type OfficeDownloadRequestPolicyFactory = OfficeRequestPolicyFactory;
+export type OfficeGetJsonRequestPolicyFactory = OfficeRequestPolicyFactory;
+export type OfficeJsonMutationRequestPolicyFactory = OfficeRequestPolicyFactory;
+export type OfficeFormPublishRequestPolicyFactory = OfficeRequestPolicyFactory;
+
+export type OfficeSiteClientDependencies = {
+  createDownloadOutboundRequestPolicy?: OfficeDownloadRequestPolicyFactory;
+  createGetJsonOutboundRequestPolicy?: OfficeGetJsonRequestPolicyFactory;
+  createJsonMutationOutboundRequestPolicy?: OfficeJsonMutationRequestPolicyFactory;
+  createFormPublishOutboundRequestPolicy?: OfficeFormPublishRequestPolicyFactory;
+};
+
+let officeSiteClientTestDependencies: OfficeSiteClientDependencies | undefined;
+
+/** 测试只替换外部 DNS/transport capability；每个 fixture 必须在 afterEach 重置。 */
+export function __setOfficeSiteClientDependenciesForTests(
+  dependencies: OfficeSiteClientDependencies | undefined,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("OfficeSiteClient test dependencies are only available in the test environment.");
+  }
+  officeSiteClientTestDependencies = dependencies;
+}
+
 const SENSITIVE_PATTERNS = [
   ".env",
   ".env.local",
@@ -45,6 +83,15 @@ const SENSITIVE_PATTERNS = [
 ];
 
 const DEFAULT_BELLDANDY_AGENT_LOOKUP_KEY = "__default_belldandy__";
+const OFFICE_DOWNLOAD_MAX_REDIRECTS = 0;
+const OFFICE_DOWNLOAD_IDLE_TIMEOUT_MS = 15_000;
+const OFFICE_GET_JSON_MAX_REDIRECTS = 0;
+const OFFICE_GET_JSON_IDLE_TIMEOUT_MS = 15_000;
+const OFFICE_JSON_MAX_RESPONSE_BYTES = 1024 * 1024;
+const OFFICE_JSON_MUTATION_MAX_REDIRECTS = 0;
+const OFFICE_JSON_MUTATION_IDLE_TIMEOUT_MS = 15_000;
+const OFFICE_FORM_PUBLISH_MAX_REDIRECTS = 0;
+const OFFICE_FORM_PUBLISH_IDLE_TIMEOUT_MS = 15_000;
 
 function normalizeAgentLookupName(input: string): string {
   return input.trim().replace(/[\s_-]+/g, "").toLowerCase();
@@ -211,8 +258,20 @@ export class OfficeSiteClient {
   private readonly endpoint: string;
   private readonly agentConfig: OfficeCommunityAgentConfig;
   private readonly abortSignal?: AbortSignal;
+  private readonly createDownloadOutboundRequestPolicy: OfficeDownloadRequestPolicyFactory;
+  private readonly createGetJsonOutboundRequestPolicy: OfficeGetJsonRequestPolicyFactory;
+  private readonly createJsonMutationOutboundRequestPolicy: OfficeJsonMutationRequestPolicyFactory;
+  private readonly createFormPublishOutboundRequestPolicy: OfficeFormPublishRequestPolicyFactory;
 
-  constructor(agentName: string, abortSignal?: AbortSignal) {
+  constructor(
+    agentName: string,
+    abortSignal?: AbortSignal,
+    dependencies: OfficeSiteClientDependencies = {},
+  ) {
+    const resolvedDependencies = {
+      ...officeSiteClientTestDependencies,
+      ...dependencies,
+    };
     const config = this.loadConfig();
     this.endpoint = config.endpoint.replace(/\/+$/, "");
     this.agentConfig = findAgentConfig(config.agents, agentName)
@@ -220,6 +279,14 @@ export class OfficeSiteClient {
         throw new Error(`community.json 未找到 Agent 配置: ${agentName}`);
       })();
     this.abortSignal = abortSignal;
+    this.createDownloadOutboundRequestPolicy = resolvedDependencies.createDownloadOutboundRequestPolicy
+      ?? ((options) => new OutboundRequestPolicy(options));
+    this.createGetJsonOutboundRequestPolicy = resolvedDependencies.createGetJsonOutboundRequestPolicy
+      ?? ((options) => new OutboundRequestPolicy(options));
+    this.createJsonMutationOutboundRequestPolicy = resolvedDependencies.createJsonMutationOutboundRequestPolicy
+      ?? ((options) => new OutboundRequestPolicy(options));
+    this.createFormPublishOutboundRequestPolicy = resolvedDependencies.createFormPublishOutboundRequestPolicy
+      ?? ((options) => new OutboundRequestPolicy(options));
 
     if (!this.agentConfig.apiKey) {
       throw new Error(`Agent ${agentName} 缺少 apiKey 配置`);
@@ -247,11 +314,48 @@ export class OfficeSiteClient {
   }
 
   async getJson<T>(apiPath: string): Promise<T> {
-    return this.requestJson<T>(apiPath, { method: "GET" });
+    throwIfAborted(this.abortSignal);
+    const requestUrl = this.buildUrl(apiPath);
+    const endpointHost = new URL(this.endpoint).hostname;
+    const requestPolicy = this.createGetJsonOutboundRequestPolicy({
+      allowedHosts: [endpointHost],
+      maxRedirects: OFFICE_GET_JSON_MAX_REDIRECTS,
+    });
+    let res: Response;
+    try {
+      const result = await requestPolicy.request({
+        url: requestUrl,
+        method: "GET",
+        headers: {
+          ...this.buildHeaders(),
+          "Accept-Encoding": "identity",
+        },
+        signal: this.abortSignal,
+        maxRedirects: OFFICE_GET_JSON_MAX_REDIRECTS,
+        idleTimeoutMs: OFFICE_GET_JSON_IDLE_TIMEOUT_MS,
+      });
+      res = result.response;
+    } catch (error) {
+      if (this.abortSignal?.aborted) {
+        throw toAbortError(this.abortSignal.reason);
+      }
+      throw error;
+    }
+
+    if (!res.ok) {
+      throw await this.buildBoundedJsonResponseError(res);
+    }
+
+    throwIfAborted(this.abortSignal);
+    return await readBoundedOfficeJsonResponse({
+      response: res,
+      maxBytes: OFFICE_JSON_MAX_RESPONSE_BYTES,
+      abortSignal: this.abortSignal,
+    }) as T;
   }
 
   async postJson<T>(apiPath: string, body: unknown): Promise<T> {
-    return this.requestJson<T>(apiPath, {
+    return this.requestJsonMutation<T>(apiPath, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -259,7 +363,7 @@ export class OfficeSiteClient {
   }
 
   async putJson<T>(apiPath: string, body: unknown): Promise<T> {
-    return this.requestJson<T>(apiPath, {
+    return this.requestJsonMutation<T>(apiPath, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -267,16 +371,54 @@ export class OfficeSiteClient {
   }
 
   async deleteJson<T>(apiPath: string): Promise<T> {
-    return this.requestJson<T>(apiPath, {
+    return this.requestJsonMutation<T>(apiPath, {
       method: "DELETE",
     });
   }
 
   async postForm<T>(apiPath: string, form: FormData): Promise<T> {
-    return this.requestJson<T>(apiPath, {
-      method: "POST",
-      body: form,
+    throwIfAborted(this.abortSignal);
+    const requestUrl = this.buildUrl(apiPath);
+    const endpointHost = new URL(this.endpoint).hostname;
+    const requestPolicy = this.createFormPublishOutboundRequestPolicy({
+      allowedHosts: [endpointHost],
+      maxRedirects: OFFICE_FORM_PUBLISH_MAX_REDIRECTS,
     });
+    const multipart = await serializeOfficeMultipartForm(form, this.abortSignal);
+    let res: Response;
+    try {
+      const result = await requestPolicy.request({
+        url: requestUrl,
+        method: "POST",
+        headers: {
+          ...this.buildHeaders(),
+          "Content-Type": multipart.contentType,
+          "Content-Length": String(multipart.body.byteLength),
+          "Accept-Encoding": "identity",
+        },
+        body: multipart.body,
+        signal: this.abortSignal,
+        maxRedirects: OFFICE_FORM_PUBLISH_MAX_REDIRECTS,
+        idleTimeoutMs: OFFICE_FORM_PUBLISH_IDLE_TIMEOUT_MS,
+      });
+      res = result.response;
+    } catch (error) {
+      if (this.abortSignal?.aborted) {
+        throw toAbortError(this.abortSignal.reason);
+      }
+      throw error;
+    }
+
+    if (!res.ok) {
+      throw await this.buildBoundedJsonResponseError(res);
+    }
+
+    throwIfAborted(this.abortSignal);
+    return await readBoundedOfficeJsonResponse({
+      response: res,
+      maxBytes: OFFICE_JSON_MAX_RESPONSE_BYTES,
+      abortSignal: this.abortSignal,
+    }) as T;
   }
 
   async downloadToFile(apiPath: string, input: {
@@ -285,13 +427,27 @@ export class OfficeSiteClient {
     overwrite: boolean;
   }): Promise<BoundedResponseFileResult> {
     throwIfAborted(this.abortSignal);
+    const downloadUrl = this.buildUrl(apiPath);
+    const endpointHost = new URL(this.endpoint).hostname;
+    // Office 下载携带 API key；只允许配置 endpoint 的已审查首跳，禁止 redirect 重放凭据。
+    const requestPolicy = this.createDownloadOutboundRequestPolicy({
+      allowedHosts: [endpointHost],
+      maxRedirects: OFFICE_DOWNLOAD_MAX_REDIRECTS,
+    });
     let res: Response;
     try {
-      res = await fetch(this.buildUrl(apiPath), {
+      const result = await requestPolicy.request({
+        url: downloadUrl,
         method: "GET",
-        headers: this.buildHeaders(),
+        headers: {
+          ...this.buildHeaders(),
+          "Accept-Encoding": "identity",
+        },
         signal: this.abortSignal,
+        maxRedirects: OFFICE_DOWNLOAD_MAX_REDIRECTS,
+        idleTimeoutMs: OFFICE_DOWNLOAD_IDLE_TIMEOUT_MS,
       });
+      res = result.response;
     } catch (error) {
       if (this.abortSignal?.aborted) {
         throw toAbortError(this.abortSignal.reason);
@@ -335,20 +491,34 @@ export class OfficeSiteClient {
     return parsed;
   }
 
-  private async requestJson<T>(apiPath: string, init: RequestInit): Promise<T> {
+  private async requestJsonMutation<T>(
+    apiPath: string,
+    init: Pick<OutboundRequestInit, "method" | "headers" | "body">,
+  ): Promise<T> {
     throwIfAborted(this.abortSignal);
-    const headers = {
-      ...this.buildHeaders(),
-      ...(init.headers ?? {}),
-    };
-
+    const requestUrl = this.buildUrl(apiPath);
+    const endpointHost = new URL(this.endpoint).hostname;
+    // JSON mutation 携带 API key 与可重放 body，只允许配置 endpoint 的已审查首跳。
+    const requestPolicy = this.createJsonMutationOutboundRequestPolicy({
+      allowedHosts: [endpointHost],
+      maxRedirects: OFFICE_JSON_MUTATION_MAX_REDIRECTS,
+    });
     let res: Response;
     try {
-      res = await fetch(this.buildUrl(apiPath), {
-        ...init,
-        headers,
+      const result = await requestPolicy.request({
+        url: requestUrl,
+        method: init.method ?? "POST",
+        headers: {
+          ...this.buildHeaders(),
+          ...(init.headers ?? {}),
+          "Accept-Encoding": "identity",
+        },
+        body: init.body,
         signal: this.abortSignal,
+        maxRedirects: OFFICE_JSON_MUTATION_MAX_REDIRECTS,
+        idleTimeoutMs: OFFICE_JSON_MUTATION_IDLE_TIMEOUT_MS,
       });
+      res = result.response;
     } catch (error) {
       if (this.abortSignal?.aborted) {
         throw toAbortError(this.abortSignal.reason);
@@ -357,11 +527,15 @@ export class OfficeSiteClient {
     }
 
     if (!res.ok) {
-      throw await this.buildResponseError(res);
+      throw await this.buildBoundedJsonResponseError(res);
     }
 
     throwIfAborted(this.abortSignal);
-    return res.json() as Promise<T>;
+    return await readBoundedOfficeJsonResponse({
+      response: res,
+      maxBytes: OFFICE_JSON_MAX_RESPONSE_BYTES,
+      abortSignal: this.abortSignal,
+    }) as T;
   }
 
   private buildHeaders(): Record<string, string> {
@@ -374,6 +548,30 @@ export class OfficeSiteClient {
   private buildUrl(apiPath: string): string {
     if (/^https?:\/\//i.test(apiPath)) return apiPath;
     return `${this.endpoint}${apiPath.startsWith("/") ? apiPath : `/${apiPath}`}`;
+  }
+
+  private async buildBoundedJsonResponseError(res: Response): Promise<Error> {
+    let message = `请求失败 (${res.status})`;
+    if (!res.body) {
+      return new Error(message);
+    }
+    const bodyText = await readBoundedOfficeResponseText({
+      response: res,
+      maxBytes: OFFICE_JSON_MAX_RESPONSE_BYTES,
+      abortSignal: this.abortSignal,
+    });
+    try {
+      const body = JSON.parse(bodyText) as unknown;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const errorBody = body as OfficeApiErrorBody;
+        message = errorBody.error || errorBody.message || message;
+      }
+    } catch {
+      if (bodyText.trim()) {
+        message = bodyText.trim().slice(0, 300);
+      }
+    }
+    return new Error(message);
   }
 
   private async buildResponseError(res: Response): Promise<Error> {

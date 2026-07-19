@@ -1,6 +1,15 @@
 import * as fs from "node:fs";
+import { uploadFileToOpenAICompatible } from "@belldandy/skills/multimedia-upload";
+import type { OutboundRequestPolicy } from "@belldandy/protocol";
 import type { AgentContentPart } from "./index.js";
 import type { ModelProfile } from "./failover-client.js";
+
+const MAX_MOONSHOT_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+export type MoonshotUploadOptions = {
+  abortSignal?: AbortSignal;
+  outboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
+};
 
 /**
  * Shared helper: build a versioned API URL from a base URL + endpoint.
@@ -15,7 +24,7 @@ export function buildUrl(baseUrl: string, endpoint: string): string {
 
 /**
  * Upload a local file to the Moonshot /files endpoint.
- * Uses Node.js 22 native FormData + Blob (no npm form-data dependency).
+ * Reuses the shared bounded streaming upload owner.
  *
  * @returns The file ID from the Moonshot API response.
  */
@@ -24,40 +33,22 @@ export async function uploadFileToMoonshot(
   apiKey: string,
   baseUrl: string,
   purpose: string = "file-extract",
+  options: MoonshotUploadOptions = {},
 ): Promise<string> {
   const stats = fs.statSync(filePath);
-  if (stats.size > 100 * 1024 * 1024) {
+  if (stats.size > MAX_MOONSHOT_UPLOAD_BYTES) {
     throw new Error("Video file too large (>100MB)");
   }
 
-  const buffer = fs.readFileSync(filePath);
-  const fileName = filePath.split(/[\\/]/).pop() ?? "video.mp4";
-
-  // Use native FormData + Blob (Node.js 18+)
-  const blob = new Blob([buffer]);
-  const form = new FormData();
-  form.append("file", blob, fileName);
-  form.append("purpose", purpose);
-
-  const url = buildUrl(baseUrl, "/files");
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      // Do NOT set Content-Type manually — native fetch sets it
-      // automatically with the correct multipart boundary.
-    },
-    body: form,
+  return await uploadFileToOpenAICompatible({
+    filePath,
+    apiKey,
+    baseURL: baseUrl,
+    purpose,
+    maxBytes: MAX_MOONSHOT_UPLOAD_BYTES,
+    abortSignal: options.abortSignal,
+    outboundRequestPolicy: options.outboundRequestPolicy,
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Upload failed: ${response.status} ${text}`);
-  }
-
-  const json = (await response.json()) as { id: string };
-  return json.id;
 }
 
 export type PreprocessResult = {
@@ -88,6 +79,7 @@ export async function preprocessMultimodalContent(
   content: string | Array<AgentContentPart>,
   profile: ModelProfile,
   uploadOverride?: VideoUploadConfig,
+  uploadOptions: MoonshotUploadOptions = {},
 ): Promise<PreprocessResult> {
   if (typeof content === "string") {
     return { content, hadVideoUpload: false };
@@ -108,6 +100,7 @@ export async function preprocessMultimodalContent(
           uploadApiKey,
           uploadBaseUrl,
           "video",
+          uploadOptions,
         );
         newContent.push({
           type: "video_url",

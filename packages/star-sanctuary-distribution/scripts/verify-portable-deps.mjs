@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { getModeLogSuffix, resolveDistributionMode, resolvePortableArtifactRoot } from "./distribution-mode.mjs";
+import {
+  assertRuntimeDependencyReport,
+  createRuntimeDependencyReportTarget,
+} from "./runtime-dependency-report-policy.mjs";
 import { guardedRemovePath } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
@@ -71,22 +75,12 @@ async function main() {
   }
 
   const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
-  const nodePtyOk = mode !== "full"
-    || (report.nodePty?.installed && report.nodePty?.backend === "node-pty");
-
-  if (
-    !report.betterSqlite3?.ok
-    || !report.sqliteVec?.ok
-    || !nodePtyOk
-    || !report.protobufjs?.ok
-    || !report.launcher?.openModule?.ok
-    || !report.browserToolchain?.puppeteerCore?.ok
-    || !report.browserToolchain?.browserToolsModule?.ok
-    || !report.browserToolchain?.readability?.ok
-    || !report.browserToolchain?.turndown?.ok
-  ) {
-    throw new Error(`Portable dependency verification reported failures.\n${JSON.stringify(report, null, 2)}`);
-  }
+  assertRuntimeDependencyReport(report, createRuntimeDependencyReportTarget({
+    mode,
+    platform,
+    arch,
+    nodeAbi: process.versions.modules,
+  }));
 
   console.log(`[portable-verify] Dependency report (${mode}) written to ${reportPath}`);
   console.log(JSON.stringify(report, null, 2));

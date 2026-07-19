@@ -9,7 +9,7 @@ describe("memory shared review filter controls lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("preserves shared review filter transitions until dispose", () => {
+  it("preserves shared review filter transitions only while the controls are active", () => {
     document.body.innerHTML = `
       <select id="focus"><option value="mine">Mine</option></select>
       <select id="target"><option value="agent-2">Agent 2</option></select>
@@ -74,14 +74,36 @@ describe("memory shared review filter controls lifecycle", () => {
     expect(state.sharedReviewFilters.targetAgentId).toBe("agent-2");
     expect(loadMemoryViewer).toHaveBeenCalledTimes(4);
 
-    feature.dispose();
-    feature.dispose();
+    expect(feature.deactivate()).toBe(true);
     const retainedState = { ...state.sharedReviewFilters };
     document.getElementById("focus").dispatchEvent(new Event("change"));
     document.getElementById("clear").click();
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
     expect(state.sharedReviewFilters).toEqual(retainedState);
     expect(memoryViewer.syncSharedReviewFilterUi).toHaveBeenCalledTimes(3);
     expect(loadMemoryViewer).toHaveBeenCalledTimes(4);
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 4, disposed: false });
+    state.tab = "sharedReview";
+    document.getElementById("focus").dispatchEvent(new Event("change"));
+    expect(state.sharedReviewFilters).toMatchObject({
+      focus: "mine",
+      targetAgentId: "agent-2",
+      claimedByAgentId: "",
+    });
+    expect(memoryViewer.syncSharedReviewFilterUi).toHaveBeenCalledTimes(4);
+    expect(loadMemoryViewer).toHaveBeenCalledTimes(5);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    const disposedState = { ...state.sharedReviewFilters };
+    document.getElementById("claimed").dispatchEvent(new Event("change"));
+    document.getElementById("clear").click();
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(state.sharedReviewFilters).toEqual(disposedState);
+    expect(memoryViewer.syncSharedReviewFilterUi).toHaveBeenCalledTimes(4);
+    expect(loadMemoryViewer).toHaveBeenCalledTimes(5);
   });
 });

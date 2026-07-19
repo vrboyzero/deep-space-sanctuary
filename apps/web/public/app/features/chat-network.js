@@ -462,7 +462,9 @@ export function createChatNetworkFeature({
     socket.send(JSON.stringify(connectFrame));
   }
 
-  function sendReq(frame) {
+  function sendReq(frame, { signal } = {}) {
+    if (signal?.aborted) return Promise.resolve(null);
+    if (!getReady()) return Promise.resolve(null);
     const socket = getSocket();
     if (!socket) return Promise.resolve(null);
     const generation = socketGenerations.get(socket);
@@ -480,6 +482,7 @@ export function createChatNetworkFeature({
       generation,
       requestId: normalizedFrame.id,
       timeoutMs,
+      signal,
     });
   }
 
@@ -685,6 +688,16 @@ export function createChatNetworkFeature({
       generation,
       onRelease: () => requestLifecycle.settleGeneration(generation),
       onReconnect: connect,
+      onReconnectScheduled: ({ delayMs }) => {
+        const reconnectUrl = buildWebSocketUrl();
+        const seconds = Math.max(1, Math.ceil(delayMs / 1_000));
+        setLocalizedStatus(
+          "status.disconnectedRetrying",
+          { url: reconnectUrl, seconds },
+          `disconnected (retrying ${reconnectUrl} in ${seconds}s...)`,
+        );
+        ensureDisconnectHint(statusEl, getStatusHintMessage("status.disconnectedRetrying"));
+      },
       onOpen: () => {
         markStartupObservability("chat-network.websocket.open", { url });
         setLocalizedStatus("status.awaitingChallenge", {}, "connected (awaiting challenge)");
@@ -722,13 +735,6 @@ export function createChatNetworkFeature({
           return false;
         }
 
-        const reconnectUrl = buildWebSocketUrl();
-        setLocalizedStatus(
-          "status.disconnectedRetrying",
-          { url: reconnectUrl },
-          `disconnected (retrying ${reconnectUrl} in 3s...)`,
-        );
-        ensureDisconnectHint(statusEl, getStatusHintMessage("status.disconnectedRetrying"));
         return true;
       },
       onMessage: (evt) => {
@@ -742,6 +748,7 @@ export function createChatNetworkFeature({
         }
 
         if (frame.type === "hello-ok") {
+          connectionLifecycle.resetReconnectBackoff();
           markStartupObservability("chat-network.hello.ok", {
             url,
             clientId: frame.clientId || "",

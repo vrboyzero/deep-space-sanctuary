@@ -1,4 +1,7 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 const DEFAULT_HIDE_DELAY_MS = 8_000;
+const HIDE_TIMER_KEY = "task-token-result-hide";
 
 export function createTaskTokenResultPanelFeature({
   enabled = false,
@@ -9,13 +12,10 @@ export function createTaskTokenResultPanelFeature({
   recordResult,
 } = {}) {
   const transientPanelEnabled = enabled === true;
-  let hideTimer = null;
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
   function clearHideTimer() {
-    if (hideTimer === null) return;
-    clearTimeout(hideTimer);
-    hideTimer = null;
+    return taskScope.clearTimeout(HIDE_TIMER_KEY);
   }
 
   function hidePanel() {
@@ -31,7 +31,7 @@ export function createTaskTokenResultPanelFeature({
   }
 
   function showTaskTokenResult(payload) {
-    if (disposed || !payload) return;
+    if (!taskScope.isActive() || !payload) return;
     if (payload.conversationId) {
       recordResult?.(payload);
     }
@@ -47,29 +47,41 @@ export function createTaskTokenResultPanelFeature({
     setMetric("taskOut", payload.outputTokens);
     setMetric("taskTotal", payload.totalTokens);
     panel.style.display = "flex";
-    clearHideTimer();
-    hideTimer = setTimeout(() => {
-      hideTimer = null;
-      if (!disposed) hidePanel();
-    }, hideDelayMs);
+    taskScope.replaceTimeout(HIDE_TIMER_KEY, hidePanel, hideDelayMs);
+  }
+
+  function activate() {
+    if (!taskScope.activate()) return false;
+    hidePanel();
+    return true;
+  }
+
+  function deactivate() {
+    if (!taskScope.deactivate()) return false;
+    hidePanel();
+    return true;
   }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    clearHideTimer();
+    if (!taskScope.dispose()) return false;
     hidePanel();
+    return true;
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
       enabled: transientPanelEnabled,
-      pendingTimerCount: hideTimer === null ? 0 : 1,
-      disposed,
+      pendingTimerCount: snapshot.activeTimerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     showTaskTokenResult,

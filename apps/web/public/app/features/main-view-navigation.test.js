@@ -9,7 +9,7 @@ describe("main view navigation lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("forwards every root navigation command until dispose", () => {
+  it("forwards every root navigation command only while active", () => {
     document.body.innerHTML = `
       <button id="memory"></button>
       <button id="experience"></button>
@@ -46,14 +46,33 @@ describe("main view navigation lifecycle", () => {
       expect(action).toHaveBeenCalledTimes(1);
     }
 
+    expect(feature.deactivate()).toBe(true);
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
+    for (const action of Object.values(actions)) {
+      expect(action).toHaveBeenCalledTimes(1);
+    }
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 6, disposed: false });
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    for (const action of Object.values(actions)) {
+      expect(action).toHaveBeenCalledTimes(2);
+    }
+
     feature.dispose();
     feature.dispose();
+    expect(feature.activate()).toBe(false);
     for (const button of document.querySelectorAll("button")) {
       button.click();
     }
     expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
     for (const action of Object.values(actions)) {
-      expect(action).toHaveBeenCalledTimes(1);
+      expect(action).toHaveBeenCalledTimes(2);
     }
   });
 });

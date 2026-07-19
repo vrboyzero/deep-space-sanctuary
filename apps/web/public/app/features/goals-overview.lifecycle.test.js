@@ -83,7 +83,11 @@ afterEach(() => {
 describe("goals overview lifecycle", () => {
   it("settles a disposed goal list read without restoring state or retained DOM", async () => {
     const request = createDeferred();
-    const sendReq = vi.fn(() => request.promise);
+    let requestSignal;
+    const sendReq = vi.fn((_payload, options) => {
+      requestSignal = options?.signal;
+      return request.promise;
+    });
     const {
       feature,
       goalsState,
@@ -93,9 +97,12 @@ describe("goals overview lifecycle", () => {
     } = createFixture({ sendReq });
 
     const load = feature.loadGoals(true);
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
+    expect(requestSignal.aborted).toBe(false);
     expect(feature.getRuntimeSnapshot().pendingGoalListReadCount).toBe(1);
 
     feature.dispose();
+    expect(requestSignal.aborted).toBe(true);
     expect(refs.summary.innerHTML).toBe("");
     expect(refs.list.innerHTML).toBe("");
     expect(refs.detail.innerHTML).toBe("");
@@ -186,7 +193,6 @@ describe("goals overview lifecycle", () => {
     expect(renderCanvasGoalContext).toHaveBeenCalledTimes(1);
     expect(feature.getRuntimeSnapshot()).toMatchObject({
       disposed: false,
-      goalListGeneration: 2,
       pendingGoalListReadCount: 0,
     });
   });
@@ -202,15 +208,28 @@ describe("goals overview lifecycle", () => {
       onArchiveGoal,
       onPauseGoal,
       onResumeGoal,
+      renderGoalDetail,
     } = createFixture({ sendReq });
 
     await feature.loadGoals(true);
-    expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({
-      method: "goal.list",
-      params: { includeArchived: false },
-    }));
-    expect(feature.getRuntimeSnapshot().retainedGoalListListenerCount).toBe(4);
+    expect(sendReq).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "goal.list",
+        params: { includeArchived: false },
+      }),
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 1,
+      pendingTaskCount: 0,
+      retainedGoalListListenerCount: 1,
+    });
 
+    renderGoalDetail.mockClear();
+    refs.list.querySelector("[data-goal-id]").click();
+    expect(renderGoalDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "goal-active" }),
+    );
     const resumeButton = refs.list.querySelector("[data-goal-resume]");
     const pauseButton = refs.list.querySelector("[data-goal-pause]");
     const archiveButton = refs.list.querySelector("[data-goal-archive]");
@@ -226,6 +245,8 @@ describe("goals overview lifecycle", () => {
     expect(onResumeGoal).toHaveBeenCalledTimes(1);
     expect(feature.getRuntimeSnapshot()).toMatchObject({
       disposed: true,
+      listenerCount: 0,
+      pendingTaskCount: 0,
       retainedGoalListListenerCount: 0,
     });
     expect(refs.list.childElementCount).toBe(0);

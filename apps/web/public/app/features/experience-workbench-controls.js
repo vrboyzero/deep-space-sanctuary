@@ -1,36 +1,42 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createExperienceWorkbenchControlsFeature({
   refreshButton,
   loadExperienceWorkbench,
 } = {}) {
-  const listenerEntries = [];
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
-  if (refreshButton) {
-    const handleRefresh = () => {
-      if (disposed) return;
-      void loadExperienceWorkbench?.(true);
-    };
-    refreshButton.addEventListener("click", handleRefresh);
-    listenerEntries.push({ target: refreshButton, handler: handleRefresh });
+  function activate() {
+    if (!taskScope.activate()) return false;
+    if (refreshButton) {
+      taskScope.addEventListener(refreshButton, "click", () => {
+        void loadExperienceWorkbench?.(true);
+      });
+    }
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
   }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, handler } of listenerEntries) {
-      target.removeEventListener("click", handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

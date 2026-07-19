@@ -38,6 +38,7 @@ import {
 import { createAttachmentsFeature } from "./app/features/attachments.js";
 import { createAgentRuntimeFeature } from "./app/features/agent-runtime.js";
 import { createAgentSessionCacheFeature } from "./app/features/agent-session-cache.js";
+import { createBootSequenceFeature } from "./app/features/boot-sequence.js";
 import { createTaskTokenHistoryCache } from "./app/features/task-token-history-cache.js";
 import { createTaskTokenResultPanelFeature } from "./app/features/task-token-result-panel.js";
 import { createChatEventsFeature } from "./app/features/chat-events.js";
@@ -46,6 +47,7 @@ import { createChatUiFeature } from "./app/features/chat-ui.js";
 import { createCanvasContextFeature } from "./app/features/canvas-context.js";
 import { buildDoctorChatSummary } from "./app/features/doctor-observability.js";
 import { createWebchatPerformanceObservability } from "./app/features/webchat-performance-observability.js";
+import { createWebchatLifecycleDiagnostics } from "./app/features/webchat-lifecycle-diagnostics.js";
 import { createAppShellFeature } from "./app/features/app-shell.js";
 import { createEmailInboundSessionBannerFeature } from "./app/features/email-inbound-session-banner.js";
 import { createGoalsDetailFeature } from "./app/features/goals-detail.js";
@@ -497,6 +499,11 @@ function markWebchatStartup(stage, extra = {}) {
 const webchatPerformanceObservability = createWebchatPerformanceObservability({
   startup: webchatStartup,
 });
+const webchatLifecycleDiagnostics = createWebchatLifecycleDiagnostics();
+const bootSequenceFeature = createBootSequenceFeature({
+  onReplacementSettlement: () => webchatLifecycleDiagnostics.captureReplacementSettlement(),
+  onFeatureDispose: () => webchatLifecycleDiagnostics.captureFeatureDispose(),
+});
 webchatPerformanceObservability.start();
 window.addEventListener("pagehide", () => {
   webchatPerformanceObservability.dispose();
@@ -505,11 +512,12 @@ window.addEventListener("pagehide", () => {
   serverConfigCache.dispose();
 }, { once: true });
 
-function withWebchatPerformance(payload) {
+function withLocalWebchatDiagnostics(payload) {
   if (!payload || typeof payload !== "object") return payload;
   return {
     ...payload,
     webchatPerformance: webchatPerformanceObservability.getSummary(),
+    webchatLifecycle: webchatLifecycleDiagnostics.getSummary(),
   };
 }
 
@@ -853,6 +861,7 @@ const agentSessionCacheFeature = createAgentSessionCacheFeature();
 const emailThreadAdviceRetention = createEmailThreadAdviceRetention();
 window.addEventListener("pagehide", () => {
   agentSessionCacheFeature.dispose();
+  bootSequenceFeature.dispose();
   emailThreadAdviceRetention.dispose();
   chatEventsFeature?.dispose();
   chatNetworkFeature?.dispose();
@@ -900,6 +909,7 @@ window.addEventListener("pagehide", () => {
   sessionPlanFeature?.dispose();
   themeController.dispose();
   localeController.dispose();
+  webchatLifecycleDiagnostics.capturePagehide();
 }, { once: true });
 let workspaceFeature = null;
 let workspaceRootsSaveFeature = null;
@@ -930,6 +940,69 @@ let subtasksOverviewFeature = null;
 let subtasksRuntimeFeature = null;
 let bridgeRuntimeFeature = null;
 let sessionNavigationFeature = null;
+
+function registerWebchatLifecycleProvider(getFeature) {
+  webchatLifecycleDiagnostics.registerProvider(() => {
+    const feature = getFeature();
+    if (typeof feature?.getRuntimeSnapshot === "function") return feature.getRuntimeSnapshot();
+    if (typeof feature?.getRetentionSnapshot === "function") return feature.getRetentionSnapshot();
+    return null;
+  });
+}
+
+[
+  () => taskTokenResultPanelFeature,
+  () => taskTokenHistoryByConversation,
+  () => serverConfigCache,
+  () => credentialSession,
+  () => bootSequenceFeature,
+  () => promptController,
+  () => localeController,
+  () => themeController,
+  () => panelVisibilityFeature,
+  () => governanceDetailModeRefreshFeature,
+  () => primaryChatControlsFeature,
+  () => modelSelectionPersistenceFeature,
+  () => mainViewNavigationFeature,
+  () => goalSubtaskListControlsFeature,
+  () => goalModalControlsFeature,
+  () => experienceWorkbenchControlsFeature,
+  () => memoryDreamControlsFeature,
+  () => memoryViewerControlsFeature,
+  () => memoryQueryFilterControlsFeature,
+  () => memorySharedReviewFilterControlsFeature,
+  () => agentSessionCacheFeature,
+  () => emailThreadAdviceRetention,
+  () => attachmentsFeature,
+  () => agentRuntimeFeature,
+  () => voiceFeature,
+  () => headerNavigationFeature,
+  () => webConfigLinksFeature,
+  () => appShellFeature,
+  () => setupGuidanceFeature,
+  () => workspaceFeature,
+  () => workspaceRootsSaveFeature,
+  () => uuidIdentityFeature,
+  () => chatEventsFeature,
+  () => chatNetworkFeature,
+  () => chatUiFeature,
+  () => canvasContextFeature,
+  () => goalsCapabilityPanelFeature,
+  () => goalsActionsRuntimeFeature,
+  () => goalsOverviewFeature,
+  () => goalsSpecialistPanelsFeature,
+  () => goalsStateRuntimeFeature,
+  () => goalsRuntimeFeature,
+  () => memoryDetailRenderFeature,
+  () => memoryRuntimeFeature,
+  () => memoryViewerFeature,
+  () => experienceWorkbenchFeature,
+  () => emailInboundSessionBannerFeature,
+  () => sessionDigestFeature,
+  () => sessionPlanFeature,
+  () => subtasksOverviewFeature,
+  () => bridgeRuntimeFeature,
+].forEach(registerWebchatLifecycleProvider);
 
 function setActiveConversationIdValue(conversationId) {
   const normalized = typeof conversationId === "string" ? conversationId : "";
@@ -2295,33 +2368,8 @@ function teardown() {
   return chatNetworkFeature?.teardown();
 }
 
-async function playBootSequence() {
-  const overlay = document.getElementById("awakening");
-  const logEl = document.getElementById("bootLog");
-  if (!overlay || !logEl) return;
-
-  overlay.classList.remove("hidden");
-
-  const logs = [
-    "Initializing Neural Interface...",
-    "Loading Core Memories... OK",
-    "Establishing Secure Link... OK",
-    "Syncing with Star Sanctuary Gateway...",
-    "User Identity Verified.",
-    "System Online."
-  ];
-
-  for (const line of logs) {
-    const p = document.createElement("div");
-    p.className = "boot-line";
-    p.textContent = `> ${line}`;
-    logEl.appendChild(p);
-    // Random delay for typing effect
-    await new Promise(r => setTimeout(r, 100 + Math.random() * 300));
-  }
-
-  await new Promise(r => setTimeout(r, 800));
-  overlay.classList.add("hidden");
+function playBootSequence() {
+  return bootSequenceFeature.play();
 }
 function estimateBase64DecodedBytes(base64) {
   if (typeof base64 !== "string") return 0;
@@ -2600,7 +2648,7 @@ async function sendMessage(options = {}) {
         const icon = c.status === "pass" ? "✅" : c.status === "warn" ? "⚠️" : "❌";
         return `${icon} ${c.name}: ${c.message}`;
       });
-      lines.push(...buildDoctorChatSummary(withWebchatPerformance(res.payload), localeController.t));
+      lines.push(...buildDoctorChatSummary(withLocalWebchatDiagnostics(res.payload), localeController.t));
       statusEl.textContent = lines.join("\n");
     } else {
       statusEl.textContent = localeController.t(
@@ -2816,6 +2864,7 @@ settingsRuntimeFeature = createSettingsRuntimeFeature({
   getSelectedSubtaskId: () => subtasksState.selectedId || "",
   isSubtasksViewActive: () => Boolean(subtasksSection && !subtasksSection.classList.contains("hidden")),
   getWebchatPerformanceSummary: () => webchatPerformanceObservability.getSummary(),
+  getWebchatLifecycleSummary: () => webchatLifecycleDiagnostics.getSummary(),
   escapeHtml,
   showNotice,
   redactedPlaceholder: REDACTED_PLACEHOLDER,
@@ -3282,8 +3331,8 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function sendReq(frame) {
-  return chatNetworkFeature?.sendReq(frame) ?? Promise.resolve(null);
+function sendReq(frame, options) {
+  return chatNetworkFeature?.sendReq(frame, options) ?? Promise.resolve(null);
 }
 
 function resolveClientId() {

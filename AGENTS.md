@@ -22,6 +22,38 @@ Detailed project navigation lives in [docs/project-map.md](docs/project-map.md).
 - Keep the map focused on source files and maintained directories; exclude generated or disposable trees such as `node_modules/`, `dist/`, `artifacts/`, `tmp/`, `.tmp*/`, and other runtime mirrors.
 - Prefer documenting each area with both responsibility and the main entry file instead of listing directories without context.
 
+## Codebase Memory MCP Usage
+
+`codebase-memory-mcp` is a local, persistent code-graph cache configured for Codex only. Its current project name is `E-project-star-sanctuary`, and its allowed source root is `E:\project\star-sanctuary`. Treat graph results as navigation evidence, not as the source of truth. Detailed machine-specific configuration, monitoring, known issues, and rollback steps live in [docs/codebase-memory-mcp使用配置与限制说明.md](docs/codebase-memory-mcp%E4%BD%BF%E7%94%A8%E9%85%8D%E7%BD%AE%E4%B8%8E%E9%99%90%E5%88%B6%E8%AF%B4%E6%98%8E.md).
+
+Use the MCP when the task needs structural context that would otherwise require reading many files:
+- understanding an unfamiliar module, package boundary, architecture, entrypoint, route, or hotspot;
+- finding inbound/outbound call chains or cross-package relationships;
+- estimating change impact before a structural refactor, shared-contract change, or core-path modification;
+- discovering qualified symbols before opening a focused set of source files.
+
+Do not use the graph as a replacement for direct evidence:
+- For exact strings, config values, a known file, or a small local diff, use `rg`, direct file reads, and `git diff` first.
+- Confirm graph-derived claims against the current source before editing; confirm behavior with type checking/tests where appropriate.
+- Dynamic imports, reflection, runtime registration, string dispatch, framework magic, and unindexed changes may produce missing or incorrect edges.
+- Do not use this MCP to inspect or index sibling repositories; their workspace boundary remains reference-only.
+
+Preferred query flow:
+1. Call `index_status` with `project="E-project-star-sanctuary"` when freshness matters. If the tool is unavailable, fall back to repository-native search and state that the graph was not used.
+2. Use `get_architecture` for an overview, or `get_graph_schema` before writing a non-trivial `query_graph` query.
+3. Use `search_graph` to discover the exact symbol and qualified name before `trace_path` or `get_code_snippet`.
+4. Use `trace_path` for relationships, `get_code_snippet` for focused context, and the read-only `query_graph` subset only when the higher-level tools cannot express the question.
+5. Read the affected source and tests before reaching a conclusion or making a change.
+
+Index refresh and safety rules:
+- Keep `auto_index=false`, `auto_watch=false`, and team artifact persistence disabled. Never enable them as a side effect of a development task.
+- Refresh manually only after material cross-file changes, when `index_status` is not ready, or when a known new symbol is missing. Do not re-index after every small edit.
+- For a manual refresh, use `repo_path="E:\project\star-sanctuary"`, an explicit mode, and `persistence=false`. Run only one index operation at a time.
+- After indexing, require `nodes == expected_nodes` and `edges == expected_edges`, verify one newly changed symbol, and confirm the cache WAL is no longer growing.
+- Stop using the MCP if its WAL keeps growing for 10 minutes after indexing, approaches `1 GB`, results become stale, or orphan processes accumulate. Do not repeatedly retry on the same evidence.
+- Never run CBM `install`, `update`, or `uninstall`, change its Codex MCP entry, move its binary/cache, or delete/rebuild its database without explicit user approval.
+- Never commit `.codebase-memory/` artifacts unless the user explicitly changes the current local-only policy.
+
 ## Build, Test, and Development Commands
 - `corepack pnpm install`: install workspace dependencies.
 - `corepack pnpm build`: generate version metadata, build all packages, and verify workspace output.

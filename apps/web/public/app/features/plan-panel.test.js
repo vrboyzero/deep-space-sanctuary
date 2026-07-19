@@ -13,9 +13,9 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function createHarness(activeConversationId = "conversation:plan") {
+function createHarness(activeConversationId = "conversation:plan", overrides = {}) {
   const openPlanAction = vi.fn(async () => {});
-  const loadWorkflowStatus = vi.fn(async () => ({
+  const loadWorkflowStatus = overrides.loadWorkflowStatus || vi.fn(async () => ({
     status: "running",
     workflowName: "Plan Bridge Workflow",
     journalId: "wf_123",
@@ -65,6 +65,14 @@ function createHarness(activeConversationId = "conversation:plan") {
       sessionPlanModalContentEl: document.getElementById("sessionPlanModalContent"),
     },
   };
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe("plan panel feature", () => {
@@ -200,6 +208,156 @@ describe("plan panel feature", () => {
     expect(refs.sessionPlanModalContentEl.querySelector(".session-plan-ref-badge")?.classList.contains("is-continuation-focus")).toBe(true);
   });
 
+  it("keeps a late workflow response from replacing the latest status", async () => {
+    const firstResponse = createDeferred();
+    const secondResponse = createDeferred();
+    const loadWorkflowStatus = vi.fn()
+      .mockImplementationOnce(() => firstResponse.promise)
+      .mockImplementationOnce(() => secondResponse.promise);
+    const { feature, refs } = createHarness("conversation:plan", { loadWorkflowStatus });
+
+    feature.setPlanState({
+      title: "Workflow replacement",
+      status: "active",
+      mode: "agent",
+      revision: 1,
+      updatedAt: 1,
+      updatedBy: "agent",
+      steps: [{
+        id: "step-workflow",
+        title: "观察 workflow",
+        status: "in_progress",
+        updatedAt: 1,
+        refs: [{ kind: "workflow", journalId: "wf_123", workflowName: "Plan Bridge Workflow", label: "Bridge WF" }],
+      }],
+    }, { conversationId: "conversation:plan", source: "load" });
+    refs.sessionPlanSummaryEl.querySelector(".session-plan-card")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    refs.sessionPlanModalContentEl.querySelector(".session-plan-ref-badge")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    refs.sessionPlanModalContentEl.querySelector(".session-plan-ref-badge")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(feature.getRuntimeSnapshot().pendingWorkflowStatusRequestCount).toBe(2);
+
+    secondResponse.resolve({ status: "completed", workflowName: "Fresh Workflow", journalId: "wf_123" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refs.sessionPlanModalContentEl.textContent).toContain("Fresh Workflow");
+
+    firstResponse.resolve({ status: "failed", workflowName: "Late Workflow", journalId: "wf_123" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refs.sessionPlanModalContentEl.textContent).toContain("Fresh Workflow");
+    expect(refs.sessionPlanModalContentEl.textContent).not.toContain("Late Workflow");
+    expect(feature.getRuntimeSnapshot().pendingWorkflowStatusRequestCount).toBe(0);
+  });
+
+  it("deactivates plan roots and reactivates without late workflow state", async () => {
+    const response = createDeferred();
+    const loadWorkflowStatus = vi.fn(() => response.promise);
+    const { feature, refs } = createHarness("conversation:plan", { loadWorkflowStatus });
+    feature.setPlanState({
+      title: "Disposable workflow plan",
+      status: "active",
+      mode: "agent",
+      revision: 1,
+      updatedAt: 1,
+      updatedBy: "agent",
+      steps: [{
+        id: "step-workflow",
+        title: "观察 workflow",
+        status: "in_progress",
+        updatedAt: 1,
+        refs: [{ kind: "workflow", journalId: "wf_123", workflowName: "Plan Bridge Workflow", label: "Bridge WF" }],
+      }],
+    }, { conversationId: "conversation:plan", source: "load" });
+    const detachedSummary = refs.sessionPlanSummaryEl;
+    detachedSummary.querySelector(".session-plan-card")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    refs.sessionPlanModalContentEl.querySelector(".session-plan-ref-badge")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(feature.deactivate()).toBe(true);
+    detachedSummary.remove();
+    detachedSummary.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 0,
+      pendingWorkflowStatusRequestCount: 1,
+      modalOpen: false,
+      disposed: false,
+    });
+
+    response.resolve({ status: "completed", workflowName: "Late Workflow", journalId: "wf_123" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refs.sessionPlanModalContentEl.textContent).toBe("");
+    expect(feature.getRuntimeSnapshot().pendingWorkflowStatusRequestCount).toBe(0);
+
+    expect(feature.activate()).toBe(true);
+    feature.setPlanState({
+      title: "Fresh active plan",
+      status: "active",
+      mode: "agent",
+      revision: 2,
+      updatedAt: 2,
+      updatedBy: "agent",
+      steps: [],
+    }, { conversationId: "conversation:plan", source: "event" });
+    feature.setFocusedStep("step-fresh");
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 5,
+      pendingWorkflowStatusRequestCount: 0,
+      disposed: false,
+    });
+  });
+
+  it("invalidates pending workflow state when the plan is cleared", async () => {
+    for (const clearMode of ["clear", "null-plan"]) {
+      const response = createDeferred();
+      const loadWorkflowStatus = vi.fn(() => response.promise);
+      const { feature, refs } = createHarness("conversation:plan", { loadWorkflowStatus });
+      const buildPlan = (title, revision) => ({
+        title,
+        status: "active",
+        mode: "agent",
+        revision,
+        updatedAt: revision,
+        updatedBy: "agent",
+        steps: [{
+          id: "step-workflow",
+          title: "观察 workflow",
+          status: "in_progress",
+          updatedAt: revision,
+          refs: [{ kind: "workflow", journalId: "wf_123", workflowName: "Plan Bridge Workflow", label: "Bridge WF" }],
+        }],
+      });
+
+      feature.setPlanState(buildPlan("Old plan", 1), { conversationId: "conversation:plan", source: "load" });
+      refs.sessionPlanSummaryEl.querySelector(".session-plan-card")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      refs.sessionPlanModalContentEl.querySelector(".session-plan-ref-badge")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(feature.getRuntimeSnapshot().pendingWorkflowStatusRequestCount).toBe(1);
+
+      if (clearMode === "clear") {
+        feature.clear();
+      } else {
+        feature.setPlanState(null, { conversationId: "conversation:plan", source: "event" });
+      }
+      response.resolve({ status: "failed", workflowName: "Late Workflow", journalId: "wf_123" });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      feature.setPlanState(buildPlan("Fresh plan", 2), { conversationId: "conversation:plan", source: "event" });
+      refs.sessionPlanSummaryEl.querySelector(".session-plan-card")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(refs.sessionPlanModalContentEl.textContent).not.toContain("Late Workflow");
+      expect(feature.getRuntimeSnapshot().pendingWorkflowStatusRequestCount).toBe(0);
+      feature.dispose();
+    }
+  });
+
   it("ignores updates for inactive conversations and hides after clear", () => {
     const { feature, refs } = createHarness();
 
@@ -265,6 +423,7 @@ describe("plan panel feature", () => {
 
     expect(feature.getRuntimeSnapshot()).toEqual({
       listenerCount: 5,
+      pendingWorkflowStatusRequestCount: 0,
       modalOpen: true,
       disposed: false,
     });
@@ -275,6 +434,7 @@ describe("plan panel feature", () => {
 
     expect(feature.getRuntimeSnapshot()).toEqual({
       listenerCount: 0,
+      pendingWorkflowStatusRequestCount: 0,
       modalOpen: false,
       disposed: true,
     });

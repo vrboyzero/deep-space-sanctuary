@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createMainViewNavigationFeature({ refs = {}, actions = {} } = {}) {
   const {
     switchMemoryBtn,
@@ -7,43 +9,47 @@ export function createMainViewNavigationFeature({ refs = {}, actions = {} } = {}
     openChannelSettingsBtn,
     switchCanvasBtn,
   } = refs;
-  const listenerEntries = [];
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
   function addOwnedCommand(target, action) {
     if (!target) return;
-    const handler = () => {
-      if (disposed) return;
+    taskScope.addEventListener(target, "click", () => {
       void action?.();
-    };
-    target.addEventListener("click", handler);
-    listenerEntries.push({ target, handler });
+    });
   }
 
-  addOwnedCommand(switchMemoryBtn, actions.openMemory);
-  addOwnedCommand(switchExperienceBtn, actions.openExperience);
-  addOwnedCommand(switchGoalsBtn, actions.openGoals);
-  addOwnedCommand(switchSubtasksBtn, actions.openSubtasks);
-  addOwnedCommand(openChannelSettingsBtn, actions.openChannels);
-  addOwnedCommand(switchCanvasBtn, actions.openCanvas);
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedCommand(switchMemoryBtn, actions.openMemory);
+    addOwnedCommand(switchExperienceBtn, actions.openExperience);
+    addOwnedCommand(switchGoalsBtn, actions.openGoals);
+    addOwnedCommand(switchSubtasksBtn, actions.openSubtasks);
+    addOwnedCommand(openChannelSettingsBtn, actions.openChannels);
+    addOwnedCommand(switchCanvasBtn, actions.openCanvas);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, handler } of listenerEntries) {
-      target.removeEventListener("click", handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };

@@ -9,8 +9,9 @@ import doctorCommand from "./doctor.js";
 import { RuntimeResilienceTracker } from "../../runtime-resilience.js";
 import { withEnv } from "../../server-testkit.js";
 
-const { execFileSyncMock } = vi.hoisted(() => ({
+const { execFileSyncMock, requestModelConnectivityCheckMock } = vi.hoisted(() => ({
   execFileSyncMock: vi.fn(),
+  requestModelConnectivityCheckMock: vi.fn(),
 }));
 
 const CLI_DOCTOR_TEST_TIMEOUT_MS = 15_000;
@@ -23,9 +24,14 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+vi.mock("../../model-connectivity-check.js", () => ({
+  requestModelConnectivityCheck: requestModelConnectivityCheckMock,
+}));
+
 afterEach(() => {
   vi.restoreAllMocks();
   execFileSyncMock.mockReset();
+  requestModelConnectivityCheckMock.mockReset();
 });
 
 async function listenOnEphemeralPort(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -541,6 +547,91 @@ test("bdd doctor json output includes runtime resilience summary when available"
       status: "warn",
       message: "recent_degrade: Latest runtime required retry/fallback to recover.",
     });
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, CLI_DOCTOR_TEST_TIMEOUT_MS);
+
+test("bdd doctor delegates the active responses model probe to the bounded connectivity owner", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-doctor-model-connectivity-"));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const legacyFetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("legacy fetch must not run"));
+  requestModelConnectivityCheckMock.mockResolvedValue({ ok: true });
+
+  try {
+    await withEnv({
+      BELLDANDY_OPENAI_BASE_URL: "https://models.example.com/openai",
+      BELLDANDY_OPENAI_API_KEY: "doctor-secret",
+      BELLDANDY_OPENAI_MODEL: "doctor-model",
+      BELLDANDY_OPENAI_WIRE_API: "responses",
+    }, async () => {
+      await doctorCommand.run?.({
+        args: {
+          json: true,
+          "state-dir": stateDir,
+          "check-model": true,
+        },
+      } as never);
+    });
+
+    expect(requestModelConnectivityCheckMock).toHaveBeenCalledWith({
+      baseUrl: "https://models.example.com/openai",
+      apiKey: "doctor-secret",
+      model: "doctor-model",
+      wireApi: "responses",
+      timeoutMs: 10_000,
+    });
+    expect(legacyFetchSpy).not.toHaveBeenCalled();
+
+    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    const parsed = JSON.parse(output);
+    expect(parsed.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "Model connectivity",
+        status: "pass",
+        message: "doctor-model reachable",
+      }),
+    ]));
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+}, CLI_DOCTOR_TEST_TIMEOUT_MS);
+
+test("bdd doctor preserves bounded model connectivity HTTP failure diagnostics", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cli-doctor-model-failure-"));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const responseBody = `rate-limited:${"x".repeat(120)}`;
+  requestModelConnectivityCheckMock.mockResolvedValue({
+    ok: false,
+    status: 429,
+    responseBody,
+  });
+
+  try {
+    await withEnv({
+      BELLDANDY_OPENAI_BASE_URL: "https://models.example.com/v1",
+      BELLDANDY_OPENAI_API_KEY: "doctor-secret",
+      BELLDANDY_OPENAI_MODEL: "doctor-model",
+      BELLDANDY_OPENAI_WIRE_API: "chat_completions",
+    }, async () => {
+      await doctorCommand.run?.({
+        args: {
+          json: true,
+          "state-dir": stateDir,
+          "check-model": true,
+        },
+      } as never);
+    });
+
+    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? "");
+    const parsed = JSON.parse(output);
+    expect(parsed.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "Model connectivity",
+        status: "fail",
+        message: `HTTP 429: ${responseBody.slice(0, 100)}`,
+      }),
+    ]));
   } finally {
     await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }

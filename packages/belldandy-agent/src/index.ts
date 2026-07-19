@@ -441,7 +441,14 @@ export * from "./hooks.js";
 export { createHookRunner, type HookRunner, type HookRunnerLogger, type HookRunnerOptions } from "./hook-runner.js";
 
 // 多模态预处理（视频上传等）
-export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent, type PreprocessResult, type VideoUploadConfig } from "./multimodal.js";
+export {
+  buildUrl,
+  uploadFileToMoonshot,
+  preprocessMultimodalContent,
+  type MoonshotUploadOptions,
+  type PreprocessResult,
+  type VideoUploadConfig,
+} from "./multimodal.js";
 
 // Anthropic 原生协议支持（prompt caching、消息/工具转换）
 export {

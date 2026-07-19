@@ -3,6 +3,10 @@ import OpenAI from "openai";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  OutboundRequestPolicy,
+  type OutboundRequestPolicyOptions,
+} from "@belldandy/protocol";
 import { createLinkedAbortController } from "../../abort-utils.js";
 import {
   BoundedResponseLimitError,
@@ -16,12 +20,19 @@ type GeneratedImageAsset = {
   filePath: string;
   outputFormat: ImageOutputFormat;
 };
+type ImageGenerateToolDependencies = {
+  createAssetOutboundRequestPolicy?: (
+    options: OutboundRequestPolicyOptions,
+  ) => Pick<OutboundRequestPolicy, "request">;
+};
 
 const DEFAULT_MODEL = "gpt-image-2";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_TIMEOUT_MS = 60000;
 const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
 const MAX_SDK_TIMEOUT_MS = 2_147_483_647;
+const IMAGE_ASSET_MAX_REDIRECTS = 3;
+const IMAGE_ASSET_IDLE_TIMEOUT_MS = 15_000;
 const REVEAL_PREFIX = "#generated-image-reveal:";
 const AGNES_IMAGE_MODEL = "agnes-image-2.1-flash";
 
@@ -68,6 +79,15 @@ function normalizeInputImages(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function readImageAssetAllowedHosts(baseURL: string): string[] {
+  const providerHost = new URL(baseURL).hostname;
+  const configuredHosts = (process.env.BELLDANDY_IMAGE_ASSET_ALLOWED_HOSTS ?? "")
+    .split(/[\s,]+/)
+    .map((host) => host.trim())
+    .filter(Boolean);
+  return Array.from(new Set([providerHost, ...configuredHosts]));
 }
 
 function isAgnesImageModel(model: string): boolean {
@@ -157,6 +177,7 @@ async function persistGeneratedImageAsset(input: {
   preferDetectedFormat: boolean;
   maxBytes: number;
   abortSignal?: AbortSignal;
+  assetOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
 }): Promise<GeneratedImageAsset> {
   const { item } = input;
   const b64Json = typeof item.b64_json === "string" ? item.b64_json : "";
@@ -179,7 +200,15 @@ async function persistGeneratedImageAsset(input: {
     if (!imageUrl) {
       throw new Error("Image generation response did not include b64_json or url.");
     }
-    const remoteResponse = await fetch(imageUrl, { signal: input.abortSignal });
+    if (!input.assetOutboundRequestPolicy) {
+      throw new Error("Image asset outbound policy is required for URL responses.");
+    }
+    const { response: remoteResponse } = await input.assetOutboundRequestPolicy.request({
+      url: imageUrl,
+      signal: input.abortSignal,
+      maxRedirects: IMAGE_ASSET_MAX_REDIRECTS,
+      idleTimeoutMs: IMAGE_ASSET_IDLE_TIMEOUT_MS,
+    });
     if (!remoteResponse.ok) {
       throw new Error(`Failed to download generated image (${remoteResponse.status}).`);
     }
@@ -207,7 +236,11 @@ async function persistGeneratedImageAsset(input: {
   };
 }
 
-export const imageGenerateTool: Tool = {
+export const imageGenerateTool: Tool = createImageGenerateTool();
+
+/** 允许测试注入受控 transport；生产默认使用 DNS 审查与地址固定的出站 policy。 */
+export function createImageGenerateTool(dependencies: ImageGenerateToolDependencies = {}): Tool {
+  return {
   definition: {
     name: "image_generate",
     description: "Generate an image using the configured standalone image model.",
@@ -342,6 +375,19 @@ export const imageGenerateTool: Tool = {
         const generatedImagesDir = getGeneratedImagesDir(context);
         await fs.mkdir(generatedImagesDir, { recursive: true });
         const baseFileName = `image-${buildTimestamp()}-${crypto.randomUUID().slice(0, 8)}`;
+        const hasBase64Asset = typeof (firstItem as Record<string, unknown>).b64_json === "string"
+          && Boolean((firstItem as Record<string, unknown>).b64_json);
+        const hasUrlAsset = typeof (firstItem as Record<string, unknown>).url === "string"
+          && Boolean((firstItem as Record<string, unknown>).url);
+        const assetOutboundRequestPolicy = !hasBase64Asset && hasUrlAsset
+          ? dependencies.createAssetOutboundRequestPolicy?.({
+            allowedHosts: readImageAssetAllowedHosts(config.baseURL),
+            maxRedirects: IMAGE_ASSET_MAX_REDIRECTS,
+          }) ?? new OutboundRequestPolicy({
+            allowedHosts: readImageAssetAllowedHosts(config.baseURL),
+            maxRedirects: IMAGE_ASSET_MAX_REDIRECTS,
+          })
+          : undefined;
         const asset = await persistGeneratedImageAsset({
           item: firstItem as Record<string, unknown>,
           generatedImagesDir,
@@ -350,6 +396,7 @@ export const imageGenerateTool: Tool = {
           preferDetectedFormat: isAgnes,
           maxBytes: config.maxOutputBytes,
           abortSignal: linkedAbort.controller.signal,
+          assetOutboundRequestPolicy,
         });
         const fileName = path.basename(asset.filePath);
 
@@ -387,4 +434,5 @@ export const imageGenerateTool: Tool = {
       };
     }
   },
-};
+  };
+}

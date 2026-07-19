@@ -3,7 +3,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ToolEnabledAgent } from "@belldandy/agent";
+
+vi.mock("../../belldandy-agent/src/model-request-transport.js", () => ({
+  requestModelTransport: (options: { url: string | URL; init: RequestInit }) => (
+    fetch(options.url, options.init)
+  ),
+}));
+
+import { ToolEnabledAgent } from "../../belldandy-agent/src/tool-agent.js";
 
 import {
   buildPromptFocusRuntimePrelude,

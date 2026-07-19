@@ -242,6 +242,7 @@ function createSettingsRefs(overrides = {}) {
     cfgStarweaverActiveNotifyPollIntervalMs: overrides.cfgStarweaverActiveNotifyPollIntervalMs || createInput("5000"),
     cfgBrowserRelayEnabled: overrides.cfgBrowserRelayEnabled || createCheckbox(false),
     cfgRelayPort: overrides.cfgRelayPort || createInput(""),
+    cfgBrowserOutboundProfile: overrides.cfgBrowserOutboundProfile || createInput("public-web"),
     cfgMcpEnabled: overrides.cfgMcpEnabled || createCheckbox(false),
     cfgBrowserAllowedDomains: overrides.cfgBrowserAllowedDomains || createInput(""),
     cfgBrowserDeniedDomains: overrides.cfgBrowserDeniedDomains || createInput(""),
@@ -591,6 +592,7 @@ function createController(overrides = {}) {
     getConnectionAuthMode: overrides.getConnectionAuthMode || (() => "none"),
     onApprovePairing,
     getWebchatPerformanceSummary: overrides.getWebchatPerformanceSummary,
+    getWebchatLifecycleSummary: overrides.getWebchatLifecycleSummary,
     t: overrides.t,
   });
   return {
@@ -749,6 +751,7 @@ describe("settings controller", () => {
       BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS: "7000",
       BELLDANDY_BROWSER_RELAY_ENABLED: "true",
       BELLDANDY_RELAY_PORT: "28892",
+      BELLDANDY_BROWSER_OUTBOUND_PROFILE: "privileged-local-browser",
       BELLDANDY_MCP_ENABLED: "true",
       BELLDANDY_BROWSER_ALLOWED_DOMAINS: "github.com,developer.mozilla.org",
       BELLDANDY_BROWSER_DENIED_DOMAINS: "mail.google.com",
@@ -973,6 +976,7 @@ describe("settings controller", () => {
     expect(refs.cfgStarweaverActiveNotifyPollIntervalMs.value).toBe("7000");
     expect(refs.cfgBrowserRelayEnabled.checked).toBe(true);
     expect(refs.cfgRelayPort.value).toBe("28892");
+    expect(refs.cfgBrowserOutboundProfile.value).toBe("privileged-local-browser");
     expect(refs.cfgMcpEnabled.checked).toBe(true);
     expect(refs.cfgBrowserAllowedDomains.value).toBe("github.com,developer.mozilla.org");
     expect(refs.cfgBrowserDeniedDomains.value).toBe("mail.google.com");
@@ -1434,6 +1438,7 @@ describe("settings controller", () => {
       cfgHeartbeatActiveHours: createInput(" 09:00-18:00 "),
       cfgBrowserRelayEnabled: createCheckbox(true),
       cfgRelayPort: createInput("28892"),
+      cfgBrowserOutboundProfile: createInput("privileged-local-browser"),
       cfgMcpEnabled: createCheckbox(true),
       cfgBrowserAllowedDomains: createInput(" github.com,developer.mozilla.org "),
       cfgBrowserDeniedDomains: createInput(" mail.google.com "),
@@ -1694,6 +1699,7 @@ describe("settings controller", () => {
       BELLDANDY_HEARTBEAT_ACTIVE_HOURS: "09:00-18:00",
       BELLDANDY_BROWSER_RELAY_ENABLED: "true",
       BELLDANDY_RELAY_PORT: "28892",
+      BELLDANDY_BROWSER_OUTBOUND_PROFILE: "privileged-local-browser",
       BELLDANDY_MCP_ENABLED: "true",
       BELLDANDY_BROWSER_ALLOWED_DOMAINS: "github.com,developer.mozilla.org",
       BELLDANDY_BROWSER_DENIED_DOMAINS: "mail.google.com",
@@ -2823,10 +2829,25 @@ describe("settings controller", () => {
       longTasks: { supported: false, count: 0 },
       interactions: { supported: false, count: 0 },
     }));
+    const getWebchatLifecycleSummary = vi.fn(() => ({
+      captureSequence: 4,
+      providerCount: 12,
+      failedProviderCount: 0,
+      activeTimerCount: 1,
+      activeListenerCount: 3,
+      pendingOperationCount: 2,
+      retainedItemCount: 5,
+      retainedByteCount: 128,
+      replacementSettlementCaptureCount: 1,
+      featureDisposeCaptureCount: 1,
+      pagehideCaptureCount: 0,
+      explicitSnapshotCaptureCount: 2,
+    }));
     const { controller } = createController({
       sendReq,
       loadServerConfig: vi.fn().mockResolvedValue({}),
       getWebchatPerformanceSummary,
+      getWebchatLifecycleSummary,
     });
 
     await controller.toggle(true);
@@ -2847,7 +2868,13 @@ describe("settings controller", () => {
         available: true,
         startup: { markCount: 2 },
       },
+      webchatLifecycle: {
+        captureSequence: 4,
+        providerCount: 12,
+        pendingOperationCount: 2,
+      },
     });
     expect(getWebchatPerformanceSummary).toHaveBeenCalledTimes(1);
+    expect(getWebchatLifecycleSummary).toHaveBeenCalledTimes(1);
   });
 });

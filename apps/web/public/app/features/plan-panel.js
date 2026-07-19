@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 function formatPlanStatus(status, t) {
   switch (status) {
     case "active":
@@ -302,18 +304,15 @@ export function createPlanPanelFeature({
     focusedRefKey: "",
     workflowStatusByJournalId: {},
   };
-  let disposed = false;
-  const listenerEntries = [];
+  const taskScope = createPanelTaskScope();
 
   function addOwnedListener(target, type, handler) {
-    if (!target) return;
-    target.addEventListener(type, handler);
-    listenerEntries.push({ target, type, handler });
+    taskScope.addEventListener(target, type, handler);
   }
 
   function hasRenderablePlan() {
     return Boolean(
-      !disposed
+      taskScope.isActive()
       && isConnected()
       && getActiveConversationId()
       && state.planState
@@ -322,7 +321,7 @@ export function createPlanPanelFeature({
   }
 
   function syncVisibility() {
-    if (disposed) return false;
+    if (!taskScope.isActive()) return false;
     const visible = hasRenderablePlan();
     sessionPlanPanelEl?.classList.toggle("hidden", !visible);
     if (!visible) {
@@ -332,20 +331,20 @@ export function createPlanPanelFeature({
   }
 
   function closeModal() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     state.modalOpen = false;
     renderModal();
   }
 
   function openModal() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     if (!hasRenderablePlan()) return;
     state.modalOpen = true;
     renderModal();
   }
 
   function renderModal() {
-    if (disposed || !sessionPlanModalEl) return;
+    if (!taskScope.isActive() || !sessionPlanModalEl) return;
     const visible = syncVisibility();
     const shouldOpen = visible && state.modalOpen;
     sessionPlanModalEl.classList.toggle("hidden", !shouldOpen);
@@ -513,7 +512,7 @@ export function createPlanPanelFeature({
   }
 
   function render() {
-    if (disposed || !sessionPlanSummaryEl) return;
+    if (!taskScope.isActive() || !sessionPlanSummaryEl) return;
     const visible = syncVisibility();
     if (!visible) {
       sessionPlanSummaryEl.replaceChildren();
@@ -563,7 +562,8 @@ export function createPlanPanelFeature({
   }
 
   function clear() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
+    taskScope.invalidateTasks();
     state.conversationId = null;
     state.planState = null;
     state.modalOpen = false;
@@ -575,7 +575,7 @@ export function createPlanPanelFeature({
   }
 
   function setPlanState(planState, options = {}) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const activeConversationId = getActiveConversationId();
     const conversationId = typeof options?.conversationId === "string"
       ? options.conversationId
@@ -589,6 +589,7 @@ export function createPlanPanelFeature({
       : null;
     state.lastSource = typeof options?.source === "string" ? options.source : "";
     if (!state.planState) {
+      taskScope.invalidateTasks();
       state.modalOpen = false;
       state.focusedStepId = "";
       state.focusedRefKey = "";
@@ -600,7 +601,7 @@ export function createPlanPanelFeature({
   }
 
   function setFocusedStep(stepId) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     state.focusedStepId = typeof stepId === "string" ? stepId.trim() : "";
     if (state.focusedStepId) {
       state.focusedRefKey = "";
@@ -609,33 +610,39 @@ export function createPlanPanelFeature({
   }
 
   function setFocusedRef(refKey) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     state.focusedRefKey = typeof refKey === "string" ? refKey.trim() : "";
     renderModal();
   }
 
   async function loadWorkflowStatus(journalId) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const normalizedJournalId = typeof journalId === "string" ? journalId.trim() : "";
     if (!normalizedJournalId) return;
     if (typeof onLoadWorkflowStatus !== "function") return;
-    const workflowState = await onLoadWorkflowStatus({ journalId: normalizedJournalId });
-    // 底层 Promise 无法取消时，退出后的结果也不能重新持有 workflow 正文或触发渲染。
-    if (disposed) return;
-    state.workflowStatusByJournalId = {
-      ...state.workflowStatusByJournalId,
-      [normalizedJournalId]: workflowState && typeof workflowState === "object"
-        ? workflowState
-        : {
-          status: "",
-          missing: true,
-        },
-    };
-    renderModal();
+    const requestTask = taskScope.beginTask();
+    if (!requestTask) return;
+    try {
+      const workflowState = await onLoadWorkflowStatus({ journalId: normalizedJournalId });
+      // 底层 Promise 无法取消时，只允许当前激活代次的最新读取提交 workflow 正文。
+      if (!requestTask.isCurrent()) return;
+      state.workflowStatusByJournalId = {
+        ...state.workflowStatusByJournalId,
+        [normalizedJournalId]: workflowState && typeof workflowState === "object"
+          ? workflowState
+          : {
+            status: "",
+            missing: true,
+          },
+      };
+      renderModal();
+    } finally {
+      requestTask.settle();
+    }
   }
 
   async function handlePlanAction(action) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const kind = typeof action?.kind === "string" ? action.kind : "";
     if (!kind) return;
     if (kind === "step") {
@@ -658,7 +665,7 @@ export function createPlanPanelFeature({
   }
 
   function handlePlanUpdated(payload) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId : "";
     if (!conversationId || conversationId !== getActiveConversationId()) return;
     setPlanState(payload?.cleared === true ? null : payload?.planState || null, {
@@ -668,14 +675,14 @@ export function createPlanPanelFeature({
   }
 
   function handleSummaryClick(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest(".session-plan-card.is-interactive") : null;
     if (!trigger) return;
     openModal();
   }
 
   function handleSummaryKeydown(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest(".session-plan-card.is-interactive") : null;
     if (!trigger || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
@@ -687,7 +694,7 @@ export function createPlanPanelFeature({
   }
 
   function handleModalClick(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const trigger = event.target instanceof Element ? event.target.closest("[data-plan-action]") : null;
     if (trigger) {
       const action = parsePlanAction(trigger.getAttribute("data-plan-action") || "");
@@ -702,19 +709,23 @@ export function createPlanPanelFeature({
   }
 
   function handleDocumentKeydown(event) {
-    if (disposed || event.key !== "Escape" || !state.modalOpen) return;
+    if (!taskScope.isActive() || event.key !== "Escape" || !state.modalOpen) return;
     closeModal();
   }
 
-  addOwnedListener(sessionPlanSummaryEl, "click", handleSummaryClick);
-  addOwnedListener(sessionPlanSummaryEl, "keydown", handleSummaryKeydown);
-  addOwnedListener(sessionPlanModalCloseBtn, "click", handleModalCloseClick);
-  addOwnedListener(sessionPlanModalEl, "click", handleModalClick);
-  addOwnedListener(document, "keydown", handleDocumentKeydown);
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedListener(sessionPlanSummaryEl, "click", handleSummaryClick);
+    addOwnedListener(sessionPlanSummaryEl, "keydown", handleSummaryKeydown);
+    addOwnedListener(sessionPlanModalCloseBtn, "click", handleModalCloseClick);
+    addOwnedListener(sessionPlanModalEl, "click", handleModalClick);
+    addOwnedListener(document, "keydown", handleDocumentKeydown);
+    render();
+    return true;
+  }
 
-  function dispose() {
-    if (disposed) return;
-    disposed = true;
+  function deactivate() {
+    if (!taskScope.deactivate()) return false;
     state.conversationId = null;
     state.planState = null;
     state.modalOpen = false;
@@ -722,35 +733,42 @@ export function createPlanPanelFeature({
     state.focusedStepId = "";
     state.focusedRefKey = "";
     state.workflowStatusByJournalId = {};
-    for (const { target, type, handler } of listenerEntries) {
-      target.removeEventListener(type, handler);
-    }
-    listenerEntries.length = 0;
     sessionPlanPanelEl?.classList.add("hidden");
     sessionPlanSummaryEl?.replaceChildren();
     sessionPlanModalEl?.classList.add("hidden");
     sessionPlanModalTitleEl?.replaceChildren();
     sessionPlanModalMetaEl?.replaceChildren();
     sessionPlanModalContentEl?.replaceChildren();
+    return true;
+  }
+
+  function dispose() {
+    if (taskScope.getRuntimeSnapshot().disposed) return false;
+    deactivate();
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
+      listenerCount: snapshot.listenerCount,
+      pendingWorkflowStatusRequestCount: snapshot.pendingTaskCount,
       modalOpen: state.modalOpen,
-      disposed,
+      disposed: snapshot.disposed,
     };
   }
 
-  render();
+  activate();
 
   return {
+    activate,
     clear,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     handlePlanUpdated,
     refreshLocale() {
-      if (disposed) return;
+      if (!taskScope.isActive()) return;
       render();
     },
     setPlanState,

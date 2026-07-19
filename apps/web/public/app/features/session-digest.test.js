@@ -59,6 +59,7 @@ function createFeatureHarness(options = {}) {
     showNotice,
     refs: {
       sessionDigestSummaryEl: document.getElementById("sessionDigestSummary"),
+      sessionDigestRefreshBtn: document.getElementById("sessionDigestRefresh"),
       sessionDigestModalEl: document.getElementById("sessionDigestModal"),
       sessionDigestModalContentEl: document.getElementById("sessionDigestModalContent"),
     },
@@ -177,5 +178,62 @@ describe("session digest modal continuation details", () => {
       digest: { rollingSummary: "after dispose" },
     });
     expect(refs.sessionDigestSummaryEl.textContent).toBe("");
+  });
+
+  it("deactivates detached roots and reactivates with a fresh digest task", async () => {
+    const firstResponse = createDeferred();
+    const sendReq = vi.fn()
+      .mockImplementationOnce(() => firstResponse.promise)
+      .mockResolvedValueOnce({
+        ok: true,
+        payload: {
+          digest: {
+            status: "ready",
+            rollingSummary: "fresh digest body",
+          },
+        },
+      });
+    const { feature, refs, showNotice } = createFeatureHarness({ sendReq });
+    const firstLoad = feature.loadSessionDigest("conversation:current", { force: true, notify: true });
+    const detachedRefreshButton = refs.sessionDigestRefreshBtn;
+
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 9,
+      pendingRequestCount: 1,
+      disposed: false,
+    });
+    expect(feature.deactivate()).toBe(true);
+    detachedRefreshButton.remove();
+    detachedRefreshButton.click();
+    expect(sendReq).toHaveBeenCalledTimes(1);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 0,
+      pendingRequestCount: 1,
+      disposed: false,
+    });
+
+    firstResponse.resolve({
+      ok: true,
+      payload: {
+        updated: true,
+        digest: { status: "ready", rollingSummary: "late digest body" },
+      },
+    });
+    await firstLoad;
+    expect(refs.sessionDigestSummaryEl.textContent).toBe("");
+    expect(showNotice).not.toHaveBeenCalled();
+
+    expect(feature.activate()).toBe(true);
+    await feature.loadSessionDigest("conversation:current");
+    expect(refs.sessionDigestSummaryEl.textContent).toContain("fresh digest body");
+    refs.sessionDigestSummaryEl.querySelector(".session-digest-card")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(refs.sessionDigestModalEl.classList.contains("hidden")).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 9,
+      pendingRequestCount: 0,
+      modalOpen: true,
+      disposed: false,
+    });
   });
 });

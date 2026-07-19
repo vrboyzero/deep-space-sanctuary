@@ -52,7 +52,7 @@ describe("task token result panel lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("records history but keeps the disabled transient panel inert", () => {
+  it("records disabled results only while the feature is active", () => {
     vi.useFakeTimers();
     const fixture = createFixture();
 
@@ -68,9 +68,23 @@ describe("task token result panel lifecycle", () => {
       disposed: false,
     });
     expect(vi.getTimerCount()).toBe(0);
+
+    fixture.recordResult.mockClear();
+    expect(fixture.feature.deactivate()).toBe(true);
+    expect(fixture.feature.deactivate()).toBe(false);
+    fixture.feature.showTaskTokenResult({ ...payload, name: "inactive-task" });
+    expect(fixture.recordResult).not.toHaveBeenCalled();
+    expect(fixture.valueElements.taskName.textContent).toBe("old-name");
+    expect(vi.getTimerCount()).toBe(0);
+
+    expect(fixture.feature.activate()).toBe(true);
+    fixture.feature.showTaskTokenResult({ ...payload, name: "reactivated-task" });
+    expect(fixture.recordResult).toHaveBeenCalledWith({ ...payload, name: "reactivated-task" });
+    expect(fixture.panel.style.display).toBe("none");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("preserves the enabled metric and auto-hide behavior behind the owner", async () => {
+  it("owns enabled metrics and the auto-hide timer across activation cycles", async () => {
     vi.useFakeTimers();
     const fixture = createFixture({ enabled: true });
 
@@ -82,6 +96,44 @@ describe("task token result panel lifecycle", () => {
     expect(fixture.valueElements.taskTotal.textContent).toBe("20tok");
     expect(fixture.panel.style.display).toBe("flex");
     expect(fixture.feature.getRuntimeSnapshot().pendingTimerCount).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    fixture.feature.showTaskTokenResult({
+      ...payload,
+      name: "replacement-task",
+      totalTokens: 30,
+    });
+    expect(fixture.valueElements.taskName.textContent).toBe("replacement-task");
+    expect(fixture.valueElements.taskTotal.textContent).toBe("30tok");
+    expect(fixture.feature.getRuntimeSnapshot().pendingTimerCount).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    fixture.recordResult.mockClear();
+    expect(fixture.feature.deactivate()).toBe(true);
+    expect(fixture.panel.style.display).toBe("none");
+    expect(fixture.feature.getRuntimeSnapshot().pendingTimerCount).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+
+    fixture.feature.showTaskTokenResult({
+      ...payload,
+      name: "inactive-task",
+      totalTokens: 40,
+    });
+    expect(fixture.recordResult).not.toHaveBeenCalled();
+    expect(fixture.valueElements.taskName.textContent).toBe("replacement-task");
+    expect(fixture.valueElements.taskTotal.textContent).toBe("30tok");
+    expect(vi.getTimerCount()).toBe(0);
+
+    expect(fixture.feature.activate()).toBe(true);
+    fixture.feature.showTaskTokenResult({
+      ...payload,
+      name: "reactivated-task",
+      totalTokens: 50,
+    });
+    expect(fixture.valueElements.taskName.textContent).toBe("reactivated-task");
+    expect(fixture.valueElements.taskTotal.textContent).toBe("50tok");
+    expect(fixture.panel.style.display).toBe("flex");
+    expect(vi.getTimerCount()).toBe(1);
 
     await vi.advanceTimersByTimeAsync(8_000);
 
@@ -95,7 +147,9 @@ describe("task token result panel lifecycle", () => {
     fixture.feature.showTaskTokenResult(payload);
     fixture.recordResult.mockClear();
 
-    fixture.feature.dispose();
+    expect(fixture.feature.dispose()).toBe(true);
+    expect(fixture.feature.dispose()).toBe(false);
+    expect(fixture.feature.activate()).toBe(false);
     fixture.feature.showTaskTokenResult({ ...payload, name: "late-task" });
 
     expect(fixture.panel.style.display).toBe("none");

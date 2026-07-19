@@ -26,6 +26,7 @@ export function createSettingsRuntimeFeature({
   getSelectedSubtaskId,
   isSubtasksViewActive,
   getWebchatPerformanceSummary,
+  getWebchatLifecycleSummary,
   escapeHtml,
   showNotice,
   redactedPlaceholder = "[REDACTED]",
@@ -178,6 +179,7 @@ export function createSettingsRuntimeFeature({
     },
     onOpenContinuationAction,
     getWebchatPerformanceSummary,
+    getWebchatLifecycleSummary,
     redactedPlaceholder,
     t,
   });

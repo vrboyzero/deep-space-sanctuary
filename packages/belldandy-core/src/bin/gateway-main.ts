@@ -87,7 +87,8 @@ import {
 import { startImapPollingEmailInboundRuntime } from "../email-inbound-imap-runtime.js";
 import { TopLevelConversationLifecycle } from "../top-level-conversation-lifecycle.js";
 import { startStarweaverActiveNotifyRuntime } from "../starweaver-active-notify-runtime.js";
-import { shouldDebugToolAuditLog } from "../tool-audit-log.js";
+import { formatToolAuditLogMessage, shouldDebugToolAuditLog } from "../tool-audit-log.js";
+import { requestPrimaryModelWarmup } from "../primary-warmup-probe.js";
 
 import {
   OpenAIChatAgent,
@@ -1309,9 +1310,7 @@ const toolExecutor: ToolExecutor = new ToolExecutor({
     }
   },
   auditLogger: (log) => {
-    const msg = log.success
-      ? `${log.toolName} completed in ${log.durationMs}ms`
-      : `${log.toolName} failed in ${log.durationMs}ms: ${log.error ?? "unknown"}`;
+    const msg = formatToolAuditLogMessage(log);
     if (shouldDebugToolAuditLog(log)) {
       logger.debug("tools", msg, { toolName: log.toolName, success: log.success, durationMs: log.durationMs });
       return;
@@ -1973,48 +1972,30 @@ async function runPrimaryWarmupProbe(): Promise<void> {
   if (!primaryWarmupEnabled || agentProvider !== "openai") return;
   if (!openaiBaseUrl || !openaiApiKey || !openaiModel) return;
 
-  const trimmedBase = openaiBaseUrl.replace(/\/+$/, "");
-  const base = /\/v\d+$/.test(trimmedBase) ? trimmedBase : `${trimmedBase}/v1`;
-  const isResponsesWireApi = openaiWireApi === "responses";
-  const url = isResponsesWireApi ? `${base}/responses` : `${base}/chat/completions`;
-  const body: Record<string, unknown> = isResponsesWireApi
-    ? { model: openaiModel, input: "ping", max_output_tokens: 8 }
-    : { model: openaiModel, messages: [{ role: "user", content: "ping" }], max_tokens: 8 };
-  if (openaiThinking) {
-    body.thinking = openaiThinking;
-  }
-  if (openaiReasoningEffort) {
-    body.reasoning_effort = openaiReasoningEffort;
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), primaryWarmupTimeoutMs);
-
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openaiApiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+    const result = await requestPrimaryModelWarmup({
+      baseUrl: openaiBaseUrl,
+      apiKey: openaiApiKey,
+      model: openaiModel,
+      wireApi: openaiWireApi,
+      thinking: openaiThinking,
+      reasoningEffort: openaiReasoningEffort,
+      timeoutMs: primaryWarmupTimeoutMs,
     });
 
-    if (res.ok) {
+    if (result.ok) {
       logger.info("warmup", `primary probe success (wire_api=${openaiWireApi}, model=${openaiModel})`);
       return;
     }
 
-    const text = await res.text().catch(() => "");
-    const reason = classifyFailoverReason(res.status, text);
+    const reason = classifyFailoverReason(result.status, result.responseBody);
     const cooldownMs = resolveFailoverCooldownMs(reason, {
       defaultCooldownMs: primaryWarmupCooldownMs,
     }) ?? primaryWarmupCooldownMs;
     primaryBootstrapCooldownUntil = Date.now() + cooldownMs;
     logger.warn(
       "warmup",
-      `primary probe failed: HTTP ${res.status} (reason=${reason}, wire_api=${openaiWireApi}, model=${openaiModel}), apply ${cooldownMs}ms cooldown. body=${text.slice(0, 200)}`,
+      `primary probe failed: HTTP ${result.status} (reason=${reason}, wire_api=${openaiWireApi}, model=${openaiModel}), apply ${cooldownMs}ms cooldown. body=${result.responseBody.slice(0, 200)}`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -2023,8 +2004,6 @@ async function runPrimaryWarmupProbe(): Promise<void> {
       "warmup",
       `primary probe error: ${msg} (wire_api=${openaiWireApi}, model=${openaiModel}), apply ${primaryWarmupCooldownMs}ms cooldown.`,
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 

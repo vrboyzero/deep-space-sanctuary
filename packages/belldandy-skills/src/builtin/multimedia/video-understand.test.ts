@@ -2,6 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  OutboundRequestPolicy,
+  type OutboundRequestAdapterInput,
+} from "@belldandy/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { chatCreateMock, openAIMock } = vi.hoisted(() => ({
@@ -28,7 +32,22 @@ vi.mock("./video-frame-fallback.js", () => ({
 }));
 
 import type { ToolContext } from "../../types.js";
-import { videoUnderstandTool, understandVideoFile } from "./video-understand.js";
+import {
+  createVideoUnderstandTool,
+  videoUnderstandTool,
+  understandVideoFile,
+} from "./video-understand.js";
+
+function createUploadPolicy(
+  requestAdapter: (input: OutboundRequestAdapterInput) => Promise<Response>,
+): OutboundRequestPolicy {
+  return new OutboundRequestPolicy({
+    allowedHosts: ["video.example.com"],
+    maxRedirects: 0,
+    dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestAdapter,
+  });
+}
 
 function createContext(workspaceRoot: string): ToolContext {
   return {
@@ -117,17 +136,17 @@ describe("video_understand", () => {
     const fetchMock = vi.mocked(fetch);
     let uploadBody = Buffer.alloc(0);
     let uploadChunkSizes: number[] = [];
-    fetchMock.mockImplementation(async (_url, init) => {
+    const uploadAdapter = vi.fn(async (request: OutboundRequestAdapterInput) => {
       const chunks: Buffer[] = [];
-      for await (const chunk of init?.body as any) {
+      for await (const chunk of request.init.body as NodeJS.ReadableStream) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
       uploadChunkSizes = chunks.map((chunk) => chunk.length);
       uploadBody = Buffer.concat(chunks);
-      return {
-        ok: true,
-        json: async () => ({ id: "file-video-123" }),
-      } as Response;
+      return new Response(JSON.stringify({ id: "file-video-123" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     });
     chatCreateMock.mockResolvedValue({
       choices: [
@@ -152,7 +171,10 @@ describe("video_understand", () => {
 
     const context = createContext(tempDir);
     context.logger = createLogger();
-    const result = await videoUnderstandTool.execute({
+    const testTool = createVideoUnderstandTool({
+      uploadOutboundRequestPolicy: createUploadPolicy(uploadAdapter),
+    });
+    const result = await testTool.execute({
       file_path: "clip.mp4",
     }, context);
 
@@ -171,8 +193,9 @@ describe("video_understand", () => {
       mimeType: "video/mp4",
       focusMode: "overview",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const uploadHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(uploadAdapter).toHaveBeenCalledTimes(1);
+    const uploadHeaders = uploadAdapter.mock.calls[0]?.[0].init.headers as Record<string, string>;
     expect(uploadHeaders["Content-Type"]).toMatch(/^multipart\/form-data; boundary=/);
     expect(Number(uploadHeaders["Content-Length"])).toBe(uploadBody.length);
     expect(uploadBody.toString("utf-8")).toContain("fake-video");
@@ -292,10 +315,10 @@ describe("video_understand", () => {
     const videoPath = path.join(tempDir, "clip.mp4");
     await fs.writeFile(videoPath, Buffer.from("fake-video"));
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: "file-video-123" }),
-    } as Response);
+    const uploadAdapter = vi.fn(async () => new Response(JSON.stringify({ id: "file-video-123" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
     chatCreateMock.mockResolvedValue({
       choices: [
         {
@@ -312,13 +335,16 @@ describe("video_understand", () => {
       ],
     });
 
-    const result = await videoUnderstandTool.execute({
+    const result = await createVideoUnderstandTool({
+      uploadOutboundRequestPolicy: createUploadPolicy(uploadAdapter),
+    }).execute({
       file_path: "clip.mp4",
       max_timeline_items: 0,
     }, createContext(tempDir));
 
     expect(result.success).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(uploadAdapter).toHaveBeenCalledTimes(1);
     const promptText = chatCreateMock.mock.calls[0]?.[0]?.messages?.[1]?.content?.[0]?.text;
     expect(promptText).toContain("不要因为固定上限而省略重要片段");
     expect(promptText).toContain("不要只给 5 条示例");
@@ -353,10 +379,10 @@ describe("video_understand", () => {
     const videoPath = path.join(tempDir, "clip.mp4");
     await fs.writeFile(videoPath, Buffer.from("fake-video"));
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: "file-video-456" }),
-    } as Response);
+    const uploadAdapter = vi.fn(async () => new Response(JSON.stringify({ id: "file-video-456" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
     chatCreateMock.mockResolvedValue({
       choices: [
         {
@@ -380,7 +406,9 @@ describe("video_understand", () => {
       ],
     });
 
-    const result = await videoUnderstandTool.execute({
+    const result = await createVideoUnderstandTool({
+      uploadOutboundRequestPolicy: createUploadPolicy(uploadAdapter),
+    }).execute({
       file_path: "clip.mp4",
       focus_mode: "timestamp_query",
       target_timestamp: "00:09",
@@ -389,6 +417,8 @@ describe("video_understand", () => {
     }, createContext(tempDir));
 
     expect(result.success).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(uploadAdapter).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(result.output))).toMatchObject({
       focusMode: "timestamp_query",
       targetTimestamp: "00:09",
@@ -413,11 +443,7 @@ describe("video_understand", () => {
     const videoPath = path.join(tempDir, "clip.mp4");
     await fs.writeFile(videoPath, Buffer.from("fake-video"));
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 415,
-      text: async () => "unsupported media",
-    } as Response);
+    const uploadAdapter = vi.fn(async () => new Response("unsupported media", { status: 415 }));
     understandVideoFileByFrameSamplingMock.mockResolvedValue({
       summary: "基于抽帧识别，视频大致展示了产品演示过程。",
       tags: ["demo", "fallback"],
@@ -435,12 +461,16 @@ describe("video_understand", () => {
 
     const context = createContext(tempDir);
     context.logger = createLogger();
-    const result = await videoUnderstandTool.execute({
+    const result = await createVideoUnderstandTool({
+      uploadOutboundRequestPolicy: createUploadPolicy(uploadAdapter),
+    }).execute({
       file_path: "clip.mp4",
       max_timeline_items: 0,
     }, context);
 
     expect(result.success).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(uploadAdapter).toHaveBeenCalledTimes(1);
     expect(understandVideoFileByFrameSamplingMock).toHaveBeenCalledTimes(1);
     expect(understandVideoFileByFrameSamplingMock).toHaveBeenCalledWith(expect.objectContaining({
       maxTimelineItems: undefined,

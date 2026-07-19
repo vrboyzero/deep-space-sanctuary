@@ -2335,6 +2335,48 @@ describe("doctor observability rendering", () => {
     expect(container.textContent || "").toContain("long tasks p95/max=80ms/80ms");
   });
 
+  it("renders aggregate WebChat lifecycle counts without provider content", () => {
+    const payload = {
+      webchatLifecycle: {
+        captureSequence: 8,
+        providerCount: 24,
+        failedProviderCount: 0,
+        activeTimerCount: 1,
+        activeListenerCount: 2,
+        pendingOperationCount: 3,
+        retainedItemCount: 4,
+        retainedByteCount: 128,
+        replacementSettlementCaptureCount: 1,
+        featureDisposeCaptureCount: 2,
+        pagehideCaptureCount: 0,
+        explicitSnapshotCaptureCount: 5,
+      },
+    };
+
+    const lines = buildDoctorChatSummary(payload);
+    expect(lines.join("\n")).toContain("WebChat Lifecycle");
+    expect(lines.join("\n")).toContain("1 timers");
+    expect(lines.join("\n")).toContain("2 listeners");
+    expect(lines.join("\n")).toContain("3 pending");
+    expect(lines.join("\n")).toContain("4 retained items / 128 bytes");
+    expect(lines.join("\n")).toContain("captures 8 / providers 24 / failures 0");
+    expect(lines.join("\n")).not.toContain("conversation-secret");
+
+    const callbacks = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle) => {
+      callbacks[handle - 1] = null;
+    });
+    const container = document.createElement("div");
+    renderDoctorObservabilityCards(container, payload);
+    flushAnimationFrames(callbacks);
+    expect(container.textContent || "").toContain("WebChat Lifecycle");
+    expect(container.textContent || "").toContain("replacement 1 / dispose 2 / pagehide 0 / explicit 5");
+  });
+
   it("keeps Query Runtime and runtime resource translations in the settings namespace", () => {
     expect(zhCN.settings.doctorQueryRuntimeTitle).toBe("Query Runtime");
     expect(zhCN.settings.doctorRuntimeResourcesTitle).toBe("运行资源");

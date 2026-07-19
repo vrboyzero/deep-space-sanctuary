@@ -4,7 +4,7 @@
 > 审计基线：2026-07-15，仓库根版本 `0.5.4`。
 > 最近回写：2026-07-19。
 > 进度规则：本文仅在末尾“实施计划进度表”维护状态；正文只保留稳定目标、方案、边界与执行规则。
-> 历史回查：如需查看前两次压缩前的实现结论与详细验证记录，可查阅 [v2-1 备份](../archive/SS项目优化实施方案计划v2-1.md) 与 [v2-2 备份](../archive/SS项目优化实施方案计划v2-2.md)；归档仅用于回查，不作为当前状态源。
+> 历史回查：如需查看前三次压缩前的实现结论与详细验证记录，可查阅 [v2-1 备份](../archive/SS项目优化实施方案计划v2-1.md)、[v2-2 备份](../archive/SS项目优化实施方案计划v2-2.md) 与 [v2-3 备份](../archive/SS项目优化实施方案计划v2-3.md)；归档仅用于回查，不作为当前状态源。
 
 ## 1. 目标、范围与 Done 定义
 
@@ -312,10 +312,12 @@ Wave 表达技术依赖顺序；同一 OPT 可有多个提交，但只能有一�
 | Wave 0：基线与 Delivery Gate | `OPT-B00`、`OPT-B01`、`OPT-B02`、`OPT-B03`、`OPT-R01`、`OPT-R07`、`OPT-R09`、`OPT-P03`、`OPT-S09` | 先能测、能阻断、能区分零发现与未知 | 1-2 周 / 中 | 当前 build/test 基线 |
 | Wave 1：P0 fast lane | `OPT-A01`、`OPT-D06`、`OPT-GW05`、`OPT-C02`、`OPT-C03`、`OPT-C04`、`OPT-UI01`、`OPT-UI02`、`OPT-R02`、`OPT-R03`、`OPT-S01` | 关闭稳定复现的 secret、路径、弱 token、Relay 和版本问题 | 1-2 周 / 中高 | Wave 0 required checks |
 | Wave 2：信任、文件与外部输入 | `OPT-S02`、`OPT-S04`、`OPT-S07`、`OPT-D01`、`OPT-BR01`、`OPT-BR02`、`OPT-MCP02`、`OPT-MCP03`、`OPT-MCP04`、`OPT-PL03`、`OPT-C01`、`OPT-GW01`、`OPT-GW02`、`OPT-W01`、`OPT-W02`、`OPT-UI03`、`OPT-R04`、`OPT-R08`、`OPT-P01`、`OPT-A09` | 建立不可绕过的 ingress、可信内容、受限 I/O 与安全错误 | 3-5 周 / 高 | Wave 1；Filesystem/Outbound/Failure contract |
-| Wave 3：预算、取消与生命周期 | `OPT-P02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01`、`OPT-PL01`、`OPT-PL02`、`OPT-C05`、`OPT-C07`、`OPT-A02`、`OPT-A03`、`OPT-S03`、`OPT-S05`、`OPT-S06`、`OPT-M01`、`OPT-M05`、`OPT-M08`、`OPT-GW04`、`OPT-GW07`、`OPT-GW09`、`OPT-W03`、`OPT-UI08` | timeout 终止工作，队列有界，owner 可 drain/dispose | 3-5 周 / 高 | Wave 2 admission/contract |
+| Wave 3：预算、取消与生命周期 | `OPT-P02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01`、`OPT-PL01`、`OPT-PL02`、`OPT-C05`、`OPT-C07`、`OPT-A02`、`OPT-A03`、`OPT-S03`、`OPT-S05`、`OPT-S06`、`OPT-M01`、`OPT-M05`、`OPT-M08`、`OPT-GW04`、`OPT-GW07`、`OPT-GW09`、`OPT-W03`、`OPT-UI08` | timeout 终止工作，队列有界，owner 可 drain/dispose；UI08 在 S030 停止横向 listener 迁移，随后以窄 RuntimeContext、真实跨 panel consumer、command/event 和 `app.js` wiring Gate 收口 | 3-5 周 / 高；UI08 尚余 S030 收尾与 4 个结构性切片，约 2-4 个专注人日 | Wave 2 admission/contract |
 | Wave 4：状态、事务与 retention | `OPT-D02`、`OPT-D03`、`OPT-D07`、`OPT-C06`、`OPT-A04`、`OPT-A05`、`OPT-A06`、`OPT-S08`、`OPT-M02`、`OPT-M03`、`OPT-M04`、`OPT-M06`、`OPT-M07`、`OPT-GW03`、`OPT-GW06`、`OPT-W04`、`OPT-W05`、`OPT-UI06`、`OPT-UI07` | 消除写放大和无界状态，证明事务、resume 与 cleanup | 3-5 周 / 高 | Wave 2 revision；Wave 3 lifecycle |
 | Wave 5：热路径与体验深度 | `OPT-D04`、`OPT-A07`、`OPT-A08`、`OPT-M09`、`OPT-GW08`、`OPT-UI04`、`OPT-UI05` | streaming、prepared request、embedding、Commander 和 lazy UI 获得可测收益 | 3-5 周 / 中高 | B00；Wave 2-4 contract/retention |
 | Wave 6：发行矩阵与 rollout | `OPT-R05`、`OPT-R06` | frozen/offline native、Windows 资产、公开回读与发布 transaction 闭合 | 2-4 周 / 高 | R02-R04/R08 与 ArtifactContract |
+
+UI08 的 Wave 3 关闭边界不是迁移全部现存 listener。S030 完成后不再自动增加横向迁移切片，只按 S031-S034 建立 Gateway、Navigation、Locale、Notice、Identity 五项窄能力的 `WebChatRuntimeContext`，接入真实跨 panel consumer，以 command/event 替代对应 callback bundle，并完成 `app.js` 装配边界与 inventory 验证。
 
 ### 5.2 P0-P3 唯一映射
 
@@ -358,7 +360,7 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 | 批次 | 范围 | 启动 Gate | 退出 Gate |
 | --- | --- | --- | --- |
 | P1-A | B01-B03、P01、MCP02 | P0.0 checks 可用 | 阶段/资源/Web 指标可用；state-dir 与 MCP config 原子/revision 通过 |
-| P1-B | Wave 3 的 P1 OPT | admission、FailureEnvelope、外部输入 seam 闭合 | timeout 后资源归零；queue 有界；shutdown/drain/claim 故障注入通过 |
+| P1-B | Wave 3 的 P1 OPT | admission、FailureEnvelope、外部输入 seam 闭合 | timeout 后资源归零；queue 有界；shutdown/drain/claim 故障注入通过。UI08 另需满足：RuntimeContext 五项窄能力契约稳定；至少一个真实跨 panel consumer 接入；至少一条 callback bundle 已转为 command/event；本轮触及的 `app.js` 路径只保留装配、注册或转发；PanelTaskScope、RuntimeContext、inventory、WebChat/security/build 验证通过 |
 | P1-C | Wave 4 的 P1 OPT | lifecycle 与 revision 原语稳定 | 无半提交；cache/state/query/write 有硬限；旧 schema 可读可回滚 |
 | P1-D | M09、GW08、R05、R06 | contract/transaction/ArtifactContract 稳定 | Embedding/Commander 单一；slim/full/native/winget 能真实 probe |
 | P2 | 11 个 P2 OPT | 无同 seam P0/P1 blocker；B00-B03 有三次可比基线 | 行为等价；目标 p95/RSS/首屏/构建指标改善；回滚可用 |
@@ -369,7 +371,7 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 1. Wave 0：required checks 能运行正确性测试与有效 scanner；基准可重复。未满足前不开始大规模性能改造。
 2. Wave 1：每个 E1 问题先有失败测试；secret、Goal root、Relay CLI、release version fixture 通过。
 3. Wave 2：path/URL/archive/Markdown/config/identity corpus 在全部 Adapter 一致拒绝；合法旧配置可版本化读取。
-4. Wave 3：取消后 request/process/socket/job 在 deadline 内归零；shutdown 顺序和 claim 恢复通过故障注入。
+4. Wave 3：取消后 request/process/socket/job 在 deadline 内归零；shutdown 顺序和 claim 恢复通过故障注入。UI08 在 S030 后停止 listener 横向扫描，只有 RuntimeContext 契约、真实跨 panel consumer、command/event 替代和 `app.js` wiring 收敛全部通过才可关闭；新 listener 发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决，不自动进入 UI08 队列。
 5. Wave 4：状态增长、写次数、cache bytes、DB query 数有上限；事务故障不产生半提交；schema 可备份恢复。
 6. Wave 5：仅在基准证明收益且行为等价时启用；streaming、final DOM、capability、embedding fallback 均有兼容测试。
 7. Wave 6：所有发行变体从 frozen identity 构建，native probe、公开下载/hash、离线恢复、upgrade/rollback 均通过；未闭环的变体不得发布。
@@ -380,6 +382,9 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 - Given 文件、URL、archive、Plugin/Workflow 或 Web asset 来自不可信输入，When 跨越 seam，Then 先验证 identity/capability/规模再 I/O，任何 Adapter 不得绕过。
 - Given 长会话、10 万列表项、后台索引和多 Channel 并发运行，When 预算达到上限，Then 按领域背压/淘汰/分页，活跃事务与用户 draft 不丢失。
 - Given 同一 tag/commit/lockfile 重复构建，When 验证并发布，Then identity 可复算、声明能力可 probe、测试 digest 与发布 digest 相同。
+- Given panel 已 inactive、replaced 或 disposed，When 旧 listener、timer 或 pending task 结算，Then snapshot 最终归零、旧 generation 不转发或提交副作用，active 行为保持不变。
+- Given 跨 panel 的 Gateway、Navigation、Locale、Notice 或 Identity 请求，When consumer 通过 RuntimeContext command/event 发起，Then 不再依赖持续增长的 `app.js` callback bundle，现有可观察行为保持兼容。
+- Given RuntimeContext consumer 被替换或释放，When retained callback 或迟到 command/event 返回，Then 旧 generation 零转发，新 active consumer 仍可按原契约工作。
 
 ### 6.5 提交、兼容和发布边界
 
@@ -388,6 +393,9 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 3. schema/wire/manifest 采用 expand → migrate/read-old → contract → remove-old；remove-old 在独立版本窗口执行。
 4. 依赖主版本、数据库/持久化迁移、生产配置、真实发布、签名、外部不可逆写入和大批量覆盖必须另走 HITL。
 5. 正式 tag 前执行 Delivery Readiness Gate；核心目标、验证、兼容、风险、回滚和阻塞缺陷有任何不清楚，不得表述为可发布。
+6. RuntimeContext 采用 expand-first：先以 Adapter 兼容旧 callback 路径；至少第二个真实 capability/consumer fixture 通过前不删除旧路径，删除动作必须保持独立可回滚。
+7. UI08 只对本轮触及的 `app.js` wiring 做最小替换，目标是让主文件保留装配、注册或转发，不以顺手缩减既有行数为完成条件。
+8. UI01 物理网络取消、UI05 lazy loading、UI06 分页不借 RuntimeContext 收口扩入；对应证据或优先级变化前维持既有裁决。
 
 ## 7. 技术债及持续执行规则
 
@@ -410,6 +418,7 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 4. 阶段未结束时，第 8 节必须同步写唯一一段后续计划，说明下一步、先做原因和尚缺闭环。
 5. 优先选择具备独立失败 fixture、明确 owner、低耦合和可回滚边界的最小闭环；不得以性能、重构或“顺手修复”为由跨越既定 `split_task`。
 6. 每个阶段启动时必须制定收口规划，明确完成边界、验收证据和不纳入范围；达到边界后停止扩张，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+7. 每个阶段的计划完成并回写第 8 节后，必须一并检查第 6 节以及 8.2、8.3 是否需要同步更新；状态、Gate 或 Wave 摘要有变化时在同一轮更新，无变化时也要在阶段结论中确认已核对。
 
 ### 7.3 当前明确延期边界
 
@@ -431,21 +440,21 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 
 | Priority | 已完成 | 部分完成 | 未开始 | 延期/阻塞 | 合计 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| P0 | 24 | 8 | 0 | 0 | 32 |
-| P1 | 18 | 23 | 2 | 1 | 44 |
+| P0 | 25 | 7 | 0 | 0 | 32 |
+| P1 | 20 | 23 | 0 | 1 | 44 |
 | P2 | 0 | 4 | 5 | 2 | 11 |
 | P3 | 0 | 1 | 0 | 1 | 2 |
-| **合计** | **42** | **36** | **7** | **4** | **89** |
+| **合计** | **45** | **35** | **5** | **4** | **89** |
 
 ### 8.2 P0-P3 当前唯一状态
 
 | Priority / 状态 | 数量 | OPT |
 | --- | ---: | --- |
-| P0 已完成 | 24 | `OPT-B00`、`OPT-R09`、`OPT-A01`、`OPT-D06`、`OPT-GW05`、`OPT-C02`、`OPT-C03`、`OPT-C04`、`OPT-UI02`、`OPT-R02`、`OPT-S01`、`OPT-S02`、`OPT-D01`、`OPT-BR01`、`OPT-BR02`、`OPT-MCP03`、`OPT-MCP04`、`OPT-PL03`、`OPT-C01`、`OPT-GW01`、`OPT-GW02`、`OPT-W01`、`OPT-W02`、`OPT-A09` |
-| P0 部分完成 | 8 | `OPT-R07`、`OPT-UI01`、`OPT-R03`、`OPT-S04`、`OPT-S07`、`OPT-UI03`、`OPT-R04`、`OPT-R08` |
-| P1 已完成 | 18 | `OPT-B01`、`OPT-B02`、`OPT-B03`、`OPT-P01`、`OPT-MCP02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01`、`OPT-PL01`、`OPT-C05`、`OPT-C07`、`OPT-A02`、`OPT-A03`、`OPT-A06`、`OPT-S05`、`OPT-S06`、`OPT-M05`、`OPT-M09` |
-| P1 部分完成 | 23 | `OPT-P02`、`OPT-PL02`、`OPT-S03`、`OPT-M01`、`OPT-M08`、`OPT-GW04`、`OPT-GW07`、`OPT-GW09`、`OPT-W03`、`OPT-C06`、`OPT-A04`、`OPT-A05`、`OPT-S08`、`OPT-M02`、`OPT-M04`、`OPT-M06`、`OPT-M07`、`OPT-GW03`、`OPT-GW06`、`OPT-W04`、`OPT-W05`、`OPT-UI07`、`OPT-GW08` |
-| P1 未开始 | 2 | `OPT-UI08`、`OPT-R05` |
+| P0 已完成 | 25 | `OPT-B00`、`OPT-R09`、`OPT-A01`、`OPT-D06`、`OPT-GW05`、`OPT-C02`、`OPT-C03`、`OPT-C04`、`OPT-UI02`、`OPT-R02`、`OPT-S01`、`OPT-S02`、`OPT-S07`、`OPT-D01`、`OPT-BR01`、`OPT-BR02`、`OPT-MCP03`、`OPT-MCP04`、`OPT-PL03`、`OPT-C01`、`OPT-GW01`、`OPT-GW02`、`OPT-W01`、`OPT-W02`、`OPT-A09` |
+| P0 部分完成 | 7 | `OPT-R07`、`OPT-UI01`、`OPT-R03`、`OPT-S04`、`OPT-UI03`、`OPT-R04`、`OPT-R08` |
+| P1 已完成 | 20 | `OPT-B01`、`OPT-B02`、`OPT-B03`、`OPT-P01`、`OPT-MCP02`、`OPT-D05`、`OPT-BR03`、`OPT-MCP01`、`OPT-PL01`、`OPT-C05`、`OPT-C07`、`OPT-A02`、`OPT-A03`、`OPT-A06`、`OPT-S05`、`OPT-S06`、`OPT-S08`、`OPT-M05`、`OPT-UI07`、`OPT-M09` |
+| P1 部分完成 | 23 | `OPT-P02`、`OPT-PL02`、`OPT-S03`、`OPT-M01`、`OPT-M08`、`OPT-GW04`、`OPT-GW07`、`OPT-GW09`、`OPT-W03`、`OPT-UI08`、`OPT-C06`、`OPT-A04`、`OPT-A05`、`OPT-M02`、`OPT-M04`、`OPT-M06`、`OPT-M07`、`OPT-GW03`、`OPT-GW06`、`OPT-W04`、`OPT-W05`、`OPT-GW08`、`OPT-R05` |
+| P1 未开始 | 0 | 无 |
 | P1 外部阻塞 | 1 | `OPT-R06` |
 | P2 部分完成 | 4 | `OPT-R01`、`OPT-D02`、`OPT-M03`、`OPT-D04` |
 | P2 未开始 | 5 | `OPT-D03`、`OPT-UI06`、`OPT-A07`、`OPT-UI04`、`OPT-UI05` |
@@ -462,61 +471,46 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 | Wave 0 | 进行中 | B00-B03、R09 和本地/`private/main` CI、Docker、dependency 检查已有证据。 | 外部 branch protection、attestation、公开 Release 与 P03 按延期边界处理。 |
 | Wave 1 | 本地包完成 | TDZ、请求结算、CredentialSession、setup token、ArtifactContract、Relay probe、registry fail-closed 有回归。 | UI01、R03 原目标仍有明确余项。 |
 | Wave 2 | 本地包完成 | FilesystemCapability、admission、safe output、outbound、MCP/Channel 日志、Web assets、renderer/CSP、installer 首批闭环。 | 统一 Adapter、attestation 和全局 enforced 余项保持部分完成。 |
-| Wave 3 | 进行中 | token usage、supervisor、Relay/MCP/Plugin/Channel/Agent/Skill/Memory 生命周期与预算已有切片。 | Gateway 全局 shutdown、完整 scheduler/queue、PL02、UI08 尚未闭环。 |
-| Wave 4 | 进行中 | A06 十五个切片已闭合；UI07 已覆盖 cache、timer、panel、read/action owner、pagehide 与 dispose 主要路径。 | UI07 四个硬 Gate和 S120 尚缺；顶层事务、lease/resume、ArtifactStore 等独立 split_task 不纳入。 |
+| Wave 3 | 进行中 | token usage、supervisor、Relay/MCP/Plugin/Channel/Agent/Skill/Memory 生命周期与预算已有切片；UI08 已完成 S001-S029 共 29 个切片，PanelTaskScope 已由 28 个 consumer 文件验证。 | Gateway 全局 shutdown、完整 scheduler/queue、PL02 仍有余项；UI08 以 S030 作为最后一个 listener 切片，随后仅执行 S031-S034 的 RuntimeContext、真实跨 panel consumer、command/event 与 `app.js` wiring 收口。 |
+| Wave 4 | 进行中 | A06 十五个切片、UI07 S120/四个硬 Gate 与 GW03 generated static path admission 已闭合；cache、timer、panel、read/action owner、pagehide、dispose、纯计数诊断及 canonical file handle 发送均有验证。 | 顶层事务、lease/resume、完整 ArtifactStore retention 等独立 `split_task` 不纳入当前持续队列。 |
 | Wave 5 | 受 Gate 约束 | D04 启动 I/O、M09 Interface、GW08 role/capability 已有首切片。 | A07、A08、UI04、UI05 需先满足依赖和收益 Gate。 |
-| Wave 6 | 未开始 / 外部阻塞 | 无。 | R05 未开始；R06 受 Windows、公开发布与权限条件阻塞，未闭环变体不得发布。 |
+| Wave 6 | 进行中 / 外部阻塞 | R05 已建立按 mode/platform/arch/Node ABI 绑定的 runtime dependency report，并由 portable/single-exe verifier 共用失败关闭 policy。 | R05 frozen/offline assembler、native matrix 与真实 backend probe 尚未闭合；R06 受 Windows、公开发布与权限条件阻塞，未闭环变体不得发布。 |
 
 ### 8.4 关键实现与验证证据
 
-#### OPT-B00 基准闭环
+本节只保留能支撑当前状态的聚合证据；切片编号和主题见 8.5，状态只以 8.1-8.3 为准。具体源码、fixture 和命令以仓库当前实现及相邻测试为准，不再重复逐切片文件清单。
 
-B00 已完成十个 report-only fixture：BuildGraph、Memory keyword/vec0/cache batch、ToolEnabledAgent history、history×Tool catalog、Channel ingress、真实 ToolExecutor catalog、MCP SDK lifecycle、Browser Relay fake-WebSocket、WebChat full-shell/固定长会话。
+#### 基准与共用验证口径
 
-固定 fixture 不调用计费模型、不读取私有 state、不访问非本机网络、不设置生产阈值。断线复核后既有切片重跑；B00 及相邻定向共 11 个文件、155 项测试通过，相关包 build 通过。
+1. **OPT-B00 基准闭环**：已建立 BuildGraph、Memory、Tool catalog、Channel ingress、MCP、Browser Relay 和 WebChat 等 10 个 report-only fixture；不调用计费模型、不读取私有 state、不访问非本机网络，也不把单次结果设为生产阈值。B00 及相邻定向 11 个文件、155 项测试通过，相关 package build 通过。
+2. **代表性基准**：ToolExecutor 1000 Tool scan 中位数 0.073-0.076 ms/次；MCP 500 Tool + 500 Resource connect/discover 中位数 2.280-2.548 ms；Relay 1000 次 lifecycle 中位数 0.005-0.007 ms/op；WebChat full-shell 为 93 resources、12 marks、2528 DOM nodes，cold/hot 中位数 108.6-113.8/16.4-17.2 ms。上述数据只证明固定 fixture 内成本，不能单独启动 UI04、UI05、A08 或 catalog cache。
+3. **共用机制**：Quality/Dependency Gate 区分 `zero_findings`、`findings_present`、`scan_failed`、`stale`；安全基础覆盖 realpath/root ownership、入口 admission、role/capability、source identity、redaction、outbound、CSP/Trusted Types 和 verified installer；生命周期基础覆盖 root cancellation、generation/claim、硬限、原子 publish、TTL/LRU、fault injection 和纯计数 Doctor 指标。
+4. **共用验证**：按风险使用 workspace/package build、定向 Vitest、WebChat lifecycle/security fixture、`verify:webchat` 和浏览器 smoke。原 OPT 仍有 `split_task`、外部 Gate 或前后对照余项时保持“部分完成”，不得以单个切片通过替代整项关闭。
 
-代表性证据：ToolExecutor 1000 Tool scan 中位数 0.073-0.076 ms/次；MCP 500 Tool+500 Resource connect/discover 中位数 2.280-2.548 ms。
+#### 重点 OPT 聚合证据
 
-Relay 1000 次 lifecycle 中位数 0.005-0.007 ms/op；WebChat full-shell 93 resources、12 marks、2528 DOM nodes，cold/hot 中位数 108.6-113.8/16.4-17.2 ms。
+| OPT / 当前状态 | 已完成重点与可观察效果 | 代表性验证 | 尚缺闭环 / 明确边界 |
+| --- | --- | --- | --- |
+| `OPT-A06` / P1 已完成 | 15 个切片以 generation、completion barrier、lease、release、TTL/LRU 和 revision 收拢 Agent、Tool、Conversation、ResidentStore 与多 Channel ingress；active/pending/new-run 被 pin，终态资源可释放，迟到结果不能复活旧状态。 | Agent/Core/Skills 定向与 workspace build 通过；容量/TTL、四类写链 flush、release fence、resident 并发接管、Channel lease 和 durable history 均有独立 fixture。Windows 并行 `exec.test.ts` 曾因资源争用超时，单文件通过，按 `record_only` 保留。 | 原目标已闭合；Gateway 全局 shutdown、跨进程锁和其他深层 coordinator 仍是独立 `split_task`。 |
+| `OPT-UI07` / P1 已完成 | 120 个切片覆盖 WebChat cache、timer、listener、pending、read/action owner、retained DOM/bytes、pagehide 与 dispose；S120 和 inactive TTL、boot timer、纯计数 diagnostics、inventory 四个 Gate 已闭合，`app.js` 只保留装配/注册/转发。 | Gate 4 回归 26 个文件、208 项测试通过；workspace build、入口校验、`verify:webchat`、CSP/Trusted Types security fixture、shell smoke 和资源清单通过。清单固定 92 个显式 snapshot owner 与 51 个无重复顶层 provider。 | 不要求扫描所有 UI listener/Promise；UI08、UI05、UI06、性能优化和其他既定 `split_task` 未纳入。 |
+| `OPT-UI08` / P1 部分完成 | S001-S029 共 29 个切片建立 `PanelTaskScope` 的 activation/root signal、latest-only commit、timer/listener、pending settlement、deactivate/dispose 和非终态 invalidation，并由 28 个 consumer 文件验证；inactive/detached 资源零转发，active 行为保持。 | 最新 WebChat 全量 139 个文件、691 项通过；`verify:webchat` 校验 275 个文件，CSP/Trusted Types fixture、workspace build、inventory 与顶层 wiring 回归通过。 | S030 是最后一个横向 listener 切片；随后仅执行 S031-S034 RuntimeContext 契约、真实跨 panel consumer、command/event 和 `app.js` wiring/inventory 收口。 |
+| `OPT-UI01` / P0 部分完成 | 已完成 AbortSignal request settlement、ready-generation send Gate 和 3/6/12/24/30 秒有界 reconnect backoff（默认正负 20% jitter）；pre-ready/pre-aborted 零发送，replacement 与旧 generation 不能提交，auth rejected 不重连。 | request/connection 独立 fixture、WebChat 全量、`verify:webchat`、security smoke 和 workspace build 通过。 | 深 GatewayClient 状态机、challenge/auth、请求 retry/idempotency、Gateway method registry 和更广物理取消继续独立 `split_task`。 |
+| `OPT-S07` / P0 已完成 | 3 个切片完成 Authorization/URL userinfo 脱敏、audit output/error 与 arguments 正文最小化，只保留 bytes/hash/failure kind 和 `ackMatched` 安全投影；Tool 原始结果及 legacy producer 保持兼容。 | 未知 secret/参数红灯 fixture、摘要确定性、legacy fallback、Protocol/Skills 全量、Core audit/resource 回归与 workspace build 通过。 | 当前 audit schema 不含 metadata；持久化 audit store、dispatcher shutdown drain 和跨模块统一错误映射不属于本目标。 |
+| `OPT-S08` / P1 已完成 | 空 Tool 状态回收、Timer namespace/容量限界、唯一 active Skill source/eligibility 和 Tool 会话释放钩子已闭合；目标会话 timer/lap 归零，其他会话不受影响，cleanup failure 隔离且不泄漏正文。 | Skills 76 个文件、634 项；Timer/Executor 2 个文件、62 项；Agent 顶层 release 1 个文件、72 项通过，workspace build 通过。一次 STT single-flight 波动经单文件及全量复跑通过，未扩改 STT。 | 不建立通用异步 lifecycle registry，不改变 Tool execution、selection persistence 或 Gateway shutdown。 |
+| `OPT-S04` / P0 部分完成 | 31 个切片把 Discord、QQ、Community、DashScope、Browser/Search、Office、视频理解、模型/Agent/Memory 请求迁入 fixed/configured endpoint admission、pinned transport、redirect/DNS 防护及有界 response policy，并补 Protocol 标准 IP range 分类。 | 各 Adapter 独立攻击/合法路径 fixture、Protocol/Core/Agent/Skills/Channels/Memory 定向测试及相关 build 通过；超限、恶意 redirect、私网/保留地址与迟到响应均有失败关闭证据。 | 统一 outbound Adapter、全局 enforced 覆盖和剩余外部调用面仍需按独立 seam 迁移，不能借单个 endpoint 扩张。 |
+| `OPT-UI03` / P0 部分完成 | 外链统一 `noopener/noreferrer` 与 referrer trust；Tool result preview 统一进入 `RichContentRenderer`，避免旁路 HTML/Markdown 渲染。 | DOM/security fixture、WebChat 定向与 `verify:webchat:security` 通过。 | 完整 renderer/CSP 迁移和所有历史入口审计仍按原 OPT 边界推进。 |
+| `OPT-R08` / P0 部分完成 | Web asset package provenance Gate 与 lockfile SHA-256 identity 已落地，manifest 只接受受信本地依赖与可复算内容身份。 | manifest/provenance/lockfile 失败 fixture、`verify:webchat`、security fixture 和 build 通过。 | critical/lazy chunk budget、完整离线 load 与所有发行变体统一消费仍是后续切片。 |
+| `OPT-R03` / P0 部分完成 | release-light 已具备 per-file content identity、source provenance identity 和 canonical BuildGraph identity，派生元数据绑定同一输入快照。 | 篡改、缺失、重复路径和 identity 不一致 fixture、release-light 定向及 build 验证通过。 | 全发行矩阵 SBOM/attestation、公开资产回读和跨 publisher 同一 digest 仍受后续/外部 Gate 约束。 |
+| `OPT-GW03` / P1 部分完成 | generated static path 使用 canonical admission，并从已验证、已打开的 file handle 发送，缩小路径替换与 TOCTOU 窗口。 | 合法/越界/symlink/path replacement fixture、Core 定向和 workspace build 通过。 | 全部 static/cache/send 路径的统一策略与其他 Gateway 状态余项未借本切片扩入。 |
+| `OPT-R05` / P1 部分完成 | 11 个切片建立 target-bound runtime dependency report、frozen/offline assembler contract、prefetch snapshot admission、slim/full build-script 与 optional/native payload policy、artifact/single-exe identity、pnpm store snapshot、fastembed/ONNX module-load evidence 和 native matrix descriptor。 | portable/single-exe verifier 共用失败关闭 policy；target/mode/platform/arch/Node ABI 不一致、缺包、漂移和模块加载均有 fixture，相关 build/verify 通过。 | 真实 frozen/offline assembler、完整 native matrix/backend probe、Windows/winget 与公开 rollout 尚未闭合；未闭环变体不得发布。 |
+| `OPT-R07` / P0 部分完成 | Docker/Quality workflows 已完成非发布 job 最小权限、publisher full workspace test Gate、第三方 Action 固定 SHA、自动更新 Gate 和 Docker base image digest。 | workflow 静态 contract、权限/测试依赖、浮动 ref 与 digest 失败 fixture 通过。 | `origin/main` branch protection/ruleset、artifact attestation、semver tag、GitHub Release 和公开回读按外部延期边界处理；完整 Delivery DAG 尚未关闭。 |
+| `OPT-C06` / P1 部分完成 | QQ reply context 增加 TTL/LRU；current conversation binding 支持显式 prune、悬空索引清理和纯计数 diagnostics，active/latest binding 保持。 | 独立时钟、容量/过期、并发写、prune 一致性与 snapshot fixture 通过，Channels/Core 相关 build 通过。 | 原子/coalesced 全量持久化、旧 JSON 迁移和达到规模阈值后的 SQLite/KV 方案仍是独立任务。 |
 
-上述结果只证明 fixture 内行为和成本，不能直接启动 UI04/UI05、A08 或 catalog cache；性能优化仍需 B00-B03 的可比前后证据。
+#### 验证结论使用规则
 
-#### 共享机制与验证口径
-
-Quality/Dependency Gate 已区分 `zero_findings`、`findings_present`、`scan_failed`、`stale`；安全基础覆盖 realpath/root ownership、入口 admission、role/capability、source identity、redaction、outbound、CSP/Trusted Types 和 verified installer。
-
-P1/P2 已建立 root cancellation、generation/claim、队列/字节/条目硬限、原子 publish、TTL/LRU、fault injection 和有界 Doctor 指标。原 OPT 仍有 split_task、前后对照或生命周期余项时，继续标记“部分完成”。
-
-当前代表性验证为 workspace `corepack pnpm build`、相关定向 Vitest、WebChat 模块/安全 fixture、`corepack pnpm verify:webchat` 和浏览器 smoke；历史切片测试数字仅在本索引的聚合说明中保留。
-
-#### Wave 4 / OPT-A06 实现结论：会话资源释放闭环（2026-07-18）
-
-##### 已完成内容
-
-1. **Agent、Skills、Conversation、ResidentStore 与 Channel owner 扩展**：以 generation、completion barrier、lease、release、TTL/LRU 和 revision 约束终态会话、纯内存状态、顶层 conversation、resident proxy 及多入口 ingress。
-2. **相邻模块拆分**：会话生命周期协调器、resident store 与 channel lease owner 承担新增逻辑；3000 行以上主文件保留装配、注册或转发。
-3. **效果**：终态会话、Tool/Agent cache、conversation sidecar、resident entry 和 ingress lease 在正确 owner 完成后可释放；active/pending/new-run 会被 pin，迟到结果不能复活旧状态。
-
-##### 验证结果
-
-- Agent/Core/Skills 定向及 workspace build 通过；A06 十五个切片均有独立 fixture。
-- 覆盖容量/TTL、四类写链 flush、release fence、completion barrier、异步失败隔离、resident 并发接管、Channel ingress lease 和 durable history 恢复。
-- Windows 并行资源争用的 `exec.test.ts` 超时已按 `record_only` 记录；该文件单独运行通过，不把不稳定的并行全量结果冒充成功。
-
-#### Wave 4 / OPT-UI07 当前实现摘要（截至 2026-07-19）
-
-##### 已完成内容
-
-1. **相邻 lifecycle/read/action owner**：覆盖 agent-session、task-token、chat event、settings、goals、experience、agent runtime、memory viewer/runtime、ChatNetwork、Doctor、Goals specialist 等资源链。
-2. **主模块边界**：`app.js` 和 specialist runtime 只保留装配、注册、转发与状态提交；异步 read owner 统一 latest-only、真实 pending、dispose fence 和无正文 snapshot。
-3. **S119 tracking read lifecycle**：`loadGoalTrackingData` 的 task graph、task/checkpoint、capability cache 与 tracking runtime index 两阶段读取已由独立 owner 接管；迟到 success/rejection 不得写 tracking state、DOM 或 focus。
-4. **当前边界**：UI07 仍为 P1 部分完成。S120 是已承诺的最后一个 capability panel controls 局部切片；随后只执行四个硬 Gate。
-
-##### 验证结果
-
-- workspace `corepack pnpm build`、package entrypoint 校验、`corepack pnpm verify:webchat` 通过。
-- 最新 tracking 定向 10 个文件、43 项测试通过；全部 WebChat lifecycle 测试 15 个文件、122 项通过。
-- 浏览器 smoke 页面正常加载，pagehide 后无新增 console error/warn；replacement、latest-only、dispose、pending 归零和两阶段 tracking fixture 可重复验证。
+- 上表记录的是能支撑 8.2 状态的最新代表性证据，不累计重复列出每轮相同的 build/verify 数字。
+- 新阶段完成时仍按仓库规定的“已完成内容 / 效果 / 验证结果”格式回写；后续文档维护可在状态稳定后并入本聚合表和 8.5 索引。
+- 任何未实际运行、受环境阻塞或仅由替代验证覆盖的项目必须继续明确标注，不能因文档压缩改写为“全部通过”。
 
 ### 8.5 已完成切片压缩索引
 
@@ -541,6 +535,128 @@ P1/P2 已建立 root cancellation、generation/claim、队列/字节/条目硬�
 | 第 13 切片 | Feishu Channel ingress shared lease | 已完成 |
 | 第 14 切片 | QQ Channel ingress shared lease | 已完成 |
 | 第 15 切片 | Discord Channel ingress shared lease 与 A06 闭环 | 已完成 |
+
+#### OPT-R07 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| R07-S001 | Docker workflow 非发布 job 最小权限 Gate | 已完成切片 |
+| R07-S002 | Docker publisher full workspace test Gate | 已完成切片 |
+| R07-S003 | Quality Gates workflow floating Action SHA Gate | 已完成切片 |
+| R07-S004 | Docker workflow floating Action SHA Gate | 已完成切片 |
+| R07-S005 | GitHub Actions pinned SHA update automation Gate | 已完成切片 |
+| R07-S006 | Dockerfile base image digest Gate | 已完成切片 |
+
+#### OPT-UI01 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| UI01-S001 | AbortSignal request settlement 与 workspace roots 首个 consumer | 已完成切片 |
+| UI01-S002 | ready-generation send gate 与 replacement fence | 已完成切片 |
+| UI01-S003 | bounded reconnect backoff、ready reset 与实际 delay 状态 | 已完成切片 |
+
+#### OPT-UI03 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| UI03-S001 | 外链 browsing context 与 referrer trust | 已完成切片 |
+| UI03-S002 | tool result preview 统一 RichContentRenderer 入口 | 已完成切片 |
+
+#### OPT-S04 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| S04-S001 | Discord 音频附件 outbound policy 与有界媒体读取 | 已完成切片 |
+| S04-S002 | QQ raw/wav 语音附件 outbound policy 迁移 | 已完成切片 |
+| S04-S003 | QQ token、gateway 与 reply 固定 REST pinned policy | 已完成切片 |
+| S04-S004 | Community room lookup/join HTTP pinned policy | 已完成切片 |
+| S04-S005 | Community WebSocket endpoint admission 与 pinned transport | 已完成切片 |
+| S04-S006 | DashScope TTS 返回音频 asset pinned policy | 已完成切片 |
+| S04-S007 | image_generate 返回图片 asset pinned policy | 已完成切片 |
+| S04-S008 | DashScope STT 返回转录 asset pinned policy | 已完成切片 |
+| S04-S009 | DashScope STT submit/poll 固定 REST pinned policy | 已完成切片 |
+| S04-S010 | Browser URL admission 命名 profile | 已完成切片 |
+| S04-S011 | Protocol 标准 IP range 分类 | 已完成切片 |
+| S04-S012 | Brave Search fixed REST pinned/bounded policy | 已完成切片 |
+| S04-S013 | SerpAPI query-key fixed REST pinned/bounded policy | 已完成切片 |
+| S04-S014 | DashScope TTS submit fixed REST pinned/bounded policy | 已完成切片 |
+| S04-S015 | Core update checker configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S016 | Office download GET configured-endpoint pinned policy | 已完成切片 |
+| S04-S017 | Office GET JSON configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S018 | Office JSON mutation configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S019 | Office FormData publish configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S020 | 视频理解文件上传 configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S021 | QQ 固定 REST 成功 JSON 有界读取 | 已完成切片 |
+| S04-S022 | Primary model warmup configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S023 | Experience synthesis configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S024 | CLI Doctor model-connectivity configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S025 | CLI advanced modules Gateway runtime `/health` trusted-private pinned policy | 已完成切片 |
+| S04-S026 | TaskSummarizer configured-endpoint pinned/bounded JSON policy | 已完成切片 |
+| S04-S027 | Dream runtime configured-endpoint pinned/bounded JSON policy | 已完成切片 |
+| S04-S028 | MemoryManager chunk-summary configured-endpoint pinned/bounded JSON policy | 已完成切片 |
+| S04-S029 | MemoryManager evolution durable-extraction configured-endpoint pinned/bounded JSON policy | 已完成切片 |
+| S04-S030 | Agent Moonshot multipart upload configured-endpoint pinned/bounded policy | 已完成切片 |
+| S04-S031 | Agent FailoverClient configured-endpoint streaming response policy | 已完成切片 |
+
+#### OPT-S07 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| S07-S001 | Authorization scheme 与 URL userinfo 文本脱敏 | 已完成切片 |
+| S07-S002 | audit output/error 正文最小化与 Core 安全摘要 | 已完成切片 |
+| S07-S003 | audit arguments 正文最小化与 `ackMatched` 安全投影 | 已完成切片 |
+
+#### OPT-S08 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| S08-S001 | 空 Tool 状态回收与 Timer namespace/容量限界 | 已完成切片 |
+| S08-S002 | 唯一 active Skill source 与 eligibility 分类 | 已完成切片 |
+| S08-S003 | Tool 会话释放钩子与 Timer registry 归零 | 已完成切片 |
+
+#### OPT-R08 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| R08-S001 | Web asset package provenance gate | 已完成切片 |
+| R08-S002 | Web asset lockfile SHA-256 identity | 已完成切片 |
+
+#### OPT-R03 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| R03-S001 | release-light per-file content identity | 已完成切片 |
+| R03-S002 | release-light source provenance identity | 已完成切片 |
+| R03-S003 | release-light canonical BuildGraph identity | 已完成切片 |
+
+#### OPT-R05 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| R05-S001 | runtime dependency report target identity 与共享失败关闭 policy | 已完成切片 |
+| R05-S002 | frozen/offline assembler command contract 与 prefetch 边界 | 已完成切片 |
+| R05-S003 | target-bound prefetch snapshot descriptor admission | 已完成切片 |
+| R05-S004 | slim/full runtime build-script decision policy | 已完成切片 |
+| R05-S005 | slim optional/native payload absence contract | 已完成切片 |
+| R05-S006 | full optional/native payload presence contract | 已完成切片 |
+| R05-S007 | dependency snapshot artifact identity 与 derived metadata 继承 | 已完成切片 |
+| R05-S008 | single-exe outer/extracted snapshot identity consistency | 已完成切片 |
+| R05-S009 | prefetched pnpm store content snapshot admission | 已完成切片 |
+| R05-S010 | full fastembed/ONNX module-load evidence | 已完成切片 |
+| R05-S011 | target-bound native backend matrix descriptor | 已完成切片 |
+
+#### OPT-GW03 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| GW03-S001 | generated static canonical path admission 与已打开句柄发送 | 已完成切片 |
+
+#### OPT-C06 切片索引
+
+| 切片 | 主题 | 状态 |
+| --- | --- | --- |
+| C06-S001 | QQ reply context TTL/LRU lifecycle | 已完成切片 |
+| C06-S002 | current conversation binding 显式 prune 与纯计数 diagnostics | 已完成切片 |
 
 #### OPT-UI07 切片索引
 
@@ -665,34 +781,69 @@ P1/P2 已建立 root cancellation、generation/claim、队列/字节/条目硬�
 | UI07-S117 | Goals specialist capability cache/pending read lifecycle | 已完成切片 |
 | UI07-S118 | Goals specialist capability panel read lifecycle | 已完成切片 |
 | UI07-S119 | Goals specialist tracking read lifecycle | 已完成切片 |
+| UI07-S120 | capability panel controls listener lifecycle | 已完成切片 |
 
-### 8.6 UI07 收口规划与后续计划
+#### OPT-UI08 切片索引
 
-#### 收口边界
+| Slice | Owner / 目标 | 状态 |
+| --- | --- | --- |
+| UI08-S001 | PanelTaskScope + workspace roots save 首个真实 consumer | 已完成切片 |
+| UI08-S002 | Session digest 多 listener/latest-only read consumer | 已完成切片 |
+| UI08-S003 | Plan panel workflow latest-only read 与 listener lifecycle | 已完成切片 |
+| UI08-S004 | Plan clear/null-plan 非终态 task invalidation | 已完成切片 |
+| UI08-S005 | Goals overview PanelTaskScope request/listener lifecycle | 已完成切片 |
+| UI08-S006 | Goal modal controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S007 | Goal/Subtask list controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S008 | ExperienceWorkbench refresh controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S009 | Memory Dream controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S010 | Memory Viewer root controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S011 | Memory query filter controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S012 | SharedReview filter controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S013 | Memory Viewer modal controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S014 | Primary Chat controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S015 | Main View navigation PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S016 | Header navigation PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S017 | Web config links PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S018 | Governance detail mode refresh PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S019 | Panel visibility PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S020 | Model selection persistence PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S021 | Theme controller PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S022 | UUID identity reconnect PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S023 | ExperienceWorkbench synthesis sources delegated listener activation lifecycle | 已完成切片 |
+| UI08-S024 | Setup guidance timer PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S025 | ChatNetwork model controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S026 | Prompt controller PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S027 | Task token result panel PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S028 | Goals specialist panel controls PanelTaskScope activation lifecycle | 已完成切片 |
+| UI08-S029 | Memory detail path listener PanelTaskScope activation lifecycle | 已完成切片 |
 
-UI07 的目标是证明 WebChat 关键生命周期资源在 replacement、feature dispose、pagehide 和诊断读取后有明确 owner、真实 settlement 和可观察归零；不要求扫描并改造所有 UI listener、Promise 或未来新增面板。
+### 8.6 UI07/UI08 收口结果与后续计划
 
-UI07-S120 capability panel controls 是当前队列中已承诺的最后一个局部切片，不构成第五个硬 Gate。它只处理 `goals-capability-panel.js` 的 source、subtask、governance save、commander decision、prefill 五类动态 action listener；通用 panel action/listener 归 OPT-UI08。
+#### UI07 收口结果（已完成）
 
-#### 四个硬 Gate
+UI07 只要求关键 WebChat 生命周期资源在 replacement、feature dispose、pagehide 和诊断读取后具有明确 owner、真实 settlement 和可观察归零，不要求迁移所有 UI listener、Promise 或未来面板。S120 与以下四个 Gate 均已通过，因此 UI07 已切换为 P1 已完成。
 
-| Gate | 必须完成 | 通过证据 | 明确不纳入 |
+| Gate | 完成结果 | 核心证据 | 不纳入范围 |
 | --- | --- | --- | --- |
-| Gate 1：inactive TTL | 为 `agent-session-cache.js`、`task-token-history-cache.js` 增加 inactive TTL；active/pinned 项不误清，过期项可重复淘汰。 | 独立时钟 fixture、replacement/pagehide dispose、snapshot 计数与边界回归。 | 不扩展为全站 cache 策略；catalog/cache 参数仍按 OPT-S09/A08 裁决。 |
-| Gate 2：boot timer | 关闭 `app.js` 中未受管的 `playBootSequence` timer，并保留启动成功、失败和 pagehide 行为。 | timer owner fixture、浏览器 smoke、dispose 后 timer/listener snapshot 归零。 | 不把 app.js 改成新的业务 owner；只保留装配/转发。 |
-| Gate 3：aggregate diagnostics | 提供只含数量的 WebChat lifecycle aggregate diagnostics，并固定 replacement settlement、feature dispose、pagehide、显式 snapshot 四类触发契约。 | 触发顺序、计数增减、敏感正文不出现在 snapshot、归零和迟到 settlement fixture。 | 不输出正文、conversation/task id 或高基数标签；不重做 Doctor 信息架构。 |
-| Gate 4：inventory/audit | 对 UI07 owner 做最终 resource inventory/audit，核对 timer、listener、pending、cache、retained DOM/bytes 的 owner、释放点、fixture 和回滚点。 | 清单与代码/测试逐项对照；WebChat verify、browser smoke、diff 检查和 closure checklist 全部通过。 | 不以审计名义跨入 UI08/UI05/UI06 或新增 Promise/action 迁移。 |
+| inactive TTL | agent-session 与 task-token cache 支持默认 30 分钟惰性 TTL，active/streaming 项 pin，淘汰不重复计数。 | 独立时钟、LRU/bytes、generation、replacement/pagehide fixture。 | 不扩展为全站 cache manager。 |
+| boot timer | boot sequence 由相邻 owner 持有单一 timer、replacement generation 和 dispose settlement。 | pending dispose、replacement、缺失 DOM、active 六行日志与 snapshot 归零 fixture。 | `app.js` 只保留装配、pagehide 和 `play()` 转发。 |
+| aggregate diagnostics | Doctor 只聚合 timer/listener/pending/retained item/bytes 与采样次数。 | 四类触发顺序、provider failure、敏感正文排除和迟到 settlement fixture。 | 不输出 owner、正文、conversation/task id 或高基数标签。 |
+| inventory/audit | timer、listener、pending、cache、retained DOM/bytes 的 owner、释放点、fixture 和回滚点已核对。 | 92 个显式 snapshot owner、51 个顶层 provider、WebChat verify/security、shell smoke 与 closure checklist。 | 不跨入 UI08/UI05/UI06 或新增迁移。 |
 
-四个 Gate 的共同收口标准是：有独立失败 fixture、明确 owner、可回滚实现、active 行为不变、inactive 资源可释放、迟到结果不产生可见副作用。四 Gate 全部通过后，OPT-UI07 才从 P1 部分完成改为已完成。
+#### UI08 当前闭合边界
 
-#### 计划统计切换
+PanelTaskScope 已由 S001-S029 和 28 个 consumer 文件证明 activation/root signal、latest-only commit、timer/listener、pending settlement、deactivate/dispose 与非终态 invalidation。S030 是 listener 横向迁移的最终边界；完成后不再扫描并迁移其他 listener，也不要求覆盖所有现存 listener。
 
-当前统计仍为 42 已完成、36 部分完成、7 未开始、4 延期/阻塞，共 89 项。S120 与四 Gate 全部通过后，预期切换为 43、35、7、4；在证据完成前不得提前改写统计。
+| 切片 | 完成边界 | 验收证据 | 明确排除 |
+| --- | --- | --- | --- |
+| S030 | Memory detail stats 的 task/source/candidate/goal 四类 listener 由 feature/binding scope 管理；deactivate 真实解绑，reactivate 恢复 active 行为。 | 独立 DOM 红灯 fixture、detached/retained button 零转发、inactive bind 零注册、snapshot 归零。 | 不改 action 参数、Goal 导航顺序、Promise cancellation、MemoryViewer 渲染或父 runtime。 |
+| S031 | 固定 Gateway、Navigation、Locale、Notice、Identity 五项最小 `WebChatRuntimeContext` 契约与 fixture。 | 契约、默认 Adapter、replacement/dispose 和旧路径兼容 fixture。 | 不建立全局 service locator，不迁移无关 UI 状态。 |
+| S032 | 至少一个真实跨 panel consumer 使用 RuntimeContext。 | active 行为不变、旧 generation 零转发、consumer replacement fixture。 | 不以抽象名义批量迁移 panel。 |
+| S033 | 至少一条 callback bundle 改为 command/event，触及的 `app.js` 只保留装配、注册或转发。 | command/event 顺序、错误与迟到结果、legacy Adapter 兼容 fixture。 | 不以减少 `app.js` 总行数为目标。 |
+| S034 | 完成 UI08 inventory、WebChat/security/build 回归和状态复核。 | PanelTaskScope、RuntimeContext、consumer、wiring、inventory、`verify:webchat`、security 与 build 全部满足第 6 节 Gate。 | UI01 物理网络取消、UI05 lazy loading、UI06 分页继续独立裁决。 |
+
+S030-S034 全部通过后，UI08 才从 P1 部分完成切换为已完成。任何新增发现都按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决，不自动进入当前持续队列。
 
 #### 后续计划
 
-下一步只执行该局部切片：把五类动态 listener 接入相邻 controls owner，在 panel rerender/loading/error replacement 与 pagehide dispose 时真实解绑，并保留 active 参数和 prefill 行为。
-
-先做它是因为它有独立 DOM fixture、明确 owner、低耦合 replacement 边界，且 action RPC settlement 已由 GoalsActionsRuntime 持有。当前尚缺 detached button 零转发、listener snapshot 归零和 active 行为回归三项证据。
-
-完成该切片后依次执行四个硬 Gate；延期、外部阻塞及其他 split_task 不进入当前队列。
+下一步先完成 `UI08-S030`：其独立 DOM fixture、owner 和回滚边界已经明确，可最小验证四类 listener 在 deactivate 后真实解绑、detached/retained button 零转发、snapshot 归零及 reactivate 后 active 行为不变；S030 回写后立即转入 S031-S034 RuntimeContext 收口，依次固定五项窄契约、接入真实跨 panel consumer、以 command/event 替代对应 callback bundle，最后完成 `app.js` wiring/inventory 与 WebChat/security/build Gate。当前尚缺的关键闭环是 RuntimeContext 契约、真实 consumer、command/event 替代和最终状态切换证据；UI01 物理网络取消、UI05 lazy loading、UI06 分页及其他新发现不纳入本序列。

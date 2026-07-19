@@ -129,7 +129,7 @@ describe("panel visibility feature", () => {
     expect(localStorage.getItem("test.agent.visible")).toBe("1");
   });
 
-  it("releases panel listeners and its pending observability frame", () => {
+  it("owns panel listeners and the observability frame across activation cycles", () => {
     let nextFrameHandle = 1;
     const frames = new Map();
     const requestAnimationFrame = vi.fn((callback) => {
@@ -141,7 +141,8 @@ describe("panel visibility feature", () => {
     vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
     vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
     const windowRef = new EventTarget();
-    const { refs, feature } = createHarness({ windowRef });
+    const onContentPanelVisibleChange = vi.fn();
+    const { refs, feature } = createHarness({ windowRef, onContentPanelVisibleChange });
 
     expect(feature.getRuntimeSnapshot()).toEqual({
       listenerCount: 6,
@@ -153,9 +154,70 @@ describe("panel visibility feature", () => {
     expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
     expect(cancelAnimationFrame).toHaveBeenCalledTimes(1);
 
+    const stateBeforeDeactivate = feature.getState();
+    expect(feature.deactivate()).toBe(true);
+    expect(feature.deactivate()).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 0,
+      pendingFrameCount: 0,
+      disposed: false,
+    });
+    expect(frames.size).toBe(0);
+
+    refs.tokenUsageEl.classList.remove("is-collapsed");
+    refs.sidebarEl.classList.remove("hidden");
+    refs.controlPanelEl.classList.remove("hidden");
+    refs.agentRightPanelEl.classList.remove("hidden");
+    const inactiveKeydown = new KeyboardEvent("keydown", { key: "Enter", cancelable: true });
+    refs.tokenUsageEl.click();
+    refs.tokenUsageEl.dispatchEvent(inactiveKeydown);
+    refs.toggleContentPanelBtn.click();
+    refs.toggleControlPanelBtn.click();
+    refs.toggleAgentPanelBtn.click();
+    windowRef.dispatchEvent(new Event("resize"));
+    feature.setContentPanelVisible(true);
+    feature.setAgentPanelHasContent(true);
+    feature.refreshLocale();
+    expect(inactiveKeydown.defaultPrevented).toBe(false);
+    expect(feature.getState()).toEqual(stateBeforeDeactivate);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(onContentPanelVisibleChange).not.toHaveBeenCalled();
+    expect(localStorage.getItem("test.content.visible")).toBeNull();
+    expect(localStorage.getItem("test.agent.visible")).toBeNull();
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      listenerCount: 6,
+      pendingFrameCount: 1,
+      disposed: false,
+    });
+    expect(refs.tokenUsageEl.classList.contains("is-collapsed")).toBe(true);
+    expect(refs.sidebarEl.classList.contains("hidden")).toBe(true);
+    expect(refs.controlPanelEl.classList.contains("hidden")).toBe(true);
+    expect(refs.agentRightPanelEl.classList.contains("hidden")).toBe(true);
+
+    refs.tokenUsageEl.click();
+    const activeKeydown = new KeyboardEvent("keydown", { key: "Enter", cancelable: true });
+    refs.tokenUsageEl.dispatchEvent(activeKeydown);
+    refs.toggleContentPanelBtn.click();
+    refs.toggleControlPanelBtn.click();
+    refs.toggleAgentPanelBtn.click();
+    feature.setAgentPanelHasContent(true);
+    windowRef.dispatchEvent(new Event("resize"));
+    expect(activeKeydown.defaultPrevented).toBe(true);
+    expect(feature.getState()).toEqual({
+      tokenUsageCollapsed: true,
+      contentPanelVisible: true,
+      controlPanelVisible: true,
+      agentPanelVisible: true,
+      agentPanelHasContent: true,
+    });
+    expect(onContentPanelVisibleChange).toHaveBeenCalledOnce();
+
     const stateBeforeDispose = feature.getState();
     feature.dispose();
     feature.dispose();
+    expect(feature.activate()).toBe(false);
     expect(feature.getRuntimeSnapshot()).toEqual({
       listenerCount: 0,
       pendingFrameCount: 0,
@@ -169,9 +231,10 @@ describe("panel visibility feature", () => {
     refs.toggleControlPanelBtn.click();
     refs.toggleAgentPanelBtn.click();
     windowRef.dispatchEvent(new Event("resize"));
-    feature.setContentPanelVisible(true);
-    feature.setAgentPanelHasContent(true);
+    feature.setContentPanelVisible(false);
+    feature.setAgentPanelHasContent(false);
+    feature.refreshLocale();
     expect(feature.getState()).toEqual(stateBeforeDispose);
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(6);
   });
 });

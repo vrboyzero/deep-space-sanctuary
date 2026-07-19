@@ -9,7 +9,7 @@ describe("memory viewer controls lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("preserves root control mappings until dispose", () => {
+  it("preserves root control mappings only while the controls are active", () => {
     document.body.innerHTML = `
       <button id="refresh"></button>
       <button id="tasks"></button>
@@ -58,15 +58,50 @@ describe("memory viewer controls lifecycle", () => {
     expect(memoryViewer.switchOutboundAuditFocus.mock.calls).toEqual([["all"], ["threads"]]);
     expect(memoryViewer.openDedupModal).toHaveBeenCalledTimes(1);
 
-    feature.dispose();
-    feature.dispose();
+    expect(feature.deactivate()).toBe(true);
     for (const button of document.querySelectorAll("button")) {
       button.click();
     }
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
     expect(loadMemoryViewer).toHaveBeenCalledTimes(2);
     expect(switchMemoryViewerTab).toHaveBeenCalledTimes(4);
     expect(memoryViewer.switchOutboundAuditFocus).toHaveBeenCalledTimes(2);
     expect(memoryViewer.openDedupModal).toHaveBeenCalledTimes(1);
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 9, disposed: false });
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(loadMemoryViewer.mock.calls).toEqual([[true], [true], [true], [true]]);
+    expect(switchMemoryViewerTab.mock.calls).toEqual([
+      ["tasks"],
+      ["memories"],
+      ["sharedReview"],
+      ["outboundAudit"],
+      ["tasks"],
+      ["memories"],
+      ["sharedReview"],
+      ["outboundAudit"],
+    ]);
+    expect(memoryViewer.switchOutboundAuditFocus.mock.calls).toEqual([
+      ["all"],
+      ["threads"],
+      ["all"],
+      ["threads"],
+    ]);
+    expect(memoryViewer.openDedupModal).toHaveBeenCalledTimes(2);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(loadMemoryViewer).toHaveBeenCalledTimes(4);
+    expect(switchMemoryViewerTab).toHaveBeenCalledTimes(8);
+    expect(memoryViewer.switchOutboundAuditFocus).toHaveBeenCalledTimes(4);
+    expect(memoryViewer.openDedupModal).toHaveBeenCalledTimes(2);
   });
 });

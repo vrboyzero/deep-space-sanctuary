@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AgentRegistry } from "@belldandy/agent";
-import type { GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
+import type { GatewayReqFrame, GatewayResFrame, OutboundRequestPolicy } from "@belldandy/protocol";
 import {
   buildVirtualCandidateFromPublishedAsset,
   listPublishedAssets,
@@ -80,6 +80,7 @@ import {
   resolveExperienceSynthesisTemplateInfo,
 } from "../experience-synthesis-template.js";
 import { buildResidentSharedGovernancePreview } from "../resident-shared-governance-report.js";
+import { requestExperienceSynthesisModel } from "../experience-synthesis-model-request.js";
 
 type MemoryExperienceMethodContext = {
   stateDir: string;
@@ -102,6 +103,7 @@ type MemoryExperienceMethodContext = {
     thinking?: Record<string, unknown>;
     reasoningEffort?: string;
   }) => Promise<string>;
+  experienceSynthesisOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
   logger?: {
     debug?: (message: string, data?: unknown) => void;
     warn?: (message: string, data?: unknown) => void;
@@ -2974,59 +2976,17 @@ async function invokePrimaryModelForExperienceSynthesis(input: {
     throw new Error("Primary model is not configured for experience synthesis.");
   }
 
-  const payload: Record<string, unknown> = {
+  const data = await requestExperienceSynthesisModel({
+    baseUrl: requestConfig.baseUrl,
+    apiKey: requestConfig.apiKey,
     model: requestConfig.model,
-    messages: [
-      { role: "system", content: input.system },
-      { role: "user", content: input.user },
-    ],
-    temperature: 0.2,
-    max_tokens: 8_000,
-  };
-  if (requestConfig.thinking) {
-    payload.thinking = requestConfig.thinking;
-  }
-  if (requestConfig.reasoningEffort) {
-    payload.reasoning_effort = requestConfig.reasoningEffort;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort(new Error(`Experience synthesis model call timed out after ${EXPERIENCE_SYNTHESIS_MODEL_CALL_TIMEOUT_MS}ms.`));
-  }, EXPERIENCE_SYNTHESIS_MODEL_CALL_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(buildOpenAIChatCompletionsUrl(requestConfig.baseUrl), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${requestConfig.apiKey}`,
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`Experience synthesis model call timed out after ${EXPERIENCE_SYNTHESIS_MODEL_CALL_TIMEOUT_MS}ms.`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Experience synthesis model call failed: ${response.status} ${truncateText(text, 200)}`.trim());
-  }
-  const data = await response.json() as {
-    choices?: Array<{
-      message?: {
-        content?: string | Array<{ text?: string | null; type?: string | null }> | null;
-        reasoning_content?: string | null;
-      };
-      finish_reason?: string | null;
-    }>;
-  };
+    system: input.system,
+    user: input.user,
+    thinking: requestConfig.thinking,
+    reasoningEffort: requestConfig.reasoningEffort,
+    timeoutMs: EXPERIENCE_SYNTHESIS_MODEL_CALL_TIMEOUT_MS,
+    outboundRequestPolicy: input.ctx.experienceSynthesisOutboundRequestPolicy,
+  });
   const choice = data.choices?.[0];
   const content = extractExperienceSynthesisResponseText(choice?.message?.content);
   const finishReason = normalizeText(choice?.finish_reason);
@@ -3371,19 +3331,6 @@ function truncateText(value: string | undefined, maxLength = 2800): string {
   return normalized.length > maxLength
     ? `${normalized.slice(0, Math.max(0, maxLength - 3))}...`
     : normalized;
-}
-
-function buildOpenAIChatCompletionsUrl(baseUrl: string): string {
-  const trimmed = String(baseUrl ?? "").trim().replace(/\/+$/, "");
-  if (!trimmed) {
-    return "/v1/chat/completions";
-  }
-  if (trimmed.endsWith("/chat/completions")) {
-    return trimmed;
-  }
-  return /\/v\d+$/.test(trimmed)
-    ? `${trimmed}/chat/completions`
-    : `${trimmed}/v1/chat/completions`;
 }
 
 function escapeRegExp(value: string): string {

@@ -563,6 +563,31 @@ describe("chat ui rich text rendering", () => {
     expect(handleReactFinal).not.toHaveBeenCalled();
   });
 
+  it("routes media-rich tool result HTML through the shared link trust policy", () => {
+    installMarkedStub((text) => text);
+    const { feature, messagesEl } = createFeature();
+    const { chatEvents } = createChatEventsHarness(feature);
+
+    chatEvents.handleEvent("tool_result", {
+      conversationId: "",
+      success: true,
+      name: "image_generate",
+      output: [
+        "<div class=\"generated-image-result\">",
+        "<img src=\"/generated/images/demo.png\" alt=\"Generated Image\">",
+        "<a href=\"https://example.com/tool-output\" target=\"_top\" rel=\"opener\">External details</a>",
+        "</div>",
+      ].join(""),
+    });
+
+    const preview = messagesEl.querySelectorAll(".msg-wrapper.bot")[1];
+    const external = preview?.querySelector('a[href="https://example.com/tool-output"]');
+    expect(preview?.querySelector(".media-thumbnail")).not.toBeNull();
+    expect(external?.getAttribute("target")).toBe("_blank");
+    expect(external?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(external?.getAttribute("referrerpolicy")).toBe("no-referrer");
+  });
+
   it("does not render plain text tool results as chat bubbles", () => {
     installMarkedStub((text) => text);
     const { feature, messagesEl } = createFeature();

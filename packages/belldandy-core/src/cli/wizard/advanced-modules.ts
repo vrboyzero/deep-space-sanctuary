@@ -121,6 +121,10 @@ import {
   upsertWebhookRule,
 } from "./advanced-modules-shared.js";
 import type { AdvancedModule } from "./advanced-modules-shared.js";
+import {
+  checkGatewayRuntimeReachability,
+  resolveGatewayBaseUrl,
+} from "./gateway-runtime-reachability.js";
 
 export interface AdvancedModulesWizardOptions {
   envPath: string;
@@ -134,7 +138,6 @@ export interface AdvancedModulesWizardResult {
   notes: string[];
 }
 
-const DEFAULT_GATEWAY_PORT = 28889;
 const CRON_RUN_NOW_TICK_HINT = "~30s";
 
 type GatewayConnectAuth =
@@ -348,39 +351,6 @@ function formatSummaryList(values: string[], limit = 3): string {
     return values.join(", ");
   }
   return `${values.slice(0, limit).join(", ")} +${values.length - limit} more`;
-}
-
-function resolveGatewayBaseUrl(envValues: Map<string, string>): string {
-  const rawHost = (envValues.get("BELLDANDY_HOST") ?? "127.0.0.1").trim() || "127.0.0.1";
-  const host = rawHost === "0.0.0.0" ? "127.0.0.1" : rawHost;
-  const portValue = Number(envValues.get("BELLDANDY_PORT") ?? String(DEFAULT_GATEWAY_PORT));
-  const port = Number.isFinite(portValue) && portValue >= 1 && portValue <= 65535 ? Math.floor(portValue) : DEFAULT_GATEWAY_PORT;
-  return `http://${host}:${port}`;
-}
-
-async function checkGatewayRuntimeReachability(
-  envValues: Map<string, string>,
-): Promise<{ reachable: boolean; healthUrl: string }> {
-  const healthUrl = `${resolveGatewayBaseUrl(envValues).replace(/\/+$/, "")}/health`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 800);
-  try {
-    const response = await fetch(healthUrl, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    return {
-      reachable: response.ok,
-      healthUrl,
-    };
-  } catch {
-    return {
-      reachable: false,
-      healthUrl,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function resolveGatewayConnectAuth(envValues: Map<string, string>): GatewayConnectAuth {

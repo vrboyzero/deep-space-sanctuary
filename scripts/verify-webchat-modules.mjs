@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
+import { validateWebAssetPackageProvenance } from "./web-asset-manifest-policy.mjs";
+
 const repoRoot = process.cwd();
 const webPublicDir = path.join(repoRoot, "apps", "web", "public");
 const entryFile = path.join(webPublicDir, "app.js");
@@ -123,6 +125,7 @@ async function verifyLocalWebAssets(indexHtml) {
   }
 
   const manifest = JSON.parse(await fs.readFile(webAssetsManifestFile, "utf8"));
+  validateWebAssetPackageProvenance(manifest);
   const requiredAssets = ["marked", "dagre", "dompurify", "fontStylesheet"];
   for (const assetName of requiredAssets) {
     if (!manifest.assets?.[assetName]) {

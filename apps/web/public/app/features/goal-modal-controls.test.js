@@ -36,7 +36,11 @@ describe("goal modal controls lifecycle", () => {
       actions,
     });
 
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 6, disposed: false });
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: true,
+      listenerCount: 6,
+      disposed: false,
+    });
     for (const button of document.querySelectorAll("button")) {
       button.click();
     }
@@ -45,15 +49,46 @@ describe("goal modal controls lifecycle", () => {
     expect(actions.submitGoalCreate).toHaveBeenCalledTimes(1);
     expect(actions.closeGoalCheckpointAction).toHaveBeenCalledTimes(2);
 
-    feature.dispose();
-    feature.dispose();
+    expect(feature.deactivate()).toBe(true);
     for (const button of document.querySelectorAll("button")) {
       button.click();
     }
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: false,
+      listenerCount: 0,
+      disposed: false,
+    });
     expect(actions.openGoalCreate).toHaveBeenCalledTimes(1);
     expect(actions.closeGoalCreate).toHaveBeenCalledTimes(2);
-    expect(actions.submitGoalCreate).toHaveBeenCalledTimes(1);
-    expect(actions.closeGoalCheckpointAction).toHaveBeenCalledTimes(2);
+
+    expect(feature.activate()).toBe(true);
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: true,
+      listenerCount: 6,
+      disposed: false,
+    });
+    expect(actions.openGoalCreate).toHaveBeenCalledTimes(2);
+    expect(actions.closeGoalCreate).toHaveBeenCalledTimes(4);
+    expect(actions.submitGoalCreate).toHaveBeenCalledTimes(2);
+    expect(actions.closeGoalCheckpointAction).toHaveBeenCalledTimes(4);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    for (const button of document.querySelectorAll("button")) {
+      button.click();
+    }
+    expect(feature.getRuntimeSnapshot()).toEqual({
+      active: false,
+      listenerCount: 0,
+      disposed: true,
+    });
+    expect(actions.openGoalCreate).toHaveBeenCalledTimes(2);
+    expect(actions.closeGoalCreate).toHaveBeenCalledTimes(4);
+    expect(actions.submitGoalCreate).toHaveBeenCalledTimes(2);
+    expect(actions.closeGoalCheckpointAction).toHaveBeenCalledTimes(4);
   });
 });

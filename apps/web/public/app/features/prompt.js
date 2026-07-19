@@ -1,17 +1,21 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 function createNoopPromptController() {
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
+  taskScope.activate();
   return {
+    activate: taskScope.activate,
+    deactivate: taskScope.deactivate,
     syncHeight() {},
     restoreText() {},
-    dispose() {
-      disposed = true;
-    },
+    dispose: taskScope.dispose,
     getRuntimeSnapshot() {
+      const snapshot = taskScope.getRuntimeSnapshot();
       return {
         listenerCount: 0,
         pendingFrameCount: 0,
         pendingFontReadyCount: 0,
-        disposed,
+        disposed: snapshot.disposed,
       };
     },
   };
@@ -29,15 +33,14 @@ export function initPromptController({
 
   const scheduleFrame = requestAnimationFrameFn ?? ((callback) => setTimeout(callback, 0));
   const cancelFrame = cancelAnimationFrameFn ?? ((handle) => clearTimeout(handle));
-  let disposed = false;
-  let listenerBound = true;
+  const taskScope = createPanelTaskScope();
   let frameScheduled = false;
   let scheduledFrameHandle = null;
   let fontReadyPending = false;
   let promptBaseHeightPx = 0;
 
   function measurePromptBaseHeight() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const computed = globalThis.getComputedStyle(promptEl);
     const lineHeight = Number.parseFloat(computed.lineHeight) || 24;
     const paddingTop = Number.parseFloat(computed.paddingTop) || 0;
@@ -51,7 +54,7 @@ export function initPromptController({
   }
 
   function syncHeight() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     const baseHeight = promptBaseHeightPx || promptEl.scrollHeight;
     const hasText = Boolean(promptEl.value);
     if (!hasText) {
@@ -66,19 +69,19 @@ export function initPromptController({
   }
 
   function initialize() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     measurePromptBaseHeight();
     syncHeight();
   }
 
   function restoreText(text) {
-    if (disposed || !text) return;
+    if (!taskScope.isActive() || !text) return;
     promptEl.value = text;
     syncHeight();
   }
 
   function scheduleHeightSync() {
-    if (disposed || frameScheduled) return;
+    if (!taskScope.isActive() || frameScheduled) return;
     frameScheduled = true;
     const handle = scheduleFrame(() => {
       frameScheduled = false;
@@ -90,7 +93,7 @@ export function initPromptController({
   }
 
   function handleKeydown(event) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       onSubmit?.();
@@ -99,38 +102,50 @@ export function initPromptController({
   }
 
   function handleInput() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     syncHeight();
   }
 
+  function cancelScheduledFrame() {
+    if (!frameScheduled) return false;
+    frameScheduled = false;
+    if (scheduledFrameHandle !== null) cancelFrame(scheduledFrameHandle);
+    scheduledFrameHandle = null;
+    return true;
+  }
+
+  function activate() {
+    cancelScheduledFrame();
+    if (!taskScope.activate()) return false;
+    taskScope.addEventListener(promptEl, "keydown", handleKeydown);
+    taskScope.addEventListener(promptEl, "input", handleInput);
+    initialize();
+    return true;
+  }
+
+  function deactivate() {
+    if (!taskScope.deactivate()) return false;
+    cancelScheduledFrame();
+    return true;
+  }
+
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    if (frameScheduled) {
-      frameScheduled = false;
-      if (scheduledFrameHandle !== null) cancelFrame(scheduledFrameHandle);
-      scheduledFrameHandle = null;
-    }
-    if (listenerBound) {
-      promptEl.removeEventListener("keydown", handleKeydown);
-      promptEl.removeEventListener("input", handleInput);
-      listenerBound = false;
-    }
+    if (taskScope.getRuntimeSnapshot().disposed) return false;
+    cancelScheduledFrame();
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerBound ? 2 : 0,
+      listenerCount: snapshot.listenerCount,
       pendingFrameCount: frameScheduled ? 1 : 0,
       pendingFontReadyCount: fontReadyPending ? 1 : 0,
-      disposed,
+      disposed: snapshot.disposed,
     };
   }
 
-  promptEl.addEventListener("keydown", handleKeydown);
-  promptEl.addEventListener("input", handleInput);
-
-  initialize();
+  activate();
   if (documentRef?.fonts?.ready) {
     fontReadyPending = true;
     Promise.resolve(documentRef.fonts.ready).then(
@@ -145,6 +160,8 @@ export function initPromptController({
   }
 
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     syncHeight,

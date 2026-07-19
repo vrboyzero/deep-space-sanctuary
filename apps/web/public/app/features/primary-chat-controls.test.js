@@ -9,7 +9,7 @@ describe("primary chat controls lifecycle", () => {
     document.body.innerHTML = "";
   });
 
-  it("forwards connect and composer commands until dispose", () => {
+  it("forwards connect and composer commands only while active", () => {
     document.body.innerHTML = `
       <button id="connect">Connect</button>
       <button id="send">Send</button>
@@ -29,12 +29,27 @@ describe("primary chat controls lifecycle", () => {
     expect(onConnect).toHaveBeenCalledTimes(1);
     expect(onComposerPrimaryAction).toHaveBeenCalledTimes(1);
 
+    expect(feature.deactivate()).toBe(true);
+    document.getElementById("connect").click();
+    document.getElementById("send").click();
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onComposerPrimaryAction).toHaveBeenCalledTimes(1);
+
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 2, disposed: false });
+    document.getElementById("connect").click();
+    document.getElementById("send").click();
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    expect(onComposerPrimaryAction).toHaveBeenCalledTimes(2);
+
     feature.dispose();
     feature.dispose();
+    expect(feature.activate()).toBe(false);
     document.getElementById("connect").click();
     document.getElementById("send").click();
     expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
-    expect(onConnect).toHaveBeenCalledTimes(1);
-    expect(onComposerPrimaryAction).toHaveBeenCalledTimes(1);
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    expect(onComposerPrimaryAction).toHaveBeenCalledTimes(2);
   });
 });

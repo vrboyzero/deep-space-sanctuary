@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createHeaderNavigationFeature({
   refs,
   switchMode,
@@ -12,17 +14,15 @@ export function createHeaderNavigationFeature({
     goBridgePageBtn,
     goChatPageBtn,
   } = refs ?? {};
-  let disposed = false;
-  const listenerEntries = [];
+  const taskScope = createPanelTaskScope();
 
   function addOwnedListener(target, type, handler) {
     if (!target) return;
-    target.addEventListener(type, handler);
-    listenerEntries.push({ target, type, handler });
+    taskScope.addEventListener(target, type, handler);
   }
 
   function refreshMultiPageLink() {
-    if (disposed || !openWebChatTabLink) return;
+    if (!taskScope.isActive() || !openWebChatTabLink) return;
     const nextHref = typeof buildMultiPageUrl === "function"
       ? buildMultiPageUrl()
       : (globalThis.location?.href || "/");
@@ -32,19 +32,19 @@ export function createHeaderNavigationFeature({
   }
 
   function openGoalsPage() {
-    if (disposed) return undefined;
+    if (!taskScope.isActive()) return undefined;
     switchMode?.("goals");
     return loadGoals?.(false);
   }
 
   function openBridgePage() {
-    if (disposed) return undefined;
+    if (!taskScope.isActive()) return undefined;
     switchMode?.("bridge");
     return loadBridgeSessions?.(false);
   }
 
   function openChatPage() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     switchMode?.("chat");
     focusPrompt?.();
   }
@@ -65,29 +65,37 @@ export function createHeaderNavigationFeature({
     refreshMultiPageLink();
   }
 
+  function activate() {
+    if (!taskScope.activate()) return false;
+    refreshMultiPageLink();
+    addOwnedListener(goGoalsPageBtn, "click", handleGoalsClick);
+    addOwnedListener(goBridgePageBtn, "click", handleBridgeClick);
+    addOwnedListener(goChatPageBtn, "click", handleChatClick);
+    addOwnedListener(openWebChatTabLink, "click", handleMultiPageLinkClick);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
+
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, type, handler } of listenerEntries) {
-      target.removeEventListener(type, handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
-  refreshMultiPageLink();
-  addOwnedListener(goGoalsPageBtn, "click", handleGoalsClick);
-  addOwnedListener(goBridgePageBtn, "click", handleBridgeClick);
-  addOwnedListener(goChatPageBtn, "click", handleChatClick);
-  addOwnedListener(openWebChatTabLink, "click", handleMultiPageLinkClick);
+  activate();
 
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     refreshMultiPageLink,

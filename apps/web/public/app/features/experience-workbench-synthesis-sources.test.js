@@ -51,6 +51,7 @@ describe("experience workbench synthesis source selection", () => {
       maxRelatedSourceCount: 2,
       initialized: true,
       bound: false,
+      listenerCount: 0,
       disposed: false,
     });
 
@@ -66,11 +67,15 @@ describe("experience workbench synthesis source selection", () => {
     expect(cappedCheckbox.disabled).toBe(true);
   });
 
-  it("moves capacity between related sources through one delegated change owner", () => {
+  it("owns delegated changes across activation cycles without losing selection state", () => {
     const fixture = createFixture();
     fixture.feature.setPreview(createPreview());
     fixture.feature.bind();
     fixture.feature.bind();
+    expect(fixture.feature.getSelectionSnapshot()).toMatchObject({
+      bound: true,
+      disposed: false,
+    });
     fixture.root.innerHTML = [
       fixture.feature.renderCheckbox({ candidateId: "related-2", label: "Include" }),
       fixture.feature.renderCheckbox({ candidateId: "related-3", label: "Include" }),
@@ -83,10 +88,25 @@ describe("experience workbench synthesis source selection", () => {
     expect(fixture.feature.getSelectedSourceIds()).toEqual(["seed-1", "related-1"]);
     expect(fixture.onSelectionChange).toHaveBeenCalledTimes(1);
 
+    expect(fixture.feature.deactivate()).toBe(true);
+    expect(fixture.feature.deactivate()).toBe(false);
+    expect(fixture.feature.getSelectionSnapshot()).toMatchObject({
+      selectedSourceCount: 2,
+      bound: false,
+      listenerCount: 0,
+      disposed: false,
+    });
+
     fixture.root.innerHTML = fixture.feature.renderCheckbox({ candidateId: "related-3", label: "Include" });
     const replacementCheckbox = fixture.root.querySelector("[data-synthesis-source-id='related-3']");
     expect(replacementCheckbox.disabled).toBe(false);
     replacementCheckbox.checked = true;
+    replacementCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(fixture.feature.getSelectedSourceIds()).toEqual(["seed-1", "related-1"]);
+    expect(fixture.onSelectionChange).toHaveBeenCalledTimes(1);
+    expect(fixture.feature.activate()).toBe(true);
+    expect(fixture.feature.getSelectionSnapshot()).toMatchObject({ bound: true, listenerCount: 1 });
     replacementCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(fixture.feature.getSelectedSourceIds()).toEqual(["seed-1", "related-1", "related-3"]);
@@ -113,10 +133,15 @@ describe("experience workbench synthesis source selection", () => {
     });
 
     fixture.feature.dispose();
+    expect(fixture.feature.activate()).toBe(false);
     fixture.root.innerHTML = '<input type="checkbox" data-synthesis-source-id="related-1" />';
     fixture.root.querySelector("input").dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(fixture.onSelectionChange).not.toHaveBeenCalled();
-    expect(fixture.feature.getSelectionSnapshot()).toMatchObject({ bound: false, disposed: true });
+    expect(fixture.feature.getSelectionSnapshot()).toMatchObject({
+      bound: false,
+      listenerCount: 0,
+      disposed: true,
+    });
   });
 });

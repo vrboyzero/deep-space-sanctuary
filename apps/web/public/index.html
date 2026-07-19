@@ -1910,6 +1910,14 @@
             <div class="form-help" data-i18n="settings.relayPortHelp">浏览器中继监听端口。只有在启用 Browser Relay 时才会用到。</div>
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgBrowserOutboundProfile" data-i18n="settings.browserOutboundProfileLabel">Browser Outbound Profile</label>
+            <select id="cfgBrowserOutboundProfile" class="input">
+              <option value="public-web" data-i18n="settings.browserOutboundProfilePublicWeb">Public web only</option>
+              <option value="privileged-local-browser" data-i18n="settings.browserOutboundProfilePrivilegedLocal">Private network access</option>
+            </select>
+            <div class="form-help" data-i18n="settings.browserOutboundProfileHelp">默认仅允许公网目标；仅在明确需要私网自动化并配置最小域名白名单时启用私网访问。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgMcpEnabled">
               <input id="cfgMcpEnabled" type="checkbox" style="margin-right: 8px;" />
               <span data-i18n="settings.mcpEnabledLabel">Enable MCP</span>

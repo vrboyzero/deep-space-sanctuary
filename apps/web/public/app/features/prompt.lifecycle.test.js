@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 describe("prompt controller lifecycle", () => {
-  it("coalesces keydown frames and releases listeners and the pending frame", () => {
+  it("owns listeners and the pending frame across activation cycles", () => {
     const frames = createFrameHarness();
     const promptEl = createPrompt();
     const onSubmit = vi.fn();
@@ -77,23 +77,53 @@ describe("prompt controller lifecycle", () => {
     });
 
     const [frameHandle] = frames.callbacks.keys();
-    controller.dispose();
+    expect(controller.deactivate()).toBe(true);
+    expect(controller.deactivate()).toBe(false);
     expect(frames.cancel).toHaveBeenCalledWith(frameHandle);
+    expect(controller.getRuntimeSnapshot()).toEqual({
+      listenerCount: 0,
+      pendingFrameCount: 0,
+      pendingFontReadyCount: 0,
+      disposed: false,
+    });
+
+    promptEl.style.height = "1px";
+    controller.restoreText("inactive");
+    controller.syncHeight();
+    promptEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    promptEl.dispatchEvent(new Event("input"));
+    frames.run(frameHandle);
+    expect(promptEl.value).toBe("hello");
+    expect(promptEl.style.height).toBe("1px");
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(frames.schedule).toHaveBeenCalledTimes(1);
+
+    expect(controller.activate()).toBe(true);
+    expect(promptEl.style.height).toBe("72px");
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 2,
+      pendingFrameCount: 0,
+      disposed: false,
+    });
+    controller.restoreText("restored");
+    promptEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    expect(promptEl.value).toBe("restored");
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+    expect(frames.schedule).toHaveBeenCalledTimes(2);
+
+    const [reactivatedFrameHandle] = frames.callbacks.keys();
+    controller.dispose();
+    expect(controller.activate()).toBe(false);
+    expect(frames.cancel).toHaveBeenCalledWith(reactivatedFrameHandle);
     expect(controller.getRuntimeSnapshot()).toEqual({
       listenerCount: 0,
       pendingFrameCount: 0,
       pendingFontReadyCount: 0,
       disposed: true,
     });
-
-    promptEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
-    promptEl.dispatchEvent(new Event("input"));
-    frames.run(frameHandle);
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(frames.schedule).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores a late document fonts settlement after dispose", async () => {
+  it("settles document fonts while inactive and remeasures only after reactivate", async () => {
     const fontReady = createDeferred();
     const frames = createFrameHarness();
     const promptEl = createPrompt();
@@ -110,14 +140,28 @@ describe("prompt controller lifecycle", () => {
       disposed: false,
     });
 
-    controller.dispose();
+    expect(controller.deactivate()).toBe(true);
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 0,
+      pendingFontReadyCount: 1,
+      disposed: false,
+    });
     fontReady.resolve();
     await flushPromises();
     expect(getComputedStyleSpy).toHaveBeenCalledTimes(1);
     expect(controller.getRuntimeSnapshot()).toMatchObject({
       pendingFontReadyCount: 0,
-      disposed: true,
+      disposed: false,
     });
+
+    expect(controller.activate()).toBe(true);
+    expect(getComputedStyleSpy).toHaveBeenCalledTimes(2);
+    expect(controller.getRuntimeSnapshot()).toMatchObject({
+      listenerCount: 2,
+      pendingFontReadyCount: 0,
+      disposed: false,
+    });
+    controller.dispose();
   });
 
   it("settles the coalesced frame and keeps normal height sync behavior", () => {

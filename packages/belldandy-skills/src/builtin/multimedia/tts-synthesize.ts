@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { EdgeTTS } from "node-edge-tts";
 import {
+  OutboundRequestPolicy,
+  OutboundRequestPolicyError,
+} from "@belldandy/protocol";
+import {
   isAbortError,
   raceWithAbort,
   sleepWithAbort,
@@ -10,11 +14,17 @@ import {
   toAbortError,
 } from "../../abort-utils.js";
 import {
+  BoundedResponseLimitError,
   parsePositiveByteLimit,
   persistBoundedResponseToFile,
 } from "../remote-response-file.js";
 
 const DEFAULT_TTS_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
+const DASHSCOPE_REST_MAX_REDIRECTS = 0;
+const DASHSCOPE_REST_IDLE_TIMEOUT_MS = 15_000;
+const DASHSCOPE_REST_MAX_RESPONSE_BYTES = 1024 * 1024;
+const DASHSCOPE_ASSET_MAX_REDIRECTS = 3;
+const DASHSCOPE_ASSET_IDLE_TIMEOUT_MS = 15_000;
 
 export type SynthesizeResult = {
   webPath: string;
@@ -28,6 +38,10 @@ export type SynthesizeOptions = {
   voice?: string;
   model?: string;
   abortSignal?: AbortSignal;
+  /** DashScope 固定 submit API 使用的零 redirect pinned outbound capability。 */
+  dashScopeRestOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
+  /** DashScope 返回音频 URL 使用的独立 pinned outbound capability。 */
+  dashScopeAssetOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
 };
 
 /**
@@ -73,7 +87,16 @@ export async function synthesizeSpeech(opts: SynthesizeOptions): Promise<Synthes
     if (provider === "openai") {
       await synthesizeOpenAI(filepath, text, voice!, model, maxOutputBytes, opts.abortSignal);
     } else if (provider === "dashscope") {
-      await synthesizeDashScope(filepath, text, voice!, model, maxOutputBytes, opts.abortSignal);
+      await synthesizeDashScope(
+        filepath,
+        text,
+        voice!,
+        model,
+        maxOutputBytes,
+        opts.abortSignal,
+        opts.dashScopeRestOutboundRequestPolicy,
+        opts.dashScopeAssetOutboundRequestPolicy,
+      );
     } else {
       await synthesizeEdge(filepath, text, voice!, opts.abortSignal);
     }
@@ -141,22 +164,36 @@ async function synthesizeDashScope(
   model: string,
   maxOutputBytes: number,
   abortSignal?: AbortSignal,
+  restOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">,
+  assetOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">,
 ): Promise<void> {
   const apiKey = process.env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error("DASHSCOPE_API_KEY required for DashScope provider.");
 
   const endpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+  const restPolicy = restOutboundRequestPolicy ?? new OutboundRequestPolicy({
+    allowedHosts: ["dashscope.aliyuncs.com"],
+    maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
+  });
+  const assetPolicy = assetOutboundRequestPolicy ?? new OutboundRequestPolicy({
+    // DashScope signed result URLs use Alibaba Cloud service hosts; no API credential is sent on this GET.
+    allowedHosts: ["aliyuncs.com"],
+    maxRedirects: DASHSCOPE_ASSET_MAX_REDIRECTS,
+  });
   const maxRetries = 3;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       throwIfAborted(abortSignal);
-      const response = await fetch(endpoint, {
+      const { response } = await restPolicy.request({
+        url: endpoint,
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,
           "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Accept-Encoding": "identity",
         },
         body: JSON.stringify({
           model,
@@ -164,23 +201,38 @@ async function synthesizeDashScope(
           parameters: { format: "mp3" },
         }),
         signal: abortSignal,
+        maxRedirects: DASHSCOPE_REST_MAX_REDIRECTS,
+        idleTimeoutMs: DASHSCOPE_REST_IDLE_TIMEOUT_MS,
       });
 
       if (!response.ok) {
-        const errText = await response.text();
+        const errText = await readBoundedDashScopeResponseText(
+          response,
+          DASHSCOPE_REST_MAX_RESPONSE_BYTES,
+          abortSignal,
+        );
         throw new Error(`DashScope API failed (${response.status}): ${errText}`);
       }
 
-      const data = await response.json();
+      const data = JSON.parse(await readBoundedDashScopeResponseText(
+        response,
+        DASHSCOPE_REST_MAX_RESPONSE_BYTES,
+        abortSignal,
+      ));
       const audioUrl =
         data?.output?.audio?.url ||
         data?.output?.choices?.[0]?.message?.content?.[0]?.audio;
 
-      if (!audioUrl) {
+      if (typeof audioUrl !== "string" || !audioUrl.trim()) {
         throw new Error(`DashScope response missing audio URL. keys: ${Object.keys(data?.output || {}).join(",")}`);
       }
 
-      const audioRes = await fetch(audioUrl, { signal: abortSignal });
+      const { response: audioRes } = await assetPolicy.request({
+        url: audioUrl,
+        signal: abortSignal,
+        maxRedirects: DASHSCOPE_ASSET_MAX_REDIRECTS,
+        idleTimeoutMs: DASHSCOPE_ASSET_IDLE_TIMEOUT_MS,
+      });
       if (!audioRes.ok) throw new Error(`Failed to download audio (${audioRes.status})`);
 
       await persistBoundedResponseToFile({
@@ -201,6 +253,9 @@ async function synthesizeDashScope(
       if (isAbortError(err) || abortSignal?.aborted) {
         throw toAbortError(abortSignal?.reason);
       }
+      if (err instanceof BoundedResponseLimitError || isDashScopeNonRetryablePolicyError(err)) {
+        throw err;
+      }
       lastError = err;
       const msg = err instanceof Error ? err.message : String(err);
       const cause = err instanceof Error && err.cause ? ` | cause: ${(err.cause as Error).message ?? err.cause}` : "";
@@ -211,6 +266,71 @@ async function synthesizeDashScope(
     }
   }
   throw new Error(`DashScope failed after ${maxRetries} attempts. Last: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+function isDashScopeNonRetryablePolicyError(error: unknown): boolean {
+  if (!(error instanceof OutboundRequestPolicyError)) return false;
+  return error.code !== "dns_unavailable" && error.code !== "idle_timeout";
+}
+
+async function readBoundedDashScopeResponseText(
+  response: Pick<Response, "body" | "headers">,
+  maxBytes: number,
+  abortSignal?: AbortSignal,
+): Promise<string> {
+  const body = response.body;
+  if (!body) throw new Error("DashScope API response has no readable body");
+
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    if (!/^\d+$/u.test(declaredLength.trim())) {
+      await cancelResponseBody(response);
+      throw new BoundedResponseLimitError("DashScope API response has invalid Content-Length");
+    }
+    if (Number(declaredLength) > maxBytes) {
+      await cancelResponseBody(response);
+      throw new BoundedResponseLimitError(`DashScope API response exceeds ${maxBytes} byte limit`);
+    }
+  }
+
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  let completed = false;
+  try {
+    while (true) {
+      throwIfAborted(abortSignal);
+      const next = await raceWithAbort(reader.read(), abortSignal);
+      if (next.done) {
+        completed = true;
+        break;
+      }
+      const chunk = Buffer.from(next.value.buffer, next.value.byteOffset, next.value.byteLength);
+      byteLength += chunk.length;
+      if (byteLength > maxBytes) {
+        throw new BoundedResponseLimitError(`DashScope API response exceeds ${maxBytes} byte limit`);
+      }
+      chunks.push(chunk);
+    }
+  } catch (error) {
+    if (!completed) {
+      await reader.cancel(error).catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  throwIfAborted(abortSignal);
+  return Buffer.concat(chunks, byteLength).toString("utf8");
+}
+
+async function cancelResponseBody(response: Pick<Response, "body">): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // 正文已决定不再消费，取消失败不得覆盖原始 policy 或字节限额错误。
+  }
 }
 
 async function synthesizeEdge(filepath: string, text: string, voice: string, abortSignal?: AbortSignal): Promise<void> {

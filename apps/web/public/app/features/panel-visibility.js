@@ -2,6 +2,7 @@ import {
   cancelTokenUsageObservabilityPopoverSync,
   scheduleTokenUsageObservabilityPopoverSync,
 } from "./token-usage-observability.js";
+import { createPanelTaskScope } from "./panel-task-scope.js";
 
 function readStoredBoolean(storageKey, defaultValue) {
   if (!storageKey) return defaultValue;
@@ -56,17 +57,14 @@ export function createPanelVisibilityFeature({
   let controlPanelVisible = readStoredBoolean(controlPanelVisibleKey, defaults.controlPanelVisible ?? false);
   let agentPanelVisible = readStoredBoolean(agentPanelVisibleKey, defaults.agentPanelVisible ?? false);
   let agentPanelHasContent = false;
-  let disposed = false;
-  const listenerEntries = [];
+  const taskScope = createPanelTaskScope();
 
   function addOwnedListener(target, type, handler) {
-    if (!target) return;
-    target.addEventListener(type, handler);
-    listenerEntries.push({ target, type, handler });
+    taskScope.addEventListener(target, type, handler);
   }
 
   function refreshTokenUsageState() {
-    if (disposed || !tokenUsageEl) return;
+    if (!taskScope.isActive() || !tokenUsageEl) return;
     tokenUsageEl.classList.toggle("is-collapsed", tokenUsageCollapsed);
     tokenUsageEl.setAttribute("role", "button");
     tokenUsageEl.tabIndex = 0;
@@ -80,7 +78,7 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshContentPanelState() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     sidebarEl?.classList.toggle("hidden", !contentPanelVisible);
     if (!toggleContentPanelBtn) return;
     toggleContentPanelBtn.classList.toggle("is-active", contentPanelVisible);
@@ -94,7 +92,7 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshControlPanelState() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     controlPanelEl?.classList.toggle("hidden", !controlPanelVisible);
     document.body.classList.toggle("control-panel-hidden", !controlPanelVisible);
     if (!toggleControlPanelBtn) return;
@@ -109,7 +107,7 @@ export function createPanelVisibilityFeature({
   }
 
   function refreshAgentPanelState() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     agentRightPanelEl?.classList.toggle("hidden", !agentPanelVisible);
     agentRightPanelEl?.classList.toggle("is-empty", !agentPanelHasContent);
     if (!toggleAgentPanelBtn) return;
@@ -124,14 +122,14 @@ export function createPanelVisibilityFeature({
   }
 
   function setTokenUsageCollapsed(nextValue) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     tokenUsageCollapsed = Boolean(nextValue);
     writeStoredBoolean(tokenUsageCollapsedKey, tokenUsageCollapsed);
     refreshTokenUsageState();
   }
 
   function setContentPanelVisible(nextValue) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     contentPanelVisible = Boolean(nextValue);
     writeStoredBoolean(contentPanelVisibleKey, contentPanelVisible);
     refreshContentPanelState();
@@ -139,14 +137,14 @@ export function createPanelVisibilityFeature({
   }
 
   function setControlPanelVisible(nextValue) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     controlPanelVisible = Boolean(nextValue);
     writeStoredBoolean(controlPanelVisibleKey, controlPanelVisible);
     refreshControlPanelState();
   }
 
   function setAgentPanelVisible(nextValue) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     agentPanelVisible = Boolean(nextValue);
     writeStoredBoolean(agentPanelVisibleKey, agentPanelVisible);
     refreshAgentPanelState();
@@ -157,13 +155,13 @@ export function createPanelVisibilityFeature({
   }
 
   function handleTokenUsageKeydown(event) {
-    if (disposed || (event.key !== "Enter" && event.key !== " ")) return;
+    if (!taskScope.isActive() || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
     setTokenUsageCollapsed(!tokenUsageCollapsed);
   }
 
   function handleWindowResize() {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     scheduleTokenUsageObservabilityPopoverSync(tokenUsageEl);
   }
 
@@ -179,37 +177,47 @@ export function createPanelVisibilityFeature({
     setAgentPanelVisible(!agentPanelVisible);
   }
 
-  function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, type, handler } of listenerEntries) {
-      target.removeEventListener(type, handler);
-    }
-    listenerEntries.length = 0;
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedListener(tokenUsageEl, "click", handleTokenUsageClick);
+    addOwnedListener(tokenUsageEl, "keydown", handleTokenUsageKeydown);
+    addOwnedListener(windowRef, "resize", handleWindowResize);
+    addOwnedListener(toggleContentPanelBtn, "click", handleContentPanelClick);
+    addOwnedListener(toggleControlPanelBtn, "click", handleControlPanelClick);
+    addOwnedListener(toggleAgentPanelBtn, "click", handleAgentPanelClick);
+    refreshTokenUsageState();
+    refreshContentPanelState();
+    refreshControlPanelState();
+    refreshAgentPanelState();
+    return true;
+  }
+
+  function deactivate() {
+    if (!taskScope.deactivate()) return false;
     cancelTokenUsageObservabilityPopoverSync(tokenUsageEl);
+    return true;
+  }
+
+  function dispose() {
+    if (!taskScope.dispose()) return false;
+    cancelTokenUsageObservabilityPopoverSync(tokenUsageEl);
+    return true;
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
+      listenerCount: snapshot.listenerCount,
       pendingFrameCount: tokenUsageEl?.__tokenUsageObservabilityFrame ? 1 : 0,
-      disposed,
+      disposed: snapshot.disposed,
     };
   }
 
-  addOwnedListener(tokenUsageEl, "click", handleTokenUsageClick);
-  addOwnedListener(tokenUsageEl, "keydown", handleTokenUsageKeydown);
-  addOwnedListener(windowRef, "resize", handleWindowResize);
-  addOwnedListener(toggleContentPanelBtn, "click", handleContentPanelClick);
-  addOwnedListener(toggleControlPanelBtn, "click", handleControlPanelClick);
-  addOwnedListener(toggleAgentPanelBtn, "click", handleAgentPanelClick);
-
-  refreshTokenUsageState();
-  refreshContentPanelState();
-  refreshControlPanelState();
-  refreshAgentPanelState();
+  activate();
 
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
     getState() {
@@ -222,12 +230,12 @@ export function createPanelVisibilityFeature({
       };
     },
     setAgentPanelHasContent(hasContent) {
-      if (disposed) return;
+      if (!taskScope.isActive()) return;
       agentPanelHasContent = Boolean(hasContent);
       refreshAgentPanelState();
     },
     refreshLocale() {
-      if (disposed) return;
+      if (!taskScope.isActive()) return;
       refreshTokenUsageState();
       refreshContentPanelState();
       refreshControlPanelState();

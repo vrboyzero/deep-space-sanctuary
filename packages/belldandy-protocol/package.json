@@ -14,5 +14,8 @@
   },
   "scripts": {
     "build": "tsc -b"
+  },
+  "dependencies": {
+    "ipaddr.js": "2.4.0"
   }
 }

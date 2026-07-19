@@ -2,9 +2,20 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool, ToolCallResult } from "../../types.js";
 import { parsePositiveByteLimit } from "../remote-response-file.js";
-import { OfficeSiteClient, normalizeWorkshopCategory, resolveWritableDir } from "./client.js";
+import {
+  OfficeSiteClient,
+  normalizeWorkshopCategory,
+  resolveWritableDir,
+  type OfficeDownloadRequestPolicyFactory,
+  type OfficeGetJsonRequestPolicyFactory,
+} from "./client.js";
 
 const DEFAULT_OFFICE_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
+
+type OfficeWorkshopDownloadToolDependencies = {
+  createDownloadOutboundRequestPolicy?: OfficeDownloadRequestPolicyFactory;
+  createGetJsonOutboundRequestPolicy?: OfficeGetJsonRequestPolicyFactory;
+};
 
 type WorkshopListResponse = {
   items: Array<Record<string, unknown>>;
@@ -140,7 +151,13 @@ export const officeWorkshopGetItemTool: Tool = {
   },
 };
 
-export const officeWorkshopDownloadTool: Tool = {
+export const officeWorkshopDownloadTool: Tool = createOfficeWorkshopDownloadTool();
+
+/** 仅为文件下载注入受控网络边界；其他 Office JSON/FormData 请求保持原 owner。 */
+export function createOfficeWorkshopDownloadTool(
+  dependencies: OfficeWorkshopDownloadToolDependencies = {},
+): Tool {
+  return {
   definition: {
     name: "office_workshop_download",
     description: "下载工坊作品到本地目录，并在有 fileHash 时校验 SHA-256。",
@@ -164,7 +181,7 @@ export const officeWorkshopDownloadTool: Tool = {
       const overwrite = input.overwrite === true;
       if (!agentName || !itemId) return makeResult(name, start, false, null, "agent_name 和 item_id 参数必填");
 
-      const client = new OfficeSiteClient(agentName, context.abortSignal);
+      const client = new OfficeSiteClient(agentName, context.abortSignal, dependencies);
       const item = await client.getJson<WorkshopItemDetail>(`/api/workshop/items/${encodeURIComponent(itemId)}`);
       const targetDir = input.target_dir
         ? resolveWritableDir(String(input.target_dir), context).absolute
@@ -209,8 +226,9 @@ export const officeWorkshopDownloadTool: Tool = {
     } catch (error) {
       return makeResult(name, start, false, null, error instanceof Error ? error.message : String(error));
     }
-  },
-};
+    },
+  };
+}
 
 export const officeWorkshopPublishTool: Tool = {
   definition: {

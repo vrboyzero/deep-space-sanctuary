@@ -324,11 +324,12 @@ function createConnectionHarness(options = {}) {
       ready = value;
     },
     persistConnectionFields: () => {},
-    setStatus: () => {},
+    setStatus: options.setStatus ?? (() => {}),
     safeJsonParse: JSON.parse,
     makeId: () => `req-${++requestId}`,
     onConnectionStateChanged: options.onConnectionStateChanged,
     onEvent: options.onEvent,
+    t: options.t,
   });
 
   return {
@@ -400,6 +401,213 @@ function createModelControlHarness(value = "") {
   };
 }
 
+function markSocketReady(socket) {
+  socket.dispatch("message", { data: JSON.stringify({ type: "hello-ok" }) });
+}
+
+describe("chat network ready generation", () => {
+  it("does not send or track a request before hello-ok", () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      void harness.feature.sendReq({
+        type: "req",
+        id: "request-pre-ready",
+        method: "system.doctor",
+      });
+
+      expect(harness.sockets[0].sent).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        pendingChatNetworkGenerationCount: 0,
+        pendingChatNetworkRequestCount: 0,
+      });
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("sends and resolves a request after the current generation becomes ready", async () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      const socket = harness.sockets[0];
+      markSocketReady(socket);
+      const request = harness.feature.sendReq({
+        type: "req",
+        id: "request-ready",
+        method: "system.doctor",
+      });
+
+      expect(socket.sent).toHaveLength(1);
+      const response = { type: "res", id: "request-ready", ok: true };
+      socket.dispatch("message", { data: JSON.stringify(response) });
+
+      await expect(request).resolves.toEqual(response);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(harness.feature.getRuntimeSnapshot().pendingChatNetworkRequestCount).toBe(0);
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("closes the send gate on replacement and ignores the old hello-ok handler", async () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      const oldSocket = harness.sockets[0];
+      const retainedOldMessage = oldSocket.getRetainedListener("message");
+      markSocketReady(oldSocket);
+
+      harness.feature.connect();
+      const currentSocket = harness.sockets[1];
+      retainedOldMessage({ data: JSON.stringify({ type: "hello-ok" }) });
+
+      await expect(harness.feature.sendReq({
+        type: "req",
+        id: "request-replacement-pre-ready",
+        method: "system.doctor",
+      })).resolves.toBeNull();
+      expect(currentSocket.sent).toEqual([]);
+
+      markSocketReady(currentSocket);
+      const request = harness.feature.sendReq({
+        type: "req",
+        id: "request-replacement-ready",
+        method: "system.doctor",
+      });
+      const response = { type: "res", id: "request-replacement-ready", ok: true };
+      currentSocket.dispatch("message", { data: JSON.stringify(response) });
+
+      await expect(request).resolves.toEqual(response);
+      expect(currentSocket.sent).toHaveLength(1);
+      expect(harness.feature.getRuntimeSnapshot().pendingChatNetworkRequestCount).toBe(0);
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("resets reconnect backoff when the current generation becomes ready", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      harness.sockets[0].dispatch("close", { code: 1006, reason: "" });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(harness.sockets).toHaveLength(2);
+
+      harness.sockets[1].dispatch("close", { code: 1006, reason: "" });
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(harness.sockets).toHaveLength(3);
+
+      markSocketReady(harness.sockets[2]);
+      harness.sockets[2].dispatch("close", { code: 1006, reason: "" });
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(harness.sockets).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(harness.sockets).toHaveLength(4);
+    } finally {
+      harness.restore();
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("reports the actual reconnect delay in connection status", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const statuses = [];
+    const harness = createConnectionHarness({
+      setStatus: (status) => statuses.push(status),
+      t: (key, params, fallback) => key === "status.disconnectedRetrying"
+        ? `retry:${params.seconds}:${params.url}`
+        : fallback,
+    });
+
+    try {
+      harness.feature.connect();
+      harness.sockets[0].dispatch("close", { code: 1006, reason: "" });
+      expect(statuses.at(-1)).toMatch(/^retry:3:/);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      harness.sockets[1].dispatch("close", { code: 1006, reason: "" });
+      expect(statuses.at(-1)).toMatch(/^retry:6:/);
+    } finally {
+      harness.restore();
+      randomSpy.mockRestore();
+    }
+  });
+});
+
+describe("chat network request abort", () => {
+  it("does not send a request whose signal is already aborted", async () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      markSocketReady(harness.sockets[0]);
+      const abortController = new AbortController();
+      abortController.abort();
+
+      await expect(harness.feature.sendReq({
+        type: "req",
+        id: "request-pre-aborted",
+        method: "system.doctor",
+      }, { signal: abortController.signal })).resolves.toBeNull();
+
+      expect(harness.sockets[0].sent).toEqual([]);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        pendingChatNetworkGenerationCount: 0,
+        pendingChatNetworkRequestCount: 0,
+      });
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("settles an inflight request on abort and ignores its late response", async () => {
+    const harness = createConnectionHarness();
+
+    try {
+      harness.feature.connect();
+      markSocketReady(harness.sockets[0]);
+      const abortController = new AbortController();
+      const request = harness.feature.sendReq({
+        type: "req",
+        id: "request-inflight-abort",
+        method: "system.doctor",
+      }, { signal: abortController.signal });
+
+      expect(harness.sockets[0].sent).toHaveLength(1);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        pendingChatNetworkGenerationCount: 1,
+        pendingChatNetworkRequestCount: 1,
+      });
+
+      abortController.abort();
+      await expect(request).resolves.toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(harness.feature.getRuntimeSnapshot()).toMatchObject({
+        pendingChatNetworkGenerationCount: 0,
+        pendingChatNetworkRequestCount: 0,
+      });
+
+      harness.sockets[0].dispatch("message", {
+        data: JSON.stringify({
+          type: "res",
+          id: "request-inflight-abort",
+          ok: true,
+        }),
+      });
+      expect(harness.feature.getRuntimeSnapshot().pendingChatNetworkRequestCount).toBe(0);
+    } finally {
+      harness.restore();
+    }
+  });
+});
+
 describe("chat network connection close", () => {
   it("clears conversation cache state at connection generation boundaries", () => {
     const sessionCache = createAgentSessionCacheFeature();
@@ -448,6 +656,7 @@ describe("chat network connection close", () => {
 
     try {
       harness.feature.connect();
+      markSocketReady(harness.sockets[0]);
       let result = "unsettled";
       const request = harness.feature.sendReq({
         type: "req",
@@ -482,6 +691,7 @@ describe("chat network connection close", () => {
     try {
       harness.feature.connect();
       const oldSocket = harness.sockets[0];
+      markSocketReady(oldSocket);
       let oldResult = "unsettled";
       void harness.feature.sendReq({
         type: "req",
@@ -493,6 +703,7 @@ describe("chat network connection close", () => {
 
       harness.feature.connect();
       const currentSocket = harness.sockets[1];
+      markSocketReady(currentSocket);
       let currentResult = "unsettled";
       void harness.feature.sendReq({
         type: "req",
@@ -571,6 +782,7 @@ describe("chat network connection close", () => {
     try {
       harness.feature.connect();
       const socket = harness.sockets[0];
+      markSocketReady(socket);
       const retainedMessage = socket.getRetainedListener("message");
       let requestResult = "unsettled";
       void harness.feature.sendReq({

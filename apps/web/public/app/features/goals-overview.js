@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createGoalsOverviewFeature({
   refs,
   isConnected,
@@ -26,29 +28,12 @@ export function createGoalsOverviewFeature({
     goalsListEl,
     goalsDetailEl,
   } = refs;
-  // generation 负责截止逻辑提交，Set 单独保留底层 Promise 的真实未结算数量。
-  const pendingGoalListReads = new Set();
-  const goalListListenerDisposers = new Set();
-  let goalListGeneration = 0;
-  let disposed = false;
-
-  function isCurrent(expectedGeneration) {
-    return !disposed && goalListGeneration === expectedGeneration;
-  }
-
-  function clearGoalListListeners() {
-    for (const disposeListener of goalListListenerDisposers) disposeListener();
-    goalListListenerDisposers.clear();
-  }
-
-  function addGoalListListener(node, listener) {
-    node.addEventListener("click", listener);
-    goalListListenerDisposers.add(() => node.removeEventListener("click", listener));
-  }
+  const taskScope = createPanelTaskScope();
+  taskScope.activate();
+  taskScope.addEventListener(goalsListEl, "click", handleGoalListClick);
 
   function renderGoalsLoading(message) {
-    if (disposed) return;
-    clearGoalListListeners();
+    if (!taskScope.isActive()) return;
     if (goalsListEl) {
       goalsListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
     }
@@ -58,7 +43,7 @@ export function createGoalsOverviewFeature({
   }
 
   function renderGoalsSummary(items) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     if (!goalsSummaryEl) return;
     const goals = Array.isArray(items) ? items : [];
     const executingCount = goals.filter((goal) => goal?.status === "executing").length;
@@ -74,8 +59,7 @@ export function createGoalsOverviewFeature({
   }
 
   function renderGoalsEmpty(message) {
-    if (disposed) return;
-    clearGoalListListeners();
+    if (!taskScope.isActive()) return;
     renderGoalsSummary([]);
     if (goalsListEl) {
       goalsListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
@@ -86,9 +70,8 @@ export function createGoalsOverviewFeature({
   }
 
   function renderGoalList(items) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     if (!goalsListEl) return;
-    clearGoalListListeners();
     if (!Array.isArray(items) || items.length === 0) {
       const emptyMessage = getGoalsState()?.includeArchived === true
         ? t("goals.emptyNoGoals", {}, "There are no long tasks yet.")
@@ -132,51 +115,38 @@ export function createGoalsOverviewFeature({
         </div>
       `;
     }).join("");
+  }
 
-    goalsListEl.querySelectorAll("[data-goal-id]").forEach((node) => {
-      addGoalListListener(node, () => {
-        if (disposed) return;
-        const goalId = node.getAttribute("data-goal-id");
-        if (!goalId) return;
-        goalsState.selectedId = goalId;
-        renderGoalList(goalsState.items);
-        renderGoalDetail(getGoalById(goalId));
-      });
-    });
+  function handleGoalListClick(event) {
+    if (!taskScope.isActive() || !goalsListEl || !(event.target instanceof Element)) return;
+    // 单一根 listener 避免每轮列表渲染继续积累 detached button 与闭包。
+    const actionNode = event.target.closest(
+      "[data-goal-resume], [data-goal-pause], [data-goal-archive], [data-goal-id]",
+    );
+    if (!actionNode || !goalsListEl.contains(actionNode)) return;
 
-    goalsListEl.querySelectorAll("[data-goal-resume]").forEach((node) => {
-      addGoalListListener(node, (event) => {
-        if (disposed) return;
-        event.stopPropagation();
-        const goalId = node.getAttribute("data-goal-resume");
-        if (!goalId) return;
-        void onResumeGoal(goalId);
-      });
-    });
+    for (const [attribute, handler] of [
+      ["data-goal-resume", onResumeGoal],
+      ["data-goal-pause", onPauseGoal],
+      ["data-goal-archive", onArchiveGoal],
+    ]) {
+      if (!actionNode.hasAttribute(attribute)) continue;
+      event.stopPropagation();
+      const goalId = actionNode.getAttribute(attribute);
+      if (goalId) void handler(goalId);
+      return;
+    }
 
-    goalsListEl.querySelectorAll("[data-goal-pause]").forEach((node) => {
-      addGoalListListener(node, (event) => {
-        if (disposed) return;
-        event.stopPropagation();
-        const goalId = node.getAttribute("data-goal-pause");
-        if (!goalId) return;
-        void onPauseGoal(goalId);
-      });
-    });
-
-    goalsListEl.querySelectorAll("[data-goal-archive]").forEach((node) => {
-      addGoalListListener(node, (event) => {
-        if (disposed) return;
-        event.stopPropagation();
-        const goalId = node.getAttribute("data-goal-archive");
-        if (!goalId) return;
-        void onArchiveGoal(goalId);
-      });
-    });
+    const goalId = actionNode.getAttribute("data-goal-id");
+    if (!goalId) return;
+    const goalsState = getGoalsState();
+    goalsState.selectedId = goalId;
+    renderGoalList(goalsState.items);
+    renderGoalDetail(getGoalById(goalId));
   }
 
   async function loadGoals(forceReload = false, preferredGoalId) {
-    if (disposed) return;
+    if (!taskScope.isActive()) return;
     if (!goalsSection) return;
     if (!isConnected()) {
       renderGoalsLoading(t("goals.loadingDisconnected", {}, "Disconnected"));
@@ -188,11 +158,9 @@ export function createGoalsOverviewFeature({
       renderGoalsLoading(t("goals.loading", {}, "Loading..."));
     }
 
-    const seq = goalsState.loadSeq + 1;
-    goalsState.loadSeq = seq;
-    const expectedGeneration = ++goalListGeneration;
-    const pendingToken = Symbol("goal-list-read");
-    pendingGoalListReads.add(pendingToken);
+    goalsState.loadSeq += 1;
+    const requestTask = taskScope.beginTask();
+    if (!requestTask) return;
     let res;
     try {
       res = await sendReq({
@@ -202,14 +170,16 @@ export function createGoalsOverviewFeature({
         params: {
           includeArchived: goalsState.includeArchived === true,
         },
+      }, {
+        signal: requestTask.signal,
       });
     } catch (error) {
-      if (!isCurrent(expectedGeneration)) return;
+      if (!requestTask.isCurrent()) return;
       throw error;
     } finally {
-      pendingGoalListReads.delete(pendingToken);
+      requestTask.settle();
     }
-    if (!isCurrent(expectedGeneration) || seq !== goalsState.loadSeq) return;
+    if (!requestTask.isCurrent()) return;
 
     if (!res || !res.ok || !Array.isArray(res.payload?.goals)) {
       renderGoalsEmpty(t("goals.listLoadFailed", {}, "Failed to load long task list."));
@@ -241,10 +211,8 @@ export function createGoalsOverviewFeature({
   }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    goalListGeneration += 1;
-    clearGoalListListeners();
+    if (taskScope.getRuntimeSnapshot().disposed) return;
+    taskScope.dispose();
     const goalsState = getGoalsState?.();
     if (goalsState) {
       // 列表响应含完整 objective，随其 owner 一起释放，避免 pagehide 后继续保留正文。
@@ -258,11 +226,14 @@ export function createGoalsOverviewFeature({
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      disposed,
-      goalListGeneration,
-      pendingGoalListReadCount: pendingGoalListReads.size,
-      retainedGoalListListenerCount: goalListListenerDisposers.size,
+      active: snapshot.active,
+      disposed: snapshot.disposed,
+      listenerCount: snapshot.listenerCount,
+      pendingTaskCount: snapshot.pendingTaskCount,
+      pendingGoalListReadCount: snapshot.pendingTaskCount,
+      retainedGoalListListenerCount: snapshot.listenerCount,
     };
   }
 

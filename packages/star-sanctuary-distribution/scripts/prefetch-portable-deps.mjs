@@ -3,7 +3,18 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveDistributionMode } from "./distribution-mode.mjs";
 import { resolveDistributionPolicySummary } from "./distribution-policy.mjs";
-import { resetSandboxDir } from "./sandbox-paths.mjs";
+import {
+  createRuntimeDependencyPrefetchArgs,
+  createRuntimeRootPackageJson,
+  sanitizeRuntimeWorkspacePackageJson,
+} from "./runtime-dependency-assembler-policy.mjs";
+import {
+  createRuntimeDependencySnapshot,
+  serializeRuntimeDependencySnapshot,
+} from "./runtime-dependency-snapshot-policy.mjs";
+import { createRuntimeDependencyStoreSnapshot } from "./runtime-dependency-store-snapshot-policy.mjs";
+import { resolveRuntimeBuildScriptPolicy } from "./runtime-build-script-policy.mjs";
+import { assertPathInsideRoots, resetSandboxDir } from "./sandbox-paths.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1")), "..", "..", "..");
 const rootPackageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
@@ -20,6 +31,7 @@ const portableCacheRoot = path.join(workspaceRoot, "artifacts", "_cache");
 const portablePnpmStoreDir = path.join(portableCacheRoot, "pnpm-store-portable", mode);
 const prefetchRoot = path.join(portableCacheRoot, "portable-prefetch", mode);
 const runtimeRoot = path.join(prefetchRoot, "runtime");
+const snapshotPath = path.join(prefetchRoot, "runtime-dependency-snapshot.json");
 const runtimePackagesRoot = path.join(runtimeRoot, "packages");
 const runtimeAppsRoot = path.join(runtimeRoot, "apps");
 const PORTABLE_PREFETCH_MAX_ATTEMPTS = 4;
@@ -74,13 +86,6 @@ function copyFile(src, dest) {
   fs.copyFileSync(src, dest);
 }
 
-function sanitizeRuntimeWorkspacePackageJson(packageJson) {
-  const sanitized = { ...packageJson };
-  delete sanitized.devDependencies;
-  delete sanitized.scripts;
-  return sanitized;
-}
-
 function copyRuntimePackageJson(src, dest) {
   const packageJson = JSON.parse(fs.readFileSync(src, "utf-8"));
   ensureDir(path.dirname(dest));
@@ -92,21 +97,37 @@ function copyRuntimePackageJson(src, dest) {
 }
 
 function writeRuntimePackageJson() {
-  const runtimePackageJson = {
-    name: "star-sanctuary-portable-runtime",
-    private: true,
-    type: "module",
+  const runtimePackageJson = createRuntimeRootPackageJson({
     packageManager: rootPackageJson.packageManager,
     engines: rootPackageJson.engines,
-    dependencies: {
-      "sqlite-vec-windows-x64": sqliteVecVersion,
-    },
-  };
+    pnpm: rootPackageJson.pnpm,
+    sqliteVecVersion,
+  });
   fs.writeFileSync(
     path.join(runtimeRoot, "package.json"),
     `${JSON.stringify(runtimePackageJson, null, 2)}\n`,
     "utf-8",
   );
+}
+
+function copyRuntimeDependencyPatches() {
+  const patchedDependencies = rootPackageJson.pnpm?.patchedDependencies ?? {};
+  for (const patchPath of Object.values(patchedDependencies)) {
+    if (typeof patchPath !== "string" || !patchPath.trim()) {
+      throw new Error(`Invalid runtime dependency patch path: ${String(patchPath)}`);
+    }
+    const sourcePath = assertPathInsideRoots(
+      path.resolve(workspaceRoot, patchPath),
+      [workspaceRoot],
+      "copy runtime dependency patch source",
+    );
+    const destinationPath = assertPathInsideRoots(
+      path.resolve(runtimeRoot, patchPath),
+      [runtimeRoot],
+      "copy runtime dependency patch destination",
+    );
+    copyFile(sourcePath, destinationPath);
+  }
 }
 
 function copyWorkspacePackageManifest(packageName) {
@@ -127,6 +148,7 @@ function preparePrefetchWorkspace() {
   writeRuntimePackageJson();
   copyFile(path.join(workspaceRoot, "pnpm-workspace.yaml"), path.join(runtimeRoot, "pnpm-workspace.yaml"));
   copyFile(path.join(workspaceRoot, "pnpm-lock.yaml"), path.join(runtimeRoot, "pnpm-lock.yaml"));
+  copyRuntimeDependencyPatches();
 
   for (const packageName of packageNames) {
     copyWorkspacePackageManifest(packageName);
@@ -140,43 +162,45 @@ function preparePrefetchWorkspace() {
 
 function prefetchRuntimeDependencies() {
   ensureDir(portablePnpmStoreDir);
-  const args = [
-    "pnpm",
-    "fetch",
-    "--prefer-offline",
-    "--child-concurrency=1",
-    "--network-concurrency=1",
-    "--store-dir",
-    portablePnpmStoreDir,
-    "--config.package-import-method=copy",
-  ];
-  if (!includeOptionalNative) {
-    args.push("--no-optional");
-  }
+  const { lockfileArgs, fetchArgs } = createRuntimeDependencyPrefetchArgs({
+    includeOptionalNative,
+    storeDir: portablePnpmStoreDir,
+  });
 
   let lastError;
   for (let attempt = 1; attempt <= PORTABLE_PREFETCH_MAX_ATTEMPTS; attempt += 1) {
-    const result = spawnSync("corepack", args, {
-      cwd: runtimeRoot,
-      encoding: "utf-8",
-      shell: process.platform === "win32",
-      env: {
-        ...process.env,
-        CI: "true",
-      },
-    });
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
+    let commandOutput = "";
+    let failedStep = "lockfile";
+    let failedStatus = 1;
+    for (const [stepName, args] of [["lockfile", lockfileArgs], ["fetch", fetchArgs]]) {
+      const result = spawnSync("corepack", args, {
+        cwd: runtimeRoot,
+        encoding: "utf-8",
+        shell: process.platform === "win32",
+        env: {
+          ...process.env,
+          CI: "true",
+        },
+      });
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+      commandOutput += `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      if (result.status !== 0) {
+        failedStep = stepName;
+        failedStatus = result.status ?? 1;
+        break;
+      }
+      failedStep = "";
+    }
 
-    if (result.status === 0) {
+    if (!failedStep) {
       if (attempt > 1) {
         console.warn(`[portable] dependency prefetch recovered on attempt ${attempt}/${PORTABLE_PREFETCH_MAX_ATTEMPTS}.`);
       }
       return;
     }
 
-    const commandOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-    lastError = new Error(`Portable dependency prefetch failed with exit code ${result.status ?? 1}`);
+    lastError = new Error(`Portable dependency prefetch ${failedStep} failed with exit code ${failedStatus}`);
     if (
       process.platform !== "win32"
       || attempt === PORTABLE_PREFETCH_MAX_ATTEMPTS
@@ -195,17 +219,45 @@ function prefetchRuntimeDependencies() {
   throw lastError ?? new Error("Portable dependency prefetch failed for an unknown reason.");
 }
 
-function main() {
+async function writeRuntimeDependencySnapshot() {
+  const snapshot = createRuntimeDependencySnapshot({
+    target: {
+      mode,
+      platform,
+      arch,
+      nodeAbi: process.versions.modules,
+    },
+    sourceLockfile: fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml")),
+    runtimeLockfile: fs.readFileSync(path.join(runtimeRoot, "pnpm-lock.yaml")),
+    runtimeWorkspaceConfig: fs.readFileSync(path.join(runtimeRoot, "pnpm-workspace.yaml")),
+    storeSnapshot: await createRuntimeDependencyStoreSnapshot(portablePnpmStoreDir),
+  });
+  const temporaryPath = `${snapshotPath}.tmp`;
+  fs.writeFileSync(temporaryPath, serializeRuntimeDependencySnapshot(snapshot), "utf-8");
+  fs.renameSync(temporaryPath, snapshotPath);
+}
+
+async function main() {
   if (platform !== "win32") {
     throw new Error(`Portable dependency prefetch currently only targets Windows. Current platform: ${platform}`);
   }
 
+  resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode });
+  resetSandboxDir(portablePnpmStoreDir, {
+    allowedRoots: [portableCacheRoot],
+    label: "reset portable pnpm store",
+  });
   preparePrefetchWorkspace();
   prefetchRuntimeDependencies();
+  // Descriptor 只在 lockfile resolution 与 store fetch 都成功后发布，避免部分 prefetch 被 assembler 接纳。
+  await writeRuntimeDependencySnapshot();
 
   console.log(
     `[portable] Prefetched runtime dependencies into ${portablePnpmStoreDir} using ${runtimeRoot} (${includeOptionalNative ? "full" : "slim"} mode, ${platform}-${arch}, included optional deps: ${distributionPolicy.includedOptionalDependencies.join(", ") || "(none)"})`,
   );
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

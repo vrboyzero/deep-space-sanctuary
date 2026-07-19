@@ -202,8 +202,12 @@ async function main() {
     readPackageMetadata("@fontsource/outfit"),
     readPackageMetadata("@fontsource/jetbrains-mono"),
   ]);
+  const lockfileSha256 = sha256(await readRequiredFile(path.join(repoRoot, "pnpm-lock.yaml")));
   const manifest = {
     version: 1,
+    provenance: {
+      lockfileSha256,
+    },
     assets,
     packages: packages.sort((left, right) => left.name.localeCompare(right.name)),
   };

@@ -2,15 +2,59 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { DreamModelRequestOptions, DreamModelResponse } from "./dream-model-request.js";
 import { DreamRuntime } from "./dream-runtime.js";
 import * as dreamWriterModule from "./dream-writer.js";
 import type { DreamInputSnapshot } from "./dream-types.js";
 import type { UpsertProfileStateEntryInput } from "./profile-state-types.js";
 
+const requestDreamModelMock = vi.hoisted(() => vi.fn<(
+  options: DreamModelRequestOptions,
+) => Promise<DreamModelResponse>>());
+
+vi.mock("./dream-model-request.js", () => ({
+  requestDreamModel: requestDreamModelMock,
+}));
+
 describe("dream runtime", () => {
   const tempDirs: string[] = [];
+
+  beforeEach(() => {
+    requestDreamModelMock.mockImplementation(async (options) => {
+      if (!vi.isMockFunction(globalThis.fetch)) {
+        throw new Error("dream model fixture is not configured");
+      }
+
+      // 既有 runtime fixture 只关心 Dream 业务语义；网络策略由 dream-model-request.test.ts 独立覆盖。
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+      try {
+        const response = await fetch(options.baseUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${options.apiKey}`,
+          },
+          body: JSON.stringify(options.payload),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new Error(`Dream LLM call failed: ${response.status}${detail ? ` ${detail}` : ""}`);
+        }
+        return await response.json() as DreamModelResponse;
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new Error(`Dream LLM call timed out after ${options.timeoutMs}ms`);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  });
 
   function createSnapshot(partial: Partial<DreamInputSnapshot> = {}): DreamInputSnapshot {
     return {
@@ -214,6 +258,7 @@ describe("dream runtime", () => {
   }
 
   afterEach(async () => {
+    requestDreamModelMock.mockReset();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true }).catch(() => {})));
@@ -521,30 +566,25 @@ describe("dream runtime", () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-dream-runtime-reasoning-"));
     tempDirs.push(stateDir);
 
-    const requestBodies: Array<Record<string, unknown>> = [];
-    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
-      requestBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-      return {
-        ok: true,
-        async json() {
-          return {
-            choices: [{
-              finish_reason: "stop",
-              message: {
-                content: JSON.stringify({
-                  headline: "Reasoning dream ready",
-                  stableInsights: ["reasoning config reached dream runtime"],
-                  corrections: [],
-                  openQuestions: [],
-                  shareCandidates: [],
-                  nextFocus: ["keep payload aligned"],
-                }),
-              },
-            }],
-          };
+    const legacyFetch = vi.fn(async () => {
+      throw new Error("legacy fetch must not run");
+    });
+    vi.stubGlobal("fetch", legacyFetch);
+    requestDreamModelMock.mockResolvedValue({
+      choices: [{
+        finish_reason: "stop",
+        message: {
+          content: JSON.stringify({
+            headline: "Reasoning dream ready",
+            stableInsights: ["reasoning config reached dream runtime"],
+            corrections: [],
+            openQuestions: [],
+            shareCandidates: [],
+            nextFocus: ["keep payload aligned"],
+          }),
         },
-      };
-    }));
+      }],
+    });
 
     const runtime = new DreamRuntime({
       stateDir,
@@ -564,12 +604,18 @@ describe("dream runtime", () => {
     });
 
     expect(result.record.status).toBe("completed");
-    expect(requestBodies).toHaveLength(1);
-    expect(requestBodies[0]).toMatchObject({
-      model: "deepseek-v4-pro",
-      thinking: { type: "enabled" },
-      reasoning_effort: "high",
+    expect(requestDreamModelMock).toHaveBeenCalledTimes(1);
+    expect(requestDreamModelMock).toHaveBeenCalledWith({
+      baseUrl: "https://example.com/v1",
+      apiKey: "sk-test",
+      timeoutMs: 120_000,
+      payload: expect.objectContaining({
+        model: "deepseek-v4-pro",
+        thinking: { type: "enabled" },
+        reasoning_effort: "high",
+      }),
     });
+    expect(legacyFetch).not.toHaveBeenCalled();
   });
 
   it("retries dream generation with larger token budget when reasoning exhausts the first attempt", async () => {

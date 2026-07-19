@@ -44,7 +44,7 @@ describe("header navigation feature", () => {
     expect(focusPrompt).toHaveBeenCalled();
   });
 
-  it("releases header listeners and rejects navigation after dispose", () => {
+  it("routes header commands only while active and rebuilds the link on reactivate", async () => {
     const openWebChatTabLink = document.createElement("a");
     const goGoalsPageBtn = document.createElement("button");
     const goBridgePageBtn = document.createElement("button");
@@ -53,7 +53,8 @@ describe("header navigation feature", () => {
     const loadGoals = vi.fn();
     const loadBridgeSessions = vi.fn();
     const focusPrompt = vi.fn();
-    const buildMultiPageUrl = vi.fn(() => "http://127.0.0.1:28889/?authHandoff=before-dispose");
+    let nextUrl = "http://127.0.0.1:28889/?authHandoff=before-deactivate";
+    const buildMultiPageUrl = vi.fn(() => nextUrl);
     const feature = createHeaderNavigationFeature({
       refs: { openWebChatTabLink, goGoalsPageBtn, goBridgePageBtn, goChatPageBtn },
       switchMode,
@@ -63,11 +64,10 @@ describe("header navigation feature", () => {
       buildMultiPageUrl,
     });
     expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 4, disposed: false });
+    expect(openWebChatTabLink.href).toBe(nextUrl);
 
-    feature.dispose();
-    feature.dispose();
-    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
-
+    expect(feature.deactivate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: false });
     openWebChatTabLink.click();
     goGoalsPageBtn.click();
     goBridgePageBtn.click();
@@ -81,5 +81,40 @@ describe("header navigation feature", () => {
     expect(loadGoals).not.toHaveBeenCalled();
     expect(loadBridgeSessions).not.toHaveBeenCalled();
     expect(focusPrompt).not.toHaveBeenCalled();
+
+    nextUrl = "http://127.0.0.1:28889/?authHandoff=after-reactivate";
+    expect(feature.activate()).toBe(true);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 4, disposed: false });
+    expect(openWebChatTabLink.href).toBe(nextUrl);
+    expect(buildMultiPageUrl).toHaveBeenCalledTimes(2);
+    openWebChatTabLink.click();
+    goGoalsPageBtn.click();
+    goBridgePageBtn.click();
+    goChatPageBtn.click();
+    await Promise.resolve();
+    expect(buildMultiPageUrl).toHaveBeenCalledTimes(3);
+    expect(switchMode.mock.calls).toEqual([["goals"], ["bridge"], ["chat"]]);
+    expect(loadGoals).toHaveBeenCalledWith(false);
+    expect(loadBridgeSessions).toHaveBeenCalledWith(false);
+    expect(focusPrompt).toHaveBeenCalledTimes(1);
+
+    feature.dispose();
+    feature.dispose();
+    expect(feature.activate()).toBe(false);
+    expect(feature.getRuntimeSnapshot()).toEqual({ listenerCount: 0, disposed: true });
+    openWebChatTabLink.click();
+    goGoalsPageBtn.click();
+    goBridgePageBtn.click();
+    goChatPageBtn.click();
+    feature.refreshMultiPageLink();
+    feature.openGoalsPage();
+    feature.openBridgePage();
+    feature.openChatPage();
+    await Promise.resolve();
+    expect(buildMultiPageUrl).toHaveBeenCalledTimes(3);
+    expect(switchMode).toHaveBeenCalledTimes(3);
+    expect(loadGoals).toHaveBeenCalledTimes(1);
+    expect(loadBridgeSessions).toHaveBeenCalledTimes(1);
+    expect(focusPrompt).toHaveBeenCalledTimes(1);
   });
 });

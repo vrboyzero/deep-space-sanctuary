@@ -71,10 +71,103 @@ function createLifecycle(timerHarness) {
   return createChatNetworkConnectionLifecycle({
     scheduleReconnect: timerHarness.schedule,
     cancelReconnect: timerHarness.cancel,
+    random: () => 0.5,
   });
 }
 
 describe("chat network connection lifecycle", () => {
+  it("backs off consecutive reconnects exponentially up to the hard cap", () => {
+    const timerHarness = createTimerHarness();
+    const lifecycle = createChatNetworkConnectionLifecycle({
+      scheduleReconnect: timerHarness.schedule,
+      cancelReconnect: timerHarness.cancel,
+      reconnectDelayMs: 3_000,
+      maxReconnectDelayMs: 30_000,
+      reconnectJitterRatio: 0.2,
+      random: () => 0.5,
+    });
+    const scheduledDelays = [];
+
+    for (let generation = 1; generation <= 6; generation += 1) {
+      const socket = createSocketHarness();
+      lifecycle.replaceConnection({
+        socket,
+        generation,
+        onClose: () => true,
+      });
+      socket.dispatch("close", { code: 1006 });
+      scheduledDelays.push(timerHarness.delays[0]);
+      timerHarness.runNext();
+    }
+
+    expect(scheduledDelays).toEqual([3_000, 6_000, 12_000, 24_000, 30_000, 30_000]);
+  });
+
+  it("resets reconnect backoff after a connection becomes ready", () => {
+    const timerHarness = createTimerHarness();
+    const lifecycle = createChatNetworkConnectionLifecycle({
+      scheduleReconnect: timerHarness.schedule,
+      cancelReconnect: timerHarness.cancel,
+      random: () => 0.5,
+    });
+    const scheduledDelays = [];
+
+    for (let generation = 1; generation <= 2; generation += 1) {
+      const socket = createSocketHarness();
+      lifecycle.replaceConnection({ socket, generation, onClose: () => true });
+      socket.dispatch("close", { code: 1006 });
+      scheduledDelays.push(timerHarness.delays[0]);
+      timerHarness.runNext();
+    }
+
+    lifecycle.resetReconnectBackoff();
+    const readySocket = createSocketHarness();
+    lifecycle.replaceConnection({ socket: readySocket, generation: 3, onClose: () => true });
+    readySocket.dispatch("close", { code: 1006 });
+    scheduledDelays.push(timerHarness.delays[0]);
+
+    expect(scheduledDelays).toEqual([3_000, 6_000, 3_000]);
+  });
+
+  it("applies bounded jitter without exceeding the reconnect hard cap", () => {
+    function getFirstDelay({ reconnectDelayMs = 3_000, random }) {
+      const timerHarness = createTimerHarness();
+      const lifecycle = createChatNetworkConnectionLifecycle({
+        scheduleReconnect: timerHarness.schedule,
+        cancelReconnect: timerHarness.cancel,
+        reconnectDelayMs,
+        maxReconnectDelayMs: 30_000,
+        reconnectJitterRatio: 0.2,
+        random,
+      });
+      const socket = createSocketHarness();
+      lifecycle.replaceConnection({ socket, generation: 1, onClose: () => true });
+      socket.dispatch("close", { code: 1006 });
+      return timerHarness.delays[0];
+    }
+
+    expect(getFirstDelay({ random: () => 0 })).toBe(2_400);
+    expect(getFirstDelay({ random: () => 1 })).toBe(3_600);
+    expect(getFirstDelay({ reconnectDelayMs: 30_000, random: () => 1 })).toBe(30_000);
+  });
+
+  it("reports the actual delay after a reconnect timer is scheduled", () => {
+    const timerHarness = createTimerHarness();
+    const lifecycle = createLifecycle(timerHarness);
+    const socket = createSocketHarness();
+    const scheduled = [];
+
+    lifecycle.replaceConnection({
+      socket,
+      generation: 1,
+      onClose: () => true,
+      onReconnectScheduled: (event) => scheduled.push(event),
+    });
+    socket.dispatch("close", { code: 1006 });
+
+    expect(scheduled).toEqual([{ delayMs: 3_000 }]);
+  });
+
   it("forwards active socket events and handles close only once", () => {
     const timerHarness = createTimerHarness();
     const lifecycle = createLifecycle(timerHarness);

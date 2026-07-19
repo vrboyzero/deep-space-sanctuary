@@ -75,6 +75,34 @@ describe("agent session cache retention", () => {
     });
   });
 
+  it("evicts expired inactive conversations while retaining the active conversation", () => {
+    let now = 0;
+    const cache = createAgentSessionCacheFeature({
+      inactiveTtlMs: 100,
+      maxConversationEntries: 10,
+      maxApproxBytes: 1024 * 1024,
+      now: () => now,
+    });
+    cache.setActiveConversation("conv-active");
+    cache.setConversationMessages("conv-active", [message("active")]);
+    cache.setConversationMessages("conv-inactive", [message("inactive")]);
+    cache.appendAssistantDelta("conv-streaming", "partial");
+
+    now = 101;
+
+    expect(cache.getConversationMessages("conv-active")).toHaveLength(1);
+    expect(cache.getConversationMessages("conv-inactive")).toEqual([]);
+    expect(cache.getConversationMessages("conv-streaming")).toHaveLength(1);
+    expect(cache.getConversationMessages("conv-inactive")).toEqual([]);
+    expect(cache.getRuntimeSnapshot()).toMatchObject({
+      retainedConversationCount: 2,
+      activeConversationCount: 1,
+      pendingConversationCount: 1,
+      evictedConversationCount: 1,
+      inactiveTtlMs: 100,
+    });
+  });
+
   it("keeps authoritative agent bindings when only cached messages are evicted", () => {
     const cache = createAgentSessionCacheFeature({
       maxConversationEntries: 1,

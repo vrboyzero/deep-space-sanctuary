@@ -97,12 +97,15 @@ Practical takeaway:
 
 Supported variables:
 
+- `BELLDANDY_BROWSER_OUTBOUND_PROFILE` (`public-web` by default; use `privileged-local-browser` only for explicit private-network automation)
 - `BELLDANDY_BROWSER_ALLOWED_DOMAINS`
 - `BELLDANDY_BROWSER_DENIED_DOMAINS`
 
 Practical takeaway:
 
-- if browser automation is enabled, configure domain limits at the same time
+- keep `public-web` unless private-network automation is required
+- if `privileged-local-browser` is enabled, configure the smallest possible domain allowlist at the same time
+- the legacy `BELLDANDY_BROWSER_ALLOW_PRIVATE_NETWORK` boolean no longer elevates browser access
 
 ## Recommended Profiles
 

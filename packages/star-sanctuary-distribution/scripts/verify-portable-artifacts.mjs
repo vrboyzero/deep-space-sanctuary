@@ -12,6 +12,10 @@ import {
   resolveDistributionMode,
   resolvePortableArtifactRoot,
 } from "./distribution-mode.mjs";
+import {
+  assertRuntimeDependencySnapshotArtifactIdentity,
+  createRuntimeDependencySnapshot,
+} from "./runtime-dependency-snapshot-policy.mjs";
 import { guardedRemovePath } from "./sandbox-paths.mjs";
 import { reserveFreePort, terminateChild, wait } from "./runtime-process.mjs";
 
@@ -144,6 +148,26 @@ function verifyRelayRecoveryContract(relayArtifact) {
   }
 }
 
+function verifyRuntimeDependencySnapshotIdentity() {
+  const versionFile = readJson(path.join(runtimeVersionRoot, "version.json"));
+  const runtimeManifest = readJson(path.join(runtimeVersionRoot, "runtime-manifest.json"));
+  const runtimeRoot = path.join(runtimeVersionRoot, "runtime");
+  const snapshot = createRuntimeDependencySnapshot({
+    target: {
+      mode: versionFile.distributionMode ?? (versionFile.includeOptionalNative ? "full" : "slim"),
+      platform: versionFile.platform,
+      arch: versionFile.arch,
+      nodeAbi: process.versions.modules,
+    },
+    sourceLockfile: fs.readFileSync(path.join(workspaceRoot, "pnpm-lock.yaml")),
+    runtimeLockfile: fs.readFileSync(path.join(runtimeRoot, "pnpm-lock.yaml")),
+    runtimeWorkspaceConfig: fs.readFileSync(path.join(runtimeRoot, "pnpm-workspace.yaml")),
+    storeSnapshot: versionFile.dependencySnapshot?.storeSnapshot,
+  });
+  assertRuntimeDependencySnapshotArtifactIdentity(versionFile.dependencySnapshot, snapshot);
+  assertRuntimeDependencySnapshotArtifactIdentity(runtimeManifest.dependencySnapshot, snapshot);
+}
+
 function appendBounded(current, chunk) {
   const next = `${current}${chunk.toString("utf-8")}`;
   return next.length <= MAX_CAPTURED_OUTPUT_CHARS
@@ -251,6 +275,7 @@ async function main() {
     );
   }
 
+  verifyRuntimeDependencySnapshotIdentity();
   const relayArtifact = resolveRelayArtifact();
   verifyRelayRecoveryContract(relayArtifact);
   await probeRelayCli(relayArtifact);

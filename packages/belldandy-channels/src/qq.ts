@@ -4,7 +4,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
 import type { BelldandyAgent, ConversationStore } from "@belldandy/agent";
-import { FilesystemCapability, assertSafeFilesystemBasename } from "@belldandy/protocol";
+import {
+    FilesystemCapability,
+    OutboundRequestPolicy,
+    assertSafeFilesystemBasename,
+    type OutboundRequestInit,
+} from "@belldandy/protocol";
 import type { ChatKind, ChannelRouter } from "./router/types.js";
 import type {
     Channel,
@@ -18,8 +23,13 @@ import type {
 import { chunkMarkdownForOutbound } from "./reply-chunking.js";
 import { ChannelIngressScheduler } from "./channel-ingress-scheduler.js";
 import type { CurrentConversationBindingStore } from "./current-conversation-binding-store.js";
+import { QqReplyContextCache } from "./qq-reply-context-cache.js";
+import { readBoundedQqRestJson } from "./qq-json-response.js";
 import { buildChannelSessionDescriptor } from "./session-key.js";
-import { readBoundedMediaBuffer } from "./media-reader.js";
+import {
+    readBoundedMediaBuffer,
+    type BoundedMediaRequestPolicy,
+} from "./media-reader.js";
 import {
     ChannelOutboundDeduplicator,
     classifyChannelOutboundFailure,
@@ -44,6 +54,10 @@ export interface QqChannelConfig extends ChannelConfig {
     conversationStore: ConversationStore;
     agentId?: string;
     sttTranscribe?: (opts: { buffer: Buffer; fileName: string; mime?: string; provider?: string }) => Promise<{ text: string } | null>;
+    /** QQ 媒体使用独立 host profile，避免与 token/gateway/reply REST 权限混用。 */
+    mediaOutboundRequestPolicy?: BoundedMediaRequestPolicy;
+    /** QQ 固定 REST endpoint 使用零 redirect 的独立 profile，防止敏感凭据跨 host 重放。 */
+    restOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
     eventSampleCapture?: {
         enabled: boolean;
         dir: string;
@@ -114,6 +128,9 @@ const QQ_VOICE_DOWNLOAD_TIMEOUT_MS = 15_000;
 const QQ_VOICE_STT_TIMEOUT_MS = 30_000;
 const QQ_VOICE_TRANSCODE_TIMEOUT_MS = 30_000;
 const QQ_VOICE_MAX_BYTES = 16 * 1024 * 1024;
+const QQ_MEDIA_ALLOWED_HOSTS = ["multimedia.nt.qq.com.cn", "qqbot.ugcimg.cn"];
+const QQ_REST_ALLOWED_HOSTS = ["bots.qq.com", "api.sgroup.qq.com", "sandbox.api.sgroup.qq.com"];
+const QQ_REST_IDLE_TIMEOUT_MS = 15_000;
 const QQ_FFMPEG_OUTPUT_MAX_BYTES = 64 * 1024;
 const DEFAULT_FFMPEG_COMMAND = "ffmpeg";
 const QQ_SILK_DECODER_SUPPORTED = false;
@@ -134,6 +151,8 @@ export class QqChannel implements Channel {
     private readonly currentConversationBindingStore?: CurrentConversationBindingStore;
     private readonly onChannelSecurityApprovalRequired?: QqChannelConfig["onChannelSecurityApprovalRequired"];
     private readonly sttTranscribe?: QqChannelConfig["sttTranscribe"];
+    private readonly mediaOutboundRequestPolicy: BoundedMediaRequestPolicy;
+    private readonly restOutboundRequestPolicy: Pick<OutboundRequestPolicy, "request">;
     private readonly eventSampleCapture?: QqChannelConfig["eventSampleCapture"];
     private readonly ingressScheduler: ChannelIngressScheduler;
     private readonly conversationLifecycle?: QqChannelConfig["conversationLifecycle"];
@@ -144,7 +163,7 @@ export class QqChannel implements Channel {
     private stopPromise?: Promise<void>;
     private lifecycleAbortController = new AbortController();
     private readonly outboundDeduplicator = new ChannelOutboundDeduplicator();
-    private readonly replyContextByChatId = new Map<string, QqReplyContext>();
+    private readonly replyContextByChatId = new QqReplyContextCache<QqReplyContext>();
 
     private readonly processedMessages = new Set<string>();
     private readonly MESSAGE_CACHE_SIZE = 1000;
@@ -224,6 +243,13 @@ export class QqChannel implements Channel {
         this.currentConversationBindingStore = config.currentConversationBindingStore;
         this.onChannelSecurityApprovalRequired = config.onChannelSecurityApprovalRequired;
         this.sttTranscribe = config.sttTranscribe;
+        this.mediaOutboundRequestPolicy = config.mediaOutboundRequestPolicy ?? new OutboundRequestPolicy({
+            allowedHosts: QQ_MEDIA_ALLOWED_HOSTS,
+        });
+        this.restOutboundRequestPolicy = config.restOutboundRequestPolicy ?? new OutboundRequestPolicy({
+            allowedHosts: QQ_REST_ALLOWED_HOSTS,
+            maxRedirects: 0,
+        });
         this.eventSampleCapture = config.eventSampleCapture?.enabled ? config.eventSampleCapture : undefined;
         this.ingressScheduler = config.ingressScheduler ?? new ChannelIngressScheduler();
         this.conversationLifecycle = config.conversationLifecycle;
@@ -527,6 +553,8 @@ export class QqChannel implements Channel {
             label: `QQ voice attachment ${label}`,
             timeoutMs: QQ_VOICE_DOWNLOAD_TIMEOUT_MS,
             maxBytes: QQ_VOICE_MAX_BYTES,
+            signal: this.lifecycleAbortController.signal,
+            requestPolicy: this.mediaOutboundRequestPolicy,
         });
         console.log(`[${this.name}] Downloaded QQ voice attachment ${label}: ${buffer.length} bytes`);
         return buffer;
@@ -832,29 +860,51 @@ export class QqChannel implements Channel {
         return this.replyContextByChatId.get(chatId);
     }
 
+    private async requestQqRest(
+        url: string,
+        init: OutboundRequestInit,
+        timeoutMs?: number,
+    ): Promise<Response> {
+        const idleTimeoutMs = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+            ? Math.floor(timeoutMs)
+            : QQ_REST_IDLE_TIMEOUT_MS;
+        // 固定 REST 请求携带 clientSecret 或 token，禁止任何 redirect 避免凭据被跨端点重放。
+        return (await this.restOutboundRequestPolicy.request({
+            url,
+            ...init,
+            maxRedirects: 0,
+            idleTimeoutMs,
+        })).response;
+    }
+
     /**
      * 获取 AccessToken
      */
     private async fetchAccessToken(options: ChannelOutboundOptions = {}): Promise<void> {
         try {
-            const response = await this.runOutbound((signal) => fetch("https://bots.qq.com/app/getAppAccessToken", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    appId: this.config.appId,
-                    clientSecret: this.config.appSecret,
-                }),
-                signal,
-            }), options);
+            const data = await this.runOutbound(async (signal) => {
+                const response = await this.requestQqRest("https://bots.qq.com/app/getAppAccessToken", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        appId: this.config.appId,
+                        clientSecret: this.config.appSecret,
+                    }),
+                    signal,
+                }, options.timeoutMs);
+
+                if (!response.ok) {
+                    throw await createQqOutboundHttpError(response as Response, "Failed to fetch AccessToken");
+                }
+                return await readBoundedQqRestJson({ response, abortSignal: signal }) as {
+                    access_token?: string;
+                    expires_in?: number;
+                };
+            }, options);
             throwIfChannelAborted(options.signal);
 
-            if (!response.ok) {
-                throw await createQqOutboundHttpError(response as Response, "Failed to fetch AccessToken");
-            }
-
-            const data = await response.json();
             if (!data.access_token) {
                 throw new Error("Invalid AccessToken response");
             }
@@ -942,20 +992,22 @@ export class QqChannel implements Channel {
             ? "https://sandbox.api.sgroup.qq.com"
             : "https://api.sgroup.qq.com";
 
-        const response = await this.runOutbound((signal) => fetch(`${baseUrl}/gateway/bot`, {
-            headers: {
-                Authorization: `QQBot ${this.accessToken}`,
-                "Content-Type": "application/json",
-            },
-            signal,
-        }), options);
+        const data = await this.runOutbound(async (signal) => {
+            const response = await this.requestQqRest(`${baseUrl}/gateway/bot`, {
+                headers: {
+                    Authorization: `QQBot ${this.accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                signal,
+            }, options.timeoutMs);
+
+            if (!response.ok) {
+                throw await createQqOutboundHttpError(response as Response, "Failed to fetch gateway URL");
+            }
+            return await readBoundedQqRestJson({ response, abortSignal: signal }) as { url?: string };
+        }, options);
         throwIfChannelAborted(options.signal);
 
-        if (!response.ok) {
-            throw await createQqOutboundHttpError(response as Response, "Failed to fetch gateway URL");
-        }
-
-        const data = await response.json();
         if (!data.url) {
             throw new Error("Invalid gateway response");
         }
@@ -1551,7 +1603,7 @@ export class QqChannel implements Channel {
                 });
                 for (const chunk of chunks) {
                     throwIfChannelAborted(signal);
-                    const response = await fetch(url, {
+                    const response = await this.requestQqRest(url, {
                         method: "POST",
                         headers: {
                             Authorization: `QQBot ${this.accessToken}`,
@@ -1562,7 +1614,7 @@ export class QqChannel implements Channel {
                             content: chunk,
                         }),
                         signal,
-                    });
+                    }, options.timeoutMs);
                     throwIfChannelAborted(signal);
 
                     if (!response.ok) {

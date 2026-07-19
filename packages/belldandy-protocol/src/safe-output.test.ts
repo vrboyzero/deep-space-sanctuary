@@ -61,6 +61,27 @@ describe("safe output contracts", () => {
     expect(JSON.stringify(failure)).not.toContain("not-for-user");
   });
 
+  it("redacts non-Bearer authorization credentials and embedded URL userinfo", () => {
+    const text = redactSensitiveText([
+      "Authorization: Basic dXNlcjpwYXNz",
+      'Proxy-Authorization: Digest username="owner", response="digest-secret"',
+      "request failed at https://owner:url-password@example.test/callback?token=query-secret&safe=ok",
+    ].join("\n"));
+
+    expect(text).not.toContain("dXNlcjpwYXNz");
+    expect(text).not.toContain("digest-secret");
+    expect(text).not.toContain("owner");
+    expect(text).not.toContain("url-password");
+    expect(text).not.toContain("query-secret");
+    expect(text).toContain("[REDACTED]");
+  });
+
+  it("preserves ordinary authorization guidance and URLs without userinfo", () => {
+    const text = "authorization is required for https://example.test/public?safe=ok";
+
+    expect(redactSensitiveText(text)).toBe(text);
+  });
+
   it("redacts URL userinfo together with sensitive query parameters", () => {
     const redacted = redactSensitiveUrl("https://owner:password@example.test/callback?token=query-secret&safe=ok");
 

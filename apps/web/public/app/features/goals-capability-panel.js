@@ -4,6 +4,7 @@ import {
   buildGoalSubAgentExplainabilityEntries,
   buildGoalVerifierExplainabilityEntry,
 } from "./goal-launch-explainability.js";
+import { createGoalsCapabilityPanelControlsFeature } from "./goals-capability-panel-controls.js";
 
 export function createGoalsCapabilityPanelFeature({
   refs,
@@ -16,6 +17,12 @@ export function createGoalsCapabilityPanelFeature({
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
   const { goalsDetailEl } = refs;
+  const capabilityPanelControls = createGoalsCapabilityPanelControlsFeature({
+    onOpenSourcePath,
+    onOpenSubtask,
+    onSaveGovernanceSettings,
+    onCommanderDecision,
+  });
 
   function renderCapabilityFreshnessSummary(memoryFreshness) {
     const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
@@ -205,102 +212,34 @@ export function createGoalsCapabilityPanelFeature({
 
   function renderGoalCapabilityPanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalCapabilityPanel");
-    if (!panel) return;
+    if (!panel) {
+      capabilityPanelControls.bind(null);
+      return;
+    }
     panel.innerHTML = '<div class="memory-viewer-empty">正在读取 capability-plans.json …</div>';
+    capabilityPanelControls.bind(panel);
   }
 
   function renderGoalCapabilityPanelError(message) {
     const panel = goalsDetailEl?.querySelector("#goalCapabilityPanel");
-    if (!panel) return;
+    if (!panel) {
+      capabilityPanelControls.bind(null);
+      return;
+    }
     panel.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+    capabilityPanelControls.bind(panel);
   }
 
   function bindCapabilityPanelActions(panel) {
-    if (!panel) return;
-    panel.querySelectorAll("[data-open-source]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const sourcePath = node.getAttribute("data-open-source");
-        if (!sourcePath) return;
-        void onOpenSourcePath?.(sourcePath);
-      });
-    });
-    panel.querySelectorAll("[data-open-subtask-id]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const taskId = node.getAttribute("data-open-subtask-id");
-        if (!taskId) return;
-        void onOpenSubtask?.(taskId);
-      });
-    });
-    panel.querySelectorAll("[data-goal-capability-save]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const goalId = node.getAttribute("data-goal-id");
-        const nodeId = node.getAttribute("data-node-id");
-        if (!goalId || !nodeId) return;
-        const scope = node.closest("[data-goal-governance-form]") || panel;
-        const executionMode = scope.querySelector("[data-goal-capability-field='executionMode']")?.value || "";
-        const governanceMode = scope.querySelector("[data-goal-capability-field='governanceMode']")?.value || "";
-        const commanderAgentId = scope.querySelector("[data-goal-capability-field='commanderAgentId']")?.value || "";
-        const preferredAgentsRaw = scope.querySelector("[data-goal-capability-field='preferredAgents']")?.value || "";
-        const finalApprovalMode = scope.querySelector("[data-goal-capability-field='finalApprovalMode']")?.value || "";
-        await onSaveGovernanceSettings?.(goalId, nodeId, {
-          executionMode,
-          governanceMode,
-          commanderAgentId,
-          preferredAgents: preferredAgentsRaw
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
-          finalApprovalMode,
-        });
-      });
-    });
-    panel.querySelectorAll("[data-goal-commander-decision]").forEach((node) => {
-      node.addEventListener("click", async () => {
-        const goalId = node.getAttribute("data-goal-id");
-        const nodeId = node.getAttribute("data-node-id");
-        const decision = node.getAttribute("data-goal-commander-decision");
-        if (!goalId || !nodeId || !decision) return;
-        const scope = node.closest("[data-goal-commander-form]") || panel;
-        const summary = scope.querySelector("[data-goal-capability-field='decisionSummary']")?.value || "";
-        const note = scope.querySelector("[data-goal-capability-field='decisionNote']")?.value || "";
-        const requireUserApproval = scope.querySelector("[data-goal-capability-field='requireUserApproval']")?.value || "";
-        await onCommanderDecision?.(goalId, nodeId, {
-          decision,
-          summary,
-          note,
-          requireUserApproval: requireUserApproval === "agent_auto_complete"
-            ? false
-            : requireUserApproval === "user_required"
-              ? true
-              : undefined,
-        });
-      });
-    });
-    panel.querySelectorAll("[data-goal-commander-prefill]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const mode = node.getAttribute("data-goal-commander-prefill");
-        const scope = node.closest("[data-goal-commander-form]") || panel;
-        const summaryEl = scope.querySelector("[data-goal-capability-field='decisionSummary']");
-        const noteEl = scope.querySelector("[data-goal-capability-field='decisionNote']");
-        if (!summaryEl || !noteEl) return;
-        const historySummary = node.getAttribute("data-prefill-history-summary") || "";
-        const historyNote = node.getAttribute("data-prefill-history-note") || "";
-        const gateSummary = node.getAttribute("data-prefill-gate-summary") || "";
-        if (mode === "history") {
-          if (historySummary) summaryEl.value = historySummary;
-          if (historyNote) noteEl.value = historyNote;
-          return;
-        }
-        if (mode === "gate") {
-          if (gateSummary) summaryEl.value = gateSummary;
-        }
-      });
-    });
+    return capabilityPanelControls.bind(panel);
   }
 
   function renderGoalCapabilityPanel(goal, payload) {
     const panel = goalsDetailEl?.querySelector("#goalCapabilityPanel");
-    if (!panel) return;
+    if (!panel) {
+      capabilityPanelControls.bind(null);
+      return;
+    }
     const plans = Array.isArray(payload?.plans) ? payload.plans : [];
     const nodeMap = payload?.nodeMap && typeof payload.nodeMap === "object" ? payload.nodeMap : {};
     const planCount = plans.length;
@@ -323,6 +262,7 @@ export function createGoalsCapabilityPanelFeature({
           <code>goal_capability_plan</code> / <code>goal_orchestrate</code>。
         </div>
       `;
+      bindCapabilityPanelActions(panel);
       return;
     }
 
@@ -737,6 +677,8 @@ export function createGoalsCapabilityPanelFeature({
   }
 
   return {
+    dispose: capabilityPanelControls.dispose,
+    getRuntimeSnapshot: capabilityPanelControls.getRuntimeSnapshot,
     renderGoalCapabilityPanel,
     renderGoalCapabilityPanelError,
     renderGoalCapabilityPanelLoading,

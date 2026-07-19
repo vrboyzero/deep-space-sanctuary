@@ -727,6 +727,7 @@ BELLDANDY_ASSISTANT_EXTERNAL_DELIVERY_PREFERENCE=feishu,qq,community,discord
 ```env
 BELLDANDY_BROWSER_RELAY_ENABLED=true
 BELLDANDY_RELAY_PORT=28892
+BELLDANDY_BROWSER_OUTBOUND_PROFILE=public-web
 
 # 浏览器访问范围限制（建议与 Relay 一起配置）
 # BELLDANDY_BROWSER_ALLOWED_DOMAINS=github.com,developer.mozilla.org,docs.example.com

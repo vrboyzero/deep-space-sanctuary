@@ -5,6 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { MemoryStore } from "../../belldandy-memory/dist/index.js";
 import { PtyManager } from "../../belldandy-skills/dist/builtin/system/pty.js";
+import { inspectOptionalRuntimeModule } from "./runtime-dependency-module-load-policy.mjs";
+import { createRuntimeDependencyReportTarget } from "./runtime-dependency-target-policy.mjs";
+import { createRuntimeNativeMatrix } from "./runtime-native-matrix-policy.mjs";
 import { guardedRemovePath } from "./sandbox-paths.mjs";
 
 function getPortableContext() {
@@ -29,9 +32,21 @@ async function main() {
   const result = {
     productName: "Star Sanctuary",
     mode: version.includeOptionalNative ? "full" : "slim",
+    target: createRuntimeDependencyReportTarget({
+      mode: version.includeOptionalNative ? "full" : "slim",
+      platform: process.platform,
+      arch: process.arch,
+      nodeAbi: process.versions.modules,
+    }),
+    nativeMatrix: null,
     betterSqlite3: { ok: false },
     sqliteVec: { ok: false },
     nodePty: { installed: false, backend: "child_process" },
+    optionalPayloads: {
+      fastembed: { present: null, load: { ok: null } },
+      nodePty: { present: null },
+      onnxruntimeNode: { present: null, load: { ok: null } },
+    },
     protobufjs: { ok: false },
     browserToolchain: {
       puppeteerCore: { ok: false },
@@ -43,6 +58,34 @@ async function main() {
       openModule: { ok: false },
     },
   };
+  result.nativeMatrix = createRuntimeNativeMatrix(result.target);
+
+  // Slim 仅解析 package 位置；full 实际加载 embedding modules，但不初始化或下载模型。
+  const memoryRequire = createRequire(new URL("../../belldandy-memory/dist/index.js", import.meta.url));
+  const skillsRequire = createRequire(new URL("../../belldandy-skills/dist/index.js", import.meta.url));
+  const loadOptionalModules = result.mode === "full";
+  result.optionalPayloads.fastembed = inspectOptionalRuntimeModule(
+    memoryRequire,
+    "fastembed",
+    { load: loadOptionalModules },
+  );
+  result.optionalPayloads.nodePty = inspectOptionalRuntimeModule(skillsRequire, "node-pty");
+  result.optionalPayloads.onnxruntimeNode = inspectOptionalRuntimeModule(
+    memoryRequire,
+    "onnxruntime-node",
+    { load: loadOptionalModules },
+  );
+  if (
+    result.optionalPayloads.onnxruntimeNode.present === false
+    && result.optionalPayloads.fastembed.present === true
+  ) {
+    const fastembedRequire = createRequire(result.optionalPayloads.fastembed.resolvedFrom);
+    result.optionalPayloads.onnxruntimeNode = inspectOptionalRuntimeModule(
+      fastembedRequire,
+      "onnxruntime-node",
+      { load: loadOptionalModules },
+    );
+  }
 
   try {
     const store = new MemoryStore(dbPath);

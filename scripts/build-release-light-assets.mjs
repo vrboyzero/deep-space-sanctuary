@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -6,6 +5,11 @@ import {
   copyPackageNonDistBinArtifacts,
   resolveReleaseVersion,
 } from "./artifact-contract.mjs";
+import {
+  collectReleaseContentManifest,
+  sha256File,
+} from "./release-content-manifest.mjs";
+import { resolveReleaseIdentity } from "./release-identity.mjs";
 
 const workspaceRoot = process.cwd();
 const packageJsonPath = path.join(workspaceRoot, "package.json");
@@ -168,47 +172,6 @@ function writeReleaseReadme() {
   fs.writeFileSync(targetPath, content, "utf-8");
 }
 
-function collectStageSummary() {
-  const files = [];
-  const rootPrefix = `${packageRoot}${path.sep}`;
-  for (const absolutePath of walkFiles(packageRoot)) {
-    const relativePath = absolutePath.startsWith(rootPrefix)
-      ? absolutePath.slice(rootPrefix.length).replaceAll("\\", "/")
-      : path.relative(packageRoot, absolutePath).replaceAll("\\", "/");
-    const stat = fs.statSync(absolutePath);
-    files.push({
-      path: relativePath,
-      size: stat.size,
-    });
-  }
-  files.sort((left, right) => left.path.localeCompare(right.path));
-  const totalBytes = files.reduce((sum, item) => sum + item.size, 0);
-  return {
-    fileCount: files.length,
-    totalBytes,
-    files,
-  };
-}
-
-function* walkFiles(rootPath) {
-  for (const entry of fs.readdirSync(rootPath, { withFileTypes: true })) {
-    const entryPath = path.join(rootPath, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkFiles(entryPath);
-      continue;
-    }
-    if (entry.isFile()) {
-      yield entryPath;
-    }
-  }
-}
-
-function sha256File(filePath) {
-  const hash = crypto.createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest("hex");
-}
-
 function runCommand(command, args) {
   const result = spawnSync(command, args, {
     cwd: versionRoot,
@@ -238,7 +201,7 @@ function createTarGzArchive() {
   runCommand("tar", ["-czf", path.basename(tarGzPath), packageRootName]);
 }
 
-function writeManifest(stageSummary) {
+function writeManifest(stageSummary, releaseIdentity) {
   const archives = [zipPath, tarGzPath].map((archivePath) => ({
     fileName: path.basename(archivePath),
     size: fs.statSync(archivePath).size,
@@ -250,6 +213,7 @@ function writeManifest(stageSummary) {
     schemaVersion: 1,
     product: "star-sanctuary",
     version,
+    releaseIdentity,
     releaseKind: "light",
     generatedAt: new Date().toISOString(),
     packageRoot: packageRootName,
@@ -265,6 +229,7 @@ function writeManifest(stageSummary) {
     content: {
       fileCount: stageSummary.fileCount,
       totalBytes: stageSummary.totalBytes,
+      files: stageSummary.files,
       includedRoots: [
         "packages/*/dist",
         "packages/*/package.json",
@@ -307,6 +272,7 @@ function writeSha256File() {
 }
 
 function main() {
+  const releaseIdentity = resolveReleaseIdentity({ version, workspaceRoot });
   ensureDir(releaseRoot);
   resetDir(versionRoot);
   ensureDir(packageRoot);
@@ -326,10 +292,10 @@ function main() {
   copyPackageDistTrees();
   writeReleaseReadme();
 
-  const stageSummary = collectStageSummary();
+  const stageSummary = collectReleaseContentManifest(packageRoot);
   createZipArchive();
   createTarGzArchive();
-  writeManifest(stageSummary);
+  writeManifest(stageSummary, releaseIdentity);
   writeSha256File();
 
   console.log(`[build:release-light] created ${path.relative(workspaceRoot, zipPath)}`);

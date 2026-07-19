@@ -9,6 +9,8 @@ export type {
   RecentToolResultRecord,
   ToolContext,
   ToolPolicy,
+  ToolAuditContentSummary,
+  ToolAuditSafeArguments,
   ToolAuditLog,
   ToolCatalogEntry,
   ToolCatalogFamilyEntry,

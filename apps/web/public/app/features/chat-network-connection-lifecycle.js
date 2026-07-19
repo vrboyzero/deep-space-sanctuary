@@ -2,15 +2,32 @@ export function createChatNetworkConnectionLifecycle({
   scheduleReconnect = (callback, delayMs) => setTimeout(callback, delayMs),
   cancelReconnect = (handle) => clearTimeout(handle),
   reconnectDelayMs = 3000,
+  maxReconnectDelayMs = 30_000,
+  reconnectJitterRatio = 0.2,
+  random = Math.random,
 } = {}) {
   let activeConnection = null;
   let reconnectTimer = null;
+  let reconnectAttempt = 0;
   let disposed = false;
+  const baseDelayMs = Number.isFinite(reconnectDelayMs) && reconnectDelayMs > 0
+    ? reconnectDelayMs
+    : 3_000;
+  const maxDelayMs = Number.isFinite(maxReconnectDelayMs) && maxReconnectDelayMs >= baseDelayMs
+    ? maxReconnectDelayMs
+    : Math.max(baseDelayMs, 30_000);
+  const jitterRatio = Number.isFinite(reconnectJitterRatio)
+    ? Math.min(1, Math.max(0, reconnectJitterRatio))
+    : 0.2;
 
   function cancelScheduledReconnect() {
     if (reconnectTimer === null) return;
     cancelReconnect(reconnectTimer);
     reconnectTimer = null;
+  }
+
+  function resetReconnectBackoff() {
+    reconnectAttempt = 0;
   }
 
   function detachListeners(connection) {
@@ -41,14 +58,23 @@ export function createChatNetworkConnectionLifecycle({
 
   function scheduleConnectionReconnect(connection) {
     cancelScheduledReconnect();
+    const exponentialDelayMs = Math.min(
+      maxDelayMs,
+      baseDelayMs * (2 ** Math.min(reconnectAttempt, 30)),
+    );
+    const randomValue = Math.min(1, Math.max(0, Number(random()) || 0));
+    const jitterMultiplier = 1 + ((randomValue * 2) - 1) * jitterRatio;
+    const delayMs = Math.min(maxDelayMs, Math.max(0, Math.round(exponentialDelayMs * jitterMultiplier)));
+    reconnectAttempt += 1;
     let handle = null;
     handle = scheduleReconnect(() => {
       if (reconnectTimer !== handle) return;
       reconnectTimer = null;
       if (disposed || activeConnection) return;
       connection.onReconnect?.();
-    }, reconnectDelayMs);
+    }, delayMs);
     reconnectTimer = handle;
+    connection.onReconnectScheduled?.({ delayMs });
   }
 
   function replaceConnection({
@@ -60,6 +86,7 @@ export function createChatNetworkConnectionLifecycle({
     onMessage,
     onRelease,
     onReconnect,
+    onReconnectScheduled,
   } = {}) {
     if (disposed || !socket || generation === undefined) return false;
 
@@ -74,6 +101,7 @@ export function createChatNetworkConnectionLifecycle({
       listeners: null,
       onRelease,
       onReconnect,
+      onReconnectScheduled,
     };
     const isCurrent = () => !disposed && activeConnection === connection && !connection.released;
 
@@ -133,6 +161,7 @@ export function createChatNetworkConnectionLifecycle({
     getRuntimeSnapshot,
     isDisposed: () => disposed,
     replaceConnection,
+    resetReconnectBackoff,
     teardown,
   };
 }

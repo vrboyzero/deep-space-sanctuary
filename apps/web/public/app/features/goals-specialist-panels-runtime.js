@@ -1246,6 +1246,7 @@ export function createGoalsSpecialistPanelsRuntimeFeature({
 
   return {
     dispose: () => {
+      getGoalsCapabilityPanelFeature?.()?.dispose?.();
       panelControls.dispose();
       capabilityCacheReadLifecycle.dispose();
       capabilityPanelReadLifecycle.dispose();

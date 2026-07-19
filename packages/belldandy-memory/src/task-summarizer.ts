@@ -1,12 +1,17 @@
-import type { TaskRecord, TaskToolCallSummary } from "./task-types.js";
+import type { OutboundRequestPolicy } from "@belldandy/protocol";
 
-import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
+import type { TaskRecord, TaskToolCallSummary } from "./task-types.js";
+import { requestTaskSummaryModel } from "./task-summary-model-request.js";
+
+const DEFAULT_TASK_SUMMARY_TIMEOUT_MS = 120_000;
 
 export interface TaskSummarizerOptions {
   enabled?: boolean;
   model?: string;
   baseUrl?: string;
   apiKey?: string;
+  timeoutMs?: number;
+  outboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
 }
 
 export interface TaskSummaryPayload {
@@ -22,12 +27,18 @@ export class TaskSummarizer {
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly timeoutMs: number;
+  private readonly outboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
 
   constructor(options: TaskSummarizerOptions = {}) {
     this.enabled = options.enabled ?? false;
     this.model = options.model ?? "";
     this.baseUrl = (options.baseUrl ?? "").replace(/\/+$/, "");
     this.apiKey = options.apiKey ?? "";
+    this.timeoutMs = typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.floor(options.timeoutMs)
+      : DEFAULT_TASK_SUMMARY_TIMEOUT_MS;
+    this.outboundRequestPolicy = options.outboundRequestPolicy;
   }
 
   get isEnabled(): boolean {
@@ -78,45 +89,23 @@ export class TaskSummarizer {
       historyText || "无",
     ].filter(Boolean).join("\n");
 
-    const response = await fetch(this.buildChatCompletionsUrl(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          {
-            role: "system",
-            content: [
-              "你是任务总结器。",
-              "根据任务目标、工具摘要和最近会话内容，输出一个 JSON 对象。",
-              "字段：title, summary, reflection, outcome, artifact_paths。",
-              "summary 侧重任务做了什么与最终结果；reflection 侧重可复用经验或失败教训。",
-              "outcome 必须是 success / failed / partial 之一。",
-              "artifact_paths 必须是字符串数组。",
-              "只输出 JSON，不要额外解释。",
-            ].join(" "),
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        max_tokens: 400,
-        temperature: 0.2,
-      }),
+    const data = await requestTaskSummaryModel({
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      model: this.model,
+      systemPrompt: [
+        "你是任务总结器。",
+        "根据任务目标、工具摘要和最近会话内容，输出一个 JSON 对象。",
+        "字段：title, summary, reflection, outcome, artifact_paths。",
+        "summary 侧重任务做了什么与最终结果；reflection 侧重可复用经验或失败教训。",
+        "outcome 必须是 success / failed / partial 之一。",
+        "artifact_paths 必须是字符串数组。",
+        "只输出 JSON，不要额外解释。",
+      ].join(" "),
+      userPrompt: prompt,
+      timeoutMs: this.timeoutMs,
+      outboundRequestPolicy: this.outboundRequestPolicy,
     });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`Task summary LLM call failed: ${response.status} ${text.slice(0, 200)}`);
-    }
-
-    const data = await response.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
     const raw = data.choices?.[0]?.message?.content?.trim();
     if (!raw) return null;
 
@@ -137,9 +126,6 @@ export class TaskSummarizer {
     }
   }
 
-  private buildChatCompletionsUrl(): string {
-    return buildOpenAIChatCompletionsUrl(this.baseUrl);
-  }
 }
 
 function asOptionalString(value: unknown): string | undefined {

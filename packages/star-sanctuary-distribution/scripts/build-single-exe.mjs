@@ -213,6 +213,7 @@ function writeSingleExeMetadata(runtimeManifest) {
     version: versionFile.version,
     distributionMode: versionFile.distributionMode ?? (versionFile.includeOptionalNative ? "full" : "slim"),
     distributionPolicy: versionFile.distributionPolicy,
+    dependencySnapshot: versionFile.dependencySnapshot,
     platform,
     arch,
     builtAt: new Date().toISOString(),

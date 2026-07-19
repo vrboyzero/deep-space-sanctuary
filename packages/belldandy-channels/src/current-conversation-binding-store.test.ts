@@ -269,6 +269,225 @@ describe("current conversation binding store", () => {
     }
   });
 
+  it("persists explicit prune while exposing only retained and pending counts", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-explicit-prune-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let now = 1_000;
+    const store = createFileCurrentConversationBindingStore(filePath, {
+      maxEntries: 10,
+      retentionMs: 100,
+      now: () => now,
+    });
+
+    try {
+      await store.upsert(createRecord({
+        sessionKey: "community:old-alpha",
+        chatId: "old-alpha",
+        accountId: "alpha",
+        updatedAt: now,
+      }));
+      now += 1;
+      await store.upsert(createRecord({
+        sessionKey: "community:latest-alpha",
+        chatId: "latest-alpha",
+        accountId: "alpha",
+        updatedAt: now,
+      }));
+
+      now = 1_200;
+      await store.prune();
+
+      const persisted = JSON.parse(await fs.readFile(filePath, "utf-8")) as {
+        bindings: Record<string, unknown>;
+      };
+      expect(Object.keys(persisted.bindings)).toEqual(["community:latest-alpha"]);
+      expect(await store.getRuntimeSnapshot()).toEqual({
+        retainedBindingCount: 1,
+        latestScopeCount: 2,
+        pendingMutationCount: 0,
+      });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("coalesces same-turn prune and upsert without losing the new binding", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-prune-upsert-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let now = 1_000;
+    let writeCount = 0;
+    const store = createFileCurrentConversationBindingStore(filePath, {
+      maxEntries: 10,
+      retentionMs: 100,
+      now: () => now,
+      fileSystem: {
+        readFile: fs.readFile.bind(fs),
+        mkdir: fs.mkdir.bind(fs),
+        writeFile: async (...args) => {
+          writeCount += 1;
+          await fs.writeFile(...args);
+        },
+        rename: fs.rename.bind(fs),
+        rm: fs.rm.bind(fs),
+      },
+    });
+
+    try {
+      await store.upsert(createRecord({
+        sessionKey: "community:old-alpha",
+        chatId: "old-alpha",
+        accountId: "alpha",
+        updatedAt: now,
+      }));
+      now += 1;
+      await store.upsert(createRecord({
+        sessionKey: "community:latest-alpha",
+        chatId: "latest-alpha",
+        accountId: "alpha",
+        updatedAt: now,
+      }));
+
+      now = 1_200;
+      writeCount = 0;
+      await Promise.all([
+        store.prune(),
+        store.upsert(createRecord({
+          sessionKey: "community:latest-beta",
+          chatId: "latest-beta",
+          accountId: "beta",
+          updatedAt: now,
+        })),
+      ]);
+
+      const persisted = JSON.parse(await fs.readFile(filePath, "utf-8")) as {
+        bindings: Record<string, unknown>;
+      };
+      expect(writeCount).toBe(1);
+      expect(Object.keys(persisted.bindings).sort()).toEqual([
+        "community:latest-alpha",
+        "community:latest-beta",
+      ]);
+      expect(await store.getRuntimeSnapshot()).toEqual({
+        retainedBindingCount: 2,
+        latestScopeCount: 3,
+        pendingMutationCount: 0,
+      });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("counts an in-flight prune until its atomic publish settles", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-prune-pending-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    const seed = createFileCurrentConversationBindingStore(filePath);
+    let releaseWrite = () => {};
+    let markWriteStarted = () => {};
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const store = createFileCurrentConversationBindingStore(filePath, {
+      fileSystem: {
+        readFile: fs.readFile.bind(fs),
+        mkdir: fs.mkdir.bind(fs),
+        writeFile: async (...args) => {
+          markWriteStarted();
+          await writeGate;
+          await fs.writeFile(...args);
+        },
+        rename: fs.rename.bind(fs),
+        rm: fs.rm.bind(fs),
+      },
+    });
+
+    try {
+      await seed.upsert(createRecord({
+        sessionKey: "community:latest",
+        chatId: "latest",
+        updatedAt: Date.now(),
+      }));
+      const pruning = store.prune();
+      await writeStarted;
+
+      await expect(store.getRuntimeSnapshot()).resolves.toMatchObject({
+        retainedBindingCount: 1,
+        pendingMutationCount: 1,
+      });
+
+      releaseWrite();
+      await pruning;
+      await expect(store.getRuntimeSnapshot()).resolves.toMatchObject({
+        pendingMutationCount: 0,
+      });
+    } finally {
+      releaseWrite();
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("keeps the previous file and clears pending counts when prune publish fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-prune-failure-"));
+    const filePath = path.join(stateDir, "current-conversation-bindings.json");
+    let now = 1_000;
+    let failNextWrite = false;
+    const store = createFileCurrentConversationBindingStore(filePath, {
+      maxEntries: 10,
+      retentionMs: 100,
+      now: () => now,
+      fileSystem: {
+        readFile: fs.readFile.bind(fs),
+        mkdir: fs.mkdir.bind(fs),
+        writeFile: async (...args) => {
+          if (failNextWrite) {
+            failNextWrite = false;
+            throw new Error("simulated prune write failure");
+          }
+          await fs.writeFile(...args);
+        },
+        rename: fs.rename.bind(fs),
+        rm: fs.rm.bind(fs),
+      },
+    });
+
+    try {
+      await store.upsert(createRecord({
+        sessionKey: "community:old-alpha",
+        chatId: "old-alpha",
+        accountId: "alpha",
+        updatedAt: now,
+      }));
+      now += 1;
+      await store.upsert(createRecord({
+        sessionKey: "community:latest-alpha",
+        chatId: "latest-alpha",
+        accountId: "alpha",
+        updatedAt: now,
+      }));
+
+      now = 1_200;
+      failNextWrite = true;
+      await expect(store.prune()).rejects.toThrow("simulated prune write failure");
+
+      const persisted = JSON.parse(await fs.readFile(filePath, "utf-8")) as {
+        bindings: Record<string, unknown>;
+      };
+      expect(Object.keys(persisted.bindings).sort()).toEqual([
+        "community:latest-alpha",
+        "community:old-alpha",
+      ]);
+      expect(await store.getRuntimeSnapshot()).toEqual({
+        retainedBindingCount: 1,
+        latestScopeCount: 2,
+        pendingMutationCount: 0,
+      });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("evicts oldest non-latest bindings before latest scope bindings when capacity is exceeded", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "binding-store-capacity-"));
     const filePath = path.join(stateDir, "current-conversation-bindings.json");

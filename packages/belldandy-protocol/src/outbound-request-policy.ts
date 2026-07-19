@@ -1,8 +1,9 @@
 import { lookup as lookupDns } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
 import * as http from "node:http";
 import * as https from "node:https";
-import { isIP } from "node:net";
 import { Readable } from "node:stream";
+import ipaddr from "ipaddr.js";
 
 export type OutboundAddress = {
   address: string;
@@ -36,7 +37,7 @@ export class OutboundRequestPolicyError extends Error {
 export type OutboundRequestInit = {
   method?: string;
   headers?: Record<string, string>;
-  body?: string | Uint8Array;
+  body?: string | Uint8Array | Readable;
   signal?: AbortSignal;
   maxRedirects?: number;
   idleTimeoutMs?: number;
@@ -97,37 +98,48 @@ export class OutboundRequestPolicy {
     let currentUrl = parseUrl(input.url);
     let method = input.method ?? "GET";
     let body = input.body;
+    const originalBody = input.body;
     const redirectLimit = normalizePositiveInteger(input.maxRedirects, this.maxRedirects);
 
-    for (let redirectCount = 0; ; redirectCount += 1) {
-      const addresses = await this.resolveAllowedAddresses(currentUrl);
-      const response = await this.requestAdapter({
-        url: currentUrl,
-        addresses,
-        init: { ...input, method, body },
-      });
+    try {
+      for (let redirectCount = 0; ; redirectCount += 1) {
+        const addresses = await this.resolveAllowedAddresses(currentUrl);
+        const response = await this.requestAdapter({
+          url: currentUrl,
+          addresses,
+          init: { ...input, method, body },
+        });
 
-      if (!isRedirect(response.status)) {
-        return { response, url: currentUrl, addresses, redirectCount };
-      }
+        if (!isRedirect(response.status)) {
+          return { response, url: currentUrl, addresses, redirectCount };
+        }
 
-      if (redirectCount >= redirectLimit) {
+        if (redirectCount >= redirectLimit) {
+          await cancelResponseBody(response);
+          throw new OutboundRequestPolicyError("redirect_limit", "Outbound redirect limit exceeded.");
+        }
+
+        const location = response.headers.get("location");
+        if (!location) {
+          await cancelResponseBody(response);
+          throw new OutboundRequestPolicyError("redirect_without_location", "Outbound redirect did not provide a location.");
+        }
+
         await cancelResponseBody(response);
-        throw new OutboundRequestPolicyError("redirect_limit", "Outbound redirect limit exceeded.");
+        currentUrl = parseUrl(location, currentUrl);
+        if (response.status === 301 || response.status === 302 || response.status === 303) {
+          method = "GET";
+          body = undefined;
+        } else if (body instanceof Readable) {
+          throw new OutboundRequestPolicyError(
+            "redirect_limit",
+            "Outbound redirect cannot replay a streaming request body.",
+          );
+        }
       }
-
-      const location = response.headers.get("location");
-      if (!location) {
-        await cancelResponseBody(response);
-        throw new OutboundRequestPolicyError("redirect_without_location", "Outbound redirect did not provide a location.");
-      }
-
-      await cancelResponseBody(response);
-      currentUrl = parseUrl(location, currentUrl);
-      if (response.status === 301 || response.status === 302 || response.status === 303) {
-        method = "GET";
-        body = undefined;
-      }
+    } catch (error) {
+      if (originalBody instanceof Readable && !originalBody.destroyed) originalBody.destroy();
+      throw error;
     }
   }
 
@@ -136,10 +148,10 @@ export class OutboundRequestPolicy {
     this.assertUrlPolicy(url);
 
     const hostname = normalizeHostname(url.hostname);
-    const literalFamily = isIP(hostname);
+    const literalAddress = parseIpAddress(hostname);
     let addresses: OutboundAddress[];
-    if (literalFamily === 4 || literalFamily === 6) {
-      addresses = [{ address: hostname, family: literalFamily }];
+    if (literalAddress) {
+      addresses = [{ address: hostname, family: literalAddress.kind() === "ipv4" ? 4 : 6 }];
     } else {
       try {
         addresses = await this.dnsLookup(hostname);
@@ -178,7 +190,7 @@ export class OutboundRequestPolicy {
     if (!this.allowPrivateNetwork && isLocalhostName(hostname)) {
       throw new OutboundRequestPolicyError("private_network_not_allowed", "Outbound localhost targets are not allowed.");
     }
-    if (!this.allowPrivateNetwork && isIP(hostname) && isRestrictedAddress(hostname)) {
+    if (!this.allowPrivateNetwork && parseIpAddress(hostname) && isRestrictedAddress(hostname)) {
       throw new OutboundRequestPolicyError("private_network_not_allowed", "Outbound private or reserved network targets are not allowed.");
     }
     if (url.protocol === "http:" && !this.allowInsecureHttp) {
@@ -219,23 +231,35 @@ async function requestWithPinnedAddress(input: OutboundRequestAdapterInput): Pro
     method: input.init.method ?? "GET",
     headers: input.init.headers,
   };
-  requestOptions.lookup = ((_hostname, _options, callback) => {
-    callback(null, selectedAddress.address, selectedAddress.family);
-  }) as NonNullable<http.RequestOptions["lookup"]>;
+  const pinnedLookup: NonNullable<http.RequestOptions["lookup"]> = (_hostname, options, callback) => {
+    const address: LookupAddress = {
+      address: selectedAddress.address,
+      family: selectedAddress.family,
+    };
+    if (options.all) {
+      callback(null, [address]);
+      return;
+    }
+    callback(null, address.address, address.family);
+  };
+  requestOptions.lookup = pinnedLookup;
 
   return new Promise<Response>((resolve, reject) => {
     let settled = false;
     let responseStream: http.IncomingMessage | undefined;
     const signal = input.init.signal;
+    const streamingBody = input.init.body instanceof Readable ? input.init.body : undefined;
     const finish = () => {
       signal?.removeEventListener("abort", abortRequest);
     };
     const abortRequest = () => {
+      if (streamingBody && !streamingBody.destroyed) streamingBody.destroy();
       request.destroy(signal?.reason instanceof Error ? signal.reason : new Error("Outbound request aborted."));
     };
     const rejectOnce = (error: Error) => {
       if (settled) return;
       settled = true;
+      if (streamingBody && !streamingBody.destroyed) streamingBody.destroy();
       finish();
       reject(error);
     };
@@ -273,10 +297,15 @@ async function requestWithPinnedAddress(input: OutboundRequestAdapterInput): Pro
       return;
     }
     signal?.addEventListener("abort", abortRequest, { once: true });
-    if (input.init.body !== undefined) {
+    if (streamingBody) {
+      streamingBody.once("error", (error) => request.destroy(error));
+      streamingBody.pipe(request);
+    } else if (input.init.body !== undefined) {
       request.write(input.init.body);
+      request.end();
+    } else {
+      request.end();
     }
-    request.end();
   });
 }
 
@@ -305,70 +334,29 @@ function isLocalhostName(hostname: string): boolean {
 }
 
 function isValidAddress(entry: OutboundAddress): boolean {
-  const normalized = normalizeHostname(entry.address);
-  return (entry.family === 4 || entry.family === 6) && isIP(normalized) === entry.family;
+  const parsed = parseIpAddress(entry.address);
+  return parsed !== undefined
+    && (entry.family === 4 || entry.family === 6)
+    && (parsed.kind() === "ipv4" ? 4 : 6) === entry.family;
 }
 
 function isRestrictedAddress(address: string): boolean {
-  const normalized = normalizeHostname(address);
-  if (isIP(normalized) === 4) {
-    return isRestrictedIpv4(normalized);
+  const parsed = parseIpAddress(address);
+  if (!parsed) return true;
+
+  // IPv4-mapped IPv6 沿用内嵌 IPv4 分类，保持公网 mapped 地址兼容。
+  if (parsed instanceof ipaddr.IPv6 && parsed.isIPv4MappedAddress()) {
+    return parsed.toIPv4Address().range() !== "unicast";
   }
-  if (isIP(normalized) === 6) {
-    return isRestrictedIpv6(normalized);
-  }
-  return true;
+  return parsed.range() !== "unicast";
 }
 
-function isRestrictedIpv4(address: string): boolean {
-  const octets = address.split(".").map(Number);
-  const [a, b, c] = octets;
-  if (a === undefined || b === undefined || c === undefined) return true;
-  if (a === 0 || a === 10 || a === 127 || a >= 224) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && (b === 0 || b === 168)) return true;
-  if (a === 198 && (b === 18 || b === 19 || b === 51)) return true;
-  if (a === 203 && b === 0 && c === 113) return true;
-  return false;
-}
-
-function isRestrictedIpv6(address: string): boolean {
-  const groups = expandIpv6(address);
-  if (!groups) return true;
-  if (groups.every((group) => group === 0)) return true;
-  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true;
-  const first = groups[0] ?? 0;
-  if ((first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) {
-    return true;
+function parseIpAddress(address: string) {
+  try {
+    return ipaddr.parse(normalizeHostname(address));
+  } catch {
+    return undefined;
   }
-  if (groups[0] === 0x2001 && groups[1] === 0x0db8) return true;
-
-  // IPv4-mapped IPv6 必须沿用 IPv4 的全部保留地址判断。
-  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
-    const high = groups[6] ?? 0;
-    const low = groups[7] ?? 0;
-    return isRestrictedIpv4(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
-  }
-  return false;
-}
-
-function expandIpv6(address: string): number[] | undefined {
-  const normalized = normalizeHostname(address);
-  if (normalized.includes(".")) return undefined;
-  const halves = normalized.split("::");
-  if (halves.length > 2) return undefined;
-  const left = halves[0] ? halves[0].split(":").filter(Boolean) : [];
-  const right = halves[1] ? halves[1].split(":").filter(Boolean) : [];
-  if (left.length + right.length > 8) return undefined;
-  const missing = 8 - left.length - right.length;
-  const raw = halves.length === 2 ? [...left, ...Array(missing).fill("0"), ...right] : left;
-  if (raw.length !== 8) return undefined;
-  const parsed = raw.map((group) => Number.parseInt(group, 16));
-  return parsed.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)
-    ? undefined
-    : parsed;
 }
 
 function isRedirect(status: number): boolean {

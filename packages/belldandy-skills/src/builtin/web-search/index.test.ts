@@ -28,39 +28,23 @@ describe("web_search tool", () => {
     delete process.env.SERPAPI_API_KEY;
   });
 
-  it("stops an in-flight provider request when abortSignal is aborted", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (_input, init) => {
-      return await new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal as AbortSignal | undefined;
-        if (signal?.aborted) {
-          const error = new Error("Stopped by user.");
-          error.name = "AbortError";
-          reject(error);
-          return;
-        }
-        signal?.addEventListener("abort", () => {
-          const error = new Error("Stopped by user.");
-          error.name = "AbortError";
-          reject(error);
-        }, { once: true });
-      });
-    }));
+  it("preserves the reason for a search aborted before provider transport", async () => {
+    const legacyFetch = vi.fn();
+    vi.stubGlobal("fetch", legacyFetch);
     const controller = new AbortController();
+    controller.abort("Stopped by user.");
 
-    const resultPromise = webSearchTool.execute({
+    const result = await webSearchTool.execute({
       query: "belldandy tools",
     }, {
       ...context,
       abortSignal: controller.signal,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    controller.abort("Stopped by user.");
-    const result = await resultPromise;
-
     expect(result.success).toBe(false);
     expect(result.error).toBe("Stopped by user.");
     expect(result.failureKind).toBe("environment_error");
+    expect(legacyFetch).not.toHaveBeenCalled();
   });
 
   it("classifies missing query as input_error", async () => {

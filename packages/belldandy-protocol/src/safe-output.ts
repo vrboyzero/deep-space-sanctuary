@@ -79,9 +79,11 @@ export function createPublicFailureEnvelope(input: {
 /** 将文本中的常见凭据形式替换为固定占位符。 */
 export function redactSensitiveText(value: string): string {
   return value
-    .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, `$1${REDACTED_VALUE}`)
-    .replace(/(proxy-authorization\s*[:=]\s*)(?:basic\s+)?[^\s,;]+/gi, `$1${REDACTED_VALUE}`)
+    // Digest 会携带逗号分隔的多段 credential，必须清洗整段 header value。
+    .replace(/\b((?:proxy-)?authorization\s*[:=]\s*)digest\b[^\r\n;]*/gi, `$1${REDACTED_VALUE}`)
+    .replace(/\b((?:proxy-)?authorization\s*[:=]\s*)(?:[a-z][a-z0-9._~-]*\s+)?[^\s,;]+/gi, `$1${REDACTED_VALUE}`)
     .replace(/\bbearer\s+[a-z0-9._~+/=-]+/gi, `Bearer ${REDACTED_VALUE}`)
+    .replace(/\b(https?:\/\/)[^/\s@]+@/gi, `$1${REDACTED_VALUE}@`)
     .replace(/\b(?:api[_-]?key|access[_-]?key|auth(?:entication)?|cookie|credential|pass(?:word|phrase)?|private[_-]?key|secret|session|signature|token)\s*([:=])\s*(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi, (match, separator) => {
       const key = match.slice(0, match.indexOf(separator)).trim();
       return `${key}${separator}${REDACTED_VALUE}`;

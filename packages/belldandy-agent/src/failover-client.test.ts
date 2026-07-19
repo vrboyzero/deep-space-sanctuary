@@ -2,7 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { requestModelTransportMock } = vi.hoisted(() => ({
+  requestModelTransportMock: vi.fn(),
+}));
+
+vi.mock("./model-request-transport.js", () => ({
+  requestModelTransport: requestModelTransportMock,
+}));
 
 import { FailoverClient, loadModelFallbacks, type ModelProfile } from "./failover-client.js";
 
@@ -17,7 +25,15 @@ function createProfile(overrides?: Partial<ModelProfile>): ModelProfile {
 }
 
 describe("FailoverClient", () => {
+  beforeEach(() => {
+    requestModelTransportMock.mockReset();
+    requestModelTransportMock.mockImplementation(async (options: { url: string | URL; init: RequestInit }) => (
+      fetch(options.url, options.init)
+    ));
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -48,6 +64,110 @@ describe("FailoverClient", () => {
     });
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("delegates the active request to the model transport owner without consuming its stream", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data: active\n\n"));
+        controller.close();
+      },
+    });
+    const activeResponse = new Response(stream, { status: 200 });
+    const legacyFetch = vi.fn(async () => activeResponse);
+    vi.stubGlobal("fetch", legacyFetch);
+    requestModelTransportMock.mockResolvedValueOnce(activeResponse);
+    const client = new FailoverClient({
+      primary: createProfile({
+        requestTimeoutMs: 45_000,
+        proxyUrl: "http://proxy.example.test:8080",
+      }),
+    });
+
+    const result = await client.fetchWithFailover({
+      buildRequest: () => ({
+        url: "https://api.openai.com/v1/chat/completions",
+        init: {
+          method: "POST",
+          headers: { Authorization: "Bearer model-secret" },
+          body: JSON.stringify({ prompt: "active prompt" }),
+        },
+      }),
+    });
+
+    expect(result.response).toBe(activeResponse);
+    expect(result.response.bodyUsed).toBe(false);
+    expect(requestModelTransportMock).toHaveBeenCalledWith({
+      url: "https://api.openai.com/v1/chat/completions",
+      init: expect.objectContaining({
+        method: "POST",
+        signal: expect.any(AbortSignal),
+      }),
+      idleTimeoutMs: 45_000,
+      proxyUrl: "http://proxy.example.test:8080",
+    });
+    expect(legacyFetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards caller abort to the active model transport without retrying", async () => {
+    requestModelTransportMock.mockImplementationOnce((options: { init: RequestInit }) => (
+      new Promise<Response>((_resolve, reject) => {
+        const signal = options.init.signal;
+        if (!signal) throw new Error("Active transport fixture requires a signal.");
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })
+    ));
+    const client = new FailoverClient({ primary: createProfile() });
+    const controller = new AbortController();
+    const pending = client.fetchWithFailover({
+      signal: controller.signal,
+      maxRetries: 2,
+      buildRequest: () => ({
+        url: "https://api.openai.com/v1/chat/completions",
+        init: { method: "POST" },
+      }),
+    });
+
+    await Promise.resolve();
+    controller.abort("cancelled active model request");
+
+    await expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+      message: "cancelled active model request",
+    });
+    expect(requestModelTransportMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an internal attempt deadline classified as timeout", async () => {
+    vi.useFakeTimers();
+    requestModelTransportMock.mockImplementationOnce((options: { init: RequestInit }) => (
+      new Promise<Response>((_resolve, reject) => {
+        const signal = options.init.signal;
+        if (!signal) throw new Error("Attempt deadline fixture requires a signal.");
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })
+    ));
+    const client = new FailoverClient({ primary: createProfile() });
+    const pending = client.fetchWithFailover({
+      timeoutMs: 25,
+      buildRequest: () => ({
+        url: "https://api.openai.com/v1/chat/completions",
+        init: { method: "POST" },
+      }),
+    });
+    const result = expect(pending).rejects.toMatchObject({
+      name: "FailoverExhaustedError",
+      attempts: [expect.objectContaining({ reason: "timeout", timeoutMs: 25 })],
+      summary: expect.objectContaining({
+        finalStatus: "exhausted",
+        finalReason: "timeout",
+      }),
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    await result;
+    expect(requestModelTransportMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not continue retry backoff after caller abort", async () => {

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { OutboundRequestPolicy } from "@belldandy/protocol";
 import { transcribeSpeech, transcribeSpeechWithCache } from "./stt-transcribe.js";
 
 // Mock OpenAI
@@ -23,6 +24,19 @@ vi.mock("openai", () => {
 
 // Mock fetch for DashScope
 global.fetch = vi.fn();
+
+function createDashScopeRestPolicy() {
+    return new OutboundRequestPolicy({
+        allowedHosts: ["dashscope.aliyuncs.com"],
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        requestAdapter: async ({ url, init }) => await (fetch as any)(url.toString(), {
+            method: init.method,
+            headers: init.headers,
+            body: init.body,
+            signal: init.signal,
+        }),
+    });
+}
 
 describe("stt-transcribe", () => {
     const mockBuffer = Buffer.from("mock-audio");
@@ -107,29 +121,26 @@ describe("stt-transcribe", () => {
         });
     });
 
-    it("should use DashScope when configured", async () => {
+    it("routes DashScope submit and poll through one fixed REST policy", async () => {
         process.env.BELLDANDY_STT_PROVIDER = "dashscope";
-
-        // 1. Submit task
-        (fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ output: { task_id: "task-123" } }),
-        });
-
-        // 2. Poll result (Success)
-        (fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
+        const requestAdapter = vi.fn()
+            .mockResolvedValueOnce(Response.json({ output: { task_id: "task-123" } }))
+            .mockResolvedValueOnce(Response.json({
                 output: {
                     task_status: "SUCCEEDED",
                     results: [{ text: "DashScope Result" }]
                 }
-            }),
+            }));
+        const restPolicy = new OutboundRequestPolicy({
+            allowedHosts: ["dashscope.aliyuncs.com"],
+            dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+            requestAdapter,
         });
 
         const result = await transcribeSpeech({
             buffer: mockBuffer,
             fileName: "test.wav",
+            dashScopeRestOutboundRequestPolicy: restPolicy,
         });
 
         expect(result).toEqual({
@@ -137,6 +148,337 @@ describe("stt-transcribe", () => {
             provider: "dashscope",
             model: "paraformer-v2",
         });
+        expect(fetch).not.toHaveBeenCalled();
+        expect(requestAdapter).toHaveBeenCalledTimes(2);
+        expect(requestAdapter.mock.calls[0]?.[0]).toMatchObject({
+            url: new URL("https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription"),
+            init: {
+                method: "POST",
+                maxRedirects: 0,
+                idleTimeoutMs: 15_000,
+            },
+        });
+        expect(requestAdapter.mock.calls[1]?.[0]).toMatchObject({
+            url: new URL("https://dashscope.aliyuncs.com/api/v1/tasks/task-123"),
+            init: {
+                method: "GET",
+                maxRedirects: 0,
+                idleTimeoutMs: 15_000,
+            },
+        });
+    });
+
+    it("rejects a private DashScope REST resolution before submit transport", async () => {
+        process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const requestAdapter = vi.fn(async () => Response.json({
+            output: { task_id: "private-task" },
+        }));
+        const restPolicy = new OutboundRequestPolicy({
+            allowedHosts: ["dashscope.aliyuncs.com"],
+            dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+            requestAdapter,
+        });
+
+        try {
+            const result = await transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                dashScopeRestOutboundRequestPolicy: restPolicy,
+            });
+
+            expect(result).toBeNull();
+            expect(requestAdapter).not.toHaveBeenCalled();
+            expect(fetch).not.toHaveBeenCalled();
+            expect(consoleError).toHaveBeenCalledWith(
+                expect.stringContaining("dashscope"),
+                expect.stringContaining("private or reserved"),
+            );
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
+    it("does not replay DashScope submit credentials or body to a redirected endpoint", async () => {
+        process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const requestAdapter = vi.fn(async () => new Response(null, {
+            status: 307,
+            headers: { location: "https://attacker.example/collect" },
+        }));
+        const restPolicy = new OutboundRequestPolicy({
+            allowedHosts: ["dashscope.aliyuncs.com"],
+            dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+            requestAdapter,
+        });
+
+        try {
+            const result = await transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                dashScopeRestOutboundRequestPolicy: restPolicy,
+            });
+
+            expect(result).toBeNull();
+            expect(requestAdapter).toHaveBeenCalledTimes(1);
+            expect(fetch).not.toHaveBeenCalled();
+            const firstRequest = requestAdapter.mock.calls[0]?.[0];
+            expect(firstRequest?.url.toString()).toBe(
+                "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription",
+            );
+            expect(firstRequest?.init.headers).toMatchObject({
+                Authorization: "Bearer sk-dashscope",
+            });
+            expect(String(firstRequest?.init.body)).toContain("data:audio/wav;base64,");
+            expect(consoleError).toHaveBeenCalledWith(
+                expect.stringContaining("dashscope"),
+                expect.stringContaining("redirect limit"),
+            );
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
+    it("downloads a DashScope transcription URL through the asset policy with the caller signal", async () => {
+        vi.useFakeTimers();
+        try {
+            process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+            (fetch as any)
+                .mockResolvedValueOnce(Response.json({ output: { task_id: "task-asset" } }))
+                .mockResolvedValueOnce(Response.json({
+                    output: {
+                        task_status: "SUCCEEDED",
+                        results: [{
+                            transcription_url: "https://dashscope-result.aliyuncs.com/transcript.json",
+                        }],
+                    },
+                }));
+            const requestAdapter = vi.fn(async () => Response.json({
+                transcripts: [{ text: "Pinned transcription" }],
+            }));
+            const assetPolicy = new OutboundRequestPolicy({
+                allowedHosts: ["aliyuncs.com"],
+                dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+                requestAdapter,
+            });
+            const controller = new AbortController();
+
+            const resultPromise = transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                abortSignal: controller.signal,
+                dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
+                dashScopeAssetOutboundRequestPolicy: assetPolicy,
+            });
+            await vi.advanceTimersByTimeAsync(2000);
+            const result = await resultPromise;
+
+            expect(result).toEqual({
+                text: "Pinned transcription",
+                provider: "dashscope",
+                model: "paraformer-v2",
+            });
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(requestAdapter).toHaveBeenCalledTimes(1);
+            expect(requestAdapter.mock.calls[0]?.[0]).toMatchObject({
+                url: new URL("https://dashscope-result.aliyuncs.com/transcript.json"),
+                init: {
+                    signal: controller.signal,
+                    maxRedirects: 3,
+                    idleTimeoutMs: 15_000,
+                },
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("rejects a DashScope transcription host resolving to a private address before asset transport", async () => {
+        vi.useFakeTimers();
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+            (fetch as any)
+                .mockResolvedValueOnce(Response.json({ output: { task_id: "task-private-asset" } }))
+                .mockResolvedValueOnce(Response.json({
+                    output: {
+                        task_status: "SUCCEEDED",
+                        results: [{
+                            transcription_url: "https://dashscope-result.aliyuncs.com/private.json",
+                        }],
+                    },
+                }));
+            const requestAdapter = vi.fn(async () => Response.json({
+                transcripts: [{ text: "Private transcription" }],
+            }));
+            const assetPolicy = new OutboundRequestPolicy({
+                allowedHosts: ["aliyuncs.com"],
+                dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+                requestAdapter,
+            });
+
+            const resultPromise = transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
+                dashScopeAssetOutboundRequestPolicy: assetPolicy,
+            });
+            await vi.advanceTimersByTimeAsync(2000);
+            const result = await resultPromise;
+
+            expect(result).toBeNull();
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(requestAdapter).not.toHaveBeenCalled();
+            expect(consoleError).toHaveBeenCalledWith(
+                expect.stringContaining("dashscope"),
+                expect.stringContaining("private or reserved"),
+            );
+        } finally {
+            consoleError.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    it("rejects a non-Aliyun DashScope transcription URL with the default asset profile", async () => {
+        vi.useFakeTimers();
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+            (fetch as any)
+                .mockResolvedValueOnce(Response.json({ output: { task_id: "task-untrusted-asset" } }))
+                .mockResolvedValueOnce(Response.json({
+                    output: {
+                        task_status: "SUCCEEDED",
+                        results: [{
+                            transcription_url: "https://attacker.example/transcript.json",
+                        }],
+                    },
+                }));
+
+            const resultPromise = transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
+            });
+            await vi.advanceTimersByTimeAsync(2000);
+            const result = await resultPromise;
+
+            expect(result).toBeNull();
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(consoleError).toHaveBeenCalledWith(
+                expect.stringContaining("dashscope"),
+                expect.stringContaining("not in the allowlist"),
+            );
+        } finally {
+            consoleError.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    it("revalidates a DashScope transcription redirect before a private second-hop transport", async () => {
+        vi.useFakeTimers();
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+            (fetch as any)
+                .mockResolvedValueOnce(Response.json({ output: { task_id: "task-redirect-asset" } }))
+                .mockResolvedValueOnce(Response.json({
+                    output: {
+                        task_status: "SUCCEEDED",
+                        results: [{
+                            transcription_url: "https://dashscope-result.aliyuncs.com/redirect.json",
+                        }],
+                    },
+                }));
+            const requestAdapter = vi.fn(async () => new Response(null, {
+                status: 307,
+                headers: { location: "https://127.0.0.1/private.json" },
+            }));
+            const assetPolicy = new OutboundRequestPolicy({
+                allowedHosts: ["aliyuncs.com", "127.0.0.1"],
+                dnsLookup: async (hostname) => [{
+                    address: hostname === "127.0.0.1" ? "127.0.0.1" : "93.184.216.34",
+                    family: 4,
+                }],
+                requestAdapter,
+            });
+
+            const resultPromise = transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
+                dashScopeAssetOutboundRequestPolicy: assetPolicy,
+            });
+            await vi.advanceTimersByTimeAsync(2000);
+            const result = await resultPromise;
+
+            expect(result).toBeNull();
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(requestAdapter).toHaveBeenCalledTimes(1);
+            expect(requestAdapter.mock.calls[0]?.[0].url.toString()).toBe(
+                "https://dashscope-result.aliyuncs.com/redirect.json",
+            );
+            expect(consoleError).toHaveBeenCalledWith(
+                expect.stringContaining("dashscope"),
+                expect.stringContaining("private or reserved"),
+            );
+        } finally {
+            consoleError.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    it("rejects an oversized declared DashScope transcription JSON before reading the body", async () => {
+        vi.useFakeTimers();
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            process.env.BELLDANDY_STT_PROVIDER = "dashscope";
+            (fetch as any)
+                .mockResolvedValueOnce(Response.json({ output: { task_id: "task-oversized-asset" } }))
+                .mockResolvedValueOnce(Response.json({
+                    output: {
+                        task_status: "SUCCEEDED",
+                        results: [{
+                            transcription_url: "https://dashscope-result.aliyuncs.com/oversized.json",
+                        }],
+                    },
+                }));
+            let bodyCancelled = false;
+            const oversizedBody = new ReadableStream<Uint8Array>({
+                cancel() {
+                    bodyCancelled = true;
+                },
+            });
+            const requestAdapter = vi.fn(async () => new Response(oversizedBody, {
+                headers: { "Content-Length": String(1024 * 1024 + 1) },
+            }));
+            const assetPolicy = new OutboundRequestPolicy({
+                allowedHosts: ["aliyuncs.com"],
+                dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+                requestAdapter,
+            });
+
+            const resultPromise = transcribeSpeech({
+                buffer: mockBuffer,
+                fileName: "test.wav",
+                dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
+                dashScopeAssetOutboundRequestPolicy: assetPolicy,
+            });
+            await vi.advanceTimersByTimeAsync(2000);
+            const result = await resultPromise;
+
+            expect(result).toBeNull();
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(requestAdapter).toHaveBeenCalledTimes(1);
+            expect(bodyCancelled).toBe(true);
+            expect(consoleError).toHaveBeenCalledWith(
+                expect.stringContaining("dashscope"),
+                expect.stringContaining("1048576"),
+            );
+        } finally {
+            consoleError.mockRestore();
+            vi.useRealTimers();
+        }
     });
 
     it("should use BELLDANDY_STT_MODEL across providers", async () => {
@@ -181,6 +523,7 @@ describe("stt-transcribe", () => {
         const dashscopeResult = await transcribeSpeech({
             buffer: mockBuffer,
             fileName: "test.wav",
+            dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
         });
 
         expect(dashscopeResult).toEqual({
@@ -235,6 +578,7 @@ describe("stt-transcribe", () => {
             buffer: mockBuffer,
             fileName: "test.wav",
             abortSignal: controller.signal,
+            dashScopeRestOutboundRequestPolicy: createDashScopeRestPolicy(),
         });
 
         await new Promise((resolve) => setTimeout(resolve, 50));

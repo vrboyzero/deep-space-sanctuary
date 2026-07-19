@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 const VALID_THEMES = Object.freeze(["dark", "light"]);
 const TRANSITION_CLASS = "theme-transitioning";
 const TRANSITION_MS = 240;
@@ -56,30 +58,22 @@ export function createThemeController({
     document.documentElement.dataset.theme || readStoredTheme(storageKey),
     fallbackTheme,
   );
-  let transitionTimer = null;
-  let disposed = false;
-
-  applyTheme(activeTheme);
-  updateToggleButton(toggleButtonEl, activeTheme, translate);
+  const taskScope = createPanelTaskScope();
+  const transitionTimerKey = Symbol("theme-transition");
 
   function runThemeTransition(callback) {
     const root = document.documentElement;
-    if (transitionTimer !== null) {
-      window.clearTimeout(transitionTimer);
-      transitionTimer = null;
-    }
+    taskScope.clearTimeout(transitionTimerKey);
     root.classList.add(TRANSITION_CLASS);
     void root.offsetWidth;
     callback();
-    transitionTimer = window.setTimeout(() => {
-      transitionTimer = null;
-      if (disposed) return;
+    taskScope.replaceTimeout(transitionTimerKey, () => {
       root.classList.remove(TRANSITION_CLASS);
     }, TRANSITION_MS);
   }
 
   function setTheme(nextTheme, options = {}) {
-    if (disposed) return activeTheme;
+    if (!taskScope.isActive()) return activeTheme;
     const normalizedTheme = normalizeTheme(nextTheme, fallbackTheme);
     const shouldTransition = options.transition !== false && normalizedTheme !== activeTheme;
 
@@ -100,7 +94,7 @@ export function createThemeController({
   }
 
   function toggle() {
-    if (disposed) return activeTheme;
+    if (!taskScope.isActive()) return activeTheme;
     return setTheme(getNextTheme(activeTheme));
   }
 
@@ -108,34 +102,46 @@ export function createThemeController({
     toggle();
   }
 
-  toggleButtonEl?.addEventListener("click", handleToggleClick);
+  function activate() {
+    if (!taskScope.activate()) return false;
+    applyTheme(activeTheme);
+    updateToggleButton(toggleButtonEl, activeTheme, translate);
+    taskScope.addEventListener(toggleButtonEl, "click", handleToggleClick);
+    return true;
+  }
+
+  function deactivate() {
+    if (!taskScope.deactivate()) return false;
+    document.documentElement.classList.remove(TRANSITION_CLASS);
+    return true;
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    if (transitionTimer !== null) {
-      window.clearTimeout(transitionTimer);
-      transitionTimer = null;
-    }
+    if (!taskScope.dispose()) return false;
     document.documentElement.classList.remove(TRANSITION_CLASS);
-    toggleButtonEl?.removeEventListener("click", handleToggleClick);
+    return true;
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      activeTimerCount: transitionTimer === null ? 0 : 1,
-      listenerCount: disposed || !toggleButtonEl ? 0 : 1,
-      disposed,
+      activeTimerCount: snapshot.activeTimerCount,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getAvailableThemes: () => [...VALID_THEMES],
     getRuntimeSnapshot,
     getTheme: () => activeTheme,
     refreshLabels: () => {
-      if (!disposed) updateToggleButton(toggleButtonEl, activeTheme, translate);
+      if (taskScope.isActive()) updateToggleButton(toggleButtonEl, activeTheme, translate);
     },
     setTheme,
     toggle,

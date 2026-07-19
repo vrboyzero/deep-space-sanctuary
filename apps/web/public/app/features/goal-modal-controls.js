@@ -1,3 +1,5 @@
+import { createPanelTaskScope } from "./panel-task-scope.js";
+
 export function createGoalModalControlsFeature({ refs = {}, actions = {} } = {}) {
   const {
     goalCreateBtn,
@@ -7,43 +9,49 @@ export function createGoalModalControlsFeature({ refs = {}, actions = {} } = {})
     goalCheckpointActionCloseBtn,
     goalCheckpointActionCancelBtn,
   } = refs;
-  const listenerEntries = [];
-  let disposed = false;
+  const taskScope = createPanelTaskScope();
 
   function addOwnedCommand(target, action) {
     if (!target) return;
     const handler = () => {
-      if (disposed) return;
       void action?.();
     };
-    target.addEventListener("click", handler);
-    listenerEntries.push({ target, handler });
+    taskScope.addEventListener(target, "click", handler);
   }
 
-  addOwnedCommand(goalCreateBtn, actions.openGoalCreate);
-  addOwnedCommand(goalCreateCloseBtn, actions.closeGoalCreate);
-  addOwnedCommand(goalCreateCancelBtn, actions.closeGoalCreate);
-  addOwnedCommand(goalCreateSubmitBtn, actions.submitGoalCreate);
-  addOwnedCommand(goalCheckpointActionCloseBtn, actions.closeGoalCheckpointAction);
-  addOwnedCommand(goalCheckpointActionCancelBtn, actions.closeGoalCheckpointAction);
+  function activate() {
+    if (!taskScope.activate()) return false;
+    addOwnedCommand(goalCreateBtn, actions.openGoalCreate);
+    addOwnedCommand(goalCreateCloseBtn, actions.closeGoalCreate);
+    addOwnedCommand(goalCreateCancelBtn, actions.closeGoalCreate);
+    addOwnedCommand(goalCreateSubmitBtn, actions.submitGoalCreate);
+    addOwnedCommand(goalCheckpointActionCloseBtn, actions.closeGoalCheckpointAction);
+    addOwnedCommand(goalCheckpointActionCancelBtn, actions.closeGoalCheckpointAction);
+    return true;
+  }
+
+  function deactivate() {
+    return taskScope.deactivate();
+  }
 
   function dispose() {
-    if (disposed) return;
-    disposed = true;
-    for (const { target, handler } of listenerEntries) {
-      target.removeEventListener("click", handler);
-    }
-    listenerEntries.length = 0;
+    return taskScope.dispose();
   }
 
   function getRuntimeSnapshot() {
+    const snapshot = taskScope.getRuntimeSnapshot();
     return {
-      listenerCount: listenerEntries.length,
-      disposed,
+      active: snapshot.active,
+      listenerCount: snapshot.listenerCount,
+      disposed: snapshot.disposed,
     };
   }
 
+  activate();
+
   return {
+    activate,
+    deactivate,
     dispose,
     getRuntimeSnapshot,
   };
