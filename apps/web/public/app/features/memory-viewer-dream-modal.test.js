@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMemoryViewerFeature } from "./memory-viewer.js";
 
-function createHarness() {
+function createHarness(options = {}) {
   document.body.innerHTML = `
     <section id="memoryViewerSection"></section>
     <div id="memoryViewerTitle"></div>
@@ -100,10 +100,11 @@ function createHarness() {
     dreamHistoryDetailError: "",
   };
 
-  createMemoryViewerFeature({
+  const sendReq = options.sendReq ?? vi.fn();
+  const feature = createMemoryViewerFeature({
     refs,
     isConnected: () => true,
-    sendReq: vi.fn(),
+    sendReq,
     makeId: () => "req-1",
     getMemoryViewerState: () => state,
     getSelectedAgentId: () => "default",
@@ -128,17 +129,16 @@ function createHarness() {
     getGoalDisplayName: () => "",
     getLatestExperienceUsageTimestamp: () => 0,
     getActiveMemoryCategoryLabel: () => "",
-    renderMemoryCategoryDistribution: () => "",
-    renderTaskUsageOverviewCard: () => "",
+    getMemoryCategoryDistributionViewModel: () => null,
     bindStatsAuditJumpLinks: vi.fn(),
     bindMemoryPathLinks: vi.fn(),
     bindTaskAuditJumpLinks: vi.fn(),
     openConversationSession: vi.fn(),
     showNotice: vi.fn(),
-    t: (_key, _params, fallback) => fallback ?? "",
+    t: options.t ?? ((_key, _params, fallback) => fallback ?? ""),
   });
 
-  return refs;
+  return { refs, state, sendReq, feature };
 }
 
 describe("memory viewer dream modal", () => {
@@ -148,7 +148,7 @@ describe("memory viewer dream modal", () => {
   });
 
   it("opens and closes the dream modal from the header trigger", () => {
-    const refs = createHarness();
+    const { refs } = createHarness();
 
     expect(refs.memoryDreamModalEl?.classList.contains("hidden")).toBe(true);
     expect(refs.memoryDreamModalTriggerBtn?.textContent).toBe("梦境");
@@ -161,5 +161,140 @@ describe("memory viewer dream modal", () => {
     refs.memoryDreamModalCloseBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(refs.memoryDreamModalEl?.classList.contains("hidden")).toBe(true);
     expect(refs.memoryDreamModalTriggerBtn?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("renders Dream history entries through the list owner while preserving delegated detail selection", async () => {
+    const sendReq = vi.fn((request) => {
+      if (request.method === "dream.get") {
+        return Promise.resolve({ ok: true, payload: { item: { id: "dream-1", title: "Dream One" }, content: "detail" } });
+      }
+      return Promise.resolve({ ok: true, payload: { items: [] } });
+    });
+    const { refs, state, feature } = createHarness({ sendReq });
+    state.dreamHistoryOpen = true;
+    state.selectedDreamHistoryId = "dream-1";
+    state.dreamHistoryItems = [{
+      id: "dream-1",
+      title: "Dream One",
+      status: "completed",
+      triggerMode: "manual",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      summary: "summary",
+    }];
+    const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(refs.memoryDreamHistoryListEl, "innerHTML", {
+      configurable: true,
+      get() {
+        return innerHtmlDescriptor.get.call(this);
+      },
+      set(value) {
+        if (value) throw new Error("Dream history list must not use innerHTML");
+        innerHtmlDescriptor.set.call(this, value);
+      },
+    });
+
+    expect(() => feature.renderDreamHistoryPanel()).not.toThrow();
+    const entry = refs.memoryDreamHistoryListEl?.querySelector('[data-dream-history-id="dream-1"]');
+    expect(entry?.classList.contains("active")).toBe(true);
+    entry?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({ method: "dream.get" }));
+    });
+  });
+
+  it.each([
+    {
+      name: "loading",
+      statePatch: { dreamHistoryDetailLoading: true },
+      translationKey: "memory.dreamHistoryDetailLoading",
+      text: "<img src=x onerror=alert(6)>Loading Dream",
+    },
+    {
+      name: "error",
+      statePatch: { dreamHistoryDetailError: "<svg onload=alert(7)>Dream failed" },
+      translationKey: "",
+      text: "<svg onload=alert(7)>Dream failed",
+    },
+    {
+      name: "no-card",
+      statePatch: {},
+      translationKey: "memory.dreamHistoryDetailEmpty",
+      text: "<script>alert(8)</script>Select a Dream",
+    },
+  ])("renders Dream history detail $name text without an HTML parser", ({ statePatch, translationKey, text }) => {
+    const { refs, state, feature } = createHarness({
+      t: (key, _params, fallback) => key === translationKey ? text : fallback ?? "",
+    });
+    state.dreamHistoryOpen = true;
+    Object.assign(state, statePatch);
+    const previous = document.createElement("div");
+    previous.textContent = "Old full detail";
+    refs.memoryDreamHistoryDetailEl?.append(previous);
+    const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(refs.memoryDreamHistoryDetailEl, "innerHTML", {
+      configurable: true,
+      get() {
+        return innerHtmlDescriptor.get.call(this);
+      },
+      set(value) {
+        if (value) throw new Error("Dream history detail empty state must not use innerHTML");
+        innerHtmlDescriptor.set.call(this, value);
+      },
+    });
+
+    expect(() => feature.renderDreamHistoryPanel()).not.toThrow();
+    expect(previous.isConnected).toBe(false);
+    expect(refs.memoryDreamHistoryDetailEl?.querySelector(".memory-viewer-empty")?.textContent).toBe(text);
+    expect(refs.memoryDreamHistoryDetailEl?.querySelector("img, script, svg, [onerror], [onload]")).toBeNull();
+  });
+
+  it("renders Dream history full detail through the owner and preserves delegated review", async () => {
+    vi.spyOn(window, "prompt").mockReturnValue("");
+    const sendReq = vi.fn(() => Promise.resolve({ ok: true, payload: { items: [] } }));
+    const { refs, state, feature } = createHarness({ sendReq });
+    const selectedItem = {
+      id: "dream-1",
+      summary: "<img src=x onerror=alert(9)>Dream summary",
+      status: "completed",
+      triggerMode: "manual",
+      finishedAt: "2026-07-21T00:00:00.000Z",
+      conversationId: "<svg onload=alert(10)>conversation",
+      dreamPath: "<script>alert(11)</script>dream.md",
+      reason: "<iframe srcdoc=alert(12)>reason",
+      consolidation: {
+        profilePatchCandidates: [{ profilePath: "profile.md" }],
+        review: { status: "pending" },
+        apply: { status: "not_applied" },
+      },
+    };
+    state.dreamHistoryOpen = true;
+    state.dreamHistoryItems = [selectedItem];
+    state.selectedDreamHistoryId = selectedItem.id;
+    state.selectedDreamHistoryItem = selectedItem;
+    state.selectedDreamHistoryContent = "<details open>Dream body</details>";
+    const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(refs.memoryDreamHistoryDetailEl, "innerHTML", {
+      configurable: true,
+      get() {
+        return innerHtmlDescriptor.get.call(this);
+      },
+      set(value) {
+        if (value) throw new Error("Dream history full detail must not use innerHTML");
+        innerHtmlDescriptor.set.call(this, value);
+      },
+    });
+
+    expect(() => feature.renderDreamHistoryPanel()).not.toThrow();
+    expect(refs.memoryDreamHistoryDetailEl?.querySelector(".memory-detail-title")?.textContent).toBe(selectedItem.summary);
+    expect(refs.memoryDreamHistoryDetailEl?.querySelector(".memory-detail-pre")?.textContent).toBe(state.selectedDreamHistoryContent);
+    expect(refs.memoryDreamHistoryDetailEl?.querySelector("img, script, svg, iframe, details, [onerror], [onload]")).toBeNull();
+
+    refs.memoryDreamHistoryDetailEl
+      ?.querySelector('[data-dream-consolidation-action="approve"]')
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(sendReq).toHaveBeenCalledWith(expect.objectContaining({ method: "dream.consolidation.review" }));
+    });
   });
 });

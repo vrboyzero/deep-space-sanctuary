@@ -18,7 +18,6 @@ function dedupeStrings(values) {
 
 export function createExperienceWorkbenchSynthesisSourcesFeature({
   root,
-  escapeHtml = (value) => String(value ?? ""),
   onSelectionChange,
 } = {}) {
   const taskScope = createPanelTaskScope();
@@ -112,27 +111,20 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
     };
   }
 
-  function renderCheckbox({ candidateId, label, disabled = false } = {}) {
+  function getCheckboxViewModel({ candidateId, label, disabled = false } = {}) {
     const normalizedCandidateId = normalizeText(candidateId);
-    if (!normalizedCandidateId || !availableSourceIds.includes(normalizedCandidateId)) return "";
-    const selected = selectedSourceIds.has(normalizedCandidateId);
+    if (!normalizedCandidateId || !availableSourceIds.includes(normalizedCandidateId)) return null;
+    const checked = selectedSourceIds.has(normalizedCandidateId);
     const required = normalizedCandidateId === seedSourceId;
     const selectedRelatedCount = selectedSourceIds.size - (seedSourceId && selectedSourceIds.has(seedSourceId) ? 1 : 0);
-    const capacityReached = !selected && selectedRelatedCount >= maxRelatedSourceCount;
-    const inputDisabled = disabled || required || capacityReached || isDisposed();
-    const safeLabel = escapeHtml(normalizeText(label));
-    return `
-      <label class="experience-synthesis-source-select${required ? " is-required" : ""}">
-        <input
-          type="checkbox"
-          data-synthesis-source-id="${escapeHtml(normalizedCandidateId)}"
-          aria-label="${safeLabel}"
-          ${selected ? "checked" : ""}
-          ${inputDisabled ? "disabled" : ""}
-        />
-        <span>${safeLabel}</span>
-      </label>
-    `;
+    const capacityReached = !checked && selectedRelatedCount >= maxRelatedSourceCount;
+    return {
+      candidateId: normalizedCandidateId,
+      label: normalizeText(label),
+      checked,
+      disabled: disabled || required || capacityReached || isDisposed(),
+      required,
+    };
   }
 
   function handleChange(event) {
@@ -191,9 +183,9 @@ export function createExperienceWorkbenchSynthesisSourcesFeature({
     clear,
     deactivate,
     dispose,
+    getCheckboxViewModel,
     getSelectedSourceIds,
     getSelectionSnapshot,
-    renderCheckbox,
     setPreview,
   };
 }

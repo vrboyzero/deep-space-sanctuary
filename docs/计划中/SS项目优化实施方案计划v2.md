@@ -475,7 +475,7 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 | --- | --- | --- | --- |
 | Wave 0 | 进行中 | B00-B03、R09 和本地/`private/main` CI、Docker、dependency 检查已有证据。 | 外部 branch protection、attestation、公开 Release 与 P03 按延期边界处理。 |
 | Wave 1 | 本地包完成 | TDZ、请求结算、CredentialSession、setup token、ArtifactContract、Relay probe、registry fail-closed 有回归。 | UI01、R03 原目标仍有明确余项。 |
-| Wave 2 | 本地包完成 | FilesystemCapability、admission、safe output、outbound、MCP/Channel 日志、Web assets、renderer/CSP、installer 首批闭环；UI03 S003-S070 已固定 production HTML sink/owner/CSS-media trust，把两条 pairing 路径、三类 confirmation target/summary、Goal checkpoint context/empty state/governance/tracking/capability/progress/Handoff loading/error/no-data/full placeholder、Goal capability no-plan 指令、Locale options、Session Digest 全部 summary/modal、Canvas context bar/board list item/board list header title/resource picker shell/empty/row/edit dialog/node foreignObject content、Bridge 全部 summary/list/detail、Plan 全部 summary/modal、Goal Detail full/compact shell、Goal Tracking、Goal Governance、Goal Capability 完整 panel、Goal Progress 完整时间线与 Goal Canvas 完整 panel、SubTask placeholder/summary/full list/detail、Workspace tree placeholder/item、Memory Viewer/Experience Workbench top-level empty/candidate list/published asset lane、Experience 六卡 stats 与 Synthesis loading/no-data/summary placeholder、Goals Overview placeholder/summary/full list、Settings Doctor transient status、Tool Settings empty state 与全部 tab、Chat bot copy button 与 Chat copy feedback、Settings pending approval lists 迁入相邻 DOM owner，并关闭 static sink 阶段、使 Workspace 普通 structured sink 归零、继续其他 structured owner 阶段，S04 S001-S039 已建立 31 个直接 Adapter、生产 transport inventory与七个受控 SDK transport，opaque SDK HTTP surface 已归零。 | S04 已完成；attestation、全局 Trusted Types/CSP、其余结构模板迁移、installer 等余项仍按各自 OPT 保持部分完成。 |
+| Wave 2 | 本地包完成 | FilesystemCapability、admission、safe output、outbound、MCP/Channel 日志、Web assets、renderer/CSP、installer 首批闭环；UI03 S003-S092 已固定 production HTML sink/owner/CSS-media trust，把两条 pairing 路径、三类 confirmation target/summary、Goal checkpoint context/empty state/governance/tracking/capability/progress/Handoff loading/error/no-data/full placeholder、Goal capability no-plan 指令、Locale options、Session Digest 全部 summary/modal、Canvas context bar/board list item/board list header title/resource picker shell/empty/row/edit dialog/node foreignObject content、Bridge 全部 summary/list/detail、Plan 全部 summary/modal、Goal Detail full/compact shell、Goal Tracking、Goal Governance、Goal Capability 完整 panel、Goal Progress 完整时间线与 Goal Canvas 完整 panel、SubTask placeholder/summary/full list/detail、Workspace tree placeholder/item、Memory Viewer/Experience Workbench top-level empty/candidate list/published asset lane/Capability Overview/synthesis modal source list/Usage Overview/dedup warning/dedup summary/dedup list/shared-review target/claimed-by filter/batch bar/Dream history list/detail empty/full/fallback stats/outbound thread/audit/shared-review/task/memories stats/task list/memory list/outbound audit list/shared-review list、Experience 六卡 stats 与 Synthesis loading/no-data/summary placeholder、Goals Overview placeholder/summary/full list、Settings Doctor transient status、Tool Settings empty state 与全部 tab、Chat bot copy button 与 Chat copy feedback、Settings pending approval lists 迁入相邻 DOM owner，并关闭 static sink 阶段、使 Workspace 普通 structured sink 归零、继续其他 structured owner 阶段，S04 S001-S039 已建立 31 个直接 Adapter、生产 transport inventory与七个受控 SDK transport，opaque SDK HTTP surface 已归零。 | S04 已完成；attestation、全局 Trusted Types/CSP、其余结构模板迁移、installer 等余项仍按各自 OPT 保持部分完成。 |
 | Wave 3 | 进行中 | token usage、supervisor、Relay/MCP/Plugin/Channel/Agent/Skill/Memory 生命周期与预算已有切片；UI08 S001-S034、GW04 S001-S005 已闭合；PL02 S001-S003 已统一 14 类 Hook 失败策略、Plugin owner 隔离和无正文诊断；GW07 S001-S005 已闭合四类 SubTask command revision/idempotency/owner、cursor pagination、protected retention 与 Doctor；GW09 S001-S005 已闭合四类后台 admission、generation/CAS、有界公平队列、真实 busy/drain 与 CronStore 跨进程唯一写；W03 S001-S004 已闭合 spawn 前预算 reservation、同一 signal、lazy batch hard cap 与 canonical retry owner；M08 S001-S004 已闭合三类 Memory 后台任务的共享 scheduler/signal/run-token budget、durable 输入/关闭限界、`private_summary` trust/redactor/响应 owner、配置与无正文 Doctor。 | 其他独立 OPT 仍有余项；Provider 真实账单/tokenizer、分布式 scheduler、Workflow lease/resume 等目标不得借已完成 M08/GW09/W03 扩入，GW04/GW07/GW09/W03/M08/UI08/PL02 已完成且无后续缺口，UI01 物理网络取消、UI05 lazy loading、UI06 分页继续按独立 OPT 裁决。 |
 | Wave 4 | 进行中 | A06 十五个切片、UI07 S120/四个硬 Gate 与 GW03 generated static path admission 已闭合；cache、timer、panel、read/action owner、pagehide、dispose、纯计数诊断及 canonical file handle 发送均有验证。 | 顶层事务、lease/resume、完整 ArtifactStore retention 等独立 `split_task` 不纳入当前持续队列。 |
 | Wave 5 | 受 Gate 约束 | D04 启动 I/O、M09 Interface、GW08 role/capability 已有首切片。 | A07、A08、UI04、UI05 需先满足依赖和收益 Gate。 |
@@ -509,7 +509,7 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 | `OPT-S07` / P0 已完成 | 3 个切片完成 Authorization/URL userinfo 脱敏、audit output/error 与 arguments 正文最小化，只保留 bytes/hash/failure kind 和 `ackMatched` 安全投影；Tool 原始结果及 legacy producer 保持兼容。 | 未知 secret/参数红灯 fixture、摘要确定性、legacy fallback、Protocol/Skills 全量、Core audit/resource 回归与 workspace build 通过。 | 当前 audit schema 不含 metadata；持久化 audit store、dispatcher shutdown drain 和跨模块统一错误映射不属于本目标。 |
 | `OPT-S08` / P1 已完成 | 空 Tool 状态回收、Timer namespace/容量限界、唯一 active Skill source/eligibility 和 Tool 会话释放钩子已闭合；目标会话 timer/lap 归零，其他会话不受影响，cleanup failure 隔离且不泄漏正文。 | Skills 76 个文件、634 项；Timer/Executor 2 个文件、62 项；Agent 顶层 release 1 个文件、72 项通过，workspace build 通过。一次 STT single-flight 波动经单文件及全量复跑通过，未扩改 STT。 | 不建立通用异步 lifecycle registry，不改变 Tool execution、selection persistence 或 Gateway shutdown。 |
 | `OPT-S04` / P0 已完成 | S001-S031 把 Discord、QQ、Community、DashScope、Browser/Search、Office、视频理解、模型/Agent/Memory 请求迁入 fixed/configured endpoint admission、pinned transport、redirect/DNS 防护及有界 response policy；S032 固定生产 outbound owner，S033-S039 将 Memory OpenAI Embedding、Skills understanding/TTS/image/STT、Feishu 与 Discord SDK HTTP 逐项收口到相邻 pinned/bounded transport，opaque SDK surface 归零。 | S039 定向 7 个文件、46 项与 Channels 28 个文件、169 项通过；workspace 全量 Vitest 648 个文件、4060 项通过，另 1 项跳过；workspace build、全部 package entrypoint、配置模板/audit、项目地图与 outbound inventory 通过。 | 原目标已闭合；`OPT-P02` token usage trusted-private upload 继续作为显式跨 OPT owner。当前生产 Discord 不发送 SDK FormData/file upload，相关通用支持按 `record_only` 保留；Channel lifecycle 继续由已完成的 `OPT-C07` 持有。 |
-| `OPT-UI03` / P0 部分完成 | 外链与 Tool rich content trust 已统一；S003-S070 将两条 pairing 路径、external/email outbound target、Tool confirmation summary、Goal checkpoint context/detail/governance/tracking/capability/progress/Handoff loading/error/no-data/full state、Goal capability no-plan 指令、Locale options、Session Digest 全部 summary/modal、Canvas context bar/board list item/board list header title/resource picker shell/empty/row/edit dialog/node foreignObject content、Bridge 全部 summary/list/detail、Plan 全部 summary/modal、Goal Detail full/compact shell、Goal Tracking、Goal Governance、Goal Capability 完整 panel、Goal Progress 完整时间线与 Goal Canvas 完整 panel、SubTask placeholder/summary/full list/detail、Workspace tree placeholder/item、Memory Viewer/Experience Workbench top-level empty/candidate list/published asset lane、Experience 六卡 stats 与 Synthesis loading/no-data/summary placeholder、Goals Overview placeholder/summary/full list、Settings Doctor transient status、Tool Settings empty state 与全部 tab、Chat bot copy button 与 copy feedback、Settings pending approval lists 改由相邻 DOM/textContent/attribute/property/SVG/replaceChildren owner 渲染，inventory 从 153 降至 55，static sink、Goals Overview、Workspace、Canvas 与 SubTasks structured sink 已归零。 | S070 owner/action、Experience behavior/lifecycle 与 inventory 定向 4 个文件、51 项通过；WebChat 全量 194 个文件、833 项，`verify:webchat` 364 文件、Chromium security fixture、workspace build 与全部 package entrypoint 通过。 | 其余 33 个结构模板的 DOM/TrustedHTML 迁移、全局 Trusted Types/CSP enforced 与 unsafe-inline 清理仍按后续切片推进。 |
+| `OPT-UI03` / P0 部分完成 | 外链与 Tool rich content trust 已统一；S003-S092 将两条 pairing 路径、external/email outbound target、Tool confirmation summary、Goal checkpoint context/detail/governance/tracking/capability/progress/Handoff loading/error/no-data/full state、Goal capability no-plan 指令、Locale options、Session Digest 全部 summary/modal、Canvas context bar/board list item/board list header title/resource picker shell/empty/row/edit dialog/node foreignObject content、Bridge 全部 summary/list/detail、Plan 全部 summary/modal、Goal Detail full/compact shell、Goal Tracking、Goal Governance、Goal Capability 完整 panel、Goal Progress 完整时间线与 Goal Canvas 完整 panel、SubTask placeholder/summary/full list/detail、Workspace tree placeholder/item、Memory Viewer/Experience Workbench top-level empty/candidate list/published asset lane/Capability Overview/synthesis modal source list/Usage Overview/dedup warning/dedup summary/dedup list/shared-review target/claimed-by filter/batch bar/Dream history list/detail empty/full/fallback stats/outbound thread/audit/shared-review/task/memories stats/task list/memory list/outbound audit list/shared-review list、Experience 六卡 stats 与 Synthesis loading/no-data/summary placeholder、Goals Overview placeholder/summary/full list、Settings Doctor transient status、Tool Settings empty state 与全部 tab、Chat bot copy button 与 copy feedback、Settings pending approval lists 改由相邻 DOM/textContent/attribute/style/property/SVG/replaceChildren owner 渲染，inventory 从 153 降至 27，static sink、Goals Overview、Workspace、Canvas 与 SubTasks structured sink 已归零。 | S092 owner/controller/category-provider/inventory 定向 9 个文件、77 项及 Memory Viewer 扩大回归 47 个文件、175 项通过；WebChat 全量 216 个文件、913 项，`verify:webchat` 408 文件/48 manifest entries、Chromium security fixture、workspace build 与全部 package entrypoint 通过。 | 其余 6 个结构模板的 DOM/TrustedHTML 迁移、全局 Trusted Types/CSP enforced 与 unsafe-inline 清理仍按后续切片推进。 |
 | `OPT-R08` / P0 部分完成 | Web asset package provenance Gate 与 lockfile SHA-256 identity 已落地，manifest 只接受受信本地依赖与可复算内容身份。 | manifest/provenance/lockfile 失败 fixture、`verify:webchat`、security fixture 和 build 通过。 | critical/lazy chunk budget、完整离线 load 与所有发行变体统一消费仍是后续切片。 |
 | `OPT-R03` / P0 部分完成 | release-light 已具备 per-file content identity、source provenance identity 和 canonical BuildGraph identity，派生元数据绑定同一输入快照。 | 篡改、缺失、重复路径和 identity 不一致 fixture、release-light 定向及 build 验证通过。 | 全发行矩阵 SBOM/attestation、公开资产回读和跨 publisher 同一 digest 仍受后续/外部 Gate 约束。 |
 | `OPT-GW03` / P1 部分完成 | generated static path 使用 canonical admission，并从已验证、已打开的 file handle 发送，缩小路径替换与 TOCTOU 窗口。 | 合法/越界/symlink/path replacement fixture、Core 定向和 workspace build 通过。 | 全部 static/cache/send 路径的统一策略与其他 Gateway 状态余项未借本切片扩入。 |
@@ -532,7 +532,7 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 | `OPT-A06` | 15 个切片 | Agent/Tool/Conversation/ResidentStore 与多 Channel ingress 的 generation、lease、release、TTL/LRU 闭合 | P1 已完成 |
 | `OPT-R07` | `R07-S001-S006` | Workflow 最小权限、完整测试 Gate、Action SHA 固定与 Docker base digest | P0 部分完成；外部 ruleset/attestation/Release 延期 |
 | `OPT-UI01` | `UI01-S001-S003` | AbortSignal settlement、ready-generation send Gate、有界 reconnect backoff | P0 部分完成；深状态机与物理取消另行拆分 |
-| `OPT-UI03` | `UI03-S001-S070` | 外链/富内容/CSS-media trust、多类 placeholder/instruction、Canvas context/board list item/board list header title/resource picker shell/empty/row/edit dialog/node foreignObject content、Session Digest 全部 summary/modal、Bridge 全部 summary/list/detail、Plan 全部 summary/modal、Goal Detail full/compact shell、Goal Tracking、Goal Governance、Goal Capability 完整 panel、Goal Progress 完整时间线、Goal Canvas 完整 panel、Handoff error/no-data/full action/content、Memory Viewer/Experience Workbench empty/candidate list/published asset lane、Experience stats 与 Synthesis loading/no-data/summary、Goals Overview placeholder/summary/full-list、SubTasks summary/full-list/detail、Workspace tree placeholder/item、Settings Doctor transient status、Tool Settings empty state 与全部 tab、Chat bot copy button与copy feedback、Settings pending approval lists DOM owner；HTML inventory `153 -> 55`，static sink、Goals Overview、Workspace、Canvas 与 SubTasks structured sink 归零 | P0 部分完成；尚余 33 structured、全局 TT/CSP 与 unsafe-inline |
+| `OPT-UI03` | `UI03-S001-S092` | 外链/富内容/CSS-media trust、多类 placeholder/instruction、Canvas context/board list item/board list header title/resource picker shell/empty/row/edit dialog/node foreignObject content、Session Digest 全部 summary/modal、Bridge 全部 summary/list/detail、Plan 全部 summary/modal、Goal Detail full/compact shell、Goal Tracking、Goal Governance、Goal Capability 完整 panel、Goal Progress 完整时间线、Goal Canvas 完整 panel、Handoff error/no-data/full action/content、Memory Viewer/Experience Workbench empty/candidate list/published asset lane/Capability Overview/synthesis modal source list/Usage Overview/dedup warning/dedup summary/dedup list/shared-review target/claimed-by filter/batch bar/Dream history list/detail empty/full/fallback stats/outbound thread/audit/shared-review/task/memories stats/task list/memory list/outbound audit list/shared-review list、Experience stats 与 Synthesis loading/no-data/summary、Goals Overview placeholder/summary/full-list、SubTasks summary/full-list/detail、Workspace tree placeholder/item、Settings Doctor transient status、Tool Settings empty state 与全部 tab、Chat bot copy button与copy feedback、Settings pending approval lists DOM owner；HTML inventory `153 -> 27`，static sink、Goals Overview、Workspace、Canvas 与 SubTasks structured sink 归零 | P0 部分完成；尚余 6 structured、全局 TT/CSP 与 unsafe-inline |
 | `OPT-S04` | `S04-S001-S039` | 31 个直接 Adapter、生产 inventory 与 7 个受控 SDK transport；opaque SDK HTTP surface 归零 | P0 已完成 |
 | `OPT-S07` | `S07-S001-S003` | Authorization/URL、audit output/error/arguments 正文最小化 | P0 已完成 |
 | `OPT-S08` | `S08-S001-S003` | 空 Tool 状态、Timer 容量、active Skill source 与会话释放闭合 | P1 已完成 |
@@ -567,16 +567,16 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 
 **回滚与停止规则**：每个 owner 切片独立回滚，回滚不得恢复远程脚本、未清洗富文本、敏感正文或全局 fail-open；达到当前切片完成边界后立即停止扩张。新发现按 `fix_now`、`split_task`、`defer` 或 `record_only` 裁决；每个后续 UI03 切片及之后所有新阶段都必须在修改生产代码前写明完成边界、验收证据、不纳入范围、风险/工作量/回滚和停止条件。
 
-#### OPT-UI03 总体收口规划进度对照（2026-07-21，UI03-S070 后）
+#### OPT-UI03 总体收口规划进度对照（2026-07-21，UI03-S092 后）
 
 | 阶段 | 当前进度 | 尚缺闭环 |
 | --- | --- | --- |
 | A：placeholder 与 static sink 归零 | 已完成；S020 后 `staticTemplate=0` 持续由 AST inventory 固定 | 无；后续不得以 placeholder 名义重新引入 static sink |
-| B：structured template 按 owner 收口 | 进行中；S070 后 production inventory 为 14 个 sink 文件、55 sink，其中 20 clear、2 rich-content、33 structured、0 static；Canvas 与 SubTasks structured sink 已归零，Tool Settings 全部 tab 已迁入相邻 owner，Experience candidate list、Synthesis summary 与 published asset lane 已退出 production sink inventory | 33 个普通 structured sink仍需按独立 owner/split_task 逐项归零；Memory/Experience 大文件和完整 detail template 必须保持独立阶段 |
+| B：structured template 按 owner 收口 | 进行中；S092 后 production inventory 为 14 个 sink 文件、27 sink，其中 19 clear、2 rich-content、6 structured、0 static；Canvas 与 SubTasks structured sink 已归零，Tool Settings 全部 tab 已迁入相邻 owner，Experience candidate list、Synthesis summary、published asset lane、Capability Overview、synthesis modal source list、Usage Overview、dedup warning/summary/list、shared-review target/claimed-by filter/batch bar/list、Dream history list/detail empty/full、fallback stats 与 outbound thread/audit/shared-review/task/memories stats/task list/memory list/outbound audit list 已退出 production sink inventory | 6 个普通 structured sink 仍需按独立 owner/split_task 逐项归零；Memory/Experience 大文件和其余完整 detail template 必须保持独立阶段 |
 | C：style/script 与 policy 收紧 | 未关闭；本地 asset manifest、Gateway enforced CSP 与窄 rich-content Trusted Types 浏览器 fixture 已具备 | 真实 app shell 的全局 `require-trusted-types-for 'script'`、`unsafe-inline` 清理及 policy 创建点 inventory 尚未闭合 |
-| D：最终行为与发行 Gate | 每个已完成切片持续执行 WebChat、module/security、build/entrypoint 与 diff Gate；S069 Gate 全部通过 | 只能在 B/C 完成后执行最终跨 panel browser smoke、同步第 6 节及 8.1-8.5，并把 `OPT-UI03` 从 P0 部分完成切换为已完成 |
+| D：最终行为与发行 Gate | 每个已完成切片持续执行 WebChat、module/security、build/entrypoint 与 diff Gate；S092 Gate 全部通过 | 只能在 B/C 完成后执行最终跨 panel browser smoke、同步第 6 节及 8.1-8.5，并把 `OPT-UI03` 从 P0 部分完成切换为已完成 |
 
-**当前结论**：总体收口规划存在且边界仍有效；当前处于阶段 B，A 已关闭，C/D 尚不能关闭。`OPT-UI03` 继续保持 P0 部分完成，下一步仍应优先选择单 sink、明确 DOM owner、独立失败 fixture 和窄回滚边界的 structured template，不提前跨入全局 policy 收紧。
+**当前结论**：总体收口规划存在且边界仍有效；当前处于阶段 B，A 已关闭，C/D 尚不能关闭。`OPT-UI03` 继续保持 P0 部分完成；S092 已由相邻 DOM owner 收口 memories 普通/可选 stats cards与category distribution，query/search/evaluation/governance/category保持view-model边界，task stats listener、RPC与完整 detail未变。按用户要求，S092闭合后暂停，不启动S093，也不提前跨入六个完整detail或全局policy收紧。
 
 #### UI03-S018 实现结论：Goal capability top-level placeholder DOM owner（2026-07-20）
 
@@ -2585,4 +2585,884 @@ Priority 表达业务紧迫度，不替代 Wave 依赖顺序。
 - 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S070 / 55 sink / 33 structured。
 - 本切片未新增限制、开关或可调设置；DOM/textContent/attribute/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
 
-**后续计划**：当前按用户指令停在 `UI03-S070`。恢复后先为 `experienceWorkbenchCapabilityOverviewEl` 的 Capability Overview 单 root 制定 `UI03-S071` 独立收口规划，并先建立 parser/text/order/replacement 与 action-wiring 的失败 fixture；它是剩余 Experience 候选中仍由本地 controller 持有、已有 capability action 回归且不依赖外部 HTML producer 的最小边界。当前尚缺阶段 B 的 33 个 structured sink，以及阶段 C 的全局 Trusted Types/CSP、`unsafe-inline` 清理和阶段 D 的最终跨 panel smoke；usage overview、synthesis source list、candidate detail、Memory detail/Viewer 与其他既定 `split_task` 继续排除，恢复前不得跨入实现。
+#### UI03-S071 收口规划：Experience Workbench Capability Overview DOM owner（2026-07-21）
+
+- **候选裁决**：S070 后 `experience-workbench.js` 为 3061 行，仍有 4 个 structured sink。`experienceWorkbenchCapabilityOverviewEl.innerHTML` 是 Capability Overview 的单一 root，包含本地 controller 已持有的再合成输入栏、Method/Skill Draft 两条 lane、候选动作及既有 `bindExperienceWorkbenchCapabilityActions()`；它不依赖外部 HTML producer，且既有 capability action/lifecycle 回归可复用。相比 usage overview、synthesis source list 与 candidate detail，它具有更窄的 DOM owner 和回滚边界，因此优先处理；其余 3 个 Experience sink、Memory detail/Viewer 与全局 CSP 继续按既定 `split_task` 排除。
+- **完成边界**：只把 Capability Overview card/head/caption、再合成 input/preview/fill-selected action、Method/Skill lane head/count/bulk-reject、empty/list、candidate title/meta/badge/summary 与 candidate action 的 DOM/textContent/attribute/property owner 迁入新增 `experience-workbench-capability-overview-view.js`，并以 `replaceChildren()` 提交。controller 只投影已规范化的 lane/item view model，继续在 owner 后绑定 `bindExperienceWorkbenchCapabilityActions()`；保留 draft load、状态和 pending 计算、selectedCandidate、review/bulk-reject/synthesis/modal、task/detail navigation、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 54 sink / 32 structured / 0 static，sink 文件仍为 14 个，`experience-workbench.js` 保留其余 3 个 structured sink。
+- **验收证据**：先新增独立 jsdom owner fixture 和 production capability-wiring 断言形成 RED；目标 root 阻断非空 `innerHTML`，恶意-looking title/caption/path/placeholder/label/candidate id/task id/summary/status/freshness/locale 只能进入文本或受控 attribute/property，不能生成攻击节点。覆盖 Method/Skill 双 lane、empty/list、candidate id/task/freshness/synthesized 可选结构、class/order、data attribute、input value/placeholder/title、button disabled、连续 replacement 与缺失 root no-op；静态断言 owner render 在既有 capability action bind 前，capability slice 不再含 `experienceWorkbenchCapabilityOverviewEl.innerHTML`，既有 review/bulk-reject/synthesis/resynthesize/task/detail/lifecycle 回归继续通过；AST inventory 固定 14 个 sink 文件、54/32/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 usage overview root、synthesis modal source list、candidate detail、assets lane、其余 32 个 structured sink、draft/asset RPC 或 state machine、review/synthesis/modal action、Memory detail/Viewer、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 panel 通用 capability renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 S-M；主要失败模式是 Method/Skill lane 顺序、candidate 可选 meta/badge、受控 action selector、input property、disabled 状态或 owner-before-listener 时序漂移。单一 root、独立 parser/text/attribute/property/order fixture 与既有 capability action/lifecycle 回归形成窄回滚边界；回滚只恢复 capability owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 Capability Overview sink、parser/text/attribute/property/class/order/optional/replacement/no-op/action-wiring fixture、既有 capability action/lifecycle 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S071；其它 Experience、Memory 与全局 policy 工作继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/attribute/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S071 实现结论：Experience Workbench Capability Overview DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`experience-workbench-capability-overview-view.js` 新建，`experience-workbench.js` 接入**：
+   - 新增 Capability Overview 相邻 DOM/textContent/attribute/property owner，以 `replaceChildren()` 提交 card/head/caption、再合成栏、Method/Skill Draft lane、candidate meta/badge/summary 与 action。
+   - controller 将 draft、pending、selectedCandidate、本地化和候选状态投影为规范化 view model；原有 draft load、review/bulk-reject/synthesis/modal、task/detail navigation、RPC、CSS/locale 与 lifecycle 仍由 controller 持有。
+   - owner 渲染后继续执行 `bindExperienceWorkbenchCapabilityActions()`，保留既有 input、preview、fill-selected、candidate/detail/task、review/bulk-reject 与 synthesis selector。
+
+2. **`experience-workbench-capability-overview-view.test.js` 新建并接入回归**：
+   - 先以缺少 owner 模块形成有效 RED；实现后实例级阻断非空 `innerHTML`，覆盖恶意-looking 动态字段、Method/Skill 双 lane、受控 data attribute/property、disabled、可选 meta/badge、replacement 与缺失 root no-op。
+   - production wiring fixture 固定 owner render 位于既有 capability action listener 装配之前，Capability Overview slice 不再含 `experienceWorkbenchCapabilityOverviewEl.innerHTML`。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `experience-workbench.js` 的结构化 sink 从 4 降为 3；全局 inventory 从 55 sink / 33 structured 收敛为 54 sink / 32 structured / 0 static，sink 文件保持 14 个。
+   - 项目地图登记 Capability Overview owner，并明确 controller 继续持有 draft state、action listener、review/synthesis/modal、导航与 RPC。
+
+4. **效果**：
+   - title、caption、路径、placeholder、label、candidate/task id、summary、status、freshness 与 locale 文案不再进入 HTML parser，只作为文本或受控 attribute/property 呈现。
+   - Method/Skill lane 顺序、可选 candidate/task/freshness/synthesized 结构、input/disabled 状态及既有 action 行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S071 先由缺少 owner 模块和未接入 controller 分别形成有效 RED；最终 Experience owner/action/lifecycle 与 inventory 定向 5 个文件、54 项全部通过（含新增 3 项 owner/parser/wiring/replacement fixture）。
+- WebChat 全量 193 个文件、831 项通过；`corepack pnpm verify:webchat` 校验 366 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 未发现空白错误。
+- 轻量对抗性 Review 确认 Method/Skill 顺序、可选 meta/badge、受控 selector、input/disabled property 与 owner-before-listener 时序保持；usage overview、synthesis source list、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S071 / 54 sink / 32 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/attribute/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S072 收口规划：Experience Workbench synthesis modal source list DOM owner（2026-07-21）
+
+- **候选裁决**：S071 后 `experience-workbench.js` 为 3023 行，仍有 3 个 structured sink。`experienceSynthesisModalListEl.innerHTML` 是 synthesis modal 的单一 list root，source selection state、delegated `change` listener 与 lifecycle 都位于相邻 `experience-workbench-synthesis-sources.js`，不依赖外部 HTML producer；可将该 feature 从 HTML checkbox producer 收敛为 selection view-model owner，再由新的 list owner 构建 DOM。相比 usage overview 与 candidate detail 的跨模块 HTML producer，它维持本地、可回滚的边界，因此优先处理；其余 2 个 Experience sink、Memory detail/Viewer 与全局 CSP 继续按既定 `split_task` 排除。
+- **完成边界**：只把 synthesis source list 的 overwrite compare card、seed candidate row、related candidate row、title/meta/summary/relation badge、source checkbox/required class/checked/disabled/aria-label/property 和 preview candidate data attribute 迁入新增 `experience-workbench-synthesis-list-view.js` DOM/textContent/attribute/property owner，并以 `replaceChildren()` 提交。`experience-workbench-synthesis-sources.js` 只提供受控 selection checkbox view model 并继续持有 dedupe、seed pin、related capacity、delegated change、scroll restore、activate/deactivate/dispose；controller 只投影已本地化的 list model，保留 modal title/status/summary、submit/cancel/close、preview/create/accept、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 53 sink / 31 structured / 0 static，sink 文件仍为 14 个，`experience-workbench.js` 保留其余 2 个 structured sink。
+- **验收证据**：先新增独立 jsdom owner fixture、selection view-model fixture 与 production list-wiring 断言形成 RED；目标 list root 阻断非空 `innerHTML`，恶意-looking content/title/summary/status/task/id/score/relation/label/locale 只能进入文本或受控 attribute/property，不能生成攻击节点。覆盖 overwrite compare、seed/related row、required/checked/disabled/aria-label、selected/max-related capacity、class/order、data attribute、replacement、缺失 root no-op 与 change 后 scroll restore；静态断言 owner render 不再含 `experienceSynthesisModalListEl.innerHTML`，既有 source selection/listener/modal lifecycle 继续通过；AST inventory 固定 14 个 sink 文件、53/31/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 synthesis modal summary/status/title/action、usage overview、candidate detail、assets lane、其余 31 个 structured sink、preview/create/accept RPC 或 state machine、Memory detail/Viewer、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 modal 通用 list renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是 seed 必选、related capacity、checked/disabled/aria-label property、overwrite compare pre 文本、scroll restore、delegated listener 或 modal lifecycle 时序漂移。单一 list root、selection state fixture、独立 parser/text/attribute/property/order fixture 与既有 synthesis lifecycle 回归构成窄回滚边界；回滚只恢复 source-list owner 接线、selection view-model、fixture、inventory 与项目地图。
+- **停止条件**：单一 synthesis source list sink、selection/parser/text/attribute/property/class/order/optional/replacement/no-op/scroll/listener-wiring fixture、既有 synthesis source/lifecycle 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S072；其它 Experience、Memory 与全局 policy 工作继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/attribute/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S072 实现结论：Experience Workbench synthesis modal source list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`experience-workbench-synthesis-list-view.js` 新建，`experience-workbench.js` 接入**：
+   - 新增 synthesis source list 相邻 DOM/textContent/attribute/property owner，以 `replaceChildren()` 提交 overwrite compare、seed/related row、checkbox 与 relation badge。
+   - controller 将本地化的 preview、seed、score、relation 与 modal disabled 状态投影为 view model；modal title/status/summary、submit/cancel/close、preview/create/accept、RPC、CSS/locale 与 lifecycle 仍由 controller 持有。
+   - owner 渲染后保留根节点 delegated `change` listener，既有 source selection 与 scroll restore 继续在相邻 feature 中运行。
+
+2. **`experience-workbench-synthesis-sources.js` 与其测试收敛为 selection view model**：
+   - 新增 `getCheckboxViewModel()`，保留 seed pin、related capacity、checked/disabled/required 状态与生命周期边界。
+   - 删除无生产调用的 `renderCheckbox()` HTML producer 及 `escapeHtml` 注入；测试改为以原生 DOM fixture 挂载 view model，避免 selection owner 再产生 HTML 字符串。
+
+3. **`experience-workbench-synthesis-list-view.test.js`、`experience-workbench-synthesis-summary-view.test.js`、`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - 先以缺少 owner、未接入 controller 与仍暴露旧 HTML API 分别形成有效 RED；实现后阻断非空 `innerHTML`，覆盖 overwrite compare、seed/related row、恶意-looking 文本、checkbox property、class/order、data attribute、replacement 与缺失 root no-op。
+   - Synthesis summary 的装配断言改为检查 source-list owner，固定 summary、status 与 list owner 的渲染顺序。
+   - `experience-workbench.js` 的结构化 sink 从 3 降为 2；全局 inventory 从 54 sink / 32 structured 收敛为 53 sink / 31 structured / 0 static，sink 文件保持 14 个。
+
+4. **效果**：
+   - overwrite compare 内容、title/meta/summary、task/id/score/relation、checkbox label 与 locale 文案不再进入 HTML parser，只作为文本或受控 attribute/property 呈现。
+   - seed 必选、related 选择上限、checked/disabled/aria-label、delegated selection、scroll restore、modal lifecycle 与既有 action selector 保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S072 的 selection view-model、source-list DOM owner 与 production wiring 先分别形成有效 RED；最终 Experience owner/summary/selection/action/lifecycle 与 inventory 定向 7 个文件、60 项全部通过。
+- WebChat 全量 194 个文件、834 项通过；`corepack pnpm verify:webchat` 校验 368 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 未发现空白错误。
+- 轻量对抗性 Review 确认 seed/related capacity、checked/disabled/aria-label property、overwrite compare `pre` 文本、delegated listener/scroll restore、owner-before-listener 时序保持；usage overview、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S072 / 53 sink / 31 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/attribute/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S073 收口规划：Experience Workbench usage overview DOM owner（2026-07-21）
+
+- **候选裁决**：S072 后 `experience-workbench.js` 为 2866 行，仍有 2 个 structured sink。`experienceWorkbenchUsageOverviewEl.innerHTML` 的唯一字符串 producer 是 `memory-detail-render.js` 中的 `renderTaskUsageOverviewCard()`，静态检索确认它只被该 usage root 消费；可将这一窄 producer 先收敛为结构化 view model，再由新增的相邻 DOM owner 负责 card/lane/row。它不迁移 Memory task detail root，也不涉及 candidate detail 的跨模块 HTML producer，具备单 consumer、明确 owner、已有 usage action 回归和可回滚边界，因此优先处理。
+- **完成边界**：只将 Usage Overview card/head/caption、Method/Skill lane、empty/list/row、key/meta/badge、candidate/task/source action、bar track/fill/metrics 迁入新增 `experience-workbench-usage-overview-view.js` DOM/textContent/attribute/style/property owner，并以 `replaceChildren()` 提交。`memory-detail-render.js` 将 `renderTaskUsageOverviewCard()`/lane 字符串 helper 改为受控 view model，继续持有 Memory usage state、格式化、本地化与业务字段投影；controller 只取得 view model、调用 owner 并继续绑定 `bindExperienceWorkbenchUsageOverviewActions()`，保留 load/RPC、tab/lifecycle、导航、CSS/locale。完成后 inventory 应为 52 sink / 30 structured / 0 static，sink 文件仍为 14 个，`experience-workbench.js` 只保留 candidate detail 一个 structured sink。
+- **验收证据**：先新增独立 jsdom owner fixture、usage view-model fixture 与 production wiring 断言形成 RED；目标 root 阻断非空 `innerHTML`，恶意-looking asset key/title/candidate/task/path/status/source/freshness/locale 只能进入文本或受控 attribute/property，不能生成攻击节点。覆盖 loading/empty、Method/Skill 双 lane、empty/list、usage count 与百分比 clamp、badge class、data attribute、disabled/可选 action、replacement 与缺失 root no-op；静态断言 controller 不再含 `experienceWorkbenchUsageOverviewEl.innerHTML`，旧 producer 不再返回 HTML，既有 usage load/action/lifecycle 回归继续通过；AST inventory 固定 14 个 sink 文件、52/30/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 Experience candidate detail、Memory task detail root 或其 usage item/revoke HTML、synthesis/capability/assets pane、其余 30 个 structured sink、usage load RPC/state machine、Memory detail/Viewer 大模板、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 panel 通用 usage renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是跨模块 view-model 契约、Method/Skill lane 顺序、usage count/width、badge class、可选 action selector、loading/empty 分支或 owner-before-listener 时序漂移。唯一 producer/consumer、独立 parser/text/attribute/style/property/order fixture、既有 usage action/lifecycle 回归构成窄回滚边界；回滚只恢复 usage overview producer/owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 Usage Overview sink、view-model/parser/text/attribute/style/property/class/order/optional/replacement/no-op/action-wiring fixture、既有 usage load/action/lifecycle 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S073；Experience candidate detail、Memory 与全局 policy 工作继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/attribute/style/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S073 实现结论：Experience Workbench Usage Overview DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`experience-workbench-usage-overview-view.js` 新建，`experience-workbench.js` 接入**：
+   - 新增 Usage Overview 相邻 DOM/textContent/attribute/style/property owner，以 `replaceChildren()` 提交 card、Method/Skill lane、empty/list/row、badge、action 与 usage bar。
+   - controller 只取得 view model 并在 owner 渲染后绑定既有 Usage Overview action；load/RPC、tab/lifecycle、导航、CSS 与 locale 仍由原有边界持有。
+
+2. **`memory-detail-render.js` 与 `app.js` 收敛跨模块投影**：
+   - 旧的 Usage Overview HTML producer 改为受控 view model，继续由 Memory detail 持有 usage state、格式化、本地化和业务字段投影。
+   - `app.js` 只向 Experience Workbench 注入该 view model，移除 MemoryViewer 无效的旧 producer 注入。
+
+3. **owner/source-model/action fixture、inventory 与项目地图同步**：
+   - 新增 DOM owner 与 production wiring fixture，覆盖恶意-looking 动态字段、Method/Skill 双 lane、usage percent clamp、受控 action、replacement 与缺失 root no-op。
+   - `experience-workbench.js` 的结构化 sink 从 2 降为 1；全局 inventory 从 53 sink / 31 structured 收敛为 52 sink / 30 structured / 0 static，sink 文件保持 14 个。
+
+4. **效果**：
+   - asset key、title、candidate/task/source、status、freshness 与 locale 文案不再进入 HTML parser，只作为文本或受控 attribute/style/property 呈现。
+   - Method/Skill lane 顺序、可选 action、usage bar、既有 tab 与 action/lifecycle 行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S073 的 source-model、DOM owner 与 production tab/action wiring 先形成有效 RED；最终定向回归 12 个文件、109 项全部通过。
+- WebChat 全量 195 个文件、839 项通过；`corepack pnpm verify:webchat` 校验 370 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认跨模块 view-model 契约、Method/Skill lane 顺序、usage count/width、badge class、可选 action selector 与 owner-before-listener 时序保持；candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S073 / 52 sink / 30 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/attribute/style/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S074 收口规划：Memory Viewer dedup warning DOM owner（2026-07-21）
+
+- **候选裁决**：S073 后 `memory-viewer.js` 为 4592 行，必须把新增 DOM 构造拆入相邻模块。`memoryDedupModalWarningEl.innerHTML` 是单一 warning root，不依赖外部 HTML producer、没有 action listener，业务层已独立计算 `warningLines`；它具备单 root、明确 owner、可独立阻断 HTML parser 和窄回滚边界。Experience candidate detail 复用 `renderCandidateDetailPanel()` 并同时影响 Experience 与 MemoryViewer 两个 shell，继续属于高耦合 `split_task`，不在本切片处理。
+- **完成边界**：只把 dedup warning line 的空白过滤、`div` 创建、textContent 写入与 `replaceChildren()` 提交迁入新增 `memory-viewer-dedup-warning-view.js`。`memory-viewer.js` 保留 backup/提示文案的业务计算和 warning root 的 `hidden` class 切换；保留 modal title/status/summary/list、submit/cancel/close、preview/apply RPC、dedup state、CSS/locale 与 lifecycle。完成后 inventory 应为 51 sink / 29 structured / 0 static，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；目标 root 阻断非空 `innerHTML`，恶意-looking backup path/文案只能成为文本，不能生成攻击节点。覆盖空白过滤、原有顺序、连续 replacement、缺失 root no-op 与 warning hidden 状态保持；静态断言 production slice 不再含 `memoryDedupModalWarningEl.innerHTML`，既有 dedup preview/apply 回归继续通过；AST inventory 固定 14 个 sink 文件、51/29/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 dedup modal summary/list、candidate detail、Memory task/detail/viewer 大模板、其余 29 个 structured sink、dedup preview/apply RPC 或 state machine、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 modal 通用 warning renderer。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是 warning 行过滤/顺序、hidden 状态、replacement 或 modal render 时序漂移。单一 root、独立 parser/text/order/replacement/no-op/wiring fixture 与既有 dedup preview/apply 回归构成窄回滚边界；回滚只恢复 warning owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 warning sink、parser/text/order/replacement/no-op/wiring fixture、既有 dedup 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S074；candidate detail、Memory detail/Viewer 与全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S074 实现结论：Memory Viewer dedup warning DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-dedup-warning-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 dedup warning 相邻 DOM/textContent owner，过滤空白行后以 `replaceChildren()` 提交提示 `div`，不再经 HTML parser。
+   - controller 保留 backup/提示文案的业务计算、warning hidden 状态、modal title/status/summary/list、preview/apply RPC、dedup state 与 lifecycle。
+
+2. **`memory-viewer-dedup-warning-view.test.js` 新建，`memory-viewer.test.js` 扩展**：
+   - 先以缺少 owner 模块形成有效 RED；实现后阻断 warning root 的非空 `innerHTML`，覆盖恶意-looking backup path/提示、空白过滤、顺序、replacement 与缺失 root no-op。
+   - 既有 dedup preview/apply 集成回归也对真实 warning root 阻断非空 `innerHTML`，并固定 preview 与 apply 后提示可见。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 28 降为 27；全局 inventory 从 52 sink / 30 structured 收敛为 51 sink / 29 structured / 0 static，sink 文件保持 14 个。
+   - 项目地图登记 dedup warning owner，并明确 controller 继续持有文案投影与 hidden 状态。
+
+4. **效果**：
+   - backup path 与提示文本只作为文本节点呈现，不能创建 `img`、`script` 或事件属性节点。
+   - warning 的空白过滤、原有顺序、可见状态、连续渲染替换及 dedup preview/apply 行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S074 先由缺少 owner 模块和 inventory 基线分别形成有效 RED；最终 dedup warning owner、preview/apply、modal lifecycle 与 inventory 定向 5 个文件、45 项全部通过。
+- WebChat 全量 196 个文件、842 项通过；`corepack pnpm verify:webchat` 校验 372 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意文本只进入 textContent、空白过滤和顺序与旧行为一致、hidden 状态与 replacement 正确；dedup summary/list、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S074 / 51 sink / 29 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S075 收口规划：Memory Viewer dedup summary DOM owner（2026-07-21）
+
+- **候选裁决**：S074 后 `memory-viewer.js` 仍远超 3000 行，新增 DOM 构造必须保持在相邻模块。`memoryDedupModalSummaryEl.innerHTML` 是同一 dedup modal 内的单一 summary root，只包含固定顺序的八张 label/value 卡，无 action listener、无外部 HTML producer；controller 已在本地计算扫描范围、chunk/page/freelist 变化、计数和来源风险，可投影为窄 card view model。它比 dedup list、shared-review select 与 candidate detail 更少状态/委托耦合，具备独立 fixture 与回滚边界，因此优先处理。
+- **完成边界**：只把 dedup summary 的八张 card、label/value 文本和 `replaceChildren()` 提交迁入新增 `memory-viewer-dedup-summary-view.js` DOM/textContent owner。`memory-viewer.js` 继续计算 card value、保留 title/status/warning/list、submit/cancel/close、preview/apply RPC、dedup state、CSS/locale 与 lifecycle。完成后 inventory 应为 50 sink / 28 structured / 0 static，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；目标 summary root 阻断非空 `innerHTML`，恶意-looking label/value/filter/backup-related 文案只能成为文本，不能生成攻击节点。覆盖八张固定 card 的 label/value/order、preview/result 分支、空/异常 fallback、连续 replacement、缺失 root no-op 与既有 dedup preview/apply 真实接线；静态断言 production slice 不再含 `memoryDedupModalSummaryEl.innerHTML`，AST inventory 固定 14 个 sink 文件、50/28/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 dedup modal list、warning、candidate detail、Memory task/detail/viewer 大模板、其余 28 个 structured sink、dedup preview/apply RPC 或 state machine、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 modal 通用 card renderer。
+- **风险、工作量与回滚**：风险等级低中、工作量 S-M；主要失败模式是八卡顺序、preview/result value、count transition/来源风险 fallback、replacement 或 modal render 时序漂移。单一 root、独立 parser/text/order/replacement/no-op/wiring fixture 与既有 dedup preview/apply 回归构成窄回滚边界；回滚只恢复 summary owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 summary sink、parser/text/order/preview/result/replacement/no-op/wiring fixture、既有 dedup 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S075；dedup list、candidate detail、Memory detail/Viewer 与全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S075 实现结论：Memory Viewer dedup summary DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-dedup-summary-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 dedup summary 相邻 DOM/textContent owner，以 `replaceChildren()` 提交八张固定顺序的 label/value card。
+   - controller 继续持有 preview/result 的扫描范围、chunk/page/freelist transition、计数和来源风险投影；title/status/warning/list、preview/apply RPC、dedup state 与 lifecycle 未改变。
+
+2. **`memory-viewer-dedup-summary-view.test.js` 新建，`memory-viewer.test.js` 扩展**：
+   - 先以缺少 owner 模块和真实 summary root 的非空 `innerHTML` 写入形成有效 RED；实现后覆盖恶意-looking label/value、八卡顺序、replacement 与缺失 root no-op。
+   - 既有 dedup preview/apply 集成回归对真实 summary 与 warning root 同时阻断非空 `innerHTML`，并固定八卡数量和生产标签顺序。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 27 降为 26；全局 inventory 从 51 sink / 29 structured 收敛为 50 sink / 28 structured / 0 static，sink 文件保持 14 个。
+   - 项目地图登记 dedup summary owner，并明确 controller 继续持有 preview/result 的业务 value 投影。
+
+4. **效果**：
+   - summary 的 label、filter/result 文案、计数 transition 和来源风险只作为文本节点呈现，不能创建 HTML 节点。
+   - 八卡顺序、preview/result 值、warning、submit/cancel/close 与既有 dedup preview/apply 行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S075 先由缺少 owner 模块、真实 root HTML 阻断和 inventory 基线分别形成有效 RED；最终 dedup summary/warning、preview/apply、modal lifecycle 与 inventory 定向 6 个文件、48 项全部通过。
+- WebChat 全量 197 个文件、845 项通过；`corepack pnpm verify:webchat` 校验 374 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认八卡 label/value/order、preview/result transition、真实 root replacement 与 owner-before-modal 后续渲染保持；dedup list、shared-review select、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S075 / 50 sink / 28 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S076 收口规划：Memory Viewer shared-review target filter DOM owner（2026-07-21）
+
+- **候选裁决**：S075 后 `memory-viewer.js` 仍远超 3000 行，新增 DOM 构造必须保持在相邻模块。`memorySharedReviewTargetFilterEl.innerHTML` 是单一 select root，只消费本地生成的 target agent option/value，无 dynamic action listener、无外部 HTML producer；`getSharedReviewAgentOptions()` 已处理 active/selected Agent fallback 与稳定排序，controller 可将本地化 all-target option 和选中值投影给窄 owner。claimed-by select 仍复用旧 `buildSelectOptionsHtml()`，与 target root 分开处理，避免跨越本切片。
+- **完成边界**：只把 target filter 的 option 创建、value/textContent/property、空 label fallback、selected value 与 `replaceChildren()` 提交迁入新增 `memory-viewer-shared-review-target-filter-view.js` DOM/textContent/property owner。`memory-viewer.js` 保留 agent option 聚合/排序、shared-review filter state、focus/claimed-by filter、controls listener、queue/RPC、CSS/locale 与 lifecycle；旧 HTML helper 暂仅服务 claimed-by root。完成后 inventory 应为 49 sink / 27 structured / 0 static，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；目标 select 阻断非空 `innerHTML`，恶意-looking agent id/label/locale 只能进入 option property/textContent，不能生成攻击节点。覆盖 all-target fallback、active/selected agent、稳定 option 顺序、selected property、replacement、缺失 root no-op 与真实 `syncSharedReviewFilterUi()`；静态断言 target slice 不再含 `memorySharedReviewTargetFilterEl.innerHTML`，claimed-by root/HTML helper 保持既有边界；AST inventory 固定 14 个 sink 文件、49/27/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 claimed-by/focus filter、shared-review batch bar、dedup list、candidate detail、Memory task/detail/viewer 大模板、其余 27 个 structured sink、shared-review queue/RPC/state machine、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 select 通用 renderer。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是 agent fallback/sort、option label/value、selected property、replacement 或 controls listener 时序漂移。单一 root、独立 parser/text/property/order/replacement/no-op/wiring fixture 与现有 shared-review state/controls 回归构成窄回滚边界；回滚只恢复 target-filter owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 target filter sink、parser/text/property/order/selected/replacement/no-op/wiring fixture、既有 shared-review controls/state 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S076；claimed-by/focus filter、batch bar、dedup list、candidate detail、Memory detail/Viewer 与全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S076 实现结论：Memory Viewer shared-review target filter DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-shared-review-target-filter-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 shared-review target Agent select 的相邻 DOM/textContent/property owner，以 `createElement("option")`、`textContent`、`value` 和 `replaceChildren()` 提交本地 option 投影。
+   - controller 继续持有 Agent 聚合、active/selected fallback、稳定排序、shared-review filter state、focus/claimed-by controls、queue/RPC 与 lifecycle；超过 3000 行的 `memory-viewer.js` 只保留装配与投影。
+
+2. **`memory-viewer-shared-review-target-filter-view.test.js` 新建，`memory-viewer.test.js` 扩展**：
+   - 独立 fixture 阻断 target root 的非空 `innerHTML`，覆盖恶意-looking id/label、all-target/空 label fallback、稳定 option 顺序、selected property、连续 replacement 与缺失 root no-op。
+   - 真实 `syncSharedReviewFilterUi()` 回归阻断 target root 的非空 HTML 写入，并固定 target selected value；claimed-by select 继续保留既有 HTML helper，未跨越本切片。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 26 降为 25；全局 inventory 从 50 sink / 28 structured 收敛为 49 sink / 27 structured / 0 static，sink 文件保持 14 个。
+   - 项目地图登记 target filter owner，并明确 controller 继续持有 Agent 聚合与 filter state。
+
+4. **效果**：
+   - target Agent 的本地化文案、Agent id 和 display label 只能成为 option property/text node，不能生成攻击节点。
+   - all-target fallback、可用/已选 Agent 回填、排序、selected value 与既有 shared-review controls 行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S076 先由缺少 owner 模块、真实 target root 的非空 `innerHTML` 阻断和 inventory 基线形成有效 RED；实现后 target owner、真实 shared-review wiring 与 inventory 定向 3 个文件、43 项全部通过（含 4 项新增 target-filter owner/wiring fixture）。
+- WebChat 全量 198 个文件、849 项通过；`corepack pnpm verify:webchat` 校验 376 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 option text/value 只经 DOM property/textContent 写入，active/selected fallback、排序、replacement、selected property 与 controls listener 时序保持；claimed-by/focus filter、batch bar、dedup list、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S076 / 49 sink / 27 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S077 收口规划：Memory Viewer shared-review claimed-by filter DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S076 后 `memory-viewer.js` 仍远超 3000 行，`memorySharedReviewClaimedByFilterEl.innerHTML` 是当前同一 shared-review controls 中唯一相邻、单一 select root；它只消费已审查的 `getSharedReviewAgentOptions()` 本地 Agent option/value 与本地化 all-claim-owner label，无 dynamic action listener 或外部 HTML producer。`buildSelectOptionsHtml()` 现仅服务该 root，迁移后可随本切片删除。它比 focus filter、batch bar、dedup list 与完整 detail template 更低耦合，具备独立失败 fixture、明确 owner 与窄回滚边界；其余候选继续按既定 `split_task` 排除。
+- **完成边界**：只把 claimed-by filter 的 option 创建、value/textContent/property、空 label fallback、selected value 与 `replaceChildren()` 提交迁入新增 `memory-viewer-shared-review-claimed-by-filter-view.js` DOM/textContent/property owner，并删除不再使用的 `buildSelectOptionsHtml()`。`memory-viewer.js` 保留 Agent 聚合/排序、shared-review filter state、focus/target filter、controls listener、queue/RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 48 sink / 26 structured / 0 static，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；claimed-by select 阻断非空 `innerHTML`，恶意-looking Agent id/label/locale 只能进入 option property/textContent，不能生成攻击节点。覆盖 all-claim-owner fallback、active/selected Agent、稳定 option 顺序、selected property、replacement、缺失 root no-op 与真实 `syncSharedReviewFilterUi()`；静态断言 claimed-by slice 不再含 `memorySharedReviewClaimedByFilterEl.innerHTML`，target root/owner 保持既有边界；AST inventory 固定 14 个 sink 文件、48/26/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 focus/target filter、shared-review batch bar、dedup list、candidate detail、Memory task/detail/viewer 大模板、其余 26 个 structured sink、shared-review queue/RPC/state machine、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 feature 或全局 select renderer。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是 Agent fallback/sort、option label/value、selected property、replacement 或 controls listener 时序漂移。单一 root、独立 parser/text/property/order/replacement/no-op/wiring fixture 与现有 shared-review state/controls 回归构成窄回滚边界；回滚只恢复 claimed-by-filter owner 接线、fixture、inventory、项目地图及局部 HTML helper。
+- **停止条件**：单一 claimed-by filter sink、parser/text/property/order/selected/replacement/no-op/wiring fixture、既有 shared-review controls/state 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S077；focus/target filter、batch bar、dedup list、candidate detail、Memory detail/Viewer 与全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S077 实现结论：Memory Viewer shared-review claimed-by filter DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-shared-review-claimed-by-filter-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 shared-review claim-owner select 的相邻 DOM/textContent/property owner，以 `createElement("option")`、`textContent`、`value` 和 `replaceChildren()` 提交本地 option 投影。
+   - controller 继续持有 Agent 聚合、active/selected fallback、稳定排序、shared-review filter state、focus/target controls、queue/RPC 与 lifecycle；超过 3000 行的 `memory-viewer.js` 只保留装配与投影。
+
+2. **局部 HTML helper 与 fixture 边界收口**：
+   - 删除只服务 claimed-by root 的 `buildSelectOptionsHtml()`；target 与 claimed-by 各自保持明确 DOM owner，不建立跨 feature 或全局 select renderer。
+   - `memory-viewer-shared-review-claimed-by-filter-view.test.js` 新建，`memory-viewer.test.js` 扩展真实 claimed-owner root 阻断回归；target owner fixture 删除“claimed-by 仍使用 HTML”的旧范围断言，继续只验证 target 自身边界。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 25 降为 24；全局 inventory 从 49 sink / 27 structured 收敛为 48 sink / 26 structured / 0 static，sink 文件保持 14 个。
+   - 项目地图登记 claim-owner filter owner，并明确 controller 继续持有 Agent 聚合与 filter state。
+
+4. **效果**：
+   - claim-owner 的本地化文案、Agent id 和 display label 只能成为 option property/text node，不能生成攻击节点。
+   - all-claim-owner fallback、可用/已选 Agent 回填、排序、selected value 与既有 shared-review controls 行为保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S077 先由缺少 owner 模块、真实 claimed-by root 的非空 `innerHTML` 阻断和 inventory 基线形成有效 RED；实现后 target/claimed-by owner、真实 shared-review wiring 与 inventory 定向 4 个文件、47 项全部通过（含 4 项新增 claim-owner owner/wiring fixture）。
+- WebChat 全量 199 个文件、853 项通过；`corepack pnpm verify:webchat` 校验 378 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 option text/value 只经 DOM property/textContent 写入，active/selected fallback、排序、replacement、selected property 与 controls listener 时序保持；batch bar、dedup list、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S077 / 48 sink / 26 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S078 收口规划：Memory Viewer shared-review batch bar DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S076/S077 已把 shared-review target 与 claimed-by 两个 filter 从 production inventory 移出，`memorySharedReviewBatchBarEl` 现为该 controls 区域唯一剩余 HTML root。它只有同一 root 的清空与 batch-bar 两个 AST sink，业务层已独立得到 selected/visible count、五个固定 action key、三个 selection mode、busy 和本地化 label；现有真实 batch action 与 dispose fixture 已覆盖 listener 到 RPC 的关键路径。此完成的 owner 边界是重新提高 batch bar 优先级的新证据；它仍作为独立阶段进入，不与 dedup list、detail template 或全局 policy 合并。
+- **完成边界**：只把 batch bar 的 clear、summary、selection/action button 创建、textContent、class/data attribute、disabled property、`replaceChildren()` 与局部 click callback 转发迁入新增 `memory-viewer-shared-review-batch-bar-view.js` DOM/textContent/property/attribute owner。`memory-viewer.js` 保留 visible item/selected id、batch state、文案和 count 计算、selection/action 的业务回调、queue/RPC、CSS/locale 与 lifecycle；不建立跨 panel action renderer。完成后 inventory 应为 46 sink / 25 structured / 0 static，其中 clear 为 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；batch root 阻断非空 `innerHTML`，恶意-looking summary/label/action text 只能进入 text/property，不能生成攻击节点。覆盖 summary、三个 selection button 与五个 action button 的顺序/class/data attribute、busy/zero-count disabled property、callback forwarding、连续 replacement、empty clear/no-op 与真实 `renderSharedReviewBatchBar()`；静态断言 batch slice 不再含 `memorySharedReviewBatchBarEl.innerHTML`，既有 stale batch action/dispose 回归保持；AST inventory 固定 14 个 sink 文件、46/25/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 target/claimed-by/focus filter、dedup list、Dream history、Memory list/detail/stats 大模板、Experience candidate detail、其余 25 个 structured sink、shared-review queue/RPC/state machine、全局 Trusted Types/CSP、CSS 或 locale key；不重构 selection/action 业务规则。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是 button 顺序、selector/class/disabled property、callback 时序、replacement 后 listener 或 stale action/dispose 路径漂移。单一 root、独立 parser/text/property/attribute/listener/replacement/empty fixture 与既有真实 batch action/dispose 回归构成窄回滚边界；回滚只恢复 batch-bar owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：同一 batch-bar root 的 clear/structured sink、parser/text/property/attribute/order/disabled/listener/replacement/empty/wiring fixture、既有 shared-review action/dispose 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S078；dedup list、Dream history、Memory/Experience detail 和全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/property/attribute owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S078 实现结论：Memory Viewer shared-review batch bar DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-shared-review-batch-bar-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 shared-review batch bar 的相邻 DOM/textContent/property/attribute owner，以 `replaceChildren()` 统一提交清空、summary、三个 selection button 和五个 action button。
+   - controller 继续持有 visible item/selected id、batch state、五个 action count/文案、selection/action 业务回调、queue/RPC、CSS/locale 与 lifecycle；超过 3000 行的 `memory-viewer.js` 只保留 view model 与回调装配。
+
+2. **`memory-viewer-shared-review-batch-bar-view.test.js` 新建，`memory-viewer.test.js` 扩展**：
+   - 独立 fixture 阻断 batch root 的非空 `innerHTML`，覆盖恶意-looking summary/label/action key、按钮顺序、class/data selector、disabled property、callback forwarding、replacement、clear 与缺失 root no-op。
+   - 真实 `syncMemoryViewerUi()` 回归阻断 batch root 的非空 HTML 写入，并固定既有三个 selection selector、五个 action selector、可用/禁用状态和 clear-selection 行为；既有 stale batch action/dispose 路径继续通过。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的 clear sink 从 1 降为 0、结构化 sink 从 24 降为 23；全局 inventory 从 48 sink / 26 structured 收敛为 46 sink / 25 structured / 0 static，其中 clear 为 19，sink 文件保持 14 个。
+   - 项目地图登记 batch-bar owner，并明确 controller 继续持有 batch state 与 RPC。
+
+4. **效果**：
+   - summary、button label 和 action key 只能成为 DOM text/property/attribute，不能生成攻击节点。
+   - 三个 selection button、五个 action button 的顺序、class、selector、disabled 语义、replacement 和既有 batch action 路径保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S078 先由缺少 owner 模块、真实 batch root 的非空 `innerHTML` 阻断和 inventory 基线形成有效 RED；实现后 target/claimed-by/batch-bar owner、真实 shared-review action/dispose wiring 与 inventory 定向 5 个文件、51 项全部通过（含 3 项新增 batch-bar owner/wiring fixture）。
+- WebChat 全量 200 个文件、857 项通过；`corepack pnpm verify:webchat` 校验 380 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认 batch key/selector/class/order、busy/zero-count disabled property、callback 时序、clear/replacement 和 stale action/dispose 保持；dedup list、Dream history、candidate detail、Memory detail/Viewer 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S078 / 46 sink / 25 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/property/attribute owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S079 收口规划：Memory Viewer Dream history list DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S078 后 `memory-viewer.js` 仍远超 3000 行，`memoryDreamHistoryListEl` 与 Dream detail root 分离；其 list root 只消费 `buildDreamHistoryPanelView()` 已投影的 id、active、title、meta 与 snippet。`memory-viewer-modal-controls.js` 已在稳定 list parent 上委托 `[data-dream-history-id]` click，因此以 `replaceChildren()` 重建条目不改变选择 listener 的 owner/lifecycle。它具备单 root、独立 fixture、明确 owner、低耦合和窄回滚边界；Dream detail、dedup list、Memory/Experience detail 继续按既定 `split_task` 排除。
+- **完成边界**：只把 Dream history list 的 empty state、entry/子节点创建、class、data attribute、textContent 与 `replaceChildren()` 提交迁入新增 `memory-viewer-dream-history-list-view.js` DOM/textContent/attribute owner。该单 root 在 AST inventory 中分别记录 empty 与 entry 两处 structured sink，均属于同一 list owner；`memory-viewer.js` 保留 panel view model、open/status/refresh state、detail root、request generation、modal controls、selection/RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 44 sink / 23 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；list root 阻断非空 `innerHTML`，恶意-looking id/title/meta/snippet 只能进入 DOM text/data attribute，不能生成攻击节点。覆盖 empty/loading/error 文案、active class、entry/meta order、data-dream-history-id、replacement、缺失 root no-op 与父节点 delegated click；静态断言 list slice 不再含 `memoryDreamHistoryListEl.innerHTML`，Dream detail root 保持既有边界；AST inventory 固定 14 个 sink 文件、44/23/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 Dream history detail、Dream modal/runtime bar、dedup list、Memory list/detail/stats 大模板、Experience candidate detail、其余 23 个 structured sink、Dream history request/consolidation state machine、modal controls、全局 Trusted Types/CSP、CSS 或 locale key；不重构选择或 request lifecycle。
+- **风险、工作量与回滚**：风险等级低中、工作量 S-M；主要失败模式是 active class/data id、meta order、empty state、replacement 或 parent delegated selection 时序漂移。单一 root、独立 parser/text/attribute/order/replacement/no-op/delegation fixture 与既有 Dream lifecycle/modal-controls 回归构成窄回滚边界；回滚只恢复 history-list owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 history-list sink、parser/text/attribute/order/active/replacement/no-op/delegation/wiring fixture、既有 Dream lifecycle/modal-controls 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S079；Dream detail、dedup list、Memory/Experience detail 与全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/attribute owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S079 实现结论：Memory Viewer Dream history list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-dream-history-list-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 Dream history list 的相邻 DOM/textContent/attribute owner，以 `createElement()`、`textContent`、`setAttribute()` 和 `replaceChildren()` 提交 empty state 与 history entry。
+   - controller 继续持有 panel view model、open/status/refresh state、detail root、request generation、modal controls、selection/RPC、CSS/locale 与 lifecycle；超过 3000 行的 `memory-viewer.js` 只保留投影和装配。
+
+2. **`memory-viewer-dream-history-list-view.test.js` 新建，Dream modal 回归扩展**：
+   - 独立 fixture 阻断 list root 的非空 `innerHTML`，覆盖恶意-looking id/title/meta/snippet、empty/loading/error 文案、active class、entry/meta 顺序、replacement 与缺失 root no-op。
+   - 真实 Dream modal fixture 固定 `data-dream-history-id` 和稳定父节点的 delegated detail selection；Dream detail root 与 request lifecycle 保持原有 owner 边界。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 23 降为 21；全局 inventory 从 46 sink / 25 structured 收敛为 44 sink / 23 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 Dream history list owner，并明确 controller 继续持有 panel view model、selection 与请求状态。
+
+4. **效果**：
+   - Dream id、标题、meta 与摘要只能成为 DOM attribute/text node，不能生成攻击节点。
+   - empty state、active 状态、条目顺序、替换语义以及既有 delegated detail selection 保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S079 先由缺少 owner 模块、真实 list root 的非空 `innerHTML` 阻断和 inventory 基线形成有效 RED；实现后 Dream history list/modal-controls/lifecycle 与 inventory 定向 5 个文件、10 项全部通过。
+- WebChat 全量 201 个文件、861 项通过；`corepack pnpm verify:webchat` 校验 382 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 id/text 仅经 DOM attribute/textContent 写入，active/meta/order/replacement 与稳定父节点 delegated selection 保持；Dream detail、dedup list、Memory/Experience detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S079 / 44 sink / 23 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/attribute owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S080 收口规划：Memory Viewer fallback stats DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S079 后 `memory-viewer.js` 仍远超 3000 行。`memoryViewerStatsEl` 虽有多个 tab 分支，但无 stats、且非 shared-review/outbound-audit 时的四张 fallback 卡是唯一独立 root 写入：只消费四个本地化 label 和固定 `--` 值，无动态 action、无 data selector，也不会触发 `bindStatsAuditJumpLinks()`。其余 outbound-audit/shared-review/memories/tasks stats 分支混有数据投影、可选结构或既有 audit-jump listener，继续保持独立 `split_task`，不得借本切片一起迁移。
+- **完成边界**：只把 fallback 四卡的 card/span/strong 创建、class、textContent 与 `replaceChildren()` 提交迁入新增 `memory-viewer-stats-fallback-view.js` DOM/textContent owner。`memory-viewer.js` 保留 tab 判定、stats/null state、全部其余 stats 分支、数据计算、audit-jump listener、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 43 sink / 22 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom owner fixture 与 production wiring 断言形成 RED；fallback stats root 阻断非空 `innerHTML`，恶意-looking local label 只能进入 text node，不能生成攻击节点。覆盖四卡固定顺序/class/`--` value、replacement、缺失 root no-op 与真实 `renderMemoryViewerStats(null)` 的 tasks fallback；静态断言该 fallback slice 不再含 `memoryViewerStatsEl.innerHTML`，其余 stats branches 和 `bindStatsAuditJumpLinks()` 保持既有边界；AST inventory 固定 14 个 sink 文件、43/22/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 outbound-audit/shared-review/memories/tasks 的非 fallback stats 分支、search diagnostics、memory evaluation、category distribution、audit-jump listener、Memory list/detail/stats 大模板、Dream detail、dedup list、Experience candidate detail、其余 22 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不重构统计计算或 RPC lifecycle。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是 fallback card 顺序/class/label/value、replacement 或 null-state tab 分支漂移。单一 root、独立 parser/text/order/replacement/no-op/wiring fixture 与既有 stats/lifecycle 回归构成窄回滚边界；回滚只恢复 fallback-stats owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 fallback stats sink、parser/text/order/replacement/no-op/wiring fixture、既有 stats/lifecycle 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S080；其他 stats branches、Dream detail、dedup list、Memory/Experience detail 与全局 policy 继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S080 实现结论：Memory Viewer fallback stats DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-stats-fallback-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增无 stats fallback 四卡的相邻 DOM/textContent owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交固定顺序的 label 与 `--` value。
+   - controller 继续持有 tab/null 判定、其余 stats 分支、数据投影、audit-jump listener、RPC、CSS/locale 与 lifecycle；超过 3000 行的 `memory-viewer.js` 只保留 label 投影和装配。
+
+2. **`memory-viewer-stats-fallback-view.test.js` 新建，真实 controller 回归扩展**：
+   - 独立 fixture 阻断 fallback root 的非空 `innerHTML`，覆盖恶意-looking locale、四卡 class/order/value、replacement 与缺失 root no-op。
+   - 真实 `renderMemoryViewerStats(null)` fixture 固定 tasks fallback 走 owner，并由静态边界断言确认 outbound-audit/shared-review/memories/tasks 非 fallback 分支及 `bindStatsAuditJumpLinks()` 未迁入本切片。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 21 降为 20；全局 inventory 从 44 sink / 23 structured 收敛为 43 sink / 22 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 fallback stats owner，并明确 controller 继续持有其他统计分支和 listener。
+
+4. **效果**：
+   - fallback 本地化 label 只能成为 text node，不能生成攻击节点。
+   - 四卡顺序、class、固定值、替换语义与 null-state tab 分支保持兼容，其他 stats 可观察行为不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S080 先由缺少 owner 模块、真实 fallback root 的非空 `innerHTML` 阻断和 inventory 基线形成有效 RED；实现后 fallback stats、相邻 Dream owner、真实 controller 与 inventory 定向 4 个文件、49 项全部通过。
+- WebChat 全量 202 个文件、865 项通过；`corepack pnpm verify:webchat` 校验 384 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 locale 仅经 textContent 写入，四卡 order/class/value/replacement 与 null-state 判定保持；其他五个 stats 分支、audit-jump listener、Dream detail、dedup list、Memory/Experience detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S080 / 43 sink / 22 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S081 收口规划：Memory Viewer outbound thread stats DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S080 后剩余五个 stats 分支中，`outboundAuditFocus="threads"` 的八卡统计是唯一只消费既有 `buildEmailThreadOrganizerStats()` 结果、固定 locale label 和格式化 count 的单 sink；无可选结构、data selector、动态 action 或 listener，数据聚合已有独立 fixture。其余 outbound-all/shared-review/memories/tasks stats 继续保持独立 `split_task`。
+- **完成边界**：只把 outbound thread stats 的八张 card/span/strong 创建、class、textContent 与 `replaceChildren()` 提交迁入新增 `memory-viewer-outbound-thread-stats-view.js` DOM/textContent owner。`memory-viewer.js` 保留 focus/tab 判定、organizer stats 聚合、label/value 投影、其他 stats 分支、audit-jump listener、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 42 sink / 21 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增单一 jsdom owner fixture，使缺少模块形成 RED；GREEN 后再在真实 controller 增加 outbound threads root 的非空 `innerHTML` 阻断 fixture，固定恶意-looking label/value 只进入 text node。覆盖八卡固定顺序/class/count、replacement、缺失 root no-op、真实 `renderMemoryViewerStats({})` threads 分支与 production wiring；AST inventory 固定 14 个 sink 文件、42/21/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 outbound-all/shared-review/memories/tasks stats、audit-jump listener、organizer 数据聚合、outbound list/detail/action、Dream detail、dedup list、Memory/Experience 大模板、其余 21 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 feature 通用 stats framework。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是八卡 label/value/order/class、replacement 或 focus 分支漂移。单一 root、既有 organizer stats fixture、独立 parser/text/order/replacement/no-op/wiring fixture 与真实 controller 回归形成窄回滚边界；回滚只恢复 thread-stats owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 outbound thread stats sink、parser/text/order/replacement/no-op/wiring fixture、organizer/controller 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S081；其他 stats/detail/list 分支继续按独立 `split_task` 处理，新增发现按 `fix_now`、`defer`、`split_task` 或 `record_only` 裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S081 实现结论：Memory Viewer outbound thread stats DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-outbound-thread-stats-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 outbound thread organizer 八卡的相邻 DOM/textContent owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交固定 label/value 顺序。
+   - controller 继续持有 focus/tab 判定、`buildEmailThreadOrganizerStats()` 聚合、label/value 投影、其他 stats 分支、audit-jump listener、RPC 与 lifecycle；超过 3000 行的主文件只保留装配和转发。
+
+2. **owner 与真实 controller fixture 扩展**：
+   - 独立 fixture 阻断 stats root 的非空 `innerHTML`，覆盖恶意-looking label/value、八卡 class/order/count、replacement 与缺失 root no-op。
+   - 真实 controller fixture 固定 `outboundAudit/threads` 分支使用 owner，既有 organizer stats fixture继续验证八类计数聚合。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 20 降为 19；全局 inventory 从 43 sink / 22 structured 收敛为 42 sink / 21 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 outbound thread stats owner，并明确 controller 继续持有统计聚合和其他分支。
+
+4. **效果**：
+   - outbound thread 统计 label/value 只能成为 text node，不能生成攻击节点。
+   - 八卡顺序、class、聚合计数、替换语义与 focus 分支保持兼容，其他 stats 可观察行为不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S081 先由缺少 owner 模块形成首个 RED；随后真实 controller fixture 以非空 `innerHTML` 阻断形成 1 项失败、40 项通过，inventory 再精确报告 `20 -> 19` 与新 digest；最终 owner、organizer、真实 controller 与 inventory 定向 4 个文件、49 项全部通过。
+- WebChat 全量 203 个文件、868 项通过；扩大到 `apps/web/public` 的 205 个文件、873 项也通过；`corepack pnpm verify:webchat` 校验 386 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 label/value 仅经 textContent 写入，八卡 order/class/count/replacement 与 threads focus 判定保持；outbound-all/shared-review/memories/tasks stats、audit-jump listener、list/detail/action 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S081 / 42 sink / 21 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S082 收口规划：Memory Viewer outbound audit stats DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S081 后同一 outbound-audit 分支剩余的非 threads 六卡统计是单一独立 sink，只消费当前 items 的 sent/failed/inbound status 计数与固定 locale label，无可选结构、selector、action 或 listener；与已闭合 threads 分支由 focus 条件隔离，可单独失败和回滚。
+- **完成边界**：只把 outbound-all 六张 card/span/strong 创建、class、textContent 与 `replaceChildren()` 提交迁入新增 `memory-viewer-outbound-audit-stats-view.js` DOM/textContent owner。`memory-viewer.js` 保留 focus/tab 判定、五类计数、label/value 投影、threads/shared-review/memories/tasks stats、audit-jump listener、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 41 sink / 20 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增单一 jsdom owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller 增加 outbound-all root 的非空 `innerHTML` 阻断 fixture，覆盖恶意-looking label/value、六卡固定顺序/class/count、replacement、缺失 root no-op 与 focus 分支隔离；AST inventory 固定 14 个 sink 文件、41/20/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 threads/shared-review/memories/tasks stats、audit-jump listener、outbound list/detail/action、Dream detail、dedup list、Memory/Experience 大模板、其余 20 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不合并或重命名 S081 owner。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是六卡 label/value/order/class、五类过滤计数、replacement 或 focus 分支漂移。单一 root、独立 parser/text/order/replacement/no-op/wiring fixture 与真实 controller 回归形成窄回滚边界；回滚只恢复 outbound-audit stats owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 outbound-all stats sink、parser/text/order/replacement/no-op/wiring fixture、controller 回归、inventory、WebChat/security/build/entrypoint/diff Gate 全部闭合后立即停止 S082；shared-review/memories/tasks stats 与其他 detail/list 分支继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S082 实现结论：Memory Viewer outbound audit stats DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-outbound-audit-stats-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 outbound audit 总览六卡的相邻 DOM/textContent owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交固定 label/value 顺序。
+   - controller 继续持有 focus/tab 判定、sent/failed/inbound 三态五类计数、label/value 投影、threads 与其他 stats 分支、RPC 和 lifecycle；超过 3000 行的主文件只保留装配和转发。
+
+2. **owner 与真实 controller fixture 扩展**：
+   - 独立 fixture 阻断 stats root 的非空 `innerHTML`，覆盖恶意-looking label/value、六卡 class/order/count、replacement 与缺失 root no-op。
+   - 真实 controller fixture 固定 `outboundAudit/all` 的外发 sent/failed 与入站 processed/failed/duplicate 五类过滤计数，并确认与 threads focus 隔离。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 19 降为 18；全局 inventory 从 42 sink / 21 structured 收敛为 41 sink / 20 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 outbound audit stats owner，并明确 controller 继续持有五类计数和其他分支。
+
+4. **效果**：
+   - outbound audit 统计 label/value 只能成为 text node，不能生成攻击节点。
+   - 六卡顺序、class、过滤计数、替换语义与 focus 分支保持兼容，threads 和其他 stats 可观察行为不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S082 先由缺少 owner 模块形成首个 RED；随后真实 controller fixture 以非空 `innerHTML` 阻断形成 1 项失败、41 项通过，inventory 再精确报告 `19 -> 18` 与新 digest；最终 outbound audit/thread owner、真实 controller 与 inventory 定向 4 个文件、49 项全部通过。
+- WebChat 全量 204 个文件、871 项通过；`corepack pnpm verify:webchat` 校验 388 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 label/value 仅经 textContent 写入，六卡 order/class/count/replacement 与 all/threads focus 隔离保持；shared-review/memories/tasks stats、audit-jump listener、list/detail/action 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S082 / 41 sink / 20 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S083 收口规划：Memory Viewer shared-review stats DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S082 后剩余 stats 中 shared-review 九卡是单一独立 sink，结构固定且无 selector、action 或 listener；只消费既有 summary、前三项 Agent/reviewer 文本、timeout caption 和 completed count。相较 memories/tasks 分支，它不含可选诊断 HTML、外部 distribution fragment 或 audit-jump listener，是当前最小闭环。
+- **完成边界**：只把 shared-review 九张 card/span/strong、单一固定 caption、compact value class、textContent 与 `replaceChildren()` 提交迁入新增 `memory-viewer-shared-review-stats-view.js` owner。`memory-viewer.js` 保留 tab/null 判定、Agent/reviewer summary、duration/completed count 投影、memories/tasks stats、filter/batch/list/detail、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 40 sink / 19 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增单一 jsdom owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller 增加 shared-review stats root 的非空 `innerHTML` 阻断 fixture，覆盖恶意-looking label/value/caption、九卡固定顺序/class/count、三项 compact value、caption、replacement 与缺失 root no-op；AST inventory 固定 14 个 sink 文件、40/19/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 memories/tasks stats、audit-jump listener、shared-review filter/batch/list/detail/action、Dream detail、dedup list、Memory/Experience 大模板、其余 19 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不合并前两个 outbound stats owner。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是九卡顺序、compact class、timeout caption、前三项聚合或 completed count 漂移。单一 root、独立 parser/text/order/class/caption/replacement/no-op/wiring fixture 与真实 controller 回归形成窄回滚边界。
+- **停止条件**：单一 shared-review stats sink、全部 owner/wiring fixture、controller 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S083；memories/tasks stats 与其他 detail/list 分支继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S083 实现结论：Memory Viewer shared-review stats DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-shared-review-stats-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 shared-review 九卡的相邻 DOM/textContent/class owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交固定 card/value 顺序、三项 compact value 与 timeout caption。
+   - controller 继续持有 tab/null 判定、Agent/reviewer summary、duration/completed count 投影、memories/tasks stats、RPC 与 lifecycle；超过 3000 行的主文件只保留 view model 投影、装配和转发。
+
+2. **`memory-viewer-shared-review-stats-view.test.js` 新建，真实 controller 回归扩展**：
+   - 独立 fixture 阻断 stats root 的非空 `innerHTML`，覆盖恶意-looking label/value/caption、九卡 class/order、compact value、caption、replacement 与缺失 root no-op。
+   - 真实 shared-review controller fixture 固定九卡聚合、前三项 Agent/reviewer summary、timeout caption 与 completed count，并确认恶意正文只能进入 text node。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 18 降为 17；全局 inventory 从 41 sink / 20 structured 收敛为 40 sink / 19 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 shared-review stats owner，并明确 controller 继续持有 summary 与 count 投影。
+
+4. **效果**：
+   - shared-review 统计 label/value/caption 只能成为 text node，不能生成攻击节点。
+   - 九卡顺序、compact class、前三项聚合、timeout caption、completed count 与替换语义保持兼容，memories/tasks stats 可观察行为不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S083 先由缺少 owner 模块形成首个 RED；随后真实 controller fixture 以非空 `innerHTML` 阻断形成 1 项失败、42 项通过，inventory 再精确报告 `18 -> 17` 与新 digest；最终 shared-review owner、真实 controller与 inventory 定向 3 个文件、48 项全部通过。
+- WebChat 全量 205 个文件、874 项通过；`corepack pnpm verify:webchat` 校验 390 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 label/value/caption 仅经 textContent 写入，九卡 order/class/caption/replacement 与前三项/完成数投影保持；memories/tasks stats、audit-jump listener、filter/batch/list/detail/action 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S083 / 40 sink / 19 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S084 收口规划：Memory Viewer task stats DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S083 后剩余 stats 中 tasks 分支是单一独立 sink，只消费当前 task 数量、query strategy、已用 method/skill 数量、最后使用时间与可选 Goal filter；`bindStatsAuditJumpLinks()` 可在 owner 提交后继续由 controller 调用。memories stats 仍依赖 `renderMemoryEvaluationStats()` 与 `renderMemoryCategoryDistribution()` 两个 HTML producer，继续保持独立 `split_task`。
+- **行为验收**：Given task stats root 阻断非空 `innerHTML` 且 label/value/caption 含恶意-looking 文本，When controller 渲染无 Goal 或有 Goal 的 task stats，Then 五张固定卡与可选 Goal 卡按原顺序/class/caption 提交，文本不能生成攻击节点，旧卡被替换，并继续调用既有 audit-jump binding。
+- **完成边界**：只把 task stats 的五张固定 card/span/strong、query strategy caption 与可选 Goal card/caption 的创建、class、textContent 和 `replaceChildren()` 提交迁入新增 `memory-viewer-task-stats-view.js` owner。`memory-viewer.js` 保留 selectedTask/queryView/Goal view model 投影、`bindStatsAuditJumpLinks()`、memories stats、list/detail、RPC、CSS/locale 与 lifecycle。完成后 inventory 应为 39 sink / 18 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增单一 jsdom owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller 增加 task stats root 的非空 `innerHTML` 阻断 fixture，覆盖五卡、可选 Goal 卡、两项 compact value、两个 caption、恶意-looking text、replacement、缺失 root no-op 与 audit-jump listener 保留；AST inventory 固定 14 个 sink 文件、39/18/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 memories stats、`renderMemoryEvaluationStats()`、`renderMemoryCategoryDistribution()`、audit-jump listener、task list/detail/action、Dream detail、dedup list、Memory/Experience 其他大模板、其余 18 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立通用 stats framework。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是可选 Goal 卡条件、固定顺序、compact class、query/Goal caption、时间/数量投影或 listener 时序漂移。独立 owner fixture、真实 controller root 阻断、既有 listener 回归与 inventory 形成窄回滚边界；回滚只恢复 task-stats owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 task stats sink、owner/wiring/listener fixture、controller 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S084；memories stats 和其他 detail/list 分支继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S084 实现结论：Memory Viewer task stats DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-task-stats-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 task 五张固定统计卡与可选 Goal 卡的相邻 DOM/textContent/class owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交固定顺序、compact value 与 query/Goal caption。
+   - controller 继续持有 selectedTask/queryView/Goal view model 投影与 `bindStatsAuditJumpLinks()`；超过 3000 行的主文件只增加 owner 装配和转发。
+
+2. **`memory-viewer-task-stats-view.test.js` 新建，真实 controller 回归扩展**：
+   - 独立 fixture 阻断 stats root 的非空 `innerHTML`，覆盖恶意-looking label/value/caption、五张固定卡、可选 Goal 卡、compact class、replacement 与缺失 root no-op。
+   - 真实 tasks controller fixture 固定 query/usage/time/Goal 投影，并确认 owner 提交后 audit-jump binding 仍由 controller 调用一次。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 17 降为 16；全局 inventory 从 40 sink / 19 structured 收敛为 39 sink / 18 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 task stats owner，并明确 controller 继续持有 view model 与 listener。
+
+4. **效果**：
+   - task stats 的 label/value/caption 只能成为 text node，不能生成攻击节点。
+   - 五张固定卡、可选 Goal 卡、compact class、两个 caption、替换语义与 audit-jump listener 时序保持兼容；memories stats 行为不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S084 先由缺少 owner 模块形成首个 RED；真实 controller fixture 随后以非空 `innerHTML` 阻断形成 1 项失败、43 项通过，inventory 再精确报告 `17 -> 16` 与新 digest；最终 task owner、真实 controller 与 inventory 定向 3 个文件、49 项全部通过。
+- WebChat 全量 208 个文件、882 项通过；`corepack pnpm verify:webchat` 校验 392 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 首轮并行执行三个带 `build:web-assets` 前置的 Gate 时，Chromium fixture 报 `Navigating frame was detached`；无残留进程后按隔离顺序重跑 `verify:webchat`、security 与 build 全部通过，裁决为并发生成/浏览器干扰并按 `record_only` 保留，不修改生产逻辑。
+- 轻量对抗性 Review 确认恶意 label/value/caption 仅经 textContent 写入，Goal 条件、order/class/caption/replacement 与 listener 时序保持；memories stats、两个 HTML producer、task list/detail/action 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S084 / 39 sink / 18 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S085 收口规划：Memory Viewer dedup list DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S084 后 dedup modal list 是同一 root 的五个互斥 structured sink，只承担 loading、apply result rows、preview report rows、empty 与 idle 展示，无 selector、action 或 listener；summary/warning owner 与 dedup action lifecycle 已独立闭合，适合作为当前低耦合 `split_task`。
+- **行为验收**：Given dedup list root 阻断非空 `innerHTML` 且 title/meta/snippet/empty 文案含恶意-looking 文本，When controller 渲染 loading、result、report、empty 或 idle 状态，Then对应 empty 或 row 结构按原 class/order 提交，文本不能生成攻击节点，前一状态节点被完整替换。
+- **完成边界**：只把 dedup list 的 empty div 与 result/report row/main/title/meta/span/snippet 创建、class、textContent 和 `replaceChildren()` 提交迁入新增 `memory-viewer-dedup-list-view.js` owner。`memory-viewer.js` 保留 modal state 分支、result/report 数据与格式化投影、summary/warning owner、submit controls、RPC/action lifecycle。完成后 inventory 应为 34 sink / 13 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增单一 jsdom owner fixture，使缺少模块形成 RED；GREEN 后在真实 dedup modal root 增加非空 `innerHTML` 阻断 fixture，覆盖 loading/result/report/empty/idle、row class/order/meta/snippet、恶意-looking text、replacement 与缺失 root no-op；AST inventory 固定 14 个 sink 文件、34/13/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 dedup summary/warning、dedup RPC/action lifecycle、tasks/memories/shared-review/outbound 四类主列表、memories stats、Dream detail、Memory/Experience detail 大模板、其余 13 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨 feature 通用 list renderer。
+- **风险、工作量与回滚**：风险等级低到中、工作量 S-M；主要失败模式是 result/report 行语义混淆、meta 顺序/class、empty 状态选择或 replacement 漂移。单一 root、五态 owner/controller fixture、既有 preview/apply action 回归与 inventory 构成窄回滚边界；回滚只恢复 dedup-list owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：同一 dedup list root 的五个互斥 sink、owner/wiring fixture、既有 preview/apply 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S085；其他列表/stats/detail 与全局 policy 继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S085 实现结论：Memory Viewer dedup list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-dedup-list-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 dedup modal loading/result/report/empty/idle list 的相邻 DOM/textContent owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交 empty state 或 row/main/title/meta/snippet。
+   - controller 继续持有五态选择、result/report 格式化与 row view model、summary/warning owner、submit controls 和 dedup action lifecycle；超过 3000 行的主文件只增加 owner 装配与投影。
+
+2. **`memory-viewer-dedup-list-view.test.js` 新建，真实 controller 回归扩展**：
+   - 独立 fixture 阻断 list root 的非空 `innerHTML`，覆盖恶意-looking title/meta/snippet/empty、row class/order、replacement 与缺失 root no-op。
+   - 真实 controller fixture 覆盖 loading/empty，既有 preview/apply 集成 fixture 阻断同一 root 并实际经过 idle/loading/report/result replacement。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 16 降为 11；全局 inventory 从 39 sink / 18 structured 收敛为 34 sink / 13 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - 项目地图登记 dedup list owner，并明确 controller 继续持有状态/view model/action lifecycle。
+
+4. **效果**：
+   - dedup list 的 empty/title/meta/snippet 只能成为 text node，不能生成攻击节点。
+   - loading/result/report/empty/idle 状态、result/report 行语义、meta 顺序、class 与 replacement 保持兼容，preview/apply action 行为不变。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S085 先由缺少 owner 模块形成首个 RED；真实 controller fixture 随后以非空 `innerHTML` 阻断形成 1 项失败、44 项通过，inventory 再精确报告 `16 -> 11` 与新 digest；最终 dedup list owner、真实 controller 与 inventory 定向 3 个文件、50 项全部通过。
+- WebChat 全量 209 个文件、885 项通过；`corepack pnpm verify:webchat` 校验 394 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 empty/title/meta/snippet 仅经 textContent 写入，五态选择、row/meta order/class/replacement 保持；summary/warning、dedup RPC/action、四类主列表、memories stats、Dream detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S085 / 34 sink / 13 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S086 收口规划：Memory Viewer Dream history detail empty DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S085 后 Dream history detail 的 loading/error/no-card 分支是单一独立 sink，只消费既有 `panelView.detail.emptyText`，无 selector、action、listener 或外部 HTML producer；full detail 模板含 action selector 与多卡结构，继续保持独立 `split_task`。task/memory/shared-review/outbound 主列表依赖共享 pagination HTML producer，不进入本切片。
+- **行为验收**：Given Dream history detail root 阻断非空 `innerHTML` 且 emptyText 含恶意-looking 文本，When controller 渲染 loading、error 或无 card 状态，Then 只创建一个 `.memory-viewer-empty` text node，不能生成攻击节点，旧 full/empty 内容被替换；full detail 分支保持原边界。
+- **完成边界**：只把 Dream history detail empty div 的创建、class、textContent 与 `replaceChildren()` 提交迁入新增 `memory-viewer-dream-history-detail-empty-view.js` owner。`memory-viewer.js` 保留 empty 条件、panel view model、full detail HTML、action selectors、modal-controls delegation、RPC 与 lifecycle。完成后 inventory 应为 33 sink / 12 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增单一 jsdom owner fixture，使缺少模块形成 RED；GREEN 后在真实 Dream modal empty root 增加非空 `innerHTML` 阻断 fixture，覆盖 malicious text、class、replacement、缺失 root no-op 与 loading/error/no-card 条件；静态断言 full detail sink仍存在且未迁移；AST inventory 固定 14 个 sink 文件、33/12/0 与新 digest；WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 Dream history full detail、cards/actions/delegated listener、dedup、四类主列表/shared pagination、memories stats、Memory/Experience 其他 detail 大模板、其余 12 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key。
+- **风险、工作量与回滚**：风险等级低、工作量 S；主要失败模式是 loading/error/no-card 条件、empty class 或 replacement 漂移。单一 root、owner 与真实 modal fixture、full sink 静态边界及 inventory 构成窄回滚边界；回滚只恢复 Dream detail empty owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 Dream history detail empty sink、owner/wiring fixture、既有 Dream modal/lifecycle 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S086；full detail、主列表/stats 与全局 policy 继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S086 实现结论：Memory Viewer Dream history detail empty DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-dream-history-detail-empty-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 Dream history detail loading/error/no-card empty state 的相邻 DOM/textContent owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 提交单一 `.memory-viewer-empty` 节点。
+   - controller 继续持有三态条件、panel view model、full detail 模板、action selector、modal delegation、RPC 与 lifecycle；超过 3000 行的主文件只增加 owner import、装配与转发。
+
+2. **`memory-viewer-dream-history-detail-empty-view.test.js` 新建，`memory-viewer-dream-modal.test.js` 扩展**：
+   - 独立 fixture 阻断 root 的非空 `innerHTML`，覆盖恶意-looking 文本、class、旧节点 replacement 与缺失 root no-op，并静态固定 full detail 唯一 sink/action selector 仍留在 controller。
+   - 真实 modal fixture 先以非空 `innerHTML` 阻断形成 RED，随后覆盖 loading/error/no-card 三态，确认恶意-looking locale/error 只成为 text node。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 11 降为 10；全局 inventory 从 34 sink / 13 structured 收敛为 33 sink / 12 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - memory-viewer digest 更新为 `995732618358d13db49bb20b968cd88c848814b6c7d5c10029b7e20b9406d1c5`，项目地图登记 detail empty owner 与 full/action/lifecycle 保留边界。
+
+4. **效果**：
+   - Dream detail 的加载、错误和未选择提示不再进入 HTML parser，旧 full/empty 内容会被完整替换。
+   - full detail 卡片、正文、approve/reject/apply selector、delegated action 与 Dream 请求生命周期保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S086 先由缺少 owner 模块形成首个 RED；真实 controller fixture 再形成 1 项失败、2 项通过，inventory 精确报告 `11 -> 10` 与新 digest；最终 owner、真实 modal 与 inventory 定向 3 个文件、10 项通过，Dream owner/lifecycle/action 扩大回归 9 个文件、66 项通过。
+- WebChat 全量 210 个文件、890 项通过；`corepack pnpm verify:webchat` 校验 396 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 emptyText 仅经 textContent 写入，loading/error/no-card 条件、class/replacement 保持；full detail/action delegation、四类主列表/shared pagination、memories stats、其他 detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S086 / 33 sink / 12 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/class owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S087 收口规划：Memory Viewer Dream history full detail DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S086 后 Dream history full detail 是单一 root 的单一 structured sink，消费既有 `panelView.detail` 与本地化 action/reason/content label，无共享 pagination 或外部 HTML producer；既有 modal-controls 已独立持有 action delegation。相比依赖共享 pagination footer 的四类主列表、依赖两个 HTML producer 的 memories stats 以及其他完整 detail 模板，它具备更明确的 owner 与回滚边界。
+- **行为验收**：Given Dream history detail root 阻断非空 `innerHTML` 且 title/summary/card/reason/content/action label 含恶意-looking 文本，When controller 渲染带卡片、可选 summary/reason、正文或无正文提示及 approve/reject/apply action 的 full detail，Then shell/header/grid/card/action/content 结构、class/order 与受控 data action 保持，动态文本不能生成攻击节点，既有 delegated action 仍收到相同命令。
+- **完成边界**：只把 full detail shell、header/title/summary、card grid、可选 action bar、可选 reason card与 content card/pre/text 的 DOM 创建、class、textContent、受控 `data-dream-consolidation-action` 和 `replaceChildren()` 提交迁入新增 `memory-viewer-dream-history-detail-view.js` owner。`memory-viewer.js` 保留 empty/full 条件、panel view model、本地化 label 投影、modal-controls delegation、review/apply RPC 与 lifecycle；既有 empty owner 保持独立。完成后 inventory 应为 32 sink / 11 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom full-detail owner fixture，使缺少模块形成 RED；GREEN 后在真实 Dream modal full root 阻断非空 `innerHTML`，覆盖恶意文本、cards/order/class、summary/reason/action 可选分支、正文 `pre` 与无正文 text、replacement、缺失 root no-op及 delegated approve/reject/apply selector；静态断言 `renderDreamHistoryPanel()` 不再写 detail root HTML 且 empty/full owner 分支均存在；AST inventory 固定 14 个 sink 文件、32/11/0 与新 digest；Dream 扩大回归、WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不合并 empty/full owner，不迁移 Dream panel view model、modal-controls listener、consolidation review/apply action、RPC/lifecycle、四类主列表/shared pagination、memories stats、Memory/Experience 其他 detail 大模板、其余 11 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是 card/order/class、summary/reason/action 可选分支、正文 `pre` 与 no-content text、受控 action attribute 或 delegated listener 语义漂移。单一 root、独立 full owner/parser fixture、真实 modal action 回归与 inventory 构成窄回滚边界；回滚只恢复 full-detail owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 Dream history full detail sink、owner/wiring/delegated-action fixture、既有 Dream lifecycle/action 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S087；四类主列表/stats/其他 detail 与全局 policy 继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/受控 attribute owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S087 实现结论：Memory Viewer Dream history full detail DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-dream-history-detail-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 Dream history full detail 的相邻 DOM/textContent/受控 attribute owner，创建 shell、header/title/summary、card grid、可选 action/reason 与 content pre/text，并以 `replaceChildren()` 提交。
+   - controller 只保留 empty/full 条件、`panelView.detail` 与本地化 label 投影；超过 3000 行的主文件删除 full HTML 模板，只增加 owner import、装配与转发。
+
+2. **full/empty owner 与真实 modal fixture 扩展**：
+   - `memory-viewer-dream-history-detail-view.test.js` 先由缺少模块形成 RED，再逐轮覆盖核心 shell/cards/content、optional summary/actions/reason/no-content、恶意-looking 文本、class/order、replacement、missing-root 与 production wiring。
+   - `memory-viewer-dream-modal.test.js` 在真实 root 阻断非空 `innerHTML`，并实际点击 approve 按钮，确认既有 delegated listener 继续发出 `dream.consolidation.review`。
+   - S086 empty owner 与 S080 list owner 的静态边界同步为 empty/full 两个相邻 owner 并存；S080 旧断言首次扩大回归失败后按 `fix_now` 更新，不修改生产行为。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` 的结构化 sink 从 10 降为 9；全局 inventory 从 33 sink / 12 structured 收敛为 32 sink / 11 structured / 0 static，其中 clear 保持 19，sink 文件保持 14 个。
+   - memory-viewer digest 更新为 `b02dcd04ff788475f37e7aa373bb59074779cdd631531d8698a3aab4919d4198`，项目地图登记 full detail owner 及 controller/action/lifecycle 边界。
+
+4. **效果**：
+   - Dream full detail 的 title、summary、card、reason、content 与 action label 不再进入 HTML parser，action attribute 只取固定的 approve/reject/apply 值。
+   - loading/error/no-card 与 full detail replacement、approve delegated review、Dream 请求/action lifecycle 保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S087 依次形成缺少 owner 模块、optional 分支、真实 controller 与 inventory RED；最终 full/empty owner、真实 modal 与 inventory 定向 4 个文件、14 项通过。Dream 扩大回归首轮 69 项通过、1 条 S080 旧边界断言失败，按阶段事实更新后 10 个文件、70 项全部通过。
+- WebChat 全量 211 个文件、894 项通过；`corepack pnpm verify:webchat` 校验 398 个文件，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认恶意 title/summary/cards/reason/content/action label 仅经 textContent 写入，固定 action attribute、class/order、pre/no-content 与 replacement 保持；另外三类主列表/shared pagination、memories stats、其他 detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S087 / 32 sink / 11 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/受控 attribute owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S088 收口规划：Memory Viewer task list DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S087 后 task list 是单一 root 的单一 structured sink，row 只包含受控 task id、title、status/source/Goal/date meta 与 snippet，既有 row click 和 pagination click 均为 controller 侧 delegation/bind。虽然同一 sink 拼接共享 pagination footer HTML producer，但本切片只把 task list 对 footer 的一次消费投影为 DOM view model，保留该 producer供 memory/shared-review/outbound 三个既定 `split_task` 使用，不跨越其边界；相比 memories stats 的两个外部 HTML producer和完整 detail 模板，task list 的失败 fixture、owner 与回滚边界更明确。
+- **行为验收**：Given task list root 阻断非空 `innerHTML` 且 task id/title/status/source/Goal/date/snippet 与 pagination 文案含恶意-looking 文本，When controller 渲染单页或多页 task 结果，Then row/title/meta/badge/snippet 与 pagination summary/prev/next 结构、class/order、selected/disabled 和受控 data attribute 保持，动态文本不生成攻击节点，row selection 与翻页后首项加载行为不变。
+- **完成边界**：只把 task row 与该 root 尾部 pagination footer 的 DOM 创建、class、textContent、受控 `data-task-id`/`data-memory-list-page-action`、disabled property 和 `replaceChildren()` 提交迁入新增 `memory-viewer-task-list-view.js` owner。`memory-viewer.js` 保留分页计算/页状态、本地化与 row view-model 投影、row click、`bindMemoryViewerPaginationControls()`、selected state 与 `loadTaskDetail()`；`renderMemoryViewerPaginationFooter()` 继续服务其余三个 list sink。完成后 inventory 应为 31 sink / 10 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom task-list owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller task root 阻断非空 `innerHTML`，覆盖恶意文本、row/meta/badge order、active、单页无 footer、多页 summary/button disabled、replacement、missing-root、row click 与 21 项 next-page 首项加载；静态断言 `renderTaskList()` 不再写 list root HTML，其他三个 list sink和共享 footer producer仍存在；AST inventory 固定 14 个 sink 文件、31/10/0 与新 digest；Memory Viewer/pagination 回归、WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 memory/shared-review/outbound 三类 list sink，不修改共享 pagination footer producer或分页状态算法，不迁移 stats、Dream、candidate/outbound/memory/Experience detail、其余 10 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨列表万能 row renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是 meta/badge 顺序、selected class、原始 task id attribute、pagination summary/disabled、row 与 page listener 选择或翻页首项加载漂移。单一 root、独立 owner/parser fixture、真实 21 项 pagination/selection 回归与 inventory 构成窄回滚边界；回滚只恢复 task-list owner 接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 task list sink、owner/wiring/selection/pagination fixture、既有 Memory Viewer 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S088；其余三个 list、stats/detail 与全局 policy 继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S088 实现结论：Memory Viewer task list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-task-list-view.js` 新建**：
+   - 新增 task row 与同一 root pagination footer 的相邻 DOM owner，以 `createElement()`、`textContent` 和 `replaceChildren()` 创建 title、meta、Goal badge、snippet、summary 与 prev/next controls。
+   - `data-task-id` 与 `data-memory-list-page-action` 仅通过受控 attribute 写入，active/Goal class 和 pagination disabled property 保持原结构与顺序。
+
+2. **`memory-viewer.js` 最小接入**：
+   - 超过 3000 行的 controller 只增加 owner import、实例化以及 row/pagination view-model 投影，删除 `renderTaskList()` 的 HTML sink。
+   - 分页计算/页状态、row click、active selection、`bindMemoryViewerPaginationControls()` 与 `loadTaskDetail()` 保持 controller owner；共享 HTML footer producer继续只服务 memory/shared-review/outbound 三个独立 `split_task`。
+
+3. **fixture、inventory 与项目地图同步**：
+   - `memory-viewer-task-list-view.test.js` 新增 3 项 owner/wiring 回归，覆盖恶意-looking task/meta/pagination 文本、受控 attribute/property、class/order、单页无 footer、replacement、missing-root 与其余三个 footer sink 保留边界。
+   - `memory-viewer-pagination.test.js` 新增真实 task controller 回归，阻断 root 的非空 `innerHTML`，覆盖 21 项分页、row click、active state 与 next-page 首项 `task-21` detail loading。
+   - `memory-viewer.js` structured sink 从 9 降为 8；全局 inventory 从 32 sink / 11 structured 收敛为 31 sink / 10 structured / 0 static，clear 保持 19、sink 文件保持 14 个，digest 更新为 `52ec199620b80e6934e7a05161fb59b7af36daee7a4bfea6f49c39e59ea41b34`；`docs/project-map.md` 已登记 owner 边界。
+
+4. **效果**：
+   - task id/title/status/source/Goal/date/snippet 与 pagination 文案不再进入 HTML parser，恶意-looking 文本不会生成攻击节点。
+   - task row selection、single/multi-page 结构、prev/next disabled 状态与翻页后首项 detail loading 保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S088 依次形成缺少 owner 模块、真实 controller root 阻断与 inventory RED；最终 owner/controller/inventory 定向 3 个文件、8 项通过，Memory Viewer 扩大回归 35 个文件、124 项全部通过。
+- WebChat 全量 212 个文件、898 项通过；`corepack pnpm verify:webchat` 校验 400 个文件与 48 个 manifest entries，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除既有 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认动态正文只经 `textContent`，task/page attribute、badge class和 disabled property 均由固定分支控制；raw task id、meta 顺序、active replacement 与 row/page listener 保持，memory/shared-review/outbound list、stats/detail 与全局 policy 未越界。静态 fixture 计数最初把 footer helper 声明误计为消费点，按 `fix_now` 收窄到三个真实消费表达式，未修改生产行为。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S088 / 31 sink / 10 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S089 收口规划：Memory Viewer memory list DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S088 后 memory list 是剩余三个 list sink 中耦合最低的一项：已有真实 21 项 pagination/selection 回归与 P16 diagnostics fixture，row 没有 shared-review checkbox/claim action，也没有 outbound email-thread 双分支。该 sink 同 root 前缀包含 Search Diagnostics card，并消费 source-view badge 与共享 pagination footer HTML producer；本切片把这些消费统一投影为一个 memory-list DOM view model，保留 producer 给其余 owner或后续独立迁移，不跨越 shared-review/outbound `split_task`。
+- **行为验收**：Given memory list root 阻断非空 `innerHTML`，且 diagnostics、memory id/title/type/source/visibility/source scope/category/score/snippet 与 pagination 文案包含恶意-looking 文本，When controller 渲染单页或多页 memories，Then diagnostics card、row/meta/badge/snippet 与 footer 的结构、class/order、active/disabled 和受控 data attribute 保持，动态文本不生成攻击节点，row selection 与翻页后首项 detail loading 不变。
+- **完成边界**：只把 `renderMemoryList()` 的可选 diagnostics card、memory row 与同 root pagination footer 的 DOM 创建和提交迁入新增 `memory-viewer-memory-list-view.js`。`memory-viewer.js` 只保留 diagnostics/row/pagination view-model 投影、分页状态、row/page listener、selection 与 `loadMemoryDetail()`；`renderSourceViewBadge()` 继续服务 shared-review/detail sink，`renderMemoryViewerPaginationFooter()` 继续服务 shared-review/outbound 两个 sink。完成后 inventory 应为 30 sink / 9 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom memory-list owner fixture，使缺少模块形成 RED；GREEN 后扩展真实 controller root 阻断，覆盖恶意 diagnostics/row 文本、四类 fixed/controlled badge、单页无 footer、多页 summary/disabled、replacement、missing-root、row click 与 21 项 next-page 首项加载；静态断言只移除 memory list sink并保留 shared-review/outbound 两个 footer消费；AST inventory 固定 14 个 sink 文件、30/9/0 与新 digest，Memory Viewer扩大回归、WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 shared-review/outbound list，不修改分页状态算法，不迁移 memories stats、candidate/outbound/memory/Experience detail、另外 9 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨列表万能 row renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是 diagnostics 与 row 相对顺序、visibility/source badge class、score 文案、raw memory id、active state、pagination disabled、row/page listener 和翻页首项加载漂移。单一 root、独立 owner/parser fixture、既有 P16 diagnostics 与 21 项 pagination 回归、inventory构成窄回滚边界；回滚只恢复 memory-list owner接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 memory list sink、diagnostics/row/footer owner、真实 selection/pagination fixture、既有 Memory Viewer回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S089；shared-review/outbound list、stats/detail 与全局 policy 继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S089 实现结论：Memory Viewer memory list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-memory-list-view.js` 新建**：
+   - 新增 Search Diagnostics card、memory row 与同一 root pagination footer 的相邻 DOM owner，以 `createElement()`、`textContent`、受控 attribute/property 和 `replaceChildren()` 提交。
+   - diagnostics badge、visibility/source/category badge 只接受 `badge/private/shared/hybrid` 固定 kind 白名单；memory/page data attribute 和 disabled property 均由 owner 的固定分支创建。
+
+2. **`memory-viewer.js` 最小接入**：
+   - 将 `renderMemorySearchDiagnosticsSummary()` HTML producer改为纯 `buildMemorySearchDiagnosticsSummaryView()` 投影，`renderMemoryList()` 只组装 diagnostics、row/meta/badge 与 pagination view model。
+   - 超过 3000 行的 controller 删除 memory list HTML sink，保留分页状态、row/page listener、selection 与 `loadMemoryDetail()`；`renderSourceViewBadge()` 继续服务 shared-review/detail，shared footer producer继续服务 shared-review/outbound 两个独立 sink。
+
+3. **fixture、inventory 与项目地图同步**：
+   - `memory-viewer-memory-list-view.test.js` 新增 3 项 owner/wiring 回归，覆盖恶意-looking diagnostics/row/footer 文本、受控 badge/attribute/property、顺序、optional section、replacement、missing-root 与后续 producer 保留边界。
+   - `memory-viewer-pagination.test.js` 的真实 21 项 memory fixture 增加 root HTML 阻断、恶意 diagnostics/row、visibility/source badge class、row click 与 next-page `mem-21` detail loading；S088 task-list 静态断言在扩大回归中按 `fix_now` 从三个 footer消费更新为当前两个，未修改生产逻辑。
+   - `memory-viewer.js` structured sink 从 8 降为 7；全局 inventory 从 31 sink / 10 structured 收敛为 30 sink / 9 structured / 0 static，clear 保持 19、sink 文件保持 14 个，digest 更新为 `934645d9ee5bd54600390fb6b742856ee94264ec2510d6f74f196a195d1a5ab6`；`docs/project-map.md` 已登记 owner 边界。
+
+4. **效果**：
+   - Search Diagnostics 的 title/badges/summary/source mix/top hits，以及 memory id/title/type/source/visibility/source scope/category/score/snippet 与 pagination 文案不再进入 HTML parser。
+   - diagnostics/row/footer 相对顺序、active state、visibility/source badge class、single/multi-page 结构、row selection 与翻页后首项 detail loading 保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S089 依次形成缺少 owner 模块、真实 controller root 阻断与 inventory RED；最终 owner/controller/P16/inventory 定向 4 个文件、53 项通过。Memory Viewer 扩大回归首轮 126 项通过、1 条 S088 旧 footer消费断言失败，按阶段事实更新后 36 个文件、127 项全部通过。
+- WebChat 全量 213 个文件、901 项通过；`corepack pnpm verify:webchat` 校验 402 个文件与 48 个 manifest entries，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除既有 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认动态正文只经 `textContent`，badge kind、memory/page attribute 和 disabled property 由固定白名单/分支控制；diagnostics/row/footer 顺序、raw memory id、active replacement、row/page listener 保持，shared-review/outbound list、stats/detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S089 / 30 sink / 9 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S090 收口规划：Memory Viewer outbound audit list DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S089 后 outbound audit list 与 shared-review list各占一个 structured sink；outbound 虽有 email-thread organizer 与普通 channel/email audit 两种 controller 投影，但最终结构统一为 id/active/title/三项 meta/snippet/footer，没有 checkbox、claim、batch selection 或额外 badge producer。现有 detail/thread 回归可保留 click 下钻边界，新增 26 项（25+1）pagination fixture即可形成独立失败证据，因此先于 shared-review、stats 与完整 detail。
+- **行为验收**：Given outbound audit list root 阻断非空 `innerHTML`，且 organizer 与普通 audit 的 id/title/date/sender/state/request/agent/preview 及 pagination 文案含恶意-looking 文本，When controller 渲染单页或多页结果，Then两类 row 与 footer 的结构、class/order、active/disabled 和受控 data attribute保持，动态文本不生成攻击节点，row click 的 selected/detail 更新与翻页后首项 detail 渲染不变。
+- **完成边界**：只把 `renderExternalOutboundAuditList()` 的两类统一 row 与同 root pagination footer 的 DOM 创建、class、textContent、受控 `data-outbound-audit-id`/`data-memory-list-page-action`、disabled property 和 `replaceChildren()` 提交迁入新增 `memory-viewer-outbound-audit-list-view.js`。`memory-viewer.js` 保留 absolute index/id 与两类 row view-model 投影、分页状态、row/page listener、selection 和 `renderExternalOutboundAuditDetail()`；共享 footer HTML producer继续只服务 shared-review sink。完成后 inventory 应为 29 sink / 8 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom outbound-list owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller root阻断非空 `innerHTML`，覆盖两类恶意 row、active、单页无 footer、多页 summary/disabled、replacement、missing-root、row click/detail 与 26 项（25+1）next-page 首项选择；静态断言 outbound sink 已移除而 shared-review/footer producer仍保留；AST inventory 固定 14 个 sink文件、29/8/0 与新 digest，Memory Viewer扩大回归、WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 shared-review list，不修改 outbound detail/email-thread action 或分页状态算法，不迁移 memories stats、candidate/memory/Experience detail、另外 8 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨列表万能 row renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是 organizer/普通 audit projection混淆、absolute index fallback id、meta 顺序、active state、pagination disabled、row click/detail 和翻页首项选择漂移。单一 root、独立 owner/parser fixture、两类 row 与 26 项（25+1）pagination/detail 回归、inventory构成窄回滚边界；回滚只恢复 outbound-list owner接线、fixture、inventory 与项目地图。
+- **停止条件**：单一 outbound audit list sink、两类 row/footer owner、真实 selection/pagination/detail fixture、既有 thread/detail 回归、inventory、WebChat/security/build/entrypoint/diff Gate 闭合后立即停止 S090；shared-review list、stats/detail 与全局 policy 继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner 是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S090 实现结论：Memory Viewer outbound audit list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-outbound-audit-list-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 email-thread organizer/普通 audit 统一 row 与 pagination footer 的相邻 DOM/textContent/受控 attribute/property owner，并以 `replaceChildren()` 提交。
+   - controller 只投影 id/active/title/三项 meta/snippet/pagination，保留 absolute index fallback id、row/page listener、selection 与完整 detail renderer。
+
+2. **owner 与真实 controller fixture 扩展**：
+   - owner fixture 覆盖两类恶意-looking row、footer、active/disabled、replacement、单页无 footer与 missing-root；真实 list root 阻断非空 `innerHTML`。
+   - 26 项（25+1）真实 pagination fixture 固定 organizer/普通 audit、安全文本、row click/detail、active replacement 与下一页首项选择；S088/S089 的 footer 消费事实同步为仅剩 shared-review 一处。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` structured sink 从 7 降为 6；全局 inventory 从 30 sink / 9 structured 收敛为 29 sink / 8 structured / 0 static，clear 保持 19、sink 文件保持 14 个。
+   - digest 更新为 `baa4e861175b3ce396a0e5ef79890b26f01d0e02f964cdfb28dcd1dfb8f31a75`；项目地图登记 outbound audit list owner 与 controller 边界。
+
+4. **效果**：
+   - organizer/普通 audit 的 id/title/date/sender/state/request/agent/preview 与 pagination 文案不再进入 HTML parser，只作为文本或受控 attribute/property 呈现。
+   - 两类 row 结构、meta 顺序、active state、single/multi-page footer、row click/detail 与翻页后首项 detail 渲染保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S090 依次形成缺少 owner 模块、真实 controller root 阻断与 inventory RED；最终 owner/controller/inventory及相邻 footer 事实定向 5 个文件、15 项通过，Memory Viewer扩大回归 37 个文件、131 项全部通过。
+- WebChat 全量 214 个文件、905 项通过；`corepack pnpm verify:webchat` 校验 404 个文件与 48 个 manifest entries，Chromium CSP/Trusted Types fixture 通过。
+- 轻量对抗性 Review 确认动态正文只经 `textContent`，audit/page attribute 与 disabled property 由固定分支控制；absolute index/raw id、meta 顺序、active replacement、row/page listener 与 detail 边界保持，shared-review list、stats/detail 与全局 policy 未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0 部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S090 / 29 sink / 8 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner 是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S091 收口规划：Memory Viewer shared-review list DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S090 后剩余 8 个 structured sink 中，shared-review list 是唯一非完整 detail 的单 list root；checkbox、claim/queue/source/category badge 与 batch selection 增加了交互耦合，但现有 target/claimed-by/batch owners、row/detail action和 pagination fixture 提供明确 owner 与回滚边界。其余 7 项均为 memories stats 或完整 candidate/task/outbound/memory/Experience detail，继续保持独立 `split_task`。
+- **行为验收**：Given shared-review list root 阻断非空 `innerHTML`，且 memory/target/status/claim/source/category/deadline/date/summary、checkbox value 与 pagination 文案含恶意-looking 文本，When controller 渲染 26 项（25+1）队列并执行 checkbox change、row click 与翻页，Then head/meta/badge/selector/footer 的结构、class/order、checked/active/disabled 和受控 data attribute保持，动态文本不生成攻击节点，batch selection、target-aware detail 与下一页首项选择不变。
+- **完成边界**：只把 `renderSharedReviewList()` 的 row head/checkbox/title、八类可选/固定 meta、snippet 与同 root pagination footer 的 DOM 创建、class、textContent、受控 data attribute/checked/disabled property和 `replaceChildren()` 提交迁入新增 `memory-viewer-shared-review-list-view.js`。`memory-viewer.js` 保留 claim/source/category/deadline view-model 投影、selected IDs、checkbox/row/page listener、batch bar、target-aware `loadMemoryDetail()` 与分页状态；迁移后删除已无消费的旧 pagination HTML producer。完成后 inventory 应为 28 sink / 7 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom shared-review list owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller root 阻断非空 `innerHTML`，覆盖恶意 row/meta/badge/checkbox/footer、active/checked、单页无 footer、replacement、missing-root、checkbox stopPropagation/change、batch selection、row click/target detail 与 26 项（25+1）next-page 首项选择；静态断言 shared-review sink和无消费 footer producer均移除，source-view producer继续只服务既有 detail边界；AST inventory 固定 14 个 sink文件、28/7/0 与新 digest，Memory Viewer扩大回归、WebChat 全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint 与 `git diff --check` 通过。
+- **不纳入范围**：不迁移 memories stats，不修改 shared-review filters/batch/claim/review RPC 或 detail模板，不迁移 candidate/task/outbound/memory/Experience完整 detail、另外 7 个 structured sink、全局 Trusted Types/CSP、CSS 或 locale key；不建立跨列表万能 row renderer。
+- **风险、工作量与回滚**：风险等级中高、工作量 M；主要失败模式是 checkbox click冒泡、checked/selection state、claim/queue/source badge class、可选 deadline顺序、target Agent attribute、row/detail listener、batch bar与翻页首项选择漂移。单一 root、独立 owner/parser fixture、现有 batch/filter/detail fixture、26 项 pagination回归与 inventory构成窄回滚边界；回滚只恢复 shared-review list owner接线、直接失效 producer、fixture、inventory与项目地图。
+- **停止条件**：单一 shared-review list sink、owner/wiring/checkbox/selection/pagination/detail fixture、既有 Memory Viewer回归、inventory、WebChat/security/build/entrypoint/diff Gate闭合后立即停止 S091；stats、完整 detail与全局 policy继续按独立 `split_task` 处理。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner是不可放宽的安全边界，不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S091 实现结论：Memory Viewer shared-review list DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-shared-review-list-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增 shared-review row/head/checkbox/meta/snippet 与 pagination footer 的相邻 DOM/textContent/受控 attribute/property owner，并以 `replaceChildren()` 提交。
+   - controller 只投影 claim/source/category/deadline 与 row/pagination view model，保留 selected IDs、checkbox/row/page listener、batch bar和 target-aware `loadMemoryDetail()`。
+   - shared-review 迁移后删除已无消费的 `renderMemoryViewerPaginationFooter()`；`renderSourceViewBadge()` 继续只服务两个完整 detail sink。
+
+2. **owner 与真实 controller fixture 扩展**：
+   - owner fixture 覆盖恶意-looking id/target/title/meta/snippet/footer、active/checked/disabled、replacement、无 footer 与 missing-root，固定 meta kind 白名单对应的 badge class。
+   - 真实 list root 阻断非空 `innerHTML`；26 项（25+1）pagination fixture 固定 checkbox click 不冒泡、change 更新 batch selection、row click 的 target-aware detail 与下一页首项选择。
+   - S088-S090 的旧 footer 消费断言同步为 legacy pagination producer 已移除，未扩大到 memories stats 或完整 detail。
+
+3. **`rich-content-sink-inventory.test.js` 与 `docs/project-map.md` 同步**：
+   - `memory-viewer.js` structured sink 从 6 降为 5；全局 inventory 从 29 sink / 8 structured 收敛为 28 sink / 7 structured / 0 static，clear 保持 19、sink 文件保持 14 个。
+   - digest 更新为 `f218787fa3905138e77a45646b15677fc2e22bb7d618dad2c8183799b48bf03f`；项目地图登记 shared-review list owner 与 controller 边界。
+
+4. **效果**：
+   - shared-review 的 memory/target/status/claim/source/category/deadline/date/summary 与 pagination 文案不再进入 HTML parser，只作为文本或受控 attribute/property 呈现。
+   - checkbox/head/meta/badge/snippet/footer 顺序、active/checked/disabled、batch selection、target-aware row detail 与翻页后首项选择保持兼容。
+   - 本切片达到既定单 sink 边界后停止，没有跨入 memories stats、完整 detail、RPC 或全局 Trusted Types/CSP。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S091 依次形成缺少 owner 模块、真实 controller root 阻断与 inventory RED；最终 owner/controller/inventory及相邻 footer 事实定向 7 个文件、22 项通过，Memory Viewer扩大回归 38 个文件、135 项全部通过。
+- WebChat 全量 215 个文件、909 项通过；`corepack pnpm verify:webchat` 校验 406 个文件与 48 个 manifest entries，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除既有 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认动态正文只经 `textContent`，meta kind 仅对 `badge/shared/hybrid/private` 白名单映射固定 class，`plain` 或未知值均不附加 class；memory/target/page attribute 与 checked/disabled property 由固定分支控制，checkbox、batch、row/page listener、target-aware detail 与完整 detail边界保持，stats、RPC和全局 policy未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S091 / 28 sink / 7 structured。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/受控 attribute/property owner是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+#### UI03-S092 收口规划：Memory Viewer memories stats DOM owner（2026-07-21）
+
+- **候选裁决**：`fix_now`。S091 后剩余 7 个 structured sink 中，memories stats 是唯一非完整 detail 的单一 root/sink；恢复审计确认它消费 controller 内 Memory Evaluation cards 与 `memory-detail-render.js` category distribution 两个 HTML producer，但不绑定 audit-jump listener，现有 stats/doctor/category fixture 可形成独立失败证据。其余 6 项均为 candidate/task/outbound/memory/Experience 完整 detail，继续保持独立 `split_task`。
+- **行为验收**：Given memories stats root 阻断非空 `innerHTML`，且 label、query/search/evaluation/governance/category 文案含恶意-looking 文本，When controller 渲染无搜索/评估、完整搜索/评估、空 category distribution 与非空 active category distribution，Then普通/compact/caption card、wide chart、row active/tone、bar width与原顺序保持，动态文本不生成攻击节点，stats/query/doctor/category view model 和 task stats listener边界不变。
+- **完成边界**：只把 `renderMemoryViewerStats()` memories 分支的普通 cards、三个可选 Search Diagnostics cards、四个可选 Memory Evaluation cards、category distribution wide card/rows/bar 与 `replaceChildren()` 提交迁入新增 `memory-viewer-memory-stats-view.js` DOM/textContent/受控 class/style owner。`memory-viewer.js` 只保留 stats/search/evaluation/governance/category view-model 投影；`memory-detail-render.js` 将 category distribution HTML producer收敛为纯 view-model provider；`app.js` 只更新装配转发。完成后 inventory 应为 27 sink / 6 structured / 0 static，clear 保持 19，sink 文件仍为 14 个。
+- **验收证据**：先新增独立 jsdom memory-stats owner fixture，使缺少模块形成 RED；GREEN 后在真实 controller stats root 阻断非空 `innerHTML`，覆盖恶意 cards、search/evaluation optional顺序、空/非空 distribution、active/tone/width、replacement与 missing-root；静态断言 memories sink、`renderMemoryEvaluationStats()` 与 category distribution HTML producer已移除，task/shared/outbound stats owner和 task audit-jump listener保持；AST inventory固定 14 个 sink文件、27/6/0与新 digest，Memory Viewer扩大回归、WebChat全量、`verify:webchat`、Chromium security、workspace build、全部 package entrypoint与`git diff --check`通过。
+- **不纳入范围**：不迁移 candidate/task/outbound/memory/Experience完整 detail，不修改 stats/doctor RPC、memory/search/filter状态、task audit-jump listener、其他 stats owner、CSS或locale key，不进入另外6个 structured sink、全局 Trusted Types/CSP或`unsafe-inline`清理；不建立跨 feature万能 stats renderer。
+- **风险、工作量与回滚**：风险等级中、工作量 M；主要失败模式是最多20张普通 card加1张wide distribution的顺序、compact/caption可选节点、空分布、active/tone class、百分比/最小宽度与翻译文本漂移，以及内部 provider重命名导致装配遗漏。单一 root、独立 owner/parser fixture、真实 controller stats回归、纯 view-model provider和inventory构成窄回滚边界；回滚只恢复 memory-stats owner接线、两个 producer、fixture、inventory与项目地图。
+- **停止条件**：单一 memories stats sink、owner/wiring/search/evaluation/distribution fixture、既有 stats/doctor/listener回归、inventory、WebChat/security/build/entrypoint/diff Gate闭合后立即停止 S092；六个完整 detail与全局 policy继续按独立`split_task`处理，新增发现按`fix_now`、`defer`、`split_task`或`record_only`裁决。
+- **配置边界**：本切片不新增限制、开关或可调设置；DOM/textContent/受控 class/style owner是不可放宽的安全边界，不提供环境变量，也不修改`.env.example`、发行模板或配置审计。
+
+#### UI03-S092 实现结论：Memory Viewer memories stats DOM owner（2026-07-21）
+
+##### 已完成内容
+
+1. **`memory-viewer-memory-stats-view.js` 新建，`memory-viewer.js` 接入**：
+   - 新增普通/compact/caption stat cards 与 category distribution wide card/rows/bar 的相邻 DOM/textContent/受控 class/style owner，并以 `replaceChildren()` 提交。
+   - 超过 3000 行的 controller 删除 memories stats HTML sink，只保留 query/search/evaluation/governance/category view-model 投影与 owner 装配；task/shared-review/outbound stats owner和 task audit-jump listener边界保持不变。
+   - `renderMemoryEvaluationStats()` 收敛为纯数据 `buildMemoryEvaluationStatCards()`，没有建立跨 feature 的万能 stats renderer。
+
+2. **`memory-detail-render.js` 与 `app.js` 最小接线**：
+   - category distribution 从 HTML producer 收敛为纯数据 `getMemoryCategoryDistributionViewModel()`，保留 category label、active state、tone、count、percent 与 width 投影。
+   - `app.js` 只更新对应 provider 转发；未迁移 candidate/task/outbound/memory/Experience 完整 detail，也未改变 stats/doctor RPC、search/filter 状态或 locale key。
+
+3. **fixture、inventory 与项目地图同步**：
+   - `memory-viewer-memory-stats-view.test.js` 新增 owner fixture，覆盖恶意-looking card/distribution 文本、compact/caption、active/tone/width、空分布、replacement 与 missing-root；真实 memories stats root 阻断非空 `innerHTML`。
+   - controller/provider fixture 固定 search/evaluation optional cards 顺序、category 空/非空分布和 task stats listener边界；旧 fallback fixture同步为 stats root 不再存在 HTML sink。
+   - `memory-viewer.js` structured sink 从 5 降为 4；全局 inventory 从 28 sink / 7 structured 收敛为 27 sink / 6 structured / 0 static，clear 保持 19、sink 文件保持 14 个，digest 更新为 `a900f30425b8c0d01c39a01f7b6c4a4bc779ddc842cfea534acfed8a93dc3a59`；`docs/project-map.md` 已登记 owner/provider 边界。
+
+4. **效果**：
+   - memories stats 的 label、query/search/evaluation/governance/category 文案不再进入 HTML parser，只作为文本或受控 class/style 呈现。
+   - 普通/compact/caption card、wide distribution、row active/tone、bar width 与原有顺序保持兼容。
+   - 本切片达到既定单 sink 边界后停止，没有跨入六个完整 detail、全局 Trusted Types/CSP 或 `unsafe-inline` 清理。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 与全部 workspace package entrypoint 通过。
+- S092 依次形成缺少 owner 模块、真实 memories stats root 阻断与 inventory RED；最终 owner/controller/provider/inventory及相邻边界定向 9 个文件、77 项通过，Memory Viewer 扩大回归 47 个文件、175 项全部通过。
+- WebChat 全量 216 个文件、913 项通过；`corepack pnpm verify:webchat` 校验 408 个文件与 48 个 manifest entries，Chromium CSP/Trusted Types fixture 通过，`git diff --check` 除既有 LF/CRLF 提示外未发现空白错误。
+- 轻量对抗性 Review 确认动态正文只经 `textContent`，category tone 只映射固定 class，bar width 被限制在 0%-100%；cards/distribution顺序、optional/empty state、task stats listener与完整 detail边界保持，stats/doctor RPC和全局 policy未越界。
+- 第 6 节及 8.1、8.2 已核对：P0.4 Gate、P0 数量和 `OPT-UI03` P0部分完成状态无变化；Wave 2 摘要、8.3、8.4、8.5 与第 8.6 节总体进度已同步为 S092 / 27 sink / 6 structured，阶段 A 已完成、阶段 B 仍进行中、阶段 C/D 仍未关闭。
+- 本切片未新增限制、开关或可调设置；DOM/textContent/受控 class/style owner是不可放宽的安全边界，因此不提供环境变量，也不修改 `.env.example`、发行模板或配置审计。
+
+**后续计划**：`UI03-S092` 已完成，现按用户要求暂停，不启动 `UI03-S093`。恢复推进时先刷新 production sink inventory，并对剩余 6 个 candidate/task/outbound/memory/Experience 完整 detail structured sink 重新裁决优先级；先重审而不预定具体 sink，是因为这些候选均有 action、listener或多分支完整 detail耦合，必须分别建立收口规划、失败 fixture与可回滚 owner边界。当前尚缺阶段 B 的 6 个 structured sink、阶段 C 的全局 Trusted Types/CSP与`unsafe-inline`清理，以及阶段 D 的最终跨 panel 行为和发行 Gate。

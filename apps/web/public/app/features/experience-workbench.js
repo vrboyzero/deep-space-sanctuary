@@ -1,13 +1,16 @@
 import { extractCandidateContextTargets } from "./memory-viewer.js";
 import { isCompactGovernanceDetailMode } from "./governance-detail-mode.js";
 import { createExperienceWorkbenchAssetLaneView } from "./experience-workbench-asset-lane-view.js";
+import { createExperienceWorkbenchCapabilityOverviewView } from "./experience-workbench-capability-overview-view.js";
 import { createExperienceWorkbenchCleanupFeature } from "./experience-workbench-cleanup.js";
 import { createExperienceWorkbenchEmptyStateFeature } from "./experience-workbench-empty-state.js";
 import { createExperienceWorkbenchListView } from "./experience-workbench-list-view.js";
 import { createExperienceWorkbenchSkillFreshnessFeature } from "./experience-workbench-skill-freshness.js";
 import { createExperienceWorkbenchStatsView } from "./experience-workbench-stats-view.js";
+import { createExperienceWorkbenchSynthesisListView } from "./experience-workbench-synthesis-list-view.js";
 import { createExperienceWorkbenchSynthesisSummaryView } from "./experience-workbench-synthesis-summary-view.js";
 import { createExperienceWorkbenchSynthesisSourcesFeature } from "./experience-workbench-synthesis-sources.js";
+import { createExperienceWorkbenchUsageOverviewView } from "./experience-workbench-usage-overview-view.js";
 import { createExperienceWorkbenchViewLifecycleFeature } from "./experience-workbench-view-lifecycle.js";
 
 const EXPERIENCE_CANDIDATE_PAGE_SIZE = 100;
@@ -180,7 +183,7 @@ export function createExperienceWorkbenchFeature({
   getSelectedAgentId,
   getSelectedAgentLabel,
   renderCandidateDetailPanel,
-  renderTaskUsageOverviewCard,
+  getTaskUsageOverviewViewModel,
   loadTaskUsageOverview,
   generateExperienceCandidate,
   openToolSettingsTab,
@@ -245,6 +248,9 @@ export function createExperienceWorkbenchFeature({
   const experienceWorkbenchListView = createExperienceWorkbenchListView({
     refs: { experienceWorkbenchListEl },
   });
+  const capabilityOverviewView = createExperienceWorkbenchCapabilityOverviewView();
+  const synthesisListView = createExperienceWorkbenchSynthesisListView();
+  const usageOverviewView = createExperienceWorkbenchUsageOverviewView();
   const synthesisSummaryView = createExperienceWorkbenchSynthesisSummaryView({
     refs: { experienceSynthesisModalSummaryEl },
   });
@@ -279,7 +285,6 @@ export function createExperienceWorkbenchFeature({
   });
   const synthesisSourcesFeature = createExperienceWorkbenchSynthesisSourcesFeature({
     root: experienceSynthesisModalListEl,
-    escapeHtml,
     onSelectionChange: () => renderExperienceSynthesisModal(),
   });
 
@@ -858,105 +863,70 @@ export function createExperienceWorkbenchFeature({
     });
   }
 
-  function renderExperienceWorkbenchCapabilityLane(title, items, laneType) {
+  function createExperienceWorkbenchCapabilityLaneViewModel(title, items, laneType) {
     const safeItems = Array.isArray(items) ? items : [];
     const rawLaneType = typeof laneType === "string" ? laneType.trim().toLowerCase() : "";
     const normalizedLaneType = rawLaneType === "skill" ? "skill" : "method";
     const pendingActionKey = getPendingActionKey();
     const bulkRejectBusy = pendingActionKey === `bulk-reject:${normalizedLaneType}`;
     const bulkRejectDisabled = !safeItems.length || (Boolean(pendingActionKey) && !bulkRejectBusy);
-    const laneHead = `
-      <div class="memory-usage-overview-head">
-        <div class="experience-capability-lane-head-main">
-          <span class="memory-usage-overview-title">${escapeHtml(title)}</span>
-          <span class="memory-stat-caption">${escapeHtml(t("experience.capabilityDraftCount", { count: String(safeItems.length) }, `Draft ${safeItems.length}`))}</span>
-        </div>
-        <button
-          class="memory-usage-action-btn experience-capability-bulk-btn"
-          data-capability-bulk-reject-type="${escapeHtml(normalizedLaneType)}"
-          ${bulkRejectDisabled ? "disabled" : ""}
-        >${escapeHtml(bulkRejectBusy
-          ? t("experience.capabilityBulkRejectBusy", {}, "全部拒绝中…")
-          : t("experience.capabilityBulkReject", {}, "全部拒绝"))}</button>
-      </div>
-    `;
-    if (!safeItems.length) {
-      return `
-        <div class="memory-usage-overview-lane">
-          ${laneHead}
-          <div class="memory-usage-overview-empty">${escapeHtml(t("experience.capabilityLaneEmpty", {}, "暂无 draft 候选"))}</div>
-        </div>
-      `;
-    }
-
-    return `
-      <div class="memory-usage-overview-lane">
-        ${laneHead}
-        <div class="memory-usage-overview-list">
-          ${safeItems.map((item) => {
-            const acceptBusy = pendingActionKey === `candidate:${item?.id}:accept`;
-            const rejectBusy = pendingActionKey === `candidate:${item?.id}:reject`;
-            const synthesizeBusy = pendingActionKey === `synthesize-preview:${item?.id}` || pendingActionKey === `synthesize-create:${item?.id}`;
-            const reviewDisabled = Boolean(pendingActionKey) && !acceptBusy && !rejectBusy;
-            const skillFreshnessStatus = normalizeText(item?.skillFreshness?.status);
-            const skillFreshnessSummary = normalizeText(item?.skillFreshness?.summary);
-            const summary = normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet.");
-            const displayTaskId = resolveExperienceDisplayTaskId(item);
-            const synthesized = isSynthesizedCandidate(item);
-            const synthesisSourceCount = getSynthesisSourceCount(item);
-            const candidateId = normalizeText(item?.id);
-            return `
-              <div class="memory-usage-overview-row experience-capability-row ${synthesized ? "experience-candidate-synthesized" : ""}">
-                <div class="memory-usage-overview-row-main experience-capability-row-main">
-                  <div class="memory-usage-overview-key">${escapeHtml(item?.title || item?.slug || item?.id || t("memory.candidateUntitled", {}, "Untitled Candidate"))}</div>
-                  <div class="memory-usage-overview-meta">
-                    ${candidateId ? `<span class="experience-capability-candidate-id">${escapeHtml(`ID · ${candidateId}`)}</span>` : ""}
-                    <span>${escapeHtml(formatCandidateStatusLabel(item?.status))}</span>
-                    ${displayTaskId ? `<span>${escapeHtml(t("experience.listTaskLabel", {}, "Task"))} ${escapeHtml(displayTaskId)}</span>` : ""}
-                    ${skillFreshnessStatus ? `<span>${escapeHtml(skillFreshnessStatus)}</span>` : ""}
-                    <span>${escapeHtml(formatDateTime(item?.updatedAt || item?.createdAt))}</span>
-                  </div>
-                  <div class="memory-detail-badges">
-                    <span class="memory-badge">${escapeHtml(formatCandidateTypeLabel(item?.type))}</span>
-                    <span class="memory-badge">${escapeHtml(formatCandidateStatusLabel(item?.status))}</span>
-                    ${synthesized ? `<span class="memory-badge experience-synthesized-badge">${escapeHtml(t("experience.synthesizedBadge", { count: String(synthesisSourceCount || 0) }, synthesisSourceCount > 0 ? `合成稿 · ${synthesisSourceCount}` : "合成稿"))}</span>` : ""}
-                    ${skillFreshnessSummary ? `<span class="memory-badge">${escapeHtml(skillFreshnessSummary)}</span>` : ""}
-                  </div>
-                  <div class="experience-capability-summary">${escapeHtml(summary)}</div>
-                </div>
-                <div class="experience-capability-actions">
-                  <button class="memory-usage-action-btn" data-capability-open-candidate-id="${escapeHtml(String(item?.id || ""))}">${escapeHtml(t("experience.capabilityViewDetail", {}, "查看详情"))}</button>
-                  ${displayTaskId ? `<button class="memory-usage-action-btn" data-capability-open-task-id="${escapeHtml(displayTaskId)}">${escapeHtml(t("experience.capabilityOpenTask", {}, "打开任务"))}</button>` : ""}
-                  <button
-                    class="memory-usage-action-btn"
-                    data-capability-synthesize-candidate-id="${escapeHtml(String(item?.id || ""))}"
-                    ${synthesizeBusy || reviewDisabled ? "disabled" : ""}
-                  >${escapeHtml(synthesizeBusy
-                    ? t("experience.capabilitySynthesizeBusy", {}, "合成准备中…")
-                    : t("experience.capabilitySynthesize", {}, "合成"))}</button>
-                  <button
-                    class="memory-usage-action-btn"
-                    data-capability-review-candidate-action="accept"
-                    data-capability-review-candidate-id="${escapeHtml(String(item?.id || ""))}"
-                    ${acceptBusy || reviewDisabled ? "disabled" : ""}
-                  >${escapeHtml(acceptBusy
-                    ? t("memory.candidateReviewAccepting", {}, "接受中…")
-                    : t("memory.candidateAcceptAndPublish", {}, "接受并发布"))}</button>
-                  <button
-                    class="memory-usage-action-btn"
-                    data-capability-review-candidate-action="reject"
-                    data-capability-review-candidate-id="${escapeHtml(String(item?.id || ""))}"
-                    ${rejectBusy || reviewDisabled ? "disabled" : ""}
-                  >${escapeHtml(rejectBusy
-                    ? t("memory.candidateReviewRejecting", {}, "拒绝中…")
-                    : t("memory.candidateReject", {}, "拒绝"))}</button>
-                </div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      </div>
-    `;
+    return {
+      type: normalizedLaneType,
+      title,
+      countLabel: t("experience.capabilityDraftCount", { count: String(safeItems.length) }, `Draft ${safeItems.length}`),
+      bulkRejectLabel: bulkRejectBusy
+        ? t("experience.capabilityBulkRejectBusy", {}, "全部拒绝中…")
+        : t("experience.capabilityBulkReject", {}, "全部拒绝"),
+      bulkRejectDisabled,
+      emptyLabel: t("experience.capabilityLaneEmpty", {}, "暂无 draft 候选"),
+      items: safeItems.map((item) => {
+        const candidateActionId = String(item?.id || "");
+        const acceptBusy = pendingActionKey === `candidate:${item?.id}:accept`;
+        const rejectBusy = pendingActionKey === `candidate:${item?.id}:reject`;
+        const synthesizeBusy = pendingActionKey === `synthesize-preview:${item?.id}` || pendingActionKey === `synthesize-create:${item?.id}`;
+        const reviewDisabled = Boolean(pendingActionKey) && !acceptBusy && !rejectBusy;
+        const skillFreshnessStatus = normalizeText(item?.skillFreshness?.status);
+        const skillFreshnessSummary = normalizeText(item?.skillFreshness?.summary);
+        const summary = normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet.");
+        const displayTaskId = resolveExperienceDisplayTaskId(item);
+        const synthesized = isSynthesizedCandidate(item);
+        const synthesisSourceCount = getSynthesisSourceCount(item);
+        const candidateId = normalizeText(item?.id);
+        return {
+          candidateId: candidateActionId,
+          title: item?.title || item?.slug || item?.id || t("memory.candidateUntitled", {}, "Untitled Candidate"),
+          candidateIdLabel: candidateId ? `ID · ${candidateId}` : "",
+          statusLabel: formatCandidateStatusLabel(item?.status),
+          taskId: displayTaskId,
+          taskLabel: displayTaskId ? `${t("experience.listTaskLabel", {}, "Task")} ${displayTaskId}` : "",
+          skillFreshnessStatus,
+          updatedAtLabel: formatDateTime(item?.updatedAt || item?.createdAt),
+          typeLabel: formatCandidateTypeLabel(item?.type),
+          synthesized,
+          synthesizedLabel: t(
+            "experience.synthesizedBadge",
+            { count: String(synthesisSourceCount || 0) },
+            synthesisSourceCount > 0 ? `合成稿 · ${synthesisSourceCount}` : "合成稿",
+          ),
+          skillFreshnessSummary,
+          summary,
+          openCandidateLabel: t("experience.capabilityViewDetail", {}, "查看详情"),
+          openTaskLabel: t("experience.capabilityOpenTask", {}, "打开任务"),
+          synthesizeLabel: synthesizeBusy
+            ? t("experience.capabilitySynthesizeBusy", {}, "合成准备中…")
+            : t("experience.capabilitySynthesize", {}, "合成"),
+          synthesizeDisabled: synthesizeBusy || reviewDisabled,
+          acceptLabel: acceptBusy
+            ? t("memory.candidateReviewAccepting", {}, "接受中…")
+            : t("memory.candidateAcceptAndPublish", {}, "接受并发布"),
+          acceptDisabled: acceptBusy || reviewDisabled,
+          rejectLabel: rejectBusy
+            ? t("memory.candidateReviewRejecting", {}, "拒绝中…")
+            : t("memory.candidateReject", {}, "拒绝"),
+          rejectDisabled: rejectBusy || reviewDisabled,
+        };
+      }),
+    };
   }
 
   function bindExperienceWorkbenchCapabilityActions() {
@@ -1035,40 +1005,35 @@ export function createExperienceWorkbenchFeature({
     const resynthesizeBusy = resynthesizePendingKey.startsWith("synthesize-preview:asset:")
       || resynthesizePendingKey.startsWith("synthesize-create:asset:");
 
-    experienceWorkbenchCapabilityOverviewEl.innerHTML = `
-      <div class="memory-stat-card memory-stat-card-wide memory-usage-overview-card experience-capability-card">
-        <div class="memory-stat-card-head">
-          <span class="memory-stat-label">${escapeHtml(t("experience.capabilityTitle", {}, "能力获取"))}</span>
-          <span class="memory-stat-caption">${escapeHtml(caption)}</span>
-        </div>
-        <div class="experience-resynthesize-bar">
-          <input
-            class="input input-sm experience-resynthesize-input"
-            data-experience-resynthesize-asset-path="1"
-            value="${escapeHtml(normalizeText(state.resynthesizeAssetPath || ""))}"
-            placeholder="${escapeHtml(t("experience.resynthesizePlaceholder", {}, "粘贴已发布 method/skill 路径（methods/*.md 或 skills/*/SKILL.md）"))}"
-            ${resynthesizeBusy ? "disabled" : ""}
-          />
-          <button
-            class="memory-usage-action-btn"
-            data-experience-resynthesize-preview="1"
-            ${resynthesizeBusy ? "disabled" : ""}
-          >${escapeHtml(resynthesizeBusy
-            ? t("experience.resynthesizePreviewBusy", {}, "预览中…")
-            : t("experience.resynthesizePreview", {}, "再合成预览"))}</button>
-          <button
-            class="button goal-inline-action-secondary"
-            data-experience-resynthesize-fill-selected="1"
-            ${selectedPublishedPath && !resynthesizeBusy ? "" : "disabled"}
-            title="${escapeHtml(selectedPublishedPath || "")}"
-          >${escapeHtml(t("experience.resynthesizeFillSelected", {}, "从当前候选填充"))}</button>
-        </div>
-        <div class="memory-usage-overview-grid">
-          ${renderExperienceWorkbenchCapabilityLane(t("experience.capabilityMethodLane", {}, "Method Draft"), methods, "method")}
-          ${renderExperienceWorkbenchCapabilityLane(t("experience.capabilitySkillLane", {}, "Skill Draft"), skills, "skill")}
-        </div>
-      </div>
-    `;
+    capabilityOverviewView.render({
+      container: experienceWorkbenchCapabilityOverviewEl,
+      title: t("experience.capabilityTitle", {}, "能力获取"),
+      caption,
+      resynthesize: {
+        assetPath: normalizeText(state.resynthesizeAssetPath || ""),
+        placeholder: t("experience.resynthesizePlaceholder", {}, "粘贴已发布 method/skill 路径（methods/*.md 或 skills/*/SKILL.md）"),
+        inputDisabled: resynthesizeBusy,
+        previewLabel: resynthesizeBusy
+          ? t("experience.resynthesizePreviewBusy", {}, "预览中…")
+          : t("experience.resynthesizePreview", {}, "再合成预览"),
+        previewDisabled: resynthesizeBusy,
+        fillSelectedLabel: t("experience.resynthesizeFillSelected", {}, "从当前候选填充"),
+        fillSelectedDisabled: !selectedPublishedPath || resynthesizeBusy,
+        fillSelectedTitle: selectedPublishedPath,
+      },
+      lanes: [
+        createExperienceWorkbenchCapabilityLaneViewModel(
+          t("experience.capabilityMethodLane", {}, "Method Draft"),
+          methods,
+          "method",
+        ),
+        createExperienceWorkbenchCapabilityLaneViewModel(
+          t("experience.capabilitySkillLane", {}, "Skill Draft"),
+          skills,
+          "skill",
+        ),
+      ],
+    });
     bindExperienceWorkbenchCapabilityActions();
   }
 
@@ -1178,14 +1143,17 @@ export function createExperienceWorkbenchFeature({
 
   function renderExperienceWorkbenchUsageOverviewPanel() {
     if (!experienceWorkbenchUsageOverviewEl) return;
-    const markup = typeof renderTaskUsageOverviewCard === "function"
-      ? renderTaskUsageOverviewCard()
-      : "";
-    if (!markup) {
+    const viewModel = typeof getTaskUsageOverviewViewModel === "function"
+      ? getTaskUsageOverviewViewModel()
+      : null;
+    if (!viewModel || typeof viewModel !== "object") {
       renderExperienceWorkbenchUsageOverviewEmpty(t("experience.usageOverviewWaiting", {}, "Waiting for experience usage overview..."));
       return;
     }
-    experienceWorkbenchUsageOverviewEl.innerHTML = markup;
+    usageOverviewView.render({
+      container: experienceWorkbenchUsageOverviewEl,
+      ...viewModel,
+    });
     bindExperienceWorkbenchUsageOverviewActions();
   }
 
@@ -1231,7 +1199,7 @@ export function createExperienceWorkbenchFeature({
       renderExperienceWorkbenchUsageOverviewEmpty(t("experience.disconnected", {}, "Connect to the server to view experience candidates."));
       return;
     }
-    if (typeof loadTaskUsageOverview !== "function" || typeof renderTaskUsageOverviewCard !== "function") {
+    if (typeof loadTaskUsageOverview !== "function" || typeof getTaskUsageOverviewViewModel !== "function") {
       renderExperienceWorkbenchUsageOverviewEmpty(t("memory.usageOverviewEmpty", {}, "No usage data yet"));
       return;
     }
@@ -1679,76 +1647,64 @@ export function createExperienceWorkbenchFeature({
       );
     } else {
       const rows = [];
+      const checkboxDisabled = modalState.submitting || Boolean(createdCandidateId);
       if (showOverwriteCompare) {
-        rows.push(`
-          <div class="memory-detail-card">
-            <div class="goal-summary-header">
-              <div>
-                <div class="goal-summary-title">${escapeHtml(t("experience.overwriteCompareTitle", {}, "覆盖前对比"))}</div>
-                <div class="goal-summary-text">${escapeHtml(t("experience.overwriteCompareSummary", {}, "左侧为当前已发布资产，右侧为本次新合成草稿。确认无误后再执行覆盖。"))}</div>
-              </div>
-            </div>
-            <div class="memory-detail-grid">
-              <div class="memory-detail-card">
-                <span class="memory-detail-label">${escapeHtml(t("experience.overwriteCompareCurrent", {}, "当前已发布资产"))}</span>
-                <pre class="memory-detail-pre">${escapeHtml(seedContent)}</pre>
-              </div>
-              <div class="memory-detail-card">
-                <span class="memory-detail-label">${escapeHtml(t("experience.overwriteCompareNext", {}, "新合成草稿"))}</span>
-                <pre class="memory-detail-pre">${escapeHtml(createdContent)}</pre>
-              </div>
-            </div>
-          </div>
-        `);
+        rows.push({
+          overwriteCompare: {
+            title: t("experience.overwriteCompareTitle", {}, "覆盖前对比"),
+            summary: t("experience.overwriteCompareSummary", {}, "左侧为当前已发布资产，右侧为本次新合成草稿。确认无误后再执行覆盖。"),
+            currentLabel: t("experience.overwriteCompareCurrent", {}, "当前已发布资产"),
+            currentContent: seedContent,
+            nextLabel: t("experience.overwriteCompareNext", {}, "新合成草稿"),
+            nextContent: createdContent,
+          },
+        });
       }
       if (seedCandidate) {
-        rows.push(`
-          <div class="experience-synthesis-row experience-candidate-synthesized" data-synthesis-preview-candidate-id="${escapeHtml(String(seedCandidate.id || ""))}">
-            <div class="experience-synthesis-row-main">
-              <div class="experience-synthesis-row-title">${escapeHtml(seedTitle)}</div>
-              <div class="experience-synthesis-row-meta">
-                <span>${escapeHtml(formatCandidateTypeLabel(candidateType))}</span>
-                <span>${escapeHtml(formatCandidateStatusLabel(seedCandidate.status))}</span>
-                ${seedDisplayTaskId ? `<span>${escapeHtml(t("experience.listTaskLabel", {}, "Task"))} ${escapeHtml(seedDisplayTaskId)}</span>` : ""}
-              </div>
-              <div class="experience-synthesis-row-summary">${escapeHtml(normalizeText(seedCandidate.summary) || t("experience.listNoSummary", {}, "No summary yet."))}</div>
-            </div>
-            <div class="experience-synthesis-row-side">
-              ${synthesisSourcesFeature.renderCheckbox({
-                candidateId: seedCandidate.id,
-                label: t("experience.synthesizeSourceRequired", {}, "必选"),
-                disabled: modalState.submitting || Boolean(createdCandidateId),
-              })}
-              <span class="memory-badge experience-synthesized-badge">${escapeHtml(t("experience.synthesizeModalSeedLabel", {}, "种子草稿"))}</span>
-            </div>
-          </div>
-        `);
+        rows.push({
+          candidateId: String(seedCandidate.id || ""),
+          synthesized: true,
+          title: seedTitle,
+          meta: [
+            formatCandidateTypeLabel(candidateType),
+            formatCandidateStatusLabel(seedCandidate.status),
+            ...(seedDisplayTaskId ? [`${t("experience.listTaskLabel", {}, "Task")} ${seedDisplayTaskId}`] : []),
+          ],
+          summary: normalizeText(seedCandidate.summary) || t("experience.listNoSummary", {}, "No summary yet."),
+          checkbox: synthesisSourcesFeature.getCheckboxViewModel({
+            candidateId: seedCandidate.id,
+            label: t("experience.synthesizeSourceRequired", {}, "必选"),
+            disabled: checkboxDisabled,
+          }),
+          badgeLabel: t("experience.synthesizeModalSeedLabel", {}, "种子草稿"),
+        });
       }
       previewItems.forEach((item) => {
         const displayTaskId = normalizeText(item?.sourceTaskId) || normalizeText(item?.taskId);
-        rows.push(`
-          <div class="experience-synthesis-row" data-synthesis-preview-candidate-id="${escapeHtml(String(item?.candidateId || ""))}">
-            <div class="experience-synthesis-row-main">
-              <div class="experience-synthesis-row-title">${escapeHtml(item?.title || item?.slug || item?.candidateId || t("memory.candidateUntitled", {}, "Untitled Candidate"))}</div>
-              <div class="experience-synthesis-row-meta">
-                <span>${escapeHtml(formatCandidateStatusLabel(item?.status))}</span>
-                ${displayTaskId ? `<span>${escapeHtml(t("experience.listTaskLabel", {}, "Task"))} ${escapeHtml(displayTaskId)}</span>` : ""}
-                <span>score ${escapeHtml(Number.isFinite(Number(item?.score)) ? Number(item.score).toFixed(2) : "--")}</span>
-              </div>
-              <div class="experience-synthesis-row-summary">${escapeHtml(normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet."))}</div>
-            </div>
-            <div class="experience-synthesis-row-side">
-              ${synthesisSourcesFeature.renderCheckbox({
-                candidateId: item?.candidateId,
-                label: t("experience.synthesizeSourceInclude", {}, "参与"),
-                disabled: modalState.submitting || Boolean(createdCandidateId),
-              })}
-              <span class="memory-badge">${escapeHtml(formatSynthesisRelationLabel(item?.relation))}</span>
-            </div>
-          </div>
-        `);
+        rows.push({
+          candidateId: String(item?.candidateId || ""),
+          synthesized: false,
+          title: item?.title || item?.slug || item?.candidateId || t("memory.candidateUntitled", {}, "Untitled Candidate"),
+          meta: [
+            formatCandidateStatusLabel(item?.status),
+            ...(displayTaskId ? [`${t("experience.listTaskLabel", {}, "Task")} ${displayTaskId}`] : []),
+            `score ${Number.isFinite(Number(item?.score)) ? Number(item.score).toFixed(2) : "--"}`,
+          ],
+          summary: normalizeText(item?.summary) || t("experience.listNoSummary", {}, "No summary yet."),
+          checkbox: synthesisSourcesFeature.getCheckboxViewModel({
+            candidateId: item?.candidateId,
+            label: t("experience.synthesizeSourceInclude", {}, "参与"),
+            disabled: checkboxDisabled,
+          }),
+          badgeLabel: formatSynthesisRelationLabel(item?.relation),
+        });
       });
-      experienceSynthesisModalListEl.innerHTML = rows.join("");
+      const overwriteCompare = rows.find((row) => row.overwriteCompare)?.overwriteCompare ?? null;
+      synthesisListView.render({
+        container: experienceSynthesisModalListEl,
+        overwriteCompare,
+        rows: rows.filter((row) => !row.overwriteCompare),
+      });
     }
 
     experienceSynthesisModalSubmitBtn.textContent = createdCandidateId

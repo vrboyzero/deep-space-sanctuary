@@ -55,10 +55,10 @@ const REVIEWED_PRODUCTION_SINK_BASELINE = {
   "app/features/canvas-context.js": reviewedBaseline(2, 0, 0, "91ce12b6df360d40575f040e4326979b40d0866d4fe6c44e27de851d33b69d56"),
   "app/features/chat-network.js": reviewedBaseline(2, 0, 0, "912316973268a78c35242920da707e7387123146d40eace05b235e3b94d6ce6b"),
   "app/features/chat-ui.js": reviewedBaseline(0, 0, 0, "70eaeac7e2681705a979b636c1c170ed25ea829d48a7a8f34bd79aac1e91fd0a", { richContentCommit: 1 }),
-  "app/features/experience-workbench.js": reviewedBaseline(0, 4, 0, "f3f854141704cad040b008684b0d4d4826f81ed6a1fc8419dab64a1b3cef20f9"),
+  "app/features/experience-workbench.js": reviewedBaseline(0, 1, 0, "b5810b691634ed84e623d1e00603e1d37704787257419e1f2f3686761ff5be55"),
   "app/features/goals-overview.js": reviewedBaseline(3, 0, 0, "6cae1ac21873126a06973d6f3f85beb72de479622e256afde014f6921243b1e1"),
   "app/features/memory-detail-render.js": reviewedBaseline(0, 1, 0, "59eddd83df8322185e452223237a1a91eb07847c28e004ede6ab2ca460a09000"),
-  "app/features/memory-viewer.js": reviewedBaseline(1, 28, 0, "bbaa69c10f6c06096e19690a5551520039d06ba812c574ff691edc9c005a0e89"),
+  "app/features/memory-viewer.js": reviewedBaseline(0, 4, 0, "a900f30425b8c0d01c39a01f7b6c4a4bc779ddc842cfea534acfed8a93dc3a59"),
   "app/features/rich-content-renderer.js": reviewedBaseline(0, 0, 0, "b8c0825bb2d64026a817de36b1bfd69d473046de2f31902cdd9af0ab578f1929", { richContentSanitizer: 1 }),
   "app/features/session-navigation.js": reviewedBaseline(1, 0, 0, "043f7b6d079f96d1257fc972f183a35bbc76dafdb0df7b7f0d273b50d64289c8"),
   "app/features/settings.js": reviewedBaseline(2, 0, 0, "ade689f963d4c5892ecb35ab137fd194199ee81f09ee82cd1015130e7cd7cabd"),
@@ -195,9 +195,9 @@ describe("WebChat production HTML sink inventory", () => {
     }), { clear: 0, richContent: 0, reviewedStructuredTemplate: 0, staticTemplate: 0 });
     expect({ files: Object.keys(inventory).length, ...totals }).toEqual({
       files: 14,
-      clear: 20,
+      clear: 19,
       richContent: 2,
-      reviewedStructuredTemplate: 33,
+      reviewedStructuredTemplate: 6,
       staticTemplate: 0,
     });
   });

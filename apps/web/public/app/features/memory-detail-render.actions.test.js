@@ -18,6 +18,7 @@ function createHarness({
   detailShowNotice = vi.fn(),
   detailLoadTaskUsageOverview = vi.fn(async () => {}),
   detailLoadTaskDetail = vi.fn(async () => {}),
+  categoryFilterValue = "",
 } = {}) {
   document.body.innerHTML = `
     <div id="memoryViewerDetail"></div>
@@ -27,7 +28,7 @@ function createHarness({
   const refs = {
     memoryViewerDetailEl: document.getElementById("memoryViewerDetail"),
     memoryViewerStatsEl: document.getElementById("memoryViewerStats"),
-    memoryChunkCategoryFilterEl: null,
+    memoryChunkCategoryFilterEl: { value: categoryFilterValue },
   };
 
   const state = {
@@ -122,8 +123,7 @@ function createHarness({
     getGoalDisplayName: () => "",
     getLatestExperienceUsageTimestamp: () => "",
     getActiveMemoryCategoryLabel: () => "",
-    renderMemoryCategoryDistribution: () => "",
-    renderTaskUsageOverviewCard: () => "",
+    getMemoryCategoryDistributionViewModel: () => null,
     bindStatsAuditJumpLinks: vi.fn(),
     bindMemoryPathLinks: vi.fn(),
     bindTaskAuditJumpLinks: vi.fn(),
@@ -194,6 +194,110 @@ describe("memory detail render actions", () => {
       return;
     }
     delete globalThis.BELLDANDY_WEB_CONFIG;
+  });
+
+  it("projects category distribution rows without returning HTML", () => {
+    const { detailRenderFeature } = createHarness({ categoryFilterValue: "experience" });
+
+    expect(detailRenderFeature.getMemoryCategoryDistributionViewModel({
+      categoryBuckets: {
+        preference: 1,
+        experience: 99,
+      },
+      uncategorized: 0,
+    })).toEqual({
+      label: "Category Distribution",
+      caption: "Library 100",
+      rows: [
+        {
+          key: "preference",
+          label: "Preference",
+          count: "1",
+          percent: "1.0%",
+          widthPercent: 3,
+          active: false,
+        },
+        {
+          key: "experience",
+          label: "Experience",
+          count: "99",
+          percent: "99%",
+          widthPercent: 99,
+          active: true,
+        },
+      ],
+    });
+    expect(detailRenderFeature.getMemoryCategoryDistributionViewModel({
+      categoryBuckets: {},
+      uncategorized: 0,
+    })).toEqual({
+      label: "Category Distribution",
+      caption: "No categorized samples",
+      rows: [],
+    });
+  });
+
+  it("projects the task usage overview for a DOM owner without returning HTML", () => {
+    const { state, detailRenderFeature } = createHarness();
+    state.usageOverview = {
+      loading: false,
+      methods: [{
+        assetKey: '<img src=x onerror=alert(1)>method',
+        usageCount: 8,
+        lastUsedAt: "2026-07-21T10:00:00.000Z",
+        sourceCandidateId: "candidate-1",
+        sourceCandidateTitle: "<script>Candidate</script>",
+        lastUsedTaskId: "task-9",
+        sourceCandidatePublishedPath: "methods/demo.md",
+      }, {
+        assetKey: "method-low",
+        usageCount: 2,
+        lastUsedAt: "2026-07-20T10:00:00.000Z",
+      }],
+      skills: [],
+    };
+
+    expect(detailRenderFeature.getTaskUsageOverviewViewModel()).toEqual({
+      title: "Experience Usage Overview",
+      caption: "Shown by cumulative global usage count",
+      showLanes: true,
+      lanes: [{
+        tone: "method",
+        title: "Hot Methods",
+        topLabel: "Top 2",
+        emptyLabel: "No records",
+        items: [{
+          assetKey: '<img src=x onerror=alert(1)>method',
+          meta: [
+            "candidate candidate-1",
+            "<script>Candidate</script>",
+            "Recent 2026-07-21T10:00:00.000Z",
+          ],
+          badges: [],
+          actions: [
+            { kind: "candidate", value: "candidate-1", label: "Candidate" },
+            { kind: "task", value: "task-9", label: "Recent Task" },
+            { kind: "source", value: "methods/demo.md", label: "Open Artifact" },
+          ],
+          barPercent: 100,
+          metrics: "8",
+        }, {
+          assetKey: "method-low",
+          meta: ["Recent 2026-07-20T10:00:00.000Z"],
+          badges: [],
+          actions: [],
+          barPercent: 25,
+          metrics: "2",
+        }],
+      }, {
+        tone: "skill",
+        title: "Hot Skills",
+        topLabel: "",
+        emptyLabel: "No records",
+        items: [],
+      }],
+    });
+    expect(detailRenderFeature.renderTaskUsageOverviewCard).toBeUndefined();
   });
 
   it("binds generate/review/stale actions in task detail", async () => {

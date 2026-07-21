@@ -40,7 +40,12 @@ function createFeature(list, state, sendReq) {
     getSelectedAgentId: () => "agent-1",
     getSelectedAgentLabel: () => "Agent 1",
     renderCandidateDetailPanel: () => "",
-    renderTaskUsageOverviewCard: () => "",
+    getTaskUsageOverviewViewModel: () => ({
+      title: "Experience Usage Overview",
+      caption: "No usage data yet",
+      showLanes: false,
+      lanes: [],
+    }),
     loadTaskUsageOverview: vi.fn(),
     generateExperienceCandidate: vi.fn(),
     openToolSettingsTab: vi.fn(),

@@ -580,6 +580,13 @@ function createHarness(options = {}) {
 
   const openTaskFromWorkbench = vi.fn(async () => {});
   const showNotice = vi.fn();
+  const usageOverviewViewModel = options.usageOverviewViewModel ?? {
+    title: "Experience Usage Overview",
+    caption: "Shown by cumulative global usage count",
+    showLanes: false,
+    lanes: [],
+  };
+  const loadTaskUsageOverview = options.loadTaskUsageOverview ?? vi.fn(async () => {});
 
   const feature = createExperienceWorkbenchFeature({
     refs,
@@ -591,8 +598,8 @@ function createHarness(options = {}) {
     getSelectedAgentId: () => "default",
     getSelectedAgentLabel: () => "default",
     renderCandidateDetailPanel: (candidate) => `<div data-rendered-candidate="${candidate?.id || ""}"></div>`,
-    renderTaskUsageOverviewCard: () => `<div>usage overview</div>`,
-    loadTaskUsageOverview: vi.fn(async () => {}),
+    getTaskUsageOverviewViewModel: () => usageOverviewViewModel,
+    loadTaskUsageOverview,
     generateExperienceCandidate: vi.fn(async () => null),
     openToolSettingsTab: vi.fn(async () => {}),
     escapeHtml: (value) => String(value ?? ""),
@@ -621,6 +628,7 @@ function createHarness(options = {}) {
     sendReq,
     showNotice,
     openTaskFromWorkbench,
+    loadTaskUsageOverview,
     experienceState,
   };
 }
@@ -634,6 +642,42 @@ describe("experience workbench capability acquisition", () => {
     expect(experienceState.activeTab).toBe("capability-acquisition");
     expect(refs.experienceWorkbenchCapabilityPaneEl.classList.contains("hidden")).toBe(false);
     expect(refs.experienceWorkbenchCandidatesPaneEl.classList.contains("hidden")).toBe(true);
+  });
+
+  it("renders the usage overview through its DOM owner and keeps task actions wired", async () => {
+    const loadTaskUsageOverview = vi.fn(async () => {});
+    const { refs, openTaskFromWorkbench } = createHarness({
+      loadTaskUsageOverview,
+      usageOverviewViewModel: {
+        title: "Experience Usage Overview",
+        caption: "Shown by cumulative global usage count",
+        showLanes: true,
+        lanes: [{
+          tone: "method",
+          title: "Hot Methods",
+          topLabel: "Top 1",
+          emptyLabel: "No records",
+          items: [{
+            assetKey: "method/demo",
+            meta: ["Recent now"],
+            badges: [],
+            actions: [{ kind: "task", value: "usage-task-1", label: "Recent Task" }],
+            barPercent: 100,
+            metrics: "1",
+          }],
+        }],
+      },
+    });
+
+    refs.experienceWorkbenchTabUsageOverviewBtn.click();
+    await flushAsyncWork(2);
+
+    expect(loadTaskUsageOverview).toHaveBeenCalledTimes(1);
+    expect(refs.experienceWorkbenchUsageOverviewEl.textContent).toContain("method/demo");
+    refs.experienceWorkbenchUsageOverviewEl.querySelector("[data-open-task-id='usage-task-1']")?.click();
+    await flushAsyncWork();
+
+    expect(openTaskFromWorkbench).toHaveBeenCalledWith("usage-task-1");
   });
 
   it("renders only draft candidates in the capability acquisition tab", async () => {

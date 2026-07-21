@@ -66,7 +66,7 @@ describe("Experience Synthesis summary DOM owner", () => {
     }).render({ cards })).not.toThrow();
   });
 
-  it("renders summary through the owner before existing modal status and source-list assembly", () => {
+  it("renders summary through the owner before existing modal status and source-list owner assembly", () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), "apps/web/public/app/features/experience-workbench.js"),
       "utf8",
@@ -74,7 +74,7 @@ describe("Experience Synthesis summary DOM owner", () => {
     const modalStart = source.indexOf("function renderExperienceSynthesisModal()");
     const renderIndex = source.indexOf("synthesisSummaryView.render({", modalStart);
     const statusIndex = source.indexOf("experienceSynthesisModalStatusEl.classList.toggle", renderIndex);
-    const listIndex = source.indexOf("experienceSynthesisModalListEl.innerHTML", renderIndex);
+    const listIndex = source.indexOf("synthesisListView.render({", renderIndex);
 
     expect(source).toContain('import { createExperienceWorkbenchSynthesisSummaryView }');
     expect(source).toContain("const synthesisSummaryView = createExperienceWorkbenchSynthesisSummaryView({");

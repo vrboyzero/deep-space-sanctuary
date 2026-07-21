@@ -20,6 +20,25 @@ import { createMemoryViewerRequestLifecycle } from "./memory-viewer-request-life
 import { createMemoryViewerRetainedStateLifecycle } from "./memory-viewer-retained-state.js";
 import { createMemoryViewerModalControls } from "./memory-viewer-modal-controls.js";
 import { createMemoryViewerDedupActions } from "./memory-viewer-dedup-actions.js";
+import { createMemoryViewerDedupWarningView } from "./memory-viewer-dedup-warning-view.js";
+import { createMemoryViewerDedupSummaryView } from "./memory-viewer-dedup-summary-view.js";
+import { createMemoryViewerDedupListView } from "./memory-viewer-dedup-list-view.js";
+import { createMemoryViewerSharedReviewTargetFilterView } from "./memory-viewer-shared-review-target-filter-view.js";
+import { createMemoryViewerSharedReviewClaimedByFilterView } from "./memory-viewer-shared-review-claimed-by-filter-view.js";
+import { createMemoryViewerSharedReviewBatchBarView } from "./memory-viewer-shared-review-batch-bar-view.js";
+import { createMemoryViewerDreamHistoryListView } from "./memory-viewer-dream-history-list-view.js";
+import { createMemoryViewerDreamHistoryDetailEmptyView } from "./memory-viewer-dream-history-detail-empty-view.js";
+import { createMemoryViewerDreamHistoryDetailView } from "./memory-viewer-dream-history-detail-view.js";
+import { createMemoryViewerStatsFallbackView } from "./memory-viewer-stats-fallback-view.js";
+import { createMemoryViewerOutboundThreadStatsView } from "./memory-viewer-outbound-thread-stats-view.js";
+import { createMemoryViewerOutboundAuditStatsView } from "./memory-viewer-outbound-audit-stats-view.js";
+import { createMemoryViewerSharedReviewStatsView } from "./memory-viewer-shared-review-stats-view.js";
+import { createMemoryViewerTaskStatsView } from "./memory-viewer-task-stats-view.js";
+import { createMemoryViewerMemoryStatsView } from "./memory-viewer-memory-stats-view.js";
+import { createMemoryViewerTaskListView } from "./memory-viewer-task-list-view.js";
+import { createMemoryViewerMemoryListView } from "./memory-viewer-memory-list-view.js";
+import { createMemoryViewerOutboundAuditListView } from "./memory-viewer-outbound-audit-list-view.js";
+import { createMemoryViewerSharedReviewListView } from "./memory-viewer-shared-review-list-view.js";
 import { createMemoryViewerDreamHistoryLifecycle } from "./memory-viewer-dream-history-lifecycle.js";
 import { createMemoryViewerDreamConsolidationActions } from "./memory-viewer-dream-consolidation-actions.js";
 import { createMemoryViewerDreamRuntimeLifecycle } from "./memory-viewer-dream-runtime-lifecycle.js";
@@ -787,8 +806,7 @@ export function createMemoryViewerFeature({
   getGoalDisplayName,
   getLatestExperienceUsageTimestamp,
   getActiveMemoryCategoryLabel,
-  renderMemoryCategoryDistribution,
-  renderTaskUsageOverviewCard,
+  getMemoryCategoryDistributionViewModel,
   bindStatsAuditJumpLinks,
   bindMemoryPathLinks,
   bindTaskAuditJumpLinks,
@@ -852,6 +870,25 @@ export function createMemoryViewerFeature({
     memoryDedupModalCancelBtn,
     memoryDedupModalSubmitBtn,
   } = refs;
+  const dedupWarningView = createMemoryViewerDedupWarningView();
+  const dedupSummaryView = createMemoryViewerDedupSummaryView();
+  const dedupListView = createMemoryViewerDedupListView();
+  const sharedReviewTargetFilterView = createMemoryViewerSharedReviewTargetFilterView();
+  const sharedReviewClaimedByFilterView = createMemoryViewerSharedReviewClaimedByFilterView();
+  const sharedReviewBatchBarView = createMemoryViewerSharedReviewBatchBarView();
+  const dreamHistoryListView = createMemoryViewerDreamHistoryListView();
+  const dreamHistoryDetailEmptyView = createMemoryViewerDreamHistoryDetailEmptyView();
+  const dreamHistoryDetailView = createMemoryViewerDreamHistoryDetailView();
+  const statsFallbackView = createMemoryViewerStatsFallbackView();
+  const outboundThreadStatsView = createMemoryViewerOutboundThreadStatsView();
+  const outboundAuditStatsView = createMemoryViewerOutboundAuditStatsView();
+  const sharedReviewStatsView = createMemoryViewerSharedReviewStatsView();
+  const taskStatsView = createMemoryViewerTaskStatsView();
+  const memoryStatsView = createMemoryViewerMemoryStatsView();
+  const taskListView = createMemoryViewerTaskListView();
+  const memoryListView = createMemoryViewerMemoryListView();
+  const outboundAuditListView = createMemoryViewerOutboundAuditListView();
+  const sharedReviewListView = createMemoryViewerSharedReviewListView();
   let dreamModalOpen = false;
   const ingressLifecycle = createMemoryViewerIngressLifecycle();
   const requestLifecycle = createMemoryViewerRequestLifecycle({
@@ -1172,88 +1209,77 @@ export function createMemoryViewerFeature({
     memoryDedupModalTitleEl.textContent = result
       ? t("memory.dedupModalResultTitle", {}, "记忆重复清理结果")
       : t("memory.dedupModalTitle", {}, "记忆重复预检");
-    memoryDedupModalSummaryEl.innerHTML = `
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">扫描范围</span>
-        <div class="memory-detail-text">${escapeHtml(report?.filter ? "当前记忆筛选结果" : "全部记忆条目")}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">chunk 变化</span>
-        <div class="memory-detail-text">${escapeHtml(result
-          ? formatDedupCountTransition(applyObservability?.beforeChunkCount, applyObservability?.afterChunkCount)
-          : formatDedupCountTransition(previewObservability?.beforeChunkCount, previewObservability?.estimatedAfterChunkCount, { estimated: true }))}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">重复组</span>
-        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.duplicateGroups : totals?.duplicateGroups))}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">可移除 chunk</span>
-        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.removedChunks : totals?.removableChunks))}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">受影响 task links</span>
-        <div class="memory-detail-text">${escapeHtml(formatCount(result ? applyTotals?.relinkedTaskMemoryLinks : totals?.affectedTaskLinkCount))}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">page_count</span>
-        <div class="memory-detail-text">${escapeHtml(result
-          ? formatDedupCountTransition(applyObservability?.beforePageCount, applyObservability?.afterPageCount)
-          : formatCount(previewObservability?.pageCount))}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">freelist_count</span>
-        <div class="memory-detail-text">${escapeHtml(result
-          ? formatDedupCountTransition(applyObservability?.beforeFreelistCount, applyObservability?.afterFreelistCount)
-          : formatCount(previewObservability?.freelistCount))}</div>
-      </div>
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">来源风险</span>
-        <div class="memory-detail-text">${escapeHtml(formatDedupSourceIndexingSummary(sourceIndexingSummary))}</div>
-      </div>
-    `;
+    dedupSummaryView.render({
+      container: memoryDedupModalSummaryEl,
+      cards: [
+        { label: "扫描范围", value: report?.filter ? "当前记忆筛选结果" : "全部记忆条目" },
+        {
+          label: "chunk 变化",
+          value: result
+            ? formatDedupCountTransition(applyObservability?.beforeChunkCount, applyObservability?.afterChunkCount)
+            : formatDedupCountTransition(previewObservability?.beforeChunkCount, previewObservability?.estimatedAfterChunkCount, { estimated: true }),
+        },
+        { label: "重复组", value: formatCount(result ? applyTotals?.duplicateGroups : totals?.duplicateGroups) },
+        { label: "可移除 chunk", value: formatCount(result ? applyTotals?.removedChunks : totals?.removableChunks) },
+        { label: "受影响 task links", value: formatCount(result ? applyTotals?.relinkedTaskMemoryLinks : totals?.affectedTaskLinkCount) },
+        {
+          label: "page_count",
+          value: result
+            ? formatDedupCountTransition(applyObservability?.beforePageCount, applyObservability?.afterPageCount)
+            : formatCount(previewObservability?.pageCount),
+        },
+        {
+          label: "freelist_count",
+          value: result
+            ? formatDedupCountTransition(applyObservability?.beforeFreelistCount, applyObservability?.afterFreelistCount)
+            : formatCount(previewObservability?.freelistCount),
+        },
+        { label: "来源风险", value: formatDedupSourceIndexingSummary(sourceIndexingSummary) },
+      ],
+    });
     memoryDedupModalStatusEl.classList.toggle("hidden", !statusText);
     memoryDedupModalStatusEl.textContent = statusText;
-    memoryDedupModalWarningEl.classList.toggle("hidden", warningLines.length <= 0);
-    memoryDedupModalWarningEl.innerHTML = warningLines
-      .filter((item) => typeof item === "string" && item.trim())
-      .map((item) => `<div>${escapeHtml(item)}</div>`)
-      .join("");
+    const visibleWarningLines = warningLines
+      .filter((item) => typeof item === "string" && item.trim());
+    memoryDedupModalWarningEl.classList.toggle("hidden", visibleWarningLines.length <= 0);
+    dedupWarningView.render({
+      container: memoryDedupModalWarningEl,
+      lines: visibleWarningLines,
+    });
 
+    let dedupRows = [];
+    let dedupEmptyText = "";
     if (modalState.loading) {
-      memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewLoading", {}, "正在生成 dry-run 报告…"))}</div>`;
+      dedupEmptyText = t("memory.dedupPreviewLoading", {}, "正在生成 dry-run 报告…");
     } else if (result && Array.isArray(result.groups) && result.groups.length) {
-      memoryDedupModalListEl.innerHTML = result.groups.map((group) => `
-        <div class="experience-synthesis-row">
-          <div class="experience-synthesis-row-main">
-            <div class="experience-synthesis-row-title">keeper ${escapeHtml(group.keepChunkId || "-")}</div>
-            <div class="experience-synthesis-row-meta">
-              <span>删除 ${escapeHtml(formatCount(Array.isArray(group.removedChunkIds) ? group.removedChunkIds.length : 0))}</span>
-              <span>迁移 links ${escapeHtml(formatCount(group.relinkedTaskMemoryLinks))}</span>
-            </div>
-            <div class="memory-list-item-snippet">${escapeHtml((group.removedChunkIds || []).join(", ") || "-")}</div>
-          </div>
-        </div>
-      `).join("");
+      dedupRows = result.groups.map((group) => ({
+        title: `keeper ${group.keepChunkId || "-"}`,
+        meta: [
+          `删除 ${formatCount(Array.isArray(group.removedChunkIds) ? group.removedChunkIds.length : 0)}`,
+          `迁移 links ${formatCount(group.relinkedTaskMemoryLinks)}`,
+        ],
+        snippet: (group.removedChunkIds || []).join(", ") || "-",
+      }));
     } else if (report && Array.isArray(report.groups) && report.groups.length) {
-      memoryDedupModalListEl.innerHTML = report.groups.map((group) => `
-        <div class="experience-synthesis-row">
-            <div class="experience-synthesis-row-main">
-              <div class="experience-synthesis-row-title">${escapeHtml(group.preview || group.normalizedHash || "-")}</div>
-              <div class="experience-synthesis-row-meta">
-                <span>keeper</span>
-                <span>${escapeHtml(formatDedupPreviewItem(group.keep))}</span>
-                <span>${escapeHtml(formatDedupSourceIndexingSummary(group.sourceIndexing))}</span>
-              </div>
-              <div class="memory-list-item-snippet">${escapeHtml((group.remove || []).map((item) => formatDedupPreviewItem(item)).join(" | "))}</div>
-            </div>
-        </div>
-      `).join("");
+      dedupRows = report.groups.map((group) => ({
+        title: group.preview || group.normalizedHash || "-",
+        meta: [
+          "keeper",
+          formatDedupPreviewItem(group.keep),
+          formatDedupSourceIndexingSummary(group.sourceIndexing),
+        ],
+        snippet: (group.remove || []).map((item) => formatDedupPreviewItem(item)).join(" | "),
+      }));
     } else if (report) {
-      memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewEmpty", {}, "当前筛选范围内没有发现 exact duplicate。"))}</div>`;
+      dedupEmptyText = t("memory.dedupPreviewEmpty", {}, "当前筛选范围内没有发现 exact duplicate。");
     } else {
-      memoryDedupModalListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("memory.dedupPreviewIdle", {}, "尚未生成预检报告。"))}</div>`;
+      dedupEmptyText = t("memory.dedupPreviewIdle", {}, "尚未生成预检报告。");
     }
+    dedupListView.render({
+      container: memoryDedupModalListEl,
+      rows: dedupRows,
+      emptyText: dedupEmptyText,
+    });
 
     memoryDedupModalSubmitBtn.textContent = result
       ? t("memory.dedupModalApplied", {}, "清理已完成")
@@ -1308,39 +1334,6 @@ export function createMemoryViewerFeature({
     const pagination = paginateMemoryViewerItems(items, { page, pageSize });
     setStoredListPage(pagination.currentPage, tab);
     return pagination;
-  }
-
-  function renderMemoryViewerPaginationFooter(pagination) {
-    if (!pagination?.hasPagination) {
-      return "";
-    }
-    return `
-      <div class="memory-list-pagination">
-        <div class="memory-list-pagination-summary">${escapeHtml(t(
-          "memory.paginationSummary",
-          {
-            start: formatCount(pagination.visibleStart),
-            end: formatCount(pagination.visibleEnd),
-            total: formatCount(pagination.totalItems),
-            page: formatCount(pagination.currentPage + 1),
-            pages: formatCount(pagination.totalPages),
-          },
-          `Showing ${formatCount(pagination.visibleStart)}-${formatCount(pagination.visibleEnd)} / ${formatCount(pagination.totalItems)} · Page ${formatCount(pagination.currentPage + 1)} of ${formatCount(pagination.totalPages)}`,
-        ))}</div>
-        <div class="memory-list-pagination-actions">
-          <button
-            class="memory-usage-action-btn"
-            data-memory-list-page-action="prev"
-            ${pagination.currentPage <= 0 ? "disabled" : ""}
-          >${escapeHtml(t("memory.paginationPrev", {}, "Prev"))}</button>
-          <button
-            class="memory-usage-action-btn"
-            data-memory-list-page-action="next"
-            ${pagination.currentPage >= pagination.totalPages - 1 ? "disabled" : ""}
-          >${escapeHtml(t("memory.paginationNext", {}, "Next"))}</button>
-        </div>
-      </div>
-    `;
   }
 
   function bindMemoryViewerPaginationControls({
@@ -1524,20 +1517,39 @@ export function createMemoryViewerFeature({
       : t("memory.memoryEvaluationPass", {}, "稳定");
   }
 
-  function renderMemoryEvaluationStats(summary) {
+  function buildMemoryEvaluationStatCards(summary) {
     if (!summary?.available) {
-      return "";
+      return [];
     }
     const signals = Array.isArray(summary.signals)
       ? summary.signals.filter((item) => typeof item === "string" && item.trim()).slice(0, 1)
       : [];
     const primarySignal = signals[0] || "";
-    return `
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationTitle", {}, "Memory Evaluation"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatMemoryEvaluationStatusLabel(summary))}</strong><div class="memory-stat-caption">${escapeHtml(summary.headline || "-")}</div></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationProfileCoverage", {}, "Profile Coverage"))}</span><strong class="memory-stat-value">${formatCount(summary.profileStateFieldCount)}</strong><div class="memory-stat-caption">${escapeHtml(`freshness review ${formatCount(summary.freshnessReviewRequiredCount)} / stale ${formatCount(summary.freshnessStaleCount)}`)}</div></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationGovernance", {}, "Governance Pressure"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`shared pending ${formatCount(summary.governancePendingCount)} / claimed ${formatCount(summary.governanceClaimedCount)}`)}</strong><div class="memory-stat-caption">${escapeHtml(primarySignal || t("memory.memoryEvaluationGovernanceCaption", {}, "同一摘要已从 doctor 前推到 memory viewer。"))}</div></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.memoryEvaluationDreamBacklog", {}, "Dream Backlog"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`patch ${formatCount(summary.dreamProfilePatchBacklogCount)} / stale ${formatCount(summary.dreamStaleBacklogCount)} / contradiction ${formatCount(summary.dreamContradictionBacklogCount)}`)}</strong><div class="memory-stat-caption">${escapeHtml(`experience-linked residents ${formatCount(summary.experienceUsageLinkedResidentCount)}`)}</div></div>
-    `;
+    return [
+      {
+        label: t("memory.memoryEvaluationTitle", {}, "Memory Evaluation"),
+        value: formatMemoryEvaluationStatusLabel(summary),
+        compact: true,
+        caption: summary.headline || "-",
+      },
+      {
+        label: t("memory.memoryEvaluationProfileCoverage", {}, "Profile Coverage"),
+        value: formatCount(summary.profileStateFieldCount),
+        caption: `freshness review ${formatCount(summary.freshnessReviewRequiredCount)} / stale ${formatCount(summary.freshnessStaleCount)}`,
+      },
+      {
+        label: t("memory.memoryEvaluationGovernance", {}, "Governance Pressure"),
+        value: `shared pending ${formatCount(summary.governancePendingCount)} / claimed ${formatCount(summary.governanceClaimedCount)}`,
+        compact: true,
+        caption: primarySignal || t("memory.memoryEvaluationGovernanceCaption", {}, "同一摘要已从 doctor 前推到 memory viewer。"),
+      },
+      {
+        label: t("memory.memoryEvaluationDreamBacklog", {}, "Dream Backlog"),
+        value: `patch ${formatCount(summary.dreamProfilePatchBacklogCount)} / stale ${formatCount(summary.dreamStaleBacklogCount)} / contradiction ${formatCount(summary.dreamContradictionBacklogCount)}`,
+        compact: true,
+        caption: `experience-linked residents ${formatCount(summary.experienceUsageLinkedResidentCount)}`,
+      },
+    ];
   }
 
   function getSharedReviewFilters() {
@@ -1580,14 +1592,6 @@ export function createMemoryViewerFeature({
     return [...map.entries()]
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
-  }
-
-  function buildSelectOptionsHtml(options, fallbackLabel) {
-    return options.map((option) => {
-      const value = typeof option?.value === "string" ? option.value : "";
-      const label = typeof option?.label === "string" && option.label.trim() ? option.label.trim() : fallbackLabel;
-      return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
-    }).join("");
   }
 
   function getSelectedSharedReviewIds() {
@@ -1657,16 +1661,24 @@ export function createMemoryViewerFeature({
         { value: "", label: t("memory.sharedReviewTargetAll", {}, "All Target Agents") },
         ...agentOptions.map((agent) => ({ value: agent.id, label: agent.label })),
       ];
-      memorySharedReviewTargetFilterEl.innerHTML = buildSelectOptionsHtml(options, "-");
-      memorySharedReviewTargetFilterEl.value = stateFilters.targetAgentId;
+      sharedReviewTargetFilterView.render({
+        select: memorySharedReviewTargetFilterEl,
+        options,
+        selectedValue: stateFilters.targetAgentId,
+        fallbackLabel: "-",
+      });
     }
     if (memorySharedReviewClaimedByFilterEl) {
       const options = [
         { value: "", label: t("memory.sharedReviewClaimedByAll", {}, "All Claim Owners") },
         ...agentOptions.map((agent) => ({ value: agent.id, label: agent.label })),
       ];
-      memorySharedReviewClaimedByFilterEl.innerHTML = buildSelectOptionsHtml(options, "-");
-      memorySharedReviewClaimedByFilterEl.value = stateFilters.claimedByAgentId;
+      sharedReviewClaimedByFilterView.render({
+        select: memorySharedReviewClaimedByFilterEl,
+        options,
+        selectedValue: stateFilters.claimedByAgentId,
+        fallbackLabel: "-",
+      });
     }
   }
 
@@ -1677,7 +1689,7 @@ export function createMemoryViewerFeature({
     const items = getCurrentVisibleSharedReviewItems(Array.isArray(memoryViewerState.items) ? memoryViewerState.items : []);
     if (!isSharedReview || !items.length) {
       memorySharedReviewBatchBarEl.classList.add("hidden");
-      memorySharedReviewBatchBarEl.innerHTML = "";
+      sharedReviewBatchBarView.clear({ container: memorySharedReviewBatchBarEl });
       return;
     }
 
@@ -1712,34 +1724,39 @@ export function createMemoryViewerFeature({
     ];
 
     memorySharedReviewBatchBarEl.classList.remove("hidden");
-    memorySharedReviewBatchBarEl.innerHTML = `
-      <div class="memory-shared-review-batch-summary">
-        ${escapeHtml(t(
-          "memory.sharedReviewBatchSummary",
-          {
-            selected: formatCount(batchState.selectedCount),
-            total: formatCount(batchState.totalVisible),
-          },
-          `Selected ${formatCount(batchState.selectedCount)} / ${formatCount(batchState.totalVisible)}`,
-        ))}
-      </div>
-      <div class="memory-shared-review-batch-actions">
-        <button class="memory-usage-action-btn" data-shared-review-batch-select="all" ${busy ? "disabled" : ""}>${escapeHtml(t("memory.sharedReviewSelectAllVisible", {}, "Select Visible"))}</button>
-        <button class="memory-usage-action-btn" data-shared-review-batch-select="actionable" ${busy ? "disabled" : ""}>${escapeHtml(t("memory.sharedReviewSelectActionable", {}, "Select Actionable"))}</button>
-        <button class="memory-usage-action-btn" data-shared-review-batch-select="clear" ${(busy || batchState.selectedCount <= 0) ? "disabled" : ""}>${escapeHtml(t("memory.sharedReviewClearSelection", {}, "Clear Selection"))}</button>
-        ${actionButtons.map((action) => `
-          <button
-            class="memory-usage-action-btn"
-            data-shared-review-batch-action="${escapeHtml(action.key)}"
-            ${(busy || action.count <= 0) ? "disabled" : ""}
-          >${escapeHtml(`${action.label} (${formatCount(action.count)})`)}</button>
-        `).join("")}
-      </div>
-    `;
-
-    memorySharedReviewBatchBarEl.querySelectorAll("[data-shared-review-batch-select]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const mode = node.getAttribute("data-shared-review-batch-select");
+    sharedReviewBatchBarView.render({
+      container: memorySharedReviewBatchBarEl,
+      summary: t(
+        "memory.sharedReviewBatchSummary",
+        {
+          selected: formatCount(batchState.selectedCount),
+          total: formatCount(batchState.totalVisible),
+        },
+        `Selected ${formatCount(batchState.selectedCount)} / ${formatCount(batchState.totalVisible)}`,
+      ),
+      selectionButtons: [
+        {
+          key: "all",
+          label: t("memory.sharedReviewSelectAllVisible", {}, "Select Visible"),
+          disabled: busy,
+        },
+        {
+          key: "actionable",
+          label: t("memory.sharedReviewSelectActionable", {}, "Select Actionable"),
+          disabled: busy,
+        },
+        {
+          key: "clear",
+          label: t("memory.sharedReviewClearSelection", {}, "Clear Selection"),
+          disabled: busy || batchState.selectedCount <= 0,
+        },
+      ],
+      actionButtons: actionButtons.map((action) => ({
+        key: action.key,
+        label: `${action.label} (${formatCount(action.count)})`,
+        disabled: busy || action.count <= 0,
+      })),
+      onSelect: (mode) => {
         if (mode === "all") {
           selectAllVisibleSharedReviewItems();
         } else if (mode === "actionable") {
@@ -1749,15 +1766,11 @@ export function createMemoryViewerFeature({
         }
         renderSharedReviewList(items);
         renderSharedReviewBatchBar();
-      });
-    });
-
-    memorySharedReviewBatchBarEl.querySelectorAll("[data-shared-review-batch-action]").forEach((node) => {
-      node.addEventListener("click", () => {
-        const action = node.getAttribute("data-shared-review-batch-action") || "";
+      },
+      onAction: (action) => {
         if (!action) return;
         void runSharedReviewBatchAction(action);
-      });
+      },
     });
   }
 
@@ -2016,9 +2029,9 @@ export function createMemoryViewerFeature({
       .join(", ") || "-";
   }
 
-  function renderMemorySearchDiagnosticsSummary(diagnostics) {
+  function buildMemorySearchDiagnosticsSummaryView(diagnostics) {
     if (!diagnostics || typeof diagnostics !== "object") {
-      return "";
+      return null;
     }
     const retrievalMode = typeof diagnostics.retrievalMode === "string" && diagnostics.retrievalMode.trim()
       ? diagnostics.retrievalMode.trim()
@@ -2044,20 +2057,16 @@ export function createMemoryViewerFeature({
       { value: formatMemorySearchTopHits(diagnostics.stages?.returned) },
       `top hits: ${formatMemorySearchTopHits(diagnostics.stages?.returned)}`,
     );
-    return `
-      <div class="memory-detail-card">
-        <div class="memory-detail-title">${escapeHtml(t("memory.searchDiagnosticsTitle", {}, "Search Diagnostics"))}</div>
-        <div class="memory-detail-badges">
-          <span class="memory-badge">${escapeHtml(`raw ${formatMemorySearchStageCount(diagnostics.stages?.raw)}`)}</span>
-          <span class="memory-badge">${escapeHtml(`score ${formatMemorySearchStageCount(diagnostics.stages?.scoreAware)}`)}</span>
-          <span class="memory-badge">${escapeHtml(`rerank ${formatMemorySearchStageCount(diagnostics.stages?.reranked)}`)}</span>
-          <span class="memory-badge">${escapeHtml(`final ${formatMemorySearchStageCount(diagnostics.stages?.returned)}`)}</span>
-        </div>
-        <div class="memory-detail-text">${escapeHtml(summaryText)}</div>
-        <div class="memory-detail-text">${escapeHtml(sourceMixText)}</div>
-        <div class="memory-detail-text">${escapeHtml(topHitsText)}</div>
-      </div>
-    `;
+    return {
+      title: t("memory.searchDiagnosticsTitle", {}, "Search Diagnostics"),
+      badges: [
+        `raw ${formatMemorySearchStageCount(diagnostics.stages?.raw)}`,
+        `score ${formatMemorySearchStageCount(diagnostics.stages?.scoreAware)}`,
+        `rerank ${formatMemorySearchStageCount(diagnostics.stages?.reranked)}`,
+        `final ${formatMemorySearchStageCount(diagnostics.stages?.returned)}`,
+      ],
+      lines: [summaryText, sourceMixText, topHitsText],
+    };
   }
 
   function syncMemoryViewerHeaderTitle() {
@@ -2222,61 +2231,30 @@ export function createMemoryViewerFeature({
       memoryDreamHistoryRefreshBtn.disabled = panelView.refreshDisabled;
     }
     if (memoryDreamHistoryListEl) {
-      if (panelView.entries.length <= 0) {
-        memoryDreamHistoryListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(panelView.listEmptyText)}</div>`;
-      } else {
-        memoryDreamHistoryListEl.innerHTML = panelView.entries.map((entry) => `
-          <div class="memory-list-item ${entry.isActive ? "active" : ""}" data-dream-history-id="${escapeHtml(entry.id)}">
-            <div class="memory-list-item-title">${escapeHtml(entry.title)}</div>
-            <div class="memory-list-item-meta">
-              ${entry.meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
-            </div>
-            <div class="memory-list-item-snippet">${escapeHtml(entry.snippet)}</div>
-          </div>
-        `).join("");
-      }
+      dreamHistoryListView.render({
+        container: memoryDreamHistoryListEl,
+        entries: panelView.entries,
+        emptyText: panelView.listEmptyText,
+      });
     }
     if (memoryDreamHistoryDetailEl) {
       if (panelView.detail.loading || (!panelView.detail.content && panelView.detail.error) || panelView.detail.cards.length <= 0) {
-        memoryDreamHistoryDetailEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(panelView.detail.emptyText)}</div>`;
+        dreamHistoryDetailEmptyView.render({
+          container: memoryDreamHistoryDetailEl,
+          text: panelView.detail.emptyText,
+        });
       } else {
-        memoryDreamHistoryDetailEl.innerHTML = `
-          <div class="memory-detail-shell">
-            <div class="memory-detail-header">
-              <div>
-                <div class="memory-detail-title">${escapeHtml(panelView.detail.title)}</div>
-                ${panelView.detail.summary ? `<div class="memory-detail-text">${escapeHtml(panelView.detail.summary)}</div>` : ""}
-              </div>
-            </div>
-            <div class="memory-detail-grid">
-              ${panelView.detail.cards.map((card) => `
-                <div class="memory-detail-card">
-                  <span class="memory-detail-label">${escapeHtml(card.label)}</span>
-                  <div class="memory-detail-text">${escapeHtml(card.value)}</div>
-                </div>
-              `).join("")}
-            </div>
-            ${(panelView.detail.actions?.canApprove || panelView.detail.actions?.canReject || panelView.detail.actions?.canApply) ? `
-              <div class="goal-detail-actions">
-                ${panelView.detail.actions?.canApprove ? `<button class="memory-usage-action-btn" data-dream-consolidation-action="approve">${escapeHtml(t("memory.dreamConsolidationApprove", {}, "批准低风险画像 patch"))}</button>` : ""}
-                ${panelView.detail.actions?.canReject ? `<button class="memory-usage-action-btn" data-dream-consolidation-action="reject">${escapeHtml(t("memory.dreamConsolidationReject", {}, "驳回本次整理建议"))}</button>` : ""}
-                ${panelView.detail.actions?.canApply ? `<button class="memory-usage-action-btn" data-dream-consolidation-action="apply">${escapeHtml(t("memory.dreamConsolidationApply", {}, "应用已批准 patch"))}</button>` : ""}
-              </div>
-            ` : ""}
-            ${panelView.detail.reason ? `
-              <div class="memory-detail-card">
-                <span class="memory-detail-label">${escapeHtml(t("memory.dreamHistoryReason", {}, "触发原因"))}</span>
-                <div class="memory-detail-text">${escapeHtml(panelView.detail.reason)}</div>
-              </div>
-            ` : ""}
-            <div class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("memory.dreamHistoryContent", {}, "Dream 正文"))}</span>
-              ${panelView.detail.content
-                ? `<pre class="memory-detail-pre">${escapeHtml(panelView.detail.content)}</pre>`
-                : `<div class="memory-detail-text">${escapeHtml(panelView.detail.emptyText)}</div>`}
-            </div>
-          </div>
-        `;
+        dreamHistoryDetailView.render({
+          container: memoryDreamHistoryDetailEl,
+          detail: panelView.detail,
+          labels: {
+            approve: t("memory.dreamConsolidationApprove", {}, "批准低风险画像 patch"),
+            reject: t("memory.dreamConsolidationReject", {}, "驳回本次整理建议"),
+            apply: t("memory.dreamConsolidationApply", {}, "应用已批准 patch"),
+            reason: t("memory.dreamHistoryReason", {}, "触发原因"),
+            content: t("memory.dreamHistoryContent", {}, "Dream 正文"),
+          },
+        });
       }
     }
   }
@@ -3423,12 +3401,15 @@ export function createMemoryViewerFeature({
       } else if (memoryViewerState.tab === "outboundAudit") {
         stats = {};
       } else {
-        memoryViewerStatsEl.innerHTML = `
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statFiles", {}, "Memory Files"))}</span><strong class="memory-stat-value">--</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statChunks", {}, "Memory Chunks"))}</span><strong class="memory-stat-value">--</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statVectors", {}, "Vector Index"))}</span><strong class="memory-stat-value">--</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSummaries", {}, "Summaries Ready"))}</span><strong class="memory-stat-value">--</strong></div>
-        `;
+        statsFallbackView.render({
+          container: memoryViewerStatsEl,
+          labels: [
+            t("memory.statFiles", {}, "Memory Files"),
+            t("memory.statChunks", {}, "Memory Chunks"),
+            t("memory.statVectors", {}, "Vector Index"),
+            t("memory.statSummaries", {}, "Summaries Ready"),
+          ],
+        });
         return;
       }
     }
@@ -3437,16 +3418,19 @@ export function createMemoryViewerFeature({
       const items = Array.isArray(memoryViewerState.items) ? memoryViewerState.items : [];
       if (getOutboundAuditFocus() === "threads") {
         const summary = buildEmailThreadOrganizerStats(items);
-        memoryViewerStatsEl.innerHTML = `
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentResults", {}, "Current Results"))}</span><strong class="memory-stat-value">${formatCount(summary.threadCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatNeedsReply", {}, "待回复线程"))}</span><strong class="memory-stat-value">${formatCount(summary.needsReplyCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatNeedsFollowUp", {}, "待跟进线程"))}</span><strong class="memory-stat-value">${formatCount(summary.needsFollowUpCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatReminderPending", {}, "待提醒线程"))}</span><strong class="memory-stat-value">${formatCount(summary.reminderPendingCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatReminderDelivered", {}, "已提醒线程"))}</span><strong class="memory-stat-value">${formatCount(summary.reminderDeliveredCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatReplyReview", {}, "回复待复核"))}</span><strong class="memory-stat-value">${formatCount(summary.replyReviewRequiredCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatFailed", {}, "有失败记录"))}</span><strong class="memory-stat-value">${formatCount(summary.failedThreadCount)}</strong></div>
-          <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.emailThreadOrganizerStatRetry", {}, "待重试线程"))}</span><strong class="memory-stat-value">${formatCount(summary.retryScheduledCount)}</strong></div>
-        `;
+        outboundThreadStatsView.render({
+          container: memoryViewerStatsEl,
+          cards: [
+            { label: t("memory.statCurrentResults", {}, "Current Results"), value: formatCount(summary.threadCount) },
+            { label: t("memory.emailThreadOrganizerStatNeedsReply", {}, "待回复线程"), value: formatCount(summary.needsReplyCount) },
+            { label: t("memory.emailThreadOrganizerStatNeedsFollowUp", {}, "待跟进线程"), value: formatCount(summary.needsFollowUpCount) },
+            { label: t("memory.emailThreadOrganizerStatReminderPending", {}, "待提醒线程"), value: formatCount(summary.reminderPendingCount) },
+            { label: t("memory.emailThreadOrganizerStatReminderDelivered", {}, "已提醒线程"), value: formatCount(summary.reminderDeliveredCount) },
+            { label: t("memory.emailThreadOrganizerStatReplyReview", {}, "回复待复核"), value: formatCount(summary.replyReviewRequiredCount) },
+            { label: t("memory.emailThreadOrganizerStatFailed", {}, "有失败记录"), value: formatCount(summary.failedThreadCount) },
+            { label: t("memory.emailThreadOrganizerStatRetry", {}, "待重试线程"), value: formatCount(summary.retryScheduledCount) },
+          ],
+        });
         return;
       }
       const outboundSentCount = items.filter((item) => item?.auditKind !== "email_inbound" && item?.delivery === "sent").length;
@@ -3454,14 +3438,17 @@ export function createMemoryViewerFeature({
       const inboundProcessedCount = items.filter((item) => item?.auditKind === "email_inbound" && item?.status === "processed").length;
       const inboundFailedCount = items.filter((item) => item?.auditKind === "email_inbound" && item?.status === "failed").length;
       const inboundDuplicateCount = items.filter((item) => item?.auditKind === "email_inbound" && item?.status === "skipped_duplicate").length;
-      memoryViewerStatsEl.innerHTML = `
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentResults", {}, "Current Results"))}</span><strong class="memory-stat-value">${formatCount(items.length)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.outboundAuditStatSent", {}, "外发已发送"))}</span><strong class="memory-stat-value">${formatCount(outboundSentCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.outboundAuditStatFailed", {}, "外发失败"))}</span><strong class="memory-stat-value">${formatCount(outboundFailedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.outboundAuditStatInboundProcessed", {}, "收信已处理"))}</span><strong class="memory-stat-value">${formatCount(inboundProcessedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.outboundAuditStatInboundFailed", {}, "收信失败"))}</span><strong class="memory-stat-value">${formatCount(inboundFailedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.outboundAuditStatInboundDuplicate", {}, "收信重复跳过"))}</span><strong class="memory-stat-value">${formatCount(inboundDuplicateCount)}</strong></div>
-      `;
+      outboundAuditStatsView.render({
+        container: memoryViewerStatsEl,
+        cards: [
+          { label: t("memory.statCurrentResults", {}, "Current Results"), value: formatCount(items.length) },
+          { label: t("memory.outboundAuditStatSent", {}, "外发已发送"), value: formatCount(outboundSentCount) },
+          { label: t("memory.outboundAuditStatFailed", {}, "外发失败"), value: formatCount(outboundFailedCount) },
+          { label: t("memory.outboundAuditStatInboundProcessed", {}, "收信已处理"), value: formatCount(inboundProcessedCount) },
+          { label: t("memory.outboundAuditStatInboundFailed", {}, "收信失败"), value: formatCount(inboundFailedCount) },
+          { label: t("memory.outboundAuditStatInboundDuplicate", {}, "收信重复跳过"), value: formatCount(inboundDuplicateCount) },
+        ],
+      });
       return;
     }
 
@@ -3475,17 +3462,31 @@ export function createMemoryViewerFeature({
       const reviewerSummary = byReviewer.length
         ? byReviewer.map((item) => `${item.agentId} ${formatCount(item.count)}`).join(" · ")
         : t("memory.sharedReviewReviewerSummaryEmpty", {}, "No claimed owner.");
-      memoryViewerStatsEl.innerHTML = `
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewActingAs", {}, "Acting Reviewer"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(summary.reviewerAgentId || getActiveAgentId())}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedPendingQueue", {}, "Pending Shared Queue"))}</span><strong class="memory-stat-value">${formatCount(summary.pendingCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewActionableCount", {}, "Actionable Now"))}</span><strong class="memory-stat-value">${formatCount(summary.reviewerActionableCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewMyClaims", {}, "My Claims"))}</span><strong class="memory-stat-value">${formatCount(summary.reviewerClaimedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewOverdueCount", {}, "Timed-out Claims"))}</span><strong class="memory-stat-value">${formatCount(summary.overdueCount)}</strong><div class="memory-stat-caption">${escapeHtml(t("memory.sharedReviewOverdueHint", { duration: formatDuration(summary.claimTimeoutMs) }, `Timeout after ${formatDuration(summary.claimTimeoutMs)}`))}</div></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewBlockedCount", {}, "Blocked by Others"))}</span><strong class="memory-stat-value">${formatCount(summary.blockedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewAgentBacklog", {}, "Backlog by Agent"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(agentSummary)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewReviewerBacklog", {}, "Backlog by Reviewer"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(reviewerSummary)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.sharedReviewCompletedCount", {}, "Reviewed History"))}</span><strong class="memory-stat-value">${formatCount((Number(summary.approvedCount) || 0) + (Number(summary.rejectedCount) || 0) + (Number(summary.revokedCount) || 0))}</strong></div>
-      `;
+      sharedReviewStatsView.render({
+        container: memoryViewerStatsEl,
+        cards: [
+          { label: t("memory.sharedReviewActingAs", {}, "Acting Reviewer"), value: summary.reviewerAgentId || getActiveAgentId(), compact: true },
+          { label: t("memory.statSharedPendingQueue", {}, "Pending Shared Queue"), value: formatCount(summary.pendingCount) },
+          { label: t("memory.sharedReviewActionableCount", {}, "Actionable Now"), value: formatCount(summary.reviewerActionableCount) },
+          { label: t("memory.sharedReviewMyClaims", {}, "My Claims"), value: formatCount(summary.reviewerClaimedCount) },
+          {
+            label: t("memory.sharedReviewOverdueCount", {}, "Timed-out Claims"),
+            value: formatCount(summary.overdueCount),
+            caption: t(
+              "memory.sharedReviewOverdueHint",
+              { duration: formatDuration(summary.claimTimeoutMs) },
+              `Timeout after ${formatDuration(summary.claimTimeoutMs)}`,
+            ),
+          },
+          { label: t("memory.sharedReviewBlockedCount", {}, "Blocked by Others"), value: formatCount(summary.blockedCount) },
+          { label: t("memory.sharedReviewAgentBacklog", {}, "Backlog by Agent"), value: agentSummary, compact: true },
+          { label: t("memory.sharedReviewReviewerBacklog", {}, "Backlog by Reviewer"), value: reviewerSummary, compact: true },
+          {
+            label: t("memory.sharedReviewCompletedCount", {}, "Reviewed History"),
+            value: formatCount((Number(summary.approvedCount) || 0) + (Number(summary.rejectedCount) || 0) + (Number(summary.revokedCount) || 0)),
+          },
+        ],
+      });
       return;
     }
 
@@ -3494,33 +3495,56 @@ export function createMemoryViewerFeature({
       const currentCategorized = items.filter((item) => Boolean(item?.category)).length;
       const currentUncategorized = items.length - currentCategorized;
       const activeCategoryLabel = getActiveMemoryCategoryLabel();
-      const distributionCard = renderMemoryCategoryDistribution(stats);
+      const distribution = getMemoryCategoryDistributionViewModel(stats);
       const queryView = memoryViewerState.memoryQueryView;
       const searchDiagnostics = memoryViewerState.memorySearchDiagnostics;
       const sharedGovernance = memoryViewerState.sharedGovernance;
       const memoryEvaluation = memoryViewerState.memoryEvaluation;
       const governanceFilterLabel = formatGovernanceFilterLabel(memoryChunkGovernanceFilterEl?.value);
 
-      memoryViewerStatsEl.innerHTML = `
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentResults", {}, "Current Results"))}</span><strong class="memory-stat-value">${formatCount(items.length)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statQueryStrategy", {}, "Current Query Strategy"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatResidentQueryModeLabel(queryView))}</strong><div class="memory-stat-caption">${escapeHtml(formatResidentQueryModeSummary(queryView))}</div></div>
-        ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchReturned", {}, "Search Returned"))}</span><strong class="memory-stat-value">${escapeHtml(formatMemorySearchStageCount(searchDiagnostics.stages?.returned))}</strong><div class="memory-stat-caption">${escapeHtml(formatMemorySearchSourceMix(searchDiagnostics.sourceClassMix))}</div></div>` : ""}
-        ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchPipeline", {}, "Search Pipeline"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(`${formatMemorySearchStageCount(searchDiagnostics.stages?.raw)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.scoreAware)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.reranked)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.returned)}`)}</strong><div class="memory-stat-caption">${escapeHtml(searchDiagnostics.retrievalMode || "-")}</div></div>` : ""}
-        ${searchDiagnostics ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSearchTopHits", {}, "Search Top Hits"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatMemorySearchTopHits(searchDiagnostics.stages?.returned))}</strong></div>` : ""}
-        ${renderMemoryEvaluationStats(memoryEvaluation)}
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statGovernanceFilter", {}, "Current Governance Filter"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(governanceFilterLabel)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedPendingQueue", {}, "Pending Shared Queue"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.pendingCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedClaimed", {}, "Claimed Pending"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.claimedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedApproved", {}, "Approved Shared"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.approvedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedRejected", {}, "Rejected Shared"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.rejectedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statSharedRevoked", {}, "Revoked Shared"))}</span><strong class="memory-stat-value">${formatCount(sharedGovernance?.revokedCount)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statFilteredCategory", {}, "Filtered Category"))}</span><strong class="memory-stat-value">${escapeHtml(activeCategoryLabel)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentCategorized", {}, "Currently Categorized"))}</span><strong class="memory-stat-value">${formatCount(currentCategorized)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentUncategorized", {}, "Currently Uncategorized"))}</span><strong class="memory-stat-value">${formatCount(currentUncategorized)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statLibraryCategorized", {}, "Library Categorized"))}</span><strong class="memory-stat-value">${formatCount(stats.categorized)}</strong></div>
-        <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statLibraryUncategorized", {}, "Library Uncategorized"))}</span><strong class="memory-stat-value">${formatCount(stats.uncategorized)}</strong></div>
-        ${distributionCard}
-      `;
+      memoryStatsView.render({
+        container: memoryViewerStatsEl,
+        cards: [
+          { label: t("memory.statCurrentResults", {}, "Current Results"), value: formatCount(items.length) },
+          {
+            label: t("memory.statQueryStrategy", {}, "Current Query Strategy"),
+            value: formatResidentQueryModeLabel(queryView),
+            compact: true,
+            caption: formatResidentQueryModeSummary(queryView),
+          },
+          ...(searchDiagnostics ? [
+            {
+              label: t("memory.statSearchReturned", {}, "Search Returned"),
+              value: formatMemorySearchStageCount(searchDiagnostics.stages?.returned),
+              caption: formatMemorySearchSourceMix(searchDiagnostics.sourceClassMix),
+            },
+            {
+              label: t("memory.statSearchPipeline", {}, "Search Pipeline"),
+              value: `${formatMemorySearchStageCount(searchDiagnostics.stages?.raw)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.scoreAware)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.reranked)} → ${formatMemorySearchStageCount(searchDiagnostics.stages?.returned)}`,
+              compact: true,
+              caption: searchDiagnostics.retrievalMode || "-",
+            },
+            {
+              label: t("memory.statSearchTopHits", {}, "Search Top Hits"),
+              value: formatMemorySearchTopHits(searchDiagnostics.stages?.returned),
+              compact: true,
+            },
+          ] : []),
+          ...buildMemoryEvaluationStatCards(memoryEvaluation),
+          { label: t("memory.statGovernanceFilter", {}, "Current Governance Filter"), value: governanceFilterLabel, compact: true },
+          { label: t("memory.statSharedPendingQueue", {}, "Pending Shared Queue"), value: formatCount(sharedGovernance?.pendingCount) },
+          { label: t("memory.statSharedClaimed", {}, "Claimed Pending"), value: formatCount(sharedGovernance?.claimedCount) },
+          { label: t("memory.statSharedApproved", {}, "Approved Shared"), value: formatCount(sharedGovernance?.approvedCount) },
+          { label: t("memory.statSharedRejected", {}, "Rejected Shared"), value: formatCount(sharedGovernance?.rejectedCount) },
+          { label: t("memory.statSharedRevoked", {}, "Revoked Shared"), value: formatCount(sharedGovernance?.revokedCount) },
+          { label: t("memory.statFilteredCategory", {}, "Filtered Category"), value: activeCategoryLabel },
+          { label: t("memory.statCurrentCategorized", {}, "Currently Categorized"), value: formatCount(currentCategorized) },
+          { label: t("memory.statCurrentUncategorized", {}, "Currently Uncategorized"), value: formatCount(currentUncategorized) },
+          { label: t("memory.statLibraryCategorized", {}, "Library Categorized"), value: formatCount(stats.categorized) },
+          { label: t("memory.statLibraryUncategorized", {}, "Library Uncategorized"), value: formatCount(stats.uncategorized) },
+        ],
+        distribution,
+      });
       return;
     }
 
@@ -3532,14 +3556,34 @@ export function createMemoryViewerFeature({
     const activeGoalLabel = activeGoalId ? getGoalDisplayName(activeGoalId) : "-";
     const queryView = memoryViewerState.experienceQueryView || memoryViewerState.memoryQueryView;
 
-    memoryViewerStatsEl.innerHTML = `
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statCurrentTaskResults", {}, "Current Task Results"))}</span><strong class="memory-stat-value">${formatCount(Array.isArray(memoryViewerState.items) ? memoryViewerState.items.length : 0)}</strong></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statExperienceQueryStrategy", {}, "Current Experience Query Strategy"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatResidentQueryModeLabel(queryView))}</strong><div class="memory-stat-caption">${escapeHtml(formatResidentQueryModeSummary(queryView))}</div></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statUsedMethods", {}, "Methods Used"))}</span><strong class="memory-stat-value">${formatCount(usedMethods.length)}</strong></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statUsedSkills", {}, "Skills Used"))}</span><strong class="memory-stat-value">${formatCount(usedSkills.length)}</strong></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statLastUsedAt", {}, "Last Used At"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(formatDateTime(lastUsedAt))}</strong></div>
-      ${activeGoalId ? `<div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("memory.statGoalFilter", {}, "Goal Filter"))}</span><strong class="memory-stat-value memory-stat-value-compact">${escapeHtml(activeGoalLabel)}</strong><div class="memory-stat-caption">${escapeHtml(activeGoalId)}</div></div>` : ""}
-    `;
+    taskStatsView.render({
+      container: memoryViewerStatsEl,
+      cards: [
+        {
+          label: t("memory.statCurrentTaskResults", {}, "Current Task Results"),
+          value: formatCount(Array.isArray(memoryViewerState.items) ? memoryViewerState.items.length : 0),
+        },
+        {
+          label: t("memory.statExperienceQueryStrategy", {}, "Current Experience Query Strategy"),
+          value: formatResidentQueryModeLabel(queryView),
+          compact: true,
+          caption: formatResidentQueryModeSummary(queryView),
+        },
+        { label: t("memory.statUsedMethods", {}, "Methods Used"), value: formatCount(usedMethods.length) },
+        { label: t("memory.statUsedSkills", {}, "Skills Used"), value: formatCount(usedSkills.length) },
+        {
+          label: t("memory.statLastUsedAt", {}, "Last Used At"),
+          value: formatDateTime(lastUsedAt),
+          compact: true,
+        },
+        ...(activeGoalId ? [{
+          label: t("memory.statGoalFilter", {}, "Goal Filter"),
+          value: activeGoalLabel,
+          compact: true,
+          caption: activeGoalId,
+        }] : []),
+      ],
+    });
     bindStatsAuditJumpLinks();
   }
 
@@ -3554,24 +3598,44 @@ export function createMemoryViewerFeature({
     const memoryViewerState = getMemoryViewerState();
     const resolveTaskId = (item) => String(item?.id || "").trim();
     const pagination = resolveMemoryViewerPagination(items, resolveTaskId, { alignToSelected: true });
-    memoryViewerListEl.innerHTML = pagination.visibleItems.map((item) => {
-      const title = item.title || item.objective || item.summary || item.conversationId || item.id;
-      const snippet = item.summary || item.outcome || item.objective || t("memory.emptyNoSummary", {}, "No summary");
-      const isActive = item.id === memoryViewerState.selectedId;
-      const goalId = getTaskGoalId(item);
-      return `
-        <div class="memory-list-item ${isActive ? "active" : ""}" data-task-id="${escapeHtml(item.id)}">
-          <div class="memory-list-item-title">${escapeHtml(title)}</div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(formatTaskStatusLabel(item.status))}</span>
-            <span>${escapeHtml(formatTaskSourceLabel(item.source))}</span>
-            ${goalId ? `<span class="memory-badge memory-badge-shared">${escapeHtml(getGoalDisplayName(goalId))}</span>` : ""}
-            <span>${escapeHtml(formatDateTime(item.finishedAt || item.startedAt || item.createdAt))}</span>
-          </div>
-          <div class="memory-list-item-snippet">${escapeHtml(snippet)}</div>
-        </div>
-      `;
-    }).join("") + renderMemoryViewerPaginationFooter(pagination);
+    taskListView.render({
+      container: memoryViewerListEl,
+      rows: pagination.visibleItems.map((item) => {
+        const title = item.title || item.objective || item.summary || item.conversationId || item.id;
+        const snippet = item.summary || item.outcome || item.objective || t("memory.emptyNoSummary", {}, "No summary");
+        const isActive = item.id === memoryViewerState.selectedId;
+        const goalId = getTaskGoalId(item);
+        return {
+          id: String(item?.id ?? ""),
+          isActive,
+          title: String(title ?? ""),
+          meta: [
+            { text: String(formatTaskStatusLabel(item.status) ?? "") },
+            { text: String(formatTaskSourceLabel(item.source) ?? "") },
+            ...(goalId ? [{ text: String(getGoalDisplayName(goalId) ?? ""), kind: "shared" }] : []),
+            { text: String(formatDateTime(item.finishedAt || item.startedAt || item.createdAt) ?? "") },
+          ],
+          snippet: String(snippet ?? ""),
+        };
+      }),
+      pagination: pagination.hasPagination ? {
+        summary: t(
+          "memory.paginationSummary",
+          {
+            start: formatCount(pagination.visibleStart),
+            end: formatCount(pagination.visibleEnd),
+            total: formatCount(pagination.totalItems),
+            page: formatCount(pagination.currentPage + 1),
+            pages: formatCount(pagination.totalPages),
+          },
+          `Showing ${formatCount(pagination.visibleStart)}-${formatCount(pagination.visibleEnd)} / ${formatCount(pagination.totalItems)} · Page ${formatCount(pagination.currentPage + 1)} of ${formatCount(pagination.totalPages)}`,
+        ),
+        previousLabel: t("memory.paginationPrev", {}, "Prev"),
+        nextLabel: t("memory.paginationNext", {}, "Next"),
+        previousDisabled: pagination.currentPage <= 0,
+        nextDisabled: pagination.currentPage >= pagination.totalPages - 1,
+      } : null,
+    });
 
     memoryViewerListEl.querySelectorAll("[data-task-id]").forEach((node) => {
       node.addEventListener("click", async () => {
@@ -3616,29 +3680,59 @@ export function createMemoryViewerFeature({
     const memoryViewerState = getMemoryViewerState();
     const resolveMemoryId = (item) => String(item?.id || "").trim();
     const pagination = resolveMemoryViewerPagination(items, resolveMemoryId, { alignToSelected: true });
-    const diagnosticsSummary = renderMemorySearchDiagnosticsSummary(memoryViewerState.memorySearchDiagnostics);
-    memoryViewerListEl.innerHTML = diagnosticsSummary + pagination.visibleItems.map((item) => {
-      const title = summarizeSourcePath(item.sourcePath);
-      const summary = item.summary || item.snippet || t("memory.emptyNoSummary", {}, "No summary");
-      const isActive = item.id === memoryViewerState.selectedId;
-      const visibility = normalizeMemoryVisibility(item.visibility);
-      const category = formatMemoryCategory(item.category);
-      const sourceView = item.sourceView || { scope: visibility };
-      return `
-        <div class="memory-list-item ${isActive ? "active" : ""}" data-memory-id="${escapeHtml(item.id)}">
-          <div class="memory-list-item-title">${escapeHtml(title)}</div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(formatMemoryTypeLabel(item.memoryType))}</span>
-            <span>${escapeHtml(formatMemorySourceTypeLabel(item.sourceType))}</span>
-            <span class="memory-badge ${getVisibilityBadgeClass(visibility)}">${escapeHtml(visibility)}</span>
-            ${renderSourceViewBadge(sourceView)}
-            <span class="memory-badge">${escapeHtml(category)}</span>
-            <span>score ${formatScore(item.score)}</span>
-          </div>
-          <div class="memory-list-item-snippet">${escapeHtml(summary)}</div>
-        </div>
-      `;
-    }).join("") + renderMemoryViewerPaginationFooter(pagination);
+    memoryListView.render({
+      container: memoryViewerListEl,
+      diagnostics: buildMemorySearchDiagnosticsSummaryView(memoryViewerState.memorySearchDiagnostics),
+      rows: pagination.visibleItems.map((item) => {
+        const title = summarizeSourcePath(item.sourcePath);
+        const summary = item.summary || item.snippet || t("memory.emptyNoSummary", {}, "No summary");
+        const isActive = item.id === memoryViewerState.selectedId;
+        const visibility = normalizeMemoryVisibility(item.visibility);
+        const category = formatMemoryCategory(item.category);
+        const sourceView = item.sourceView || { scope: visibility };
+        const sourceScope = formatResidentSourceScopeLabel(sourceView);
+        const visibilityBadgeClass = getVisibilityBadgeClass(visibility);
+        return {
+          id: String(item?.id ?? ""),
+          isActive,
+          title: String(title ?? ""),
+          meta: [
+            { text: String(formatMemoryTypeLabel(item.memoryType) ?? "") },
+            { text: String(formatMemorySourceTypeLabel(item.sourceType) ?? "") },
+            {
+              text: String(visibility ?? ""),
+              kind: visibilityBadgeClass === "memory-badge-shared"
+                ? "shared"
+                : visibilityBadgeClass === "memory-badge-hybrid" ? "hybrid" : "private",
+            },
+            {
+              text: String(sourceScope ?? ""),
+              kind: sourceScope,
+            },
+            { text: String(category ?? ""), kind: "badge" },
+            { text: `score ${formatScore(item.score)}` },
+          ],
+          snippet: String(summary ?? ""),
+        };
+      }),
+      pagination: pagination.hasPagination ? {
+        summary: t(
+          "memory.paginationSummary",
+          {
+            start: formatCount(pagination.visibleStart),
+            end: formatCount(pagination.visibleEnd),
+            total: formatCount(pagination.totalItems),
+            page: formatCount(pagination.currentPage + 1),
+            pages: formatCount(pagination.totalPages),
+          },
+          `Showing ${formatCount(pagination.visibleStart)}-${formatCount(pagination.visibleEnd)} / ${formatCount(pagination.totalItems)} · Page ${formatCount(pagination.currentPage + 1)} of ${formatCount(pagination.totalPages)}`,
+        ),
+        previousLabel: t("memory.paginationPrev", {}, "Prev"),
+        nextLabel: t("memory.paginationNext", {}, "Next"),
+        previousDisabled: pagination.currentPage <= 0,
+        nextDisabled: pagination.currentPage >= pagination.totalPages - 1,
+      } : null,
+    });
 
     memoryViewerListEl.querySelectorAll("[data-memory-id]").forEach((node) => {
       node.addEventListener("click", async () => {
@@ -3674,60 +3768,84 @@ export function createMemoryViewerFeature({
     const selectedIds = new Set(getSelectedSharedReviewIds());
     const resolveSharedReviewId = (item) => String(item?.id || "").trim();
     const pagination = resolveMemoryViewerPagination(items, resolveSharedReviewId, { alignToSelected: true });
-    memoryViewerListEl.innerHTML = pagination.visibleItems.map((item) => {
-      const title = summarizeSourcePath(item.sourcePath);
-      const summary = item.summary || item.snippet || t("memory.emptyNoSummary", {}, "No summary");
-      const isActive = item.id === memoryViewerState.selectedId;
-      const isSelected = selectedIds.has(item.id);
-      const visibility = normalizeMemoryVisibility(item.visibility);
-      const category = formatMemoryCategory(item.category);
-      const sourceView = item.sourceView || { scope: visibility };
-      const promotion = getMemorySharePromotionMetadata(item);
-      const claimState = getMemoryShareClaimState(item);
-      const claimOwner = claimState.claimOwner;
-      const targetLabel = item.targetDisplayName || item.targetAgentId || promotion?.sourceAgentId || "-";
-      const statusLabel = formatMemorySharePromotionStatusLabel(item.reviewStatus || normalizeMemorySharePromotionStatus(item));
-      const requestedAt = promotion?.requestedAt || item.updatedAt || "";
-      const currentAgentId = getActiveAgentId();
-      const claimBadge = claimState.claimTimedOut
-        ? `<span class="memory-badge memory-badge-shared">${escapeHtml(t("memory.sharedReviewOverdueBadge", {}, "Claim Timed Out"))}</span>`
-        : claimOwner
-          ? `<span class="memory-badge ${claimOwner === currentAgentId ? "memory-badge-shared" : "memory-badge-hybrid"}">${escapeHtml(`${t("memory.detailSharedClaim", {}, "Review Claim")}: ${claimOwner}`)}</span>`
-          : "";
-      const queueStateBadge = claimState.blockedByOtherReviewer
-        ? `<span class="memory-badge memory-badge-hybrid">${escapeHtml(t("memory.sharedReviewBlockedBadge", {}, "Blocked"))}</span>`
-        : claimState.actionableByReviewer
-          ? `<span class="memory-badge memory-badge-private">${escapeHtml(t("memory.sharedReviewActionableBadge", {}, "Actionable"))}</span>`
-          : "";
-      const claimDeadline = claimState.claimExpiresAt
-        ? `<span>${escapeHtml(
-          claimState.claimTimedOut
-            ? t("memory.sharedReviewExpiredAt", { time: formatDateTime(claimState.claimExpiresAt) }, `Expired ${formatDateTime(claimState.claimExpiresAt)}`)
-            : t("memory.sharedReviewExpiresAt", { time: formatDateTime(claimState.claimExpiresAt) }, `Expires ${formatDateTime(claimState.claimExpiresAt)}`),
-        )}</span>`
-        : "";
-      return `
-        <div class="memory-list-item ${isActive ? "active" : ""}" data-shared-review-memory-id="${escapeHtml(item.id)}" data-shared-review-target-agent-id="${escapeHtml(item.targetAgentId || "")}">
-          <div class="memory-list-item-head">
-            <label class="memory-list-selector">
-              <input type="checkbox" data-shared-review-select="${escapeHtml(item.id)}" ${isSelected ? "checked" : ""}>
-            </label>
-            <div class="memory-list-item-title">${escapeHtml(title)}</div>
-          </div>
-          <div class="memory-list-item-meta">
-            <span class="memory-badge">${escapeHtml(targetLabel)}</span>
-            <span class="memory-badge">${escapeHtml(statusLabel)}</span>
-            ${claimBadge}
-            ${queueStateBadge}
-            ${renderSourceViewBadge(sourceView)}
-            <span class="memory-badge">${escapeHtml(category)}</span>
-            ${claimDeadline}
-            <span>${escapeHtml(formatDateTime(requestedAt))}</span>
-          </div>
-          <div class="memory-list-item-snippet">${escapeHtml(summary)}</div>
-        </div>
-      `;
-    }).join("") + renderMemoryViewerPaginationFooter(pagination);
+    sharedReviewListView.render({
+      container: memoryViewerListEl,
+      rows: pagination.visibleItems.map((item) => {
+        const title = summarizeSourcePath(item.sourcePath);
+        const summary = item.summary || item.snippet || t("memory.emptyNoSummary", {}, "No summary");
+        const isActive = item.id === memoryViewerState.selectedId;
+        const isSelected = selectedIds.has(item.id);
+        const visibility = normalizeMemoryVisibility(item.visibility);
+        const category = formatMemoryCategory(item.category);
+        const sourceView = item.sourceView || { scope: visibility };
+        const sourceBadgeClass = getResidentSourceBadgeClass(sourceView);
+        const sourceKind = sourceBadgeClass === "memory-badge-shared"
+          ? "shared"
+          : sourceBadgeClass === "memory-badge-hybrid" ? "hybrid" : "private";
+        const promotion = getMemorySharePromotionMetadata(item);
+        const claimState = getMemoryShareClaimState(item);
+        const claimOwner = claimState.claimOwner;
+        const targetLabel = item.targetDisplayName || item.targetAgentId || promotion?.sourceAgentId || "-";
+        const statusLabel = formatMemorySharePromotionStatusLabel(item.reviewStatus || normalizeMemorySharePromotionStatus(item));
+        const requestedAt = promotion?.requestedAt || item.updatedAt || "";
+        const currentAgentId = getActiveAgentId();
+        const claimMeta = claimState.claimTimedOut
+          ? [{ text: String(t("memory.sharedReviewOverdueBadge", {}, "Claim Timed Out") ?? ""), kind: "shared" }]
+          : claimOwner
+            ? [{
+                text: String(`${t("memory.detailSharedClaim", {}, "Review Claim")}: ${claimOwner}`),
+                kind: claimOwner === currentAgentId ? "shared" : "hybrid",
+              }]
+            : [];
+        const queueStateMeta = claimState.blockedByOtherReviewer
+          ? [{ text: String(t("memory.sharedReviewBlockedBadge", {}, "Blocked") ?? ""), kind: "hybrid" }]
+          : claimState.actionableByReviewer
+            ? [{ text: String(t("memory.sharedReviewActionableBadge", {}, "Actionable") ?? ""), kind: "private" }]
+            : [];
+        const claimDeadlineMeta = claimState.claimExpiresAt
+          ? [{
+              text: String(claimState.claimTimedOut
+                ? t("memory.sharedReviewExpiredAt", { time: formatDateTime(claimState.claimExpiresAt) }, `Expired ${formatDateTime(claimState.claimExpiresAt)}`)
+                : t("memory.sharedReviewExpiresAt", { time: formatDateTime(claimState.claimExpiresAt) }, `Expires ${formatDateTime(claimState.claimExpiresAt)}`)),
+            }]
+          : [];
+        return {
+          id: String(item?.id ?? ""),
+          targetAgentId: String(item?.targetAgentId ?? ""),
+          isActive,
+          isSelected,
+          title: String(title ?? ""),
+          meta: [
+            { text: String(targetLabel ?? ""), kind: "badge" },
+            { text: String(statusLabel ?? ""), kind: "badge" },
+            ...claimMeta,
+            ...queueStateMeta,
+            { text: String(formatResidentSourceScopeLabel(sourceView) ?? ""), kind: sourceKind },
+            { text: String(category ?? ""), kind: "badge" },
+            ...claimDeadlineMeta,
+            { text: String(formatDateTime(requestedAt) ?? "") },
+          ],
+          snippet: String(summary ?? ""),
+        };
+      }),
+      pagination: pagination.hasPagination ? {
+        summary: t(
+          "memory.paginationSummary",
+          {
+            start: formatCount(pagination.visibleStart),
+            end: formatCount(pagination.visibleEnd),
+            total: formatCount(pagination.totalItems),
+            page: formatCount(pagination.currentPage + 1),
+            pages: formatCount(pagination.totalPages),
+          },
+          `Showing ${formatCount(pagination.visibleStart)}-${formatCount(pagination.visibleEnd)} / ${formatCount(pagination.totalItems)} · Page ${formatCount(pagination.currentPage + 1)} of ${formatCount(pagination.totalPages)}`,
+        ),
+        previousLabel: t("memory.paginationPrev", {}, "Prev"),
+        nextLabel: t("memory.paginationNext", {}, "Next"),
+        previousDisabled: pagination.currentPage <= 0,
+        nextDisabled: pagination.currentPage >= pagination.totalPages - 1,
+      } : null,
+    });
 
     memoryViewerListEl.querySelectorAll("[data-shared-review-select]").forEach((node) => {
       node.addEventListener("click", (event) => {
@@ -3774,49 +3892,69 @@ export function createMemoryViewerFeature({
     const memoryViewerState = getMemoryViewerState();
     const resolveAuditItemId = (item, index) => getExternalOutboundAuditItemId(item, index);
     const pagination = resolveMemoryViewerPagination(items, resolveAuditItemId, { alignToSelected: true });
-    memoryViewerListEl.innerHTML = pagination.visibleItems.map((item, index) => {
-      const absoluteIndex = pagination.startIndex + index;
-      const itemId = resolveAuditItemId(item, absoluteIndex);
-      const isActive = itemId === memoryViewerState.selectedId;
-      if (item?.auditKind === "email_thread_organizer") {
-        const title = item?.latestSubject || item?.threadId || item?.conversationId || t("memory.emailThreadOrganizerUntitled", {}, "未命名邮件线程");
-        const stateParts = [
-          item?.latestTriageCategory,
-          item?.needsReply ? t("memory.emailThreadOrganizerNeedsReplyBadge", {}, "待回复") : "",
-          item?.needsFollowUp ? t("memory.emailThreadOrganizerNeedsFollowUpBadge", {}, "待跟进") : "",
-          item?.reminderStatus === "pending" ? t("memory.emailThreadOrganizerReminderPendingBadge", {}, "待提醒") : "",
-          item?.reminderStatus === "delivered" ? t("memory.emailThreadOrganizerReminderDeliveredBadge", {}, "已提醒") : "",
-        ].filter(Boolean);
-        const snippet = item?.latestTriageSummary || item?.latestPreview || t("memory.outboundAuditPreviewEmpty", {}, "(空文本)");
-        return `
-          <div class="memory-list-item ${isActive ? "active" : ""}" data-outbound-audit-id="${escapeHtml(itemId)}">
-            <div class="memory-list-item-title">${escapeHtml(title)}</div>
-            <div class="memory-list-item-meta">
-              <span>${escapeHtml(formatDateTime(item?.latestTimestamp))}</span>
-              <span>${escapeHtml(item?.latestSender || item?.targetAccountId || "-")}</span>
-              <span>${escapeHtml(stateParts.join(" / ") || t("memory.emailThreadOrganizerStateNeutral", {}, "线程整理"))}</span>
-            </div>
-            <div class="memory-list-item-snippet">${escapeHtml(snippet)}</div>
-          </div>
-        `;
-      }
-      const channel = formatOutboundAuditChannelLabel(item);
-      const preview = formatOutboundAuditPreview(item);
-      const stateSummary = item?.auditKind === "email_inbound"
-        ? formatEmailInboundStatusLabel(item?.status)
-        : `${formatExternalOutboundDecisionLabel(item?.decision)} / ${formatExternalOutboundDeliveryLabel(item?.delivery)}`;
-      return `
-        <div class="memory-list-item ${isActive ? "active" : ""}" data-outbound-audit-id="${escapeHtml(itemId)}">
-          <div class="memory-list-item-title">${escapeHtml(`${channel} · ${stateSummary}`)}</div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(formatDateTime(item?.timestamp))}</span>
-            <span>${escapeHtml(item?.requestId || item?.messageId || "-")}</span>
-            <span>${escapeHtml(item?.requestedByAgentId || item?.requestedAgentId || "-")}</span>
-          </div>
-          <div class="memory-list-item-snippet">${escapeHtml(preview)}</div>
-        </div>
-      `;
-    }).join("") + renderMemoryViewerPaginationFooter(pagination);
+    outboundAuditListView.render({
+      container: memoryViewerListEl,
+      rows: pagination.visibleItems.map((item, index) => {
+        const absoluteIndex = pagination.startIndex + index;
+        const itemId = resolveAuditItemId(item, absoluteIndex);
+        const isActive = itemId === memoryViewerState.selectedId;
+        if (item?.auditKind === "email_thread_organizer") {
+          const title = item?.latestSubject || item?.threadId || item?.conversationId || t("memory.emailThreadOrganizerUntitled", {}, "未命名邮件线程");
+          const stateParts = [
+            item?.latestTriageCategory,
+            item?.needsReply ? t("memory.emailThreadOrganizerNeedsReplyBadge", {}, "待回复") : "",
+            item?.needsFollowUp ? t("memory.emailThreadOrganizerNeedsFollowUpBadge", {}, "待跟进") : "",
+            item?.reminderStatus === "pending" ? t("memory.emailThreadOrganizerReminderPendingBadge", {}, "待提醒") : "",
+            item?.reminderStatus === "delivered" ? t("memory.emailThreadOrganizerReminderDeliveredBadge", {}, "已提醒") : "",
+          ].filter(Boolean);
+          const snippet = item?.latestTriageSummary || item?.latestPreview || t("memory.outboundAuditPreviewEmpty", {}, "(空文本)");
+          return {
+            id: String(itemId ?? ""),
+            isActive,
+            title: String(title ?? ""),
+            meta: [
+              String(formatDateTime(item?.latestTimestamp) ?? ""),
+              String(item?.latestSender || item?.targetAccountId || "-"),
+              String(stateParts.join(" / ") || t("memory.emailThreadOrganizerStateNeutral", {}, "线程整理")),
+            ],
+            snippet: String(snippet ?? ""),
+          };
+        }
+        const channel = formatOutboundAuditChannelLabel(item);
+        const preview = formatOutboundAuditPreview(item);
+        const stateSummary = item?.auditKind === "email_inbound"
+          ? formatEmailInboundStatusLabel(item?.status)
+          : `${formatExternalOutboundDecisionLabel(item?.decision)} / ${formatExternalOutboundDeliveryLabel(item?.delivery)}`;
+        return {
+          id: String(itemId ?? ""),
+          isActive,
+          title: String(`${channel} · ${stateSummary}`),
+          meta: [
+            String(formatDateTime(item?.timestamp) ?? ""),
+            String(item?.requestId || item?.messageId || "-"),
+            String(item?.requestedByAgentId || item?.requestedAgentId || "-"),
+          ],
+          snippet: String(preview ?? ""),
+        };
+      }),
+      pagination: pagination.hasPagination ? {
+        summary: t(
+          "memory.paginationSummary",
+          {
+            start: formatCount(pagination.visibleStart),
+            end: formatCount(pagination.visibleEnd),
+            total: formatCount(pagination.totalItems),
+            page: formatCount(pagination.currentPage + 1),
+            pages: formatCount(pagination.totalPages),
+          },
+          `Showing ${formatCount(pagination.visibleStart)}-${formatCount(pagination.visibleEnd)} / ${formatCount(pagination.totalItems)} · Page ${formatCount(pagination.currentPage + 1)} of ${formatCount(pagination.totalPages)}`,
+        ),
+        previousLabel: t("memory.paginationPrev", {}, "Prev"),
+        nextLabel: t("memory.paginationNext", {}, "Next"),
+        previousDisabled: pagination.currentPage <= 0,
+        nextDisabled: pagination.currentPage >= pagination.totalPages - 1,
+      } : null,
+    });
 
     memoryViewerListEl.querySelectorAll("[data-outbound-audit-id]").forEach((node) => {
       node.addEventListener("click", () => {

@@ -288,127 +288,104 @@ export function createMemoryDetailRenderFeature({
     return ordered.filter((entry) => entry.count > 0);
   }
 
-  function getMemoryCategoryToneClass(key) {
-    switch (key) {
-      case "preference":
-        return "memory-category-bar-preference";
-      case "experience":
-        return "memory-category-bar-experience";
-      case "fact":
-        return "memory-category-bar-fact";
-      case "decision":
-        return "memory-category-bar-decision";
-      case "entity":
-        return "memory-category-bar-entity";
-      case "other":
-        return "memory-category-bar-other";
-      default:
-        return "memory-category-bar-uncategorized";
-    }
-  }
-
   function getVisibilityBadgeClass(visibility) {
     return visibility === "shared" ? "memory-badge-shared" : "memory-badge-private";
   }
 
-  function renderMemoryCategoryDistribution(stats) {
+  function getMemoryCategoryDistributionViewModel(stats) {
     const entries = getMemoryCategoryDistributionEntries(stats);
+    const label = t("memory.categoryDistributionTitle", {}, "Category Distribution");
     if (!entries.length) {
-      return `
-        <div class="memory-stat-card memory-stat-card-wide">
-          <div class="memory-stat-card-head">
-            <span class="memory-stat-label">${escapeHtml(t("memory.categoryDistributionTitle", {}, "Category Distribution"))}</span>
-            <span class="memory-stat-caption">${escapeHtml(t("memory.categoryDistributionEmpty", {}, "No categorized samples"))}</span>
-          </div>
-        </div>
-      `;
+      return {
+        label,
+        caption: t("memory.categoryDistributionEmpty", {}, "No categorized samples"),
+        rows: [],
+      };
     }
 
     const total = entries.reduce((sum, entry) => sum + entry.count, 0);
     const activeKey = memoryChunkCategoryFilterEl?.value || "";
-    return `
-      <div class="memory-stat-card memory-stat-card-wide">
-        <div class="memory-stat-card-head">
-          <span class="memory-stat-label">${escapeHtml(t("memory.categoryDistributionTitle", {}, "Category Distribution"))}</span>
-          <span class="memory-stat-caption">${escapeHtml(t("memory.categoryDistributionTotal", { total: formatCount(total) }, `Library ${formatCount(total)}`))}</span>
-        </div>
-        <div class="memory-category-chart">
-          ${entries.map((entry) => {
-            const percent = total > 0 ? (entry.count / total) * 100 : 0;
-            const isActive = activeKey === entry.key;
-            return `
-              <div class="memory-category-row ${isActive ? "active" : ""}">
-                <div class="memory-category-name">${escapeHtml(entry.label)}</div>
-                <div class="memory-category-bar-track">
-                  <div class="memory-category-bar-fill ${getMemoryCategoryToneClass(entry.key)}" style="width:${Math.max(percent, entry.count > 0 ? 3 : 0).toFixed(2)}%"></div>
-                </div>
-                <div class="memory-category-metrics">
-                  <span class="memory-category-count">${formatCount(entry.count)}</span>
-                  <span class="memory-category-percent">${percent.toFixed(percent >= 10 ? 0 : 1)}%</span>
-                </div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      </div>
-    `;
+    return {
+      label,
+      caption: t("memory.categoryDistributionTotal", { total: formatCount(total) }, `Library ${formatCount(total)}`),
+      rows: entries.map((entry) => {
+        const percent = total > 0 ? (entry.count / total) * 100 : 0;
+        return {
+          key: entry.key,
+          label: entry.label,
+          count: formatCount(entry.count),
+          percent: `${percent.toFixed(percent >= 10 ? 0 : 1)}%`,
+          widthPercent: Number(Math.max(percent, entry.count > 0 ? 3 : 0).toFixed(2)),
+          active: activeKey === entry.key,
+        };
+      }),
+    };
   }
 
-  function renderTaskUsageOverviewLane(title, items, tone) {
+  function createTaskUsageOverviewLaneViewModel(title, items, tone) {
     const safeItems = Array.isArray(items) ? items : [];
+    const normalizedTone = tone === "skill" ? "skill" : "method";
+    const emptyLabel = t("memory.usageOverviewEmptyLane", {}, "No records");
     if (!safeItems.length) {
-      return `
-        <div class="memory-usage-overview-lane">
-          <div class="memory-usage-overview-head">
-            <span class="memory-usage-overview-title">${escapeHtml(title)}</span>
-          </div>
-          <div class="memory-usage-overview-empty">${escapeHtml(t("memory.usageOverviewEmptyLane", {}, "No records"))}</div>
-        </div>
-      `;
+      return {
+        tone: normalizedTone,
+        title,
+        topLabel: "",
+        emptyLabel,
+        items: [],
+      };
     }
 
     const maxCount = safeItems.reduce((max, item) => Math.max(max, Number(item?.usageCount) || 0), 0);
-    return `
-      <div class="memory-usage-overview-lane">
-        <div class="memory-usage-overview-head">
-          <span class="memory-usage-overview-title">${escapeHtml(title)}</span>
-          <span class="memory-stat-caption">Top ${formatCount(safeItems.length)}</span>
-        </div>
-        <div class="memory-usage-overview-list">
-          ${safeItems.map((item) => {
-            const usageCount = Number(item?.usageCount) || 0;
-            const percent = maxCount > 0 ? (usageCount / maxCount) * 100 : 0;
-            const sourceView = item?.sourceView || null;
-            const skillFreshness = tone === "skill" && item?.skillFreshness ? item.skillFreshness : null;
-            return `
-              <div class="memory-usage-overview-row">
-                <div class="memory-usage-overview-row-main">
-                  <div class="memory-usage-overview-key">${escapeHtml(item?.assetKey || "-")}</div>
-                  <div class="memory-usage-overview-meta">
-                    ${item?.sourceCandidateId ? `<span>candidate ${escapeHtml(item.sourceCandidateId)}</span>` : ""}
-                    ${item?.sourceCandidateTitle ? `<span>${escapeHtml(item.sourceCandidateTitle)}</span>` : ""}
-                    ${skillFreshness ? `<span>${escapeHtml(formatSkillFreshnessStatusLabel(skillFreshness.status, t))}</span>` : ""}
-                    ${sourceView ? `<span>${escapeHtml(formatResidentSourceScopeLabel(sourceView))}</span>` : ""}
-                    <span>${escapeHtml(t("memory.usageOverviewRecentAt", {}, "Recent"))} ${escapeHtml(formatDateTime(item?.lastUsedAt))}</span>
-                  </div>
-                  <div class="memory-detail-badges">
-                    ${skillFreshness ? `<span class="memory-badge ${getSkillFreshnessBadgeClass(skillFreshness.status)}">${escapeHtml(formatSkillFreshnessStatusLabel(skillFreshness.status, t))}</span>` : ""}
-                    ${sourceView ? `<span class="memory-badge ${getResidentSourceBadgeClass(sourceView)}">${escapeHtml(formatResidentSourceScopeLabel(sourceView))}</span>` : ""}
-                    ${item?.sourceCandidateId ? `<button class="memory-usage-action-btn" data-open-candidate-id="${escapeHtml(item.sourceCandidateId)}">${escapeHtml(t("memory.openCandidate", {}, "Candidate"))}</button>` : ""}
-                    ${item?.lastUsedTaskId ? `<button class="memory-usage-action-btn" data-open-task-id="${escapeHtml(item.lastUsedTaskId)}">${escapeHtml(t("memory.openRecentTask", {}, "Recent Task"))}</button>` : ""}
-                    ${item?.sourceCandidatePublishedPath ? `<button class="memory-usage-action-btn" data-open-source="${escapeHtml(item.sourceCandidatePublishedPath)}">${escapeHtml(t("memory.openArtifact", {}, "Open Artifact"))}</button>` : ""}
-                  </div>
-                </div>
-                <div class="memory-usage-overview-bar-track">
-                  <div class="memory-usage-overview-bar-fill memory-usage-overview-bar-${tone}" style="width:${Math.max(percent, usageCount > 0 ? 10 : 0).toFixed(2)}%"></div>
-                </div>
-                <div class="memory-usage-overview-metrics">${formatCount(usageCount)}</div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      </div>
-    `;
+    return {
+      tone: normalizedTone,
+      title,
+      topLabel: `Top ${formatCount(safeItems.length)}`,
+      emptyLabel,
+      items: safeItems.map((item) => {
+        const usageCount = Number(item?.usageCount) || 0;
+        const percent = maxCount > 0 ? (usageCount / maxCount) * 100 : 0;
+        const sourceView = item?.sourceView || null;
+        const skillFreshness = normalizedTone === "skill" && item?.skillFreshness ? item.skillFreshness : null;
+        return {
+          assetKey: item?.assetKey || "-",
+          meta: [
+            item?.sourceCandidateId ? `candidate ${item.sourceCandidateId}` : "",
+            item?.sourceCandidateTitle || "",
+            skillFreshness ? formatSkillFreshnessStatusLabel(skillFreshness.status, t) : "",
+            sourceView ? formatResidentSourceScopeLabel(sourceView) : "",
+            `${t("memory.usageOverviewRecentAt", {}, "Recent")} ${formatDateTime(item?.lastUsedAt)}`,
+          ].filter(Boolean),
+          badges: [
+            skillFreshness
+              ? {
+                className: `memory-badge ${getSkillFreshnessBadgeClass(skillFreshness.status)}`,
+                label: formatSkillFreshnessStatusLabel(skillFreshness.status, t),
+              }
+              : null,
+            sourceView
+              ? {
+                className: `memory-badge ${getResidentSourceBadgeClass(sourceView)}`,
+                label: formatResidentSourceScopeLabel(sourceView),
+              }
+              : null,
+          ].filter(Boolean),
+          actions: [
+            item?.sourceCandidateId
+              ? { kind: "candidate", value: item.sourceCandidateId, label: t("memory.openCandidate", {}, "Candidate") }
+              : null,
+            item?.lastUsedTaskId
+              ? { kind: "task", value: item.lastUsedTaskId, label: t("memory.openRecentTask", {}, "Recent Task") }
+              : null,
+            item?.sourceCandidatePublishedPath
+              ? { kind: "source", value: item.sourceCandidatePublishedPath, label: t("memory.openArtifact", {}, "Open Artifact") }
+              : null,
+          ].filter(Boolean),
+          barPercent: Math.min(100, Math.max(0, Number(Math.max(percent, usageCount > 0 ? 10 : 0).toFixed(2)))),
+          metrics: formatCount(usageCount),
+        };
+      }),
+    };
   }
 
   function renderTaskUsageItems(items, assetType) {
@@ -488,38 +465,28 @@ export function createMemoryDetailRenderFeature({
     `;
   }
 
-  function renderTaskUsageOverviewCard() {
+  function getTaskUsageOverviewViewModel() {
     const memoryViewerState = getMemoryViewerStateValue();
     const overview = memoryViewerState.usageOverview || {};
     const methods = Array.isArray(overview.methods) ? overview.methods : [];
     const skills = Array.isArray(overview.skills) ? overview.skills : [];
     const loading = Boolean(overview.loading);
-
-    if (!loading && !methods.length && !skills.length) {
-      return `
-        <div class="memory-stat-card memory-stat-card-wide memory-usage-overview-card">
-          <div class="memory-stat-card-head">
-            <span class="memory-stat-label">${escapeHtml(t("memory.usageOverviewTitle", {}, "Experience Usage Overview"))}</span>
-            <span class="memory-stat-caption">${escapeHtml(t("memory.usageOverviewEmpty", {}, "No usage data yet"))}</span>
-          </div>
-        </div>
-      `;
-    }
-
-    return `
-      <div class="memory-stat-card memory-stat-card-wide memory-usage-overview-card">
-        <div class="memory-stat-card-head">
-          <span class="memory-stat-label">${escapeHtml(t("memory.usageOverviewTitle", {}, "Experience Usage Overview"))}</span>
-          <span class="memory-stat-caption">${escapeHtml(loading
-            ? t("memory.usageOverviewLoading", {}, "Refreshing statistics…")
-            : t("memory.usageOverviewCaption", {}, "Shown by cumulative global usage count"))}</span>
-        </div>
-        <div class="memory-usage-overview-grid">
-          ${renderTaskUsageOverviewLane(t("memory.usageOverviewHotMethods", {}, "Hot Methods"), methods, "method")}
-          ${renderTaskUsageOverviewLane(t("memory.usageOverviewHotSkills", {}, "Hot Skills"), skills, "skill")}
-        </div>
-      </div>
-    `;
+    const showLanes = loading || methods.length > 0 || skills.length > 0;
+    return {
+      title: t("memory.usageOverviewTitle", {}, "Experience Usage Overview"),
+      caption: loading
+        ? t("memory.usageOverviewLoading", {}, "Refreshing statistics…")
+        : showLanes
+          ? t("memory.usageOverviewCaption", {}, "Shown by cumulative global usage count")
+          : t("memory.usageOverviewEmpty", {}, "No usage data yet"),
+      showLanes,
+      lanes: showLanes
+        ? [
+          createTaskUsageOverviewLaneViewModel(t("memory.usageOverviewHotMethods", {}, "Hot Methods"), methods, "method"),
+          createTaskUsageOverviewLaneViewModel(t("memory.usageOverviewHotSkills", {}, "Hot Skills"), skills, "skill"),
+        ]
+        : [],
+    };
   }
 
   function renderCandidateDetailPanel(candidate) {
@@ -928,9 +895,9 @@ export function createMemoryDetailRenderFeature({
     getTaskGoalId,
     getVisibilityBadgeClass,
     normalizeMemoryVisibility,
-    renderMemoryCategoryDistribution,
+    getMemoryCategoryDistributionViewModel,
     renderTaskDetail,
-    renderTaskUsageOverviewCard,
+    getTaskUsageOverviewViewModel,
     revokeTaskUsage,
     summarizeSourcePath,
     buildTaskSourceExplanationItems,

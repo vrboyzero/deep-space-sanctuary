@@ -196,6 +196,7 @@ function createDedupHarness(sendReqImpl = vi.fn(), options = {}) {
 
   const sendReq = typeof sendReqImpl === "function" ? sendReqImpl : vi.fn(sendReqImpl);
   const showNotice = vi.fn();
+  const bindStatsAuditJumpLinks = vi.fn();
   const feature = createMemoryViewerFeature({
     refs,
     isConnected: () => true,
@@ -207,7 +208,7 @@ function createDedupHarness(sendReqImpl = vi.fn(), options = {}) {
     getMemoryViewerState: () => state,
     getSelectedAgentId: () => "default",
     getSelectedAgentLabel: () => "Belldandy",
-    getAvailableAgents: () => [],
+    getAvailableAgents: () => options.availableAgents ?? [],
     syncMemoryTaskGoalFilterUi: vi.fn(),
     renderMemoryViewerListEmpty: vi.fn(),
     renderMemoryViewerDetailEmpty: vi.fn(),
@@ -224,21 +225,34 @@ function createDedupHarness(sendReqImpl = vi.fn(), options = {}) {
     getVisibilityBadgeClass: () => "",
     summarizeSourcePath: (value) => String(value ?? ""),
     getTaskGoalId: () => "",
-    getGoalDisplayName: () => "",
-    getLatestExperienceUsageTimestamp: () => "",
-    getActiveMemoryCategoryLabel: () => "",
-    renderMemoryCategoryDistribution: () => "",
-    renderTaskUsageOverviewCard: () => "",
-    bindStatsAuditJumpLinks: vi.fn(),
+    getGoalDisplayName: options.getGoalDisplayName ?? (() => ""),
+    getLatestExperienceUsageTimestamp: options.getLatestExperienceUsageTimestamp ?? (() => ""),
+    getActiveMemoryCategoryLabel: options.getActiveMemoryCategoryLabel ?? (() => ""),
+    getMemoryCategoryDistributionViewModel: options.getMemoryCategoryDistributionViewModel ?? (() => null),
+    bindStatsAuditJumpLinks,
     bindMemoryPathLinks: vi.fn(),
     bindTaskAuditJumpLinks: vi.fn(),
     openConversationSession: vi.fn(),
     emailThreadAdviceRetention: options.emailThreadAdviceRetention,
     showNotice,
-    t: (_key, _params, fallback) => fallback ?? "",
+    t: options.t ?? ((_key, _params, fallback) => fallback ?? ""),
   });
 
-  return { refs, state, sendReq, showNotice, feature };
+  return { refs, state, sendReq, showNotice, bindStatsAuditJumpLinks, feature };
+}
+
+function blockNonEmptyInnerHtml(element) {
+  const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+  Object.defineProperty(element, "innerHTML", {
+    configurable: true,
+    get() {
+      return innerHtmlDescriptor.get.call(this);
+    },
+    set(value) {
+      if (value) throw new Error("Memory Viewer root must not use innerHTML");
+      innerHtmlDescriptor.set.call(this, value);
+    },
+  });
 }
 
 describe("memory viewer load lifecycle", () => {
@@ -549,6 +563,62 @@ describe("memory viewer load lifecycle", () => {
 });
 
 describe("memory viewer shared review filters", () => {
+  it("renders target agent options through the DOM owner while retaining the selected target", () => {
+    const { refs, state, feature } = createDedupHarness(vi.fn(), {
+      availableAgents: [
+        { id: "alpha", displayName: "Alpha" },
+        { id: "target", displayName: "Target" },
+      ],
+    });
+    state.sharedReviewFilters = { focus: "", targetAgentId: "target", claimedByAgentId: "" };
+    blockNonEmptyInnerHtml(refs.memorySharedReviewTargetFilterEl);
+
+    feature.syncSharedReviewFilterUi();
+
+    expect(refs.memorySharedReviewTargetFilterEl.options[0]?.value).toBe("");
+    expect(refs.memorySharedReviewTargetFilterEl.options[0]?.textContent).toBe("All Target Agents");
+    expect(refs.memorySharedReviewTargetFilterEl.value).toBe("target");
+    expect([...refs.memorySharedReviewTargetFilterEl.options].find((option) => option.value === "target")?.textContent).toBe("Target");
+  });
+
+  it("renders claim-owner options through the DOM owner while retaining the selected claim owner", () => {
+    const { refs, state, feature } = createDedupHarness(vi.fn(), {
+      availableAgents: [
+        { id: "alpha", displayName: "Alpha" },
+        { id: "claim-owner", displayName: "Claim Owner" },
+      ],
+    });
+    state.sharedReviewFilters = { focus: "", targetAgentId: "", claimedByAgentId: "claim-owner" };
+    blockNonEmptyInnerHtml(refs.memorySharedReviewClaimedByFilterEl);
+
+    expect(() => feature.syncSharedReviewFilterUi()).not.toThrow();
+
+    expect(refs.memorySharedReviewClaimedByFilterEl.options[0]?.value).toBe("");
+    expect(refs.memorySharedReviewClaimedByFilterEl.options[0]?.textContent).toBe("All Claim Owners");
+    expect(refs.memorySharedReviewClaimedByFilterEl.value).toBe("claim-owner");
+    expect([...refs.memorySharedReviewClaimedByFilterEl.options].find((option) => option.value === "claim-owner")?.textContent).toBe("Claim Owner");
+  });
+
+  it("renders shared-review batch controls through the DOM owner with the existing selectors", () => {
+    const { refs, state, feature } = createDedupHarness();
+    state.tab = "sharedReview";
+    state.items = [{ id: "chunk-1", reviewStatus: "pending", actionableByReviewer: true }];
+    state.selectedSharedReviewIds = ["chunk-1"];
+    blockNonEmptyInnerHtml(refs.memorySharedReviewBatchBarEl);
+
+    expect(() => feature.syncMemoryViewerUi()).not.toThrow();
+
+    expect([...refs.memorySharedReviewBatchBarEl.querySelectorAll("[data-shared-review-batch-select]")]
+      .map((button) => button.getAttribute("data-shared-review-batch-select"))).toEqual(["all", "actionable", "clear"]);
+    expect([...refs.memorySharedReviewBatchBarEl.querySelectorAll("[data-shared-review-batch-action]")]
+      .map((button) => button.getAttribute("data-shared-review-batch-action"))).toEqual(["claim", "release", "approved", "rejected", "revoked"]);
+    expect(refs.memorySharedReviewBatchBarEl.querySelector('[data-shared-review-batch-action="claim"]')?.disabled).toBe(false);
+    expect(refs.memorySharedReviewBatchBarEl.querySelector('[data-shared-review-batch-action="release"]')?.disabled).toBe(true);
+
+    refs.memorySharedReviewBatchBarEl.querySelector('[data-shared-review-batch-select="clear"]')?.click();
+    expect(state.selectedSharedReviewIds).toEqual([]);
+  });
+
   it("settles email thread advice retention through the real click path", async () => {
     const lease = { conversationId: "conversation-email-1", generation: 0, token: 1 };
     const retention = {
@@ -914,6 +984,290 @@ describe("memory viewer shared review filters", () => {
     ]);
   });
 
+  it("renders fallback stats through the DOM owner without changing non-fallback stats branches", () => {
+    const { refs, state, feature } = createDedupHarness();
+    state.tab = "tasks";
+    blockNonEmptyInnerHtml(refs.memoryViewerStatsEl);
+
+    expect(() => feature.renderMemoryViewerStats(null)).not.toThrow();
+
+    expect([...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-label")].map((element) => element.textContent)).toEqual([
+      "Memory Files",
+      "Memory Chunks",
+      "Vector Index",
+      "Summaries Ready",
+    ]);
+    expect([...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-value")].map((element) => element.textContent)).toEqual(["--", "--", "--", "--"]);
+  });
+
+  it("renders outbound thread stats through the DOM owner", () => {
+    const t = (_key, _params, fallback) => `<img src=x onerror=alert(1)>${fallback ?? ""}`;
+    const { refs, state, feature } = createDedupHarness(undefined, { t });
+    state.tab = "outboundAudit";
+    state.outboundAuditFocus = "threads";
+    state.items = [
+      {
+        needsReply: true,
+        needsFollowUp: true,
+        reminderStatus: "pending",
+        latestSuggestedReplyQuality: "review_required",
+        failedCount: 1,
+        retryScheduledCount: 1,
+      },
+      {
+        needsFollowUp: true,
+        reminderStatus: "delivered",
+      },
+    ];
+    blockNonEmptyInnerHtml(refs.memoryViewerStatsEl);
+
+    expect(() => feature.renderMemoryViewerStats({})).not.toThrow();
+
+    const labels = [...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-label")].map((element) => element.textContent);
+    expect(labels).toEqual([
+      "Current Results",
+      "待回复线程",
+      "待跟进线程",
+      "待提醒线程",
+      "已提醒线程",
+      "回复待复核",
+      "有失败记录",
+      "待重试线程",
+    ].map((label) => `<img src=x onerror=alert(1)>${label}`));
+    expect([...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-value")].map((element) => element.textContent)).toEqual([
+      "2",
+      "1",
+      "2",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1",
+    ]);
+    expect(refs.memoryViewerStatsEl.querySelector("img, [onerror]")).toBeNull();
+  });
+
+  it("renders outbound audit stats through the DOM owner", () => {
+    const t = (_key, _params, fallback) => `<img src=x onerror=alert(2)>${fallback ?? ""}`;
+    const { refs, state, feature } = createDedupHarness(undefined, { t });
+    state.tab = "outboundAudit";
+    state.outboundAuditFocus = "all";
+    state.items = [
+      { auditKind: "external", delivery: "sent" },
+      { auditKind: "email", delivery: "failed" },
+      { auditKind: "email_inbound", status: "processed" },
+      { auditKind: "email_inbound", status: "failed" },
+      { auditKind: "email_inbound", status: "skipped_duplicate" },
+    ];
+    blockNonEmptyInnerHtml(refs.memoryViewerStatsEl);
+
+    expect(() => feature.renderMemoryViewerStats({})).not.toThrow();
+
+    const labels = [...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-label")].map((element) => element.textContent);
+    expect(labels).toEqual([
+      "Current Results",
+      "外发已发送",
+      "外发失败",
+      "收信已处理",
+      "收信失败",
+      "收信重复跳过",
+    ].map((label) => `<img src=x onerror=alert(2)>${label}`));
+    expect([...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-value")].map((element) => element.textContent)).toEqual([
+      "5",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1",
+    ]);
+    expect(refs.memoryViewerStatsEl.querySelector("img, [onerror]")).toBeNull();
+  });
+
+  it("renders shared-review stats through the DOM owner", () => {
+    const t = (_key, _params, fallback) => `<img src=x onerror=alert(3)>${fallback ?? ""}`;
+    const { refs, state, feature } = createDedupHarness(undefined, { t });
+    state.tab = "sharedReview";
+    state.sharedReviewSummary = {
+      reviewerAgentId: "<script>alert(3)</script>reviewer",
+      pendingCount: 4,
+      reviewerActionableCount: 3,
+      reviewerClaimedCount: 2,
+      overdueCount: 1,
+      claimTimeoutMs: 60000,
+      blockedCount: 5,
+      byAgent: [
+        { displayName: "Alpha", agentId: "a", totalCount: 4 },
+        { displayName: "Beta", agentId: "b", totalCount: 3 },
+        { displayName: "Gamma", agentId: "c", totalCount: 2 },
+        { displayName: "Excluded", agentId: "d", totalCount: 1 },
+      ],
+      byReviewer: [
+        { agentId: "r1", count: 4 },
+        { agentId: "r2", count: 3 },
+        { agentId: "r3", count: 2 },
+        { agentId: "excluded", count: 1 },
+      ],
+      approvedCount: 1,
+      rejectedCount: 2,
+      revokedCount: 3,
+    };
+    blockNonEmptyInnerHtml(refs.memoryViewerStatsEl);
+
+    expect(() => feature.renderMemoryViewerStats(null)).not.toThrow();
+
+    const cards = [...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-card")];
+    expect(cards).toHaveLength(9);
+    expect(cards.map((card) => card.querySelector(".memory-stat-value")?.textContent)).toEqual([
+      "<script>alert(3)</script>reviewer",
+      "4",
+      "3",
+      "2",
+      "1",
+      "5",
+      "Alpha 4 · Beta 3 · Gamma 2",
+      "r1 4 · r2 3 · r3 2",
+      "6",
+    ]);
+    expect(cards.map((card) => card.querySelector(".memory-stat-value")?.classList.contains("memory-stat-value-compact"))).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(cards[4].querySelector(".memory-stat-caption")?.textContent).toBe("<img src=x onerror=alert(3)>Timeout after 60000");
+    expect(refs.memoryViewerStatsEl.querySelector("img, script, [onerror]")).toBeNull();
+  });
+
+  it("renders task stats through the DOM owner and keeps audit-jump binding in the controller", () => {
+    const t = (_key, _params, fallback) => `<img src=x onerror=alert(4)>${fallback ?? ""}`;
+    const { refs, state, bindStatsAuditJumpLinks, feature } = createDedupHarness(undefined, {
+      t,
+      getGoalDisplayName: () => "<script>alert(4)</script>Goal Alpha",
+      getLatestExperienceUsageTimestamp: () => "<svg onload=alert(4)>2026-07-21",
+    });
+    state.tab = "tasks";
+    state.items = [{ id: "task-1" }, { id: "task-2" }];
+    state.selectedTask = {
+      usedMethods: [{ name: "method-1" }, { name: "method-2" }],
+      usedSkills: [{ name: "skill-1" }],
+    };
+    state.experienceQueryView = { scope: "shared" };
+    state.goalIdFilter = "<iframe srcdoc=alert(4)>goal-alpha";
+    blockNonEmptyInnerHtml(refs.memoryViewerStatsEl);
+
+    expect(() => feature.renderMemoryViewerStats({})).not.toThrow();
+
+    const cards = [...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-card")];
+    expect(cards).toHaveLength(6);
+    expect(cards.map((card) => card.querySelector(".memory-stat-value")?.textContent)).toEqual([
+      "2",
+      "shared",
+      "2",
+      "1",
+      "<svg onload=alert(4)>2026-07-21",
+      "<script>alert(4)</script>Goal Alpha",
+    ]);
+    expect(cards.map((card) => card.querySelector(".memory-stat-value")?.classList.contains("memory-stat-value-compact"))).toEqual([
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+    ]);
+    expect([...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-caption")].map((caption) => caption.textContent)).toEqual([
+      "<img src=x onerror=alert(4)>Read from and write to the shared team memory layer.",
+      "<iframe srcdoc=alert(4)>goal-alpha",
+    ]);
+    expect(refs.memoryViewerStatsEl.querySelector("img, script, svg, iframe, [onerror], [onload]")).toBeNull();
+    expect(bindStatsAuditJumpLinks).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders memories stats through the DOM owner without binding task audit actions", () => {
+    const t = (_key, _params, fallback) => `<img src=x onerror=alert(5)>${fallback ?? ""}`;
+    const distribution = {
+      label: "<object data=x>Category Distribution",
+      caption: "<svg onload=alert(5)>Library 3",
+      rows: [{
+        key: "experience",
+        label: "<script>alert(5)</script>Experience",
+        count: "3",
+        percent: "100%",
+        widthPercent: 100,
+        active: true,
+      }],
+    };
+    const { refs, state, bindStatsAuditJumpLinks, feature } = createDedupHarness(undefined, {
+      t,
+      getActiveMemoryCategoryLabel: () => "<iframe srcdoc=alert(5)>Experience",
+      getMemoryCategoryDistributionViewModel: () => distribution,
+    });
+    state.tab = "memories";
+    state.items = [{ category: "experience" }, { category: "" }];
+    state.memoryQueryView = { scope: "private" };
+    state.memorySearchDiagnostics = {
+      retrievalMode: "<svg onload=alert(5)>explicit",
+      sourceClassMix: { curated: 1, derived: 1 },
+      stages: {
+        raw: { count: 5 },
+        scoreAware: { count: 4 },
+        reranked: { count: 3 },
+        returned: {
+          count: 2,
+          topHits: [{ id: "<script>alert(5)</script>mem-1", sourceClass: "curated" }],
+        },
+      },
+    };
+    state.sharedGovernance = {
+      pendingCount: 4,
+      claimedCount: 3,
+      approvedCount: 2,
+      rejectedCount: 1,
+      revokedCount: 0,
+    };
+    state.memoryEvaluation = {
+      available: true,
+      status: "warn",
+      headline: "<math><mtext>Evaluation warning</mtext></math>",
+      profileStateFieldCount: 5,
+      freshnessReviewRequiredCount: 2,
+      freshnessStaleCount: 1,
+      governancePendingCount: 4,
+      governanceClaimedCount: 3,
+      dreamProfilePatchBacklogCount: 3,
+      dreamStaleBacklogCount: 2,
+      dreamContradictionBacklogCount: 1,
+      experienceUsageLinkedResidentCount: 2,
+      signals: ["<object data=x>Dream backlog"],
+    };
+    refs.memoryChunkGovernanceFilterEl.value = "pending";
+    refs.memoryChunkCategoryFilterEl.value = "experience";
+    blockNonEmptyInnerHtml(refs.memoryViewerStatsEl);
+
+    expect(() => feature.renderMemoryViewerStats({ categorized: 3, uncategorized: 0 })).not.toThrow();
+
+    const cards = [...refs.memoryViewerStatsEl.querySelectorAll(".memory-stat-card")];
+    expect(cards).toHaveLength(21);
+    expect(cards[0]?.querySelector(".memory-stat-value")?.textContent).toBe("2");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("<math><mtext>Evaluation warning</mtext></math>");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("<object data=x>Dream backlog");
+    expect(refs.memoryViewerStatsEl.textContent).toContain("<iframe srcdoc=alert(5)>Experience");
+    const distributionCard = cards.at(-1);
+    expect(distributionCard?.className).toBe("memory-stat-card memory-stat-card-wide");
+    expect(distributionCard?.querySelector(".memory-category-row")?.className).toBe("memory-category-row active");
+    expect(distributionCard?.querySelector(".memory-category-bar-fill")?.className)
+      .toBe("memory-category-bar-fill memory-category-bar-experience");
+    expect(distributionCard?.querySelector(".memory-category-bar-fill")?.style.width).toBe("100%");
+    expect(refs.memoryViewerStatsEl.querySelector("img, script, svg, iframe, math, object, [onerror], [onload]"))
+      .toBeNull();
+    expect(bindStatsAuditJumpLinks).not.toHaveBeenCalled();
+  });
+
   it("renders P16 search diagnostics in memory stats and list summaries", () => {
     const { refs, state, feature } = createDedupHarness();
     state.tab = "memories";
@@ -1251,6 +1605,32 @@ describe("memory viewer shared review filters", () => {
     expect(refs.memoryViewerDetailEl.innerHTML).toContain("review_required=1 / stale=0 / superseded=0");
   });
 
+  it("renders dedup loading state through the DOM owner", () => {
+    const t = (_key, _params, fallback) => `<img src=x onerror=alert(5)>${fallback ?? ""}`;
+    const { refs, state, feature } = createDedupHarness(undefined, { t });
+    state.dedupModal = {
+      open: true,
+      loading: true,
+      applying: false,
+      error: "",
+      report: null,
+      result: null,
+    };
+    blockNonEmptyInnerHtml(refs.memoryDedupModalListEl);
+
+    expect(() => feature.renderDedupModal()).not.toThrow();
+
+    expect(refs.memoryDedupModalListEl.querySelector(".memory-viewer-empty")?.textContent).toBe("<img src=x onerror=alert(5)>正在生成 dry-run 报告…");
+    expect(refs.memoryDedupModalListEl.querySelector("img, [onerror]")).toBeNull();
+
+    state.dedupModal.loading = false;
+    state.dedupModal.report = { groups: [] };
+    feature.renderDedupModal();
+
+    expect(refs.memoryDedupModalListEl.querySelector(".memory-viewer-empty")?.textContent).toBe("<img src=x onerror=alert(5)>当前筛选范围内没有发现 exact duplicate。");
+    expect(refs.memoryDedupModalListEl.querySelector("img, [onerror]")).toBeNull();
+  });
+
   it("runs dedup preview then apply with confirmed=true from the modal", async () => {
     const sendReq = vi.fn(async (req) => {
       if (req.method === "memory.dedup.preview") {
@@ -1364,6 +1744,9 @@ describe("memory viewer shared review filters", () => {
       throw new Error(`unexpected method ${req.method}`);
     });
     const { refs, state, feature } = createDedupHarness(sendReq);
+    blockNonEmptyInnerHtml(refs.memoryDedupModalWarningEl);
+    blockNonEmptyInnerHtml(refs.memoryDedupModalSummaryEl);
+    blockNonEmptyInnerHtml(refs.memoryDedupModalListEl);
 
     state.tab = "memories";
     refs.memoryChunkTypeFilterEl.value = "daily";
@@ -1384,6 +1767,18 @@ describe("memory viewer shared review filters", () => {
       }),
     }));
     expect(refs.memoryDedupModalEl.classList.contains("hidden")).toBe(false);
+    expect(refs.memoryDedupModalWarningEl.classList.contains("hidden")).toBe(false);
+    expect(refs.memoryDedupModalSummaryEl.querySelectorAll(".memory-detail-card")).toHaveLength(8);
+    expect([...refs.memoryDedupModalSummaryEl.querySelectorAll(".memory-detail-label")].map((element) => element.textContent)).toEqual([
+      "扫描范围",
+      "chunk 变化",
+      "重复组",
+      "可移除 chunk",
+      "受影响 task links",
+      "page_count",
+      "freelist_count",
+      "来源风险",
+    ]);
     expect(refs.memoryDedupModalSubmitBtn.disabled).toBe(false);
     expect(refs.memoryDedupModalSummaryEl.textContent).toContain("page_count");
     expect(refs.memoryDedupModalSummaryEl.textContent).toContain("freelist_count");
@@ -1407,6 +1802,7 @@ describe("memory viewer shared review filters", () => {
     expect(refs.memoryDedupModalSubmitBtn.textContent).toContain("清理已完成");
     expect(refs.memoryDedupModalSummaryEl.textContent).toContain("5 -> 4");
     expect(refs.memoryDedupModalSummaryEl.textContent).toContain("3 -> 5");
+    expect(refs.memoryDedupModalWarningEl.classList.contains("hidden")).toBe(false);
     expect(refs.memoryDedupModalWarningEl.textContent).toContain("SQLite 在 DELETE 后不会立即缩小文件体积");
   });
 });

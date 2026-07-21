@@ -18,18 +18,32 @@ function createPreview() {
 }
 
 function createFixture() {
-  document.body.innerHTML = '<div id="sources"></div>';
+  const root = document.createElement("div");
+  root.id = "sources";
+  document.body.replaceChildren(root);
   const onSelectionChange = vi.fn();
   const feature = createExperienceWorkbenchSynthesisSourcesFeature({
-    root: document.getElementById("sources"),
-    escapeHtml: (value) => String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;"),
+    root,
     onSelectionChange,
   });
-  return { feature, onSelectionChange, root: document.getElementById("sources") };
+  return { feature, onSelectionChange, root };
+}
+
+function appendCheckboxes(root, viewModels) {
+  root.replaceChildren();
+  return viewModels.map((viewModel) => {
+    if (!viewModel) return null;
+    const label = document.createElement("label");
+    label.className = `experience-synthesis-source-select${viewModel.required ? " is-required" : ""}`;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.setAttribute("data-synthesis-source-id", viewModel.candidateId);
+    checkbox.checked = viewModel.checked;
+    checkbox.disabled = viewModel.disabled;
+    label.append(checkbox);
+    root.append(label);
+    return checkbox;
+  });
 }
 
 describe("experience workbench synthesis source selection", () => {
@@ -55,16 +69,41 @@ describe("experience workbench synthesis source selection", () => {
       disposed: false,
     });
 
-    fixture.root.innerHTML = [
-      fixture.feature.renderCheckbox({ candidateId: "seed-1", label: "Required" }),
-      fixture.feature.renderCheckbox({ candidateId: "related-3", label: "Include" }),
-    ].join("");
-    const seedCheckbox = fixture.root.querySelector("[data-synthesis-source-id='seed-1']");
-    const cappedCheckbox = fixture.root.querySelector("[data-synthesis-source-id='related-3']");
+    const [seedCheckbox, cappedCheckbox] = appendCheckboxes(fixture.root, [
+      fixture.feature.getCheckboxViewModel({ candidateId: "seed-1", label: "Required" }),
+      fixture.feature.getCheckboxViewModel({ candidateId: "related-3", label: "Include" }),
+    ]);
     expect(seedCheckbox.checked).toBe(true);
     expect(seedCheckbox.disabled).toBe(true);
     expect(cappedCheckbox.checked).toBe(false);
     expect(cappedCheckbox.disabled).toBe(true);
+  });
+
+  it("projects source checkbox state without producing HTML", () => {
+    const fixture = createFixture();
+    fixture.feature.setPreview(createPreview());
+
+    expect(fixture.feature.getCheckboxViewModel({
+      candidateId: "seed-1",
+      label: '<img src=x onerror=alert(1)>Required',
+    })).toEqual({
+      candidateId: "seed-1",
+      label: '<img src=x onerror=alert(1)>Required',
+      checked: true,
+      disabled: true,
+      required: true,
+    });
+    expect(fixture.feature.getCheckboxViewModel({
+      candidateId: "related-3",
+      label: "Include",
+    })).toMatchObject({
+      candidateId: "related-3",
+      checked: false,
+      disabled: true,
+      required: false,
+    });
+    expect(fixture.feature.getCheckboxViewModel({ candidateId: "missing", label: "Include" })).toBeNull();
+    expect(fixture.feature.renderCheckbox).toBeUndefined();
   });
 
   it("owns delegated changes across activation cycles without losing selection state", () => {
@@ -76,12 +115,10 @@ describe("experience workbench synthesis source selection", () => {
       bound: true,
       disposed: false,
     });
-    fixture.root.innerHTML = [
-      fixture.feature.renderCheckbox({ candidateId: "related-2", label: "Include" }),
-      fixture.feature.renderCheckbox({ candidateId: "related-3", label: "Include" }),
-    ].join("");
-
-    const selectedCheckbox = fixture.root.querySelector("[data-synthesis-source-id='related-2']");
+    const [selectedCheckbox] = appendCheckboxes(fixture.root, [
+      fixture.feature.getCheckboxViewModel({ candidateId: "related-2", label: "Include" }),
+      fixture.feature.getCheckboxViewModel({ candidateId: "related-3", label: "Include" }),
+    ]);
     selectedCheckbox.checked = false;
     selectedCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
 
@@ -97,8 +134,9 @@ describe("experience workbench synthesis source selection", () => {
       disposed: false,
     });
 
-    fixture.root.innerHTML = fixture.feature.renderCheckbox({ candidateId: "related-3", label: "Include" });
-    const replacementCheckbox = fixture.root.querySelector("[data-synthesis-source-id='related-3']");
+    const [replacementCheckbox] = appendCheckboxes(fixture.root, [
+      fixture.feature.getCheckboxViewModel({ candidateId: "related-3", label: "Include" }),
+    ]);
     expect(replacementCheckbox.disabled).toBe(false);
     replacementCheckbox.checked = true;
     replacementCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
