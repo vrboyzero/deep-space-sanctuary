@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createCanvasBoardListHeaderTitleView } from "./canvas-board-list-header-title-view.js";
 
 describe("Canvas board list header title", () => {
-  it("renders the title as a styled text node without an HTML parser", () => {
+  it("renders the title as a named-class text node without an HTML parser", () => {
     const header = document.createElement("div");
     header.className = "canvas-board-list-header";
     const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
@@ -33,9 +33,7 @@ describe("Canvas board list header title", () => {
       expect(header.firstElementChild?.tagName).toBe("SPAN");
       expect(header.firstElementChild?.className).toBe("canvas-board-list-title");
       expect(header.firstElementChild?.textContent).toBe(title);
-      expect(header.firstElementChild?.getAttribute("style")).toBe(
-        "font-size:16px;font-weight:600;color:var(--text-main);",
-      );
+      expect(header.firstElementChild?.getAttribute("style")).toBeNull();
       expect(header.querySelector("img, svg, [onerror], [onload]")).toBeNull();
     } finally {
       Object.defineProperty(header, "innerHTML", descriptor);
@@ -70,9 +68,7 @@ describe("Canvas board list header title", () => {
     expect(canvasSource).toContain(
       "const canvasBoardListHeaderTitleView = createCanvasBoardListHeaderTitleView({ ownerDocument: document });",
     );
-    expect(canvasSource).toContain(
-      'header.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;";',
-    );
+    expect(canvasSource).toContain('header.className = "canvas-board-list-header";');
     expect(canvasSource).not.toContain("header.innerHTML");
     expect(renderIndex).toBeGreaterThan(-1);
     expect(buttonAssemblyIndex).toBeGreaterThan(renderIndex);

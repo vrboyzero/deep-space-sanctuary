@@ -1,19 +1,18 @@
 import { extractTaskContextTargets } from "./memory-viewer.js";
 import {
   formatResidentSourceScopeLabel,
-  formatResidentSourceSummary,
   getResidentSourceBadgeClass,
 } from "./memory-source-view.js";
 import {
   formatSkillFreshnessStatusLabel,
   getSkillFreshnessBadgeClass,
-  renderSkillFreshnessDetail,
 } from "./skill-freshness-view.js";
-import { isCompactGovernanceDetailMode, renderGovernanceFullOnly } from "./governance-detail-mode.js";
+import { isCompactGovernanceDetailMode } from "./governance-detail-mode.js";
 import { createMemoryDetailPathListenerLifecycle } from "./memory-detail-path-listener-lifecycle.js";
 import { createMemoryDetailSourceExplanationLifecycle } from "./memory-detail-source-explanation-lifecycle.js";
 import { createMemoryDetailStatsListenerLifecycle } from "./memory-detail-stats-listener-lifecycle.js";
 import { createMemoryDetailTaskAuditListenerLifecycle } from "./memory-detail-task-audit-listener-lifecycle.js";
+import { createMemoryDetailTaskDetailView } from "./memory-detail-task-detail-view.js";
 import { createMemoryDetailUsageRevokeAction } from "./memory-detail-usage-revoke-action.js";
 import { createMemoryDetailUsageRevokeListenerLifecycle } from "./memory-detail-usage-revoke-listener-lifecycle.js";
 
@@ -107,7 +106,6 @@ export function createMemoryDetailRenderFeature({
   switchMode,
   openGoalTaskViewer,
   showNotice,
-  escapeHtml,
   formatDateTime,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -116,6 +114,14 @@ export function createMemoryDetailRenderFeature({
     memoryViewerStatsEl,
     memoryChunkCategoryFilterEl,
   } = refs;
+  const taskDetailView = createMemoryDetailTaskDetailView({
+    t,
+    formatDateTime,
+    formatDuration,
+    formatCount,
+    formatUsageVia,
+    summarizeSourcePath,
+  });
   const sourceExplanationLifecycle = createMemoryDetailSourceExplanationLifecycle({
     isConnected,
     sendReq,
@@ -388,82 +394,6 @@ export function createMemoryDetailRenderFeature({
     };
   }
 
-  function renderTaskUsageItems(items, assetType) {
-    const memoryViewerState = getMemoryViewerStateValue();
-    const safeItems = Array.isArray(items) ? items : [];
-    if (!safeItems.length) {
-      return `<div class="memory-detail-text">${escapeHtml(t("memory.noUsageRecords", { assetType }, `No ${assetType} usage records.`))}</div>`;
-    }
-
-    return `
-      <div class="memory-usage-list">
-        ${safeItems.map((item) => {
-          const sourceView = item?.sourceView || null;
-          const skillFreshness = assetType === "skill" && item?.skillFreshness ? item.skillFreshness : null;
-          const skillFreshnessTarget = skillFreshness?.sourceCandidateId || skillFreshness?.skillKey || "";
-          const skillFreshnessStaleBusy = typeof memoryViewerState.pendingExperienceActionKey === "string"
-            && memoryViewerState.pendingExperienceActionKey === `skill-freshness:${skillFreshnessTarget}:${skillFreshness?.manualStaleMark ? "active" : "stale"}`;
-          return `
-          <div class="memory-usage-item">
-            <div class="memory-usage-item-head">
-              <div class="memory-usage-item-key">${escapeHtml(item.assetKey || "-")}</div>
-              <div class="memory-usage-item-actions">
-              <div class="memory-detail-badges">
-                ${skillFreshness ? `<span class="memory-badge ${getSkillFreshnessBadgeClass(skillFreshness.status)}">${escapeHtml(formatSkillFreshnessStatusLabel(skillFreshness.status, t))}</span>` : ""}
-                ${item.sourceCandidateStatus ? `<span class="memory-badge">${escapeHtml(item.sourceCandidateStatus)}</span>` : ""}
-                ${item.sourceCandidateId ? `<span class="memory-badge">candidate ${escapeHtml(item.sourceCandidateId)}</span>` : ""}
-                ${sourceView ? `<span class="memory-badge ${getResidentSourceBadgeClass(sourceView)}">${escapeHtml(formatResidentSourceScopeLabel(sourceView))}</span>` : ""}
-              </div>
-              <div class="memory-detail-badges">
-                <span class="memory-badge">${escapeHtml(formatUsageVia(item.usedVia))}</span>
-                <span class="memory-badge">${escapeHtml(t("memory.usageCountTotal", {}, "Total"))} ${formatCount(item.usageCount)}</span>
-              </div>
-              ${item.sourceCandidateId ? `<button class="memory-usage-action-btn" data-open-candidate-id="${escapeHtml(item.sourceCandidateId)}">${escapeHtml(t("memory.openCandidate", {}, "Candidate"))}</button>` : ""}
-              ${item.sourceCandidateTaskId ? `<button class="memory-usage-action-btn" data-open-task-id="${escapeHtml(item.sourceCandidateTaskId)}">${escapeHtml(t("memory.usageSourceTask", {}, "Source Task"))}</button>` : ""}
-              ${item.sourceCandidatePublishedPath ? `<button class="memory-usage-action-btn" data-open-source="${escapeHtml(item.sourceCandidatePublishedPath)}">${escapeHtml(t("memory.openArtifact", {}, "Open Artifact"))}</button>` : ""}
-              ${item.lastUsedTaskId && item.lastUsedTaskId !== item.taskId ? `<button class="memory-usage-action-btn" data-open-task-id="${escapeHtml(item.lastUsedTaskId)}">${escapeHtml(t("memory.usageRecentTask", {}, "Recent Task"))}</button>` : ""}
-              <button
-                class="memory-usage-action-btn"
-                  data-revoke-usage-id="${escapeHtml(item.usageId || "")}"
-                  data-revoke-task-id="${escapeHtml(item.taskId || "")}"
-                  data-revoke-asset-key="${escapeHtml(item.assetKey || "")}"
-                  ${memoryViewerState.pendingUsageRevokeId === item.usageId ? "disabled" : ""}
-                >${escapeHtml(memoryViewerState.pendingUsageRevokeId === item.usageId
-                  ? t("memory.usageRevoking", {}, "Revoking…")
-                  : t("memory.usageRevoke", {}, "Revoke"))}</button>
-              </div>
-            </div>
-            <div class="memory-usage-item-meta">
-              <span>usage ${escapeHtml(item.usageId || "-")}</span>
-              <span>${escapeHtml(t("memory.usageUsedAtTask", {}, "Used in task"))} ${escapeHtml(formatDateTime(item.createdAt))}</span>
-              <span>${escapeHtml(t("memory.usageRecentGlobal", {}, "Global recent"))} ${escapeHtml(formatDateTime(item.lastUsedAt || item.createdAt))}</span>
-              ${skillFreshness?.summary ? `<span>${escapeHtml(skillFreshness.summary)}</span>` : ""}
-              ${item.sourceCandidateId ? `<span>candidate ${escapeHtml(item.sourceCandidateId)}</span>` : ""}
-              ${item.sourceCandidateTitle ? `<span>${escapeHtml(item.sourceCandidateTitle)}</span>` : ""}
-              ${sourceView ? `<span>${escapeHtml(formatResidentSourceSummary(sourceView))}</span>` : ""}
-              ${item.sourceCandidateTaskId ? `<span>${escapeHtml(t("memory.usageSourceTask", {}, "Source Task"))} ${escapeHtml(item.sourceCandidateTaskId)}</span>` : ""}
-              ${item.lastUsedTaskId ? `<span>${escapeHtml(t("memory.usageRecentTask", {}, "Recent Task"))} ${escapeHtml(item.lastUsedTaskId)}</span>` : ""}
-            </div>
-            ${skillFreshness ? renderSkillFreshnessDetail(skillFreshness, {
-              escapeHtml,
-              t,
-              maxSignals: 2,
-              actions: {
-                sourceCandidateId: skillFreshness.sourceCandidateId || item.sourceCandidateId || "",
-                skillKey: skillFreshness.skillKey || item.assetKey || "",
-                taskId: item.taskId || "",
-                candidateId: memoryViewerState.selectedCandidate?.taskId === item.taskId
-                  ? memoryViewerState.selectedCandidate.id || ""
-                  : item.sourceCandidateId || "",
-                staleBusy: Boolean(skillFreshnessStaleBusy),
-              },
-            }) : ""}
-          </div>
-        `;
-        }).join("")}
-      </div>
-    `;
-  }
 
   function getTaskUsageOverviewViewModel() {
     const memoryViewerState = getMemoryViewerStateValue();
@@ -489,8 +419,8 @@ export function createMemoryDetailRenderFeature({
     };
   }
 
-  function renderCandidateDetailPanel(candidate) {
-    return getMemoryViewerFeatureValue()?.renderCandidateDetailPanel(candidate) || "";
+  function createCandidateDetailPanel(candidate, ownerDocument) {
+    return getMemoryViewerFeatureValue()?.createCandidateDetailPanel(candidate, ownerDocument) || null;
   }
 
   async function loadTaskSourceExplanation(taskId, conversationId = "") {
@@ -505,21 +435,20 @@ export function createMemoryDetailRenderFeature({
       return;
     }
 
-    const title = task.title || task.objective || task.summary || task.id;
-    const activities = Array.isArray(task.activities) ? task.activities : [];
-    const toolCalls = Array.isArray(task.toolCalls) ? task.toolCalls : [];
-    const memoryLinks = Array.isArray(task.memoryLinks) ? task.memoryLinks : [];
-    const artifactPaths = Array.isArray(task.artifactPaths) ? task.artifactPaths : [];
-    const workRecap = task.workRecap || null;
-    const resumeContext = task.resumeContext || null;
     const usedMethods = Array.isArray(task.usedMethods) ? task.usedMethods : [];
     const usedSkills = Array.isArray(task.usedSkills) ? task.usedSkills : [];
     const lastUsageAt = getLatestExperienceUsageTimestamp(usedMethods, usedSkills);
-    const candidatePanel = renderCandidateDetailPanel(memoryViewerState.selectedCandidate);
+    const candidatePanel = createCandidateDetailPanel(
+      memoryViewerState.selectedCandidate,
+      memoryViewerDetailEl.ownerDocument,
+    );
     const goalId = getTaskGoalId(task);
     const contextTargets = extractTaskContextTargets(task);
     const sourceExplanation = task.sourceExplanation || null;
-    const sourceExplanationItems = buildTaskSourceExplanationItems(sourceExplanation, t);
+    const sourceExplanationItems = buildTaskSourceExplanationItems(sourceExplanation, t).map((item) => ({
+      ...item,
+      activityReference: buildTaskSourceActivityReference(item.activityIds, t),
+    }));
     const sourceExplanationLoading = task.sourceExplanationLoading === true;
     const sourceExplanationError = typeof task.sourceExplanationError === "string" ? task.sourceExplanationError.trim() : "";
     const sourceExplanationUpdatedAt = sourceExplanation?.updatedAt ? formatDateTime(sourceExplanation.updatedAt) : "";
@@ -527,310 +456,26 @@ export function createMemoryDetailRenderFeature({
     const pendingActionKey = typeof memoryViewerState.pendingExperienceActionKey === "string"
       ? memoryViewerState.pendingExperienceActionKey
       : "";
-    const generateMethodBusy = pendingActionKey === `generate:method:${task.id}`;
-    const generateSkillBusy = pendingActionKey === `generate:skill:${task.id}`;
     const compactGovernanceDetailMode = isCompactGovernanceDetailMode();
 
-    memoryViewerDetailEl.innerHTML = `
-      <div class="memory-detail-shell">
-        ${renderGovernanceFullOnly(candidatePanel)}
-        <div class="memory-detail-header">
-          <div>
-            <div class="memory-detail-title">${escapeHtml(title)}</div>
-            <div class="memory-list-item-meta">
-              <span>${escapeHtml(task.id)}</span>
-              <span>${escapeHtml(task.conversationId || "-")}</span>
-            </div>
-          </div>
-          <div class="memory-detail-badges">
-            <span class="memory-badge">${escapeHtml(task.status || "unknown")}</span>
-            <span class="memory-badge">${escapeHtml(task.source || "unknown")}</span>
-            ${task.agentId ? `<span class="memory-badge">${escapeHtml(task.agentId)}</span>` : ""}
-            ${goalId ? `<span class="memory-badge memory-badge-shared">${escapeHtml(getGoalDisplayName(goalId))}</span>` : ""}
-          </div>
-        </div>
-
-        <div class="memory-detail-card">
-          <div class="goal-summary-header">
-            <div>
-              <div class="goal-summary-title">${escapeHtml(t("memory.contextSummaryTitle", {}, "上下文链"))}</div>
-              <div class="goal-summary-text">${escapeHtml(t("memory.contextSummaryTaskText", {}, "把长期任务、会话、关联记忆与经验候选入口压缩到一处。"))}</div>
-            </div>
-          </div>
-          <div class="memory-detail-badges">
-            ${goalId ? `<span class="memory-badge memory-badge-shared">${escapeHtml(getGoalDisplayName(goalId))}</span>` : ""}
-            ${task.conversationId ? `<span class="memory-badge">${escapeHtml(t("memory.contextConversation", {}, "会话"))} ${escapeHtml(summarizeSourcePath(task.conversationId))}</span>` : ""}
-            <span class="memory-badge">${escapeHtml(t("memory.contextLinkedMemories", {}, "关联记忆"))} ${escapeHtml(String(contextTargets.memoryCount))}</span>
-            <span class="memory-badge">${escapeHtml(t("memory.contextCandidates", {}, "经验候选"))} ${escapeHtml(String(contextTargets.candidateCount))}</span>
-            <span class="memory-badge">${escapeHtml(t("memory.contextArtifacts", {}, "产物"))} ${escapeHtml(String(contextTargets.artifactCount))}</span>
-          </div>
-          <div class="goal-detail-actions">
-            ${goalId ? `<button class="button" data-open-goal-id="${escapeHtml(goalId)}">${escapeHtml(t("memory.openGoal", {}, "Open Long Task"))}</button>` : ""}
-            ${goalId ? `<button class="button goal-inline-action-secondary" data-open-goal-tasks="${escapeHtml(goalId)}">${escapeHtml(t("memory.filterTasksByGoal", {}, "Filter Tasks by Goal"))}</button>` : ""}
-            ${contextTargets.firstMemoryId ? `<button class="button goal-inline-action-secondary" data-open-memory-id="${escapeHtml(contextTargets.firstMemoryId)}">${escapeHtml(t("memory.contextOpenFirstMemory", {}, "打开关联记忆"))}</button>` : ""}
-            ${contextTargets.firstCandidateId ? `<button class="button goal-inline-action-secondary" data-open-candidate-id="${escapeHtml(contextTargets.firstCandidateId)}">${escapeHtml(t("memory.contextOpenFirstCandidate", {}, "打开经验候选"))}</button>` : ""}
-            ${contextTargets.firstCandidateId ? `<button class="button goal-inline-action-secondary" data-open-experience-candidate-id="${escapeHtml(contextTargets.firstCandidateId)}">${escapeHtml(t("memory.contextOpenFirstCandidateWorkbench", {}, "在经验能力中打开"))}</button>` : ""}
-            ${contextTargets.firstArtifactPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(contextTargets.firstArtifactPath)}">${escapeHtml(t("memory.contextOpenFirstArtifact", {}, "打开相关产物"))}</button>` : ""}
-          </div>
-        </div>
-
-        <div class="memory-detail-grid">
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.taskStartTime", {}, "Started At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(task.startedAt))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.taskEndTime", {}, "Finished At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(task.finishedAt))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.taskDuration", {}, "Duration"))}</span><div class="memory-detail-text">${escapeHtml(formatDuration(task.durationMs))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">Token</span><div class="memory-detail-text">${escapeHtml(formatCount(task.tokenTotal))}</div></div>
-          ${goalId ? `<div class="memory-detail-card"><span class="memory-detail-label">Goal</span><div class="memory-detail-text">${escapeHtml(getGoalDisplayName(goalId))}</div></div>` : ""}
-        </div>
-
-        <div class="memory-detail-grid memory-detail-grid-usage">
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.methodUsageCount", {}, "Method Usage Count"))}</span><div class="memory-detail-text">${escapeHtml(formatCount(usedMethods.length))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.skillUsageCount", {}, "Skill Usage Count"))}</span><div class="memory-detail-text">${escapeHtml(formatCount(usedSkills.length))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.statLastUsedAt", {}, "Last Used At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(lastUsageAt))}</div></div>
-        </div>
-
-        <div class="memory-detail-card">
-          <div class="goal-summary-header">
-            <div>
-              <div class="goal-summary-title">${escapeHtml(t("memory.experienceActionsTitle", {}, "经验候选操作"))}</div>
-              <div class="goal-summary-text">${escapeHtml(t("memory.experienceActionsHint", {}, "从当前任务直接生成 method / skill candidate，并在右侧继续审核。"))}</div>
-            </div>
-          </div>
-          <div class="goal-detail-actions">
-            <button
-              class="memory-usage-action-btn"
-              data-generate-experience-type="method"
-              data-generate-experience-task-id="${escapeHtml(task.id || "")}"
-              ${generateMethodBusy ? "disabled" : ""}
-            >${escapeHtml(generateMethodBusy
-              ? t("memory.generateMethodCandidateBusy", {}, "生成 method 中…")
-              : t("memory.generateMethodCandidate", {}, "生成 method candidate"))}</button>
-            <button
-              class="memory-usage-action-btn"
-              data-generate-experience-type="skill"
-              data-generate-experience-task-id="${escapeHtml(task.id || "")}"
-              ${generateSkillBusy ? "disabled" : ""}
-            >${escapeHtml(generateSkillBusy
-              ? t("memory.generateSkillCandidateBusy", {}, "生成 skill 中…")
-              : t("memory.generateSkillCandidate", {}, "生成 skill candidate"))}</button>
-          </div>
-        </div>
-
-        ${task.objective ? `<div class="memory-detail-card"><span class="memory-detail-label">目标说明</span><div class="memory-detail-text">${escapeHtml(task.objective)}</div></div>` : ""}
-        ${task.summary ? `<div class="memory-detail-card"><span class="memory-detail-label">摘要</span><div class="memory-detail-text">${escapeHtml(task.summary)}</div></div>` : ""}
-        ${task.outcome ? `<div class="memory-detail-card"><span class="memory-detail-label">结果</span><div class="memory-detail-text">${escapeHtml(task.outcome)}</div></div>` : ""}
-        ${!compactGovernanceDetailMode && workRecap ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">Work Recap</span>
-            <div class="memory-detail-text">${escapeHtml(workRecap.headline || "-")}</div>
-            ${Array.isArray(workRecap.confirmedFacts) && workRecap.confirmedFacts.length ? `
-              <div class="memory-inline-list">
-                ${workRecap.confirmedFacts.map((item) => `
-                  <div class="memory-inline-item">
-                    <div class="memory-detail-text">${escapeHtml(item)}</div>
-                  </div>
-                `).join("")}
-              </div>
-            ` : ""}
-            ${Array.isArray(workRecap.pendingActions) && workRecap.pendingActions.length ? `
-              <div class="memory-detail-label">待继续 / 下一步</div>
-              <div class="memory-inline-list">
-                ${workRecap.pendingActions.map((item) => `
-                  <div class="memory-inline-item">
-                    <div class="memory-detail-text">${escapeHtml(item)}</div>
-                  </div>
-                `).join("")}
-              </div>
-            ` : ""}
-            ${Array.isArray(workRecap.blockers) && workRecap.blockers.length ? `
-              <div class="memory-detail-label">Blockers</div>
-              <div class="memory-inline-list">
-                ${workRecap.blockers.map((item) => `
-                  <div class="memory-inline-item">
-                    <div class="memory-detail-text">${escapeHtml(item)}</div>
-                  </div>
-                `).join("")}
-              </div>
-            ` : ""}
-          </div>
-        ` : ""}
-        ${!compactGovernanceDetailMode && resumeContext ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">Resume Context</span>
-            ${resumeContext.currentStopPoint ? `<div class="memory-detail-text">${escapeHtml(`当前停点：${resumeContext.currentStopPoint}`)}</div>` : ""}
-            ${resumeContext.nextStep ? `<div class="memory-detail-text">${escapeHtml(`下一步：${resumeContext.nextStep}`)}</div>` : ""}
-            ${Array.isArray(resumeContext.blockers) && resumeContext.blockers.length ? `
-              <div class="memory-inline-list">
-                ${resumeContext.blockers.map((item) => `
-                  <div class="memory-inline-item">
-                    <div class="memory-detail-text">${escapeHtml(item)}</div>
-                  </div>
-                `).join("")}
-              </div>
-            ` : ""}
-          </div>
-        ` : ""}
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <div class="goal-summary-header">
-            <div>
-              <div class="goal-summary-title">${escapeHtml(t("memory.taskSourceExplanationTitle", {}, "来源解释"))}</div>
-              <div class="goal-summary-text">${escapeHtml(t("memory.taskSourceExplanationHint", {}, "按需查看当前 stop / recap / recent activity 分别来自哪一层任务记忆。"))}</div>
-            </div>
-            <div class="memory-detail-badges">
-              ${hasLoadedSourceExplanation ? `<span class="memory-badge">${escapeHtml(t("memory.taskSourceExplanationSourceCount", { count: String(sourceExplanationItems.length) }, `来源 ${sourceExplanationItems.length}`))}</span>` : ""}
-              ${sourceExplanationUpdatedAt ? `<span class="memory-badge">${escapeHtml(t("memory.taskSourceExplanationUpdatedAt", { time: sourceExplanationUpdatedAt }, `更新于 ${sourceExplanationUpdatedAt}`))}</span>` : ""}
-            </div>
-          </div>
-          <div class="goal-detail-actions">
-            <button
-              class="button goal-inline-action-secondary"
-              data-load-task-source-explanation="${escapeHtml(task.id || "")}"
-              data-load-task-conversation-id="${escapeHtml(task.conversationId || "")}"
-              ${sourceExplanationLoading ? "disabled" : ""}
-            >${escapeHtml(sourceExplanationLoading
-              ? t("memory.taskSourceExplanationLoadingShort", {}, "正在读取来源…")
-              : hasLoadedSourceExplanation
-                ? t("memory.taskSourceExplanationReload", {}, "刷新来源解释")
-                : t("memory.taskSourceExplanationLoad", {}, "查看来源解释"))}</button>
-          </div>
-          ${sourceExplanationError ? `<div class="memory-detail-text">${escapeHtml(sourceExplanationError)}</div>` : ""}
-          ${sourceExplanationItems.length ? `
-            <div class="memory-inline-list">
-              ${sourceExplanationItems.map((item) => {
-                const activityRef = buildTaskSourceActivityReference(item.activityIds, t);
-                return `
-                  <div class="memory-inline-item">
-                    <div class="memory-inline-item-head">
-                      ${item.label ? `<span class="memory-badge">${escapeHtml(item.label)}</span>` : ""}
-                      ${activityRef
-                        ? `<span class="memory-badge" title="${escapeHtml(activityRef.title)}">${escapeHtml(activityRef.badgeLabel)}</span>`
-                        : ""}
-                    </div>
-                    ${item.previews.map((preview) => `<div class="memory-detail-text">${escapeHtml(preview)}</div>`).join("")}
-                  </div>
-                `;
-              }).join("")}
-            </div>
-          ` : `
-            <div class="memory-detail-text">${escapeHtml(sourceExplanationLoading
-              ? t("memory.taskSourceExplanationLoading", {}, "正在读取 stop / recap 的来源…")
-              : hasLoadedSourceExplanation
-                ? t("memory.taskSourceExplanationEmpty", {}, "当前没有可展示的来源解释。")
-                : t("memory.taskSourceExplanationEmptyIdle", {}, "需要时再点击查看来源解释。"))}</div>
-          `}
-        </div>
-        `)}
-        ${!compactGovernanceDetailMode && task.reflection ? `<div class="memory-detail-card"><span class="memory-detail-label">复盘</span><div class="memory-detail-text">${escapeHtml(task.reflection)}</div></div>` : ""}
-
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">Activity / Worklog (${activities.length})</span>
-          ${activities.length ? `
-            <div class="memory-inline-list">
-              ${activities.map((activity) => `
-                <div class="memory-inline-item">
-                  <div class="memory-inline-item-head">
-                    <span class="memory-badge">${escapeHtml(activity.state || "completed")}</span>
-                    <span class="memory-badge">${escapeHtml(activity.kind || "activity")}</span>
-                    <span class="memory-badge">${escapeHtml(formatDateTime(activity.happenedAt || activity.recordedAt))}</span>
-                  </div>
-                  <div class="memory-detail-text">${escapeHtml(activity.title || "-")}</div>
-                  ${activity.summary ? `<div class="memory-detail-text">${escapeHtml(activity.summary)}</div>` : ""}
-                  ${Array.isArray(activity.files) && activity.files.length ? `
-                    <div class="memory-detail-text">
-                      ${activity.files.map((filePath) => `<button class="memory-path-link" data-open-source="${escapeHtml(filePath)}">${escapeHtml(filePath)}</button>`).join("")}
-                    </div>
-                  ` : ""}
-                  ${Array.isArray(activity.artifactPaths) && activity.artifactPaths.length ? `
-                    <div class="memory-detail-text">
-                      ${activity.artifactPaths.map((artifactPath) => `<button class="memory-path-link" data-open-source="${escapeHtml(artifactPath)}">${escapeHtml(artifactPath)}</button>`).join("")}
-                    </div>
-                  ` : ""}
-                  ${Array.isArray(activity.memoryChunkIds) && activity.memoryChunkIds.length ? `
-                    <div class="memory-detail-text">
-                      ${activity.memoryChunkIds.map((chunkId) => `<button class="memory-path-link" data-open-memory-id="${escapeHtml(chunkId)}">${escapeHtml(chunkId)}</button>`).join("")}
-                    </div>
-                  ` : ""}
-                  ${activity.error ? `<div class="memory-detail-text">${escapeHtml(activity.error)}</div>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">No activity records.</div>`}
-        </div>
-        `)}
-
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.methodUsageTitle", {}, "Method Usage"))} (${usedMethods.length})</span>
-          ${renderTaskUsageItems(usedMethods, "method")}
-        </div>
-        `)}
-
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.skillUsageTitle", {}, "Skill Usage"))} (${usedSkills.length})</span>
-          ${renderTaskUsageItems(usedSkills, "skill")}
-        </div>
-        `)}
-
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">工具调用（${toolCalls.length}）</span>
-          ${toolCalls.length ? `
-            <div class="memory-inline-list">
-              ${toolCalls.map((call) => `
-                <div class="memory-inline-item">
-                  <div class="memory-inline-item-head">
-                    <span class="memory-badge">${escapeHtml(call.toolName || "unknown")}</span>
-                    <span class="memory-badge">${call.success ? "成功" : "失败"}</span>
-                    <span class="memory-badge">${escapeHtml(formatDuration(call.durationMs))}</span>
-                  </div>
-                  ${call.note ? `<div class="memory-detail-text">${escapeHtml(call.note)}</div>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">${escapeHtml(t("memory.noToolCalls", {}, "No tool call records."))}</div>`}
-        </div>
-        `)}
-
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.linkedMemoriesTitle", {}, "Linked Memories"))} (${memoryLinks.length})</span>
-          ${memoryLinks.length ? `
-            <div class="memory-inline-list">
-              ${memoryLinks.map((link) => `
-                <div class="memory-inline-item">
-                  <div class="memory-inline-item-head">
-                    <span class="memory-badge">${escapeHtml(link.relation || "used")}</span>
-                    ${link.memoryType ? `<span class="memory-badge">${escapeHtml(link.memoryType)}</span>` : ""}
-                    ${link.sourceView ? `<span class="memory-badge ${getResidentSourceBadgeClass(link.sourceView)}">${escapeHtml(formatResidentSourceScopeLabel(link.sourceView))}</span>` : ""}
-                    <button class="memory-path-link" data-open-memory-id="${escapeHtml(link.chunkId || "")}">${escapeHtml(link.chunkId || "打开记忆")}</button>
-                  </div>
-                  ${link.sourcePath ? `<button class="memory-path-link" data-open-source="${escapeHtml(link.sourcePath)}">${escapeHtml(link.sourcePath)}</button>` : ""}
-                  ${link.snippet ? `<div class="memory-detail-text">${escapeHtml(link.snippet)}</div>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">${escapeHtml(t("memory.noLinkedMemories", {}, "No linked memories."))}</div>`}
-        </div>
-        `)}
-
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.artifactsTitle", {}, "Artifacts"))} (${artifactPaths.length})</span>
-          ${artifactPaths.length ? `
-            <div class="memory-inline-list">
-              ${artifactPaths.map((artifactPath) => `
-                <div class="memory-inline-item">
-                  <button class="memory-path-link" data-open-source="${escapeHtml(artifactPath)}">${escapeHtml(artifactPath)}</button>
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">${escapeHtml(t("memory.noArtifacts", {}, "No artifact paths."))}</div>`}
-        </div>
-        `)}
-      </div>
-    `;
+    taskDetailView.render({
+      container: memoryViewerDetailEl,
+      task,
+      candidatePanel,
+      goalId,
+      goalDisplayName: goalId ? getGoalDisplayName(goalId) : "",
+      contextTargets,
+      sourceExplanationItems,
+      sourceExplanationLoading,
+      sourceExplanationError,
+      sourceExplanationUpdatedAt,
+      hasLoadedSourceExplanation,
+      pendingActionKey,
+      pendingUsageRevokeId: memoryViewerState.pendingUsageRevokeId || "",
+      selectedCandidate: memoryViewerState.selectedCandidate || null,
+      lastUsageAt,
+      compact: compactGovernanceDetailMode,
+    });
     bindMemoryPathLinks();
     bindTaskAuditJumpLinks();
     bindTaskUsageRevokeButtons(task);

@@ -8,8 +8,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createExperienceWorkbenchUsageOverviewView } from "./experience-workbench-usage-overview-view.js";
 
 afterEach(() => {
+  document.head.querySelectorAll("style[data-ui03-runtime-stylesheet]").forEach((element) => element.remove());
   document.body.replaceChildren();
 });
+
+function installRuntimeStyleSheet() {
+  const style = document.createElement("style");
+  style.setAttribute("data-ui03-runtime-stylesheet", "true");
+  document.head.append(style);
+  return style;
+}
+
+function getRuntimeStyleValue(style, element, property) {
+  const className = [...element.classList].find((name) => name.startsWith("webchat-runtime-style-"));
+  return [...(style.sheet?.cssRules ?? [])]
+    .find((rule) => rule.selectorText === `.${className}`)
+    ?.style.getPropertyValue(property);
+}
 
 function blockNonEmptyInnerHtml(element) {
   const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
@@ -27,6 +42,7 @@ function blockNonEmptyInnerHtml(element) {
 
 describe("Experience Workbench usage overview DOM owner", () => {
   it("renders usage lanes, trusted selectors, and bounded widths without an HTML parser", () => {
+    const style = installRuntimeStyleSheet();
     const container = document.createElement("div");
     document.body.append(container);
     blockNonEmptyInnerHtml(container);
@@ -81,8 +97,9 @@ describe("Experience Workbench usage overview DOM owner", () => {
     expect(buttons[0]?.getAttribute("data-open-candidate-id")).toBe(candidateId);
     expect(buttons[1]?.getAttribute("data-open-task-id")).toBe(taskId);
     expect(buttons[2]?.getAttribute("data-open-source")).toBe(sourcePath);
-    expect(bar?.className).toBe("memory-usage-overview-bar-fill memory-usage-overview-bar-method");
-    expect(bar?.style.width).toBe("100%");
+    expect(bar?.classList.contains("memory-usage-overview-bar-fill")).toBe(true);
+    expect(bar?.classList.contains("memory-usage-overview-bar-method")).toBe(true);
+    expect(getRuntimeStyleValue(style, bar, "width")).toBe("100%");
     expect(container.textContent).toContain("<object data=javascript:alert(5)>8</object>");
     expect(container.querySelector("img, script, mark, b, details, em, u, q, strong, i, svg, iframe, object, [onerror], [onload]")).toBeNull();
   });

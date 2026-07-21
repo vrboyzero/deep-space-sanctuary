@@ -48,6 +48,10 @@ function sanitizeEnv(extraEnv = {}) {
   delete env.STAR_SANCTUARY_RUNTIME_MODE;
   delete env.BELLDANDY_RUNTIME_MODE;
   delete env.STAR_SANCTUARY_INSTALL_TEST_FAIL_AT;
+  delete env.BELLDANDY_AUTH_MODE;
+  delete env.BELLDANDY_AUTH_TOKEN;
+  delete env.BELLDANDY_AUTH_PASSWORD;
+  delete env.BELLDANDY_COMMUNITY_API_ENABLED;
   return { ...env, ...extraEnv };
 }
 
@@ -147,8 +151,8 @@ async function runScenario(scenario, index) {
   const installRoot = path.join(smokeRoot, scenario.id);
   const stateDir = path.join(smokeRoot, `${scenario.id}-state`);
   const brokenSourceDir = path.join(smokeRoot, `${scenario.id}-broken-source`);
-  const envPath = path.join(installRoot, ".env");
-  const envLocalPath = path.join(installRoot, ".env.local");
+  const envPath = path.join(stateDir, ".env");
+  const envLocalPath = path.join(stateDir, ".env.local");
   const installInfoPath = path.join(installRoot, "install-info.json");
   const backupRoot = path.join(installRoot, "backups");
   const port = 29489 + (index * 2);
@@ -192,6 +196,8 @@ async function runScenario(scenario, index) {
       BELLDANDY_PORT: String(port),
       BELLDANDY_RELAY_PORT: String(relayPort),
       BELLDANDY_STATE_DIR: stateDir,
+      BELLDANDY_AUTH_MODE: "none",
+      BELLDANDY_COMMUNITY_API_ENABLED: "false",
       AUTO_OPEN_BROWSER: "false",
       CI: "true",
     }),
@@ -247,6 +253,8 @@ async function runScenario(scenario, index) {
       BELLDANDY_PORT: String(port),
       BELLDANDY_RELAY_PORT: String(relayPort),
       BELLDANDY_STATE_DIR: stateDir,
+      BELLDANDY_AUTH_MODE: "none",
+      BELLDANDY_COMMUNITY_API_ENABLED: "false",
       AUTO_OPEN_BROWSER: "false",
       CI: "true",
     }),
@@ -259,7 +267,11 @@ async function runScenario(scenario, index) {
     command: "cmd.exe",
     args: ["/c", path.join(installRoot, "bdd.cmd"), "doctor", "--json", "--state-dir", stateDir],
     cwd: installRoot,
-    env: sanitizeEnv({ CI: "true" }),
+    env: sanitizeEnv({
+      BELLDANDY_AUTH_MODE: "none",
+      BELLDANDY_COMMUNITY_API_ENABLED: "false",
+      CI: "true",
+    }),
     stdoutPath: path.join(smokeRoot, `${scenario.id}-doctor.stdout.log`),
     stderrPath: path.join(smokeRoot, `${scenario.id}-doctor.stderr.log`),
   });
@@ -280,7 +292,7 @@ async function runScenario(scenario, index) {
     && rollbackStart.healthy
     && installInfo.tag === "v1.0.0-smoke"
     && installInfo.version === "v1.0.0-smoke"
-    && environmentCheck?.message === installRoot
+    && environmentCheck?.message === stateDir
     && envLocalCheck?.status === "pass"
     && envLocalCheck?.message === envLocalPath
     && envLocalText.includes(envMarkerLine)

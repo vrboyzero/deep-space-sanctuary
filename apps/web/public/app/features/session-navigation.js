@@ -44,7 +44,7 @@ export function createSessionNavigationFeature({
     }
     getChatEventsFeature?.()?.resetStreamingState();
     if (messagesEl && renderHint) {
-      messagesEl.innerHTML = "";
+      messagesEl.textContent = "";
       const hint = document.createElement("div");
       hint.className = "system-msg";
       hint.textContent = hintText || t(

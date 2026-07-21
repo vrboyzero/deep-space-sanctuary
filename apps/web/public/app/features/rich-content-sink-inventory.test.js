@@ -49,20 +49,8 @@ function reviewedBaseline(clear, reviewedStructuredTemplate, staticTemplate, ide
 // Counts are paired with a digest of the AST-level sink identities. Any new or moved sink must
 // be reviewed and explicitly assigned to clear/static/structured/rich-content before it lands.
 const REVIEWED_PRODUCTION_SINK_BASELINE = {
-  "app.js": reviewedBaseline(1, 0, 0, "9384d71c8ffcae8f51038a69a4d843bd1de863f7cc0f924263730af8b81488d9"),
-  "app/features/agent-runtime.js": reviewedBaseline(3, 0, 0, "7ff651802b017dc4edcdc5cabe30316a282abb02b4d3d7a2a27b06ae0ea58b64"),
-  "app/features/assistant-mode-settings-view-model.js": reviewedBaseline(1, 0, 0, "e1225418b5c2940a575662f4682cbe05134545bf44e254e47111a25865c90aab"),
-  "app/features/canvas-context.js": reviewedBaseline(2, 0, 0, "91ce12b6df360d40575f040e4326979b40d0866d4fe6c44e27de851d33b69d56"),
-  "app/features/chat-network.js": reviewedBaseline(2, 0, 0, "912316973268a78c35242920da707e7387123146d40eace05b235e3b94d6ce6b"),
   "app/features/chat-ui.js": reviewedBaseline(0, 0, 0, "70eaeac7e2681705a979b636c1c170ed25ea829d48a7a8f34bd79aac1e91fd0a", { richContentCommit: 1 }),
-  "app/features/experience-workbench.js": reviewedBaseline(0, 1, 0, "b5810b691634ed84e623d1e00603e1d37704787257419e1f2f3686761ff5be55"),
-  "app/features/goals-overview.js": reviewedBaseline(3, 0, 0, "6cae1ac21873126a06973d6f3f85beb72de479622e256afde014f6921243b1e1"),
-  "app/features/memory-detail-render.js": reviewedBaseline(0, 1, 0, "59eddd83df8322185e452223237a1a91eb07847c28e004ede6ab2ca460a09000"),
-  "app/features/memory-viewer.js": reviewedBaseline(0, 4, 0, "a900f30425b8c0d01c39a01f7b6c4a4bc779ddc842cfea534acfed8a93dc3a59"),
   "app/features/rich-content-renderer.js": reviewedBaseline(0, 0, 0, "b8c0825bb2d64026a817de36b1bfd69d473046de2f31902cdd9af0ab578f1929", { richContentSanitizer: 1 }),
-  "app/features/session-navigation.js": reviewedBaseline(1, 0, 0, "043f7b6d079f96d1257fc972f183a35bbc76dafdb0df7b7f0d273b50d64289c8"),
-  "app/features/settings.js": reviewedBaseline(2, 0, 0, "ade689f963d4c5892ecb35ab137fd194199ee81f09ee82cd1015130e7cd7cabd"),
-  "canvas.js": reviewedBaseline(4, 0, 0, "2caa2c8b0d087c3e7d2b2e41f6c10035a2fabbdf40d734ff2ab33423d48a2802"),
 };
 
 function listProductionJavaScriptFiles(directory) {
@@ -194,10 +182,10 @@ describe("WebChat production HTML sink inventory", () => {
       staticTemplate: summary.staticTemplate + entry.staticTemplate,
     }), { clear: 0, richContent: 0, reviewedStructuredTemplate: 0, staticTemplate: 0 });
     expect({ files: Object.keys(inventory).length, ...totals }).toEqual({
-      files: 14,
-      clear: 19,
+      files: 2,
+      clear: 0,
       richContent: 2,
-      reviewedStructuredTemplate: 6,
+      reviewedStructuredTemplate: 0,
       staticTemplate: 0,
     });
   });
@@ -219,9 +207,17 @@ describe("WebChat production HTML sink inventory", () => {
     expect(chatUiSource.match(/body\.innerHTML = sanitizedHtml;/g)).toHaveLength(1);
   });
 
-  it("records enforced Gateway CSP and the narrower Trusted Types browser fixture", () => {
+  it("records enforced Gateway CSP and globally enforced Trusted Types", () => {
     expect(coreHttpRoutesSource).toContain('res.setHeader("Content-Security-Policy", WEBCHAT_CSP);');
     expect(coreHttpRoutesSource).not.toContain('res.setHeader("Content-Security-Policy-Report-Only"');
+    expect(coreHttpRoutesSource).toContain('"style-src \'self\'"');
+    expect(coreHttpRoutesSource).toContain('"style-src-attr \'none\'"');
+    expect(coreHttpRoutesSource).not.toContain("unsafe-inline");
+    expect(coreHttpRoutesSource).toContain("trusted-types belldandy-web-assets belldandy-rich-content dompurify");
+    expect(coreHttpRoutesSource).toContain("require-trusted-types-for 'script'");
+    expect(securityFixtureSource).toContain('"style-src \'self\'"');
+    expect(securityFixtureSource).toContain('"style-src-attr \'none\'"');
+    expect(securityFixtureSource).not.toContain("unsafe-inline");
     expect(securityFixtureSource).toContain("trusted-types belldandy-web-assets belldandy-rich-content dompurify");
     expect(securityFixtureSource).toContain("require-trusted-types-for 'script'");
     expect(securityFixtureSource).toContain("/__webchat-rich-content-fixture__.html");

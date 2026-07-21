@@ -75,7 +75,7 @@ export function resolvePreferredAgentSelection(agents, currentValue = "", savedV
 export function syncAgentSelectOptions(agentSelectEl, agents) {
   if (!agentSelectEl) return;
   const items = Array.isArray(agents) ? agents : [];
-  agentSelectEl.innerHTML = "";
+  agentSelectEl.textContent = "";
   for (const agent of items) {
     if (!agent || typeof agent !== "object" || !agent.id) continue;
     const opt = document.createElement("option");
@@ -605,7 +605,7 @@ export function createChatNetworkFeature({
       }))
       .filter((group) => group.models.length > 0);
 
-    modelSelectEl.innerHTML = "";
+    modelSelectEl.textContent = "";
     const defaultOpt = document.createElement("option");
     defaultOpt.value = "";
     defaultOpt.textContent = defaultLabel;

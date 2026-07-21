@@ -24,15 +24,31 @@ import { buildDreamHistoryPanelView } from "./memory-viewer-dream-history.js";
 
 let previousWebConfig;
 
+function installRuntimeStyleSheet() {
+  const style = document.createElement("style");
+  style.setAttribute("data-ui03-runtime-stylesheet", "true");
+  document.head.append(style);
+  return style;
+}
+
+function getRuntimeStyleValue(style, element, property) {
+  const className = [...element.classList].find((name) => name.startsWith("webchat-runtime-style-"));
+  return [...(style.sheet?.cssRules ?? [])]
+    .find((rule) => rule.selectorText === `.${className}`)
+    ?.style.getPropertyValue(property);
+}
+
 beforeEach(() => {
   previousWebConfig = globalThis.BELLDANDY_WEB_CONFIG;
   globalThis.BELLDANDY_WEB_CONFIG = {
     ...(previousWebConfig && typeof previousWebConfig === "object" ? previousWebConfig : {}),
     governanceDetailMode: "full",
   };
+  installRuntimeStyleSheet();
 });
 
 afterEach(() => {
+  document.head.querySelectorAll("style[data-ui03-runtime-stylesheet]").forEach((element) => element.remove());
   if (previousWebConfig && typeof previousWebConfig === "object") {
     globalThis.BELLDANDY_WEB_CONFIG = previousWebConfig;
     return;
@@ -230,8 +246,8 @@ function createDedupHarness(sendReqImpl = vi.fn(), options = {}) {
     getActiveMemoryCategoryLabel: options.getActiveMemoryCategoryLabel ?? (() => ""),
     getMemoryCategoryDistributionViewModel: options.getMemoryCategoryDistributionViewModel ?? (() => null),
     bindStatsAuditJumpLinks,
-    bindMemoryPathLinks: vi.fn(),
-    bindTaskAuditJumpLinks: vi.fn(),
+    bindMemoryPathLinks: options.bindMemoryPathLinks ?? vi.fn(),
+    bindTaskAuditJumpLinks: options.bindTaskAuditJumpLinks ?? vi.fn(),
     openConversationSession: vi.fn(),
     emailThreadAdviceRetention: options.emailThreadAdviceRetention,
     showNotice,
@@ -496,7 +512,7 @@ describe("memory viewer load lifecycle", () => {
     feature.renderMemoryViewerStats({ files: 99 });
     feature.renderSharedReviewList([]);
     feature.renderTaskList([]);
-    expect(feature.renderCandidateDetailPanel({ id: "late-candidate" })).toBe("");
+    expect(feature.createCandidateDetailPanel({ id: "late-candidate" }, document)).toBeNull();
 
     await Promise.all([
       feature.applyDedupFromModal(),
@@ -1260,9 +1276,12 @@ describe("memory viewer shared review filters", () => {
     const distributionCard = cards.at(-1);
     expect(distributionCard?.className).toBe("memory-stat-card memory-stat-card-wide");
     expect(distributionCard?.querySelector(".memory-category-row")?.className).toBe("memory-category-row active");
-    expect(distributionCard?.querySelector(".memory-category-bar-fill")?.className)
-      .toBe("memory-category-bar-fill memory-category-bar-experience");
-    expect(distributionCard?.querySelector(".memory-category-bar-fill")?.style.width).toBe("100%");
+    expect(distributionCard?.querySelector(".memory-category-bar-fill")?.classList.contains("memory-category-bar-fill"))
+      .toBe(true);
+    expect(distributionCard?.querySelector(".memory-category-bar-fill")?.classList.contains("memory-category-bar-experience"))
+      .toBe(true);
+    const style = document.head.querySelector("style[data-ui03-runtime-stylesheet]");
+    expect(getRuntimeStyleValue(style, distributionCard?.querySelector(".memory-category-bar-fill"), "width")).toBe("100%");
     expect(refs.memoryViewerStatsEl.querySelector("img, script, svg, iframe, math, object, [onerror], [onload]"))
       .toBeNull();
     expect(bindStatsAuditJumpLinks).not.toHaveBeenCalled();
@@ -1603,6 +1622,65 @@ describe("memory viewer shared review filters", () => {
     expect(refs.memoryViewerDetailEl.innerHTML).toContain("Memory Freshness：");
     expect(refs.memoryViewerDetailEl.innerHTML).toContain("Procedural experience needs review before publish.");
     expect(refs.memoryViewerDetailEl.innerHTML).toContain("review_required=1 / stale=0 / superseded=0");
+  });
+
+  it("renders candidate-only detail through its DOM owner and preserves path actions", () => {
+    const openedTasks = [];
+    const openedSources = [];
+    let detailRoot;
+    const bindTaskAuditJumpLinks = () => {
+      for (const button of detailRoot.querySelectorAll("[data-open-task-id]")) {
+        button.addEventListener("click", () => openedTasks.push(button.getAttribute("data-open-task-id")));
+      }
+    };
+    const bindMemoryPathLinks = () => {
+      for (const button of detailRoot.querySelectorAll("[data-open-source]")) {
+        button.addEventListener("click", () => openedSources.push(button.getAttribute("data-open-source")));
+      }
+    };
+    const { refs, feature } = createDedupHarness(undefined, {
+      bindMemoryPathLinks,
+      bindTaskAuditJumpLinks,
+    });
+    detailRoot = refs.memoryViewerDetailEl;
+    blockNonEmptyInnerHtml(detailRoot);
+
+    const firstCandidate = {
+      id: "candidate-<img src=x onerror=alert(1)>",
+      taskId: "task-<script>alert(2)</script>",
+      type: "method",
+      status: "draft",
+      title: "First <svg onload=alert(3)> candidate",
+      publishedPath: "state/<iframe srcdoc='<script>alert(4)</script>'>.md",
+      content: "<object data=javascript:alert(5)>content",
+      sourceTaskSnapshot: {
+        artifactPaths: ["artifact/<math><mtext>unsafe</mtext></math>.md"],
+      },
+    };
+
+    expect(() => feature.renderCandidateOnlyDetail(firstCandidate)).not.toThrow();
+    const previousPanel = detailRoot.querySelector(":scope > .memory-detail-shell > .memory-detail-card");
+    expect(detailRoot.querySelector(".memory-detail-text strong")?.textContent).toBe(firstCandidate.title);
+    expect(detailRoot.querySelector("img, script, svg, iframe, object, math, [onerror], [onload], [srcdoc]"))
+      .toBeNull();
+    [...detailRoot.querySelectorAll("[data-open-task-id]")]
+      .find((button) => button.getAttribute("data-open-task-id") === firstCandidate.taskId)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    [...detailRoot.querySelectorAll("[data-open-source]")]
+      .find((button) => button.getAttribute("data-open-source") === firstCandidate.sourceTaskSnapshot.artifactPaths[0])
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(openedTasks).toEqual([firstCandidate.taskId]);
+    expect(openedSources).toEqual([firstCandidate.sourceTaskSnapshot.artifactPaths[0]]);
+
+    feature.renderCandidateOnlyDetail({
+      ...firstCandidate,
+      id: "candidate-second",
+      title: "Second candidate",
+    });
+
+    expect(previousPanel?.isConnected).toBe(false);
+    expect(detailRoot.querySelector(".memory-detail-text strong")?.textContent).toBe("Second candidate");
+    expect(detailRoot.textContent).not.toContain(firstCandidate.title);
   });
 
   it("renders dedup loading state through the DOM owner", () => {

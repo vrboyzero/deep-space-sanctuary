@@ -7,6 +7,7 @@ import type { BelldandyAgent, AgentRegistry, ConversationStore } from "@belldand
 import { DEFAULT_STATE_DIR_DISPLAY } from "@belldandy/protocol";
 
 import type { BelldandyLogger } from "./logger/index.js";
+import { createAvatarStaticHttpHandler } from "./avatar-static-http.js";
 import { createGeneratedArtifactHttpHandler } from "./generated-artifact-http.js";
 import type { QueryRuntimeTraceStore } from "./query-runtime-trace.js";
 import type { TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
@@ -29,12 +30,15 @@ const WEBCHAT_CSP = [
   "frame-ancestors 'none'",
   "form-action 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self'",
+  "style-src-attr 'none'",
   "img-src 'self' https: data:",
   "media-src 'self' https:",
   "font-src 'self'",
   "connect-src 'self' ws: wss:",
   "worker-src 'self' blob:",
+  "trusted-types belldandy-web-assets belldandy-rich-content dompurify",
+  "require-trusted-types-for 'script'",
 ].join("; ");
 
 export type RegisterGatewayHttpRoutesContext = {
@@ -163,8 +167,8 @@ export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesCo
     next();
   });
 
-  // WebChat 的首屏脚本和第三方资产均为同源文件后，可直接强制 CSP；Trusted Types
-  // 仍以专用浏览器 fixture 收敛，不在未迁移的全局 UI 上提前启用。
+  // WebChat 的脚本、样式和动态 HTML 创建点均已收口到同源资产、CSSOM owner 与
+  // 固定 Trusted Types policy，因此对所有 Gateway 页面直接强制完整 CSP。
   ctx.app.use((_req, res, next) => {
     res.setHeader("Content-Security-Policy", WEBCHAT_CSP);
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -188,8 +192,17 @@ export async function registerGatewayHttpRoutes(ctx: RegisterGatewayHttpRoutesCo
     }
   }
 
-  ctx.app.use("/avatar", express.static(ctx.avatarDir));
-  ctx.log.info("gateway", `Static: serving /avatar -> ${ctx.avatarDir}`);
+  try {
+    await fsp.mkdir(ctx.avatarDir, { recursive: true });
+    ctx.app.use("/avatar", createAvatarStaticHttpHandler({
+      avatarDir: ctx.avatarDir,
+    }));
+    ctx.log.info("gateway", `Static: serving /avatar -> ${ctx.avatarDir}`);
+  } catch (error) {
+    ctx.log.error("gateway", "Static: unable to initialize /avatar", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   ctx.app.get("/config.js", (_req, res) => {
     res.type("application/javascript; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");

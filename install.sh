@@ -540,13 +540,24 @@ function readOctal(header, start, length) {
   return value;
 }
 
-function validatePath(rawPath, seen) {
+function validatePath(rawPath, isDirectory, seen, entryKinds) {
   assert(/^[A-Za-z0-9._/-]+$/.test(rawPath), "release archive contains an unsafe entry path");
   assert(!rawPath.includes("//") && !/(^|\/)(\.|\.\.)(\/|$)/.test(rawPath), "release archive contains an unsafe entry path");
   assert(rawPath === expectedRoot || rawPath.startsWith(`${expectedRoot}/`), "release archive entry is outside the declared package root");
   const key = rawPath.toLowerCase();
   assert(!seen.has(key), "release archive contains a duplicate entry path");
+  let parent = key;
+  while (parent.includes("/")) {
+    parent = parent.slice(0, parent.lastIndexOf("/"));
+    assert(entryKinds.get(parent) !== false, "release archive entry has a parent file");
+  }
+  if (!isDirectory) {
+    for (const knownPath of entryKinds.keys()) {
+      assert(!knownPath.startsWith(`${key}/`), "release archive file entry conflicts with existing child entries");
+    }
+  }
   seen.add(key);
+  entryKinds.set(key, isDirectory);
 }
 
 async function scanArchive() {
@@ -559,6 +570,7 @@ async function scanArchive() {
   let fileCount = 0;
   let totalBytes = 0;
   const seen = new Set();
+  const entryKinds = new Map();
 
   const processBuffer = () => {
     while (true) {
@@ -593,8 +605,8 @@ async function scanArchive() {
       const path = prefix ? `${prefix}/${name}` : name;
       const type = String.fromCharCode(header[156] || 0);
       const size = readOctal(header, 124, 12);
-      validatePath(path, seen);
       assert(type === "\0" || type === "0" || type === "5", "release archive links and extended tar entries are not allowed");
+      validatePath(path, type === "5", seen, entryKinds);
       if (type === "5") {
         assert(size === 0, "release archive directory entry has unexpected content");
       } else {

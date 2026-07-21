@@ -1,3 +1,5 @@
+import { setRuntimeStyles } from "./runtime-style-registry.js";
+
 function formatNumber(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
@@ -44,9 +46,11 @@ const TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR = "--token-usage-observability-shift";
 const TOKEN_USAGE_OBSERVABILITY_TOP_VAR = "--token-usage-observability-top";
 
 function writePopoverPlacement(target, top) {
-  if (!target?.style) return;
-  target.style.setProperty(TOKEN_USAGE_OBSERVABILITY_TOP_VAR, `${Math.round(top)}px`);
-  target.style.setProperty(TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR, "0px");
+  if (!target) return;
+  setRuntimeStyles(target, {
+    [TOKEN_USAGE_OBSERVABILITY_TOP_VAR]: `${Math.round(top)}px`,
+    [TOKEN_USAGE_OBSERVABILITY_SHIFT_VAR]: "0px",
+  });
 }
 
 export function syncTokenUsageObservabilityPopover(container, target = container?.querySelector?.(".token-usage-observability")) {

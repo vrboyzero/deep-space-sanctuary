@@ -5,6 +5,7 @@ import {
 } from "./rich-content-renderer.js";
 import { createChatCopyButtonView } from "./chat-copy-button-view.js";
 import { createChatCopyFeedbackView } from "./chat-copy-feedback-view.js";
+import { clearRuntimeStyles, setRuntimeStyles, toRuntimeStyleUrl } from "./runtime-style-registry.js";
 
 export function createChatUiFeature({
   refs,
@@ -207,12 +208,14 @@ export function createChatUiFeature({
 
   function applyAvatarVisual(avatarEl, avatarSrc) {
     if (!avatarEl) return;
-    avatarEl.style.backgroundImage = "";
+    clearRuntimeStyles(avatarEl);
     avatarEl.classList.remove("avatar-image");
     avatarEl.textContent = "";
 
     if (isImagePath(avatarSrc)) {
-      avatarEl.style.backgroundImage = `url(${avatarSrc})`;
+      setRuntimeStyles(avatarEl, {
+        "background-image": toRuntimeStyleUrl(avatarSrc, avatarEl.ownerDocument),
+      });
       avatarEl.classList.add("avatar-image");
       return;
     }
@@ -336,11 +339,10 @@ export function createChatUiFeature({
       cancel?.(restoreScrollBehaviorHandle);
       restoreScrollBehaviorHandle = null;
     }
-    const previousScrollBehavior = chatSection.style.scrollBehavior;
-    chatSection.style.scrollBehavior = "auto";
+    chatSection.classList.add("chat-section--instant-scroll");
     chatSection.scrollTop = chatSection.scrollHeight;
     const restore = () => {
-      chatSection.style.scrollBehavior = previousScrollBehavior;
+      chatSection.classList.remove("chat-section--instant-scroll");
       restoreScrollBehaviorHandle = null;
     };
     const schedule = typeof globalThis.requestAnimationFrame === "function"
@@ -426,16 +428,14 @@ export function createChatUiFeature({
     if (type === "image") {
       const img = document.createElement("img");
       img.src = src;
-      img.style.maxWidth = "90vw";
-      img.style.maxHeight = "90vh";
+      img.className = "media-modal-image";
       content.appendChild(img);
     } else if (type === "video") {
       const video = document.createElement("video");
       video.src = src;
       video.controls = true;
       video.autoplay = true;
-      video.style.maxWidth = "90vw";
-      video.style.maxHeight = "90vh";
+      video.className = "media-modal-video";
       content.appendChild(video);
     }
 
@@ -460,7 +460,9 @@ export function createChatUiFeature({
       }
       const wrapper = document.createElement("div");
       wrapper.className = "media-thumbnail";
-      wrapper.style.backgroundImage = `url(${originalSrc})`;
+      setRuntimeStyles(wrapper, {
+        "background-image": toRuntimeStyleUrl(originalSrc, wrapper.ownerDocument),
+      });
       wrapper.title = t("chat.mediaOpenImage", {}, "Open full image");
       wrapper.addEventListener("click", () => openMediaModal(originalSrc, "image"));
       img.replaceWith(wrapper);
@@ -489,8 +491,11 @@ export function createChatUiFeature({
       video.addEventListener("loadeddata", () => {
         if (!ctx) return;
         try {
+          if (!wrapper.isConnected) return;
           ctx.drawImage(video, 0, 0, 200, 150);
-          wrapper.style.backgroundImage = `url(${canvas.toDataURL()})`;
+          setRuntimeStyles(wrapper, {
+            "background-image": toRuntimeStyleUrl(canvas.toDataURL(), wrapper.ownerDocument),
+          });
         } catch {
           // Cross-origin / codec restrictions can block thumbnail extraction.
         }

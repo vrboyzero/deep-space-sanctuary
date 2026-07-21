@@ -5,8 +5,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createMemoryViewerMemoryStatsView } from "./memory-viewer-memory-stats-view.js";
 
 afterEach(() => {
+  document.head.querySelectorAll("style[data-ui03-runtime-stylesheet]").forEach((element) => element.remove());
   document.body.replaceChildren();
 });
+
+function installRuntimeStyleSheet() {
+  const style = document.createElement("style");
+  style.setAttribute("data-ui03-runtime-stylesheet", "true");
+  document.head.append(style);
+  return style;
+}
+
+function getRuntimeStyleValue(style, element, property) {
+  const className = [...element.classList].find((name) => name.startsWith("webchat-runtime-style-"));
+  return [...(style.sheet?.cssRules ?? [])]
+    .find((rule) => rule.selectorText === `.${className}`)
+    ?.style.getPropertyValue(property);
+}
 
 function blockNonEmptyInnerHtml(element) {
   const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
@@ -24,6 +39,7 @@ function blockNonEmptyInnerHtml(element) {
 
 describe("Memory Viewer memories stats DOM owner", () => {
   it("renders cards and an active category distribution without an HTML parser", () => {
+    const style = installRuntimeStyleSheet();
     const container = document.createElement("div");
     document.body.append(container);
     blockNonEmptyInnerHtml(container);
@@ -86,11 +102,16 @@ describe("Memory Viewer memories stats DOM owner", () => {
     ]);
     expect(rows.map((row) => row.querySelector(".memory-category-name")?.textContent))
       .toEqual(distribution.rows.map((row) => row.label));
-    expect(rows.map((row) => row.querySelector(".memory-category-bar-fill")?.className)).toEqual([
-      "memory-category-bar-fill memory-category-bar-preference",
-      "memory-category-bar-fill memory-category-bar-uncategorized",
+    expect(rows.map((row) => ({
+      base: row.querySelector(".memory-category-bar-fill")?.classList.contains("memory-category-bar-fill"),
+      tone: row.querySelector(".memory-category-bar-fill")?.classList.contains(
+        row.classList.contains("active") ? "memory-category-bar-preference" : "memory-category-bar-uncategorized",
+      ),
+    }))).toEqual([
+      { base: true, tone: true },
+      { base: true, tone: true },
     ]);
-    expect(rows.map((row) => row.querySelector(".memory-category-bar-fill")?.style.width))
+    expect(rows.map((row) => getRuntimeStyleValue(style, row.querySelector(".memory-category-bar-fill"), "width")))
       .toEqual(["66.67%", "33.33%"]);
     expect(rows.map((row) => row.querySelector(".memory-category-count")?.textContent)).toEqual(["2", "1"]);
     expect(rows.map((row) => row.querySelector(".memory-category-percent")?.textContent)).toEqual(["66.7%", "33.3%"]);

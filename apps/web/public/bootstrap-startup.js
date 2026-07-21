@@ -98,12 +98,10 @@
     const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
     const nextTheme = VALID_THEMES.has(storedTheme) ? storedTheme : FALLBACK_THEME;
     document.documentElement.dataset.theme = nextTheme;
-    document.documentElement.style.colorScheme = nextTheme === "light" ? "light" : "dark";
   } catch {
     document.documentElement.dataset.locale = FALLBACK_LOCALE;
     document.documentElement.lang = FALLBACK_LOCALE;
     document.documentElement.dataset.theme = FALLBACK_THEME;
-    document.documentElement.style.colorScheme = FALLBACK_THEME;
   }
 
   document.addEventListener("DOMContentLoaded", () => {

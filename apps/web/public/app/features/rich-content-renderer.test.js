@@ -44,6 +44,21 @@ describe("rich content renderer link trust", () => {
     expect(probe?.hasAttribute("style")).toBe(false);
   });
 
+  it("pre-strips forbidden style markup without mutating ordinary attribute text", () => {
+    const sanitized = sanitizeRichContent([
+      '<span title="literal style=token">safe title</span>',
+      '<div STYLE = "color: red">safe body</div>',
+      '<style>.leak { background: url(https://attacker.example/track.png); }</style>',
+    ].join(""));
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+
+    expect(container.querySelector("span")?.getAttribute("title")).toBe("literal style=token");
+    expect(container.querySelector("div")?.hasAttribute("style")).toBe(false);
+    expect(container.textContent).toContain("safe body");
+    expect(container.querySelector("style")).toBeNull();
+  });
+
   it("enforces the capability and HTTPS media url matrix for src and poster", () => {
     const sanitized = sanitizeRichContent([
       '<img class="generated" src="/generated/image.png">',

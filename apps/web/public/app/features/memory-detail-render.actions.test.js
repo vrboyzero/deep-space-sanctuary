@@ -13,6 +13,20 @@ function createDeferred() {
   return { promise, resolve };
 }
 
+function blockNonEmptyInnerHtml(element) {
+  const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+  Object.defineProperty(element, "innerHTML", {
+    configurable: true,
+    get() {
+      return innerHtmlDescriptor.get.call(this);
+    },
+    set(value) {
+      if (value) throw new Error("Task detail controller must not use innerHTML");
+      innerHtmlDescriptor.set.call(this, value);
+    },
+  });
+}
+
 function createHarness({
   detailSendReq = vi.fn(),
   detailShowNotice = vi.fn(),
@@ -465,6 +479,30 @@ describe("memory detail render actions", () => {
 
     expect(openExperienceCandidate).toHaveBeenCalledWith("exp-method-1");
     expect(openExperienceCandidate).toHaveBeenCalledWith("exp-skill-pending");
+  });
+
+  it("renders Task detail without assigning non-empty innerHTML to the controller root", () => {
+    const { refs, state, detailRenderFeature } = createHarness();
+    state.selectedTask = {
+      id: "task-<img src=x onerror=alert(1)>",
+      conversationId: "conversation-<script>alert(2)</script>",
+      status: "success",
+      source: "chat",
+      title: "Task <svg onload=alert(3)>",
+      objective: "Objective <iframe srcdoc='<script>alert(4)</script>'>",
+      usedMethods: [],
+      usedSkills: [],
+      activities: [],
+      toolCalls: [],
+      memoryLinks: [],
+      artifactPaths: [],
+    };
+    blockNonEmptyInnerHtml(refs.memoryViewerDetailEl);
+
+    expect(() => detailRenderFeature.renderTaskDetail(state.selectedTask)).not.toThrow();
+    expect(refs.memoryViewerDetailEl.textContent).toContain(state.selectedTask.title);
+    expect(refs.memoryViewerDetailEl.querySelector("img, script, svg, iframe, [onerror], [onload], [srcdoc]"))
+      .toBeNull();
   });
 
   it("routes source explanation reads through the disposable detail owner", async () => {

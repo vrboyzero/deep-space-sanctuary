@@ -14,14 +14,16 @@ const WEBCHAT_CSP = [
   "frame-ancestors 'none'",
   "form-action 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self'",
+  "style-src-attr 'none'",
   "img-src 'self' https: data:",
   "media-src 'self' https:",
   "font-src 'self'",
   "connect-src 'self' ws: wss:",
   "worker-src 'self' blob:",
+  "trusted-types belldandy-web-assets belldandy-rich-content dompurify",
+  "require-trusted-types-for 'script'",
 ].join("; ");
-const TRUSTED_TYPES_CSP = `${WEBCHAT_CSP}; trusted-types belldandy-web-assets belldandy-rich-content dompurify; require-trusted-types-for 'script'`;
 const CONTENT_TYPES = new Map([
   [".css", "text/css"],
   [".html", "text/html"],
@@ -92,17 +94,15 @@ async function resolveChromeExecutable() {
 function createFixtureServer() {
   return http.createServer(async (req, res) => {
     const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-    const fixturePolicy = pathname.startsWith("/__webchat-rich-content-fixture__")
-      ? TRUSTED_TYPES_CSP
-      : WEBCHAT_CSP;
+    const fixturePolicy = WEBCHAT_CSP;
     try {
       if (pathname === "/__webchat-rich-content-fixture__.html") {
-        res.writeHead(200, { "content-security-policy": TRUSTED_TYPES_CSP, "content-type": "text/html" });
+        res.writeHead(200, { "content-security-policy": WEBCHAT_CSP, "content-type": "text/html" });
         res.end(RICH_CONTENT_FIXTURE_HTML);
         return;
       }
       if (pathname === "/__webchat-rich-content-fixture__.js") {
-        res.writeHead(200, { "content-security-policy": TRUSTED_TYPES_CSP, "content-type": "text/javascript" });
+        res.writeHead(200, { "content-security-policy": WEBCHAT_CSP, "content-type": "text/javascript" });
         res.end(RICH_CONTENT_FIXTURE_SOURCE);
         return;
       }

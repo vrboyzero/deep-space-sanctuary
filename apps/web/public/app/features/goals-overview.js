@@ -191,9 +191,9 @@ export function createGoalsOverviewFeature({
       goalsState.selectedId = null;
       goalsState.loadSeq = Number(goalsState.loadSeq || 0) + 1;
     }
-    if (goalsSummaryEl) goalsSummaryEl.innerHTML = "";
-    if (goalsListEl) goalsListEl.innerHTML = "";
-    if (goalsDetailEl) goalsDetailEl.innerHTML = "";
+    if (goalsSummaryEl) goalsSummaryEl.textContent = "";
+    if (goalsListEl) goalsListEl.textContent = "";
+    if (goalsDetailEl) goalsDetailEl.textContent = "";
   }
 
   function getRuntimeSnapshot() {

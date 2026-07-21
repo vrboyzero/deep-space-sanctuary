@@ -1,7 +1,3 @@
-function applyStyles(element, styles) {
-  Object.assign(element.style, styles);
-}
-
 function createTextElement(tagName, text, className = "") {
   const element = document.createElement(tagName);
   if (className) element.className = className;
@@ -16,14 +12,14 @@ export function renderPairingRequiredFallback(target, {
   if (!target) return;
   const pairingCode = typeof code === "string" ? code : String(code ?? "");
   const card = document.createElement("div");
-  card.style.lineHeight = "1.6";
+  card.className = "pairing-required-card pairing-required-card--fallback";
   card.appendChild(createTextElement(
     "div",
     t("settings.pairingPendingDefaultMessage", {}, "The current WebChat session still needs pairing approval."),
   ));
 
   const codeRow = document.createElement("div");
-  codeRow.style.marginTop = "8px";
+  codeRow.className = "pairing-required-code-row";
   codeRow.append(`${t("runtime.pairingCodeLabel", {}, "Pairing code")}：`);
   codeRow.appendChild(createTextElement("b", pairingCode || "-"));
   card.appendChild(codeRow);
@@ -31,24 +27,15 @@ export function renderPairingRequiredFallback(target, {
   const command = createTextElement(
     "div",
     `corepack pnpm bdd pairing approve ${pairingCode}`,
+    "pairing-required-command",
   );
-  applyStyles(command, {
-    background: "var(--bg-secondary)",
-    borderRadius: "4px",
-    fontFamily: "monospace",
-    margin: "8px 0",
-    padding: "8px",
-  });
   card.appendChild(command);
 
   const hint = createTextElement(
     "div",
     t("runtime.pairingCliHint", {}, "If the inline approval button is unavailable, run this command in a new terminal and then resend your message here."),
+    "pairing-required-hint",
   );
-  applyStyles(hint, {
-    color: "var(--text-secondary)",
-    fontSize: "12px",
-  });
   card.appendChild(hint);
   target.replaceChildren(card);
 }
@@ -69,23 +56,16 @@ export function createPairingRequiredPromptRenderer({
 
     const card = document.createElement("div");
     card.className = "pairing-required-card";
-    card.style.lineHeight = "1.6";
     card.appendChild(createTextElement("div", message));
 
     const codeRow = document.createElement("div");
-    codeRow.style.marginTop = "8px";
+    codeRow.className = "pairing-required-code-row";
     codeRow.append(`${t("runtime.pairingCodeLabel", {}, "Pairing code")}：`);
     codeRow.appendChild(createTextElement("b", code || "-"));
     card.appendChild(codeRow);
 
     const actions = document.createElement("div");
-    applyStyles(actions, {
-      alignItems: "center",
-      display: "flex",
-      flexWrap: "wrap",
-      gap: "8px",
-      marginTop: "10px",
-    });
+    actions.className = "pairing-required-actions";
     const approveButton = createTextElement(
       "button",
       t("settings.pairingApprove", {}, "Approve"),
@@ -99,30 +79,18 @@ export function createPairingRequiredPromptRenderer({
     );
     openSettingsButton.type = "button";
     const statusElement = createTextElement("span", "", "pairing-status-text");
-    applyStyles(statusElement, {
-      color: "var(--text-secondary)",
-      fontSize: "12px",
-    });
     actions.append(approveButton, openSettingsButton, statusElement);
     card.appendChild(actions);
 
     const hint = document.createElement("div");
-    applyStyles(hint, {
-      color: "var(--text-secondary)",
-      fontSize: "12px",
-      marginTop: "10px",
-    });
+    hint.className = "pairing-required-hint pairing-required-hint--spaced";
     hint.append(`${t("runtime.pairingCliHint", {}, "If the inline approval button is unavailable, use the CLI fallback below and then resend your message here.")} `);
     hint.appendChild(createTextElement("code", `bdd pairing approve ${code || "<CODE>"}`));
     card.appendChild(hint);
 
     if (clientId) {
       const clientRow = document.createElement("div");
-      applyStyles(clientRow, {
-        color: "var(--text-secondary)",
-        fontSize: "12px",
-        marginTop: "6px",
-      });
+      clientRow.className = "pairing-required-client-row";
       clientRow.append("clientId: ");
       clientRow.appendChild(createTextElement("code", clientId));
       card.appendChild(clientRow);

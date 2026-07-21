@@ -50,6 +50,20 @@ async function flushAsyncWork(rounds = 1) {
   }
 }
 
+function blockNonEmptyInnerHtml(element) {
+  const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+  Object.defineProperty(element, "innerHTML", {
+    configurable: true,
+    get() {
+      return innerHtmlDescriptor.get.call(this);
+    },
+    set(value) {
+      if (value) throw new Error("Experience candidate detail must not use innerHTML");
+      innerHtmlDescriptor.set.call(this, value);
+    },
+  });
+}
+
 function createHarness(options = {}) {
   document.body.innerHTML = `
     <section id="experienceWorkbenchSection">
@@ -579,6 +593,9 @@ function createHarness(options = {}) {
   });
 
   const openTaskFromWorkbench = vi.fn(async () => {});
+  const openMemoryFromWorkbench = vi.fn(async () => {});
+  const openSourcePath = vi.fn(async () => {});
+  const openToolSettingsTab = vi.fn(async () => {});
   const showNotice = vi.fn();
   const usageOverviewViewModel = options.usageOverviewViewModel ?? {
     title: "Experience Usage Overview",
@@ -597,16 +614,22 @@ function createHarness(options = {}) {
     getMemoryViewerState: () => memoryViewerState,
     getSelectedAgentId: () => "default",
     getSelectedAgentLabel: () => "default",
-    renderCandidateDetailPanel: (candidate) => `<div data-rendered-candidate="${candidate?.id || ""}"></div>`,
+    createCandidateDetailPanel: options.createCandidateDetailPanel ?? ((candidate, ownerDocument = document) => {
+      const panel = ownerDocument.createElement("div");
+      panel.className = "memory-detail-card";
+      panel.setAttribute("data-rendered-candidate", String(candidate?.id || ""));
+      panel.textContent = String(candidate?.title || candidate?.id || "");
+      return panel;
+    }),
     getTaskUsageOverviewViewModel: () => usageOverviewViewModel,
     loadTaskUsageOverview,
     generateExperienceCandidate: vi.fn(async () => null),
-    openToolSettingsTab: vi.fn(async () => {}),
+    openToolSettingsTab,
     escapeHtml: (value) => String(value ?? ""),
     formatDateTime: (value) => String(value ?? ""),
     openTaskFromWorkbench,
-    openMemoryFromWorkbench: vi.fn(async () => {}),
-    openSourcePath: vi.fn(async () => {}),
+    openMemoryFromWorkbench,
+    openSourcePath,
     showNotice,
     t: (_key, params, fallback) => {
       let text = fallback ?? "";
@@ -628,6 +651,9 @@ function createHarness(options = {}) {
     sendReq,
     showNotice,
     openTaskFromWorkbench,
+    openMemoryFromWorkbench,
+    openSourcePath,
+    openToolSettingsTab,
     loadTaskUsageOverview,
     experienceState,
   };
@@ -869,6 +895,71 @@ describe("experience workbench capability acquisition", () => {
     expect(refs.experienceWorkbenchDetailEl.innerHTML).toContain("Memory Freshness：");
     expect(refs.experienceWorkbenchDetailEl.innerHTML).toContain("Procedural experience needs review before publish.");
     expect(refs.experienceWorkbenchDetailEl.innerHTML).toContain("review_required=1 / stale=0 / superseded=0");
+  });
+
+  it("renders selected candidate detail through DOM owners and preserves aggregate actions", async () => {
+    const candidates = [
+      {
+        id: "candidate-<img src=x onerror=alert(1)>",
+        taskId: "task-<script>alert(2)</script>",
+        type: "method",
+        status: "draft",
+        title: "First <svg onload=alert(3)> candidate",
+        slug: "method-first",
+        publishedPath: "state/<iframe srcdoc='<script>alert(4)</script>'>.md",
+        sourceTaskSnapshot: {},
+      },
+      {
+        id: "candidate-second",
+        taskId: "task-second",
+        type: "skill",
+        status: "accepted",
+        title: "Second candidate",
+        slug: "skill-second",
+        publishedPath: "state/skills/second.md",
+        sourceTaskSnapshot: {},
+      },
+    ];
+    const {
+      refs,
+      feature,
+      openTaskFromWorkbench,
+      openSourcePath,
+      openToolSettingsTab,
+    } = createHarness({ candidates, listCandidateIds: candidates.map((candidate) => candidate.id) });
+    blockNonEmptyInnerHtml(refs.experienceWorkbenchDetailEl);
+
+    await expect(feature.openExperienceWorkbench({
+      tab: "candidates",
+      candidateId: candidates[0].id,
+      preferFirst: false,
+    })).resolves.toBeUndefined();
+
+    const previousShell = refs.experienceWorkbenchDetailEl.firstElementChild;
+    expect(refs.experienceWorkbenchDetailEl.querySelector("[data-rendered-candidate]")
+      ?.getAttribute("data-rendered-candidate")).toBe(candidates[0].id);
+    expect(refs.experienceWorkbenchDetailEl.querySelector("img, script, svg, iframe, [onerror], [onload], [srcdoc]"))
+      .toBeNull();
+    [...refs.experienceWorkbenchDetailEl.querySelectorAll("[data-open-task-id]")]
+      .find((node) => node.getAttribute("data-open-task-id") === candidates[0].taskId)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    [...refs.experienceWorkbenchDetailEl.querySelectorAll("[data-open-source]")]
+      .find((node) => node.getAttribute("data-open-source") === candidates[0].publishedPath)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    refs.experienceWorkbenchDetailEl.querySelector("[data-open-tool-settings-tab='methods']")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushAsyncWork(1);
+    expect(openTaskFromWorkbench).toHaveBeenCalledWith(candidates[0].taskId);
+    expect(openSourcePath).toHaveBeenCalledWith(candidates[0].publishedPath, { startLine: undefined });
+    expect(openToolSettingsTab).toHaveBeenCalledWith("methods");
+
+    await feature.loadExperienceCandidateDetail(candidates[1].id);
+
+    expect(previousShell?.isConnected).toBe(false);
+    expect(refs.experienceWorkbenchDetailEl.querySelector("[data-rendered-candidate]")
+      ?.getAttribute("data-rendered-candidate")).toBe(candidates[1].id);
+    expect(refs.experienceWorkbenchDetailEl.textContent).toContain(candidates[1].title);
+    expect(refs.experienceWorkbenchDetailEl.textContent).not.toContain(candidates[0].title);
   });
 
   it("retries accept with confirmed flag when publish confirmation is required", async () => {

@@ -162,7 +162,9 @@ describe("Memory Viewer shared-review list DOM owner", () => {
     expect(sharedListSource).not.toContain("memoryViewerListEl.innerHTML");
     expect(sharedListSource).toContain("sharedReviewListView.render({");
     expect(source).not.toContain("function renderMemoryViewerPaginationFooter");
-    expect(source).toContain("function renderSourceViewBadge(sourceView)");
-    expect(source.match(/\$\{renderSourceViewBadge\(sourceView\)\}/g)).toHaveLength(2);
+    expect(source).toContain('import { createMemoryViewerMemoryDetailView }');
+    expect(source).toContain("memoryDetailView.render({");
+    expect(source).not.toContain("function renderSourceViewBadge(sourceView)");
+    expect(source).not.toContain("${renderSourceViewBadge(sourceView)}");
   });
 });

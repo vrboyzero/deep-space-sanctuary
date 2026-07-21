@@ -141,7 +141,7 @@ describe("Memory Viewer memory list DOM owner", () => {
     expect(() => view.render({ container: null, diagnostics: null, rows: [], pagination: null })).not.toThrow();
   });
 
-  it("owns only the memory-list sink while the detail badge producer remains available", () => {
+  it("owns only the memory-list sink and leaves no legacy detail badge producer", () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), "apps/web/public/app/features/memory-viewer.js"),
       "utf8",
@@ -155,7 +155,9 @@ describe("Memory Viewer memory list DOM owner", () => {
     expect(memoryListSource).not.toContain("memoryViewerListEl.innerHTML");
     expect(memoryListSource).toContain("memoryListView.render({");
     expect(source).not.toContain("function renderMemoryViewerPaginationFooter");
-    expect(source).toContain("function renderSourceViewBadge(sourceView)");
-    expect(source).toContain("${renderSourceViewBadge(sourceView)}");
+    expect(source).toContain('import { createMemoryViewerMemoryDetailView }');
+    expect(source).toContain("memoryDetailView.render({");
+    expect(source).not.toContain("function renderSourceViewBadge(sourceView)");
+    expect(source).not.toContain("${renderSourceViewBadge(sourceView)}");
   });
 });

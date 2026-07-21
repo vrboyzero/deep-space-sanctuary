@@ -118,7 +118,7 @@ export function createCanvasContextFeature({
 
     if (!boardId && !goalId && !conversation) {
       canvasContextBarEl.classList.add("hidden");
-      canvasContextBarEl.innerHTML = "";
+      canvasContextBarEl.textContent = "";
       return;
     }
 
@@ -278,7 +278,7 @@ export function createCanvasContextFeature({
     capabilityRequestGeneration += 1;
     if (!canvasContextBarEl) return;
     canvasContextBarEl.classList.add("hidden");
-    canvasContextBarEl.innerHTML = "";
+    canvasContextBarEl.textContent = "";
   }
 
   function getRuntimeSnapshot() {

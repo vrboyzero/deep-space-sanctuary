@@ -68,7 +68,7 @@ star-sanctuary/
 - `scripts/verify-workspace-build.mjs`: 对 workspace package 编译产物执行 ArtifactContract Gate
 - `scripts/build-web-assets.mjs`: 将 WebChat 的第三方脚本与字体本地化为哈希资产，并生成完整性、许可证与 lockfile identity 清单
 - `scripts/web-asset-manifest-policy.mjs`: Web asset manifest 的第三方 package/version/license 与 lockfile SHA-256 provenance 失败关闭验证 owner
-- `scripts/verify-webchat-security-policy.mjs`: 以 Chromium 验证 WebChat enforced CSP 首屏与 RichContentRenderer 的 Trusted Types 富内容 fixture
+- `scripts/verify-webchat-security-policy.mjs`: 以 Chromium 验证 WebChat 全局 enforced CSP/Trusted Types 首屏与 RichContentRenderer 富内容 fixture
 - `scripts/build-release-light-assets.mjs`: 生成 GitHub Release 轻量正式附件（`zip` / `tar.gz` / per-file identity manifest / `sha256`）
 - `scripts/release-content-manifest.mjs`: release staged tree 的规范 path/size/SHA-256/mode 枚举与实际内容复核 owner；特殊条目失败关闭
 - `scripts/release-identity.mjs`: release version、Git commit、lockfile 与 canonical BuildGraph SHA-256 的规范 identity 解析/验证/一致性比较 owner；release-light 为首个 consumer
@@ -153,8 +153,9 @@ star-sanctuary/
 ### API / RPC / HTTP
 - `packages/belldandy-core/src/server.ts`: RPC 请求分发总入口
 - `packages/belldandy-core/src/server-methods/`: `models` / `goal` / `memory` / `dream` / `tools` / `workspace` / `subtask`
-- `packages/belldandy-core/src/server-http-routes.ts`: `/health`、`/api/message`、webhook、静态资源，以及 WebChat enforced CSP 与基础浏览器安全响应头
+- `packages/belldandy-core/src/server-http-routes.ts`: `/health`、`/api/message`、webhook、静态资源，以及包含 `style-src-attr 'none'` 与 Trusted Types enforcement 的 WebChat CSP、基础浏览器安全响应头
 - `packages/belldandy-core/src/generated-artifact-http.ts`: `/generated` 的词法/canonical admission、regular-file 与已打开句柄发送 owner，保持 GET/HEAD/cache/range 静态响应契约
+- `packages/belldandy-core/src/avatar-static-http.ts`: `/avatar` state-dir 的专属 canonical/no-follow/opened-handle admission；链接、路径替换或缺失目标直接 404，不 fall through 到其他静态目录
 - `packages/belldandy-core/src/query-runtime-http.ts`: community/webhook 鉴权与 Agent 执行链；有效 owner 请求复用 Gateway 顶层 lifecycle，重复 webhook 不重复计租
 - `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，先验证 canonical target 仍在 generated root 内，再本地打开保存目录/定位文件
 - `packages/belldandy-core/src/query-runtime-message-send.ts`: `message.send` 主执行链、从 history 准备到后台 finalizer 的顶层 lifecycle lease、tool result metadata / `failureKind` / follow-up runtime marks 透传，以及 `budget_exhausted` 的失败终态收尾
@@ -176,7 +177,8 @@ star-sanctuary/
 - `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示；button-keyed copy feedback timer、document delegation dispose 与无正文 lifecycle snapshot
 - `apps/web/public/app/features/chat-events.js`: 服务端事件归并与聊天流状态；tool result/notice 去重 key 的固定容量窗口、connection/auth generation 清理、pagehide dispose 和无正文 retention snapshot
 - `apps/web/public/app/features/pairing-required-prompt.js`: pairing required 卡片和 ChatEvents CLI-only fallback 的 DOM/textContent 构造 owner；持有 open settings/approve 状态与 notice 行为，Gateway code/message/clientId 不经过 HTML sink
-- `apps/web/public/app/features/rich-content-renderer.js`: DOMPurify 富内容清理、媒体 URL allowlist、外链 browsing-context/referrer 约束与受限 TrustedHTML policy；相邻 `rich-content-sink-inventory.test.js` 以 AST 固定 production HTML sink 分类、唯一富内容提交点及 enforced CSP/Trusted Types Gate
+- `apps/web/public/app/features/rich-content-renderer.js`: DOMPurify 富内容清理、CSP 前 style 标记/属性预过滤、媒体 URL allowlist、外链 browsing-context/referrer 约束与受限 TrustedHTML policy；相邻 `rich-content-sink-inventory.test.js` 以 AST 固定 production HTML sink 分类、唯一富内容提交点及 enforced CSP/Trusted Types Gate
+- `apps/web/public/app/features/runtime-style-registry.js` / `apps/web/public/runtime-style-closure.css`: WebChat 唯一 runtime CSSOM rule owner；`index.html` 预加载同源 stylesheet，固定允许属性、rule 释放与无 inline-style fallback
 - `apps/web/public/app/features/chat-network-connection-lifecycle.js`: WebSocket connection owner；socket listener 解绑、close-once、单一 reconnect timer、3-30 秒 capped exponential backoff、正负 20% jitter、ready reset、实际 delay 通知、generation replacement、dispose guard 与无正文 runtime snapshot
 - `apps/web/public/app/features/chat-network-model-controls.js`: ChatNetwork model controls owner；复用 PanelTaskScope 的 model select/filter listener activate/deactivate、inactive/disposed retained callback guard 与 listener 计数 snapshot
 - `apps/web/public/app/features/chat-network-request-lifecycle.js`: WebSocket request pending owner；connection generation 隔离、单请求 deadline、可选 AbortSignal 的 pre-abort/inflight settlement、response/close/dispose 统一 timer/listener 释放与无正文 pending snapshot
@@ -237,8 +239,9 @@ star-sanctuary/
 - `apps/web/public/app/features/experience-workbench-synthesis-list-view.js`: ExperienceWorkbench Synthesis modal source list 的 DOM/textContent/attribute/property owner；overwrite compare、seed/related row、checkbox checked/disabled/aria-label 与 source data attribute 以 `replaceChildren()` 提交
 - `apps/web/public/app/features/experience-workbench-synthesis-sources.js`: ExperienceWorkbench synthesis source selection view-model/lifecycle owner；seed pin、related 选择上限、复用 PanelTaskScope 的 delegated checkbox listener activate/deactivate、view hide/show 转发、modal generation clear、终态 dispose 与无正文 snapshot
 - `apps/web/public/app/features/experience-workbench-usage-overview-view.js`: ExperienceWorkbench Usage Overview 的 DOM/textContent/attribute/style/property owner；Method/Skill lane、usage bar、受控 candidate/task/source action 与 `replaceChildren()` 提交
+- `apps/web/public/app/features/experience-workbench-candidate-detail-view.js`: ExperienceWorkbench candidate aggregate + detail 的 DOM/textContent/受控 attribute owner；投影 candidate/task/published/freshness/synthesis/consumed 卡片与 action，并直接组合 MemoryViewer Candidate 节点 owner，controller 只保留 selection 和 listener/RPC 转发
 - `apps/web/public/app/features/experience-workbench-view-lifecycle.js`: ExperienceWorkbench panel visibility owner；deactivate generation/request fence、pending UI 与 synthesis transient 清理、幂等 reactivate/dispose
-- `apps/web/public/app/features/experience-workbench.js`: Experience candidate/capability/assets/usage 工作台；静态 listener owner、动态 render 接线、requestToken 读取隔离、view deactivate、usage/source-list owner 装配、generate/review/bulk/synthesis preview/create/accept/cleanup/freshness action 的 generation 与物理 pending、retained state/正文清理和 pagehide dispose
+- `apps/web/public/app/features/experience-workbench.js`: Experience candidate/capability/assets/usage 工作台；静态 listener owner、动态 render 接线、requestToken 读取隔离、view deactivate、candidate-detail/usage/source-list owner 装配、generate/review/bulk/synthesis preview/create/accept/cleanup/freshness action 的 generation 与物理 pending、retained state/正文清理和 pagehide dispose
 - `apps/web/public/app/features/memory-dream-controls.js`: Memory Dream status/run/history 主命令接线；复用 PanelTaskScope 的四 listener activate/deactivate、终态 pagehide dispose 和无正文 lifecycle snapshot
 - `apps/web/public/app/features/memory-viewer-controls.js`: Memory refresh/tab/outbound focus/search/dedup 主命令接线；复用 PanelTaskScope 的九 listener activate/deactivate、终态 pagehide dispose 和无正文 lifecycle snapshot
 - `apps/web/public/app/features/memory-detail-source-explanation-lifecycle.js`: Task source explanation read owner；selected task/Agent generation、物理 pending、active success/failure 提交、pagehide dispose 与无正文 snapshot
@@ -247,7 +250,8 @@ star-sanctuary/
 - `apps/web/public/app/features/memory-detail-path-listener-lifecycle.js`: Memory detail source path 动态 click listener owner；复用 feature/binding 两级 PanelTaskScope 的 startLine 转发、重复 bind replacement、activate/deactivate、终态 pagehide dispose 与无正文计数 snapshot
 - `apps/web/public/app/features/memory-detail-task-audit-listener-lifecycle.js`: Memory task detail audit/action 动态 click listener owner；十类跳转/读写参数、Goal 顺序、candidate close 回退、重复 bind replacement、pagehide dispose 与无正文计数 snapshot
 - `apps/web/public/app/features/memory-detail-usage-revoke-listener-lifecycle.js`: Usage revoke button 动态 click listener owner；仅持有 taskId、busy/confirm/参数转发、重复 bind replacement、pagehide dispose 与无正文计数 snapshot
-- `apps/web/public/app/features/memory-detail-render.js`: Memory task/detail/stats 渲染与动态 action 装配；Usage Overview 与 category distribution 仅投影为受控 view model，source explanation/usage revoke/stats/path/task-audit/revoke-button listener 仅保留相邻 owner 转发、Agent generation/pagehide dispose 和合并 snapshot
+- `apps/web/public/app/features/memory-detail-render.js`: Memory task detail view-model/stats 格式化与动态 action 装配；Usage Overview 与 category distribution 仅投影为受控 view model，source explanation/usage revoke/stats/path/task-audit/revoke-button listener 仅保留相邻 owner 转发、Agent generation/pagehide dispose 和合并 snapshot
+- `apps/web/public/app/features/memory-detail-task-detail-view.js`: MemoryViewer Task 完整/紧凑 detail 的 DOM/textContent/受控 attribute/property owner；组合 Candidate 节点并创建 context、source explanation、usage/freshness、activity、tool/memory/artifact 区块，controller 只保留数据投影与 listener/RPC 转发
 - `apps/web/public/app/features/memory-viewer-request-lifecycle.js`: MemoryViewer top-level load 的 lifecycle generation、physical pending、pagehide requestToken 失效与无正文 runtime snapshot
 - `apps/web/public/app/features/memory-viewer-retained-state.js`: MemoryViewer items/detail/query/usage/shared review/Dream/dedup 正文 state、batch bar 动态 listener DOM 的 pagehide 清理、序列失效及无正文 retention snapshot
 - `apps/web/public/app/features/memory-viewer-modal-controls.js`: MemoryViewer dedup/Dream modal、Dream history delegation 与 document Escape；复用 PanelTaskScope 的 10 listener activate/deactivate、终态 pagehide dispose 和无正文 snapshot
@@ -267,9 +271,12 @@ star-sanctuary/
 - `apps/web/public/app/features/memory-viewer-shared-review-stats-view.js`: MemoryViewer shared-review 九张统计卡的 DOM/textContent/class owner；安全提交 compact value 与 timeout caption，controller 保留 summary 聚合、duration 与 completed count 投影。
 - `apps/web/public/app/features/memory-viewer-task-stats-view.js`: MemoryViewer task 五张固定统计卡与可选 Goal 卡的 DOM/textContent/class owner；controller 保留 task/query/Goal view model 投影与 audit-jump listener。
 - `apps/web/public/app/features/memory-viewer-memory-stats-view.js`: MemoryViewer memories 普通/可选 stats cards 与 category distribution wide card/rows/bar 的 DOM/textContent/受控 class/style owner；controller 保留 query/search/evaluation/governance/category view model 投影，category provider 保持纯数据边界。
+- `apps/web/public/app/features/memory-viewer-candidate-detail-view.js`: MemoryViewer Candidate 完整/紧凑 detail 的 DOM/textContent/受控 attribute owner；安全创建 context、review、freshness、learning、snapshot、memory/artifact/tool 与 content 区块，Task 与 Experience 均直接组合节点 owner；`memory-viewer.js` 只保留 view-model 与 action/listener 装配。
 - `apps/web/public/app/features/memory-viewer-task-list-view.js`: MemoryViewer task row 与同一 root pagination footer 的 DOM/textContent/受控 attribute/property owner；controller 保留分页状态、row/page listener、selection、label/view-model 投影与 detail loading。
 - `apps/web/public/app/features/memory-viewer-memory-list-view.js`: MemoryViewer Search Diagnostics、memory row 与同一 root pagination footer 的 DOM/textContent/受控 attribute/property owner；controller 保留 diagnostics/row 格式投影、分页状态、row/page listener、selection 与 detail loading。
 - `apps/web/public/app/features/memory-viewer-outbound-audit-list-view.js`: MemoryViewer email-thread organizer/普通 outbound audit row 与同一 root pagination footer 的 DOM/textContent/受控 attribute/property owner；controller 保留两类 view-model 投影、absolute index、row/page listener、selection 与 detail 渲染。
+- `apps/web/public/app/features/memory-viewer-outbound-audit-detail-view.js`: MemoryViewer email-thread organizer、email inbound/outbound 与 channel audit 完整/紧凑 detail 的 DOM/textContent/受控 attribute/property owner；controller 保留 formatter 注入、conversation open、advice RPC 与 listener 装配。
+- `apps/web/public/app/features/memory-viewer-memory-detail-view.js`: MemoryViewer Memory 完整/紧凑 detail 的 DOM/textContent/受控 attribute/property owner；安全创建 shared-review action、context/source link 与 content/metadata 折叠区块，controller 保留 share/claim view-model、RPC 和 listener 装配。
 - `apps/web/public/app/features/memory-viewer-shared-review-list-view.js`: MemoryViewer shared-review row/head/checkbox/meta/snippet 与 pagination footer 的 DOM/textContent/受控 attribute/property owner；controller 保留 claim/source/category/deadline 投影、batch selection、row/page listener 与 target-aware detail loading。
 - `apps/web/public/app/features/memory-viewer-dream-history-lifecycle.js`: Dream history list/detail 请求的 owner generation、分类型 physical pending、dispose 入口与无正文 snapshot
 - `apps/web/public/app/features/memory-viewer-dream-consolidation-actions.js`: Dream consolidation review/apply 的输入 fence、action generation、physical pending、notice 与 history/detail/runtime reload settlement

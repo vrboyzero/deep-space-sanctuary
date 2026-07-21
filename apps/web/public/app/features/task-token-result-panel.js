@@ -19,7 +19,7 @@ export function createTaskTokenResultPanelFeature({
   }
 
   function hidePanel() {
-    if (panel) panel.style.display = "none";
+    panel?.classList?.remove("task-token-usage--visible");
   }
 
   function setMetric(key, value) {
@@ -46,7 +46,7 @@ export function createTaskTokenResultPanelFeature({
     setMetric("taskIn", payload.inputTokens);
     setMetric("taskOut", payload.outputTokens);
     setMetric("taskTotal", payload.totalTokens);
-    panel.style.display = "flex";
+    panel.classList?.add("task-token-usage--visible");
     taskScope.replaceTimeout(HIDE_TIMER_KEY, hidePanel, hideDelayMs);
   }
 

@@ -88,7 +88,7 @@ export function createGoalsGovernancePanelFeature({
       return null;
     }
     const note = createGovernanceElement(ownerDocument, "div", "tool-settings-policy-note");
-    note.setAttribute("style", "margin-bottom:12px;");
+    note.classList.add("goal-section-space-bottom-12");
     const headline = createGovernanceElement(ownerDocument, "div");
     headline.append(
       createGovernanceElement(ownerDocument, "strong", "", "治理 freshness："),
@@ -127,7 +127,7 @@ export function createGoalsGovernancePanelFeature({
     if (!summary || typeof summary !== "object") return null;
     const items = Array.isArray(summary.items) ? summary.items : [];
     const card = createGovernanceElement(ownerDocument, "div", "memory-detail-card");
-    card.setAttribute("style", "margin-bottom:12px;");
+    card.classList.add("goal-section-space-bottom-12");
     card.append(
       createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Bridge 治理摘要"),
       createGovernanceElement(
@@ -138,7 +138,7 @@ export function createGoalsGovernancePanelFeature({
       ),
     );
     const grid = createGovernanceElement(ownerDocument, "div", "goal-summary-grid");
-    grid.setAttribute("style", "margin-top:10px;");
+    grid.classList.add("goal-section-space-top-10");
     const stats = [
       ["Bridge 节点", summary.bridgeNodeCount || 0],
       ["活跃会话", summary.activeCount || 0],
@@ -159,13 +159,13 @@ export function createGoalsGovernancePanelFeature({
 
     if (!items.length) {
       const empty = createGovernanceElement(ownerDocument, "div", "memory-viewer-empty", "当前没有 bridge 治理摘要项。");
-      empty.setAttribute("style", "margin-top:12px;");
+      empty.classList.add("goal-section-space-top-12");
       card.append(empty);
       return card;
     }
 
     const list = createGovernanceElement(ownerDocument, "div", "goal-tracking-list");
-    list.setAttribute("style", "margin-top:12px;");
+    list.classList.add("goal-section-space-top-12");
     for (const item of items) {
       const itemElement = createGovernanceElement(ownerDocument, "div", "goal-tracking-item");
       const head = createGovernanceElement(ownerDocument, "div", "goal-tracking-item-head");
@@ -229,7 +229,7 @@ export function createGoalsGovernancePanelFeature({
     const workOrderPaths = Array.isArray(summary.workOrderPaths) ? summary.workOrderPaths : [];
     const reworkTargetAgentIds = Array.isArray(summary.reworkTargetAgentIds) ? summary.reworkTargetAgentIds : [];
     const card = createGovernanceElement(ownerDocument, "div", "memory-detail-card");
-    card.setAttribute("style", "margin-bottom:12px;");
+    card.classList.add("goal-section-space-bottom-12");
     card.append(
       createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Commander Review / Fan-in"),
       createGovernanceElement(
@@ -240,7 +240,7 @@ export function createGoalsGovernancePanelFeature({
       ),
     );
     const grid = createGovernanceElement(ownerDocument, "div", "goal-summary-grid");
-    grid.setAttribute("style", "margin-top:10px;");
+    grid.classList.add("goal-section-space-top-10");
     const stats = [
       ["当前节点", summary.nodeTitle || summary.nodeId || "-"],
       ["治理模式", summary.governanceMode || "-"],
@@ -260,7 +260,7 @@ export function createGoalsGovernancePanelFeature({
     card.append(grid);
 
     const badges = createGovernanceElement(ownerDocument, "div", "memory-detail-badges");
-    badges.setAttribute("style", "margin-top:10px;");
+    badges.classList.add("goal-section-space-top-10");
     if (summary.commanderAgentId) badges.append(createGovernanceElement(ownerDocument, "span", "memory-badge", `Commander: ${summary.commanderAgentId}`));
     if (summary.planId) badges.append(createGovernanceElement(ownerDocument, "span", "memory-badge", `Plan: ${summary.planId}`));
     if (summary.runId) badges.append(createGovernanceElement(ownerDocument, "span", "memory-badge", `Run: ${summary.runId}`));
@@ -273,14 +273,14 @@ export function createGoalsGovernancePanelFeature({
 
     if (summary.reworkContext?.quickSummary || summary.reworkContext?.historySummary) {
       const title = createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Rework Context");
-      title.setAttribute("style", "margin-top:12px;");
+      title.classList.add("goal-section-space-top-12");
       card.append(title);
       appendGovernanceTextBlock(ownerDocument, card, "memory-detail-text", summary.reworkContext?.quickSummary, "Quick: ");
       appendGovernanceTextBlock(ownerDocument, card, "memory-detail-text", summary.reworkContext?.historySummary);
     }
     if (reworkTargetAgentIds.length) {
       const title = createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Rework Targets");
-      title.setAttribute("style", "margin-top:12px;");
+      title.classList.add("goal-section-space-top-12");
       const targetBadges = createGovernanceElement(ownerDocument, "div", "memory-detail-badges");
       targetBadges.append(...reworkTargetAgentIds.map((item) => createGovernanceElement(ownerDocument, "span", "memory-badge", item)));
       card.append(title, targetBadges);
@@ -292,7 +292,7 @@ export function createGoalsGovernancePanelFeature({
     }
     if (checkLines.length) {
       const title = createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Acceptance Checks");
-      title.setAttribute("style", "margin-top:12px;");
+      title.classList.add("goal-section-space-top-12");
       const note = createGovernanceElement(ownerDocument, "div", "tool-settings-policy-note");
       note.append(...checkLines.map((item) => createGovernanceElement(ownerDocument, "div", "", item)));
       card.append(title, note);
@@ -300,7 +300,7 @@ export function createGoalsGovernancePanelFeature({
 
     if (delegationResults.length) {
       const title = createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Delegation Lanes");
-      title.setAttribute("style", "margin-top:12px;");
+      title.classList.add("goal-section-space-top-12");
       const list = createGovernanceElement(ownerDocument, "div", "goal-tracking-list");
       for (const item of delegationResults) {
         const itemElement = createGovernanceElement(ownerDocument, "div", "goal-tracking-item");
@@ -334,12 +334,12 @@ export function createGoalsGovernancePanelFeature({
       card.append(title, list);
     } else {
       const empty = createGovernanceElement(ownerDocument, "div", "memory-viewer-empty", "当前还没有可展示的 delegation lane 结果。");
-      empty.setAttribute("style", "margin-top:12px;");
+      empty.classList.add("goal-section-space-top-12");
       card.append(empty);
     }
 
     const actions = createGovernanceElement(ownerDocument, "div", "goal-detail-actions");
-    actions.setAttribute("style", "margin-top:12px;");
+    actions.classList.add("goal-section-space-top-12");
     if (summary.reviewPath) actions.append(createGovernanceButton(
       ownerDocument,
       "button goal-inline-action-secondary",
@@ -462,7 +462,7 @@ export function createGoalsGovernancePanelFeature({
       if (bridge) fragment.append(bridge);
       if (data.learningReviewInput) {
         const learningCard = createGovernanceElement(ownerDocument, "div", "memory-detail-card");
-        learningCard.setAttribute("style", "margin-bottom:12px;");
+        learningCard.classList.add("goal-section-space-bottom-12");
         learningCard.append(createGovernanceElement(ownerDocument, "div", "goal-summary-title", "Learning / Review Input"));
         const badges = createGovernanceElement(ownerDocument, "div", "memory-detail-badges");
         badges.append(createGovernanceElement(
@@ -645,7 +645,7 @@ export function createGoalsGovernancePanelFeature({
       checkpointColumn.append(createGovernanceElement(ownerDocument, "div", "goal-summary-title", "分发渠道 / 队列"));
       if (notificationDispatches.length) {
         const dispatchMeta = createGovernanceElement(ownerDocument, "div", "memory-list-item-meta");
-        dispatchMeta.setAttribute("style", "margin-bottom:10px;");
+        dispatchMeta.classList.add("goal-section-space-bottom-10");
         dispatchMeta.append(
           createGovernanceElement(
             ownerDocument,

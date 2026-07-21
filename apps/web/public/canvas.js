@@ -18,6 +18,7 @@ import { createCanvasNodeEditDialogView } from "./app/features/canvas-node-edit-
 import { createCanvasResourcePickerDialogView } from "./app/features/canvas-resource-picker-dialog-view.js";
 import { createCanvasResourcePickerItemView } from "./app/features/canvas-resource-picker-item-view.js";
 import { createCanvasResourcePickerEmptyView } from "./app/features/canvas-resource-picker-empty-view.js";
+import { setRuntimeStyles } from "./app/features/runtime-style-registry.js";
 
 await awaitWebAssetsReady();
 
@@ -315,8 +316,8 @@ class CanvasRenderer {
   // ── Render ──
 
   renderAll(board) {
-    this.nodesLayer.innerHTML = "";
-    this.edgesLayer.innerHTML = "";
+    this.nodesLayer.textContent = "";
+    this.edgesLayer.textContent = "";
     if (!board) return;
 
     // edges first (below nodes)
@@ -336,13 +337,11 @@ class CanvasRenderer {
     fo.setAttribute("width", node.width);
     fo.setAttribute("height", node.height);
     fo.setAttribute("data-node-id", node.id);
-    fo.style.overflow = "visible";
+    fo.setAttribute("overflow", "visible");
 
     const body = document.createElementNS(XHTML_NS, "div");
     body.setAttribute("xmlns", XHTML_NS);
-    body.style.position = "relative";
-    body.style.width = node.width + "px";
-    body.style.height = node.height + "px";
+    body.setAttribute("class", "canvas-node-foreign-body");
     canvasNodeContentView.render(body, node, {
       activeGoalNodeId: this.activeGoalNodeId,
       activeNodeTitle: t("canvas.activeNodeTitle", {}, "Current activeNode"),
@@ -385,10 +384,10 @@ class CanvasRenderer {
     hit.setAttribute("d", d);
     hit.setAttribute("data-edge-id", edge.id);
     hit.setAttribute("class", "canvas-edge-hit");
-    hit.style.fill = "none";
-    hit.style.stroke = "transparent";
-    hit.style.strokeWidth = "12";
-    hit.style.cursor = "pointer";
+    hit.setAttribute("fill", "none");
+    hit.setAttribute("stroke", "transparent");
+    hit.setAttribute("stroke-width", "12");
+    hit.setAttribute("cursor", "pointer");
 
     this.edgesLayer.appendChild(path);
     this.edgesLayer.appendChild(hit);
@@ -840,8 +839,8 @@ class CanvasApp {
     this.currentBoardId = null;
     this.manager.board = null;
     if (this.renderer) {
-      this.renderer.nodesLayer.innerHTML = "";
-      this.renderer.edgesLayer.innerHTML = "";
+      this.renderer.nodesLayer.textContent = "";
+      this.renderer.edgesLayer.textContent = "";
     }
     window._belldandySyncCanvasContext?.();
   }
@@ -854,8 +853,8 @@ class CanvasApp {
     // Hide SVG and toolbar, show list
     const svg = document.getElementById("canvasSvg");
     const toolbar = document.getElementById("canvasToolbar");
-    if (svg) svg.style.display = "none";
-    if (toolbar) toolbar.style.display = "none";
+    svg?.classList.add("canvas-view-hidden");
+    toolbar?.classList.add("canvas-view-hidden");
 
     // Remove existing list if any
     let listEl = section.querySelector(".canvas-board-list");
@@ -866,10 +865,10 @@ class CanvasApp {
 
     // Header
     const header = document.createElement("div");
-    header.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;";
+    header.className = "canvas-board-list-header";
     canvasBoardListHeaderTitleView.render(header, t("canvas.boardListTitle", {}, "Canvas Workspace"));
     const headerBtns = document.createElement("div");
-    headerBtns.style.cssText = "display:flex;gap:8px;";
+    headerBtns.className = "canvas-board-list-actions";
 
     const newBtn = document.createElement("button");
     newBtn.className = "canvas-tb-btn";
@@ -899,7 +898,7 @@ class CanvasApp {
     const boards = await this.listBoards();
     if (boards.length === 0) {
       const empty = document.createElement("div");
-      empty.style.cssText = "text-align:center;color:var(--text-muted);padding:40px 0;font-size:14px;";
+      empty.className = "canvas-board-list-empty";
       empty.textContent = t("canvas.emptyBoards", {}, "No boards yet. Create one with the button above.");
       listEl.appendChild(empty);
     } else {
@@ -927,8 +926,8 @@ class CanvasApp {
     const toolbar = document.getElementById("canvasToolbar");
     const listEl = section.querySelector(".canvas-board-list");
     if (listEl) listEl.remove();
-    if (svg) svg.style.display = "";
-    if (toolbar) toolbar.style.display = "";
+    svg?.classList.remove("canvas-view-hidden");
+    toolbar?.classList.remove("canvas-view-hidden");
     window._belldandySyncCanvasContext?.();
   }
 
@@ -1348,8 +1347,7 @@ class CanvasApp {
     this._hideContextMenu();
     const menu = document.createElement("div");
     menu.className = "canvas-context-menu";
-    menu.style.left = cx + "px";
-    menu.style.top = cy + "px";
+    setRuntimeStyles(menu, { left: `${cx}px`, top: `${cy}px` });
 
     for (const item of items) {
       if (item === "sep") {

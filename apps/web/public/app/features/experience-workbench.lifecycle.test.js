@@ -1650,14 +1650,16 @@ describe("experience workbench static UI lifecycle", () => {
       getMemoryViewerState: () => memoryViewerState,
       getSelectedAgentId: () => state.activeAgentId,
       getSelectedAgentLabel: () => state.activeAgentId,
-      renderCandidateDetailPanel: () => `
-        <button
-          data-skill-freshness-stale-action="mark"
-          data-skill-freshness-source-candidate-id="source-1"
-          data-skill-freshness-skill-key="skill-a"
-          data-skill-freshness-candidate-id="candidate-1"
-        ></button>
-      `,
+      createCandidateDetailPanel: (_candidate, ownerDocument = document) => {
+        const panel = ownerDocument.createElement("div");
+        const button = ownerDocument.createElement("button");
+        button.setAttribute("data-skill-freshness-stale-action", "mark");
+        button.setAttribute("data-skill-freshness-source-candidate-id", "source-1");
+        button.setAttribute("data-skill-freshness-skill-key", "skill-a");
+        button.setAttribute("data-skill-freshness-candidate-id", "candidate-1");
+        panel.append(button);
+        return panel;
+      },
       escapeHtml: (value) => String(value || ""),
       formatDateTime: (value) => String(value || ""),
       showNotice,

@@ -39,7 +39,7 @@ function createFeature(list, state, sendReq) {
     getMemoryViewerState: () => ({ pendingExperienceActionKey: null }),
     getSelectedAgentId: () => "agent-1",
     getSelectedAgentLabel: () => "Agent 1",
-    renderCandidateDetailPanel: () => "",
+    createCandidateDetailPanel: () => null,
     getTaskUsageOverviewViewModel: () => ({
       title: "Experience Usage Overview",
       caption: "No usage data yet",

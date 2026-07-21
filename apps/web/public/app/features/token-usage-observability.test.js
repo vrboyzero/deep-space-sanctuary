@@ -9,6 +9,20 @@ import {
   syncTokenUsageObservabilityPopover,
 } from "./token-usage-observability.js";
 
+function installRuntimeStyleSheet() {
+  const style = document.createElement("style");
+  style.setAttribute("data-ui03-runtime-stylesheet", "true");
+  document.head.append(style);
+  return style;
+}
+
+function getRuntimeStyleValue(style, element, property) {
+  const className = [...element.classList].find((name) => name.startsWith("webchat-runtime-style-"));
+  return [...(style.sheet?.cssRules ?? [])]
+    .find((rule) => rule.selectorText === `.${className}`)
+    ?.style.getPropertyValue(property);
+}
+
 describe("token usage observability", () => {
   it("builds a readable cache observability summary", () => {
     const text = buildTokenUsageObservabilityText({
@@ -229,6 +243,7 @@ describe("token usage observability", () => {
   });
 
   it("anchors the expanded observability popover to the header and centers it", () => {
+    const style = installRuntimeStyleSheet();
     document.body.innerHTML = `
       <div id="tokenUsage" class="token-usage">
         <div id="tokenUsageObservability" class="token-usage-observability">demo</div>
@@ -256,7 +271,7 @@ describe("token usage observability", () => {
 
     syncTokenUsageObservabilityPopover(tokenUsageEl, observabilityEl);
 
-    expect(observabilityEl.style.getPropertyValue("--token-usage-observability-top")).toBe("56px");
-    expect(observabilityEl.style.getPropertyValue("--token-usage-observability-shift")).toBe("0px");
+    expect(getRuntimeStyleValue(style, observabilityEl, "--token-usage-observability-top")).toBe("56px");
+    expect(getRuntimeStyleValue(style, observabilityEl, "--token-usage-observability-shift")).toBe("0px");
   });
 });

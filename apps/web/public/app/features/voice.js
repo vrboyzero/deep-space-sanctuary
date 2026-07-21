@@ -377,7 +377,7 @@ export function createVoiceFeature({
     const hasWebSpeech = !!SpeechRecognitionCtor;
 
     if (!hasMediaRecorder && !hasWebSpeech) {
-      voiceButtonEl.style.display = "none";
+      voiceButtonEl.classList.add("voice-btn--unsupported");
       return createNoopVoiceInputController();
     }
 

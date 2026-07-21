@@ -124,7 +124,7 @@ export function createGoalsCapabilityPanelFeature({
       return null;
     }
     const note = createCapabilityElement(ownerDocument, "div", "tool-settings-policy-note");
-    note.setAttribute("style", "margin-bottom:12px;");
+    note.classList.add("goal-section-space-bottom-12");
     const headline = createCapabilityElement(ownerDocument, "div");
     headline.append(
       createCapabilityElement(ownerDocument, "strong", "", "治理 freshness："),
@@ -515,7 +515,7 @@ export function createGoalsCapabilityPanelFeature({
     }
     if (reworkTargetAgentIds.length) {
       const title = createCapabilityElement(ownerDocument, "div", "goal-summary-title", "Rework Targets");
-      title.setAttribute("style", "margin-top:12px;");
+      title.classList.add("goal-section-space-top-12");
       const badges = createCapabilityElement(ownerDocument, "div", "memory-detail-badges");
       badges.append(...reworkTargetAgentIds.map((item) => createCapabilityElement(ownerDocument, "span", "memory-badge", item)));
       governanceColumn.append(title, badges);

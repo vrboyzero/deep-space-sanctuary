@@ -1,4 +1,5 @@
 import { createPanelTaskScope } from "./panel-task-scope.js";
+import { setRuntimeStyles } from "./runtime-style-registry.js";
 
 function createNoopPromptController() {
   const taskScope = createPanelTaskScope();
@@ -58,14 +59,18 @@ export function initPromptController({
     const baseHeight = promptBaseHeightPx || promptEl.scrollHeight;
     const hasText = Boolean(promptEl.value);
     if (!hasText) {
-      promptEl.style.height = `${baseHeight}px`;
-      promptEl.style.overflowY = "hidden";
+      setRuntimeStyles(promptEl, {
+        height: `${baseHeight}px`,
+        "overflow-y": "hidden",
+      });
       return;
     }
-    promptEl.style.height = "auto";
+    setRuntimeStyles(promptEl, { height: "auto", "overflow-y": "hidden" });
     const nextHeight = Math.min(promptEl.scrollHeight, maxHeightPx);
-    promptEl.style.height = `${Math.max(baseHeight, nextHeight)}px`;
-    promptEl.style.overflowY = promptEl.scrollHeight > maxHeightPx ? "auto" : "hidden";
+    setRuntimeStyles(promptEl, {
+      height: `${Math.max(baseHeight, nextHeight)}px`,
+      "overflow-y": promptEl.scrollHeight > maxHeightPx ? "auto" : "hidden",
+    });
   }
 
   function initialize() {

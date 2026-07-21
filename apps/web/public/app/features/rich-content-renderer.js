@@ -26,6 +26,103 @@ function getDomPurify() {
   return purifier && typeof purifier.sanitize === "function" ? purifier : null;
 }
 
+function findHtmlTagEnd(value, start) {
+  let quote = "";
+  for (let index = start + 1; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === "\"" || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getHtmlTagDescriptor(tag) {
+  const match = /^<\s*(\/?)\s*([A-Za-z][A-Za-z0-9:-]*)/.exec(tag);
+  return match
+    ? { closing: match[1] === "/", name: match[2].toLowerCase(), nameEnd: match[0].length }
+    : null;
+}
+
+function stripStyleAttributeFromTag(tag) {
+  const descriptor = getHtmlTagDescriptor(tag);
+  if (!descriptor || descriptor.closing) return tag;
+
+  let index = descriptor.nameEnd;
+  let output = tag.slice(0, index);
+  while (index < tag.length) {
+    const whitespaceStart = index;
+    while (/\s/.test(tag[index] ?? "")) index += 1;
+    output += tag.slice(whitespaceStart, index);
+    if (tag[index] === "/" || tag[index] === ">" || index >= tag.length) {
+      output += tag.slice(index);
+      break;
+    }
+
+    const attributeStart = index;
+    while (!/[\s=/>]/.test(tag[index] ?? "")) index += 1;
+    const attributeName = tag.slice(attributeStart, index).toLowerCase();
+    while (/\s/.test(tag[index] ?? "")) index += 1;
+    if (tag[index] === "=") {
+      index += 1;
+      while (/\s/.test(tag[index] ?? "")) index += 1;
+      const quote = tag[index];
+      if (quote === "\"" || quote === "'") {
+        index += 1;
+        while (index < tag.length && tag[index] !== quote) index += 1;
+        if (tag[index] === quote) index += 1;
+      } else {
+        while (!/[\s>]/.test(tag[index] ?? "")) index += 1;
+      }
+    }
+    if (attributeName !== "style") output += tag.slice(attributeStart, index);
+  }
+  return output;
+}
+
+// `style-src-attr 'none'` still observes style attributes while DOMPurify parses raw
+// input. Remove the permanently forbidden style markup before that parse; DOMPurify remains
+// responsible for the full structural and URL sanitization pass below.
+function stripCspBlockedStyleMarkup(rawHtml) {
+  const lowerCaseHtml = rawHtml.toLowerCase();
+  const parts = [];
+  let cursor = 0;
+  while (cursor < rawHtml.length) {
+    const tagStart = rawHtml.indexOf("<", cursor);
+    if (tagStart < 0) {
+      parts.push(rawHtml.slice(cursor));
+      break;
+    }
+    const tagEnd = findHtmlTagEnd(rawHtml, tagStart);
+    if (tagEnd < 0) {
+      parts.push(rawHtml.slice(cursor));
+      break;
+    }
+    const tag = rawHtml.slice(tagStart, tagEnd + 1);
+    const descriptor = getHtmlTagDescriptor(tag);
+    parts.push(rawHtml.slice(cursor, tagStart));
+    if (descriptor?.name === "style") {
+      if (!descriptor.closing) {
+        const closingStart = lowerCaseHtml.indexOf("</style", tagEnd + 1);
+        if (closingStart < 0) break;
+        const closingEnd = findHtmlTagEnd(rawHtml, closingStart);
+        cursor = closingEnd < 0 ? rawHtml.length : closingEnd + 1;
+        continue;
+      }
+    } else {
+      parts.push(stripStyleAttributeFromTag(tag));
+    }
+    cursor = tagEnd + 1;
+  }
+  return parts.join("");
+}
+
 function createTrustedRichHtml(value) {
   const trustedTypes = window.trustedTypes;
   if (!trustedTypes || typeof trustedTypes.createPolicy !== "function") return value;
@@ -48,7 +145,7 @@ function createTrustedRichHtml(value) {
  * 收紧媒体来源，避免模型输出触发任意下载或内存型 data URL。
  */
 export function sanitizeRichContent(rawHtml) {
-  const content = typeof rawHtml === "string" ? rawHtml : "";
+  const content = stripCspBlockedStyleMarkup(typeof rawHtml === "string" ? rawHtml : "");
   const purifier = getDomPurify();
   if (!purifier) {
     return escapeHtml(content);

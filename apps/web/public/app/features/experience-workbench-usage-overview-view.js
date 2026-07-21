@@ -1,3 +1,5 @@
+import { setRuntimeStyles } from "./runtime-style-registry.js";
+
 function createTextElement(ownerDocument, tagName, className, value) {
   const element = ownerDocument.createElement(tagName);
   if (className) element.className = className;
@@ -80,7 +82,7 @@ function createUsageLane(ownerDocument, lane) {
     track.className = "memory-usage-overview-bar-track";
     const fill = ownerDocument.createElement("div");
     fill.className = `memory-usage-overview-bar-fill memory-usage-overview-bar-${tone}`;
-    fill.style.width = `${normalizePercent(item?.barPercent)}%`;
+    setRuntimeStyles(fill, { width: `${normalizePercent(item?.barPercent)}%` });
     track.append(fill);
 
     row.append(

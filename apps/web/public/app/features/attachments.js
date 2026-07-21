@@ -1,3 +1,5 @@
+import { setRuntimeStyles, toRuntimeStyleUrl } from "./runtime-style-registry.js";
+
 function parsePositiveIntOrDefault(raw, fallback) {
   if (raw === undefined || raw === null) return fallback;
   const parsed = Number.parseInt(String(raw).trim(), 10);
@@ -495,7 +497,9 @@ export function createAttachmentsFeature({
         if (attachment.type === "image") {
           const thumbnail = document.createElement("div");
           thumbnail.className = "attachment-thumbnail";
-          thumbnail.style.backgroundImage = `url(${attachment.content})`;
+          setRuntimeStyles(thumbnail, {
+            "background-image": toRuntimeStyleUrl(attachment.content, thumbnail.ownerDocument),
+          });
           thumbnail.title = attachment.name;
           item.appendChild(thumbnail);
         } else if (attachment.type === "video") {
@@ -516,7 +520,9 @@ export function createAttachmentsFeature({
             const ctx = canvas.getContext("2d");
             if (!ctx) return;
             ctx.drawImage(video, 0, 0, 80, 60);
-            thumbnail.style.backgroundImage = `url(${canvas.toDataURL()})`;
+            setRuntimeStyles(thumbnail, {
+              "background-image": toRuntimeStyleUrl(canvas.toDataURL(), thumbnail.ownerDocument),
+            });
           };
           mediaEntry.handleLoadedData = handleLoadedData;
           dynamicMediaListeners.add(mediaEntry);
@@ -529,9 +535,8 @@ export function createAttachmentsFeature({
           item.appendChild(thumbnail);
         } else {
           const icon = document.createElement("div");
-          icon.className = "file-icon";
+          icon.className = "file-icon file-icon--large";
           icon.textContent = attachment.type === "audio" ? "🎤" : "📄";
-          icon.style.fontSize = "24px";
           item.appendChild(icon);
         }
 

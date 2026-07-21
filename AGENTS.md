@@ -47,7 +47,8 @@ Preferred query flow:
 
 Index refresh and safety rules:
 - Keep `auto_index=false`, `auto_watch=false`, and team artifact persistence disabled. Never enable them as a side effect of a development task.
-- Refresh manually only after material cross-file changes, when `index_status` is not ready, or when a known new symbol is missing. Do not re-index after every small edit.
+- A Git commit is a refresh assessment point, not an index trigger. In the semi-automatic flow, treat added/moved/deleted source modules, cross-package or public-contract changes, entrypoint/registration changes, or an upcoming graph-dependent task as refresh candidates; documentation-only, test-only, and local non-structural edits are not candidates.
+- For a refresh candidate, check `index_status` before the next graph-dependent task. Refresh manually only when freshness is required, `index_status` is not ready, or a known new symbol is missing. Do not re-index after every small edit, and do not add a pre/post-commit hook, watcher, or background task that starts indexing automatically; record a refresh recommendation in the delivery or handoff when relevant.
 - For a manual refresh, use `repo_path="E:\project\star-sanctuary"`, an explicit mode, and `persistence=false`. Run only one index operation at a time.
 - After indexing, require `nodes == expected_nodes` and `edges == expected_edges`, verify one newly changed symbol, and confirm the cache WAL is no longer growing.
 - Stop using the MCP if its WAL keeps growing for 10 minutes after indexing, approaches `1 GB`, results become stale, or orphan processes accumulate. Do not repeatedly retry on the same evidence.

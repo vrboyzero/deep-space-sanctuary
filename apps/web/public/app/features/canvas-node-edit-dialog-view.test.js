@@ -38,7 +38,7 @@ describe("Canvas node edit dialog", () => {
       expect(dialog.className).toBe("canvas-picker-dialog");
       expect([...dialog.children].map((child) => child.className)).toEqual([
         "canvas-picker-header",
-        "canvas-picker-body",
+        "canvas-picker-body canvas-picker-body--edit",
         "canvas-picker-footer",
       ]);
       expect(dialog.children[0]?.children[0]?.textContent).toBe(fields.dialogTitle);
@@ -51,12 +51,8 @@ describe("Canvas node edit dialog", () => {
       expect(parts.contentInput?.value).toBe(fields.content);
       expect(parts.contentInput?.defaultValue).toBe(fields.content);
       expect(parts.contentInput?.getAttribute("rows")).toBe("5");
-      expect(parts.titleInput?.getAttribute("style")).toBe(
-        "width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main);color:var(--text-main);margin-bottom:12px;box-sizing:border-box;",
-      );
-      expect(parts.contentInput?.getAttribute("style")).toBe(
-        "width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main);color:var(--text-main);resize:vertical;box-sizing:border-box;",
-      );
+      expect(parts.titleInput?.getAttribute("style")).toBeNull();
+      expect(parts.contentInput?.getAttribute("style")).toBeNull();
       expect(parts.saveButton?.className).toBe("canvas-picker-save");
       expect(parts.saveButton?.textContent).toBe(fields.saveLabel);
       expect(dialog.querySelector("img, svg, iframe, [onerror], [onload], [onclick]")).toBeNull();

@@ -194,7 +194,7 @@ export function applyAssistantModeSettingsViewModel(refs, t, options = {}) {
     refs.assistantModeConfigHintEl.textContent = viewModel.configHint;
   }
   if (refs?.cfgAssistantModePreset) {
-    refs.cfgAssistantModePreset.innerHTML = "";
+    refs.cfgAssistantModePreset.textContent = "";
     if (typeof refs.cfgAssistantModePreset.appendChild === "function" && typeof document !== "undefined" && document?.createElement) {
       for (const option of viewModel.presetOptions) {
         const optionEl = document.createElement("option");

@@ -1080,7 +1080,7 @@ const setupGuidanceFeature = createSetupGuidanceFeature({
       toggleSettings(true);
     }
     const guideMsg = appendMessage("bot", "👋 欢迎使用 Star Sanctuary！\n\n检测到默认模型配置尚未完成。请继续使用当前设置弹窗补齐 API Key 与默认模型，然后点击 Save 保存。");
-    if (guideMsg) guideMsg.style.whiteSpace = "pre-wrap";
+    guideMsg?.classList?.add("message--preserve-whitespace");
   },
 });
 const switchMode = (mode) => {
@@ -1895,7 +1895,6 @@ memoryDetailRenderFeature = createMemoryDetailRenderFeature({
   switchMode,
   openGoalTaskViewer,
   showNotice,
-  escapeHtml,
   formatDateTime,
   t: localeController.t,
 });
@@ -1968,7 +1967,6 @@ memoryViewerFeature = createMemoryViewerFeature({
   renderMemoryViewerDetailEmpty,
   loadTaskDetail: (taskId) => loadTaskDetail(taskId),
   loadMemoryDetail: (chunkId) => loadMemoryDetail(chunkId),
-  escapeHtml,
   formatCount: (value) => memoryDetailRenderFeature.formatCount(value),
   formatDateTime,
   formatDuration: (value) => memoryDetailRenderFeature.formatDuration(value),
@@ -2037,12 +2035,13 @@ experienceWorkbenchFeature = createExperienceWorkbenchFeature({
   getMemoryViewerState: () => memoryViewerState,
   getSelectedAgentId: () => getCurrentAgentSelection(),
   getSelectedAgentLabel: () => getCurrentAgentLabel(),
-  renderCandidateDetailPanel: (candidate) => memoryViewerFeature?.renderCandidateDetailPanel(candidate) || "",
+  createCandidateDetailPanel: (candidate, ownerDocument) => (
+    memoryViewerFeature?.createCandidateDetailPanel(candidate, ownerDocument) || null
+  ),
   getTaskUsageOverviewViewModel: () => memoryDetailRenderFeature.getTaskUsageOverviewViewModel(),
   loadTaskUsageOverview: () => loadTaskUsageOverview(),
   generateExperienceCandidate: (taskId, candidateType) => memoryRuntimeFeature?.generateExperienceCandidate?.(taskId, candidateType),
   openToolSettingsTab: (tab) => settingsRuntimeFeature?.openToolSettingsTab?.(tab),
-  escapeHtml,
   formatDateTime,
   openTaskFromWorkbench: async (taskId) => {
     switchMode("memory");
@@ -3060,7 +3059,7 @@ function renderConversationMessages(conversationId, messages) {
     return;
   }
 
-  messagesEl.innerHTML = "";
+  messagesEl.textContent = "";
 
   if (normalizedMessages.length === 0) {
     const empty = document.createElement("div");
@@ -3177,8 +3176,7 @@ function renderTaskTokenHistory() {
     };
     const inlineSeparator = () => {
       const element = document.createElement("span");
-      element.style.opacity = "0.5";
-      element.style.margin = "0 2px";
+      element.className = "task-token-chip-inline-separator";
       element.textContent = "/";
       return element;
     };

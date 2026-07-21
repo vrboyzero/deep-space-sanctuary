@@ -4287,29 +4287,14 @@ function formatRuntimeAge(ageMs) {
 function createDoctorCard(card, handlers = {}) {
   const panel = document.createElement("div");
   panel.className = "doctor-observability-card";
-  panel.style.width = "100%";
-  panel.style.padding = "10px 12px";
-  panel.style.border = "1px solid var(--border-color, rgba(127,127,127,0.2))";
-  panel.style.borderRadius = "10px";
-  panel.style.background = "var(--bg-secondary, rgba(127,127,127,0.06))";
-  panel.style.display = "flex";
-  panel.style.flexDirection = "column";
-  panel.style.gap = "8px";
-  panel.style.boxSizing = "border-box";
-  panel.style.maxWidth = "100%";
-  panel.style.minWidth = "0";
 
   const title = document.createElement("div");
   title.className = "doctor-observability-card-title";
-  title.style.fontWeight = "600";
   title.textContent = card.title;
   panel.appendChild(title);
 
   const badgesRow = document.createElement("div");
   badgesRow.className = "doctor-observability-card-badges";
-  badgesRow.style.display = "flex";
-  badgesRow.style.flexWrap = "wrap";
-  badgesRow.style.gap = "8px";
   for (const text of card.badges) {
     const badge = document.createElement("span");
     badge.className = `badge doctor-observability-card-badge ${card.status === "warn" ? "warn" : "pass"}`;
@@ -4320,10 +4305,6 @@ function createDoctorCard(card, handlers = {}) {
 
   const notes = document.createElement("div");
   notes.className = "doctor-observability-card-notes";
-  notes.style.display = "flex";
-  notes.style.flexDirection = "column";
-  notes.style.gap = "4px";
-  notes.style.fontSize = "0.92em";
   for (const line of card.notes) {
     const noteText = typeof line === "string" ? line : line?.text || "";
     const action = line && typeof line === "object" ? line.action : null;
@@ -4331,7 +4312,6 @@ function createDoctorCard(card, handlers = {}) {
       const note = document.createElement("button");
       note.type = "button";
       note.className = "button goal-inline-action-secondary doctor-observability-card-action";
-      note.style.textAlign = "left";
       note.textContent = noteText;
       note.addEventListener("click", () => {
         void handlers.onOpenContinuationAction(action);

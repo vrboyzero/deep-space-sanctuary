@@ -117,6 +117,121 @@ test("release-light verifier rejects staged file content identity drift", async 
   }
 }, 120_000);
 
+test("release-light verifier rejects staged Web asset lockfile identity drift", async () => {
+  const versionRoot = path.join(releaseRoot, `v${version}`);
+  const packageRootName = `star-sanctuary-dist-v${version}`;
+  const manifestName = `${packageRootName}.manifest.json`;
+  const manifestPath = path.join(versionRoot, manifestName);
+  const sha256Path = path.join(versionRoot, `${packageRootName}.sha256`);
+  const stagedLockfilePath = path.join(
+    versionRoot,
+    packageRootName,
+    "pnpm-lock.yaml",
+  );
+  const [originalLockfile, originalManifest, originalSha256] = await Promise.all([
+    fsp.readFile(stagedLockfilePath),
+    fsp.readFile(manifestPath),
+    fsp.readFile(sha256Path),
+  ]);
+  const tamperedLockfile = Buffer.concat([
+    originalLockfile,
+    Buffer.from("\n# tampered-web-asset-lockfile\n", "utf-8"),
+  ]);
+  const manifest = JSON.parse(originalManifest.toString("utf-8"));
+  const lockfileEntry = manifest.content?.files?.find((entry: { path?: string }) => entry.path === "pnpm-lock.yaml");
+  if (!lockfileEntry) throw new Error("release-light fixture is missing pnpm-lock.yaml.");
+  lockfileEntry.sha256 = crypto.createHash("sha256").update(tamperedLockfile).digest("hex");
+  lockfileEntry.size = tamperedLockfile.byteLength;
+  manifest.content.totalBytes += tamperedLockfile.byteLength - originalLockfile.byteLength;
+  const updatedManifest = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+  const updatedManifestHash = crypto.createHash("sha256").update(updatedManifest).digest("hex");
+  const updatedSha256 = originalSha256.toString("utf-8")
+    .split(/\r?\n/)
+    .map((line) => line.endsWith(`  ${manifestName}`) ? `${updatedManifestHash}  ${manifestName}` : line)
+    .join("\n");
+  await Promise.all([
+    fsp.writeFile(stagedLockfilePath, tamperedLockfile),
+    fsp.writeFile(manifestPath, updatedManifest),
+    fsp.writeFile(sha256Path, updatedSha256),
+  ]);
+
+  try {
+    const result = spawnSync(process.execPath, ["scripts/verify-release-light-assets.mjs"], {
+      cwd: workspaceRoot,
+      env: releaseLightEnvironment(),
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Web asset manifest lockfile SHA-256 mismatch");
+  } finally {
+    await Promise.all([
+      fsp.writeFile(stagedLockfilePath, originalLockfile),
+      fsp.writeFile(manifestPath, originalManifest),
+      fsp.writeFile(sha256Path, originalSha256),
+    ]);
+  }
+}, 120_000);
+
+test("release-light verifier rejects a staged Web asset hash drift after outer manifest reconciliation", async () => {
+  const versionRoot = path.join(releaseRoot, `v${version}`);
+  const packageRootName = `star-sanctuary-dist-v${version}`;
+  const packageRoot = path.join(versionRoot, packageRootName);
+  const manifestName = `${packageRootName}.manifest.json`;
+  const manifestPath = path.join(versionRoot, manifestName);
+  const sha256Path = path.join(versionRoot, `${packageRootName}.sha256`);
+  const webManifestPath = path.join(packageRoot, "apps", "web", "public", "assets", "web-assets-manifest.json");
+  const [originalManifest, originalSha256, webManifest] = await Promise.all([
+    fsp.readFile(manifestPath),
+    fsp.readFile(sha256Path),
+    fsp.readFile(webManifestPath, "utf-8"),
+  ]);
+  const markedAssetPath = path.join(
+    packageRoot,
+    "apps",
+    "web",
+    "public",
+    `.${JSON.parse(webManifest).assets.marked.path}`,
+  );
+  const originalAsset = await fsp.readFile(markedAssetPath);
+  const tamperedAsset = Buffer.concat([originalAsset, Buffer.from("\n// tampered-web-asset\n", "utf-8")]);
+  const manifest = JSON.parse(originalManifest.toString("utf-8"));
+  const assetRelativePath = path.relative(packageRoot, markedAssetPath).replaceAll("\\", "/");
+  const assetEntry = manifest.content?.files?.find((entry: { path?: string }) => entry.path === assetRelativePath);
+  if (!assetEntry) throw new Error("release-light fixture is missing the marked asset.");
+  assetEntry.sha256 = crypto.createHash("sha256").update(tamperedAsset).digest("hex");
+  assetEntry.size = tamperedAsset.byteLength;
+  manifest.content.totalBytes += tamperedAsset.byteLength - originalAsset.byteLength;
+  const updatedManifest = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+  const updatedManifestHash = crypto.createHash("sha256").update(updatedManifest).digest("hex");
+  const updatedSha256 = originalSha256.toString("utf-8")
+    .split(/\r?\n/)
+    .map((line) => line.endsWith(`  ${manifestName}`) ? `${updatedManifestHash}  ${manifestName}` : line)
+    .join("\n");
+  await Promise.all([
+    fsp.writeFile(markedAssetPath, tamperedAsset),
+    fsp.writeFile(manifestPath, updatedManifest),
+    fsp.writeFile(sha256Path, updatedSha256),
+  ]);
+
+  try {
+    const result = spawnSync(process.execPath, ["scripts/verify-release-light-assets.mjs"], {
+      cwd: workspaceRoot,
+      env: releaseLightEnvironment(),
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Web asset hash mismatch for marked");
+  } finally {
+    await Promise.all([
+      fsp.writeFile(markedAssetPath, originalAsset),
+      fsp.writeFile(manifestPath, originalManifest),
+      fsp.writeFile(sha256Path, originalSha256),
+    ]);
+  }
+}, 120_000);
+
 test("release-light verifier rejects another source or BuildGraph identity with a valid outer manifest hash", async () => {
   const versionRoot = path.join(releaseRoot, `v${version}`);
   const packageRootName = `star-sanctuary-dist-v${version}`;

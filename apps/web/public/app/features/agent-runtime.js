@@ -1,6 +1,7 @@
 import { buildResidentPanelSummary } from "./resident-observability-summary.js";
 import { buildAgentWorkSummary } from "./agent-work-summary.js";
 import { PENDING_AGENT_SELECTION_KEY } from "./chat-network.js";
+import { setRuntimeStyles, toRuntimeStyleUrl } from "./runtime-style-registry.js";
 
 function getElementsByDataValue(root, attribute, expectedValue) {
   if (!root || !attribute || !expectedValue) return [];
@@ -140,7 +141,7 @@ export function createAgentRuntimeFeature({
 
   function renderAgentCreateModelOptions(modelCatalog) {
     if (!agentCreateModelEl) return;
-    agentCreateModelEl.innerHTML = "";
+    agentCreateModelEl.textContent = "";
     const addOption = (value, label) => {
       const option = document.createElement("option");
       option.value = value;
@@ -1033,7 +1034,7 @@ export function createAgentRuntimeFeature({
       avatar.className = "agent-card-avatar avatar-clickable";
       avatar.title = t("agentPanel.changeAvatarTitle", { agentName: agent.displayName || agent.id });
       if (uploadBusy && agentPanelUploadBusyAgentId === agent.id) {
-        avatar.style.opacity = "0.5";
+        avatar.classList.add("agent-card-avatar--uploading");
         avatar.title = t("agentPanel.uploadingAvatar");
       }
       avatar.addEventListener("click", (event) => {
@@ -1042,7 +1043,9 @@ export function createAgentRuntimeFeature({
       });
 
       if (typeof agent.avatar === "string" && agent.avatar.trim()) {
-        avatar.style.backgroundImage = `url(${agent.avatar})`;
+        setRuntimeStyles(avatar, {
+          "background-image": toRuntimeStyleUrl(agent.avatar, avatar.ownerDocument),
+        });
         avatar.classList.add("agent-card-avatar-image");
       } else {
         const fallbackSeed = (agent.displayName || agent.name || agent.id || "?").trim();
@@ -1168,7 +1171,7 @@ export function createAgentRuntimeFeature({
     getChatEventsFeature?.()?.resetStreamingState();
     getSessionDigestFeature?.()?.clear?.();
     if (messagesEl) {
-      messagesEl.innerHTML = "";
+      messagesEl.textContent = "";
     }
     const displayName = agentSelectEl?.options?.[agentSelectEl.selectedIndex]?.text || agentSelectEl?.value || selectedAgentId;
     appendMessage?.("system", `已切换到 ${displayName}`);
@@ -1296,7 +1299,7 @@ export function createAgentRuntimeFeature({
     }
     resetAgentCreateForm();
     if (agentCreateModelEl) {
-      agentCreateModelEl.innerHTML = "";
+      agentCreateModelEl.textContent = "";
     }
     if (agentRightPanelEl) {
       // 清空动态节点即可释放其按钮 listener 与闭包正文。

@@ -32,6 +32,9 @@ function createFrameHarness() {
 }
 
 function createPrompt() {
+  const style = document.createElement("style");
+  style.setAttribute("data-ui03-runtime-stylesheet", "true");
+  document.head.append(style);
   const promptEl = document.createElement("textarea");
   Object.defineProperty(promptEl, "scrollHeight", {
     configurable: true,
@@ -41,6 +44,14 @@ function createPrompt() {
   return promptEl;
 }
 
+function getRuntimeStyleValue(element, property) {
+  const style = document.head.querySelector("style[data-ui03-runtime-stylesheet]");
+  const className = [...element.classList].find((name) => name.startsWith("webchat-runtime-style-"));
+  return [...(style?.sheet?.cssRules ?? [])]
+    .find((rule) => rule.selectorText === `.${className}`)
+    ?.style.getPropertyValue(property);
+}
+
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
@@ -48,6 +59,7 @@ async function flushPromises() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  document.head.querySelectorAll("style[data-ui03-runtime-stylesheet]").forEach((element) => element.remove());
   document.body.replaceChildren();
 });
 
@@ -87,19 +99,18 @@ describe("prompt controller lifecycle", () => {
       disposed: false,
     });
 
-    promptEl.style.height = "1px";
     controller.restoreText("inactive");
     controller.syncHeight();
     promptEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     promptEl.dispatchEvent(new Event("input"));
     frames.run(frameHandle);
     expect(promptEl.value).toBe("hello");
-    expect(promptEl.style.height).toBe("1px");
+    expect(getRuntimeStyleValue(promptEl, "height")).toBe("24px");
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(frames.schedule).toHaveBeenCalledTimes(1);
 
     expect(controller.activate()).toBe(true);
-    expect(promptEl.style.height).toBe("72px");
+    expect(getRuntimeStyleValue(promptEl, "height")).toBe("72px");
     expect(controller.getRuntimeSnapshot()).toMatchObject({
       listenerCount: 2,
       pendingFrameCount: 0,
@@ -179,8 +190,8 @@ describe("prompt controller lifecycle", () => {
     const [frameHandle] = frames.callbacks.keys();
     frames.run(frameHandle);
 
-    expect(promptEl.style.height).toBe("72px");
-    expect(promptEl.style.overflowY).toBe("hidden");
+    expect(getRuntimeStyleValue(promptEl, "height")).toBe("72px");
+    expect(getRuntimeStyleValue(promptEl, "overflow-y")).toBe("hidden");
     expect(controller.getRuntimeSnapshot()).toMatchObject({
       pendingFrameCount: 0,
       disposed: false,

@@ -9,11 +9,10 @@ export function createWorkspaceTreePlaceholderView({
       placeholder.className = "tree-loading";
       placeholder.textContent = String(t(key, {}, fallback) ?? "");
       if (compact) {
-        placeholder.style.padding = "4px 8px";
-        placeholder.style.fontSize = "12px";
+        placeholder.classList.add("tree-loading--compact");
       }
       if (muted) {
-        placeholder.style.color = "var(--text-muted)";
+        placeholder.classList.add("tree-loading--muted");
       }
       target.replaceChildren(placeholder);
     },

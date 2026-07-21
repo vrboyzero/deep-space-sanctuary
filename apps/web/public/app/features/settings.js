@@ -1870,7 +1870,7 @@ export function createSettingsController({
     if (!doctorStatusEl || !doctorToggleBtn || !payload?.checks) return false;
     let hasFail = false;
     let hasWarn = false;
-    doctorStatusEl.innerHTML = "";
+    doctorStatusEl.textContent = "";
 
     const doctorPerformance = payload.performance;
     if (doctorPerformance && Number.isFinite(Number(doctorPerformance.totalMs))) {
@@ -1970,7 +1970,7 @@ export function createSettingsController({
     if (!doctorStatusEl || !doctorToggleBtn) return;
     const version = ++doctorRequestVersion;
     doctorToggleView.render(doctorToggleBtn, "checking");
-    doctorStatusEl.innerHTML = "";
+    doctorStatusEl.textContent = "";
     
     if (!isConnected()) {
       doctorToggleView.render(doctorToggleBtn, "disconnected");

@@ -38,7 +38,10 @@ import { createMemoryViewerMemoryStatsView } from "./memory-viewer-memory-stats-
 import { createMemoryViewerTaskListView } from "./memory-viewer-task-list-view.js";
 import { createMemoryViewerMemoryListView } from "./memory-viewer-memory-list-view.js";
 import { createMemoryViewerOutboundAuditListView } from "./memory-viewer-outbound-audit-list-view.js";
+import { createMemoryViewerOutboundAuditDetailView } from "./memory-viewer-outbound-audit-detail-view.js";
+import { createMemoryViewerMemoryDetailView } from "./memory-viewer-memory-detail-view.js";
 import { createMemoryViewerSharedReviewListView } from "./memory-viewer-shared-review-list-view.js";
+import { createMemoryViewerCandidateDetailView } from "./memory-viewer-candidate-detail-view.js";
 import { createMemoryViewerDreamHistoryLifecycle } from "./memory-viewer-dream-history-lifecycle.js";
 import { createMemoryViewerDreamConsolidationActions } from "./memory-viewer-dream-consolidation-actions.js";
 import { createMemoryViewerDreamRuntimeLifecycle } from "./memory-viewer-dream-runtime-lifecycle.js";
@@ -48,8 +51,7 @@ import { createMemoryViewerShareClaimAction } from "./memory-viewer-share-claim-
 import { createMemoryViewerShareReviewAction } from "./memory-viewer-share-review-action.js";
 import { createMemoryViewerShareBatchAction } from "./memory-viewer-share-batch-action.js";
 import { createMemoryViewerIngressLifecycle } from "./memory-viewer-ingress-lifecycle.js";
-import { renderSkillFreshnessDetail } from "./skill-freshness-view.js";
-import { isCompactGovernanceDetailMode, renderGovernanceFullOnly } from "./governance-detail-mode.js";
+import { isCompactGovernanceDetailMode } from "./governance-detail-mode.js";
 
 function normalizeSharedReviewFocus(value) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -61,21 +63,6 @@ function normalizeSharedReviewFocus(value) {
 
 function normalizeEmailThreadOpenNoteText(value) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function renderCandidateMemoryFreshnessSummary(memoryFreshness, escapeHtml) {
-  const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
-    ? memoryFreshness.summary
-    : null;
-  if (!summary?.available || !summary.headline) {
-    return "";
-  }
-  return `
-    <div class="tool-settings-policy-note" style="margin-bottom:12px;">
-      <div><strong>Memory Freshness：</strong>${escapeHtml(summary.headline)}</div>
-      <div>review_required=${escapeHtml(String(summary.reviewRequiredCount || 0))} / stale=${escapeHtml(String(summary.staleCount || 0))} / superseded=${escapeHtml(String(summary.supersededCount || 0))}</div>
-    </div>
-  `;
 }
 
 function formatDreamConsolidationSummary(consolidation, t = (_key, _params, fallback) => fallback ?? "") {
@@ -792,7 +779,6 @@ export function createMemoryViewerFeature({
   renderMemoryViewerDetailEmpty,
   loadTaskDetail,
   loadMemoryDetail,
-  escapeHtml,
   formatCount,
   formatDateTime,
   formatDuration,
@@ -885,9 +871,41 @@ export function createMemoryViewerFeature({
   const sharedReviewStatsView = createMemoryViewerSharedReviewStatsView();
   const taskStatsView = createMemoryViewerTaskStatsView();
   const memoryStatsView = createMemoryViewerMemoryStatsView();
+  const candidateDetailView = createMemoryViewerCandidateDetailView({
+    t,
+    formatTaskStatusLabel,
+    formatTaskSourceLabel,
+    formatMemoryTypeLabel,
+    formatDateTime,
+    formatDuration,
+    summarizeSourcePath,
+  });
   const taskListView = createMemoryViewerTaskListView();
   const memoryListView = createMemoryViewerMemoryListView();
   const outboundAuditListView = createMemoryViewerOutboundAuditListView();
+  const outboundAuditDetailView = createMemoryViewerOutboundAuditDetailView({
+    t,
+    formatDateTime,
+    formatExternalOutboundDecisionLabel,
+    formatExternalOutboundDeliveryLabel,
+    formatEmailInboundStatusLabel,
+    formatExternalOutboundResolutionLabel,
+    formatEmailOutboundDiagnosis,
+    formatEmailInboundDiagnosis,
+    formatOutboundAuditChannelLabel,
+    formatOutboundAuditPreview,
+    buildExternalOutboundDiagnosis,
+  });
+  const memoryDetailView = createMemoryViewerMemoryDetailView({
+    t,
+    formatCount,
+    formatLineRange,
+    formatScore,
+    formatMemoryTypeLabel,
+    formatMemorySourceTypeLabel,
+    getVisibilityBadgeClass,
+    summarizeSourcePath,
+  });
   const sharedReviewListView = createMemoryViewerSharedReviewListView();
   let dreamModalOpen = false;
   const ingressLifecycle = createMemoryViewerIngressLifecycle();
@@ -1801,11 +1819,6 @@ export function createMemoryViewerFeature({
     const activeAgentId = String(memoryViewerState.activeAgentId || getActiveAgentId()).trim() || "default";
     return Number(memoryViewerState.requestToken || 0) === Number(requestContext.requestToken)
       && activeAgentId === requestContext.agentId;
-  }
-
-  function renderSourceViewBadge(sourceView) {
-    const label = formatResidentSourceScopeLabel(sourceView);
-    return `<span class="memory-badge ${getResidentSourceBadgeClass(sourceView)}">${escapeHtml(label)}</span>`;
   }
 
   function getMemorySharePromotionMetadata(item) {
@@ -3985,433 +3998,47 @@ export function createMemoryViewerFeature({
       return;
     }
 
-    const compactGovernanceDetailMode = isCompactGovernanceDetailMode();
+    outboundAuditDetailView.render({
+      container: memoryViewerDetailEl,
+      item,
+      compact: isCompactGovernanceDetailMode(),
+    });
+    if (item?.auditKind !== "email_thread_organizer") return;
 
-    if (item?.auditKind === "email_thread_organizer") {
-      const badges = [
-        item?.providerId ? `<span class="memory-badge">${escapeHtml(`email-inbound/${item.providerId}`)}</span>` : "",
-        item?.latestTriageCategory ? `<span class="memory-badge">${escapeHtml(item.latestTriageCategory)}</span>` : "",
-        item?.latestTriagePriority ? `<span class="memory-badge">${escapeHtml(item.latestTriagePriority)}</span>` : "",
-        item?.needsReply ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerNeedsReplyBadge", {}, "待回复"))}</span>` : "",
-        item?.needsFollowUp ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerNeedsFollowUpBadge", {}, "待跟进"))}</span>` : "",
-        item?.latestSuggestedReplyQuality === "review_required" ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerReplyReviewBadge", {}, "回复待复核"))}</span>` : "",
-        item?.reminderStatus === "pending" ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerReminderPendingBadge", {}, "待提醒"))}</span>` : "",
-        item?.reminderStatus === "delivered" ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerReminderDeliveredBadge", {}, "已提醒"))}</span>` : "",
-        item?.reminderStatus === "resolved" ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerReminderResolvedBadge", {}, "提醒已解除"))}</span>` : "",
-      ].filter(Boolean).join("");
-      const retryState = item?.retryExhaustedCount
-        ? t("memory.outboundAuditInboundRetryExhausted", { count: item.retryExhaustedCount }, "已耗尽（{count} 次）")
-        : item?.retryScheduledCount
-          ? t("memory.outboundAuditInboundRetryScheduled", { count: item.retryScheduledCount }, "待重试（第 {count} 次）")
-          : "-";
-      const preview = item?.latestPreview || t("memory.outboundAuditPreviewEmpty", {}, "(空文本)");
-      memoryViewerDetailEl.innerHTML = `
-        <div class="memory-detail-shell">
-          <div class="memory-detail-card">
-            <div class="memory-detail-title">${escapeHtml(t("memory.emailThreadOrganizerTitle", {}, "邮件线程整理"))}</div>
-            <div class="memory-detail-badges">${badges}</div>
-            <div class="memory-detail-actions">
-              <button class="button" data-open-email-thread-conversation="${escapeHtml(item?.conversationId || "")}" ${item?.conversationId ? "" : "disabled"}>${escapeHtml(t("memory.emailThreadOrganizerOpenConversation", {}, "打开线程会话"))}</button>
-            </div>
-          </div>
-          <div class="memory-detail-grid">
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundConversation", {}, "会话"))}</span><div class="memory-detail-text">${escapeHtml(item?.conversationId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditProvider", {}, "Provider"))}</span><div class="memory-detail-text">${escapeHtml(item?.providerId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditTargetAccountId", {}, "目标 Account ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.targetAccountId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundAgent", {}, "处理 Agent"))}</span><div class="memory-detail-text">${escapeHtml(item?.requestedAgentId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditSubject", {}, "主题"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestSubject || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSender", {}, "发件人"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestSender || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerMessageCount", {}, "线程消息数"))}</span><div class="memory-detail-text">${escapeHtml(String(Number(item?.messageCount) || 0))}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundStatus", {}, "处理状态"))}</span><div class="memory-detail-text">${escapeHtml(formatEmailInboundStatusLabel(item?.latestStatus))}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriageCategory", {}, "整理分类"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestTriageCategory || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriagePriority", {}, "整理优先级"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestTriagePriority || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriageDisposition", {}, "建议动作"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestTriageDisposition || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriageSummary", {}, "整理摘要"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestTriageSummary || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyQuality", {}, "回复建议质量"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestSuggestedReplyQuality || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundRetryState", {}, "重试状态"))}</span><div class="memory-detail-text">${escapeHtml(retryState)}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerReminderStatus", {}, "提醒状态"))}</span><div class="memory-detail-text">${escapeHtml(item?.reminderStatus || "-")}</div></div>
-            ${compactGovernanceDetailMode ? "" : `
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditThreadId", {}, "线程 ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.threadId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundMessageId", {}, "Message ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestMessageId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundFollowUpWindow", {}, "建议跟进窗口"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestTriageFollowUpWindowHours ? `${item.latestTriageFollowUpWindowHours}h` : "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyStarter", {}, "建议回复 starter"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestSuggestedReplyStarter || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyConfidence", {}, "回复建议置信度"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestSuggestedReplyConfidence || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplySubject", {}, "建议回复主题"))}</span><div class="memory-detail-text">${escapeHtml(item?.latestSuggestedReplySubject || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerProcessedCount", {}, "已处理消息"))}</span><div class="memory-detail-text">${escapeHtml(String(Number(item?.processedCount) || 0))}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerFailedCount", {}, "失败消息"))}</span><div class="memory-detail-text">${escapeHtml(String(Number(item?.failedCount) || 0))}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerReminderDueAt", {}, "提醒时间"))}</span><div class="memory-detail-text">${escapeHtml(item?.reminderDueAt ? formatDateTime(item.reminderDueAt) : "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerReminderDeliveredAt", {}, "最近提醒"))}</span><div class="memory-detail-text">${escapeHtml(item?.reminderLastDeliveredAt ? formatDateTime(item.reminderLastDeliveredAt) : "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.emailThreadOrganizerReminderResolution", {}, "提醒解除"))}</span><div class="memory-detail-text">${escapeHtml(item?.reminderResolvedAt ? formatDateTime(item.reminderResolvedAt) : (item?.reminderResolutionSource || "-"))}</div></div>
-            `}
-          </div>
-          ${!compactGovernanceDetailMode && Array.isArray(item?.latestSuggestedReplyWarnings) && item.latestSuggestedReplyWarnings.length > 0 ? `
-            <div class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyWarnings", {}, "回复建议风险"))}</span>
-              <pre class="memory-detail-pre">${escapeHtml(item.latestSuggestedReplyWarnings.join("\n"))}</pre>
-            </div>
-          ` : ""}
-          ${!compactGovernanceDetailMode && Array.isArray(item?.latestSuggestedReplyChecklist) && item.latestSuggestedReplyChecklist.length > 0 ? `
-            <div class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyChecklist", {}, "回复建议检查清单"))}</span>
-              <pre class="memory-detail-pre">${escapeHtml(item.latestSuggestedReplyChecklist.join("\n"))}</pre>
-            </div>
-          ` : ""}
-          ${!compactGovernanceDetailMode && item?.latestSuggestedReplyDraft ? `
-            <div class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyDraft", {}, "建议回复草稿"))}</span>
-              <pre class="memory-detail-pre">${escapeHtml(item.latestSuggestedReplyDraft)}</pre>
-            </div>
-          ` : ""}
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditContentPreview", {}, "消息预览"))}</span>
-            <pre class="memory-detail-pre">${escapeHtml(preview)}</pre>
-          </div>
-        </div>
-      `;
-      memoryViewerDetailEl.querySelectorAll("[data-open-email-thread-conversation]").forEach((node) => {
-        node.addEventListener("click", () => {
-          const conversationId = node.getAttribute("data-open-email-thread-conversation");
-          if (!conversationId) return;
-          openConversationSession?.(
-            conversationId,
-            t("memory.emailThreadOrganizerSwitchedConversation", { conversationId }, `Switched to email thread conversation: ${conversationId}`),
-            {
-              systemNoticeText: buildEmailThreadConversationOpenNote(item, t),
-            },
-          );
-          void requestEmailThreadConversationAdvice(conversationId, item);
-        });
+    memoryViewerDetailEl.querySelectorAll("[data-open-email-thread-conversation]").forEach((node) => {
+      node.addEventListener("click", () => {
+        const conversationId = node.getAttribute("data-open-email-thread-conversation");
+        if (!conversationId) return;
+        openConversationSession?.(
+          conversationId,
+          t("memory.emailThreadOrganizerSwitchedConversation", { conversationId }, `Switched to email thread conversation: ${conversationId}`),
+          {
+            systemNoticeText: buildEmailThreadConversationOpenNote(item, t),
+          },
+        );
+        void requestEmailThreadConversationAdvice(conversationId, item);
       });
-      return;
-    }
-
-    const preview = formatOutboundAuditPreview(item);
-    const isEmailOutboundAudit = item?.auditKind === "email";
-    const isEmailInboundAudit = item?.auditKind === "email_inbound";
-    const isEmailAudit = isEmailOutboundAudit || isEmailInboundAudit;
-    const diagnosis = isEmailOutboundAudit ? {
-      stageLabel: t("memory.outboundAuditEmailFailureStage", {}, "邮件投递"),
-      summary: formatEmailOutboundDiagnosis(item),
-    } : isEmailInboundAudit ? {
-      stageLabel: t("memory.outboundAuditEmailInboundFailureStage", {}, "邮件收信"),
-      summary: formatEmailInboundDiagnosis(item),
-    } : buildExternalOutboundDiagnosis({
-      errorCode: item?.errorCode,
-      error: item?.error,
-      targetSessionKey: item?.targetSessionKey,
-      delivery: item?.delivery,
-    }, t);
-    const senderSummary = Array.isArray(item?.from) ? item.from.join(", ") : "";
-    const recipientSummary = [
-      ...(Array.isArray(item?.to) ? item.to : []),
-      ...(Array.isArray(item?.cc) ? item.cc : []),
-      ...(Array.isArray(item?.bcc) ? item.bcc : []),
-    ].join(", ");
-    const badgeMarkup = isEmailInboundAudit
-      ? `
-            <span class="memory-badge">${escapeHtml(formatOutboundAuditChannelLabel(item))}</span>
-            <span class="memory-badge">${escapeHtml(formatEmailInboundStatusLabel(item?.status))}</span>
-            <span class="memory-badge">${escapeHtml(item?.createdBinding ? t("memory.outboundAuditInboundThreadBindingNew", {}, "新建线程会话") : t("memory.outboundAuditInboundThreadBindingExisting", {}, "复用线程会话"))}</span>
-            ${item?.triageCategory ? `<span class="memory-badge">${escapeHtml(item.triageCategory)}</span>` : ""}
-            ${item?.triagePriority ? `<span class="memory-badge">${escapeHtml(item.triagePriority)}</span>` : ""}
-            ${item?.suggestedReplyQuality === "review_required" ? `<span class="memory-badge">${escapeHtml(t("memory.emailThreadOrganizerReplyReviewBadge", {}, "回复待复核"))}</span>` : ""}
-      `
-      : `
-            <span class="memory-badge">${escapeHtml(formatOutboundAuditChannelLabel(item))}</span>
-            <span class="memory-badge">${escapeHtml(formatExternalOutboundDecisionLabel(item?.decision))}</span>
-            <span class="memory-badge">${escapeHtml(formatExternalOutboundDeliveryLabel(item?.delivery))}</span>
-      `;
-    const detailGrid = isEmailInboundAudit ? `
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditTime", {}, "时间"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(item?.timestamp))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundConversation", {}, "会话"))}</span><div class="memory-detail-text">${escapeHtml(item?.conversationId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundAgent", {}, "处理 Agent"))}</span><div class="memory-detail-text">${escapeHtml(item?.requestedAgentId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditProvider", {}, "Provider"))}</span><div class="memory-detail-text">${escapeHtml(item?.providerId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditTargetAccountId", {}, "目标 Account ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.targetAccountId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSender", {}, "发件人"))}</span><div class="memory-detail-text">${escapeHtml(senderSummary || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditSubject", {}, "主题"))}</span><div class="memory-detail-text">${escapeHtml(item?.subject || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundStatus", {}, "处理状态"))}</span><div class="memory-detail-text">${escapeHtml(formatEmailInboundStatusLabel(item?.status))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriageCategory", {}, "整理分类"))}</span><div class="memory-detail-text">${escapeHtml(item?.triageCategory || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriagePriority", {}, "整理优先级"))}</span><div class="memory-detail-text">${escapeHtml(item?.triagePriority || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriageDisposition", {}, "建议动作"))}</span><div class="memory-detail-text">${escapeHtml(item?.triageDisposition || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundTriageSummary", {}, "整理摘要"))}</span><div class="memory-detail-text">${escapeHtml(item?.triageSummary || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyQuality", {}, "回复建议质量"))}</span><div class="memory-detail-text">${escapeHtml(item?.suggestedReplyQuality || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditDiagnosis", {}, "诊断"))}</span><div class="memory-detail-text">${escapeHtml(item?.status === "failed" || item?.status === "invalid_event" || item?.errorCode || item?.error ? diagnosis.summary : "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundRetryState", {}, "重试状态"))}</span><div class="memory-detail-text">${escapeHtml(item?.retryExhausted ? t("memory.outboundAuditInboundRetryExhausted", { count: item?.retryAttempt || 0 }, "已耗尽（{count} 次）") : item?.retryScheduled ? t("memory.outboundAuditInboundRetryScheduled", { count: item?.retryAttempt || 0 }, "待重试（第 {count} 次）") : "-")}</div></div>
-          ${compactGovernanceDetailMode ? "" : `
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundMessageId", {}, "Message ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.messageId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditThreadId", {}, "线程 ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.threadId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundReplyMode", {}, "线程语义"))}</span><div class="memory-detail-text">${escapeHtml(item?.inReplyToMessageId || (Array.isArray(item?.references) && item.references.length > 0) ? t("memory.outboundAuditInboundReplyModeReply", {}, "回复既有线程") : t("memory.outboundAuditInboundReplyModeNew", {}, "新线程首封"))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundThreadBinding", {}, "会话绑定"))}</span><div class="memory-detail-text">${escapeHtml(item?.createdBinding ? t("memory.outboundAuditInboundThreadBindingNew", {}, "新建线程会话") : t("memory.outboundAuditInboundThreadBindingExisting", {}, "复用线程会话"))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundInReplyTo", {}, "In-Reply-To"))}</span><div class="memory-detail-text">${escapeHtml(item?.inReplyToMessageId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundReferences", {}, "References"))}</span><div class="memory-detail-text">${escapeHtml(Array.isArray(item?.references) && item.references.length > 0 ? item.references.join(" | ") : "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundFollowUpWindow", {}, "建议跟进窗口"))}</span><div class="memory-detail-text">${escapeHtml(item?.triageFollowUpWindowHours ? `${item.triageFollowUpWindowHours}h` : "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyStarter", {}, "建议回复 starter"))}</span><div class="memory-detail-text">${escapeHtml(item?.suggestedReplyStarter || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyConfidence", {}, "回复建议置信度"))}</span><div class="memory-detail-text">${escapeHtml(item?.suggestedReplyConfidence || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplySubject", {}, "建议回复主题"))}</span><div class="memory-detail-text">${escapeHtml(item?.suggestedReplySubject || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditErrorCode", {}, "错误码"))}</span><div class="memory-detail-text">${escapeHtml(item?.errorCode || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditAttachmentCount", {}, "附件数"))}</span><div class="memory-detail-text">${escapeHtml(String(Number(item?.attachmentCount) || 0))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundInlineAttachmentCount", {}, "内联附件数"))}</span><div class="memory-detail-text">${escapeHtml(String(Number(item?.inlineAttachmentCount) || 0))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundMailbox", {}, "Mailbox"))}</span><div class="memory-detail-text">${escapeHtml(item?.mailbox || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSessionKey", {}, "Session Key"))}</span><div class="memory-detail-text">${escapeHtml(item?.sessionKey || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundCheckpointUid", {}, "Checkpoint UID"))}</span><div class="memory-detail-text">${escapeHtml(item?.checkpointUid ? String(item.checkpointUid) : "-")}</div></div>
-          `}
-    ` : `
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditTime", {}, "时间"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(item?.timestamp))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditSourceConversation", {}, "来源会话"))}</span><div class="memory-detail-text">${escapeHtml(item?.sourceConversationId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditRequestedByAgent", {}, "请求 Agent"))}</span><div class="memory-detail-text">${escapeHtml(item?.requestedByAgentId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(isEmailOutboundAudit ? t("memory.outboundAuditProvider", {}, "Provider") : t("memory.outboundAuditTargetChatId", {}, "目标 Chat ID"))}</span><div class="memory-detail-text">${escapeHtml(isEmailOutboundAudit ? (item?.providerId || "-") : (item?.targetChatId || "-"))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditTargetAccountId", {}, "目标 Account ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.targetAccountId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(isEmailOutboundAudit ? t("memory.outboundAuditRecipients", {}, "收件人") : t("memory.outboundAuditRequestedSessionKey", {}, "请求 Session Key"))}</span><div class="memory-detail-text">${escapeHtml(isEmailOutboundAudit ? (recipientSummary || "-") : (item?.requestedSessionKey || "-"))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(isEmailOutboundAudit ? t("memory.outboundAuditSubject", {}, "主题") : t("memory.outboundAuditTargetSessionKey", {}, "目标 Session Key"))}</span><div class="memory-detail-text">${escapeHtml(isEmailOutboundAudit ? (item?.subject || "-") : (item?.targetSessionKey || "-"))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditDiagnosis", {}, "诊断"))}</span><div class="memory-detail-text">${escapeHtml(item?.delivery === "failed" || item?.errorCode || item?.error ? diagnosis.summary : "-")}</div></div>
-          ${compactGovernanceDetailMode ? "" : `
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditRequestId", {}, "Request ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.requestId || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(isEmailOutboundAudit ? t("memory.outboundAuditThreadId", {}, "线程 ID") : t("memory.outboundAuditResolution", {}, "目标解析"))}</span><div class="memory-detail-text">${escapeHtml(isEmailOutboundAudit ? (item?.threadId || item?.providerThreadId || "-") : formatExternalOutboundResolutionLabel(item?.resolution))}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditFailureStage", {}, "失败阶段"))}</span><div class="memory-detail-text">${escapeHtml(item?.delivery === "failed" ? diagnosis.stageLabel : "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditErrorCode", {}, "错误码"))}</span><div class="memory-detail-text">${escapeHtml(item?.errorCode || "-")}</div></div>
-          ${isEmailAudit ? `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditAttachmentCount", {}, "附件数"))}</span><div class="memory-detail-text">${escapeHtml(String(Number(item?.attachmentCount) || 0))}</div></div>` : ""}
-          ${isEmailOutboundAudit ? `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditReplyToMessageId", {}, "回复消息 ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.replyToMessageId || "-")}</div></div>` : ""}
-          ${isEmailOutboundAudit ? `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditProviderMessageId", {}, "Provider Message ID"))}</span><div class="memory-detail-text">${escapeHtml(item?.providerMessageId || "-")}</div></div>` : ""}
-          `}
-    `;
-    memoryViewerDetailEl.innerHTML = `
-      <div class="memory-detail-shell">
-        <div class="memory-detail-card">
-          <div class="memory-detail-title">${escapeHtml(t("memory.outboundAuditTitle", {}, "消息审计"))}</div>
-          <div class="memory-detail-badges">
-            ${badgeMarkup}
-          </div>
-        </div>
-        <div class="memory-detail-grid">
-          ${detailGrid}
-        </div>
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditContentPreview", {}, "消息预览"))}</span>
-          <pre class="memory-detail-pre">${escapeHtml(preview)}</pre>
-        </div>
-        ${!compactGovernanceDetailMode && isEmailInboundAudit && Array.isArray(item?.suggestedReplyWarnings) && item.suggestedReplyWarnings.length > 0 ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyWarnings", {}, "回复建议风险"))}</span>
-            <pre class="memory-detail-pre">${escapeHtml(item.suggestedReplyWarnings.join("\n"))}</pre>
-          </div>
-        ` : ""}
-        ${!compactGovernanceDetailMode && isEmailInboundAudit && Array.isArray(item?.suggestedReplyChecklist) && item.suggestedReplyChecklist.length > 0 ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyChecklist", {}, "回复建议检查清单"))}</span>
-            <pre class="memory-detail-pre">${escapeHtml(item.suggestedReplyChecklist.join("\n"))}</pre>
-          </div>
-        ` : ""}
-        ${!compactGovernanceDetailMode && isEmailInboundAudit && item?.suggestedReplyDraft ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditInboundSuggestedReplyDraft", {}, "建议回复草稿"))}</span>
-            <pre class="memory-detail-pre">${escapeHtml(item.suggestedReplyDraft)}</pre>
-          </div>
-        ` : ""}
-        ${!compactGovernanceDetailMode && item?.error ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("memory.outboundAuditError", {}, "错误信息"))}</span>
-            <pre class="memory-detail-pre">${escapeHtml(item.error)}</pre>
-          </div>
-        ` : ""}
-      </div>
-    `;
+    });
   }
 
-  function renderCandidateDetailPanel(candidate) {
-    if (!candidate) return "";
-    const compactGovernanceDetailMode = isCompactGovernanceDetailMode();
+  function getCandidateDetailViewInput(candidate) {
     const memoryViewerState = getMemoryViewerState();
-    const snapshot = candidate.sourceTaskSnapshot || {};
-    const memoryLinks = Array.isArray(snapshot.memoryLinks) ? snapshot.memoryLinks : [];
-    const artifactPaths = Array.isArray(snapshot.artifactPaths) ? snapshot.artifactPaths : [];
-    const toolCalls = Array.isArray(snapshot.toolCalls) ? snapshot.toolCalls : [];
-    const learningReviewInput = candidate.learningReviewInput && typeof candidate.learningReviewInput === "object"
-      ? candidate.learningReviewInput
-      : null;
-    const memoryFreshness = candidate.memoryFreshness && typeof candidate.memoryFreshness === "object"
-      ? candidate.memoryFreshness
-      : null;
-    const skillFreshness = candidate.skillFreshness && typeof candidate.skillFreshness === "object"
-      ? candidate.skillFreshness
-      : null;
-    const candidateSourceView = candidate.sourceView || null;
-    const candidateSourceExplanation = candidateSourceView ? formatResidentSourceExplainability(candidateSourceView) : "-";
-    const candidateSourceConflict = candidateSourceView ? formatResidentSourceConflictSummary(candidateSourceView) : "-";
-    const contextTargets = extractCandidateContextTargets(candidate);
-    const pendingActionKey = typeof memoryViewerState.pendingExperienceActionKey === "string"
-      ? memoryViewerState.pendingExperienceActionKey
-      : "";
-    const acceptBusy = pendingActionKey === `candidate:${candidate.id}:accept`;
-    const rejectBusy = pendingActionKey === `candidate:${candidate.id}:reject`;
-    const skillFreshnessStaleTarget = skillFreshness?.sourceCandidateId || skillFreshness?.skillKey || (candidate.type === "skill" ? candidate.id : "");
-    const skillFreshnessStaleBusy = pendingActionKey === `skill-freshness:${skillFreshnessStaleTarget}:${skillFreshness?.manualStaleMark ? "active" : "stale"}`;
+    return {
+      candidate,
+      contextTargets: extractCandidateContextTargets(candidate),
+      pendingActionKey: typeof memoryViewerState.pendingExperienceActionKey === "string"
+        ? memoryViewerState.pendingExperienceActionKey
+        : "",
+      compact: isCompactGovernanceDetailMode(),
+    };
+  }
 
-    return `
-      <div class="memory-detail-card">
-        <div class="memory-inline-item-head">
-          <span class="memory-detail-label">${escapeHtml(t("memory.candidatePanelTitle", {}, "Candidate Detail Panel"))}</span>
-          <div class="memory-detail-badges">
-            <span class="memory-badge">${escapeHtml(candidate.type || "未知类型")}</span>
-            <span class="memory-badge">${escapeHtml(formatTaskStatusLabel(candidate.status))}</span>
-            ${candidateSourceView ? renderSourceViewBadge(candidateSourceView) : ""}
-            ${candidate?.id ? `<button class="memory-usage-action-btn" data-open-experience-candidate-id="${escapeHtml(candidate.id)}">${escapeHtml(t("memory.openCandidateWorkbench", {}, "经验能力"))}</button>` : ""}
-            <button class="memory-usage-action-btn" data-close-candidate-panel="1">${escapeHtml(t("memory.close", {}, "Close"))}</button>
-          </div>
-        </div>
-        <div class="memory-detail-text"><strong>${escapeHtml(candidate.title || candidate.id || t("memory.candidateUntitled", {}, "Untitled Candidate"))}</strong></div>
-        <div class="memory-detail-card">
-          <div class="goal-summary-header">
-            <div>
-              <div class="goal-summary-title">${escapeHtml(t("memory.contextSummaryTitle", {}, "上下文链"))}</div>
-              <div class="goal-summary-text">${escapeHtml(t("memory.contextSummaryCandidateText", {}, "把来源任务、源记忆与产物入口压缩到一处，方便继续追溯。"))}</div>
-            </div>
-          </div>
-          <div class="memory-detail-badges">
-            ${contextTargets.sourceConversationId ? `<span class="memory-badge">${escapeHtml(t("memory.contextConversation", {}, "会话"))} ${escapeHtml(summarizeSourcePath(contextTargets.sourceConversationId))}</span>` : ""}
-            <span class="memory-badge">${escapeHtml(t("memory.contextLinkedMemories", {}, "关联记忆"))} ${escapeHtml(String(contextTargets.memoryCount))}</span>
-            <span class="memory-badge">${escapeHtml(t("memory.contextArtifacts", {}, "产物"))} ${escapeHtml(String(contextTargets.artifactCount))}</span>
-          </div>
-          <div class="goal-detail-actions">
-            ${contextTargets.sourceTaskId ? `<button class="button goal-inline-action-secondary" data-open-task-id="${escapeHtml(contextTargets.sourceTaskId)}">${escapeHtml(t("memory.contextOpenSourceTask", {}, "打开来源任务"))}</button>` : ""}
-            ${contextTargets.firstMemoryId ? `<button class="button goal-inline-action-secondary" data-open-memory-id="${escapeHtml(contextTargets.firstMemoryId)}">${escapeHtml(t("memory.contextOpenFirstMemory", {}, "打开关联记忆"))}</button>` : ""}
-            ${contextTargets.firstArtifactPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(contextTargets.firstArtifactPath)}">${escapeHtml(t("memory.contextOpenFirstArtifact", {}, "打开相关产物"))}</button>` : ""}
-            ${contextTargets.publishedPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(contextTargets.publishedPath)}">${escapeHtml(t("memory.contextOpenPublishedArtifact", {}, "打开发布产物"))}</button>` : ""}
-          </div>
-        </div>
-        <div class="memory-detail-grid">
-          <div class="memory-detail-card"><span class="memory-detail-label">来源任务</span><div class="memory-detail-text">${candidate.taskId ? `<button class="memory-path-link" data-open-task-id="${escapeHtml(candidate.taskId)}">${escapeHtml(candidate.taskId)}</button>` : "-"}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">标识</span><div class="memory-detail-text">${escapeHtml(candidate.slug || "-")}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">发布路径</span><div class="memory-detail-text">${candidate.publishedPath ? `<button class="memory-path-link" data-open-source="${escapeHtml(candidate.publishedPath)}">${escapeHtml(candidate.publishedPath)}</button>` : "-"}</div></div>
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">候选 ID</span><div class="memory-detail-text">${escapeHtml(candidate.id || "-")}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">来源视角</span><div class="memory-detail-text">${escapeHtml(formatResidentSourceSummary(candidateSourceView))}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">来源解释</span><div class="memory-detail-text">${escapeHtml(candidateSourceExplanation)}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">冲突说明</span><div class="memory-detail-text">${escapeHtml(candidateSourceConflict)}</div></div>`}
-        </div>
-        ${candidate.summary ? `<div class="memory-detail-text">${escapeHtml(candidate.summary)}</div>` : ""}
-        ${candidate.status === "draft" ? `
-          <div class="goal-detail-actions">
-            <button
-              class="memory-usage-action-btn"
-              data-review-candidate-action="accept"
-              data-review-candidate-id="${escapeHtml(candidate.id || "")}"
-              data-review-candidate-task-id="${escapeHtml(candidate.taskId || "")}"
-              ${acceptBusy ? "disabled" : ""}
-            >${escapeHtml(acceptBusy
-              ? t("memory.candidateReviewAccepting", {}, "接受中…")
-              : t("memory.candidateAcceptAndPublish", {}, "接受并发布"))}</button>
-            <button
-              class="memory-usage-action-btn"
-              data-review-candidate-action="reject"
-              data-review-candidate-id="${escapeHtml(candidate.id || "")}"
-              data-review-candidate-task-id="${escapeHtml(candidate.taskId || "")}"
-              ${rejectBusy ? "disabled" : ""}
-            >${escapeHtml(rejectBusy
-              ? t("memory.candidateReviewRejecting", {}, "拒绝中…")
-              : t("memory.candidateReject", {}, "拒绝"))}</button>
-          </div>
-        ` : ""}
-        ${!compactGovernanceDetailMode && skillFreshness ? renderSkillFreshnessDetail(skillFreshness, {
-          escapeHtml,
-          t,
-          maxSignals: 3,
-          actions: {
-            sourceCandidateId: skillFreshness.sourceCandidateId || (candidate.type === "skill" ? candidate.id : ""),
-            skillKey: skillFreshness.skillKey || "",
-            taskId: candidate.taskId || "",
-            candidateId: candidate.id || "",
-            staleBusy: skillFreshnessStaleBusy,
-          },
-        }) : ""}
-        ${!compactGovernanceDetailMode ? renderCandidateMemoryFreshnessSummary(memoryFreshness, escapeHtml) : ""}
-        ${!compactGovernanceDetailMode && learningReviewInput ? `
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">Learning / Review Input</span>
-            <div class="memory-detail-badges">
-              <span class="memory-badge">${escapeHtml(learningReviewInput.summary?.headline || "-")}</span>
-            </div>
-            ${(Array.isArray(learningReviewInput.summaryLines) ? learningReviewInput.summaryLines : []).slice(0, 4).map((line) => `
-              <div class="memory-detail-text">${escapeHtml(line)}</div>
-            `).join("")}
-            ${(Array.isArray(learningReviewInput.nudges) ? learningReviewInput.nudges : []).slice(0, 4).map((line) => `
-              <div class="memory-detail-text">Nudge: ${escapeHtml(line)}</div>
-            `).join("")}
-          </div>
-        ` : ""}
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.snapshotTitle", {}, "Source Snapshot"))}</span>
-          <div class="memory-detail-grid">
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailConversationId", {}, "Conversation"))}</span><div class="memory-detail-text">${escapeHtml(snapshot.conversationId || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.snapshotStatus", {}, "Status"))}</span><div class="memory-detail-text">${escapeHtml(formatTaskStatusLabel(snapshot.status) || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.snapshotSource", {}, "Source"))}</span><div class="memory-detail-text">${escapeHtml(formatTaskSourceLabel(snapshot.source) || "-")}</div></div>
-            <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.snapshotStartedAt", {}, "Started At"))}</span><div class="memory-detail-text">${escapeHtml(formatDateTime(snapshot.startedAt))}</div></div>
-          </div>
-          ${snapshot.objective ? `<div class="memory-detail-text"><strong>${escapeHtml(t("memory.snapshotObjective", {}, "Objective"))}：</strong>${escapeHtml(snapshot.objective)}</div>` : ""}
-          ${snapshot.summary ? `<div class="memory-detail-text"><strong>${escapeHtml(t("memory.snapshotSummary", {}, "Summary"))}：</strong>${escapeHtml(snapshot.summary)}</div>` : ""}
-        </div>
-        `)}
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.linkedSourceMemories", {}, "Source Memories"))} (${memoryLinks.length})</span>
-          ${memoryLinks.length ? `
-            <div class="memory-inline-list">
-              ${memoryLinks.map((link) => `
-                <div class="memory-inline-item">
-                  <div class="memory-inline-item-head">
-                    <span class="memory-badge">${escapeHtml(link.relation || t("memory.memoryLinkUsed", {}, "Used"))}</span>
-                    ${link.memoryType ? `<span class="memory-badge">${escapeHtml(formatMemoryTypeLabel(link.memoryType))}</span>` : ""}
-                    ${link.sourceView ? renderSourceViewBadge(link.sourceView) : ""}
-                    <button class="memory-path-link" data-open-memory-id="${escapeHtml(link.chunkId || "")}">${escapeHtml(link.chunkId || t("memory.openMemory", {}, "Open Memory"))}</button>
-                  </div>
-                  ${link.sourcePath ? `<button class="memory-path-link" data-open-source="${escapeHtml(link.sourcePath)}">${escapeHtml(link.sourcePath)}</button>` : ""}
-                  ${link.snippet ? `<div class="memory-detail-text">${escapeHtml(link.snippet)}</div>` : ""}
-                  ${link.sourceView ? `<div class="memory-detail-text">${escapeHtml(formatResidentSourceExplainability(link.sourceView))}</div>` : ""}
-                  ${link.sourceView ? `<div class="memory-detail-text">${escapeHtml(formatResidentSourceConflictSummary(link.sourceView))}</div>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">${escapeHtml(t("memory.noSourceMemoryLinks", {}, "No source memory links."))}</div>`}
-        </div>
-        `)}
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.sourceArtifacts", {}, "Source Artifacts"))} (${artifactPaths.length})</span>
-          ${artifactPaths.length ? `
-            <div class="memory-inline-list">
-              ${artifactPaths.map((artifactPath) => `
-                <div class="memory-inline-item">
-                  <button class="memory-path-link" data-open-source="${escapeHtml(artifactPath)}">${escapeHtml(artifactPath)}</button>
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">${escapeHtml(t("memory.noSourceArtifacts", {}, "No source artifacts."))}</div>`}
-        </div>
-        `)}
-        ${renderGovernanceFullOnly(`
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.toolCallsTitle", { count: String(toolCalls.length) }, `Tool Calls (${toolCalls.length})`))}</span>
-          ${toolCalls.length ? `
-            <div class="memory-inline-list">
-              ${toolCalls.map((call) => `
-                <div class="memory-inline-item">
-                  <div class="memory-inline-item-head">
-                    <span class="memory-badge">${escapeHtml(call.toolName || t("memory.unknownTool", {}, "Unknown Tool"))}</span>
-                    <span class="memory-badge">${escapeHtml(call.success ? t("memory.toolCallSuccess", {}, "Success") : t("memory.toolCallFailed", {}, "Failed"))}</span>
-                    <span class="memory-badge">${escapeHtml(formatDuration(call.durationMs))}</span>
-                  </div>
-                  ${call.note ? `<div class="memory-detail-text">${escapeHtml(call.note)}</div>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : `<div class="memory-detail-text">${escapeHtml(t("memory.noToolCalls", {}, "No tool call records."))}</div>`}
-        </div>
-        `)}
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.candidateContent", {}, "Candidate Content"))}</span>
-          <pre class="memory-detail-pre">${escapeHtml(candidate.content || t("memory.noContent", {}, "No content"))}</pre>
-        </div>
-      </div>
-    `;
+  function createCandidateDetailPanel(candidate, ownerDocument = memoryViewerDetailEl?.ownerDocument) {
+    if (!candidate || !ownerDocument) return null;
+    return candidateDetailView.createPanel({
+      ownerDocument,
+      ...getCandidateDetailViewInput(candidate),
+    });
   }
 
   function renderCandidateOnlyDetail(candidate) {
@@ -4420,28 +4047,25 @@ export function createMemoryViewerFeature({
       renderMemoryViewerDetailEmpty(t("memory.candidateMissing", {}, "Candidate not found."));
       return;
     }
-    memoryViewerDetailEl.innerHTML = `
-      <div class="memory-detail-shell">
-        ${renderCandidateDetailPanel(candidate)}
-      </div>
-    `;
+    candidateDetailView.render({
+      container: memoryViewerDetailEl,
+      ...getCandidateDetailViewInput(candidate),
+    });
     bindMemoryPathLinks();
     bindTaskAuditJumpLinks();
   }
-
   function renderMemoryDetail(item) {
     if (!memoryViewerDetailEl) return;
     if (!item) {
       renderMemoryViewerDetailEmpty(t("memory.memoryMissing", {}, "Memory not found."));
       return;
     }
-    const compactGovernanceDetailMode = isCompactGovernanceDetailMode();
 
     const visibility = normalizeMemoryVisibility(item.visibility);
     const category = formatMemoryCategory(item.category);
     const sourceView = item.sourceView || { scope: visibility };
-    const promotion = getMemorySharePromotionMetadata(item);
-    const shareStatus = formatMemorySharePromotionStatusLabel(normalizeMemorySharePromotionStatus(item));
+    const promotionStatus = normalizeMemorySharePromotionStatus(item);
+    const shareStatus = formatMemorySharePromotionStatusLabel(promotionStatus);
     const shareActionMode = getMemoryShareActionMode(item);
     const governanceSummary = formatSharedGovernanceSummary(item);
     const sourceExplanation = formatResidentSourceExplainability(sourceView);
@@ -4458,45 +4082,71 @@ export function createMemoryViewerFeature({
     const canClaimNow = !claimOwner || claimTimedOut;
     const canReviewNow = shareActionMode === "pending"
       && (claimState.actionableByReviewer || !claimOwner || claimOwner === activeAgentId || claimTimedOut);
-    const shareActionButtons = [];
+    const shareActions = [];
+
     if (shareActionMode === "request" && sourceView.scope !== "shared") {
-      shareActionButtons.push(
-        `<button class="memory-usage-action-btn" data-memory-share-promote="${escapeHtml(item.id)}">${escapeHtml(t("memory.sharePromoteAction", {}, "Submit Shared Review"))}</button>`,
-      );
+      shareActions.push({
+        kind: "promote",
+        value: item.id,
+        label: t("memory.sharePromoteAction", {}, "Submit Shared Review"),
+      });
     }
     if (shareActionMode === "pending") {
       if (claimOwner === activeAgentId && !claimTimedOut) {
-        shareActionButtons.push(
-          `<button class="memory-usage-action-btn" data-memory-share-claim="release" data-memory-share-claim-scope="${escapeHtml(shareActionScope)}">${escapeHtml(t("memory.shareReleaseAction", {}, "Release"))}</button>`,
-        );
+        shareActions.push({
+          kind: "claim",
+          action: "release",
+          scope: shareActionScope,
+          label: t("memory.shareReleaseAction", {}, "Release"),
+        });
       }
       if (canClaimNow) {
-        shareActionButtons.push(
-          `<button class="memory-usage-action-btn" data-memory-share-claim="claim" data-memory-share-claim-scope="${escapeHtml(shareActionScope)}">${escapeHtml(t("memory.shareClaimAction", {}, "Claim"))}</button>`,
-        );
+        shareActions.push({
+          kind: "claim",
+          action: "claim",
+          scope: shareActionScope,
+          label: t("memory.shareClaimAction", {}, "Claim"),
+        });
       }
       if (canReviewNow) {
-        shareActionButtons.push(
-          `<button class="memory-usage-action-btn" data-memory-share-decision="approved">${escapeHtml(t("memory.shareReviewApproveAction", {}, "Approve"))}</button>`,
-        );
-        shareActionButtons.push(
-          `<button class="memory-usage-action-btn" data-memory-share-decision="rejected">${escapeHtml(t("memory.shareReviewRejectAction", {}, "Reject"))}</button>`,
+        shareActions.push(
+          {
+            kind: "decision",
+            decision: "approved",
+            label: t("memory.shareReviewApproveAction", {}, "Approve"),
+          },
+          {
+            kind: "decision",
+            decision: "rejected",
+            label: t("memory.shareReviewRejectAction", {}, "Reject"),
+          },
         );
         if (shareActionScope === "source") {
-          shareActionButtons.push(
-            `<button class="memory-usage-action-btn" data-memory-share-decision="approved" data-memory-share-decision-scope="source">${escapeHtml(t("memory.shareReviewApproveBatchAction", {}, "Approve Source Group"))}</button>`,
-          );
-          shareActionButtons.push(
-            `<button class="memory-usage-action-btn" data-memory-share-decision="rejected" data-memory-share-decision-scope="source">${escapeHtml(t("memory.shareReviewRejectBatchAction", {}, "Reject Source Group"))}</button>`,
+          shareActions.push(
+            {
+              kind: "decision",
+              decision: "approved",
+              scope: "source",
+              label: t("memory.shareReviewApproveBatchAction", {}, "Approve Source Group"),
+            },
+            {
+              kind: "decision",
+              decision: "rejected",
+              scope: "source",
+              label: t("memory.shareReviewRejectBatchAction", {}, "Reject Source Group"),
+            },
           );
         }
       }
     }
     if (shareActionMode === "approved") {
-      shareActionButtons.push(
-        `<button class="memory-usage-action-btn" data-memory-share-decision="revoked">${escapeHtml(t("memory.shareReviewRevokeAction", {}, "Revoke Shared"))}</button>`,
-      );
+      shareActions.push({
+        kind: "decision",
+        decision: "revoked",
+        label: t("memory.shareReviewRevokeAction", {}, "Revoke Shared"),
+      });
     }
+
     const claimStatusText = claimOwner
       ? claimTimedOut
         ? t(
@@ -4515,125 +4165,41 @@ export function createMemoryViewerFeature({
           : canReviewNow
             ? t("memory.detailSharedReviewerActionable", {}, "This review item is actionable for the current reviewer.")
             : t("memory.detailSharedReviewerIdle", {}, "This review item is waiting for a reviewer.");
-    const canOpenSharedReviewContext = normalizeMemorySharePromotionStatus(item) && normalizeMemorySharePromotionStatus(item) !== "none";
     const contentText = String(item.content || item.snippet || t("memory.noContent", {}, "No content"));
     const contentPreview = buildMemoryDetailCollapsedPreview(contentText);
     const metadataText = item.metadata ? JSON.stringify(item.metadata, null, 2) : "";
     const metadataPreview = metadataText ? buildMemoryDetailCollapsedPreview(metadataText) : null;
-    memoryViewerDetailEl.innerHTML = `
-      <div class="memory-detail-shell">
-        <div class="memory-detail-header memory-detail-header-memory-entry">
-          <div class="memory-detail-header-main">
-            <div class="memory-detail-title">${escapeHtml(summarizeSourcePath(item.sourcePath))}</div>
-            ${compactGovernanceDetailMode ? "" : `<div class="memory-list-item-meta">
-              <span>${escapeHtml(item.id)}</span>
-            </div>`}
-          </div>
-          <div class="memory-detail-header-side">
-            <div class="memory-detail-badges memory-detail-badges-memory-entry">
-              <span class="memory-badge">${escapeHtml(formatMemoryTypeLabel(item.memoryType))}</span>
-              <span class="memory-badge">${escapeHtml(formatMemorySourceTypeLabel(item.sourceType))}</span>
-              <span class="memory-badge ${getVisibilityBadgeClass(visibility)}">${escapeHtml(visibility)}</span>
-              ${renderSourceViewBadge(sourceView)}
-              <span class="memory-badge">${escapeHtml(category)}</span>
-              <span class="memory-badge">分数 ${formatScore(item.score)}</span>
-            </div>
-            ${shareActionButtons.length ? `
-              <div class="memory-detail-actions memory-detail-actions-memory-entry">
-                ${shareActionButtons.join("")}
-              </div>
-            ` : ""}
-          </div>
-        </div>
 
-        <div class="memory-detail-card">
-          <div class="goal-summary-header">
-            <div>
-              <div class="goal-summary-title">${escapeHtml(t("memory.contextSummaryTitle", {}, "上下文链"))}</div>
-              <div class="goal-summary-text">${escapeHtml(t("memory.contextSummaryMemoryText", {}, "把来源范围、shared 治理状态与继续下钻入口收拢到一处。"))}</div>
-            </div>
-          </div>
-          <div class="memory-detail-badges">
-            <span class="memory-badge ${getVisibilityBadgeClass(visibility)}">${escapeHtml(visibility)}</span>
-            ${renderSourceViewBadge(sourceView)}
-            <span class="memory-badge">${escapeHtml(shareStatus)}</span>
-            ${targetDisplayName ? `<span class="memory-badge">${escapeHtml(targetDisplayName)}</span>` : ""}
-            ${claimOwner ? `<span class="memory-badge">${escapeHtml(claimTimedOut ? t("memory.contextClaimTimedOut", {}, "claim 超时") : t("memory.contextClaimActive", {}, "claim 生效中"))}</span>` : ""}
-          </div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(sourceExplanation)}</span>
-          </div>
-          <div class="goal-detail-actions">
-            ${item.sourcePath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(item.sourcePath)}" data-open-line="${typeof item.startLine === "number" ? item.startLine : ""}">${escapeHtml(t("memory.contextOpenSource", {}, "打开来源文件"))}</button>` : ""}
-            ${canOpenSharedReviewContext ? `<button class="button goal-inline-action-secondary" data-memory-open-shared-review-context="1">${escapeHtml(t("memory.contextOpenSharedReview", {}, "打开 Shared Review"))}</button>` : ""}
-          </div>
-        </div>
-
-        <div class="memory-detail-grid">
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailVisibility", {}, "Visibility"))}</span><div class="memory-detail-text">${escapeHtml(visibility)}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.sharedReviewTargetAgent", {}, "Target Agent"))}</span><div class="memory-detail-text">${escapeHtml(targetDisplayName)}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailSharedStatus", {}, "Shared Status"))}</span><div class="memory-detail-text">${escapeHtml(shareStatus)}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailSharedClaim", {}, "Shared Claim"))}</span><div class="memory-detail-text">${escapeHtml(claimStatusText)}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailSharedReviewerState", {}, "Reviewer State"))}</span><div class="memory-detail-text">${escapeHtml(reviewerStateText)}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailCategory", {}, "Category"))}</span><div class="memory-detail-text">${escapeHtml(category)}</div></div>
-          <div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailSummary", {}, "Summary"))}</span><div class="memory-detail-text">${escapeHtml(item.summary || t("memory.emptyNoSummary", {}, "No summary"))}</div></div>
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailSourcePath", {}, "Source Path"))}</span><div class="memory-detail-text">${item.sourcePath ? `<button class="memory-path-link" data-open-source="${escapeHtml(item.sourcePath)}" data-open-line="${typeof item.startLine === "number" ? item.startLine : ""}">${escapeHtml(item.sourcePath)}</button>` : "-"}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailLines", {}, "Lines"))}</span><div class="memory-detail-text">${escapeHtml(formatLineRange(item.startLine, item.endLine))}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">来源视角</span><div class="memory-detail-text">${escapeHtml(formatResidentSourceSummary(sourceView))}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">来源解释</span><div class="memory-detail-text">${escapeHtml(sourceExplanation)}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">冲突说明</span><div class="memory-detail-text">${escapeHtml(sourceConflictSummary)}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">来源审计</span><div class="memory-detail-text">${escapeHtml(sourceAuditSummary)}</div></div>`}
-          ${compactGovernanceDetailMode ? "" : `<div class="memory-detail-card"><span class="memory-detail-label">${escapeHtml(t("memory.detailSharedGovernance", {}, "Shared Governance"))}</span><div class="memory-detail-text">${escapeHtml(governanceSummary)}</div></div>`}
-        </div>
-
-        <div class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("memory.detailSnippet", {}, "Snippet"))}</span>
-          <div class="memory-detail-text">${escapeHtml(item.snippet || t("memory.noContent", {}, "No content"))}</div>
-        </div>
-
-        <div class="memory-detail-card${contentPreview.truncated ? " is-collapsible" : ""}" data-memory-detail-collapsible="content">
-          <div class="memory-detail-card-head">
-            <span class="memory-detail-label">${escapeHtml(t("memory.detailContent", {}, "Content"))}</span>
-            ${contentPreview.truncated ? `
-              <button class="memory-usage-action-btn" data-memory-detail-toggle="content" data-memory-detail-expanded="false">${escapeHtml(t("memory.detailExpand", {}, "Expand"))}</button>
-            ` : ""}
-          </div>
-          ${contentPreview.truncated ? `
-            <div class="memory-detail-caption">${escapeHtml(t(
-              "memory.detailCollapsedHint",
-              {
-                chars: formatCount(contentPreview.charCount),
-                lines: formatCount(contentPreview.lineCount),
-              },
-              `Previewing ${formatCount(contentPreview.charCount)} chars / ${formatCount(contentPreview.lineCount)} lines`,
-            ))}</div>
-          ` : ""}
-          <pre class="memory-detail-pre${contentPreview.truncated ? " is-collapsed" : ""}" data-memory-detail-body="content">${escapeHtml(contentPreview.truncated ? contentPreview.preview : contentText)}</pre>
-        </div>
-
-        ${!compactGovernanceDetailMode && metadataPreview ? `
-          <div class="memory-detail-card${metadataPreview.truncated ? " is-collapsible" : ""}" data-memory-detail-collapsible="metadata">
-            <div class="memory-detail-card-head">
-              <span class="memory-detail-label">元数据</span>
-              ${metadataPreview.truncated ? `
-                <button class="memory-usage-action-btn" data-memory-detail-toggle="metadata" data-memory-detail-expanded="false">${escapeHtml(t("memory.detailExpand", {}, "Expand"))}</button>
-              ` : ""}
-            </div>
-            ${metadataPreview.truncated ? `
-              <div class="memory-detail-caption">${escapeHtml(t(
-                "memory.detailCollapsedHint",
-                {
-                  chars: formatCount(metadataPreview.charCount),
-                  lines: formatCount(metadataPreview.lineCount),
-                },
-                `Previewing ${formatCount(metadataPreview.charCount)} chars / ${formatCount(metadataPreview.lineCount)} lines`,
-              ))}</div>
-            ` : ""}
-            <pre class="memory-detail-pre${metadataPreview.truncated ? " is-collapsed" : ""}" data-memory-detail-body="metadata">${escapeHtml(metadataPreview.truncated ? metadataPreview.preview : metadataText)}</pre>
-          </div>
-        ` : ""}
-      </div>
-    `;
+    memoryDetailView.render({
+      container: memoryViewerDetailEl,
+      view: {
+        item,
+        compact: isCompactGovernanceDetailMode(),
+        visibility,
+        category,
+        sourceBadge: {
+          label: formatResidentSourceScopeLabel(sourceView),
+          className: getResidentSourceBadgeClass(sourceView),
+        },
+        sourceSummary: formatResidentSourceSummary(sourceView),
+        sourceExplanation,
+        sourceConflictSummary,
+        sourceAuditSummary,
+        shareStatus,
+        shareActions,
+        governanceSummary,
+        claimOwner,
+        claimTimedOut,
+        claimStatusText,
+        reviewerStateText,
+        targetDisplayName,
+        canOpenSharedReviewContext: Boolean(promotionStatus && promotionStatus !== "none"),
+        contentText,
+        contentPreview,
+        metadataText,
+        metadataPreview,
+      },
+    });
     bindMemoryPathLinks();
     bindMemoryDetailActions(item);
   }
@@ -4701,7 +4267,7 @@ export function createMemoryViewerFeature({
     loadTaskViewer: ingressLifecycle.guardAsync((...args) => (
       requestLifecycle.run(() => loadTaskViewer(...args))
     )),
-    renderCandidateDetailPanel: ingressLifecycle.guard(renderCandidateDetailPanel, ""),
+    createCandidateDetailPanel: ingressLifecycle.guard(createCandidateDetailPanel, null),
     renderCandidateOnlyDetail: ingressLifecycle.guard(renderCandidateOnlyDetail),
     renderExternalOutboundAuditDetail: ingressLifecycle.guard(renderExternalOutboundAuditDetail),
     renderExternalOutboundAuditList: ingressLifecycle.guard(renderExternalOutboundAuditList),

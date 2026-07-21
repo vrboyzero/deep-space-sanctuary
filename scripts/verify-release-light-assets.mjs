@@ -12,6 +12,7 @@ import {
   assertReleaseIdentityMatches,
   resolveReleaseIdentity,
 } from "./release-identity.mjs";
+import { verifyWebAssetBundle } from "./web-asset-bundle-verifier.mjs";
 
 const workspaceRoot = process.cwd();
 const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf-8"));
@@ -85,7 +86,7 @@ function collectStagedPackageArtifactFailures() {
   return failures;
 }
 
-function main() {
+async function main() {
   for (const requiredPath of [packageRoot, zipPath, tarGzPath, manifestPath, sha256Path]) {
     assertExists(requiredPath);
   }
@@ -156,7 +157,15 @@ function main() {
     throw new Error(`sha256 file missing entries: ${[...expectedFiles.keys()].join(", ")}`);
   }
 
+  await verifyWebAssetBundle({
+    webPublicDir: path.join(packageRoot, "apps", "web", "public"),
+    lockfilePath: path.join(packageRoot, "pnpm-lock.yaml"),
+  });
+
   console.log(`[verify:release-light] verified ${path.relative(workspaceRoot, versionRoot)}`);
 }
 
-main();
+main().catch((error) => {
+  console.error(`[verify:release-light] failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+});

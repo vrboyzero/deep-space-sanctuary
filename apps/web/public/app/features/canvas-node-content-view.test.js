@@ -3,12 +3,32 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { createCanvasNodeContentView, getCanvasNodeIcon } from "./canvas-node-content-view.js";
 
+function installRuntimeStyleSheet() {
+  const style = document.createElement("style");
+  style.setAttribute("data-ui03-runtime-stylesheet", "true");
+  document.head.append(style);
+  return style;
+}
+
+function getRuntimeStyleValue(style, element, property) {
+  const className = [...element.classList].find((name) => name.startsWith("webchat-runtime-style-"));
+  return [...(style.sheet?.cssRules ?? [])]
+    .find((rule) => rule.selectorText === `.${className}`)
+    ?.style.getPropertyValue(property);
+}
+
+afterEach(() => {
+  document.head.querySelectorAll("style[data-ui03-runtime-stylesheet]").forEach((element) => element.remove());
+  document.body.replaceChildren();
+});
+
 describe("Canvas node foreignObject content DOM owner", () => {
   it("renders dynamic node content as DOM without an HTML parser", () => {
+    const style = installRuntimeStyleSheet();
     const body = document.createElement("div");
     const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
     Object.defineProperty(body, "innerHTML", {
@@ -51,7 +71,7 @@ describe("Canvas node foreignObject content DOM owner", () => {
       expect(root?.classList.contains("goal-active")).toBe(true);
       expect(root?.classList.contains("react-running")).toBe(true);
       expect(root?.getAttribute("data-node-id")).toBe(node.id);
-      expect(root?.style.borderLeftColor).toBeTruthy();
+      expect(getRuntimeStyleValue(style, root, "border-left-color")).toBeTruthy();
       expect([...root?.children ?? []].map((child) => child.className)).toEqual([
         "node-header",
         "node-body",

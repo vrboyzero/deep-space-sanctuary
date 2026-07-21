@@ -526,6 +526,7 @@ function Assert-SafeReleaseArchive {
   $rootPath = [System.IO.Path]::GetFullPath($ExtractionRoot)
   $rootPrefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
   $seenEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $entryKinds = [System.Collections.Generic.Dictionary[string, bool]]::new([System.StringComparer]::OrdinalIgnoreCase)
   [Int64]$entryCount = 0
   [Int64]$fileCount = 0
   [Int64]$unpackedBytes = 0
@@ -552,7 +553,7 @@ function Assert-SafeReleaseArchive {
       if ($normalizedName -ne $ExpectedRoot -and -not $normalizedName.StartsWith("$ExpectedRoot/", [System.StringComparison]::Ordinal)) {
         throw "Release archive entry is outside the declared package root."
       }
-      if (-not $seenEntries.Add($normalizedName)) {
+      if ($seenEntries.Contains($normalizedName)) {
         throw "Release archive contains a duplicate entry path."
       }
 
@@ -566,7 +567,25 @@ function Assert-SafeReleaseArchive {
       if ($unixFileType -eq 0xA000) {
         throw "Release archive symlink entries are not allowed."
       }
+
+      $parentPath = $normalizedName
+      while ($parentPath.Contains("/")) {
+        $parentPath = $parentPath.Substring(0, $parentPath.LastIndexOf("/"))
+        [bool]$parentIsDirectory = $false
+        if ($entryKinds.TryGetValue($parentPath, [ref]$parentIsDirectory) -and -not $parentIsDirectory) {
+          throw "Release archive entry has a parent file."
+        }
+      }
+      if (-not $isDirectory) {
+        foreach ($knownEntryPath in $entryKinds.Keys) {
+          if ($knownEntryPath.StartsWith("$normalizedName/", [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Release archive file entry conflicts with existing child entries."
+          }
+        }
+      }
       if ($isDirectory) {
+        $null = $seenEntries.Add($normalizedName)
+        $entryKinds[$normalizedName] = $true
         continue
       }
 
@@ -576,6 +595,8 @@ function Assert-SafeReleaseArchive {
       }
       $fileCount += 1
       $unpackedBytes += $entryBytes
+      $null = $seenEntries.Add($normalizedName)
+      $entryKinds[$normalizedName] = $false
     }
   } finally {
     $archive.Dispose()

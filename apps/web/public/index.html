@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/styles.css?v=10.2" />
   <link rel="stylesheet" href="/canvas.css?v=1.0" />
   <link rel="stylesheet" href="/theme.css?v=1.1" />
+  <link id="webchatRuntimeStylesheet" rel="stylesheet" href="/runtime-style-closure.css?v=1.0" />
   <link rel="icon" type="image/png" href="/logo06-256.png" />
   <script src="/assets/web-assets-manifest.js"></script>
   <script src="/assets/web-assets-loader.js"></script>
@@ -57,7 +58,7 @@
           <span class="token-metric token-metric-all"><span class="token-label">ALL</span><span class="token-val token-val-all" id="tuAll">--</span></span>
           <div class="token-usage-observability is-empty" id="tokenUsageObservability" data-i18n="header.tokenObservabilityEmpty">暂无缓存观测</div>
         </div>
-        <div class="task-token-usage" id="taskTokenUsage" title="任务 Token 用量" style="display: none;">
+        <div class="task-token-usage task-token-usage--initially-hidden" id="taskTokenUsage" title="任务 Token 用量">
           <span class="token-label">TASK</span><span class="token-val" id="taskName">--</span>
           <span class="token-sep">|</span>
           <span class="token-label">IN</span><span class="token-val" id="taskIn">--</span>
@@ -162,30 +163,21 @@
       <aside class="sidebar hidden" id="sidebar">
         <!-- 导航区域 -->
         <div class="sidebar-nav">
-          <button id="switchRoot" class="sidebar-action-btn is-active"
-            style="text-align: left; font-weight: 600; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">📂</span><span data-i18n="sidebar.rootSettings">智能体设置</span></button>
-          <button id="switchFacet" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🧩</span><span data-i18n="sidebar.facetEditor">模组编辑</span></button>
-          <button id="switchCron" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">⏰</span><span data-i18n="sidebar.cronConfig">定时任务配置</span></button>
-          <button id="switchMemory" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🧠</span><span data-i18n="sidebar.memoryViewer">记忆查看</span></button>
-          <button id="switchExperience" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🧩</span><span data-i18n="sidebar.experienceWorkbench">经验能力</span></button>
-          <button id="switchGoals" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🎯</span><span data-i18n="sidebar.longTasks">长期任务</span></button>
-          <button id="switchSubtasks" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🪄</span><span data-i18n="sidebar.subtasks">子任务面板</span></button>
-          <button id="switchCanvas" class="sidebar-action-btn"
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🎨</span><span data-i18n="sidebar.canvasWorkspace">画布工作区</span></button>
-          <button id="openChannelSettings" class="sidebar-action-btn hidden" hidden
-            style="text-align: left; justify-content: flex-start;"><span style="margin-right: 8px;" aria-hidden="true">🌐</span><span data-i18n="sidebar.channelSettings">渠道配置</span></button>
+          <button id="switchRoot" class="sidebar-action-btn is-active sidebar-action-btn--emphasized"><span class="sidebar-action-icon" aria-hidden="true">📂</span><span data-i18n="sidebar.rootSettings">智能体设置</span></button>
+          <button id="switchFacet" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">🧩</span><span data-i18n="sidebar.facetEditor">模组编辑</span></button>
+          <button id="switchCron" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">⏰</span><span data-i18n="sidebar.cronConfig">定时任务配置</span></button>
+          <button id="switchMemory" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">🧠</span><span data-i18n="sidebar.memoryViewer">记忆查看</span></button>
+          <button id="switchExperience" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">🧩</span><span data-i18n="sidebar.experienceWorkbench">经验能力</span></button>
+          <button id="switchGoals" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">🎯</span><span data-i18n="sidebar.longTasks">长期任务</span></button>
+          <button id="switchSubtasks" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">🪄</span><span data-i18n="sidebar.subtasks">子任务面板</span></button>
+          <button id="switchCanvas" class="sidebar-action-btn"><span class="sidebar-action-icon" aria-hidden="true">🎨</span><span data-i18n="sidebar.canvasWorkspace">画布工作区</span></button>
+          <button id="openChannelSettings" class="sidebar-action-btn hidden" hidden><span class="sidebar-action-icon" aria-hidden="true">🌐</span><span data-i18n="sidebar.channelSettings">渠道配置</span></button>
         </div>
 
         <!-- 树头部 -->
         <div class="sidebar-header sidebar-header-divider">
-          <span class="sidebar-title" id="treeTitle" style="font-size: 0.85em; opacity: 0.5;" data-i18n="sidebar.fileList">文件列表</span>
-          <div style="display: flex; gap: 4px; align-items: center;">
+          <span class="sidebar-title sidebar-title--muted" id="treeTitle" data-i18n="sidebar.fileList">文件列表</span>
+          <div class="sidebar-header-actions">
             <!-- 配置按钮移到这里 -->
             <button id="openEnvEditor" class="sidebar-btn" data-i18n-title="sidebar.openEnvConfig" title="编辑 .env 配置">⚙</button>
             <button id="refreshTree" class="sidebar-btn" data-i18n-title="common.refresh" title="刷新">⟳</button>
@@ -640,8 +632,8 @@
   <!-- Settings Modal -->
   <div id="settingsModal" class="modal-overlay hidden">
     <div class="modal settings-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+      <div class="modal-header">
+        <div class="modal-header-content">
           <span data-i18n="settings.title">设置</span>
           <a id="recommendApiLink" href="#" target="_blank" class="theme-link theme-link-muted" data-i18n="settings.recommendApi">推荐模型API</a>
           <a id="aliyunOneKeyLink" href="#" target="_blank" class="theme-link theme-link-muted" data-i18n="settings.aliyunOneKey">阿里一KEY通道</a>
@@ -666,7 +658,7 @@
           </div>
           <div id="pairingPendingList" class="doctor-grid"></div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.channelSecurityPendingTitle">待审批 Sender</div>
               <div class="form-help" data-i18n="settings.channelSecurityPendingHelp">当渠道 DM 命中 `allowlist` 阻断时，会在这里生成待审批记录。批准后会自动写入对应渠道的 `allowFrom`。</div>
@@ -705,21 +697,21 @@
             <div class="form-help" data-i18n="settings.dashScopeApiKeyHelp">供 DashScope 的 TTS / STT 以及共享阿里云能力复用；保存时会同步写入相关 Key。</div>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.modelFallbackConfigTitle">Model Fallback Profiles</div>
               <div class="form-help" data-i18n="settings.modelFallbackConfigHelp">使用结构化 JSON 维护 `models.json` fallback 列表；primary provider 仍由上方 OpenAI API Key / Base URL / Model 控制。已有条目的 `apiKey` 可保留 `[REDACTED]` 占位，保存后会立即刷新 model picker。</div>
             </div>
             <button id="refreshModelFallbackConfig" type="button" class="button button-muted" data-i18n="settings.modelFallbackConfigRefresh">刷新</button>
           </div>
-          <div id="modelFallbackConfigMeta" class="form-help" style="margin-bottom: 8px;"></div>
+          <div id="modelFallbackConfigMeta" class="form-help form-help--spaced-bottom"></div>
           <div class="form-group">
             <label class="form-label" for="cfgModelFallbackContent" data-i18n="settings.modelFallbackConfigContentLabel">Model Fallback JSON</label>
             <textarea id="cfgModelFallbackContent" class="input" rows="12" spellcheck="false" placeholder="{&#10;  &quot;fallbacks&quot;: [&#10;    {&#10;      &quot;id&quot;: &quot;openrouter-main&quot;,&#10;      &quot;displayName&quot;: &quot;OpenRouter Main&quot;,&#10;      &quot;baseUrl&quot;: &quot;https://openrouter.ai/api/v1&quot;,&#10;      &quot;apiKey&quot;: &quot;sk-or-v1-...&quot;,&#10;      &quot;model&quot;: &quot;openai/gpt-4o-mini&quot;,&#10;      &quot;protocol&quot;: &quot;openai&quot;,&#10;      &quot;wireApi&quot;: &quot;responses&quot;&#10;    }&#10;  ]&#10;}"></textarea>
           </div>
 
           <section class="settings-subsection" id="assistantModeConfigSection">
-            <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div class="settings-subsection-header settings-subsection-header--spaced">
               <div>
                 <div id="assistantModeConfigTitle" class="settings-subsection-title" data-i18n="settings.assistantModeConfigTitle">Assistant Mode 配置</div>
                 <div id="assistantModeConfigHelp" class="form-help" data-i18n="settings.assistantModeConfigHelp">统一收口主动工作相关配置，包括通知确认、heartbeat 活跃时段和 cron 自动调度。底层仍复用现有 runtime。</div>
@@ -728,7 +720,7 @@
             </div>
             <div class="form-group settings-priority-toggle">
               <label class="form-label" for="cfgAssistantModeEnabled">
-                <input id="cfgAssistantModeEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgAssistantModeEnabled" type="checkbox" class="form-checkbox" />
                 <span class="settings-priority-toggle-title" data-i18n="settings.assistantModeEnabledLabel">启用 Assistant Mode</span>
               </label>
               <div class="form-help" data-i18n="settings.assistantModeEnabledHelp">产品层总开关。关闭时 heartbeat 与 cron 都不会主动运行；重新开启时会优先恢复为 heartbeat + cron 的默认主动组合，随后仍可在下方细调。</div>
@@ -740,7 +732,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgExternalOutboundRequireConfirmation">
-                <input id="cfgExternalOutboundRequireConfirmation" type="checkbox" style="margin-right: 8px;" checked />
+                <input id="cfgExternalOutboundRequireConfirmation" type="checkbox" class="form-checkbox" checked />
                 <span data-i18n="settings.externalOutboundRequireConfirmationLabel">外部渠道外发需要确认</span>
               </label>
               <div class="form-help" data-i18n="settings.externalOutboundRequireConfirmationHelp">控制 WebChat 请求 Agent 向飞书 / QQ / Community / Discord 外发文本时，是否必须先经过页面确认弹窗。默认开启。无需重启</div>
@@ -757,7 +749,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgHeartbeatEnabled">
-                <input id="cfgHeartbeatEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgHeartbeatEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.heartbeatEnabledLabel">Enable Heartbeat</span>
               </label>
               <div class="form-help" data-i18n="settings.heartbeatEnabledHelp">启用后，Agent 会按心跳配置检查 `HEARTBEAT.md` 并主动联系你。</div>
@@ -769,7 +761,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgStarweaverActiveNotifyEnabled">
-                <input id="cfgStarweaverActiveNotifyEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgStarweaverActiveNotifyEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.starweaverActiveNotifyEnabledLabel">启用 StarWeaver 主动提示</span>
               </label>
               <div class="form-help" data-i18n="settings.starweaverActiveNotifyEnabledHelp">仅在当前 Agent 进入 StarWeaver/游戏工作态且相关工具可用时，自动检查牵星通知摘要并拉取对应消息面。默认关闭。</div>
@@ -781,7 +773,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgCronEnabled">
-                <input id="cfgCronEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgCronEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.cronEnabledLabel">Enable Cron Scheduler</span>
               </label>
               <div class="form-help" data-i18n="settings.cronEnabledHelp">控制自动调度引擎。关闭后 `cron` 工具仍存在，但不会自动调度执行。</div>
@@ -797,7 +789,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgOpenAiStreamEnabled">
-              <input id="cfgOpenAiStreamEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgOpenAiStreamEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.openAiStreamEnabledLabel">启用流式输出</span>
             </label>
             <div class="form-help" data-i18n="settings.openAiStreamEnabledHelp">控制 OpenAI-compatible 请求是否启用流式输出。</div>
@@ -822,7 +814,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgResponsesSanitizeToolSchema">
-              <input id="cfgResponsesSanitizeToolSchema" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgResponsesSanitizeToolSchema" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.responsesSanitizeToolSchemaLabel">清洗 Responses Tool Schema</span>
             </label>
             <div class="form-help" data-i18n="settings.responsesSanitizeToolSchemaHelp">仅在 `responses + tools` 模式下移除 `oneOf`、`$ref` 等不兼容 schema 关键字。</div>
@@ -844,7 +836,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgPrimaryWarmupEnabled">
-              <input id="cfgPrimaryWarmupEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgPrimaryWarmupEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.primaryWarmupEnabledLabel">启用 Primary 预热</span>
             </label>
             <div class="form-help" data-i18n="settings.primaryWarmupEnabledHelp">启动时对 primary 做预热探测，失败时给 primary 添加短期冷却。</div>
@@ -898,42 +890,42 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgInjectAgents">
-              <input id="cfgInjectAgents" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgInjectAgents" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.injectAgentsLabel">Inject AGENTS.md</span>
             </label>
             <div class="form-help" data-i18n="settings.injectAgentsHelp">决定是否把 `AGENTS.md` 注入到 System Prompt。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgInjectSoul">
-              <input id="cfgInjectSoul" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgInjectSoul" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.injectSoulLabel">Inject SOUL.md</span>
             </label>
             <div class="form-help" data-i18n="settings.injectSoulHelp">决定是否把 `SOUL.md` 注入到 System Prompt。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgInjectMemory">
-              <input id="cfgInjectMemory" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgInjectMemory" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.injectMemoryLabel">Inject MEMORY.md</span>
             </label>
             <div class="form-help" data-i18n="settings.injectMemoryHelp">决定是否把 `MEMORY.md` 注入到 System Prompt。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgInjectMethodSkillList">
-              <input id="cfgInjectMethodSkillList" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgInjectMethodSkillList" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.injectMethodSkillListLabel">Inject Method / Skill Summary</span>
             </label>
             <div class="form-help" data-i18n="settings.injectMethodSkillListHelp">决定是否把 Methods / Skills 的运行时摘要索引注入到 System Prompt。关闭后，Agent 仍可通过工具搜索，但启动时不会看到摘要目录。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgPromptFocusEnabled">
-              <input id="cfgPromptFocusEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgPromptFocusEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.promptFocusEnabledLabel">Prompt Focus Runtime Prelude</span>
             </label>
             <div class="form-help" data-i18n="settings.promptFocusEnabledHelp">控制运行时是否从当前工作区 `AGENTS.md` / `SOUL.md` 中提取最相关片段，作为额外 prompt focus prelude 注入。关闭后退回普通 system prompt 组装链路。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgPromptFocusSemanticEnabled">
-              <input id="cfgPromptFocusSemanticEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgPromptFocusSemanticEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.promptFocusSemanticEnabledLabel">启用 Prompt Focus 语义召回</span>
             </label>
             <div class="form-help" data-i18n="settings.promptFocusSemanticEnabledHelp">开启后，会优先复用当前 embedding 能力对 `AGENTS.md` / `SOUL.md` 做语义召回；embedding 不可用时自动回退 lexical focus。</div>
@@ -956,20 +948,20 @@
           <div class="form-group">
             <label class="form-label" data-i18n="settings.conversationAccessTitle">会话历史访问范围</label>
             <div class="form-help" data-i18n="settings.conversationAccessHelp">全局限制 Agent 通过 conversation_list / conversation_read 可读取的会话类别。未配置时默认全开；保存后需重启 Gateway 生效。</div>
-            <label class="form-label" for="cfgConversationKindMain" style="margin-top: 10px;">
-              <input id="cfgConversationKindMain" type="checkbox" style="margin-right: 8px;" />
+            <label class="form-label form-label--with-initial-top-gap" for="cfgConversationKindMain">
+              <input id="cfgConversationKindMain" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.conversationAccessMain">允许主会话</span>
             </label>
-            <label class="form-label" for="cfgConversationKindSubtask" style="margin-top: 6px;">
-              <input id="cfgConversationKindSubtask" type="checkbox" style="margin-right: 8px;" />
+            <label class="form-label form-label--with-compact-top-gap" for="cfgConversationKindSubtask">
+              <input id="cfgConversationKindSubtask" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.conversationAccessSubtask">允许子代理会话</span>
             </label>
-            <label class="form-label" for="cfgConversationKindGoal" style="margin-top: 6px;">
-              <input id="cfgConversationKindGoal" type="checkbox" style="margin-right: 8px;" />
+            <label class="form-label form-label--with-compact-top-gap" for="cfgConversationKindGoal">
+              <input id="cfgConversationKindGoal" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.conversationAccessGoal">允许长期任务会话</span>
             </label>
-            <label class="form-label" for="cfgConversationKindHeartbeat" style="margin-top: 6px;">
-              <input id="cfgConversationKindHeartbeat" type="checkbox" style="margin-right: 8px;" />
+            <label class="form-label form-label--with-compact-top-gap" for="cfgConversationKindHeartbeat">
+              <input id="cfgConversationKindHeartbeat" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.conversationAccessHeartbeat">允许心跳会话</span>
             </label>
           </div>
@@ -1023,7 +1015,7 @@
             <div class="form-help" data-i18n="settings.promptSnapshotRetentionDaysHelp">自动清理多少天前的 snapshot；`0` 表示不按天清理。</div>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.compactionSectionTitle">Compaction</div>
               <div class="form-help" data-i18n="settings.compactionSectionHelp">上下文自动压缩、预警/阻断阈值和摘要专用模型。</div>
@@ -1031,7 +1023,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCompactionEnabled">
-              <input id="cfgCompactionEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCompactionEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.compactionEnabledLabel">Enable Compaction</span>
             </label>
             <div class="form-help" data-i18n="settings.compactionEnabledHelp">启用后，长上下文会按阈值自动压缩成摘要，降低 prompt 过长风险。</div>
@@ -1088,13 +1080,13 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCompressionReferenceStore">
-              <input id="cfgCompressionReferenceStore" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCompressionReferenceStore" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.compressionReferenceStoreLabel">启用 Compression Reference Store</span>
             </label>
             <div class="form-help" data-i18n="settings.compressionReferenceStoreHelp">控制压缩后是否保存可回取引用。关闭后回退到更兼容但更容易信息漂移的旧模式。</div>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.preflightCompressionSectionTitle">Preflight Compression</div>
               <div class="form-help" data-i18n="settings.preflightCompressionSectionHelp">发送给主模型前的附件预压缩、sidecar 原文回取和清理治理。</div>
@@ -1102,7 +1094,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgPreflightCompressionEnabled">
-              <input id="cfgPreflightCompressionEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgPreflightCompressionEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.preflightCompressionEnabledLabel">启用预压缩</span>
             </label>
             <div class="form-help" data-i18n="settings.preflightCompressionEnabledHelp">默认只处理长附件文本；用户直接粘贴的长文本和便宜模型 LLM 预压缩暂不启用。</div>
@@ -1158,7 +1150,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCompressionPersistentReferenceStore">
-              <input id="cfgCompressionPersistentReferenceStore" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCompressionPersistentReferenceStore" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.compressionPersistentReferenceStoreLabel">启用工具结果持久 Reference</span>
             </label>
             <div class="form-help" data-i18n="settings.compressionPersistentReferenceStoreHelp">默认关闭；开启后被压缩的工具结果原文可按 refId 受控回取，并受 TTL / 最大条目数约束。</div>
@@ -1188,7 +1180,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgStablePrefixSplit">
-              <input id="cfgStablePrefixSplit" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgStablePrefixSplit" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.stablePrefixSplitLabel">启用 Stable Prefix Split</span>
             </label>
             <div class="form-help" data-i18n="settings.stablePrefixSplitHelp">将稳定前缀与易变 runtime tail 拆开，减少 system prompt 高频漂移。</div>
@@ -1200,7 +1192,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDeepseekRoutePolicyEnabled">
-              <input id="cfgDeepseekRoutePolicyEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgDeepseekRoutePolicyEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.deepseekRoutePolicyEnabledLabel">Enable DeepSeek Route Policy</span>
             </label>
             <div class="form-help" data-i18n="settings.deepseekRoutePolicyEnabledHelp">控制 `deepseek:auto/flash/pro` 虚拟路由与 DeepSeek 辅助摘要优先 flash 策略。关闭后保留真实模型与显式 compaction route，不再启用这层自动策略。</div>
@@ -1225,7 +1217,7 @@
         <section class="settings-panel" data-settings-panel="memory" hidden>
           <div class="form-group settings-priority-toggle">
             <label class="form-label" for="cfgMemoryEnabled">
-              <input id="cfgMemoryEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMemoryEnabled" type="checkbox" class="form-checkbox" />
               <span class="settings-priority-toggle-title" data-i18n="settings.memoryEnabledLabel">启用记忆系统</span>
             </label>
             <div class="form-help" data-i18n="settings.memoryEnabledHelp">记忆系统总开关。关闭后不会初始化记忆运行时、向量检索和相关召回。</div>
@@ -1238,8 +1230,8 @@
             </div>
           </div>
           <div class="form-group">
-            <div id="memoryConfiguredSourcesMeta" class="form-help" style="margin-bottom: 8px;"></div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+            <div id="memoryConfiguredSourcesMeta" class="form-help form-help--spaced-bottom"></div>
+            <div class="settings-inline-actions settings-inline-actions--with-bottom-gap">
               <button id="refreshMemoryConfiguredSources" type="button" class="button" data-i18n="settings.memoryConfiguredSourcesRefresh">刷新来源配置</button>
               <button id="previewMemoryInventory" type="button" class="button-secondary" data-i18n="settings.memoryConfiguredSourcesInventoryPreview">Preview Inventory</button>
               <button id="previewMemoryExternalIngest" type="button" class="button-secondary" data-i18n="settings.memoryConfiguredSourcesIngestPreview">Preview External Ingest</button>
@@ -1247,20 +1239,20 @@
             <label class="form-label" for="cfgMemoryConfiguredSourceId" data-i18n="settings.memoryConfiguredSourceIdLabel">Preview Source Id</label>
             <input id="cfgMemoryConfiguredSourceId" class="input" placeholder="configured:obsidian-vault:1" />
             <div class="form-help" data-i18n="settings.memoryConfiguredSourceIdHelp">当存在多个来源时，可填写 source id 只对单个来源执行 external ingest preview。留空时由服务端按来源数量校验。</div>
-            <label class="form-label" for="cfgMemoryConfiguredSourcesContent" style="margin-top: 12px;" data-i18n="settings.memoryConfiguredSourcesContentLabel">Configured Sources JSON</label>
+            <label class="form-label form-label--with-top-gap" for="cfgMemoryConfiguredSourcesContent" data-i18n="settings.memoryConfiguredSourcesContentLabel">Configured Sources JSON</label>
             <textarea id="cfgMemoryConfiguredSourcesContent" class="input" rows="10" spellcheck="false" placeholder="[&#10;  {&#10;    &quot;id&quot;: &quot;configured:obsidian-vault:1&quot;,&#10;    &quot;label&quot;: &quot;Obsidian Vault&quot;,&#10;    &quot;sourceClass&quot;: &quot;curated&quot;,&#10;    &quot;scope&quot;: &quot;private&quot;,&#10;    &quot;rootPath&quot;: &quot;C:/Vault&quot;,&#10;    &quot;fileExtensions&quot;: [&quot;.md&quot;]&#10;  }&#10;]"></textarea>
             <div class="form-help" data-i18n="settings.memoryConfiguredSourcesContentHelp">保存设置时会把这份 JSON 持久化到 `stateDir/memory-configured-sources.json`。当前支持 Obsidian Markdown 目录与单个 Markdown 文件。</div>
-            <label class="form-label" for="cfgMemoryConfiguredSourcesPreviewContent" style="margin-top: 12px;" data-i18n="settings.memoryConfiguredSourcesPreviewContentLabel">Preview Result</label>
+            <label class="form-label form-label--with-top-gap" for="cfgMemoryConfiguredSourcesPreviewContent" data-i18n="settings.memoryConfiguredSourcesPreviewContentLabel">Preview Result</label>
             <textarea id="cfgMemoryConfiguredSourcesPreviewContent" class="input" rows="12" spellcheck="false" readonly placeholder="{&#10;  &quot;kind&quot;: &quot;inventory_preview&quot;,&#10;  &quot;report&quot;: {}&#10;}"></textarea>
             <div class="form-help" data-i18n="settings.memoryConfiguredSourcesPreviewContentHelp">这里会显示最近一次 inventory preview 或 external ingest preview 的 JSON 结果，便于人工检查后再走 report review/apply。</div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+            <div class="settings-inline-actions settings-inline-actions--with-top-gap">
               <button id="approveMemoryExternalIngestReport" type="button" class="button-secondary" data-i18n="settings.memoryConfiguredSourcesApproveReport">Approve Report</button>
               <button id="rejectMemoryExternalIngestReport" type="button" class="button-secondary" data-i18n="settings.memoryConfiguredSourcesRejectReport">Reject Report</button>
               <button id="applyMemoryExternalIngestReport" type="button" class="button" data-i18n="settings.memoryConfiguredSourcesApplyReport">Apply Approved Report</button>
             </div>
-            <label class="form-label" for="cfgMemoryConfiguredSourcesActionNote" style="margin-top: 12px;" data-i18n="settings.memoryConfiguredSourcesActionNoteLabel">Review / Apply Note</label>
+            <label class="form-label form-label--with-top-gap" for="cfgMemoryConfiguredSourcesActionNote" data-i18n="settings.memoryConfiguredSourcesActionNoteLabel">Review / Apply Note</label>
             <input id="cfgMemoryConfiguredSourcesActionNote" class="input" placeholder="optional note for review/apply" />
-            <div id="memoryConfiguredSourcesActionStatus" class="form-help" style="margin-top: 8px;" data-i18n="settings.memoryConfiguredSourcesActionStatusIdle">当前还没有可执行的 ingest report。请先运行 External Ingest Preview。</div>
+            <div id="memoryConfiguredSourcesActionStatus" class="form-help form-help--with-top-gap" data-i18n="settings.memoryConfiguredSourcesActionStatusIdle">当前还没有可执行的 ingest report。请先运行 External Ingest Preview。</div>
           </div>
 
           <div class="settings-subsection-header">
@@ -1271,7 +1263,7 @@
           </div>
           <div class="form-group settings-priority-toggle">
             <label class="form-label" for="cfgEmbeddingEnabled">
-              <input id="cfgEmbeddingEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgEmbeddingEnabled" type="checkbox" class="form-checkbox" />
               <span class="settings-priority-toggle-title" data-i18n="settings.embeddingEnabledLabel">Enable Embedding Retrieval</span>
             </label>
             <div class="form-help" data-i18n="settings.embeddingEnabledHelp">向量检索总开关。关闭后不会初始化 Embedding，也不会进行相关召回。</div>
@@ -1320,7 +1312,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgContextInjectionEnabled">
-              <input id="cfgContextInjectionEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgContextInjectionEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.contextInjectionEnabledLabel">启用 Context Injection</span>
             </label>
             <div class="form-help" data-i18n="settings.contextInjectionEnabledHelp">关闭后，对话开始时不会自动注入最近记忆摘要。</div>
@@ -1332,7 +1324,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgContextInjectionIncludeSession">
-              <input id="cfgContextInjectionIncludeSession" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgContextInjectionIncludeSession" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.contextInjectionIncludeSessionLabel">允许注入 Session 短期记忆</span>
             </label>
             <div class="form-help" data-i18n="settings.contextInjectionIncludeSessionHelp">建议默认关闭，避免把刚执行过的步骤再次塞回上下文。</div>
@@ -1349,7 +1341,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCarryoverContextEnabled">
-              <input id="cfgCarryoverContextEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCarryoverContextEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.carryoverContextEnabledLabel">启用 Carryover Context</span>
             </label>
             <div class="form-help" data-i18n="settings.carryoverContextEnabledHelp">控制是否把上一轮关键工具读物与中间事实，作为“可续跑背景”注入到后续轮次，减少重读与丢上下文。</div>
@@ -1365,7 +1357,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMindProfileRuntimeEnabled">
-              <input id="cfgMindProfileRuntimeEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMindProfileRuntimeEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.mindProfileRuntimeEnabledLabel">启用 Mind Profile Runtime</span>
             </label>
             <div class="form-help" data-i18n="settings.mindProfileRuntimeEnabledHelp">在合适时机向主会话注入一小段稳定用户画像/长期记忆摘要。</div>
@@ -1401,7 +1393,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTaskDedupGuardEnabled">
-              <input id="cfgTaskDedupGuardEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTaskDedupGuardEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.taskDedupGuardEnabledLabel">启用 Task 去重守卫</span>
             </label>
             <div class="form-help" data-i18n="settings.taskDedupGuardEnabledHelp">阻止最近已经成功执行过的相同工具动作再次执行。</div>
@@ -1437,7 +1429,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgAutoRecallEnabled">
-              <input id="cfgAutoRecallEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgAutoRecallEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.autoRecallEnabledLabel">启用 Auto Recall</span>
             </label>
             <div class="form-help" data-i18n="settings.autoRecallEnabledHelp">开启后，会在每轮开始前按当前输入自动做一次语义召回。</div>
@@ -1468,7 +1460,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMemorySummaryEnabled">
-              <input id="cfgMemorySummaryEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMemorySummaryEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.memorySummaryEnabledLabel">启用 Memory Summary</span>
             </label>
             <div class="form-help" data-i18n="settings.memorySummaryEnabledHelp">启用 L0 摘要层，为长期记忆提供更稳定的压缩摘要。</div>
@@ -1490,7 +1482,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMemoryEvolutionEnabled">
-              <input id="cfgMemoryEvolutionEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMemoryEvolutionEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.memoryEvolutionEnabledLabel">启用 Memory Evolution</span>
             </label>
             <div class="form-help" data-i18n="settings.memoryEvolutionEnabledHelp">启用会话记忆自动演化抽取，把对话逐步沉淀成长期记忆。</div>
@@ -1580,7 +1572,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTeamSharedMemoryEnabled">
-              <input id="cfgTeamSharedMemoryEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTeamSharedMemoryEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.teamSharedMemoryEnabledLabel">启用 Team Shared Memory</span>
             </label>
             <div class="form-help" data-i18n="settings.teamSharedMemoryEnabledHelp">开启后，resident 与相关运行时可使用团队共享记忆层。</div>
@@ -1592,21 +1584,21 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTaskMemoryEnabled">
-              <input id="cfgTaskMemoryEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTaskMemoryEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.taskMemoryEnabledLabel">启用 Task Memory</span>
             </label>
             <div class="form-help" data-i18n="settings.taskMemoryEnabledHelp">让长任务与子任务运行结果沉淀到任务级记忆层。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTaskStatsWhenMemoryDisabled">
-              <input id="cfgTaskStatsWhenMemoryDisabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTaskStatsWhenMemoryDisabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.taskStatsWhenMemoryDisabledLabel">关闭记忆时保留 Task 统计</span>
             </label>
             <div class="form-help" data-i18n="settings.taskStatsWhenMemoryDisabledHelp">当 Memory 总开关关闭时，仍允许保留 task 统计；不会恢复 task summary、experience auto promotion 或 task dedup guard。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTaskSummaryEnabled">
-              <input id="cfgTaskSummaryEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTaskSummaryEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.taskSummaryEnabledLabel">启用 Task Summary</span>
             </label>
             <div class="form-help" data-i18n="settings.taskSummaryEnabledHelp">开启后，满足阈值的任务会自动生成摘要并进入任务记忆层。</div>
@@ -1643,49 +1635,49 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgExperienceAutoPromotionEnabled">
-              <input id="cfgExperienceAutoPromotionEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgExperienceAutoPromotionEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.experienceAutoPromotionEnabledLabel">启用 Experience Auto Promotion</span>
             </label>
             <div class="form-help" data-i18n="settings.experienceAutoPromotionEnabledHelp">总开关。开启后，经验候选可自动进入方法论或技能沉淀流程。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgExperienceAutoMethodEnabled">
-              <input id="cfgExperienceAutoMethodEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgExperienceAutoMethodEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.experienceAutoMethodEnabledLabel">启用自动沉淀 Method</span>
             </label>
             <div class="form-help" data-i18n="settings.experienceAutoMethodEnabledHelp">允许经验候选自动产出方法论草稿；若要求确认，则仅保留候选不自动生成。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgExperienceAutoSkillEnabled">
-              <input id="cfgExperienceAutoSkillEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgExperienceAutoSkillEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.experienceAutoSkillEnabledLabel">启用自动沉淀 Skill</span>
             </label>
             <div class="form-help" data-i18n="settings.experienceAutoSkillEnabledHelp">允许经验候选自动产出技能草稿；若要求确认，则仅保留候选不自动生成。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMethodGenerationConfirmRequired">
-              <input id="cfgMethodGenerationConfirmRequired" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMethodGenerationConfirmRequired" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.methodGenerationConfirmRequiredLabel">Method 生成需确认</span>
             </label>
             <div class="form-help" data-i18n="settings.methodGenerationConfirmRequiredHelp">开启后，不再自动生成方法论草稿，而是转入确认流。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgSkillGenerationConfirmRequired">
-              <input id="cfgSkillGenerationConfirmRequired" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgSkillGenerationConfirmRequired" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.skillGenerationConfirmRequiredLabel">Skill 生成需确认</span>
             </label>
             <div class="form-help" data-i18n="settings.skillGenerationConfirmRequiredHelp">开启后，不再自动生成技能草稿，而是转入确认流。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMethodPublishConfirmRequired">
-              <input id="cfgMethodPublishConfirmRequired" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMethodPublishConfirmRequired" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.methodPublishConfirmRequiredLabel">Method 发布需确认</span>
             </label>
             <div class="form-help" data-i18n="settings.methodPublishConfirmRequiredHelp">开启后，方法论发布动作必须经过确认。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgSkillPublishConfirmRequired">
-              <input id="cfgSkillPublishConfirmRequired" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgSkillPublishConfirmRequired" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.skillPublishConfirmRequiredLabel">Skill 发布需确认</span>
             </label>
             <div class="form-help" data-i18n="settings.skillPublishConfirmRequiredHelp">开启后，技能发布动作必须经过确认。</div>
@@ -1716,14 +1708,14 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMemoryDeepRetrievalEnabled">
-              <input id="cfgMemoryDeepRetrievalEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMemoryDeepRetrievalEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.memoryDeepRetrievalEnabledLabel">启用 Deep Retrieval</span>
             </label>
             <div class="form-help" data-i18n="settings.memoryDeepRetrievalEnabledHelp">开启后，可沿源路径做更深层的记忆聚合检索。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMemoryNodeAssistedRetrievalEnabled">
-              <input id="cfgMemoryNodeAssistedRetrievalEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMemoryNodeAssistedRetrievalEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.memoryNodeAssistedRetrievalEnabledLabel">启用 Node-Assisted Retrieval</span>
             </label>
             <div class="form-help" data-i18n="settings.memoryNodeAssistedRetrievalEnabledHelp">开启后，检索会优先参考 memory tree 节点摘要，再按需回落到 chunk 级证据。</div>
@@ -1750,7 +1742,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMemoryIndexerVerboseWatch">
-              <input id="cfgMemoryIndexerVerboseWatch" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMemoryIndexerVerboseWatch" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.memoryIndexerVerboseWatchLabel">启用 Indexer Verbose Watch</span>
             </label>
             <div class="form-help" data-i18n="settings.memoryIndexerVerboseWatchHelp">开启后，索引器会输出更详细的 watch / 增量索引日志。</div>
@@ -1766,14 +1758,14 @@
           </div>
           <div class="form-group settings-priority-toggle">
             <label class="form-label" for="cfgToolsEnabled">
-              <input id="cfgToolsEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgToolsEnabled" type="checkbox" class="form-checkbox" />
               <span class="settings-priority-toggle-title" data-i18n="settings.toolsEnabledLabel">启用工具调用</span>
             </label>
             <div class="form-help" data-i18n="settings.toolsEnabledHelp">工具系统总开关。关闭后模型将无法调用文件、浏览器、命令等工具。</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgAgentBridgeEnabled">
-              <input id="cfgAgentBridgeEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgAgentBridgeEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.agentBridgeEnabledLabel">启用 Agent Bridge</span>
             </label>
             <div class="form-help" data-i18n="settings.agentBridgeEnabledHelp">启用 CLI / IDE 桥接工具族，具体 target 仍需在 `agent-bridge.json` 中声明。</div>
@@ -1825,7 +1817,7 @@
           </div>
           <div class="form-group settings-priority-toggle">
             <label class="form-label" for="cfgWebAllowPrivilegedSafeScope">
-              <input id="cfgWebAllowPrivilegedSafeScope" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgWebAllowPrivilegedSafeScope" type="checkbox" class="form-checkbox" />
               <span class="settings-priority-toggle-title" data-i18n="settings.webAllowPrivilegedSafeScopeLabel">允许 WebChat 使用 privileged safe-scope</span>
             </label>
             <div class="form-help" data-i18n="settings.webAllowPrivilegedSafeScopeHelp">开启后，WebChat 可参与 privileged 级别的工具安全判定；通常需要和下方的写入 channel 白名单一起使用。</div>
@@ -1854,7 +1846,7 @@
 
           <div class="form-group settings-priority-toggle">
             <label class="form-label" for="cfgTtsEnabled">
-              <input id="cfgTtsEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTtsEnabled" type="checkbox" class="form-checkbox" />
               <span class="settings-priority-toggle-title" data-i18n="settings.ttsEnabledLabel">Enable TTS</span>
             </label>
             <div class="form-help" data-i18n="settings.ttsEnabledHelp">服务端自动语音开关。开启后回复可附带语音音频。无需重启</div>
@@ -1899,7 +1891,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgBrowserRelayEnabled">
-              <input id="cfgBrowserRelayEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgBrowserRelayEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.browserRelayEnabledLabel">Enable Browser Relay</span>
             </label>
             <div class="form-help" data-i18n="settings.browserRelayEnabledHelp">启用浏览器中继自动启动，需要配合 Chrome 扩展完成自动化操作。</div>
@@ -1919,7 +1911,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgMcpEnabled">
-              <input id="cfgMcpEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgMcpEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.mcpEnabledLabel">Enable MCP</span>
             </label>
             <div class="form-help" data-i18n="settings.mcpEnabledHelp">启用 MCP 协议支持。通常需要同时打开工具系统。</div>
@@ -1939,7 +1931,7 @@
 
           <div class="form-group">
             <label class="form-label" for="cfgDangerousToolsEnabled">
-              <input id="cfgDangerousToolsEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgDangerousToolsEnabled" type="checkbox" class="form-checkbox" />
               <span>Enable Dangerous Tools</span>
             </label>
             <div class="form-help">受控开放高风险工具能力。生产环境建议审慎开启。</div>
@@ -1950,7 +1942,7 @@
             <div class="form-help">工具策略 JSON 路径。可用于平衡档/开放档等预定义策略。</div>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.subAgentsSectionTitle">Sub Agents</div>
               <div class="form-help" data-i18n="settings.subAgentsSectionHelp">子代理并发、排队、超时和嵌套深度预算。</div>
@@ -1977,7 +1969,7 @@
             <div class="form-help" data-i18n="settings.subAgentMaxDepthHelp">子代理继续派生子代理时允许的最大嵌套层级。</div>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.workflowSectionTitle">Dynamic Workflows</div>
               <div class="form-help" data-i18n="settings.workflowSectionHelp">动态工作流 orchestrator 的并发、排队、超时与调用预算。与旧 Sub Agent 配置并存，便于灰度迁移。</div>
@@ -2029,7 +2021,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgImageEnabled">
-              <input id="cfgImageEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgImageEnabled" type="checkbox" class="form-checkbox" />
               <span>Enable Image Tool</span>
             </label>
             <div class="form-help">启用独立图片生成工具。无需重启</div>
@@ -2066,7 +2058,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgImageUnderstandEnabled">
-              <input id="cfgImageUnderstandEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgImageUnderstandEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.imageUnderstandEnabledLabel">启用图片识别</span>
             </label>
             <div class="form-help" data-i18n="settings.imageUnderstandEnabledHelp">启用独立图片识别工具。Enable standalone image understanding.</div>
@@ -2108,35 +2100,35 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgImageUnderstandAutoOnAttachment">
-              <input id="cfgImageUnderstandAutoOnAttachment" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgImageUnderstandAutoOnAttachment" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.imageUnderstandAutoOnAttachmentLabel">图片附件自动识别</span>
             </label>
             <div class="form-help" data-i18n="settings.imageUnderstandAutoOnAttachmentHelp">上传图片附件后自动识别。Auto-read uploaded image attachments.</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgBrowserScreenshotAutoUnderstand">
-              <input id="cfgBrowserScreenshotAutoUnderstand" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgBrowserScreenshotAutoUnderstand" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.browserScreenshotAutoUnderstandLabel">浏览器截图自动识别</span>
             </label>
             <div class="form-help" data-i18n="settings.browserScreenshotAutoUnderstandHelp">浏览器截图完成后自动识别。Auto-understand browser screenshots after capture.</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCameraSnapAutoUnderstand">
-              <input id="cfgCameraSnapAutoUnderstand" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCameraSnapAutoUnderstand" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.cameraSnapAutoUnderstandLabel">摄像头截图自动识别</span>
             </label>
             <div class="form-help" data-i18n="settings.cameraSnapAutoUnderstandHelp">摄像头截图完成后自动识别。Auto-understand camera snapshots after capture.</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgScreenCaptureAutoUnderstand">
-              <input id="cfgScreenCaptureAutoUnderstand" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgScreenCaptureAutoUnderstand" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.screenCaptureAutoUnderstandLabel">屏幕截图自动识别</span>
             </label>
             <div class="form-help" data-i18n="settings.screenCaptureAutoUnderstandHelp">桌面、窗口或区域截图完成后自动识别。Auto-understand desktop, window, or region screenshots after capture.</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgVideoUnderstandEnabled">
-              <input id="cfgVideoUnderstandEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgVideoUnderstandEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.videoUnderstandEnabledLabel">启用视频识别</span>
             </label>
             <div class="form-help" data-i18n="settings.videoUnderstandEnabledHelp">启用独立视频识别工具。Enable standalone video understanding.</div>
@@ -2192,7 +2184,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgVideoUnderstandAutoOnAttachment">
-              <input id="cfgVideoUnderstandAutoOnAttachment" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgVideoUnderstandAutoOnAttachment" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.videoUnderstandAutoOnAttachmentLabel">视频附件自动识别</span>
             </label>
             <div class="form-help" data-i18n="settings.videoUnderstandAutoOnAttachmentHelp">上传视频附件后自动识别；文件上传地址优先复用 Video File API。Auto-read uploaded video attachments; upload falls back to Video File API settings.</div>
@@ -2318,7 +2310,7 @@
             <label class="form-label" data-i18n="settings.voiceShortcutLabel">Voice Shortcut</label>
             <input id="cfgVoiceShortcut" class="input" data-i18n-placeholder="settings.voiceShortcutPlaceholder" placeholder="聚焦后按下新的快捷键" readonly />
             <div class="form-help" id="cfgVoiceShortcutStatus" data-i18n="voice.shortcutStatusInitial">本地快捷键，默认 Alt+R。聚焦输入框后按下组合键即可修改，不会写入服务端配置。</div>
-            <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+            <div class="settings-inline-actions settings-inline-actions--with-compact-top-gap">
               <button id="cfgVoiceShortcutDefault" type="button" class="button" data-i18n="settings.voiceShortcutDefault">恢复默认</button>
               <button id="cfgVoiceShortcutClear" type="button" class="button" data-i18n="settings.voiceShortcutClear">禁用快捷键</button>
             </div>
@@ -2356,7 +2348,7 @@
 
             <div class="form-group settings-priority-toggle">
               <label class="form-label" for="cfgCommunityApiEnabled">
-                <input id="cfgCommunityApiEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgCommunityApiEnabled" type="checkbox" class="form-checkbox" />
                 <span class="settings-priority-toggle-title" data-i18n="settings.communityApiEnabledLabel">Enable Community API</span>
               </label>
               <div class="form-help" data-i18n="settings.communityApiEnabledHelp">启用 /api/message 社区 API。开启前必须确保 Gateway 认证模式不是 none。无需重启</div>
@@ -2415,7 +2407,7 @@
 
             <div class="form-group">
               <label class="form-label" for="cfgDiscordEnabled">
-                <input id="cfgDiscordEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgDiscordEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.discordEnabledLabel">Enable Discord</span>
               </label>
               <div class="form-help" data-i18n="settings.discordEnabledHelp">启用 Discord 渠道。保存后需重启 Gateway 生效。</div>
@@ -2467,14 +2459,14 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgQqSandbox">
-                <input id="cfgQqSandbox" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgQqSandbox" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.qqSandboxLabel">QQ Sandbox Mode</span>
               </label>
               <div class="form-help" data-i18n="settings.qqSandboxHelp">控制 QQ 机器人是否运行在沙箱环境。</div>
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgQqEventSampleCaptureEnabled">
-                <input id="cfgQqEventSampleCaptureEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgQqEventSampleCaptureEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.qqEventSampleCaptureEnabledLabel">QQ Event Sample Capture</span>
               </label>
               <div class="form-help" data-i18n="settings.qqEventSampleCaptureEnabledHelp">抓取 QQ 原始事件样本到本地，便于排查问题。保存后需重启</div>
@@ -2489,20 +2481,20 @@
 
             <div class="form-group">
               <label class="form-label" for="cfgEmailSmtpEnabled">
-                <input id="cfgEmailSmtpEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgEmailSmtpEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.emailSmtpEnabledLabel">Enable Email SMTP</span>
               </label>
               <div class="form-help" data-i18n="settings.emailSmtpEnabledHelp">启用邮件发送通道。保存后需重启 Gateway 生效。</div>
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailImapEnabled">
-                <input id="cfgEmailImapEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgEmailImapEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.emailImapEnabledLabel">Enable Email IMAP</span>
               </label>
               <div class="form-help" data-i18n="settings.emailImapEnabledHelp">启用 IMAP 轮询收信与邮件线程处理。保存后需重启 Gateway 生效。</div>
             </div>
 
-            <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div class="settings-subsection-header settings-subsection-header--spaced">
               <div>
                 <div class="settings-subsection-title" data-i18n="settings.emailOutboundSectionTitle">Email Outbound</div>
                 <div class="form-help" data-i18n="settings.emailOutboundSectionHelp">邮件外发细项。用于 SMTP 发信账号、发件人身份和是否要求二次确认。</div>
@@ -2510,7 +2502,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailOutboundRequireConfirmation">
-                <input id="cfgEmailOutboundRequireConfirmation" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgEmailOutboundRequireConfirmation" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.emailOutboundRequireConfirmationLabel">Require Email Confirmation</span>
               </label>
               <div class="form-help" data-i18n="settings.emailOutboundRequireConfirmationHelp">对应 `BELLDANDY_EMAIL_OUTBOUND_REQUIRE_CONFIRMATION`，建议在生产环境保持开启。</div>
@@ -2535,7 +2527,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailSmtpSecure">
-                <input id="cfgEmailSmtpSecure" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgEmailSmtpSecure" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.emailSmtpSecureLabel">SMTP Secure</span>
               </label>
               <div class="form-help" data-i18n="settings.emailSmtpSecureHelp">`true` 时走 SMTPS/TLS，常见为 `465`；`false` 时常见为 `587`。</div>
@@ -2557,7 +2549,7 @@
               <input id="cfgEmailSmtpFromName" class="input" data-i18n-placeholder="settings.emailSmtpFromNamePlaceholder" placeholder="Belldandy" />
             </div>
 
-            <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div class="settings-subsection-header settings-subsection-header--spaced">
               <div>
                 <div class="settings-subsection-title" data-i18n="settings.emailInboundSectionTitle">Email Inbound</div>
                 <div class="form-help" data-i18n="settings.emailInboundSectionHelp">邮件收信细项。用于 IMAP 轮询、线程接管与默认投递 Agent。</div>
@@ -2581,7 +2573,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgEmailImapSecure">
-                <input id="cfgEmailImapSecure" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgEmailImapSecure" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.emailImapSecureLabel">IMAP Secure</span>
               </label>
               <div class="form-help" data-i18n="settings.emailImapSecureHelp">通常收信建议保持开启。</div>
@@ -2619,7 +2611,7 @@
               <input id="cfgEmailImapRecentWindowLimit" class="input" data-i18n-placeholder="settings.emailImapRecentWindowLimitPlaceholder" placeholder="50" />
             </div>
 
-            <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div class="settings-subsection-header settings-subsection-header--spaced">
               <div>
                 <div class="settings-subsection-title" data-i18n="settings.channelRouterSectionTitle">Channel Router</div>
                 <div class="form-help" data-i18n="settings.channelRouterSectionHelp">按规则做 mention gating / agent 路由。规则正文仍在独立 JSON 文件中维护。</div>
@@ -2627,7 +2619,7 @@
             </div>
             <div class="form-group">
               <label class="form-label" for="cfgChannelRouterEnabled">
-                <input id="cfgChannelRouterEnabled" type="checkbox" style="margin-right: 8px;" />
+                <input id="cfgChannelRouterEnabled" type="checkbox" class="form-checkbox" />
                 <span data-i18n="settings.channelRouterEnabledLabel">Enable Channel Router</span>
               </label>
               <div class="form-help" data-i18n="settings.channelRouterEnabledHelp">启用渠道路由规则；保存后需重启 Gateway 生效。</div>
@@ -2650,19 +2642,19 @@
               </div>
               <button id="refreshChannelSecurity" type="button" class="button button-muted" data-i18n="settings.channelSecurityRefresh">刷新</button>
             </div>
-            <div id="channelSecurityConfigMeta" class="form-help" style="margin-bottom: 8px;"></div>
+            <div id="channelSecurityConfigMeta" class="form-help form-help--spaced-bottom"></div>
             <div class="form-group">
               <label class="form-label" for="cfgChannelSecurityContent" data-i18n="settings.channelSecurityContentLabel">Channel Security JSON</label>
               <textarea id="cfgChannelSecurityContent" class="input" rows="12" spellcheck="false" placeholder="{&#10;  &quot;version&quot;: 1,&#10;  &quot;channels&quot;: {}&#10;}"></textarea>
             </div>
 
-            <div class="settings-subsection-header" style="margin-top: 16px;">
+            <div class="settings-subsection-header settings-subsection-header--spaced">
               <div>
                 <div class="settings-subsection-title" data-i18n="settings.channelReplyChunkingTitle">渠道回复分段策略</div>
                 <div class="form-help" data-i18n="settings.channelReplyChunkingHelp">使用结构化 JSON 维护 discord / feishu / qq / community 的回复分段 runtime 策略；支持 channels.&lt;channel&gt;.accounts.&lt;accountId&gt; 覆盖 textLimit / chunkMode。默认值：discord 1800/newline、qq 1500/newline、feishu 3000/newline、community 3500/newline。</div>
               </div>
             </div>
-            <div id="channelReplyChunkingConfigMeta" class="form-help" style="margin-bottom: 8px;"></div>
+            <div id="channelReplyChunkingConfigMeta" class="form-help form-help--spaced-bottom"></div>
             <div class="form-group">
               <label class="form-label" for="cfgChannelReplyChunkingContent" data-i18n="settings.channelReplyChunkingContentLabel">Channel Reply Chunking JSON</label>
               <textarea id="cfgChannelReplyChunkingContent" class="input" rows="12" spellcheck="false" placeholder="{&#10;  &quot;version&quot;: 1,&#10;  &quot;channels&quot;: {&#10;    &quot;discord&quot;: { &quot;textLimit&quot;: 1800, &quot;chunkMode&quot;: &quot;newline&quot; },&#10;    &quot;qq&quot;: { &quot;textLimit&quot;: 1500, &quot;chunkMode&quot;: &quot;newline&quot; },&#10;    &quot;feishu&quot;: { &quot;textLimit&quot;: 3000, &quot;chunkMode&quot;: &quot;newline&quot; },&#10;    &quot;community&quot;: {&#10;      &quot;textLimit&quot;: 3500,&#10;      &quot;chunkMode&quot;: &quot;newline&quot;,&#10;      &quot;accounts&quot;: {&#10;        &quot;agent-name&quot;: { &quot;textLimit&quot;: 2200, &quot;chunkMode&quot;: &quot;length&quot; }&#10;      }&#10;    }&#10;  }&#10;}"></textarea>
@@ -2682,10 +2674,10 @@
           <div class="form-group settings-featured-group settings-doctor-group">
             <label class="form-label" data-i18n="settings.systemDoctor">系统检查</label>
             <div>
-              <button id="doctorToggleBtn" class="button badge" type="button" style="margin-bottom: 8px;">
+              <button id="doctorToggleBtn" class="button badge button--with-bottom-gap" type="button">
                 <span data-i18n="settings.doctorChecking">检查中...</span>
               </button>
-              <div id="doctorStatus" class="hidden" style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <div id="doctorStatus" class="hidden doctor-status-list">
               </div>
             </div>
             <div class="form-help" data-i18n="settings.doctorHelp">检查当前配置、依赖与运行状态，便于快速定位缺失项。</div>
@@ -2693,7 +2685,7 @@
 
           <hr class="theme-divider">
 
-          <div class="settings-subsection-header settings-featured-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-featured-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.statePathsSectionTitle">State Dir / Paths</div>
               <div class="form-help" data-i18n="settings.statePathsSectionHelp">运行态、工作区和静态资源路径。`Extra Workspace Roots` 仍会写入共享 `.env`。</div>
@@ -2731,7 +2723,7 @@
             </select>
             <div class="form-help">控制记忆查看、经验能力、长期任务等治理审阅类页面右下详情区的显示密度。`compact` 只显示重要级信息，`full` 显示完整信息。无需重启</div>
           </div>
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title">Commander / Goal Governance</div>
               <div class="form-help">控制长期任务 capability plan 的默认执行拓扑、治理模式和默认 commander。Node 级别仍可在 Goal 详情页覆盖。</div>
@@ -2773,14 +2765,14 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCommanderAutoReworkEnabled">
-              <input id="cfgCommanderAutoReworkEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCommanderAutoReworkEnabled" type="checkbox" class="form-checkbox" />
               <span>Commander 自动重复返工</span>
             </label>
             <div class="form-help">控制 `goal.capability.commander_decide` / `goal_commander_decide` 在 `rework` 时是否自动续发失败 lanes，并保持节点留在 commander 治理执行链路。关闭后退回旧语义：把节点打回 `blocked`。无需重启</div>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgExperienceDraftGenerateNoticeEnabled">
-              <input id="cfgExperienceDraftGenerateNoticeEnabled" type="checkbox" style="margin-right: 8px;" checked />
+              <input id="cfgExperienceDraftGenerateNoticeEnabled" type="checkbox" class="form-checkbox" checked />
               <span data-i18n="settings.experienceDraftGenerateNoticeEnabledLabel">Method / Skill Draft Draft Notice</span>
             </label>
             <div class="form-help" data-i18n="settings.experienceDraftGenerateNoticeEnabledHelp">控制手动生成与自动生成的 Method Draft / Skill Draft 是否在聊天页右下角弹出提示。无需重启</div>
@@ -2805,7 +2797,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgUpdateCheckEnabled">
-              <input id="cfgUpdateCheckEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgUpdateCheckEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.updateCheckEnabledLabel">启用版本检查</span>
             </label>
             <div class="form-help" data-i18n="settings.updateCheckEnabledHelp">仅做新版本日志提示，不会自动升级。</div>
@@ -2925,7 +2917,7 @@
             <div class="form-help" data-i18n="settings.webhookMaxInFlightTrackedKeysHelp">内存里最多追踪多少个 in-flight key。无需重启</div>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.tokenUploadSectionTitle">Token Upload</div>
               <div class="form-help" data-i18n="settings.tokenUploadSectionHelp">任务 token 增量上传和任务结束统计附带项。</div>
@@ -2933,7 +2925,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTokenUsageUploadEnabled">
-              <input id="cfgTokenUsageUploadEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTokenUsageUploadEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.tokenUsageUploadEnabledLabel">Enable Token Usage Upload</span>
             </label>
           </div>
@@ -2951,7 +2943,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgTokenUsageStrictUuid">
-              <input id="cfgTokenUsageStrictUuid" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgTokenUsageStrictUuid" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.tokenUsageStrictUuidLabel">Strict UUID Upload</span>
             </label>
             <div class="form-help" data-i18n="settings.tokenUsageStrictUuidHelp">接收端开启严格 UUID 校验时建议同步开启。</div>
@@ -2968,18 +2960,18 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgAutoTaskTimeEnabled">
-              <input id="cfgAutoTaskTimeEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgAutoTaskTimeEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.autoTaskTimeEnabledLabel">Append Auto Task Time</span>
             </label>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgAutoTaskTokenEnabled">
-              <input id="cfgAutoTaskTokenEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgAutoTaskTokenEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.autoTaskTokenEnabledLabel">Append Auto Task Token</span>
             </label>
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.webhookRuntimeSectionTitle">Webhook Runtime</div>
               <div class="form-help" data-i18n="settings.webhookRuntimeSectionHelp">Webhook 路由配置文件和幂等窗口。</div>
@@ -2994,7 +2986,7 @@
             <input id="cfgWebhookIdempotencyWindowMs" class="input" data-i18n-placeholder="settings.webhookIdempotencyWindowMsPlaceholder" placeholder="600000" />
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.loggingSectionTitle">Logging</div>
               <div class="form-help" data-i18n="settings.loggingSectionHelp">日志级别、输出目标和轮转策略。</div>
@@ -3006,13 +2998,13 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgLogConsole">
-              <input id="cfgLogConsole" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgLogConsole" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.logConsoleLabel">Log To Console</span>
             </label>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgLogFile">
-              <input id="cfgLogFile" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgLogFile" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.logFileLabel">Log To File</span>
             </label>
           </div>
@@ -3029,7 +3021,7 @@
             <input id="cfgLogRetentionDays" class="input" data-i18n-placeholder="settings.logRetentionDaysPlaceholder" placeholder="7" />
           </div>
 
-          <div class="settings-subsection-header" style="margin-top: 16px;">
+          <div class="settings-subsection-header settings-subsection-header--spaced">
             <div>
               <div class="settings-subsection-title" data-i18n="settings.dreamObsidianSectionTitle">Dream / Obsidian</div>
               <div class="form-help" data-i18n="settings.dreamObsidianSectionHelp">Dream 自动任务和 Obsidian 镜像输出。</div>
@@ -3037,13 +3029,13 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDreamAutoHeartbeatEnabled">
-              <input id="cfgDreamAutoHeartbeatEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgDreamAutoHeartbeatEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.dreamAutoHeartbeatEnabledLabel">Dream Auto Heartbeat</span>
             </label>
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDreamAutoCronEnabled">
-              <input id="cfgDreamAutoCronEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgDreamAutoCronEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.dreamAutoCronEnabledLabel">Dream Auto Cron</span>
             </label>
           </div>
@@ -3068,7 +3060,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgDreamObsidianEnabled">
-              <input id="cfgDreamObsidianEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgDreamObsidianEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.dreamObsidianEnabledLabel">Dream Obsidian Enabled</span>
             </label>
           </div>
@@ -3082,7 +3074,7 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="cfgCommonsObsidianEnabled">
-              <input id="cfgCommonsObsidianEnabled" type="checkbox" style="margin-right: 8px;" />
+              <input id="cfgCommonsObsidianEnabled" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.commonsObsidianEnabledLabel">Commons Obsidian Enabled</span>
             </label>
           </div>
@@ -3099,14 +3091,14 @@
       </div>
       <div class="modal-footer">
         <button id="restartBtn" class="button button-muted" data-i18n="settings.restartButton">重启服务</button>
-        <button id="saveSettings" class="button" data-i18n="settings.save" style="background: var(--button-primary-bg); color: var(--button-primary-text);">保存</button>
+        <button id="saveSettings" class="button" button-primary data-i18n="settings.save">保存</button>
       </div>
     </div>
   </div>
 
   <div id="goalCreateModal" class="modal-overlay hidden">
     <div class="modal goal-create-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span data-i18n="goals.create">新建长期任务</span>
         <button id="goalCreateClose" class="settings-btn" data-i18n-title="common.close" title="关闭">✕</button>
       </div>
@@ -3128,7 +3120,7 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="goalCreateAutoResume">
-            <input id="goalCreateAutoResume" type="checkbox" style="margin-right: 8px;" checked />
+            <input id="goalCreateAutoResume" type="checkbox" class="form-checkbox" checked />
             <span data-i18n="goals.createAutoResumeLabel">创建后立即进入独立长期任务通道</span>
           </label>
           <div class="form-help" data-i18n="goals.createAutoResumeHelp">建议保持开启。这样创建完成后会立刻切到该长期任务的专用执行通道。</div>
@@ -3136,14 +3128,14 @@
       </div>
       <div class="modal-footer">
         <button id="goalCreateCancel" class="button" data-i18n="common.cancel">取消</button>
-        <button id="goalCreateSubmit" class="button" data-i18n="goals.createButton" style="background: var(--button-primary-bg); color: var(--button-primary-text);">创建</button>
+        <button id="goalCreateSubmit" class="button" button-primary data-i18n="goals.createButton">创建</button>
       </div>
     </div>
   </div>
 
   <div id="agentObservabilityModal" class="modal-overlay hidden">
     <div class="modal agent-observability-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="agentObservabilityModalTitle" data-i18n="agentPanel.detailsTitle">Agent 详情</span>
         <button id="agentObservabilityModalClose" class="settings-btn" data-i18n-title="common.close" title="关闭">✕</button>
       </div>
@@ -3153,7 +3145,7 @@
 
   <div id="agentCreateModal" class="modal-overlay hidden">
     <div class="modal agent-create-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="agentCreateModalTitle" data-i18n="agentPanel.createTitle">新建 Agent</span>
         <button id="agentCreateModalClose" class="settings-btn" data-i18n-title="common.close" title="关闭">✕</button>
       </div>
@@ -3179,14 +3171,14 @@
       </div>
       <div class="modal-footer">
         <button id="agentCreateCancel" class="button" data-i18n="common.cancel">取消</button>
-        <button id="agentCreateSubmit" class="button" data-i18n="common.create" style="background: var(--button-primary-bg); color: var(--button-primary-text);">创建</button>
+        <button id="agentCreateSubmit" class="button" button-primary data-i18n="common.create">创建</button>
       </div>
     </div>
   </div>
 
   <div id="sessionDigestModal" class="modal-overlay hidden">
     <div class="modal session-digest-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="sessionDigestModalTitle" data-i18n="panel.sessionDigestFullTitle">会话摘要</span>
         <button id="sessionDigestModalClose" class="settings-btn" data-i18n-title="panel.sessionDigestClose" title="关闭">✕</button>
       </div>
@@ -3200,7 +3192,7 @@
 
   <div id="sessionPlanModal" class="modal-overlay hidden">
     <div class="modal session-plan-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="sessionPlanModalTitle" data-i18n="panel.sessionPlanTitle">当前计划</span>
         <button id="sessionPlanModalClose" class="settings-btn" data-i18n-title="panel.sessionPlanClose" title="关闭">✕</button>
       </div>
@@ -3213,7 +3205,7 @@
 
   <div id="experienceSynthesisModal" class="modal-overlay hidden">
     <div class="modal experience-synthesis-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="experienceSynthesisModalTitle">合成能力草稿</span>
         <button id="experienceSynthesisModalClose" class="settings-btn" data-i18n-title="common.close" title="关闭">✕</button>
       </div>
@@ -3228,7 +3220,7 @@
       </div>
       <div class="modal-footer">
         <button id="experienceSynthesisModalCancel" class="button" data-i18n="common.cancel">取消</button>
-        <button id="experienceSynthesisModalSubmit" class="button" style="background: var(--button-primary-bg); color: var(--button-primary-text);">合成</button>
+        <button id="experienceSynthesisModalSubmit" class="button" button-primary>合成</button>
       </div>
     </div>
   </div>
@@ -3247,14 +3239,14 @@
       </div>
       <div class="modal-footer">
         <button id="memoryDedupModalCancel" class="button" data-i18n="common.cancel">取消</button>
-        <button id="memoryDedupModalSubmit" class="button" style="background: var(--button-primary-bg); color: var(--button-primary-text);">确认清理</button>
+        <button id="memoryDedupModalSubmit" class="button" button-primary>确认清理</button>
       </div>
     </div>
   </div>
 
   <div id="memoryDreamModal" class="modal-overlay hidden">
     <div class="modal memory-dream-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="memoryDreamModalTitle" data-i18n="memory.dreamModalTitle">梦境</span>
         <button id="memoryDreamModalClose" class="settings-btn" type="button" data-i18n-title="memory.dreamModalClose" title="关闭">✕</button>
       </div>
@@ -3289,7 +3281,7 @@
 
   <div id="goalCheckpointActionModal" class="modal-overlay hidden">
     <div class="modal goal-checkpoint-action-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span id="goalCheckpointActionTitle" data-i18n="goals.checkpointActionModalTitle">处理 Checkpoint</span>
         <button id="goalCheckpointActionClose" class="settings-btn" data-i18n-title="common.close" title="关闭">✕</button>
       </div>
@@ -3334,7 +3326,7 @@
       </div>
       <div class="modal-footer">
         <button id="goalCheckpointActionCancel" class="button" data-i18n="common.cancel">取消</button>
-        <button id="goalCheckpointActionSubmit" class="button" data-i18n="common.submit" style="background: var(--button-primary-bg); color: var(--button-primary-text);">提交</button>
+        <button id="goalCheckpointActionSubmit" class="button" button-primary data-i18n="common.submit">提交</button>
       </div>
     </div>
   </div>
@@ -3342,8 +3334,8 @@
   <!-- Tool Settings Modal (调用设置) -->
   <div id="toolSettingsModal" class="modal-overlay hidden">
     <div class="modal tool-settings-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+      <div class="modal-header">
+        <div class="modal-header-content">
           <span data-i18n="toolSettings.title">调用设置</span>
           <a id="workshopLink" href="#" target="_blank" class="theme-link theme-link-accent" data-i18n="toolSettings.workshop">工坊入口</a>
         </div>
@@ -3360,7 +3352,7 @@
         <div class="tool-settings-empty" data-i18n="toolSettings.emptyDisconnectedView">连接后可查看工具列表</div>
       </div>
       <div class="modal-footer">
-        <button id="saveToolSettings" class="button" data-i18n="common.save" style="background: var(--button-primary-bg); color: var(--button-primary-text);">保存</button>
+        <button id="saveToolSettings" class="button" button-primary data-i18n="common.save">保存</button>
       </div>
     </div>
   </div>
@@ -3383,14 +3375,14 @@
       </div>
       <div class="modal-footer">
         <button id="toolSettingsConfirmReject" class="button" data-i18n="toolSettings.reject">拒绝</button>
-        <button id="toolSettingsConfirmApprove" class="button" data-i18n="toolSettings.approve" style="background: var(--button-primary-bg); color: var(--button-primary-text);">确认</button>
+        <button id="toolSettingsConfirmApprove" class="button" button-primary data-i18n="toolSettings.approve">确认</button>
       </div>
     </div>
   </div>
 
   <div id="externalOutboundConfirmModal" class="modal-overlay hidden">
     <div class="modal tool-settings-confirm-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span data-i18n="externalOutbound.confirmTitle">确认外部消息发送</span>
       </div>
       <div class="modal-body">
@@ -3409,14 +3401,14 @@
       </div>
       <div class="modal-footer">
         <button id="externalOutboundConfirmReject" class="button" data-i18n="externalOutbound.reject">取消</button>
-        <button id="externalOutboundConfirmApprove" class="button" data-i18n="externalOutbound.approve" style="background: var(--button-primary-bg); color: var(--button-primary-text);">确认发送</button>
+        <button id="externalOutboundConfirmApprove" class="button" button-primary data-i18n="externalOutbound.approve">确认发送</button>
       </div>
     </div>
   </div>
 
   <div id="emailOutboundConfirmModal" class="modal-overlay hidden">
     <div class="modal tool-settings-confirm-modal">
-      <div class="modal-header" style="display: flex; align-items: center;">
+      <div class="modal-header">
         <span data-i18n="emailOutbound.confirmTitle">确认邮件发送</span>
       </div>
       <div class="modal-body">
@@ -3435,7 +3427,7 @@
       </div>
       <div class="modal-footer">
         <button id="emailOutboundConfirmReject" class="button" data-i18n="emailOutbound.reject">取消</button>
-        <button id="emailOutboundConfirmApprove" class="button" data-i18n="emailOutbound.approve" style="background: var(--button-primary-bg); color: var(--button-primary-text);">确认发送</button>
+        <button id="emailOutboundConfirmApprove" class="button" button-primary data-i18n="emailOutbound.approve">确认发送</button>
       </div>
     </div>
   </div>

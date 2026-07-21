@@ -558,11 +558,12 @@ describe("chat ui rich text rendering", () => {
     feature.forceScrollToBottom();
 
     expect(chatSection.scrollTop).toBe(240);
-    expect(chatSection.style.scrollBehavior).toBe("auto");
+    expect(chatSection.classList.contains("chat-section--instant-scroll")).toBe(true);
 
     const pending = scheduled.shift();
     pending?.callback(0);
 
+    expect(chatSection.classList.contains("chat-section--instant-scroll")).toBe(false);
     expect(chatSection.style.scrollBehavior).toBe("smooth");
     globalThis.requestAnimationFrame = originalRaf;
     globalThis.cancelAnimationFrame = originalCancelRaf;

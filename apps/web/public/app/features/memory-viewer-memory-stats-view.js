@@ -1,3 +1,5 @@
+import { setRuntimeStyles } from "./runtime-style-registry.js";
+
 function createStatCard(ownerDocument, card) {
   const cardElement = ownerDocument.createElement("div");
   cardElement.className = "memory-stat-card";
@@ -75,7 +77,9 @@ function createCategoryDistribution(ownerDocument, distribution) {
     const fillElement = ownerDocument.createElement("div");
     fillElement.className = `memory-category-bar-fill ${getCategoryToneClass(row?.key)}`;
     const widthPercent = Number(row?.widthPercent);
-    fillElement.style.width = `${Number.isFinite(widthPercent) ? Math.min(100, Math.max(0, widthPercent)) : 0}%`;
+    setRuntimeStyles(fillElement, {
+      width: `${Number.isFinite(widthPercent) ? Math.min(100, Math.max(0, widthPercent)) : 0}%`,
+    });
     trackElement.append(fillElement);
 
     const metricsElement = ownerDocument.createElement("div");

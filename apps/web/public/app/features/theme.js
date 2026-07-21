@@ -26,7 +26,6 @@ function writeStoredTheme(storageKey, theme) {
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
 }
 
 function getNextTheme(theme) {

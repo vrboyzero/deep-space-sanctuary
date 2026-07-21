@@ -114,18 +114,16 @@ describe("Workspace tree placeholder DOM owner", () => {
     blockNonEmptyInnerHtml(children);
     folder.querySelector(".tree-item").click();
 
-    expect(children.firstElementChild?.className).toBe("tree-loading");
+    expect(children.firstElementChild?.classList.contains("tree-loading")).toBe(true);
     expect(children.firstElementChild?.textContent).toContain("Loading...");
-    expect(children.firstElementChild?.style.padding).toBe("4px 8px");
-    expect(children.firstElementChild?.style.fontSize).toBe("12px");
+    expect(children.firstElementChild?.classList.contains("tree-loading--compact")).toBe(true);
 
     folderRequest.resolve({ ok: true, payload: { items: [] } });
     await vi.waitFor(() => {
       expect(children.firstElementChild?.textContent).toContain("Empty");
     });
-    expect(children.firstElementChild?.style.padding).toBe("4px 8px");
-    expect(children.firstElementChild?.style.fontSize).toBe("12px");
-    expect(children.firstElementChild?.style.color).toBe("var(--text-muted)");
+    expect(children.firstElementChild?.classList.contains("tree-loading--compact")).toBe(true);
+    expect(children.firstElementChild?.classList.contains("tree-loading--muted")).toBe(true);
     expect(children.querySelector("img, script, [onerror]")).toBeNull();
   });
 

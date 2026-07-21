@@ -1,3 +1,5 @@
+import { setRuntimeStyles } from "./runtime-style-registry.js";
+
 const NODE_ICONS = {
   task: "\u2611", note: "\u270E", method: "\uD83D\uDCCB",
   knowledge: "\uD83D\uDCA1", "agent-output": "\uD83E\uDD16",
@@ -43,7 +45,7 @@ export function createCanvasNodeContentView({ ownerDocument }) {
       const root = ownerDocument.createElement("div");
       root.className = `canvas-node node-${node.type}${data.status ? ` node-status-${data.status}` : ""}${isGoalActive ? " goal-active" : ""}${Array.isArray(data.tags) && data.tags.includes("running") ? " react-running" : ""}`;
       root.setAttribute("data-node-id", node.id);
-      if (data.color) root.style.borderLeftColor = text(data.color);
+      if (data.color) setRuntimeStyles(root, { "border-left-color": text(data.color) });
 
       const header = ownerDocument.createElement("div");
       header.className = "node-header";
