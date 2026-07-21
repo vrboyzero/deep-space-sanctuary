@@ -3,6 +3,8 @@ import {
   isSafeAssistantMediaUrl,
   sanitizeRichContent,
 } from "./rich-content-renderer.js";
+import { createChatCopyButtonView } from "./chat-copy-button-view.js";
+import { createChatCopyFeedbackView } from "./chat-copy-feedback-view.js";
 
 export function createChatUiFeature({
   refs,
@@ -17,6 +19,11 @@ export function createChatUiFeature({
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
   const { messagesEl, chatSection } = refs;
+  const copyButtonView = createChatCopyButtonView({
+    ownerDocument: messagesEl?.ownerDocument ?? document,
+    t,
+  });
+  const copyFeedbackView = createChatCopyFeedbackView({ t });
   let markedConfigured = false;
   let copyDelegationBound = false;
   const copyFeedbackEntries = new Map();
@@ -397,13 +404,7 @@ export function createChatUiFeature({
       const metaActionsEl = metaRow?.querySelector(".msg-meta-actions");
 
       const copyBtn = document.createElement("button");
-      copyBtn.className = "copy-msg-btn";
-      copyBtn.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-        </svg> ${escapeHtml(t("chat.copy", {}, "Copy"))}
-      `;
-      copyBtn.title = t("chat.copyFullTitle", {}, "Copy full message");
+      copyButtonView.render(copyBtn);
       metaActionsEl?.appendChild(copyBtn);
     }
 
@@ -562,14 +563,14 @@ export function createChatUiFeature({
       await navigator.clipboard.writeText(text);
       if (disposed) return;
       const previousEntry = copyFeedbackEntries.get(button);
-      const originalHtml = previousEntry?.originalHtml ?? button.innerHTML;
+      const originalChildren = previousEntry?.originalChildren ?? copyFeedbackView.capture(button);
       if (previousEntry) clearTimeout(previousEntry.timer);
-      button.innerHTML = escapeHtml(t("chat.copied", {}, "Copied"));
-      const entry = { originalHtml, timer: null };
+      copyFeedbackView.showCopied(button);
+      const entry = { originalChildren, timer: null };
       entry.timer = setTimeout(() => {
         if (copyFeedbackEntries.get(button) !== entry) return;
         copyFeedbackEntries.delete(button);
-        if (!disposed && button.isConnected) button.innerHTML = originalHtml;
+        if (!disposed && button.isConnected) copyFeedbackView.restore(button, originalChildren);
       }, 2000);
       copyFeedbackEntries.set(button, entry);
     } catch (error) {
@@ -614,7 +615,7 @@ export function createChatUiFeature({
     disposed = true;
     for (const [button, entry] of copyFeedbackEntries) {
       clearTimeout(entry.timer);
-      if (button.isConnected) button.innerHTML = entry.originalHtml;
+      if (button.isConnected) copyFeedbackView.restore(button, entry.originalChildren);
     }
     copyFeedbackEntries.clear();
     if (copyDelegationBound) {

@@ -5,6 +5,7 @@
 export {
     startHeartbeatRunner,
     type HeartbeatRunnerOptions,
+    type HeartbeatRunExecutionContext,
     type HeartbeatRunnerHandle,
     type HeartbeatResult,
     type HeartbeatRunEvent,

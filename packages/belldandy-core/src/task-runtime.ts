@@ -40,6 +40,18 @@ import {
   type SubTaskRuntimeQuarantineStatus,
 } from "./subtask-runtime-state-quarantine.js";
 import { SubTaskRuntimeStoreLifecycle } from "./subtask-runtime-store-lifecycle.js";
+import {
+  paginateSubTaskRecords,
+  type SubTaskPage,
+} from "./subtask-runtime-pagination.js";
+import {
+  compactSubTaskRetention,
+  normalizeSubTaskRetentionPolicy,
+  selectSubTaskRetentionCandidates,
+  type SubTaskRetentionCompactionReport,
+  type SubTaskRetentionPolicy,
+  type SubTaskRetentionPolicyInput,
+} from "./subtask-runtime-retention.js";
 import { parseGoalSessionKey } from "./goals/session.js";
 import { GoalRuntimeBindingStore, type GoalRuntimeBindingSource } from "./goal-runtime-binding-store.js";
 import { getGoalRegistryEntry } from "./goals/registry.js";
@@ -62,6 +74,7 @@ export type SubTaskNotificationKind =
   | "resume_delivered"
   | "resume_failed"
   | "stop_requested"
+  | "stop_failed"
   | "stopped"
   | "archived"
   | "completed"
@@ -73,6 +86,11 @@ export type SubTaskTakeoverStatus = "accepted" | "delivered" | "failed";
 export type SubTaskResumeStatus = "accepted" | "delivered" | "failed";
 export type SubTaskTakeoverMode = "safe_point" | "resume_relaunch";
 export type SubTaskKind = "sub_agent" | "bridge_session";
+
+export type SubTaskCommandRequestOptions = {
+  expectedRevision?: number;
+  idempotencyKey?: string;
+};
 
 export type SubTaskBridgeSessionLaunch = {
   targetId: string;
@@ -203,6 +221,12 @@ export type SubTaskRecord = {
   takeover: SubTaskTakeoverRecord[];
   resume: SubTaskResumeRecord[];
   notifications: SubTaskNotification[];
+};
+
+export type SubTaskStopCommandResult = {
+  item: SubTaskRecord;
+  commandClaim: SubTaskCommandClaim;
+  claimOwner: boolean;
 };
 
 export type SubTaskChangeEvent = {
@@ -851,6 +875,11 @@ export class SubTaskRuntimeStore {
   private loadPromise: Promise<void> | null = null;
   private deferredPersistTimer: NodeJS.Timeout | null = null;
   private quarantineStatus: SubTaskRuntimeQuarantineStatus | undefined;
+  private retentionPolicy = normalizeSubTaskRetentionPolicy();
+  private lastRetentionCompaction: Pick<
+    SubTaskRetentionCompactionReport,
+    "removedCount" | "errorCount" | "lastCompactedAt"
+  > | undefined;
 
   constructor(stateDir: string, logger?: RuntimeLogger, bindingStore?: GoalRuntimeBindingStore) {
     this.stateDir = stateDir;
@@ -1153,15 +1182,45 @@ export class SubTaskRuntimeStore {
     });
   }
 
-  async requestStop(taskId: string, reason = "Task stop requested by user."): Promise<SubTaskRecord | undefined> {
+  async requestStop(
+    taskId: string,
+    reason = "Task stop requested by user.",
+    input: SubTaskCommandRequestOptions & { sessionId?: string } = {},
+  ): Promise<SubTaskStopCommandResult | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
       if (!record) return undefined;
-      if (isTerminalStatus(record.status)) return cloneRecord(record);
       const now = Date.now();
+      const normalizedReason = String(reason ?? "").trim() || "Task stop requested by user.";
+      const commandId = `task_stop_${crypto.randomUUID().slice(0, 8)}`;
+      const requestedSessionId = input.sessionId?.trim() || record.sessionId;
+      const claimResult = claimSubTaskCommand(record, {
+        kind: "stop",
+        commandId,
+        idempotencyKey: input.idempotencyKey?.trim() || createSubTaskCommandIdempotencyKey({
+          taskId,
+          kind: "stop",
+          message: normalizedReason,
+          sessionId: requestedSessionId,
+        }),
+        ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
+        requestedAt: now,
+        expectedSessionId: requestedSessionId,
+        expectedRevision: input.expectedRevision,
+      });
+      if (claimResult.status === "rejected") {
+        throw new SubTaskCommandClaimError(claimResult.reason, claimResult.code);
+      }
+      if (claimResult.status === "replayed") {
+        return {
+          item: cloneRecord(record),
+          commandClaim: { ...claimResult.claim },
+          claimOwner: false,
+        };
+      }
       record.stopRequestedAt = now;
-      record.stopReason = reason;
+      record.stopReason = normalizedReason;
       record.updatedAt = now;
       record.progress = {
         phase: record.status,
@@ -1169,10 +1228,14 @@ export class SubTaskRuntimeStore {
         lastActivityAt: now,
       };
       record.summary = inferSummary(record, record.progress.message);
-      this.pushNotification(record, "stop_requested", reason);
+      this.pushNotification(record, "stop_requested", normalizedReason);
       this.markScratchDirty(record);
       this.emitChange("stop_requested", record);
-      return cloneRecord(record);
+      return {
+        item: cloneRecord(record),
+        commandClaim: { ...claimResult.claim },
+        claimOwner: true,
+      };
     });
   }
 
@@ -1181,12 +1244,21 @@ export class SubTaskRuntimeStore {
     input: {
       reason?: string;
       sessionId?: string;
+      commandClaim?: SubTaskCommandClaim;
     } = {},
   ): Promise<SubTaskRecord | undefined> {
     await this.load();
     return this.mutate(async () => {
       const record = this.records.get(taskId);
       if (!record) return undefined;
+      if (input.commandClaim && !isSubTaskCommandGenerationCurrent(record, input.commandClaim)) {
+        return cloneRecord(record);
+      }
+      if (record.activeCommandClaim) {
+        if (!input.commandClaim || !releaseSubTaskCommandClaim(record, "stop", input.commandClaim.commandId)) {
+          return cloneRecord(record);
+        }
+      }
       if (record.sessionId && input.sessionId && input.sessionId !== record.sessionId) {
         this.sessionToTask.delete(input.sessionId);
         return cloneRecord(record);
@@ -1214,6 +1286,36 @@ export class SubTaskRuntimeStore {
       this.markPostRunArtifactsDirty(record);
       await this.ensurePostRunArtifactPathsForRecord(record);
       this.emitChange("stopped", record);
+      return cloneRecord(record);
+    });
+  }
+
+  async markStopFailed(
+    taskId: string,
+    commandId: string,
+    reason: string,
+  ): Promise<SubTaskRecord | undefined> {
+    await this.load();
+    return this.mutate(async () => {
+      const record = this.records.get(taskId);
+      if (!record) return undefined;
+      if (!releaseSubTaskCommandClaim(record, "stop", commandId)) {
+        return cloneRecord(record);
+      }
+      const now = Date.now();
+      const normalizedReason = truncateText(reason, 300) || "Subtask stop command failed.";
+      record.stopRequestedAt = undefined;
+      record.stopReason = undefined;
+      record.updatedAt = now;
+      record.progress = {
+        phase: record.status,
+        message: normalizedReason,
+        lastActivityAt: now,
+      };
+      record.summary = inferSummary(record, normalizedReason);
+      this.pushNotification(record, "stop_failed", normalizedReason);
+      this.markScratchDirty(record);
+      this.emitChange("updated", record);
       return cloneRecord(record);
     });
   }
@@ -1409,6 +1511,7 @@ export class SubTaskRuntimeStore {
     input: {
       sessionId?: string;
       idempotencyKey?: string;
+      expectedRevision?: number;
     } = {},
   ): Promise<{
     item: SubTaskRecord;
@@ -1441,10 +1544,11 @@ export class SubTaskRuntimeStore {
         }),
         requestedAt: now,
         expectedSessionId: steering.requestedSessionId,
+        expectedRevision: input.expectedRevision,
         ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
       });
       if (claimResult.status === "rejected") {
-        throw new SubTaskCommandClaimError(claimResult.reason);
+        throw new SubTaskCommandClaimError(claimResult.reason, claimResult.code);
       }
       if (claimResult.status === "replayed") {
         const existing = record.steering.find((item) => item.id === claimResult.claim.commandId);
@@ -1529,6 +1633,7 @@ export class SubTaskRuntimeStore {
     input: {
       sessionId?: string;
       idempotencyKey?: string;
+      expectedRevision?: number;
     } = {},
   ): Promise<{
     item: SubTaskRecord;
@@ -1560,10 +1665,11 @@ export class SubTaskRuntimeStore {
         }),
         requestedAt: now,
         expectedSessionId: resume.requestedSessionId,
+        expectedRevision: input.expectedRevision,
         ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
       });
       if (claimResult.status === "rejected") {
-        throw new SubTaskCommandClaimError(claimResult.reason);
+        throw new SubTaskCommandClaimError(claimResult.reason, claimResult.code);
       }
       if (claimResult.status === "replayed") {
         const existing = record.resume.find((item) => item.id === claimResult.claim.commandId);
@@ -1602,6 +1708,7 @@ export class SubTaskRuntimeStore {
       sessionId?: string;
       mode?: SubTaskTakeoverMode;
       idempotencyKey?: string;
+      expectedRevision?: number;
     } = {},
   ): Promise<{
     item: SubTaskRecord;
@@ -1639,11 +1746,12 @@ export class SubTaskRuntimeStore {
         }),
         requestedAt: now,
         expectedSessionId: takeover.requestedSessionId,
+        expectedRevision: input.expectedRevision,
         takeoverMode: takeover.mode,
         ownerInstanceId: SUBTASK_RUNTIME_INSTANCE_ID,
       });
       if (claimResult.status === "rejected") {
-        throw new SubTaskCommandClaimError(claimResult.reason);
+        throw new SubTaskCommandClaimError(claimResult.reason, claimResult.code);
       }
       if (claimResult.status === "replayed") {
         const existing = record.takeover.find((item) => item.id === claimResult.claim.commandId);
@@ -1810,6 +1918,94 @@ export class SubTaskRuntimeStore {
       .filter((record) => options.includeArchived ? true : !record.archivedAt)
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((record) => cloneRecord(record));
+  }
+
+  async listTaskPage(
+    parentConversationId: string | undefined,
+    options: {
+      includeArchived?: boolean;
+      limit?: number;
+      cursor?: string;
+    } = {},
+  ): Promise<SubTaskPage<SubTaskRecord>> {
+    await this.load();
+    const page = paginateSubTaskRecords(
+      [...this.records.values()]
+        .filter((record) => !parentConversationId || record.parentConversationId === parentConversationId)
+        .filter((record) => options.includeArchived ? true : !record.archivedAt),
+      options,
+    );
+    return {
+      ...page,
+      items: page.items.map((record) => cloneRecord(record)),
+    };
+  }
+
+  async getRetentionCompactionReport(): Promise<SubTaskRetentionCompactionReport> {
+    await this.load();
+    const goalBoundTaskIds = await this.listGoalBoundTaskIds();
+    const selection = selectSubTaskRetentionCandidates(
+      [...this.records.values()],
+      this.retentionPolicy,
+      Date.now(),
+      { goalBoundTaskIds },
+    );
+    return {
+      policy: { ...this.retentionPolicy },
+      eligibleCount: selection.eligibleTaskIds.length,
+      protectedCount: selection.protectedCount,
+      removedCount: this.lastRetentionCompaction?.removedCount ?? 0,
+      errorCount: this.lastRetentionCompaction?.errorCount ?? 0,
+      ...(this.lastRetentionCompaction?.lastCompactedAt
+        ? { lastCompactedAt: this.lastRetentionCompaction.lastCompactedAt }
+        : {}),
+    };
+  }
+
+  async compactTerminalTasks(
+    policyInput: SubTaskRetentionPolicyInput = {},
+  ): Promise<SubTaskRetentionCompactionReport> {
+    await this.load();
+    this.lifecycle.assertMutationAllowed();
+    this.assertWritable();
+    const policy = normalizeSubTaskRetentionPolicy(policyInput);
+    let report!: SubTaskRetentionCompactionReport;
+    const run = this.writeChain.then(async () => {
+      // 先清空可能存在的 deferred artifact，保证下一次 persist 只发布 retention 后的 registry。
+      this.cancelDeferredPersist();
+      await this.persist();
+      const goalBoundTaskIds = await this.listGoalBoundTaskIds();
+      report = await compactSubTaskRetention({
+        records: this.records,
+        policy,
+        outputsDir: this.outputsDir,
+        goalBoundTaskIds,
+        publishRegistry: () => this.persist(),
+        onRecordRemoved: (record) => {
+          if (record.sessionId) this.sessionToTask.delete(record.sessionId);
+        },
+        onRecordRestored: (record) => {
+          if (record.sessionId) this.sessionToTask.set(record.sessionId, record.id);
+        },
+        logger: this.logger,
+      });
+      this.retentionPolicy = policy;
+      this.lastRetentionCompaction = {
+        removedCount: report.removedCount,
+        errorCount: report.errorCount,
+        lastCompactedAt: report.lastCompactedAt,
+      };
+    });
+    this.writeChain = run.catch(() => {});
+    await run;
+    return report;
+  }
+
+  private async listGoalBoundTaskIds(): Promise<Set<string>> {
+    const bindings = await this.bindingStore?.listBindings() ?? [];
+    return new Set(bindings
+      .map((binding) => binding.taskId)
+      .filter((taskId): taskId is string => Boolean(taskId)));
   }
 
   async listSessionInfos(parentConversationId?: string, options: { includeArchived?: boolean } = {}): Promise<SessionInfo[]> {
@@ -2100,6 +2296,7 @@ export class SubTaskRuntimeStore {
       case "resume_delivered":
       case "resume_failed":
       case "stop_requested":
+      case "stop_failed":
       case "stopped":
       case "archived":
       case "completed":
@@ -2184,18 +2381,26 @@ export class SubTaskRuntimeStore {
       ? record.steering.find((item) => item.id === claim.commandId)
       : claim.kind === "resume"
         ? record.resume.find((item) => item.id === claim.commandId)
-        : record.takeover.find((item) => item.id === claim.commandId);
+        : claim.kind === "takeover"
+          ? record.takeover.find((item) => item.id === claim.commandId)
+          : undefined;
     if (command && command.status === "accepted") {
       command.status = "failed";
       command.error = "Command claim was interrupted by a previous runtime instance. Retry the command.";
     }
     record.activeCommandClaim = undefined;
     record.updatedAt = Math.max(record.updatedAt, Date.now());
+    if (claim.kind === "stop") {
+      record.stopRequestedAt = undefined;
+      record.stopReason = undefined;
+    }
     const notificationKind = claim.kind === "steering"
       ? "steering_failed"
       : claim.kind === "resume"
         ? "resume_failed"
-        : "takeover_failed";
+        : claim.kind === "takeover"
+          ? "takeover_failed"
+          : "stop_failed";
     this.pushNotification(record, notificationKind, "A pending command claim was interrupted by a previous runtime instance and can be retried.");
     return true;
   }
@@ -3025,7 +3230,11 @@ export function createSubTaskUpdateController(input: {
   };
   logger?: RuntimeLogger;
 }) {
-  return async (taskId: string, message: string): Promise<SubTaskRecord | undefined> => {
+  return async (
+    taskId: string,
+    message: string,
+    options: SubTaskCommandRequestOptions = {},
+  ): Promise<SubTaskRecord | undefined> => {
     const normalizedMessage = String(message ?? "").trim();
     if (!normalizedMessage) {
       throw new Error("Steering message is required.");
@@ -3046,6 +3255,8 @@ export function createSubTaskUpdateController(input: {
 
     const accepted = await input.runtimeStore.requestSteering(taskId, normalizedMessage, {
       sessionId: current.sessionId,
+      expectedRevision: options.expectedRevision,
+      idempotencyKey: options.idempotencyKey,
     });
     if (!accepted) {
       throw new Error(`Failed to record subtask steering: ${taskId}`);
@@ -3147,6 +3358,8 @@ export function createSubTaskResumeController(input: {
     message = "",
     options?: {
       takeoverAgentId?: string;
+      expectedRevision?: number;
+      idempotencyKey?: string;
     },
   ): Promise<SubTaskRecord | undefined> => {
     const current = await input.runtimeStore.getTask(taskId);
@@ -3182,6 +3395,8 @@ export function createSubTaskResumeController(input: {
       : buildResumeInstruction(current, message);
     const accepted = await input.runtimeStore.requestResume(taskId, resumeMessage, {
       sessionId: current.sessionId,
+      expectedRevision: options?.expectedRevision,
+      idempotencyKey: options?.idempotencyKey,
     });
     if (!accepted) {
       throw new Error(`Failed to record subtask resume: ${taskId}`);
@@ -3299,6 +3514,7 @@ export function createSubTaskTakeoverController(input: {
     taskId: string,
     agentId: string,
     message = "",
+    options: SubTaskCommandRequestOptions = {},
   ): Promise<SubTaskRecord | undefined> => {
     const normalizedAgentId = String(agentId ?? "").trim();
     if (!normalizedAgentId) {
@@ -3328,6 +3544,8 @@ export function createSubTaskTakeoverController(input: {
     const accepted = await input.runtimeStore.requestTakeover(taskId, normalizedAgentId, takeoverMessage, {
       sessionId: current.sessionId,
       mode: isRunningTakeover ? "safe_point" : "resume_relaunch",
+      expectedRevision: options.expectedRevision,
+      idempotencyKey: options.idempotencyKey,
     });
     if (!accepted) {
       throw new Error(`Failed to record subtask takeover: ${taskId}`);

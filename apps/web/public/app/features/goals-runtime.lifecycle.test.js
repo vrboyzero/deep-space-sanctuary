@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 import { createGoalsRuntimeFeature } from "./goals-runtime.js";
 
@@ -12,7 +14,10 @@ function createDeferred() {
   return { promise, resolve };
 }
 
-function createFixture({ sendReq = vi.fn().mockResolvedValue({ ok: true }) } = {}) {
+function createFixture({
+  sendReq = vi.fn().mockResolvedValue({ ok: true }),
+  escapeHtml = (value) => String(value || ""),
+} = {}) {
   document.body.innerHTML = `
     <section id="goals"></section>
     <div id="detail"></div>
@@ -67,7 +72,7 @@ function createFixture({ sendReq = vi.fn().mockResolvedValue({ ok: true }) } = {
     loadGoals,
     showNotice,
     formatDateTime: (value) => String(value || ""),
-    escapeHtml: (value) => String(value || ""),
+    ...(typeof escapeHtml === "function" ? { escapeHtml } : {}),
   });
   return { feature, loadGoals, refs, sendReq, showNotice };
 }
@@ -87,6 +92,38 @@ describe("goals runtime checkpoint modal lifecycle", () => {
   afterEach(() => {
     vi.useRealTimers();
     document.body.innerHTML = "";
+  });
+
+  it("renders untrusted checkpoint context as text without an HTML escaper", () => {
+    const { feature, refs } = createFixture({ escapeHtml: null });
+    const unsafeValue = '</strong><img src=x onerror="alert(1)">';
+
+    feature.toggleGoalCheckpointActionModal(true, {
+      action: "approve",
+      goalId: unsafeValue,
+      nodeId: unsafeValue,
+      checkpointId: unsafeValue,
+      status: unsafeValue,
+      reviewer: unsafeValue,
+      slaAt: unsafeValue,
+    });
+
+    expect(refs.goalCheckpointActionContextEl.querySelector("img")).toBeNull();
+    expect(refs.goalCheckpointActionContextEl.querySelector("[onerror]")).toBeNull();
+    expect(refs.goalCheckpointActionContextEl.textContent).toContain(unsafeValue);
+    expect(refs.goalCheckpointActionContextEl.children).toHaveLength(6);
+    expect(refs.goalCheckpointActionContextEl.querySelectorAll(".goal-summary-label")).toHaveLength(6);
+    feature.dispose();
+    expect(refs.goalCheckpointActionContextEl.children).toHaveLength(0);
+  });
+
+  it("keeps the oversized app entrypoint limited to Goals Runtime wiring", () => {
+    const appSource = fs.readFileSync(path.join(process.cwd(), "apps/web/public/app.js"), "utf8");
+    const featureStart = appSource.indexOf("goalsRuntimeFeature = createGoalsRuntimeFeature({");
+    const featureEnd = appSource.indexOf("\n});", featureStart);
+
+    expect(featureStart).toBeGreaterThan(-1);
+    expect(appSource.slice(featureStart, featureEnd)).not.toContain("escapeHtml,");
   });
 
   it("keeps the normal focus and successful submit settlement", async () => {

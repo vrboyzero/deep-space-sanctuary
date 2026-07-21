@@ -9,6 +9,7 @@ import type {
   MemoryEvolutionModelResponse,
 } from "./memory-evolution-model-request.js";
 import { MemoryManager } from "./manager.js";
+import { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 import { clearMemoryTreeJobInflightForTest } from "./memory-tree-job-control.js";
 import {
   recordMemoryTreeJobLedgerFailure,
@@ -3278,6 +3279,45 @@ describe("MemoryManager guardrails", () => {
     expect(store.getChunksNeedingSummary(1, 10)).toHaveLength(0);
   });
 
+  it("forwards the idle summary owner signal and skips a cancelled summary commit", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      summaryEnabled: true,
+      summaryApiKey: "test-summary-key",
+      summaryModel: "test-summary-model",
+      summaryBatchSize: 1,
+      summaryMinContentLength: 1,
+    });
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "summary-owner-cancel",
+      sourcePath: path.join(docsDir, "summary-owner-cancel.md"),
+      sourceType: "file",
+      memoryType: "other",
+      content: "summary owner cancellation source",
+    });
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const summarySpy = vi.spyOn(manager as any, "callLLMForSummary").mockImplementation(
+      async (...args: unknown[]) => {
+        const signal = args[1] as AbortSignal | undefined;
+        observedSignal = signal;
+        return await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+
+    const run = manager.runIdleSummaries({ signal: controller.signal });
+    await vi.waitFor(() => expect(summarySpy).toHaveBeenCalledTimes(1));
+    controller.abort(new Error("idle summary owner stopped"));
+
+    await expect(run).rejects.toThrow("idle summary owner stopped");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(store.getChunksNeedingSummary(1, 10)).toHaveLength(1);
+  });
+
   it("excludes session memories from context injection by default", async () => {
     const stateMemoryPath = path.join(stateDir, "MEMORY.md");
     const sessionFilePath = path.join(sessionsDir, "session-001.md");
@@ -3776,6 +3816,42 @@ describe("MemoryManager guardrails", () => {
     }
   });
 
+  it("propagates a durable extraction owner signal without marking the session extracted", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      evolutionEnabled: true,
+      evolutionModel: "test-evolution-model",
+      evolutionBaseUrl: "https://example.invalid/v1",
+      evolutionApiKey: "test-evolution-key",
+      evolutionMinMessages: 2,
+      evolutionTimeoutMs: 60_000,
+    });
+    const controller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>(() => {});
+    });
+
+    try {
+      const extraction = manager.extractMemoriesFromConversation("evolution-owner-cancel", [
+        { role: "user", content: "remember this durable preference" },
+        { role: "assistant", content: "acknowledged" },
+      ], {
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      controller.abort(new Error("durable owner stopped"));
+
+      await expect(extraction).rejects.toThrow("durable owner stopped");
+      expect(requestSignal?.aborted).toBe(true);
+      expect(manager.isSessionMemoryExtracted("evolution-owner-cancel")).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("filters code-like and path-like extraction candidates before writing durable memory", async () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -4021,6 +4097,7 @@ describe("MemoryManager guardrails", () => {
   });
 
   it("adds reasoning_split for MiniMax evolution requests", async () => {
+    const modelPrivacyRuntime = new MemoryModelPrivacyRuntime();
     manager = createManager({
       workspaceRoot: docsDir,
       stateDir,
@@ -4029,6 +4106,7 @@ describe("MemoryManager guardrails", () => {
       evolutionBaseUrl: "https://api.minimaxi.com/v1",
       evolutionApiKey: "test-evolution-key",
       evolutionMinMessages: 2,
+      modelPrivacyRuntime,
     });
 
     const legacyFetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("legacy fetch must not run"));
@@ -4047,6 +4125,7 @@ describe("MemoryManager guardrails", () => {
       }),
       signal: expect.any(AbortSignal),
       idleTimeoutMs: 120_000,
+      privacyRuntime: modelPrivacyRuntime,
     });
     expect(legacyFetch).not.toHaveBeenCalled();
 

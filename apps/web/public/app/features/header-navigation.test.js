@@ -3,6 +3,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createHeaderNavigationFeature } from "./header-navigation.js";
+import { HEADER_NAVIGATION_COMMANDS } from "./header-navigation-commands.js";
+import {
+  createDefaultWebChatRuntimeAdapter,
+  createWebChatRuntimeContext,
+} from "./webchat-runtime-context.js";
 
 describe("header navigation feature", () => {
   it("opens goals, bridge, and chat pages through the existing shell hooks", async () => {
@@ -116,5 +121,98 @@ describe("header navigation feature", () => {
     expect(loadGoals).toHaveBeenCalledTimes(1);
     expect(loadBridgeSessions).toHaveBeenCalledTimes(1);
     expect(focusPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes cross-panel modes through the replaceable runtime context", async () => {
+    const goGoalsPageBtn = document.createElement("button");
+    const goBridgePageBtn = document.createElement("button");
+    const goChatPageBtn = document.createElement("button");
+    const addListenerSpy = vi.spyOn(goGoalsPageBtn, "addEventListener");
+    const firstSwitchMode = vi.fn();
+    const secondSwitchMode = vi.fn();
+    const legacySwitchMode = vi.fn();
+    const loadGoals = vi.fn();
+    const loadBridgeSessions = vi.fn();
+    const focusPrompt = vi.fn();
+    const runtimeContext = createWebChatRuntimeContext({
+      adapter: createDefaultWebChatRuntimeAdapter({ switchMode: firstSwitchMode }),
+    });
+    const feature = createHeaderNavigationFeature({
+      refs: { goGoalsPageBtn, goBridgePageBtn, goChatPageBtn },
+      runtimeContext,
+      switchMode: legacySwitchMode,
+      loadGoals,
+      loadBridgeSessions,
+      focusPrompt,
+    });
+    const retainedGoalsListener = addListenerSpy.mock.calls.find(([type]) => type === "click")?.[1];
+
+    goGoalsPageBtn.click();
+    await Promise.resolve();
+    expect(firstSwitchMode).toHaveBeenCalledWith("goals");
+    expect(loadGoals).toHaveBeenCalledWith(false);
+    expect(legacySwitchMode).not.toHaveBeenCalled();
+
+    expect(runtimeContext.replaceAdapter(
+      createDefaultWebChatRuntimeAdapter({ switchMode: secondSwitchMode }),
+    )).toBe(true);
+    goBridgePageBtn.click();
+    goChatPageBtn.click();
+    await Promise.resolve();
+    expect(firstSwitchMode).toHaveBeenCalledTimes(1);
+    expect(secondSwitchMode.mock.calls).toEqual([["bridge"], ["chat"]]);
+    expect(loadBridgeSessions).toHaveBeenCalledWith(false);
+    expect(focusPrompt).toHaveBeenCalledTimes(1);
+
+    expect(feature.deactivate()).toBe(true);
+    goGoalsPageBtn.click();
+    await retainedGoalsListener?.({ type: "click" });
+    expect(secondSwitchMode).toHaveBeenCalledTimes(2);
+
+    expect(feature.activate()).toBe(true);
+    goGoalsPageBtn.click();
+    await Promise.resolve();
+    expect(secondSwitchMode).toHaveBeenLastCalledWith("goals");
+    expect(feature.dispose()).toBe(true);
+    expect(feature.dispose()).toBe(false);
+    expect(feature.activate()).toBe(false);
+    goGoalsPageBtn.click();
+    await retainedGoalsListener?.({ type: "click" });
+    expect(secondSwitchMode).toHaveBeenCalledTimes(3);
+  });
+
+  it("switches panel mode before dispatching each header command", async () => {
+    const goGoalsPageBtn = document.createElement("button");
+    const goBridgePageBtn = document.createElement("button");
+    const goChatPageBtn = document.createElement("button");
+    const order = [];
+    const runtimeContext = createWebChatRuntimeContext({
+      adapter: createDefaultWebChatRuntimeAdapter({
+        switchMode: (mode) => order.push(`mode:${mode}`),
+      }),
+    });
+    const commandDispatcher = {
+      dispatch: vi.fn((command) => {
+        order.push(`command:${command}`);
+      }),
+    };
+    createHeaderNavigationFeature({
+      refs: { goGoalsPageBtn, goBridgePageBtn, goChatPageBtn },
+      runtimeContext,
+      commandDispatcher,
+    });
+
+    goGoalsPageBtn.click();
+    goBridgePageBtn.click();
+    goChatPageBtn.click();
+    await Promise.resolve();
+    expect(order).toEqual([
+      "mode:goals",
+      `command:${HEADER_NAVIGATION_COMMANDS.LOAD_GOALS}`,
+      "mode:bridge",
+      `command:${HEADER_NAVIGATION_COMMANDS.LOAD_BRIDGE}`,
+      "mode:chat",
+      `command:${HEADER_NAVIGATION_COMMANDS.FOCUS_CHAT}`,
+    ]);
   });
 });

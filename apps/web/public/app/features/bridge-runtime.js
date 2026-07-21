@@ -1,12 +1,23 @@
 const POLL_INTERVAL_MS = 1500;
 
-function renderStatCard(label, value) {
-  return `
-    <div class="memory-stat-card">
-      <span class="memory-stat-label">${label}</span>
-      <strong class="memory-stat-value">${value}</strong>
-    </div>
-  `;
+function createStatCardElement(ownerDocument, label, value) {
+  const card = ownerDocument.createElement("div");
+  card.className = "memory-stat-card";
+  const labelElement = ownerDocument.createElement("span");
+  labelElement.className = "memory-stat-label";
+  labelElement.textContent = String(label ?? "");
+  const valueElement = ownerDocument.createElement("strong");
+  valueElement.className = "memory-stat-value";
+  valueElement.textContent = String(value ?? "");
+  card.append(labelElement, valueElement);
+  return card;
+}
+
+function renderStatCards(target, stats) {
+  const ownerDocument = target.ownerDocument ?? document;
+  target.replaceChildren(
+    ...stats.map(([label, value]) => createStatCardElement(ownerDocument, label, value)),
+  );
 }
 
 function formatBridgeStatus(status, t) {
@@ -30,13 +41,80 @@ function formatCloseReason(reason, t) {
   }
 }
 
-function renderDetailCard(label, value, escapeHtml) {
-  return `
-    <div class="memory-detail-card">
-      <span class="memory-detail-label">${escapeHtml(label)}</span>
-      <div class="memory-detail-text">${escapeHtml(value || "-")}</div>
-    </div>
-  `;
+function createBridgeDetailCardElement(ownerDocument, label, value) {
+  const card = ownerDocument.createElement("div");
+  card.className = "memory-detail-card";
+  const labelElement = ownerDocument.createElement("span");
+  labelElement.className = "memory-detail-label";
+  labelElement.textContent = String(label ?? "");
+  const valueElement = ownerDocument.createElement("div");
+  valueElement.className = "memory-detail-text";
+  valueElement.textContent = String(value || "-");
+  card.append(labelElement, valueElement);
+  return card;
+}
+
+function createBridgeActionButtonElement(
+  ownerDocument,
+  { className, label, attribute, value },
+) {
+  const button = ownerDocument.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = String(label ?? "");
+  button.setAttribute(attribute, String(value ?? ""));
+  return button;
+}
+
+function renderBridgeEmptyState(target, message) {
+  if (!target) return;
+  const ownerDocument = target.ownerDocument ?? document;
+  const empty = ownerDocument.createElement("div");
+  empty.className = "memory-viewer-empty";
+  empty.textContent = message;
+  target.replaceChildren(empty);
+}
+
+function createBridgeListItemElement(ownerDocument, item, state, t) {
+  const button = ownerDocument.createElement("button");
+  button.type = "button";
+  button.className = "memory-list-item";
+  button.classList.toggle("active", item?.sessionId === state.selectedSessionId);
+  button.setAttribute("data-bridge-session-id", String(item?.sessionId ?? ""));
+
+  const head = ownerDocument.createElement("div");
+  head.className = "memory-list-item-head";
+  const title = ownerDocument.createElement("span");
+  title.className = "memory-list-item-title";
+  title.textContent = `${item.targetId}.${item.action}`;
+  const statusBadge = ownerDocument.createElement("span");
+  statusBadge.className = "memory-badge";
+  statusBadge.textContent = formatBridgeStatus(item?.status, t);
+  head.append(title, statusBadge);
+
+  const meta = ownerDocument.createElement("div");
+  meta.className = "memory-list-item-meta";
+  const cwd = ownerDocument.createElement("span");
+  cwd.textContent = String(item.cwd || "-");
+  meta.append(cwd);
+  if (item?.taskId) {
+    const taskBadge = ownerDocument.createElement("span");
+    taskBadge.className = "memory-badge";
+    taskBadge.textContent = `task:${item.taskId}`;
+    meta.append(taskBadge);
+  }
+  if (item?.hasBufferedOutput) {
+    const bufferedBadge = ownerDocument.createElement("span");
+    bufferedBadge.className = "memory-badge";
+    bufferedBadge.textContent = t("bridge.bufferedBadge", {}, "有新输出");
+    meta.append(bufferedBadge);
+  }
+
+  const snippet = ownerDocument.createElement("div");
+  snippet.className = "memory-list-item-snippet";
+  snippet.textContent = String(item.latestOutputPreview || item.commandPreview || "-");
+  button.append(head, meta, snippet);
+  return button;
 }
 
 function formatTranscriptTail(transcriptTail, liveOutput, formatDateTime, t) {
@@ -110,73 +188,43 @@ export function createBridgeRuntimeFeature({
 
   function renderBridgeLoading(message) {
     if (bridgeSummaryEl) {
-      bridgeSummaryEl.innerHTML = renderStatCard(
-        escapeHtml(t("bridge.statSessions", {}, "桥接会话")),
-        "--",
+      renderStatCards(
+        bridgeSummaryEl,
+        [[t("bridge.statSessions", {}, "桥接会话"), "--"]],
       );
     }
     if (bridgeListEl) {
-      bridgeListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+      renderBridgeEmptyState(bridgeListEl, message);
     }
     if (bridgeDetailEl) {
-      bridgeDetailEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+      renderBridgeEmptyState(bridgeDetailEl, message);
     }
   }
 
   function renderBridgeDetailEmpty(message) {
-    if (!bridgeDetailEl) return;
-    bridgeDetailEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+    renderBridgeEmptyState(bridgeDetailEl, message);
   }
 
   function renderBridgeSummary(state) {
     if (!bridgeSummaryEl) return;
-    bridgeSummaryEl.innerHTML = [
-      renderStatCard(
-        escapeHtml(t("bridge.statSessions", {}, "桥接会话")),
-        escapeHtml(String(state.totalCount || 0)),
-      ),
-      renderStatCard(
-        escapeHtml(t("bridge.statActive", {}, "运行中")),
-        escapeHtml(String(state.activeCount || 0)),
-      ),
-      renderStatCard(
-        escapeHtml(t("bridge.statClosed", {}, "已关闭")),
-        escapeHtml(String(state.closedCount || 0)),
-      ),
-    ].join("");
+    renderStatCards(bridgeSummaryEl, [
+      [t("bridge.statSessions", {}, "桥接会话"), String(state.totalCount || 0)],
+      [t("bridge.statActive", {}, "运行中"), String(state.activeCount || 0)],
+      [t("bridge.statClosed", {}, "已关闭"), String(state.closedCount || 0)],
+    ]);
   }
 
   function renderBridgeList(state) {
     if (!bridgeListEl) return;
     if (!Array.isArray(state.items) || state.items.length === 0) {
-      bridgeListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("bridge.empty", {}, "当前没有 bridge session。"))}</div>`;
+      renderBridgeEmptyState(bridgeListEl, t("bridge.empty", {}, "当前没有 bridge session。"));
       return;
     }
 
-    bridgeListEl.innerHTML = state.items.map((item) => {
-      const active = item?.sessionId === state.selectedSessionId;
-      const runtimeBadge = formatBridgeStatus(item?.status, t);
-      const bufferedBadge = item?.hasBufferedOutput
-        ? `<span class="memory-badge">${escapeHtml(t("bridge.bufferedBadge", {}, "有新输出"))}</span>`
-        : "";
-      const taskBadge = item?.taskId
-        ? `<span class="memory-badge">${escapeHtml(`task:${item.taskId}`)}</span>`
-        : "";
-      return `
-        <button type="button" class="memory-list-item ${active ? "active" : ""}" data-bridge-session-id="${escapeHtml(item.sessionId)}">
-          <div class="memory-list-item-head">
-            <span class="memory-list-item-title">${escapeHtml(`${item.targetId}.${item.action}`)}</span>
-            <span class="memory-badge">${escapeHtml(runtimeBadge)}</span>
-          </div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(item.cwd || "-")}</span>
-            ${taskBadge}
-            ${bufferedBadge}
-          </div>
-          <div class="memory-list-item-snippet">${escapeHtml(item.latestOutputPreview || item.commandPreview || "-")}</div>
-        </button>
-      `;
-    }).join("");
+    const ownerDocument = bridgeListEl.ownerDocument ?? document;
+    bridgeListEl.replaceChildren(
+      ...state.items.map((item) => createBridgeListItemElement(ownerDocument, item, state, t)),
+    );
 
     bridgeListEl.querySelectorAll("[data-bridge-session-id]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -202,45 +250,125 @@ export function createBridgeRuntimeFeature({
       formatDateTime,
       t,
     );
-    const actions = [
-      session.taskId
-        ? `<button type="button" class="button" data-bridge-open-task="${escapeHtml(session.taskId)}">${escapeHtml(t("bridge.openTask", {}, "打开子任务"))}</button>`
-        : "",
-      session.transcriptPath
-        ? `<button type="button" class="button goal-inline-action-secondary" data-open-source="${escapeHtml(session.transcriptPath)}">${escapeHtml(t("bridge.openTranscript", {}, "打开 transcript"))}</button>`
-        : "",
-      session.artifactPath
-        ? `<button type="button" class="button goal-inline-action-secondary" data-open-source="${escapeHtml(session.artifactPath)}">${escapeHtml(t("bridge.openArtifact", {}, "打开 artifact"))}</button>`
-        : "",
-      `<button type="button" class="button goal-inline-action-secondary" data-bridge-refresh-session="${escapeHtml(session.sessionId)}">${escapeHtml(t("bridge.refreshSession", {}, "刷新输出"))}</button>`,
-    ].filter(Boolean).join("");
+    const ownerDocument = bridgeDetailEl.ownerDocument ?? document;
+    const shell = ownerDocument.createElement("div");
+    shell.className = "memory-detail-shell";
 
-    bridgeDetailEl.innerHTML = `
-      <div class="memory-detail-shell">
-        <section class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("bridge.detailTitle", {}, "Bridge Session"))}</span>
-          <div class="memory-detail-grid">
-            ${renderDetailCard(t("bridge.detailTarget", {}, "Target"), `${session.targetId}.${session.action}`, escapeHtml)}
-            ${renderDetailCard(t("bridge.detailStatus", {}, "Status"), formatBridgeStatus(session.status, t), escapeHtml)}
-            ${renderDetailCard(t("bridge.detailCloseReason", {}, "Close Reason"), formatCloseReason(session.closeReason, t), escapeHtml)}
-            ${renderDetailCard(t("bridge.detailTaskId", {}, "Task ID"), session.taskId || "-", escapeHtml)}
-            ${renderDetailCard(t("bridge.detailCwd", {}, "CWD"), session.cwd || "-", escapeHtml)}
-            ${renderDetailCard(t("bridge.detailBuffered", {}, "Buffered Output"), String(session.bufferedOutputChars || 0), escapeHtml)}
-          </div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(t("bridge.detailUpdatedAt", {}, "Updated"))}</span>
-            <span>${escapeHtml(formatDateTime(session.updatedAt))}</span>
-          </div>
-          <div class="memory-detail-text bridge-command-preview">${escapeHtml(session.commandPreview || "-")}</div>
-          ${session.firstTurnHint ? `<div class="tool-settings-policy-note">${escapeHtml(session.firstTurnHint)}</div>` : ""}
-          ${actions ? `<div class="subtask-detail-actions">${actions}</div>` : ""}
-        </section>
-        <section class="memory-detail-card">
-          <span class="memory-detail-label">${escapeHtml(t("bridge.detailOutput", {}, "Live Tail"))}</span>
-          <pre class="bridge-live-output">${escapeHtml(transcriptText || t("bridge.noOutput", {}, "当前还没有可显示的输出。"))}</pre>
-        </section>
-      </div>
-    `;
+    const overviewCard = ownerDocument.createElement("section");
+    overviewCard.className = "memory-detail-card";
+    const title = ownerDocument.createElement("span");
+    title.className = "memory-detail-label";
+    title.textContent = t("bridge.detailTitle", {}, "Bridge Session");
+    const grid = ownerDocument.createElement("div");
+    grid.className = "memory-detail-grid";
+    grid.append(
+      createBridgeDetailCardElement(
+        ownerDocument,
+        t("bridge.detailTarget", {}, "Target"),
+        `${session.targetId}.${session.action}`,
+      ),
+      createBridgeDetailCardElement(
+        ownerDocument,
+        t("bridge.detailStatus", {}, "Status"),
+        formatBridgeStatus(session.status, t),
+      ),
+      createBridgeDetailCardElement(
+        ownerDocument,
+        t("bridge.detailCloseReason", {}, "Close Reason"),
+        formatCloseReason(session.closeReason, t),
+      ),
+      createBridgeDetailCardElement(
+        ownerDocument,
+        t("bridge.detailTaskId", {}, "Task ID"),
+        session.taskId || "-",
+      ),
+      createBridgeDetailCardElement(
+        ownerDocument,
+        t("bridge.detailCwd", {}, "CWD"),
+        session.cwd || "-",
+      ),
+      createBridgeDetailCardElement(
+        ownerDocument,
+        t("bridge.detailBuffered", {}, "Buffered Output"),
+        String(session.bufferedOutputChars || 0),
+      ),
+    );
+
+    const updatedMeta = ownerDocument.createElement("div");
+    updatedMeta.className = "memory-list-item-meta";
+    const updatedLabel = ownerDocument.createElement("span");
+    updatedLabel.textContent = t("bridge.detailUpdatedAt", {}, "Updated");
+    const updatedValue = ownerDocument.createElement("span");
+    updatedValue.textContent = String(formatDateTime(session.updatedAt) ?? "");
+    updatedMeta.append(updatedLabel, updatedValue);
+
+    const commandPreview = ownerDocument.createElement("div");
+    commandPreview.className = "memory-detail-text bridge-command-preview";
+    commandPreview.textContent = String(session.commandPreview || "-");
+    overviewCard.append(title, grid, updatedMeta, commandPreview);
+
+    if (session.firstTurnHint) {
+      const hint = ownerDocument.createElement("div");
+      hint.className = "tool-settings-policy-note";
+      hint.textContent = String(session.firstTurnHint);
+      overviewCard.append(hint);
+    }
+
+    const actionDefinitions = [
+      session.taskId
+        ? {
+            className: "button",
+            label: t("bridge.openTask", {}, "打开子任务"),
+            attribute: "data-bridge-open-task",
+            value: session.taskId,
+          }
+        : null,
+      session.transcriptPath
+        ? {
+            className: "button goal-inline-action-secondary",
+            label: t("bridge.openTranscript", {}, "打开 transcript"),
+            attribute: "data-open-source",
+            value: session.transcriptPath,
+          }
+        : null,
+      session.artifactPath
+        ? {
+            className: "button goal-inline-action-secondary",
+            label: t("bridge.openArtifact", {}, "打开 artifact"),
+            attribute: "data-open-source",
+            value: session.artifactPath,
+          }
+        : null,
+      {
+        className: "button goal-inline-action-secondary",
+        label: t("bridge.refreshSession", {}, "刷新输出"),
+        attribute: "data-bridge-refresh-session",
+        value: session.sessionId,
+      },
+    ].filter(Boolean);
+    const actions = ownerDocument.createElement("div");
+    actions.className = "subtask-detail-actions";
+    actions.append(
+      ...actionDefinitions.map((definition) => (
+        createBridgeActionButtonElement(ownerDocument, definition)
+      )),
+    );
+    overviewCard.append(actions);
+
+    const outputCard = ownerDocument.createElement("section");
+    outputCard.className = "memory-detail-card";
+    const outputLabel = ownerDocument.createElement("span");
+    outputLabel.className = "memory-detail-label";
+    outputLabel.textContent = t("bridge.detailOutput", {}, "Live Tail");
+    const output = ownerDocument.createElement("pre");
+    output.className = "bridge-live-output";
+    output.textContent = String(
+      transcriptText || t("bridge.noOutput", {}, "当前还没有可显示的输出。"),
+    );
+    outputCard.append(outputLabel, output);
+
+    shell.append(overviewCard, outputCard);
+    bridgeDetailEl.replaceChildren(shell);
 
     bridgeDetailEl.querySelectorAll("[data-open-source]").forEach((button) => {
       button.addEventListener("click", () => {

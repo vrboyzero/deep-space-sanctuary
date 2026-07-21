@@ -589,6 +589,8 @@ describe("stt-transcribe", () => {
 
     it("should reuse shared cached transcription results", async () => {
         const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-stt-cache-"));
+        const openAIRequest = vi.fn();
+        const groqRequest = vi.fn();
         const transcribe = vi.fn(async () => ({
             text: "Cached by shared layer",
             provider: "mock",
@@ -602,6 +604,8 @@ describe("stt-transcribe", () => {
                 buffer: mockBuffer,
                 fileName: "voice.webm",
                 mime: "audio/webm",
+                openAIOutboundRequestPolicy: { request: openAIRequest },
+                groqOutboundRequestPolicy: { request: groqRequest },
                 transcribe,
             });
             const second = await transcribeSpeechWithCache({
@@ -616,6 +620,10 @@ describe("stt-transcribe", () => {
             expect(first.cacheHit).toBe(false);
             expect(second.cacheHit).toBe(true);
             expect(second.result?.text).toBe("Cached by shared layer");
+            expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
+                openAIOutboundRequestPolicy: { request: openAIRequest },
+                groqOutboundRequestPolicy: { request: groqRequest },
+            }));
         } finally {
             await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
         }
@@ -641,8 +649,8 @@ describe("stt-transcribe", () => {
             await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
             release?.({ text: "single-flight", provider: "mock", model: "mock-stt" });
 
-            await expect(first).resolves.toMatchObject({ cacheHit: false });
-            await expect(second).resolves.toMatchObject({ cacheHit: true });
+            const results = await Promise.all([first, second]);
+            expect(results.map((result) => result.cacheHit).sort()).toEqual([false, true]);
             expect(transcribe).toHaveBeenCalledTimes(1);
         } finally {
             await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});

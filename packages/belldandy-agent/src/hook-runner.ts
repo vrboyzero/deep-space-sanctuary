@@ -39,6 +39,13 @@ import type {
   GatewayStartEvent,
   GatewayStopEvent,
 } from "./hooks.js";
+import {
+  HOOK_FAILURE_POLICIES,
+  listHookFailurePolicies,
+  type HookFailurePolicyDescriptor,
+} from "./hook-failure-policy.js";
+
+export { HOOK_FAILURE_POLICIES } from "./hook-failure-policy.js";
 
 // ============================================================================
 // 日志接口
@@ -65,6 +72,11 @@ export interface HookRunnerOptions {
   logger?: HookRunnerLogger;
   /** 是否捕获错误（true: 记录错误但不抛出；false: 抛出错误） */
   catchErrors?: boolean;
+}
+
+export interface HookRunnerDiagnostics {
+  catchErrors: boolean;
+  policies: HookFailurePolicyDescriptor[];
 }
 
 // ============================================================================
@@ -128,6 +140,7 @@ export function createHookRunner(registry: HookRegistry, options: HookRunnerOpti
     event: Parameters<HookHandlerMap[K]>[0],
     ctx: Parameters<HookHandlerMap[K]>[1],
     mergeResults?: (accumulated: TResult | undefined, next: TResult) => TResult,
+    onHandlerFailure?: (hook: HookRegistration<K>) => void,
   ): Promise<TResult | undefined> {
     const hooks = registry.getHooks(hookName);
     if (hooks.length === 0) return undefined;
@@ -154,6 +167,7 @@ export function createHookRunner(registry: HookRegistry, options: HookRunnerOpti
         const msg = `[hooks] ${hookName} 处理器（来源: ${hook.source}）执行失败: ${String(err)}`;
         if (catchErrors) {
           logger?.error(msg);
+          onHandlerFailure?.(hook);
         } else {
           throw new Error(msg);
         }
@@ -345,7 +359,8 @@ export function createHookRunner(registry: HookRegistry, options: HookRunnerOpti
     event: BeforeToolCallEvent,
     ctx: HookToolContext,
   ): Promise<BeforeToolCallResult | undefined> {
-    return runModifyingHook<"before_tool_call", BeforeToolCallResult>(
+    let failedClosed = false;
+    const result = await runModifyingHook<"before_tool_call", BeforeToolCallResult>(
       "before_tool_call",
       event,
       ctx,
@@ -356,7 +371,20 @@ export function createHookRunner(registry: HookRegistry, options: HookRunnerOpti
         skipExecution: next.skipExecution ?? acc?.skipExecution,
         syntheticResult: next.syntheticResult ?? acc?.syntheticResult,
       }),
+      () => {
+        failedClosed = HOOK_FAILURE_POLICIES.before_tool_call === "fail_closed";
+      },
     );
+    if (!failedClosed) return result;
+
+    // 在全部 owner 执行后锁存阻断，后续 Hook 返回 block=false 也不能解除安全失败。
+    return {
+      ...(result ?? {}),
+      block: true,
+      blockReason: result?.block === true && result.blockReason
+        ? result.blockReason
+        : "Hook handler failed; tool call blocked by fail-closed policy.",
+    };
   }
 
   /**
@@ -494,6 +522,14 @@ export function createHookRunner(registry: HookRegistry, options: HookRunnerOpti
     return registry.getHookCount(hookName);
   }
 
+  /** 返回只含执行模式和失败策略的静态诊断，不保留 Hook 调用内容。 */
+  function getDiagnostics(): HookRunnerDiagnostics {
+    return {
+      catchErrors,
+      policies: listHookFailurePolicies(),
+    };
+  }
+
   return {
     // Agent 钩子
     runBeforeAgentStart,
@@ -517,6 +553,7 @@ export function createHookRunner(registry: HookRegistry, options: HookRunnerOpti
     // 工具函数
     hasHooks,
     getHookCount,
+    getDiagnostics,
   };
 }
 

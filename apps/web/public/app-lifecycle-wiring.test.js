@@ -73,4 +73,42 @@ describe("WebChat app lifecycle wiring", () => {
     expect(appSource).toContain("getWebchatLifecycleSummary: () => webchatLifecycleDiagnostics.getSummary()");
     expect(appSource).toContain("webchatLifecycle: webchatLifecycleDiagnostics.getSummary()");
   });
+
+  it("wires the runtime context into the header navigation lifecycle", () => {
+    const lifecycleBlock = appSource.match(
+      /window\.addEventListener\("pagehide", \(\) => \{\s*agentSessionCacheFeature\.dispose\(\);([\s\S]*?)\}, \{ once: true \}\);/,
+    )?.[0] ?? "";
+
+    expect(appSource).toContain("createDefaultWebChatRuntimeAdapter");
+    expect(appSource).toContain("createWebChatRuntimeContext");
+    expect(appSource).toContain("sendReq: (...args) => sendReq(...args)");
+    expect(appSource).toContain("isConnected: () => Boolean(ws && isReady)");
+    expect(appSource).toContain("switchMode: (mode) => switchMode(mode)");
+    expect(appSource).toContain("t: (...args) => localeController.t(...args)");
+    expect(appSource).toContain("showNotice: (...args) => showNotice(...args)");
+    expect(appSource).toContain("getCurrentAgentSelection: () => getCurrentAgentSelection()");
+    expect(appSource).toContain("runtimeContext: webChatRuntimeContext");
+    expect(appSource).toContain("() => webChatRuntimeContext");
+    expect(lifecycleBlock).toContain("webChatRuntimeContext?.dispose();");
+  });
+
+  it("replaces the header callback bundle with registered commands", () => {
+    const lifecycleBlock = appSource.match(
+      /window\.addEventListener\("pagehide", \(\) => \{\s*agentSessionCacheFeature\.dispose\(\);([\s\S]*?)\}, \{ once: true \}\);/,
+    )?.[0] ?? "";
+    const headerStart = appSource.indexOf("headerNavigationFeature = createHeaderNavigationFeature({");
+    const headerEnd = appSource.indexOf("\n});", headerStart);
+    const headerBlock = appSource.slice(headerStart, headerEnd + 4);
+
+    expect(appSource).toContain("createHeaderNavigationCommandOwner");
+    expect(appSource).toContain("HEADER_NAVIGATION_COMMANDS.LOAD_GOALS");
+    expect(appSource).toContain("HEADER_NAVIGATION_COMMANDS.LOAD_BRIDGE");
+    expect(appSource).toContain("HEADER_NAVIGATION_COMMANDS.FOCUS_CHAT");
+    expect(appSource).toContain("() => headerNavigationCommandOwner");
+    expect(headerBlock).toContain("commandDispatcher: headerNavigationCommandOwner");
+    expect(headerBlock).not.toContain("loadGoals:");
+    expect(headerBlock).not.toContain("loadBridgeSessions:");
+    expect(headerBlock).not.toContain("focusPrompt:");
+    expect(lifecycleBlock).toContain("headerNavigationCommandOwner?.dispose();");
+  });
 });

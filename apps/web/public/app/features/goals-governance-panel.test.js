@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createGoalsGovernancePanelFeature } from "./goals-governance-panel.js";
@@ -14,6 +16,7 @@ describe("goals governance panel", () => {
   });
 
   afterEach(() => {
+    document.body.replaceChildren();
     if (previousWebConfig && typeof previousWebConfig === "object") {
       globalThis.BELLDANDY_WEB_CONFIG = previousWebConfig;
       return;
@@ -22,7 +25,8 @@ describe("goals governance panel", () => {
   });
 
   it("renders bridge governance summary in the governance panel", () => {
-    const panel = { innerHTML: "" };
+    const panel = document.createElement("div");
+    document.body.append(panel);
     const feature = createGoalsGovernancePanelFeature({
       refs: {
         goalsDetailEl: {
@@ -82,7 +86,8 @@ describe("goals governance panel", () => {
   });
 
   it("renders top-level governance freshness summary without relying on learningReviewInput", () => {
-    const panel = { innerHTML: "" };
+    const panel = document.createElement("div");
+    document.body.append(panel);
     const feature = createGoalsGovernancePanelFeature({
       refs: {
         goalsDetailEl: {
@@ -129,7 +134,8 @@ describe("goals governance panel", () => {
   });
 
   it("renders experience workbench jump for method and skill suggestion reviews", () => {
-    const panel = { innerHTML: "" };
+    const panel = document.createElement("div");
+    document.body.append(panel);
     const feature = createGoalsGovernancePanelFeature({
       refs: {
         goalsDetailEl: {
@@ -188,7 +194,8 @@ describe("goals governance panel", () => {
   });
 
   it("renders commander review and fan-in focus section", () => {
-    const panel = { innerHTML: "" };
+    const panel = document.createElement("div");
+    document.body.append(panel);
     const feature = createGoalsGovernancePanelFeature({
       refs: {
         goalsDetailEl: {

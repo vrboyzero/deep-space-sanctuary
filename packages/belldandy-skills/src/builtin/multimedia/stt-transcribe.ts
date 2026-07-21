@@ -32,6 +32,10 @@ import {
     runMediaUnderstandingCacheSingleFlight,
     writeCachedAudioTranscription,
 } from "./understanding-cache.js";
+import {
+    createSttOpenAIFetch,
+    type SttOpenAIOutboundRequestPolicy,
+} from "./stt-openai-transport.js";
 
 // ─── 类型定义 ───────────────────────────────────────────────
 
@@ -52,6 +56,10 @@ export type TranscribeOptions = {
     prompt?: string;
     /** 协作式中断信号 */
     abortSignal?: AbortSignal;
+    /** OpenAI transcription endpoint 的零 redirect pinned outbound capability。 */
+    openAIOutboundRequestPolicy?: SttOpenAIOutboundRequestPolicy;
+    /** Groq OpenAI-compatible endpoint 的零 redirect pinned outbound capability。 */
+    groqOutboundRequestPolicy?: SttOpenAIOutboundRequestPolicy;
     /** DashScope submit/poll 固定 REST 的独立出站策略。 */
     dashScopeRestOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
     /** DashScope 返回转录 JSON 的独立出站策略；主要用于受控宿主与测试 transport。 */
@@ -114,7 +122,7 @@ export async function transcribeSpeech(
     try {
         switch (provider) {
             case "groq":
-                return await transcribeGroq(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal);
+                return await transcribeGroq(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal, opts.groqOutboundRequestPolicy);
             case "dashscope":
                 return await transcribeDashScope(
                     opts.buffer,
@@ -128,7 +136,7 @@ export async function transcribeSpeech(
                 );
             case "openai":
             default:
-                return await transcribeOpenAI(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal);
+                return await transcribeOpenAI(opts.buffer, opts.fileName, language, model, opts.prompt, opts.abortSignal, opts.openAIOutboundRequestPolicy);
         }
     } catch (err) {
         if (isAbortError(err) || opts.abortSignal?.aborted) {
@@ -185,6 +193,8 @@ export async function transcribeSpeechWithCache(
                 language: input.language,
                 prompt: input.prompt,
                 abortSignal: input.abortSignal,
+                openAIOutboundRequestPolicy: input.openAIOutboundRequestPolicy,
+                groqOutboundRequestPolicy: input.groqOutboundRequestPolicy,
                 dashScopeRestOutboundRequestPolicy: input.dashScopeRestOutboundRequestPolicy,
                 dashScopeAssetOutboundRequestPolicy: input.dashScopeAssetOutboundRequestPolicy,
             });
@@ -215,6 +225,7 @@ async function transcribeOpenAI(
     model: string,
     prompt?: string,
     abortSignal?: AbortSignal,
+    outboundRequestPolicy?: SttOpenAIOutboundRequestPolicy,
 ): Promise<TranscribeResult> {
     const apiKey =
         process.env.BELLDANDY_STT_OPENAI_API_KEY?.trim()
@@ -228,7 +239,15 @@ async function transcribeOpenAI(
 
     throwIfAborted(abortSignal);
     console.info(`[STT] OpenAI request target: baseURL=${baseURL || "default"}, model=${model}, fileName=${fileName}`);
-    const openai = new OpenAI({ apiKey, baseURL });
+    const resolvedBaseURL = baseURL || "https://api.openai.com/v1";
+    const openai = new OpenAI({
+        apiKey,
+        baseURL: resolvedBaseURL,
+        fetch: createSttOpenAIFetch({
+            baseURL: resolvedBaseURL,
+            outboundRequestPolicy,
+        }),
+    });
 
     // OpenAI SDK 接受 File 对象用于 multipart/form-data 上传
     const file = await bufferToUploadable(buffer, fileName);
@@ -264,6 +283,7 @@ async function transcribeGroq(
     model: string,
     prompt?: string,
     abortSignal?: AbortSignal,
+    outboundRequestPolicy?: SttOpenAIOutboundRequestPolicy,
 ): Promise<TranscribeResult> {
     // Groq 使用 OpenAI 兼容接口，只需换 apiKey 和 baseURL
     const apiKey =
@@ -276,7 +296,14 @@ async function transcribeGroq(
     if (!apiKey) throw new Error("BELLDANDY_STT_GROQ_API_KEY 或 GROQ_API_KEY 未设置");
 
     throwIfAborted(abortSignal);
-    const openai = new OpenAI({ apiKey, baseURL });
+    const openai = new OpenAI({
+        apiKey,
+        baseURL,
+        fetch: createSttOpenAIFetch({
+            baseURL,
+            outboundRequestPolicy,
+        }),
+    });
 
     const file = await bufferToUploadable(buffer, fileName);
 

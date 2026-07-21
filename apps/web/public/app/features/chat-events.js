@@ -1,4 +1,5 @@
 import { isExperienceDraftGenerateNoticeEnabled } from "./experience-draft-notice-mode.js";
+import { renderPairingRequiredFallback } from "./pairing-required-prompt.js";
 
 export function createChatEventsFeature({
   appendMessage,
@@ -33,7 +34,6 @@ export function createChatEventsFeature({
   onConversationFinal,
   onConversationStopped,
   getStoppedMessageText,
-  escapeHtml,
   dedupeMaxEntries = 512,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -402,19 +402,7 @@ export function createChatEventsFeature({
         });
         return true;
       }
-      const safeCode = escapeHtml?.(code) || code;
-      target.innerHTML = `
-        <div style="line-height: 1.6;">
-          <div>${escapeHtml?.(t("settings.pairingPendingDefaultMessage", {}, "The current WebChat session still needs pairing approval.")) || ""}</div>
-          <div style="margin-top: 8px;">${escapeHtml?.(t("runtime.pairingCodeLabel", {}, "Pairing code")) || ""}：<b>${safeCode || "-"}</b></div>
-          <div style="background: var(--bg-secondary); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace;">
-            corepack pnpm bdd pairing approve ${safeCode}
-          </div>
-          <div style="color: var(--text-secondary); font-size: 12px;">
-            ${escapeHtml?.(t("runtime.pairingCliHint", {}, "If the inline approval button is unavailable, run this command in a new terminal and then resend your message here.")) || ""}
-          </div>
-        </div>
-      `;
+      renderPairingRequiredFallback(target, { code, t });
       return true;
     }
 

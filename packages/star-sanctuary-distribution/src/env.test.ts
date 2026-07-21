@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -242,4 +242,60 @@ test("default env.local template keeps community api enabled in local overrides"
 
   expect(templates.envLocal).toContain('BELLDANDY_COMMUNITY_API_ENABLED="true"');
   expect(templates.envLocal).not.toContain('BELLDANDY_COMMUNITY_API_ENABLED="false"');
+});
+
+test("memory background governance defaults stay aligned across env templates", async () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");
+  const templates = readDefaultEnvTemplates();
+  const defaults = [
+    ["BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS", ""],
+    ["BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS", "3600000"],
+    ["BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS", ""],
+    ["BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES", "64"],
+    ["BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES", "16384"],
+    ["BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES", "49152"],
+    ["BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS", "5000"],
+    ["BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS", ""],
+    ["BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR", "off"],
+  ] as const;
+
+  for (const [key, value] of defaults) {
+    expect(example).toContain(`# ${key}=${value}`);
+    expect(templates.env).toContain(`# ${key}=${value}`);
+    expect(templates.envLocal).toContain(`${key}="${value}"`);
+  }
+});
+
+test("Feishu HTTP governance defaults stay aligned across env templates", async () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");
+  const templates = readDefaultEnvTemplates();
+  const defaults = [
+    ["BELLDANDY_FEISHU_JSON_MAX_RESPONSE_BYTES", "1048576"],
+    ["BELLDANDY_FEISHU_RESOURCE_MAX_RESPONSE_BYTES", "20971520"],
+    ["BELLDANDY_FEISHU_HTTP_IDLE_TIMEOUT_MS", "30000"],
+  ] as const;
+
+  for (const [key, value] of defaults) {
+    expect(example).toContain(`# ${key}=${value}`);
+    expect(templates.env).toContain(`# ${key}=${value}`);
+    expect(templates.envLocal).toContain(`${key}="${value}"`);
+  }
+});
+
+test("Discord REST governance defaults stay aligned across env templates", async () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");
+  const templates = readDefaultEnvTemplates();
+  const defaults = [
+    ["BELLDANDY_DISCORD_REST_MAX_RESPONSE_BYTES", "1048576"],
+    ["BELLDANDY_DISCORD_REST_TIMEOUT_MS", "15000"],
+  ] as const;
+
+  for (const [key, value] of defaults) {
+    expect(example).toContain(`# ${key}=${value}`);
+    expect(templates.env).toContain(`# ${key}=${value}`);
+    expect(templates.envLocal).toContain(`${key}="${value}"`);
+  }
 });

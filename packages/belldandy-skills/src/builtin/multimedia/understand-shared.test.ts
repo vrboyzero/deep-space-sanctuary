@@ -6,7 +6,69 @@ import { Readable } from "node:stream";
 import { OutboundRequestPolicy } from "@belldandy/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { uploadFileToOpenAICompatible } from "./understand-shared.js";
+import {
+  createOpenAIClient,
+  uploadFileToOpenAICompatible,
+} from "./understand-shared.js";
+
+type OutboundRequestInput = Parameters<OutboundRequestPolicy["request"]>[0];
+
+describe("OpenAI-compatible understanding chat client", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns a chat completion through the configured pinned endpoint policy", async () => {
+    const legacyFetch = vi.fn(async () => {
+      throw new Error("legacy fetch must not run");
+    });
+    vi.stubGlobal("fetch", legacyFetch);
+    const request = vi.fn(async (_input: OutboundRequestInput) => ({
+      response: Response.json({
+        id: "chatcmpl-understand-1",
+        object: "chat.completion",
+        created: 0,
+        model: "vision-model",
+        choices: [{
+          index: 0,
+          finish_reason: "stop",
+          message: { role: "assistant", content: "bounded understanding" },
+        }],
+      }),
+      url: new URL("https://vision.example.test/v1/chat/completions"),
+      addresses: [{ address: "93.184.216.34", family: 4 as const }],
+      redirectCount: 0,
+    }));
+    const clientInput: Parameters<typeof createOpenAIClient>[0] & {
+      outboundRequestPolicy: Pick<OutboundRequestPolicy, "request">;
+    } = {
+      apiKey: "understanding-secret",
+      baseURL: "https://vision.example.test/v1",
+      timeoutMs: 60_000,
+      outboundRequestPolicy: { request },
+    };
+    const client = createOpenAIClient(clientInput);
+
+    const response = await client.chat.completions.create({
+      model: "vision-model",
+      messages: [{ role: "user", content: "describe image" }],
+    });
+
+    expect(response.choices[0]?.message.content).toBe("bounded understanding");
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[0]).toMatchObject({
+      url: new URL("https://vision.example.test/v1/chat/completions"),
+      method: "POST",
+      maxRedirects: 0,
+    });
+    expect(JSON.parse(String(request.mock.calls[0]?.[0].body))).toMatchObject({
+      model: "vision-model",
+      messages: [{ role: "user", content: "describe image" }],
+    });
+    expect(legacyFetch).not.toHaveBeenCalled();
+  });
+});
 
 describe("OpenAI-compatible media upload", () => {
   let tempDir: string | undefined;

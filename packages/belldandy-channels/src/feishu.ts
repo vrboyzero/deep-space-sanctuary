@@ -27,6 +27,11 @@ import {
     createChannelApprovalPreview,
     createChannelPublicFailureMessage,
 } from "./channel-safe-logger.js";
+import {
+    FEISHU_OPEN_API_BASE_URL,
+    createFeishuHttpInstance,
+    type FeishuOutboundRequestPolicy,
+} from "./feishu-http-transport.js";
 
 import { ConversationStore } from "@belldandy/agent";
 
@@ -41,6 +46,11 @@ export interface FeishuChannelConfig extends ChannelConfig {
     appSecret: string;
     conversationStore: ConversationStore;
     agentId?: string;
+    /** Feishu REST/token HTTP 使用官方 endpoint 对应的零 redirect pinned profile。 */
+    restOutboundRequestPolicy?: FeishuOutboundRequestPolicy;
+    restJsonMaxResponseBytes?: number;
+    resourceMaxResponseBytes?: number;
+    restIdleTimeoutMs?: number;
     sttTranscribe?: (opts: { buffer: Buffer; fileName: string; mime?: string }) => Promise<{ text: string } | null>;
 }
 
@@ -145,6 +155,14 @@ export class FeishuChannel implements Channel {
         this.client = new lark.Client({
             appId: config.appId,
             appSecret: config.appSecret,
+            domain: FEISHU_OPEN_API_BASE_URL,
+            httpInstance: createFeishuHttpInstance({
+                baseUrl: FEISHU_OPEN_API_BASE_URL,
+                outboundRequestPolicy: config.restOutboundRequestPolicy,
+                jsonMaxResponseBytes: config.restJsonMaxResponseBytes,
+                resourceMaxResponseBytes: config.resourceMaxResponseBytes,
+                idleTimeoutMs: config.restIdleTimeoutMs,
+            }),
         });
 
         // WebSocket Client for receiving events

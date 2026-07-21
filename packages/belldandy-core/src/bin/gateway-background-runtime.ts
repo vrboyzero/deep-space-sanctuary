@@ -9,6 +9,7 @@ import {
 import type { BackgroundRecoveryRuntime } from "../background-recovery-runtime.js";
 import {
   startHeartbeatRunner,
+  type HeartbeatRunExecutionContext,
   type HeartbeatRunnerHandle,
 } from "../heartbeat/index.js";
 import {
@@ -16,6 +17,7 @@ import {
   startCronScheduler,
   type CronGoalApprovalScanPayload,
   type CronJob,
+  type CronRunExecutionContext,
   type CronSchedulerHandle,
 } from "../cron/index.js";
 import type { GoalManager } from "../goals/manager.js";
@@ -42,6 +44,8 @@ function parseActiveHours(raw: string | undefined): { start: string; end: string
 }
 
 type GatewayBackgroundLogger = Pick<BelldandyLogger, "info" | "warn" | "error" | "child">;
+
+export type BrowserRelayRuntimeHandle = Pick<RelayServer, "port" | "stop">;
 
 export async function startHeartbeatRuntime(input: {
   enabled: boolean;
@@ -78,11 +82,12 @@ export async function startHeartbeatRuntime(input: {
     const intervalMs = parseIntervalMs(input.heartbeatIntervalRaw);
     const activeHours = parseActiveHours(input.heartbeatActiveHoursRaw);
 
-    const sendMessage = async (messageInput: { prompt: string; conversationId: string; runId: string }): Promise<string> => {
+    const sendMessage = async (messageInput: HeartbeatRunExecutionContext): Promise<string> => {
       let result = "";
       for await (const item of heartbeatAgent.run({
         conversationId: messageInput.conversationId,
         text: messageInput.prompt,
+        abortSignal: messageInput.signal,
       })) {
         if (item.type === "delta") {
           result += item.delta;
@@ -196,12 +201,12 @@ export async function startCronRuntime(input: {
   const activeHours = parseActiveHours(input.heartbeatActiveHoursRaw);
 
   let cronSendMessage:
-    ((job: CronJob, prompt: string) => Promise<string | { text: string; conversationId?: string }>)
+    ((job: CronJob, prompt: string, context: CronRunExecutionContext) => Promise<string | { text: string; conversationId?: string }>)
     | undefined;
   if (input.createAgent) {
     try {
       const cronAgent = input.createAgent();
-      cronSendMessage = async (job, prompt: string): Promise<{ text: string; conversationId: string }> => {
+      cronSendMessage = async (job, prompt: string, context): Promise<{ text: string; conversationId: string }> => {
         let result = "";
         const conversationId = job.sessionTarget === "main"
           ? `cron-main:${job.id}`
@@ -209,6 +214,7 @@ export async function startCronRuntime(input: {
         for await (const item of cronAgent.run({
           conversationId,
           text: prompt,
+          abortSignal: context.signal,
         })) {
           if (item.type === "delta") {
             result += item.delta;
@@ -373,9 +379,9 @@ export async function startBrowserRelayRuntime(input: {
   stateDir: string;
   configuredToken?: string;
   logger: GatewayBackgroundLogger;
-}): Promise<void> {
+}): Promise<BrowserRelayRuntimeHandle | undefined> {
   if (!input.enabled) {
-    return;
+    return undefined;
   }
   const relayLogger = input.logger.child("browser-relay");
   try {
@@ -388,7 +394,9 @@ export async function startBrowserRelayRuntime(input: {
     const relay = new RelayServer(input.port, { token: credential.token }, relayLogger);
     await relay.start();
     input.logger.info("browser-relay", `enabled (port=${relay.port}, credential=${credential.source})`);
+    return relay;
   } catch (error) {
     input.logger.error("browser-relay", "Relay Error", error);
+    return undefined;
   }
 }

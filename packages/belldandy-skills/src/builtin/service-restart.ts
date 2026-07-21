@@ -19,10 +19,14 @@ import { isAbortError, readAbortReason, sleepWithAbort, throwIfAborted } from ".
 
 /** 广播函数接口，由 gateway 注入 */
 export type BroadcastFn = (msg: unknown) => void;
+export type RequestServiceRestartFn = (reason: string) => void;
 
 const COUNTDOWN_SECONDS = 3;
 
-export function createServiceRestartTool(broadcast?: BroadcastFn): Tool {
+export function createServiceRestartTool(
+  broadcast?: BroadcastFn,
+  requestRestart?: RequestServiceRestartFn,
+): Tool {
   return withToolContract({
     definition: {
       name: "service_restart",
@@ -88,8 +92,12 @@ export function createServiceRestartTool(broadcast?: BroadcastFn): Tool {
           payload: { status: "restarting", reason, countdown: 0 },
         });
 
-        // 延迟 300ms 让最后一帧广播发出
-        setTimeout(() => process.exit(100), 300);
+        if (requestRestart) {
+          requestRestart(reason);
+        } else {
+          // 独立使用时保留兼容 fallback；Gateway 装配必须注入统一 shutdown owner。
+          setTimeout(() => process.exit(100), 300);
+        }
 
         return {
           id: "",

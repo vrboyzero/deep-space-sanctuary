@@ -1,6 +1,6 @@
 # 记忆与 Token 变量配置建议方案
 
-更新时间：2026-03-17
+更新时间：2026-07-20
 
 ## 先说结论
 
@@ -30,6 +30,11 @@
 - `packages/belldandy-skills/src/builtin/memory.ts`
 - `packages/belldandy-skills/src/builtin/get-room-members.ts`
 - `packages/belldandy-core/src/memory-index-paths.ts`
+- `packages/belldandy-core/src/memory-background-job-scheduler.ts`
+- `packages/belldandy-core/src/bin/gateway-memory-background-runtime.ts`
+- `packages/belldandy-memory/src/durable-extraction-input.ts`
+- `packages/belldandy-memory/src/memory-model-privacy.ts`
+- `packages/belldandy-memory/src/private-summary-model-response.ts`
 - `packages/belldandy-protocol/src/token-usage-upload.ts`
 
 ## 关键实现结论
@@ -172,6 +177,18 @@ Gateway 初始化 MemoryManager 时直接把数据库写到 `stateDir/memory.sql
 - 本地单机使用时，默认关就好
 - 接 office 计费/统计时再开
 
+### 13. Dream、idle summary 与 durable extraction 共用后台治理
+
+这三类任务现在共用同一个 Gateway scheduler、run/token 窗口预算和 `private_summary` 隐私 owner：
+
+- scheduler 在模型调用前执行全局/分组并发、per-agent singleflight、优先级、队列和窗口预算 admission；被拒绝的请求不会先产生模型调用副作用
+- `BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS` 与 `BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS` 留空或设为非正数时，不增加对应窗口限制；token units 是保守估算，不是 Provider 账单或精确 tokenizer 结果
+- durable extraction 在 prompt 构造前按最近完整消息、单消息 UTF-8 bytes 和聚合 UTF-8 bytes 限界；关闭时只等待受控 deadline，取消后的迟到结果不会再提交
+- 三类模型请求都标记为 `private_summary`。本机 endpoint、受信远端 hostname 和未受信远端分别记录为 `local`、`trusted_remote`、`untrusted_remote`
+- `BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR=basic` 会对所有远端请求的副本处理常见邮箱与 `sk-*` token；本地 payload 不修改，且该模式不承诺完整识别 PII 或 secret
+- 成功和错误响应都使用统一 UTF-8 byte 上限；无效或超限 `Content-Length` 会在读取正文前失败关闭
+- `system.doctor` 只返回 job family、trust profile、是否离开本机、redactor 状态、请求/响应字节数和状态，不返回 prompt、响应正文、API key 或 endpoint URL
+
 ## 记忆变量逐项评估
 
 | 变量 | 实际作用 | 收益 | 成本 / 风险 | 结论 |
@@ -188,6 +205,15 @@ Gateway 初始化 MemoryManager 时直接把数据库写到 `stateDir/memory.sql
 | `BELLDANDY_MEMORY_SUMMARY_ENABLED` | 给长 chunk 生成摘要 | 搜索同 token 下更高信息密度 | 后台额外 LLM 调用 | 很值得开 |
 | `BELLDANDY_MEMORY_EVOLUTION_ENABLED` | 会话结束后提取长期记忆 | 长期积累价值高 | 每个合格会话额外 LLM 调用 | 看你是否真想做长期沉淀 |
 | `BELLDANDY_MEMORY_EVOLUTION_MIN_MESSAGES` | 触发最少消息数 | 控制触发频率 | 太低会写入噪声 | 建议 `6~8` |
+| `BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS` | 三类后台模型任务共享窗口的 run 上限 | 控制后台调用频率 | 留空/非正数表示不额外限制 | 先观测再按部署容量设置 |
+| `BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS` | run/token units 共用统计窗口 | 统一预算周期 | 太短会造成频繁抖动 | 默认 `3600000` |
+| `BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS` | 三类后台模型任务共享窗口的估算 token units 上限 | 提前阻断异常消耗 | 不是账单或精确 token | 留空表示不额外限制 |
+| `BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES` | 提取时保留最近完整消息数 | 限制 prompt 输入规模 | 太小会损失早期上下文 | 默认 `64` |
+| `BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES` | 单条提取消息 UTF-8 byte 上限 | 阻断单条超大输入 | 超限时保留尾部 | 默认 `16384` |
+| `BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES` | 提取聚合正文 UTF-8 byte 上限 | 给模型请求建立硬边界 | 超限时优先保留最近消息 | 默认 `49152` |
+| `BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS` | 关闭时等待提取任务结算的 deadline | 避免关服被忽略取消的调用阻塞 | 太短可能放弃等待中的结果 | 默认 `5000` |
+| `BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS` | 逗号分隔的受信远端 hostname 清单 | 区分远端信任观测 | 不接受 scheme、port、path 或 userinfo | 默认留空 |
+| `BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR` | 远端 `private_summary` 请求副本脱敏 | 降低常见邮箱/token 外发风险 | `basic` 不是完整 PII/secret 检测 | 默认 `off`，仅支持 `off/basic` |
 | `BELLDANDY_TASK_MEMORY_ENABLED` | 记录 task 级元数据 | 为任务复盘和候选沉淀打基础 | 数据量增加 | 很适合长期项目 |
 | `BELLDANDY_TASK_SUMMARY_ENABLED` | 额外 LLM 总结 task | 更强复盘质量 | 触发比直觉更频繁 | 不建议默认开 |
 | `BELLDANDY_TASK_SUMMARY_*` 阈值 | 控制 task summary 触发 | 可控成本 | 子 Agent / 失败任务仍可能强触发 | 只建议在“效果优先”方案使用 |
@@ -392,6 +418,28 @@ BELLDANDY_LOCAL_EMBEDDING_MODEL=fast-bge-small-en-v1.5
 中文内容可改用 Fastembed 2 内置的 `fast-bge-small-zh-v1.5`；不支持的模型名会在下载前返回可诊断错误。
 
 否则最稳妥的“最节省方案”仍然是直接关闭 Embedding。
+
+### 共享后台治理基线（叠加到 A/B/C）
+
+下面这组只建立输入、关闭和隐私边界，不替代三套记忆效果配置。run/token units 上限没有通用安全值，默认先留空并通过 Doctor 观测，再按部署容量收紧：
+
+```env
+BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS=
+BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS=3600000
+BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS=
+
+BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES=64
+BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES=16384
+BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES=49152
+BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS=5000
+
+# 只填写逗号分隔 hostname；不要填写 URL、端口、路径、凭据
+BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS=
+# 可选 off/basic；basic 仅处理常见邮箱和 sk-* token
+BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR=off
+```
+
+如果 endpoint 在 `localhost`、`127.0.0.1` 或 `::1`，Doctor 将其归类为本机且不运行 redactor。其他 endpoint 都会被视为离开本机；trusted hosts 只改变 `trusted_remote` / `untrusted_remote` 分类，不绕过已开启的远端 redactor。
 
 ## Token 管理变量逐项评估
 

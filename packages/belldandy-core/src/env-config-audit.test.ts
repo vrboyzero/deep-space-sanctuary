@@ -28,6 +28,24 @@ const MANUAL_ONLY_ENV_KEYS = [
   "TAILSCALE_EXTRA_ARGS",
 ].sort();
 
+const SETTINGS_EXEMPT_ENV_KEYS = [
+  ...MANUAL_ONLY_ENV_KEYS,
+  "BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS",
+  "BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS",
+  "BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS",
+  "BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS",
+  "BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES",
+  "BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES",
+  "BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES",
+  "BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR",
+  "BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS",
+  "BELLDANDY_FEISHU_HTTP_IDLE_TIMEOUT_MS",
+  "BELLDANDY_FEISHU_JSON_MAX_RESPONSE_BYTES",
+  "BELLDANDY_FEISHU_RESOURCE_MAX_RESPONSE_BYTES",
+  "BELLDANDY_DISCORD_REST_MAX_RESPONSE_BYTES",
+  "BELLDANDY_DISCORD_REST_TIMEOUT_MS",
+].sort();
+
 function readFile(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 }
@@ -81,11 +99,11 @@ describe("env config audit", () => {
     expect(missing).toEqual(MANUAL_ONLY_ENV_KEYS);
   });
 
-  it(".env.example variables are either exposed in settings or explicitly manual-only", () => {
+  it(".env.example variables are either exposed in settings or explicitly settings-exempt", () => {
     const envKeys = extractEnvExampleKeys();
     const settingsKeys = extractSettingsKeys();
     const missing = envKeys.filter((key) => !settingsKeys.includes(key));
-    expect(missing).toEqual(MANUAL_ONLY_ENV_KEYS);
+    expect(missing).toEqual(SETTINGS_EXEMPT_ENV_KEYS);
   });
 
   it("hot reload env keys stay both whitelist-managed and settings-exposed", () => {

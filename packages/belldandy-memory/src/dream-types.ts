@@ -18,6 +18,7 @@ import type {
   MemoryType,
   MemoryVisibility,
 } from "./types.js";
+import type { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 import type {
   TaskSearchFilter,
   TaskSource,
@@ -454,6 +455,7 @@ export interface DreamRuntimeModelOptions {
   maxTokens?: number;
   timeoutMs?: number;
   temperature?: number;
+  modelPrivacyRuntime?: MemoryModelPrivacyRuntime;
 }
 
 export interface DreamRuntimeLogger {
@@ -466,6 +468,7 @@ export interface DreamRunOptions {
   conversationId?: string;
   triggerMode?: DreamTriggerMode;
   reason?: string;
+  signal?: AbortSignal;
 }
 
 export interface DreamRunResult {

@@ -2,6 +2,10 @@ import OpenAI from "openai";
 import { OutboundRequestPolicy } from "@belldandy/protocol";
 import { raceWithAbort, throwIfAborted } from "../../abort-utils.js";
 import { createMultipartFileUpload } from "./media-file-stream.js";
+import {
+  createUnderstandingOpenAIFetch,
+  type UnderstandingOpenAIOutboundRequestPolicy,
+} from "./understand-openai-transport.js";
 
 export const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -47,11 +51,16 @@ export function createOpenAIClient(input: {
   apiKey: string;
   baseURL: string;
   timeoutMs: number;
+  outboundRequestPolicy?: UnderstandingOpenAIOutboundRequestPolicy;
 }): OpenAI {
   return new OpenAI({
     apiKey: input.apiKey,
     baseURL: input.baseURL,
     timeout: input.timeoutMs > 0 ? input.timeoutMs : MAX_SDK_TIMEOUT_MS,
+    fetch: createUnderstandingOpenAIFetch({
+      baseURL: input.baseURL,
+      outboundRequestPolicy: input.outboundRequestPolicy,
+    }),
   });
 }
 

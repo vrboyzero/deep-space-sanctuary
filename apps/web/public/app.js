@@ -45,6 +45,7 @@ import { createChatEventsFeature } from "./app/features/chat-events.js";
 import { createChatNetworkFeature } from "./app/features/chat-network.js";
 import { createChatUiFeature } from "./app/features/chat-ui.js";
 import { createCanvasContextFeature } from "./app/features/canvas-context.js";
+import { createPairingRequiredPromptRenderer } from "./app/features/pairing-required-prompt.js";
 import { buildDoctorChatSummary } from "./app/features/doctor-observability.js";
 import { createWebchatPerformanceObservability } from "./app/features/webchat-performance-observability.js";
 import { createWebchatLifecycleDiagnostics } from "./app/features/webchat-lifecycle-diagnostics.js";
@@ -64,6 +65,10 @@ import { createGoalsRuntimeFeature } from "./app/features/goals-runtime.js";
 import { createGoalsTrackingPanelFeature } from "./app/features/goals-tracking-panel.js";
 import { createBridgeRuntimeFeature } from "./app/features/bridge-runtime.js";
 import { createHeaderNavigationFeature } from "./app/features/header-navigation.js";
+import {
+  HEADER_NAVIGATION_COMMANDS,
+  createHeaderNavigationCommandOwner,
+} from "./app/features/header-navigation-commands.js";
 import { createMemoryDetailRenderFeature } from "./app/features/memory-detail-render.js";
 import { createMemoryDreamControlsFeature } from "./app/features/memory-dream-controls.js";
 import { createMemoryQueryFilterControlsFeature } from "./app/features/memory-query-filter-controls.js";
@@ -73,6 +78,7 @@ import { createMainViewNavigationFeature } from "./app/features/main-view-naviga
 import { createEmailThreadAdviceRetention } from "./app/features/email-thread-advice-retention.js";
 import { createMemoryRuntimeFeature } from "./app/features/memory-runtime.js";
 import { createMemoryViewerFeature } from "./app/features/memory-viewer.js";
+import { createMemoryViewerEmptyStateFeature } from "./app/features/memory-viewer-empty-state.js";
 import { createExperienceWorkbenchControlsFeature } from "./app/features/experience-workbench-controls.js";
 import { createExperienceWorkbenchFeature } from "./app/features/experience-workbench.js";
 import { createSessionNavigationFeature } from "./app/features/session-navigation.js";
@@ -98,6 +104,10 @@ import {
 } from "./app/features/session-auth-handoff.js";
 import { createServerConfigCache } from "./app/features/server-config-cache.js";
 import { createSetupGuidanceFeature } from "./app/features/setup-guidance.js";
+import {
+  createDefaultWebChatRuntimeAdapter,
+  createWebChatRuntimeContext,
+} from "./app/features/webchat-runtime-context.js";
 import { applyWebConfigLinks } from "./app/features/web-config-links.js";
 import { createWorkspaceFeature } from "./app/features/workspace.js";
 import { createWorkspaceRootsSaveFeature } from "./app/features/workspace-roots-save.js";
@@ -856,6 +866,8 @@ let attachmentsFeature = null;
 let agentRuntimeFeature = null;
 let voiceFeature = null;
 let headerNavigationFeature = null;
+let headerNavigationCommandOwner = null;
+let webChatRuntimeContext = null;
 let webConfigLinksFeature = null;
 const agentSessionCacheFeature = createAgentSessionCacheFeature();
 const emailThreadAdviceRetention = createEmailThreadAdviceRetention();
@@ -882,6 +894,8 @@ window.addEventListener("pagehide", () => {
   credentialSession.dispose();
   disposeSessionAuthHandoffs();
   headerNavigationFeature?.dispose();
+  headerNavigationCommandOwner?.dispose();
+  webChatRuntimeContext?.dispose();
   webConfigLinksFeature?.dispose();
   panelVisibilityFeature.dispose();
   governanceDetailModeRefreshFeature.dispose();
@@ -931,6 +945,7 @@ let goalsTrackingPanelFeature = null;
 let memoryDetailRenderFeature = null;
 let memoryRuntimeFeature = null;
 let memoryViewerFeature = null;
+let memoryViewerEmptyStateFeature = null;
 let experienceWorkbenchFeature = null;
 let emailInboundSessionBannerFeature = null;
 let sessionDigestFeature = null;
@@ -977,6 +992,8 @@ function registerWebchatLifecycleProvider(getFeature) {
   () => agentRuntimeFeature,
   () => voiceFeature,
   () => headerNavigationFeature,
+  () => headerNavigationCommandOwner,
+  () => webChatRuntimeContext,
   () => webConfigLinksFeature,
   () => appShellFeature,
   () => setupGuidanceFeature,
@@ -1072,6 +1089,29 @@ const switchMode = (mode) => {
   experienceWorkbenchFeature?.setViewActive?.(mode === "experience");
   return result;
 };
+webChatRuntimeContext = createWebChatRuntimeContext({
+  adapter: createDefaultWebChatRuntimeAdapter({
+    sendReq: (...args) => sendReq(...args),
+    isConnected: () => Boolean(ws && isReady),
+    switchMode: (mode) => switchMode(mode),
+    t: (...args) => localeController.t(...args),
+    showNotice: (...args) => showNotice(...args),
+    getCurrentAgentSelection: () => getCurrentAgentSelection(),
+  }),
+});
+headerNavigationCommandOwner = createHeaderNavigationCommandOwner();
+headerNavigationCommandOwner.register(
+  HEADER_NAVIGATION_COMMANDS.LOAD_GOALS,
+  () => loadGoals(false),
+);
+headerNavigationCommandOwner.register(
+  HEADER_NAVIGATION_COMMANDS.LOAD_BRIDGE,
+  () => loadBridgeSessions(false),
+);
+headerNavigationCommandOwner.register(
+  HEADER_NAVIGATION_COMMANDS.FOCUS_CHAT,
+  () => promptEl?.focus(),
+);
 const updateSidebarModeButtons = (...args) => appShellFeature.updateSidebarModeButtons(...args);
 headerNavigationFeature = createHeaderNavigationFeature({
   refs: {
@@ -1080,10 +1120,8 @@ headerNavigationFeature = createHeaderNavigationFeature({
     goBridgePageBtn,
     goChatPageBtn,
   },
-  switchMode,
-  loadGoals: (forceReload = false) => loadGoals(forceReload),
-  loadBridgeSessions: (forceReload = false) => loadBridgeSessions(forceReload),
-  focusPrompt: () => promptEl?.focus(),
+  runtimeContext: webChatRuntimeContext,
+  commandDispatcher: headerNavigationCommandOwner,
   buildMultiPageUrl: () => createSessionAuthHandoffUrl({
     currentUrl: window.location.href,
     authMode: authModeEl?.value || "",
@@ -1804,7 +1842,6 @@ goalsRuntimeFeature = createGoalsRuntimeFeature({
   loadGoals: (forceReload = false, preferredGoalId) => goalsOverviewFeature?.loadGoals(forceReload, preferredGoalId),
   showNotice,
   formatDateTime,
-  escapeHtml,
   onResumeGoal: (goalId, options) => resumeGoal(goalId, options),
   onPauseGoal: (goalId) => pauseGoal(goalId),
   onArchiveGoal: (goalId) => archiveGoal(goalId),
@@ -1818,6 +1855,13 @@ goalsRuntimeFeature = createGoalsRuntimeFeature({
   onLoadGoalReviewGovernanceData: (goal) => loadGoalReviewGovernanceData(goal),
   onLoadGoalTrackingData: (goal) => loadGoalTrackingData(goal),
   t: localeController.t,
+});
+
+memoryViewerEmptyStateFeature = createMemoryViewerEmptyStateFeature({
+  refs: {
+    memoryViewerListEl,
+    memoryViewerDetailEl,
+  },
 });
 
 memoryDetailRenderFeature = createMemoryDetailRenderFeature({
@@ -2412,68 +2456,14 @@ async function approvePairingFromWebchat(code) {
   };
 }
 
-function renderPairingRequiredPrompt(target, payload = {}) {
-  if (!target) return;
-  const code = typeof payload.code === "string" ? payload.code.trim().toUpperCase() : "";
-  const safeCode = escapeHtml(code);
-  const message = typeof payload.message === "string" && payload.message.trim()
-    ? payload.message.trim()
-    : localeController.t("settings.pairingPendingDefaultMessage", {}, "The current WebChat session still needs pairing approval.");
-  const safeMessage = escapeHtml(message);
-  const clientId = typeof payload.clientId === "string" ? payload.clientId.trim() : "";
-  const safeClientId = escapeHtml(clientId);
-  target.innerHTML = `
-    <div class="pairing-required-card" style="line-height: 1.6;">
-      <div>${safeMessage}</div>
-      <div style="margin-top: 8px;">${escapeHtml(localeController.t("runtime.pairingCodeLabel", {}, "Pairing code"))}：<b>${safeCode || "-"}</b></div>
-      <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-        <button type="button" class="btn pairing-approve-btn">${escapeHtml(localeController.t("settings.pairingApprove", {}, "Approve"))}</button>
-        <button type="button" class="btn pairing-open-settings-btn">${escapeHtml(localeController.t("settings.title", {}, "Settings"))}</button>
-        <span class="pairing-status-text" style="color: var(--text-secondary); font-size: 12px;"></span>
-      </div>
-      <div style="margin-top: 10px; color: var(--text-secondary); font-size: 12px;">
-        ${escapeHtml(localeController.t("runtime.pairingCliHint", {}, "If the inline approval button is unavailable, use the CLI fallback below and then resend your message here."))}
-        <code>bdd pairing approve ${safeCode || "&lt;CODE&gt;"}</code>
-      </div>
-      ${safeClientId ? `<div style="margin-top: 6px; color: var(--text-secondary); font-size: 12px;">clientId: <code>${safeClientId}</code></div>` : ""}
-    </div>
-  `;
-
-  const approveBtn = target.querySelector(".pairing-approve-btn");
-  const openSettingsBtn = target.querySelector(".pairing-open-settings-btn");
-  const statusEl = target.querySelector(".pairing-status-text");
-  if (!approveBtn || !statusEl) return;
-  openSettingsBtn?.addEventListener("click", () => {
-    void settingsRuntimeFeature?.openPairingPending?.();
-  });
-
-  approveBtn.addEventListener("click", async () => {
-    if (!code) {
-      statusEl.textContent = localeController.t("settings.pairingCodeMissing", {}, "Pairing code is required.");
-      return;
-    }
-    approveBtn.disabled = true;
-    if (openSettingsBtn) openSettingsBtn.disabled = true;
-    statusEl.textContent = localeController.t("settings.pairingProcessing", {}, "Processing...");
-    const approved = settingsRuntimeFeature?.approvePairingPending
-      ? await settingsRuntimeFeature.approvePairingPending(code, { showSuccessNotice: false })
-      : await approvePairingFromWebchat(code);
-    if (!approved.ok) {
-      statusEl.textContent = approved.message || localeController.t("settings.pairingApproveFailedFallback", {}, "Pairing approval failed.");
-      approveBtn.disabled = false;
-      if (openSettingsBtn) openSettingsBtn.disabled = false;
-      return;
-    }
-    statusEl.textContent = localeController.t("runtime.pairingApprovedResend", {}, "Pairing approved. You can resend your message now.");
-    approveBtn.textContent = localeController.t("runtime.pairingApprovedButton", {}, "Approved");
-    showNotice?.(
-      localeController.t("settings.pairingApprovedTitle", {}, "Pairing approved"),
-      localeController.t("settings.pairingApprovedMessage", { code }, "Pairing code {code} was approved. You can continue in the current WebChat session."),
-      "success",
-      3200,
-    );
-  }, { once: true });
-}
+const renderPairingRequiredPrompt = createPairingRequiredPromptRenderer({
+  t: (...args) => localeController.t(...args),
+  openPairingPending: () => settingsRuntimeFeature?.openPairingPending?.(),
+  approvePairing: (code) => settingsRuntimeFeature?.approvePairingPending
+    ? settingsRuntimeFeature.approvePairingPending(code, { showSuccessNotice: false })
+    : approvePairingFromWebchat(code),
+  showNotice: (...args) => showNotice?.(...args),
+});
 
 function buildConversationHistoryActionPrompt(actionId, conversationId) {
   switch (actionId) {
@@ -2925,7 +2915,6 @@ chatEventsFeature = createChatEventsFeature({
     handleComposerRunStopped(payload);
   },
   getStoppedMessageText: () => localeController.t("common.interrupted", {}, "Interrupted"),
-  escapeHtml,
   t: localeController.t,
 });
 
@@ -3832,13 +3821,11 @@ function renderMemoryDetail(item) {
 }
 
 function renderMemoryViewerListEmpty(message) {
-  if (!memoryViewerListEl) return;
-  memoryViewerListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+  return memoryViewerEmptyStateFeature?.renderListEmpty(message);
 }
 
 function renderMemoryViewerDetailEmpty(message) {
-  if (!memoryViewerDetailEl) return;
-  memoryViewerDetailEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+  return memoryViewerEmptyStateFeature?.renderDetailEmpty(message);
 }
 
 function summarizeSourcePath(sourcePath) {

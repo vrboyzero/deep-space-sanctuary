@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildGoalTrackingCapabilityPlanIndex,
@@ -9,6 +9,10 @@ import {
   getGoalTrackingCheckpointExplainabilityLines,
   getGoalTrackingNodeActionTargets,
 } from "./goals-tracking-panel.js";
+
+afterEach(() => {
+  document.body.replaceChildren();
+});
 
 describe("goal tracking linkage helpers", () => {
   it("extracts task id and artifact paths for node jump actions", () => {
@@ -110,5 +114,35 @@ describe("goal tracking linkage helpers", () => {
     });
 
     expect(document.getElementById("goalTrackingPanel")?.textContent || "").toContain("治理 freshness：当前治理队列存在待收口项");
+  });
+
+  it("renders top-level states as text without parsing HTML", () => {
+    const maliciousError = '<img src=x onerror="alert(1)">tracking failed';
+    document.body.innerHTML = '<div id="goalsDetail"><div id="goalTrackingPanel"></div></div>';
+    const panel = document.getElementById("goalTrackingPanel");
+    const feature = createGoalsTrackingPanelFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      escapeHtml(value) {
+        if (value === maliciousError) {
+          throw new Error("Tracking error placeholders must not require an HTML escaper");
+        }
+        return String(value ?? "");
+      },
+      formatDateTime: (value) => value || "",
+      getGoalCheckpointSlaBadge: () => "",
+    });
+
+    feature.renderGoalTrackingPanelLoading();
+    expect(panel.children).toHaveLength(1);
+    expect(panel.firstElementChild.className).toBe("memory-viewer-empty");
+    expect(panel.firstElementChild.textContent).toBe("正在读取 tasks.json / checkpoints.json …");
+
+    expect(() => feature.renderGoalTrackingPanelError(maliciousError)).not.toThrow();
+    expect(panel.children).toHaveLength(1);
+    expect(panel.firstElementChild.className).toBe("memory-viewer-empty");
+    expect(panel.firstElementChild.textContent).toBe(maliciousError);
+    expect(panel.querySelector("img, [onerror]")).toBeNull();
   });
 });

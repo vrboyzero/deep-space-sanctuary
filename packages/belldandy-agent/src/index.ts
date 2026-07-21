@@ -438,7 +438,20 @@ function sleep(ms: number): Promise<void> {
 
 // 钩子系统
 export * from "./hooks.js";
-export { createHookRunner, type HookRunner, type HookRunnerLogger, type HookRunnerOptions } from "./hook-runner.js";
+export {
+  HOOK_FAILURE_POLICIES,
+  createHookRunner,
+  type HookRunner,
+  type HookRunnerDiagnostics,
+  type HookRunnerLogger,
+  type HookRunnerOptions,
+} from "./hook-runner.js";
+export {
+  listHookFailurePolicies,
+  type HookExecutionMode,
+  type HookFailurePolicy,
+  type HookFailurePolicyDescriptor,
+} from "./hook-failure-policy.js";
 
 // 多模态预处理（视频上传等）
 export {

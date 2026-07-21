@@ -27,6 +27,31 @@ describe("locale controller lifecycle", () => {
     document.body.innerHTML = '<select id="locale"></select>';
   });
 
+  it("renders locale codes and labels as option data instead of HTML", () => {
+    const unsafeLocale = 'evil" onmouseover="alert(1)';
+    const unsafeLabel = '</option><option onfocus="alert(1)">Injected';
+    const controller = createLocaleController({
+      defaultLocale: "safe",
+      dictionaries: {
+        safe: {},
+        [unsafeLocale]: {},
+      },
+      localeMeta: {
+        safe: { label: "Safe" },
+        [unsafeLocale]: { label: unsafeLabel },
+      },
+    });
+    const select = document.getElementById("locale");
+
+    controller.bindSelect(select);
+
+    expect(select.options).toHaveLength(2);
+    expect(select.querySelector("[onmouseover], [onfocus]")).toBeNull();
+    expect(select.options[1].value).toBe(unsafeLocale);
+    expect(select.options[1].textContent).toBe(unsafeLabel);
+    controller.dispose();
+  });
+
   it("removes subscribers and bound select listeners on dispose", () => {
     const controller = createController();
     const select = document.getElementById("locale");

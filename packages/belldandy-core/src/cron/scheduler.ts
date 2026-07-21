@@ -13,7 +13,10 @@
 
 import type { CronGoalApprovalScanPayload, CronJob } from "./types.js";
 import { CronStore, computeNextRunForJob } from "./store.js";
-import type { BackgroundRunClaimCoordinator } from "../background-run-coordinator.js";
+import type {
+    BackgroundRunClaim,
+    BackgroundRunClaimCoordinator,
+} from "../background-run-coordinator.js";
 
 /** 调度器轮询间隔：30 秒 */
 const TICK_INTERVAL_MS = 30_000;
@@ -25,7 +28,11 @@ export interface CronSchedulerOptions {
     /** CronStore 实例 */
     store: CronStore;
     /** 发送消息到 Agent 并获取回复 */
-    sendMessage?: (job: CronJob, prompt: string) => Promise<string | { text: string; conversationId?: string }>;
+    sendMessage?: (
+        job: CronJob,
+        prompt: string,
+        context: CronRunExecutionContext,
+    ) => Promise<string | { text: string; conversationId?: string }>;
     /** 直接执行 goal approval scan */
     runGoalApprovalScan?: (payload: CronGoalApprovalScanPayload) => Promise<CronGoalApprovalScanResult>;
     /** 推送消息到用户渠道 */
@@ -42,6 +49,11 @@ export interface CronSchedulerOptions {
     log?: (message: string) => void;
     /** 运行态事件（用于统一 background continuation ledger） */
     onExecutionEvent?: (event: CronExecutionEvent) => void | Promise<void>;
+}
+
+export interface CronRunExecutionContext {
+    signal: AbortSignal;
+    generation: number;
 }
 
 export interface CronSchedulerHandle {
@@ -134,6 +146,8 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
     let lastTickAtMs: number | undefined;
     let tickInFlight = false;
     let drainPromise: Promise<void> | undefined;
+    let nextLocalGeneration = 0;
+    const intakeController = new AbortController();
     const activeJobIds = new Set<string>();
     const activeOperations = new Set<Promise<unknown>>();
 
@@ -151,8 +165,7 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
         return operation;
     };
 
-    // tick 与手动运行共享同一进程内 claim；跨进程锁和全局 shutdown 编排由后续 coordinator 切片处理。
-    const tryClaimRun = (jobId: string): { release: () => void } | { reason: string } => {
+    const getLocalClaimRejection = (jobId: string): { reason: string } | undefined => {
         if (stopped) {
             return { reason: "Cron scheduler is stopped." };
         }
@@ -162,28 +175,101 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
         if (activeRuns >= MAX_CONCURRENT_RUNS) {
             return { reason: "Cron scheduler has reached its concurrent run limit." };
         }
+        return undefined;
+    };
 
-        let releaseCoordinator: (() => void) | undefined;
-        if (runCoordinator) {
-            const coordinatorClaim = runCoordinator.tryClaim({ kind: "cron", key: jobId });
-            if ("reason" in coordinatorClaim) {
-                return { reason: coordinatorClaim.reason };
-            }
-            releaseCoordinator = coordinatorClaim.release;
-        }
-
+    const reserveLocalRun = (
+        jobId: string,
+        coordinatorClaim?: BackgroundRunClaim,
+    ): BackgroundRunClaim => {
         activeJobIds.add(jobId);
         activeRuns++;
         let released = false;
+        let completing = false;
+        const signal = coordinatorClaim?.signal ?? new AbortController().signal;
+        const finalizeRelease = () => {
+            if (released) return;
+            released = true;
+            activeJobIds.delete(jobId);
+            activeRuns = Math.max(0, activeRuns - 1);
+            coordinatorClaim?.release();
+        };
         return {
+            generation: coordinatorClaim?.generation ?? ++nextLocalGeneration,
+            signal,
+            complete: async <T>(commit: () => T | Promise<T>) => {
+                if (released || completing) {
+                    return { applied: false };
+                }
+                completing = true;
+                try {
+                    if (coordinatorClaim) {
+                        return await coordinatorClaim.complete(commit);
+                    }
+                    if (signal.aborted) {
+                        return { applied: false };
+                    }
+                    return { applied: true, value: await commit() };
+                } finally {
+                    finalizeRelease();
+                }
+            },
             release: () => {
-                if (released) return;
-                released = true;
-                activeJobIds.delete(jobId);
-                activeRuns = Math.max(0, activeRuns - 1);
-                releaseCoordinator?.();
+                if (completing) return;
+                finalizeRelease();
             },
         };
+    };
+
+    // tick 保留同步兼容入口；手动运行可通过 acquire 等待共享预算。
+    const tryClaimRun = (
+        jobId: string,
+    ): BackgroundRunClaim | { reason: string } => {
+        const localRejection = getLocalClaimRejection(jobId);
+        if (localRejection) return localRejection;
+
+        let coordinatorClaim: BackgroundRunClaim | undefined;
+        if (runCoordinator) {
+            const claim = runCoordinator.tryClaim({
+                kind: "cron",
+                key: jobId,
+                signal: intakeController.signal,
+            });
+            if ("reason" in claim) {
+                return { reason: claim.reason };
+            }
+            coordinatorClaim = claim;
+        }
+
+        return reserveLocalRun(jobId, coordinatorClaim);
+    };
+
+    const acquireRun = async (
+        jobId: string,
+        priority: "high" | "normal" = "high",
+    ): Promise<BackgroundRunClaim | { reason: string }> => {
+        if (!runCoordinator?.acquire) {
+            return tryClaimRun(jobId);
+        }
+        const localRejection = getLocalClaimRejection(jobId);
+        if (localRejection) return localRejection;
+        const coordinatorClaim = await runCoordinator.acquire({
+            kind: "cron",
+            key: jobId,
+            priority,
+            signal: intakeController.signal,
+        });
+        if ("reason" in coordinatorClaim) {
+            return stopped
+                ? { reason: "Cron scheduler is stopped." }
+                : coordinatorClaim;
+        }
+        const rejectionAfterWait = getLocalClaimRejection(jobId);
+        if (rejectionAfterWait) {
+            coordinatorClaim.release();
+            return rejectionAfterWait;
+        }
+        return reserveLocalRun(jobId, coordinatorClaim);
     };
 
     const markJobsSkipped = async (jobs: CronJob[], now: number, reason: string): Promise<boolean> => {
@@ -259,16 +345,30 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
         return currentMin >= startMin || currentMin < endMin;
     };
 
-    // 执行单个 job
-    const executeJob = async (job: CronJob, jobs: CronJob[]): Promise<{
-        runId: string;
+    // Agent/扫描可以在取消后迟到返回；所有终态副作用统一由 claim completion fence 提交。
+    const executeJob = async (
+        job: CronJob,
+        jobs: CronJob[],
+        claim: BackgroundRunClaim,
+        persistJobs: () => Promise<void>,
+    ): Promise<{
+        runId?: string;
         status: "ok" | "error" | "skipped";
         summary?: string;
         reason?: string;
       }> => {
         const startedAt = Date.now();
         const runId = `cron-run-${job.id}-${startedAt}`;
-        let completionEvent: Omit<Extract<CronExecutionEvent, { phase: "finished" }>, "nextRunAtMs"> | undefined;
+        const context: CronRunExecutionContext = {
+            signal: claim.signal,
+            generation: claim.generation,
+        };
+        let status: "ok" | "error" = "ok";
+        let summary: string | undefined;
+        let reason: string | undefined;
+        let notifyMessage: string | undefined;
+        let conversationId: string | undefined;
+
         log(`[cron] 执行任务 "${job.name}" (${job.id})`);
         await onExecutionEvent?.({
             phase: "started",
@@ -281,14 +381,11 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
         });
 
         try {
-            let summary = "";
-            let notifyMessage: string | undefined;
-            let conversationId: string | undefined;
             if (job.payload.kind === "systemEvent") {
                 if (!sendMessage) {
                     throw new Error("Cron systemEvent executor is not available.");
                 }
-                const response = normalizeSendMessageResult(await sendMessage(job, job.payload.text));
+                const response = normalizeSendMessageResult(await sendMessage(job, job.payload.text, context));
                 summary = response.text?.trim() || "systemEvent completed";
                 notifyMessage = response.text?.trim() || undefined;
                 conversationId = response.conversationId;
@@ -300,24 +397,57 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
                 summary = result.summary.trim();
                 notifyMessage = result.notifyMessage?.trim() || undefined;
             }
+        } catch (err) {
+            status = "error";
+            reason = err instanceof Error ? err.message : String(err);
+        }
 
-            job.state.lastRunAtMs = Date.now();
-            job.state.lastDurationMs = Date.now() - startedAt;
-            job.state.lastStatus = "ok";
-            job.state.lastError = undefined;
+        const completion = await claim.complete(async () => {
+            const finishedAt = Date.now();
+            job.state.lastRunAtMs = finishedAt;
+            job.state.lastDurationMs = finishedAt - startedAt;
+            job.state.lastStatus = status;
+            job.state.lastError = reason;
 
-            if (notifyMessage && deliverToUser && job.delivery.mode !== "none") {
-                try {
-                    await deliverToUser(`🕐 [Cron: ${job.name}] ${notifyMessage}`);
-                    log(`[cron] 任务 "${job.name}" 完成并已投递 (${job.state.lastDurationMs}ms) | ${summary}`);
-                } catch (deliverErr) {
-                    const msg = deliverErr instanceof Error ? deliverErr.message : String(deliverErr);
-                    log(`[cron] 任务 "${job.name}" 投递失败: ${msg}`);
+            if (status === "ok") {
+                if (notifyMessage && deliverToUser && job.delivery.mode !== "none") {
+                    try {
+                        await deliverToUser(`🕐 [Cron: ${job.name}] ${notifyMessage}`);
+                        log(`[cron] 任务 "${job.name}" 完成并已投递 (${job.state.lastDurationMs}ms) | ${summary ?? ""}`);
+                    } catch (deliverErr) {
+                        const message = deliverErr instanceof Error ? deliverErr.message : String(deliverErr);
+                        log(`[cron] 任务 "${job.name}" 投递失败: ${message}`);
+                    }
+                } else {
+                    log(`[cron] 任务 "${job.name}" 完成 (${job.state.lastDurationMs}ms) | ${summary ?? ""}`);
                 }
             } else {
-                log(`[cron] 任务 "${job.name}" 完成 (${job.state.lastDurationMs}ms) | ${summary}`);
+                log(`[cron] 任务 "${job.name}" 执行失败: ${reason}`);
+                if (deliverToUser && job.failureDestination?.mode === "user") {
+                    try {
+                        await deliverToUser(`⚠️ [Cron: ${job.name}] 执行失败：${reason}`);
+                    } catch (deliverErr) {
+                        const message = deliverErr instanceof Error ? deliverErr.message : String(deliverErr);
+                        log(`[cron] 任务 "${job.name}" 失败通知投递失败: ${message}`);
+                    }
+                }
             }
-            completionEvent = {
+
+            if (job.schedule.kind === "at") {
+                if (job.deleteAfterRun) {
+                    const index = jobs.indexOf(job);
+                    if (index !== -1) jobs.splice(index, 1);
+                    log(`[cron] 一次性任务 "${job.name}" 已删除`);
+                } else {
+                    job.enabled = false;
+                    job.state.nextRunAtMs = undefined;
+                    log(`[cron] 一次性任务 "${job.name}" 已禁用`);
+                }
+            } else {
+                job.state.nextRunAtMs = computeNextRunForJob(job, Date.now());
+            }
+
+            await onExecutionEvent?.({
                 phase: "finished",
                 runId,
                 jobId: job.id,
@@ -326,66 +456,23 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
                 sessionTarget: job.sessionTarget,
                 conversationId,
                 startedAt,
-                finishedAt: Date.now(),
-                status: "ok",
+                finishedAt,
+                status,
                 summary,
-            };
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            job.state.lastRunAtMs = Date.now();
-            job.state.lastDurationMs = Date.now() - startedAt;
-            job.state.lastStatus = "error";
-            job.state.lastError = message;
-            log(`[cron] 任务 "${job.name}" 执行失败: ${message}`);
-            completionEvent = {
-                phase: "finished",
-                runId,
-                jobId: job.id,
-                jobName: job.name,
-                payloadKind: job.payload.kind,
-                sessionTarget: job.sessionTarget,
-                startedAt,
-                finishedAt: Date.now(),
-                status: "error",
-                reason: message,
-            };
-            if (deliverToUser && job.failureDestination?.mode === "user") {
-                try {
-                    await deliverToUser(`⚠️ [Cron: ${job.name}] 执行失败：${message}`);
-                } catch (deliverErr) {
-                    const deliverMessage = deliverErr instanceof Error ? deliverErr.message : String(deliverErr);
-                    log(`[cron] 任务 "${job.name}" 失败通知投递失败: ${deliverMessage}`);
-                }
-            }
-        }
-
-        // 后处理：at 类型执行后处理
-        if (job.schedule.kind === "at") {
-            if (job.deleteAfterRun) {
-                // 从列表中移除
-                const idx = jobs.indexOf(job);
-                if (idx !== -1) jobs.splice(idx, 1);
-                log(`[cron] 一次性任务 "${job.name}" 已删除`);
-            } else {
-                job.enabled = false;
-                job.state.nextRunAtMs = undefined;
-                log(`[cron] 一次性任务 "${job.name}" 已禁用`);
-            }
-        } else {
-            job.state.nextRunAtMs = computeNextRunForJob(job, Date.now());
-        }
-        if (completionEvent) {
-            await onExecutionEvent?.({
-                ...completionEvent,
+                reason,
                 nextRunAtMs: job.state.nextRunAtMs,
             });
+            await persistJobs();
+            return { runId, status, summary, reason };
+        });
+
+        if (!completion.applied) {
+            return {
+                status: "skipped",
+                reason: "Cron run completion was discarded because its claim is no longer active.",
+            };
         }
-        return {
-            runId,
-            status: completionEvent?.status ?? "skipped",
-            summary: completionEvent?.summary,
-            reason: completionEvent?.reason,
-        };
+        return completion.value;
     };
 
     // 调度 tick
@@ -448,24 +535,23 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
             for (const job of dueJobs) {
                 if (stopped) break;
                 if (claimedRunCount >= availableRunSlots) break;
-                const claim = tryClaimRun(job.id);
+                const claim = await acquireRun(job.id, "normal");
                 if ("reason" in claim) {
                     continue;
                 }
                 claimedRunCount++;
                 try {
-                    await executeJob(job, jobs);
+                    await executeJob(job, jobs, claim, async () => {
+                        try {
+                            await store.saveJobs(jobs, baseJobs);
+                        } catch (err) {
+                            const message = err instanceof Error ? err.message : String(err);
+                            log(`[cron] 保存状态失败: ${message}`);
+                        }
+                    });
                 } finally {
                     claim.release();
                 }
-            }
-
-            // 持久化状态
-            try {
-                await store.saveJobs(jobs, baseJobs);
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                log(`[cron] 保存状态失败: ${msg}`);
             }
         } finally {
             tickInFlight = false;
@@ -487,6 +573,7 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
     const stop = () => {
         if (stopped) return;
         stopped = true;
+        intakeController.abort(new Error("Cron scheduler is stopping."));
         if (timer) {
             clearInterval(timer);
             timer = null;
@@ -516,37 +603,40 @@ export function startCronScheduler(options: CronSchedulerOptions): CronScheduler
                 lastTickAtMs,
             };
         },
-        runJobNow: async (jobId: string) => {
-            if (stopped) {
-                return { status: "skipped" as const, reason: "Cron scheduler is stopped." };
-            }
-            const normalizedJobId = String(jobId || "").trim();
-            if (!normalizedJobId) {
-                return { status: "skipped" as const, reason: "Cron job id is required." };
-            }
-            const jobs = await store.list();
-            if (stopped) {
-                return { status: "skipped" as const, reason: "Cron scheduler is stopped." };
-            }
-            const baseJobs = cloneCronJobSnapshot(jobs);
-            const job = jobs.find((item) => item.id === normalizedJobId);
-            if (!job || !job.enabled) {
-                return { status: "skipped" as const, reason: `Cron job ${normalizedJobId} is not available.` };
-            }
-            const claim = tryClaimRun(job.id);
-            if ("reason" in claim) {
-                return { status: "skipped" as const, reason: claim.reason };
-            }
-            // 先登记 operation，再进入可能同步重入 stopAndDrain() 的 started event 回调。
-            const operation = Promise.resolve().then(async () => {
+        runJobNow: (jobId: string) => {
+            // 整个公开调用都属于已接受 operation，包含 Store read 与 coordinator queue wait。
+            const operation = (async () => {
+                if (stopped) {
+                    return { status: "skipped" as const, reason: "Cron scheduler is stopped." };
+                }
+                const normalizedJobId = String(jobId || "").trim();
+                if (!normalizedJobId) {
+                    return { status: "skipped" as const, reason: "Cron job id is required." };
+                }
+                const jobs = await store.list();
+                if (stopped) {
+                    return { status: "skipped" as const, reason: "Cron scheduler is stopped." };
+                }
+                const baseJobs = cloneCronJobSnapshot(jobs);
+                const job = jobs.find((item) => item.id === normalizedJobId);
+                if (!job || !job.enabled) {
+                    return { status: "skipped" as const, reason: `Cron job ${normalizedJobId} is not available.` };
+                }
+                const claim = await acquireRun(job.id);
+                if ("reason" in claim) {
+                    return { status: "skipped" as const, reason: claim.reason };
+                }
                 try {
-                    const result = await executeJob(job, jobs);
-                    await store.saveJobs(jobs, baseJobs);
-                    return result;
+                    return await executeJob(
+                        job,
+                        jobs,
+                        claim,
+                        () => store.saveJobs(jobs, baseJobs),
+                    );
                 } finally {
                     claim.release();
                 }
-            });
+            })();
             return trackActiveOperation(operation);
         },
     };

@@ -396,6 +396,15 @@ test("config.update accepts advanced memory and camera helper env settings", asy
           BELLDANDY_MEMORY_DURABLE_EXTRACTION_SUCCESS_COOLDOWN_MS: "300000",
           BELLDANDY_MEMORY_DURABLE_EXTRACTION_FAILURE_BACKOFF_MS: "5000",
           BELLDANDY_MEMORY_DURABLE_EXTRACTION_FAILURE_BACKOFF_MAX_MS: "600000",
+          BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS: "20",
+          BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS: "3600000",
+          BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS: "200000",
+          BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES: "64",
+          BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES: "16384",
+          BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES: "49152",
+          BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS: "5000",
+          BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS: "models.example.com,summary.example.com",
+          BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR: "basic",
           BELLDANDY_TEAM_SHARED_MEMORY_ENABLED: "true",
           BELLDANDY_SHARED_REVIEW_CLAIM_TIMEOUT_MS: "5400000",
           BELLDANDY_TASK_MEMORY_ENABLED: "true",
@@ -450,6 +459,12 @@ test("config.update accepts advanced memory and camera helper env settings", asy
     expect(readRes.payload?.config?.BELLDANDY_TASK_SUMMARY_MODEL).toBe("moonshot-v1-32k");
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_DEEP_RETRIEVAL).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL).toBe("true");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS).toBe("20");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS).toBe("200000");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES).toBe("49152");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS).toBe("5000");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS).toBe("models.example.com,summary.example.com");
+    expect(readRes.payload?.config?.BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR).toBe("basic");
     expect(readRes.payload?.config?.BELLDANDY_EMBEDDING_PASSAGE_PREFIX).toBe("passage: ");
     expect(readRes.payload?.config?.BELLDANDY_CAMERA_NATIVE_HELPER_ENV_JSON).toBe('{"FOO":"bar"}');
     expect(readRes.payload?.config?.BELLDANDY_CAMERA_NATIVE_HELPER_FFMPEG_COMMAND).toBe("C:/ffmpeg/bin/ffmpeg.exe");
@@ -465,6 +480,15 @@ test("config.update accepts advanced memory and camera helper env settings", asy
     expect(envLocalContent).toContain('BELLDANDY_TASK_SUMMARY_API_KEY="task-summary-dedicated-key"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_NODE_ASSISTED_RETRIEVAL="true"');
     expect(envLocalContent).toContain('BELLDANDY_MEMORY_INDEXER_VERBOSE_WATCH="true"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS="20"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS="3600000"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS="200000"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES="64"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES="16384"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES="49152"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS="5000"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_PRIVATE_SUMMARY_TRUSTED_HOSTS="models.example.com,summary.example.com"');
+    expect(envLocalContent).toContain('BELLDANDY_MEMORY_PRIVATE_SUMMARY_REDACTOR="basic"');
     expect(envLocalContent).toContain('BELLDANDY_CAMERA_NATIVE_HELPER_ENV_JSON="{"FOO":"bar"}"');
     expect(envLocalContent).toContain('BELLDANDY_CAMERA_NATIVE_HELPER_FFMPEG_ARGS_JSON="["-hide_banner"]"');
   } finally {
@@ -1390,6 +1414,67 @@ test("config.update hot-reloads commander runtime governance defaults and auto r
     } else {
       delete process.env.BELLDANDY_COMMANDER_AUTO_REWORK_ENABLED;
     }
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(envDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("config.update persists workflow retry and batch hard caps", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const envDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-env-"));
+  await fs.promises.writeFile(path.join(envDir, ".env"), "", "utf-8");
+
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    envDir,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    const updates = {
+      BELLDANDY_WORKFLOW_MAX_RETRIES: "3",
+      BELLDANDY_WORKFLOW_MAX_BATCH_ITEMS: "250",
+      BELLDANDY_WORKFLOW_MAX_BATCH_QUEUED_BYTES: "2097152",
+      BELLDANDY_WORKFLOW_MAX_BATCH_OUTPUT_BYTES: "3145728",
+    };
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "config-update-workflow-caps",
+      method: "config.update",
+      params: { updates },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-update-workflow-caps"));
+    const updateRes = frames.find((f) => f.type === "res" && f.id === "config-update-workflow-caps");
+    expect(updateRes).toMatchObject({
+      ok: true,
+      payload: {
+        changedKeys: Object.keys(updates),
+        hotReloadApplied: false,
+        restartRequired: true,
+      },
+    });
+
+    ws.send(JSON.stringify({ type: "req", id: "config-read-workflow-caps", method: "config.read", params: {} }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "config-read-workflow-caps"));
+    const readRes = frames.find((f) => f.type === "res" && f.id === "config-read-workflow-caps");
+    expect(readRes.payload?.config).toMatchObject(updates);
+
+    const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
+    for (const [key, value] of Object.entries(updates)) {
+      expect(envLocalContent).toContain(`${key}="${value}"`);
+    }
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     await fs.promises.rm(envDir, { recursive: true, force: true }).catch(() => {});
   }

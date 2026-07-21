@@ -11,19 +11,28 @@
  */
 
 import { awaitWebAssetsReady } from "./app/bootstrap/web-assets.js";
+import { createCanvasBoardItemView } from "./app/features/canvas-board-item-view.js";
+import { createCanvasBoardListHeaderTitleView } from "./app/features/canvas-board-list-header-title-view.js";
+import { createCanvasNodeContentView, getCanvasNodeIcon } from "./app/features/canvas-node-content-view.js";
+import { createCanvasNodeEditDialogView } from "./app/features/canvas-node-edit-dialog-view.js";
+import { createCanvasResourcePickerDialogView } from "./app/features/canvas-resource-picker-dialog-view.js";
+import { createCanvasResourcePickerItemView } from "./app/features/canvas-resource-picker-item-view.js";
+import { createCanvasResourcePickerEmptyView } from "./app/features/canvas-resource-picker-empty-view.js";
 
 await awaitWebAssetsReady();
+
+const canvasBoardItemView = createCanvasBoardItemView({ ownerDocument: document });
+const canvasBoardListHeaderTitleView = createCanvasBoardListHeaderTitleView({ ownerDocument: document });
+const canvasNodeContentView = createCanvasNodeContentView({ ownerDocument: document });
+const canvasNodeEditDialogView = createCanvasNodeEditDialogView({ ownerDocument: document });
+const canvasResourcePickerDialogView = createCanvasResourcePickerDialogView({ ownerDocument: document });
+const canvasResourcePickerItemView = createCanvasResourcePickerItemView({ ownerDocument: document });
+const canvasResourcePickerEmptyView = createCanvasResourcePickerEmptyView({ ownerDocument: document });
 
 // ─── Helpers ─────────────────────────────────────────────────
 
 function cvId() {
   return Math.random().toString(36).slice(2, 10);
-}
-
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s ?? "";
-  return d.innerHTML;
 }
 
 function clamp(v, min, max) {
@@ -48,77 +57,11 @@ function t(key, params = {}, fallback = key) {
 
 // ─── Node Templates ──────────────────────────────────────────
 
-const NODE_ICONS = {
-  task: "\u2611", note: "\u270E", method: "\uD83D\uDCCB",
-  knowledge: "\uD83D\uDCA1", "agent-output": "\uD83E\uDD16",
-  screenshot: "\uD83D\uDDBC", session: "\uD83D\uDCAC", group: "\uD83D\uDCC1",
-};
-
 const DEFAULT_SIZE = {
   task: [220, 120], note: [240, 140], method: [220, 100],
   knowledge: [220, 120], "agent-output": [280, 160],
   screenshot: [320, 240], session: [200, 80], group: [400, 300],
 };
-
-function matchesGoalNode(node, activeGoalNodeId) {
-  const normalizedGoalNodeId = typeof activeGoalNodeId === "string" ? activeGoalNodeId.trim() : "";
-  if (!normalizedGoalNodeId || !node || typeof node !== "object") return false;
-  const d = node.data && typeof node.data === "object" ? node.data : {};
-  const candidates = [
-    node.id,
-    d.nodeId,
-    d.goalNodeId,
-    d.taskNodeId,
-    d.ref && typeof d.ref === "object" ? d.ref.id : "",
-  ];
-  return candidates.some((value) => typeof value === "string" && value.trim() === normalizedGoalNodeId);
-}
-
-function renderNodeHTML(node, options = {}) {
-  const d = node.data;
-  const icon = NODE_ICONS[node.type] || "\u25A0";
-  const statusCls = d.status ? ` node-status-${d.status}` : "";
-  const typeCls = `node-${node.type}`;
-  const isGoalActive = matchesGoalNode(node, options.activeGoalNodeId);
-  const activeCls = isGoalActive ? " goal-active" : "";
-  const reactRunningCls = Array.isArray(d.tags) && d.tags.includes("running") ? " react-running" : "";
-
-  let body = "";
-  if (!d.collapsed && d.content) {
-    const preview = d.content.length > 200 ? d.content.slice(0, 200) + "\u2026" : d.content;
-    body = `<div class="node-body">${esc(preview)}</div>`;
-  }
-
-  let tags = "";
-  if (d.tags && d.tags.length) {
-    tags = `<div class="node-tags">${d.tags.map(t => `<span class="node-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("")}</div>`;
-  }
-
-  let extra = "";
-  if (node.type === "screenshot" && d.imageUrl) {
-    extra = `<img class="node-screenshot-img" src="${esc(d.imageUrl)}" alt="screenshot"/>`;
-    body = "";
-  }
-
-  const statusDot = node.type === "task" ? `<span class="node-status-dot"></span>` : "";
-  const activeBadge = isGoalActive ? `<span class="node-active-badge" title="${esc(t("canvas.activeNodeTitle", {}, "Current activeNode"))}">ACTIVE</span>` : "";
-  const refBadge = d.ref ? `<span class="node-ref-badge" title="${esc(d.ref.type)}: ${esc(d.ref.id)}">\u{1F517}</span>` : "";
-
-  return `<div class="canvas-node ${typeCls}${statusCls}${activeCls}${reactRunningCls}" data-node-id="${node.id}" style="${d.color ? `border-left-color:${d.color}` : ""}">
-  <div class="node-header">
-    <span class="node-type-icon">${icon}</span>
-    ${statusDot}
-    <span class="node-title">${esc(d.title)}</span>
-    ${activeBadge}
-    ${refBadge}
-  </div>
-  ${extra}${body}${tags}
-  <div class="node-port node-port-top" data-port="top"></div>
-  <div class="node-port node-port-bottom" data-port="bottom"></div>
-  <div class="node-port node-port-left" data-port="left"></div>
-  <div class="node-port node-port-right" data-port="right"></div>
-</div>`;
-}
 
 // ─── BoardManager ────────────────────────────────────────────
 
@@ -400,7 +343,10 @@ class CanvasRenderer {
     body.style.position = "relative";
     body.style.width = node.width + "px";
     body.style.height = node.height + "px";
-    body.innerHTML = renderNodeHTML(node, { activeGoalNodeId: this.activeGoalNodeId });
+    canvasNodeContentView.render(body, node, {
+      activeGoalNodeId: this.activeGoalNodeId,
+      activeNodeTitle: t("canvas.activeNodeTitle", {}, "Current activeNode"),
+    });
 
     fo.appendChild(body);
     this.nodesLayer.appendChild(fo);
@@ -921,7 +867,7 @@ class CanvasApp {
     // Header
     const header = document.createElement("div");
     header.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;";
-    header.innerHTML = `<span style="font-size:16px;font-weight:600;color:var(--text-main);">${esc(t("canvas.boardListTitle", {}, "Canvas Workspace"))}</span>`;
+    canvasBoardListHeaderTitleView.render(header, t("canvas.boardListTitle", {}, "Canvas Workspace"));
     const headerBtns = document.createElement("div");
     headerBtns.style.cssText = "display:flex;gap:8px;";
 
@@ -960,8 +906,7 @@ class CanvasApp {
       for (const b of boards) {
         const item = document.createElement("div");
         item.className = "canvas-board-item";
-        item.innerHTML = `<div class="canvas-board-item-name">${esc(b.name.replace(".json", ""))}</div>
-          <div class="canvas-board-item-meta">ID: ${esc(b.id)}</div>`;
+        canvasBoardItemView.render(item, b);
         item.addEventListener("click", async () => {
           await this.openBoard(b.id);
           this._showCanvasView();
@@ -1076,7 +1021,8 @@ class CanvasApp {
       this._showResourcePicker(type);
       return;
     }
-    const title = prompt(t("canvas.nodeTitlePrompt", { icon: NODE_ICONS[type] || "", type }, `Enter ${NODE_ICONS[type] || ""} ${type} node title:`));
+    const icon = getCanvasNodeIcon(type, "");
+    const title = prompt(t("canvas.nodeTitlePrompt", { icon, type }, `Enter ${icon} ${type} node title:`));
     if (!title) return;
     const node = this.manager.addNode(type, title);
     if (node) {
@@ -1120,21 +1066,13 @@ class CanvasApp {
     };
     const refType = type === "knowledge" ? "memory" : type;
 
-    dialog.innerHTML = `<div class="canvas-picker-header">
-      <span>${esc(t("canvas.resourcePickerTitle", { typeLabel: typeLabels[type] || type }, `Choose ${typeLabels[type] || type} resource`))}</span>
-      <button class="canvas-picker-close">\u00D7</button>
-    </div>
-    <div class="canvas-picker-body"></div>
-    <div class="canvas-picker-footer">
-      <button class="canvas-picker-manual">${esc(t("canvas.manualInput", {}, "Manual Input"))}</button>
-    </div>`;
+    const { body, closeButton: closeBtn, manualButton: manualBtn } = canvasResourcePickerDialogView.render(dialog, {
+      title: t("canvas.resourcePickerTitle", { typeLabel: typeLabels[type] || type }, `Choose ${typeLabels[type] || type} resource`),
+      manualLabel: t("canvas.manualInput", {}, "Manual Input"),
+    });
 
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
-
-    const body = dialog.querySelector(".canvas-picker-body");
-    const closeBtn = dialog.querySelector(".canvas-picker-close");
-    const manualBtn = dialog.querySelector(".canvas-picker-manual");
 
     const close = () => overlay.remove();
     closeBtn.addEventListener("click", close);
@@ -1142,20 +1080,20 @@ class CanvasApp {
 
     manualBtn.addEventListener("click", () => {
       close();
-      const title = prompt(t("canvas.nodeTitlePrompt", { icon: NODE_ICONS[type] || "", type }, `Enter ${NODE_ICONS[type] || ""} ${type} node title:`));
+      const icon = getCanvasNodeIcon(type, "");
+      const title = prompt(t("canvas.nodeTitlePrompt", { icon, type }, `Enter ${icon} ${type} node title:`));
       if (!title) return;
       const node = this.manager.addNode(type, title);
       if (node) { this._rerender(); this._scheduleSave(); }
     });
 
     if (items.length === 0) {
-      body.innerHTML = `<div class="canvas-picker-empty">${esc(t("canvas.noAvailableResources", { typeLabel: typeLabels[type] || type }, `No available ${typeLabels[type] || type} resources`))}</div>`;
+      canvasResourcePickerEmptyView.render(body, t("canvas.noAvailableResources", { typeLabel: typeLabels[type] || type }, `No available ${typeLabels[type] || type} resources`));
     } else {
       for (const item of items) {
         const row = document.createElement("div");
         row.className = "canvas-picker-item";
-        row.innerHTML = `<div class="canvas-picker-item-name">${esc(item.name)}</div>
-          ${item.desc ? `<div class="canvas-picker-item-desc">${esc(item.desc)}</div>` : ""}`;
+        canvasResourcePickerItemView.render(row, item);
         row.addEventListener("click", () => {
           close();
           const node = this.manager.addNode(type, item.name, {
@@ -1225,27 +1163,22 @@ class CanvasApp {
     dialog.className = "canvas-picker-dialog";
 
     const d = node.data;
-    dialog.innerHTML = `<div class="canvas-picker-header">
-      <span>${esc(t("canvas.editNode", {}, "Edit Node"))}</span>
-      <button class="canvas-picker-close">\u00D7</button>
-    </div>
-    <div class="canvas-picker-body" style="padding:12px;">
-      <label style="display:block;margin-bottom:8px;color:var(--text-muted);font-size:12px;">${esc(t("canvas.titleLabel", {}, "Title"))}</label>
-      <input class="canvas-edit-title" value="${esc(d.title)}" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main);color:var(--text-main);margin-bottom:12px;box-sizing:border-box;"/>
-      <label style="display:block;margin-bottom:8px;color:var(--text-muted);font-size:12px;">${esc(t("canvas.contentLabel", {}, "Content"))}</label>
-      <textarea class="canvas-edit-content" rows="5" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main);color:var(--text-main);resize:vertical;box-sizing:border-box;">${esc(d.content || "")}</textarea>
-    </div>
-    <div class="canvas-picker-footer">
-      <button class="canvas-picker-save">${esc(t("canvas.save", {}, "Save"))}</button>
-    </div>`;
+    const {
+      closeButton: closeBtn,
+      saveButton: saveBtn,
+      titleInput,
+      contentInput,
+    } = canvasNodeEditDialogView.render(dialog, {
+      dialogTitle: t("canvas.editNode", {}, "Edit Node"),
+      titleLabel: t("canvas.titleLabel", {}, "Title"),
+      contentLabel: t("canvas.contentLabel", {}, "Content"),
+      saveLabel: t("canvas.save", {}, "Save"),
+      title: d.title,
+      content: d.content || "",
+    });
 
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
-
-    const closeBtn = dialog.querySelector(".canvas-picker-close");
-    const saveBtn = dialog.querySelector(".canvas-picker-save");
-    const titleInput = dialog.querySelector(".canvas-edit-title");
-    const contentInput = dialog.querySelector(".canvas-edit-content");
 
     const close = () => overlay.remove();
     closeBtn.addEventListener("click", close);

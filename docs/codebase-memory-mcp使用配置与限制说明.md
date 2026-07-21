@@ -100,6 +100,23 @@
 
 ### 3.1 Codex MCP 条目
 
+将以下配置写入用户级 Codex 配置文件 `C:\Users\admin\.codex\config.toml`。Windows 路径使用 TOML 单引号，避免反斜杠被解析为转义字符：
+
+```toml
+[mcp_servers.codebase-memory-mcp]
+enabled = true
+command = 'E:\tools\codebase-memory-mcp\v0.9.0\codebase-memory-mcp.exe'
+
+[mcp_servers.codebase-memory-mcp.env]
+CBM_CACHE_DIR = 'E:\cache\codebase-memory-mcp'
+CBM_ALLOWED_ROOT = 'E:\project\star-sanctuary'
+CBM_MEM_BUDGET_MB = '4096'
+CBM_WORKERS = '4'
+CBM_LOG_LEVEL = 'info'
+```
+
+保存配置后需要重新打开 Codex 会话，由 Codex 通过 stdio 按需启动该进程。不要直接覆盖配置文件中的其他已有条目；只新增或更新上述两个 TOML 表。
+
 查看当前条目：
 
 ```powershell

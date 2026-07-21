@@ -2959,6 +2959,10 @@ export class ConversationStore {
         await this.lifecycle.waitForPendingPersistence(id);
     }
 
+    async waitForAllPendingPersistence(): Promise<void> {
+        await this.lifecycle.waitForAllPendingPersistence();
+    }
+
     async getSessionTranscriptEvents(id: string): Promise<SessionTranscriptEvent[]> {
         return readSessionTranscriptFile(this.getSessionTranscriptFilePath(id));
     }

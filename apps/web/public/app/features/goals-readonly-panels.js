@@ -4,6 +4,54 @@ import {
   formatContinuationTargetLabel,
 } from "./continuation-targets.js";
 
+function renderReadonlyPanelEmptyState(panel, message) {
+  if (!panel) return;
+  const ownerDocument = panel.ownerDocument ?? document;
+  const empty = ownerDocument.createElement("div");
+  empty.className = "memory-viewer-empty";
+  empty.textContent = message;
+  panel.replaceChildren(empty);
+}
+
+function createReadonlyElement(ownerDocument, tagName, className = "", text) {
+  const element = ownerDocument.createElement(tagName);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = String(text ?? "");
+  return element;
+}
+
+function appendReadonlyMeta(ownerDocument, parent, values) {
+  const meta = createReadonlyElement(ownerDocument, "div", "memory-list-item-meta");
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value) !== "") {
+      meta.append(createReadonlyElement(ownerDocument, "span", "", value));
+    }
+  }
+  parent.append(meta);
+  return meta;
+}
+
+function appendReadonlySummaryItem(ownerDocument, parent, label, value) {
+  const item = createReadonlyElement(ownerDocument, "div", "goal-summary-item");
+  item.append(
+    createReadonlyElement(ownerDocument, "span", "goal-summary-label", label),
+    createReadonlyElement(ownerDocument, "strong", "goal-summary-value", value),
+  );
+  parent.append(item);
+  return item;
+}
+
+function appendReadonlySnippet(ownerDocument, parent, value) {
+  parent.append(createReadonlyElement(ownerDocument, "div", "memory-list-item-snippet", value));
+}
+
+function appendReadonlyTrackingItem(ownerDocument, parent, value) {
+  const item = createReadonlyElement(ownerDocument, "div", "goal-tracking-item");
+  appendReadonlySnippet(ownerDocument, item, value);
+  parent.append(item);
+  return item;
+}
+
 export function createGoalsReadonlyPanelsFeature({
   refs,
   escapeHtml,
@@ -15,8 +63,8 @@ export function createGoalsReadonlyPanelsFeature({
 }) {
   const { goalsDetailEl } = refs;
 
-  function renderGoalContinuationSection(continuationState) {
-    if (!continuationState || typeof continuationState !== "object") return "";
+  function appendGoalContinuationSection(ownerDocument, parent, continuationState) {
+    if (!continuationState || typeof continuationState !== "object") return;
     const checkpoints = continuationState.checkpoints && typeof continuationState.checkpoints === "object"
       ? continuationState.checkpoints
       : {};
@@ -36,16 +84,6 @@ export function createGoalsReadonlyPanelsFeature({
     const targetLabel = targetAction?.kind === "goalReplay"
       ? t("goals.detailReplayCheckpointButton", {}, "Replay Checkpoint")
       : targetText;
-    const targetMarkup = continuationState.recommendedTargetId && encodedTargetAction
-      ? `
-        <button
-          type="button"
-          class="button goal-inline-action-secondary goal-continuation-target-btn"
-          data-continuation-action="${escapeHtml(encodedTargetAction)}"
-          title="${escapeHtml(targetLabel)}"
-        >${escapeHtml(targetLabel)}</button>
-      `
-      : `<strong class="goal-summary-value">${escapeHtml(targetLabel || targetText)}</strong>`;
     const replayText = replay?.kind === "goal_checkpoint"
       ? `${replay.checkpointId || "-"} -> ${replay.nodeId || "-"}`
       : "";
@@ -53,46 +91,34 @@ export function createGoalsReadonlyPanelsFeature({
       ? replay.summary || replay.reason || ""
       : "";
 
-    return `
-      <div class="goal-summary-title">${escapeHtml(t("goals.detailContinuationTitle", {}, "Continuation State"))}</div>
-      <div class="goal-summary-grid">
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.detailContinuationMode", {}, "Resume Mode"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(continuationState.resumeMode || "-")}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.detailContinuationTarget", {}, "Recommended Target"))}</span>
-          ${targetMarkup}
-        </div>
-        ${replayText ? `
-          <div class="goal-summary-item">
-            <span class="goal-summary-label">${escapeHtml(t("goals.detailContinuationReplay", {}, "Replay Target"))}</span>
-            <strong class="goal-summary-value">${escapeHtml(replayText)}</strong>
-          </div>
-        ` : ""}
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.detailContinuationCheckpoints", {}, "Open Checkpoints"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(String(Number(checkpoints.openCount || 0)))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.detailContinuationBlockers", {}, "Blockers"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(String(Number(checkpoints.blockerCount || 0)))}</strong>
-        </div>
-      </div>
-      <div class="memory-list-item-snippet">${escapeHtml(continuationState.summary || "-")}</div>
-      <div class="memory-list-item-snippet">${escapeHtml(continuationState.nextAction || "-")}</div>
-      ${replayReason ? `<div class="memory-list-item-snippet">${escapeHtml(replayReason)}</div>` : ""}
-      ${progress.current ? `<div class="memory-list-item-meta"><span>${escapeHtml(t("goals.detailContinuationProgress", {}, "Current Progress"))}</span><span>${escapeHtml(progress.current)}</span></div>` : ""}
-      ${recent.length ? `
-        <div class="goal-tracking-list">
-          ${recent.map((item) => `
-            <div class="goal-tracking-item">
-              <div class="memory-list-item-snippet">${escapeHtml(item)}</div>
-            </div>
-          `).join("")}
-        </div>
-      ` : ""}
-    `;
+    parent.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", t("goals.detailContinuationTitle", {}, "Continuation State")));
+    const summaryGrid = createReadonlyElement(ownerDocument, "div", "goal-summary-grid");
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, t("goals.detailContinuationMode", {}, "Resume Mode"), continuationState.resumeMode || "-");
+    const targetItem = createReadonlyElement(ownerDocument, "div", "goal-summary-item");
+    targetItem.append(createReadonlyElement(ownerDocument, "span", "goal-summary-label", t("goals.detailContinuationTarget", {}, "Recommended Target")));
+    if (continuationState.recommendedTargetId && encodedTargetAction) {
+      const targetButton = createReadonlyElement(ownerDocument, "button", "button goal-inline-action-secondary goal-continuation-target-btn", targetLabel);
+      targetButton.type = "button";
+      targetButton.setAttribute("data-continuation-action", encodedTargetAction);
+      targetButton.title = targetLabel;
+      targetItem.append(targetButton);
+    } else {
+      targetItem.append(createReadonlyElement(ownerDocument, "strong", "goal-summary-value", targetLabel || targetText));
+    }
+    summaryGrid.append(targetItem);
+    if (replayText) appendReadonlySummaryItem(ownerDocument, summaryGrid, t("goals.detailContinuationReplay", {}, "Replay Target"), replayText);
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, t("goals.detailContinuationCheckpoints", {}, "Open Checkpoints"), String(Number(checkpoints.openCount || 0)));
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, t("goals.detailContinuationBlockers", {}, "Blockers"), String(Number(checkpoints.blockerCount || 0)));
+    parent.append(summaryGrid);
+    appendReadonlySnippet(ownerDocument, parent, continuationState.summary || "-");
+    appendReadonlySnippet(ownerDocument, parent, continuationState.nextAction || "-");
+    if (replayReason) appendReadonlySnippet(ownerDocument, parent, replayReason);
+    if (progress.current) appendReadonlyMeta(ownerDocument, parent, [t("goals.detailContinuationProgress", {}, "Current Progress"), progress.current]);
+    if (recent.length) {
+      const recentList = createReadonlyElement(ownerDocument, "div", "goal-tracking-list");
+      for (const item of recent) appendReadonlyTrackingItem(ownerDocument, recentList, item);
+      parent.append(recentList);
+    }
   }
 
   function deriveContinuationStateFromHandoff(goal, handoff) {
@@ -169,37 +195,37 @@ export function createGoalsReadonlyPanelsFeature({
     return [label, nodeId, title && title !== label ? title : "", detail].filter(Boolean).join(" | ");
   }
 
-  function renderHandoffBridgeGovernanceSection(handoff) {
+  function appendHandoffBridgeGovernanceSection(ownerDocument, parent, handoff) {
     const bridgeGovernance = handoff?.bridgeGovernance && typeof handoff.bridgeGovernance === "object"
       ? handoff.bridgeGovernance
       : null;
     const items = Array.isArray(bridgeGovernance?.items) ? bridgeGovernance.items : [];
-    if (!bridgeGovernance || !items.length) return "";
-    return `
-      <div class="goal-summary-title">Bridge 引用摘要</div>
-      <div class="memory-list-item-meta">
-        <span>Bridge 节点 ${escapeHtml(String(bridgeGovernance.bridgeNodeCount || 0))}</span>
-        <span>运行态丢失 ${escapeHtml(String(bridgeGovernance.runtimeLostCount || 0))}</span>
-        <span>孤儿清理 ${escapeHtml(String(bridgeGovernance.orphanedCount || 0))}</span>
-        <span>阻塞归因 ${escapeHtml(String(bridgeGovernance.blockedCount || 0))}</span>
-      </div>
-      <div class="goal-tracking-list">
-        ${items.map((item) => {
-          const summaryLines = Array.isArray(item?.summaryLines)
-            ? item.summaryLines.filter((line) => typeof line === "string" && line.trim())
-            : [];
-          return `
-            <div class="goal-tracking-item">
-              <div class="memory-list-item-snippet">${escapeHtml([item?.title || item?.nodeId || "bridge", item?.runtimeState ? `[${item.runtimeState}]` : "", item?.nodeId ? `node=${item.nodeId}` : ""].filter(Boolean).join(" | "))}</div>
-              ${summaryLines.map((line) => `<div class="memory-list-item-snippet">${escapeHtml(line)}</div>`).join("")}
-              ${item?.blockReason ? `<div class="memory-list-item-snippet">${escapeHtml(`阻塞归因: ${item.blockReason}`)}</div>` : ""}
-              ${item?.artifactPath ? `<div class="memory-list-item-meta"><span>Bridge 产物</span><span>${escapeHtml(item.artifactPath)}</span></div>` : ""}
-              ${item?.transcriptPath ? `<div class="memory-list-item-meta"><span>Bridge Transcript</span><span>${escapeHtml(item.transcriptPath)}</span></div>` : ""}
-            </div>
-          `;
-        }).join("")}
-      </div>
-    `;
+    if (!bridgeGovernance || !items.length) return;
+    parent.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "Bridge 引用摘要"));
+    appendReadonlyMeta(ownerDocument, parent, [
+      `Bridge 节点 ${String(bridgeGovernance.bridgeNodeCount || 0)}`,
+      `运行态丢失 ${String(bridgeGovernance.runtimeLostCount || 0)}`,
+      `孤儿清理 ${String(bridgeGovernance.orphanedCount || 0)}`,
+      `阻塞归因 ${String(bridgeGovernance.blockedCount || 0)}`,
+    ]);
+    const list = createReadonlyElement(ownerDocument, "div", "goal-tracking-list");
+    for (const item of items) {
+      const summaryLines = Array.isArray(item?.summaryLines)
+        ? item.summaryLines.filter((line) => typeof line === "string" && line.trim())
+        : [];
+      const itemElement = createReadonlyElement(ownerDocument, "div", "goal-tracking-item");
+      appendReadonlySnippet(ownerDocument, itemElement, [
+        item?.title || item?.nodeId || "bridge",
+        item?.runtimeState ? `[${item.runtimeState}]` : "",
+        item?.nodeId ? `node=${item.nodeId}` : "",
+      ].filter(Boolean).join(" | "));
+      for (const line of summaryLines) appendReadonlySnippet(ownerDocument, itemElement, line);
+      if (item?.blockReason) appendReadonlySnippet(ownerDocument, itemElement, `阻塞归因: ${item.blockReason}`);
+      if (item?.artifactPath) appendReadonlyMeta(ownerDocument, itemElement, ["Bridge 产物", item.artifactPath]);
+      if (item?.transcriptPath) appendReadonlyMeta(ownerDocument, itemElement, ["Bridge Transcript", item.transcriptPath]);
+      list.append(itemElement);
+    }
+    parent.append(list);
   }
 
   function formatTimelineEntry(entry) {
@@ -244,8 +270,7 @@ export function createGoalsReadonlyPanelsFeature({
 
   function renderGoalCanvasPanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalCanvasPanel");
-    if (!panel) return;
-    panel.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("goals.canvasPanelLoading", {}, "Loading board-ref.json ..."))}</div>`;
+    renderReadonlyPanelEmptyState(panel, t("goals.canvasPanelLoading", {}, "Loading board-ref.json ..."));
   }
 
   function renderGoalCanvasPanel(goal, payload) {
@@ -280,52 +305,48 @@ export function createGoalsReadonlyPanelsFeature({
       hint = t("goals.canvasHintReadError", {}, "Unable to read board-ref.json. If you use a custom path, confirm it has been added to the workspace roots.");
     }
 
-    panel.innerHTML = `
-      <div class="goal-summary-header">
-        <div>
-          <div class="goal-summary-title">${escapeHtml(t("goals.canvasPanelTitle", {}, "Canvas Link"))}</div>
-          <div class="goal-summary-text">${escapeHtml(hint)}</div>
-        </div>
-        <span class="${statusClass}">${escapeHtml(statusLabel)}</span>
-      </div>
-      <div class="goal-summary-grid">
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.canvasCurrentBoard", {}, "Current Board"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(effectiveBoardId || "-")}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.canvasSource", {}, "Source"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(source)}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.canvasRuntimeBoardRef", {}, "Runtime board-ref"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(runtimeBoardId || "-")}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.canvasRegistryBoardId", {}, "Registry boardId"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(registryBoardId || "-")}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.canvasLinkedAt", {}, "Linked At"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(formatDateTime(linkedAt))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">${escapeHtml(t("goals.canvasBoardRefPath", {}, "board-ref Path"))}</span>
-          <strong class="goal-summary-value">${escapeHtml(boardRefPath || "-")}</strong>
-        </div>
-      </div>
-      <div class="goal-detail-actions">
-        <button class="button" data-open-goal-board="${escapeHtml(effectiveBoardId)}" ${effectiveBoardId ? "" : "disabled"}>${escapeHtml(t("goals.canvasOpenLinkedBoard", {}, "Open Linked Canvas"))}</button>
-        <button class="button goal-inline-action-secondary" data-open-goal-board-list="${escapeHtml(goal.id)}">${escapeHtml(t("goals.canvasOpenBoardList", {}, "Open Canvas List"))}</button>
-        <button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(boardRefPath)}">${escapeHtml(t("goals.canvasOpenBoardRef", {}, "Open board-ref.json"))}</button>
-      </div>
-    `;
+    const ownerDocument = panel.ownerDocument ?? document;
+    const header = createReadonlyElement(ownerDocument, "div", "goal-summary-header");
+    const headerCopy = createReadonlyElement(ownerDocument, "div");
+    headerCopy.append(
+      createReadonlyElement(ownerDocument, "div", "goal-summary-title", t("goals.canvasPanelTitle", {}, "Canvas Link")),
+      createReadonlyElement(ownerDocument, "div", "goal-summary-text", hint),
+    );
+    header.append(headerCopy, createReadonlyElement(ownerDocument, "span", statusClass, statusLabel));
+
+    const summaryGrid = createReadonlyElement(ownerDocument, "div", "goal-summary-grid");
+    const summaryItems = [
+      [t("goals.canvasCurrentBoard", {}, "Current Board"), effectiveBoardId || "-"],
+      [t("goals.canvasSource", {}, "Source"), source],
+      [t("goals.canvasRuntimeBoardRef", {}, "Runtime board-ref"), runtimeBoardId || "-"],
+      [t("goals.canvasRegistryBoardId", {}, "Registry boardId"), registryBoardId || "-"],
+      [t("goals.canvasLinkedAt", {}, "Linked At"), formatDateTime(linkedAt)],
+      [t("goals.canvasBoardRefPath", {}, "board-ref Path"), boardRefPath || "-"],
+    ];
+    for (const [label, value] of summaryItems) {
+      const item = createReadonlyElement(ownerDocument, "div", "goal-summary-item");
+      item.append(
+        createReadonlyElement(ownerDocument, "span", "goal-summary-label", label),
+        createReadonlyElement(ownerDocument, "strong", "goal-summary-value", value),
+      );
+      summaryGrid.append(item);
+    }
+
+    const actions = createReadonlyElement(ownerDocument, "div", "goal-detail-actions");
+    const openLinkedBoard = createReadonlyElement(ownerDocument, "button", "button", t("goals.canvasOpenLinkedBoard", {}, "Open Linked Canvas"));
+    openLinkedBoard.setAttribute("data-open-goal-board", effectiveBoardId || "");
+    openLinkedBoard.disabled = !effectiveBoardId;
+    const openBoardList = createReadonlyElement(ownerDocument, "button", "button goal-inline-action-secondary", t("goals.canvasOpenBoardList", {}, "Open Canvas List"));
+    openBoardList.setAttribute("data-open-goal-board-list", goal.id ?? "");
+    const openBoardRef = createReadonlyElement(ownerDocument, "button", "button goal-inline-action-secondary", t("goals.canvasOpenBoardRef", {}, "Open board-ref.json"));
+    openBoardRef.setAttribute("data-open-source", boardRefPath || "");
+    actions.append(openLinkedBoard, openBoardList, openBoardRef);
+    panel.replaceChildren(header, summaryGrid, actions);
   }
 
   function renderGoalProgressPanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalProgressPanel");
-    if (!panel) return;
-    panel.innerHTML = '<div class="memory-viewer-empty">正在读取 progress.md …</div>';
+    renderReadonlyPanelEmptyState(panel, "正在读取 progress.md …");
   }
 
   function renderGoalProgressPanel(entries) {
@@ -333,49 +354,54 @@ export function createGoalsReadonlyPanelsFeature({
     if (!panel) return;
     const recentEntries = Array.isArray(entries) ? entries.slice().reverse().slice(0, 18) : [];
     if (!recentEntries.length) {
-      panel.innerHTML = '<div class="memory-viewer-empty">progress.md 中还没有时间线记录。</div>';
+      renderReadonlyPanelEmptyState(panel, "progress.md 中还没有时间线记录。");
       return;
     }
-
-    panel.innerHTML = `
-      <div class="goal-progress-timeline">
-        ${recentEntries.map((entry) => `
-          <div class="goal-progress-item">
-            <div class="goal-progress-item-head">
-              <span class="goal-tracking-item-title">${escapeHtml(entry.title || formatProgressEvent(entry.event) || "时间线")}</span>
-              <span class="memory-badge">${escapeHtml(formatProgressEvent(entry.event))}</span>
-            </div>
-            <div class="memory-list-item-meta">
-              <span>${escapeHtml(formatDateTime(entry.at))}</span>
-              ${entry.nodeId ? `<span>${escapeHtml(entry.nodeId)}</span>` : ""}
-              ${entry.status ? `<span>${escapeHtml(formatProgressStatus(entry.status))}</span>` : ""}
-              ${entry.checkpointId ? `<span>${escapeHtml(entry.checkpointId)}</span>` : ""}
-            </div>
-            ${entry.summary ? `<div class="memory-list-item-snippet">${escapeHtml(entry.summary)}</div>` : ""}
-            ${entry.note ? `<div class="memory-list-item-snippet">${escapeHtml(entry.note)}</div>` : ""}
-          </div>
-        `).join("")}
-      </div>
-    `;
+    const ownerDocument = panel.ownerDocument ?? document;
+    const timeline = createReadonlyElement(ownerDocument, "div", "goal-progress-timeline");
+    for (const entry of recentEntries) {
+      const item = createReadonlyElement(ownerDocument, "div", "goal-progress-item");
+      const head = createReadonlyElement(ownerDocument, "div", "goal-progress-item-head");
+      head.append(
+        createReadonlyElement(ownerDocument, "span", "goal-tracking-item-title", entry.title || formatProgressEvent(entry.event) || "时间线"),
+        createReadonlyElement(ownerDocument, "span", "memory-badge", formatProgressEvent(entry.event)),
+      );
+      item.append(head);
+      appendReadonlyMeta(ownerDocument, item, [
+        formatDateTime(entry.at),
+        entry.nodeId,
+        entry.status ? formatProgressStatus(entry.status) : "",
+        entry.checkpointId,
+      ]);
+      if (entry.summary) item.append(createReadonlyElement(ownerDocument, "div", "memory-list-item-snippet", entry.summary));
+      if (entry.note) item.append(createReadonlyElement(ownerDocument, "div", "memory-list-item-snippet", entry.note));
+      timeline.append(item);
+    }
+    panel.replaceChildren(timeline);
   }
 
   function renderGoalHandoffPanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalHandoffPanel");
-    if (!panel) return;
-    panel.innerHTML = '<div class="memory-viewer-empty">正在读取 goal handoff snapshot …</div>';
+    renderReadonlyPanelEmptyState(panel, "正在读取 goal handoff snapshot …");
+  }
+
+  function renderGoalHandoffPanelPlaceholder(panel, goal, message) {
+    const ownerDocument = panel.ownerDocument ?? document;
+    const empty = createReadonlyElement(ownerDocument, "div", "memory-viewer-empty", message);
+    const actions = createReadonlyElement(ownerDocument, "div", "goal-detail-actions");
+    const generate = createReadonlyElement(ownerDocument, "button", "button", "生成 handoff");
+    generate.setAttribute("data-goal-generate-handoff", goal.id ?? "");
+    const openSource = createReadonlyElement(ownerDocument, "button", "button goal-inline-action-secondary", "打开 handoff");
+    openSource.setAttribute("data-open-source", goal.handoffPath ?? "");
+    actions.append(generate, openSource);
+    panel.replaceChildren(empty, actions);
+    onBindHandoffPanelActions?.(goal);
   }
 
   function renderGoalHandoffPanelError(goal, message) {
     const panel = goalsDetailEl?.querySelector("#goalHandoffPanel");
     if (!panel) return;
-    panel.innerHTML = `
-      <div class="memory-viewer-empty">${escapeHtml(message)}</div>
-      <div class="goal-detail-actions">
-        <button class="button" data-goal-generate-handoff="${escapeHtml(goal.id)}">生成 handoff</button>
-        <button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(goal.handoffPath)}">打开 handoff</button>
-      </div>
-    `;
-    onBindHandoffPanelActions?.(goal);
+    renderGoalHandoffPanelPlaceholder(panel, goal, message);
   }
 
   function renderGoalHandoffPanel(goal, handoff, continuationState = null) {
@@ -406,109 +432,80 @@ export function createGoalsReadonlyPanelsFeature({
     );
 
     if (!handoff || !handoff.generatedAt) {
-      panel.innerHTML = `
-        <div class="memory-viewer-empty">当前还没有正式 handoff。可在节点切换、暂停前或需要交接时手动生成。</div>
-        <div class="goal-detail-actions">
-          <button class="button" data-goal-generate-handoff="${escapeHtml(goal.id)}">生成 handoff</button>
-          <button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(goal.handoffPath)}">打开 handoff</button>
-        </div>
-      `;
-      onBindHandoffPanelActions?.(goal);
+      renderGoalHandoffPanelPlaceholder(
+        panel,
+        goal,
+        "当前还没有正式 handoff。可在节点切换、暂停前或需要交接时手动生成。",
+      );
       return;
     }
 
-    panel.innerHTML = `
-      <div class="goal-summary-header">
-        <div>
-          <div class="goal-summary-title">交接摘要 / 恢复交接</div>
-          <div class="goal-summary-text">从 goal runtime 重建当前长期任务的恢复建议、阻塞点与最近交接摘要。</div>
-        </div>
-        <span class="memory-badge memory-badge-shared">当前快照</span>
-      </div>
-      <div class="goal-summary-grid">
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">生成时间</span>
-          <strong class="goal-summary-value">${escapeHtml(formatDateTime(handoff.generatedAt))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">恢复模式</span>
-          <strong class="goal-summary-value">${escapeHtml(handoff.resumeMode || "-")}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">建议节点</span>
-          <strong class="goal-summary-value">${escapeHtml(handoff.recommendedNodeId || handoff.resumeNode || "-")}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">待处理 Checkpoint</span>
-          <strong class="goal-summary-value">${escapeHtml(String(openCheckpointCount))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">阻塞项</span>
-          <strong class="goal-summary-value">${escapeHtml(String(blockers.length))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">上次运行</span>
-          <strong class="goal-summary-value">${escapeHtml(handoff.lastRunId || handoff.lastRun || "-")}</strong>
-        </div>
-      </div>
+    const ownerDocument = panel.ownerDocument ?? document;
+    const header = createReadonlyElement(ownerDocument, "div", "goal-summary-header");
+    const headerCopy = createReadonlyElement(ownerDocument, "div");
+    headerCopy.append(
+      createReadonlyElement(ownerDocument, "div", "goal-summary-title", "交接摘要 / 恢复交接"),
+      createReadonlyElement(ownerDocument, "div", "goal-summary-text", "从 goal runtime 重建当前长期任务的恢复建议、阻塞点与最近交接摘要。"),
+    );
+    header.append(headerCopy, createReadonlyElement(ownerDocument, "span", "memory-badge memory-badge-shared", "当前快照"));
 
-      <div class="goal-tracking-columns">
-        <div class="goal-tracking-column">
-          <div class="goal-summary-title">交接摘要</div>
-          <div class="memory-list-item-snippet">${escapeHtml(handoff.summary || "暂无摘要")}</div>
-          <div class="goal-summary-title">下一步建议</div>
-          <div class="memory-list-item-snippet">${escapeHtml(handoff.nextAction || "暂无建议")}</div>
-          <div class="goal-summary-title">跟踪快照</div>
-          <div class="memory-list-item-meta">
-            <span>节点 ${escapeHtml(String(handoff.tracking.totalNodes || "0"))}</span>
-            <span>完成 ${escapeHtml(String(handoff.tracking.completedNodes || "0"))}</span>
-            <span>进行中 ${escapeHtml(String(handoff.tracking.inProgressNodes || "0"))}</span>
-            <span>阻塞 ${escapeHtml(String(handoff.tracking.blockedNodes || "0"))}</span>
-            <span>Checkpoint ${escapeHtml(String(openCheckpointCount))}</span>
-          </div>
-          ${focusPlan ? `
-            <div class="goal-summary-title">当前关注能力</div>
-            <div class="memory-list-item-snippet">${escapeHtml(focusPlan)}</div>
-            ${focusSummary ? `<div class="memory-list-item-snippet">${escapeHtml(focusSummary)}</div>` : ""}
-          ` : ""}
-          ${renderHandoffBridgeGovernanceSection(handoff)}
-          ${renderGoalContinuationSection(effectiveContinuationState)}
-        </div>
-        <div class="goal-tracking-column">
-          <div class="goal-summary-title">阻塞 / 待处理</div>
-          ${blockers.length || openCheckpoints.length ? `
-            <div class="goal-tracking-list">
-              ${blockers.map((item) => `
-                <div class="goal-tracking-item">
-                  <div class="memory-list-item-snippet">${escapeHtml(item)}</div>
-                </div>
-              `).join("")}
-              ${openCheckpoints.map((item) => `
-                <div class="goal-tracking-item">
-                  <div class="memory-list-item-snippet">${escapeHtml(item)}</div>
-                </div>
-              `).join("")}
-            </div>
-          ` : '<div class="memory-viewer-empty">当前 handoff 中没有阻塞或待审批项。</div>'}
+    const summaryGrid = createReadonlyElement(ownerDocument, "div", "goal-summary-grid");
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, "生成时间", formatDateTime(handoff.generatedAt));
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, "恢复模式", handoff.resumeMode || "-");
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, "建议节点", handoff.recommendedNodeId || handoff.resumeNode || "-");
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, "待处理 Checkpoint", String(openCheckpointCount));
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, "阻塞项", String(blockers.length));
+    appendReadonlySummaryItem(ownerDocument, summaryGrid, "上次运行", handoff.lastRunId || handoff.lastRun || "-");
 
-          <div class="goal-summary-title">最近时间线</div>
-          ${recentTimeline.length ? `
-            <div class="goal-tracking-list">
-              ${recentTimeline.map((item) => `
-                <div class="goal-tracking-item">
-                  <div class="memory-list-item-snippet">${escapeHtml(item)}</div>
-                </div>
-              `).join("")}
-            </div>
-          ` : '<div class="memory-viewer-empty">handoff 中还没有最近时间线摘要。</div>'}
-        </div>
-      </div>
+    const columns = createReadonlyElement(ownerDocument, "div", "goal-tracking-columns");
+    const summaryColumn = createReadonlyElement(ownerDocument, "div", "goal-tracking-column");
+    summaryColumn.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "交接摘要"));
+    appendReadonlySnippet(ownerDocument, summaryColumn, handoff.summary || "暂无摘要");
+    summaryColumn.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "下一步建议"));
+    appendReadonlySnippet(ownerDocument, summaryColumn, handoff.nextAction || "暂无建议");
+    summaryColumn.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "跟踪快照"));
+    appendReadonlyMeta(ownerDocument, summaryColumn, [
+      `节点 ${String(handoff.tracking.totalNodes || "0")}`,
+      `完成 ${String(handoff.tracking.completedNodes || "0")}`,
+      `进行中 ${String(handoff.tracking.inProgressNodes || "0")}`,
+      `阻塞 ${String(handoff.tracking.blockedNodes || "0")}`,
+      `Checkpoint ${String(openCheckpointCount)}`,
+    ]);
+    if (focusPlan) {
+      summaryColumn.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "当前关注能力"));
+      appendReadonlySnippet(ownerDocument, summaryColumn, focusPlan);
+      if (focusSummary) appendReadonlySnippet(ownerDocument, summaryColumn, focusSummary);
+    }
+    appendHandoffBridgeGovernanceSection(ownerDocument, summaryColumn, handoff);
+    appendGoalContinuationSection(ownerDocument, summaryColumn, effectiveContinuationState);
 
-      <div class="goal-detail-actions">
-        <button class="button" data-goal-generate-handoff="${escapeHtml(goal.id)}">刷新交接摘要</button>
-        <button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(goal.handoffPath)}">打开 handoff.md</button>
-      </div>
-    `;
+    const detailColumn = createReadonlyElement(ownerDocument, "div", "goal-tracking-column");
+    detailColumn.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "阻塞 / 待处理"));
+    if (blockers.length || openCheckpoints.length) {
+      const blockerList = createReadonlyElement(ownerDocument, "div", "goal-tracking-list");
+      for (const item of blockers) appendReadonlyTrackingItem(ownerDocument, blockerList, item);
+      for (const item of openCheckpoints) appendReadonlyTrackingItem(ownerDocument, blockerList, item);
+      detailColumn.append(blockerList);
+    } else {
+      detailColumn.append(createReadonlyElement(ownerDocument, "div", "memory-viewer-empty", "当前 handoff 中没有阻塞或待审批项。"));
+    }
+    detailColumn.append(createReadonlyElement(ownerDocument, "div", "goal-summary-title", "最近时间线"));
+    if (recentTimeline.length) {
+      const timelineList = createReadonlyElement(ownerDocument, "div", "goal-tracking-list");
+      for (const item of recentTimeline) appendReadonlyTrackingItem(ownerDocument, timelineList, item);
+      detailColumn.append(timelineList);
+    } else {
+      detailColumn.append(createReadonlyElement(ownerDocument, "div", "memory-viewer-empty", "handoff 中还没有最近时间线摘要。"));
+    }
+    columns.append(summaryColumn, detailColumn);
+
+    const actions = createReadonlyElement(ownerDocument, "div", "goal-detail-actions");
+    const refresh = createReadonlyElement(ownerDocument, "button", "button", "刷新交接摘要");
+    refresh.setAttribute("data-goal-generate-handoff", goal.id ?? "");
+    const openSource = createReadonlyElement(ownerDocument, "button", "button goal-inline-action-secondary", "打开 handoff.md");
+    openSource.setAttribute("data-open-source", goal.handoffPath ?? "");
+    actions.append(refresh, openSource);
+    panel.replaceChildren(header, summaryGrid, columns, actions);
     onBindHandoffPanelActions?.(goal);
   }
 

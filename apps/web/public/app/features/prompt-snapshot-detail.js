@@ -5,22 +5,31 @@ function formatNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "0";
 }
 
-function renderDetailCard(label, value, escapeHtml) {
-  return `
-    <div class="memory-detail-card">
-      <span class="memory-detail-label">${escapeHtml(label)}</span>
-      <div class="memory-detail-text">${escapeHtml(value || "-")}</div>
-    </div>
-  `;
+function text(value) {
+  return String(value ?? "");
 }
 
-function renderExplainabilityBlock(lines, escapeHtml) {
-  if (!Array.isArray(lines) || lines.length === 0) return "";
-  return `
-    <div class="tool-settings-policy-note">
-      ${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}
-    </div>
-  `;
+function createElement(ownerDocument, tagName, className = "", value) {
+  const element = ownerDocument.createElement(tagName);
+  if (className) element.className = className;
+  if (value !== undefined) element.textContent = text(value);
+  return element;
+}
+
+function createDetailCard(ownerDocument, label, value) {
+  const card = createElement(ownerDocument, "div", "memory-detail-card");
+  card.append(
+    createElement(ownerDocument, "span", "memory-detail-label", label),
+    createElement(ownerDocument, "div", "memory-detail-text", value || "-"),
+  );
+  return card;
+}
+
+function createExplainabilityBlock(ownerDocument, lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+  const block = createElement(ownerDocument, "div", "tool-settings-policy-note");
+  block.append(...lines.map((line) => createElement(ownerDocument, "div", "", line)));
+  return block;
 }
 
 function extractMessagePreview(message) {
@@ -311,32 +320,32 @@ function collectIdentityAuthoritySummaries(snapshotArtifact) {
   return summaries;
 }
 
-function renderSummaryListBlock(title, items, escapeHtml) {
-  if (!Array.isArray(items) || items.length === 0) return "";
-  return `
-    <div class="memory-detail-text"><strong>${escapeHtml(title)}</strong></div>
-    <div class="tool-settings-policy-note">
-      ${items.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
-    </div>
-  `;
+function createSummaryListBlock(ownerDocument, title, items) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const titleLine = createElement(ownerDocument, "div", "memory-detail-text");
+  titleLine.append(createElement(ownerDocument, "strong", "", title));
+  const list = createElement(ownerDocument, "div", "tool-settings-policy-note");
+  list.append(...items.map((item) => createElement(ownerDocument, "div", "", item)));
+  return [titleLine, list];
 }
 
-export function renderPromptSnapshotDetail(view, helpers) {
-  const {
-    escapeHtml,
-    formatDateTime,
-    t = (_key, _params, fallback) => fallback ?? "",
-    sessionId = "",
-  } = helpers;
+export function createPromptSnapshotDetailView({
+  ownerDocument,
+  formatDateTime,
+  t = (_key, _params, fallback) => fallback ?? "",
+}) {
+  return {
+    render(view, sessionId = "") {
   const snapshot = view?.snapshot;
   if (!snapshot || typeof snapshot !== "object") {
-    if (!sessionId) return "";
-    return `
-      <section class="memory-detail-card" data-subtask-prompt-snapshot-session="${escapeHtml(sessionId)}">
-        <span class="memory-detail-label">${escapeHtml(t("subtasks.detailPromptSnapshot", {}, "Prompt Snapshot"))}</span>
-        <div class="memory-detail-text">${escapeHtml(t("subtasks.detailPromptSnapshotMissing", {}, "This subtask session has no persisted prompt snapshot yet."))}</div>
-      </section>
-    `;
+    if (!sessionId) return null;
+    const missing = createElement(ownerDocument, "section", "memory-detail-card");
+    missing.setAttribute("data-subtask-prompt-snapshot-session", text(sessionId));
+    missing.append(
+      createElement(ownerDocument, "span", "memory-detail-label", t("subtasks.detailPromptSnapshot", {}, "Prompt Snapshot")),
+      createElement(ownerDocument, "div", "memory-detail-text", t("subtasks.detailPromptSnapshotMissing", {}, "This subtask session has no persisted prompt snapshot yet.")),
+    );
+    return missing;
   }
 
   const summary = snapshot.summary && typeof snapshot.summary === "object" ? snapshot.summary : {};
@@ -357,90 +366,71 @@ export function renderPromptSnapshotDetail(view, helpers) {
     role: typeof message?.role === "string" ? message.role : "unknown",
     preview: extractMessagePreview(message),
   }));
+  const section = createElement(ownerDocument, "section", "memory-detail-card");
+  section.setAttribute("data-subtask-prompt-snapshot-session", text(manifest.conversationId || sessionId || ""));
+  section.append(createElement(ownerDocument, "span", "memory-detail-label", t("subtasks.detailPromptSnapshot", {}, "Prompt Snapshot")));
 
-  return `
-    <section class="memory-detail-card" data-subtask-prompt-snapshot-session="${escapeHtml(manifest.conversationId || sessionId || "")}">
-      <span class="memory-detail-label">${escapeHtml(t("subtasks.detailPromptSnapshot", {}, "Prompt Snapshot"))}</span>
-      <div class="memory-detail-grid">
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotConversation", {}, "Snapshot Conversation"), manifest.conversationId || sessionId || "-", escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotRun", {}, "Snapshot Run"), manifest.runId || "-", escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotAgent", {}, "Snapshot Agent"), manifest.agentId || "-", escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotCreatedAt", {}, "Snapshot Created At"), formatDateTime(manifest.createdAt), escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotMessages", {}, "Messages"), formatNumber(summary.messageCount), escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotDeltas", {}, "Prompt Deltas"), formatNumber(summary.deltaCount), escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotBlocks", {}, "Provider Blocks"), formatNumber(summary.providerNativeSystemBlockCount), escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotTokens", {}, "Estimated Tokens"), formatNumber(summary.tokenBreakdown?.systemPromptEstimatedTokens), escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotPrependChars", {}, "Prepend Context Chars"), formatNumber(summary.contextInjection?.prependContextChars), escapeHtml)}
-        ${renderDetailCard(t("subtasks.detailPromptSnapshotInjectionBlocks", {}, "Context Injection Blocks"), formatNumber(summary.contextInjection?.totalBlockCount), escapeHtml)}
-        ${renderDetailCard(
-          t("subtasks.detailPromptSnapshotAutoRecall", {}, "Auto Recall"),
-          `${formatNumber(summary.contextInjection?.autoRecall?.keptCount)}/${formatNumber(summary.contextInjection?.autoRecall?.candidateCount)}`,
-          escapeHtml,
-        )}
-      </div>
-      ${residentStateBindingLines.length ? `
-        <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailPromptSnapshotStateBinding", {}, "State Binding"))}</strong></div>
-        ${renderExplainabilityBlock(residentStateBindingLines, escapeHtml)}
-      ` : ""}
-      ${launchExplainabilityLines.length ? `
-        <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailPromptSnapshotExplainability", {}, "Launch Explainability"))}</strong></div>
-        ${renderExplainabilityBlock(launchExplainabilityLines, escapeHtml)}
-      ` : ""}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotContextInjectionTags", {}, "Context Injection Block Tags"),
-        contextInjectionSummaries.blockTags,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotAutoRecallSummary", {}, "Auto Recall Summary"),
-        contextInjectionSummaries.autoRecall,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotActiveSections", {}, "Active Prompt Sections"),
-        activeSectionIds,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotActiveDeltas", {}, "Active Prompt Deltas"),
-        deltaSummaries,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotProviderBlocks", {}, "Provider Block Routing"),
-        providerBlockSummaries,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotTeamCoordination", {}, "Team Coordination"),
-        teamCoordinationSummaries,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotFollowUpStrategy", {}, "Follow-Up Strategy"),
-        followUpStrategySummaries,
-        escapeHtml,
-      )}
-      ${renderSummaryListBlock(
-        t("subtasks.detailPromptSnapshotIdentityAuthority", {}, "Identity Authority"),
-        identityAuthoritySummaries,
-        escapeHtml,
-      )}
-      <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailPromptSnapshotSystemPrompt", {}, "System Prompt"))}</strong></div>
-      <pre class="memory-detail-pre">${escapeHtml(typeof artifact.systemPrompt === "string" ? artifact.systemPrompt : "-")}</pre>
-      ${messagePreviews.length ? `
-        <div class="memory-detail-text"><strong>${escapeHtml(t("subtasks.detailPromptSnapshotMessagesPreview", {}, "Message Preview"))}</strong></div>
-        <div class="subtask-notification-list">
-          ${messagePreviews.map((item) => `
-            <div class="subtask-notification-item">
-              <div class="subtask-notification-head">
-                <span class="memory-badge">${escapeHtml(`#${item.index + 1} ${item.role}`)}</span>
-              </div>
-              <div class="memory-detail-text">${escapeHtml(item.preview)}</div>
-            </div>
-          `).join("")}
-        </div>
-      ` : ""}
-    </section>
-  `;
+  const grid = createElement(ownerDocument, "div", "memory-detail-grid");
+  grid.append(
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotConversation", {}, "Snapshot Conversation"), manifest.conversationId || sessionId || "-"),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotRun", {}, "Snapshot Run"), manifest.runId || "-"),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotAgent", {}, "Snapshot Agent"), manifest.agentId || "-"),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotCreatedAt", {}, "Snapshot Created At"), formatDateTime(manifest.createdAt)),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotMessages", {}, "Messages"), formatNumber(summary.messageCount)),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotDeltas", {}, "Prompt Deltas"), formatNumber(summary.deltaCount)),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotBlocks", {}, "Provider Blocks"), formatNumber(summary.providerNativeSystemBlockCount)),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotTokens", {}, "Estimated Tokens"), formatNumber(summary.tokenBreakdown?.systemPromptEstimatedTokens)),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotPrependChars", {}, "Prepend Context Chars"), formatNumber(summary.contextInjection?.prependContextChars)),
+    createDetailCard(ownerDocument, t("subtasks.detailPromptSnapshotInjectionBlocks", {}, "Context Injection Blocks"), formatNumber(summary.contextInjection?.totalBlockCount)),
+    createDetailCard(
+      ownerDocument,
+      t("subtasks.detailPromptSnapshotAutoRecall", {}, "Auto Recall"),
+      `${formatNumber(summary.contextInjection?.autoRecall?.keptCount)}/${formatNumber(summary.contextInjection?.autoRecall?.candidateCount)}`,
+    ),
+  );
+  section.append(grid);
+
+  const appendTitledExplainability = (title, lines) => {
+    const block = createExplainabilityBlock(ownerDocument, lines);
+    if (!block) return;
+    const titleLine = createElement(ownerDocument, "div", "memory-detail-text");
+    titleLine.append(createElement(ownerDocument, "strong", "", title));
+    section.append(titleLine, block);
+  };
+  appendTitledExplainability(t("subtasks.detailPromptSnapshotStateBinding", {}, "State Binding"), residentStateBindingLines);
+  appendTitledExplainability(t("subtasks.detailPromptSnapshotExplainability", {}, "Launch Explainability"), launchExplainabilityLines);
+
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotContextInjectionTags", {}, "Context Injection Block Tags"), contextInjectionSummaries.blockTags));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotAutoRecallSummary", {}, "Auto Recall Summary"), contextInjectionSummaries.autoRecall));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotActiveSections", {}, "Active Prompt Sections"), activeSectionIds));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotActiveDeltas", {}, "Active Prompt Deltas"), deltaSummaries));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotProviderBlocks", {}, "Provider Block Routing"), providerBlockSummaries));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotTeamCoordination", {}, "Team Coordination"), teamCoordinationSummaries));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotFollowUpStrategy", {}, "Follow-Up Strategy"), followUpStrategySummaries));
+  section.append(...createSummaryListBlock(ownerDocument, t("subtasks.detailPromptSnapshotIdentityAuthority", {}, "Identity Authority"), identityAuthoritySummaries));
+
+  const systemPromptTitle = createElement(ownerDocument, "div", "memory-detail-text");
+  systemPromptTitle.append(createElement(ownerDocument, "strong", "", t("subtasks.detailPromptSnapshotSystemPrompt", {}, "System Prompt")));
+  section.append(
+    systemPromptTitle,
+    createElement(ownerDocument, "pre", "memory-detail-pre", typeof artifact.systemPrompt === "string" ? artifact.systemPrompt : "-"),
+  );
+
+  if (messagePreviews.length) {
+    const messageTitle = createElement(ownerDocument, "div", "memory-detail-text");
+    messageTitle.append(createElement(ownerDocument, "strong", "", t("subtasks.detailPromptSnapshotMessagesPreview", {}, "Message Preview")));
+    const messagesList = createElement(ownerDocument, "div", "subtask-notification-list");
+    messagesList.append(...messagePreviews.map((message) => {
+      const notification = createElement(ownerDocument, "div", "subtask-notification-item");
+      const head = createElement(ownerDocument, "div", "subtask-notification-head");
+      head.append(createElement(ownerDocument, "span", "memory-badge", `#${message.index + 1} ${message.role}`));
+      notification.append(head, createElement(ownerDocument, "div", "memory-detail-text", message.preview));
+      return notification;
+    }));
+    section.append(messageTitle, messagesList);
+  }
+
+  return section;
+    },
+  };
 }

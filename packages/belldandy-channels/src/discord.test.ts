@@ -9,6 +9,7 @@ const discordMock = vi.hoisted(() => {
 
   const loginControllers: LoginController[] = [];
   const clientInstances: any[] = [];
+  const clientOptions: any[] = [];
 
   class FakeDiscordClient {
     public destroyed = false;
@@ -20,8 +21,9 @@ const discordMock = vi.hoisted(() => {
     private readonly handlers = new Map<string, Set<(...args: any[]) => void>>();
     private readonly onceHandlers = new Map<string, Set<(...args: any[]) => void>>();
 
-    constructor() {
+    constructor(options?: unknown) {
       clientInstances.push(this);
+      clientOptions.push(options);
     }
 
     on(event: string, handler: (...args: any[]) => void): this {
@@ -82,6 +84,7 @@ const discordMock = vi.hoisted(() => {
   return {
     FakeDiscordClient,
     clientInstances,
+    clientOptions,
     loginControllers,
   };
 });
@@ -104,6 +107,7 @@ describe("DiscordChannel", () => {
   beforeEach(() => {
     discordMock.loginControllers.length = 0;
     discordMock.clientInstances.length = 0;
+    discordMock.clientOptions.length = 0;
     vi.unstubAllGlobals();
   });
 
@@ -132,6 +136,33 @@ describe("DiscordChannel", () => {
     }));
     return { policy: { request }, request };
   }
+
+  it("injects the bounded REST transport without changing websocket options", async () => {
+    const restPolicy = createMediaRequestPolicy(JSON.stringify({ url: "wss://gateway.discord.gg" }));
+    const channel = new DiscordChannel({
+      botToken: "discord-token",
+      agent: { run: vi.fn() } as any,
+      restOutboundRequestPolicy: restPolicy.policy,
+      restMaxResponseBytes: 2_048,
+      restTimeoutMs: 1_234,
+    });
+
+    const startPromise = channel.start();
+
+    expect(discordMock.clientOptions).toHaveLength(1);
+    expect(discordMock.clientOptions[0]).toEqual(expect.objectContaining({
+      intents: 15,
+      rest: expect.objectContaining({
+        makeRequest: expect.any(Function),
+        timeout: 1_234,
+      }),
+    }));
+    expect(discordMock.clientOptions[0]).not.toHaveProperty("ws");
+
+    await channel.stop();
+    discordMock.loginControllers[0]?.resolve();
+    await startPromise;
+  });
 
   it("deduplicates concurrent start calls before ready", async () => {
     const channel = createChannel();

@@ -58,7 +58,7 @@ describe("Heartbeat Runner", () => {
         expect(sendMessage).toHaveBeenCalled();
     });
 
-    it("should skip when the shared background coordinator has no capacity", async () => {
+    it("queues a heartbeat until shared background capacity is available", async () => {
         await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "check shared budget");
         const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
         const heldCronClaim = coordinator.tryClaim({ kind: "cron", key: "daily" });
@@ -72,15 +72,138 @@ describe("Heartbeat Runner", () => {
             runCoordinator: coordinator,
         });
 
+        const run = runner.runOnce();
         try {
-            await expect(runner.runOnce()).resolves.toEqual({
-                status: "skipped",
-                reason: "Background run coordinator has reached its concurrent run limit.",
+            await vi.waitFor(() => {
+                expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(1);
             });
             expect(sendMessage).not.toHaveBeenCalled();
+
+            heldCronClaim.release();
+            await expect(run).resolves.toMatchObject({ status: "ran" });
+            expect(sendMessage).toHaveBeenCalledTimes(1);
         } finally {
             runner.stop();
             heldCronClaim.release();
+            await Promise.allSettled([run]);
+        }
+    });
+
+    it("cancels a queued coordinator admission when Heartbeat stops and drains", async () => {
+        await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "cancel queued heartbeat");
+        const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+        const held = coordinator.tryClaim({ kind: "cron", key: "daily" });
+        if ("reason" in held) throw new Error(held.reason);
+        const sendMessage = vi.fn(async () => HEARTBEAT_OK_TOKEN);
+        const runner = startHeartbeatRunner({
+            workspaceDir: tmpDir,
+            sendMessage,
+            runCoordinator: coordinator,
+        });
+        const run = runner.runOnce();
+        let drain: Promise<void> | undefined;
+
+        try {
+            await vi.waitFor(() => expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(1));
+            drain = runner.stopAndDrain();
+            await vi.waitFor(() => expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(0));
+            await expect(run).resolves.toEqual({ status: "skipped", reason: "runner-stopped" });
+            await expect(drain).resolves.toBeUndefined();
+            expect(sendMessage).not.toHaveBeenCalled();
+        } finally {
+            runner.stop();
+            held.release();
+            await Promise.allSettled([run, drain ?? Promise.resolve()]);
+        }
+    });
+
+    it("propagates the coordinator claim context into an active heartbeat", async () => {
+        await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "observe heartbeat signal");
+        const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+        let observedSignal: AbortSignal | undefined;
+        let observedGeneration: number | undefined;
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
+        let finishRun!: () => void;
+        const runGate = new Promise<void>((resolve) => {
+            finishRun = resolve;
+        });
+        const runner = startHeartbeatRunner({
+            workspaceDir: tmpDir,
+            sendMessage: vi.fn(async (input) => {
+                const context = input as typeof input & {
+                    signal?: AbortSignal;
+                    generation?: number;
+                };
+                observedSignal = context.signal;
+                observedGeneration = context.generation;
+                markStarted();
+                await runGate;
+                return HEARTBEAT_OK_TOKEN;
+            }),
+            runCoordinator: coordinator,
+        });
+        const run = runner.runOnce();
+        await started;
+        const drain = coordinator.stopAndDrain();
+
+        try {
+            expect(observedSignal).toBeInstanceOf(AbortSignal);
+            expect(observedSignal?.aborted).toBe(true);
+            expect(observedGeneration).toBe(1);
+        } finally {
+            finishRun();
+            await Promise.allSettled([run, drain]);
+            runner.stop();
+        }
+    });
+
+    it("drops terminal effects when an active heartbeat generation is cancelled", async () => {
+        await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "late heartbeat completion");
+        const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+        const deliverToUser = vi.fn(async () => {});
+        const runEvents: Array<{ phase: string }> = [];
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
+        let finishRun!: () => void;
+        const runGate = new Promise<void>((resolve) => {
+            finishRun = resolve;
+        });
+        const runner = startHeartbeatRunner({
+            workspaceDir: tmpDir,
+            sendMessage: vi.fn(async () => {
+                markStarted();
+                await runGate;
+                return "late proactive message";
+            }),
+            deliverToUser,
+            runCoordinator: coordinator,
+            onRunEvent: (event) => {
+                runEvents.push(event);
+            },
+        });
+        const run = runner.runOnce();
+        await started;
+        const drain = coordinator.stopAndDrain();
+
+        try {
+            finishRun();
+            await expect(run).resolves.toEqual({
+                status: "skipped",
+                reason: "heartbeat-claim-not-active",
+            });
+            await expect(drain).resolves.toBeUndefined();
+            expect(deliverToUser).not.toHaveBeenCalled();
+            expect(runEvents.filter((event) => event.phase === "finished")).toHaveLength(0);
+            await expect(fs.readFile(path.join(tmpDir, "heartbeat-state.json"), "utf-8")).rejects.toThrow();
+        } finally {
+            finishRun();
+            await Promise.allSettled([run, drain]);
+            runner.stop();
         }
     });
 
@@ -176,6 +299,36 @@ describe("Heartbeat Runner", () => {
         runner.stop();
         releaseSend?.();
         await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it("queues an interval heartbeat through the shared coordinator", async () => {
+        vi.useFakeTimers();
+        await fs.writeFile(path.join(tmpDir, "HEARTBEAT.md"), "queue interval heartbeat");
+        const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+        const held = coordinator.tryClaim({ kind: "cron", key: "daily" });
+        if ("reason" in held) throw new Error(held.reason);
+        const sendMessage = vi.fn(async () => HEARTBEAT_OK_TOKEN);
+        const runner = startHeartbeatRunner({
+            workspaceDir: tmpDir,
+            sendMessage,
+            runCoordinator: coordinator,
+            intervalMs: 1_000,
+            activeHours: { start: "00:00", end: "24:00" },
+        });
+
+        try {
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(1);
+            expect(sendMessage).not.toHaveBeenCalled();
+
+            held.release();
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        } finally {
+            runner.stop();
+            held.release();
+            await runner.stopAndDrain();
+        }
     });
 
     it("does not overlap a manual runOnce with an active interval heartbeat", async () => {

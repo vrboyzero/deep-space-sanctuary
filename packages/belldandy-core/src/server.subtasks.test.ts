@@ -347,10 +347,19 @@ test("subtask.stop and subtask.archive manage task runtime visibility", async ()
     webRoot: resolveWebRoot(),
     stateDir,
     subTaskRuntimeStore,
-    stopSubTask: async (taskId, reason) => subTaskRuntimeStore.markStopped(taskId, {
-      reason: reason ?? "Stopped from RPC.",
-      sessionId: "sub_stop_1",
-    }),
+    stopSubTask: async (taskId, reason, options) => {
+      const accepted = await subTaskRuntimeStore.requestStop(taskId, reason ?? "Stopped from RPC.", {
+        sessionId: "sub_stop_1",
+        expectedRevision: options?.expectedRevision,
+        idempotencyKey: options?.idempotencyKey,
+      });
+      if (!accepted || !accepted.claimOwner) return accepted?.item;
+      return subTaskRuntimeStore.markStopped(taskId, {
+        reason: reason ?? "Stopped from RPC.",
+        sessionId: "sub_stop_1",
+        commandClaim: accepted.commandClaim,
+      });
+    },
   });
 
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
@@ -365,7 +374,7 @@ test("subtask.stop and subtask.archive manage task runtime visibility", async ()
       type: "req",
       id: "subtask-stop",
       method: "subtask.stop",
-      params: { taskId: runningTask.id, reason: "User requested stop" },
+      params: { taskId: runningTask.id, reason: "User requested stop", expectedRevision: 0 },
     }));
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "subtask-stop"));
 
@@ -375,7 +384,9 @@ test("subtask.stop and subtask.archive manage task runtime visibility", async ()
       id: runningTask.id,
       status: "stopped",
       stopReason: "User requested stop",
+      commandGeneration: 1,
     });
+    expect(stopRes.payload?.item).not.toHaveProperty("activeCommandClaim");
 
     ws.send(JSON.stringify({
       type: "req",
@@ -403,6 +414,7 @@ test("subtask.stop and subtask.archive manage task runtime visibility", async ()
 
     const defaultListRes = frames.find((f) => f.type === "res" && f.id === "subtask-list-default");
     expect(defaultListRes.ok).toBe(true);
+    expect(defaultListRes.payload).not.toHaveProperty("page");
     expect(defaultListRes.payload?.items).toEqual([
       expect.objectContaining({
         id: runningTask.id,
@@ -424,6 +436,61 @@ test("subtask.stop and subtask.archive manage task runtime visibility", async ()
       expect.objectContaining({ id: runningTask.id, status: "stopped" }),
       expect.objectContaining({ id: doneTask.id, archivedAt: expect.any(Number) }),
     ]));
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "subtask-list-page-1",
+      method: "subtask.list",
+      params: { conversationId: "conv-stop", includeArchived: true, limit: 1 },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "subtask-list-page-1"));
+
+    const firstPageRes = frames.find((f) => f.type === "res" && f.id === "subtask-list-page-1");
+    expect(firstPageRes.ok).toBe(true);
+    expect(firstPageRes.payload?.items).toHaveLength(1);
+    expect(firstPageRes.payload?.page).toMatchObject({
+      limit: 1,
+      hasMore: true,
+      nextCursor: expect.any(String),
+    });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "subtask-list-page-2",
+      method: "subtask.list",
+      params: {
+        conversationId: "conv-stop",
+        includeArchived: true,
+        limit: 1,
+        cursor: firstPageRes.payload.page.nextCursor,
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "subtask-list-page-2"));
+
+    const secondPageRes = frames.find((f) => f.type === "res" && f.id === "subtask-list-page-2");
+    expect(secondPageRes.ok).toBe(true);
+    expect(secondPageRes.payload?.items).toHaveLength(1);
+    expect(secondPageRes.payload?.page).toEqual({ limit: 1, hasMore: false });
+    expect(new Set([
+      firstPageRes.payload.items[0].id,
+      secondPageRes.payload.items[0].id,
+    ])).toEqual(new Set([runningTask.id, doneTask.id]));
+
+    for (const [id, paginationParams] of [
+      ["subtask-list-invalid-cursor", { cursor: "not-json" }],
+      ["subtask-list-invalid-limit", { limit: 201 }],
+    ] as const) {
+      ws.send(JSON.stringify({
+        type: "req",
+        id,
+        method: "subtask.list",
+        params: { conversationId: "conv-stop", ...paginationParams },
+      }));
+      await waitFor(() => frames.some((f) => f.type === "res" && f.id === id));
+      const invalidRes = frames.find((f) => f.type === "res" && f.id === id);
+      expect(invalidRes.ok).toBe(false);
+      expect(invalidRes.error?.code).toBe("invalid_params");
+    }
   } finally {
     ws.close();
     await closeP;
@@ -446,6 +513,7 @@ test("subtask.update accepts steering for a running task and returns the updated
     },
   });
   await subTaskRuntimeStore.attachSession(runningTask.id, "sub_update_1");
+  let receivedCommandOptions: { expectedRevision?: number; idempotencyKey?: string } | undefined;
 
   const server = await startGatewayServer({
     port: 0,
@@ -453,9 +521,12 @@ test("subtask.update accepts steering for a running task and returns the updated
     webRoot: resolveWebRoot(),
     stateDir,
     subTaskRuntimeStore,
-    updateSubTask: async (taskId, message) => {
+    updateSubTask: async (taskId, message, options) => {
+      receivedCommandOptions = options;
       const accepted = await subTaskRuntimeStore.requestSteering(taskId, message, {
         sessionId: "sub_update_1",
+        expectedRevision: options?.expectedRevision,
+        idempotencyKey: options?.idempotencyKey,
       });
       await subTaskRuntimeStore.markSteeringDelivered(taskId, String(accepted?.steering.id), {
         sessionId: "sub_update_2",
@@ -479,12 +550,17 @@ test("subtask.update accepts steering for a running task and returns the updated
       params: {
         taskId: runningTask.id,
         message: "Focus on the integration failure first.",
+        expectedRevision: 0,
       },
     }));
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "subtask-update"));
 
     const updateRes = frames.find((f) => f.type === "res" && f.id === "subtask-update");
     expect(updateRes.ok).toBe(true);
+    expect(receivedCommandOptions).toEqual({
+      expectedRevision: 0,
+      idempotencyKey: "subtask-update",
+    });
     expect(updateRes.payload?.item).toMatchObject({
       id: runningTask.id,
       sessionId: "sub_update_1",
@@ -496,6 +572,28 @@ test("subtask.update accepts steering for a running task and returns the updated
         }),
       ],
     });
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "subtask-update-stale",
+      method: "subtask.update",
+      params: {
+        taskId: runningTask.id,
+        message: "This stale command must not create another accepted record.",
+        expectedRevision: 0,
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "subtask-update-stale"));
+
+    const staleRes = frames.find((f) => f.type === "res" && f.id === "subtask-update-stale");
+    expect(staleRes).toMatchObject({
+      ok: false,
+      error: {
+        code: "revision_conflict",
+        message: "Subtask command revision conflict. Expected 0, current 1.",
+      },
+    });
+    expect((await subTaskRuntimeStore.getTask(runningTask.id))?.steering).toHaveLength(1);
   } finally {
     ws.close();
     await closeP;

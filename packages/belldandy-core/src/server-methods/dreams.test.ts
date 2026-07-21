@@ -61,8 +61,22 @@ describe("handleDreamMethod", () => {
   });
 
   it("runs dream with default conversation fallback", async () => {
+    const claimSignal = new AbortController().signal;
+    const complete = vi.fn(async <T>(commit: () => T | Promise<T>) => ({
+      applied: true as const,
+      value: await commit(),
+    }));
+    const jobScheduler = {
+      acquire: vi.fn(async () => ({
+        generation: 7,
+        signal: claimSignal,
+        complete,
+        release: vi.fn(async () => undefined),
+      })),
+    };
     const runtime = {
       getAvailability: () => ({ enabled: true, available: true, model: "gpt-test" }),
+      getBackgroundJobTokenEstimate: () => 6_144,
       run: vi.fn(async () => ({
         record: {
           id: "dream-1",
@@ -121,14 +135,23 @@ describe("handleDreamMethod", () => {
     }, {
       resolveDreamRuntime: () => runtime as any,
       resolveDefaultConversationId: () => "agent:coder:main",
+      jobScheduler: jobScheduler as any,
     });
 
     expect(res?.ok).toBe(true);
+    expect(jobScheduler.acquire).toHaveBeenCalledWith({
+      family: "dream",
+      agentId: "coder",
+      priority: "high",
+      estimatedTokenUnits: 6_144,
+    });
     expect(runtime.run).toHaveBeenCalledWith({
       conversationId: "agent:coder:main",
       triggerMode: "manual",
       reason: "manual-smoke",
+      signal: claimSignal,
     });
+    expect(complete).toHaveBeenCalledTimes(1);
     const payload = res && "payload" in res ? res.payload as any : undefined;
     expect(payload?.record?.consolidation).toMatchObject({
       headline: expect.any(String),
@@ -138,6 +161,43 @@ describe("handleDreamMethod", () => {
         }),
       ],
     });
+  });
+
+  it("rejects manual dream before runtime side effects when scheduler admission fails", async () => {
+    const runtime = {
+      getAvailability: () => ({ enabled: true, available: true, model: "gpt-test" }),
+      getBackgroundJobTokenEstimate: () => 4_096,
+      run: vi.fn(),
+    };
+    const jobScheduler = {
+      acquire: vi.fn(async () => ({
+        reason: "Memory background model run budget exceeded.",
+        reasonCode: "memory_background_run_budget_exceeded",
+        retryAfterMs: 1_000,
+      })),
+    };
+
+    const res = await handleDreamMethod({
+      type: "req",
+      id: "req-budget-rejected",
+      method: "dream.run",
+      params: {
+        agentId: "coder",
+      },
+    }, {
+      resolveDreamRuntime: () => runtime as any,
+      resolveDefaultConversationId: () => "agent:coder:main",
+      jobScheduler: jobScheduler as any,
+    });
+
+    expect(res).toMatchObject({
+      ok: false,
+      error: {
+        code: "memory_background_run_budget_exceeded",
+        message: "Memory background model run budget exceeded.",
+      },
+    });
+    expect(runtime.run).not.toHaveBeenCalled();
   });
 
   it("runs commons export through dream.commons.export_now", async () => {

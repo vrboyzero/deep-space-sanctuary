@@ -24,6 +24,7 @@ import {
   getGlobalMemoryManager,
   type DreamRuntime,
   type DurableExtractionRuntime,
+  type MemoryModelPrivacyRuntime,
 } from "@belldandy/memory";
 import type {
   ToolContractChannel,
@@ -138,6 +139,7 @@ type SystemDoctorMethodContext = {
   conversationStore: ConversationStore;
   durableExtractionRuntime?: DurableExtractionRuntime;
   memoryBudgetGuard: MemoryRuntimeBudgetGuard;
+  memoryModelPrivacyRuntime: MemoryModelPrivacyRuntime;
   durableExtractionRequestRateLimiter: SlidingWindowRateLimiter;
   toolsConfigManager?: ToolsConfigManager;
   toolExecutor?: ToolExecutor;
@@ -760,6 +762,17 @@ export async function handleSystemDoctorMethod(
     { id: "node", name: "Node.js Environment", status: "pass", message: process.version },
     { id: "memory_db", name: "Vector Database", status: "pass", message: "OK" },
   ];
+  const memoryModelPrivacy = ctx.memoryModelPrivacyRuntime.getDoctorReport();
+  const remotePrivateSummaryCount = memoryModelPrivacy.items.filter((item) => item.leavesLocalMachine).length;
+  const unredactedRemoteCount = memoryModelPrivacy.items.filter((item) => (
+    item.leavesLocalMachine && item.redactorStatus === "off"
+  )).length;
+  checks.push({
+    id: "memory_model_privacy",
+    name: "Memory Model Privacy",
+    status: unredactedRemoteCount > 0 ? "warn" : "pass",
+    message: `${remotePrivateSummaryCount} private_summary endpoint(s) leave this machine, ${unredactedRemoteCount} without redaction.`,
+  });
 
   const baselineResult = await captureDoctorStage(doctorPerformanceStages, "baseline", async () => {
     const dbPath = path.join(ctx.stateDir, "memory.sqlite");
@@ -1407,11 +1420,17 @@ export async function handleSystemDoctorMethod(
   const extensionHookMessage = hookBridgeSummary && hookBridgeSummary.availableHookCount > 0
     ? `, legacy hooks ${hookBridgeSummary.bridgedHookCount}/${hookBridgeSummary.availableHookCount} bridged`
     : "";
+  const extensionPluginHookFailureMessage = extensionRuntime.summary.pluginHookFailureCount > 0
+    ? `, ${extensionRuntime.summary.pluginHookFailureCount} hook failures`
+    : "";
   checks.push({
     id: "extension_runtime",
     name: "Extension Runtime",
-    status: extensionRuntime.summary.pluginLoadErrorCount > 0 ? "warn" : "pass",
-    message: `plugins ${extensionRuntime.summary.pluginCount} (${extensionRuntime.summary.disabledPluginCount} disabled, ${extensionRuntime.summary.pluginLoadErrorCount} load errors), skills ${extensionRuntime.summary.skillCount} (${extensionRuntime.summary.disabledSkillCount} disabled, ${extensionRuntime.summary.ineligibleSkillCount} ineligible)${extensionHookMessage}`,
+    status: extensionRuntime.summary.pluginLoadErrorCount > 0
+      || extensionRuntime.summary.pluginHookFailureCount > 0
+      ? "warn"
+      : "pass",
+    message: `plugins ${extensionRuntime.summary.pluginCount} (${extensionRuntime.summary.disabledPluginCount} disabled, ${extensionRuntime.summary.pluginLoadErrorCount} load errors${extensionPluginHookFailureMessage}), skills ${extensionRuntime.summary.skillCount} (${extensionRuntime.summary.disabledSkillCount} disabled, ${extensionRuntime.summary.ineligibleSkillCount} ineligible)${extensionHookMessage}`,
   });
   checks.push({
     id: "extension_marketplace",
@@ -1725,8 +1744,13 @@ export async function handleSystemDoctorMethod(
       let resolvedSubtaskRuntimeRetention: typeof subtaskRuntimeRetention;
       if (ctx.subTaskRuntimeStore) {
         const subtaskItems = await ctx.subTaskRuntimeStore.listTasks(undefined, { includeArchived: true });
+        const retentionCompaction = await ctx.subTaskRuntimeStore.getRetentionCompactionReport();
         resolvedDelegationObservability = buildDelegationObservabilitySnapshot(subtaskItems);
-        resolvedSubtaskRuntimeRetention = buildSubTaskRuntimeRetentionObservability(subtaskItems);
+        resolvedSubtaskRuntimeRetention = buildSubTaskRuntimeRetentionObservability(
+          subtaskItems,
+          Date.now(),
+          retentionCompaction,
+        );
       }
       const resolvedGoalRuntimeSummary = await buildAssistantModeGoalRuntimeSummary({
         goalReader: ctx.goalManager,
@@ -1816,7 +1840,7 @@ export async function handleSystemDoctorMethod(
       checks.push({
         id: "subtask_runtime_retention",
         name: "SubTask Runtime Retention",
-        status: "pass",
+        status: subtaskRuntimeRetention.compaction?.errorCount ? "warn" : "pass",
         message: subtaskRuntimeRetention.summary.headline,
       });
     }
@@ -2037,6 +2061,7 @@ export async function handleSystemDoctorMethod(
       performance: doctorPerformance,
       configSource,
       memoryRuntime,
+      memoryModelPrivacy,
       ...(memoryTreeJobs ? { memoryTreeJobs } : {}),
       ...(memorySourceInventory ? { memorySourceInventory } : {}),
       ...(memorySharedGovernance ? { memorySharedGovernance } : {}),

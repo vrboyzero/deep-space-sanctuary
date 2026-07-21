@@ -4,6 +4,8 @@ import {
 } from "./doctor-observability.js";
 import { setExperienceDraftGenerateNoticeEnabled } from "./experience-draft-notice-mode.js";
 import { setGovernanceDetailMode } from "./governance-detail-mode.js";
+import { createSettingsDoctorToggleView } from "./settings-doctor-toggle-view.js";
+import { createSettingsPendingListView } from "./settings-pending-list-view.js";
 import {
   ASSISTANT_MODE_PRESET_CUSTOM,
   applyAssistantModePreset,
@@ -1606,48 +1608,11 @@ export function createSettingsController({
   }
 
   function renderChannelSecurityPending(pending = []) {
-    if (!channelSecurityPendingList) return;
-    if (!Array.isArray(pending) || pending.length === 0) {
-      channelSecurityPendingList.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("settings.channelSecurityPendingEmpty", {}, "当前没有待审批 sender。"))}</div>`;
-      return;
-    }
-    channelSecurityPendingList.innerHTML = pending.map((item) => `
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">${escapeHtml(`${item.channel}${item.accountId ? `/${item.accountId}` : ""}:${item.senderId}`)}</span>
-        <div class="memory-detail-text">${escapeHtml(item.senderName || "-")}</div>
-        <div class="memory-list-item-meta">
-          <span>${escapeHtml(item.chatId || "-")}</span>
-          <span>${escapeHtml(formatDateTime(item.updatedAt || item.requestedAt))}</span>
-          <span>${escapeHtml(`seen ${Number(item.seenCount || 0)}`)}</span>
-        </div>
-        ${item.messagePreview ? `<div class="memory-list-item-snippet">${escapeHtml(item.messagePreview)}</div>` : ""}
-        <div class="goal-detail-actions goal-checkpoint-actions">
-          <button type="button" class="button goal-inline-action" data-channel-security-action="approve" data-channel-security-request-id="${escapeHtml(item.id)}">${escapeHtml(t("settings.channelSecurityApprove", {}, "批准"))}</button>
-          <button type="button" class="button goal-inline-action-secondary" data-channel-security-action="reject" data-channel-security-request-id="${escapeHtml(item.id)}">${escapeHtml(t("settings.channelSecurityReject", {}, "拒绝"))}</button>
-        </div>
-      </div>
-    `).join("");
+    pendingListView.renderChannelSecurityPending(channelSecurityPendingList, pending);
   }
 
   function renderPairingPending(pending = []) {
-    if (!pairingPendingList) return;
-    if (!Array.isArray(pending) || pending.length === 0) {
-      pairingPendingList.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(t("settings.pairingPendingEmpty", {}, "当前没有待批准的配对码。"))}</div>`;
-      return;
-    }
-    pairingPendingList.innerHTML = pending.map((item) => `
-      <div class="memory-detail-card">
-        <span class="memory-detail-label">Pairing Code: ${escapeHtml(item.code || "-")}</span>
-        <div class="memory-detail-text">${escapeHtml(item.message || t("settings.pairingPendingDefaultMessage", {}, "当前 WebChat 会话需要完成配对批准。"))}</div>
-        <div class="memory-list-item-meta">
-          <span>${escapeHtml(item.clientId || "-")}</span>
-          <span>${escapeHtml(formatDateTime(item.updatedAt))}</span>
-        </div>
-        <div class="goal-detail-actions goal-checkpoint-actions">
-          <button type="button" class="button goal-inline-action" data-pairing-action="approve" data-pairing-code="${escapeHtml(item.code || "")}">${escapeHtml(t("settings.pairingApprove", {}, "批准"))}</button>
-        </div>
-      </div>
-    `).join("");
+    pendingListView.renderPairingPending(pairingPendingList, pending);
   }
 
   async function loadChannelSecurityConfig() {
@@ -1864,6 +1829,17 @@ export function createSettingsController({
   }
 
   const doctorToggleBtn = document.getElementById("doctorToggleBtn");
+  const doctorToggleView = createSettingsDoctorToggleView({
+    ownerDocument: doctorToggleBtn?.ownerDocument ?? document,
+    t,
+  });
+  const pendingListView = createSettingsPendingListView({
+    ownerDocument: channelSecurityPendingList?.ownerDocument
+      ?? pairingPendingList?.ownerDocument
+      ?? globalThis.document,
+    t,
+    formatDateTime,
+  });
   if (doctorToggleBtn) {
     doctorToggleBtn.addEventListener("click", () => {
       if (doctorStatusEl) doctorStatusEl.classList.toggle("hidden");
@@ -1993,13 +1969,11 @@ export function createSettingsController({
   async function runDoctor(options = {}) {
     if (!doctorStatusEl || !doctorToggleBtn) return;
     const version = ++doctorRequestVersion;
-    doctorToggleBtn.className = "button button-muted badge";
-    doctorToggleBtn.innerHTML = `<span data-i18n="settings.doctorChecking">${t("settings.doctorChecking", {}, "检查中...")}</span>`;
+    doctorToggleView.render(doctorToggleBtn, "checking");
     doctorStatusEl.innerHTML = "";
     
     if (!isConnected()) {
-      doctorToggleBtn.className = "button badge fail";
-      doctorToggleBtn.innerHTML = `<span data-i18n="settings.doctorDisconnected">${t("settings.doctorDisconnected", {}, "Disconnected")}</span>`;
+      doctorToggleView.render(doctorToggleBtn, "disconnected");
       return;
     }
 
@@ -2037,8 +2011,7 @@ export function createSettingsController({
       doctorStatusEl.appendChild(badge);
       return;
     }
-    doctorToggleBtn.className = "button badge fail";
-    doctorToggleBtn.innerHTML = `<span data-i18n="settings.doctorCheckFailed">${t("settings.doctorCheckFailed", {}, "Check Failed")}</span>`;
+    doctorToggleView.render(doctorToggleBtn, "failed");
   }
 
   async function saveConfig() {

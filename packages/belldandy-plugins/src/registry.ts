@@ -1,5 +1,15 @@
 import type { Tool } from "@belldandy/skills";
-import type { AgentHooks, AgentHookContext, BeforeRunEvent, AfterRunEvent, BeforeToolCallEvent, AfterToolCallEvent } from "@belldandy/agent";
+import { HOOK_FAILURE_POLICIES } from "@belldandy/agent";
+import type {
+    AgentHooks,
+    AgentHookContext,
+    BeforeRunEvent,
+    AfterRunEvent,
+    BeforeToolCallEvent,
+    AfterToolCallEvent,
+    HookFailurePolicy,
+    HookName,
+} from "@belldandy/agent";
 import type {
     BelldandyPlugin,
     PluginContext,
@@ -7,6 +17,7 @@ import type {
     PluginHookMetric,
     PluginHookName,
     PluginHookOutcome,
+    PluginHookPolicy,
     PluginLoadErrorRecord,
     PluginRegistryDiagnostics,
     PluginRuntimeDescriptor,
@@ -19,6 +30,20 @@ const MAX_LOAD_ERRORS = 32;
 const MAX_HOOK_METRIC_KEYS = 128;
 const MAX_HOOK_DURATION_SAMPLES = 32;
 
+const PLUGIN_HOOK_TO_REGISTRY_HOOK = Object.freeze({
+    beforeRun: "before_agent_start",
+    afterRun: "agent_end",
+    beforeToolCall: "before_tool_call",
+    afterToolCall: "after_tool_call",
+} satisfies Record<PluginHookName, HookName>);
+
+const PLUGIN_HOOK_NAMES = Object.freeze([
+    "beforeRun",
+    "afterRun",
+    "beforeToolCall",
+    "afterToolCall",
+] satisfies PluginHookName[]);
+
 type PluginHookRegistration = {
     pluginId: string;
     hooks: AgentHooks;
@@ -27,6 +52,10 @@ type PluginHookRegistration = {
 type PluginHookMetricState = Omit<PluginHookMetric, "p50DurationMs" | "p95DurationMs"> & {
     durationSamplesMs: number[];
 };
+
+type PluginHookExecution<TResult> =
+    | { ok: true; result: TResult }
+    | { ok: false; failurePolicy: HookFailurePolicy };
 
 export class PluginRegistryRegistrationError extends Error {
     constructor(message: string) {
@@ -84,6 +113,7 @@ export class PluginRegistry {
         skillDirCount: 0,
         loadErrors: [],
         hookMetrics: [],
+        hookPolicies: [],
         hookMetricEvictionCount: 0,
     };
     private cachedLegacyHookAvailability = {
@@ -319,6 +349,7 @@ export class PluginRegistry {
             ...this.cachedDiagnostics,
             loadErrors: this.cachedDiagnostics.loadErrors.map((item) => ({ ...item })),
             hookMetrics: this.listHookMetrics(),
+            hookPolicies: this.listHookPolicies(),
             hookMetricEvictionCount: this.hookMetricEvictionCount,
         };
     }
@@ -355,7 +386,13 @@ export class PluginRegistry {
             beforeRun: async (evt, ctx) => {
                 for (const { pluginId, hooks: h } of this.hooksList) {
                     if (h.beforeRun) {
-                        const res = await this.runPluginHook(pluginId, "beforeRun", () => h.beforeRun!(evt, ctx));
+                        const execution = await this.runPluginHook(
+                            pluginId,
+                            "beforeRun",
+                            () => h.beforeRun!(evt, ctx),
+                        );
+                        if (!execution.ok) continue;
+                        const res = execution.result;
                         if (res && typeof res === "object") {
                             evt.input = { ...evt.input, ...res };
                         }
@@ -364,17 +401,24 @@ export class PluginRegistry {
             },
             afterRun: async (evt, ctx) => {
                 for (const { pluginId, hooks: h } of this.hooksList) {
-                    if (h.afterRun) await this.runPluginHook(pluginId, "afterRun", () => h.afterRun!(evt, ctx));
+                    if (h.afterRun) {
+                        await this.runPluginHook(pluginId, "afterRun", () => h.afterRun!(evt, ctx));
+                    }
                 }
             },
             beforeToolCall: async (evt, ctx) => {
                 for (const { pluginId, hooks: h } of this.hooksList) {
                     if (h.beforeToolCall) {
-                        const result = await this.runPluginHook(
+                        const execution = await this.runPluginHook(
                             pluginId,
                             "beforeToolCall",
                             () => h.beforeToolCall!(evt, ctx),
                         );
+                        if (!execution.ok) {
+                            if (execution.failurePolicy === "fail_closed") return false;
+                            continue;
+                        }
+                        const result = execution.result;
                         if (result === false) return false; // Block execution
                         if (typeof result === "object") {
                             // Merge argument overrides
@@ -385,7 +429,9 @@ export class PluginRegistry {
             },
             afterToolCall: async (evt, ctx) => {
                 for (const { pluginId, hooks: h } of this.hooksList) {
-                    if (h.afterToolCall) await this.runPluginHook(pluginId, "afterToolCall", () => h.afterToolCall!(evt, ctx));
+                    if (h.afterToolCall) {
+                        await this.runPluginHook(pluginId, "afterToolCall", () => h.afterToolCall!(evt, ctx));
+                    }
                 }
             }
         };
@@ -410,24 +456,25 @@ export class PluginRegistry {
     }
 
     /**
-     * 只包裹观测，不吞掉 Hook 的返回值或异常；由现有 HookRunner 决定最终 fail-open/fail-closed 行为。
+     * 单次执行只返回受控结果，不把异常正文写入诊断；调用循环按 canonical policy 决定继续或阻断。
      */
     private async runPluginHook<TResult>(
         pluginId: string,
         hookName: PluginHookName,
         handler: () => TResult | Promise<TResult>,
-    ): Promise<TResult> {
+    ): Promise<PluginHookExecution<TResult>> {
         const startedAt = Date.now();
         let outcome: PluginHookOutcome = "succeeded";
+        const failurePolicy = this.getPluginHookFailurePolicy(hookName);
         try {
             const result = await handler();
             if (hookName === "beforeToolCall" && result === false) {
                 outcome = "blocked";
             }
-            return result;
-        } catch (error) {
+            return { ok: true, result };
+        } catch {
             outcome = "failed";
-            throw error;
+            return { ok: false, failurePolicy };
         } finally {
             this.recordHookMetric(pluginId, hookName, Date.now() - startedAt, outcome);
         }
@@ -452,6 +499,7 @@ export class PluginRegistry {
             metric = {
                 pluginId,
                 hookName,
+                failurePolicy: this.getPluginHookFailurePolicy(hookName),
                 invocationCount: 0,
                 succeededCount: 0,
                 blockedCount: 0,
@@ -492,6 +540,7 @@ export class PluginRegistry {
                 return {
                     pluginId: metric.pluginId,
                     hookName: metric.hookName,
+                    failurePolicy: metric.failurePolicy ?? this.getPluginHookFailurePolicy(metric.hookName),
                     invocationCount: metric.invocationCount,
                     succeededCount: metric.succeededCount,
                     blockedCount: metric.blockedCount,
@@ -510,6 +559,22 @@ export class PluginRegistry {
                 || left.pluginId.localeCompare(right.pluginId)
                 || left.hookName.localeCompare(right.hookName)
             ));
+    }
+
+    private listHookPolicies(): PluginHookPolicy[] {
+        return PLUGIN_HOOK_NAMES.map((pluginHookName) => {
+            const hookName = PLUGIN_HOOK_TO_REGISTRY_HOOK[pluginHookName];
+            return {
+                pluginHookName,
+                hookName,
+                executionMode: "sequential",
+                failurePolicy: HOOK_FAILURE_POLICIES[hookName],
+            };
+        });
+    }
+
+    private getPluginHookFailurePolicy(hookName: PluginHookName): HookFailurePolicy {
+        return HOOK_FAILURE_POLICIES[PLUGIN_HOOK_TO_REGISTRY_HOOK[hookName]];
     }
 
     private getDurationPercentile(samples: number[], percentile: number): number {
@@ -574,6 +639,7 @@ export class PluginRegistry {
             skillDirCount: this.pluginSkillDirs.size,
             loadErrors: this.loadErrors.map((item) => ({ ...item })),
             hookMetrics: [],
+            hookPolicies: [],
             hookMetricEvictionCount: 0,
         };
         this.cachedLegacyHookAvailability = {

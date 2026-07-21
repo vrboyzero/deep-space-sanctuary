@@ -159,9 +159,15 @@ import type {
     MemoryTreeSourceRecord,
     MemoryTreeSourceRebuildResult,
 } from "./memory-tree-types.js";
-import { BackgroundAbortRegistry, BackgroundPauseGate } from "./background-job-control.js";
+import {
+    BackgroundAbortRegistry,
+    BackgroundPauseGate,
+    throwIfBackgroundAborted,
+} from "./background-job-control.js";
+import { renderDurableExtractionMessages } from "./durable-extraction-input.js";
 import { requestMemoryChunkSummaryModel } from "./memory-chunk-summary-model-request.js";
 import { requestMemoryEvolutionModel } from "./memory-evolution-model-request.js";
+import type { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 import type {
     TaskActivityRecord,
     TaskConversationStore,
@@ -434,6 +440,7 @@ export type ExtractConversationMemoriesOptions = {
     markKey?: string;
     sourceConversationId?: string;
     sourceLabel?: string;
+    signal?: AbortSignal;
 };
 
 export type ConversationMemoryExtractionSupportReasonCode =
@@ -718,6 +725,7 @@ export interface MemoryManagerOptions {
     evolutionApiKey?: string;      // 提取 API key（默认继承 openaiApiKey）
     evolutionMinMessages?: number; // 触发提取的最少消息数（默认 4）
     evolutionTimeoutMs?: number;   // 单次提取远端调用硬 deadline（默认 120 秒）
+    modelPrivacyRuntime?: MemoryModelPrivacyRuntime;
     /** stateDir 用于定位 memory/ 目录写入每日文件 */
     stateDir?: string;
     /** Task-aware Embedding 前缀（用于支持 task 参数的模型如 Jina/BGE） */
@@ -836,6 +844,7 @@ export class MemoryManager {
     private evolutionApiKey: string;
     private evolutionMinMessages: number;
     private evolutionTimeoutMs: number;
+    private readonly modelPrivacyRuntime?: MemoryModelPrivacyRuntime;
     private stateDir: string;
     /** 用于 embedding 缓存 key / 签名版本化（task-aware embedding） */
     private embeddingQueryPrefix: string;
@@ -966,6 +975,10 @@ export class MemoryManager {
         this.summaryApiKey = options.summaryApiKey || options.openaiApiKey || "";
         this.summaryBatchSize = options.summaryBatchSize ?? 5;
         this.summaryMinContentLength = options.summaryMinContentLength ?? 500;
+        this.modelPrivacyRuntime = options.modelPrivacyRuntime;
+        if (this.summaryBaseUrl) {
+            this.modelPrivacyRuntime?.registerEndpoint("idle_summary", this.summaryBaseUrl);
+        }
 
         // M-N3: 会话记忆自动提取配置
         this.evolutionEnabled = options.evolutionEnabled ?? false;
@@ -978,6 +991,9 @@ export class MemoryManager {
             && options.evolutionTimeoutMs > 0
             ? Math.max(1, Math.floor(options.evolutionTimeoutMs))
             : 120_000;
+        if (this.evolutionBaseUrl) {
+            this.modelPrivacyRuntime?.registerEndpoint("durable_extraction", this.evolutionBaseUrl);
+        }
         this.stateDir = options.stateDir || resolveStateDir(process.env);
         this.publishStateDir = options.stateDir || workspaceStateDir;
         this.embeddingQueryPrefix = options.embeddingQueryPrefix ?? "";
@@ -4767,7 +4783,7 @@ export class MemoryManager {
      * L0 摘要生成：扫描未摘要的长 chunk，批量调用 LLM 生成单句摘要。
      * 异步后台执行，不阻塞主流程。支持 pause/resume 协作式让步。
      */
-    async generateSummaries(options: { maxBatches?: number } = {}): Promise<number> {
+    async generateSummaries(options: { maxBatches?: number; signal?: AbortSignal } = {}): Promise<number> {
         if (!this.summaryEnabled || !this.summaryApiKey || !this.summaryModel) {
             return 0;
         }
@@ -4782,7 +4798,8 @@ export class MemoryManager {
 
         while (processedBatches < maxBatches) {
             // 协作式让步：Agent 活跃时暂停
-            await this.waitIfPaused();
+            await this.waitIfPaused(options.signal);
+            throwIfBackgroundAborted(options.signal, "Idle summary run was aborted.");
 
             const chunks = this.store.getChunksNeedingSummary(
                 this.summaryMinContentLength,
@@ -4799,13 +4816,15 @@ export class MemoryManager {
                 async () => {
                     while (pendingChunks.length > 0) {
                         // 每个 chunk 前再检查一次暂停状态
-                        await this.waitIfPaused();
+                        await this.waitIfPaused(options.signal);
+                        throwIfBackgroundAborted(options.signal, "Idle summary run was aborted.");
 
                         const chunk = pendingChunks.shift();
                         if (!chunk) break;
 
                         try {
-                            const summary = await this.callLLMForSummary(chunk.content);
+                            const summary = await this.callLLMForSummary(chunk.content, options.signal);
+                            throwIfBackgroundAborted(options.signal, "Idle summary run was aborted.");
                             if (summary) {
                                 // 粗略估算 token 数（中文约 1.5 字/token，英文约 0.75 词/token）
                                 const estimatedTokens = Math.ceil(summary.length / 2);
@@ -4813,12 +4832,14 @@ export class MemoryManager {
                                 totalGenerated++;
                             }
                         } catch (err) {
+                            throwIfBackgroundAborted(options.signal, "Idle summary run was aborted.");
                             console.error(`[MemoryManager] Failed to generate summary for chunk ${chunk.id}:`, err);
                             // 单个失败不中断整批
                         }
 
                         if (summaryThrottleMs > 0 && pendingChunks.length > 0) {
                             await new Promise((resolve) => setTimeout(resolve, summaryThrottleMs));
+                            throwIfBackgroundAborted(options.signal, "Idle summary run was aborted.");
                         }
                     }
                 },
@@ -4835,13 +4856,15 @@ export class MemoryManager {
     /**
      * 调用 LLM 生成单条 chunk 的摘要
      */
-    private async callLLMForSummary(content: string): Promise<string | null> {
+    private async callLLMForSummary(content: string, signal?: AbortSignal): Promise<string | null> {
         const truncated = content.length > 4000 ? content.slice(0, 4000) + "..." : content;
 
         const data = await requestMemoryChunkSummaryModel({
             baseUrl: this.summaryBaseUrl,
             apiKey: this.summaryApiKey,
             timeoutMs: 120_000,
+            signal,
+            ...(this.modelPrivacyRuntime ? { privacyRuntime: this.modelPrivacyRuntime } : {}),
             payload: {
                 model: this.summaryModel,
                 messages: [
@@ -4922,19 +4945,11 @@ export class MemoryManager {
             };
         }
 
-        // 构建对话文本
-        const conversationText = messages
-            .map(m => `${m.role === "user" ? "用户" : "助手"}: ${m.content}`)
-            .join("\n\n");
-
-        // 截断过长的对话（保留最近的部分）
-        const maxLen = 8000;
-        const truncated = conversationText.length > maxLen
-            ? "...\n\n" + conversationText.slice(-maxLen)
-            : conversationText;
+        const conversationText = renderDurableExtractionMessages(messages);
 
         try {
-            await this.waitIfPaused();
+            await this.waitIfPaused(options.signal);
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             if (this.closed) {
                 return {
                     count: 0,
@@ -4947,7 +4962,8 @@ export class MemoryManager {
             }
 
             // 调用 LLM 提取记忆
-            const extracted = await this.callLLMForExtraction(truncated);
+            const extracted = await this.callLLMForExtraction(conversationText, options.signal);
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             if (!extracted || extracted.length === 0) {
                 // 无值得记住的内容，仍标记为已处理
                 this.store.markSessionMemoryExtracted(dedupeKey);
@@ -4962,6 +4978,7 @@ export class MemoryManager {
             }
 
             const filtered = this.applyDurableMemoryPolicy(extracted);
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             if (filtered.accepted.length === 0) {
                 this.store.markSessionMemoryExtracted(dedupeKey);
                 return {
@@ -4979,12 +4996,14 @@ export class MemoryManager {
                 sourceConversationId,
                 sourceLabel,
             });
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             const profileStateSync = this.syncDurableProfileStatePatches(profileStatePlan.patches);
 
             // 去重：检查每条记忆是否已存在相似内容
             const newMemories: Array<ExtractedConversationMemory> = [];
             for (const item of filtered.accepted) {
                 const similar = await this.search(item.content, { limit: 1 });
+                throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
                 if (similar.length > 0 && similar[0].score > 0.85) {
                     continue; // 已有相似记忆，跳过
                 }
@@ -5021,8 +5040,11 @@ export class MemoryManager {
                 `- [${m.type}][${m.category}] ${m.content} (来源: ${sourceLabel})`
             );
             const content = lines.join("\n");
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             const filePath = await appendToTodayMemory(this.stateDir, content);
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             await this.linkTaskMemoriesFromSource(sourceConversationId, filePath, "generated");
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
 
             // 标记已提取
             this.store.markSessionMemoryExtracted(dedupeKey);
@@ -5044,6 +5066,7 @@ export class MemoryManager {
                 ),
             };
         } catch (err) {
+            throwIfBackgroundAborted(options.signal, "Durable extraction was aborted.");
             console.error(`[MemoryManager] Memory extraction failed for session ${sourceLabel}:`, err);
             return {
                 count: 0,
@@ -5219,6 +5242,7 @@ export class MemoryManager {
      */
     private async callLLMForExtraction(
         conversationText: string,
+        signal?: AbortSignal,
     ): Promise<ExtractedConversationMemory[] | null> {
         const requestBody: Record<string, unknown> = {
             model: this.evolutionModel,
@@ -5269,12 +5293,14 @@ candidateType 必须是以下之一：user / feedback / project / reference
             timeoutMs: this.evolutionTimeoutMs,
             fallbackTimeoutMs: 120_000,
             timeoutMessage: (timeoutMs) => `Evolution LLM call timed out after ${timeoutMs}ms.`,
+            signal,
             operation: (signal) => requestMemoryEvolutionModel({
                 baseUrl: this.evolutionBaseUrl,
                 apiKey: this.evolutionApiKey,
                 payload: requestBody,
                 signal,
                 idleTimeoutMs: this.evolutionTimeoutMs,
+                ...(this.modelPrivacyRuntime ? { privacyRuntime: this.modelPrivacyRuntime } : {}),
             }),
         });
         const raw = data.choices?.[0]?.message?.content?.trim();
@@ -5327,11 +5353,11 @@ candidateType 必须是以下之一：user / feedback / project / reference
     /**
      * 等待暂停结束。在后台循环中调用，实现协作式让步。
      */
-    private waitIfPaused(): Promise<void> {
+    private waitIfPaused(signal?: AbortSignal): Promise<void> {
         if (this.closed) return Promise.resolve();
         if (!this.backgroundPauseGate.isPaused) return Promise.resolve();
         console.log("[MemoryManager] Background task paused (agent active)");
-        return this.backgroundPauseGate.wait();
+        return this.backgroundPauseGate.wait(signal);
     }
 
     /**
@@ -5339,12 +5365,12 @@ candidateType 必须是以下之一：user / feedback / project / reference
      * 由 gateway 的空闲定时器调用，仅在无活跃 Agent 请求时运行。
      * 返回本次生成的摘要数。
      */
-    async runIdleSummaries(): Promise<number> {
+    async runIdleSummaries(options: { signal?: AbortSignal } = {}): Promise<number> {
         if (!this.summaryEnabled || this.backgroundPauseGate.isPaused || this._summaryRunning || this.closed) return 0;
         this._summaryRunning = true;
         return this.registerInFlight((async () => {
             try {
-                return await this.generateSummaries({ maxBatches: 1 });
+                return await this.generateSummaries({ maxBatches: 1, signal: options.signal });
             } finally {
                 this._summaryRunning = false;
             }

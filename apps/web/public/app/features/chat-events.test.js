@@ -121,6 +121,23 @@ describe("chat events pairing", () => {
     });
   });
 
+  it("renders pairing fallback code as text when no HTML escaper is provided", () => {
+    const target = document.createElement("div");
+    const code = '</b><img src=x onerror="alert(1)">';
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => target),
+    });
+
+    const handled = feature.handleEvent("pairing.required", {
+      code,
+    });
+
+    expect(handled).toBe(true);
+    expect(target.querySelector("img")).toBeNull();
+    expect(target.querySelector("[onerror]")).toBeNull();
+    expect(target.textContent).toContain(code);
+  });
+
   it("batches token and live update events into a single frame flush", () => {
     const frameCallbacks = [];
     vi.stubGlobal("requestAnimationFrame", (callback) => {

@@ -258,6 +258,9 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           onChannelSecurityApprovalRequired: recordChannelSecurityApprovalRequest,
           conversationStore: input.conversationStore,
           conversationLifecycle,
+          restJsonMaxResponseBytes: readPositiveInt(input.readEnv, "BELLDANDY_FEISHU_JSON_MAX_RESPONSE_BYTES"),
+          resourceMaxResponseBytes: readPositiveInt(input.readEnv, "BELLDANDY_FEISHU_RESOURCE_MAX_RESPONSE_BYTES"),
+          restIdleTimeoutMs: readPositiveInt(input.readEnv, "BELLDANDY_FEISHU_HTTP_IDLE_TIMEOUT_MS"),
           sttTranscribe: async (opts) => {
             const result = await input.sttTranscribe(opts);
             if (result) input.logger.info("feishu", `Transcribed audio (${result.durationSec?.toFixed(1) ?? "?"}s) from ${result.provider}`);
@@ -331,6 +334,8 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
           ingressScheduler: channelIngressScheduler,
           agentResolver: resolveChannelAgent,
           conversationLifecycle,
+          restMaxResponseBytes: readPositiveInt(input.readEnv, "BELLDANDY_DISCORD_REST_MAX_RESPONSE_BYTES"),
+          restTimeoutMs: readPositiveInt(input.readEnv, "BELLDANDY_DISCORD_REST_TIMEOUT_MS"),
           sttTranscribe: async (opts) => {
             const result = await input.sttTranscribe(opts);
             if (result) input.logger.info("discord", `Transcribed audio (${result.durationSec?.toFixed(1) ?? "?"}s) from ${result.provider}`);

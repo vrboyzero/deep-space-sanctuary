@@ -34,6 +34,7 @@ import {
   resolveWorkflowRunBudget,
   type WorkflowRunController,
 } from "./workflow-run-controller.js";
+import { resolveWorkflowBatchLimits } from "./workflow-batch-runner.js";
 import { computeMigrationFingerprint } from "./workflow-fingerprint.js";
 import {
   loadWorkflowScript,
@@ -315,6 +316,7 @@ export class WorkflowRuntime {
         channel: opts.channel,
         journalId,
         maxConcurrent,
+        batchLimits: resolveWorkflowBatchLimits(this.readEnv),
         abortSignal: runController.signal,
         callbacks: opts.callbacks ? {
           ...opts.callbacks,

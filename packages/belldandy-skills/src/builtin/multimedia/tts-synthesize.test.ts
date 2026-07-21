@@ -108,6 +108,7 @@ describe("tts-synthesize", () => {
     expect(vi.mocked(OpenAI)).toHaveBeenCalledWith({
       apiKey: "sk-bdd",
       baseURL: "https://example.invalid/v1",
+      fetch: expect.any(Function),
     });
     expect(openAISpeechCreateMock).toHaveBeenCalledTimes(1);
     const firstCall = openAISpeechCreateMock.mock.calls[0]?.[0];
@@ -131,6 +132,7 @@ describe("tts-synthesize", () => {
     expect(vi.mocked(OpenAI)).toHaveBeenCalledWith({
       apiKey: "sk-tts",
       baseURL: "https://tts.example.invalid/v1",
+      fetch: expect.any(Function),
     });
   });
 

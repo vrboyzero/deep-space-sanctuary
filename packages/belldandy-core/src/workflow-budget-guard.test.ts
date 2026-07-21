@@ -16,12 +16,64 @@ describe("WorkflowBudgetGuard", () => {
     expect(() => guard.check()).not.toThrow();
   });
 
-  it("agent call 超限抛错", () => {
+  it("agent call 超过上限后抛错", () => {
     const guard = new WorkflowBudgetGuard({ maxAgentCalls: 2, onExceeded: "abort" });
     guard.consume(0, 1);
     guard.consume(0, 1);
+    expect(() => guard.check()).not.toThrow();
+    guard.consume(0, 1);
     expect(() => guard.check()).toThrow(WorkflowBudgetExceededError);
     expect(() => guard.check()).toThrow(/agent call budget exceeded/);
+  });
+
+  it("在 agent spawn 前原子预留 call 与 token slot", () => {
+    const guard = new WorkflowBudgetGuard({
+      maxAgentCalls: 1,
+      maxTokens: 1,
+      onExceeded: "abort",
+    });
+
+    const reservation = guard.reserveAgentCall();
+
+    expect(guard.getUsage()).toMatchObject({ calls: 1, tokens: 0, exceeded: false });
+    expect(() => guard.reserveAgentCall()).toThrow(/agent call budget exceeded/);
+    reservation.settle(1);
+    expect(guard.getUsage()).toMatchObject({ calls: 1, tokens: 1 });
+  });
+
+  it("失败调用释放 token reservation 但保留已发起 call 计数", () => {
+    const guard = new WorkflowBudgetGuard({
+      maxAgentCalls: 2,
+      maxTokens: 1,
+      onExceeded: "abort",
+    });
+
+    const failed = guard.reserveAgentCall();
+    failed.release();
+
+    const retry = guard.reserveAgentCall();
+    retry.settle(1);
+    expect(guard.getUsage()).toMatchObject({ calls: 2, tokens: 1, exceeded: false });
+  });
+
+  it("并发 reservation 不能占用同一个有限 token slot", () => {
+    const guard = new WorkflowBudgetGuard({ maxAgentCalls: 2, maxTokens: 1 });
+
+    const first = guard.reserveAgentCall();
+
+    expect(() => guard.reserveAgentCall()).toThrow(/token budget exceeded/);
+    expect(guard.getUsage()).toMatchObject({ calls: 1, tokens: 0, exceeded: true });
+    first.release();
+  });
+
+  it("spawn 前失败可取消 reservation 并回滚 call slot", () => {
+    const guard = new WorkflowBudgetGuard({ maxAgentCalls: 1, maxTokens: 1 });
+
+    const reservation = guard.reserveAgentCall();
+    reservation.cancel();
+
+    expect(guard.getUsage()).toMatchObject({ calls: 0, tokens: 0, exceeded: false });
+    expect(() => guard.reserveAgentCall()).not.toThrow();
   });
 
   it("token 超限抛错", () => {
@@ -39,11 +91,12 @@ describe("WorkflowBudgetGuard", () => {
     const guard = new WorkflowBudgetGuard({ maxRetries: 1, onExceeded: "abort" });
     guard.consumeRetry();
     expect(() => guard.consumeRetry()).toThrow(/max retries exceeded/);
+    expect(guard.getUsage().retries).toBe(1);
   });
 
   it("warn 模式不抛错但标记 exceeded", () => {
     const guard = new WorkflowBudgetGuard({ maxAgentCalls: 1, onExceeded: "warn" });
-    guard.consume(0, 1);
+    guard.consume(0, 2);
     expect(() => guard.check()).not.toThrow();
     expect(guard.isExceeded()).toBe(true);
     expect(guard.getExceededReason()).toMatch(/agent call budget exceeded/);
@@ -75,7 +128,7 @@ describe("WorkflowBudgetGuard", () => {
 
   it("isExceeded 在超限后返回 true", () => {
     const guard = new WorkflowBudgetGuard({ maxAgentCalls: 1, onExceeded: "warn" });
-    guard.consume(0, 1);
+    guard.consume(0, 2);
     guard.check();
     expect(guard.isExceeded()).toBe(true);
   });

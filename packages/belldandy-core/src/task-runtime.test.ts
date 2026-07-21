@@ -16,6 +16,7 @@ import {
   SubTaskRuntimeStore,
 } from "./task-runtime.js";
 import { GoalManager } from "./goals/manager.js";
+import { GoalRuntimeBindingStore } from "./goal-runtime-binding-store.js";
 
 test("subtask runtime store persists lifecycle, progress, and output artifacts", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-"));
@@ -294,6 +295,221 @@ test("subtask runtime store quarantines malformed registry without overwriting t
 
     await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
+});
+
+test("subtask runtime store pages filtered records without duplicates or omissions", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-pagination-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+
+  const targetTasks = [];
+  for (let index = 0; index < 5; index += 1) {
+    targetTasks.push(await store.createTask({
+      launchSpec: {
+        parentConversationId: "conv-pagination",
+        agentId: "coder",
+        instruction: `Paginated task ${index}`,
+      },
+    }));
+  }
+  await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-other",
+      agentId: "coder",
+      instruction: "Must be filtered before pagination",
+    },
+  });
+
+  const first = await store.listTaskPage("conv-pagination", { limit: 2 });
+  const second = await store.listTaskPage("conv-pagination", {
+    limit: 2,
+    cursor: first.nextCursor,
+  });
+  const third = await store.listTaskPage("conv-pagination", {
+    limit: 2,
+    cursor: second.nextCursor,
+  });
+  const pagedIds = [...first.items, ...second.items, ...third.items].map((item) => item.id);
+
+  expect(first).toMatchObject({ limit: 2, hasMore: true });
+  expect(second).toMatchObject({ limit: 2, hasMore: true });
+  expect(third).toMatchObject({ limit: 2, hasMore: false });
+  expect(new Set(pagedIds)).toEqual(new Set(targetTasks.map((item) => item.id)));
+  expect(pagedIds).toHaveLength(targetTasks.length);
+  await expect(store.listTaskPage("conv-pagination", { cursor: "not-json" }))
+    .rejects.toThrow("cursor is invalid or unsupported");
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime store compacts only eligible terminal records and preserves non-output artifacts", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-retention-"));
+  const bindingStore = new GoalRuntimeBindingStore(stateDir);
+  const store = new SubTaskRuntimeStore(stateDir, undefined, bindingStore);
+  await store.load();
+
+  const removable = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-retention",
+      agentId: "coder",
+      instruction: "Remove only the runtime-owned output after registry publication",
+    },
+  });
+  const completedRemovable = await store.completeTask(removable.id, {
+    status: "done",
+    output: "runtime output that may be compacted",
+  });
+  const goalBound = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-retention",
+      agentId: "reviewer",
+      instruction: "Protect goal-bound terminal task",
+      delegationProtocol: {
+        source: "goal_subtask",
+        intent: { kind: "goal_execution", summary: "Protected goal task", goalId: "goal-retention" },
+        contextPolicy: { includeParentConversation: true, includeStructuredContext: true, contextKeys: ["goalId"] },
+        expectedDeliverable: { format: "patch", summary: "Protected result" },
+        aggregationPolicy: { mode: "main_agent_summary", summarizeFailures: true, sourceAgentIds: [] },
+        launchDefaults: {},
+      },
+    },
+  });
+  await store.completeTask(goalBound.id, { status: "done", output: "goal output must remain" });
+  const externallyBound = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-retention",
+      agentId: "reviewer",
+      instruction: "Protect terminal task through the external binding owner",
+    },
+  });
+  await store.completeTask(externallyBound.id, { status: "done", output: "external goal output must remain" });
+  await bindingStore.upsertSubTaskBinding({
+    source: "goal_subtask",
+    goalId: "goal-external-retention",
+    taskId: externallyBound.id,
+    status: "done",
+  });
+  const active = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-retention",
+      agentId: "coder",
+      instruction: "Active task must remain",
+    },
+  });
+
+  const report = await store.compactTerminalTasks({
+    maxTerminalRecords: 0,
+    minTerminalAgeMs: 0,
+  });
+
+  expect(report).toMatchObject({
+    policy: { autoCompact: false, maxTerminalRecords: 0, minTerminalAgeMs: 0 },
+    eligibleCount: 1,
+    protectedCount: 3,
+    removedCount: 1,
+    errorCount: 0,
+  });
+  expect(await store.getTask(removable.id)).toBeUndefined();
+  expect(await store.getTask(goalBound.id)).toBeDefined();
+  expect(await store.getTask(externallyBound.id)).toBeDefined();
+  expect(await store.getTask(active.id)).toBeDefined();
+  await expect(fs.access(String(completedRemovable?.outputPath))).rejects.toThrow();
+  await expect(fs.access(String(completedRemovable?.scratchPath))).resolves.toBeUndefined();
+  await expect(fs.access(String(completedRemovable?.reviewPath))).resolves.toBeUndefined();
+  await expect(fs.access(String(completedRemovable?.lessonPath))).resolves.toBeUndefined();
+
+  const reloaded = new SubTaskRuntimeStore(stateDir, undefined, new GoalRuntimeBindingStore(stateDir));
+  await reloaded.load();
+  expect(await reloaded.getTask(removable.id)).toBeUndefined();
+  expect(await reloaded.getTask(goalBound.id)).toBeDefined();
+  expect(await reloaded.getTask(externallyBound.id)).toBeDefined();
+  expect(await reloaded.getTask(active.id)).toBeDefined();
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime compaction keeps the published registry when output cleanup fails", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-retention-failure-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-retention-failure",
+      agentId: "coder",
+      instruction: "Keep registry compaction committed on cleanup failure",
+    },
+  });
+  const completed = await store.completeTask(task.id, {
+    status: "done",
+    output: "output cleanup will fail",
+  });
+  const originalRm = fs.rm.bind(fs);
+  const rmSpy = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+    if (String(target).includes(task.id)) {
+      throw Object.assign(new Error("simulated cleanup failure"), { code: "EACCES" });
+    }
+    return originalRm(target, options);
+  });
+
+  try {
+    const report = await store.compactTerminalTasks({
+      maxTerminalRecords: 0,
+      minTerminalAgeMs: 0,
+    });
+    expect(report).toMatchObject({ removedCount: 1, errorCount: 1 });
+    const reloaded = new SubTaskRuntimeStore(stateDir);
+    await reloaded.load();
+    expect(await reloaded.getTask(task.id)).toBeUndefined();
+    await expect(fs.access(String(completed?.outputPath))).resolves.toBeUndefined();
+  } finally {
+    rmSpy.mockRestore();
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("subtask runtime compaction rolls memory back and keeps outputs when registry publication fails", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-retention-persist-failure-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-retention-persist-failure",
+      agentId: "coder",
+      instruction: "Do not clean output before registry publication",
+    },
+  });
+  const completed = await store.completeTask(task.id, {
+    status: "done",
+    output: "output must remain after registry failure",
+  });
+  const registryPath = path.join(stateDir, "subtasks", "registry.json");
+  const originalRename = fs.rename.bind(fs);
+  let registryRenameCount = 0;
+  const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+    if (path.resolve(String(newPath)) === path.resolve(registryPath)) {
+      registryRenameCount += 1;
+      if (registryRenameCount > 1) {
+        throw Object.assign(new Error("simulated registry publication failure"), { code: "EIO" });
+      }
+    }
+    return originalRename(oldPath, newPath);
+  });
+
+  try {
+    await expect(store.compactTerminalTasks({
+      maxTerminalRecords: 0,
+      minTerminalAgeMs: 0,
+    })).rejects.toThrow("simulated registry publication failure");
+    expect(await store.getTask(task.id)).toBeDefined();
+    await expect(fs.access(String(completed?.outputPath))).resolves.toBeUndefined();
+  } finally {
+    renameSpy.mockRestore();
+  }
+
+  const reloaded = new SubTaskRuntimeStore(stateDir);
+  await reloaded.load();
+  expect(await reloaded.getTask(task.id)).toBeDefined();
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
 test("subtask runtime store batches thought_delta persistence within a short window", async () => {
@@ -625,11 +841,17 @@ test("subtask runtime store supports stop request and archive filtering", async 
   });
   const requested = await store.requestStop(pending.id, "Stop before execution.");
   expect(requested).toMatchObject({
-    id: pending.id,
-    stopReason: "Stop before execution.",
+    claimOwner: true,
+    item: {
+      id: pending.id,
+      stopReason: "Stop before execution.",
+    },
   });
 
-  const stopped = await store.markStopped(pending.id, { reason: "Stopped before execution." });
+  const stopped = await store.markStopped(pending.id, {
+    reason: "Stopped before execution.",
+    commandClaim: requested?.commandClaim,
+  });
   expect(stopped).toMatchObject({
     id: pending.id,
     status: "stopped",
@@ -809,6 +1031,49 @@ test("subtask runtime store releases a pending claim left by a previous runtime 
       error: expect.stringContaining("interrupted"),
     }),
   ]);
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime store recovers an interrupted stop claim as retryable", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-stop-recovery-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-stop-recovery",
+      agentId: "coder",
+      instruction: "Recover interrupted stop claim",
+    },
+  });
+  await store.attachSession(task.id, "sub_stop_recovery_1", "coder", "coder");
+  await store.requestStop(task.id, "Stop before restart.", {
+    sessionId: "sub_stop_recovery_1",
+    idempotencyKey: "interrupted-stop-claim",
+    expectedRevision: 0,
+  });
+
+  const statePath = path.join(stateDir, "subtasks", "registry.json");
+  const persisted = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
+    items: Array<{ activeCommandClaim?: { ownerInstanceId?: string } }>;
+  };
+  persisted.items[0]!.activeCommandClaim!.ownerInstanceId = "previous-runtime-instance";
+  await fs.writeFile(statePath, JSON.stringify(persisted, null, 2), "utf-8");
+
+  const reloaded = new SubTaskRuntimeStore(stateDir);
+  await reloaded.load();
+  const recovered = await reloaded.getTask(task.id);
+  expect(recovered).toMatchObject({
+    status: "running",
+    commandGeneration: 1,
+    activeCommandClaim: undefined,
+    stopRequestedAt: undefined,
+    stopReason: undefined,
+  });
+  expect(recovered?.notifications.at(-1)).toMatchObject({
+    kind: "stop_failed",
+    message: expect.stringContaining("interrupted"),
+  });
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });

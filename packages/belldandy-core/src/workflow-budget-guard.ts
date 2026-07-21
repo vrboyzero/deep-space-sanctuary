@@ -38,6 +38,15 @@ export type WorkflowBudgetUsage = {
   exceededReason?: string;
 };
 
+export type WorkflowAgentCallReservation = {
+  /** Agent 成功返回后，用实际估算 token 结算本次预留。 */
+  settle(tokens: number): void;
+  /** Agent 已开始但失败或取消时，只释放 token slot，保留 call 计数。 */
+  release(): void;
+  /** 外部调用尚未开始时回滚全部 reservation。 */
+  cancel(): void;
+};
+
 export class WorkflowBudgetExceededError extends Error {
   readonly reason: string;
   readonly usage: WorkflowBudgetUsage;
@@ -84,6 +93,7 @@ export function resolveWorkflowBudgetFromEnv(readEnv: (name: string) => string |
 
 export class WorkflowBudgetGuard {
   private tokens = 0;
+  private reservedTokens = 0;
   private calls = 0;
   private retries = 0;
   private readonly startedAt: number;
@@ -118,6 +128,48 @@ export class WorkflowBudgetGuard {
   }
 
   /**
+   * 在 Agent 外部调用前同步取得 call 与最小 token slot，避免并发分支同时越过预算检查。
+   */
+  reserveAgentCall(): WorkflowAgentCallReservation {
+    const tokenReservation = this.maxTokens === undefined ? 0 : 1;
+    const reason = this.findReservationExceededReason(tokenReservation);
+    if (reason) {
+      throw this.markExceeded(reason);
+    }
+
+    this.calls++;
+    this.reservedTokens += tokenReservation;
+    let closed = false;
+
+    const releaseTokenReservation = () => {
+      this.reservedTokens = Math.max(0, this.reservedTokens - tokenReservation);
+    };
+
+    return {
+      settle: (tokens: number): void => {
+        if (closed) return;
+        closed = true;
+        releaseTokenReservation();
+        if (Number.isFinite(tokens) && tokens > 0) {
+          this.tokens += tokens;
+        }
+        this.check();
+      },
+      release: (): void => {
+        if (closed) return;
+        closed = true;
+        releaseTokenReservation();
+      },
+      cancel: (): void => {
+        if (closed) return;
+        closed = true;
+        releaseTokenReservation();
+        this.calls = Math.max(0, this.calls - 1);
+      },
+    };
+  }
+
+  /**
    * 消费 token 和调用次数。在 agent() 调用完成后调用。
    */
   consume(tokens: number, calls: number = 1): void {
@@ -129,15 +181,15 @@ export class WorkflowBudgetGuard {
    * 消费一次重试计数。超限时根据 onExceeded 模式抛错或仅记录。
    */
   consumeRetry(): void {
-    this.retries++;
     const limit = this.maxRetries;
-    if (limit !== undefined && this.retries > limit) {
-      const reason = `max retries exceeded (${this.retries}/${limit})`;
+    if (limit !== undefined && this.retries >= limit) {
+      const reason = `max retries exceeded (${this.retries + 1}/${limit})`;
       const error = this.markExceeded(reason);
       if (this.onExceededMode === "abort") {
         throw error;
       }
     }
+    this.retries++;
   }
 
   /**
@@ -181,6 +233,7 @@ export class WorkflowBudgetGuard {
    */
   reset(): void {
     this.tokens = 0;
+    this.reservedTokens = 0;
     this.calls = 0;
     this.retries = 0;
     this.exceeded = false;
@@ -191,7 +244,7 @@ export class WorkflowBudgetGuard {
     if (this.maxTokens !== undefined && this.tokens > this.maxTokens) {
       return `token budget exceeded (${this.tokens}/${this.maxTokens})`;
     }
-    if (this.maxAgentCalls !== undefined && this.calls >= this.maxAgentCalls) {
+    if (this.maxAgentCalls !== undefined && this.calls > this.maxAgentCalls) {
       return `agent call budget exceeded (${this.calls}/${this.maxAgentCalls})`;
     }
     if (this.maxWallClockMs !== undefined) {
@@ -199,6 +252,21 @@ export class WorkflowBudgetGuard {
       if (elapsed > this.maxWallClockMs) {
         return `wall clock budget exceeded (${elapsed}ms/${this.maxWallClockMs}ms)`;
       }
+    }
+    return undefined;
+  }
+
+  private findReservationExceededReason(tokenReservation: number): string | undefined {
+    const currentReason = this.findExceededReason();
+    if (currentReason) return currentReason;
+    if (this.maxAgentCalls !== undefined && this.calls >= this.maxAgentCalls) {
+      return `agent call budget exceeded (${this.calls}/${this.maxAgentCalls})`;
+    }
+    if (
+      this.maxTokens !== undefined
+      && this.tokens + this.reservedTokens + tokenReservation > this.maxTokens
+    ) {
+      return `token budget exceeded (${this.tokens + this.reservedTokens}/${this.maxTokens})`;
     }
     return undefined;
   }

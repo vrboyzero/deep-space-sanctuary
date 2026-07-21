@@ -48,11 +48,12 @@ const RICH_CONTENT_FIXTURE_SOURCE = `
 await window.__BELLDANDY_WEB_ASSETS_READY__;
 const { sanitizeRichContent } = await import("/app/features/rich-content-renderer.js");
 const target = document.querySelector("#fixture-target");
-const richHtml = sanitizeRichContent('<strong>safe</strong><img src="javascript:alert(1)" onerror="alert(1)"><a href="javascript:alert(1)">blocked</a>');
+const richHtml = sanitizeRichContent('<strong>safe</strong><div class="css-url-probe" style="background-image:url(/__webchat-css-url-probe__.png)">probe</div><img src="javascript:alert(1)" onerror="alert(1)"><a href="javascript:alert(1)">blocked</a>');
 target.innerHTML = richHtml;
 window.__WEBCHAT_SECURITY_FIXTURE__ = {
   html: target.innerHTML,
   hasSafeMarkup: target.querySelector("strong")?.textContent === "safe",
+  hasInlineStyle: target.querySelector(".css-url-probe")?.hasAttribute("style"),
   hasScript: Boolean(target.querySelector("script")),
   hasEventHandler: Boolean(target.querySelector("[onerror]")),
   hasUnsafeLink: Boolean(target.querySelector('a[href^="javascript:"]')),
@@ -139,7 +140,9 @@ async function openSecurityPage(browser, url) {
   const page = await browser.newPage();
   const violations = [];
   const pageErrors = [];
+  const requestedUrls = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => requestedUrls.push(request.url()));
   await page.evaluateOnNewDocument(() => {
     window.__WEBCHAT_POLICY_VIOLATIONS__ = [];
     document.addEventListener("securitypolicyviolation", (event) => {
@@ -153,7 +156,7 @@ async function openSecurityPage(browser, url) {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
   await new Promise((resolve) => setTimeout(resolve, 800));
   violations.push(...await page.evaluate(() => window.__WEBCHAT_POLICY_VIOLATIONS__));
-  return { page, pageErrors, violations };
+  return { page, pageErrors, requestedUrls, violations };
 }
 
 function assertNoSecurityFailures(label, violations, pageErrors) {
@@ -196,9 +199,11 @@ async function main() {
     try {
       await richContent.page.waitForFunction(() => window.__WEBCHAT_SECURITY_FIXTURE__, { timeout: 10_000 });
       const richContentState = await richContent.page.evaluate(() => window.__WEBCHAT_SECURITY_FIXTURE__);
-      if (!richContentState.hasSafeMarkup || richContentState.hasScript || richContentState.hasEventHandler
+      const cssUrlProbeRequested = richContent.requestedUrls.some((url) => url.includes("/__webchat-css-url-probe__.png"));
+      if (!richContentState.hasSafeMarkup || richContentState.hasInlineStyle || cssUrlProbeRequested
+        || richContentState.hasScript || richContentState.hasEventHandler
         || richContentState.hasUnsafeLink || richContentState.hasUnsafeMedia) {
-        throw new Error(`Rich content Trusted Types fixture rendered an unsafe result: ${JSON.stringify(richContentState)}`);
+        throw new Error(`Rich content Trusted Types fixture rendered an unsafe result: ${JSON.stringify({ ...richContentState, cssUrlProbeRequested })}`);
       }
       assertNoSecurityFailures("Rich content Trusted Types fixture", richContent.violations, richContent.pageErrors);
     } finally {

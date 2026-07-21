@@ -33,6 +33,10 @@ import {
     readBoundedMediaBuffer,
     type BoundedMediaRequestPolicy,
 } from "./media-reader.js";
+import {
+    createDiscordRestClientOptions,
+    type DiscordRestOutboundRequestPolicy,
+} from "./discord-rest-transport.js";
 
 export interface DiscordChannelConfig extends ChannelConfig {
     botToken: string;
@@ -40,6 +44,10 @@ export interface DiscordChannelConfig extends ChannelConfig {
     sttTranscribe?: (opts: { buffer: Buffer; fileName: string; mime?: string }) => Promise<{ text: string } | null>;
     /** 测试或宿主可注入同契约 policy；生产默认使用仅公网 HTTPS 的安全 profile。 */
     outboundRequestPolicy?: BoundedMediaRequestPolicy;
+    /** Discord SDK REST 专用 policy；不影响 Gateway WebSocket transport。 */
+    restOutboundRequestPolicy?: DiscordRestOutboundRequestPolicy;
+    restMaxResponseBytes?: number;
+    restTimeoutMs?: number;
 }
 
 type AudioAttachmentResolution = {
@@ -170,7 +178,14 @@ export class DiscordChannel implements Channel {
             GatewayIntentBits.MessageContent
         );
 
-        const client = new Client({ intents });
+        const client = new Client({
+            intents,
+            rest: createDiscordRestClientOptions({
+                outboundRequestPolicy: this.config.restOutboundRequestPolicy,
+                maxResponseBytes: this.config.restMaxResponseBytes,
+                timeoutMs: this.config.restTimeoutMs,
+            }),
+        });
         const session = ++this.clientSession;
         this.client = client;
         this._lifecycleState = "starting";

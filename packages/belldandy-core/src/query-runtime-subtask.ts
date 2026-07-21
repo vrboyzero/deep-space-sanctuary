@@ -6,11 +6,20 @@ import type { GatewayResFrame } from "@belldandy/protocol";
 import { buildAgentLaunchExplainability } from "./agent-launch-explainability.js";
 import { buildSubTaskContinuationState } from "./continuation-state.js";
 import type { ConversationPromptSnapshotArtifact } from "./conversation-prompt-snapshot.js";
-import type { SubTaskRecord, SubTaskRuntimeStore } from "./task-runtime.js";
+import { SubTaskCommandClaimError } from "./subtask-command-claim.js";
+import type {
+  SubTaskCommandRequestOptions,
+  SubTaskRecord,
+  SubTaskRuntimeStore,
+} from "./task-runtime.js";
 import { QueryRuntime, type QueryRuntimeObserver } from "./query-runtime.js";
 import { attachSubTaskBridgeProjection, getSubTaskBridgeProjection } from "./subtask-bridge-view.js";
 import { buildSubTaskLaunchExplainability } from "./subtask-launch-explainability.js";
 import { buildSubTaskResultEnvelope } from "./subtask-result-envelope.js";
+import {
+  paginateSubTaskRecords,
+  SubTaskPageInputError,
+} from "./subtask-runtime-pagination.js";
 import { resolveResidentStateBindingViewForAgent } from "./resident-state-binding.js";
 
 type SubTaskQueryRuntimeMethod =
@@ -31,18 +40,43 @@ export type QueryRuntimeSubTaskContext = {
     conversationId: string;
     runId?: string;
   }) => Promise<ConversationPromptSnapshotArtifact | undefined>;
-  resumeSubTask?: (taskId: string, message?: string) => Promise<SubTaskRecord | undefined>;
-  takeoverSubTask?: (taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>;
-  updateSubTask?: (taskId: string, message: string) => Promise<SubTaskRecord | undefined>;
-  stopSubTask?: (taskId: string, reason?: string) => Promise<SubTaskRecord | undefined>;
+  resumeSubTask?: (
+    taskId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  takeoverSubTask?: (
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  updateSubTask?: (
+    taskId: string,
+    message: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  stopSubTask?: (
+    taskId: string,
+    reason?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
   runtimeObserver?: QueryRuntimeObserver<SubTaskQueryRuntimeMethod>;
 };
+
+function resolveCommandErrorCode(error: unknown, fallback: string): string {
+  return error instanceof SubTaskCommandClaimError && error.code === "revision_conflict"
+    ? "revision_conflict"
+    : fallback;
+}
 
 export async function handleSubTaskListWithQueryRuntime(
   ctx: QueryRuntimeSubTaskContext,
   params: {
     conversationId?: string;
     includeArchived: boolean;
+    limit?: number;
+    cursor?: string;
   },
 ): Promise<GatewayResFrame> {
   const runtime = new QueryRuntime({
@@ -52,6 +86,7 @@ export async function handleSubTaskListWithQueryRuntime(
   });
 
   return runtime.run(async (queryRuntime) => {
+    const paginationRequested = params.limit !== undefined || params.cursor !== undefined;
     queryRuntime.mark("runtime_checked", {
       conversationId: params.conversationId,
       detail: {
@@ -60,6 +95,22 @@ export async function handleSubTaskListWithQueryRuntime(
     });
 
     if (!ctx.subTaskRuntimeStore) {
+      let page: ReturnType<typeof paginateSubTaskRecords> | undefined;
+      try {
+        page = paginationRequested
+          ? paginateSubTaskRecords([], { limit: params.limit, cursor: params.cursor })
+          : undefined;
+      } catch (error) {
+        if (error instanceof SubTaskPageInputError) {
+          return {
+            type: "res",
+            id: ctx.requestId,
+            ok: false,
+            error: { code: "invalid_params", message: error.message },
+          };
+        }
+        throw error;
+      }
       queryRuntime.mark("completed", {
         conversationId: params.conversationId,
         detail: {
@@ -73,6 +124,13 @@ export async function handleSubTaskListWithQueryRuntime(
         ok: true,
         payload: {
           items: [],
+          ...(page ? {
+            page: {
+              limit: page.limit,
+              hasMore: page.hasMore,
+              ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+            },
+          } : {}),
         },
       };
     }
@@ -81,13 +139,47 @@ export async function handleSubTaskListWithQueryRuntime(
       conversationId: params.conversationId,
       detail: {
         includeArchived: params.includeArchived,
+        paginationRequested,
+        limit: params.limit,
       },
     });
 
-    const items = await ctx.subTaskRuntimeStore.listTasks(
-      params.conversationId,
-      { includeArchived: params.includeArchived },
-    );
+    let items: SubTaskRecord[];
+    let page: { limit: number; hasMore: boolean; nextCursor?: string } | undefined;
+    try {
+      if (paginationRequested) {
+        const result = await ctx.subTaskRuntimeStore.listTaskPage(params.conversationId, {
+          includeArchived: params.includeArchived,
+          limit: params.limit,
+          cursor: params.cursor,
+        });
+        items = result.items;
+        page = {
+          limit: result.limit,
+          hasMore: result.hasMore,
+          ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+        };
+      } else {
+        items = await ctx.subTaskRuntimeStore.listTasks(
+          params.conversationId,
+          { includeArchived: params.includeArchived },
+        );
+      }
+    } catch (error) {
+      if (error instanceof SubTaskPageInputError) {
+        queryRuntime.mark("completed", {
+          conversationId: params.conversationId,
+          detail: { code: "invalid_params" },
+        });
+        return {
+          type: "res",
+          id: ctx.requestId,
+          ok: false,
+          error: { code: "invalid_params", message: error.message },
+        };
+      }
+      throw error;
+    }
     const itemsWithBridgeProjection = items.map((item) => attachSubTaskBridgeProjection(item));
 
     queryRuntime.mark("task_listed", {
@@ -112,6 +204,7 @@ export async function handleSubTaskListWithQueryRuntime(
           conversationId: params.conversationId ?? null,
           includeArchived: params.includeArchived,
           items: itemsWithBridgeProjection,
+          ...(page ? { page } : {}),
         },
       };
   });
@@ -1077,7 +1170,7 @@ function normalizeSectionLabel(value: string): string | undefined {
 
 export async function handleSubTaskStopWithQueryRuntime(
   ctx: QueryRuntimeSubTaskContext,
-  params: { taskId: string; reason?: string },
+  params: { taskId: string; reason?: string; expectedRevision?: number },
 ): Promise<GatewayResFrame> {
   const runtime = new QueryRuntime({
     method: "subtask.stop" as const,
@@ -1111,6 +1204,7 @@ export async function handleSubTaskStopWithQueryRuntime(
       detail: {
         taskId: params.taskId,
         hasReason: Boolean(params.reason),
+        expectedRevision: params.expectedRevision,
       },
     });
 
@@ -1155,7 +1249,30 @@ export async function handleSubTaskStopWithQueryRuntime(
       };
     }
 
-    const item = await ctx.stopSubTask(params.taskId, params.reason);
+    let item: SubTaskRecord | undefined;
+    try {
+      item = await ctx.stopSubTask(params.taskId, params.reason, {
+        expectedRevision: params.expectedRevision,
+        idempotencyKey: ctx.requestId,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode = resolveCommandErrorCode(error, "stop_failed");
+      queryRuntime.mark("completed", {
+        conversationId: current.parentConversationId,
+        detail: {
+          taskId: current.id,
+          code: errorCode,
+          error: errorMessage,
+        },
+      });
+      return {
+        type: "res",
+        id: ctx.requestId,
+        ok: false,
+        error: { code: errorCode, message: errorMessage },
+      };
+    }
     if (!item) {
       queryRuntime.mark("completed", {
         conversationId: current.parentConversationId,
@@ -1200,7 +1317,7 @@ export async function handleSubTaskStopWithQueryRuntime(
 
 export async function handleSubTaskResumeWithQueryRuntime(
   ctx: QueryRuntimeSubTaskContext,
-  params: { taskId: string; message?: string },
+  params: { taskId: string; message?: string; expectedRevision?: number },
 ): Promise<GatewayResFrame> {
   const runtime = new QueryRuntime({
     method: "subtask.resume" as const,
@@ -1234,6 +1351,7 @@ export async function handleSubTaskResumeWithQueryRuntime(
       detail: {
         taskId: params.taskId,
         messageChars: typeof params.message === "string" ? params.message.length : 0,
+        expectedRevision: params.expectedRevision,
       },
     });
 
@@ -1265,14 +1383,18 @@ export async function handleSubTaskResumeWithQueryRuntime(
 
     let item: SubTaskRecord | undefined;
     try {
-      item = await ctx.resumeSubTask(params.taskId, params.message);
+      item = await ctx.resumeSubTask(params.taskId, params.message, {
+        expectedRevision: params.expectedRevision,
+        idempotencyKey: ctx.requestId,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode = resolveCommandErrorCode(error, "resume_failed");
       queryRuntime.mark("completed", {
         conversationId: current.parentConversationId,
         detail: {
           taskId: current.id,
-          code: "resume_failed",
+          code: errorCode,
           error: errorMessage,
         },
       });
@@ -1280,7 +1402,7 @@ export async function handleSubTaskResumeWithQueryRuntime(
         type: "res",
         id: ctx.requestId,
         ok: false,
-        error: { code: "resume_failed", message: errorMessage },
+        error: { code: errorCode, message: errorMessage },
       };
     }
 
@@ -1328,7 +1450,7 @@ export async function handleSubTaskResumeWithQueryRuntime(
 
 export async function handleSubTaskTakeoverWithQueryRuntime(
   ctx: QueryRuntimeSubTaskContext,
-  params: { taskId: string; agentId: string; message?: string },
+  params: { taskId: string; agentId: string; message?: string; expectedRevision?: number },
 ): Promise<GatewayResFrame> {
   const runtime = new QueryRuntime({
     method: "subtask.takeover" as const,
@@ -1363,6 +1485,7 @@ export async function handleSubTaskTakeoverWithQueryRuntime(
         taskId: params.taskId,
         agentId: params.agentId,
         messageChars: typeof params.message === "string" ? params.message.length : 0,
+        expectedRevision: params.expectedRevision,
       },
     });
 
@@ -1397,14 +1520,18 @@ export async function handleSubTaskTakeoverWithQueryRuntime(
 
     let item: SubTaskRecord | undefined;
     try {
-      item = await ctx.takeoverSubTask(params.taskId, params.agentId, params.message);
+      item = await ctx.takeoverSubTask(params.taskId, params.agentId, params.message, {
+        expectedRevision: params.expectedRevision,
+        idempotencyKey: ctx.requestId,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode = resolveCommandErrorCode(error, "takeover_failed");
       queryRuntime.mark("completed", {
         conversationId: current.parentConversationId,
         detail: {
           taskId: current.id,
-          code: "takeover_failed",
+          code: errorCode,
           error: errorMessage,
           toAgentId: params.agentId,
         },
@@ -1413,7 +1540,7 @@ export async function handleSubTaskTakeoverWithQueryRuntime(
         type: "res",
         id: ctx.requestId,
         ok: false,
-        error: { code: "takeover_failed", message: errorMessage },
+        error: { code: errorCode, message: errorMessage },
       };
     }
 
@@ -1465,7 +1592,7 @@ export async function handleSubTaskTakeoverWithQueryRuntime(
 
 export async function handleSubTaskUpdateWithQueryRuntime(
   ctx: QueryRuntimeSubTaskContext,
-  params: { taskId: string; message: string },
+  params: { taskId: string; message: string; expectedRevision?: number },
 ): Promise<GatewayResFrame> {
   const runtime = new QueryRuntime({
     method: "subtask.update" as const,
@@ -1499,6 +1626,7 @@ export async function handleSubTaskUpdateWithQueryRuntime(
       detail: {
         taskId: params.taskId,
         messageChars: params.message.length,
+        expectedRevision: params.expectedRevision,
       },
     });
 
@@ -1529,14 +1657,18 @@ export async function handleSubTaskUpdateWithQueryRuntime(
 
     let item: SubTaskRecord | undefined;
     try {
-      item = await ctx.updateSubTask(params.taskId, params.message);
+      item = await ctx.updateSubTask(params.taskId, params.message, {
+        expectedRevision: params.expectedRevision,
+        idempotencyKey: ctx.requestId,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode = resolveCommandErrorCode(error, "update_failed");
       queryRuntime.mark("completed", {
         conversationId: current.parentConversationId,
         detail: {
           taskId: current.id,
-          code: "update_failed",
+          code: errorCode,
           error: errorMessage,
         },
       });
@@ -1544,7 +1676,7 @@ export async function handleSubTaskUpdateWithQueryRuntime(
         type: "res",
         id: ctx.requestId,
         ok: false,
-        error: { code: "update_failed", message: errorMessage },
+        error: { code: errorCode, message: errorMessage },
       };
     }
 

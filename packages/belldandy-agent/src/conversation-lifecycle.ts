@@ -73,6 +73,17 @@ export class ConversationLifecycleCoordinator {
         }
     }
 
+    async waitForAllPendingPersistence(): Promise<void> {
+        // settlement 期间可能追加下一条写链，因此循环到所有 lane 的 Map 同时为空。
+        while (true) {
+            const pending = [...this.writeChains.values()]
+                .flatMap((chains) => [...chains.values()]);
+            if (pending.length === 0) return;
+
+            await Promise.all(pending.map((write) => write.catch(() => undefined)));
+        }
+    }
+
     release(conversationId: string, clearState: () => void): Promise<void> {
         const existing = this.releases.get(conversationId);
         if (existing) return existing;

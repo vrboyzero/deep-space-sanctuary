@@ -8,7 +8,7 @@ function flushPromises() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function createHarness(sendReqImpl = vi.fn()) {
+function createHarness(sendReqImpl = vi.fn(), options = {}) {
   document.body.innerHTML = `
     <section id="bridgeSection">
       <div id="bridgeSummary"></div>
@@ -54,7 +54,7 @@ function createHarness(sendReqImpl = vi.fn()) {
       return () => `req-${++seq}`;
     })(),
     getBridgeRuntimeState: () => state,
-    escapeHtml: (value) => String(value ?? ""),
+    escapeHtml: options.escapeHtml || ((value) => String(value ?? "")),
     formatDateTime: (value) => String(value ?? "-"),
     onOpenSourcePath,
     onOpenTask,
@@ -77,6 +77,31 @@ afterEach(() => {
 });
 
 describe("bridge runtime feature", () => {
+  it("renders Gateway list errors as empty-state text without parsing HTML", async () => {
+    const maliciousError = '<img src=x onerror="alert(1)">bridge list failed';
+    const { refs, feature } = createHarness(
+      vi.fn(async () => ({ ok: false, error: { message: maliciousError } })),
+      {
+        escapeHtml(value) {
+          if (value === maliciousError) {
+            throw new Error("Bridge error placeholders must not require an HTML escaper");
+          }
+          return String(value ?? "");
+        },
+      },
+    );
+
+    await expect(feature.loadBridgeSessions()).resolves.toBeUndefined();
+
+    for (const root of [refs.bridgeListEl, refs.bridgeDetailEl]) {
+      expect(root.children).toHaveLength(1);
+      expect(root.firstElementChild.className).toBe("memory-viewer-empty");
+      expect(root.firstElementChild.textContent).toBe(maliciousError);
+      expect(root.querySelector("img, [onerror]")).toBeNull();
+    }
+    feature.dispose();
+  });
+
   it("owns polling across activate, deactivate, and dispose", async () => {
     vi.useFakeTimers();
     const sendReq = vi.fn(async (req) => {

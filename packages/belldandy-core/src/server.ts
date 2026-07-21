@@ -19,6 +19,7 @@ import {
   DurableExtractionRuntime,
   getGlobalMemoryManager,
   guardTeamSharedMemoryWrite,
+  MemoryModelPrivacyRuntime,
   type DurableExtractionDigestSnapshot,
   type DurableExtractionRecord,
 } from "@belldandy/memory";
@@ -62,7 +63,11 @@ import {
   readConfiguredPromptExperimentToolContracts,
 } from "./tool-behavior-observability.js";
 import { buildToolContractV2Observability } from "./tool-contract-v2-observability.js";
-import type { SubTaskRecord, SubTaskRuntimeStore } from "./task-runtime.js";
+import type {
+  SubTaskCommandRequestOptions,
+  SubTaskRecord,
+  SubTaskRuntimeStore,
+} from "./task-runtime.js";
 import {
   applyToolControlChanges,
   buildToolControlDisabledPayload,
@@ -77,6 +82,8 @@ import {
   type MemoryBudgetDecision,
   type RateLimitState,
 } from "./memory-runtime-budget.js";
+import { BackgroundRunCoordinator } from "./background-run-coordinator.js";
+import { MemoryBackgroundJobScheduler } from "./memory-background-job-scheduler.js";
 import {
   buildMemoryRuntimeDoctorReport,
   getDurableExtractionAvailability,
@@ -173,6 +180,21 @@ import type { ChannelSecurityApprovalRequestInput } from "@belldandy/channels";
 import type { BackgroundContinuationRuntimeDoctorReport } from "./background-continuation-runtime.js";
 import type { CronRuntimeDoctorReport } from "./cron/observability.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
+import {
+  GatewayShutdownCoordinator,
+  type GatewayShutdownRequest,
+  type GatewayShutdownResult,
+} from "./gateway-shutdown-coordinator.js";
+import {
+  type GatewayShutdownResources,
+  registerGatewayShutdownResources,
+} from "./gateway-shutdown-resources.js";
+import {
+  createGatewayServerIntakeGate,
+  createGatewayTransportCloser,
+  registerGatewayServerShutdownResources,
+  throwOnGatewayServerShutdownFailure,
+} from "./gateway-server-shutdown.js";
 import {
   TopLevelConversationLifecycle,
   type TopLevelConversationLifecycleSnapshot,
@@ -316,13 +338,30 @@ export type GatewayServerOptions = {
   /** 子任务运行时存储 */
   subTaskRuntimeStore?: SubTaskRuntimeStore;
   /** 子任务 resume / continuation 控制 */
-  resumeSubTask?: (taskId: string, message?: string) => Promise<SubTaskRecord | undefined>;
+  resumeSubTask?: (
+    taskId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
   /** 子任务 takeover 控制 */
-  takeoverSubTask?: (taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>;
+  takeoverSubTask?: (
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
   /** 子任务 steering / update 控制 */
-  updateSubTask?: (taskId: string, message: string) => Promise<SubTaskRecord | undefined>;
+  updateSubTask?: (
+    taskId: string,
+    message: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
   /** 子任务停止控制 */
-  stopSubTask?: (taskId: string, reason?: string) => Promise<SubTaskRecord | undefined>;
+  stopSubTask?: (
+    taskId: string,
+    reason?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
   /** 动态工作流运行时（由 Gateway 装配后注入） */
   workflowRuntime?: WorkflowRuntimeCapabilities;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
@@ -335,6 +374,14 @@ export type GatewayServerOptions = {
   webhookIdempotency?: IdempotencyManager;
   /** Resident MemoryManager 组装记录 */
   residentMemoryManagers?: ScopedMemoryManagerRecord[];
+  /** Gateway 统一 Memory usage owner；直接启动 server 时保留内部 fallback。 */
+  memoryUsageAccounting?: MemoryRuntimeUsageAccounting;
+  /** 与 memoryUsageAccounting 配套的共享预算 guard。 */
+  memoryBudgetGuard?: MemoryRuntimeBudgetGuard;
+  /** Dream/summary/extraction 共用的后台模型调度 owner。 */
+  memoryBackgroundJobScheduler?: MemoryBackgroundJobScheduler;
+  /** Dream/summary/extraction 共用的 private_summary policy 与无正文观测 owner。 */
+  memoryModelPrivacyRuntime?: MemoryModelPrivacyRuntime;
   /** Cron 运行态观测摘要 */
   getCronRuntimeDoctorReport?: () => Promise<CronRuntimeDoctorReport | undefined>;
   /** Background continuation runtime 摘要 */
@@ -357,12 +404,16 @@ export type GatewayServerOptions = {
   }>;
   /** 当 community/http 等入口命中 DM allowlist 阻断时记录待审批 sender */
   onChannelSecurityApprovalRequired?: (input: ChannelSecurityApprovalRequestInput) => void | Promise<void>;
+  /** 由 Gateway 入口 owner 安排 countdown，并在响应返回后请求统一关闭。 */
+  requestSystemRestart?: (reason: string) => void;
 };
 
 export type GatewayServer = {
   port: number;
   host: string;
   close: () => Promise<void>;
+  requestShutdown: (request: GatewayShutdownRequest) => Promise<GatewayShutdownResult>;
+  registerShutdownResources: (resources: GatewayShutdownResources) => void;
   broadcast: (frame: GatewayEventFrame) => void;
   isResidentAgentBusy: (agentId?: string) => boolean;
   autoRunResidentAgent: (input: {
@@ -783,6 +834,15 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     };
 
   const app = express();
+  const intakeGate = createGatewayServerIntakeGate();
+  app.use((_req, res, next) => {
+    const rejection = intakeGate.getHttpRejection();
+    if (!rejection) {
+      next();
+      return;
+    }
+    res.status(rejection.statusCode).json(rejection.body);
+  });
   const tokenUsageUploadConfig: TokenUsageUploadConfig = {
     enabled: String(process.env.BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED ?? "false").toLowerCase() === "true",
     url: readEnvTrimmed("BELLDANDY_TOKEN_USAGE_UPLOAD_URL"),
@@ -849,14 +909,22 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
   const conversationRunRegistry = opts.conversationRunRegistry ?? new ConversationRunRegistry();
   const topLevelConversationLifecycle = opts.topLevelConversationLifecycle
     ?? new TopLevelConversationLifecycle(opts.topLevelConversationLifecycleOptions);
-  const memoryUsageAccounting = new MemoryRuntimeUsageAccounting({
-    stateDir,
-    logger: {
-      warn: (message, data) => log.warn("memory-usage", message, data),
-    },
-  });
+  const memoryUsageAccounting = opts.memoryUsageAccounting ?? new MemoryRuntimeUsageAccounting({
+      stateDir,
+      logger: {
+        warn: (message, data) => log.warn("memory-usage", message, data),
+      },
+    });
   await memoryUsageAccounting.load();
-  const memoryBudgetGuard = MemoryRuntimeBudgetGuard.fromEnv(memoryUsageAccounting);
+  const memoryBudgetGuard = opts.memoryBudgetGuard ?? MemoryRuntimeBudgetGuard.fromEnv(memoryUsageAccounting);
+  const memoryBackgroundJobScheduler = opts.memoryBackgroundJobScheduler ?? new MemoryBackgroundJobScheduler({
+    runCoordinator: new BackgroundRunCoordinator({
+      getForegroundActiveCount: () => conversationRunRegistry.getRuntimeSnapshot().activeCount,
+    }),
+    budgetGuard: memoryBudgetGuard,
+    usageAccounting: memoryUsageAccounting,
+  });
+  const memoryModelPrivacyRuntime = opts.memoryModelPrivacyRuntime ?? MemoryModelPrivacyRuntime.fromEnv();
   const durableExtractionRequestRateLimiter = new SlidingWindowRateLimiter(
     parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_RUNS"),
     parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_WINDOW_MS") ?? 60 * 60 * 1_000,
@@ -920,6 +988,22 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       successCooldownMs: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_SUCCESS_COOLDOWN_MS"),
       failureBackoffMs: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_FAILURE_BACKOFF_MS"),
       failureBackoffMaxMs: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_FAILURE_BACKOFF_MAX_MS"),
+      inputLimits: {
+        maxMessages: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGES"),
+        maxMessageBytes: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES"),
+        maxAggregateBytes: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_INPUT_BYTES"),
+      },
+      closeDeadlineMs: parseOptionalPositiveIntEnv("BELLDANDY_MEMORY_DURABLE_EXTRACTION_CLOSE_DEADLINE_MS"),
+      acquireJob: ({ conversationId, estimatedTokenUnits, signal }) => {
+        const agentId = /^agent:([^:]+):/u.exec(conversationId.trim())?.[1] ?? "default";
+        return memoryBackgroundJobScheduler.acquire({
+          family: "durable_extraction",
+          agentId,
+          priority: "normal",
+          estimatedTokenUnits,
+          signal,
+        });
+      },
       canStartRun: async (event) => {
         const decision = await memoryBudgetGuard.evaluateDurableExtractionRun();
         if (!decision.allowed) {
@@ -1127,6 +1211,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       reasoningEffort: dreamOpenAIReasoningEffort,
       maxTokens: dreamOpenAIMaxTokens,
       timeoutMs: dreamOpenAITimeoutMs,
+      modelPrivacyRuntime: memoryModelPrivacyRuntime,
       obsidianMirror: {
         enabled: dreamObsidianMirrorEnabled,
         vaultPath: dreamObsidianMirrorVaultPath,
@@ -1302,6 +1387,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     requestDurableExtraction,
     memoryUsageAccounting,
     memoryBudgetGuard,
+    memoryBackgroundJobScheduler,
+    memoryModelPrivacyRuntime,
     durableExtractionRequestRateLimiter,
     ttsEnabled: opts.ttsEnabled,
     ttsSynthesize: opts.ttsSynthesize,
@@ -1334,6 +1421,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     tokenUsageUploadConfig,
     broadcast: (frame) => broadcastEvent?.(frame),
     broadcastEvent: (frame) => broadcastEvent?.(frame),
+    requestSystemRestart: opts.requestSystemRestart,
     getCompactionRuntimeReport: opts.getCompactionRuntimeReport,
     getRuntimeResilienceReport: opts.getRuntimeResilienceReport,
     queryRuntimeTraceStore,
@@ -1357,7 +1445,12 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     onActivity: opts.onActivity,
     isConfigured: opts.isConfigured,
     startupObservability: opts.startupObservability,
-    onRequest: handleWebSocketRequest,
+    onRequest: (ws, frame, connection) => {
+      const rejection = intakeGate.getGatewayRejection(frame.id);
+      return rejection
+        ? Promise.resolve(rejection)
+        : handleWebSocketRequest(ws, frame, connection);
+    },
   });
   runtimeResourceObservability.start();
   broadcastEvent = websocketRuntime.broadcast;
@@ -1472,42 +1565,42 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     return runtime.status === "running" || runtime.status === "background";
   };
 
-  return {
-    port,
-    host,
-    close: async () => {
+  const shutdownCoordinator = new GatewayShutdownCoordinator();
+  const closeTransport = createGatewayTransportCloser({
+    server,
+    trackedSockets,
+    closeWebSockets: () => websocketRuntime?.close() ?? Promise.resolve(),
+  });
+  registerGatewayServerShutdownResources(shutdownCoordinator, {
+    stopIntake: () => {
+      intakeGate.stop();
+      conversationRunRegistry.stopAccepting();
+    },
+    abortActiveRuns: () => conversationRunRegistry.requestStopAll("gateway_shutdown"),
+    drainActiveRuns: (signal) => conversationRunRegistry.waitForIdle(signal),
+    disposeTopLevelConversations: () => topLevelConversationLifecycle.dispose(),
+    closeDurableExtraction: () => durableExtractionRuntime?.close(),
+    flushConversationState: () => conversationStore.waitForAllPendingPersistence(),
+    flushSubTaskState: () => opts.subTaskRuntimeStore?.flushAndClose(),
+    flushMemoryUsage: () => memoryUsageAccounting.flush(),
+    detachRuntimeHooks: () => {
       detachSubTaskBroadcast?.();
       detachDurableExtractionBroadcast?.();
       runtimeResourceObservability.stop();
-      // 先启动 HTTP 关闭与 force-close timer；活跃 WebSocket 不能阻止后续 socket 收敛。
-      const closeHttpServer = new Promise<void>((resolve, reject) => {
-        const forceCloseTimer = setTimeout(() => {
-          server.closeIdleConnections?.();
-          server.closeAllConnections?.();
-          for (const socket of trackedSockets) {
-            if (!socket.destroyed) {
-              socket.destroy();
-            }
-          }
-        }, 200);
-        forceCloseTimer.unref?.();
-
-        server.close((err) => {
-          clearTimeout(forceCloseTimer);
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve();
-        });
-        server.closeIdleConnections?.();
-      });
-      await websocketRuntime?.close();
-      await closeHttpServer;
-      await topLevelConversationLifecycle.dispose();
-      await durableExtractionRuntime?.close();
-      await memoryUsageAccounting.flush();
     },
+    closeTransport,
+  });
+  const close = async (): Promise<void> => {
+    const result = await shutdownCoordinator.requestShutdown({ kind: "manual", exitCode: 0 });
+    throwOnGatewayServerShutdownFailure(result);
+  };
+
+  return {
+    port,
+    host,
+    close,
+    requestShutdown: (request) => shutdownCoordinator.requestShutdown(request),
+    registerShutdownResources: (resources) => registerGatewayShutdownResources(shutdownCoordinator, resources),
     broadcast: broadcastEvent,
     isResidentAgentBusy,
     autoRunResidentAgent,
@@ -1800,6 +1893,7 @@ async function handleReq(
     clientId: ctx.clientId,
     log: ctx.log,
     broadcast: ctx.broadcast,
+    requestSystemRestart: ctx.requestSystemRestart,
     agentRegistry: ctx.agentRegistry,
     residentAgentRuntime: ctx.residentAgentRuntime,
     residentMemoryManagers: ctx.residentMemoryManagers,
@@ -1965,6 +2059,7 @@ async function handleReq(
         conversationStore: ctx.conversationStore,
         durableExtractionRuntime: ctx.durableExtractionRuntime,
         memoryBudgetGuard: ctx.memoryBudgetGuard,
+        memoryModelPrivacyRuntime: ctx.memoryModelPrivacyRuntime,
         durableExtractionRequestRateLimiter: ctx.durableExtractionRequestRateLimiter,
         toolsConfigManager: ctx.toolsConfigManager,
         toolExecutor: ctx.toolExecutor,
@@ -2153,6 +2248,7 @@ async function handleReq(
         resolveDreamRuntime: ctx.resolveDreamRuntime ?? (() => null),
         resolveDefaultConversationId: ctx.resolveDreamDefaultConversationId ?? (() => "agent:default:main"),
         resolveCommonsExportRuntime: ctx.resolveCommonsExportRuntime ?? (() => null),
+        jobScheduler: ctx.memoryBackgroundJobScheduler,
       });
 
     case "workspace.list":

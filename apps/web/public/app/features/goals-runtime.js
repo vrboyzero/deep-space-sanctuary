@@ -107,6 +107,18 @@ function parseDateTimeLocalValue(value) {
   return date.toISOString();
 }
 
+function createGoalCheckpointContextRow(ownerDocument, label, value) {
+  const row = ownerDocument.createElement("div");
+  row.className = "goal-checkpoint-action-context-item";
+  const labelElement = ownerDocument.createElement("span");
+  labelElement.className = "goal-summary-label";
+  labelElement.textContent = label;
+  const valueElement = ownerDocument.createElement("strong");
+  valueElement.textContent = value;
+  row.append(labelElement, valueElement);
+  return row;
+}
+
 export function createGoalsRuntimeFeature({
   refs,
   isConnected,
@@ -119,7 +131,6 @@ export function createGoalsRuntimeFeature({
   loadGoals,
   showNotice,
   formatDateTime,
-  escapeHtml,
   onResumeGoal,
   onPauseGoal,
   onArchiveGoal,
@@ -215,7 +226,7 @@ export function createGoalsRuntimeFeature({
     if (goalCheckpointActionHintEl) {
       goalCheckpointActionHintEl.textContent = t("goals.checkpointActionHint", {}, "Complete checkpoint review or state transitions here instead of using temporary prompts.");
     }
-    if (goalCheckpointActionContextEl) goalCheckpointActionContextEl.innerHTML = "";
+    goalCheckpointActionContextEl?.replaceChildren();
     if (goalCheckpointActionReviewerEl) goalCheckpointActionReviewerEl.value = "";
     if (goalCheckpointActionReviewerRoleEl) goalCheckpointActionReviewerRoleEl.value = "";
     if (goalCheckpointActionRequestedByEl) goalCheckpointActionRequestedByEl.value = "";
@@ -268,32 +279,15 @@ export function createGoalsRuntimeFeature({
 
   function renderGoalCheckpointActionContext(context) {
     if (!goalCheckpointActionContextEl || !context) return;
-    goalCheckpointActionContextEl.innerHTML = `
-      <div class="goal-checkpoint-action-context-item">
-        <span class="goal-summary-label">${escapeHtml(t("goals.checkpointActionContextGoal", {}, "Goal"))}</span>
-        <strong>${escapeHtml(context.goalId)}</strong>
-      </div>
-      <div class="goal-checkpoint-action-context-item">
-        <span class="goal-summary-label">${escapeHtml(t("goals.checkpointActionContextNode", {}, "Node"))}</span>
-        <strong>${escapeHtml(context.nodeId)}</strong>
-      </div>
-      <div class="goal-checkpoint-action-context-item">
-        <span class="goal-summary-label">${escapeHtml(t("goals.checkpointActionContextCheckpoint", {}, "Checkpoint"))}</span>
-        <strong>${escapeHtml(context.checkpointId)}</strong>
-      </div>
-      <div class="goal-checkpoint-action-context-item">
-        <span class="goal-summary-label">${escapeHtml(t("goals.checkpointActionContextStatus", {}, "Status"))}</span>
-        <strong>${escapeHtml(context.status || "-")}</strong>
-      </div>
-      <div class="goal-checkpoint-action-context-item">
-        <span class="goal-summary-label">${escapeHtml(t("goals.checkpointActionContextReviewer", {}, "Reviewer"))}</span>
-        <strong>${escapeHtml(context.reviewer || "-")}</strong>
-      </div>
-      <div class="goal-checkpoint-action-context-item">
-        <span class="goal-summary-label">${escapeHtml(t("goals.checkpointActionContextSla", {}, "SLA"))}</span>
-        <strong>${escapeHtml(context.slaAt ? formatDateTime(context.slaAt) : "-")}</strong>
-      </div>
-    `;
+    const ownerDocument = goalCheckpointActionContextEl.ownerDocument ?? document;
+    goalCheckpointActionContextEl.replaceChildren(
+      createGoalCheckpointContextRow(ownerDocument, t("goals.checkpointActionContextGoal", {}, "Goal"), context.goalId),
+      createGoalCheckpointContextRow(ownerDocument, t("goals.checkpointActionContextNode", {}, "Node"), context.nodeId),
+      createGoalCheckpointContextRow(ownerDocument, t("goals.checkpointActionContextCheckpoint", {}, "Checkpoint"), context.checkpointId),
+      createGoalCheckpointContextRow(ownerDocument, t("goals.checkpointActionContextStatus", {}, "Status"), context.status || "-"),
+      createGoalCheckpointContextRow(ownerDocument, t("goals.checkpointActionContextReviewer", {}, "Reviewer"), context.reviewer || "-"),
+      createGoalCheckpointContextRow(ownerDocument, t("goals.checkpointActionContextSla", {}, "SLA"), context.slaAt ? formatDateTime(context.slaAt) : "-"),
+    );
   }
 
   function toggleGoalCheckpointActionModal(show, context = null) {

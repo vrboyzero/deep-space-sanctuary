@@ -63,4 +63,28 @@ describe("ConversationLifecycleCoordinator", () => {
         await Promise.all([first, second]);
         expect(clear).toHaveBeenCalledTimes(1);
     });
+
+    it("waits for pending persistence across every conversation and lane", async () => {
+        const coordinator = new ConversationLifecycleCoordinator();
+        const first = createDeferred();
+        const second = createDeferred();
+        const writes = [
+            coordinator.enqueue("append", "conversation-a", () => first.promise),
+            coordinator.enqueue("session_digest_state", "conversation-b", () => second.promise),
+        ];
+        let settled = false;
+        const flush = coordinator.waitForAllPendingPersistence().then(() => {
+            settled = true;
+        });
+
+        first.resolve();
+        await writes[0];
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        second.resolve();
+        await Promise.all(writes);
+        await flush;
+        expect(settled).toBe(true);
+    });
 });

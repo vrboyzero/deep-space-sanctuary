@@ -6,7 +6,6 @@ export function createEmailOutboundController({
   sendReq,
   makeId,
   clientId,
-  escapeHtml,
   showNotice,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -154,7 +153,12 @@ export function createEmailOutboundController({
         pendingConfirm.replyToMessageId ? `${t("emailOutbound.replyToMessageIdLabel", {}, "回复消息 ID")}: ${pendingConfirm.replyToMessageId}` : "",
         ...buildThreadGuidanceLines(),
       ].filter(Boolean);
-      emailOutboundConfirmTargetEl.innerHTML = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+      const ownerDocument = emailOutboundConfirmTargetEl.ownerDocument ?? document;
+      emailOutboundConfirmTargetEl.replaceChildren(...lines.map((line) => {
+        const row = ownerDocument.createElement("div");
+        row.textContent = line;
+        return row;
+      }));
     }
     if (emailOutboundConfirmExpiryEl) {
       emailOutboundConfirmExpiryEl.textContent = formatExpiry(pendingConfirm.expiresAt);

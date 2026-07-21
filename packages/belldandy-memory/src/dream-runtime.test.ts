@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DreamModelRequestOptions, DreamModelResponse } from "./dream-model-request.js";
 import { DreamRuntime } from "./dream-runtime.js";
+import { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 import * as dreamWriterModule from "./dream-writer.js";
 import type { DreamInputSnapshot } from "./dream-types.js";
 import type { UpsertProfileStateEntryInput } from "./profile-state-types.js";
@@ -586,6 +587,7 @@ describe("dream runtime", () => {
       }],
     });
 
+    const modelPrivacyRuntime = new MemoryModelPrivacyRuntime();
     const runtime = new DreamRuntime({
       stateDir,
       agentId: "coder",
@@ -594,6 +596,7 @@ describe("dream runtime", () => {
       apiKey: "sk-test",
       thinking: { type: "enabled" },
       reasoningEffort: "high",
+      modelPrivacyRuntime,
       now: () => new Date("2026-04-19T12:00:00.000Z"),
       buildInputSnapshot: async () => createSnapshot(),
     });
@@ -609,6 +612,7 @@ describe("dream runtime", () => {
       baseUrl: "https://example.com/v1",
       apiKey: "sk-test",
       timeoutMs: 120_000,
+      privacyRuntime: modelPrivacyRuntime,
       payload: expect.objectContaining({
         model: "deepseek-v4-pro",
         thinking: { type: "enabled" },
@@ -616,6 +620,42 @@ describe("dream runtime", () => {
       }),
     });
     expect(legacyFetch).not.toHaveBeenCalled();
+  });
+
+  it("stops a cancelled dream without fallback or a late run record", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-dream-runtime-cancel-"));
+    tempDirs.push(stateDir);
+    const controller = new AbortController();
+    requestDreamModelMock.mockImplementation(async (options) => {
+      return await new Promise<never>((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+      });
+    });
+    const runtime = new DreamRuntime({
+      stateDir,
+      agentId: "coder",
+      model: "gpt-test",
+      baseUrl: "https://example.com/v1",
+      apiKey: "sk-test",
+      now: () => new Date("2026-04-19T12:00:00.000Z"),
+      buildInputSnapshot: async () => createSnapshot(),
+    });
+
+    const result = runtime.run({
+      conversationId: "agent:coder:main",
+      triggerMode: "manual",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(requestDreamModelMock).toHaveBeenCalledTimes(1);
+    });
+    controller.abort(new Error("Dream background job stopped."));
+
+    await expect(result).rejects.toThrow("Dream background job stopped.");
+    await expect(runtime.getState()).resolves.toMatchObject({
+      status: "idle",
+      recentRuns: [],
+    });
   });
 
   it("retries dream generation with larger token budget when reasoning exhausts the first attempt", async () => {

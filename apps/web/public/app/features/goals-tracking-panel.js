@@ -6,6 +6,15 @@ import {
 } from "./subtasks-overview.js";
 import { isCompactGovernanceDetailMode } from "./governance-detail-mode.js";
 
+function renderGoalTrackingEmptyState(panel, message) {
+  if (!panel) return;
+  const ownerDocument = panel.ownerDocument ?? document;
+  const empty = ownerDocument.createElement("div");
+  empty.className = "memory-viewer-empty";
+  empty.textContent = message;
+  panel.replaceChildren(empty);
+}
+
 export function getGoalTrackingNodeActionTargets(node) {
   const taskId = typeof node?.lastRunId === "string" && node.lastRunId.trim()
     ? node.lastRunId.trim()
@@ -43,40 +52,78 @@ function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function renderGoalTrackingNodeBridgeGovernance(node, escapeHtml, summarizeSourcePath, t) {
+function createGoalTrackingElement(ownerDocument, tagName, className = "", text) {
+  const element = ownerDocument.createElement(tagName);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = String(text ?? "");
+  return element;
+}
+
+function createGoalTrackingButton(ownerDocument, className, label, attributes = {}) {
+  const button = createGoalTrackingElement(ownerDocument, "button", className, label);
+  for (const [name, value] of Object.entries(attributes)) {
+    button.setAttribute(name, String(value ?? ""));
+  }
+  return button;
+}
+
+function renderGoalTrackingNodeBridgeGovernance(ownerDocument, node, summarizeSourcePath, t) {
   const bridgeSubtaskView = node?.bridgeSubtaskView && typeof node.bridgeSubtaskView === "object"
     ? node.bridgeSubtaskView
     : null;
   const bridgeSessionView = node?.bridgeSessionView && typeof node.bridgeSessionView === "object"
     ? node.bridgeSessionView
     : null;
-  if (!bridgeSubtaskView && !bridgeSessionView) return "";
+  if (!bridgeSubtaskView && !bridgeSessionView) return null;
 
   const summaryLines = buildBridgeGovernanceSummaryLines(node, t);
-  return `
-    <div class="goal-checkpoint-meta">
-      <span class="memory-badge">${escapeHtml(t("goals.trackingBridgeGovernance", {}, "Bridge Governance"))}</span>
-      ${bridgeSessionView?.runtimeState ? `<span class="memory-badge">${escapeHtml(formatBridgeRuntimeState(bridgeSessionView.runtimeState, t))}</span>` : ""}
-      ${bridgeSessionView?.closeReason ? `<span class="memory-badge">${escapeHtml(formatBridgeCloseReason(bridgeSessionView.closeReason, t))}</span>` : ""}
-    </div>
-    ${summaryLines.length ? `
-      <div class="tool-settings-policy-note">
-        ${summaryLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}
-      </div>
-    ` : ""}
-    ${bridgeSessionView?.artifactPath ? `
-      <div class="memory-list-item-meta">
-        <span>${escapeHtml(t("goals.trackingBridgeArtifact", {}, "Bridge Artifact"))}</span>
-        <span>${escapeHtml(summarizeSourcePath(bridgeSessionView.artifactPath))}</span>
-      </div>
-    ` : ""}
-    ${bridgeSessionView?.transcriptPath ? `
-      <div class="memory-list-item-meta">
-        <span>${escapeHtml(t("goals.trackingBridgeTranscript", {}, "Bridge Transcript"))}</span>
-        <span>${escapeHtml(summarizeSourcePath(bridgeSessionView.transcriptPath))}</span>
-      </div>
-    ` : ""}
-  `;
+  const fragment = ownerDocument.createDocumentFragment();
+  const badges = createGoalTrackingElement(ownerDocument, "div", "goal-checkpoint-meta");
+  badges.append(createGoalTrackingElement(
+    ownerDocument,
+    "span",
+    "memory-badge",
+    t("goals.trackingBridgeGovernance", {}, "Bridge Governance"),
+  ));
+  if (bridgeSessionView?.runtimeState) {
+    badges.append(createGoalTrackingElement(
+      ownerDocument,
+      "span",
+      "memory-badge",
+      formatBridgeRuntimeState(bridgeSessionView.runtimeState, t),
+    ));
+  }
+  if (bridgeSessionView?.closeReason) {
+    badges.append(createGoalTrackingElement(
+      ownerDocument,
+      "span",
+      "memory-badge",
+      formatBridgeCloseReason(bridgeSessionView.closeReason, t),
+    ));
+  }
+  fragment.append(badges);
+  if (summaryLines.length) {
+    const note = createGoalTrackingElement(ownerDocument, "div", "tool-settings-policy-note");
+    note.append(...summaryLines.map((line) => createGoalTrackingElement(ownerDocument, "div", "", line)));
+    fragment.append(note);
+  }
+  if (bridgeSessionView?.artifactPath) {
+    const meta = createGoalTrackingElement(ownerDocument, "div", "memory-list-item-meta");
+    meta.append(
+      createGoalTrackingElement(ownerDocument, "span", "", t("goals.trackingBridgeArtifact", {}, "Bridge Artifact")),
+      createGoalTrackingElement(ownerDocument, "span", "", summarizeSourcePath(bridgeSessionView.artifactPath)),
+    );
+    fragment.append(meta);
+  }
+  if (bridgeSessionView?.transcriptPath) {
+    const meta = createGoalTrackingElement(ownerDocument, "div", "memory-list-item-meta");
+    meta.append(
+      createGoalTrackingElement(ownerDocument, "span", "", t("goals.trackingBridgeTranscript", {}, "Bridge Transcript")),
+      createGoalTrackingElement(ownerDocument, "span", "", summarizeSourcePath(bridgeSessionView.transcriptPath)),
+    );
+    fragment.append(meta);
+  }
+  return fragment;
 }
 
 function getGoalTrackingPlanUpdatedAt(plan) {
@@ -111,18 +158,34 @@ export function filterGoalTrackingCheckpointsByNode(checkpoints, nodeId) {
   return (Array.isArray(checkpoints) ? checkpoints : []).filter((item) => normalizeString(item?.nodeId) === normalizedNodeId);
 }
 
-function renderGoalTrackingFreshnessSummary(memoryFreshness, escapeHtml) {
+function renderGoalTrackingFreshnessSummary(ownerDocument, memoryFreshness) {
   const summary = memoryFreshness?.summary && typeof memoryFreshness.summary === "object"
     ? memoryFreshness.summary
     : null;
   if (!summary?.available || !summary.headline) {
-    return "";
+    return null;
   }
-  return `
-    <div class="tool-settings-policy-note">
-      <strong>治理 freshness：</strong>${escapeHtml(summary.headline)}
-    </div>
-  `;
+  const note = createGoalTrackingElement(ownerDocument, "div", "tool-settings-policy-note");
+  note.append(
+    createGoalTrackingElement(ownerDocument, "strong", "", "治理 freshness："),
+    createGoalTrackingElement(ownerDocument, "span", "", summary.headline),
+  );
+  return note;
+}
+
+function createGoalTrackingSlaBadge(ownerDocument, checkpoint, formatDateTime) {
+  if (!checkpoint?.slaAt) return null;
+  const deadline = new Date(checkpoint.slaAt);
+  if (Number.isNaN(deadline.getTime())) {
+    return createGoalTrackingElement(ownerDocument, "span", "memory-badge", `SLA ${checkpoint.slaAt}`);
+  }
+  const overdue = deadline.getTime() < Date.now();
+  return createGoalTrackingElement(
+    ownerDocument,
+    "span",
+    `memory-badge${overdue ? " is-overdue" : ""}`,
+    `${overdue ? "SLA 已超时" : "SLA"} ${formatDateTime(checkpoint.slaAt)}`,
+  );
 }
 
 export function createGoalsTrackingPanelFeature({
@@ -170,13 +233,13 @@ export function createGoalsTrackingPanelFeature({
 
   function renderGoalTrackingPanelLoading() {
     const panel = goalsDetailEl?.querySelector("#goalTrackingPanel");
-    if (!panel) return;
-    panel.innerHTML = '<div class="memory-viewer-empty">正在读取 tasks.json / checkpoints.json …</div>';
+    renderGoalTrackingEmptyState(panel, "正在读取 tasks.json / checkpoints.json …");
   }
 
   function renderGoalTrackingPanel(goal, payload) {
     const panel = goalsDetailEl?.querySelector("#goalTrackingPanel");
     if (!panel) return;
+    const ownerDocument = panel.ownerDocument ?? document;
     const compactGovernanceDetailMode = isCompactGovernanceDetailMode();
     const nodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
     const checkpoints = Array.isArray(payload?.checkpoints) ? payload.checkpoints : [];
@@ -195,153 +258,212 @@ export function createGoalsTrackingPanelFeature({
     const focusNodeId = normalizeString(payload?.focusNodeId);
     const focusedCheckpoints = filterGoalTrackingCheckpointsByNode(recentCheckpoints, focusNodeId);
     const visibleCheckpoints = focusNodeId ? focusedCheckpoints : recentCheckpoints;
-    const freshnessSummaryHtml = renderGoalTrackingFreshnessSummary(payload?.memoryFreshness, escapeHtml);
+    const fragment = ownerDocument.createDocumentFragment();
+    const freshnessSummary = renderGoalTrackingFreshnessSummary(ownerDocument, payload?.memoryFreshness);
+    if (freshnessSummary) fragment.append(freshnessSummary);
 
-    panel.innerHTML = `
-      ${freshnessSummaryHtml}
-      <div class="goal-tracking-stats">
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">节点总数</span>
-          <strong class="goal-summary-value">${escapeHtml(String(nodes.length))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">已完成</span>
-          <strong class="goal-summary-value">${escapeHtml(String(completedNodeCount))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">进行中</span>
-          <strong class="goal-summary-value">${escapeHtml(String(runningNodeCount))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">阻塞</span>
-          <strong class="goal-summary-value">${escapeHtml(String(blockedNodeCount))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">Checkpoint</span>
-          <strong class="goal-summary-value">${escapeHtml(String(checkpoints.length))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">待处理</span>
-          <strong class="goal-summary-value">${escapeHtml(String(waitingCheckpointCount))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">已批准</span>
-          <strong class="goal-summary-value">${escapeHtml(String(approvedCheckpointCount))}</strong>
-        </div>
-        <div class="goal-summary-item">
-          <span class="goal-summary-label">已拒绝</span>
-          <strong class="goal-summary-value">${escapeHtml(String(rejectedCheckpointCount))}</strong>
-        </div>
-      </div>
+    const stats = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-stats");
+    const statItems = [
+      ["节点总数", nodes.length],
+      ["已完成", completedNodeCount],
+      ["进行中", runningNodeCount],
+      ["阻塞", blockedNodeCount],
+      ["Checkpoint", checkpoints.length],
+      ["待处理", waitingCheckpointCount],
+      ["已批准", approvedCheckpointCount],
+      ["已拒绝", rejectedCheckpointCount],
+    ];
+    for (const [label, value] of statItems) {
+      const item = createGoalTrackingElement(ownerDocument, "div", "goal-summary-item");
+      item.append(
+        createGoalTrackingElement(ownerDocument, "span", "goal-summary-label", label),
+        createGoalTrackingElement(ownerDocument, "strong", "goal-summary-value", value),
+      );
+      stats.append(item);
+    }
+    fragment.append(stats);
 
-      <div class="goal-tracking-columns">
-        <div class="goal-tracking-column">
-          <div class="goal-summary-title">最近节点</div>
-          ${recentNodes.length ? `
-            <div class="goal-tracking-list">
-              ${recentNodes.map((node) => `
-                <div class="goal-tracking-item" data-goal-continuation-focus="node" data-goal-node-id="${escapeHtml(node.id || "")}">
-                  <div class="goal-tracking-item-head">
-                    <span class="goal-tracking-item-title">${escapeHtml(node.title)}</span>
-                    <span class="memory-badge ${node.status === "completed" ? "memory-badge-shared" : ""}">${escapeHtml(formatNodeStatus(node.status))}</span>
-                  </div>
-                  ${node.summary ? `<div class="memory-list-item-snippet">${escapeHtml(node.summary)}</div>` : ""}
-                  <div class="memory-list-item-meta">
-                    <span>${escapeHtml(node.id)}</span>
-                    ${node.phase ? `<span>${escapeHtml(node.phase)}</span>` : ""}
-                    ${node.owner ? `<span>${escapeHtml(node.owner)}</span>` : ""}
-                  </div>
-                  ${compactGovernanceDetailMode ? "" : renderGoalTrackingNodeBridgeGovernance(node, escapeHtml, summarizeSourcePath, t)}
-                  ${(() => {
-                    const targets = getGoalTrackingNodeActionTargets(node);
-                    if (compactGovernanceDetailMode && !targets.taskId) return "";
-                    if (!targets.taskId && !targets.artifactPaths.length && !targets.bridgeArtifactPath && !targets.bridgeTranscriptPath) return "";
-                    return `
-                      <div class="goal-detail-actions goal-checkpoint-actions">
-                        ${targets.taskId ? `<button class="button goal-inline-action-secondary" data-open-task-id="${escapeHtml(targets.taskId)}">打开运行任务</button>` : ""}
-                        ${compactGovernanceDetailMode ? "" : targets.artifactPaths.map((artifactPath) => `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(artifactPath)}">${escapeHtml(summarizeSourcePath(artifactPath))}</button>`).join("")}
-                        ${compactGovernanceDetailMode ? "" : targets.bridgeArtifactPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(targets.bridgeArtifactPath)}">${escapeHtml(t("goals.trackingOpenBridgeArtifact", {}, "Open bridge artifact"))}</button>` : ""}
-                        ${compactGovernanceDetailMode ? "" : targets.bridgeTranscriptPath ? `<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(targets.bridgeTranscriptPath)}">${escapeHtml(t("goals.trackingOpenBridgeTranscript", {}, "Open bridge transcript"))}</button>` : ""}
-                      </div>
-                    `;
-                  })()}
-                </div>
-              `).join("")}
-            </div>
-          ` : '<div class="memory-viewer-empty">tasks.json 中还没有节点。</div>'}
-        </div>
-        <div class="goal-tracking-column">
-          <div class="goal-summary-title">${escapeHtml(focusNodeId ? `关联 Checkpoint · ${focusNodeId}` : "最近 Checkpoint")}</div>
-          ${focusNodeId ? `<div class="goal-summary-text">当前 node focus 已收窄到该节点关联的 checkpoint。</div>` : ""}
-          ${visibleCheckpoints.length ? `
-            <div class="goal-tracking-list">
-              ${visibleCheckpoints.map((item) => `
-                <div class="goal-tracking-item" data-goal-continuation-focus="node" data-goal-node-id="${escapeHtml(item.nodeId || "")}">
-                  <div class="goal-tracking-item-head">
-                    <span class="goal-tracking-item-title">${escapeHtml(item.title)}</span>
-                    <span class="memory-badge ${item.status === "approved" ? "memory-badge-shared" : ""}">${escapeHtml(formatCheckpointStatus(item.status))}</span>
-                  </div>
-                  <div class="memory-list-item-snippet">${escapeHtml(item.summary || item.note || "暂无摘要")}</div>
-                  <div class="memory-list-item-meta">
-                    <span>${escapeHtml(item.id)}</span>
-                    ${item.nodeId ? `<span>${escapeHtml(item.nodeId)}</span>` : ""}
-                    <span>${escapeHtml(formatDateTime(item.updatedAt))}</span>
-                  </div>
-                  <div class="goal-checkpoint-meta">
-                    ${item.reviewer ? `<span class="memory-badge">评审人 ${escapeHtml(item.reviewer)}</span>` : ""}
-                    ${item.reviewerRole ? `<span class="memory-badge">${escapeHtml(item.reviewerRole)}</span>` : ""}
-                    ${item.requestedBy ? `<span class="memory-badge">发起 ${escapeHtml(item.requestedBy)}</span>` : ""}
-                    ${compactGovernanceDetailMode ? "" : item.decidedBy ? `<span class="memory-badge">审批 ${escapeHtml(item.decidedBy)}</span>` : ""}
-                    ${getGoalCheckpointSlaBadge(item)}
-                  </div>
-                  ${(() => {
-                    if (compactGovernanceDetailMode) return "";
-                    const explainabilityLines = getGoalTrackingCheckpointExplainabilityLines(item, capabilityPlansByNodeId, t);
-                    if (!explainabilityLines.length) return "";
-                    return `
-                      <div class="tool-settings-policy-note">
-                        ${explainabilityLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}
-                      </div>
-                    `;
-                  })()}
-                  <div class="goal-detail-actions goal-checkpoint-actions">
-                    ${item.runId ? `<button class="button goal-inline-action-secondary" data-open-task-id="${escapeHtml(item.runId)}">打开运行任务</button>` : ""}
-                    ${["waiting_user", "required"].includes(item.status) ? `
-                      <button class="button goal-inline-action" data-goal-checkpoint-action="approve" data-goal-checkpoint-goal-id="${escapeHtml(goal.id)}" data-goal-checkpoint-node-id="${escapeHtml(item.nodeId || "")}" data-goal-checkpoint-id="${escapeHtml(item.id)}">批准</button>
-                      <button class="button goal-inline-action-secondary" data-goal-checkpoint-action="reject" data-goal-checkpoint-goal-id="${escapeHtml(goal.id)}" data-goal-checkpoint-node-id="${escapeHtml(item.nodeId || "")}" data-goal-checkpoint-id="${escapeHtml(item.id)}">拒绝</button>
-                      <button class="button goal-inline-action-secondary" data-goal-checkpoint-action="expire" data-goal-checkpoint-goal-id="${escapeHtml(goal.id)}" data-goal-checkpoint-node-id="${escapeHtml(item.nodeId || "")}" data-goal-checkpoint-id="${escapeHtml(item.id)}">过期</button>
-                    ` : ""}
-                    ${["rejected", "expired"].includes(item.status) ? `
-                      <button class="button goal-inline-action" data-goal-checkpoint-action="reopen" data-goal-checkpoint-goal-id="${escapeHtml(goal.id)}" data-goal-checkpoint-node-id="${escapeHtml(item.nodeId || "")}" data-goal-checkpoint-id="${escapeHtml(item.id)}">重新打开</button>
-                    ` : ""}
-                  </div>
-                  ${!compactGovernanceDetailMode && item.history.length ? `
-                    <div class="goal-checkpoint-history">
-                      ${item.history.slice().reverse().slice(0, 4).map((history) => `
-                        <div class="goal-checkpoint-history-item">
-                          <span class="memory-badge">${escapeHtml(formatCheckpointHistoryAction(history.action))}</span>
-                          <span>${escapeHtml(formatDateTime(history.at))}</span>
-                          ${history.actor ? `<span>${escapeHtml(history.actor)}</span>` : ""}
-                          ${history.note ? `<span>${escapeHtml(history.note)}</span>` : ""}
-                        </div>
-                      `).join("")}
-                    </div>
-                  ` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : focusNodeId
-            ? '<div class="memory-viewer-empty">当前 node 还没有关联 checkpoint。</div>'
-            : '<div class="memory-viewer-empty">checkpoints.json 中还没有 checkpoint。</div>'}
-        </div>
-      </div>
-    `;
+    const columns = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-columns");
+    const nodeColumn = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-column");
+    nodeColumn.append(createGoalTrackingElement(ownerDocument, "div", "goal-summary-title", "最近节点"));
+    if (recentNodes.length) {
+      const nodeList = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-list");
+      for (const node of recentNodes) {
+        const nodeItem = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-item");
+        nodeItem.setAttribute("data-goal-continuation-focus", "node");
+        nodeItem.setAttribute("data-goal-node-id", String(node.id || ""));
+        const head = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-item-head");
+        head.append(
+          createGoalTrackingElement(ownerDocument, "span", "goal-tracking-item-title", node.title),
+          createGoalTrackingElement(
+            ownerDocument,
+            "span",
+            `memory-badge${node.status === "completed" ? " memory-badge-shared" : ""}`,
+            formatNodeStatus(node.status),
+          ),
+        );
+        nodeItem.append(head);
+        if (node.summary) nodeItem.append(createGoalTrackingElement(ownerDocument, "div", "memory-list-item-snippet", node.summary));
+        const meta = createGoalTrackingElement(ownerDocument, "div", "memory-list-item-meta");
+        meta.append(createGoalTrackingElement(ownerDocument, "span", "", node.id));
+        if (node.phase) meta.append(createGoalTrackingElement(ownerDocument, "span", "", node.phase));
+        if (node.owner) meta.append(createGoalTrackingElement(ownerDocument, "span", "", node.owner));
+        nodeItem.append(meta);
+        if (!compactGovernanceDetailMode) {
+          const bridge = renderGoalTrackingNodeBridgeGovernance(ownerDocument, node, summarizeSourcePath, t);
+          if (bridge) nodeItem.append(bridge);
+        }
+        const targets = getGoalTrackingNodeActionTargets(node);
+        if (!(compactGovernanceDetailMode && !targets.taskId)
+          && (targets.taskId || targets.artifactPaths.length || targets.bridgeArtifactPath || targets.bridgeTranscriptPath)) {
+          const actions = createGoalTrackingElement(ownerDocument, "div", "goal-detail-actions goal-checkpoint-actions");
+          if (targets.taskId) actions.append(createGoalTrackingButton(
+            ownerDocument,
+            "button goal-inline-action-secondary",
+            "打开运行任务",
+            { "data-open-task-id": targets.taskId },
+          ));
+          if (!compactGovernanceDetailMode) {
+            actions.append(...targets.artifactPaths.map((artifactPath) => createGoalTrackingButton(
+              ownerDocument,
+              "button goal-inline-action-secondary",
+              summarizeSourcePath(artifactPath),
+              { "data-open-source": artifactPath },
+            )));
+            if (targets.bridgeArtifactPath) actions.append(createGoalTrackingButton(
+              ownerDocument,
+              "button goal-inline-action-secondary",
+              t("goals.trackingOpenBridgeArtifact", {}, "Open bridge artifact"),
+              { "data-open-source": targets.bridgeArtifactPath },
+            ));
+            if (targets.bridgeTranscriptPath) actions.append(createGoalTrackingButton(
+              ownerDocument,
+              "button goal-inline-action-secondary",
+              t("goals.trackingOpenBridgeTranscript", {}, "Open bridge transcript"),
+              { "data-open-source": targets.bridgeTranscriptPath },
+            ));
+          }
+          nodeItem.append(actions);
+        }
+        nodeList.append(nodeItem);
+      }
+      nodeColumn.append(nodeList);
+    } else {
+      nodeColumn.append(createGoalTrackingElement(ownerDocument, "div", "memory-viewer-empty", "tasks.json 中还没有节点。"));
+    }
+    columns.append(nodeColumn);
+
+    const checkpointColumn = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-column");
+    checkpointColumn.append(createGoalTrackingElement(
+      ownerDocument,
+      "div",
+      "goal-summary-title",
+      focusNodeId ? `关联 Checkpoint · ${focusNodeId}` : "最近 Checkpoint",
+    ));
+    if (focusNodeId) checkpointColumn.append(createGoalTrackingElement(
+      ownerDocument,
+      "div",
+      "goal-summary-text",
+      "当前 node focus 已收窄到该节点关联的 checkpoint。",
+    ));
+    if (visibleCheckpoints.length) {
+      const checkpointList = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-list");
+      for (const item of visibleCheckpoints) {
+        const checkpointItem = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-item");
+        checkpointItem.setAttribute("data-goal-continuation-focus", "node");
+        checkpointItem.setAttribute("data-goal-node-id", String(item.nodeId || ""));
+        const head = createGoalTrackingElement(ownerDocument, "div", "goal-tracking-item-head");
+        head.append(
+          createGoalTrackingElement(ownerDocument, "span", "goal-tracking-item-title", item.title),
+          createGoalTrackingElement(
+            ownerDocument,
+            "span",
+            `memory-badge${item.status === "approved" ? " memory-badge-shared" : ""}`,
+            formatCheckpointStatus(item.status),
+          ),
+        );
+        checkpointItem.append(
+          head,
+          createGoalTrackingElement(ownerDocument, "div", "memory-list-item-snippet", item.summary || item.note || "暂无摘要"),
+        );
+        const meta = createGoalTrackingElement(ownerDocument, "div", "memory-list-item-meta");
+        meta.append(createGoalTrackingElement(ownerDocument, "span", "", item.id));
+        if (item.nodeId) meta.append(createGoalTrackingElement(ownerDocument, "span", "", item.nodeId));
+        meta.append(createGoalTrackingElement(ownerDocument, "span", "", formatDateTime(item.updatedAt)));
+        checkpointItem.append(meta);
+        const checkpointMeta = createGoalTrackingElement(ownerDocument, "div", "goal-checkpoint-meta");
+        if (item.reviewer) checkpointMeta.append(createGoalTrackingElement(ownerDocument, "span", "memory-badge", `评审人 ${item.reviewer}`));
+        if (item.reviewerRole) checkpointMeta.append(createGoalTrackingElement(ownerDocument, "span", "memory-badge", item.reviewerRole));
+        if (item.requestedBy) checkpointMeta.append(createGoalTrackingElement(ownerDocument, "span", "memory-badge", `发起 ${item.requestedBy}`));
+        if (!compactGovernanceDetailMode && item.decidedBy) checkpointMeta.append(createGoalTrackingElement(ownerDocument, "span", "memory-badge", `审批 ${item.decidedBy}`));
+        const slaBadge = createGoalTrackingSlaBadge(ownerDocument, item, formatDateTime);
+        if (slaBadge) checkpointMeta.append(slaBadge);
+        checkpointItem.append(checkpointMeta);
+        if (!compactGovernanceDetailMode) {
+          const explainabilityLines = getGoalTrackingCheckpointExplainabilityLines(item, capabilityPlansByNodeId, t);
+          if (explainabilityLines.length) {
+            const note = createGoalTrackingElement(ownerDocument, "div", "tool-settings-policy-note");
+            note.append(...explainabilityLines.map((line) => createGoalTrackingElement(ownerDocument, "div", "", line)));
+            checkpointItem.append(note);
+          }
+        }
+        const actions = createGoalTrackingElement(ownerDocument, "div", "goal-detail-actions goal-checkpoint-actions");
+        if (item.runId) actions.append(createGoalTrackingButton(
+          ownerDocument,
+          "button goal-inline-action-secondary",
+          "打开运行任务",
+          { "data-open-task-id": item.runId },
+        ));
+        const actionAttributes = {
+          "data-goal-checkpoint-goal-id": goal?.id || "",
+          "data-goal-checkpoint-node-id": item.nodeId || "",
+          "data-goal-checkpoint-id": item.id || "",
+        };
+        if (["waiting_user", "required"].includes(item.status)) {
+          actions.append(
+            createGoalTrackingButton(ownerDocument, "button goal-inline-action", "批准", { ...actionAttributes, "data-goal-checkpoint-action": "approve" }),
+            createGoalTrackingButton(ownerDocument, "button goal-inline-action-secondary", "拒绝", { ...actionAttributes, "data-goal-checkpoint-action": "reject" }),
+            createGoalTrackingButton(ownerDocument, "button goal-inline-action-secondary", "过期", { ...actionAttributes, "data-goal-checkpoint-action": "expire" }),
+          );
+        }
+        if (["rejected", "expired"].includes(item.status)) {
+          actions.append(createGoalTrackingButton(ownerDocument, "button goal-inline-action", "重新打开", { ...actionAttributes, "data-goal-checkpoint-action": "reopen" }));
+        }
+        checkpointItem.append(actions);
+        const itemHistory = Array.isArray(item.history) ? item.history : [];
+        if (!compactGovernanceDetailMode && itemHistory.length) {
+          const historyEl = createGoalTrackingElement(ownerDocument, "div", "goal-checkpoint-history");
+          historyEl.append(...itemHistory.slice().reverse().slice(0, 4).map((history) => {
+            const historyItem = createGoalTrackingElement(ownerDocument, "div", "goal-checkpoint-history-item");
+            historyItem.append(
+              createGoalTrackingElement(ownerDocument, "span", "memory-badge", formatCheckpointHistoryAction(history.action)),
+              createGoalTrackingElement(ownerDocument, "span", "", formatDateTime(history.at)),
+            );
+            if (history.actor) historyItem.append(createGoalTrackingElement(ownerDocument, "span", "", history.actor));
+            if (history.note) historyItem.append(createGoalTrackingElement(ownerDocument, "span", "", history.note));
+            return historyItem;
+          }));
+          checkpointItem.append(historyEl);
+        }
+        checkpointList.append(checkpointItem);
+      }
+      checkpointColumn.append(checkpointList);
+    } else {
+      checkpointColumn.append(createGoalTrackingElement(
+        ownerDocument,
+        "div",
+        "memory-viewer-empty",
+        focusNodeId ? "当前 node 还没有关联 checkpoint。" : "checkpoints.json 中还没有 checkpoint。",
+      ));
+    }
+    columns.append(checkpointColumn);
+    fragment.append(columns);
+    panel.replaceChildren(fragment);
   }
 
   function renderGoalTrackingPanelError(message) {
     const panel = goalsDetailEl?.querySelector("#goalTrackingPanel");
-    if (!panel) return;
-    panel.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+    renderGoalTrackingEmptyState(panel, message);
   }
 
   return {

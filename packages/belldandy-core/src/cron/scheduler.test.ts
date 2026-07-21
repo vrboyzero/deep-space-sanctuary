@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackgroundRunCoordinator } from "../background-run-coordinator.js";
-import { startCronScheduler } from "./scheduler.js";
+import { startCronScheduler, type CronExecutionEvent } from "./scheduler.js";
 import { computeNextRunForJob } from "./store.js";
 import type { CronJob } from "./types.js";
 
@@ -332,7 +332,7 @@ describe("startCronScheduler", () => {
     }
   });
 
-  it("honors shared BackgroundRunCoordinator capacity for manual Cron runs", async () => {
+  it("queues a manual Cron run until shared background capacity is available", async () => {
     const now = Date.now();
     const job = createCronJob({
       id: "cron_shared_background_budget",
@@ -369,19 +369,219 @@ describe("startCronScheduler", () => {
       log: () => {},
     });
 
+    const run = scheduler.runJobNow(job.id);
     try {
-      await expect(scheduler.runJobNow(job.id)).resolves.toEqual({
-        status: "skipped",
-        reason: "Background run coordinator has reached its concurrent run limit.",
+      await vi.waitFor(() => {
+        expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(1);
       });
       expect(sendMessage).not.toHaveBeenCalled();
 
       heldHeartbeatClaim.release();
-      await expect(scheduler.runJobNow(job.id)).resolves.toMatchObject({ status: "ok" });
+      await expect(run).resolves.toMatchObject({ status: "ok" });
       expect(sendMessage).toHaveBeenCalledTimes(1);
     } finally {
       scheduler.stop();
       heldHeartbeatClaim.release();
+      await Promise.allSettled([run]);
+    }
+  });
+
+  it("cancels a queued coordinator admission when Cron stops and drains", async () => {
+    const now = Date.now();
+    const job = createCronJob({
+      id: "cron_queued_drain",
+      name: "queued drain",
+      enabled: true,
+      createdAtMs: now - 60_000,
+      updatedAtMs: now - 60_000,
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: now - 60_000 },
+      payload: { kind: "systemEvent", text: "queued drain" },
+      state: { nextRunAtMs: now + 60_000 },
+    });
+    const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+    const held = coordinator.tryClaim({ kind: "heartbeat", key: "heartbeat" });
+    if ("reason" in held) throw new Error(held.reason);
+    const scheduler = startCronScheduler({
+      store: {
+        list: vi.fn(async () => [job]),
+        saveJobs: vi.fn(async () => {}),
+      } as never,
+      sendMessage: vi.fn(async () => "unexpected"),
+      runCoordinator: coordinator,
+      log: () => {},
+    });
+    const run = scheduler.runJobNow(job.id);
+    let drain: Promise<void> | undefined;
+
+    try {
+      await vi.waitFor(() => expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(1));
+      drain = scheduler.stopAndDrain();
+      await vi.waitFor(() => expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(0));
+      await expect(run).resolves.toEqual({ status: "skipped", reason: "Cron scheduler is stopped." });
+      await expect(drain).resolves.toBeUndefined();
+    } finally {
+      scheduler.stop();
+      held.release();
+      await Promise.allSettled([run, drain ?? Promise.resolve()]);
+    }
+  });
+
+  it("queues a tick-owned Cron run through the shared coordinator", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-04-03T10:11:00.000Z");
+    vi.setSystemTime(now);
+    const job = createCronJob({
+      id: "cron_tick_shared_queue",
+      name: "tick shared queue",
+      enabled: true,
+      createdAtMs: now.getTime() - 60_000,
+      updatedAtMs: now.getTime() - 60_000,
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: now.getTime() - 60_000 },
+      payload: { kind: "systemEvent", text: "tick queue" },
+      state: { nextRunAtMs: now.getTime() - 1 },
+    });
+    const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+    const held = coordinator.tryClaim({ kind: "heartbeat", key: "heartbeat" });
+    if ("reason" in held) throw new Error(held.reason);
+    const sendMessage = vi.fn(async () => "tick completed");
+    const scheduler = startCronScheduler({
+      store: {
+        list: vi.fn(async () => [job]),
+        saveJobs: vi.fn(async () => {}),
+      } as never,
+      sendMessage,
+      runCoordinator: coordinator,
+      log: () => {},
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(coordinator.getRuntimeSnapshot().queuedCount).toBe(1);
+      expect(sendMessage).not.toHaveBeenCalled();
+
+      held.release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      scheduler.stop();
+      held.release();
+      await scheduler.stopAndDrain();
+    }
+  });
+
+  it("propagates the coordinator claim signal into an active Cron execution", async () => {
+    const now = Date.now();
+    const job = createCronJob({
+      id: "cron_abort_signal",
+      name: "abort signal",
+      enabled: true,
+      createdAtMs: now - 60_000,
+      updatedAtMs: now - 60_000,
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: now - 60_000 },
+      payload: { kind: "systemEvent", text: "observe signal" },
+      state: { nextRunAtMs: now + 60_000 },
+    });
+    const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+    let observedSignal: AbortSignal | undefined;
+    let observedGeneration: number | undefined;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let finishRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    const scheduler = startCronScheduler({
+      store: {
+        list: vi.fn(async () => [job]),
+        saveJobs: vi.fn(async () => {}),
+      } as never,
+      sendMessage: vi.fn(async (_job, _prompt, context) => {
+        observedSignal = context?.signal;
+        observedGeneration = context?.generation;
+        markStarted();
+        await runGate;
+        return "finished after abort";
+      }),
+      runCoordinator: coordinator,
+      log: () => {},
+    });
+    const run = scheduler.runJobNow(job.id);
+    await started;
+    const drain = coordinator.stopAndDrain();
+
+    try {
+      expect(observedSignal).toBeInstanceOf(AbortSignal);
+      expect(observedSignal?.aborted).toBe(true);
+      expect(observedGeneration).toBe(1);
+    } finally {
+      finishRun();
+      await Promise.allSettled([run, drain]);
+      scheduler.stop();
+    }
+  });
+
+  it("drops terminal effects when an active Cron generation is cancelled", async () => {
+    const now = Date.now();
+    const job = createCronJob({
+      id: "cron_cancelled_generation",
+      name: "cancelled generation",
+      enabled: true,
+      createdAtMs: now - 60_000,
+      updatedAtMs: now - 60_000,
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: now - 60_000 },
+      payload: { kind: "systemEvent", text: "late result" },
+      delivery: { mode: "user" },
+      state: { nextRunAtMs: now + 60_000 },
+    });
+    const coordinator = new BackgroundRunCoordinator({ maxConcurrentRuns: 1 });
+    const saveJobs = vi.fn(async () => {});
+    const deliverToUser = vi.fn(async () => {});
+    const executionEvents: CronExecutionEvent[] = [];
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let finishRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    const scheduler = startCronScheduler({
+      store: {
+        list: vi.fn(async () => [job]),
+        saveJobs,
+      } as never,
+      sendMessage: vi.fn(async () => {
+        markStarted();
+        await runGate;
+        return "late completion";
+      }),
+      deliverToUser,
+      runCoordinator: coordinator,
+      onExecutionEvent: (event) => {
+        executionEvents.push(event);
+      },
+      log: () => {},
+    });
+    const run = scheduler.runJobNow(job.id);
+    await started;
+    const drain = coordinator.stopAndDrain();
+
+    try {
+      finishRun();
+      await expect(run).resolves.toEqual({
+        status: "skipped",
+        reason: "Cron run completion was discarded because its claim is no longer active.",
+      });
+      await expect(drain).resolves.toBeUndefined();
+      expect(saveJobs).not.toHaveBeenCalled();
+      expect(deliverToUser).not.toHaveBeenCalled();
+      expect(executionEvents.filter((event) => event.phase === "finished")).toHaveLength(0);
+    } finally {
+      finishRun();
+      await Promise.allSettled([run, drain]);
+      scheduler.stop();
     }
   });
 
@@ -806,8 +1006,16 @@ describe("startCronScheduler", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     scheduler.stop();
 
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "cron_main_job", sessionTarget: "main" }), "main check");
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "cron_isolated_job", sessionTarget: "isolated" }), "isolated check");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cron_main_job", sessionTarget: "main" }),
+      "main check",
+      expect.objectContaining({ signal: expect.any(AbortSignal), generation: expect.any(Number) }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cron_isolated_job", sessionTarget: "isolated" }),
+      "isolated check",
+      expect.objectContaining({ signal: expect.any(AbortSignal), generation: expect.any(Number) }),
+    );
   });
 
   it("suppresses success delivery when delivery.mode is none and sends failure notices when configured", async () => {

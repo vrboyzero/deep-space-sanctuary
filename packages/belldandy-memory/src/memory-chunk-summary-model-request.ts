@@ -1,8 +1,17 @@
 import { OutboundRequestPolicy } from "@belldandy/protocol";
 
 import { buildOpenAIChatCompletionsUrl } from "./openai-url.js";
+import {
+  type MemoryModelPrivacyObservation,
+  MemoryModelPrivacyRuntime,
+  preparePrivateSummaryModelRequest,
+} from "./memory-model-privacy.js";
+import {
+  PRIVATE_SUMMARY_MODEL_MAX_RESPONSE_BYTES,
+  readBoundedPrivateSummaryModelResponse,
+} from "./private-summary-model-response.js";
 
-export const MEMORY_CHUNK_SUMMARY_MAX_RESPONSE_BYTES = 1024 * 1024;
+export const MEMORY_CHUNK_SUMMARY_MAX_RESPONSE_BYTES = PRIVATE_SUMMARY_MODEL_MAX_RESPONSE_BYTES;
 
 export type MemoryChunkSummaryModelResponse = {
   choices?: Array<{
@@ -17,7 +26,9 @@ export type MemoryChunkSummaryModelRequestOptions = {
   apiKey: string;
   payload: Record<string, unknown>;
   timeoutMs: number;
+  signal?: AbortSignal;
   outboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
+  privacyRuntime?: MemoryModelPrivacyRuntime;
 };
 
 /**
@@ -31,12 +42,43 @@ export async function requestMemoryChunkSummaryModel(
     allowedHosts: [url.hostname],
     maxRedirects: 0,
   });
+  const prepared = options.privacyRuntime
+    ? options.privacyRuntime.prepareRequest({
+      jobFamily: "idle_summary",
+      baseUrl: options.baseUrl,
+      payload: options.payload,
+    })
+    : preparePrivateSummaryModelRequest({
+      jobFamily: "idle_summary",
+      baseUrl: options.baseUrl,
+      payload: options.payload,
+      trustedRemoteHosts: [],
+    });
+  const observation = "observation" in prepared
+    ? prepared.observation as MemoryModelPrivacyObservation
+    : undefined;
+  let observationFinished = false;
   const controller = new AbortController();
+  let timedOut = false;
+  const abortFromParent = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(options.signal?.reason);
+    }
+  };
+  if (options.signal?.aborted) {
+    abortFromParent();
+  } else {
+    options.signal?.addEventListener("abort", abortFromParent, { once: true });
+  }
   const timeout = setTimeout(() => {
-    controller.abort(new Error(`Summary LLM call timed out after ${options.timeoutMs}ms`));
+    timedOut = true;
+    if (!controller.signal.aborted) {
+      controller.abort(new Error(`Summary LLM call timed out after ${options.timeoutMs}ms`));
+    }
   }, options.timeoutMs);
 
   try {
+    throwIfAborted(controller.signal);
     const { response } = await outboundRequestPolicy.request({
       url,
       method: "POST",
@@ -44,98 +86,55 @@ export async function requestMemoryChunkSummaryModel(
         "Content-Type": "application/json",
         Authorization: `Bearer ${options.apiKey}`,
       },
-      body: JSON.stringify(options.payload),
+      body: prepared.body,
       signal: controller.signal,
       maxRedirects: 0,
       idleTimeoutMs: options.timeoutMs,
     });
-    const responseText = await readBoundedSummaryResponse(response, controller.signal);
+    const { text: responseText, bytes: responseBytes } = await readBoundedPrivateSummaryModelResponse(
+      response,
+      { label: "Summary LLM", signal: controller.signal },
+    );
     if (!response.ok) {
-      throw new Error(`Summary LLM call failed: ${response.status} ${responseText.slice(0, 200)}`);
+      if (observation) {
+        options.privacyRuntime?.completeRequest(observation, {
+          httpStatus: response.status,
+          responseBytes,
+        });
+        observationFinished = true;
+      }
+      throw new Error(`Summary LLM call failed: ${response.status}.`);
     }
-    return JSON.parse(responseText) as MemoryChunkSummaryModelResponse;
+    let parsed: MemoryChunkSummaryModelResponse;
+    try {
+      parsed = JSON.parse(responseText) as MemoryChunkSummaryModelResponse;
+    } catch {
+      throw new Error("Summary LLM returned invalid JSON.");
+    }
+    if (observation) {
+      options.privacyRuntime?.completeRequest(observation, {
+        httpStatus: response.status,
+        responseBytes,
+      });
+      observationFinished = true;
+    }
+    return parsed;
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (observation && !observationFinished) {
+      options.privacyRuntime?.failRequest(observation);
+      observationFinished = true;
+    }
+    if (timedOut) {
       throw new Error(`Summary LLM call timed out after ${options.timeoutMs}ms`);
+    }
+    if (options.signal?.aborted) {
+      throwIfAborted(options.signal);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abortFromParent);
   }
-}
-
-async function readBoundedSummaryResponse(
-  response: Pick<Response, "body" | "headers">,
-  abortSignal: AbortSignal,
-): Promise<string> {
-  const declaredLength = response.headers.get("content-length");
-  if (
-    declaredLength !== null
-    && /^\d+$/u.test(declaredLength.trim())
-    && Number(declaredLength) > MEMORY_CHUNK_SUMMARY_MAX_RESPONSE_BYTES
-  ) {
-    await cancelResponseBody(response);
-    throw new Error(`Summary LLM response exceeds ${MEMORY_CHUNK_SUMMARY_MAX_RESPONSE_BYTES} byte limit.`);
-  }
-
-  const body = response.body;
-  if (!body) return "";
-  const reader = body.getReader();
-  const chunks: Buffer[] = [];
-  let byteLength = 0;
-  let completed = false;
-  try {
-    while (true) {
-      throwIfAborted(abortSignal);
-      const next = await readWithAbort(reader, abortSignal);
-      if (next.done) {
-        completed = true;
-        break;
-      }
-      const chunk = Buffer.from(next.value.buffer, next.value.byteOffset, next.value.byteLength);
-      byteLength += chunk.length;
-      if (byteLength > MEMORY_CHUNK_SUMMARY_MAX_RESPONSE_BYTES) {
-        throw new Error(`Summary LLM response exceeds ${MEMORY_CHUNK_SUMMARY_MAX_RESPONSE_BYTES} byte limit.`);
-      }
-      chunks.push(chunk);
-    }
-  } catch (error) {
-    if (!completed) await reader.cancel(error).catch(() => undefined);
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-
-  throwIfAborted(abortSignal);
-  return Buffer.concat(chunks, byteLength).toString("utf8");
-}
-
-function readWithAbort<T>(
-  reader: ReadableStreamDefaultReader<T>,
-  signal: AbortSignal,
-): Promise<ReadableStreamReadResult<T>> {
-  throwIfAborted(signal);
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort);
-      try {
-        throwIfAborted(signal);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    reader.read().then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -144,12 +143,4 @@ function throwIfAborted(signal: AbortSignal): void {
   const error = new Error("Summary LLM call was aborted.");
   error.name = "AbortError";
   throw error;
-}
-
-async function cancelResponseBody(response: Pick<Response, "body">): Promise<void> {
-  try {
-    await response.body?.cancel();
-  } catch {
-    // 已决定拒绝正文，取消失败不得覆盖原始限界错误。
-  }
 }

@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvasContextFeature } from "./canvas-context.js";
 
@@ -14,23 +16,9 @@ function createDeferred() {
 
 function createFixture() {
   const capabilityRequest = createDeferred();
-  const classNames = new Set(["hidden"]);
-  const canvasContextBarEl = {
-    classList: {
-      add: vi.fn((name) => classNames.add(name)),
-      remove: vi.fn((name) => classNames.delete(name)),
-    },
-    htmlWriteCount: 0,
-    querySelectorAll: vi.fn(() => []),
-    value: "",
-    get innerHTML() {
-      return this.value;
-    },
-    set innerHTML(value) {
-      this.htmlWriteCount += 1;
-      this.value = value;
-    },
-  };
+  const canvasContextBarEl = document.createElement("section");
+  canvasContextBarEl.className = "hidden";
+  document.body.append(canvasContextBarEl);
   const goal = {
     id: "goal-1",
     title: "Lifecycle goal",
@@ -94,6 +82,10 @@ function createFixture() {
 }
 
 describe("canvas context lifecycle", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
   it("refreshes the current context after the capability request settles", async () => {
     const fixture = createFixture();
 
@@ -118,7 +110,6 @@ describe("canvas context lifecycle", () => {
 
     fixture.feature.renderCanvasGoalContext();
     fixture.feature.dispose();
-    const htmlWriteCountAfterDispose = fixture.canvasContextBarEl.htmlWriteCount;
     const contextWriteCountAfterDispose = fixture.canvasApp.setGoalContext.mock.calls.length;
 
     expect(fixture.canvasContextBarEl.innerHTML).toBe("");
@@ -132,11 +123,11 @@ describe("canvas context lifecycle", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(fixture.canvasContextBarEl.htmlWriteCount).toBe(htmlWriteCountAfterDispose);
+    expect(fixture.canvasContextBarEl.innerHTML).toBe("");
     expect(fixture.canvasApp.setGoalContext).toHaveBeenCalledTimes(contextWriteCountAfterDispose);
     expect(fixture.feature.getRuntimeSnapshot().pendingCapabilityRequestCount).toBe(0);
 
     fixture.feature.renderCanvasGoalContext();
-    expect(fixture.canvasContextBarEl.htmlWriteCount).toBe(htmlWriteCountAfterDispose);
+    expect(fixture.canvasContextBarEl.innerHTML).toBe("");
   });
 });

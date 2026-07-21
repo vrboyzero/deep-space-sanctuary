@@ -12,6 +12,7 @@ import { loadRecoveredBridgeSessions } from "@belldandy/skills";
 
 import type {
   SubTaskBridgeSessionLaunch,
+  SubTaskCommandRequestOptions,
   SubTaskRecord,
   SubTaskRuntimeStore,
 } from "./task-runtime.js";
@@ -511,6 +512,8 @@ export function createBridgeSessionResumeController(input: {
     message = "",
     options?: {
       takeoverAgentId?: string;
+      expectedRevision?: number;
+      idempotencyKey?: string;
     },
   ): Promise<SubTaskRecord | undefined> => {
     const current = await input.runtimeStore.getTask(taskId);
@@ -529,9 +532,14 @@ export function createBridgeSessionResumeController(input: {
     const resumeMessage = buildResumeRequestMessage(current, message, takeoverAgentId);
     const accepted = await input.runtimeStore.requestResume(taskId, resumeMessage, {
       sessionId: current.sessionId,
+      expectedRevision: options?.expectedRevision,
+      idempotencyKey: options?.idempotencyKey,
     });
     if (!accepted) {
       throw new Error(`Failed to record bridge subtask resume: ${taskId}`);
+    }
+    if (!accepted.claimOwner) {
+      return accepted.item;
     }
 
     const resumeId = accepted.resume.id;
@@ -578,6 +586,7 @@ export function createBridgeSessionTakeoverController(input: {
     taskId: string,
     agentId: string,
     message = "",
+    options: SubTaskCommandRequestOptions = {},
   ): Promise<SubTaskRecord | undefined> => {
     const normalizedAgentId = normalizeOptionalString(agentId);
     if (!normalizedAgentId) {
@@ -601,9 +610,14 @@ export function createBridgeSessionTakeoverController(input: {
     const accepted = await input.runtimeStore.requestTakeover(taskId, normalizedAgentId, normalizeOptionalString(message) || "", {
       sessionId: current.sessionId,
       mode: runningTakeover ? "safe_point" : "resume_relaunch",
+      expectedRevision: options.expectedRevision,
+      idempotencyKey: options.idempotencyKey,
     });
     if (!accepted) {
       throw new Error(`Failed to record bridge subtask takeover: ${taskId}`);
+    }
+    if (!accepted.claimOwner) {
+      return accepted.item;
     }
 
     const takeoverId = accepted.takeover.id;
@@ -655,31 +669,58 @@ export function createBridgeSessionTakeoverController(input: {
 
 export function createGatewaySubTaskResumeDispatcher(input: {
   runtimeStore: Pick<SubTaskRuntimeStore, "getTask">;
-  resumeBridgeSessionSubTask: (taskId: string, message?: string) => Promise<SubTaskRecord | undefined>;
-  resumeAgentSubTask: (taskId: string, message?: string) => Promise<SubTaskRecord | undefined>;
+  resumeBridgeSessionSubTask: (
+    taskId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  resumeAgentSubTask: (
+    taskId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
 }) {
-  return async (taskId: string, message?: string): Promise<SubTaskRecord | undefined> => {
+  return async (
+    taskId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ): Promise<SubTaskRecord | undefined> => {
     const current = await input.runtimeStore.getTask(taskId);
     if (!current) return undefined;
     if (isBridgeSessionSubTask(current)) {
-      return input.resumeBridgeSessionSubTask(taskId, message);
+      return input.resumeBridgeSessionSubTask(taskId, message, options);
     }
-    return input.resumeAgentSubTask(taskId, message);
+    return input.resumeAgentSubTask(taskId, message, options);
   };
 }
 
 export function createGatewaySubTaskTakeoverDispatcher(input: {
   runtimeStore: Pick<SubTaskRuntimeStore, "getTask">;
-  takeoverBridgeSessionSubTask: (taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>;
-  takeoverAgentSubTask: (taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>;
+  takeoverBridgeSessionSubTask: (
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  takeoverAgentSubTask: (
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
 }) {
-  return async (taskId: string, agentId: string, message?: string): Promise<SubTaskRecord | undefined> => {
+  return async (
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ): Promise<SubTaskRecord | undefined> => {
     const current = await input.runtimeStore.getTask(taskId);
     if (!current) return undefined;
     if (isBridgeSessionSubTask(current)) {
-      return input.takeoverBridgeSessionSubTask(taskId, agentId, message);
+      return input.takeoverBridgeSessionSubTask(taskId, agentId, message, options);
     }
-    return input.takeoverAgentSubTask(taskId, agentId, message);
+    return input.takeoverAgentSubTask(taskId, agentId, message, options);
   };
 }
 
@@ -688,6 +729,7 @@ export function createBridgeAwareStopSubTaskHandler(input: {
     SubTaskRuntimeStore,
     | "getTask"
     | "markStopped"
+    | "markStopFailed"
     | "requestStop"
   > | undefined;
   subAgentOrchestrator?: {
@@ -696,7 +738,11 @@ export function createBridgeAwareStopSubTaskHandler(input: {
   toolExecutor?: ToolExecutorLike;
   logger?: RuntimeLogger;
 }) {
-  return async (taskId: string, reason?: string): Promise<SubTaskRecord | undefined> => {
+  return async (
+    taskId: string,
+    reason?: string,
+    options: SubTaskCommandRequestOptions = {},
+  ): Promise<SubTaskRecord | undefined> => {
     const runtimeStore = input.subTaskRuntimeStore;
     if (!runtimeStore) return undefined;
 
@@ -704,13 +750,25 @@ export function createBridgeAwareStopSubTaskHandler(input: {
     if (!current) return undefined;
 
     const normalizedReason = normalizeOptionalString(reason) || "Task stopped by user.";
+    const accepted = await runtimeStore.requestStop(taskId, normalizedReason, {
+      sessionId: current.sessionId,
+      expectedRevision: options.expectedRevision,
+      idempotencyKey: options.idempotencyKey,
+    });
+    if (!accepted) return undefined;
+    if (!accepted.claimOwner) {
+      return accepted.item;
+    }
+    const commandClaim = accepted.commandClaim;
 
     if (current.status === "pending" && !current.sessionId) {
-      return runtimeStore.markStopped(taskId, { reason: normalizedReason });
+      return runtimeStore.markStopped(taskId, {
+        reason: normalizedReason,
+        commandClaim,
+      });
     }
 
     if (isBridgeSessionSubTask(current) && current.sessionId && input.toolExecutor) {
-      const requested = await runtimeStore.requestStop(taskId, normalizedReason);
       try {
         const runtimeContext = buildRuntimeContext(current, current.instruction, current.agentId, current.launchSpec.profileId);
         const result = await executeBridgeTool(input.toolExecutor, current, {
@@ -718,30 +776,42 @@ export function createBridgeAwareStopSubTaskHandler(input: {
           arguments: { sessionId: current.sessionId },
         }, runtimeContext, current.agentId || current.launchSpec.agentId);
         if (result.success) {
-          return runtimeStore.getTask(taskId);
+          return runtimeStore.markStopped(taskId, {
+            reason: normalizedReason,
+            sessionId: current.sessionId,
+            commandClaim,
+          });
         }
-        input.logger?.warn?.("Bridge subtask stop fell back to stop_requested after close failure.", {
+        input.logger?.warn?.("Bridge subtask stop command failed while closing the governed session.", {
           taskId,
           sessionId: current.sessionId,
           error: result.error,
         });
+        throw new Error(result.error || `Failed to close bridge session ${current.sessionId}.`);
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         input.logger?.warn?.("Bridge subtask stop failed while closing bridge session.", {
           taskId,
           sessionId: current.sessionId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
         });
+        await runtimeStore.markStopFailed(taskId, commandClaim.commandId, errorMessage);
+        throw error;
       }
-      return requested;
     }
 
-    const requested = await runtimeStore.requestStop(taskId, normalizedReason);
     if (current.sessionId && input.subAgentOrchestrator) {
       const stopped = await input.subAgentOrchestrator.stopSession(current.sessionId, normalizedReason);
       if (stopped) {
-        return runtimeStore.getTask(taskId);
+        return runtimeStore.markStopped(taskId, {
+          reason: normalizedReason,
+          sessionId: current.sessionId,
+          commandClaim,
+        });
       }
+      await runtimeStore.markStopFailed(taskId, commandClaim.commandId, `Failed to stop subtask session ${current.sessionId}.`);
+      throw new Error(`Failed to stop subtask session ${current.sessionId}.`);
     }
-    return requested;
+    return accepted.item;
   };
 }

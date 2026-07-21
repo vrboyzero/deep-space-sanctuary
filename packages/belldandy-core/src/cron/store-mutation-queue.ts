@@ -1,4 +1,5 @@
 import path from "node:path";
+import { withCronStoreFileLock } from "./store-file-lock.js";
 
 const mutationTails = new Map<string, Promise<void>>();
 
@@ -8,8 +9,7 @@ function getMutationKey(filePath: string): string {
 }
 
 /**
- * 同一 Node 进程内按 Cron Store 文件路径串行 mutation。
- * 仅覆盖进程内读改写，跨进程文件锁仍属于 OPT-GW09 的后续切片。
+ * 同一 Node 进程内按 Cron Store 文件路径排队，并在执行 mutation 前取得跨进程文件锁。
  */
 export async function withCronStoreMutationLock<T>(
   filePath: string,
@@ -33,7 +33,7 @@ export async function withCronStoreMutationLock<T>(
 
   await predecessor.catch(() => undefined);
   try {
-    return await mutation();
+    return await withCronStoreFileLock(filePath, mutation);
   } finally {
     // 写入失败也必须释放队尾，避免后续 Cron CRUD 永久阻塞。
     releaseCurrent();

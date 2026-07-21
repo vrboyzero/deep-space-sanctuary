@@ -1,3 +1,29 @@
+function createCanvasContextElement(ownerDocument, tagName, className, text) {
+  const element = ownerDocument.createElement(tagName);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = String(text ?? "");
+  return element;
+}
+
+function appendCanvasContextItem(ownerDocument, container, label, value, extraClass = "") {
+  const item = createCanvasContextElement(
+    ownerDocument,
+    "span",
+    `canvas-context-item${extraClass ? ` ${extraClass}` : ""}`,
+  );
+  item.append(
+    createCanvasContextElement(ownerDocument, "span", "canvas-context-label", label),
+    createCanvasContextElement(ownerDocument, "span", "canvas-context-value", value),
+  );
+  container.append(item);
+}
+
+function appendCanvasContextAction(ownerDocument, container, attributeName, attributeValue, label) {
+  const button = createCanvasContextElement(ownerDocument, "button", "canvas-tb-btn", label);
+  button.setAttribute(attributeName, String(attributeValue ?? ""));
+  container.append(button);
+}
+
 export function createCanvasContextFeature({
   refs,
   getCanvasApp,
@@ -7,7 +33,6 @@ export function createCanvasContextFeature({
   normalizeGoalBoardId,
   getCachedGoalCapabilityEntry,
   goalRuntimeFilePath,
-  escapeHtml,
   ensureGoalCapabilityCache,
   switchMode,
   loadGoals,
@@ -108,68 +133,86 @@ export function createCanvasContextFeature({
       note = t("canvasContext.unmatchedBoard", {}, "This canvas is not matched to a long task yet and can continue to be used independently.");
     }
 
-    const actions = [];
+    const ownerDocument = canvasContextBarEl.ownerDocument ?? document;
+    const meta = createCanvasContextElement(ownerDocument, "div", "canvas-context-meta");
+    appendCanvasContextItem(ownerDocument, meta, t("canvasContext.boardLabel", {}, "Board"), boardId || "-");
+    appendCanvasContextItem(ownerDocument, meta, t("canvasContext.goalLabel", {}, "Goal"), goalName || "-");
+    if (nodeId) {
+      appendCanvasContextItem(ownerDocument, meta, t("canvasContext.nodeLabel", {}, "Node"), nodeId);
+    }
+    if (runId) {
+      appendCanvasContextItem(ownerDocument, meta, t("canvasContext.runLabel", {}, "Run"), runId);
+    }
+    if (capabilityPlan) {
+      appendCanvasContextItem(ownerDocument, meta, "计划", capabilityPlan.nodeId || capabilityPlan.id, "canvas-context-item-capability");
+      appendCanvasContextItem(ownerDocument, meta, "模式", capabilityPlan.executionMode || "-", "canvas-context-item-capability");
+      appendCanvasContextItem(ownerDocument, meta, "风险", capabilityPlan.riskLevel || "-", "canvas-context-item-capability");
+      appendCanvasContextItem(ownerDocument, meta, "对齐", capabilityPlan.analysis?.status || "-", "canvas-context-item-capability");
+      meta.append(createCanvasContextElement(
+        ownerDocument,
+        "span",
+        "canvas-context-note canvas-context-note-capability",
+        capabilityPlan.summary
+          || capabilityPlan.analysis?.summary
+          || t("canvasContext.capabilityPlanHint", {}, "A capabilityPlan is available for the current node."),
+      ));
+    } else if (goalId) {
+      meta.append(createCanvasContextElement(
+        ownerDocument,
+        "span",
+        "canvas-context-note canvas-context-note-capability",
+        capabilityEntry
+          ? t("canvasContext.capabilityPlanMissing", {}, "The current goal has not matched a capabilityPlan for this node yet.")
+          : t("canvasContext.capabilityPlanLoading", {}, "Loading capabilityPlan context..."),
+      ));
+    }
+    meta.append(createCanvasContextElement(ownerDocument, "span", "canvas-context-note", note));
+
+    const actions = createCanvasContextElement(ownerDocument, "div", "canvas-context-actions");
     if (goalId) {
-      actions.push(`<button class="canvas-tb-btn" data-canvas-open-goal-detail="${escapeHtml(goalId)}">${escapeHtml(t("canvasContext.openGoalDetail", {}, "打开长期任务详情"))}</button>`);
-      actions.push(`<button class="canvas-tb-btn" data-canvas-open-goal-tasks="${escapeHtml(goalId)}">${escapeHtml(t("canvasContext.viewGoalTasks", {}, "查看长期任务任务记录"))}</button>`);
+      appendCanvasContextAction(
+        ownerDocument,
+        actions,
+        "data-canvas-open-goal-detail",
+        goalId,
+        t("canvasContext.openGoalDetail", {}, "打开长期任务详情"),
+      );
+      appendCanvasContextAction(
+        ownerDocument,
+        actions,
+        "data-canvas-open-goal-tasks",
+        goalId,
+        t("canvasContext.viewGoalTasks", {}, "查看长期任务任务记录"),
+      );
     }
     if (conversation?.conversationId) {
-      actions.push(`
-        <button
-          class="canvas-tb-btn"
-          data-canvas-open-conversation="${escapeHtml(conversation.conversationId)}"
-          data-canvas-conversation-label="${escapeHtml(nodeId
-            ? t("canvasContext.returnNodeChannelLabel", { goalName: goalName || goalId, nodeId }, `返回节点通道：${goalName || goalId} / ${nodeId}`)
-            : t("canvasContext.returnGoalChannelLabel", { goalName: goalName || goalId }, `返回长期任务通道：${goalName || goalId}`))}"
-        >
-          ${escapeHtml(nodeId
-            ? t("canvasContext.returnNodeChannelButton", {}, "返回当前节点通道")
-            : t("canvasContext.returnGoalChannelButton", {}, "返回当前长期任务通道"))}
-        </button>
-      `);
+      const conversationLabel = nodeId
+        ? t("canvasContext.returnNodeChannelLabel", { goalName: goalName || goalId, nodeId }, `返回节点通道：${goalName || goalId} / ${nodeId}`)
+        : t("canvasContext.returnGoalChannelLabel", { goalName: goalName || goalId }, `返回长期任务通道：${goalName || goalId}`);
+      const button = createCanvasContextElement(
+        ownerDocument,
+        "button",
+        "canvas-tb-btn",
+        nodeId
+          ? t("canvasContext.returnNodeChannelButton", {}, "返回当前节点通道")
+          : t("canvasContext.returnGoalChannelButton", {}, "返回当前长期任务通道"),
+      );
+      button.setAttribute("data-canvas-open-conversation", conversation.conversationId);
+      button.setAttribute("data-canvas-conversation-label", String(conversationLabel ?? ""));
+      actions.append(button);
     }
     if (goal?.runtimeRoot) {
-      actions.push(`<button class="canvas-tb-btn" data-canvas-open-capability-source="${escapeHtml(goalRuntimeFilePath(goal, "capability-plans.json"))}">${escapeHtml(t("canvasContext.openCapabilityPlan", {}, "打开 capability-plans.json"))}</button>`);
+      appendCanvasContextAction(
+        ownerDocument,
+        actions,
+        "data-canvas-open-capability-source",
+        goalRuntimeFilePath(goal, "capability-plans.json"),
+        t("canvasContext.openCapabilityPlan", {}, "打开 capability-plans.json"),
+      );
     }
 
-    const capabilityMeta = capabilityPlan ? `
-      <span class="canvas-context-item canvas-context-item-capability">
-        <span class="canvas-context-label">计划</span>
-        <span class="canvas-context-value">${escapeHtml(capabilityPlan.nodeId || capabilityPlan.id)}</span>
-      </span>
-      <span class="canvas-context-item canvas-context-item-capability">
-        <span class="canvas-context-label">模式</span>
-        <span class="canvas-context-value">${escapeHtml(capabilityPlan.executionMode || "-")}</span>
-      </span>
-      <span class="canvas-context-item canvas-context-item-capability">
-        <span class="canvas-context-label">风险</span>
-        <span class="canvas-context-value">${escapeHtml(capabilityPlan.riskLevel || "-")}</span>
-      </span>
-      <span class="canvas-context-item canvas-context-item-capability">
-        <span class="canvas-context-label">对齐</span>
-        <span class="canvas-context-value">${escapeHtml(capabilityPlan.analysis?.status || "-")}</span>
-      </span>
-      <span class="canvas-context-note canvas-context-note-capability">${escapeHtml(capabilityPlan.summary || capabilityPlan.analysis?.summary || t("canvasContext.capabilityPlanHint", {}, "A capabilityPlan is available for the current node."))}</span>
-    ` : goalId ? `
-      <span class="canvas-context-note canvas-context-note-capability">${escapeHtml(capabilityEntry
-        ? t("canvasContext.capabilityPlanMissing", {}, "The current goal has not matched a capabilityPlan for this node yet.")
-        : t("canvasContext.capabilityPlanLoading", {}, "Loading capabilityPlan context..."))}</span>
-    ` : "";
-
     canvasContextBarEl.classList.remove("hidden");
-    canvasContextBarEl.innerHTML = `
-      <div class="canvas-context-meta">
-        <span class="canvas-context-item"><span class="canvas-context-label">${escapeHtml(t("canvasContext.boardLabel", {}, "Board"))}</span><span class="canvas-context-value">${escapeHtml(boardId || "-")}</span></span>
-        <span class="canvas-context-item"><span class="canvas-context-label">${escapeHtml(t("canvasContext.goalLabel", {}, "Goal"))}</span><span class="canvas-context-value">${escapeHtml(goalName || "-")}</span></span>
-        ${nodeId ? `<span class="canvas-context-item"><span class="canvas-context-label">${escapeHtml(t("canvasContext.nodeLabel", {}, "Node"))}</span><span class="canvas-context-value">${escapeHtml(nodeId)}</span></span>` : ""}
-        ${runId ? `<span class="canvas-context-item"><span class="canvas-context-label">${escapeHtml(t("canvasContext.runLabel", {}, "Run"))}</span><span class="canvas-context-value">${escapeHtml(runId)}</span></span>` : ""}
-        ${capabilityMeta}
-        <span class="canvas-context-note">${escapeHtml(note)}</span>
-      </div>
-      <div class="canvas-context-actions">
-        ${actions.join("")}
-      </div>
-    `;
+    canvasContextBarEl.replaceChildren(meta, actions);
 
     canvasContextBarEl.querySelectorAll("[data-canvas-open-goal-detail]").forEach((node) => {
       node.addEventListener("click", async () => {

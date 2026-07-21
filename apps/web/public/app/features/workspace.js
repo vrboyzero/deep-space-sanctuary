@@ -1,3 +1,6 @@
+import { createWorkspaceTreePlaceholderView } from "./workspace-tree-placeholder-view.js";
+import { createWorkspaceTreeItemView } from "./workspace-tree-item-view.js";
+
 function createReq(sendReq, makeId, method, params) {
   return sendReq({
     type: "req",
@@ -132,7 +135,6 @@ export function createWorkspaceFeature({
   makeId,
   switchMode,
   showNotice,
-  escapeHtml,
   loadServerConfig,
   syncAttachmentLimitsFromConfig,
   persistWorkspaceRootsField,
@@ -155,6 +157,10 @@ export function createWorkspaceFeature({
     workspaceRootsEl,
   } = refs;
   const { workspaceRootsKey } = keys;
+  const treePlaceholderView = createWorkspaceTreePlaceholderView({ t });
+  const treeItemView = createWorkspaceTreeItemView({
+    ownerDocument: fileTreeEl?.ownerDocument ?? document,
+  });
 
   let sidebarExpanded = !sidebarEl?.classList.contains("hidden");
   let currentEditPath = null;
@@ -240,16 +246,9 @@ export function createWorkspaceFeature({
     }
   }
 
-  function renderTreePlaceholderHtml(key, fallback, style = "") {
-    const safeStyle = style ? ` style="${style}"` : "";
-    return `<div class="tree-loading"${safeStyle}>${escapeHtml(t(key, {}, fallback))}</div>`;
-  }
-
   function setRootTreePlaceholder(key, fallback) {
     lastRootTreePlaceholder = { key, fallback };
-    if (fileTreeEl) {
-      fileTreeEl.innerHTML = renderTreePlaceholderHtml(key, fallback);
-    }
+    treePlaceholderView.render(fileTreeEl, key, fallback);
   }
 
   async function loadWorkspaceRootsFromServer() {
@@ -463,53 +462,24 @@ export function createWorkspaceFeature({
 
   function createTreeItem(item) {
     if (item.type === "directory") {
-      const folder = document.createElement("div");
-      folder.className = "tree-folder";
-      if (expandedFolders.has(item.path)) {
-        folder.classList.add("expanded");
-      }
-
-      const header = document.createElement("div");
-      header.className = "tree-item";
-      header.innerHTML = `
-        <span class="tree-item-icon"></span>
-        <span class="tree-item-name">${escapeHtml(item.name)}</span>
-      `;
-      header.addEventListener("click", () => {
-        void toggleFolder(item.path, folder);
+      const expanded = expandedFolders.has(item.path);
+      const { element, trigger, children } = treeItemView.createDirectory(item, { expanded });
+      trigger.addEventListener("click", () => {
+        void toggleFolder(item.path, element);
       });
-
-      const children = document.createElement("div");
-      children.className = "tree-children";
-
-      folder.appendChild(header);
-      folder.appendChild(children);
-
-      if (expandedFolders.has(item.path)) {
+      if (expanded) {
         void loadFolderChildren(item.path, children);
       }
-
-      return folder;
+      return element;
     }
 
-    const file = document.createElement("div");
-    file.className = "tree-file";
-
-    const fileItem = document.createElement("div");
-    fileItem.className = "tree-item";
-    if (currentEditPath === item.path) {
-      fileItem.classList.add("active");
-    }
-    fileItem.innerHTML = `
-      <span class="tree-item-icon"></span>
-      <span class="tree-item-name">${escapeHtml(item.name)}</span>
-    `;
-    fileItem.addEventListener("click", () => {
+    const { element, trigger } = treeItemView.createFile(item, {
+      active: currentEditPath === item.path,
+    });
+    trigger.addEventListener("click", () => {
       void openFile(item.path);
     });
-
-    file.appendChild(fileItem);
-    return file;
+    return element;
   }
 
   async function toggleFolder(folderPath, folderEl) {
@@ -529,12 +499,12 @@ export function createWorkspaceFeature({
   }
 
   async function loadFolderChildren(folderPath, containerEl) {
-    containerEl.innerHTML = renderTreePlaceholderHtml("sidebar.loading", "Loading...", "padding: 4px 8px; font-size: 12px;");
+    treePlaceholderView.render(containerEl, "sidebar.loading", "Loading...", { compact: true });
     const items = await loadFileTree(folderPath);
     containerEl.textContent = "";
 
     if (!items || items.length === 0) {
-      containerEl.innerHTML = renderTreePlaceholderHtml("sidebar.empty", "Empty", "padding: 4px 8px; font-size: 12px; color: var(--text-muted);");
+      treePlaceholderView.render(containerEl, "sidebar.empty", "Empty", { compact: true, muted: true });
       return;
     }
 
@@ -761,7 +731,8 @@ export function createWorkspaceFeature({
     refreshLocale() {
       updateSidebarTitle();
       if (lastRootTreePlaceholder && fileTreeEl) {
-        fileTreeEl.innerHTML = renderTreePlaceholderHtml(
+        treePlaceholderView.render(
+          fileTreeEl,
           lastRootTreePlaceholder.key,
           lastRootTreePlaceholder.fallback,
         );

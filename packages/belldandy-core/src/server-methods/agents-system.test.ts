@@ -28,11 +28,8 @@ describe("handleAgentsSystemMethod", () => {
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it("broadcasts a countdown before exiting on system.restart", async () => {
-    const broadcast = vi.fn();
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-      return undefined as never;
-    }) as typeof process.exit);
+  it("returns the response before delegating system.restart to the shutdown owner", async () => {
+    const requestSystemRestart = vi.fn();
 
     const res = await handleAgentsSystemMethod(
       {
@@ -45,7 +42,8 @@ describe("handleAgentsSystemMethod", () => {
         stateDir,
         clientId: "client-1",
         log: { warn: vi.fn() },
-        broadcast,
+        broadcast: vi.fn(),
+        requestSystemRestart,
         agentRegistry: undefined,
         residentAgentRuntime: {} as any,
         residentMemoryManagers: [],
@@ -57,38 +55,8 @@ describe("handleAgentsSystemMethod", () => {
     );
 
     expect(res).toMatchObject({ type: "res", id: "restart-1", ok: true });
-    expect(broadcast).toHaveBeenCalledTimes(0);
-
-    await vi.advanceTimersByTimeAsync(0);
-    expect(broadcast).toHaveBeenNthCalledWith(1, {
-      type: "event",
-      event: "agent.status",
-      payload: { status: "restarting", reason: "settings updated", countdown: 3 },
-    });
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(broadcast).toHaveBeenNthCalledWith(2, {
-      type: "event",
-      event: "agent.status",
-      payload: { status: "restarting", reason: "settings updated", countdown: 2 },
-    });
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(broadcast).toHaveBeenNthCalledWith(3, {
-      type: "event",
-      event: "agent.status",
-      payload: { status: "restarting", reason: "settings updated", countdown: 1 },
-    });
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(broadcast).toHaveBeenNthCalledWith(4, {
-      type: "event",
-      event: "agent.status",
-      payload: { status: "restarting", reason: "settings updated", countdown: 0 },
-    });
-
-    await vi.advanceTimersByTimeAsync(300);
-    expect(exitSpy).toHaveBeenCalledWith(100);
+    expect(requestSystemRestart).toHaveBeenCalledTimes(1);
+    expect(requestSystemRestart).toHaveBeenCalledWith("settings updated");
   });
 
   it("creates a new agent profile and minimal workspace files", async () => {

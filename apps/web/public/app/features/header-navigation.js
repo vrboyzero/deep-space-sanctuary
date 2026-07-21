@@ -1,7 +1,13 @@
 import { createPanelTaskScope } from "./panel-task-scope.js";
+import {
+  HEADER_NAVIGATION_COMMANDS,
+  createLegacyHeaderNavigationCommandAdapter,
+} from "./header-navigation-commands.js";
 
 export function createHeaderNavigationFeature({
   refs,
+  runtimeContext,
+  commandDispatcher,
   switchMode,
   loadGoals,
   loadBridgeSessions,
@@ -15,6 +21,16 @@ export function createHeaderNavigationFeature({
     goChatPageBtn,
   } = refs ?? {};
   const taskScope = createPanelTaskScope();
+  const commands = commandDispatcher?.dispatch
+    ? commandDispatcher
+    : createLegacyHeaderNavigationCommandAdapter({ loadGoals, loadBridgeSessions, focusPrompt });
+
+  function switchPanelMode(mode) {
+    if (runtimeContext?.navigation?.switchMode) {
+      return runtimeContext.navigation.switchMode(mode);
+    }
+    return switchMode?.(mode);
+  }
 
   function addOwnedListener(target, type, handler) {
     if (!target) return;
@@ -33,20 +49,20 @@ export function createHeaderNavigationFeature({
 
   function openGoalsPage() {
     if (!taskScope.isActive()) return undefined;
-    switchMode?.("goals");
-    return loadGoals?.(false);
+    switchPanelMode("goals");
+    return commands.dispatch(HEADER_NAVIGATION_COMMANDS.LOAD_GOALS);
   }
 
   function openBridgePage() {
     if (!taskScope.isActive()) return undefined;
-    switchMode?.("bridge");
-    return loadBridgeSessions?.(false);
+    switchPanelMode("bridge");
+    return commands.dispatch(HEADER_NAVIGATION_COMMANDS.LOAD_BRIDGE);
   }
 
   function openChatPage() {
     if (!taskScope.isActive()) return;
-    switchMode?.("chat");
-    focusPrompt?.();
+    switchPanelMode("chat");
+    return commands.dispatch(HEADER_NAVIGATION_COMMANDS.FOCUS_CHAT);
   }
 
   async function handleGoalsClick() {

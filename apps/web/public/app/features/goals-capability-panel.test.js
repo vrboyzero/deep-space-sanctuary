@@ -274,4 +274,48 @@ describe("goals capability panel", () => {
 
     expect(document.getElementById("goalCapabilityPanel")?.textContent || "").toContain("治理 freshness：当前治理队列存在待收口项");
   });
+
+  it("renders top-level states as text without parsing HTML", () => {
+    const maliciousError = '<img src=x onerror="alert(1)">capability failed';
+    document.body.innerHTML = `
+      <div id="goalsDetail">
+        <div id="goalCapabilityPanel"></div>
+      </div>
+    `;
+    const panel = document.getElementById("goalCapabilityPanel");
+    const feature = createGoalsCapabilityPanelFeature({
+      refs: {
+        goalsDetailEl: document.getElementById("goalsDetail"),
+      },
+      escapeHtml(value) {
+        if (value === maliciousError) {
+          throw new Error("Capability error placeholders must not require an HTML escaper");
+        }
+        return String(value ?? "");
+      },
+      formatDateTime: (value) => String(value ?? "-"),
+      onOpenSourcePath: vi.fn(async () => {}),
+      onOpenSubtask: vi.fn(async () => {}),
+      onSaveGovernanceSettings: vi.fn(async () => {}),
+      onCommanderDecision: vi.fn(async () => {}),
+    });
+
+    feature.renderGoalCapabilityPanelLoading();
+    expect(panel.children).toHaveLength(1);
+    expect(panel.firstElementChild.className).toBe("memory-viewer-empty");
+    expect(panel.firstElementChild.textContent).toBe("正在读取 capability-plans.json …");
+
+    expect(() => feature.renderGoalCapabilityPanelError(maliciousError)).not.toThrow();
+    expect(panel.children).toHaveLength(1);
+    expect(panel.firstElementChild.className).toBe("memory-viewer-empty");
+    expect(panel.firstElementChild.textContent).toBe(maliciousError);
+    expect(panel.querySelector("img, [onerror]")).toBeNull();
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      activeGroupCount: 0,
+      activeListenerCount: 0,
+      disposed: false,
+    });
+
+    feature.dispose();
+  });
 });

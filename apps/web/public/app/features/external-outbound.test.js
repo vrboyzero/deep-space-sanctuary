@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createExternalOutboundController } from "./external-outbound.js";
@@ -21,6 +23,10 @@ function createRefs() {
       },
       click: () => listeners.get("click")?.(),
       listenerCount: () => listeners.size,
+      replaceChildren(...nodes) {
+        this.innerHTML = nodes.map((node) => node.outerHTML).join("");
+        this.textContent = nodes.map((node) => node.textContent).join("");
+      },
     };
   };
   return {
@@ -66,6 +72,41 @@ afterEach(() => {
 });
 
 describe("external outbound controller", () => {
+  it("renders untrusted target fields as text without an HTML escaper", () => {
+    const refs = {
+      externalOutboundConfirmModal: document.createElement("div"),
+      externalOutboundConfirmPreviewEl: document.createElement("div"),
+      externalOutboundConfirmTargetEl: document.createElement("div"),
+      externalOutboundConfirmExpiryEl: document.createElement("div"),
+      externalOutboundConfirmApproveBtn: document.createElement("button"),
+      externalOutboundConfirmRejectBtn: document.createElement("button"),
+    };
+    const unsafeTarget = '</div><img src=x onerror="alert(1)">';
+    const controller = createExternalOutboundController({
+      refs,
+      isConnected: () => true,
+      sendReq: vi.fn(),
+      makeId: () => "req-1",
+      clientId: "client-web-1",
+      showNotice: vi.fn(),
+      t: (_key, _params, fallback) => fallback ?? "",
+    });
+
+    controller.handleConfirmRequired({
+      ...createRequiredPayload(),
+      channel: unsafeTarget,
+      targetSessionKey: unsafeTarget,
+      targetAccountId: unsafeTarget,
+      resolution: unsafeTarget,
+    });
+
+    expect(refs.externalOutboundConfirmTargetEl.querySelector("img")).toBeNull();
+    expect(refs.externalOutboundConfirmTargetEl.querySelector("[onerror]")).toBeNull();
+    expect(refs.externalOutboundConfirmTargetEl.textContent).toContain(unsafeTarget);
+    expect(refs.externalOutboundConfirmTargetEl.children).toHaveLength(5);
+    controller.dispose();
+  });
+
   it("owns the pending countdown and button listeners until dispose", async () => {
     vi.useFakeTimers();
     const { refs, controller } = createController();

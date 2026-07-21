@@ -1,5 +1,11 @@
 import { buildLaunchExplainabilityLines } from "./agent-launch-explainability.js";
 import { buildResidentStateBindingLines } from "./resident-state-binding-lines.js";
+import { createToolSettingsBuiltinTabView } from "./tool-settings-builtin-tab-view.js";
+import { createToolSettingsEmptyStateView } from "./tool-settings-empty-state.js";
+import { createToolSettingsMethodsTabView } from "./tool-settings-methods-tab-view.js";
+import { createToolSettingsMcpTabView } from "./tool-settings-mcp-tab-view.js";
+import { createToolSettingsPluginsTabView } from "./tool-settings-plugins-tab-view.js";
+import { createToolSettingsSkillsTabView } from "./tool-settings-skills-tab-view.js";
 
 export function createToolSettingsController({
   refs,
@@ -11,7 +17,6 @@ export function createToolSettingsController({
   getActiveConversationId,
   getSelectedSubtaskId,
   isSubtasksViewActive,
-  escapeHtml,
   showNotice,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -29,6 +34,30 @@ export function createToolSettingsController({
     toolSettingsBody,
     toolTabButtons,
   } = refs;
+  const toolSettingsBuiltinTabView = createToolSettingsBuiltinTabView({
+    ownerDocument: toolSettingsBody?.ownerDocument ?? document,
+    t,
+  });
+  const toolSettingsEmptyStateView = createToolSettingsEmptyStateView({
+    ownerDocument: toolSettingsBody?.ownerDocument ?? document,
+    t,
+  });
+  const toolSettingsMethodsTabView = createToolSettingsMethodsTabView({
+    ownerDocument: toolSettingsBody?.ownerDocument ?? document,
+    t,
+  });
+  const toolSettingsPluginsTabView = createToolSettingsPluginsTabView({
+    ownerDocument: toolSettingsBody?.ownerDocument ?? document,
+    t,
+  });
+  const toolSettingsMcpTabView = createToolSettingsMcpTabView({
+    ownerDocument: toolSettingsBody?.ownerDocument ?? document,
+    t,
+  });
+  const toolSettingsSkillsTabView = createToolSettingsSkillsTabView({
+    ownerDocument: toolSettingsBody?.ownerDocument ?? document,
+    t,
+  });
 
   let toolSettingsData = null;
   let toolSettingsActiveTab = "builtin";
@@ -88,8 +117,7 @@ export function createToolSettingsController({
   }
 
   function renderEmpty(messageKey, fallback) {
-    if (!toolSettingsBody) return;
-    toolSettingsBody.innerHTML = `<div class="tool-settings-empty">${escapeHtml(t(messageKey, {}, fallback))}</div>`;
+    toolSettingsEmptyStateView.render(toolSettingsBody, messageKey, fallback);
   }
 
   function normalizeBuiltinContract(contract) {
@@ -205,10 +233,6 @@ export function createToolSettingsController({
     return labels[channel] || channel;
   }
 
-  function renderContractBadge(label, className = "") {
-    return `<span class="tool-contract-badge${className ? ` ${className}` : ""}">${escapeHtml(label)}</span>`;
-  }
-
   function formatVisibilityLabel(reasonCode) {
     const labels = {
       available: t("toolSettings.visibilityAvailable", {}, "Visible in Current Context"),
@@ -227,24 +251,7 @@ export function createToolSettingsController({
     return labels[reasonCode] || reasonCode || t("toolSettings.visibilityUnknown", {}, "Unknown Visibility");
   }
 
-  function renderVisibilitySummary(visibility) {
-    if (!visibility) return "";
-    const badges = [
-      renderContractBadge(
-        formatVisibilityLabel(visibility.reasonCode),
-        visibility.available ? "visibility-available" : "visibility-blocked",
-      ),
-    ];
-    if (visibility.alwaysEnabled) {
-      badges.push(renderContractBadge(t("toolSettings.visibilityAlwaysEnabled", {}, "Always Enabled"), "visibility-always-enabled"));
-    }
-    return `
-      <div class="tool-visibility-badges">${badges.join("")}</div>
-      ${visibility.reasonMessage ? `<span class="tool-visibility-reason">${escapeHtml(visibility.reasonMessage)}</span>` : ""}
-    `;
-  }
-
-  function renderToolControlState(toolControl, visibilityContext) {
+  function buildToolControlViewModel(toolControl, visibilityContext) {
     if (!toolControl) return "";
     const residentStateBinding = visibilityContext?.residentStateBinding && typeof visibilityContext.residentStateBinding === "object"
       ? visibilityContext.residentStateBinding
@@ -310,44 +317,17 @@ export function createToolSettingsController({
         `${t("toolSettings.runtimeMaxRisk", {}, "Max Risk")}: ${launchSpec.maxToolRiskLevel || "-"}`,
       ]
       : [];
-    return `
-      <div class="tool-settings-context">${escapeHtml(contextParts.join(" · "))}</div>
-      <div class="tool-settings-policy-note">${details.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>
-      ${scopeLines.length > 0
-        ? `<div class="tool-settings-policy-note">${scopeLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>`
-        : ""}
-      ${launchExplainabilityLines.length > 0
-        ? `<div class="tool-settings-policy-note">${launchExplainabilityLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>`
-        : ""}
-      ${runtimeLines.length > 0
-        ? `<div class="tool-settings-policy-note">${runtimeLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>`
-        : ""}
-    `;
+    return {
+      context: contextParts.join(" · "),
+      details,
+      scopeLines,
+      launchExplainabilityLines,
+      runtimeLines,
+    };
   }
 
-  function renderBuiltinContractDetails(contract) {
-    if (!contract) return "";
-    const badges = [
-      renderContractBadge(formatContractFamilyLabel(contract.family), "family"),
-      renderContractBadge(formatContractRiskLabel(contract.riskLevel), `risk-${contract.riskLevel || "unknown"}`),
-      renderContractBadge(
-        contract.isReadOnly
-          ? t("toolSettings.modeReadOnly", {}, "Read-only")
-          : t("toolSettings.modeWritesState", {}, "Writes State"),
-        contract.isReadOnly ? "mode-read" : "mode-write",
-      ),
-      renderContractBadge(
-        contract.needsPermission
-          ? t("toolSettings.permissionRequired", {}, "Permission Required")
-          : t("toolSettings.permissionNotRequired", {}, "No Extra Permission"),
-        contract.needsPermission ? "permission-needed" : "permission-free",
-      ),
-      renderContractBadge(
-        contract.outputPersistencePolicy
-          ? `${t("toolSettings.outputLabel", {}, "Output")}: ${contract.outputPersistencePolicy}`
-          : t("toolSettings.outputLabel", {}, "Output"),
-      ),
-    ];
+  function buildBuiltinContractViewModel(contract) {
+    if (!contract) return null;
     const scopeText = contract.safeScopes.length > 0
       ? contract.safeScopes.map(formatContractScopeLabel).join(", ")
       : t("toolSettings.scopeUnknown", {}, "Unknown");
@@ -357,13 +337,32 @@ export function createToolSettingsController({
     const concurrencyText = contract.isConcurrencySafe
       ? t("toolSettings.concurrentSafe", {}, "Concurrency Safe")
       : t("toolSettings.concurrentSerialized", {}, "Serialized Access");
-    return `
-      ${contract.activityDescription ? `<span class="tool-contract-desc">${escapeHtml(contract.activityDescription)}</span>` : ""}
-      <div class="tool-contract-badges">${badges.join("")}</div>
-      <span class="tool-contract-meta">${escapeHtml(
-        `${t("toolSettings.scopeLabel", {}, "Scopes")}: ${scopeText} · ${t("toolSettings.channelLabel", {}, "Channels")}: ${channelText} · ${concurrencyText}`,
-      )}</span>
-    `;
+    return {
+      description: contract.activityDescription,
+      badges: [
+        { className: "family", label: formatContractFamilyLabel(contract.family) },
+        { className: `risk-${contract.riskLevel || "unknown"}`, label: formatContractRiskLabel(contract.riskLevel) },
+        {
+          className: contract.isReadOnly ? "mode-read" : "mode-write",
+          label: contract.isReadOnly
+            ? t("toolSettings.modeReadOnly", {}, "Read-only")
+            : t("toolSettings.modeWritesState", {}, "Writes State"),
+        },
+        {
+          className: contract.needsPermission ? "permission-needed" : "permission-free",
+          label: contract.needsPermission
+            ? t("toolSettings.permissionRequired", {}, "Permission Required")
+            : t("toolSettings.permissionNotRequired", {}, "No Extra Permission"),
+        },
+        {
+          className: "",
+          label: contract.outputPersistencePolicy
+            ? `${t("toolSettings.outputLabel", {}, "Output")}: ${contract.outputPersistencePolicy}`
+            : t("toolSettings.outputLabel", {}, "Output"),
+        },
+      ],
+      meta: `${t("toolSettings.scopeLabel", {}, "Scopes")}: ${scopeText} · ${t("toolSettings.channelLabel", {}, "Channels")}: ${channelText} · ${concurrencyText}`,
+    };
   }
 
   function handleOpenToolSettingsClick() {
@@ -478,9 +477,12 @@ export function createToolSettingsController({
       const lines = pendingToolSettingsConfirm.summary.length > 0
         ? pendingToolSettingsConfirm.summary
         : [t("toolSettings.confirmNoSummary", {}, "No displayable change summary was provided for this request.")];
-      toolSettingsConfirmSummaryEl.innerHTML = lines
-        .map((line) => `<li>${escapeHtml(line)}</li>`)
-        .join("");
+      const ownerDocument = toolSettingsConfirmSummaryEl.ownerDocument ?? document;
+      toolSettingsConfirmSummaryEl.replaceChildren(...lines.map((line) => {
+        const item = ownerDocument.createElement("li");
+        item.textContent = line;
+        return item;
+      }));
     }
     if (toolSettingsConfirmExpiryEl) {
       toolSettingsConfirmExpiryEl.textContent = formatToolSettingsConfirmExpiry(pendingToolSettingsConfirm.expiresAt);
@@ -523,17 +525,16 @@ export function createToolSettingsController({
     return labels[capability.reasonCode] || labels.tool_system_unavailable;
   }
 
-  function renderWorkflowCapabilitySummary(capability) {
+  function buildWorkflowCapabilityViewModel(capability) {
     if (!capability) return "";
     const statusText = capability.registered
       ? t("toolSettings.workflowCapabilityStatusReady", {}, "Workflow tool ready")
       : t("toolSettings.workflowCapabilityStatusMissing", {}, "Workflow tool unavailable");
-    return `
-      <div class="tool-settings-policy-note">
-        <div><strong>${escapeHtml(t("toolSettings.workflowCapabilityTitle", {}, "Dynamic Workflow"))}</strong> · ${escapeHtml(statusText)}</div>
-        <div>${escapeHtml(formatWorkflowCapabilityReason(capability))}</div>
-      </div>
-    `;
+    return {
+      title: t("toolSettings.workflowCapabilityTitle", {}, "Dynamic Workflow"),
+      status: statusText,
+      reason: formatWorkflowCapabilityReason(capability),
+    };
   }
 
   function buildToolSettingsConfirmAgentNotice(request, decision) {
@@ -777,26 +778,33 @@ export function createToolSettingsController({
     }
     const disabledSet = new Set(disabledList);
     const enabledCount = tools.length - disabledSet.size;
-    let html = `<div class="tool-section-header"><span>${escapeHtml(t("toolSettings.sectionBuiltin", {}, "Built-in Tools"))}</span><span class="tool-section-count">${escapeHtml(t("toolSettings.enabledCount", { enabled: enabledCount, total: tools.length }, `${enabledCount}/${tools.length} enabled`))}</span></div>`;
-    html += renderToolControlState(toolControl, visibilityContext);
-    html += renderWorkflowCapabilitySummary(workflowCapability);
-    for (const name of [...tools].sort((a, b) => String(a).localeCompare(String(b)))) {
+    const builtinTools = tools.map((name) => {
       const checked = !disabledSet.has(name);
       const contract = normalizeBuiltinContract(contractsByName ? contractsByName[name] : null);
       const visibility = normalizeVisibility(visibilityByName ? visibilityByName[name] : null);
-      html += `<div class="tool-item${checked ? "" : " disabled"}${visibility && !visibility.available ? " unavailable" : ""}">
-      <div class="tool-item-info">
-        <span class="tool-item-name">${escapeHtml(name)}</span>
-        ${renderBuiltinContractDetails(contract)}
-        ${renderVisibilitySummary(visibility)}
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" data-category="builtin" data-name="${escapeHtml(name)}" ${checked ? "checked" : ""}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>`;
-    }
-    toolSettingsBody.innerHTML = html;
+      return {
+        name,
+        checked,
+        contract: buildBuiltinContractViewModel(contract),
+        visibility: visibility
+          ? {
+            available: visibility.available,
+            label: formatVisibilityLabel(visibility.reasonCode),
+            alwaysEnabled: visibility.alwaysEnabled,
+            alwaysEnabledLabel: visibility.alwaysEnabled
+              ? t("toolSettings.visibilityAlwaysEnabled", {}, "Always Enabled")
+              : "",
+            reasonMessage: visibility.reasonMessage,
+          }
+          : null,
+      };
+    });
+    toolSettingsBuiltinTabView.render(toolSettingsBody, {
+      tools: builtinTools,
+      enabledCount,
+      toolControlView: buildToolControlViewModel(toolControl, visibilityContext),
+      workflowCapabilityView: buildWorkflowCapabilityViewModel(workflowCapability),
+    });
     bindToggleEvents();
   }
 
@@ -808,30 +816,32 @@ export function createToolSettingsController({
     }
     const disabledSet = new Set(disabledList);
     const enabledCount = serverIds.length - disabledSet.size;
-    let html = `<div class="tool-section-header"><span>${escapeHtml(t("toolSettings.sectionMcp", {}, "MCP Servers"))}</span><span class="tool-section-count">${escapeHtml(t("toolSettings.enabledCount", { enabled: enabledCount, total: serverIds.length }, `${enabledCount}/${serverIds.length} enabled`))}</span></div>`;
-    html += renderToolControlState(toolControl, visibilityContext);
-    for (const serverId of serverIds.sort()) {
+    const servers = serverIds.map((serverId) => {
       const server = mcpServers[serverId];
       const checked = !disabledSet.has(serverId);
       const visibility = normalizeVisibility(visibilityByServer ? visibilityByServer[serverId] : null);
-      const toolList = (server.tools || []).map((toolName) => {
-        const short = toolName.replace(`mcp_${serverId}_`, "");
-        return escapeHtml(short);
-      }).join(", ");
-
-      html += `<div class="tool-item${checked ? "" : " disabled"}${visibility && !visibility.available ? " unavailable" : ""}">
-      <div class="skill-item-info">
-        <span class="tool-item-name">${escapeHtml(serverId)}</span>
-        ${toolList ? `<span class="skill-desc">${toolList}</span>` : `<span class="skill-meta">${escapeHtml(t("toolSettings.emptyNoTools", {}, "No tools"))}</span>`}
-        ${renderVisibilitySummary(visibility)}
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" data-category="mcp_servers" data-name="${escapeHtml(serverId)}" ${checked ? "checked" : ""}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>`;
-    }
-    toolSettingsBody.innerHTML = html;
+      return {
+        id: serverId,
+        tools: server.tools || [],
+        checked,
+        visibility: visibility
+          ? {
+            available: visibility.available,
+            label: formatVisibilityLabel(visibility.reasonCode),
+            alwaysEnabled: visibility.alwaysEnabled,
+            alwaysEnabledLabel: visibility.alwaysEnabled
+              ? t("toolSettings.visibilityAlwaysEnabled", {}, "Always Enabled")
+              : "",
+            reasonMessage: visibility.reasonMessage,
+          }
+          : null,
+      };
+    });
+    toolSettingsMcpTabView.render(toolSettingsBody, {
+      servers,
+      enabledCount,
+      toolControlView: buildToolControlViewModel(toolControl, visibilityContext),
+    });
     bindToggleEvents();
   }
 
@@ -842,23 +852,30 @@ export function createToolSettingsController({
     }
     const disabledSet = new Set(disabledList);
     const enabledCount = pluginList.length - disabledSet.size;
-    let html = `<div class="tool-section-header"><span>${escapeHtml(t("toolSettings.sectionPlugins", {}, "Plugins"))}</span><span class="tool-section-count">${escapeHtml(t("toolSettings.enabledCount", { enabled: enabledCount, total: pluginList.length }, `${enabledCount}/${pluginList.length} enabled`))}</span></div>`;
-    html += renderToolControlState(toolControl, visibilityContext);
-    for (const name of pluginList.sort()) {
+    const plugins = pluginList.map((name) => {
       const checked = !disabledSet.has(name);
       const visibility = normalizeVisibility(visibilityByPlugin ? visibilityByPlugin[name] : null);
-      html += `<div class="tool-item${checked ? "" : " disabled"}${visibility && !visibility.available ? " unavailable" : ""}">
-      <div class="skill-item-info">
-        <span class="tool-item-name">${escapeHtml(name)}</span>
-        ${renderVisibilitySummary(visibility)}
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" data-category="plugins" data-name="${escapeHtml(name)}" ${checked ? "checked" : ""}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>`;
-    }
-    toolSettingsBody.innerHTML = html;
+      return {
+        name,
+        checked,
+        visibility: visibility
+          ? {
+            available: visibility.available,
+            label: formatVisibilityLabel(visibility.reasonCode),
+            alwaysEnabled: visibility.alwaysEnabled,
+            alwaysEnabledLabel: visibility.alwaysEnabled
+              ? t("toolSettings.visibilityAlwaysEnabled", {}, "Always Enabled")
+              : "",
+            reasonMessage: visibility.reasonMessage,
+          }
+          : null,
+      };
+    });
+    toolSettingsPluginsTabView.render(toolSettingsBody, {
+      plugins,
+      enabledCount,
+      toolControlView: buildToolControlViewModel(toolControl, visibilityContext),
+    });
     bindToggleEvents();
   }
 
@@ -867,31 +884,10 @@ export function createToolSettingsController({
       renderEmpty("toolSettings.emptyNoMethods", "未发布方法（将 .md 放入 ~/.star_sanctuary/methods/ 目录）");
       return;
     }
-    let html = `<div class="tool-section-header"><span>${escapeHtml(t("toolSettings.sectionMethods", {}, "Methods"))}</span><span class="tool-section-count">${escapeHtml(t("toolSettings.totalCount", { total: methodList.length }, `${methodList.length} total`))}</span></div>`;
-    html += renderToolControlState(toolControl, visibilityContext);
-    html += `<div class="tool-settings-policy-note"><div>${escapeHtml(t("toolSettings.methodsReadonlyHint", {}, "Methods is a system-level read-only index here. Review and open files from this list, but do not manage enable/disable state in this tab."))}</div></div>`;
-    for (const method of [...methodList].sort((a, b) => String(a.filename || "").localeCompare(String(b.filename || ""), "zh-CN"))) {
-      const displayTitle = method.title || method.filename || t("toolSettings.methodTitleMissing", {}, "未命名方法");
-      const metaParts = [
-        method.filename ? `${t("toolSettings.methodFileLabel", {}, "文件")}: ${method.filename}` : "",
-        method.status ? `${t("toolSettings.methodStatusLabel", {}, "状态")}: ${method.status}` : "",
-      ].filter(Boolean);
-      const openPath = typeof method.path === "string" && method.path.trim()
-        ? method.path.trim()
-        : method.filename
-          ? `methods/${method.filename}`
-          : "";
-      html += `<div class="tool-item method-item">
-      <div class="skill-item-info">
-        <span class="tool-item-name">${escapeHtml(displayTitle)}</span>
-        ${metaParts.length > 0 ? `<span class="skill-meta">${escapeHtml(metaParts.join(" · "))}</span>` : ""}
-        <span class="skill-desc">${escapeHtml(method.summary || t("toolSettings.methodSummaryMissing", {}, "暂无摘要"))}</span>
-      </div>
-      ${openPath
-        ? `<div class="tool-item-actions"><button type="button" class="button tool-inline-action" data-method-path="${escapeHtml(openPath)}">${escapeHtml(t("toolSettings.methodOpen", {}, "打开文件"))}</button></div>`
-        : ""}</div>`;
-    }
-    toolSettingsBody.innerHTML = html;
+    toolSettingsMethodsTabView.render(toolSettingsBody, {
+      methods: methodList,
+      toolControlView: buildToolControlViewModel(toolControl, visibilityContext),
+    });
     bindMethodOpenEvents();
   }
 
@@ -913,30 +909,36 @@ export function createToolSettingsController({
       normal: t("toolSettings.priorityNormal", {}, "Normal"),
       low: t("toolSettings.priorityLow", {}, "Low"),
     };
-
-    let html = `<div class="tool-section-header"><span>${escapeHtml(t("toolSettings.sectionSkills", {}, "Skills"))}</span><span class="tool-section-count">${escapeHtml(t("toolSettings.enabledCount", { enabled: enabledCount, total: skillList.length }, `${enabledCount}/${skillList.length} enabled`))}</span></div>`;
-    html += renderToolControlState(toolControl, visibilityContext);
-    for (const skill of skillList.sort((a, b) => a.name.localeCompare(b.name))) {
+    const skills = skillList.map((skill) => {
       const checked = !disabledSet.has(skill.name);
       const visibility = normalizeVisibility(visibilityBySkill ? visibilityBySkill[skill.name] : null);
       const src = sourceLabel[skill.source] || skill.source;
       const pri = priorityLabel[skill.priority] || skill.priority;
-      const tags = (skill.tags || []).map((tag) => `<span class="skill-tag">${escapeHtml(tag)}</span>`).join("");
-      html += `<div class="tool-item${checked ? "" : " disabled"}${visibility && !visibility.available ? " unavailable" : ""}">
-      <div class="skill-item-info">
-        <span class="tool-item-name">${escapeHtml(skill.name)}</span>
-        <span class="skill-meta">${src} · ${pri}</span>
-        ${skill.description ? `<span class="skill-desc">${escapeHtml(skill.description)}</span>` : ""}
-        ${tags ? `<div class="skill-tags">${tags}</div>` : ""}
-        ${renderVisibilitySummary(visibility)}
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" data-category="skills" data-name="${escapeHtml(skill.name)}" ${checked ? "checked" : ""}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>`;
-    }
-    toolSettingsBody.innerHTML = html;
+      return {
+        name: skill.name,
+        source: src,
+        priority: pri,
+        description: skill.description,
+        tags: skill.tags || [],
+        checked,
+        visibility: visibility
+          ? {
+            available: visibility.available,
+            label: formatVisibilityLabel(visibility.reasonCode),
+            alwaysEnabled: visibility.alwaysEnabled,
+            alwaysEnabledLabel: visibility.alwaysEnabled
+              ? t("toolSettings.visibilityAlwaysEnabled", {}, "Always Enabled")
+              : "",
+            reasonMessage: visibility.reasonMessage,
+          }
+          : null,
+      };
+    });
+    toolSettingsSkillsTabView.render(toolSettingsBody, {
+      skills,
+      enabledCount,
+      toolControlView: buildToolControlViewModel(toolControl, visibilityContext),
+    });
     bindToggleEvents();
   }
 

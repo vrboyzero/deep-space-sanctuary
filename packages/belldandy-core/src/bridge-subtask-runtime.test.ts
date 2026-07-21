@@ -183,6 +183,57 @@ test("bridge session resume controller relaunches the governed task and records 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
+test("bridge session resume replay does not relaunch outside the command claim owner", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-bridge-resume-owner-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createBridgeSessionTask({
+    parentConversationId: "conv-bridge-resume-owner",
+    agentId: "coder",
+    profileId: "coder",
+    instruction: "Resume exactly once.",
+    bridgeSession: {
+      targetId: "codex_session",
+      action: "interactive",
+      transport: "pty",
+      cwd: stateDir,
+      commandPreview: "codex interactive",
+    },
+  });
+  await store.attachSession(task.id, "bridge_resume_owner_1", "coder", "coder");
+  await store.completeTask(task.id, {
+    status: "done",
+    sessionId: "bridge_resume_owner_1",
+    output: "first result",
+  });
+  await store.requestResume(task.id, "Retry the governed bridge session.", {
+    sessionId: "bridge_resume_owner_1",
+    idempotencyKey: "bridge-resume-request-1",
+    expectedRevision: 0,
+  });
+
+  const execute = vi.fn();
+  const controller = createBridgeSessionResumeController({
+    runtimeStore: store,
+    bridgeRuntimeStore: store,
+    toolExecutor: { execute } as any,
+  });
+  const replayed = await controller(task.id, "Retry the governed bridge session.", {
+    idempotencyKey: "bridge-resume-request-1",
+    expectedRevision: 0,
+  });
+
+  expect(execute).not.toHaveBeenCalled();
+  expect(replayed?.resume).toHaveLength(1);
+  expect(replayed?.activeCommandClaim).toMatchObject({
+    kind: "resume",
+    idempotencyKey: "bridge-resume-request-1",
+    generation: 1,
+  });
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
 test("bridge session takeover controller closes the running session, relaunches it, and records delivered takeover metadata", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-bridge-takeover-"));
   const store = new SubTaskRuntimeStore(stateDir);
@@ -359,6 +410,117 @@ test("bridge-aware stop handler closes a running bridge session through tool exe
     status: "stopped",
     sessionId: "bridge_stop_1",
     stopReason: "User requested stop",
+  });
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("bridge-aware stop handler lets only the command claim owner stop a regular subtask", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-stop-owner-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-stop-owner",
+      agentId: "coder",
+      instruction: "Stop exactly once.",
+    },
+  });
+  await store.attachSession(task.id, "subtask_stop_owner_1", "coder", "coder");
+
+  let releaseStop!: () => void;
+  const stopReleased = new Promise<void>((resolve) => {
+    releaseStop = resolve;
+  });
+  let signalStopStarted!: () => void;
+  const stopStarted = new Promise<void>((resolve) => {
+    signalStopStarted = resolve;
+  });
+  const stopSession = vi.fn(async () => {
+    signalStopStarted();
+    await stopReleased;
+    return true;
+  });
+  const stopSubTask = createBridgeAwareStopSubTaskHandler({
+    subTaskRuntimeStore: store,
+    subAgentOrchestrator: { stopSession },
+  });
+
+  const owner = stopSubTask(task.id, "User requested stop", {
+    expectedRevision: 0,
+    idempotencyKey: "stop-request-owner-1",
+  });
+  await stopStarted;
+  const replay = await stopSubTask(task.id, "User requested stop", {
+    expectedRevision: 0,
+    idempotencyKey: "stop-request-owner-1",
+  });
+
+  expect(stopSession).toHaveBeenCalledTimes(1);
+  expect(replay).toMatchObject({
+    id: task.id,
+    status: "running",
+    commandGeneration: 1,
+    activeCommandClaim: {
+      kind: "stop",
+      idempotencyKey: "stop-request-owner-1",
+    },
+  });
+
+  releaseStop();
+  await expect(owner).resolves.toMatchObject({
+    id: task.id,
+    status: "stopped",
+    commandGeneration: 1,
+    activeCommandClaim: undefined,
+  });
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("bridge-aware stop handler releases a failed claim so a newer revision can retry", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-stop-retry-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+  const task = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-stop-retry",
+      agentId: "coder",
+      instruction: "Retry a failed stop.",
+    },
+  });
+  await store.attachSession(task.id, "subtask_stop_retry_1", "coder", "coder");
+
+  const failedHandler = createBridgeAwareStopSubTaskHandler({
+    subTaskRuntimeStore: store,
+    subAgentOrchestrator: { stopSession: vi.fn(async () => false) },
+  });
+  await expect(failedHandler(task.id, "First stop attempt", {
+    expectedRevision: 0,
+    idempotencyKey: "stop-request-failed-1",
+  })).rejects.toThrow("Failed to stop subtask session subtask_stop_retry_1");
+  const failedRecord = await store.getTask(task.id);
+  expect(failedRecord).toMatchObject({
+    status: "running",
+    commandGeneration: 1,
+    activeCommandClaim: undefined,
+    stopRequestedAt: undefined,
+  });
+  expect(failedRecord?.notifications.map((item) => item.kind)).toEqual(expect.arrayContaining([
+    "stop_requested",
+    "stop_failed",
+  ]));
+
+  const retryHandler = createBridgeAwareStopSubTaskHandler({
+    subTaskRuntimeStore: store,
+    subAgentOrchestrator: { stopSession: vi.fn(async () => true) },
+  });
+  await expect(retryHandler(task.id, "Second stop attempt", {
+    expectedRevision: 1,
+    idempotencyKey: "stop-request-retry-2",
+  })).resolves.toMatchObject({
+    status: "stopped",
+    commandGeneration: 2,
   });
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});

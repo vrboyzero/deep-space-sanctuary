@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 
-export type SubTaskCommandKind = "steering" | "resume" | "takeover";
+export const SUBTASK_COMMAND_KINDS = ["steering", "resume", "takeover", "stop"] as const;
+
+export type SubTaskCommandKind = typeof SUBTASK_COMMAND_KINDS[number];
 
 export type SubTaskCommandClaim = {
   kind: SubTaskCommandKind;
@@ -20,13 +22,22 @@ type SubTaskCommandClaimTarget = {
   activeCommandClaim?: SubTaskCommandClaim;
 };
 
+export type SubTaskCommandClaimRejectionCode =
+  | "invalid_claim"
+  | "command_pending"
+  | "invalid_state"
+  | "revision_conflict";
+
 type ClaimAttempt =
   | { status: "claimed"; claim: SubTaskCommandClaim }
   | { status: "replayed"; claim: SubTaskCommandClaim }
-  | { status: "rejected"; reason: string };
+  | { status: "rejected"; code: SubTaskCommandClaimRejectionCode; reason: string };
 
 export class SubTaskCommandClaimError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: SubTaskCommandClaimRejectionCode = "invalid_state",
+  ) {
     super(message);
     this.name = "SubTaskCommandClaimError";
   }
@@ -67,9 +78,7 @@ export function createSubTaskCommandIdempotencyKey(input: {
 export function normalizeSubTaskCommandClaim(value: unknown): SubTaskCommandClaim | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const source = value as Record<string, unknown>;
-  const kind = source.kind === "steering" || source.kind === "resume" || source.kind === "takeover"
-    ? source.kind
-    : undefined;
+  const kind = SUBTASK_COMMAND_KINDS.find((candidate) => candidate === source.kind);
   const commandId = normalizeOptionalString(source.commandId);
   const idempotencyKey = normalizeOptionalString(source.idempotencyKey);
   const ownerInstanceId = normalizeOptionalString(source.ownerInstanceId);
@@ -101,6 +110,7 @@ export function claimSubTaskCommand(
     ownerInstanceId: string;
     requestedAt: number;
     expectedSessionId?: string;
+    expectedRevision?: number;
     takeoverMode?: "safe_point" | "resume_relaunch";
   },
 ): ClaimAttempt {
@@ -108,7 +118,11 @@ export function claimSubTaskCommand(
   const idempotencyKey = normalizeOptionalString(input.idempotencyKey);
   const ownerInstanceId = normalizeOptionalString(input.ownerInstanceId);
   if (!commandId || !idempotencyKey || !ownerInstanceId) {
-    return { status: "rejected", reason: "Subtask command claim requires a valid idempotency key." };
+    return {
+      status: "rejected",
+      code: "invalid_claim",
+      reason: "Subtask command claim requires a valid idempotency key.",
+    };
   }
 
   const active = target.activeCommandClaim;
@@ -116,33 +130,94 @@ export function claimSubTaskCommand(
     if (active.kind === input.kind && active.idempotencyKey === idempotencyKey) {
       return { status: "replayed", claim: active };
     }
-    return { status: "rejected", reason: `Subtask command ${active.kind} is already pending.` };
+    return {
+      status: "rejected",
+      code: "command_pending",
+      reason: `Subtask command ${active.kind} is already pending.`,
+    };
+  }
+
+  const currentRevision = Math.max(0, Math.floor(Number(target.commandGeneration) || 0));
+  if (input.expectedRevision !== undefined) {
+    if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      return {
+        status: "rejected",
+        code: "invalid_claim",
+        reason: "Subtask command expectedRevision must be a non-negative integer.",
+      };
+    }
+    if (input.expectedRevision !== currentRevision) {
+      return {
+        status: "rejected",
+        code: "revision_conflict",
+        reason: `Subtask command revision conflict. Expected ${input.expectedRevision}, current ${currentRevision}.`,
+      };
+    }
   }
   if (target.archivedAt) {
-    return { status: "rejected", reason: "Archived subtasks cannot accept commands." };
+    return {
+      status: "rejected",
+      code: "invalid_state",
+      reason: "Archived subtasks cannot accept commands.",
+    };
   }
 
   const expectedSessionId = normalizeOptionalString(input.expectedSessionId);
   if (input.kind === "steering") {
     if (target.status !== "running" || !target.sessionId || target.sessionId !== expectedSessionId) {
-      return { status: "rejected", reason: `Subtask steering only supports the current running session. Current status: ${target.status}` };
+      return {
+        status: "rejected",
+        code: "invalid_state",
+        reason: `Subtask steering only supports the current running session. Current status: ${target.status}`,
+      };
     }
   } else if (input.kind === "resume") {
     if (!isTerminalStatus(target.status)) {
-      return { status: "rejected", reason: `Subtask resume only supports finished tasks. Current status: ${target.status}` };
+      return {
+        status: "rejected",
+        code: "invalid_state",
+        reason: `Subtask resume only supports finished tasks. Current status: ${target.status}`,
+      };
     }
     if (expectedSessionId && target.sessionId !== expectedSessionId) {
-      return { status: "rejected", reason: "Subtask resume target session changed before claim." };
+      return {
+        status: "rejected",
+        code: "invalid_state",
+        reason: "Subtask resume target session changed before claim.",
+      };
+    }
+  } else if (input.kind === "stop") {
+    if (isTerminalStatus(target.status)) {
+      return {
+        status: "rejected",
+        code: "invalid_state",
+        reason: `Subtask stop only supports active tasks. Current status: ${target.status}`,
+      };
+    }
+    if (expectedSessionId && target.sessionId !== expectedSessionId) {
+      return {
+        status: "rejected",
+        code: "invalid_state",
+        reason: "Subtask stop target session changed before claim.",
+      };
     }
   } else if (input.takeoverMode === "safe_point") {
     if (target.status !== "running" || !target.sessionId || target.sessionId !== expectedSessionId) {
-      return { status: "rejected", reason: `Safe-point takeover only supports the current running session. Current status: ${target.status}` };
+      return {
+        status: "rejected",
+        code: "invalid_state",
+        reason: `Safe-point takeover only supports the current running session. Current status: ${target.status}`,
+      };
     }
   } else if (!isTerminalStatus(target.status)) {
-    return { status: "rejected", reason: `Subtask takeover only supports running or finished tasks. Current status: ${target.status}` };
+    return {
+      status: "rejected",
+      code: "invalid_state",
+      reason: `Subtask takeover only supports running or finished tasks. Current status: ${target.status}`,
+    };
   }
 
-  const generation = Math.max(0, Math.floor(Number(target.commandGeneration) || 0)) + 1;
+  const generation = currentRevision + 1;
   const claim: SubTaskCommandClaim = {
     kind: input.kind,
     commandId,

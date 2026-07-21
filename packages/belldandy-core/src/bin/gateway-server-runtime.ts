@@ -29,7 +29,7 @@ type GatewayStopSubTaskHandlerInput = {
 export function createGatewayStopSubTaskHandler(
   input: GatewayStopSubTaskHandlerInput,
 ): NonNullable<GatewayServerOptions["stopSubTask"]> {
-  return async (taskId, reason) => {
+  return async (taskId, reason, options) => {
     const runtimeStore = input.subTaskRuntimeStore;
     if (!runtimeStore) return undefined;
 
@@ -39,19 +39,40 @@ export function createGatewayStopSubTaskHandler(
     const normalizedReason = typeof reason === "string" && reason.trim()
       ? reason.trim()
       : "Task stopped by user.";
-
-    if (current.status === "pending" && !current.sessionId) {
-      return runtimeStore.markStopped(taskId, { reason: normalizedReason });
+    const accepted = await runtimeStore.requestStop(taskId, normalizedReason, {
+      sessionId: current.sessionId,
+      expectedRevision: options?.expectedRevision,
+      idempotencyKey: options?.idempotencyKey,
+    });
+    if (!accepted) return undefined;
+    if (!accepted.claimOwner) {
+      return accepted.item;
     }
 
-    const requested = await runtimeStore.requestStop(taskId, normalizedReason);
+    if (current.status === "pending" && !current.sessionId) {
+      return runtimeStore.markStopped(taskId, {
+        reason: normalizedReason,
+        commandClaim: accepted.commandClaim,
+      });
+    }
+
     if (current.sessionId && input.subAgentOrchestrator) {
       const stopped = await input.subAgentOrchestrator.stopSession(current.sessionId, normalizedReason);
       if (stopped) {
-        return runtimeStore.getTask(taskId);
+        return runtimeStore.markStopped(taskId, {
+          reason: normalizedReason,
+          sessionId: current.sessionId,
+          commandClaim: accepted.commandClaim,
+        });
       }
+      await runtimeStore.markStopFailed(
+        taskId,
+        accepted.commandClaim.commandId,
+        `Failed to stop subtask session ${current.sessionId}.`,
+      );
+      throw new Error(`Failed to stop subtask session ${current.sessionId}.`);
     }
-    return requested;
+    return accepted.item;
   };
 }
 
@@ -72,6 +93,10 @@ export function buildGatewayServerOptions(input: GatewayServerRuntimeInput): Gat
     preferredProviderIds: input.preferredProviderIds,
     modelConfigPath: input.modelConfigPath,
     residentMemoryManagers: input.residentMemoryManagers,
+    memoryUsageAccounting: input.memoryUsageAccounting,
+    memoryBudgetGuard: input.memoryBudgetGuard,
+    memoryBackgroundJobScheduler: input.memoryBackgroundJobScheduler,
+    memoryModelPrivacyRuntime: input.memoryModelPrivacyRuntime,
     conversationStore: input.conversationStore,
     conversationRunRegistry: input.conversationRunRegistry,
     getCompactionRuntimeReport: input.getCompactionRuntimeReport,
@@ -116,5 +141,6 @@ export function buildGatewayServerOptions(input: GatewayServerRuntimeInput): Gat
     isConfigured: input.isConfigured,
     webhookConfig: input.webhookConfig,
     webhookIdempotency: input.webhookIdempotency,
+    requestSystemRestart: input.requestSystemRestart,
   };
 }

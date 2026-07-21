@@ -2,11 +2,17 @@ import type { DreamRuntime } from "@belldandy/memory";
 import type { GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
 
 import type { ObsidianCommonsRuntime } from "../obsidian-commons-runtime.js";
+import type {
+  MemoryBackgroundJobClaim,
+  MemoryBackgroundJobClaimResult,
+  MemoryBackgroundJobScheduler,
+} from "../memory-background-job-scheduler.js";
 
 type DreamMethodContext = {
   resolveDreamRuntime: (agentId?: string) => DreamRuntime | null;
   resolveDefaultConversationId: (agentId?: string) => string;
   resolveCommonsExportRuntime?: () => ObsidianCommonsRuntime | null;
+  jobScheduler?: Pick<MemoryBackgroundJobScheduler, "acquire">;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -50,6 +56,25 @@ function confirmationRequired(id: string, message: string): GatewayResFrame {
     error: {
       code: "confirmation_required",
       message,
+    },
+  };
+}
+
+function isMemoryJobClaim(result: MemoryBackgroundJobClaimResult): result is MemoryBackgroundJobClaim {
+  return !("reason" in result);
+}
+
+function admissionRejected(
+  id: string,
+  rejection: Exclude<MemoryBackgroundJobClaimResult, MemoryBackgroundJobClaim>,
+): GatewayResFrame {
+  return {
+    type: "res",
+    id,
+    ok: false,
+    error: {
+      code: rejection.reasonCode ?? "memory_background_admission_rejected",
+      message: rejection.reason,
     },
   };
 }
@@ -102,11 +127,44 @@ export async function handleDreamMethod(
       if (!runtime) return notAvailable(req.id);
       const conversationId = readOptionalString(params, "conversationId") ?? ctx.resolveDefaultConversationId(agentId);
       const reason = readOptionalString(params, "reason");
-      const result = await runtime.run({
-        conversationId,
-        triggerMode: "manual",
-        reason,
-      });
+      const admission = ctx.jobScheduler
+        ? await ctx.jobScheduler.acquire({
+          family: "dream",
+          agentId,
+          priority: "high",
+          estimatedTokenUnits: runtime.getBackgroundJobTokenEstimate(),
+        })
+        : undefined;
+      if (admission && !isMemoryJobClaim(admission)) {
+        return admissionRejected(req.id, admission);
+      }
+      let result: Awaited<ReturnType<DreamRuntime["run"]>>;
+      try {
+        result = await runtime.run({
+          conversationId,
+          triggerMode: "manual",
+          reason,
+          ...(admission ? { signal: admission.signal } : {}),
+        });
+        if (admission) {
+          const completion = await admission.complete(() => result);
+          if (!completion.applied) {
+            return {
+              type: "res",
+              id: req.id,
+              ok: false,
+              error: {
+                code: "dream_run_cancelled",
+                message: "Dream run was cancelled before completion.",
+              },
+            };
+          }
+          result = completion.value;
+        }
+      } catch (error) {
+        await admission?.release("failed");
+        throw error;
+      }
       return ok(req.id, {
         agentId,
         availability: runtime.getAvailability(),

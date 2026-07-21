@@ -1,5 +1,6 @@
 import type { PluginRegistry } from "@belldandy/plugins";
 import type { PluginHookMetric } from "@belldandy/plugins";
+import type { PluginHookPolicy } from "@belldandy/plugins";
 import type { PluginLoadErrorRecord } from "@belldandy/plugins";
 import type { SkillDefinition, SkillRegistry } from "@belldandy/skills";
 
@@ -64,6 +65,7 @@ export type ExtensionRuntimeReport = {
   diagnostics: {
     pluginLoadErrors: PluginLoadErrorRecord[];
     pluginHookMetrics: PluginHookMetric[];
+    pluginHookPolicies: PluginHookPolicy[];
     hookMetricEvictionCount: number;
   };
 };
@@ -117,6 +119,7 @@ export function buildExtensionRuntimeReport(input: {
 
   const pluginDiagnostics = input.pluginRegistry?.getDiagnostics();
   const pluginHookMetrics = pluginDiagnostics?.hookMetrics ?? [];
+  const pluginHookPolicies = pluginDiagnostics?.hookPolicies ?? [];
   const plugins = (input.pluginRegistry?.listPlugins() ?? []).map((plugin) => ({
     ...plugin,
     toolNames: [...plugin.toolNames].sort((a, b) => a.localeCompare(b)),
@@ -178,6 +181,7 @@ export function buildExtensionRuntimeReport(input: {
     diagnostics: {
       pluginLoadErrors: (pluginDiagnostics?.loadErrors ?? []).map((item) => ({ ...item })),
       pluginHookMetrics: pluginHookMetrics.map((item) => ({ ...item })),
+      pluginHookPolicies: pluginHookPolicies.map((item) => ({ ...item })),
       hookMetricEvictionCount: pluginDiagnostics?.hookMetricEvictionCount ?? 0,
     },
   };

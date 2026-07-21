@@ -502,6 +502,70 @@ describe("WorkflowRuntime", () => {
     expect(result.stats.agentCalls).toBe(3);
   });
 
+  it("启动期 batch item hard cap 在任何 workflow task 前生效", async () => {
+    let executed = 0;
+    const f = await setupRuntime("unused", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_BATCH_ITEMS" ? "1" : undefined,
+    });
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "batch-item-hard-cap",
+      scriptHash: "batch-item-hard-cap-v1",
+      default: async (ctx) => {
+        await ctx.parallel([
+          async () => { executed++; return "first"; },
+          async () => { executed++; return "second"; },
+        ]);
+        return "should not complete";
+      },
+    });
+
+    const result = await f.runtime.run({
+      source: { kind: "builtin", name: "batch-item-hard-cap" },
+      parentConversationId: "conv-batch-item-hard-cap",
+      channel: "test",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Workflow batch item limit exceeded (2/1)");
+    expect(executed).toBe(0);
+  });
+
+  it("环境 retry hard cap 在节点下一次 spawn 前生效", async () => {
+    let attempts = 0;
+    const f = await setupRuntime("unused", {
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_RETRIES" ? "1" : undefined,
+      agentFactory: () => ({
+        async *run(): AsyncIterable<AgentStreamItem> {
+          attempts++;
+          throw new Error("temporary agent failure");
+        },
+      }),
+    });
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "retry-hard-cap",
+      scriptHash: "retry-hard-cap-v1",
+      default: async (ctx) => ctx.agent("retry me", { callKey: "retry/0", maxRetries: 2 }),
+    });
+
+    const result = await f.runtime.run({
+      source: { kind: "builtin", name: "retry-hard-cap" },
+      parentConversationId: "conv-retry-hard-cap",
+      channel: "test",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("max retries exceeded (2/1)");
+    expect(result.stats.agentCalls).toBe(2);
+    expect(attempts).toBe(2);
+    expect(f.runtime.getStatus(result.journalId)).toMatchObject({
+      status: "budget_exceeded",
+      stats: { total: 1, errors: 1, done: 0 },
+      budgetUsage: { calls: 2, retries: 1, exceeded: true },
+    });
+  });
+
   it("脚本抛错时返回 error 状态", async () => {
     const f = await setupRuntime();
     cleanups.push(f.cleanup);

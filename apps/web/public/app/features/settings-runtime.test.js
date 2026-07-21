@@ -112,6 +112,8 @@ describe("settings runtime feature", () => {
     expect(createSettingsControllerMock.mock.calls[0][0].refs.cfgAssistantModeEnabled).toBe(
       refs.cfgAssistantModeEnabled,
     );
+    expect(createExternalOutboundControllerMock.mock.calls[0][0]).not.toHaveProperty("escapeHtml");
+    expect(createEmailOutboundControllerMock.mock.calls[0][0]).not.toHaveProperty("escapeHtml");
   });
 
   it("passes newly added OpenAI reasoning refs into settings controller", () => {

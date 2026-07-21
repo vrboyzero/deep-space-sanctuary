@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createToolSettingsController } from "./tool-settings.js";
@@ -7,6 +9,7 @@ function createElement() {
   return {
     innerHTML: "",
     textContent: "",
+    children: [],
     disabled: false,
     classList: {
       add() {},
@@ -18,6 +21,10 @@ function createElement() {
     },
     removeEventListener(event, listener) {
       if (listeners.get(event) === listener) listeners.delete(event);
+    },
+    replaceChildren(...children) {
+      this.children = children;
+      this.textContent = children.map((child) => child.textContent || "").join("");
     },
     click: () => listeners.get("click")?.(),
     listenerCount: () => listeners.size,
@@ -68,6 +75,65 @@ afterEach(() => {
 });
 
 describe("tool settings confirmation lifecycle", () => {
+  it("renders confirmation summary entries as list item text without an HTML escaper", () => {
+    const maliciousSummary = '<img src=x onerror="alert(1)">disable shell_exec';
+    document.body.innerHTML = `
+      <div id="modal" class="hidden"></div>
+      <div id="impact"></div>
+      <ul id="summary"></ul>
+      <div id="expiry"></div>
+      <button id="approve"></button>
+      <button id="reject"></button>
+    `;
+    const controller = createToolSettingsController({
+      refs: {
+        toolSettingsConfirmModal: document.getElementById("modal"),
+        toolSettingsConfirmImpactEl: document.getElementById("impact"),
+        toolSettingsConfirmSummaryEl: document.getElementById("summary"),
+        toolSettingsConfirmExpiryEl: document.getElementById("expiry"),
+        toolSettingsConfirmApproveBtn: document.getElementById("approve"),
+        toolSettingsConfirmRejectBtn: document.getElementById("reject"),
+        toolTabButtons: [],
+      },
+      isConnected: () => true,
+      sendReq: vi.fn(),
+      makeId: () => "req-dom",
+      clientId: "client-web-1",
+      getSelectedAgentId: () => "default",
+      getActiveConversationId: () => "conversation-1",
+      getSelectedSubtaskId: () => "",
+      isSubtasksViewActive: () => false,
+      escapeHtml: () => {
+        throw new Error("confirmation summary must not require an HTML escaper");
+      },
+      showNotice: vi.fn(),
+      t: (_key, _params, fallback) => fallback ?? "",
+    });
+
+    expect(() => controller.handleConfirmRequired({
+      ...createRequiredPayload("tool-confirm-dom"),
+      summary: [maliciousSummary, "enable browser"],
+    })).not.toThrow();
+
+    const summary = document.getElementById("summary");
+    expect(summary.querySelectorAll(":scope > li")).toHaveLength(2);
+    expect([...summary.children].map((item) => item.textContent)).toEqual([
+      maliciousSummary,
+      "enable browser",
+    ]);
+    expect(summary.querySelector("img, [onerror]")).toBeNull();
+
+    controller.handleConfirmRequired({
+      ...createRequiredPayload("tool-confirm-empty-summary"),
+      summary: [],
+    });
+    expect(summary.querySelectorAll(":scope > li")).toHaveLength(1);
+    expect(summary.firstElementChild.textContent).toBe(
+      "No displayable change summary was provided for this request.",
+    );
+    controller.disposeConfirmation();
+  });
+
   it("owns the pending countdown and confirmation listeners until dispose", async () => {
     vi.useFakeTimers();
     const { refs, controller } = createController();

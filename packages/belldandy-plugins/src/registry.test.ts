@@ -501,7 +501,7 @@ describe("PluginRegistry", () => {
         arguments: { secret },
         result: "ok",
         success: true,
-      } as never, { conversationId: "metrics" })).rejects.toThrow("after hook failure");
+      } as never, { conversationId: "metrics" })).resolves.toBeUndefined();
     } finally {
       dateNow.mockRestore();
     }
@@ -513,6 +513,7 @@ describe("PluginRegistry", () => {
       expect.objectContaining({
         pluginId: "hook-metrics-plugin",
         hookName: "beforeRun",
+        failurePolicy: "fail_open",
         invocationCount: 1,
         succeededCount: 1,
         blockedCount: 0,
@@ -528,6 +529,7 @@ describe("PluginRegistry", () => {
       expect.objectContaining({
         pluginId: "hook-metrics-plugin",
         hookName: "beforeToolCall",
+        failurePolicy: "fail_closed",
         invocationCount: 1,
         succeededCount: 0,
         blockedCount: 1,
@@ -538,6 +540,7 @@ describe("PluginRegistry", () => {
       expect.objectContaining({
         pluginId: "hook-metrics-plugin",
         hookName: "afterToolCall",
+        failurePolicy: "fail_open",
         invocationCount: 1,
         succeededCount: 0,
         blockedCount: 0,
@@ -546,7 +549,102 @@ describe("PluginRegistry", () => {
         latestOutcome: "failed",
       }),
     ]));
+    expect(registry.getDiagnostics().hookPolicies).toEqual([
+      {
+        pluginHookName: "beforeRun",
+        hookName: "before_agent_start",
+        executionMode: "sequential",
+        failurePolicy: "fail_open",
+      },
+      {
+        pluginHookName: "afterRun",
+        hookName: "agent_end",
+        executionMode: "sequential",
+        failurePolicy: "fail_open",
+      },
+      {
+        pluginHookName: "beforeToolCall",
+        hookName: "before_tool_call",
+        executionMode: "sequential",
+        failurePolicy: "fail_closed",
+      },
+      {
+        pluginHookName: "afterToolCall",
+        hookName: "after_tool_call",
+        executionMode: "sequential",
+        failurePolicy: "fail_open",
+      },
+    ]);
     expect(JSON.stringify(diagnostics.hookMetrics)).not.toContain(secret);
+  });
+
+  it("isolates failed Plugin owners according to the canonical Hook policy", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-hook-policy-"));
+    tempDirs.push(dir);
+    const orderKey = `__belldandyHookPolicyOrder${Date.now()}`;
+    (globalThis as any)[orderKey] = [];
+
+    const createPluginSource = (id: string, behavior: "fail" | "continue") => [
+      "export default {",
+      `  id: '${id}',`,
+      `  name: '${id}',`,
+      "  activate(context) {",
+      "    context.registerHooks({",
+      `      beforeRun() { globalThis['${orderKey}'].push('${id}:beforeRun');${behavior === "fail" ? " throw new Error('beforeRun fixture secret');" : ""} },`,
+      `      beforeToolCall() { globalThis['${orderKey}'].push('${id}:beforeToolCall');${behavior === "fail" ? " throw new Error('beforeToolCall fixture secret');" : " return true;"} },`,
+      "    });",
+      "  },",
+      "};",
+      "",
+    ].join("\n");
+
+    try {
+      const failingPath = path.join(dir, "failing.mjs");
+      const continuingPath = path.join(dir, "continuing.mjs");
+      await fs.writeFile(failingPath, createPluginSource("failing-plugin", "fail"), "utf-8");
+      await fs.writeFile(continuingPath, createPluginSource("continuing-plugin", "continue"), "utf-8");
+
+      const registry = new PluginRegistry();
+      await registry.loadPlugin(failingPath);
+      await registry.loadPlugin(continuingPath);
+      const hooks = registry.getAggregatedHooks();
+
+      await expect(hooks.beforeRun?.({ input: {} } as never, { conversationId: "policy" }))
+        .resolves.toBeUndefined();
+      expect((globalThis as any)[orderKey]).toEqual([
+        "failing-plugin:beforeRun",
+        "continuing-plugin:beforeRun",
+      ]);
+
+      (globalThis as any)[orderKey] = [];
+      await expect(hooks.beforeToolCall?.({
+        id: "tool-call",
+        toolName: "demo",
+        arguments: {},
+      } as never, { conversationId: "policy" })).resolves.toBe(false);
+      expect((globalThis as any)[orderKey]).toEqual([
+        "failing-plugin:beforeToolCall",
+      ]);
+
+      const diagnostics = registry.getDiagnostics();
+      expect(diagnostics.hookMetrics).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          pluginId: "failing-plugin",
+          hookName: "beforeRun",
+          failurePolicy: "fail_open",
+          failedCount: 1,
+        }),
+        expect.objectContaining({
+          pluginId: "failing-plugin",
+          hookName: "beforeToolCall",
+          failurePolicy: "fail_closed",
+          failedCount: 1,
+        }),
+      ]));
+      expect(JSON.stringify(diagnostics)).not.toContain("fixture secret");
+    } finally {
+      delete (globalThis as any)[orderKey];
+    }
   });
 
   it("bounds hook metric keys with least-recent eviction", () => {

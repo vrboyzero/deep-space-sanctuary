@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createEmailOutboundController } from "./email-outbound.js";
@@ -21,6 +23,10 @@ function createRefs() {
       },
       click: () => listeners.get("click")?.(),
       listenerCount: () => listeners.size,
+      replaceChildren(...nodes) {
+        this.innerHTML = nodes.map((node) => node.outerHTML).join("");
+        this.textContent = nodes.map((node) => node.textContent).join("");
+      },
     };
   };
   return {
@@ -38,6 +44,49 @@ afterEach(() => {
 });
 
 describe("email outbound controller", () => {
+  it("renders untrusted email target fields as text without an HTML escaper", () => {
+    const refs = {
+      emailOutboundConfirmModal: document.createElement("div"),
+      emailOutboundConfirmPreviewEl: document.createElement("div"),
+      emailOutboundConfirmTargetEl: document.createElement("div"),
+      emailOutboundConfirmExpiryEl: document.createElement("div"),
+      emailOutboundConfirmApproveBtn: document.createElement("button"),
+      emailOutboundConfirmRejectBtn: document.createElement("button"),
+    };
+    const unsafeTarget = '</div><img src=x onerror="alert(1)">';
+    const controller = createEmailOutboundController({
+      refs,
+      isConnected: () => true,
+      sendReq: vi.fn(),
+      makeId: () => "req-1",
+      clientId: "client-web-1",
+      showNotice: vi.fn(),
+      t: (_key, _params, fallback) => fallback ?? "",
+    });
+
+    controller.handleConfirmRequired({
+      requestId: "email-confirm-unsafe",
+      conversationId: "conversation-1",
+      providerId: unsafeTarget,
+      accountId: unsafeTarget,
+      to: [unsafeTarget],
+      cc: [unsafeTarget],
+      bcc: [unsafeTarget],
+      subject: unsafeTarget,
+      attachmentCount: 1,
+      threadId: unsafeTarget,
+      replyToMessageId: unsafeTarget,
+      expiresAt: Date.now() + 30_000,
+      targetClientId: "client-web-1",
+    });
+
+    expect(refs.emailOutboundConfirmTargetEl.querySelector("img")).toBeNull();
+    expect(refs.emailOutboundConfirmTargetEl.querySelector("[onerror]")).toBeNull();
+    expect(refs.emailOutboundConfirmTargetEl.textContent).toContain(unsafeTarget);
+    expect(refs.emailOutboundConfirmTargetEl.children).toHaveLength(9);
+    controller.dispose();
+  });
+
   it("owns the pending countdown and button listeners until dispose", async () => {
     vi.useFakeTimers();
     const refs = createRefs();
@@ -173,8 +222,8 @@ describe("email outbound controller", () => {
       targetClientId: "client-web-1",
     });
 
-    expect(refs.emailOutboundConfirmTargetEl.innerHTML).toContain("当前邮件线程");
-    expect(refs.emailOutboundConfirmTargetEl.innerHTML).toContain("send_email.threadId=<thread-001@example.com>");
+    expect(refs.emailOutboundConfirmTargetEl.textContent).toContain("当前邮件线程");
+    expect(refs.emailOutboundConfirmTargetEl.textContent).toContain("send_email.threadId=<thread-001@example.com>");
   });
 
   it("shows explicit reply guidance when thread metadata matches the current email thread", () => {
@@ -204,6 +253,6 @@ describe("email outbound controller", () => {
       targetClientId: "client-web-1",
     });
 
-    expect(refs.emailOutboundConfirmTargetEl.innerHTML).toContain("这次草稿会继续当前邮件线程，并显式回复 <msg-010@example.com>");
+    expect(refs.emailOutboundConfirmTargetEl.textContent).toContain("这次草稿会继续当前邮件线程，并显式回复 <msg-010@example.com>");
   });
 });

@@ -227,7 +227,6 @@ export function createSettingsRuntimeFeature({
     sendReq,
     makeId,
     clientId,
-    escapeHtml,
     showNotice,
     t,
   });
@@ -244,7 +243,6 @@ export function createSettingsRuntimeFeature({
     sendReq,
     makeId,
     clientId,
-    escapeHtml,
     showNotice,
     t,
   });

@@ -13,6 +13,11 @@ import {
   parsePositiveByteLimit,
   persistBoundedResponseToFile,
 } from "../remote-response-file.js";
+import {
+  calculateImageOpenAIMaxResponseBytes,
+  createImageOpenAIFetch,
+  type ImageOpenAIOutboundRequestPolicy,
+} from "./image-openai-transport.js";
 
 type ImageOutputFormat = "png" | "jpeg" | "webp";
 type ImageResponseTransport = "base64" | "url";
@@ -21,6 +26,7 @@ type GeneratedImageAsset = {
   outputFormat: ImageOutputFormat;
 };
 type ImageGenerateToolDependencies = {
+  generationOutboundRequestPolicy?: ImageOpenAIOutboundRequestPolicy;
   createAssetOutboundRequestPolicy?: (
     options: OutboundRequestPolicyOptions,
   ) => Pick<OutboundRequestPolicy, "request">;
@@ -334,6 +340,11 @@ export function createImageGenerateTool(dependencies: ImageGenerateToolDependenc
         apiKey: config.apiKey,
         baseURL: config.baseURL,
         timeout: config.timeoutMs > 0 ? config.timeoutMs : MAX_SDK_TIMEOUT_MS,
+        fetch: createImageOpenAIFetch({
+          baseURL: config.baseURL,
+          maxResponseBytes: calculateImageOpenAIMaxResponseBytes(config.maxOutputBytes),
+          outboundRequestPolicy: dependencies.generationOutboundRequestPolicy,
+        }),
       });
 
       try {

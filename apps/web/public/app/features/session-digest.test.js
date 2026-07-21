@@ -47,7 +47,7 @@ function createFeatureHarness(options = {}) {
     getActiveConversationId: () => "conversation:current",
     onSendHistoryAction: vi.fn(),
     onOpenContinuationAction,
-    escapeHtml,
+    escapeHtml: options.escapeHtml || escapeHtml,
     formatDateTime: () => "2026-04-21 09:30:00",
     showNotice,
     t: (_key, _params, fallback) => fallback ?? "",
@@ -78,6 +78,39 @@ describe("session digest modal continuation details", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     vi.restoreAllMocks();
+  });
+
+  it("renders the Gateway digest summary card as DOM text without an HTML escaper", () => {
+    const maliciousSummary = '<img src=x onerror="alert(1)">digest body';
+    const { feature, refs } = createFeatureHarness({
+      escapeHtml: () => {
+        throw new Error("digest summary card must not require an HTML escaper");
+      },
+    });
+
+    expect(() => feature.handleDigestUpdated({
+      conversationId: "conversation:current",
+      source: "event",
+      digest: {
+        status: "ready",
+        messageCount: 12,
+        pendingMessageCount: 2,
+        threshold: 5,
+        digestedMessageCount: 10,
+        lastDigestAt: 1713663000000,
+        rollingSummary: maliciousSummary,
+      },
+    })).not.toThrow();
+
+    const card = refs.sessionDigestSummaryEl.querySelector(".session-digest-card");
+    expect(card?.getAttribute("role")).toBe("button");
+    expect(card?.getAttribute("tabindex")).toBe("0");
+    expect(card?.title).toBe("Click to view the full digest");
+    expect(card?.querySelectorAll(".session-digest-badges > .memory-badge")).toHaveLength(4);
+    expect(card?.querySelectorAll(".session-digest-meta > span")).toHaveLength(2);
+    expect(card?.querySelector(".session-digest-summary-text")?.textContent).toBe(maliciousSummary);
+    expect(card?.querySelector("img, [onerror]")).toBeNull();
+    feature.dispose();
   });
 
   it("keeps continuation next action out of the top bar and renders it inside the digest modal", () => {

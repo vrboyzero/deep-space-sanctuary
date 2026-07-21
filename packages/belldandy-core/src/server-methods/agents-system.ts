@@ -20,6 +20,7 @@ type AgentsSystemMethodContext = {
   clientId: string;
   log: { warn: (scope: string, message: string, meta?: Record<string, unknown>) => void };
   broadcast?: (message: GatewayEventFrame) => void;
+  requestSystemRestart?: (reason: string) => void;
   agentRegistry?: AgentRegistry;
   residentAgentRuntime: ResidentAgentRuntimeRegistry;
   residentMemoryManagers?: ScopedMemoryManagerRecord[];
@@ -40,42 +41,20 @@ type AgentsSystemMethodContext = {
   } & Record<string, unknown>>;
 };
 
-const SYSTEM_RESTART_COUNTDOWN_SECONDS = 3;
-
-function scheduleSystemRestartCountdown(
-  broadcast: AgentsSystemMethodContext["broadcast"],
-  reason: string,
-): void {
-  for (let step = SYSTEM_RESTART_COUNTDOWN_SECONDS; step >= 1; step -= 1) {
-    const delayMs = (SYSTEM_RESTART_COUNTDOWN_SECONDS - step) * 1000;
-    setTimeout(() => {
-      broadcast?.({
-        type: "event",
-        event: "agent.status",
-        payload: { status: "restarting", reason, countdown: step },
-      });
-    }, delayMs);
-  }
-
-  setTimeout(() => {
-    broadcast?.({
-      type: "event",
-      event: "agent.status",
-      payload: { status: "restarting", reason, countdown: 0 },
-    });
-  }, SYSTEM_RESTART_COUNTDOWN_SECONDS * 1000);
-
-  setTimeout(() => {
-    process.exit(100);
-  }, SYSTEM_RESTART_COUNTDOWN_SECONDS * 1000 + 300);
-}
-
 export async function handleAgentsSystemMethod(
   req: GatewayReqFrame,
   ctx: AgentsSystemMethodContext,
 ): Promise<GatewayResFrame | null> {
   switch (req.method) {
     case "system.restart": {
+      if (!ctx.requestSystemRestart) {
+        return {
+          type: "res",
+          id: req.id,
+          ok: false,
+          error: { code: "restart_unavailable", message: "Gateway restart owner is not available." },
+        };
+      }
       const params = req.params as { reason?: string } | undefined;
       const reason = typeof params?.reason === "string" && params.reason.trim()
         ? params.reason.trim()
@@ -89,7 +68,7 @@ export async function handleAgentsSystemMethod(
         });
         return { type: "res", id: req.id, ok: false, error: { code: "restart_cooldown", message } };
       }
-      scheduleSystemRestartCountdown(ctx.broadcast, reason);
+      ctx.requestSystemRestart(reason);
       return { type: "res", id: req.id, ok: true };
     }
 

@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
+import { fork, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeNextRun, CronStore } from "./store.js";
@@ -15,6 +18,53 @@ afterEach(async () => {
 });
 
 describe("CronStore concurrent mutations", () => {
+  it("keeps concurrent adds from separate processes", async () => {
+    const stateDir = await createTempStateDir();
+    await fs.writeFile(
+      path.join(stateDir, "cron-jobs.json"),
+      JSON.stringify({ version: 1, jobs: [] }),
+      "utf-8",
+    );
+    const first = startMutationChild(stateDir, "alpha");
+    const second = startMutationChild(stateDir, "beta");
+    const firstReady = waitForChildMessage(first, "ready");
+    const secondReady = waitForChildMessage(second, "ready");
+    const firstLoaded = waitForChildMessage(first, "loaded");
+    const secondLoaded = waitForChildMessage(second, "loaded");
+    const firstDone = waitForChildMessage(first, "done");
+    const secondDone = waitForChildMessage(second, "done");
+    const firstExit = once(first, "exit");
+    const secondExit = once(second, "exit");
+
+    await Promise.all([firstReady, secondReady]);
+    first.send("start");
+    second.send("start");
+
+    const leadingChild = await Promise.race([
+      firstLoaded.then(() => first),
+      secondLoaded.then(() => second),
+    ]);
+    const trailingChild = leadingChild === first ? second : first;
+    const trailingLoaded = leadingChild === first ? secondLoaded : firstLoaded;
+    const leadingDone = leadingChild === first ? firstDone : secondDone;
+    const bothReadOldSnapshot = await Promise.race([
+      trailingLoaded.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 500)),
+    ]);
+
+    leadingChild.send("continue");
+    if (!bothReadOldSnapshot) {
+      await leadingDone;
+      await trailingLoaded;
+    }
+    trailingChild.send("continue");
+
+    await Promise.all([firstDone, secondDone, firstExit, secondExit]);
+
+    const jobs = await new CronStore(stateDir).list();
+    expect(jobs.map((job) => job.name).sort()).toEqual(["alpha", "beta"]);
+  });
+
   it("keeps concurrent adds from separate instances and gives each write a unique staging path", async () => {
     const stateDir = await createTempStateDir();
     const first = new CronStore(stateDir);
@@ -34,6 +84,7 @@ describe("CronStore concurrent mutations", () => {
     expect(stagingPaths).toHaveLength(2);
     expect(new Set(stagingPaths).size).toBe(2);
     expect(stagingPaths.every((filePath) => /cron-jobs\.json\.[^.]+\.tmp$/i.test(filePath))).toBe(true);
+    expect(await listCronMutationArtifacts(stateDir)).toEqual([]);
   });
 
   it("rebases scheduler runtime updates onto jobs added after the scheduler snapshot", async () => {
@@ -78,9 +129,11 @@ describe("CronStore concurrent mutations", () => {
 
     await expect(second.add(createCronJobInput("beta"))).rejects.toThrow("expected staged write failure");
     expect((await first.list()).map((job) => job.name)).toEqual(["alpha"]);
+    expect(await listCronMutationArtifacts(stateDir)).toEqual([]);
 
     await expect(second.add(createCronJobInput("gamma"))).resolves.toMatchObject({ name: "gamma" });
     expect((await first.list()).map((job) => job.name).sort()).toEqual(["alpha", "gamma"]);
+    expect(await listCronMutationArtifacts(stateDir)).toEqual([]);
   });
 });
 
@@ -88,6 +141,63 @@ async function createTempStateDir(): Promise<string> {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-cron-store-"));
   tempStateDirs.push(stateDir);
   return stateDir;
+}
+
+async function listCronMutationArtifacts(stateDir: string): Promise<string[]> {
+  return (await fs.readdir(stateDir))
+    .filter((name) => name.startsWith("cron-jobs.json") && name !== "cron-jobs.json")
+    .sort();
+}
+
+type ChildFixtureMessage = {
+  type: "ready" | "loaded" | "done" | "error";
+  message?: string;
+};
+
+function startMutationChild(stateDir: string, jobName: string): ChildProcess {
+  return fork(
+    fileURLToPath(new URL("./fixtures/cron-store-mutation-child.mjs", import.meta.url)),
+    [stateDir, jobName],
+    {
+      execArgv: ["--import", "tsx"],
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    },
+  );
+}
+
+function waitForChildMessage(
+  child: ChildProcess,
+  expectedType: ChildFixtureMessage["type"],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`CronStore child timed out waiting for ${expectedType}.`));
+    }, 10_000);
+    timer.unref?.();
+
+    const onMessage = (message: ChildFixtureMessage) => {
+      if (message?.type === "error") {
+        cleanup();
+        reject(new Error(`CronStore child failed: ${message.message ?? "unknown error"}`));
+        return;
+      }
+      if (message?.type !== expectedType) return;
+      cleanup();
+      resolve();
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
+      reject(new Error(`CronStore child exited before ${expectedType} with code ${code}.`));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+    };
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+  });
 }
 
 function createCronJobInput(name: string): CronJobCreate {

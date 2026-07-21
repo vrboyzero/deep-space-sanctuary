@@ -8,7 +8,11 @@ import WebSocket from "ws";
 
 import { AgentRegistry, ConversationStore, MockAgent } from "@belldandy/agent";
 import { CompactionRuntimeTracker as SourceCompactionRuntimeTracker } from "../../belldandy-agent/src/compaction-runtime.js";
-import { MemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
+import {
+  MemoryManager,
+  MemoryModelPrivacyRuntime,
+  registerGlobalMemoryManager,
+} from "@belldandy/memory";
 import {
   SkillRegistry,
   ToolExecutor,
@@ -51,6 +55,65 @@ beforeAll(() => {
 
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
+});
+
+test("system.doctor reports private-summary trust metadata without content or credentials", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-privacy-doctor-"));
+  const modelPrivacyRuntime = new MemoryModelPrivacyRuntime({
+    trustedRemoteHosts: ["trusted.example.test"],
+    redactor: (text) => text.replace("doctor-private-prompt", "[REDACTED]"),
+  });
+  modelPrivacyRuntime.registerEndpoint("dream", "http://127.0.0.1:11434/v1");
+  modelPrivacyRuntime.registerEndpoint("idle_summary", "https://trusted.example.test/v1");
+  const prepared = modelPrivacyRuntime.prepareRequest({
+    jobFamily: "durable_extraction",
+    baseUrl: "https://unknown.example.test/v1",
+    payload: {
+      apiKey: "doctor-private-api-key",
+      messages: [{ role: "user", content: "doctor-private-prompt" }],
+    },
+  });
+  modelPrivacyRuntime.completeRequest(prepared.observation, {
+    httpStatus: 503,
+    responseBytes: Buffer.byteLength("doctor-private-response", "utf8"),
+  });
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    memoryModelPrivacyRuntime: modelPrivacyRuntime,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    ws.send(JSON.stringify({ type: "req", id: "memory-privacy-doctor", method: "system.doctor", params: {} }));
+    await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === "memory-privacy-doctor"));
+    const response = frames.find((frame) => frame.type === "res" && frame.id === "memory-privacy-doctor");
+
+    expect(response?.ok).toBe(true);
+    expect(response?.payload?.memoryModelPrivacy).toEqual(modelPrivacyRuntime.getDoctorReport());
+    expect(response?.payload?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "memory_model_privacy",
+        status: "pass",
+        message: "2 private_summary endpoint(s) leave this machine, 0 without redaction.",
+      }),
+    ]));
+    const serialized = JSON.stringify(response?.payload);
+    expect(serialized).not.toContain("doctor-private-prompt");
+    expect(serialized).not.toContain("doctor-private-response");
+    expect(serialized).not.toContain("doctor-private-api-key");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 });
 
 async function listenOnEphemeralPort(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -1508,15 +1571,16 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
   ((pluginRegistry as any).hookMetrics).set("demo-plugin\u0000beforeRun", {
     pluginId: "demo-plugin",
     hookName: "beforeRun",
+    failurePolicy: "fail_open",
     invocationCount: 1,
-    succeededCount: 1,
+    succeededCount: 0,
     blockedCount: 0,
-    failedCount: 0,
+    failedCount: 1,
     totalDurationMs: 7,
     maxDurationMs: 7,
     durationSamplesMs: [7],
     latestDurationMs: 7,
-    latestOutcome: "succeeded",
+    latestOutcome: "failed",
     latestAt: new Date("2026-04-02T12:07:00.000Z"),
   });
 
@@ -1547,7 +1611,7 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
       expect.objectContaining({
         id: "extension_runtime",
         status: "warn",
-        message: "plugins 1 (1 disabled, 1 load errors), skills 2 (1 disabled, 0 ineligible), legacy hooks 2/2 bridged",
+        message: "plugins 1 (1 disabled, 1 load errors, 1 hook failures), skills 2 (1 disabled, 0 ineligible), legacy hooks 2/2 bridged",
       }),
     ]));
     expect(response.payload?.extensionRuntime?.summary).toEqual({
@@ -1556,7 +1620,7 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
       pluginToolCount: 1,
       pluginLoadErrorCount: 1,
       pluginHookMetricCount: 1,
-      pluginHookFailureCount: 0,
+      pluginHookFailureCount: 1,
       skillCount: 2,
       disabledSkillCount: 1,
       ineligibleSkillCount: 0,
@@ -1574,12 +1638,27 @@ test("system.doctor exposes unified extension runtime diagnostics for plugins an
       expect.objectContaining({
         pluginId: "demo-plugin",
         hookName: "beforeRun",
+        failurePolicy: "fail_open",
         totalDurationMs: 7,
         p50DurationMs: 7,
         p95DurationMs: 7,
-        latestOutcome: "succeeded",
+        latestOutcome: "failed",
       }),
     ]);
+    expect(response.payload?.extensionRuntime?.diagnostics?.pluginHookPolicies).toEqual(expect.arrayContaining([
+      {
+        pluginHookName: "beforeRun",
+        hookName: "before_agent_start",
+        executionMode: "sequential",
+        failurePolicy: "fail_open",
+      },
+      {
+        pluginHookName: "beforeToolCall",
+        hookName: "before_tool_call",
+        executionMode: "sequential",
+        failurePolicy: "fail_closed",
+      },
+    ]));
     expect(response.payload?.extensionRuntime?.registry).toEqual({
       pluginToolRegistrations: [
         {
@@ -2960,6 +3039,17 @@ test("system.doctor exposes delegation observability summary", async () => {
       oldestArchivedAt: expect.any(Number),
       newestArchivedAt: expect.any(Number),
       oldestArchivedAgeMs: expect.any(Number),
+    });
+    expect(res.payload?.subtaskRuntimeRetention?.compaction).toEqual({
+      policy: {
+        autoCompact: false,
+        maxTerminalRecords: 500,
+        minTerminalAgeMs: 30 * 24 * 60 * 60 * 1_000,
+      },
+      eligibleCount: 0,
+      protectedCount: 2,
+      removedCount: 0,
+      errorCount: 0,
     });
     expect(res.payload?.subtaskRuntimeRetention).not.toHaveProperty("items");
     expect(JSON.stringify(res.payload?.subtaskRuntimeRetention)).not.toContain("legacy task done");

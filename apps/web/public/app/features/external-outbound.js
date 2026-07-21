@@ -6,7 +6,6 @@ export function createExternalOutboundController({
   sendReq,
   makeId,
   clientId,
-  escapeHtml,
   showNotice,
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -119,7 +118,12 @@ export function createExternalOutboundController({
           ? `${t("externalOutbound.targetResolution", {}, "目标解析")}: ${pendingConfirm.resolution}`
           : "",
       ].filter(Boolean);
-      externalOutboundConfirmTargetEl.innerHTML = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+      const ownerDocument = externalOutboundConfirmTargetEl.ownerDocument ?? document;
+      externalOutboundConfirmTargetEl.replaceChildren(...lines.map((line) => {
+        const row = ownerDocument.createElement("div");
+        row.textContent = line;
+        return row;
+      }));
     }
     if (externalOutboundConfirmExpiryEl) {
       externalOutboundConfirmExpiryEl.textContent = formatExpiry(pendingConfirm.expiresAt);

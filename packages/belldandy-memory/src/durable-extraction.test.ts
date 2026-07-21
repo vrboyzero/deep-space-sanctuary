@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { DurableExtractionRuntime } from "./durable-extraction.js";
 
@@ -404,4 +404,128 @@ test("durable extraction runtime close waits for in-flight finish hooks", async 
   expect(closeResolved).toBe(true);
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("durable extraction runtime forwards its scheduler signal and fences a late result after close", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-durable-extraction-cancel-"));
+  let finishExtraction!: (value: number) => void;
+  const extractionResult = new Promise<number>((resolve) => {
+    finishExtraction = resolve;
+  });
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let observedSignal: AbortSignal | undefined;
+  const complete = vi.fn();
+  const release = vi.fn(async () => undefined);
+  const runtime = new DurableExtractionRuntime({
+    stateDir,
+    extractor: {
+      get isPaused() {
+        return false;
+      },
+      isConversationMemoryExtractionEnabled() {
+        return true;
+      },
+      async extractMemoriesFromConversation(_sessionKey, _messages, options) {
+        observedSignal = options?.signal;
+        markStarted();
+        return extractionResult;
+      },
+    },
+    getMessages: async () => [
+      { role: "user", content: "private durable input" },
+      { role: "assistant", content: "bounded durable response" },
+    ],
+    acquireJob: async (input) => ({
+      generation: 1,
+      signal: input.signal,
+      complete: async <T>(commit: () => T | Promise<T>) => {
+        complete();
+        if (input.signal.aborted) return { applied: false as const };
+        return { applied: true as const, value: await commit() };
+      },
+      release,
+    }),
+    closeDeadlineMs: 30,
+  });
+
+  try {
+    await runtime.requestExtraction({
+      conversationId: "conv-cancel",
+      source: "manual",
+      digest: { lastDigestAt: 100, messageCount: 2, status: "ready" },
+    });
+    await started;
+
+    const closeStartedAt = Date.now();
+    await runtime.close();
+    expect(Date.now() - closeStartedAt).toBeLessThan(250);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(release).toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+
+    finishExtraction(3);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(runtime.getRecord("conv-cancel")).resolves.not.toMatchObject({
+      status: "completed",
+      lastExtractedMemoryCount: 3,
+    });
+  } finally {
+    finishExtraction(3);
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("durable extraction runtime removes a queued scheduler admission during close", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-durable-extraction-queued-close-"));
+  let markAdmissionStarted!: () => void;
+  const admissionStarted = new Promise<void>((resolve) => {
+    markAdmissionStarted = resolve;
+  });
+  const extractor = vi.fn(async () => 1);
+  const runtime = new DurableExtractionRuntime({
+    stateDir,
+    extractor: {
+      get isPaused() {
+        return false;
+      },
+      isConversationMemoryExtractionEnabled() {
+        return true;
+      },
+      extractMemoriesFromConversation: extractor,
+    },
+    getMessages: async () => [
+      { role: "user", content: "queued durable input" },
+    ],
+    acquireJob: async ({ signal }) => {
+      markAdmissionStarted();
+      return await new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({
+          reason: "scheduler admission aborted",
+          reasonCode: "memory_background_admission_rejected",
+        }), { once: true });
+      });
+    },
+    closeDeadlineMs: 30,
+  });
+
+  try {
+    await runtime.requestExtraction({
+      conversationId: "conv-queued-close",
+      source: "manual",
+      digest: { lastDigestAt: 100, messageCount: 1, status: "ready" },
+    });
+    await admissionStarted;
+
+    await runtime.close();
+
+    expect(extractor).not.toHaveBeenCalled();
+    await expect(runtime.getRecord("conv-queued-close")).resolves.not.toMatchObject({
+      status: "completed",
+    });
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
 });

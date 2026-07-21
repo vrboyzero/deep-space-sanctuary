@@ -44,6 +44,8 @@ import {
   buildCacheAlignedSummaryInstruction,
 } from "../compaction-cache-aligned.js";
 import { DreamAutomationRuntime } from "../dream-automation-runtime.js";
+import { startMemoryIdleSummaryRuntime } from "../memory-idle-summary-runtime.js";
+import { createGatewayMemoryBackgroundRuntime } from "./gateway-memory-background-runtime.js";
 import { GoalRuntimeBindingStore } from "../goal-runtime-binding-store.js";
 import {
   createSubTaskAgentCapabilities,
@@ -53,6 +55,7 @@ import {
   createSubTaskUpdateController,
   createSubTaskWorktreeLifecycleHandler,
   reconcileSubTaskWorktreeRuntimes,
+  type SubTaskCommandRequestOptions,
   type SubTaskRecord,
   SubTaskRuntimeStore,
 } from "../task-runtime.js";
@@ -380,11 +383,16 @@ const GOAL_TOOL_NAMES = new Set([
 ]);
 
 import { startGatewayServer } from "../server.js";
+import { createGatewayShutdownRequestOwner } from "../gateway-shutdown-request-owner.js";
 import {
   BackgroundContinuationLedger,
   buildBackgroundContinuationRuntimeDoctorReport,
 } from "../background-continuation-runtime.js";
 import { BackgroundRunCoordinator } from "../background-run-coordinator.js";
+import {
+  evaluateBackgroundRunBusy,
+  type BackgroundRunBusyContext,
+} from "../background-run-busy-policy.js";
 import { BackgroundRecoveryRuntime } from "../background-recovery-runtime.js";
 import { ConversationRunRegistry } from "../conversation-run-registry.js";
 import { type HeartbeatRunnerHandle } from "../heartbeat/index.js";
@@ -743,7 +751,17 @@ const conversationRunRegistry = new ConversationRunRegistry();
 const backgroundRunCoordinator = new BackgroundRunCoordinator({
   getForegroundActiveCount: () => conversationRunRegistry.getRuntimeSnapshot().activeCount,
 });
-const isBusy = () => backgroundRunCoordinator.isForegroundBusy();
+const memoryBackgroundRuntime = await createGatewayMemoryBackgroundRuntime({
+  stateDir,
+  runCoordinator: backgroundRunCoordinator,
+  logger: {
+    warn: (message, data) => logger.warn("memory-usage", message, data),
+  },
+});
+const isBusy = (context?: BackgroundRunBusyContext) => evaluateBackgroundRunBusy(
+  backgroundRunCoordinator.getRuntimeSnapshot(),
+  context,
+).busy;
 
 // --- Validation ---
 if (!Number.isFinite(port) || port <= 0) {
@@ -846,12 +864,6 @@ if (embeddingEnabled && !openaiApiKey) {
 // [SECURITY] 危险工具需显式启用
 const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "true";
 const agentBridgeEnabled = readEnv("BELLDANDY_AGENT_BRIDGE_ENABLED") === "true";
-if (agentBridgeEnabled) {
-  process.once("exit", () => {
-    // exit hook 只能同步 kill；完整持久化由配置重启路径和后续 shutdown coordinator 负责。
-    void shutdownBridgeSessions().catch(() => {});
-  });
-}
 const readExternalOutboundRequireConfirmation = () => readEnv("BELLDANDY_EXTERNAL_OUTBOUND_REQUIRE_CONFIRMATION") !== "false";
 const readEmailOutboundRequireConfirmation = () => {
   const value = readEnv("BELLDANDY_EMAIL_OUTBOUND_REQUIRE_CONFIRMATION");
@@ -906,6 +918,19 @@ let heartbeatRunner: HeartbeatRunnerHandle | undefined;
 let cronSchedulerHandle: CronSchedulerHandle | undefined;
 let emailInboundRuntimeHandle: Awaited<ReturnType<typeof startImapPollingEmailInboundRuntime>> | undefined;
 let starweaverActiveNotifyRuntimeHandle: Awaited<ReturnType<typeof startStarweaverActiveNotifyRuntime>> | undefined;
+let browserRelayRuntimeHandle: Awaited<ReturnType<typeof startBrowserRelayRuntime>> | undefined;
+
+type GatewaySystemRestartOptions = {
+  countdownSeconds?: number;
+  graceMs?: number;
+  broadcast?: boolean;
+};
+let requestGatewaySystemRestart: (
+  reason: string,
+  options?: GatewaySystemRestartOptions,
+) => void = () => {
+  throw new Error("Gateway shutdown request owner is not ready.");
+};
 
 // 延迟绑定 broadcast：工具注册时 server 尚未创建，执行时才调用
   let serverBroadcast: ((msg: unknown) => void) | undefined;
@@ -1116,7 +1141,14 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
           status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 },
         },
       }),
-      createServiceRestartTool((msg) => serverBroadcast?.(msg)),
+      createServiceRestartTool(
+        (msg) => serverBroadcast?.(msg),
+        (reason) => requestGatewaySystemRestart(reason, {
+          countdownSeconds: 0,
+          graceMs: 300,
+          broadcast: false,
+        }),
+      ),
       listFaqisTool,
       switchFaqiTool,
       switchFacetTool,
@@ -2906,12 +2938,19 @@ const goalRuntimeBindingStore = new GoalRuntimeBindingStore(stateDir, {
   warn: (message, data) => logger.warn("goal-binding", message, data),
 });
 let resumeSubTask:
-  | ((taskId: string, message?: string, options?: { takeoverAgentId?: string }) => Promise<SubTaskRecord | undefined>)
+  | ((taskId: string, message?: string, options?: SubTaskCommandRequestOptions) => Promise<SubTaskRecord | undefined>)
   | undefined;
 let takeoverSubTask:
-  | ((taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>)
+  | ((
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>)
   | undefined;
-let updateSubTask: ((taskId: string, message: string) => Promise<SubTaskRecord | undefined>) | undefined;
+let updateSubTask:
+  | ((taskId: string, message: string, options?: SubTaskCommandRequestOptions) => Promise<SubTaskRecord | undefined>)
+  | undefined;
 let workflowRuntime: WorkflowRuntime | undefined;
 if (agentRegistry && toolsEnabled) {
   const subAgentMaxConcurrent = parseInt(readEnv("BELLDANDY_SUB_AGENT_MAX_CONCURRENT") || "3", 10);
@@ -3318,6 +3357,7 @@ const scopedMemoryManagers = createScopedMemoryManagers({
   summaryModel,
   summaryBaseUrl,
   summaryApiKey,
+  modelPrivacyRuntime: memoryBackgroundRuntime.modelPrivacyRuntime,
   evolutionEnabled,
   evolutionModel,
   evolutionBaseUrl,
@@ -3360,10 +3400,22 @@ logger.info(
 
 // ========== 后台任务调度：pause/resume + 空闲摘要 ==========
 
-// 活跃 Agent 计数器（支持并发会话）
-let activeAgentCount = 0;
-let idleSummaryTimer: ReturnType<typeof setInterval> | null = null;
-const IDLE_SUMMARY_INTERVAL_MS = 5 * 60 * 1000; // 5 分钟
+const IDLE_SUMMARY_INTERVAL_MS = 5 * 60 * 1000;
+const memoryIdleSummaryRuntime = startMemoryIdleSummaryRuntime({
+  summaryEnabled,
+  intervalMs: IDLE_SUMMARY_INTERVAL_MS,
+  listManagers: listGlobalMemoryManagers,
+  runCoordinator: backgroundRunCoordinator,
+  jobScheduler: memoryBackgroundRuntime.jobScheduler,
+  resolveAgentId: (manager) => scopedMemoryManagers.records.find((item) => item.manager === manager)?.agentId ?? "default",
+  logger: {
+    info: (message) => logger.info("memory-summary", message),
+    error: (message) => logger.error("memory-summary", message),
+  },
+});
+if (summaryEnabled) {
+  logger.info("memory-summary", `Idle summary timer started (interval=${IDLE_SUMMARY_INTERVAL_MS / 1000}s)`);
+}
 
 // before_agent_start: 暂停后台 LLM 任务
 hookRegistry.register({
@@ -3371,12 +3423,7 @@ hookRegistry.register({
   hookName: "before_agent_start",
   priority: 50, // 高优先级，尽早暂停
   handler: async () => {
-    activeAgentCount++;
-    for (const mm of listGlobalMemoryManagers()) {
-      if (!mm.isPaused) {
-        mm.pause();
-      }
-    }
+    memoryIdleSummaryRuntime.onAgentStart();
     logger.debug("memory-throttle", "Paused background LLM tasks (agent active)");
   },
 });
@@ -3387,42 +3434,9 @@ hookRegistry.register({
   hookName: "agent_end",
   priority: 50, // 高优先级，在 evolution hook 之前恢复
   handler: async () => {
-    activeAgentCount = Math.max(0, activeAgentCount - 1);
-    if (activeAgentCount === 0) {
-      const managers = listGlobalMemoryManagers();
-      if (managers.length > 0) {
-        // 延迟 3s 恢复，给 evolution 提取留出窗口
-        setTimeout(() => {
-          if (activeAgentCount === 0) {
-            for (const mm of managers) {
-              mm.resume();
-            }
-            logger.debug("memory-throttle", "Resumed background LLM tasks (agent idle)");
-          }
-        }, 3000);
-      }
-    }
+    memoryIdleSummaryRuntime.onAgentEnd();
   },
 });
-
-// 空闲定时器：定期触发摘要生成（仅在无活跃 Agent 时）
-if (summaryEnabled) {
-  idleSummaryTimer = setInterval(() => {
-    if (activeAgentCount > 0) return;
-    for (const mm of listGlobalMemoryManagers()) {
-      mm.runIdleSummaries().then(count => {
-        if (count > 0) {
-          logger.info("memory-summary", `Idle summary run: generated ${count} summaries`);
-        }
-      }).catch(err => {
-        logger.error("memory-summary", `Idle summary failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
-  }, IDLE_SUMMARY_INTERVAL_MS);
-  // 不阻止进程退出
-  if (idleSummaryTimer.unref) idleSummaryTimer.unref();
-  logger.info("memory-summary", `Idle summary timer started (interval=${IDLE_SUMMARY_INTERVAL_MS / 1000}s)`);
-}
 
 function detectTaskSource(sessionKey: string, meta?: Record<string, unknown>): "chat" | "sub_agent" | "cron" | "heartbeat" | "manual" {
   if (typeof meta?._parentConversationId === "string" && meta._parentConversationId.trim()) {
@@ -4147,6 +4161,10 @@ const serverOptions = buildGatewayServerOptions({
   preferredProviderIds,
   modelConfigPath: modelConfigFile,
   residentMemoryManagers: scopedMemoryManagers.records,
+  memoryUsageAccounting: memoryBackgroundRuntime.usageAccounting,
+  memoryBudgetGuard: memoryBackgroundRuntime.budgetGuard,
+  memoryBackgroundJobScheduler: memoryBackgroundRuntime.jobScheduler,
+  memoryModelPrivacyRuntime: memoryBackgroundRuntime.modelPrivacyRuntime,
   conversationStore,
   conversationRunRegistry,
   topLevelConversationLifecycle,
@@ -4287,6 +4305,7 @@ const serverOptions = buildGatewayServerOptions({
   isConfigured: () => agentProvider === "mock" || (agentProvider === "openai" && !!openaiApiKey && !!openaiModel),
   webhookConfig,
   webhookIdempotency,
+  requestSystemRestart: (reason) => requestGatewaySystemRestart(reason),
 });
 serverOptions.startupObservability = {
   onFirstStaticWebRequest: ({ timestampMs, method, path, userAgent, referer }) => {
@@ -4357,6 +4376,15 @@ serverOptions.startupObservability = {
   },
 };
 const server = await startGatewayServer(serverOptions);
+const shutdownRequestOwner = createGatewayShutdownRequestOwner({
+  requestShutdown: (request) => server.requestShutdown(request),
+  broadcast: (frame) => server.broadcast(frame),
+});
+requestGatewaySystemRestart = (reason, options) => {
+  void shutdownRequestOwner.requestSystemRestart(reason, options).catch((error) => {
+    logger.error("shutdown", "Gateway system restart failed", error);
+  });
+};
 requestMemoryEvolutionExtraction = server.requestDurableExtractionFromDigest;
 const dreamAutomationRuntime = new DreamAutomationRuntime({
   heartbeatEnabled: dreamAutoHeartbeatEnabled,
@@ -4364,6 +4392,8 @@ const dreamAutomationRuntime = new DreamAutomationRuntime({
   agentIds: scopedMemoryManagers.records.map((item) => item.agentId),
   resolveDreamRuntime: server.resolveDreamRuntime,
   resolveDefaultConversationId: server.resolveDreamDefaultConversationId,
+  runCoordinator: backgroundRunCoordinator,
+  jobScheduler: memoryBackgroundRuntime.jobScheduler,
   isBusy,
   logger: {
     debug: (message, data) => logger.debug("dream-automation", message, data),
@@ -4492,8 +4522,10 @@ heartbeatRunner = await startHeartbeatRuntime({
   backgroundRecoveryRuntime,
   runCoordinator: backgroundRunCoordinator,
   isBusy,
-  onFinalizedRun: async (event) => {
-    await dreamAutomationRuntime.handleHeartbeatEvent(event);
+  onFinalizedRun: (event) => {
+    void dreamAutomationRuntime.handleHeartbeatEvent(event).catch((error) => {
+      logger.error("dream-automation", "Heartbeat-triggered dream automation failed", error);
+    });
   },
   logger,
 });
@@ -4511,8 +4543,10 @@ cronSchedulerHandle = await startCronRuntime({
   goalManager,
   runCoordinator: backgroundRunCoordinator,
   isBusy,
-  onFinalizedRun: async (event) => {
-    await dreamAutomationRuntime.handleCronEvent(event);
+  onFinalizedRun: (event) => {
+    void dreamAutomationRuntime.handleCronEvent(event).catch((error) => {
+      logger.error("dream-automation", "Cron-triggered dream automation failed", error);
+    });
   },
   logger,
 });
@@ -4553,7 +4587,7 @@ starweaverActiveNotifyRuntimeHandle = await startStarweaverActiveNotifyRuntime({
 
 const browserRelayEnabled = readEnv("BELLDANDY_BROWSER_RELAY_ENABLED") === "true";
 const browserRelayPort = Number(readEnv("BELLDANDY_RELAY_PORT") ?? "28892");
-startBrowserRelayRuntime({
+browserRelayRuntimeHandle = await startBrowserRelayRuntime({
   enabled: browserRelayEnabled,
   port: browserRelayPort,
   stateDir,
@@ -4561,29 +4595,32 @@ startBrowserRelayRuntime({
   logger,
 });
 
-startGatewayConfigWatcher({
+const configWatcher = startGatewayConfigWatcher({
   envDir: envFiles.envDir,
   envPath: envFiles.envPath,
   envLocalPath: envFiles.envLocalPath,
   logger,
   onRestartRequired: (fileName) => {
     logger.info("config-watcher", `检测到 ${fileName} 变更，正在重启服务...`);
-    server.broadcast({
-      type: "event",
-      event: "agent.status",
-      payload: { status: "restarting", reason: `${fileName} changed` },
+    void shutdownRequestOwner.requestConfigRestart(fileName).catch((error) => {
+      logger.error("shutdown", "Gateway config restart failed", error);
     });
-    // Channel 与 Agent Bridge 各自 drain 所有外部 owner；完整 HTTP/WS shutdown 仍属于 OPT-GW04。
-    void Promise.all([
-      channelRuntime.stopChannels()
-        .catch((error) => logger.warn("config-watcher", "Failed to stop channels before restart", error)),
-      agentBridgeEnabled
-        ? shutdownBridgeSessions()
-          .catch((error) => logger.warn("config-watcher", "Failed to stop Agent Bridge sessions before restart", error))
-        : Promise.resolve(),
-    ])
-      .finally(() => {
-        setTimeout(() => process.exit(100), 300);
-      });
   },
 });
+
+server.registerShutdownResources({
+  shutdownRequests: shutdownRequestOwner,
+  configWatcher,
+  cron: cronSchedulerHandle,
+  heartbeat: heartbeatRunner,
+  memoryIdleSummary: memoryIdleSummaryRuntime,
+  dreamAutomation: dreamAutomationRuntime,
+  backgroundRuns: backgroundRunCoordinator,
+  emailInbound: emailInboundRuntimeHandle,
+  activeNotify: starweaverActiveNotifyRuntimeHandle,
+  channels: channelRuntime,
+  shutdownMcp: shutdownMCPIntegration,
+  browserRelay: browserRelayRuntimeHandle,
+  shutdownAgentBridge: agentBridgeEnabled ? shutdownBridgeSessions : undefined,
+});
+shutdownRequestOwner.installSignalHandlers();

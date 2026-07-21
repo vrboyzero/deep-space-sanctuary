@@ -1,5 +1,5 @@
 import type { Tool } from "@belldandy/skills";
-import type { AgentHooks } from "@belldandy/agent";
+import type { AgentHooks, HookFailurePolicy, HookName } from "@belldandy/agent";
 
 /** Plugin 在卸载或 activate 回滚时需要释放的本机资源。 */
 export type PluginDisposer = () => void | Promise<void>;
@@ -48,13 +48,22 @@ export interface PluginLoadErrorRecord {
 /** Legacy Plugin Hook 的可观测阶段；不包含输入、参数或结果内容。 */
 export type PluginHookName = "beforeRun" | "afterRun" | "beforeToolCall" | "afterToolCall";
 
-/** Hook 返回 false 时保留阻断语义；异常继续交给调用方的现有错误策略。 */
+/** Hook 返回 false 时保留阻断语义；异常由 canonical Hook failure policy 决定隔离或阻断。 */
 export type PluginHookOutcome = "succeeded" | "blocked" | "failed";
+
+/** Legacy Plugin Hook 到 HookRegistry 的显式执行与失败策略。 */
+export interface PluginHookPolicy {
+    pluginHookName: PluginHookName;
+    hookName: HookName;
+    executionMode: "sequential";
+    failurePolicy: HookFailurePolicy;
+}
 
 /** 单个 Plugin Hook 的有界运行聚合，用于定位慢 Hook 且不保留调用内容。 */
 export interface PluginHookMetric {
     pluginId: string;
     hookName: PluginHookName;
+    failurePolicy: HookFailurePolicy;
     invocationCount: number;
     succeededCount: number;
     blockedCount: number;
@@ -75,5 +84,6 @@ export interface PluginRegistryDiagnostics {
     skillDirCount: number;
     loadErrors: PluginLoadErrorRecord[];
     hookMetrics: PluginHookMetric[];
+    hookPolicies: PluginHookPolicy[];
     hookMetricEvictionCount: number;
 }

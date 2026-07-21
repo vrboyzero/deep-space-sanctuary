@@ -58,9 +58,12 @@ function createFeature(overrides = {}) {
     showNotice: overrides.showNotice || vi.fn(),
     getAvatarUploadHeaders: () => ({}),
     onAvatarUploaded: vi.fn(),
+    t: overrides.t,
   });
 
-  const bubble = feature.appendMessage("bot", "占位消息");
+  const bubble = overrides.appendInitialMessage === false
+    ? null
+    : feature.appendMessage("bot", "占位消息");
   return {
     bubble,
     chatSection,
@@ -269,11 +272,13 @@ describe("chat ui rich text rendering", () => {
 
     feature.renderAssistantMessage(bubble, "```ts\nconst html = '<div>';\n```");
     const codeButton = bubble.querySelector(".copy-code-btn");
+    const originalCodeButtonChildren = Array.from(codeButton.childNodes);
     await clickHandler({ target: codeButton });
     expect(clipboard.writeText).toHaveBeenNthCalledWith(1, "const html = '<div>';\n");
     expect(codeButton?.innerHTML).toBe("Copied");
     vi.advanceTimersByTime(2000);
     expect(codeButton?.innerHTML).toContain("Copy");
+    expect(Array.from(codeButton.childNodes)).toEqual(originalCodeButtonChildren);
 
     const textBubble = feature.appendMessage("bot", "");
     feature.renderAssistantMessage(textBubble, "<p>第一段 <strong>重点</strong></p>");
@@ -283,11 +288,45 @@ describe("chat ui rich text rendering", () => {
     expect(metaRow?.firstElementChild?.classList.contains("msg-meta-actions")).toBe(true);
     expect(metaRow?.querySelector(".msg-meta-actions .copy-msg-btn")).toBe(messageButton);
     expect(metaRow?.querySelector(".msg-time")).not.toBeNull();
+    const originalMessageButtonChildren = Array.from(messageButton.childNodes);
     await clickHandler({ target: messageButton });
     expect(clipboard.writeText).toHaveBeenNthCalledWith(2, "第一段 重点");
     expect(messageButton?.innerHTML).toBe("Copied");
     vi.advanceTimersByTime(2000);
     expect(messageButton?.innerHTML).toContain("Copy");
+    expect(Array.from(messageButton.childNodes)).toEqual(originalMessageButtonChildren);
+  });
+
+  it("creates the bot copy button without an HTML parser write", () => {
+    const { feature, messagesEl } = createFeature({
+      appendInitialMessage: false,
+      t: (key, _params, fallback) => key === "chat.copy"
+        ? '<img src=x onerror="alert(1)">Copy'
+        : fallback ?? "",
+    });
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(Element.prototype, "innerHTML", {
+      configurable: true,
+      get() {
+        return descriptor.get.call(this);
+      },
+      set(value) {
+        if (value) throw new Error("Chat copy button must not use innerHTML");
+        descriptor.set.call(this, value);
+      },
+    });
+
+    try {
+      expect(() => feature.appendMessage("bot", "message")).not.toThrow();
+      const button = messagesEl.querySelector(".msg-meta-actions .copy-msg-btn");
+      expect(button).not.toBeNull();
+      expect(button.querySelectorAll("svg rect, svg path")).toHaveLength(2);
+      expect(button.textContent).toContain('<img src=x onerror="alert(1)">Copy');
+      expect(button.title).toBe("Copy full message");
+      expect(button.querySelector("img, [onerror]")).toBeNull();
+    } finally {
+      Object.defineProperty(Element.prototype, "innerHTML", descriptor);
+    }
   });
 
   it("replaces copy feedback timers and disposes document delegation", async () => {
@@ -306,16 +345,32 @@ describe("chat ui rich text rendering", () => {
       const match = text.match(/```(\w+)\n([\s\S]*?)```/);
       return match && renderer?.code ? renderer.code(match[2], match[1]) : text;
     });
-    const { bubble, feature } = createFeature();
+    const copiedText = '<img src=x onerror="alert(1)">Copied';
+    const { bubble, feature } = createFeature({
+      t: (key, _params, fallback) => key === "chat.copied" ? copiedText : fallback ?? "",
+    });
     feature.initCopyButtonDelegation();
     feature.renderAssistantMessage(bubble, "```ts\nconst value = 1;\n```");
     const button = bubble.querySelector(".copy-code-btn");
+    const originalChildren = Array.from(button.childNodes);
+    const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(button, "innerHTML", {
+      configurable: true,
+      get() {
+        return innerHtmlDescriptor.get.call(this);
+      },
+      set(value) {
+        if (value) throw new Error("Chat copy feedback must not use innerHTML");
+        innerHtmlDescriptor.set.call(this, value);
+      },
+    });
 
     await clickHandler({ target: button });
     await vi.advanceTimersByTimeAsync(1_000);
     await clickHandler({ target: button });
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(button.innerHTML).toBe("Copied");
+    expect(button.textContent).toBe(copiedText);
+    expect(button.querySelector("img, [onerror]")).toBeNull();
     expect(feature.getRuntimeSnapshot()).toMatchObject({
       copyFeedbackTimerCount: 1,
       copyDelegationListenerCount: 1,
@@ -323,7 +378,8 @@ describe("chat ui rich text rendering", () => {
     });
 
     feature.dispose();
-    expect(button.innerHTML).toContain("Copy");
+    expect(button.textContent).toContain("Copy");
+    expect(Array.from(button.childNodes)).toEqual(originalChildren);
     expect(feature.getRuntimeSnapshot()).toMatchObject({
       copyFeedbackTimerCount: 0,
       copyDelegationListenerCount: 0,

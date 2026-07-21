@@ -1,10 +1,16 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 
-import { renderPromptSnapshotDetail } from "./prompt-snapshot-detail.js";
+import { createPromptSnapshotDetailView } from "./prompt-snapshot-detail.js";
 
 describe("prompt snapshot detail rendering", () => {
   it("renders sidecar summaries inside the snapshot detail block", () => {
-    const html = renderPromptSnapshotDetail({
+    const detail = createPromptSnapshotDetailView({
+      ownerDocument: document,
+      formatDateTime: (value) => String(value),
+      t: (_key, _params, fallback) => fallback,
+    }).render({
       snapshot: {
         manifest: {
           conversationId: "sub_task_1",
@@ -138,12 +144,8 @@ describe("prompt snapshot detail rendering", () => {
           handoffStyle: "structured",
         },
       },
-    }, {
-      escapeHtml: (value) => String(value),
-      formatDateTime: (value) => String(value),
-      t: (_key, _params, fallback) => fallback,
-      sessionId: "sub_task_1",
-    });
+    }, "sub_task_1");
+    const html = detail?.textContent ?? "";
 
     expect(html).toContain("Prompt Snapshot");
     expect(html).toContain("custom workspace scope (repo-a) rooted at E:/state/workspaces/repo-a");
@@ -151,11 +153,11 @@ describe("prompt snapshot detail rendering", () => {
     expect(html).toContain("effective launch: source=catalog_default, agent=coder");
     expect(html).toContain("Follow the repo conventions.");
     expect(html).toContain("Prepend Context Chars");
-    expect(html).toContain(">480<");
+    expect(html).toContain("480");
     expect(html).toContain("Context Injection Blocks");
-    expect(html).toContain(">3<");
+    expect(html).toContain("3");
     expect(html).toContain("Auto Recall");
-    expect(html).toContain(">2/3<");
+    expect(html).toContain("2/3");
     expect(html).toContain("Context Injection Block Tags");
     expect(html).toContain("current-turn");
     expect(html).toContain("auto-recall");
@@ -185,6 +187,6 @@ describe("prompt snapshot detail rendering", () => {
     expect(html).toContain("current_label=首席执行官 (CEO)");
     expect(html).toContain("team_id=team-42");
     expect(html).toContain("#1 system");
-    expect(html).toContain('data-subtask-prompt-snapshot-session="sub_task_1"');
+    expect(detail?.getAttribute("data-subtask-prompt-snapshot-session")).toBe("sub_task_1");
   });
 });

@@ -68,7 +68,32 @@ export {
   type DurableExtractionRunStartEvent,
   type DurableExtractionRunDecision,
   type DurableExtractionRunResultEvent,
+  type DurableExtractionJobClaim,
+  type DurableExtractionJobClaimResult,
 } from "./durable-extraction.js";
+export {
+  DEFAULT_DURABLE_EXTRACTION_MAX_AGGREGATE_BYTES,
+  DEFAULT_DURABLE_EXTRACTION_MAX_MESSAGE_BYTES,
+  DEFAULT_DURABLE_EXTRACTION_MAX_MESSAGES,
+  renderDurableExtractionMessages,
+  selectDurableExtractionInput,
+  type DurableExtractionInputLimits,
+  type DurableExtractionInputSelection,
+  type DurableExtractionMessage,
+} from "./durable-extraction-input.js";
+export {
+  MEMORY_MODEL_MAX_REQUEST_BYTES,
+  MemoryModelPrivacyRuntime,
+  preparePrivateSummaryModelRequest,
+  resolveMemoryModelEndpointTrust,
+  type MemoryModelEndpointTrust,
+  type MemoryModelPrivacyDoctorItem,
+  type MemoryModelPrivacyDoctorReport,
+  type MemoryModelPrivacyObservation,
+  type MemoryModelPrivacySnapshot,
+  type MemoryModelRedactor,
+  type MemoryPrivateSummaryJobFamily,
+} from "./memory-model-privacy.js";
 export {
   DURABLE_PROFILE_STATE_PROMPT_BLOCK,
   buildDurableProfileStatePlan,

@@ -1,3 +1,5 @@
+import type { SubTaskRetentionCompactionReport } from "./subtask-runtime-retention.js";
+
 export type SubTaskRuntimeRetentionObservationItem = {
   status: string;
   archivedAt?: number;
@@ -25,6 +27,7 @@ export type SubTaskRuntimeRetentionObservabilitySnapshot = {
     oldestArchivedAgeMs?: number;
     headline: string;
   };
+  compaction?: SubTaskRetentionCompactionReport;
 };
 
 const TERMINAL_STATUSES = new Set(["done", "error", "timeout", "stopped"]);
@@ -44,6 +47,7 @@ const EMPTY_STATUS_COUNTS: SubTaskRuntimeRetentionObservabilitySnapshot["summary
 export function buildSubTaskRuntimeRetentionObservability(
   items: readonly SubTaskRuntimeRetentionObservationItem[],
   nowMs = Date.now(),
+  compaction?: SubTaskRetentionCompactionReport,
 ): SubTaskRuntimeRetentionObservabilitySnapshot {
   const statusCounts = { ...EMPTY_STATUS_COUNTS };
   let activeCount = 0;
@@ -92,6 +96,9 @@ export function buildSubTaskRuntimeRetentionObservability(
     `archived=${archivedCount} (terminal=${archivedTerminalCount}, active=${archivedActiveCount})`,
     `unarchivedTerminal=${unarchivedTerminalCount}`,
     ...(oldestArchivedAgeMs === undefined ? [] : [`oldestArchivedAgeMs=${oldestArchivedAgeMs}`]),
+    ...(compaction ? [
+      `retention eligible=${compaction.eligibleCount}, protected=${compaction.protectedCount}, removed=${compaction.removedCount}, errors=${compaction.errorCount}`,
+    ] : []),
   ].join("; ");
 
   return {
@@ -109,6 +116,7 @@ export function buildSubTaskRuntimeRetentionObservability(
       ...(oldestArchivedAgeMs === undefined ? {} : { oldestArchivedAgeMs }),
       headline,
     },
+    ...(compaction ? { compaction } : {}),
   };
 }
 

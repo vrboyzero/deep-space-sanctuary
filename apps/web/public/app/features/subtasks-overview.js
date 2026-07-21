@@ -5,7 +5,9 @@ import {
   encodeContinuationAction,
   formatContinuationTargetLabel,
 } from "./continuation-targets.js";
-import { renderPromptSnapshotDetail } from "./prompt-snapshot-detail.js";
+import { createSubtasksDetailView } from "./subtasks-detail-view.js";
+import { createSubtasksOverviewListView } from "./subtasks-overview-list-view.js";
+import { createSubtasksOverviewSummaryView } from "./subtasks-overview-summary-view.js";
 
 function formatSubtaskStatus(status) {
   switch (status) {
@@ -502,6 +504,15 @@ export function findSubtaskBySessionId(items, sessionId) {
   return items.find((item) => typeof item?.sessionId === "string" && item.sessionId.trim() === normalizedSessionId) || null;
 }
 
+function renderSubtasksEmptyState(target, message) {
+  if (!target) return;
+  const ownerDocument = target.ownerDocument ?? document;
+  const empty = ownerDocument.createElement("div");
+  empty.className = "memory-viewer-empty";
+  empty.textContent = message;
+  target.replaceChildren(empty);
+}
+
 export function createSubtasksOverviewFeature({
   refs,
   isConnected,
@@ -527,6 +538,24 @@ export function createSubtasksOverviewFeature({
     subtasksListEl,
     subtasksDetailEl,
   } = refs;
+  const summaryView = createSubtasksOverviewSummaryView({
+    refs: { subtasksSummaryEl },
+    t,
+  });
+  const listView = createSubtasksOverviewListView({
+    refs: { subtasksListEl },
+    formatStatus: formatSubtaskStatus,
+    getStatusToneClass,
+    formatDateTime,
+    summarizeSourcePath,
+    t,
+  });
+  const subtasksDetailView = createSubtasksDetailView({
+    refs: { subtasksDetailEl },
+    formatDateTime,
+    summarizeSourcePath,
+    t,
+  });
   let liveUpdateDisposed = false;
 
   function getEmptyStateMessage(subtasksState) {
@@ -537,28 +566,15 @@ export function createSubtasksOverviewFeature({
   }
 
   function renderSubtasksSummary(items) {
-    if (!subtasksSummaryEl) return;
-    const safeItems = Array.isArray(items) ? items : [];
-    const runningCount = safeItems.filter((item) => item?.status === "running").length;
-    const doneCount = safeItems.filter((item) => item?.status === "done").length;
-    const failedCount = safeItems.filter((item) => item?.status === "error" || item?.status === "timeout" || item?.status === "stopped").length;
-
-    subtasksSummaryEl.innerHTML = `
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("subtasks.statTasks", {}, "Subtasks"))}</span><strong class="memory-stat-value">${escapeHtml(String(safeItems.length))}</strong></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("subtasks.statRunning", {}, "Running"))}</span><strong class="memory-stat-value">${escapeHtml(String(runningCount))}</strong></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("subtasks.statDone", {}, "Done"))}</span><strong class="memory-stat-value">${escapeHtml(String(doneCount))}</strong></div>
-      <div class="memory-stat-card"><span class="memory-stat-label">${escapeHtml(t("subtasks.statFailed", {}, "Failed"))}</span><strong class="memory-stat-value">${escapeHtml(String(failedCount))}</strong></div>
-    `;
+    summaryView.render(items);
   }
 
   function renderSubtasksListEmpty(message) {
-    if (!subtasksListEl) return;
-    subtasksListEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+    renderSubtasksEmptyState(subtasksListEl, message);
   }
 
   function renderSubtasksDetailEmpty(message) {
-    if (!subtasksDetailEl) return;
-    subtasksDetailEl.innerHTML = `<div class="memory-viewer-empty">${escapeHtml(message)}</div>`;
+    renderSubtasksEmptyState(subtasksDetailEl, message);
   }
 
   function renderSubtasksLoading(message) {
@@ -732,180 +748,15 @@ export function createSubtasksOverviewFeature({
       ? subtasksState.continuationFocusSessionId.trim()
       : "";
 
-    subtasksListEl.innerHTML = safeItems.map((item) => {
-      const isActive = item?.id === subtasksState.selectedId;
-      const isCurrentConversation = !isFilteredToConversation
-        && activeConversationId
-        && item?.parentConversationId === activeConversationId;
-      const isContinuationFocus = continuationFocusSessionId
-        && typeof item?.sessionId === "string"
-        && item.sessionId.trim() === continuationFocusSessionId;
-      const progressText = item?.progress?.message || item?.summary || item?.instruction || "";
-      return `
-        <div class="memory-list-item subtask-list-item${isActive ? " active" : ""}${isContinuationFocus ? " is-continuation-focus" : ""}" data-subtask-id="${escapeHtml(item.id || "")}" data-subtask-session-id="${escapeHtml(item?.sessionId || "")}">
-          <div class="subtask-list-item-head">
-            <div class="memory-list-item-title">${escapeHtml(item.id || "-")}</div>
-            <div class="memory-detail-badges">
-              ${isCurrentConversation ? `<span class="memory-badge memory-badge-shared">${escapeHtml(t("subtasks.currentConversation", {}, "current"))}</span>` : ""}
-              ${item?.archivedAt ? `<span class="memory-badge">${escapeHtml(t("subtasks.archivedBadge", {}, "archived"))}</span>` : ""}
-              <span class="memory-badge subtask-status-badge ${getStatusToneClass(item?.status)}">${escapeHtml(formatSubtaskStatus(item?.status))}</span>
-            </div>
-          </div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(item?.agentId || "-")}</span>
-            ${item?.sessionId ? `<span>${escapeHtml(item.sessionId)}</span>` : ""}
-            <span>${escapeHtml(formatDateTime(item?.updatedAt || item?.createdAt))}</span>
-          </div>
-          <div class="memory-list-item-snippet">${escapeHtml(progressText || t("subtasks.noSummary", {}, "No summary yet."))}</div>
-          <div class="memory-list-item-meta">
-            <span>${escapeHtml(summarizeSourcePath(item?.parentConversationId || "-"))}</span>
-            ${item?.outputPath ? `<span>${escapeHtml(summarizeSourcePath(item.outputPath))}</span>` : ""}
-          </div>
-        </div>
-      `;
-    }).join("");
+    listView.render({
+      items: safeItems,
+      selectedId: subtasksState.selectedId,
+      activeConversationId,
+      conversationId: isFilteredToConversation ? subtasksState.conversationId : "",
+      continuationFocusSessionId,
+    });
 
     bindListActions();
-  }
-
-  function renderNotifications(items) {
-    const safeItems = Array.isArray(items) ? items : [];
-    if (!safeItems.length) {
-      return `<div class="memory-detail-text">${escapeHtml(t("subtasks.noNotifications", {}, "No notifications yet."))}</div>`;
-    }
-
-    return `
-      <div class="subtask-notification-list">
-        ${safeItems.map((item) => `
-          <div class="subtask-notification-item">
-            <div class="subtask-notification-head">
-              <span class="memory-badge subtask-status-badge ${getStatusToneClass(item?.kind === "failed" || item?.kind === "steering_failed" || item?.kind === "resume_failed" || item?.kind === "takeover_failed" ? "error" : item?.kind === "completed" || item?.kind === "steering_delivered" || item?.kind === "resume_delivered" || item?.kind === "takeover_delivered" ? "done" : item?.kind === "started" || item?.kind === "progress" || item?.kind === "steering_requested" || item?.kind === "resume_requested" || item?.kind === "takeover_requested" ? "running" : "pending")}">${escapeHtml(formatNotificationKindLabel(item?.kind, t))}</span>
-              <span class="subtask-notification-meta">${escapeHtml(formatDateTime(item?.createdAt))}</span>
-            </div>
-            <div class="memory-detail-text">${escapeHtml(item?.message || "-")}</div>
-          </div>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  function renderSteeringRecords(items) {
-    const safeItems = Array.isArray(items) ? items : [];
-    if (!safeItems.length) {
-      return `<div class="memory-detail-text">${escapeHtml(t("subtasks.noSteering", {}, "No steering requests yet."))}</div>`;
-    }
-    return `
-      <div class="subtask-notification-list">
-        ${safeItems.map((item) => `
-          <div class="subtask-notification-item">
-            <div class="subtask-notification-head">
-              <span class="memory-badge subtask-status-badge ${getStatusToneClass(item?.status === "failed" ? "error" : item?.status === "delivered" ? "done" : "running")}">${escapeHtml(formatSteeringStatus(item?.status, t))}</span>
-              <span class="subtask-notification-meta">${escapeHtml(formatDateTime(item?.deliveredAt || item?.requestedAt))}</span>
-            </div>
-            <div class="memory-detail-text">${escapeHtml(item?.message || "-")}</div>
-            ${item?.error ? `<div class="memory-detail-text">${escapeHtml(item.error)}</div>` : ""}
-          </div>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  function renderResumeRecords(items) {
-    const safeItems = Array.isArray(items) ? items : [];
-    if (!safeItems.length) {
-      return `<div class="memory-detail-text">${escapeHtml(t("subtasks.noResume", {}, "No resume requests yet."))}</div>`;
-    }
-    return `
-      <div class="subtask-notification-list">
-        ${safeItems.map((item) => `
-          <div class="subtask-notification-item">
-            <div class="subtask-notification-head">
-              <span class="memory-badge subtask-status-badge ${getStatusToneClass(item?.status === "failed" ? "error" : item?.status === "delivered" ? "done" : "running")}">${escapeHtml(formatResumeStatus(item?.status, t))}</span>
-              <span class="subtask-notification-meta">${escapeHtml(formatDateTime(item?.deliveredAt || item?.requestedAt))}</span>
-            </div>
-            <div class="memory-detail-text">${escapeHtml(item?.message || t("subtasks.resumeDefaultMessage", {}, "Continue from the last recorded state."))}</div>
-            ${item?.resumedFromSessionId ? `<div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailResumeSourceSession", {}, "Resumed From"))}</span><span>${escapeHtml(item.resumedFromSessionId)}</span></div>` : ""}
-            ${item?.error ? `<div class="memory-detail-text">${escapeHtml(item.error)}</div>` : ""}
-          </div>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  function renderTakeoverRecords(items) {
-    const safeItems = Array.isArray(items) ? items : [];
-    if (!safeItems.length) {
-      return `<div class="memory-detail-text">${escapeHtml(t("subtasks.noTakeover", {}, "No takeover requests yet."))}</div>`;
-    }
-    return `
-      <div class="subtask-notification-list">
-        ${safeItems.map((item) => `
-          <div class="subtask-notification-item">
-            <div class="subtask-notification-head">
-              <span class="memory-badge subtask-status-badge ${getStatusToneClass(item?.status === "failed" ? "error" : item?.status === "delivered" ? "done" : "running")}">${escapeHtml(formatTakeoverStatus(item?.status, t))}</span>
-              <span class="subtask-notification-meta">${escapeHtml(formatDateTime(item?.deliveredAt || item?.requestedAt))}</span>
-            </div>
-            <div class="memory-detail-text">${escapeHtml(item?.message || t("subtasks.takeoverDefaultMessage", { agentId: item?.agentId || "-" }, "Relaunch this subtask under {agentId}."))}</div>
-            <div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailTakeoverAgent", {}, "Takeover Agent"))}</span><span>${escapeHtml(item?.agentId || "-")}</span></div>
-            <div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailTakeoverMode", {}, "Mode"))}</span><span>${escapeHtml(item?.mode === "safe_point" ? t("subtasks.takeoverModeSafePoint", {}, "safe-point relaunch") : t("subtasks.takeoverModeResumeRelaunch", {}, "finished-task relaunch"))}</span></div>
-            ${item?.resumedFromSessionId ? `<div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailResumeSourceSession", {}, "Resumed From"))}</span><span>${escapeHtml(item.resumedFromSessionId)}</span></div>` : ""}
-            ${item?.error ? `<div class="memory-detail-text">${escapeHtml(item.error)}</div>` : ""}
-          </div>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  function renderContinuationState(state) {
-    if (!state || typeof state !== "object") return "";
-    const checkpoints = state.checkpoints && typeof state.checkpoints === "object" ? state.checkpoints : {};
-    const progress = state.progress && typeof state.progress === "object" ? state.progress : {};
-    const recent = Array.isArray(progress.recent)
-      ? progress.recent.filter((item) => typeof item === "string" && item.trim())
-      : [];
-    const labels = Array.isArray(checkpoints.labels)
-      ? checkpoints.labels.filter((item) => typeof item === "string" && item.trim())
-      : [];
-    const targetText = formatContinuationTargetLabel(state);
-    const targetAction = buildContinuationAction(state);
-    const encodedTargetAction = encodeContinuationAction(targetAction);
-    const targetMarkup = state.recommendedTargetId && encodedTargetAction
-      ? `
-        <button
-          type="button"
-          class="button goal-inline-action-secondary"
-          data-continuation-action="${escapeHtml(encodedTargetAction)}"
-        >${escapeHtml(targetText)}</button>
-      `
-      : escapeHtml(targetText);
-
-    return `
-      <section class="memory-detail-card">
-        <span class="memory-detail-label">${escapeHtml(t("subtasks.detailContinuation", {}, "Continuation State"))}</span>
-        <div class="memory-detail-grid">
-          ${renderDetailCard(t("subtasks.detailContinuationMode", {}, "Resume Mode"), state.resumeMode || "-", escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailContinuationNextAction", {}, "Next Action"), state.nextAction || "-", escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailContinuationCheckpoints", {}, "Open Checkpoints"), String(Number(checkpoints.openCount || 0)), escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailContinuationBlockers", {}, "Blockers"), String(Number(checkpoints.blockerCount || 0)), escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailContinuationProgress", {}, "Current Progress"), progress.current || "-", escapeHtml)}
-          <div class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailContinuationTarget", {}, "Recommended Target"))}</span>
-            <div class="memory-detail-text">${targetMarkup}</div>
-          </div>
-        </div>
-        <div class="memory-detail-text">${escapeHtml(state.summary || "-")}</div>
-        ${labels.length ? `<div class="memory-list-item-meta"><span>${escapeHtml(labels.join(" | "))}</span></div>` : ""}
-        ${recent.length ? `
-          <div class="subtask-notification-list">
-            ${recent.map((item) => `
-              <div class="subtask-notification-item">
-                <div class="memory-detail-text">${escapeHtml(item)}</div>
-              </div>
-            `).join("")}
-          </div>
-        ` : `<div class="memory-detail-text">${escapeHtml(t("subtasks.detailContinuationRecentEmpty", {}, "No recent continuation events."))}</div>`}
-      </section>
-    `;
   }
 
   function renderSubtaskDetail(item, outputContent = "") {
@@ -916,77 +767,6 @@ export function createSubtasksOverviewFeature({
     }
 
     const subtasksState = getSubtasksState();
-    const pendingActionKind = subtasksState.pendingActionTaskId === item.id ? subtasksState.pendingActionKind : null;
-    const canStop = item.status === "pending" || item.status === "running";
-    const canArchive = !item.archivedAt && (item.status === "done" || item.status === "error" || item.status === "timeout" || item.status === "stopped");
-    const canResume = !item.archivedAt && (item.status === "done" || item.status === "error" || item.status === "timeout" || item.status === "stopped");
-    const canTakeover = !item.archivedAt && (item.status === "running" || item.status === "done" || item.status === "error" || item.status === "timeout" || item.status === "stopped");
-    const outputText = typeof outputContent === "string" && outputContent.trim()
-      ? outputContent
-      : item?.outputPreview || "";
-    const resultEnvelope = subtasksState.selectedResultEnvelope && subtasksState.selectedResultEnvelope.taskId === item.id
-      ? subtasksState.selectedResultEnvelope
-      : null;
-    const launchExplainability = subtasksState.selectedLaunchExplainability?.taskId === item.id
-      ? subtasksState.selectedLaunchExplainability.value
-      : null;
-    const promptSnapshotView = subtasksState.selectedPromptSnapshot?.taskId === item.id
-      ? subtasksState.selectedPromptSnapshot.value
-      : null;
-    const scratchText = typeof subtasksState.selectedScratchContent === "string"
-      ? subtasksState.selectedScratchContent
-      : "";
-    const reviewText = typeof subtasksState.selectedReviewContent === "string"
-      ? subtasksState.selectedReviewContent
-      : "";
-    const lessonText = typeof subtasksState.selectedLessonContent === "string"
-      ? subtasksState.selectedLessonContent
-      : "";
-    const acceptanceGate = subtasksState.selectedAcceptanceGate?.taskId === item.id
-      ? subtasksState.selectedAcceptanceGate.value
-      : null;
-    const teamSharedState = subtasksState.selectedTeamSharedState?.taskId === item.id
-      ? subtasksState.selectedTeamSharedState.value
-      : null;
-    const continuationState = subtasksState.selectedContinuationState?.taskId === item.id
-      ? subtasksState.selectedContinuationState.value
-      : null;
-    const launchExplainabilityLines = buildLaunchExplainabilityLines(launchExplainability, t);
-    const executionExplainabilityLines = buildSubtaskExecutionExplainabilityLines({
-      launchExplainability,
-      resultEnvelope,
-      promptSnapshotView,
-      sessionId: item?.sessionId || "",
-      summarizeSourcePath,
-      formatDateTime,
-      t,
-    });
-    const delegation = item?.launchSpec?.delegation && typeof item.launchSpec.delegation === "object"
-      ? item.launchSpec.delegation
-      : null;
-    const artifactEntries = buildSubtaskArtifactEntries(item, {
-      scratchContent: scratchText,
-      reviewContent: reviewText,
-      lessonContent: lessonText,
-    }, t);
-    const worktreeStatus = item?.launchSpec?.worktreeStatus || "";
-    const worktreeStatusLabel = formatWorktreeRuntimeStatus(worktreeStatus, t);
-    const worktreeStatusDescription = describeWorktreeRuntimeStatus(worktreeStatus, t);
-    const parentTaskId = typeof item?.launchSpec?.parentTaskId === "string" ? item.launchSpec.parentTaskId.trim() : "";
-    const worktreePath = typeof item?.launchSpec?.worktreePath === "string" ? item.launchSpec.worktreePath.trim() : "";
-    const goalSession = parseGoalSessionReference(item.parentConversationId);
-    const steeringRecords = Array.isArray(item?.steering) ? item.steering : [];
-    const steeringDraft = typeof subtasksState.steeringDrafts?.[item.id] === "string"
-      ? subtasksState.steeringDrafts[item.id]
-      : "";
-    const resumeRecords = Array.isArray(item?.resume) ? item.resume : [];
-    const resumeDraft = typeof subtasksState.resumeDrafts?.[item.id] === "string"
-      ? subtasksState.resumeDrafts[item.id]
-      : "";
-    const takeoverRecords = Array.isArray(item?.takeover) ? item.takeover : [];
-    const takeoverDraft = typeof subtasksState.takeoverDrafts?.[item.id] === "string"
-      ? subtasksState.takeoverDrafts[item.id]
-      : "";
     const selectedAgentId = typeof getSelectedAgentId === "function"
       ? String(getSelectedAgentId() || "").trim()
       : "";
@@ -995,300 +775,40 @@ export function createSubtasksOverviewFeature({
       : selectedAgentId && selectedAgentId !== item.agentId
         ? selectedAgentId
         : "";
-    const continuationFocusSessionId = typeof subtasksState.continuationFocusSessionId === "string"
-      ? subtasksState.continuationFocusSessionId.trim()
-      : "";
-    const isContinuationFocus = continuationFocusSessionId
-      && typeof item?.sessionId === "string"
-      && item.sessionId.trim() === continuationFocusSessionId;
-    const detailActionButtons = [];
-    if (canStop) {
-      detailActionButtons.push(`<button class="button" data-subtask-stop="${escapeHtml(item.id)}" ${pendingActionKind ? "disabled" : ""}>${escapeHtml(pendingActionKind === "stop" ? t("subtasks.actionStopping", {}, "Stopping...") : t("subtasks.actionStop", {}, "Stop"))}</button>`);
-    }
-    if (canArchive) {
-      detailActionButtons.push(`<button class="button" data-subtask-archive="${escapeHtml(item.id)}" ${pendingActionKind ? "disabled" : ""}>${escapeHtml(pendingActionKind === "archive" ? t("subtasks.actionArchiving", {}, "Archiving...") : t("subtasks.actionArchive", {}, "Archive"))}</button>`);
-    }
-    if (goalSession?.goalId) {
-      detailActionButtons.push(`<button class="button goal-inline-action-secondary" data-open-goal-id="${escapeHtml(goalSession.goalId)}">${escapeHtml(t("subtasks.openGoal", {}, "Open long task"))}</button>`);
-    }
-    if (parentTaskId) {
-      detailActionButtons.push(`<button class="button goal-inline-action-secondary" data-open-task-id="${escapeHtml(parentTaskId)}">${escapeHtml(t("subtasks.openParentTask", {}, "Open parent task"))}</button>`);
-    }
-    if (worktreePath) {
-      detailActionButtons.push(`<button class="button goal-inline-action-secondary" data-open-source="${escapeHtml(worktreePath)}">${escapeHtml(t("subtasks.openWorktree", {}, "Open worktree"))}</button>`);
-    }
 
-    subtasksDetailEl.innerHTML = `
-      <div class="memory-detail-shell${isContinuationFocus ? " is-continuation-focus" : ""}" data-subtask-session-focus="${escapeHtml(item?.sessionId || "")}">
-        <div class="memory-detail-header">
-          <div>
-            <div class="memory-detail-title">${escapeHtml(item.id || "-")}</div>
-            <div class="memory-list-item-meta">
-              <span>${escapeHtml(item.agentId || "-")}</span>
-              ${item?.sessionId ? `<span>${escapeHtml(item.sessionId)}</span>` : ""}
-              <span>${escapeHtml(formatDateTime(item.updatedAt || item.createdAt))}</span>
-            </div>
-          </div>
-          <div class="memory-detail-badges">
-            <span class="memory-badge">${escapeHtml(item.kind || "sub_agent")}</span>
-            <span class="memory-badge subtask-status-badge ${getStatusToneClass(item.status)}">${escapeHtml(formatSubtaskStatus(item.status))}</span>
-            ${item.archivedAt ? `<span class="memory-badge">${escapeHtml(t("subtasks.archivedBadge", {}, "archived"))}</span>` : ""}
-          </div>
-        </div>
-
-        ${detailActionButtons.length ? `
-          <div class="subtask-detail-actions">
-            ${detailActionButtons.join("")}
-          </div>
-        ` : ""}
-
-        <div class="memory-detail-grid">
-          ${renderDetailCard(t("subtasks.detailParentConversation", {}, "Parent Conversation"), item.parentConversationId, escapeHtml)}
-          <div class="memory-detail-card${isContinuationFocus ? " is-continuation-focus" : ""}">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailSessionId", {}, "Session ID"))}</span>
-            <div class="memory-detail-text">${escapeHtml(item.sessionId || "-")}</div>
-          </div>
-          ${renderDetailCard(t("subtasks.detailAgentId", {}, "Agent"), item.agentId || "-", escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailLaunchProfile", {}, "Launch Profile"), item?.launchSpec?.profileId || "-", escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailLaunchChannel", {}, "Launch Channel"), item?.launchSpec?.channel || "-", escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailLaunchTimeout", {}, "Launch Timeout"), formatLaunchTimeout(item?.launchSpec?.timeoutMs), escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailLaunchBackground", {}, "Background"), item?.launchSpec?.background === true ? t("subtasks.boolYes", {}, "Yes") : item?.launchSpec?.background === false ? t("subtasks.boolNo", {}, "No") : "-", escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailCreatedAt", {}, "Created At"), formatDateTime(item.createdAt), escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailUpdatedAt", {}, "Updated At"), formatDateTime(item.updatedAt), escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailFinishedAt", {}, "Finished At"), formatDateTime(item.finishedAt), escapeHtml)}
-          ${renderDetailCard(t("subtasks.detailArchivedAt", {}, "Archived At"), formatDateTime(item.archivedAt), escapeHtml)}
-        </div>
-
-        <div class="subtask-detail-sections">
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailInstruction", {}, "Instruction"))}</span>
-            <pre class="memory-detail-pre">${escapeHtml(item.instruction || "-")}</pre>
-          </section>
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailSummary", {}, "Summary"))}</span>
-            <div class="memory-detail-text">${escapeHtml(item.summary || t("subtasks.noSummary", {}, "No summary yet."))}</div>
-          </section>
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailProgress", {}, "Progress"))}</span>
-            <div class="memory-detail-text">${escapeHtml(item?.progress?.message || "-")}</div>
-          </section>
-
-          ${renderBridgeGovernanceSection(item, escapeHtml, summarizeSourcePath, t)}
-
-          ${renderContinuationState(continuationState)}
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailSteering", {}, "Steering"))}</span>
-            ${item.status === "running" ? `
-              <div class="subtask-steering-panel">
-                <textarea class="editor-textarea subtask-steering-input" rows="4" data-subtask-steering-input="${escapeHtml(item.id)}" placeholder="${escapeHtml(t("subtasks.steeringPlaceholder", {}, "Describe how this running subtask should adjust its next attempt."))}" ${pendingActionKind === "steering" ? "disabled" : ""}>${escapeHtml(steeringDraft)}</textarea>
-                <div class="subtask-detail-actions">
-                  <button class="button" data-subtask-steering-send="${escapeHtml(item.id)}" ${pendingActionKind === "steering" ? "disabled" : ""}>${escapeHtml(pendingActionKind === "steering" ? t("subtasks.actionSteering", {}, "Sending...") : t("subtasks.actionSteer", {}, "Send steering"))}</button>
-                </div>
-              </div>
-            ` : ""}
-            ${renderSteeringRecords(steeringRecords)}
-          </section>
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailResume", {}, "Resume"))}</span>
-            ${canResume ? `
-              <div class="subtask-steering-panel">
-                <textarea class="editor-textarea subtask-steering-input" rows="4" data-subtask-resume-input="${escapeHtml(item.id)}" placeholder="${escapeHtml(t("subtasks.resumePlaceholder", {}, "Optionally describe how this finished subtask should continue from its last recorded state."))}" ${pendingActionKind === "resume" ? "disabled" : ""}>${escapeHtml(resumeDraft)}</textarea>
-                <div class="subtask-detail-actions">
-                  <button class="button" data-subtask-resume-send="${escapeHtml(item.id)}" ${pendingActionKind === "resume" ? "disabled" : ""}>${escapeHtml(pendingActionKind === "resume" ? t("subtasks.actionResuming", {}, "Resuming...") : t("subtasks.actionResume", {}, "Resume"))}</button>
-                </div>
-              </div>
-            ` : ""}
-            ${renderResumeRecords(resumeRecords)}
-          </section>
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailTakeover", {}, "Takeover / Handoff"))}</span>
-            ${canTakeover ? `
-              <div class="subtask-steering-panel">
-                <textarea class="editor-textarea subtask-steering-input" rows="4" data-subtask-takeover-input="${escapeHtml(item.id)}" placeholder="${escapeHtml(item.status === "running"
-                  ? t("subtasks.takeoverSafePointPlaceholder", {}, "Optionally describe how the new agent should continue after the current run stops at a safe point.")
-                  : t("subtasks.takeoverPlaceholder", {}, "Optionally describe how the new agent should continue from the last recorded state."))}" ${pendingActionKind === "takeover" ? "disabled" : ""}>${escapeHtml(takeoverDraft)}</textarea>
-                <div class="subtask-detail-actions">
-                  <input
-                    type="text"
-                    class="editor-textarea"
-                    data-subtask-takeover-agent-input="${escapeHtml(item.id)}"
-                    value="${escapeHtml(takeoverAgentDraft)}"
-                    placeholder="${escapeHtml(item.status === "running"
-                      ? t("subtasks.takeoverSafePointAgentPlaceholder", {}, "Enter the agentId that should take over this running subtask at a safe point.")
-                      : t("subtasks.takeoverAgentPlaceholder", {}, "Enter the agentId that should take over this finished subtask."))}"
-                    ${pendingActionKind === "takeover" ? "disabled" : ""}
-                  />
-                  <button class="button goal-inline-action-secondary" data-subtask-takeover-send="${escapeHtml(item.id)}" ${pendingActionKind === "takeover" ? "disabled" : ""}>${escapeHtml(pendingActionKind === "takeover" ? t("subtasks.actionTakingOver", {}, "Taking over...") : t("subtasks.actionTakeover", {}, "Take over"))}</button>
-                </div>
-                <div class="memory-list-item-meta"><span>${escapeHtml(item.status === "running"
-                  ? t("subtasks.takeoverSafePointNote", {}, "Takeover will stop the current run and relaunch the same subtask under the new agent.")
-                  : t("subtasks.takeoverResumeNote", {}, "Takeover will relaunch the same finished subtask under the new agent."))}</span></div>
-              </div>
-            ` : ""}
-            ${renderTakeoverRecords(takeoverRecords)}
-          </section>
-
-          ${executionExplainabilityLines.length ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailExecutionExplainability", {}, "Execution Explainability"))}</span>
-              ${renderExplainabilityNote(executionExplainabilityLines, escapeHtml)}
-            </section>
-          ` : ""}
-
-          ${launchExplainabilityLines.length ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailLaunchExplainability", {}, "Launch Explainability"))}</span>
-              ${renderExplainabilityNote(launchExplainabilityLines, escapeHtml)}
-            </section>
-          ` : ""}
-
-          ${item?.sessionId
-            ? renderPromptSnapshotDetail(promptSnapshotView, {
-              escapeHtml,
-              formatDateTime,
-              t,
-              sessionId: item.sessionId,
-            })
-            : ""}
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailLaunchSpec", {}, "Launch Spec"))}</span>
-            <div class="memory-detail-grid">
-              ${renderDetailCard(t("subtasks.detailLaunchPermission", {}, "Permission Mode"), item?.launchSpec?.permissionMode || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchIsolation", {}, "Isolation"), item?.launchSpec?.isolationMode || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchRole", {}, "Launch Role"), item?.launchSpec?.role || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchRolePolicy", {}, "Role Policy"), item?.launchSpec?.policySummary || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchParentTask", {}, "Parent Task"), item?.launchSpec?.parentTaskId || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchCwd", {}, "Launch CWD"), item?.launchSpec?.cwd || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchResolvedCwd", {}, "Resolved CWD"), item?.launchSpec?.resolvedCwd || item?.launchSpec?.cwd || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchWorktreeStatus", {}, "Worktree Runtime"), worktreeStatusLabel, escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchWorktreePath", {}, "Worktree Path"), item?.launchSpec?.worktreePath || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchWorktreeRepo", {}, "Worktree Repo"), item?.launchSpec?.worktreeRepoRoot || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchWorktreeBranch", {}, "Worktree Branch"), item?.launchSpec?.worktreeBranch || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchToolSet", {}, "Tool Set"), Array.isArray(item?.launchSpec?.toolSet) && item.launchSpec.toolSet.length ? item.launchSpec.toolSet.join(", ") : "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchAllowedFamilies", {}, "Allowed Families"), Array.isArray(item?.launchSpec?.allowedToolFamilies) && item.launchSpec.allowedToolFamilies.length ? item.launchSpec.allowedToolFamilies.join(", ") : "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchMaxRisk", {}, "Max Risk"), item?.launchSpec?.maxToolRiskLevel || "-", escapeHtml)}
-              ${renderDetailCard(t("subtasks.detailLaunchContextKeys", {}, "Context Keys"), Array.isArray(item?.launchSpec?.contextKeys) && item.launchSpec.contextKeys.length ? item.launchSpec.contextKeys.join(", ") : "-", escapeHtml)}
-            </div>
-          </section>
-
-          ${delegation ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailDelegationProtocol", {}, "Delegation Protocol"))}</span>
-              <div class="memory-detail-grid">
-                ${renderDetailCard(t("subtasks.detailDelegationSource", {}, "Delegation Source"), delegation.source || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationIntentKind", {}, "Intent Kind"), delegation.intentKind || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationIntent", {}, "Intent"), delegation.intentSummary || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationDeliverable", {}, "Deliverable"), delegation.expectedDeliverableFormat || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationDeliverableSummary", {}, "Deliverable Summary"), delegation.expectedDeliverableSummary || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationAggregation", {}, "Aggregation"), delegation.aggregationMode || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationSourceAgents", {}, "Source Agents"), formatJoinedValues(delegation.sourceAgentIds), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationContextKeys", {}, "Delegation Context Keys"), formatJoinedValues(delegation.contextKeys), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationOwnedScope", {}, "Owned Scope"), delegation.ownership?.scopeSummary || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationOutOfScope", {}, "Out of Scope"), formatJoinedValues(delegation.ownership?.outOfScope), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationWriteScope", {}, "Write Scope"), formatJoinedValues(delegation.ownership?.writeScope), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationDoneDefinition", {}, "Done Definition"), delegation.acceptance?.doneDefinition || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationVerificationHints", {}, "Verification Hints"), formatJoinedValues(delegation.acceptance?.verificationHints), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailDelegationRequiredSections", {}, "Required Sections"), formatJoinedValues(delegation.deliverableContract?.requiredSections), escapeHtml)}
-              </div>
-            </section>
-          ` : ""}
-
-          ${renderTeamSharedStateSection(teamSharedState, escapeHtml, t)}
-
-          ${resultEnvelope ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailResultEnvelope", {}, "Result Envelope"))}</span>
-              <div class="memory-detail-grid">
-                ${renderDetailCard(t("subtasks.detailResultEnvelopeStatus", {}, "Envelope Status"), resultEnvelope.status || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailResultEnvelopeAgent", {}, "Envelope Agent"), resultEnvelope.agentId || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailResultEnvelopeFinishedAt", {}, "Envelope Finished At"), formatDateTime(resultEnvelope.finishedAt), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailResultEnvelopeOutputPath", {}, "Envelope Output Path"), resultEnvelope.outputPath || "-", escapeHtml)}
-              </div>
-              <div class="memory-detail-text">${escapeHtml(resultEnvelope.summary || "-")}</div>
-            </section>
-          ` : ""}
-
-          ${acceptanceGate ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailAcceptanceGate", {}, "Acceptance Gate"))}</span>
-              <div class="memory-detail-grid">
-                ${renderDetailCard(t("subtasks.detailAcceptanceGateStatus", {}, "Gate Status"), acceptanceGate.status || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailAcceptanceGateDoneCheck", {}, "Done Definition Check"), acceptanceGate.doneDefinitionCheck || "-", escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailAcceptanceGateRequiredSections", {}, "Required Sections"), formatJoinedValues(acceptanceGate.requiredSections), escapeHtml)}
-                ${renderDetailCard(t("subtasks.detailAcceptanceGateMissingSections", {}, "Missing Sections"), formatJoinedValues(acceptanceGate.missingRequiredSections), escapeHtml)}
-              </div>
-              <div class="memory-detail-text">${escapeHtml(acceptanceGate.summary || "-")}</div>
-              ${Array.isArray(acceptanceGate.reasons) && acceptanceGate.reasons.length ? `
-                <div class="memory-list-item-meta"><span>${escapeHtml(acceptanceGate.reasons.join(" | "))}</span></div>
-              ` : ""}
-            </section>
-          ` : ""}
-
-          ${artifactEntries.map((artifact) => `
-            <section class="memory-detail-card">
-              <div class="subtask-output-header">
-                <span class="memory-detail-label">${escapeHtml(artifact.label)}</span>
-                ${artifact.path ? `<button class="memory-path-link" data-open-source="${escapeHtml(artifact.path)}">${escapeHtml(t("subtasks.openArtifactPath", {}, "Open path"))}</button>` : ""}
-              </div>
-              ${artifact.path ? `<div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailArtifactPath", {}, "Artifact Path"))}</span><span>${escapeHtml(artifact.path)}</span></div>` : ""}
-              ${artifact.content
-                ? `<pre class="memory-detail-pre">${escapeHtml(artifact.content)}</pre>`
-                : `<div class="memory-detail-text">${escapeHtml(artifact.emptyMessage)}</div>`}
-            </section>
-          `).join("")}
-
-          ${worktreeStatus ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailLaunchWorktreeStatusNote", {}, "Worktree Status Note"))}</span>
-              <div class="memory-detail-text">${escapeHtml(worktreeStatusDescription)}</div>
-            </section>
-          ` : ""}
-
-          ${item?.launchSpec?.worktreeError ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailLaunchWorktreeError", {}, "Worktree Error"))}</span>
-              <pre class="memory-detail-pre">${escapeHtml(item.launchSpec.worktreeError)}</pre>
-            </section>
-          ` : ""}
-
-          ${item?.error ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailError", {}, "Error"))}</span>
-              <pre class="memory-detail-pre">${escapeHtml(item.error)}</pre>
-            </section>
-          ` : ""}
-
-          ${item?.archiveReason ? `
-            <section class="memory-detail-card">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailArchiveReason", {}, "Archive Reason"))}</span>
-              <div class="memory-detail-text">${escapeHtml(item.archiveReason)}</div>
-            </section>
-          ` : ""}
-
-          <section class="memory-detail-card">
-            <span class="memory-detail-label">${escapeHtml(t("subtasks.detailNotifications", {}, "Notifications"))}</span>
-            ${renderNotifications(item.notifications)}
-          </section>
-
-          <section class="memory-detail-card">
-            <div class="subtask-output-header">
-              <span class="memory-detail-label">${escapeHtml(t("subtasks.detailOutput", {}, "Output"))}</span>
-              ${item?.outputPath ? `<button class="memory-path-link" data-open-output-path="${escapeHtml(item.outputPath)}">${escapeHtml(t("subtasks.openOutputPath", {}, "Open output path"))}</button>` : ""}
-            </div>
-            ${item?.outputPath ? `<div class="memory-list-item-meta"><span>${escapeHtml(t("subtasks.detailOutputPath", {}, "Output Path"))}</span><span>${escapeHtml(item.outputPath)}</span></div>` : ""}
-            ${outputText
-              ? `<pre class="memory-detail-pre">${escapeHtml(outputText)}</pre>`
-              : `<div class="memory-detail-text">${escapeHtml(t("subtasks.noOutput", {}, "No output yet."))}</div>`}
-          </section>
-        </div>
-      </div>
-    `;
+    subtasksDetailView.render({
+      item,
+      outputContent,
+      pendingActionKind: subtasksState.pendingActionTaskId === item.id ? subtasksState.pendingActionKind : null,
+      resultEnvelope: subtasksState.selectedResultEnvelope?.taskId === item.id
+        ? subtasksState.selectedResultEnvelope
+        : null,
+      launchExplainability: subtasksState.selectedLaunchExplainability?.taskId === item.id
+        ? subtasksState.selectedLaunchExplainability.value
+        : null,
+      promptSnapshotView: subtasksState.selectedPromptSnapshot?.taskId === item.id
+        ? subtasksState.selectedPromptSnapshot.value
+        : null,
+      scratchText: typeof subtasksState.selectedScratchContent === "string" ? subtasksState.selectedScratchContent : "",
+      reviewText: typeof subtasksState.selectedReviewContent === "string" ? subtasksState.selectedReviewContent : "",
+      lessonText: typeof subtasksState.selectedLessonContent === "string" ? subtasksState.selectedLessonContent : "",
+      acceptanceGate: subtasksState.selectedAcceptanceGate?.taskId === item.id
+        ? subtasksState.selectedAcceptanceGate.value
+        : null,
+      teamSharedState: subtasksState.selectedTeamSharedState?.taskId === item.id
+        ? subtasksState.selectedTeamSharedState.value
+        : null,
+      continuationState: subtasksState.selectedContinuationState?.taskId === item.id
+        ? subtasksState.selectedContinuationState.value
+        : null,
+      steeringDraft: typeof subtasksState.steeringDrafts?.[item.id] === "string" ? subtasksState.steeringDrafts[item.id] : "",
+      resumeDraft: typeof subtasksState.resumeDrafts?.[item.id] === "string" ? subtasksState.resumeDrafts[item.id] : "",
+      takeoverDraft: typeof subtasksState.takeoverDrafts?.[item.id] === "string" ? subtasksState.takeoverDrafts[item.id] : "",
+      takeoverAgentDraft,
+      continuationFocusSessionId: typeof subtasksState.continuationFocusSessionId === "string"
+        ? subtasksState.continuationFocusSessionId.trim()
+        : "",
+    });
 
     bindDetailActions();
   }

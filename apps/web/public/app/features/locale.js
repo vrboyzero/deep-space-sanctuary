@@ -115,13 +115,14 @@ export function createLocaleController({
   function refreshBoundSelect(selectEl) {
     if (!selectEl) return;
     const currentValue = activeLocale;
-    selectEl.innerHTML = availableLocales
-      .map((locale) => {
-        const meta = localeMeta[locale];
-        const label = meta?.label || locale;
-        return `<option value="${locale}">${label}</option>`;
-      })
-      .join("");
+    const ownerDocument = selectEl.ownerDocument ?? document;
+    selectEl.replaceChildren(...availableLocales.map((locale) => {
+      const meta = localeMeta[locale];
+      const option = ownerDocument.createElement("option");
+      option.value = locale;
+      option.textContent = meta?.label || locale;
+      return option;
+    }));
     selectEl.value = currentValue;
   }
 

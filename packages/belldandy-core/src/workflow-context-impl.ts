@@ -11,8 +11,8 @@
  * agent() 流程：
  *   计算 callKey → 计算 fingerprint → journal.lookup()
  *     命中 → incrementCacheHit → 返回缓存（cacheHit=true）
- *     未命中 → budgetGuard.check() → orchestrator.spawn()
- *       成功 → budgetGuard.consume() → journal.record() → 返回
+ *     未命中 → reserveAgentCall() → orchestrator.spawn()
+ *       成功 → reservation.settle() → journal.record() → 返回
  *       失败 → journal.recordError() → 返回结构化失败项
  *
  * parallel() / parallelMap()：
@@ -24,7 +24,6 @@
  *   同批其他 item。某个 item 在某 stage 失败后跳过后续 stage，返回结构化失败项。
  */
 
-import { randomUUID } from "node:crypto";
 import type {
   AgentCallOptions,
   AgentLaunchSpec,
@@ -40,6 +39,13 @@ import {
 } from "@belldandy/agent";
 import type { WorkflowJournal } from "./workflow-journal.js";
 import type { WorkflowBudgetGuard } from "./workflow-budget-guard.js";
+import { runWorkflowAgentCall } from "./workflow-agent-call-runner.js";
+import {
+  DEFAULT_WORKFLOW_BATCH_LIMITS,
+  runWorkflowBatch,
+  WORKFLOW_BATCH_ENTRY_METADATA_BYTES,
+  type WorkflowBatchLimits,
+} from "./workflow-batch-runner.js";
 import {
   computeWorkflowFingerprint,
   computeStableHash,
@@ -77,6 +83,8 @@ export type WorkflowContextDeps = {
   journalId: string;
   /** 并发上限（默认 6） */
   maxConcurrent?: number;
+  /** runtime 启动期解析的 batch items/queue/output hard cap。 */
+  batchLimits?: WorkflowBatchLimits;
   /** 回调 */
   callbacks?: WorkflowContextCallbacks;
   /**
@@ -151,63 +159,6 @@ export interface WorkflowRunResultLike {
   error?: string;
 }
 
-// ─── 信号量 ───────────────────────────────────────────────────────────────
-
-class Semaphore {
-  private current = 0;
-  private waiters: Array<{
-    resolve: () => void;
-    reject: (error: Error) => void;
-    cleanup: () => void;
-  }> = [];
-
-  constructor(private readonly max: number) {}
-
-  async acquire(abortSignal?: AbortSignal): Promise<void> {
-    throwIfWorkflowAborted(abortSignal);
-    if (this.current < this.max) {
-      this.current++;
-      return;
-    }
-    // 等待槽位：release 时直接转交；取消时移除 waiter，避免队列滞留。
-    await new Promise<void>((resolve, reject) => {
-      const waiter = {
-        resolve: () => {
-          waiter.cleanup();
-          resolve();
-        },
-        reject: (error: Error) => {
-          waiter.cleanup();
-          reject(error);
-        },
-        cleanup: () => abortSignal?.removeEventListener("abort", onAbort),
-      };
-      const onAbort = () => {
-        const index = this.waiters.indexOf(waiter);
-        if (index >= 0) {
-          this.waiters.splice(index, 1);
-        }
-        waiter.reject(createWorkflowAbortError(abortSignal));
-      };
-      this.waiters.push(waiter);
-      abortSignal?.addEventListener("abort", onAbort, { once: true });
-      if (abortSignal?.aborted) {
-        onAbort();
-      }
-    });
-  }
-
-  release(): void {
-    const next = this.waiters.shift();
-    if (next) {
-      // 槽位直接转交给下一个 waiter，current 保持不变
-      next.resolve();
-    } else {
-      this.current--;
-    }
-  }
-}
-
 // ─── 工厂函数 ─────────────────────────────────────────────────────────────
 
 export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContext {
@@ -223,6 +174,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     channel,
     journalId,
     maxConcurrent = 6,
+    batchLimits = DEFAULT_WORKFLOW_BATCH_LIMITS,
     callbacks,
     runtime,
     depth = 0,
@@ -340,20 +292,6 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         return hit.result;
       }
 
-      // 预算检查
-      budgetGuard.check();
-
-      // 写 pending 记录
-      journal.recordPending({
-        journalId,
-        workflowName,
-        scriptHash,
-        callKey,
-        fingerprint,
-        prompt,
-        optsJson: JSON.stringify(persistedOpts),
-      });
-
       // 调用 orchestrator。这里统一走 launchSpec，避免 legacy spawnOpts 丢失
       // role / timeout / tool 限制 / modelOverride 等字段。
       const spawnOpts: SpawnOptions = {
@@ -372,24 +310,46 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         },
       };
 
-      const startMs = Date.now();
-      const result = await orchestrator.spawn(spawnOpts);
-      const durationMs = Date.now() - startMs;
-      // stop/deadline 已发生时不得把迟到的 Agent 结果写入 Journal。
-      throwIfWorkflowAborted(abortSignal);
+      let pendingRecorded = false;
+      let callResult;
+      try {
+        callResult = await runWorkflowAgentCall({
+          requestedMaxRetries: opts?.maxRetries,
+          budgetGuard,
+          abortSignal,
+          beforeFirstAttempt: () => {
+            journal.recordPending({
+              journalId,
+              workflowName,
+              scriptHash,
+              callKey,
+              fingerprint,
+              prompt,
+              optsJson: JSON.stringify(persistedOpts),
+            });
+            pendingRecorded = true;
+          },
+          spawn: async () => orchestrator.spawn(spawnOpts),
+          // P2 再接入真实 tokenCounter；当前保持既有输出长度估算。
+          estimateTokens: (output) => Math.ceil(output.length / 4),
+        });
+      } catch (error) {
+        // abort 保留可恢复 pending；其他已开始调用只写一次最终 error，且 Journal
+        // 自身错误不会再次进入 retry owner。
+        if (pendingRecorded && !abortSignal?.aborted) {
+          journal.recordError(journalId, fingerprint, toErrorMessage(error));
+        }
+        throw error;
+      }
 
+      const { result, tokenCount } = callResult;
       if (result.success) {
-        // 估算 token（简化：用 output 长度 / 4 粗估；P2 会接入真实 tokenCounter）
-        const estimatedTokens = Math.ceil(result.output.length / 4);
-        budgetGuard.consume(estimatedTokens, 1);
         journal.record({
           journalId,
           fingerprint,
           result: result.output,
-          tokenCount: estimatedTokens,
+          tokenCount,
         });
-        // 当前调用的实际 token 已知后立即收敛终态，避免最后一个调用越限仍成功返回。
-        budgetGuard.check();
         callbacks?.onAgentEvent?.({
           type: "completed",
           sessionId: result.sessionId,
@@ -399,7 +359,6 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         return result.output;
       }
 
-      // 失败：记录 error
       journal.recordError(journalId, fingerprint, result.error ?? "unknown error");
       callbacks?.onAgentEvent?.({
         type: "completed",
@@ -412,72 +371,29 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     },
 
     async parallel<T>(tasks: Array<() => Promise<T>>): Promise<Array<WorkflowTaskResult<T>>> {
-      const semaphore = new Semaphore(maxConcurrent);
-      const results = await Promise.all(
-        tasks.map(async (task, index) => {
-          const taskId = `task_${index}_${randomUUID().slice(0, 8)}`;
-          const startMs = Date.now();
-          await semaphore.acquire(abortSignal);
-          try {
-            throwIfWorkflowAborted(abortSignal);
-            const value = await task();
-            return {
-              ok: true as const,
-              value,
-              taskId,
-              cacheHit: false,
-              durationMs: Date.now() - startMs,
-            };
-          } catch (err) {
-            const error = err instanceof Error ? err.message : String(err);
-            return {
-              ok: false as const,
-              error,
-              taskId,
-              durationMs: Date.now() - startMs,
-            };
-          } finally {
-            semaphore.release();
-          }
-        }),
-      );
-      return results;
+      return runWorkflowBatch({
+        items: tasks,
+        maxConcurrent,
+        limits: batchLimits,
+        taskIdPrefix: "task",
+        abortSignal,
+        measureQueuedBytes: () => WORKFLOW_BATCH_ENTRY_METADATA_BYTES,
+        execute: async (task) => task(),
+      });
     },
 
     async parallelMap<T, U>(
       items: T[],
       mapper: (item: T, index: number, ctx: WorkflowContext) => Promise<U>,
     ): Promise<Array<WorkflowTaskResult<U>>> {
-      const semaphore = new Semaphore(maxConcurrent);
-      const results = await Promise.all(
-        items.map(async (item, index) => {
-          const taskId = `map_${index}_${randomUUID().slice(0, 8)}`;
-          const startMs = Date.now();
-          await semaphore.acquire(abortSignal);
-          try {
-            throwIfWorkflowAborted(abortSignal);
-            const value = await mapper(item, index, ctx);
-            return {
-              ok: true as const,
-              value,
-              taskId,
-              cacheHit: false,
-              durationMs: Date.now() - startMs,
-            };
-          } catch (err) {
-            const error = err instanceof Error ? err.message : String(err);
-            return {
-              ok: false as const,
-              error,
-              taskId,
-              durationMs: Date.now() - startMs,
-            };
-          } finally {
-            semaphore.release();
-          }
-        }),
-      );
-      return results;
+      return runWorkflowBatch({
+        items,
+        maxConcurrent,
+        limits: batchLimits,
+        taskIdPrefix: "map",
+        abortSignal,
+        execute: async (item, index) => mapper(item, index, ctx),
+      });
     },
 
     /**
@@ -495,54 +411,21 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
       items: T[],
       ...stages: Array<(item: any, ctx: WorkflowContext) => Promise<any>>
     ): Promise<Array<WorkflowTaskResult<U>>> {
-      if (stages.length === 0) {
-        // 无 stage：直接返回所有 item 作为成功结果
-        return items.map((item, index) => ({
-          ok: true as const,
-          value: item as unknown as U,
-          taskId: `pipe_${index}_${randomUUID().slice(0, 8)}`,
-          cacheHit: false,
-          durationMs: 0,
-        }));
-      }
-
-      const semaphore = new Semaphore(maxConcurrent);
-
-      // 每个 item 独立流经所有 stage
-      const itemResults = await Promise.all(
-        items.map(async (item, index) => {
-          const taskId = `pipe_${index}_${randomUUID().slice(0, 8)}`;
-          const startMs = Date.now();
+      return runWorkflowBatch({
+        items,
+        maxConcurrent,
+        limits: batchLimits,
+        taskIdPrefix: "pipe",
+        abortSignal,
+        execute: async (item) => {
           let current: any = item;
-          try {
-            for (let s = 0; s < stages.length; s++) {
-              await semaphore.acquire(abortSignal);
-              try {
-                throwIfWorkflowAborted(abortSignal);
-                current = await stages[s](current, ctx);
-              } finally {
-                semaphore.release();
-              }
-            }
-            return {
-              ok: true as const,
-              value: current as U,
-              taskId,
-              cacheHit: false,
-              durationMs: Date.now() - startMs,
-            };
-          } catch (err) {
-            const error = err instanceof Error ? err.message : String(err);
-            return {
-              ok: false as const,
-              error,
-              taskId,
-              durationMs: Date.now() - startMs,
-            };
+          for (const stage of stages) {
+            throwIfWorkflowAborted(abortSignal);
+            current = await stage(current, ctx);
           }
-        }),
-      );
-      return itemResults;
+          return current as U;
+        },
+      });
     },
 
     /**
@@ -632,4 +515,8 @@ function createWorkflowAbortError(signal: AbortSignal | undefined): Error {
     return new Error(signal.reason.trim());
   }
   return new Error("Workflow stopped by user.");
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

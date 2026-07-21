@@ -15,7 +15,13 @@ import type { BackgroundContinuationRuntimeDoctorReport } from "./background-con
 import type { ConversationRunRegistry } from "./conversation-run-registry.js";
 import type { TopLevelConversationLifecycle } from "./top-level-conversation-lifecycle.js";
 import type { CronRuntimeDoctorReport } from "./cron/observability.js";
-import type { DreamRuntime, DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableExtractionRuntime } from "@belldandy/memory";
+import type {
+  DreamRuntime,
+  DurableExtractionDigestSnapshot,
+  DurableExtractionRecord,
+  DurableExtractionRuntime,
+  MemoryModelPrivacyRuntime,
+} from "@belldandy/memory";
 import type { ExtensionHostState } from "./extension-host.js";
 import type { ExternalOutboundAuditStore } from "./external-outbound-audit-store.js";
 import type { ExternalOutboundConfirmationStore } from "./external-outbound-confirmation-store.js";
@@ -31,6 +37,7 @@ import type {
   MemoryRuntimeUsageAccounting,
   SlidingWindowRateLimiter,
 } from "./memory-runtime-budget.js";
+import type { MemoryBackgroundJobScheduler } from "./memory-background-job-scheduler.js";
 import type { QueryRuntimeTraceStore } from "./query-runtime-trace.js";
 import type { ScopedMemoryManagerRecord } from "./resident-memory-managers.js";
 import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
@@ -85,6 +92,8 @@ export type GatewayWebSocketRequestContext = {
   }) => Promise<DurableExtractionRecord | undefined>;
   memoryUsageAccounting: MemoryRuntimeUsageAccounting;
   memoryBudgetGuard: MemoryRuntimeBudgetGuard;
+  memoryBackgroundJobScheduler: MemoryBackgroundJobScheduler;
+  memoryModelPrivacyRuntime: MemoryModelPrivacyRuntime;
   durableExtractionRequestRateLimiter: SlidingWindowRateLimiter;
   ttsEnabled?: () => boolean;
   ttsSynthesize?: (text: string) => Promise<{ webPath: string; htmlAudio: string } | null>;
@@ -116,6 +125,7 @@ export type GatewayWebSocketRequestContext = {
   tokenUsageUploadConfig: TokenUsageUploadConfig;
   broadcast?: (frame: GatewayEventFrame) => void;
   broadcastEvent?: (frame: GatewayEventFrame) => void;
+  requestSystemRestart?: (reason: string) => void;
   getCompactionRuntimeReport?: () => CompactionRuntimeReport | undefined;
   getRuntimeResilienceReport?: () => RuntimeResilienceDoctorReport | undefined;
   queryRuntimeTraceStore: QueryRuntimeTraceStore;
@@ -189,6 +199,8 @@ export function buildGatewayWebSocketRequestContext(
     requestDurableExtraction: options.requestDurableExtraction,
     memoryUsageAccounting: options.memoryUsageAccounting,
     memoryBudgetGuard: options.memoryBudgetGuard,
+    memoryBackgroundJobScheduler: options.memoryBackgroundJobScheduler,
+    memoryModelPrivacyRuntime: options.memoryModelPrivacyRuntime,
     durableExtractionRequestRateLimiter: options.durableExtractionRequestRateLimiter,
     ttsEnabled: options.ttsEnabled,
     ttsSynthesize: options.ttsSynthesize,
@@ -220,6 +232,7 @@ export function buildGatewayWebSocketRequestContext(
     tokenUsageUploadConfig: options.tokenUsageUploadConfig,
     broadcast: options.broadcast,
     broadcastEvent: options.broadcastEvent,
+    requestSystemRestart: options.requestSystemRestart,
     getCompactionRuntimeReport: options.getCompactionRuntimeReport,
     getRuntimeResilienceReport: options.getRuntimeResilienceReport,
     queryRuntimeTraceStore: options.queryRuntimeTraceStore,

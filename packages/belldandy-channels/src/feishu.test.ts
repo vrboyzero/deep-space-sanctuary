@@ -6,6 +6,7 @@ const larkMock = vi.hoisted(() => {
   const getMessageResource = vi.fn(async () => Buffer.from("mock-audio"));
   const closeWsClient = vi.fn();
   const startWsClient = vi.fn(async () => {});
+  const clientConfigs: unknown[] = [];
   class Client {
     public im = {
       message: {
@@ -17,7 +18,9 @@ const larkMock = vi.hoisted(() => {
       },
     };
 
-    constructor(_config: unknown) {}
+    constructor(config: unknown) {
+      clientConfigs.push(config);
+    }
   }
 
   class WSClient {
@@ -47,6 +50,7 @@ const larkMock = vi.hoisted(() => {
     getMessageResource,
     closeWsClient,
     startWsClient,
+    clientConfigs,
   };
 });
 
@@ -57,6 +61,26 @@ import { ConversationStore } from "@belldandy/agent";
 import { FeishuChannel } from "./feishu.js";
 
 describe("FeishuChannel", () => {
+  it("injects the pinned REST transport without changing the WebSocket client", () => {
+    const before = larkMock.clientConfigs.length;
+    const restOutboundRequestPolicy = { request: vi.fn() };
+    new FeishuChannel({
+      appId: "app-id",
+      appSecret: "app-secret",
+      conversationStore: new ConversationStore(),
+      agent: { run: vi.fn() } as any,
+      restOutboundRequestPolicy,
+    });
+
+    expect(larkMock.clientConfigs).toHaveLength(before + 1);
+    expect(larkMock.clientConfigs.at(-1)).toMatchObject({
+      appId: "app-id",
+      appSecret: "app-secret",
+      domain: "https://open.feishu.cn",
+      httpInstance: expect.objectContaining({ request: expect.any(Function) }),
+    });
+  });
+
   it("force-closes the SDK WebSocket exactly once for concurrent stop calls", async () => {
     larkMock.closeWsClient.mockClear();
     const channel = new FeishuChannel({

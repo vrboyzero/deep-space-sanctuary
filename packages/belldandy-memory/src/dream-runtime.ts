@@ -4,6 +4,7 @@ import { syncDreamToObsidian } from "./dream-obsidian-sync.js";
 import { isAllowedDurableProfileStatePath } from "./durable-profile-state.js";
 import { buildDreamRuleSkeleton } from "./dream-input.js";
 import { requestDreamModel } from "./dream-model-request.js";
+import type { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 import { buildDreamPromptBundle, parseDreamModelOutput, summarizeDreamModelOutput } from "./dream-prompt.js";
 import { DreamStore, toDreamInputMeta } from "./dream-store.js";
 import type {
@@ -76,6 +77,14 @@ function serializeError(error: unknown): string {
     return truncateText(error.message, 240) ?? error.name;
   }
   return truncateText(String(error), 240) ?? "Unknown dream runtime error";
+}
+
+function throwIfDreamRunAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error("Dream run was aborted.");
+  error.name = "AbortError";
+  throw error;
 }
 
 class DreamEmptyContentError extends Error {
@@ -520,6 +529,7 @@ async function resolveDreamDraft(input: {
   snapshot: Awaited<ReturnType<DreamRuntimeOptions["buildInputSnapshot"]>>;
   requestedAtDate: Date;
   logger?: DreamRuntimeLogger;
+  signal?: AbortSignal;
   callModel: (system: string, user: string) => Promise<string>;
 }): Promise<{
   draft: DreamModelOutput;
@@ -550,6 +560,7 @@ async function resolveDreamDraft(input: {
       generationMode: "llm",
     };
   } catch (error) {
+    throwIfDreamRunAborted(input.signal);
     input.logger?.warn?.("dream llm generation failed, using fallback", {
       agentId: input.agentId,
       error: serializeError(error),
@@ -579,6 +590,7 @@ export class DreamRuntime {
   private readonly maxTokens: number;
   private readonly timeoutMs: number;
   private readonly temperature: number;
+  private readonly modelPrivacyRuntime?: MemoryModelPrivacyRuntime;
   private readonly obsidianMirror?: DreamObsidianMirrorOptions;
   private readonly buildInputSnapshot: DreamRuntimeOptions["buildInputSnapshot"];
   private readonly profileStateDelegate?: DreamRuntimeOptions["profileStateDelegate"];
@@ -601,6 +613,10 @@ export class DreamRuntime {
     this.maxTokens = Math.max(400, Math.floor(options.maxTokens ?? 1_000));
     this.timeoutMs = Math.max(1_000, Math.floor(options.timeoutMs ?? 120_000));
     this.temperature = Math.max(0, Math.min(1, Number.isFinite(options.temperature) ? Number(options.temperature) : 0.3));
+    this.modelPrivacyRuntime = options.modelPrivacyRuntime;
+    if (this.baseUrl) {
+      this.modelPrivacyRuntime?.registerEndpoint("dream", this.baseUrl);
+    }
     this.obsidianMirror = options.obsidianMirror
       ? {
           enabled: options.obsidianMirror.enabled === true,
@@ -620,6 +636,10 @@ export class DreamRuntime {
 
   get modelName(): string | undefined {
     return this.model || undefined;
+  }
+
+  getBackgroundJobTokenEstimate(): number {
+    return this.maxTokens + 4_096;
   }
 
   getAvailability(): {
@@ -684,6 +704,7 @@ export class DreamRuntime {
   }
 
   async run(input: DreamRunOptions = {}): Promise<DreamRunResult> {
+    throwIfDreamRunAborted(input.signal);
     if (!this.tryReserveRun()) {
       const state = await this.getState();
       const runningRecord = state.recentRuns.find((item) => item.id === state.lastRunId);
@@ -708,6 +729,7 @@ export class DreamRuntime {
   }
 
   async maybeAutoRun(input: DreamRunOptions = {}): Promise<DreamAutoRunResult> {
+    throwIfDreamRunAborted(input.signal);
     const triggerMode = input.triggerMode === "cron" ? "cron" : "heartbeat";
     const availability = this.getAvailability();
     const now = this.nowProvider();
@@ -803,6 +825,7 @@ export class DreamRuntime {
         conversationId: normalizeText(input.conversationId),
         now,
       });
+      throwIfDreamRunAborted(input.signal);
       await this.store.updateLastInput(snapshot);
       const baselineAt = state.lastDreamAt || snapshot.windowStartedAt;
       const signal = buildAutoSignalSummary(snapshot, baselineAt, state.lastDreamCursor);
@@ -880,7 +903,9 @@ export class DreamRuntime {
     input: DreamRunOptions,
     prepared?: { now: Date; snapshot: Awaited<ReturnType<DreamRuntimeOptions["buildInputSnapshot"]>> },
   ): Promise<DreamRunResult> {
+    throwIfDreamRunAborted(input.signal);
     await this.store.load();
+    throwIfDreamRunAborted(input.signal);
     const availability = this.getAvailability();
     const requestedAtDate = prepared?.now ?? this.nowProvider();
     const requestedAt = requestedAtDate.toISOString();
@@ -889,6 +914,10 @@ export class DreamRuntime {
     const conversationId = normalizeText(input.conversationId);
 
     await this.store.setStatus("running");
+    if (input.signal?.aborted) {
+      await this.store.setStatus("idle");
+      throwIfDreamRunAborted(input.signal);
+    }
 
     if (!availability.enabled) {
       const failedRecord: DreamRecord = {
@@ -924,7 +953,9 @@ export class DreamRuntime {
         conversationId,
         now: requestedAtDate,
       });
+      throwIfDreamRunAborted(input.signal);
       await this.store.updateLastInput(snapshot);
+      throwIfDreamRunAborted(input.signal);
 
       const draftResult = await resolveDreamDraft({
         availability,
@@ -932,8 +963,10 @@ export class DreamRuntime {
         snapshot,
         requestedAtDate,
         logger: this.logger,
-        callModel: (system, user) => this.callModel(system, user),
+        signal: input.signal,
+        callModel: (system, user) => this.callModel(system, user, input.signal),
       });
+      throwIfDreamRunAborted(input.signal);
       lastDraft = draftResult.draft;
 
       const startedAt = requestedAtDate.toISOString();
@@ -965,6 +998,7 @@ export class DreamRuntime {
         },
       };
       const stateBeforeWrite = await this.store.getState();
+      throwIfDreamRunAborted(input.signal);
       const dreamPath = this.store.buildDreamFilePath({
         occurredAt: finishedAt,
         dreamId: runId,
@@ -982,6 +1016,7 @@ export class DreamRuntime {
         snapshot,
         previousRuns: stateBeforeWrite.recentRuns,
       });
+      throwIfDreamRunAborted(input.signal);
       const obsidianSync = await syncDreamToObsidian({
         mirror: this.obsidianMirror,
         agentId: this.agentId,
@@ -995,6 +1030,7 @@ export class DreamRuntime {
         now: this.nowProvider,
         logger: this.logger,
       });
+      throwIfDreamRunAborted(input.signal);
       const completedRecord: DreamRecord = {
         ...previewRecord,
         dreamPath: written.dreamPath,
@@ -1021,6 +1057,10 @@ export class DreamRuntime {
         indexMarkdown: written.indexMarkdown,
       };
     } catch (error) {
+      if (input.signal?.aborted) {
+        await this.store.setStatus("idle");
+        throwIfDreamRunAborted(input.signal);
+      }
       const finishedAt = this.nowProvider().toISOString();
       const failedRecord: DreamRecord = {
         id: runId,
@@ -1177,9 +1217,10 @@ export class DreamRuntime {
     return { record, state, appliedPatchCount };
   }
 
-  private async callModel(system: string, user: string): Promise<string> {
+  private async callModel(system: string, user: string, signal?: AbortSignal): Promise<string> {
+    throwIfDreamRunAborted(signal);
     try {
-      return await this.callModelOnce(system, user, this.maxTokens);
+      return await this.callModelOnce(system, user, this.maxTokens, signal);
     } catch (error) {
       if (
         error instanceof DreamEmptyContentError
@@ -1197,14 +1238,21 @@ export class DreamRuntime {
             thinkingType: normalizeText((this.thinking as { type?: unknown } | undefined)?.type) ?? null,
             reasoningEffort: this.reasoningEffort ?? null,
           });
-          return this.callModelOnce(system, user, retryMaxTokens);
+          throwIfDreamRunAborted(signal);
+          return this.callModelOnce(system, user, retryMaxTokens, signal);
         }
       }
       throw error;
     }
   }
 
-  private async callModelOnce(system: string, user: string, maxTokens: number): Promise<string> {
+  private async callModelOnce(
+    system: string,
+    user: string,
+    maxTokens: number,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    throwIfDreamRunAborted(signal);
     const payload: Record<string, unknown> = {
       model: this.model,
       messages: [
@@ -1224,6 +1272,8 @@ export class DreamRuntime {
       apiKey: this.apiKey,
       payload,
       timeoutMs: this.timeoutMs,
+      ...(this.modelPrivacyRuntime ? { privacyRuntime: this.modelPrivacyRuntime } : {}),
+      ...(signal ? { signal } : {}),
     });
     const choice = data.choices?.[0];
     const content = normalizeText(choice?.message?.content);

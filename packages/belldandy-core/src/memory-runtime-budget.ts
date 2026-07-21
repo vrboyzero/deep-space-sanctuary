@@ -5,7 +5,8 @@ import path from "node:path";
 export type MemoryUsageConsumer =
   | "session_digest_refresh"
   | "durable_extraction_request"
-  | "durable_extraction_run";
+  | "durable_extraction_run"
+  | "background_model_run";
 
 export type MemoryUsageOutcome =
   | "completed"
@@ -41,6 +42,11 @@ type MemoryBudgetLimit = {
   windowMs: number;
 };
 
+type MemoryTokenBudgetLimit = {
+  maxTokenUnits: number;
+  windowMs: number;
+};
+
 export type MemoryBudgetDecision = {
   allowed: boolean;
   reasonCode?: string;
@@ -49,6 +55,9 @@ export type MemoryBudgetDecision = {
   maxRuns?: number;
   windowMs?: number;
   retryAfterMs?: number;
+  observedTokenUnits?: number;
+  requestedTokenUnits?: number;
+  maxTokenUnits?: number;
 };
 
 export type RateLimitStatus = "unlimited" | "ok" | "limited";
@@ -76,6 +85,8 @@ export type MemoryRuntimeBudgetGuardOptions = {
   accounting: MemoryRuntimeUsageAccounting;
   sessionDigestRefreshLimit?: MemoryBudgetLimit;
   durableExtractionRunLimit?: MemoryBudgetLimit;
+  backgroundModelRunLimit?: MemoryBudgetLimit;
+  backgroundModelTokenLimit?: MemoryTokenBudgetLimit;
 };
 
 const STATE_VERSION = 1 as const;
@@ -311,7 +322,8 @@ export class MemoryRuntimeUsageAccounting {
   private isConsumer(value: string): value is MemoryUsageConsumer {
     return value === "session_digest_refresh"
       || value === "durable_extraction_request"
-      || value === "durable_extraction_run";
+      || value === "durable_extraction_run"
+      || value === "background_model_run";
   }
 
   private isOutcome(value: string): value is MemoryUsageOutcome {
@@ -344,12 +356,16 @@ export class MemoryRuntimeBudgetGuard {
   private readonly accounting: MemoryRuntimeUsageAccounting;
   private readonly sessionDigestRefreshLimit?: MemoryBudgetLimit;
   private readonly durableExtractionRunLimit?: MemoryBudgetLimit;
+  private readonly backgroundModelRunLimit?: MemoryBudgetLimit;
+  private readonly backgroundModelTokenLimit?: MemoryTokenBudgetLimit;
   private readonly runtimeEvents: MemoryUsageEvent[] = [];
 
   constructor(options: MemoryRuntimeBudgetGuardOptions) {
     this.accounting = options.accounting;
     this.sessionDigestRefreshLimit = this.normalizeLimit(options.sessionDigestRefreshLimit);
     this.durableExtractionRunLimit = this.normalizeLimit(options.durableExtractionRunLimit);
+    this.backgroundModelRunLimit = this.normalizeLimit(options.backgroundModelRunLimit);
+    this.backgroundModelTokenLimit = this.normalizeTokenLimit(options.backgroundModelTokenLimit);
   }
 
   static fromEnv(accounting: MemoryRuntimeUsageAccounting): MemoryRuntimeBudgetGuard {
@@ -362,6 +378,14 @@ export class MemoryRuntimeBudgetGuard {
       durableExtractionRunLimit: {
         maxRuns: normalizePositiveInteger(process.env.BELLDANDY_MEMORY_DURABLE_EXTRACTION_MAX_RUNS) ?? 0,
         windowMs: normalizePositiveInteger(process.env.BELLDANDY_MEMORY_DURABLE_EXTRACTION_WINDOW_MS) ?? 60 * 60 * 1_000,
+      },
+      backgroundModelRunLimit: {
+        maxRuns: normalizePositiveInteger(process.env.BELLDANDY_MEMORY_BACKGROUND_MAX_RUNS) ?? 0,
+        windowMs: normalizePositiveInteger(process.env.BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS) ?? 60 * 60 * 1_000,
+      },
+      backgroundModelTokenLimit: {
+        maxTokenUnits: normalizePositiveInteger(process.env.BELLDANDY_MEMORY_BACKGROUND_MAX_TOKEN_UNITS) ?? 0,
+        windowMs: normalizePositiveInteger(process.env.BELLDANDY_MEMORY_BACKGROUND_WINDOW_MS) ?? 60 * 60 * 1_000,
       },
     });
   }
@@ -402,6 +426,70 @@ export class MemoryRuntimeBudgetGuard {
     );
   }
 
+  async evaluateBackgroundModelRun(
+    requestedTokenUnits: number,
+    now = Date.now(),
+  ): Promise<MemoryBudgetDecision> {
+    const normalizedRequested = Math.max(0, Math.floor(Number(requestedTokenUnits) || 0));
+    const windows = [
+      this.backgroundModelRunLimit?.windowMs,
+      this.backgroundModelTokenLimit?.windowMs,
+    ].filter((value): value is number => typeof value === "number" && value > 0);
+    const maxWindowMs = windows.length > 0 ? Math.max(...windows) : 60 * 60 * 1_000;
+    const events = await this.accounting.listEvents({
+      consumer: "background_model_run",
+      outcomes: ["started"],
+      since: now - maxWindowMs,
+    });
+
+    if (this.backgroundModelRunLimit) {
+      const activeWindowStart = now - this.backgroundModelRunLimit.windowMs;
+      const runEvents = events.filter((event) => event.timestamp >= activeWindowStart);
+      if (runEvents.length >= this.backgroundModelRunLimit.maxRuns) {
+        const oldestTimestamp = Math.min(...runEvents.map((event) => event.timestamp));
+        return {
+          allowed: false,
+          reasonCode: "memory_background_run_budget_exceeded",
+          reasonMessage: "Memory background model run budget exceeded.",
+          observedRuns: runEvents.length,
+          maxRuns: this.backgroundModelRunLimit.maxRuns,
+          windowMs: this.backgroundModelRunLimit.windowMs,
+          retryAfterMs: Math.max(1, oldestTimestamp + this.backgroundModelRunLimit.windowMs - now),
+        };
+      }
+    }
+
+    if (this.backgroundModelTokenLimit) {
+      const activeWindowStart = now - this.backgroundModelTokenLimit.windowMs;
+      const tokenEvents = events.filter((event) => event.timestamp >= activeWindowStart);
+      const observedTokenUnits = tokenEvents.reduce(
+        (total, event) => total + Math.max(0, Math.floor(Number(event.quantity) || 0)),
+        0,
+      );
+      if (observedTokenUnits + normalizedRequested > this.backgroundModelTokenLimit.maxTokenUnits) {
+        const oldestTimestamp = tokenEvents.length > 0
+          ? Math.min(...tokenEvents.map((event) => event.timestamp))
+          : now;
+        return {
+          allowed: false,
+          reasonCode: "memory_background_token_budget_exceeded",
+          reasonMessage: "Memory background model token budget exceeded.",
+          observedTokenUnits,
+          requestedTokenUnits: normalizedRequested,
+          maxTokenUnits: this.backgroundModelTokenLimit.maxTokenUnits,
+          windowMs: this.backgroundModelTokenLimit.windowMs,
+          retryAfterMs: Math.max(1, oldestTimestamp + this.backgroundModelTokenLimit.windowMs - now),
+        };
+      }
+    }
+
+    return {
+      allowed: true,
+      observedRuns: events.length,
+      requestedTokenUnits: normalizedRequested,
+    };
+  }
+
   noteEvent(event: MemoryUsageEvent): void {
     this.runtimeEvents.push({
       consumer: event.consumer,
@@ -422,6 +510,15 @@ export class MemoryRuntimeBudgetGuard {
       return undefined;
     }
     return { maxRuns, windowMs };
+  }
+
+  private normalizeTokenLimit(limit: MemoryTokenBudgetLimit | undefined): MemoryTokenBudgetLimit | undefined {
+    const maxTokenUnits = normalizePositiveInteger(limit?.maxTokenUnits);
+    const windowMs = normalizePositiveInteger(limit?.windowMs);
+    if (!maxTokenUnits || !windowMs) {
+      return undefined;
+    }
+    return { maxTokenUnits, windowMs };
   }
 
   private async evaluateLimit(
@@ -480,7 +577,12 @@ export class MemoryRuntimeBudgetGuard {
   }
 
   private pruneRuntimeEvents(now: number): void {
-    const windows = [this.sessionDigestRefreshLimit?.windowMs, this.durableExtractionRunLimit?.windowMs]
+    const windows = [
+      this.sessionDigestRefreshLimit?.windowMs,
+      this.durableExtractionRunLimit?.windowMs,
+      this.backgroundModelRunLimit?.windowMs,
+      this.backgroundModelTokenLimit?.windowMs,
+    ]
       .filter((value): value is number => typeof value === "number" && value > 0);
     const maxWindowMs = windows.length > 0 ? Math.max(...windows) : 60 * 60 * 1_000;
     const minTimestamp = now - maxWindowMs;

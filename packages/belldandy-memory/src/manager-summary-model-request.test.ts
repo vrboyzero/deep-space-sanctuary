@@ -9,6 +9,7 @@ import type {
   MemoryChunkSummaryModelResponse,
 } from "./memory-chunk-summary-model-request.js";
 import { MemoryManager } from "./manager.js";
+import { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 
 const requestMemoryChunkSummaryModelMock = vi.hoisted(() => vi.fn<(
   options: MemoryChunkSummaryModelRequestOptions,
@@ -45,6 +46,7 @@ describe("MemoryManager chunk summary model consumer", () => {
     requestMemoryChunkSummaryModelMock.mockResolvedValue({
       choices: [{ message: { content: "  bounded chunk summary  " } }],
     });
+    const modelPrivacyRuntime = new MemoryModelPrivacyRuntime();
     manager = new MemoryManager({
       workspaceRoot,
       stateDir,
@@ -56,6 +58,7 @@ describe("MemoryManager chunk summary model consumer", () => {
       summaryApiKey: "summary-secret",
       summaryBatchSize: 1,
       summaryMinContentLength: 1,
+      modelPrivacyRuntime,
     });
     const store = (manager as unknown as { store: {
       upsertChunk(input: Record<string, unknown>): void;
@@ -75,6 +78,8 @@ describe("MemoryManager chunk summary model consumer", () => {
       baseUrl: "https://summary.example.test/v1",
       apiKey: "summary-secret",
       timeoutMs: 120_000,
+      signal: undefined,
+      privacyRuntime: modelPrivacyRuntime,
       payload: {
         model: "summary-model",
         messages: [

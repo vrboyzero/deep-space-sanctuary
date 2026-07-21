@@ -15,6 +15,14 @@ function normalizeAbortReason(reason: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
+export function throwIfBackgroundAborted(
+  signal: AbortSignal | undefined,
+  fallback = "Background operation aborted.",
+): void {
+  if (!signal?.aborted) return;
+  throw normalizeAbortReason(signal.reason, fallback);
+}
+
 /** 管理协作式暂停的全部等待者，避免单 resolver 覆盖导致后台任务永久挂起。 */
 export class BackgroundPauseGate {
   private paused = false;
@@ -38,12 +46,27 @@ export class BackgroundPauseGate {
     return this.paused;
   }
 
-  wait(): Promise<void> {
+  wait(signal?: AbortSignal): Promise<void> {
+    throwIfBackgroundAborted(signal);
     if (!this.paused) {
       return Promise.resolve();
     }
-    return new Promise<void>((resolve) => {
-      this.waiters.add(resolve);
+    return new Promise<void>((resolve, reject) => {
+      const release = () => {
+        signal?.removeEventListener("abort", handleAbort);
+        resolve();
+      };
+      const handleAbort = () => {
+        this.waiters.delete(release);
+        signal?.removeEventListener("abort", handleAbort);
+        try {
+          throwIfBackgroundAborted(signal);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      this.waiters.add(release);
+      signal?.addEventListener("abort", handleAbort, { once: true });
     });
   }
 
@@ -60,6 +83,7 @@ export type DeadlineOperationOptions<T> = {
   timeoutMs: number;
   fallbackTimeoutMs: number;
   timeoutMessage: (timeoutMs: number) => string;
+  signal?: AbortSignal;
   operation: (signal: AbortSignal) => Promise<T>;
 };
 
@@ -71,6 +95,16 @@ export class BackgroundAbortRegistry {
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs, options.fallbackTimeoutMs);
     const controller = new AbortController();
     this.controllers.add(controller);
+    const abortFromParent = () => {
+      if (!controller.signal.aborted) {
+        controller.abort(options.signal?.reason);
+      }
+    };
+    if (options.signal?.aborted) {
+      abortFromParent();
+    } else {
+      options.signal?.addEventListener("abort", abortFromParent, { once: true });
+    }
 
     let rejectOnAbort!: (reason?: unknown) => void;
     const aborted = new Promise<never>((_resolve, reject) => {
@@ -92,6 +126,7 @@ export class BackgroundAbortRegistry {
     } finally {
       clearTimeout(timeout);
       controller.signal.removeEventListener("abort", handleAbort);
+      options.signal?.removeEventListener("abort", abortFromParent);
       this.controllers.delete(controller);
     }
   }

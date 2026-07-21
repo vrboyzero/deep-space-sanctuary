@@ -18,8 +18,13 @@ import {
   parsePositiveByteLimit,
   persistBoundedResponseToFile,
 } from "../remote-response-file.js";
+import {
+  createTtsOpenAIFetch,
+  type TtsOpenAIOutboundRequestPolicy,
+} from "./tts-openai-transport.js";
 
 const DEFAULT_TTS_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DASHSCOPE_REST_MAX_REDIRECTS = 0;
 const DASHSCOPE_REST_IDLE_TIMEOUT_MS = 15_000;
 const DASHSCOPE_REST_MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -38,6 +43,8 @@ export type SynthesizeOptions = {
   voice?: string;
   model?: string;
   abortSignal?: AbortSignal;
+  /** OpenAI speech JSON API 使用的零 redirect pinned outbound capability。 */
+  openAIOutboundRequestPolicy?: TtsOpenAIOutboundRequestPolicy;
   /** DashScope 固定 submit API 使用的零 redirect pinned outbound capability。 */
   dashScopeRestOutboundRequestPolicy?: Pick<OutboundRequestPolicy, "request">;
   /** DashScope 返回音频 URL 使用的独立 pinned outbound capability。 */
@@ -85,7 +92,15 @@ export async function synthesizeSpeech(opts: SynthesizeOptions): Promise<Synthes
     const filepath = path.join(generatedDir, filename);
 
     if (provider === "openai") {
-      await synthesizeOpenAI(filepath, text, voice!, model, maxOutputBytes, opts.abortSignal);
+      await synthesizeOpenAI(
+        filepath,
+        text,
+        voice!,
+        model,
+        maxOutputBytes,
+        opts.abortSignal,
+        opts.openAIOutboundRequestPolicy,
+      );
     } else if (provider === "dashscope") {
       await synthesizeDashScope(
         filepath,
@@ -120,6 +135,7 @@ async function synthesizeOpenAI(
   model: string,
   maxOutputBytes: number,
   abortSignal?: AbortSignal,
+  outboundRequestPolicy?: TtsOpenAIOutboundRequestPolicy,
 ): Promise<void> {
   const apiKey = readOptionalEnv(
     "BELLDANDY_TTS_OPENAI_API_KEY",
@@ -136,7 +152,15 @@ async function synthesizeOpenAI(
   }
 
   throwIfAborted(abortSignal);
-  const openai = new OpenAI({ apiKey, baseURL });
+  const resolvedBaseURL = baseURL ?? DEFAULT_OPENAI_BASE_URL;
+  const openai = new OpenAI({
+    apiKey,
+    baseURL: resolvedBaseURL,
+    fetch: createTtsOpenAIFetch({
+      baseURL: resolvedBaseURL,
+      outboundRequestPolicy,
+    }),
+  });
   const mp3 = await raceWithAbort(
     (openai.audio.speech.create as any)({
       model: model as any,

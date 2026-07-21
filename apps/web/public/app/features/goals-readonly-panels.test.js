@@ -1,17 +1,20 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import { createGoalsReadonlyPanelsFeature } from "./goals-readonly-panels.js";
 
+afterEach(() => {
+  document.body.replaceChildren();
+});
+
 describe("goals readonly panels", () => {
   it("renders long continuation targets with an in-card wrapping button class", () => {
-    const panel = { innerHTML: "" };
+    document.body.innerHTML = '<section id="goalsDetail"><div id="goalHandoffPanel"></div></section>';
+    const panel = document.getElementById("goalHandoffPanel");
     const feature = createGoalsReadonlyPanelsFeature({
       refs: {
-        goalsDetailEl: {
-          querySelector(selector) {
-            return selector === "#goalHandoffPanel" ? panel : null;
-          },
-        },
+        goalsDetailEl: document.getElementById("goalsDetail"),
       },
       escapeHtml: (value) => String(value ?? ""),
       formatDateTime: (value) => String(value ?? "-"),
@@ -52,19 +55,16 @@ describe("goals readonly panels", () => {
       },
     });
 
-    expect(panel.innerHTML).toContain("goal-continuation-target-btn");
-    expect(panel.innerHTML).toContain("title=\"node:node_d1c48b7e_with_a_very_long_suffix_to_stress_the_layout\"");
+    expect(panel.querySelector(".goal-continuation-target-btn")).not.toBeNull();
+    expect(panel.querySelector(".goal-continuation-target-btn")?.getAttribute("title")).toBe("node:node_d1c48b7e_with_a_very_long_suffix_to_stress_the_layout");
   });
 
   it("renders bridge governance reference summary inside the handoff panel", () => {
-    const panel = { innerHTML: "" };
+    document.body.innerHTML = '<section id="goalsDetail"><div id="goalHandoffPanel"></div></section>';
+    const panel = document.getElementById("goalHandoffPanel");
     const feature = createGoalsReadonlyPanelsFeature({
       refs: {
-        goalsDetailEl: {
-          querySelector(selector) {
-            return selector === "#goalHandoffPanel" ? panel : null;
-          },
-        },
+        goalsDetailEl: document.getElementById("goalsDetail"),
       },
       escapeHtml: (value) => String(value ?? ""),
       formatDateTime: (value) => String(value ?? "-"),
@@ -134,10 +134,10 @@ describe("goals readonly panels", () => {
       },
     });
 
-    expect(panel.innerHTML).toContain("Bridge 引用摘要");
-    expect(panel.innerHTML).toContain("运行态丢失 1");
-    expect(panel.innerHTML).toContain("Bridge session runtime-lost via codex_session.interactive");
-    expect(panel.innerHTML).toContain("artifacts/bridge.md");
-    expect(panel.innerHTML).toContain("logs/bridge.jsonl");
+    expect(panel.textContent).toContain("Bridge 引用摘要");
+    expect(panel.textContent).toContain("运行态丢失 1");
+    expect(panel.textContent).toContain("Bridge session runtime-lost via codex_session.interactive");
+    expect(panel.textContent).toContain("artifacts/bridge.md");
+    expect(panel.textContent).toContain("logs/bridge.jsonl");
   });
 });

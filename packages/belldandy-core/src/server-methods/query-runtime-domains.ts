@@ -60,7 +60,11 @@ import {
   type QueryRuntimeToolsContext,
 } from "../query-runtime-tools.js";
 import type { ResidentAgentRuntimeRegistry } from "../resident-agent-runtime.js";
-import type { SubTaskRecord, SubTaskRuntimeStore } from "../task-runtime.js";
+import type {
+  SubTaskCommandRequestOptions,
+  SubTaskRecord,
+  SubTaskRuntimeStore,
+} from "../task-runtime.js";
 import type { ToolControlConfirmationStore } from "../tool-control-confirmation-store.js";
 import type { ToolsConfigManager } from "../tools-config.js";
 
@@ -89,10 +93,27 @@ type QueryRuntimeDomainsMethodContext = {
     conversationId: string;
     runId?: string;
   }) => Promise<ConversationPromptSnapshotArtifact | undefined>;
-  resumeSubTask?: (taskId: string, message?: string) => Promise<SubTaskRecord | undefined>;
-  takeoverSubTask?: (taskId: string, agentId: string, message?: string) => Promise<SubTaskRecord | undefined>;
-  updateSubTask?: (taskId: string, message: string) => Promise<SubTaskRecord | undefined>;
-  stopSubTask?: (taskId: string, reason?: string) => Promise<SubTaskRecord | undefined>;
+  resumeSubTask?: (
+    taskId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  takeoverSubTask?: (
+    taskId: string,
+    agentId: string,
+    message?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  updateSubTask?: (
+    taskId: string,
+    message: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
+  stopSubTask?: (
+    taskId: string,
+    reason?: string,
+    options?: SubTaskCommandRequestOptions,
+  ) => Promise<SubTaskRecord | undefined>;
   externalOutboundConfirmationStore?: ExternalOutboundConfirmationStore;
   externalOutboundSenderRegistry?: ExternalOutboundSenderRegistry;
   externalOutboundAuditStore?: ExternalOutboundAuditStore;
@@ -127,6 +148,14 @@ type BridgeRuntimeMethod =
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseExpectedRevision(value: unknown):
+  | { ok: true; value?: number }
+  | { ok: false } {
+  if (value === undefined) return { ok: true };
+  if (!Number.isInteger(value) || Number(value) < 0) return { ok: false };
+  return { ok: true, value: Number(value) };
 }
 
 function createToolsRuntimeContext(requestId: string, ctx: QueryRuntimeDomainsMethodContext) {
@@ -397,9 +426,22 @@ export async function handleQueryRuntimeDomainsMethod(
         ? params.conversationId.trim()
         : undefined;
       const includeArchived = params.includeArchived === true;
+      const paginationRequested = params.limit !== undefined || params.cursor !== undefined;
+      const limit = params.limit;
+      const cursor = typeof params.cursor === "string" ? params.cursor.trim() : undefined;
+      if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 200)) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "limit must be an integer between 1 and 200" } };
+      }
+      if (params.cursor !== undefined && !cursor) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "cursor must be a non-empty string" } };
+      }
       return handleSubTaskListWithQueryRuntime(createSubTaskRuntimeContext(req.id, ctx), {
         conversationId,
         includeArchived,
+        ...(paginationRequested ? {
+          limit: limit === undefined ? undefined : Number(limit),
+          cursor,
+        } : {}),
       });
     }
 
@@ -420,12 +462,17 @@ export async function handleQueryRuntimeDomainsMethod(
       const message = typeof params.message === "string" && params.message.trim()
         ? params.message.trim()
         : undefined;
+      const expectedRevision = parseExpectedRevision(params.expectedRevision);
       if (!taskId) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "taskId is required" } };
+      }
+      if (!expectedRevision.ok) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "expectedRevision must be a non-negative integer" } };
       }
       return handleSubTaskResumeWithQueryRuntime(createSubTaskRuntimeContext(req.id, ctx), {
         taskId,
         message,
+        expectedRevision: expectedRevision.value,
       });
     }
 
@@ -436,16 +483,21 @@ export async function handleQueryRuntimeDomainsMethod(
       const message = typeof params.message === "string" && params.message.trim()
         ? params.message.trim()
         : undefined;
+      const expectedRevision = parseExpectedRevision(params.expectedRevision);
       if (!taskId) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "taskId is required" } };
       }
       if (!agentId) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "agentId is required" } };
       }
+      if (!expectedRevision.ok) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "expectedRevision must be a non-negative integer" } };
+      }
       return handleSubTaskTakeoverWithQueryRuntime(createSubTaskRuntimeContext(req.id, ctx), {
         taskId,
         agentId,
         message,
+        expectedRevision: expectedRevision.value,
       });
     }
 
@@ -453,15 +505,20 @@ export async function handleQueryRuntimeDomainsMethod(
       const params = isObjectRecord(req.params) ? req.params : {};
       const taskId = typeof params.taskId === "string" ? params.taskId.trim() : "";
       const message = typeof params.message === "string" ? params.message.trim() : "";
+      const expectedRevision = parseExpectedRevision(params.expectedRevision);
       if (!taskId) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "taskId is required" } };
       }
       if (!message) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "message is required" } };
       }
+      if (!expectedRevision.ok) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "expectedRevision must be a non-negative integer" } };
+      }
       return handleSubTaskUpdateWithQueryRuntime(createSubTaskRuntimeContext(req.id, ctx), {
         taskId,
         message,
+        expectedRevision: expectedRevision.value,
       });
     }
 
@@ -471,12 +528,17 @@ export async function handleQueryRuntimeDomainsMethod(
       const reason = typeof params.reason === "string" && params.reason.trim()
         ? params.reason.trim()
         : undefined;
+      const expectedRevision = parseExpectedRevision(params.expectedRevision);
       if (!taskId) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "taskId is required" } };
+      }
+      if (!expectedRevision.ok) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "expectedRevision must be a non-negative integer" } };
       }
       return handleSubTaskStopWithQueryRuntime(createSubTaskRuntimeContext(req.id, ctx), {
         taskId,
         reason,
+        expectedRevision: expectedRevision.value,
       });
     }
 

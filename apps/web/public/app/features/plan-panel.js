@@ -105,6 +105,243 @@ function buildBadgeClassNames(kind) {
   return "";
 }
 
+function createPlanTextElement(ownerDocument, tagName, className, value) {
+  const element = ownerDocument.createElement(tagName);
+  element.className = className;
+  element.textContent = String(value ?? "");
+  return element;
+}
+
+function createPlanBadgeElement(ownerDocument, value, className = "") {
+  return createPlanTextElement(
+    ownerDocument,
+    "span",
+    ["memory-badge", className].filter(Boolean).join(" "),
+    value,
+  );
+}
+
+function createPlanElement(ownerDocument, tagName, className = "") {
+  const element = ownerDocument.createElement(tagName);
+  if (className) element.className = className;
+  return element;
+}
+
+function createPlanActionElement(ownerDocument, tagName, className, label, action, title) {
+  const element = createPlanTextElement(ownerDocument, tagName, className, label);
+  if (title) {
+    element.title = String(title);
+  }
+  if (tagName === "button") {
+    element.type = "button";
+    element.setAttribute("aria-label", String(title));
+    element.setAttribute("data-plan-action", action);
+  }
+  return element;
+}
+
+function createPlanModalContent({
+  ownerDocument,
+  planState,
+  currentStep,
+  completedSteps,
+  totalSteps,
+  focusedStepId,
+  focusedRefKey,
+  workflowStatusByJournalId,
+  formatDateTime,
+  t,
+}) {
+  const fragment = ownerDocument.createDocumentFragment();
+  const summary = createPlanElement(ownerDocument, "div", "session-plan-modal-summary");
+  summary.append(
+    createPlanTextElement(
+      ownerDocument,
+      "div",
+      "session-plan-modal-plan-title",
+      planState?.title || t("panel.sessionPlanTitle", {}, "Current Plan"),
+    ),
+  );
+  if (planState?.summary) {
+    summary.append(
+      createPlanTextElement(ownerDocument, "div", "session-plan-modal-plan-summary", planState.summary),
+    );
+  }
+  const summaryChips = createPlanElement(ownerDocument, "div", "session-plan-modal-chip-row");
+  summaryChips.append(
+    createPlanBadgeElement(ownerDocument, formatPlanStatus(planState?.status, t), buildBadgeClassNames(planState?.status)),
+    createPlanBadgeElement(ownerDocument, formatPlanMode(planState?.mode, t)),
+    createPlanBadgeElement(
+      ownerDocument,
+      t("panel.sessionPlanRevision", { revision: String(planState?.revision || 0) }, `r${planState?.revision || 0}`),
+    ),
+  );
+  summary.append(summaryChips);
+  fragment.append(summary);
+
+  const grid = createPlanElement(ownerDocument, "div", "session-plan-modal-grid");
+  const gridItems = [
+    [
+      t("panel.sessionPlanCurrentStepLabel", {}, "Current Step"),
+      currentStep?.title || "-",
+    ],
+    [
+      t("panel.sessionPlanNextActionLabel", {}, "Next Action"),
+      planState?.nextAction || "-",
+    ],
+    [
+      t("panel.sessionPlanBlockerLabel", {}, "Blocker"),
+      planState?.blocker || currentStep?.blocker || "-",
+    ],
+  ];
+  for (const [label, value] of gridItems) {
+    const card = createPlanElement(ownerDocument, "div", "session-plan-modal-card");
+    card.append(
+      createPlanTextElement(ownerDocument, "span", "session-plan-modal-card-label", label),
+      createPlanTextElement(ownerDocument, "div", "session-plan-modal-card-value", value),
+    );
+    grid.append(card);
+  }
+  fragment.append(grid);
+
+  const section = createPlanElement(ownerDocument, "section", "session-plan-modal-section");
+  const sectionHead = createPlanElement(ownerDocument, "div", "session-plan-modal-section-head");
+  const sectionTitle = createPlanTextElement(
+    ownerDocument,
+    "div",
+    "session-plan-modal-section-title",
+    t("panel.sessionPlanStepListLabel", {}, "Steps"),
+  );
+  const progress = createPlanElement(ownerDocument, "div", "session-plan-modal-chip-row");
+  progress.append(
+    createPlanBadgeElement(
+      ownerDocument,
+      t(
+        "panel.sessionPlanProgress",
+        { completed: String(completedSteps), total: String(totalSteps) },
+        `Steps ${completedSteps}/${totalSteps}`,
+      ),
+    ),
+  );
+  sectionHead.append(sectionTitle, progress);
+  section.append(sectionHead);
+
+  const stepList = createPlanElement(ownerDocument, "div", "session-plan-step-list");
+  if (Array.isArray(planState?.steps) && planState.steps.length > 0) {
+    for (const step of planState.steps) {
+      const isCurrent = Boolean(currentStep?.id && currentStep.id === step?.id);
+      const isFocused = Boolean(step?.id && focusedStepId === step.id);
+      const stepItem = createPlanElement(
+        ownerDocument,
+        "div",
+        [
+          "session-plan-step-item",
+          isCurrent ? "is-current" : "",
+          step?.status === "blocked" ? "is-blocked" : "",
+          isFocused ? "is-continuation-focus" : "",
+        ].filter(Boolean).join(" "),
+      );
+      stepItem.setAttribute("data-plan-step-id", String(step?.id || ""));
+      const stepHead = createPlanElement(ownerDocument, "div", "session-plan-step-head");
+      const titleRow = createPlanElement(ownerDocument, "div", "session-plan-step-title-row");
+      titleRow.append(
+        createPlanBadgeElement(ownerDocument, formatPlanStepStatus(step?.status, t), buildBadgeClassNames(step?.status)),
+      );
+      if (isCurrent) {
+        titleRow.append(
+          createPlanBadgeElement(
+            ownerDocument,
+            t("panel.sessionPlanStepCurrent", {}, "Current"),
+            "memory-badge-private",
+          ),
+        );
+      }
+      const stepAction = buildStepAction(step);
+      const stepTitle = step?.title || "-";
+      titleRow.append(
+        stepAction
+          ? createPlanActionElement(
+            ownerDocument,
+            "button",
+            "session-plan-step-title session-plan-step-action",
+            stepTitle,
+            stepAction,
+            stepTitle,
+          )
+          : createPlanTextElement(ownerDocument, "span", "session-plan-step-title", stepTitle),
+      );
+      stepHead.append(
+        titleRow,
+        createPlanTextElement(ownerDocument, "span", "session-plan-step-time", formatDateTime(step?.updatedAt)),
+      );
+      stepItem.append(stepHead);
+      if (step?.summary) {
+        stepItem.append(createPlanTextElement(ownerDocument, "div", "session-plan-step-summary", step.summary));
+      }
+      if (step?.blocker) {
+        stepItem.append(
+          createPlanTextElement(
+            ownerDocument,
+            "div",
+            "session-plan-step-blocker",
+            `${t("panel.sessionPlanBlockerLabel", {}, "Blocker")}: ${step.blocker}`,
+          ),
+        );
+      }
+
+      if (Array.isArray(step?.refs) && step.refs.length > 0) {
+        const refs = createPlanElement(ownerDocument, "div", "session-plan-step-refs");
+        for (const ref of step.refs) {
+          const label = buildPlanRefLabel(ref, t);
+          if (!label) continue;
+          const action = buildRefAction(ref);
+          const focusKey = buildRefFocusKey(ref);
+          const journalId = typeof ref?.journalId === "string" ? ref.journalId.trim() : "";
+          const workflowState = ref?.kind === "workflow"
+            ? workflowStatusByJournalId?.[journalId]
+            : null;
+          const workflowStatus = ref?.kind === "workflow"
+            ? buildWorkflowStatusText(workflowState, t)
+            : "";
+          const workflowStatusClass = ref?.kind === "workflow"
+            ? normalizeWorkflowStatus(workflowState?.status)
+            : "";
+          const classNames = [
+            "memory-badge",
+            "session-plan-ref-badge",
+            focusKey && focusedRefKey === focusKey ? "is-continuation-focus" : "",
+            workflowStatusClass ? `is-workflow-${workflowStatusClass}` : "",
+          ].filter(Boolean).join(" ");
+          const title = workflowStatus || label;
+          const badge = action
+            ? createPlanActionElement(ownerDocument, "button", classNames, label, action, title)
+            : createPlanActionElement(ownerDocument, "span", classNames, label, "", title);
+          const entry = createPlanElement(ownerDocument, "span", "session-plan-ref-entry");
+          entry.append(badge);
+          if (workflowStatus) {
+            entry.append(createPlanTextElement(ownerDocument, "span", "session-plan-ref-status", workflowStatus));
+          }
+          refs.append(entry);
+        }
+        stepItem.append(refs);
+      }
+      stepList.append(stepItem);
+    }
+  } else {
+    stepList.append(
+      createPlanTextElement(
+        ownerDocument,
+        "div",
+        "session-plan-empty",
+        t("panel.sessionPlanEmptySteps", {}, "No steps in the current plan yet."),
+      ),
+    );
+  }
+  section.append(stepList);
+  fragment.append(section);
+  return fragment;
+}
+
 function escapeAttribute(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -348,7 +585,10 @@ export function createPlanPanelFeature({
     const visible = syncVisibility();
     const shouldOpen = visible && state.modalOpen;
     sessionPlanModalEl.classList.toggle("hidden", !shouldOpen);
-    if (!shouldOpen) return;
+    if (!shouldOpen) {
+      if (!visible) sessionPlanModalContentEl?.replaceChildren();
+      return;
+    }
 
     const planState = state.planState;
     const currentStep = resolveCurrentStep(planState);
@@ -390,124 +630,19 @@ export function createPlanPanelFeature({
       sessionPlanModalCloseBtn.setAttribute("aria-label", closeText);
     }
     if (sessionPlanModalContentEl) {
-      const stepsMarkup = Array.isArray(planState?.steps) && planState.steps.length > 0
-        ? planState.steps.map((step) => {
-          const isCurrent = Boolean(currentStep?.id && currentStep.id === step?.id);
-          const isFocused = Boolean(step?.id && state.focusedStepId === step.id);
-          const stepAction = buildStepAction(step);
-          const refsMarkup = Array.isArray(step?.refs) && step.refs.length > 0
-            ? `
-              <div class="session-plan-step-refs">
-                ${step.refs
-                  .map((ref) => {
-                    const label = buildPlanRefLabel(ref, t);
-                    if (!label) return "";
-                    const action = buildRefAction(ref);
-                    const focusKey = buildRefFocusKey(ref);
-                    const journalId = typeof ref?.journalId === "string" ? ref.journalId.trim() : "";
-                    const workflowState = ref?.kind === "workflow"
-                      ? state.workflowStatusByJournalId?.[journalId]
-                      : null;
-                    const workflowStatus = ref?.kind === "workflow"
-                      ? buildWorkflowStatusText(workflowState, t)
-                      : "";
-                    const workflowStatusClass = ref?.kind === "workflow"
-                      ? normalizeWorkflowStatus(workflowState?.status)
-                      : "";
-                    const classNames = [
-                      "memory-badge",
-                      "session-plan-ref-badge",
-                      focusKey && state.focusedRefKey === focusKey ? "is-continuation-focus" : "",
-                      workflowStatusClass ? `is-workflow-${workflowStatusClass}` : "",
-                    ].filter(Boolean).join(" ");
-                    const title = workflowStatus || label;
-                    const badgeMarkup = !action
-                      ? `<span class="${classNames}" title="${escapeAttribute(title)}">${escapeHtml(label)}</span>`
-                      : `
-                        <button
-                          type="button"
-                          class="${classNames}"
-                          data-plan-action="${escapeAttribute(action)}"
-                          title="${escapeAttribute(title)}"
-                          aria-label="${escapeAttribute(title)}"
-                        >${escapeHtml(label)}</button>
-                      `;
-                    const statusMarkup = workflowStatus
-                      ? `<span class="session-plan-ref-status">${escapeHtml(workflowStatus)}</span>`
-                      : "";
-                    return `
-                      <span class="session-plan-ref-entry">
-                        ${badgeMarkup}
-                        ${statusMarkup}
-                      </span>
-                    `;
-                  })
-                  .join("")}
-              </div>
-            `
-            : "";
-          return `
-            <div class="session-plan-step-item${isCurrent ? " is-current" : ""}${step?.status === "blocked" ? " is-blocked" : ""}${isFocused ? " is-continuation-focus" : ""}" data-plan-step-id="${escapeAttribute(step?.id || "")}">
-              <div class="session-plan-step-head">
-                <div class="session-plan-step-title-row">
-                  <span class="memory-badge ${buildBadgeClassNames(step?.status)}">${escapeHtml(formatPlanStepStatus(step?.status, t))}</span>
-                  ${isCurrent ? `<span class="memory-badge memory-badge-private">${escapeHtml(t("panel.sessionPlanStepCurrent", {}, "Current"))}</span>` : ""}
-                  ${stepAction
-                    ? `
-                      <button
-                        type="button"
-                        class="session-plan-step-title session-plan-step-action"
-                        data-plan-action="${escapeAttribute(stepAction)}"
-                        title="${escapeAttribute(step?.title || "-")}"
-                        aria-label="${escapeAttribute(step?.title || "-")}"
-                      >${escapeHtml(step?.title || "-")}</button>
-                    `
-                    : `<span class="session-plan-step-title">${escapeHtml(step?.title || "-")}</span>`}
-                </div>
-                <span class="session-plan-step-time">${escapeHtml(formatDateTime(step?.updatedAt))}</span>
-              </div>
-              ${step?.summary ? `<div class="session-plan-step-summary">${escapeHtml(step.summary)}</div>` : ""}
-              ${step?.blocker ? `<div class="session-plan-step-blocker">${escapeHtml(t("panel.sessionPlanBlockerLabel", {}, "Blocker"))}: ${escapeHtml(step.blocker)}</div>` : ""}
-              ${refsMarkup}
-            </div>
-          `;
-        }).join("")
-        : `<div class="session-plan-empty">${escapeHtml(t("panel.sessionPlanEmptySteps", {}, "No steps in the current plan yet."))}</div>`;
-
-      sessionPlanModalContentEl.innerHTML = `
-        <div class="session-plan-modal-summary">
-          <div class="session-plan-modal-plan-title">${escapeHtml(planState?.title || t("panel.sessionPlanTitle", {}, "Current Plan"))}</div>
-          ${planState?.summary ? `<div class="session-plan-modal-plan-summary">${escapeHtml(planState.summary)}</div>` : ""}
-          <div class="session-plan-modal-chip-row">
-            <span class="memory-badge ${buildBadgeClassNames(planState?.status)}">${escapeHtml(formatPlanStatus(planState?.status, t))}</span>
-            <span class="memory-badge">${escapeHtml(formatPlanMode(planState?.mode, t))}</span>
-            <span class="memory-badge">${escapeHtml(t("panel.sessionPlanRevision", { revision: String(planState?.revision || 0) }, `r${planState?.revision || 0}`))}</span>
-          </div>
-        </div>
-        <div class="session-plan-modal-grid">
-          <div class="session-plan-modal-card">
-            <span class="session-plan-modal-card-label">${escapeHtml(t("panel.sessionPlanCurrentStepLabel", {}, "Current Step"))}</span>
-            <div class="session-plan-modal-card-value">${escapeHtml(currentStep?.title || "-")}</div>
-          </div>
-          <div class="session-plan-modal-card">
-            <span class="session-plan-modal-card-label">${escapeHtml(t("panel.sessionPlanNextActionLabel", {}, "Next Action"))}</span>
-            <div class="session-plan-modal-card-value">${escapeHtml(planState?.nextAction || "-")}</div>
-          </div>
-          <div class="session-plan-modal-card">
-            <span class="session-plan-modal-card-label">${escapeHtml(t("panel.sessionPlanBlockerLabel", {}, "Blocker"))}</span>
-            <div class="session-plan-modal-card-value">${escapeHtml(planState?.blocker || currentStep?.blocker || "-")}</div>
-          </div>
-        </div>
-        <section class="session-plan-modal-section">
-          <div class="session-plan-modal-section-head">
-            <div class="session-plan-modal-section-title">${escapeHtml(t("panel.sessionPlanStepListLabel", {}, "Steps"))}</div>
-            <div class="session-plan-modal-chip-row">
-              <span class="memory-badge">${escapeHtml(t("panel.sessionPlanProgress", { completed: String(completedSteps), total: String(totalSteps) }, `Steps ${completedSteps}/${totalSteps}`))}</span>
-            </div>
-          </div>
-          <div class="session-plan-step-list">${stepsMarkup}</div>
-        </section>
-      `;
+      const ownerDocument = sessionPlanModalContentEl.ownerDocument ?? document;
+      sessionPlanModalContentEl.replaceChildren(createPlanModalContent({
+        ownerDocument,
+        planState,
+        currentStep,
+        completedSteps,
+        totalSteps,
+        focusedStepId: state.focusedStepId,
+        focusedRefKey: state.focusedRefKey,
+        workflowStatusByJournalId: state.workflowStatusByJournalId,
+        formatDateTime,
+        t,
+      }));
     }
   }
 
@@ -537,27 +672,76 @@ export function createPlanPanelFeature({
     const summaryText = buildSummaryText(planState, t);
     const openTitle = t("panel.sessionPlanOpenFull", {}, "Click to view the full plan");
 
-    sessionPlanSummaryEl.innerHTML = `
-      <div class="session-plan-card is-interactive" role="button" tabindex="0" title="${escapeHtml(openTitle)}" aria-label="${escapeHtml(openTitle)}">
-        <div class="session-plan-card-head">
-          <div class="session-plan-title-row">
-            <div class="session-plan-title">${escapeHtml(planState?.title || t("panel.sessionPlanTitle", {}, "Current Plan"))}</div>
-            <div class="session-plan-badges">
-              <span class="memory-badge ${buildBadgeClassNames(planState?.status)}">${escapeHtml(formatPlanStatus(planState?.status, t))}</span>
-              <span class="memory-badge">${escapeHtml(formatPlanMode(planState?.mode, t))}</span>
-              <span class="memory-badge">${escapeHtml(t("panel.sessionPlanProgress", { completed: String(completedSteps), total: String(totalSteps) }, `Steps ${completedSteps}/${totalSteps}`))}</span>
-              ${currentStep ? `<span class="memory-badge memory-badge-private">${escapeHtml(t("panel.sessionPlanStepCurrent", {}, "Current"))}</span>` : ""}
-            </div>
-          </div>
-          <div class="session-plan-meta">
-            <span>${escapeHtml(t("panel.sessionPlanRevision", { revision: String(planState?.revision || 0) }, `r${planState?.revision || 0}`))}</span>
-            <span>${escapeHtml(updatedBy)}</span>
-            <span>${escapeHtml(updatedAt)}</span>
-          </div>
-        </div>
-        <div class="session-plan-summary-text">${escapeHtml(summaryText)}</div>
-      </div>
-    `;
+    const ownerDocument = sessionPlanSummaryEl.ownerDocument ?? document;
+    const card = ownerDocument.createElement("div");
+    card.className = "session-plan-card is-interactive";
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
+    card.title = String(openTitle ?? "");
+    card.setAttribute("aria-label", String(openTitle ?? ""));
+
+    const head = ownerDocument.createElement("div");
+    head.className = "session-plan-card-head";
+    const titleRow = ownerDocument.createElement("div");
+    titleRow.className = "session-plan-title-row";
+    const title = createPlanTextElement(
+      ownerDocument,
+      "div",
+      "session-plan-title",
+      planState?.title || t("panel.sessionPlanTitle", {}, "Current Plan"),
+    );
+    const badges = ownerDocument.createElement("div");
+    badges.className = "session-plan-badges";
+    badges.append(
+      createPlanBadgeElement(
+        ownerDocument,
+        formatPlanStatus(planState?.status, t),
+        buildBadgeClassNames(planState?.status),
+      ),
+      createPlanBadgeElement(ownerDocument, formatPlanMode(planState?.mode, t)),
+      createPlanBadgeElement(
+        ownerDocument,
+        t(
+          "panel.sessionPlanProgress",
+          { completed: String(completedSteps), total: String(totalSteps) },
+          `Steps ${completedSteps}/${totalSteps}`,
+        ),
+      ),
+      ...(currentStep
+        ? [createPlanBadgeElement(
+            ownerDocument,
+            t("panel.sessionPlanStepCurrent", {}, "Current"),
+            "memory-badge-private",
+          )]
+        : []),
+    );
+    titleRow.append(title, badges);
+
+    const meta = ownerDocument.createElement("div");
+    meta.className = "session-plan-meta";
+    meta.append(
+      createPlanTextElement(
+        ownerDocument,
+        "span",
+        "",
+        t(
+          "panel.sessionPlanRevision",
+          { revision: String(planState?.revision || 0) },
+          `r${planState?.revision || 0}`,
+        ),
+      ),
+      createPlanTextElement(ownerDocument, "span", "", updatedBy),
+      createPlanTextElement(ownerDocument, "span", "", updatedAt),
+    );
+    head.append(titleRow, meta);
+    const summary = createPlanTextElement(
+      ownerDocument,
+      "div",
+      "session-plan-summary-text",
+      summaryText,
+    );
+    card.append(head, summary);
+    sessionPlanSummaryEl.replaceChildren(card);
     renderModal();
   }
 

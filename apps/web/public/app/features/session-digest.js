@@ -96,6 +96,47 @@ function formatDigestTimestamp(value, formatDateTime, t) {
   return formatDateTime(value);
 }
 
+function renderSessionDigestModalActions(container, actions) {
+  const ownerDocument = container.ownerDocument ?? document;
+  const fragment = ownerDocument.createDocumentFragment();
+  for (const action of actions) {
+    const button = ownerDocument.createElement("button");
+    button.type = "button";
+    button.className = "button button-muted session-digest-action-btn";
+    button.setAttribute("data-history-action", String(action.id ?? ""));
+    button.textContent = String(action.label ?? "");
+    fragment.append(button);
+  }
+  container.replaceChildren(fragment);
+}
+
+function createSessionDigestTextElement(ownerDocument, tagName, className, value) {
+  const element = ownerDocument.createElement(tagName);
+  element.className = className;
+  element.textContent = String(value ?? "");
+  return element;
+}
+
+function createSessionDigestModalCard(ownerDocument, label, value) {
+  const card = ownerDocument.createElement("div");
+  card.className = "session-digest-modal-card";
+  card.append(
+    createSessionDigestTextElement(
+      ownerDocument,
+      "span",
+      "session-digest-modal-card-label",
+      label,
+    ),
+    createSessionDigestTextElement(
+      ownerDocument,
+      "div",
+      "session-digest-modal-card-value",
+      value,
+    ),
+  );
+  return card;
+}
+
 export function createSessionDigestFeature({
   refs,
   isConnected,
@@ -152,10 +193,10 @@ export function createSessionDigestFeature({
     return Boolean(state.digest && getActiveConversationId() && isConnected());
   }
 
-  function buildContinuationModalMarkup() {
+  function buildContinuationModalElement(ownerDocument) {
     const continuation = state.continuationState;
     if (!continuation || typeof continuation !== "object") {
-      return "";
+      return null;
     }
 
     const checkpoints = continuation.checkpoints && typeof continuation.checkpoints === "object"
@@ -173,53 +214,110 @@ export function createSessionDigestFeature({
     const targetText = formatContinuationTargetLabel(continuation);
     const targetAction = buildContinuationAction(continuation);
     const encodedTargetAction = encodeContinuationAction(targetAction);
-    const targetMarkup = continuation.recommendedTargetId && encodedTargetAction
-      ? `
-        <button
-          type="button"
-          class="button button-muted session-digest-inline-action"
-          data-continuation-action="${escapeHtml(encodedTargetAction)}"
-        >${escapeHtml(targetText)}</button>
-      `
-      : escapeHtml(targetText);
+    const section = ownerDocument.createElement("section");
+    section.className = "session-digest-modal-section";
+    const head = ownerDocument.createElement("div");
+    head.className = "session-digest-modal-section-head";
+    const title = createSessionDigestTextElement(
+      ownerDocument,
+      "div",
+      "session-digest-modal-section-title",
+      t("panel.sessionContinuationLabel", {}, "Continuation"),
+    );
+    const statusChips = ownerDocument.createElement("div");
+    statusChips.className = "session-digest-modal-chip-row";
+    statusChips.append(
+      createSessionDigestTextElement(ownerDocument, "span", "memory-badge", continuation.resumeMode || "-"),
+      createSessionDigestTextElement(
+        ownerDocument,
+        "span",
+        "memory-badge",
+        t(
+          "panel.sessionContinuationMessages",
+          { count: String(progress.current || "-") },
+          String(progress.current || "-"),
+        ),
+      ),
+      createSessionDigestTextElement(
+        ownerDocument,
+        "span",
+        "memory-badge",
+        t(
+          "panel.sessionContinuationBoundaries",
+          { count: String(Number(checkpoints.openCount || 0)) },
+          `Boundaries ${Number(checkpoints.openCount || 0)}`,
+        ),
+      ),
+      createSessionDigestTextElement(
+        ownerDocument,
+        "span",
+        "memory-badge",
+        t(
+          "panel.sessionContinuationBlockers",
+          { count: String(Number(checkpoints.blockerCount || 0)) },
+          `Blockers ${Number(checkpoints.blockerCount || 0)}`,
+        ),
+      ),
+    );
+    head.append(title, statusChips);
 
-    return `
-      <section class="session-digest-modal-section">
-        <div class="session-digest-modal-section-head">
-          <div class="session-digest-modal-section-title">${escapeHtml(t("panel.sessionContinuationLabel", {}, "Continuation"))}</div>
-          <div class="session-digest-modal-chip-row">
-            <span class="memory-badge">${escapeHtml(continuation.resumeMode || "-")}</span>
-            <span class="memory-badge">${escapeHtml(t("panel.sessionContinuationMessages", { count: String(progress.current || "-") }, String(progress.current || "-")))}</span>
-            <span class="memory-badge">${escapeHtml(t("panel.sessionContinuationBoundaries", { count: String(Number(checkpoints.openCount || 0)) }, `Boundaries ${Number(checkpoints.openCount || 0)}`))}</span>
-            <span class="memory-badge">${escapeHtml(t("panel.sessionContinuationBlockers", { count: String(Number(checkpoints.blockerCount || 0)) }, `Blockers ${Number(checkpoints.blockerCount || 0)}`))}</span>
-          </div>
-        </div>
-        <div class="session-digest-modal-grid">
-          <div class="session-digest-modal-card">
-            <span class="session-digest-modal-card-label">${escapeHtml(t("panel.sessionContinuationTargetLabel", {}, "Target"))}</span>
-            <div class="session-digest-modal-card-value">${targetMarkup}</div>
-          </div>
-          <div class="session-digest-modal-card">
-            <span class="session-digest-modal-card-label">${escapeHtml(t("panel.sessionContinuationNextAction", {}, "Next Action"))}</span>
-            <div class="session-digest-modal-card-value">${escapeHtml(continuation.nextAction || "-")}</div>
-          </div>
-        </div>
-        <div class="session-digest-modal-card">
-          <span class="session-digest-modal-card-label">${escapeHtml(t("panel.sessionContinuationSummaryLabel", {}, "Continuation Summary"))}</span>
-          <div class="session-digest-modal-card-value">${escapeHtml(continuation.summary || t("panel.sessionContinuationEmpty", {}, "No continuation summary yet."))}</div>
-        </div>
-        ${labels.length ? `
-          <div class="session-digest-modal-chip-row">
-            ${labels.map((item) => `<span class="memory-badge">${escapeHtml(item)}</span>`).join("")}
-          </div>
-        ` : ""}
-        ${recent.length ? `
-          <div class="session-digest-modal-note-list">
-            ${recent.map((item) => `<div class="session-digest-modal-note">${escapeHtml(item)}</div>`).join("")}
-          </div>
-        ` : ""}
-      </section>
-    `;
+    const grid = ownerDocument.createElement("div");
+    grid.className = "session-digest-modal-grid";
+    const targetCard = createSessionDigestModalCard(
+      ownerDocument,
+      t("panel.sessionContinuationTargetLabel", {}, "Target"),
+      targetText,
+    );
+    if (continuation.recommendedTargetId && encodedTargetAction) {
+      const targetButton = ownerDocument.createElement("button");
+      targetButton.type = "button";
+      targetButton.className = "button button-muted session-digest-inline-action";
+      targetButton.setAttribute("data-continuation-action", encodedTargetAction);
+      targetButton.textContent = targetText;
+      targetCard.lastElementChild.replaceChildren(targetButton);
+    }
+    grid.append(
+      targetCard,
+      createSessionDigestModalCard(
+        ownerDocument,
+        t("panel.sessionContinuationNextAction", {}, "Next Action"),
+        continuation.nextAction || "-",
+      ),
+    );
+
+    const summaryCard = createSessionDigestModalCard(
+      ownerDocument,
+      t("panel.sessionContinuationSummaryLabel", {}, "Continuation Summary"),
+      continuation.summary || t(
+        "panel.sessionContinuationEmpty",
+        {},
+        "No continuation summary yet.",
+      ),
+    );
+    section.append(head, grid, summaryCard);
+
+    if (labels.length) {
+      const labelChips = ownerDocument.createElement("div");
+      labelChips.className = "session-digest-modal-chip-row";
+      labelChips.append(...labels.map((item) => (
+        createSessionDigestTextElement(ownerDocument, "span", "memory-badge", item)
+      )));
+      section.append(labelChips);
+    }
+    if (recent.length) {
+      const notes = ownerDocument.createElement("div");
+      notes.className = "session-digest-modal-note-list";
+      notes.append(...recent.map((item) => (
+        createSessionDigestTextElement(
+          ownerDocument,
+          "div",
+          "session-digest-modal-note",
+          item,
+        )
+      )));
+      section.append(notes);
+    }
+    return section;
   }
 
   function renderModal() {
@@ -290,20 +388,22 @@ export function createSessionDigestFeature({
           },
         ]
         : [];
-      sessionDigestModalActionsEl.innerHTML = actions.map((action) => `
-        <button
-          type="button"
-          class="button button-muted session-digest-action-btn"
-          data-history-action="${escapeHtml(action.id)}"
-        >${escapeHtml(action.label)}</button>
-      `).join("");
+      renderSessionDigestModalActions(sessionDigestModalActionsEl, actions);
       sessionDigestModalActionsEl.classList.toggle("hidden", actions.length === 0);
     }
     if (sessionDigestModalContentEl) {
-      sessionDigestModalContentEl.innerHTML = `
-        <div class="session-digest-modal-copy">${escapeHtml(summaryText)}</div>
-        ${buildContinuationModalMarkup()}
-      `;
+      const ownerDocument = sessionDigestModalContentEl.ownerDocument ?? document;
+      const summary = createSessionDigestTextElement(
+        ownerDocument,
+        "div",
+        "session-digest-modal-copy",
+        summaryText,
+      );
+      const continuation = buildContinuationModalElement(ownerDocument);
+      sessionDigestModalContentEl.replaceChildren(
+        summary,
+        ...(continuation ? [continuation] : []),
+      );
     }
   }
 
@@ -371,22 +471,40 @@ export function createSessionDigestFeature({
     const openFullTextTitle = t("panel.sessionDigestOpenFull", {}, "Click to view the full digest");
     const badgeItems = buildDigestBadgeItems(digest, state, t);
 
-    sessionDigestSummaryEl.innerHTML = `
-      <div class="session-digest-card is-interactive" role="button" tabindex="0" title="${escapeHtml(openFullTextTitle)}" aria-label="${escapeHtml(openFullTextTitle)}">
-        <div class="session-digest-head">
-          <div class="session-digest-badges">
-            ${badgeItems.map((item) => `
-              <span class="memory-badge ${item.className}" title="${escapeHtml(item.title)}">${escapeHtml(item.label)}</span>
-            `).join("")}
-          </div>
-          <div class="session-digest-meta">
-            <span>${escapeHtml(t("panel.sessionDigestLastDigest", { time: lastDigestAt }, `Last digest ${lastDigestAt}`))}</span>
-            <span>${escapeHtml(lastEventText)}</span>
-          </div>
-        </div>
-        <div class="session-digest-summary-text">${escapeHtml(summaryText)}</div>
-      </div>
-    `;
+    const ownerDocument = sessionDigestSummaryEl.ownerDocument ?? document;
+    const card = ownerDocument.createElement("div");
+    card.className = "session-digest-card is-interactive";
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
+    card.title = openFullTextTitle;
+    card.setAttribute("aria-label", openFullTextTitle);
+
+    const head = ownerDocument.createElement("div");
+    head.className = "session-digest-head";
+    const badges = ownerDocument.createElement("div");
+    badges.className = "session-digest-badges";
+    badges.replaceChildren(...badgeItems.map((item) => {
+      const badge = ownerDocument.createElement("span");
+      badge.className = ["memory-badge", item.className].filter(Boolean).join(" ");
+      badge.title = item.title;
+      badge.textContent = item.label;
+      return badge;
+    }));
+
+    const meta = ownerDocument.createElement("div");
+    meta.className = "session-digest-meta";
+    const lastDigest = ownerDocument.createElement("span");
+    lastDigest.textContent = t("panel.sessionDigestLastDigest", { time: lastDigestAt }, `Last digest ${lastDigestAt}`);
+    const lastEvent = ownerDocument.createElement("span");
+    lastEvent.textContent = lastEventText;
+    meta.replaceChildren(lastDigest, lastEvent);
+    head.replaceChildren(badges, meta);
+
+    const summary = ownerDocument.createElement("div");
+    summary.className = "session-digest-summary-text";
+    summary.textContent = summaryText;
+    card.replaceChildren(head, summary);
+    sessionDigestSummaryEl.replaceChildren(card);
     setRefreshButtonState();
     renderContinuationSummary();
     renderModal();

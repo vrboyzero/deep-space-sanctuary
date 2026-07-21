@@ -12,6 +12,7 @@ export {
 export {
     startCronScheduler,
     type CronGoalApprovalScanResult,
+    type CronRunExecutionContext,
     type CronSchedulerOptions,
     type CronSchedulerHandle,
     type CronSchedulerStatus,

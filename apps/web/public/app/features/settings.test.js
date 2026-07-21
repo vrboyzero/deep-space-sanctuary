@@ -37,8 +37,12 @@ function createFakeList() {
   const listeners = new Map();
   return {
     innerHTML: "",
+    children: [],
     addEventListener(type, handler) {
       listeners.set(type, handler);
+    },
+    replaceChildren(...children) {
+      this.children = children;
     },
     trigger(type, event) {
       listeners.get(type)?.(event);
@@ -149,13 +153,27 @@ function createDomNode() {
     textContent: "",
     innerHTML: "",
     children: [],
+    attributes: new Map(),
     appendChild(child) {
       this.children.push(child);
       return child;
     },
+    replaceChildren(...children) {
+      this.children = children;
+    },
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    },
+    getAttribute(name) {
+      return this.attributes.get(name) ?? null;
+    },
     addEventListener() {},
     classList: createClassList(),
   };
+}
+
+function readFakeText(node) {
+  return [node?.textContent || "", ...(node?.children || []).map(readFakeText)].join("");
 }
 
 function createInput(value = "") {
@@ -674,9 +692,33 @@ describe("settings controller", () => {
       },
     ]);
 
-    expect(pairingPendingList.innerHTML).toContain("ABCD1234");
-    expect(pairingPendingList.innerHTML).toContain("client-1");
-    expect(pairingPendingList.innerHTML).toContain("批准");
+    expect(readFakeText(pairingPendingList)).toContain("ABCD1234");
+    expect(readFakeText(pairingPendingList)).toContain("client-1");
+    expect(readFakeText(pairingPendingList)).toContain("批准");
+  });
+
+  it("renders pairing approvals without a non-empty innerHTML write", () => {
+    const pairingPendingList = createFakeList();
+    Object.defineProperty(pairingPendingList, "innerHTML", {
+      configurable: true,
+      get() {
+        return "";
+      },
+      set(value) {
+        if (value) throw new Error("Settings pending approvals must not use innerHTML");
+      },
+    });
+    const { controller } = createController({
+      refsOverrides: { pairingPendingList },
+    });
+
+    expect(() => controller.renderPairingPending([{
+      code: "ABCD1234",
+      clientId: "client-1",
+      message: "需要批准当前配对码。",
+      updatedAt: "2026-04-12T09:30:00.000Z",
+    }])).not.toThrow();
+    expect(pairingPendingList.children).toHaveLength(1);
   });
 
   it("routes pairing approval clicks through the provided handler", async () => {
@@ -2876,5 +2918,56 @@ describe("settings controller", () => {
     });
     expect(getWebchatPerformanceSummary).toHaveBeenCalledTimes(1);
     expect(getWebchatLifecycleSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders disconnected Doctor state without an HTML parser write", async () => {
+    const doctorToggleBtn = globalThis.document.getElementById("doctorToggleBtn");
+    let innerHtml = "";
+    Object.defineProperty(doctorToggleBtn, "innerHTML", {
+      configurable: true,
+      get() {
+        return innerHtml;
+      },
+      set(value) {
+        if (value) throw new Error("Doctor toggle must not use innerHTML");
+        innerHtml = value;
+      },
+    });
+
+    const { controller, sendReq } = createController({ isConnected: () => false });
+
+    await expect(controller.toggle(true)).resolves.toBeUndefined();
+    expect(sendReq).not.toHaveBeenCalled();
+    expect(doctorToggleBtn.className).toBe("button badge fail");
+    expect(doctorToggleBtn.children[0]?.textContent).toBe("Disconnected");
+    expect(doctorToggleBtn.children[0]?.getAttribute("data-i18n")).toBe("settings.doctorDisconnected");
+  });
+
+  it("replaces checking with the failed Doctor state after one summary request", async () => {
+    const doctorToggleBtn = globalThis.document.getElementById("doctorToggleBtn");
+    let innerHtml = "";
+    Object.defineProperty(doctorToggleBtn, "innerHTML", {
+      configurable: true,
+      get() {
+        return innerHtml;
+      },
+      set(value) {
+        if (value) throw new Error("Doctor toggle must not use innerHTML");
+        innerHtml = value;
+      },
+    });
+    const sendReq = vi.fn(async () => ({ ok: false, error: { message: "doctor failed" } }));
+    const { controller } = createController({ sendReq });
+
+    await expect(controller.toggle(true)).resolves.toBeUndefined();
+    const doctorCalls = sendReq.mock.calls
+      .map(([frame]) => frame)
+      .filter((frame) => frame.method === "system.doctor");
+    expect(doctorCalls).toHaveLength(1);
+    expect(doctorCalls[0].params).toEqual({ surface: "summary" });
+    expect(doctorToggleBtn.className).toBe("button badge fail");
+    expect(doctorToggleBtn.children).toHaveLength(1);
+    expect(doctorToggleBtn.children[0]?.textContent).toBe("Check Failed");
+    expect(doctorToggleBtn.children[0]?.getAttribute("data-i18n")).toBe("settings.doctorCheckFailed");
   });
 });

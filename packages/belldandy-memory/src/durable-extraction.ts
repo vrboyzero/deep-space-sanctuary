@@ -16,6 +16,11 @@ import {
   normalizeNonEmptyString,
   type DurableExtractionSkipReasonCode,
 } from "./durable-extraction-policy.js";
+import {
+  selectDurableExtractionInput,
+  type DurableExtractionInputLimits,
+  type DurableExtractionInputSelection,
+} from "./durable-extraction-input.js";
 
 export type DurableExtractionStatus = "idle" | "queued" | "running" | "completed" | "failed";
 
@@ -116,6 +121,22 @@ export type DurableExtractionRunResultEvent = {
   failure?: string;
 };
 
+export type DurableExtractionJobClaim = {
+  generation: number;
+  signal: AbortSignal;
+  complete: <T>(commit: () => T | Promise<T>) => Promise<
+    | { applied: true; value: T }
+    | { applied: false }
+  >;
+  release: (outcome?: "skipped" | "failed") => Promise<void> | void;
+};
+
+export type DurableExtractionJobClaimResult = DurableExtractionJobClaim | {
+  reason: string;
+  reasonCode?: string;
+  retryAfterMs?: number;
+};
+
 export type DurableExtractionRuntimeOptions = {
   stateDir: string;
   extractor: {
@@ -131,6 +152,13 @@ export type DurableExtractionRuntimeOptions = {
   };
   getMessages: (conversationId: string) => Promise<Array<{ role: string; content: string }>>;
   getDigest?: (conversationId: string) => Promise<DurableExtractionDigestSnapshot | undefined>;
+  inputLimits?: DurableExtractionInputLimits;
+  acquireJob?: (input: {
+    conversationId: string;
+    estimatedTokenUnits: number;
+    signal: AbortSignal;
+  }) => Promise<DurableExtractionJobClaimResult>;
+  closeDeadlineMs?: number;
   retryDelayMs?: number;
   minPendingMessages?: number;
   minMessageDelta?: number;
@@ -320,12 +348,53 @@ function normalizeExtractionResult(
   };
 }
 
+function isDurableExtractionJobClaim(
+  result: DurableExtractionJobClaimResult,
+): result is DurableExtractionJobClaim {
+  return !("reason" in result);
+}
+
+function toAbortError(signal: AbortSignal, fallback: string): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error(fallback);
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal, fallback: string): void {
+  if (signal.aborted) throw toAbortError(signal, fallback);
+}
+
+function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal, fallback: string): Promise<T> {
+  throwIfAborted(signal, fallback);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(toAbortError(signal, fallback));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export class DurableExtractionRuntime {
   private readonly runtimeDir: string;
   private readonly statePath: string;
   private readonly extractor: DurableExtractionRuntimeOptions["extractor"];
   private readonly getMessages: DurableExtractionRuntimeOptions["getMessages"];
   private readonly getDigest?: DurableExtractionRuntimeOptions["getDigest"];
+  private readonly inputLimits: DurableExtractionInputLimits;
+  private readonly acquireJob?: DurableExtractionRuntimeOptions["acquireJob"];
+  private readonly closeDeadlineMs: number;
   private readonly retryDelayMs: number;
   private readonly minPendingMessages: number;
   private readonly minMessageDelta: number;
@@ -343,6 +412,8 @@ export class DurableExtractionRuntime {
   private readonly inFlight = new Set<Promise<void>>();
   private writeChain = Promise.resolve();
   private loadPromise: Promise<void> | null = null;
+  private closePromise: Promise<void> | null = null;
+  private readonly closeController = new AbortController();
   private closed = false;
 
   constructor(options: DurableExtractionRuntimeOptions) {
@@ -351,6 +422,9 @@ export class DurableExtractionRuntime {
     this.extractor = options.extractor;
     this.getMessages = options.getMessages;
     this.getDigest = options.getDigest;
+    this.inputLimits = { ...options.inputLimits };
+    this.acquireJob = options.acquireJob;
+    this.closeDeadlineMs = Math.max(1, Math.floor(options.closeDeadlineMs ?? 5_000));
     this.retryDelayMs = Math.max(250, options.retryDelayMs ?? 2_000);
     this.minPendingMessages = Math.max(0, Math.floor(options.minPendingMessages ?? 0));
     this.minMessageDelta = Math.max(0, Math.floor(options.minMessageDelta ?? 0));
@@ -543,16 +617,39 @@ export class DurableExtractionRuntime {
   }
 
   async close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
+    if (!this.closeController.signal.aborted) {
+      this.closeController.abort(new Error("Durable extraction runtime is closing."));
+    }
     for (const timer of this.scheduled.values()) {
       clearTimeout(timer);
     }
     this.scheduled.clear();
+    this.closePromise = this.drainWithDeadline();
+    return this.closePromise;
+  }
 
-    while (this.inFlight.size > 0) {
-      await Promise.allSettled([...this.inFlight]);
+  private async drainWithDeadline(): Promise<void> {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<"timeout">((resolve) => {
+      deadline = setTimeout(() => resolve("timeout"), this.closeDeadlineMs);
+      deadline.unref?.();
+    });
+    const drained = Promise.allSettled([...this.inFlight])
+      .then(() => this.writeChain.catch(() => {}))
+      .then(() => "drained" as const);
+    try {
+      const outcome = await Promise.race([drained, timedOut]);
+      if (outcome === "timeout") {
+        this.logger?.warn?.("Durable extraction close deadline reached.", {
+          closeDeadlineMs: this.closeDeadlineMs,
+          inFlightCount: this.inFlight.size,
+        });
+      }
+    } finally {
+      if (deadline) clearTimeout(deadline);
     }
-    await this.writeChain.catch(() => {});
   }
 
   private evaluateQueueDecision(record: DurableExtractionRecord, snapshot: ExtractionSnapshot): {
@@ -702,6 +799,52 @@ export class DurableExtractionRuntime {
         return;
       }
 
+      let inputSelection: DurableExtractionInputSelection;
+      try {
+        const sourceMessages = await raceWithAbort(
+          this.getMessages(conversationId),
+          this.closeController.signal,
+          "Durable extraction input collection was aborted.",
+        );
+        inputSelection = selectDurableExtractionInput(sourceMessages, this.inputLimits);
+      } catch (error) {
+        if (this.closed || this.closeController.signal.aborted) return;
+        await this.recordPreparationFailure(conversationId, error);
+        return;
+      }
+
+      let jobClaim: DurableExtractionJobClaim | undefined;
+      if (this.acquireJob) {
+        let admission: DurableExtractionJobClaimResult;
+        try {
+          admission = await this.acquireJob({
+            conversationId,
+            estimatedTokenUnits: Math.max(1, inputSelection.inputBytes + 3_000),
+            signal: this.closeController.signal,
+          });
+        } catch (error) {
+          if (this.closed || this.closeController.signal.aborted) return;
+          await this.recordPreparationFailure(conversationId, error);
+          return;
+        }
+        if (!isDurableExtractionJobClaim(admission)) {
+          if (this.closed || this.closeController.signal.aborted) return;
+          await this.mutate(async () => {
+            const current = this.records.get(conversationId);
+            if (!current || current.status !== "queued") return;
+            current.updatedAt = Date.now();
+            current.lastSkipReason = admission.reasonCode ?? "memory_background_admission_rejected";
+            this.emitChange(current);
+          });
+          this.scheduleRun(
+            conversationId,
+            Math.max(this.retryDelayMs, admission.retryAfterMs ?? this.retryDelayMs),
+          );
+          return;
+        }
+        jobClaim = admission;
+      }
+
       const activeSnapshot = await this.mutate(async () => {
         const current = this.records.get(conversationId);
         if (!current || current.status !== "queued") {
@@ -729,6 +872,7 @@ export class DurableExtractionRuntime {
       });
 
       if (!activeSnapshot) {
+        await jobClaim?.release("skipped");
         return;
       }
       await this.safeInvoke(this.onRunStarted, {
@@ -743,23 +887,25 @@ export class DurableExtractionRuntime {
       let rejectedReasons: DurableMemoryRejectionReasonCode[] | undefined;
       let skipReason: DurableExtractionSkipReasonCode | string | undefined;
       let failure: string | undefined;
+      const runSignal = jobClaim?.signal ?? this.closeController.signal;
 
       try {
-        const messages = (await this.getMessages(conversationId))
-          .filter((item) => item && typeof item.role === "string" && typeof item.content === "string")
-          .map((item) => ({
-            role: item.role,
-            content: item.content,
-          }));
-        const extractionResult = await this.extractor.extractMemoriesFromConversation(
-          extractionKey,
-          messages,
-          {
-            markKey: extractionKey,
-            sourceConversationId: conversationId,
-            sourceLabel: extractionKey,
-          },
+        throwIfAborted(runSignal, "Durable extraction run was aborted.");
+        const extractionResult = await raceWithAbort(
+          this.extractor.extractMemoriesFromConversation(
+            extractionKey,
+            inputSelection.messages,
+            {
+              markKey: extractionKey,
+              sourceConversationId: conversationId,
+              sourceLabel: extractionKey,
+              signal: runSignal,
+            },
+          ),
+          runSignal,
+          "Durable extraction run was aborted.",
         );
+        throwIfAborted(runSignal, "Durable extraction run was aborted.");
         const normalized = normalizeExtractionResult(extractionResult);
         extractedCount = normalized.count;
         extractionSummary = normalized.summary;
@@ -768,79 +914,138 @@ export class DurableExtractionRuntime {
         rejectedReasons = normalized.rejectedReasons;
         skipReason = normalized.skipReason;
       } catch (error) {
+        if (runSignal.aborted || this.closed) {
+          await jobClaim?.release("skipped");
+          await this.recordCancelledRun(conversationId);
+          return;
+        }
         failure = error instanceof Error ? error.message : String(error);
       }
 
       let finalRunCount = activeSnapshot.runCount;
-      const shouldContinue = await this.mutate(async () => {
-        const current = this.records.get(conversationId) ?? buildIdleRecord(conversationId);
-        current.finishedAt = Date.now();
-        current.updatedAt = current.finishedAt;
-        current.lastExtractionKey = extractionKey;
-        finalRunCount = current.runCount;
+      const commitRun = async (): Promise<boolean> => {
+        throwIfAborted(runSignal, "Durable extraction completion was aborted.");
+        const shouldContinue = await this.mutate(async () => {
+          const current = this.records.get(conversationId) ?? buildIdleRecord(conversationId);
+          current.finishedAt = Date.now();
+          current.updatedAt = current.finishedAt;
+          current.lastExtractionKey = extractionKey;
+          finalRunCount = current.runCount;
 
-        if (failure) {
-          current.status = "failed";
-          current.error = failure;
-          current.consecutiveFailures = Math.max(0, Number(current.consecutiveFailures ?? 0)) + 1;
-          current.nextEligibleAt = current.finishedAt + this.computeFailureBackoffMs(current.consecutiveFailures);
-          current.lastExtractionSummary = `failure: ${failure}`;
-        } else {
-          current.status = "completed";
-          current.error = undefined;
-          current.lastExtractedAt = current.finishedAt;
-          current.lastExtractedDigestAt = activeSnapshot.queuedSnapshot.digestAt;
-          current.lastExtractedMessageCount = activeSnapshot.queuedSnapshot.messageCount;
-          current.lastExtractedMemoryCount = extractedCount;
-          current.lastExtractionSummary = extractionSummary;
-          current.lastAcceptedCandidateTypes = acceptedCandidateTypes;
-          current.lastRejectedCount = rejectedCount;
-          current.lastRejectedReasons = rejectedReasons;
-          current.consecutiveFailures = 0;
-          current.nextEligibleAt = this.successCooldownMs > 0
-            ? current.finishedAt + this.successCooldownMs
-            : undefined;
-          current.lastSkipReason = extractedCount === 0
-            ? skipReason ?? ((rejectedCount ?? 0) > 0 ? "policy_filtered" : undefined)
-            : undefined;
-        }
+          if (failure) {
+            current.status = "failed";
+            current.error = failure;
+            current.consecutiveFailures = Math.max(0, Number(current.consecutiveFailures ?? 0)) + 1;
+            current.nextEligibleAt = current.finishedAt + this.computeFailureBackoffMs(current.consecutiveFailures);
+            current.lastExtractionSummary = `failure: ${failure}`;
+          } else {
+            current.status = "completed";
+            current.error = undefined;
+            current.lastExtractedAt = current.finishedAt;
+            current.lastExtractedDigestAt = activeSnapshot.queuedSnapshot.digestAt;
+            current.lastExtractedMessageCount = activeSnapshot.queuedSnapshot.messageCount;
+            current.lastExtractedMemoryCount = extractedCount;
+            current.lastExtractionSummary = extractionSummary;
+            current.lastAcceptedCandidateTypes = acceptedCandidateTypes;
+            current.lastRejectedCount = rejectedCount;
+            current.lastRejectedReasons = rejectedReasons;
+            current.consecutiveFailures = 0;
+            current.nextEligibleAt = this.successCooldownMs > 0
+              ? current.finishedAt + this.successCooldownMs
+              : undefined;
+            current.lastSkipReason = extractedCount === 0
+              ? skipReason ?? ((rejectedCount ?? 0) > 0 ? "policy_filtered" : undefined)
+              : undefined;
+          }
 
-        const pendingSnapshot = readPendingSnapshot(current);
-        const pendingDecision = pendingSnapshot ? this.evaluateQueueDecision(current, pendingSnapshot) : undefined;
-        if (pendingSnapshot && pendingDecision?.shouldQueue) {
-          current.status = "queued";
-          current.finishedAt = undefined;
-          writeQueuedSnapshot(current, pendingSnapshot);
+          const pendingSnapshot = readPendingSnapshot(current);
+          const pendingDecision = pendingSnapshot ? this.evaluateQueueDecision(current, pendingSnapshot) : undefined;
+          if (pendingSnapshot && pendingDecision?.shouldQueue) {
+            current.status = "queued";
+            current.finishedAt = undefined;
+            writeQueuedSnapshot(current, pendingSnapshot);
+            clearPendingSnapshot(current);
+            this.emitChange(current);
+            return true;
+          }
+
           clearPendingSnapshot(current);
+          if (pendingDecision && !pendingDecision.shouldQueue) {
+            current.lastSkipReason = pendingDecision.reason;
+          }
           this.emitChange(current);
-          return true;
-        }
+          return false;
+        });
+        await this.safeInvoke(this.onRunFinished, {
+          conversationId,
+          source: activeSnapshot.queuedSnapshot.source,
+          requestedAt: activeSnapshot.queuedSnapshot.requestedAt,
+          digestAt: activeSnapshot.queuedSnapshot.digestAt,
+          messageCount: activeSnapshot.queuedSnapshot.messageCount,
+          threshold: activeSnapshot.queuedSnapshot.threshold,
+          digestStatus: activeSnapshot.queuedSnapshot.digestStatus,
+          extractionKey,
+          runCount: finalRunCount,
+          extractedCount,
+          failure,
+        });
+        return shouldContinue;
+      };
 
-        clearPendingSnapshot(current);
-        if (pendingDecision && !pendingDecision.shouldQueue) {
-          current.lastSkipReason = pendingDecision.reason;
+      let shouldContinue: boolean;
+      try {
+        if (jobClaim) {
+          const completion = await jobClaim.complete(commitRun);
+          if (!completion.applied) {
+            await this.recordCancelledRun(conversationId);
+            return;
+          }
+          shouldContinue = completion.value;
+        } else {
+          shouldContinue = await commitRun();
         }
-        this.emitChange(current);
-        return false;
-      });
-      await this.safeInvoke(this.onRunFinished, {
-        conversationId,
-        source: activeSnapshot.queuedSnapshot.source,
-        requestedAt: activeSnapshot.queuedSnapshot.requestedAt,
-        digestAt: activeSnapshot.queuedSnapshot.digestAt,
-        messageCount: activeSnapshot.queuedSnapshot.messageCount,
-        threshold: activeSnapshot.queuedSnapshot.threshold,
-        digestStatus: activeSnapshot.queuedSnapshot.digestStatus,
-        extractionKey,
-        runCount: finalRunCount,
-        extractedCount,
-        failure,
-      });
+      } catch (error) {
+        await jobClaim?.release(runSignal.aborted ? "skipped" : "failed");
+        if (runSignal.aborted || this.closed) {
+          await this.recordCancelledRun(conversationId);
+          return;
+        }
+        throw error;
+      }
 
       if (!shouldContinue) {
         return;
       }
     }
+  }
+
+  private async recordPreparationFailure(conversationId: string, error: unknown): Promise<void> {
+    const failure = error instanceof Error ? error.message : String(error);
+    await this.mutate(async () => {
+      const current = this.records.get(conversationId);
+      if (!current || current.status !== "queued") return;
+      current.status = "failed";
+      current.finishedAt = Date.now();
+      current.updatedAt = current.finishedAt;
+      current.error = failure;
+      current.consecutiveFailures = Math.max(0, Number(current.consecutiveFailures ?? 0)) + 1;
+      current.nextEligibleAt = current.finishedAt + this.computeFailureBackoffMs(current.consecutiveFailures);
+      current.lastExtractionSummary = `failure: ${failure}`;
+      this.emitChange(current);
+    });
+  }
+
+  private async recordCancelledRun(conversationId: string): Promise<void> {
+    await this.mutate(async () => {
+      const current = this.records.get(conversationId);
+      if (!current || current.status !== "running") return;
+      current.status = "failed";
+      current.finishedAt = Date.now();
+      current.updatedAt = current.finishedAt;
+      current.error = undefined;
+      current.lastSkipReason = "runtime_closed";
+      this.emitChange(current);
+    });
   }
 
   private buildExtractionKey(conversationId: string, snapshot: ExtractionSnapshot): string {

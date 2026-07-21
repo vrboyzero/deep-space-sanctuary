@@ -248,6 +248,11 @@ export class ResidentConversationStore extends ConversationStore {
     return this.withConversationStore(id, (store) => store.waitForPendingPersistence(id)) as ReturnType<ConversationStore["waitForPendingPersistence"]>;
   }
 
+  async waitForAllPendingPersistence(): Promise<void> {
+    const stores = [this.globalStore, ...this.getKnownResidentStores()];
+    await Promise.all(stores.map((store) => store.waitForAllPendingPersistence()));
+  }
+
   async getSessionTranscriptEvents(...args: Parameters<ConversationStore["getSessionTranscriptEvents"]>): ReturnType<ConversationStore["getSessionTranscriptEvents"]> {
     const [id] = args;
     return this.withConversationStore(id, (store) => store.getSessionTranscriptEvents(id)) as ReturnType<ConversationStore["getSessionTranscriptEvents"]>;

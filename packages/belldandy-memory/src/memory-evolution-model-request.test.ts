@@ -2,6 +2,7 @@ import { OutboundRequestPolicy, type OutboundRequestAdapterInput } from "@bellda
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requestMemoryEvolutionModel } from "./memory-evolution-model-request.js";
+import { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -64,6 +65,45 @@ describe("memory evolution model request", () => {
     expect(legacyFetch).not.toHaveBeenCalled();
   });
 
+  it("sends a redacted evolution copy without modifying the original payload", async () => {
+    const request = vi.fn(async (_input: { body?: string }) => ({
+      response: new Response(JSON.stringify({
+        choices: [{ message: { content: "[]" } }],
+      }), { status: 200 }),
+      url: new URL("https://evolution.example.test/v1/chat/completions"),
+      addresses: [{ address: "93.184.216.34", family: 4 as const }],
+      redirectCount: 0,
+    }));
+    const privacyRuntime = new MemoryModelPrivacyRuntime({
+      redactor: (text) => text.replace("evolution-private-body", "[REDACTED]"),
+    });
+    const payload = {
+      model: "evolution-model",
+      messages: [{ role: "user", content: "evolution-private-body" }],
+    };
+
+    await requestMemoryEvolutionModel({
+      baseUrl: "https://evolution.example.test/v1",
+      apiKey: "evolution-secret",
+      payload,
+      idleTimeoutMs: 120_000,
+      privacyRuntime,
+      outboundRequestPolicy: { request } as any,
+    });
+
+    expect(payload.messages[0]?.content).toBe("evolution-private-body");
+    expect(JSON.parse(String(request.mock.calls[0]?.[0].body))).toEqual({
+      model: "evolution-model",
+      messages: [{ role: "user", content: "[REDACTED]" }],
+    });
+    expect(privacyRuntime.getDoctorReport().items[0]).toMatchObject({
+      jobFamily: "durable_extraction",
+      dataClass: "private_summary",
+      trustProfile: "untrusted_remote",
+      status: "succeeded",
+    });
+  });
+
   it("rejects private DNS before sending the conversation or credential", async () => {
     const transport = vi.fn(async () => new Response(null, { status: 204 }));
     const outboundRequestPolicy = new OutboundRequestPolicy({
@@ -122,7 +162,7 @@ describe("memory evolution model request", () => {
     expect(cancelBody).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves the first 200 provider error characters for evolution diagnostics", async () => {
+  it("does not include provider response content in evolution errors", async () => {
     const responseBody = `  overloaded:${"x".repeat(240)}  `;
     const request = vi.fn(async () => ({
       response: new Response(responseBody, { status: 503 }),
@@ -137,7 +177,7 @@ describe("memory evolution model request", () => {
       payload: { model: "evolution-model" },
       idleTimeoutMs: 120_000,
       outboundRequestPolicy: { request },
-    })).rejects.toThrow(`Evolution LLM call failed: 503 ${responseBody.slice(0, 200)}`);
+    })).rejects.toThrow("Evolution LLM call failed: 503.");
   });
 
   it("cancels a successful response whose declared body exceeds the byte limit", async () => {

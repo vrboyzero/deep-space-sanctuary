@@ -1,5 +1,12 @@
 import type { EmbeddingProvider, EmbeddingRequestContext, EmbeddingVector } from "./index.js";
 import OpenAI from "openai";
+import type { Fetch as OpenAIFetch } from "openai/core";
+import {
+    createOpenAIEmbeddingFetch,
+    type OpenAIEmbeddingOutboundRequestPolicy,
+} from "./openai-embedding-transport.js";
+
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 
 export interface OpenAIEmbeddingOptions {
     apiKey?: string;
@@ -14,6 +21,7 @@ export interface OpenAIEmbeddingOptions {
      */
     queryPrefix?: string;
     passagePrefix?: string;
+    outboundRequestPolicy?: OpenAIEmbeddingOutboundRequestPolicy;
 }
 
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
@@ -24,9 +32,14 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     private passagePrefix: string;
 
     constructor(options: OpenAIEmbeddingOptions = {}) {
+        const baseURL = options.baseURL || process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL;
         this.openai = new OpenAI({
             apiKey: options.apiKey || process.env.OPENAI_API_KEY,
-            baseURL: options.baseURL || process.env.OPENAI_BASE_URL,
+            baseURL,
+            fetch: createOpenAIEmbeddingFetch({
+                baseURL,
+                outboundRequestPolicy: options.outboundRequestPolicy,
+            }) as unknown as OpenAIFetch,
         });
         this.modelName = options.model || "text-embedding-3-small";
         // text-embedding-3-small default is 1536, but can be scaled down. 3-large is 3072.
