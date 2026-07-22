@@ -31,6 +31,55 @@ async function collectItems(iterable: AsyncIterable<unknown>): Promise<unknown[]
 }
 
 describe("OpenAIChatAgent prompt snapshot", () => {
+  it("uses the unified stream contract and emits text before Provider completion", async () => {
+    let providerCompletedAt = 0;
+    let requestPayload: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      requestPayload = typeof init?.body === "string"
+        ? JSON.parse(init.body) as Record<string, unknown>
+        : undefined;
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\n`,
+          ));
+          setTimeout(() => {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ choices: [{ delta: { content: " world" }, finish_reason: "stop" }] })}\n\n`,
+            ));
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+            providerCompletedAt = Date.now();
+          }, 30);
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const agent = new OpenAIChatAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      stream: true,
+    });
+    const items: any[] = [];
+    let firstDeltaAt = 0;
+
+    for await (const item of agent.run({ conversationId: "conv-openai-stream", text: "hello" })) {
+      items.push(item);
+      if (item.type === "delta" && firstDeltaAt === 0) firstDeltaAt = Date.now();
+    }
+
+    expect(requestPayload?.stream).toBe(true);
+    expect(firstDeltaAt).toBeGreaterThan(0);
+    expect(firstDeltaAt).toBeLessThan(providerCompletedAt);
+    expect(items.filter((item) => item.type === "delta").map((item) => item.delta).join(""))
+      .toBe("Hello world");
+    expect(items).toContainEqual({ type: "final", text: "Hello world" });
+  });
+
   it("captures provider-native system blocks for single-text provider inspection", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
       choices: [{

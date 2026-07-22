@@ -1,14 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./doctor-observability.js", () => ({
-  disposeDoctorObservabilityCardRendering: vi.fn(),
-  renderDoctorObservabilityCards: vi.fn(),
-}));
-
-import {
-  disposeDoctorObservabilityCardRendering,
-  renderDoctorObservabilityCards,
-} from "./doctor-observability.js";
 import { createSettingsController } from "./settings.js";
 
 class FakeHTMLElement {}
@@ -546,6 +537,7 @@ function createSettingsRefs(overrides = {}) {
     cfgTokenUsageUploadUrl: overrides.cfgTokenUsageUploadUrl || createInput(""),
     cfgTokenUsageUploadApiKey: overrides.cfgTokenUsageUploadApiKey || createInput(""),
     cfgTokenUsageUploadTimeoutMs: overrides.cfgTokenUsageUploadTimeoutMs || createInput(""),
+    cfgTokenUsageUploadTrustedPrivateEndpoint: overrides.cfgTokenUsageUploadTrustedPrivateEndpoint || createCheckbox(false),
     cfgTokenUsageStrictUuid: overrides.cfgTokenUsageStrictUuid || createCheckbox(false),
     cfgWebchatCostBudgetUsd: overrides.cfgWebchatCostBudgetUsd || createInput(""),
     cfgWebchatCostBudgetWarnFraction: overrides.cfgWebchatCostBudgetWarnFraction || createInput(""),
@@ -611,6 +603,7 @@ function createController(overrides = {}) {
     onApprovePairing,
     getWebchatPerformanceSummary: overrides.getWebchatPerformanceSummary,
     getWebchatLifecycleSummary: overrides.getWebchatLifecycleSummary,
+    doctorObservabilityLoader: overrides.doctorObservabilityLoader,
     t: overrides.t,
   });
   return {
@@ -674,7 +667,6 @@ describe("settings controller", () => {
       saveFeedbackTimerActive: false,
       disposed: true,
     });
-    expect(disposeDoctorObservabilityCardRendering).toHaveBeenCalledWith(refs.doctorStatusEl);
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(1_200);
     expect(refs.saveSettingsBtn.textContent).toBe("Saved");
@@ -928,6 +920,7 @@ describe("settings controller", () => {
       BELLDANDY_TOKEN_USAGE_UPLOAD_URL: "http://127.0.0.1:3001/api/internal/token-usage",
       BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY: "[REDACTED]",
       BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS: "3000",
+      BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT: "true",
       BELLDANDY_TOKEN_USAGE_STRICT_UUID: "true",
       BELLDANDY_WEBCHAT_COST_BUDGET_USD: "0.05",
       BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION: "0.8",
@@ -1129,6 +1122,7 @@ describe("settings controller", () => {
     expect(refs.cfgTokenUsageUploadUrl.value).toBe("http://127.0.0.1:3001/api/internal/token-usage");
     expect(refs.cfgTokenUsageUploadApiKey.value).toBe("[REDACTED]");
     expect(refs.cfgTokenUsageUploadTimeoutMs.value).toBe("3000");
+    expect(refs.cfgTokenUsageUploadTrustedPrivateEndpoint.checked).toBe(true);
     expect(refs.cfgTokenUsageStrictUuid.checked).toBe(true);
     expect(refs.cfgWebchatCostBudgetUsd.value).toBe("0.05");
     expect(refs.cfgWebchatCostBudgetWarnFraction.value).toBe("0.8");
@@ -1620,6 +1614,7 @@ describe("settings controller", () => {
       cfgTokenUsageUploadUrl: createInput(" http://127.0.0.1:3001/api/internal/token-usage "),
       cfgTokenUsageUploadApiKey: createInput("gro_token_key"),
       cfgTokenUsageUploadTimeoutMs: createInput("3000"),
+      cfgTokenUsageUploadTrustedPrivateEndpoint: createCheckbox(true),
       cfgTokenUsageStrictUuid: createCheckbox(true),
       cfgWebchatCostBudgetUsd: createInput(" 0.05 "),
       cfgWebchatCostBudgetWarnFraction: createInput(" 0.8 "),
@@ -2829,7 +2824,7 @@ describe("settings controller", () => {
     });
   });
 
-  it("loads doctor summary first and then fetches full detail cards asynchronously", async () => {
+  it("loads Doctor detail cards only after the system tab is activated", async () => {
     const sendReq = vi.fn(async (frame) => {
       switch (frame.method) {
         case "models.config.get":
@@ -2885,25 +2880,42 @@ describe("settings controller", () => {
       pagehideCaptureCount: 0,
       explicitSnapshotCaptureCount: 2,
     }));
-    const { controller } = createController({
+    const doctorObservabilityLoader = {
+      dispose: vi.fn().mockReturnValue(false),
+      load: vi.fn().mockResolvedValue(),
+      render: vi.fn().mockReturnValue(true),
+    };
+    const { controller, refs } = createController({
       sendReq,
       loadServerConfig: vi.fn().mockResolvedValue({}),
       getWebchatPerformanceSummary,
       getWebchatLifecycleSummary,
+      doctorObservabilityLoader,
     });
 
     await controller.toggle(true);
     await Promise.resolve();
     await Promise.resolve();
 
-    const doctorCalls = sendReq.mock.calls
+    let doctorCalls = sendReq.mock.calls
+      .map(([frame]) => frame)
+      .filter((frame) => frame.method === "system.doctor");
+    expect(doctorCalls).toHaveLength(1);
+    expect(doctorCalls[0].params).toMatchObject({ surface: "summary" });
+    expect(doctorObservabilityLoader.load).not.toHaveBeenCalled();
+    expect(doctorObservabilityLoader.render).not.toHaveBeenCalled();
+
+    refs.settingsTabButtons[4].trigger("click");
+    await Promise.resolve();
+    await Promise.resolve();
+    doctorCalls = sendReq.mock.calls
       .map(([frame]) => frame)
       .filter((frame) => frame.method === "system.doctor");
     expect(doctorCalls).toHaveLength(2);
-    expect(doctorCalls[0].params).toMatchObject({ surface: "summary" });
     expect(doctorCalls[1].params).toMatchObject({ surface: "full" });
-    expect(renderDoctorObservabilityCards).toHaveBeenCalledTimes(1);
-    expect(renderDoctorObservabilityCards.mock.calls[0][1]).toMatchObject({
+    expect(doctorObservabilityLoader.load).toHaveBeenCalledTimes(1);
+    expect(doctorObservabilityLoader.render).toHaveBeenCalledTimes(1);
+    expect(doctorObservabilityLoader.render.mock.calls[0][1]).toMatchObject({
       surface: "full",
       residentAgents: { summary: { headline: "resident ok" } },
       webchatPerformance: {
@@ -2918,6 +2930,66 @@ describe("settings controller", () => {
     });
     expect(getWebchatPerformanceSummary).toHaveBeenCalledTimes(1);
     expect(getWebchatLifecycleSummary).toHaveBeenCalledTimes(1);
+
+    refs.settingsTabButtons[0].trigger("click");
+    refs.settingsTabButtons[4].trigger("click");
+    await Promise.resolve();
+    expect(sendReq.mock.calls.filter(([frame]) => frame.method === "system.doctor")).toHaveLength(2);
+    expect(doctorObservabilityLoader.load).toHaveBeenCalledTimes(1);
+    expect(doctorObservabilityLoader.render).toHaveBeenCalledTimes(1);
+
+    await controller.toggle(false);
+    await controller.toggle(true);
+    doctorCalls = sendReq.mock.calls
+      .map(([frame]) => frame)
+      .filter((frame) => frame.method === "system.doctor");
+    expect(doctorCalls).toHaveLength(3);
+    expect(doctorCalls[2].params).toMatchObject({ surface: "summary" });
+    expect(doctorObservabilityLoader.load).toHaveBeenCalledTimes(1);
+    expect(doctorObservabilityLoader.render).toHaveBeenCalledTimes(1);
+
+    refs.settingsTabButtons[4].trigger("click");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendReq.mock.calls.filter(([frame]) => frame.method === "system.doctor")).toHaveLength(4);
+    expect(doctorObservabilityLoader.load).toHaveBeenCalledTimes(2);
+    expect(doctorObservabilityLoader.render).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not request stale Doctor details after a later summary fails", async () => {
+    let summaryRequestCount = 0;
+    const sendReq = vi.fn(async (frame) => {
+      if (frame.method !== "system.doctor") return { ok: true, payload: {} };
+      if (frame.params?.surface === "full") {
+        return { ok: true, payload: { checks: [] } };
+      }
+      summaryRequestCount += 1;
+      if (summaryRequestCount === 1) {
+        return {
+          ok: true,
+          payload: {
+            surface: "summary",
+            checks: [{ name: "Node.js Environment", status: "pass", message: "vtest" }],
+          },
+        };
+      }
+      return { ok: false, error: { message: "doctor failed" } };
+    });
+    const { controller, refs } = createController({
+      sendReq,
+      loadServerConfig: vi.fn().mockResolvedValue({}),
+    });
+
+    await controller.toggle(true);
+    await controller.toggle(false);
+    await controller.toggle(true);
+    refs.settingsTabButtons[4].trigger("click");
+    await Promise.resolve();
+
+    const fullCalls = sendReq.mock.calls
+      .map(([frame]) => frame)
+      .filter((frame) => frame.method === "system.doctor" && frame.params?.surface === "full");
+    expect(fullCalls).toHaveLength(0);
   });
 
   it("renders disconnected Doctor state without an HTML parser write", async () => {

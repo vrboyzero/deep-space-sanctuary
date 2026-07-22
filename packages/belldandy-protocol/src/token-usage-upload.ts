@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { OutboundRequestPolicy } from "./outbound-request-policy.js";
 import { readResponseTextBounded, redactSensitiveText, redactSensitiveUrl } from "./safe-output.js";
 
 export type TokenUsageUploadConfig = {
@@ -7,6 +8,8 @@ export type TokenUsageUploadConfig = {
   url?: string;
   token?: string;
   timeoutMs: number;
+  /** 仅为显式受信任的本地 token-usage 接收端放开私网与 HTTP。默认 fail-closed。 */
+  trustedPrivateEndpoint?: boolean;
 };
 
 export type TokenUsageUploadLogger = {
@@ -19,6 +22,7 @@ export type TokenUsageUploadRequestInput = {
   body: string;
   signal: AbortSignal;
   timeoutMs: number;
+  trustedPrivateEndpoint?: boolean;
 };
 
 export type TokenUsageUploadRequest = (input: TokenUsageUploadRequestInput) => Promise<Response>;
@@ -44,6 +48,7 @@ export type TokenUsageUploadSchedulerOptions = {
 
 export type TokenUsageUploadScheduler = {
   upload: (input: TokenUsageUploadInput) => Promise<void>;
+  drain: (signal?: AbortSignal) => Promise<void>;
   getRuntimeSnapshot: () => TokenUsageUploadRuntimeSnapshot;
   reset: () => void;
 };
@@ -60,7 +65,8 @@ export type TokenUsageUploadInput = {
 type NormalizedUpload = {
   key: string;
   endpointId: string;
-  config: Required<Pick<TokenUsageUploadConfig, "url" | "timeoutMs">> & Pick<TokenUsageUploadConfig, "token">;
+  config: Required<Pick<TokenUsageUploadConfig, "url" | "timeoutMs" | "trustedPrivateEndpoint">>
+    & Pick<TokenUsageUploadConfig, "token">;
   userUuid?: string;
   conversationId: string;
   deltaTokens: number;
@@ -89,6 +95,13 @@ type UploadCompletion = {
   resolve: () => void;
 };
 
+type DrainWaiter = {
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
+
 type OverflowAggregate = {
   droppedKeys: number;
   droppedTokens: number;
@@ -111,14 +124,21 @@ const MAX_OVERFLOW_ENDPOINTS = 16;
 const MAX_ERROR_BODY_BYTES = 2_048;
 
 async function requestTokenUsageUpload(input: TokenUsageUploadRequestInput): Promise<Response> {
-  // endpoint 是 owner 配置且已有自托管 DNS/私网兼容契约；严格迁移到统一
-  // OutboundRequestPolicy 需单独提供显式 trusted-private 配置迁移，不能在 P02 静默破坏上传。
-  return fetch(input.url, {
-    method: "POST",
-    headers: input.headers,
-    body: input.body,
-    signal: input.signal,
+  const { url, timeoutMs, trustedPrivateEndpoint, ...init } = input;
+  const endpoint = new URL(url);
+  const policy = new OutboundRequestPolicy({
+    allowedHosts: [endpoint.hostname],
+    allowInsecureHttp: trustedPrivateEndpoint === true,
+    allowPrivateNetwork: trustedPrivateEndpoint === true,
+    maxRedirects: 0,
   });
+  return (await policy.request({
+    url,
+    method: "POST",
+    ...init,
+    maxRedirects: 0,
+    idleTimeoutMs: timeoutMs,
+  })).response;
 }
 
 /**
@@ -149,6 +169,7 @@ export function createTokenUsageUploadScheduler(
   const readyKeys = new Set<string>();
   const endpointActiveCounts = new Map<string, number>();
   const overflowByEndpoint = new Map<string, OverflowAggregate>();
+  const drainWaiters = new Set<DrainWaiter>();
   let activeCount = 0;
 
   function upload(input: TokenUsageUploadInput): Promise<void> {
@@ -187,17 +208,22 @@ export function createTokenUsageUploadScheduler(
     if (slot.timer || readyKeys.has(slot.key)) {
       return;
     }
+    if (drainWaiters.size > 0) {
+      readyKeys.add(slot.key);
+      drainReady();
+      return;
+    }
     slot.timer = setTimeoutFn(() => {
       slot.timer = undefined;
       if (slots.get(slot.key) !== slot || slot.pendingDeltaTokens <= 0) {
         return;
       }
       readyKeys.add(slot.key);
-      drain();
+      drainReady();
     }, batchWindowMs);
   }
 
-  function drain(): void {
+  function drainReady(): void {
     while (activeCount < maxConcurrentUploads) {
       const slot = takeReadySlot();
       if (!slot) {
@@ -250,7 +276,8 @@ export function createTokenUsageUploadScheduler(
           readyKeys.delete(slot.key);
         }
       }
-      drain();
+      drainReady();
+      resolveDrainWaitersIfIdle();
     });
   }
 
@@ -284,6 +311,7 @@ export function createTokenUsageUploadScheduler(
         body: JSON.stringify(body),
         signal: controller.signal,
         timeoutMs: slot.config.timeoutMs,
+        trustedPrivateEndpoint: slot.config.trustedPrivateEndpoint,
       });
       if (!response.ok) {
         const boundedBody = await readResponseTextBounded(response, { maxBytes: MAX_ERROR_BODY_BYTES });
@@ -298,6 +326,9 @@ export function createTokenUsageUploadScheduler(
         await discardResponseBody(response);
       }
     } catch (error) {
+      if (controller.signal.aborted && slots.get(slot.key) !== slot) {
+        return;
+      }
       if (didTimeout || controller.signal.aborted) {
         slot.log.warn("token-upload", "Token usage upload timeout", {
           timeoutMs: slot.config.timeoutMs,
@@ -313,6 +344,82 @@ export function createTokenUsageUploadScheduler(
         slot.controller = undefined;
       }
     }
+  }
+
+  function drainUploads(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      cancelOwnedWork();
+      return Promise.reject(getAbortReason(signal));
+    }
+    if (slots.size === 0 && activeCount === 0) {
+      return Promise.resolve();
+    }
+
+    const promise = new Promise<void>((resolve, reject) => {
+      const waiter: DrainWaiter = { resolve, reject, ...(signal ? { signal } : {}) };
+      if (signal) {
+        waiter.onAbort = () => {
+          removeDrainWaiter(waiter);
+          cancelOwnedWork();
+          reject(getAbortReason(signal));
+        };
+        signal.addEventListener("abort", waiter.onAbort, { once: true });
+      }
+      drainWaiters.add(waiter);
+    });
+
+    flushPendingForDrain();
+    resolveDrainWaitersIfIdle();
+    return promise;
+  }
+
+  function flushPendingForDrain(): void {
+    for (const slot of slots.values()) {
+      if (slot.timer) {
+        clearTimeoutFn(slot.timer);
+        slot.timer = undefined;
+      }
+      if (!slot.inFlight && slot.pendingDeltaTokens > 0) {
+        readyKeys.add(slot.key);
+      }
+    }
+    drainReady();
+  }
+
+  function resolveDrainWaitersIfIdle(): void {
+    if (slots.size > 0 || activeCount > 0) {
+      return;
+    }
+    for (const waiter of [...drainWaiters]) {
+      removeDrainWaiter(waiter);
+      waiter.resolve();
+    }
+  }
+
+  function removeDrainWaiter(waiter: DrainWaiter): void {
+    drainWaiters.delete(waiter);
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+    }
+  }
+
+  function cancelOwnedWork(): void {
+    for (const slot of slots.values()) {
+      if (slot.timer) {
+        clearTimeoutFn(slot.timer);
+        slot.timer = undefined;
+      }
+      slot.controller?.abort();
+      slot.pendingCompletion?.resolve();
+      slot.activeCompletion?.resolve();
+      slot.pendingCompletion = undefined;
+      slot.activeCompletion = undefined;
+    }
+    slots.clear();
+    readyKeys.clear();
+    endpointActiveCounts.clear();
+    activeCount = 0;
+    resolveDrainWaitersIfIdle();
   }
 
   function decrementEndpointActive(endpointId: string): void {
@@ -359,25 +466,11 @@ export function createTokenUsageUploadScheduler(
   }
 
   function reset(): void {
-    for (const slot of slots.values()) {
-      if (slot.timer) {
-        clearTimeoutFn(slot.timer);
-        slot.timer = undefined;
-      }
-      slot.controller?.abort();
-      slot.pendingCompletion?.resolve();
-      slot.activeCompletion?.resolve();
-      slot.pendingCompletion = undefined;
-      slot.activeCompletion = undefined;
-    }
-    slots.clear();
-    readyKeys.clear();
-    endpointActiveCounts.clear();
+    cancelOwnedWork();
     overflowByEndpoint.clear();
-    activeCount = 0;
   }
 
-  return { upload, getRuntimeSnapshot, reset };
+  return { upload, drain: drainUploads, getRuntimeSnapshot, reset };
 }
 
 const defaultTokenUsageUploadScheduler = createTokenUsageUploadScheduler();
@@ -388,6 +481,10 @@ export function uploadTokenUsage(input: TokenUsageUploadInput): Promise<void> {
 
 export function getTokenUsageUploadRuntimeSnapshot(): TokenUsageUploadRuntimeSnapshot {
   return defaultTokenUsageUploadScheduler.getRuntimeSnapshot();
+}
+
+export function drainTokenUsageUploads(signal?: AbortSignal): Promise<void> {
+  return defaultTokenUsageUploadScheduler.drain(signal);
 }
 
 export function __resetTokenUsageUploadBatchingForTests(): void {
@@ -432,6 +529,7 @@ function normalizeUpload(input: TokenUsageUploadInput): NormalizedUpload | undef
       url,
       ...(token ? { token } : {}),
       timeoutMs: normalizePositiveInt(config.timeoutMs, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
+      trustedPrivateEndpoint: config.trustedPrivateEndpoint === true,
     },
     ...(userUuid ? { userUuid } : {}),
     conversationId,
@@ -494,4 +592,8 @@ function createUploadCompletion(): UploadCompletion {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function getAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("Token usage upload drain was aborted.");
 }

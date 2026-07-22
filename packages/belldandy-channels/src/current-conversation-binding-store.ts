@@ -36,6 +36,7 @@ export type CurrentConversationBindingStore = {
 };
 
 export type CurrentConversationBindingStoreMaintenance = CurrentConversationBindingStore & {
+  delete(sessionKey: string): Promise<void>;
   prune(): Promise<void>;
   getRuntimeSnapshot(): Promise<CurrentConversationBindingStoreRuntimeSnapshot>;
 };
@@ -69,6 +70,7 @@ type PendingMutationCompletion = {
 
 type PendingMutation = PendingMutationCompletion & (
   | { kind: "upsert"; record: CurrentConversationBindingRecord }
+  | { kind: "delete"; sessionKey: string }
   | { kind: "prune" }
 );
 
@@ -228,12 +230,37 @@ function collectPinnedSessionKeys(snapshot: CurrentConversationBindingSnapshot):
 }
 
 function removeBinding(snapshot: CurrentConversationBindingSnapshot, sessionKey: string): void {
+  const affectedScopeKeys = Object.entries(snapshot.latestByScope)
+    .filter(([, latestSessionKey]) => latestSessionKey === sessionKey)
+    .map(([scopeKey]) => scopeKey);
   delete snapshot.bindings[sessionKey];
-  for (const [scopeKey, latestSessionKey] of Object.entries(snapshot.latestByScope)) {
-    if (latestSessionKey === sessionKey) {
-      delete snapshot.latestByScope[scopeKey];
+  for (const scopeKey of affectedScopeKeys) {
+    delete snapshot.latestByScope[scopeKey];
+    const replacement = findLatestBindingForScope(snapshot, scopeKey);
+    if (replacement) {
+      snapshot.latestByScope[scopeKey] = replacement.sessionKey;
     }
   }
+}
+
+function findLatestBindingForScope(
+  snapshot: CurrentConversationBindingSnapshot,
+  scopeKey: string,
+): CurrentConversationBindingRecord | undefined {
+  let latest: CurrentConversationBindingRecord | undefined;
+  for (const record of Object.values(snapshot.bindings)) {
+    const matchesScope = buildScopeKey(record.channel) === scopeKey
+      || (record.accountId !== undefined && buildScopeKey(record.channel, record.accountId) === scopeKey);
+    if (!matchesScope) continue;
+    if (
+      !latest
+      || record.updatedAt > latest.updatedAt
+      || (record.updatedAt === latest.updatedAt && record.sessionKey.localeCompare(latest.sessionKey) > 0)
+    ) {
+      latest = record;
+    }
+  }
+  return latest;
 }
 
 function pruneSnapshot(input: {
@@ -342,6 +369,8 @@ export function createFileCurrentConversationBindingStore(
     for (const entry of entries) {
       if (entry.kind === "upsert") {
         applyUpsert(nextSnapshot, entry.record);
+      } else if (entry.kind === "delete") {
+        removeBinding(nextSnapshot, entry.sessionKey);
       }
     }
     pruneSnapshot({ snapshot: nextSnapshot, now: getNow(), retentionMs, maxEntries });
@@ -389,6 +418,15 @@ export function createFileCurrentConversationBindingStore(
       const nextRecord = normalizeUpsertRecord(record);
       return new Promise<void>((resolve, reject) => {
         pendingMutations.push({ kind: "upsert", record: nextRecord, resolve, reject });
+        schedulePendingMutationDrain();
+      });
+    },
+
+    delete(sessionKey) {
+      const normalizedSessionKey = normalizeString(sessionKey);
+      if (!normalizedSessionKey) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        pendingMutations.push({ kind: "delete", sessionKey: normalizedSessionKey, resolve, reject });
         schedulePendingMutationDrain();
       });
     },

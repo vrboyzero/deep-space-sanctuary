@@ -53,6 +53,27 @@ import {
 } from "./workflow-fingerprint.js";
 import type { AgentExecutionFingerprintInputResolver } from "./workflow-runtime.js";
 
+const WORKFLOW_PENDING_LEASE_MS = 30_000;
+const WORKFLOW_PENDING_RENEW_INTERVAL_MS = 10_000;
+
+export class WorkflowPendingClaimConflictError extends Error {
+  readonly code = "workflow_pending_claim_conflict";
+
+  constructor(callKey: string) {
+    super(`Workflow pending claim conflict [${callKey}].`);
+    this.name = "WorkflowPendingClaimConflictError";
+  }
+}
+
+export class WorkflowPendingClaimLostError extends Error {
+  readonly code = "workflow_pending_claim_lost";
+
+  constructor(callKey: string) {
+    super(`Workflow pending claim lost [${callKey}].`);
+    this.name = "WorkflowPendingClaimLostError";
+  }
+}
+
 // ─── 依赖类型 ─────────────────────────────────────────────────────────────
 
 export type WorkflowContextCallbacks = {
@@ -81,6 +102,8 @@ export type WorkflowContextDeps = {
   channel: string;
   /** journal ID（用于断点续传） */
   journalId: string;
+  /** 每次 WorkflowRuntime.run() 唯一的 Journal lease owner。 */
+  leaseOwnerId: string;
   /** 并发上限（默认 6） */
   maxConcurrent?: number;
   /** runtime 启动期解析的 batch items/queue/output hard cap。 */
@@ -173,6 +196,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     parentConversationId,
     channel,
     journalId,
+    leaseOwnerId,
     maxConcurrent = 6,
     batchLimits = DEFAULT_WORKFLOW_BATCH_LIMITS,
     callbacks,
@@ -292,6 +316,21 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         return hit.result;
       }
 
+      const pendingClaim = journal.claimPending({
+        journalId,
+        workflowName,
+        scriptHash,
+        callKey,
+        fingerprint,
+        prompt,
+        optsJson: JSON.stringify(persistedOpts),
+        ownerId: leaseOwnerId,
+        leaseDurationMs: WORKFLOW_PENDING_LEASE_MS,
+      });
+      if (pendingClaim.outcome === "conflict") {
+        throw new WorkflowPendingClaimConflictError(callKey);
+      }
+
       // 调用 orchestrator。这里统一走 launchSpec，避免 legacy spawnOpts 丢失
       // role / timeout / tool 限制 / modelOverride 等字段。
       const spawnOpts: SpawnOptions = {
@@ -310,64 +349,73 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         },
       };
 
-      let pendingRecorded = false;
-      let callResult;
+      const claimIdentity = {
+        journalId,
+        fingerprint,
+        ownerId: pendingClaim.ownerId,
+        generation: pendingClaim.generation,
+      };
+      const renewal = startPendingClaimRenewal(journal, claimIdentity);
       try {
-        callResult = await runWorkflowAgentCall({
-          requestedMaxRetries: opts?.maxRetries,
-          budgetGuard,
-          abortSignal,
-          beforeFirstAttempt: () => {
-            journal.recordPending({
-              journalId,
-              workflowName,
-              scriptHash,
-              callKey,
-              fingerprint,
-              prompt,
-              optsJson: JSON.stringify(persistedOpts),
-            });
-            pendingRecorded = true;
-          },
-          spawn: async () => orchestrator.spawn(spawnOpts),
-          // P2 再接入真实 tokenCounter；当前保持既有输出长度估算。
-          estimateTokens: (output) => Math.ceil(output.length / 4),
-        });
-      } catch (error) {
-        // abort 保留可恢复 pending；其他已开始调用只写一次最终 error，且 Journal
-        // 自身错误不会再次进入 retry owner。
-        if (pendingRecorded && !abortSignal?.aborted) {
-          journal.recordError(journalId, fingerprint, toErrorMessage(error));
+        let callResult;
+        try {
+          callResult = await runWorkflowAgentCall({
+            requestedMaxRetries: opts?.maxRetries,
+            budgetGuard,
+            abortSignal,
+            beforeFirstAttempt: () => {},
+            spawn: async () => orchestrator.spawn(spawnOpts),
+            // P2 再接入真实 tokenCounter；当前保持既有输出长度估算。
+            estimateTokens: (output) => Math.ceil(output.length / 4),
+          });
+        } catch (error) {
+          if (renewal.lost || !journal.settlePending({
+            ...claimIdentity,
+            status: "error",
+            error: toErrorMessage(error),
+          })) {
+            throw new WorkflowPendingClaimLostError(callKey);
+          }
+          throw error;
         }
-        throw error;
-      }
 
-      const { result, tokenCount } = callResult;
-      if (result.success) {
-        journal.record({
-          journalId,
-          fingerprint,
-          result: result.output,
-          tokenCount,
-        });
+        const { result, tokenCount } = callResult;
+        if (result.success) {
+          if (renewal.lost || !journal.settlePending({
+            ...claimIdentity,
+            status: "done",
+            result: result.output,
+            tokenCount,
+          })) {
+            throw new WorkflowPendingClaimLostError(callKey);
+          }
+          callbacks?.onAgentEvent?.({
+            type: "completed",
+            sessionId: result.sessionId,
+            success: true,
+            output: result.output,
+          });
+          return result.output;
+        }
+
+        if (renewal.lost || !journal.settlePending({
+          ...claimIdentity,
+          status: "error",
+          error: result.error ?? "unknown error",
+        })) {
+          throw new WorkflowPendingClaimLostError(callKey);
+        }
         callbacks?.onAgentEvent?.({
           type: "completed",
           sessionId: result.sessionId,
-          success: true,
-          output: result.output,
+          success: false,
+          output: "",
+          error: result.error,
         });
-        return result.output;
+        throw new Error(`Workflow agent() failed [${callKey}]: ${result.error ?? "unknown error"}`);
+      } finally {
+        renewal.stop();
       }
-
-      journal.recordError(journalId, fingerprint, result.error ?? "unknown error");
-      callbacks?.onAgentEvent?.({
-        type: "completed",
-        sessionId: result.sessionId,
-        success: false,
-        output: "",
-        error: result.error,
-      });
-      throw new Error(`Workflow agent() failed [${callKey}]: ${result.error ?? "unknown error"}`);
     },
 
     async parallel<T>(tasks: Array<() => Promise<T>>): Promise<Array<WorkflowTaskResult<T>>> {
@@ -500,6 +548,34 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
   };
 
   return ctx;
+}
+
+function startPendingClaimRenewal(
+  journal: WorkflowJournal,
+  identity: { journalId: string; fingerprint: string; ownerId: string; generation: number },
+): { readonly lost: boolean; stop(): void } {
+  let lost = false;
+  const timer = setInterval(() => {
+    try {
+      if (!journal.renewPending({
+        ...identity,
+        leaseDurationMs: WORKFLOW_PENDING_LEASE_MS,
+      })) {
+        lost = true;
+      }
+    } catch {
+      lost = true;
+    }
+  }, WORKFLOW_PENDING_RENEW_INTERVAL_MS);
+  timer.unref?.();
+  return {
+    get lost() {
+      return lost;
+    },
+    stop() {
+      clearInterval(timer);
+    },
+  };
 }
 
 function throwIfWorkflowAborted(signal: AbortSignal | undefined): void {

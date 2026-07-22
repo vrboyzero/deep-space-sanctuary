@@ -244,6 +244,36 @@ test("default env.local template keeps community api enabled in local overrides"
   expect(templates.envLocal).not.toContain('BELLDANDY_COMMUNITY_API_ENABLED="false"');
 });
 
+test("token usage trusted-private profile stays opt-in across env templates", async () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");
+  const templates = readDefaultEnvTemplates();
+
+  expect(example).toContain("# BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT=false");
+  expect(templates.env).toContain("# BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT=false");
+  expect(templates.envLocal).toContain('BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT="false"');
+});
+
+test("Tool Agent Provider streaming stays opt-in across env templates", async () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");
+  const templates = readDefaultEnvTemplates();
+
+  expect(example).toContain("# BELLDANDY_TOOL_AGENT_STREAMING_ENABLED=false");
+  expect(templates.env).toContain("BELLDANDY_TOOL_AGENT_STREAMING_ENABLED=false");
+  expect(templates.envLocal).toContain('BELLDANDY_TOOL_AGENT_STREAMING_ENABLED="false"');
+});
+
+test("workflow script byte limit stays aligned across env templates", async () => {
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");
+  const templates = readDefaultEnvTemplates();
+
+  expect(example).toContain("# BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES=1048576");
+  expect(templates.env).toContain("# BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES=1048576");
+  expect(templates.envLocal).toContain('BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES="1048576"');
+});
+
 test("memory background governance defaults stay aligned across env templates", async () => {
   const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const example = await fs.readFile(path.join(workspaceRoot, ".env.example"), "utf-8");

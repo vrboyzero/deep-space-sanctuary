@@ -544,13 +544,13 @@ export function createChatEventsFeature({
       return true;
     }
 
-    if (event === "conversation.run.stopped") {
+    if (event === "conversation.run.stopped" || event === "conversation.run.interrupted") {
       onConversationStopped?.(payload);
       if (!isActiveConversationPayload(payload)) {
         return true;
       }
       const removedEmptyBubble = discardStreamingBubbleIfEmpty();
-      if (removedEmptyBubble) {
+      if (event === "conversation.run.interrupted" || removedEmptyBubble) {
         appendMessage("system", getStoppedMessageText?.(payload) || t("common.interrupted", {}, "Interrupted"));
       }
       resetStreamingState();

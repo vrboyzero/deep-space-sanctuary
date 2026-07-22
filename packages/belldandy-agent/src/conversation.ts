@@ -61,6 +61,7 @@ import {
     type ConversationLifecycleGeneration,
     type ConversationLifecycleSnapshot,
 } from "./conversation-lifecycle.js";
+import { ConversationToolArtifactMetaPersistence } from "./conversation-tool-artifact-persistence.js";
 
 /**
  * 对话消息
@@ -982,6 +983,12 @@ export class ConversationStore {
     private sessionDigestStates = new Map<string, SessionDigestState>();
     private sessionMemories = new Map<string, StoredSessionMemory>();
     private readonly lifecycle = new ConversationLifecycleCoordinator();
+    private readonly toolArtifactMetaPersistence = new ConversationToolArtifactMetaPersistence({
+        enqueue: (conversationId, task) => this.lifecycle.enqueue("tool_artifact_meta", conversationId, task),
+        onError: (conversationId, error) => {
+            console.error(`Failed to save conversation meta for ${conversationId}:`, error);
+        },
+    });
     private readonly maxHistory: number;
     private readonly ttlSeconds: number;
     private readonly dataDir?: string;
@@ -1515,7 +1522,11 @@ export class ConversationStore {
         return undefined;
     }
 
-    private persistConversationMeta(id: string, conv: Conversation): void {
+    private persistConversationMeta(
+        id: string,
+        conv: Conversation,
+        options: { toolArtifactAsync?: boolean } = {},
+    ): void {
         const filePath = this.getMetaFilePath(id);
         if (!filePath) return;
 
@@ -1561,9 +1572,19 @@ export class ConversationStore {
             return;
         }
 
+        const data = JSON.stringify(payload, null, 2);
+        if (options.toolArtifactAsync || this.toolArtifactMetaPersistence.hasPending(id)) {
+            this.toolArtifactMetaPersistence.schedule({
+                conversationId: id,
+                filePath,
+                data,
+            });
+            return;
+        }
+
         const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
         try {
-            fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf-8");
+            fs.writeFileSync(tempPath, data, "utf-8");
             fs.renameSync(tempPath, filePath);
         } catch (err) {
             try {
@@ -1736,7 +1757,7 @@ export class ConversationStore {
     }
 
     /**
-     * 等待会话的四类持久化链完成后释放纯内存状态；canonical 文件保持不变。
+     * 等待会话的全部持久化链完成后释放纯内存状态；canonical 文件保持不变。
      * release 开始时旧 generation 立即失效，避免长异步摘要在清理后重新写回 Map。
      */
     async releaseConversation(id: string): Promise<void> {
@@ -2007,10 +2028,17 @@ export class ConversationStore {
     }
 
     async buildConversationRestoreView(id: string): Promise<SessionRestoreView> {
+        return this.buildConversationRestoreViewFromTranscriptSnapshot(id);
+    }
+
+    private async buildConversationRestoreViewFromTranscriptSnapshot(
+        id: string,
+        transcriptSnapshot?: SessionTranscriptEvent[],
+    ): Promise<SessionRestoreView> {
         const generation = this.lifecycle.captureGeneration(id);
         const conversation = await this.getAsync(id, generation);
         const compactionState = await this.getCompactionStateAsync(id, generation);
-        const transcriptEvents = await this.getSessionTranscriptEvents(id);
+        const transcriptEvents = transcriptSnapshot ?? await this.getSessionTranscriptEvents(id);
         const transcriptArtifacts = deriveTranscriptRelinkArtifacts(transcriptEvents);
         const boundary = this.preferLatestCompactBoundary(
             conversation?.compactBoundaries?.[0],
@@ -2039,8 +2067,9 @@ export class ConversationStore {
         id: string,
         options?: { mode?: SessionTranscriptExportRedactionMode },
     ): Promise<SessionTranscriptExportBundle> {
+        await this.waitForPendingPersistence(id);
         const transcriptEvents = await this.getSessionTranscriptEvents(id);
-        const restore = await this.buildConversationRestoreView(id);
+        const restore = await this.buildConversationRestoreViewFromTranscriptSnapshot(id, transcriptEvents);
         return buildSessionTranscriptExportBundle({
             conversationId: id,
             transcriptEvents,
@@ -2054,7 +2083,7 @@ export class ConversationStore {
         options?: { previewChars?: number },
     ): Promise<SessionTimelineProjection> {
         const transcriptEvents = await this.getSessionTranscriptEvents(id);
-        const restore = await this.buildConversationRestoreView(id);
+        const restore = await this.buildConversationRestoreViewFromTranscriptSnapshot(id, transcriptEvents);
         return buildSessionTimelineProjection({
             conversationId: id,
             transcriptEvents,
@@ -3378,6 +3407,9 @@ export class ConversationStore {
      * 单项公开方法保留原有行为；Tool Agent 应使用本入口避免重复同步 meta 写入。
      */
     recordToolArtifacts(conversationId: string, artifacts: ToolArtifactsRecord): void {
+        const generation = this.lifecycle.captureGeneration(conversationId);
+        if (!this.lifecycle.isGenerationCurrent(conversationId, generation)) return;
+
         let conv = this.get(conversationId);
         const now = Date.now();
         if (!conv) {
@@ -3437,7 +3469,7 @@ export class ConversationStore {
         }
 
         conv.updatedAt = now;
-        this.persistConversationMeta(conversationId, conv);
+        this.persistConversationMeta(conversationId, conv, { toolArtifactAsync: true });
     }
 
     getRecentToolResults(

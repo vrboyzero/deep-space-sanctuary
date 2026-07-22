@@ -2942,6 +2942,13 @@
             <input id="cfgTokenUsageUploadTimeoutMs" class="input" data-i18n-placeholder="settings.tokenUsageUploadTimeoutMsPlaceholder" placeholder="3000" />
           </div>
           <div class="form-group">
+            <label class="form-label" for="cfgTokenUsageUploadTrustedPrivateEndpoint">
+              <input id="cfgTokenUsageUploadTrustedPrivateEndpoint" type="checkbox" class="form-checkbox" />
+              <span data-i18n="settings.tokenUsageUploadTrustedPrivateEndpointLabel">Trust Private Token Upload Endpoint</span>
+            </label>
+            <div class="form-help" data-i18n="settings.tokenUsageUploadTrustedPrivateEndpointHelp">Only enable for a trusted private HTTP receiver. The default blocks private networks and HTTP.</div>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cfgTokenUsageStrictUuid">
               <input id="cfgTokenUsageStrictUuid" type="checkbox" class="form-checkbox" />
               <span data-i18n="settings.tokenUsageStrictUuidLabel">Strict UUID Upload</span>

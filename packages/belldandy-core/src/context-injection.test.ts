@@ -12,6 +12,7 @@ import type { TaskActivityRecord, TaskRecord } from "../../belldandy-memory/src/
 describe("buildContextInjectionPrelude", () => {
   it("aborts the underlying auto-recall work when its deadline expires", async () => {
     let observedSignal: AbortSignal | undefined;
+    let observedDeadlineMs: number | undefined;
     const memoryManager: ContextInjectionMemoryProvider = {
       getContextInjectionMemories: () => [],
       getRecentTaskSummaries: () => [],
@@ -21,6 +22,7 @@ describe("buildContextInjectionPrelude", () => {
       search: async () => [],
       searchWithDiagnostics: async (_query, input) => {
         observedSignal = input.signal;
+        observedDeadlineMs = input.deadlineMs;
         return await new Promise((_resolve, reject) => {
           input.signal?.addEventListener("abort", () => reject(input.signal?.reason), { once: true });
         });
@@ -46,6 +48,7 @@ describe("buildContextInjectionPrelude", () => {
 
     expect(result).toBeUndefined();
     expect(observedSignal?.aborted).toBe(true);
+    expect(observedDeadlineMs).toEqual(expect.any(Number));
   });
 
   it("forwards caller cancellation into auto-recall instead of reporting a timeout", async () => {

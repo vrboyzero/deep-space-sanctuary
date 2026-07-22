@@ -25,8 +25,8 @@ import {
 } from "@belldandy/memory";
 import {
   DEFAULT_STATE_DIR_DISPLAY,
+  drainTokenUsageUploads,
   getTokenUsageUploadRuntimeSnapshot,
-  type TokenUsageUploadConfig,
 } from "@belldandy/protocol";
 import { MockAgent, type AgentPromptDelta, type BelldandyAgent, ConversationStore, type AgentRegistry, isResidentAgentProfile, type ModelProfile, type CompactionRuntimeReport, type ProviderNativeSystemBlock, type SessionTimelineProjection, type SessionTranscriptExportBundle, type SystemPromptSection } from "@belldandy/agent";
 import type {
@@ -39,6 +39,7 @@ import type {
 } from "@belldandy/protocol";
 import { approvePairingCode, ensurePairingCode, isClientAllowed, resolveStateDir } from "./security/store.js";
 import { getGatewayMethodPolicy, validateGatewayMethodRegistry } from "./gateway-method-registry.js";
+import { readTokenUsageUploadConfig } from "./token-usage-upload-config.js";
 import { admitGatewayRequest, getPairedGatewayCapabilities } from "./request-admission.js";
 import type { BelldandyLogger } from "./logger/index.js";
 import type { ToolsConfigManager } from "./tools-config.js";
@@ -843,14 +844,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     }
     res.status(rejection.statusCode).json(rejection.body);
   });
-  const tokenUsageUploadConfig: TokenUsageUploadConfig = {
-    enabled: String(process.env.BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED ?? "false").toLowerCase() === "true",
-    url: readEnvTrimmed("BELLDANDY_TOKEN_USAGE_UPLOAD_URL"),
-    token:
-      readEnvTrimmed("BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY")
-      ?? readEnvTrimmed("BELLDANDY_TOKEN_USAGE_UPLOAD_TOKEN"), // backward compatible
-    timeoutMs: parsePositiveIntEnv("BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS", 3000),
-  };
+  const tokenUsageUploadConfig = readTokenUsageUploadConfig((name) => process.env[name]);
 
   await registerGatewayHttpRoutes(buildGatewayHttpRoutesContext({
     app,
@@ -1583,6 +1577,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     flushConversationState: () => conversationStore.waitForAllPendingPersistence(),
     flushSubTaskState: () => opts.subTaskRuntimeStore?.flushAndClose(),
     flushMemoryUsage: () => memoryUsageAccounting.flush(),
+    drainTokenUsage: (signal) => drainTokenUsageUploads(signal),
     detachRuntimeHooks: () => {
       detachSubTaskBroadcast?.();
       detachDurableExtractionBroadcast?.();

@@ -253,6 +253,7 @@ export type ContextInjectionMemoryProvider = {
       filter: { agentId?: string | null };
       retrievalMode: "implicit";
       signal?: AbortSignal;
+      deadlineMs?: number;
     },
   ): Promise<AutoRecallMemoryLike[]>;
   searchWithDiagnostics?(
@@ -262,6 +263,7 @@ export type ContextInjectionMemoryProvider = {
       filter: { agentId?: string | null };
       retrievalMode: "implicit";
       signal?: AbortSignal;
+      deadlineMs?: number;
     },
   ): Promise<{
     items: AutoRecallMemoryLike[];
@@ -325,6 +327,7 @@ async function runAutoRecallSearch(input: {
     filter: input.filter,
     retrievalMode: "implicit" as const,
     signal: controller.signal,
+    deadlineMs: Date.now() + timeoutMs,
   };
   const search = input.memoryManager.searchWithDiagnostics
     ? input.memoryManager.searchWithDiagnostics(input.query, searchInput)

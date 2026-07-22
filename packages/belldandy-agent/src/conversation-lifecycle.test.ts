@@ -28,7 +28,7 @@ describe("ConversationLifecycleCoordinator", () => {
         expect(coordinator.isGenerationCurrent(conversationId, generation)).toBe(false);
         expect(coordinator.isGenerationCurrent(conversationId, generationCapturedDuringRelease)).toBe(false);
         expect(coordinator.getSnapshot(conversationId)).toMatchObject({
-            pendingPersistenceLaneCount: 4,
+            pendingPersistenceLaneCount: CONVERSATION_PERSISTENCE_LANES.length,
             releasing: true,
         });
         expect(clear).not.toHaveBeenCalled();

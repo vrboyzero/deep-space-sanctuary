@@ -612,6 +612,7 @@ export const APP_DOM_REFS = {
   cfgTokenUsageUploadUrl: byId("cfgTokenUsageUploadUrl"),
   cfgTokenUsageUploadApiKey: byId("cfgTokenUsageUploadApiKey"),
   cfgTokenUsageUploadTimeoutMs: byId("cfgTokenUsageUploadTimeoutMs"),
+  cfgTokenUsageUploadTrustedPrivateEndpoint: byId("cfgTokenUsageUploadTrustedPrivateEndpoint"),
   cfgTokenUsageStrictUuid: byId("cfgTokenUsageStrictUuid"),
   cfgWebchatCostBudgetUsd: byId("cfgWebchatCostBudgetUsd"),
   cfgWebchatCostBudgetWarnFraction: byId("cfgWebchatCostBudgetWarnFraction"),

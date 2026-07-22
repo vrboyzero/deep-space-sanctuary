@@ -8,7 +8,6 @@ import type {
   TranscribeResult,
 } from "@belldandy/skills";
 import { createJoinRoomTool, createLeaveRoomTool } from "@belldandy/skills";
-import type { TokenUsageUploadConfig } from "@belldandy/protocol";
 import { extractOwnerUuid } from "@belldandy/protocol";
 import {
   ChannelIngressScheduler,
@@ -34,6 +33,7 @@ import {
 } from "../assistant-mode-runtime.js";
 import { upsertChannelSecurityApprovalRequest } from "../channel-security-store.js";
 import { createChannelConversationLifecycle } from "../channel-conversation-lifecycle.js";
+import { readTokenUsageUploadConfig } from "../token-usage-upload-config.js";
 import type {
   ExternalOutboundChannel,
   ExternalOutboundSenderRegistry,
@@ -361,15 +361,7 @@ export function createGatewayChannelsRuntime(input: GatewayChannelsRuntimeInput)
         const communityConfig = loadCommunityConfig();
         const communityOwnerUserUuid = await extractOwnerUuid(input.stateDir);
         const communityTokenUsageStrictUuid = String(process.env.BELLDANDY_TOKEN_USAGE_STRICT_UUID ?? "false").toLowerCase() === "true";
-        const communityTokenUsageUploadConfig: TokenUsageUploadConfig = {
-          enabled: String(process.env.BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED ?? "false").toLowerCase() === "true",
-          url: input.readEnv("BELLDANDY_TOKEN_USAGE_UPLOAD_URL")?.trim() || undefined,
-          token:
-            input.readEnv("BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY")?.trim()
-            || input.readEnv("BELLDANDY_TOKEN_USAGE_UPLOAD_TOKEN")?.trim()
-            || undefined,
-          timeoutMs: Number(input.readEnv("BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS") ?? "3000") || 3000,
-        };
+        const communityTokenUsageUploadConfig = readTokenUsageUploadConfig(input.readEnv);
         if (communityTokenUsageUploadConfig.enabled && communityTokenUsageStrictUuid && !communityOwnerUserUuid) {
           input.logger.warn("community", "Token usage upload is enabled but owner UUID was not found in root IDENTITY.md; community uploads may fail when strict UUID validation is enabled.");
         }

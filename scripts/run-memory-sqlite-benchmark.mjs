@@ -6,6 +6,11 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import {
+  CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE,
+  buildChunkVectorBatchReadQuery,
+} from "../packages/belldandy-memory/src/chunk-vector-batch.ts";
+
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutput = "artifacts/benchmarks/b00-memory-sqlite.json";
 const defaultChunkCount = 2_000;
@@ -148,6 +153,26 @@ function normalizeStorage(storage) {
   return normalized;
 }
 
+function normalizeQueryDiagnostics(value, scenarioId) {
+  if (value === undefined) return undefined;
+  const candidateCount = parseCount(value?.candidateCount, `${scenarioId}.queryDiagnostics.candidateCount`);
+  const logicalStatementCount = parseCount(
+    value?.logicalStatementCount,
+    `${scenarioId}.queryDiagnostics.logicalStatementCount`,
+  );
+  if (logicalStatementCount !== Math.ceil(candidateCount / CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE)) {
+    throw new Error(`${scenarioId}.queryDiagnostics.logicalStatementCount does not match the canonical batch limit.`);
+  }
+  if (!Array.isArray(value?.queryPlan) || value.queryPlan.length === 0 || value.queryPlan.some((item) => typeof item !== "string" || item.length === 0)) {
+    throw new Error(`${scenarioId}.queryDiagnostics.queryPlan must contain plan detail strings.`);
+  }
+  return {
+    candidateCount,
+    logicalStatementCount,
+    queryPlan: [...value.queryPlan],
+  };
+}
+
 export function createMemorySqliteBenchmarkReport({
   generatedAt,
   environment,
@@ -231,12 +256,14 @@ export function createMemorySqliteBenchmarkReport({
       }
       const resultCount = parseCount(scenario.resultCount, `${scenario.id}.resultCount`);
       requireSamples(scenario.samplesMs, sampleRuns, scenario.id);
+      const queryDiagnostics = normalizeQueryDiagnostics(scenario.queryDiagnostics, scenario.id);
       return {
         id: scenario.id,
         operation: scenario.operation,
         resultCount,
         samplesMs: scenario.samplesMs.map((sample) => round(sample)),
         summary: summarizeSamples(scenario.samplesMs),
+        ...(queryDiagnostics ? { queryDiagnostics } : {}),
       };
     }),
   };
@@ -376,7 +403,7 @@ async function createFixture(MemoryStore, { chunkCount, chunkContentBytes }) {
   }
 }
 
-function runScenario({ id, operation, execute, expectedMinimumResults }, warmupRuns, sampleRuns) {
+function runScenario({ id, operation, execute, expectedMinimumResults, queryDiagnostics }, warmupRuns, sampleRuns) {
   let resultCount = null;
   const runOnce = () => {
     const startedAt = performance.now();
@@ -409,6 +436,33 @@ function runScenario({ id, operation, execute, expectedMinimumResults }, warmupR
     operation,
     resultCount,
     samplesMs,
+    ...(queryDiagnostics ? { queryDiagnostics: queryDiagnostics() } : {}),
+  };
+}
+
+function collectVectorBatchReadDiagnostics(store, chunkIds) {
+  const uniqueChunkIds = [...new Set(chunkIds)];
+  const batches = splitIntoBatches(uniqueChunkIds, CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE);
+  const database = store.db;
+  if (!database || typeof database.prepare !== "function") {
+    throw new Error("MemoryStore did not expose the SQLite owner required for benchmark diagnostics.");
+  }
+  const queryPlan = [];
+  for (const batch of batches) {
+    const planRows = database.prepare(`EXPLAIN QUERY PLAN ${buildChunkVectorBatchReadQuery(batch.length)}`)
+      .all(...batch);
+    for (const row of planRows) {
+      const detail = typeof row?.detail === "string" ? row.detail : null;
+      if (!detail) {
+        throw new Error("SQLite query plan did not expose a detail string.");
+      }
+      queryPlan.push(detail);
+    }
+  }
+  return {
+    candidateCount: uniqueChunkIds.length,
+    logicalStatementCount: batches.length,
+    queryPlan,
   };
 }
 
@@ -507,10 +561,15 @@ async function main() {
   let fixture;
   try {
     fixture = await createFixture(MemoryStore, args);
-    const vectorWrites = buildFixtureVectorWrites(
+    const allVectorWrites = buildFixtureVectorWrites(
       fixture.fixture.chunkCount,
       fixture.fixture.vectorDimensions,
-    ).slice(0, fixture.fixture.vectorBatchSize);
+    );
+    const vectorWrites = allVectorWrites.slice(0, fixture.fixture.vectorBatchSize);
+    const vectorReadCandidateCounts = [...new Set([
+      Math.min(CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE, allVectorWrites.length),
+      Math.min(CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE * 2, allVectorWrites.length),
+    ])].filter((candidateCount) => candidateCount > vectorWrites.length);
     const scenarioDefinitions = [
       {
         id: "keyword_search_common",
@@ -541,7 +600,22 @@ async function main() {
         execute: () => [...fixture.store.getChunkVectors(
           vectorWrites.map((write) => write.chunkId),
         ).values()].filter((embedding) => embedding !== null).length,
+        queryDiagnostics: () => collectVectorBatchReadDiagnostics(
+          fixture.store,
+          vectorWrites.map((write) => write.chunkId),
+        ),
       },
+      ...vectorReadCandidateCounts.map((candidateCount) => {
+        const candidateIds = allVectorWrites.slice(0, candidateCount).map((write) => write.chunkId);
+        return {
+          id: `vector_batch_read_${candidateCount}`,
+          operation: "MemoryStore.getChunkVectors",
+          expectedMinimumResults: candidateCount,
+          execute: () => [...fixture.store.getChunkVectors(candidateIds).values()]
+            .filter((embedding) => embedding !== null).length,
+          queryDiagnostics: () => collectVectorBatchReadDiagnostics(fixture.store, candidateIds),
+        };
+      }),
       {
         id: "embedding_cache_lookup",
         operation: "MemoryStore.getCachedEmbedding",

@@ -46,7 +46,7 @@ import { createChatNetworkFeature } from "./app/features/chat-network.js";
 import { createChatUiFeature } from "./app/features/chat-ui.js";
 import { createCanvasContextFeature } from "./app/features/canvas-context.js";
 import { createPairingRequiredPromptRenderer } from "./app/features/pairing-required-prompt.js";
-import { buildDoctorChatSummary } from "./app/features/doctor-observability.js";
+import { buildLazyDoctorChatSummary } from "./app/features/doctor-observability-loader.js";
 import { createWebchatPerformanceObservability } from "./app/features/webchat-performance-observability.js";
 import { createWebchatLifecycleDiagnostics } from "./app/features/webchat-lifecycle-diagnostics.js";
 import { createAppShellFeature } from "./app/features/app-shell.js";
@@ -2636,7 +2636,19 @@ async function sendMessage(options = {}) {
         const icon = c.status === "pass" ? "✅" : c.status === "warn" ? "⚠️" : "❌";
         return `${icon} ${c.name}: ${c.message}`;
       });
-      lines.push(...buildDoctorChatSummary(withLocalWebchatDiagnostics(res.payload), localeController.t));
+      const detailSummary = await buildLazyDoctorChatSummary(
+        withLocalWebchatDiagnostics(res.payload),
+        localeController.t,
+      );
+      if (detailSummary.ok) {
+        lines.push(...detailSummary.lines);
+      } else {
+        lines.push(localeController.t(
+          "runtime.doctorDetailsUnavailable",
+          {},
+          "Detailed diagnostics are temporarily unavailable.",
+        ));
+      }
       statusEl.textContent = lines.join("\n");
     } else {
       statusEl.textContent = localeController.t(

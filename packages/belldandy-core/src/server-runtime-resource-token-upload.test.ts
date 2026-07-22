@@ -9,4 +9,9 @@ describe("Gateway runtime resource wiring", () => {
     expect(serverSource).toContain("getTokenUsageUploadRuntimeSnapshot");
     expect(serverSource).toMatch(/\(\) => \[getTokenUsageUploadRuntimeSnapshot\(\)\]/);
   });
+
+  it("registers the shared token usage owner with the Gateway shutdown lifecycle", () => {
+    expect(serverSource).toContain("drainTokenUsageUploads");
+    expect(serverSource).toMatch(/drainTokenUsage:\s*\(signal\)\s*=>\s*drainTokenUsageUploads\(signal\)/);
+  });
 });

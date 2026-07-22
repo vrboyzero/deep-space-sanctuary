@@ -5,6 +5,9 @@ import { assertSafeFilesystemRelativePath } from "@belldandy/protocol";
 
 const APPROVAL_MANIFEST_FILENAME = "approved-workflows.json";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const DEFAULT_WORKFLOW_MAX_SCRIPT_BYTES = 1024 * 1024;
+const MIN_WORKFLOW_MAX_SCRIPT_BYTES = 1024;
+const MAX_WORKFLOW_MAX_SCRIPT_BYTES = 16 * 1024 * 1024;
 
 export type WorkflowExecutionPolicy = {
   workflowRoot: string;
@@ -83,10 +86,14 @@ function readWorkflowApprovalManifest(manifestPath: string): ReadonlyMap<string,
 }
 
 function resolveMaxFileBytes(raw: string | undefined): number {
-  if (!raw?.trim()) return 1024 * 1024;
+  if (!raw?.trim()) return DEFAULT_WORKFLOW_MAX_SCRIPT_BYTES;
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 1024 || value > 16 * 1024 * 1024) {
-    throw new Error("BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES must be an integer between 1024 and 16777216.");
+  if (
+    !Number.isSafeInteger(value)
+    || value < MIN_WORKFLOW_MAX_SCRIPT_BYTES
+    || value > MAX_WORKFLOW_MAX_SCRIPT_BYTES
+  ) {
+    return DEFAULT_WORKFLOW_MAX_SCRIPT_BYTES;
   }
   return value;
 }

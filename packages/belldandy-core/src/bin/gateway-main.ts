@@ -31,6 +31,7 @@ import { buildPromptFocusRuntimePrelude } from "../prompt-focus-runtime-prelude.
 import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.js";
 import { resolveMemoryRuntimeSwitches } from "../memory-runtime-switches.js";
 import { resolveTaskMemoryCarveOutEffects } from "../task-memory-carve-out.js";
+import { resolveToolAgentStreamingEnabled } from "../tool-agent-streaming-config.js";
 import { calculateUsageCostUsd, resolveCompactionThreshold, resolveProviderCapabilityFromEnv } from "../provider-capability.js";
 import { resolveCompactionModelRoute } from "../compaction-model-routing.js";
 import { normalizePreferredProviderIds } from "../provider-model-catalog.js";
@@ -607,6 +608,9 @@ const primaryWarmupTimeoutMs = primaryWarmupTimeoutMsRaw ? Math.max(1000, parseI
 const primaryWarmupCooldownMsRaw = readEnv("BELLDANDY_PRIMARY_WARMUP_COOLDOWN_MS");
 const primaryWarmupCooldownMs = primaryWarmupCooldownMsRaw ? Math.max(5000, parseInt(primaryWarmupCooldownMsRaw, 10) || 60000) : 60000;
 const openaiStream = (readEnv("BELLDANDY_OPENAI_STREAM") ?? "true") !== "false";
+const toolAgentStreamingEnabled = resolveToolAgentStreamingEnabled(
+  readEnv("BELLDANDY_TOOL_AGENT_STREAMING_ENABLED"),
+);
 const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
 const agentProtocol = readEnv("BELLDANDY_AGENT_PROTOCOL") as "openai" | "anthropic" | undefined;
 const injectAgents = (readEnv("BELLDANDY_INJECT_AGENTS") ?? "true") !== "false";
@@ -2337,6 +2341,7 @@ agentRegistry = agentProvider === "openai"
         baseUrl: resolved.baseUrl,
         apiKey: resolved.apiKey,
         model: resolved.model,
+        streamingEnabled: toolAgentStreamingEnabled,
         systemPrompt: currentSystemPrompt,
         systemPromptSections: promptInspection.sections,
         systemPromptMetadata: promptInspection.metadata as JsonObject,

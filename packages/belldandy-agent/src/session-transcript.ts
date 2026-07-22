@@ -1,4 +1,6 @@
+import { createReadStream } from "node:fs";
 import * as fsp from "node:fs/promises";
+import { createInterface } from "node:readline";
 
 export const SESSION_TRANSCRIPT_SCHEMA_VERSION = 1;
 
@@ -109,8 +111,11 @@ export const sessionTranscriptAsyncFs = {
   appendFile(filePath: string, data: string, encoding: BufferEncoding): Promise<void> {
     return fsp.appendFile(filePath, data, encoding);
   },
-  readFile(filePath: string, encoding: BufferEncoding): Promise<string> {
-    return fsp.readFile(filePath, encoding);
+};
+
+export const sessionTranscriptReadStreamFs = {
+  createReadStream(filePath: string): NodeJS.ReadableStream {
+    return createReadStream(filePath, { encoding: "utf-8" });
   },
 };
 
@@ -211,21 +216,22 @@ export async function readSessionTranscriptFile(filePath?: string): Promise<Sess
   if (!filePath) return [];
 
   try {
-    const raw = await sessionTranscriptAsyncFs.readFile(filePath, "utf-8");
-    return raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .flatMap((line) => {
-        try {
-          const parsed = JSON.parse(line) as SessionTranscriptEvent;
-          if (!parsed || typeof parsed !== "object") return [];
-          if (typeof parsed.conversationId !== "string" || typeof parsed.type !== "string") return [];
-          return [parsed];
-        } catch {
-          return [];
-        }
-      });
+    const events: SessionTranscriptEvent[] = [];
+    const stream = sessionTranscriptReadStreamFs.createReadStream(filePath);
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line) as SessionTranscriptEvent;
+        if (!parsed || typeof parsed !== "object") continue;
+        if (typeof parsed.conversationId !== "string" || typeof parsed.type !== "string") continue;
+        events.push(parsed);
+      } catch {
+        // Preserve the existing tolerance for partial or malformed JSONL lines.
+      }
+    }
+    return events;
   } catch (err) {
     const fsErr = err as NodeJS.ErrnoException;
     if (fsErr.code === "ENOENT") {

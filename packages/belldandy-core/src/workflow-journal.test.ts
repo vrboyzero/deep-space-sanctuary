@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,12 +20,365 @@ describe("WorkflowJournal", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     store.close();
     await fs.rm(rootDir, { recursive: true, force: true }).catch(() => {});
   });
 
   it("lookup 未命中返回 null", () => {
     expect(journal.lookup("journal-1", "fp-1")).toBeNull();
+  });
+
+  it("首次 pending claim 返回 owner generation 与 lease", () => {
+    const claim = journal.claimPending({
+      journalId: "journal-claim-first",
+      workflowName: "code-audit",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-claim-first",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      ownerId: "run-owner-a",
+      leaseDurationMs: 30_000,
+    });
+
+    expect(claim).toMatchObject({
+      outcome: "claimed",
+      ownerId: "run-owner-a",
+      generation: 1,
+    });
+    expect(claim.leaseExpiresAt).toBeGreaterThan(Date.now());
+    expect(journal.listByJournal("journal-claim-first")).toEqual([
+      expect.objectContaining({ fingerprint: "fp-claim-first", status: "pending" }),
+    ]);
+  });
+
+  it("未过期 pending claim 拒绝竞争 owner", () => {
+    const input = {
+      journalId: "journal-claim-conflict",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-claim-conflict",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      leaseDurationMs: 30_000,
+    };
+    const first = journal.claimPending({ ...input, ownerId: "run-owner-a" });
+    const competing = journal.claimPending({ ...input, ownerId: "run-owner-b" });
+
+    expect(first).toMatchObject({ outcome: "claimed", ownerId: "run-owner-a", generation: 1 });
+    expect(competing).toEqual({
+      outcome: "conflict",
+      ownerId: "run-owner-a",
+      generation: 1,
+      leaseExpiresAt: first.leaseExpiresAt,
+    });
+  });
+
+  it("过期 pending claim 可由新 owner 回收并递增 generation", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+    const input = {
+      journalId: "journal-claim-expired",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-claim-expired",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      leaseDurationMs: 1_000,
+    };
+    journal.claimPending({ ...input, ownerId: "run-owner-a" });
+
+    vi.advanceTimersByTime(1_000);
+    const reclaimed = journal.claimPending({ ...input, ownerId: "run-owner-b" });
+
+    expect(reclaimed).toEqual({
+      outcome: "claimed",
+      ownerId: "run-owner-b",
+      generation: 2,
+      leaseExpiresAt: Date.now() + 1_000,
+    });
+  });
+
+  it("只有当前 owner generation 能续约未过期 pending claim", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+    const claim = journal.claimPending({
+      journalId: "journal-renew",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-renew",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      ownerId: "run-owner-a",
+      leaseDurationMs: 1_000,
+    });
+
+    vi.advanceTimersByTime(500);
+    expect(journal.renewPending({
+      journalId: "journal-renew",
+      fingerprint: "fp-renew",
+      ownerId: "run-owner-b",
+      generation: claim.generation,
+      leaseDurationMs: 2_000,
+    })).toBeNull();
+    expect(journal.renewPending({
+      journalId: "journal-renew",
+      fingerprint: "fp-renew",
+      ownerId: "run-owner-a",
+      generation: claim.generation,
+      leaseDurationMs: 2_000,
+    })).toEqual({
+      ownerId: "run-owner-a",
+      generation: 1,
+      leaseExpiresAt: Date.now() + 2_000,
+    });
+  });
+
+  it("当前 owner generation 能把 pending claim 结算为 done", () => {
+    const claim = journal.claimPending({
+      journalId: "journal-settle-done",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-settle-done",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      ownerId: "run-owner-a",
+      leaseDurationMs: 30_000,
+    });
+
+    expect(journal.settlePending({
+      journalId: "journal-settle-done",
+      fingerprint: "fp-settle-done",
+      ownerId: claim.ownerId,
+      generation: claim.generation,
+      status: "done",
+      result: "发现 3 个隐患",
+      resultJson: '{"count":3}',
+      tokenCount: 500,
+    })).toBe(true);
+    expect(journal.lookup("journal-settle-done", "fp-settle-done")).toMatchObject({
+      status: "done",
+      result: "发现 3 个隐患",
+      resultJson: '{"count":3}',
+      tokenCount: 500,
+    });
+  });
+
+  it("过期回收后拒绝旧 owner 的迟到结算", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+    const claimInput = {
+      journalId: "journal-settle-fence",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-settle-fence",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      leaseDurationMs: 1_000,
+    };
+    const oldClaim = journal.claimPending({ ...claimInput, ownerId: "run-owner-a" });
+    vi.advanceTimersByTime(1_000);
+    const currentClaim = journal.claimPending({ ...claimInput, ownerId: "run-owner-b" });
+
+    expect(journal.settlePending({
+      journalId: claimInput.journalId,
+      fingerprint: claimInput.fingerprint,
+      ownerId: oldClaim.ownerId,
+      generation: oldClaim.generation,
+      status: "done",
+      result: "late result",
+    })).toBe(false);
+    expect(journal.settlePending({
+      journalId: claimInput.journalId,
+      fingerprint: claimInput.fingerprint,
+      ownerId: currentClaim.ownerId,
+      generation: currentClaim.generation,
+      status: "done",
+      result: "current result",
+    })).toBe(true);
+    expect(journal.lookup(claimInput.journalId, claimInput.fingerprint)?.result).toBe("current result");
+  });
+
+  it("旧 schema 的 pending 记录可迁移并由新 owner 接管", () => {
+    const db = store.getDbHandleForSharedSchema();
+    db.exec("DROP TABLE workflow_journal");
+    db.exec(`
+      CREATE TABLE workflow_journal (
+        id TEXT PRIMARY KEY,
+        journal_id TEXT NOT NULL,
+        workflow_name TEXT,
+        script_hash TEXT NOT NULL,
+        call_key TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        opts_json TEXT NOT NULL,
+        result TEXT,
+        result_json TEXT,
+        error TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        token_count INTEGER,
+        cache_hit_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        UNIQUE(journal_id, fingerprint)
+      )
+    `);
+    db.prepare(`
+      INSERT INTO workflow_journal
+        (id, journal_id, script_hash, call_key, fingerprint, prompt, opts_json, status, created_at)
+      VALUES ('legacy-row', 'journal-legacy', 'hash-1', 'scan/0', 'fp-legacy', '扫描 auth', '{}', 'pending', 1)
+    `).run();
+
+    const migratedJournal = new WorkflowJournal(db);
+    const claim = migratedJournal.claimPending({
+      journalId: "journal-legacy",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-legacy",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      ownerId: "run-owner-new",
+      leaseDurationMs: 30_000,
+    });
+
+    expect(claim).toMatchObject({ outcome: "claimed", ownerId: "run-owner-new", generation: 1 });
+    expect(migratedJournal.listByJournal("journal-legacy")).toHaveLength(1);
+  });
+
+  it("不同 Journal 实例竞争同一 pending claim 时只有一个 owner", () => {
+    const competingJournal = new WorkflowJournal(store.getDbHandleForSharedSchema());
+    const input = {
+      journalId: "journal-instance-race",
+      scriptHash: "hash-1",
+      callKey: "scan/0",
+      fingerprint: "fp-instance-race",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      leaseDurationMs: 30_000,
+    };
+
+    const first = journal.claimPending({ ...input, ownerId: "run-owner-a" });
+    const competing = competingJournal.claimPending({ ...input, ownerId: "run-owner-b" });
+
+    expect(first.outcome).toBe("claimed");
+    expect(competing).toMatchObject({
+      outcome: "conflict",
+      ownerId: "run-owner-a",
+      generation: first.generation,
+    });
+  });
+
+  it("当前 owner generation 能结算 error 与 skipped 终态", () => {
+    const base = {
+      journalId: "journal-settle-terminal",
+      scriptHash: "hash-1",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      ownerId: "run-owner-a",
+      leaseDurationMs: 30_000,
+    };
+    const errorClaim = journal.claimPending({
+      ...base,
+      callKey: "scan/0",
+      fingerprint: "fp-settle-error",
+    });
+    const skippedClaim = journal.claimPending({
+      ...base,
+      callKey: "scan/1",
+      fingerprint: "fp-settle-skipped",
+    });
+
+    expect(journal.settlePending({
+      journalId: base.journalId,
+      fingerprint: "fp-settle-error",
+      ownerId: errorClaim.ownerId,
+      generation: errorClaim.generation,
+      status: "error",
+      error: "agent timeout",
+    })).toBe(true);
+    expect(journal.settlePending({
+      journalId: base.journalId,
+      fingerprint: "fp-settle-skipped",
+      ownerId: skippedClaim.ownerId,
+      generation: skippedClaim.generation,
+      status: "skipped",
+    })).toBe(true);
+    expect(journal.listByJournal(base.journalId)).toEqual([
+      expect.objectContaining({ status: "error", error: "agent timeout" }),
+      expect.objectContaining({ status: "skipped" }),
+    ]);
+  });
+
+  it("error 与 skipped 可重新 claim，但 done 结果不可覆盖", () => {
+    const base = {
+      journalId: "journal-terminal-reclaim",
+      scriptHash: "hash-1",
+      prompt: "扫描 auth",
+      optsJson: "{}",
+      leaseDurationMs: 30_000,
+    };
+    const errorClaim = journal.claimPending({
+      ...base,
+      callKey: "scan/error",
+      fingerprint: "fp-error-reclaim",
+      ownerId: "run-owner-a",
+    });
+    const skippedClaim = journal.claimPending({
+      ...base,
+      callKey: "scan/skipped",
+      fingerprint: "fp-skipped-reclaim",
+      ownerId: "run-owner-a",
+    });
+    const doneClaim = journal.claimPending({
+      ...base,
+      callKey: "scan/done",
+      fingerprint: "fp-done-protected",
+      ownerId: "run-owner-a",
+    });
+    journal.settlePending({
+      journalId: base.journalId,
+      fingerprint: "fp-error-reclaim",
+      ownerId: errorClaim.ownerId,
+      generation: errorClaim.generation,
+      status: "error",
+      error: "temporary failure",
+    });
+    journal.settlePending({
+      journalId: base.journalId,
+      fingerprint: "fp-skipped-reclaim",
+      ownerId: skippedClaim.ownerId,
+      generation: skippedClaim.generation,
+      status: "skipped",
+    });
+    journal.settlePending({
+      journalId: base.journalId,
+      fingerprint: "fp-done-protected",
+      ownerId: doneClaim.ownerId,
+      generation: doneClaim.generation,
+      status: "done",
+      result: "stable result",
+    });
+
+    expect(journal.claimPending({
+      ...base,
+      callKey: "scan/error",
+      fingerprint: "fp-error-reclaim",
+      ownerId: "run-owner-b",
+    })).toMatchObject({ outcome: "claimed", ownerId: "run-owner-b", generation: 2 });
+    expect(journal.claimPending({
+      ...base,
+      callKey: "scan/skipped",
+      fingerprint: "fp-skipped-reclaim",
+      ownerId: "run-owner-b",
+    })).toMatchObject({ outcome: "claimed", ownerId: "run-owner-b", generation: 2 });
+    expect(() => journal.claimPending({
+      ...base,
+      callKey: "scan/done",
+      fingerprint: "fp-done-protected",
+      ownerId: "run-owner-b",
+    })).toThrow(/cannot replace a completed result/i);
+    expect(journal.lookup(base.journalId, "fp-done-protected")?.result).toBe("stable result");
   });
 
   it("recordPending + record 后 lookup 命中", () => {

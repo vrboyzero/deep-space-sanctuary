@@ -86,7 +86,46 @@ export type FailoverResult = {
     summary: FailoverExecutionSummary;
 };
 
-export type FailoverExecutionStatus = "success" | "non_retryable" | "exhausted" | "aborted";
+export type FailoverRequestParams = {
+    buildRequest: (profile: ModelProfile) => { url: string; init: RequestInit };
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    minimumTimeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    onSummary?: (summary: FailoverExecutionSummary) => void;
+};
+
+export type FailoverConsumeContext = {
+    response: Response;
+    profile: ModelProfile;
+    signal: AbortSignal;
+    attempt: number;
+    maxAttempts: number;
+};
+
+export type FailoverExecutionResult<T> = FailoverResult & {
+    /** HTTP 非成功且不可 failover 时保持 undefined，由调用方读取原 Response。 */
+    value?: T;
+};
+
+export class FailoverAttemptError extends Error {
+    readonly reason: FailoverReason;
+    readonly committed: boolean;
+    readonly code?: string;
+    summary?: FailoverExecutionSummary;
+    attempts?: FailoverAttempt[];
+
+    constructor(input: { message: string; reason: FailoverReason; committed: boolean; code?: string }) {
+        super(input.message);
+        this.name = "FailoverAttemptError";
+        this.reason = input.reason;
+        this.committed = input.committed;
+        this.code = input.code;
+    }
+}
+
+export type FailoverExecutionStatus = "success" | "non_retryable" | "exhausted" | "aborted" | "committed_failure";
 
 export type FailoverExecutionStepKind =
     | "cooldown_skip"
@@ -397,24 +436,29 @@ export class FailoverClient {
      * @returns             成功的 Response + 使用的 Profile + 尝试记录
      * @throws              如果所有 Profile 均失败
      */
-    async fetchWithFailover(params: {
-        /** 根据给定的 (baseUrl, apiKey, model) 构建 fetch 的 url 和 init */
-        buildRequest: (profile: ModelProfile) => { url: string; init: RequestInit };
-        /** 可选：调用方取消信号。若触发，应立即停止 failover / retry / backoff。 */
-        signal?: AbortSignal;
-        /** 单次请求超时（毫秒） */
-        timeoutMs?: number;
-        /** 请求超时下限（毫秒），会覆盖过小的 profile.requestTimeoutMs */
-        minimumTimeoutMs?: number;
-        /** 默认同 profile 最大重试次数（不含首次请求） */
-        maxRetries?: number;
-        /** 默认重试退避基线（毫秒） */
-        retryBackoffMs?: number;
-        /** 本次执行完成后的结构化摘要 */
-        onSummary?: (summary: FailoverExecutionSummary) => void;
-    }): Promise<FailoverResult> {
+    async fetchWithFailover(params: FailoverRequestParams): Promise<FailoverResult> {
+        const result = await this.executeWithFailover({
+            ...params,
+            consumeResponse: ({ response }) => response,
+        });
+        return {
+            response: result.response,
+            profile: result.profile,
+            attempts: result.attempts,
+            summary: result.summary,
+        };
+    }
+
+    /**
+     * 将成功响应的消费纳入同一次 attempt 生命周期。
+     * 流式调用可在 body 完成前保持 caller abort/deadline，并在提交前报告可 failover 的消费错误。
+     */
+    async executeWithFailover<T>(params: FailoverRequestParams & {
+        consumeResponse: (context: FailoverConsumeContext) => Promise<T> | T;
+    }): Promise<FailoverExecutionResult<T>> {
         const {
             buildRequest,
+            consumeResponse,
             signal,
             timeoutMs = 120_000,
             minimumTimeoutMs,
@@ -595,6 +639,13 @@ export class FailoverClient {
                         });
 
                         if (response.ok) {
+                            const value = await consumeResponse({
+                                response,
+                                profile,
+                                signal: controller.signal,
+                                attempt,
+                                maxAttempts,
+                            });
                             this.cooldown.markSuccess(profileId);
                             this.cooldownSkipLogUntil.delete(profileId);
                             if (attempts.length > 0) {
@@ -607,7 +658,7 @@ export class FailoverClient {
                                 finalStatus: "success",
                                 profile,
                             }));
-                            return { response, profile, attempts, summary };
+                            return { response, profile, attempts, summary, value };
                         }
 
                         const errorText = await safeReadText(response);
@@ -722,7 +773,8 @@ export class FailoverClient {
                             });
                             throw toAbortError(externalSignal.reason);
                         }
-                        const reason: FailoverReason = isAbort ? "timeout" : "unknown";
+                        const failoverAttemptError = err instanceof FailoverAttemptError ? err : undefined;
+                        const reason: FailoverReason = failoverAttemptError?.reason ?? (isAbort ? "timeout" : "unknown");
                         const errorMsg = isAbort
                             ? `请求超时（${resolvedTimeoutMs}ms）`
                             : err instanceof Error
@@ -755,6 +807,53 @@ export class FailoverClient {
                             wireApi: profile.wireApi,
                         });
                         lastError = err instanceof Error ? err : new Error(String(err));
+
+                        if (failoverAttemptError?.committed) {
+                            steps.push({
+                                kind: "terminal_fail",
+                                profileId,
+                                provider,
+                                model: profile.model,
+                                reason,
+                                attempt,
+                                maxAttempts,
+                                timeoutMs: resolvedTimeoutMs,
+                                wireApi: profile.wireApi,
+                                error: errorMsg,
+                            });
+                            this.cooldown.mark(profileId, resolveFailoverCooldownMs(reason));
+                            const summary = emitSummary(buildSummary({
+                                finalStatus: "committed_failure",
+                                profile,
+                                reason,
+                            }));
+                            failoverAttemptError.summary = summary;
+                            failoverAttemptError.attempts = attempts.map((item) => ({ ...item }));
+                            throw failoverAttemptError;
+                        }
+
+                        if (failoverAttemptError && !isRetryableReason(reason)) {
+                            steps.push({
+                                kind: "terminal_fail",
+                                profileId,
+                                provider,
+                                model: profile.model,
+                                reason,
+                                attempt,
+                                maxAttempts,
+                                timeoutMs: resolvedTimeoutMs,
+                                wireApi: profile.wireApi,
+                                error: errorMsg,
+                            });
+                            const summary = emitSummary(buildSummary({
+                                finalStatus: "non_retryable",
+                                profile,
+                                reason,
+                            }));
+                            failoverAttemptError.summary = summary;
+                            failoverAttemptError.attempts = attempts.map((item) => ({ ...item }));
+                            throw failoverAttemptError;
+                        }
 
                         if (canRetrySameProfile) {
                             const waitMs = calcBackoffDelay(resolvedBackoffMs, attempt);

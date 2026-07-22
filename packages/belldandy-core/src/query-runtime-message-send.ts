@@ -1724,7 +1724,7 @@ function wasMessageSendStopped(input: {
 }
 
 function isMessageSendAgentRunFailed(runResult: MessageSendRunResult): boolean {
-  return Boolean(runResult.budgetExhausted || runResult.latestStatus === "error");
+  return Boolean(runResult.interrupted || runResult.budgetExhausted || runResult.latestStatus === "error");
 }
 
 function applyMessageSendCompletionPolicy(input: {
@@ -1815,6 +1815,17 @@ async function finalizeMessageSendSuccess(input: {
       requestedAgentId: input.requestedAgentId,
       partialText: runResult.fullText,
       reason: readMessageSendStopReason(input.abortController.signal),
+    });
+    return;
+  }
+  if (runResult.interrupted) {
+    finalizeMessageSendInterrupted({
+      ctx,
+      queryRuntime,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      requestedAgentId: input.requestedAgentId,
+      interrupted: runResult.interrupted,
     });
     return;
   }
@@ -1994,6 +2005,62 @@ function finalizeMessageSendStopped(input: {
   });
 }
 
+function finalizeMessageSendInterrupted(input: {
+  ctx: MessageSendQueryRuntimeContext;
+  queryRuntime: QueryRuntime<"message.send">;
+  conversationId: string;
+  runId: string;
+  requestedAgentId?: string;
+  interrupted: NonNullable<MessageSendRunResult["interrupted"]>;
+}): void {
+  consumeAutoTaskReport(input.conversationId);
+  const hadPartialResponse = Boolean(input.interrupted.partialText);
+  input.ctx.runtime.log.warn("agent", "Agent provider stream was interrupted after commit", {
+    conversationId: input.conversationId,
+    runId: input.runId,
+    reason: input.interrupted.reason,
+    code: input.interrupted.code ?? null,
+    hadPartialResponse,
+  });
+  input.queryRuntime.mark("failed", {
+    conversationId: input.conversationId,
+    detail: {
+      runId: input.runId,
+      error: input.interrupted.error,
+      reason: input.interrupted.reason,
+      source: "provider_stream",
+      hadPartialResponse,
+      ...(input.interrupted.code ? { code: input.interrupted.code } : {}),
+    },
+  });
+  input.ctx.io.sendEvent(input.ctx.request.ws, {
+    type: "event",
+    event: "agent.status",
+    payload: {
+      agentId: input.requestedAgentId ?? "default",
+      conversationId: input.conversationId,
+      runId: input.runId,
+      status: "error",
+    },
+  });
+  emitMessageSendInterruptedFrame({
+    ctx: input.ctx,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    agentId: input.requestedAgentId ?? "default",
+    reason: input.interrupted.reason,
+    error: input.interrupted.error,
+    code: input.interrupted.code,
+    hadPartialResponse,
+  });
+  scheduleMessageSendDigestRefresh({
+    ctx: input.ctx,
+    conversationId: input.conversationId,
+    source: "message.agent_interrupted",
+    warningMessage: "Auto refresh after agent stream interruption failed",
+  });
+}
+
 function finalizeMessageSendFailure(input: {
   ctx: MessageSendQueryRuntimeContext;
   queryRuntime: QueryRuntime<"message.send">;
@@ -2066,6 +2133,31 @@ function finalizeMessageSendAgentRunFailure(input: {
       },
       digestSource: "message.agent_error",
       digestWarningMessage: "Auto refresh after agent stream failure failed",
+    },
+  });
+}
+
+function emitMessageSendInterruptedFrame(input: {
+  ctx: MessageSendQueryRuntimeContext;
+  conversationId: string;
+  runId: string;
+  agentId: string;
+  reason: string;
+  error: string;
+  code?: string;
+  hadPartialResponse: boolean;
+}): void {
+  input.ctx.io.sendEvent(input.ctx.request.ws, {
+    type: "event",
+    event: "conversation.run.interrupted",
+    payload: {
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      reason: input.reason,
+      error: input.error,
+      ...(input.code ? { code: input.code } : {}),
+      hadPartialResponse: input.hadPartialResponse,
     },
   });
 }

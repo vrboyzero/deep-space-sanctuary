@@ -78,6 +78,7 @@ const DEFAULT_METHODS = getAdvertisedGatewayMethods();
 const DEFAULT_EVENTS = [
   "chat.delta",
   "chat.final",
+  "conversation.run.interrupted",
   "conversation.run.stopped",
   "agent.status",
   "agent.budget_exhausted",

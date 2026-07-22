@@ -69,6 +69,17 @@ test("B00 Memory SQLite benchmark reports fixture scale and reproducible statist
         resultCount: 64,
         samplesMs: [20, 21, 22, 23, 24],
       },
+      {
+        id: "vector_batch_read_900",
+        operation: "MemoryStore.getChunkVectors",
+        resultCount: 900,
+        samplesMs: [30, 31, 32, 33, 34],
+        queryDiagnostics: {
+          candidateCount: 900,
+          logicalStatementCount: 1,
+          queryPlan: ["SEARCH c USING INDEX sqlite_autoindex_chunks_1 (id=?)"],
+        },
+      },
     ],
   });
 
@@ -118,6 +129,15 @@ test("B00 Memory SQLite benchmark reports fixture scale and reproducible statist
   expect(report.scenarios[2]).toMatchObject({
     operation: "MemoryStore.upsertChunkVectorsBatch",
     resultCount: 64,
+  });
+  expect(report.scenarios[3]).toMatchObject({
+    operation: "MemoryStore.getChunkVectors",
+    resultCount: 900,
+    queryDiagnostics: {
+      candidateCount: 900,
+      logicalStatementCount: 1,
+      queryPlan: ["SEARCH c USING INDEX sqlite_autoindex_chunks_1 (id=?)"],
+    },
   });
 });
 

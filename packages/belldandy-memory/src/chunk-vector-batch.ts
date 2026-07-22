@@ -1,13 +1,30 @@
 import type { SqliteDatabase } from "./index.js";
 import { vectorFromBuffer, vectorToBuffer, type EmbeddingVector } from "./embeddings/index.js";
 
-const SQLITE_BIND_PARAMETER_BATCH_SIZE = 900;
+export const CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE = 900;
 
 export type ChunkVectorWrite = {
   chunkId: string;
   embedding: EmbeddingVector;
   cacheHash?: string;
 };
+
+export function buildChunkVectorBatchReadQuery(candidateCount: number): string {
+  if (
+    !Number.isSafeInteger(candidateCount)
+    || candidateCount <= 0
+    || candidateCount > CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE
+  ) {
+    throw new Error("Invalid chunk vector batch candidate count.");
+  }
+  const placeholders = Array.from({ length: candidateCount }, () => "?").join(", ");
+  return `
+    SELECT c.id AS chunk_id, v.embedding
+    FROM chunks c
+    INNER JOIN chunks_vec v ON c.rowid = v.rowid
+    WHERE c.id IN (${placeholders})
+  `;
+}
 
 /**
  * 为 reranker 提供一次 SQL 读取多个 vec0 向量的适配层。
@@ -26,16 +43,11 @@ export function readChunkVectorsBatch(
     return vectors;
   }
 
-  for (const chunkIdBatch of splitIntoBatches(normalizedChunkIds, SQLITE_BIND_PARAMETER_BATCH_SIZE)) {
-    const placeholders = chunkIdBatch.map(() => "?").join(", ");
+  for (const chunkIdBatch of splitIntoBatches(normalizedChunkIds, CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE)) {
     let rows: Array<{ chunk_id: string; embedding: Buffer }>;
     try {
-      rows = db.prepare(`
-        SELECT c.id AS chunk_id, v.embedding
-        FROM chunks c
-        INNER JOIN chunks_vec v ON c.rowid = v.rowid
-        WHERE c.id IN (${placeholders})
-      `).all(...chunkIdBatch) as Array<{ chunk_id: string; embedding: Buffer }>;
+      rows = db.prepare(buildChunkVectorBatchReadQuery(chunkIdBatch.length))
+        .all(...chunkIdBatch) as Array<{ chunk_id: string; embedding: Buffer }>;
     } catch {
       // 与单项读取保持同一降级语义：vec0 不可读时让 reranker 按无向量继续。
       continue;
@@ -131,7 +143,7 @@ function normalizeChunkIds(chunkIds: string[]): string[] {
 
 function readChunkRowIds(db: SqliteDatabase, chunkIds: string[]): Map<string, number> {
   const rowIds = new Map<string, number>();
-  for (const chunkIdBatch of splitIntoBatches(chunkIds, SQLITE_BIND_PARAMETER_BATCH_SIZE)) {
+  for (const chunkIdBatch of splitIntoBatches(chunkIds, CHUNK_VECTOR_READ_BIND_PARAMETER_BATCH_SIZE)) {
     const placeholders = chunkIdBatch.map(() => "?").join(", ");
     const rows = db.prepare(`
       SELECT id, rowid

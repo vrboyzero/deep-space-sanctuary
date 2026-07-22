@@ -477,6 +477,27 @@ describe("agent runtime lifecycle", () => {
     expect(fixture.feature.getRuntimeSnapshot().pendingSystemRestartRequestCount).toBe(0);
   });
 
+  it("finalizes a non-empty interrupted partial in the resident cache without creating another message", () => {
+    const fixture = createFixture({
+      residentAgentRosterEnabled: true,
+      conversationMessages: [{ role: "assistant", content: "partial answer", __streaming: true }],
+    });
+
+    fixture.feature.handleConversationStoppedPayload({
+      conversationId: "conversation-1",
+      agentId: "coder",
+      reason: "provider_stream_error",
+    });
+
+    expect(fixture.agentSessionCacheFeature.finalizeAssistantMessage).toHaveBeenCalledOnce();
+    expect(fixture.agentSessionCacheFeature.finalizeAssistantMessage).toHaveBeenCalledWith(
+      "conversation-1",
+      "partial answer",
+      expect.objectContaining({ agentId: "coder" }),
+    );
+    expect(fixture.agentSessionCacheFeature.appendAssistantDelta).not.toHaveBeenCalled();
+  });
+
   it("rejects synchronous catalog, cache, storage, and command ingress after dispose", async () => {
     const fixture = createFixture({
       residentAgentRosterEnabled: true,

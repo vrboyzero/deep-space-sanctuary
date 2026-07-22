@@ -7,8 +7,51 @@ import {
   registerGatewayServerShutdownResources,
   throwOnGatewayServerShutdownFailure,
 } from "./gateway-server-shutdown.js";
+import { registerGatewayShutdownResources } from "./gateway-shutdown-resources.js";
 
 describe("Gateway server shutdown resources", () => {
+  it("drains token usage after external channels and before transport close", async () => {
+    const events: string[] = [];
+    let releaseChannels!: () => void;
+    const channelsClosed = new Promise<void>((resolve) => {
+      releaseChannels = resolve;
+    });
+    const coordinator = new GatewayShutdownCoordinator();
+    registerGatewayServerShutdownResources(coordinator, {
+      stopIntake: () => {
+        events.push("gateway.intake");
+      },
+      drainTokenUsage: async (signal) => {
+        expect(signal.aborted).toBe(false);
+        events.push("token-usage.drain");
+      },
+      closeTransport: () => {
+        events.push("transport.close");
+      },
+    });
+    registerGatewayShutdownResources(coordinator, {
+      channels: {
+        stopChannels: () => {
+          events.push("channels.stop");
+          return channelsClosed;
+        },
+      },
+    });
+
+    const shutdown = coordinator.requestShutdown({ kind: "manual", exitCode: 0 });
+    await vi.waitFor(() => expect(events).toContain("channels.stop"));
+    expect(events).toEqual(["gateway.intake", "channels.stop"]);
+
+    releaseChannels();
+    await expect(shutdown).resolves.toMatchObject({ outcome: "completed" });
+    expect(events).toEqual([
+      "gateway.intake",
+      "channels.stop",
+      "token-usage.drain",
+      "transport.close",
+    ]);
+  });
+
   it("stops intake, aborts and drains active work, flushes state, then closes transport once", async () => {
     const events: string[] = [];
     const coordinator = new GatewayShutdownCoordinator();

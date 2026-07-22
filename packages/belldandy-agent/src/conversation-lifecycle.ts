@@ -3,6 +3,7 @@ export const CONVERSATION_PERSISTENCE_LANES = [
     "compaction_state",
     "session_digest_state",
     "session_memory",
+    "tool_artifact_meta",
 ] as const;
 
 export type ConversationPersistenceLane = typeof CONVERSATION_PERSISTENCE_LANES[number];

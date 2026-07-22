@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS workflow_journal (
   status          TEXT    NOT NULL DEFAULT 'pending',
   token_count     INTEGER,
   cache_hit_count INTEGER NOT NULL DEFAULT 0,
+  lease_owner_id  TEXT,
+  lease_generation INTEGER NOT NULL DEFAULT 0,
+  lease_expires_at INTEGER,
   created_at      INTEGER NOT NULL,
   completed_at    INTEGER,
   UNIQUE(journal_id, fingerprint)
@@ -62,6 +65,9 @@ export type WorkflowJournalRow = {
   status: WorkflowJournalStatus;
   tokenCount: number | null;
   cacheHitCount: number;
+  leaseOwnerId: string | null;
+  leaseGeneration: number;
+  leaseExpiresAt: number | null;
   createdAt: number;
   completedAt: number | null;
 };
@@ -83,6 +89,40 @@ export type WorkflowJournalPendingInput = {
   prompt: string;
   optsJson: string;
 };
+
+export type WorkflowJournalClaimInput = WorkflowJournalPendingInput & {
+  ownerId: string;
+  leaseDurationMs: number;
+};
+
+export type WorkflowJournalClaim = {
+  outcome: "claimed" | "conflict";
+  ownerId: string;
+  generation: number;
+  leaseExpiresAt: number;
+};
+
+export type WorkflowJournalLeaseIdentity = {
+  journalId: string;
+  fingerprint: string;
+  ownerId: string;
+  generation: number;
+};
+
+export type WorkflowJournalLease = Omit<WorkflowJournalLeaseIdentity, "journalId" | "fingerprint"> & {
+  leaseExpiresAt: number;
+};
+
+export type WorkflowJournalSettleInput = WorkflowJournalLeaseIdentity & (
+  | {
+      status: "done";
+      result: string;
+      tokenCount?: number;
+      resultJson?: string;
+    }
+  | { status: "error"; error: string }
+  | { status: "skipped" }
+);
 
 export type WorkflowJournalRecordInput = {
   journalId: string;
@@ -109,6 +149,13 @@ export class WorkflowJournal {
   private readonly db: SqliteDatabase;
   private readonly stmtLookup;
   private readonly stmtInsertPending;
+  private readonly stmtInsertPendingClaim;
+  private readonly stmtReclaimPendingClaim;
+  private readonly stmtRetryTerminalClaim;
+  private readonly stmtRenewPendingClaim;
+  private readonly stmtSettlePendingDone;
+  private readonly stmtSettlePendingError;
+  private readonly stmtSettlePendingSkipped;
   private readonly stmtMarkDone;
   private readonly stmtMarkError;
   private readonly stmtMarkSkipped;
@@ -133,7 +180,8 @@ export class WorkflowJournal {
              prompt, opts_json AS optsJson, result, result_json AS resultJson,
              error, status, token_count AS tokenCount,
              cache_hit_count AS cacheHitCount, created_at AS createdAt,
-             completed_at AS completedAt
+             completed_at AS completedAt, lease_owner_id AS leaseOwnerId,
+             lease_generation AS leaseGeneration, lease_expires_at AS leaseExpiresAt
       FROM workflow_journal
       WHERE journal_id = :journal_id AND fingerprint = :fingerprint
       LIMIT 1
@@ -156,6 +204,140 @@ export class WorkflowJournal {
       VALUES
         (:id, :journal_id, :workflow_name, :script_hash, :call_key, :fingerprint,
          :prompt, :opts_json, 'pending', 0, :created_at)
+    `);
+
+    this.stmtInsertPendingClaim = db.prepare<{
+      id: string;
+      journal_id: string;
+      workflow_name: string | null;
+      script_hash: string;
+      call_key: string;
+      fingerprint: string;
+      prompt: string;
+      opts_json: string;
+      lease_owner_id: string;
+      lease_expires_at: number;
+      created_at: number;
+    }>(`
+      INSERT OR IGNORE INTO workflow_journal
+        (id, journal_id, workflow_name, script_hash, call_key, fingerprint,
+         prompt, opts_json, status, cache_hit_count, lease_owner_id,
+         lease_generation, lease_expires_at, created_at)
+      VALUES
+        (:id, :journal_id, :workflow_name, :script_hash, :call_key, :fingerprint,
+         :prompt, :opts_json, 'pending', 0, :lease_owner_id,
+         1, :lease_expires_at, :created_at)
+    `);
+
+    this.stmtReclaimPendingClaim = db.prepare<{
+      journal_id: string;
+      fingerprint: string;
+      lease_owner_id: string;
+      lease_expires_at: number;
+      current_time: number;
+    }>(`
+      UPDATE workflow_journal
+      SET lease_owner_id = :lease_owner_id,
+          lease_generation = lease_generation + 1,
+          lease_expires_at = :lease_expires_at
+      WHERE journal_id = :journal_id AND fingerprint = :fingerprint
+        AND status = 'pending'
+        AND (
+          lease_owner_id IS NULL
+          OR lease_expires_at IS NULL
+          OR lease_expires_at <= :current_time
+        )
+    `);
+
+    this.stmtRetryTerminalClaim = db.prepare<{
+      journal_id: string;
+      fingerprint: string;
+      lease_owner_id: string;
+      lease_expires_at: number;
+    }>(`
+      UPDATE workflow_journal
+      SET status = 'pending', result = NULL, result_json = NULL,
+          error = NULL, token_count = NULL, completed_at = NULL,
+          lease_owner_id = :lease_owner_id,
+          lease_generation = lease_generation + 1,
+          lease_expires_at = :lease_expires_at
+      WHERE journal_id = :journal_id AND fingerprint = :fingerprint
+        AND status IN ('error', 'skipped')
+    `);
+
+    this.stmtRenewPendingClaim = db.prepare<{
+      journal_id: string;
+      fingerprint: string;
+      lease_owner_id: string;
+      lease_generation: number;
+      lease_expires_at: number;
+      current_time: number;
+    }>(`
+      UPDATE workflow_journal
+      SET lease_expires_at = :lease_expires_at
+      WHERE journal_id = :journal_id AND fingerprint = :fingerprint
+        AND status = 'pending'
+        AND lease_owner_id = :lease_owner_id
+        AND lease_generation = :lease_generation
+        AND lease_expires_at > :current_time
+    `);
+
+    this.stmtSettlePendingDone = db.prepare<{
+      journal_id: string;
+      fingerprint: string;
+      lease_owner_id: string;
+      lease_generation: number;
+      result: string;
+      result_json: string | null;
+      token_count: number | null;
+      completed_at: number;
+    }>(`
+      UPDATE workflow_journal
+      SET status = 'done', result = :result, result_json = :result_json,
+          error = NULL, token_count = :token_count, completed_at = :completed_at,
+          lease_owner_id = NULL, lease_expires_at = NULL
+      WHERE journal_id = :journal_id AND fingerprint = :fingerprint
+        AND status = 'pending'
+        AND lease_owner_id = :lease_owner_id
+        AND lease_generation = :lease_generation
+        AND lease_expires_at > :completed_at
+    `);
+
+    this.stmtSettlePendingError = db.prepare<{
+      journal_id: string;
+      fingerprint: string;
+      lease_owner_id: string;
+      lease_generation: number;
+      error: string;
+      completed_at: number;
+    }>(`
+      UPDATE workflow_journal
+      SET status = 'error', result = NULL, result_json = NULL,
+          error = :error, token_count = NULL, completed_at = :completed_at,
+          lease_owner_id = NULL, lease_expires_at = NULL
+      WHERE journal_id = :journal_id AND fingerprint = :fingerprint
+        AND status = 'pending'
+        AND lease_owner_id = :lease_owner_id
+        AND lease_generation = :lease_generation
+        AND lease_expires_at > :completed_at
+    `);
+
+    this.stmtSettlePendingSkipped = db.prepare<{
+      journal_id: string;
+      fingerprint: string;
+      lease_owner_id: string;
+      lease_generation: number;
+      completed_at: number;
+    }>(`
+      UPDATE workflow_journal
+      SET status = 'skipped', result = NULL, result_json = NULL,
+          error = NULL, token_count = NULL, completed_at = :completed_at,
+          lease_owner_id = NULL, lease_expires_at = NULL
+      WHERE journal_id = :journal_id AND fingerprint = :fingerprint
+        AND status = 'pending'
+        AND lease_owner_id = :lease_owner_id
+        AND lease_generation = :lease_generation
+        AND lease_expires_at > :completed_at
     `);
 
     this.stmtMarkDone = db.prepare<{
@@ -229,7 +411,8 @@ export class WorkflowJournal {
              prompt, opts_json AS optsJson, result, result_json AS resultJson,
              error, status, token_count AS tokenCount,
              cache_hit_count AS cacheHitCount, created_at AS createdAt,
-             completed_at AS completedAt
+             completed_at AS completedAt, lease_owner_id AS leaseOwnerId,
+             lease_generation AS leaseGeneration, lease_expires_at AS leaseExpiresAt
       FROM workflow_journal
       WHERE journal_id = :journal_id
       ORDER BY created_at ASC
@@ -252,7 +435,8 @@ export class WorkflowJournal {
              prompt, opts_json AS optsJson, result, result_json AS resultJson,
              error, status, token_count AS tokenCount,
              cache_hit_count AS cacheHitCount, created_at AS createdAt,
-             completed_at AS completedAt
+             completed_at AS completedAt, lease_owner_id AS leaseOwnerId,
+             lease_generation AS leaseGeneration, lease_expires_at AS leaseExpiresAt
       FROM workflow_journal
       WHERE journal_id = :journal_id AND call_key = :call_key AND prompt = :prompt
         AND status = 'done'
@@ -291,6 +475,18 @@ export class WorkflowJournal {
   private installSchema(): void {
     if (this.schemaInstalled) return;
     this.db.exec(SCHEMA_WORKFLOW_JOURNAL);
+    const columns = new Set(
+      (this.db.pragma("table_info(workflow_journal)") as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!columns.has("lease_owner_id")) {
+      this.db.exec("ALTER TABLE workflow_journal ADD COLUMN lease_owner_id TEXT");
+    }
+    if (!columns.has("lease_generation")) {
+      this.db.exec("ALTER TABLE workflow_journal ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!columns.has("lease_expires_at")) {
+      this.db.exec("ALTER TABLE workflow_journal ADD COLUMN lease_expires_at INTEGER");
+    }
     this.schemaInstalled = true;
   }
 
@@ -325,6 +521,146 @@ export class WorkflowJournal {
       opts_json: input.optsJson,
       created_at: Date.now(),
     });
+  }
+
+  /**
+   * 原子创建一条带 owner generation 的 pending lease。
+   */
+  claimPending(input: WorkflowJournalClaimInput): WorkflowJournalClaim {
+    const createdAt = Date.now();
+    const leaseExpiresAt = createdAt + input.leaseDurationMs;
+    const inserted = this.stmtInsertPendingClaim.run({
+      id: randomUUID(),
+      journal_id: input.journalId,
+      workflow_name: input.workflowName ?? null,
+      script_hash: input.scriptHash,
+      call_key: input.callKey,
+      fingerprint: input.fingerprint,
+      prompt: input.prompt,
+      opts_json: input.optsJson,
+      lease_owner_id: input.ownerId,
+      lease_expires_at: leaseExpiresAt,
+      created_at: createdAt,
+    });
+    if (inserted.changes === 0) {
+      const reclaimed = this.stmtReclaimPendingClaim.run({
+        journal_id: input.journalId,
+        fingerprint: input.fingerprint,
+        lease_owner_id: input.ownerId,
+        lease_expires_at: leaseExpiresAt,
+        current_time: createdAt,
+      });
+      if (reclaimed.changes === 1) {
+        const row = this.stmtLookup.get({
+          journal_id: input.journalId,
+          fingerprint: input.fingerprint,
+        });
+        if (row?.leaseOwnerId === input.ownerId && row.leaseExpiresAt !== null) {
+          return {
+            outcome: "claimed",
+            ownerId: row.leaseOwnerId,
+            generation: row.leaseGeneration,
+            leaseExpiresAt: row.leaseExpiresAt,
+          };
+        }
+      }
+      const retried = this.stmtRetryTerminalClaim.run({
+        journal_id: input.journalId,
+        fingerprint: input.fingerprint,
+        lease_owner_id: input.ownerId,
+        lease_expires_at: leaseExpiresAt,
+      });
+      if (retried.changes === 1) {
+        const row = this.stmtLookup.get({
+          journal_id: input.journalId,
+          fingerprint: input.fingerprint,
+        });
+        if (row?.leaseOwnerId === input.ownerId && row.leaseExpiresAt !== null) {
+          return {
+            outcome: "claimed",
+            ownerId: row.leaseOwnerId,
+            generation: row.leaseGeneration,
+            leaseExpiresAt: row.leaseExpiresAt,
+          };
+        }
+      }
+      const existing = this.stmtLookup.get({
+        journal_id: input.journalId,
+        fingerprint: input.fingerprint,
+      });
+      if (
+        existing?.status === "pending"
+        && existing.leaseOwnerId
+        && existing.leaseExpiresAt !== null
+      ) {
+        return {
+          outcome: "conflict",
+          ownerId: existing.leaseOwnerId,
+          generation: existing.leaseGeneration,
+          leaseExpiresAt: existing.leaseExpiresAt,
+        };
+      }
+      if (existing?.status === "done") {
+        throw new Error("Workflow journal claim cannot replace a completed result.");
+      }
+      throw new Error("Workflow journal pending claim could not be acquired.");
+    }
+    return {
+      outcome: "claimed",
+      ownerId: input.ownerId,
+      generation: 1,
+      leaseExpiresAt,
+    };
+  }
+
+  /**
+   * 仅当前且仍有效的 owner generation 可以延长 lease。
+   */
+  renewPending(
+    input: WorkflowJournalLeaseIdentity & { leaseDurationMs: number },
+  ): WorkflowJournalLease | null {
+    const currentTime = Date.now();
+    const leaseExpiresAt = currentTime + input.leaseDurationMs;
+    const renewed = this.stmtRenewPendingClaim.run({
+      journal_id: input.journalId,
+      fingerprint: input.fingerprint,
+      lease_owner_id: input.ownerId,
+      lease_generation: input.generation,
+      lease_expires_at: leaseExpiresAt,
+      current_time: currentTime,
+    });
+    if (renewed.changes !== 1) return null;
+    return {
+      ownerId: input.ownerId,
+      generation: input.generation,
+      leaseExpiresAt,
+    };
+  }
+
+  /**
+   * 仅当前且仍有效的 owner generation 可以提交终态。
+   */
+  settlePending(input: WorkflowJournalSettleInput): boolean {
+    const completedAt = Date.now();
+    const identity = {
+      journal_id: input.journalId,
+      fingerprint: input.fingerprint,
+      lease_owner_id: input.ownerId,
+      lease_generation: input.generation,
+      completed_at: completedAt,
+    };
+    if (input.status === "done") {
+      return this.stmtSettlePendingDone.run({
+        ...identity,
+        result: input.result,
+        result_json: input.resultJson ?? null,
+        token_count: input.tokenCount ?? null,
+      }).changes === 1;
+    }
+    if (input.status === "error") {
+      return this.stmtSettlePendingError.run({ ...identity, error: input.error }).changes === 1;
+    }
+    return this.stmtSettlePendingSkipped.run(identity).changes === 1;
   }
 
   /**

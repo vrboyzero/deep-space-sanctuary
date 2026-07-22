@@ -23,6 +23,14 @@ function createStartupScenario(cacheMode) {
       assetGlobalCount: 3,
       appBootstrapReady: true,
       appShellPresent: true,
+      firstInteractionName: "theme_toggle",
+      firstInteractionDurationMs: durationMs / 2,
+      firstInteractionStateChanged: true,
+      panelId: "settings",
+      panelFirstOpenDurationMs: durationMs,
+      panelVisible: true,
+      panelResourceDelta: 0,
+      panelDomNodeDelta: 0,
       pageErrorCount: 0,
     })),
   };
@@ -82,7 +90,7 @@ test("B00 WebChat benchmark reports a complete cold/hot and fixed-render fixture
       viewport: { width: 1_280, height: 720 },
       startupTarget: "full_webchat_shell",
       minimumStartupResourceCount: 10,
-      renderModuleResourceCount: 3,
+      renderModuleResourceCount: 6,
     },
     scenarios: createInputScenarios(),
   });
@@ -103,7 +111,7 @@ test("B00 WebChat benchmark reports a complete cold/hot and fixed-render fixture
       messageBytes: 256,
       startupTarget: "full_webchat_shell",
       minimumStartupResourceCount: 10,
-      renderModuleResourceCount: 3,
+      renderModuleResourceCount: 6,
     },
   });
   expect(report).not.toHaveProperty("thresholds");
@@ -120,6 +128,32 @@ test("B00 WebChat benchmark reports a complete cold/hot and fixed-render fixture
     standardDeviation: 1.414,
     percentileMethod: "nearest-rank",
     varianceMethod: "population",
+  });
+  expect(report.scenarios[0]).toMatchObject({
+    firstInteractionSummary: {
+      unit: "milliseconds_per_fixture",
+      median: 1.5,
+      p95: 2.5,
+      sampleCount: 5,
+    },
+    panelFirstOpenSummary: {
+      unit: "milliseconds_per_fixture",
+      median: 3,
+      p95: 5,
+      sampleCount: 5,
+    },
+    panelResourceDeltaSummary: {
+      unit: "resources_per_fixture",
+      median: 0,
+      p95: 0,
+      sampleCount: 5,
+    },
+    panelDomNodeDeltaSummary: {
+      unit: "dom_nodes_per_fixture",
+      median: 0,
+      p95: 0,
+      sampleCount: 5,
+    },
   });
   expect(report.scenarios[3]).toMatchObject({
     id: "render_1000",
@@ -148,7 +182,7 @@ test("WebChat benchmark rejects an incomplete startup/render matrix", async () =
       viewport: { width: 1_280, height: 720 },
       startupTarget: "full_webchat_shell",
       minimumStartupResourceCount: 10,
-      renderModuleResourceCount: 3,
+      renderModuleResourceCount: 6,
     },
     scenarios: createInputScenarios().slice(0, 3),
   })).toThrow("WebChat fixture requires cold/hot startup and every configured render scale exactly once.");

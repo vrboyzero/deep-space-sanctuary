@@ -1,7 +1,4 @@
-import {
-  disposeDoctorObservabilityCardRendering,
-  renderDoctorObservabilityCards,
-} from "./doctor-observability.js";
+import { doctorObservabilityLoader as sharedDoctorObservabilityLoader } from "./doctor-observability-loader.js";
 import { setExperienceDraftGenerateNoticeEnabled } from "./experience-draft-notice-mode.js";
 import { setGovernanceDetailMode } from "./governance-detail-mode.js";
 import { createSettingsDoctorToggleView } from "./settings-doctor-toggle-view.js";
@@ -35,6 +32,7 @@ export function createSettingsController({
   onOpenContinuationAction,
   getWebchatPerformanceSummary,
   getWebchatLifecycleSummary,
+  doctorObservabilityLoader = sharedDoctorObservabilityLoader,
   redactedPlaceholder = "[REDACTED]",
   t = (_key, _params, fallback) => fallback ?? "",
 }) {
@@ -397,6 +395,7 @@ export function createSettingsController({
     cfgTokenUsageUploadUrl,
     cfgTokenUsageUploadApiKey,
     cfgTokenUsageUploadTimeoutMs,
+    cfgTokenUsageUploadTrustedPrivateEndpoint,
     cfgTokenUsageStrictUuid,
     cfgWebchatCostBudgetUsd,
     cfgWebchatCostBudgetWarnFraction,
@@ -469,6 +468,10 @@ export function createSettingsController({
   let lastLoadedConfiguredMemorySourcesContent = "[]\n";
   let lastConfiguredMemoryPreviewPayload = null;
   let doctorRequestVersion = 0;
+  let activeSettingsTabId = "model";
+  let latestDoctorSummary = null;
+  let doctorDetailsRequest = null;
+  let doctorDetailsRenderedVersion = 0;
   let saveFeedbackTimer = null;
   let saveFeedbackRevision = 0;
   let disposed = false;
@@ -645,12 +648,16 @@ export function createSettingsController({
 
   function activateSettingsTab(tabId = "model") {
     const normalizedTabId = typeof tabId === "string" && tabId.trim() ? tabId.trim() : "model";
+    activeSettingsTabId = normalizedTabId;
     getLiveSettingsTabButtons().forEach((buttonEl) => {
       setSettingsTabButtonState(buttonEl, getSettingsTabId(buttonEl) === normalizedTabId);
     });
     getLiveSettingsTabPanels().forEach((panelEl) => {
       setSettingsPanelState(panelEl, getSettingsTabId(panelEl) === normalizedTabId);
     });
+    if (normalizedTabId === "system") {
+      void ensureDoctorDetails();
+    }
     return normalizedTabId;
   }
 
@@ -773,6 +780,8 @@ export function createSettingsController({
   async function toggle(show, options = {}) {
     if (!settingsModal) return;
     if (show) {
+      const { tabId, target } = resolveSettingsSectionRoute(options.section);
+      activateSettingsTab(tabId);
       settingsModal.classList.remove("hidden");
       onToggle?.(true);
       if (!options.skipLoad) {
@@ -785,8 +794,6 @@ export function createSettingsController({
         ]);
         lastLoadedFormState = captureSettingsFormState();
       }
-      const { tabId, target } = resolveSettingsSectionRoute(options.section);
-      activateSettingsTab(tabId);
       if (target?.scrollIntoView) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
@@ -1132,6 +1139,7 @@ export function createSettingsController({
     if (cfgTokenUsageUploadUrl) cfgTokenUsageUploadUrl.value = c["BELLDANDY_TOKEN_USAGE_UPLOAD_URL"] || "";
     if (cfgTokenUsageUploadApiKey) cfgTokenUsageUploadApiKey.value = c["BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY"] || c["BELLDANDY_TOKEN_USAGE_UPLOAD_TOKEN"] || "";
     if (cfgTokenUsageUploadTimeoutMs) cfgTokenUsageUploadTimeoutMs.value = c["BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS"] || "";
+    if (cfgTokenUsageUploadTrustedPrivateEndpoint) cfgTokenUsageUploadTrustedPrivateEndpoint.checked = c["BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT"] === "true";
     if (cfgTokenUsageStrictUuid) cfgTokenUsageStrictUuid.checked = c["BELLDANDY_TOKEN_USAGE_STRICT_UUID"] === "true";
     if (cfgWebchatCostBudgetUsd) cfgWebchatCostBudgetUsd.value = c["BELLDANDY_WEBCHAT_COST_BUDGET_USD"] || "";
     if (cfgWebchatCostBudgetWarnFraction) cfgWebchatCostBudgetWarnFraction.value = c["BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION"] || "";
@@ -1920,7 +1928,7 @@ export function createSettingsController({
     });
 
     if (options.includeCards) {
-      renderDoctorObservabilityCards(doctorStatusEl, attachLocalDoctorObservability(payload), t, {
+      doctorObservabilityLoader.render(doctorStatusEl, attachLocalDoctorObservability(payload), t, {
         onOpenContinuationAction,
       });
     }
@@ -1940,22 +1948,44 @@ export function createSettingsController({
   }
 
   async function loadDoctorDetails(version, requestParams = {}) {
-    const res = await sendReq({
-      type: "req",
-      id: makeId(),
-      method: "system.doctor",
-      params: {
-        ...requestParams,
-        surface: "full",
-      },
+    if (doctorDetailsRenderedVersion === version) return;
+    if (doctorDetailsRequest?.version === version) return doctorDetailsRequest.promise;
+
+    const promise = (async () => {
+      const res = await sendReq({
+        type: "req",
+        id: makeId(),
+        method: "system.doctor",
+        params: {
+          ...requestParams,
+          surface: "full",
+        },
+      });
+      if (version !== doctorRequestVersion || !doctorStatusEl || disposed) return;
+      if (res?.ok && res.payload?.checks) {
+        try {
+          await doctorObservabilityLoader.load();
+        } catch {
+          appendDoctorDetailLoadFailure();
+          return;
+        }
+        if (version !== doctorRequestVersion || !doctorStatusEl || disposed) return;
+        renderDoctorPayload(res.payload, { includeCards: true });
+        doctorDetailsRenderedVersion = version;
+        return;
+      }
+      appendDoctorDetailLoadFailure();
+    })().finally(() => {
+      if (doctorDetailsRequest?.version === version) {
+        doctorDetailsRequest = null;
+      }
     });
-    if (version !== doctorRequestVersion || !doctorStatusEl) {
-      return;
-    }
-    if (res?.ok && res.payload?.checks) {
-      renderDoctorPayload(res.payload, { includeCards: true });
-      return;
-    }
+    doctorDetailsRequest = { version, promise };
+    return promise;
+  }
+
+  function appendDoctorDetailLoadFailure() {
+    if (!doctorStatusEl) return;
     const badge = document.createElement("span");
     badge.className = "badge doctor-summary-badge warn";
     badge.textContent = t(
@@ -1966,9 +1996,17 @@ export function createSettingsController({
     doctorStatusEl.appendChild(badge);
   }
 
+  function ensureDoctorDetails() {
+    if (activeSettingsTabId !== "system" || !latestDoctorSummary) return;
+    const { version, requestParams } = latestDoctorSummary;
+    if (doctorDetailsRenderedVersion === version) return;
+    return loadDoctorDetails(version, requestParams);
+  }
+
   async function runDoctor(options = {}) {
     if (!doctorStatusEl || !doctorToggleBtn) return;
     const version = ++doctorRequestVersion;
+    latestDoctorSummary = null;
     doctorToggleView.render(doctorToggleBtn, "checking");
     doctorStatusEl.textContent = "";
     
@@ -1991,11 +2029,12 @@ export function createSettingsController({
       return;
     }
     if (res && res.ok && res.payload && res.payload.checks) {
+      latestDoctorSummary = { version, requestParams };
       renderDoctorPayload(res.payload, {
         includeCards: false,
-        detailPending: true,
+        detailPending: activeSettingsTabId === "system",
       });
-      void loadDoctorDetails(version, requestParams);
+      void ensureDoctorDetails();
       return;
     }
     if (handlePairingRequiredResponse(res)) {
@@ -2360,6 +2399,7 @@ export function createSettingsController({
     if (cfgTokenUsageUploadUrl) updates["BELLDANDY_TOKEN_USAGE_UPLOAD_URL"] = cfgTokenUsageUploadUrl.value.trim();
     assignSecretUpdate(updates, "BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY", cfgTokenUsageUploadApiKey);
     if (cfgTokenUsageUploadTimeoutMs) updates["BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS"] = cfgTokenUsageUploadTimeoutMs.value.trim();
+    if (cfgTokenUsageUploadTrustedPrivateEndpoint) updates["BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT"] = cfgTokenUsageUploadTrustedPrivateEndpoint.checked ? "true" : "false";
     if (cfgTokenUsageStrictUuid) updates["BELLDANDY_TOKEN_USAGE_STRICT_UUID"] = cfgTokenUsageStrictUuid.checked ? "true" : "false";
     if (cfgWebchatCostBudgetUsd) updates["BELLDANDY_WEBCHAT_COST_BUDGET_USD"] = cfgWebchatCostBudgetUsd.value.trim();
     if (cfgWebchatCostBudgetWarnFraction) updates["BELLDANDY_WEBCHAT_COST_BUDGET_WARN_FRACTION"] = cfgWebchatCostBudgetWarnFraction.value.trim();
@@ -2593,7 +2633,7 @@ export function createSettingsController({
   function dispose() {
     if (disposed) return;
     disposed = true;
-    disposeDoctorObservabilityCardRendering(doctorStatusEl);
+    doctorObservabilityLoader.dispose(doctorStatusEl);
     saveFeedbackRevision += 1;
     if (saveFeedbackTimer !== null) {
       clearTimeout(saveFeedbackTimer);

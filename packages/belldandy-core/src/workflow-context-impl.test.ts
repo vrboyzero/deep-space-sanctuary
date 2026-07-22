@@ -87,6 +87,7 @@ async function setupContext(overrides: Partial<WorkflowContextDeps> & { orchestr
     parentConversationId: "parent-conv-1",
     channel: "test",
     journalId: `journal-${Date.now()}`,
+    leaseOwnerId: `test-run-${Math.random().toString(36).slice(2, 10)}`,
     maxConcurrent: 3,
     callbacks: {
       onPhase: (title) => phases.push(title),
@@ -108,6 +109,7 @@ describe("createWorkflowContext", () => {
   let fixtures: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
+    vi.useRealTimers();
     for (const cleanup of fixtures) {
       await cleanup();
     }
@@ -185,6 +187,133 @@ describe("createWorkflowContext", () => {
       expect(f.budgetGuard.getUsage().retries).toBe(0);
     });
 
+    it("两个 Context 竞争同一 pending 调用时竞争者不 spawn 且不消耗预算", async () => {
+      const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-wf-claim-race-"));
+      const sharedStore = new MemoryStore(path.join(sharedRoot, "memory.db"));
+      const journalId = "journal-context-claim-race";
+      let resolveFirst: ((result: SpawnResult) => void) | undefined;
+      const firstResult = new Promise<SpawnResult>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const first = await setupContext({
+        journal: new WorkflowJournal(sharedStore.getDbHandleForSharedSchema()),
+        journalId,
+        leaseOwnerId: "run-owner-a",
+        orchestratorBehavior: () => firstResult,
+      });
+      const competing = await setupContext({
+        journal: new WorkflowJournal(sharedStore.getDbHandleForSharedSchema()),
+        journalId,
+        leaseOwnerId: "run-owner-b",
+      });
+      fixtures.push(first.cleanup, competing.cleanup, async () => {
+        sharedStore.close();
+        await fs.rm(sharedRoot, { recursive: true, force: true }).catch(() => {});
+      });
+
+      const firstPending = first.ctx.agent("扫描 auth", { callKey: "scan/0" });
+      const competingResult = await competing.ctx.agent("扫描 auth", { callKey: "scan/0" })
+        .then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason: unknown) => ({ status: "rejected" as const, reason }),
+        );
+      resolveFirst?.(successResult("first result"));
+      await firstPending;
+
+      expect(competingResult.status).toBe("rejected");
+      if (competingResult.status === "rejected") {
+        expect(String(competingResult.reason)).toMatch(/pending claim conflict/i);
+      }
+      expect(first.orchestrator.spawn).toHaveBeenCalledTimes(1);
+      expect(competing.orchestrator.spawn).not.toHaveBeenCalled();
+      expect(competing.budgetGuard.getUsage()).toMatchObject({ calls: 0, retries: 0, tokens: 0 });
+    });
+
+    it("过期接管后旧 Context 的迟到结果不能覆盖当前 owner", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+      const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-wf-claim-fence-"));
+      const sharedStore = new MemoryStore(path.join(sharedRoot, "memory.db"));
+      const journalId = "journal-context-claim-fence";
+      const journalA = new WorkflowJournal(sharedStore.getDbHandleForSharedSchema());
+      const journalB = new WorkflowJournal(sharedStore.getDbHandleForSharedSchema());
+      let resolveFirst: ((result: SpawnResult) => void) | undefined;
+      const firstResult = new Promise<SpawnResult>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const first = await setupContext({
+        journal: journalA,
+        journalId,
+        leaseOwnerId: "run-owner-a",
+        orchestratorBehavior: () => firstResult,
+      });
+      const current = await setupContext({
+        journal: journalB,
+        journalId,
+        leaseOwnerId: "run-owner-b",
+        orchestratorBehavior: () => successResult("current result"),
+      });
+      fixtures.push(first.cleanup, current.cleanup, async () => {
+        sharedStore.close();
+        await fs.rm(sharedRoot, { recursive: true, force: true }).catch(() => {});
+      });
+
+      const firstPending = first.ctx.agent("扫描 auth", { callKey: "scan/0" });
+      vi.setSystemTime(new Date("2026-07-22T00:00:31.000Z"));
+      await expect(current.ctx.agent("扫描 auth", { callKey: "scan/0" })).resolves.toBe("current result");
+      resolveFirst?.(successResult("late result"));
+      const firstSettled = await firstPending.then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+
+      expect(firstSettled.status).toBe("rejected");
+      if (firstSettled.status === "rejected") {
+        expect(String(firstSettled.reason)).toMatch(/pending claim lost/i);
+      }
+      expect(journalB.lookup(journalId, journalB.listByJournal(journalId)[0]!.fingerprint)?.result)
+        .toBe("current result");
+      expect(first.events.filter((event) => event.type === "completed")).toHaveLength(0);
+      expect(current.events.filter((event) => event.type === "completed")).toHaveLength(1);
+    });
+
+    it("长调用续约 pending lease 且完成后释放 timer", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+      const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-wf-claim-renew-"));
+      const sharedStore = new MemoryStore(path.join(sharedRoot, "memory.db"));
+      const journalId = "journal-context-claim-renew";
+      let resolveFirst: ((result: SpawnResult) => void) | undefined;
+      const firstResult = new Promise<SpawnResult>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const first = await setupContext({
+        journal: new WorkflowJournal(sharedStore.getDbHandleForSharedSchema()),
+        journalId,
+        leaseOwnerId: "run-owner-a",
+        orchestratorBehavior: () => firstResult,
+      });
+      const competing = await setupContext({
+        journal: new WorkflowJournal(sharedStore.getDbHandleForSharedSchema()),
+        journalId,
+        leaseOwnerId: "run-owner-b",
+      });
+      fixtures.push(first.cleanup, competing.cleanup, async () => {
+        sharedStore.close();
+        await fs.rm(sharedRoot, { recursive: true, force: true }).catch(() => {});
+      });
+
+      const firstPending = first.ctx.agent("扫描 auth", { callKey: "scan/0" });
+      vi.advanceTimersByTime(31_000);
+      await expect(competing.ctx.agent("扫描 auth", { callKey: "scan/0" }))
+        .rejects.toThrow(/pending claim conflict/i);
+      resolveFirst?.(successResult("renewed result"));
+      await expect(firstPending).resolves.toBe("renewed result");
+
+      expect(competing.orchestrator.spawn).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
     it("不同 callKey 不命中缓存", async () => {
       const f = await setupContext({ journalId: "journal-diff-key" });
       fixtures.push(f.cleanup);
@@ -241,14 +370,15 @@ describe("createWorkflowContext", () => {
         orchestratorBehavior: () => errorResult("still failing"),
       });
       fixtures.push(f.cleanup);
-      const recordError = vi.spyOn(f.journal, "recordError");
+      const settlePending = vi.spyOn(f.journal, "settlePending");
 
       await expect(f.ctx.agent("扫描", { callKey: "scan/0", maxRetries: 1 }))
         .rejects.toThrow(/still failing/);
 
       expect(f.orchestrator.spawn).toHaveBeenCalledTimes(2);
       expect(f.budgetGuard.getUsage()).toMatchObject({ calls: 2, retries: 1 });
-      expect(recordError).toHaveBeenCalledTimes(1);
+      expect(settlePending).toHaveBeenCalledTimes(1);
+      expect(settlePending).toHaveBeenCalledWith(expect.objectContaining({ status: "error" }));
       expect(f.journal.listByJournal("journal-node-retry-exhausted"))
         .toEqual([expect.objectContaining({ status: "error", error: "still failing" })]);
     });
@@ -299,10 +429,10 @@ describe("createWorkflowContext", () => {
         .toEqual([expect.objectContaining({ status: "error", error: expect.stringContaining("agent call budget exceeded") })]);
     });
 
-    it("Journal pending 写失败时不进入 retry 或 spawn", async () => {
+    it("Journal pending claim 失败时不进入 retry 或 spawn", async () => {
       const f = await setupContext({ journalId: "journal-node-retry-pending-failure" });
       fixtures.push(f.cleanup);
-      vi.spyOn(f.journal, "recordPending").mockImplementation(() => {
+      vi.spyOn(f.journal, "claimPending").mockImplementation(() => {
         throw new Error("journal pending failed");
       });
 
@@ -401,6 +531,14 @@ describe("createWorkflowContext", () => {
       expect(budgetGuard.getUsage()).toMatchObject({ calls: 1, retries: 0, tokens: 0, exceeded: false });
       expect(f.journal.listByJournal("journal-aborted-call-reservation").some((row) => row.status === "done"))
         .toBe(false);
+      expect(f.journal.listByJournal("journal-aborted-call-reservation"))
+        .toEqual([expect.objectContaining({
+          status: "error",
+          error: "Workflow cancelled.",
+          leaseOwnerId: null,
+          leaseExpiresAt: null,
+        })]);
+      expect(f.events.filter((event) => event.type === "completed")).toHaveLength(0);
     });
 
     it("onAgentEvent 对单次 agent 调用仅触发一次 started/completed，且 sessionId 一致", async () => {

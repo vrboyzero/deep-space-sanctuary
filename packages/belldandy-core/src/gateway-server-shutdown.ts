@@ -35,6 +35,7 @@ export type GatewayServerShutdownResources = {
   flushConversationState?: () => void | Promise<void>;
   flushSubTaskState?: () => void | Promise<void>;
   flushMemoryUsage?: () => void | Promise<void>;
+  drainTokenUsage?: (signal: AbortSignal) => void | Promise<void>;
   detachRuntimeHooks?: () => void | Promise<void>;
   closeTransport: () => void | Promise<void>;
 };
@@ -143,6 +144,13 @@ export function registerGatewayServerShutdownResources(
       id: "memory-usage",
       phase: "flush_state",
       run: resources.flushMemoryUsage,
+    });
+  }
+  if (resources.drainTokenUsage) {
+    coordinator.register({
+      id: "token-usage-upload",
+      phase: "close_transport",
+      run: ({ signal }) => resources.drainTokenUsage!(signal),
     });
   }
   if (resources.detachRuntimeHooks) {

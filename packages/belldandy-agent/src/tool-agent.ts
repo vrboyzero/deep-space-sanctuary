@@ -11,17 +11,26 @@ import {
   type JsonObject,
 } from "@belldandy/protocol";
 import type { ToolExecutionRuntimeContext, ToolExecutor, ToolCallRequest, ToolFailureKind } from "@belldandy/skills";
-import type { AgentBudgetExhausted, AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
+import type { AgentBudgetExhausted, AgentInterrupted, AgentRunInput, AgentStreamItem, AgentUsage, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
 import { AgentEndLedger } from "./agent-end-ledger.js";
 import type { AfterCompactionEvent, BeforeCompactionEvent, HookAgentContext, HookToolContext, HookToolResultPersistContext } from "./hooks.js";
 import {
+  FailoverAttemptError,
   FailoverClient,
   type ModelMessageLayout,
   type ModelProfile,
   type FailoverExecutionSummary,
   type FailoverLogger,
 } from "./failover-client.js";
+import {
+  consumeModelResponseStreamWithFailover,
+  toAgentInterrupted,
+} from "./model-response-stream-failover.js";
+import {
+  createModelStreamTextDelivery,
+  type ModelStreamTextDelivery,
+} from "./model-stream-delivery.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 import {
@@ -186,6 +195,8 @@ export type ToolEnabledAgentOptions = {
   model: string;
   toolExecutor: ToolExecutor;
   timeoutMs?: number;
+  /** Provider streaming gray switch. Missing or false keeps the buffered product path. */
+  streamingEnabled?: boolean;
   /** 单次 run 可执行的工具调用总数上限，0 表示不允许执行工具调用。 */
   maxToolCalls?: number;
   /** 单次 ReAct run 的 wall-time 上限（毫秒）；非正或非法值回退到安全默认值。 */
@@ -1376,8 +1387,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
     unsupportedReleaseCount: 0,
     failureCount: 0,
   };
-  private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "maxRunWallTimeMs" | "maxTotalTokens" | "maxHighRiskToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
-    Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls" | "maxRunWallTimeMs" | "maxTotalTokens" | "maxHighRiskToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
+  private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "streamingEnabled" | "maxToolCalls" | "maxRunWallTimeMs" | "maxTotalTokens" | "maxHighRiskToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">> &
+    Omit<ToolEnabledAgentOptions, "timeoutMs" | "streamingEnabled" | "maxToolCalls" | "maxRunWallTimeMs" | "maxTotalTokens" | "maxHighRiskToolCalls" | "toolLoopIterationBudget" | "toolLoopWarningFraction" | "wireApi" | "maxRetries" | "retryBackoffMs" | "sanitizeResponsesToolSchema" | "toolCallRepairLevel">;
   private readonly failoverClient: FailoverClient;
   /** 统一上下文压缩管线（Phase 1 + Phase 2） */
   private readonly compressionPipeline: ContextCompressionPipeline | undefined;
@@ -1402,6 +1413,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     this.opts = {
       ...opts,
       timeoutMs: opts.timeoutMs ?? 120_000,
+      streamingEnabled: opts.streamingEnabled === true,
       maxToolCalls: normalizeMaxToolCalls(opts.maxToolCalls),
       maxRunWallTimeMs: normalizeMaxRunWallTimeMs(opts.maxRunWallTimeMs),
       maxTotalTokens: normalizeMaxTotalTokens(opts.maxTotalTokens),
@@ -2592,8 +2604,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           textAttachmentChars,
         });
 
-        // 调用模型
-        const response = await this.callModel(
+        // 调用模型。流式模式通过相邻单槽 delivery 转发，避免在本文件持有队列和协议状态。
+        const streamDelivery = this.opts.streamingEnabled
+          ? createModelStreamTextDelivery()
+          : undefined;
+        const responsePromise = this.callModel(
           requestMessages,
           tools.length > 0 ? tools : undefined,
           textAttachmentChars,
@@ -2637,7 +2652,29 @@ export class ToolEnabledAgent implements BelldandyAgent {
           currentSystemPromptState.bypassProviderNativeSystemBlocks
             ? undefined
             : providerNativeSystemBlocks,
+          streamDelivery,
         );
+        let response: Awaited<typeof responsePromise>;
+        if (streamDelivery) {
+          const deliveredResponsePromise = responsePromise.then(
+            async (result) => {
+              if (result.ok) await streamDelivery.complete();
+              else if (result.interrupted?.committed) await streamDelivery.interrupt();
+              else await streamDelivery.abort();
+              return result;
+            },
+            async (error) => {
+              await streamDelivery.abort();
+              throw error;
+            },
+          );
+          for await (const delta of streamDelivery.deltas) {
+            yield* yieldItem({ type: "delta", delta });
+          }
+          response = await deliveredResponsePromise;
+        } else {
+          response = await responsePromise;
+        }
         logDebug("[model-call] completed", {
           modelCallIndex: nextModelCallIndex,
           conversationId: input.conversationId,
@@ -2718,6 +2755,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           runSuccess = false;
           runError = response.error;
           yield* yieldItem(buildUsageItem());
+          if (response.interrupted) {
+            yield* yieldItem(response.interrupted);
+            yield* yieldItem({ type: "status", status: "error" });
+            return;
+          }
           yield* yieldItem({ type: "final", text: response.error });
           yield* yieldItem({ type: "status", status: "error" });
           return;
@@ -2756,7 +2798,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
         // 输出文本增量（如果有）；先剥离工具调用协议块，避免在对话中展示
         const postprocessStartedAt = Date.now();
-        const contentForDisplay = stripToolCallsSection(response.content || "");
+        const contentForDisplay = streamDelivery
+          ? streamDelivery.getText().trim()
+          : stripToolCallsSection(response.content || "");
         logDebug("[model-call] postprocess_done", {
           modelCallIndex: nextModelCallIndex,
           conversationId: input.conversationId,
@@ -2765,7 +2809,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           originalContentLength: response.content?.length ?? 0,
           displayContentLength: contentForDisplay.length,
         });
-        if (contentForDisplay) {
+        if (contentForDisplay && !streamDelivery) {
           for (const delta of splitText(contentForDisplay, 16)) {
             yield* yieldItem({ type: "delta", delta });
           }
@@ -3601,6 +3645,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       // 清理 token 计数器（在 agent_end hook 之后执行）
       // 扩展 A：清理前先保存活跃计数器快照（跨 run 持久化）
       if (this.opts.conversationStore && convId) {
+        await this.opts.conversationStore.waitForPendingPersistence(convId);
         const snapshots = tokenCounter.getSnapshots();
         this.opts.conversationStore.setActiveCounters(convId, snapshots);
       }
@@ -3624,6 +3669,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     abortSignal?: AbortSignal,
     onBeforeRequest?: (messages: Message[], trimDiagnostics?: PromptTrimDiagnostics) => void,
     providerNativeSystemBlocks?: ProviderNativeSystemBlock[],
+    streamDelivery?: ModelStreamTextDelivery,
   ): Promise<{
     ok: true;
     content: string;
@@ -3634,6 +3680,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
   } | {
     ok: false;
     error: string;
+    interrupted?: AgentInterrupted;
   }> {
     let effectiveTimeoutMs = this.opts.timeoutMs;
     const callStartedAt = Date.now();
@@ -3688,90 +3735,57 @@ export class ToolEnabledAgent implements BelldandyAgent {
       });
 
       currentPhase = "awaiting_model_response";
-      const { response: res } = await this.failoverClient.fetchWithFailover({
-        signal: abortSignal,
-        timeoutMs: requestTimeoutMs,
-        minimumTimeoutMs: minimumAdaptiveTimeoutMs,
-        maxRetries: this.opts.maxRetries,
-        retryBackoffMs: this.opts.retryBackoffMs,
-        onSummary: (summary) => {
-          failoverSummary = summary;
-          this.opts.onRuntimeResilienceEvent?.({
-            source: "tool_agent",
-            phase: "tool_loop",
-            agentId: runtimeScope?.agentId,
-            conversationId: runtimeScope?.conversationId,
-            summary,
+      const recordFailoverSummary = (summary: FailoverExecutionSummary) => {
+        failoverSummary = summary;
+        this.opts.onRuntimeResilienceEvent?.({
+          source: "tool_agent",
+          phase: "tool_loop",
+          agentId: runtimeScope?.agentId,
+          conversationId: runtimeScope?.conversationId,
+          summary,
+        });
+      };
+      const buildRequest = (profile: ModelProfile) => {
+        // 优先使用 profile 自身的 protocol（models.json 配置），再 fallback 到 agent 级别协议
+        const profileProtocol = (profile.protocol as ApiProtocol) ?? this.opts.protocol ?? detectProtocol(profile.baseUrl);
+        const profileWireApi = resolveWireApiForProfile(profile, this.opts.wireApi);
+        currentTokenEstimateModel = profile.model;
+        usedProtocol = profileProtocol;
+        usedWireApi = profileWireApi;
+
+        if (profileProtocol === "anthropic") {
+          return buildAnthropicRequest({
+            profile,
+            messages: messages as any,
+            tools: tools as any,
+            maxTokens: this.opts.maxOutputTokens ?? 4096,
+            stream: streamDelivery !== undefined,
+            enableCaching: true,
+            providerNativeSystemBlocks,
           });
-        },
-        buildRequest: (profile) => {
-          // 优先使用 profile 自身的 protocol（models.json 配置），再 fallback 到 agent 级别协议
-          const profileProtocol = (profile.protocol as ApiProtocol) ?? this.opts.protocol ?? detectProtocol(profile.baseUrl);
-          const profileWireApi = resolveWireApiForProfile(profile, this.opts.wireApi);
-          currentTokenEstimateModel = profile.model;
-          usedProtocol = profileProtocol;
-          usedWireApi = profileWireApi;
+        }
 
-          if (profileProtocol === "anthropic") {
-            return buildAnthropicRequest({
-              profile,
-              messages: messages as any,
-              tools: tools as any,
-              maxTokens: this.opts.maxOutputTokens ?? 4096,
-              stream: false,
-              enableCaching: true,
-              providerNativeSystemBlocks,
-            });
-          }
-
-          // OpenAI 协议
-          if (profileWireApi === "responses") {
-            const payload: Record<string, unknown> = {
-              model: profile.model,
-              input: buildResponsesInputFromMessages(messages),
-              max_output_tokens: this.opts.maxOutputTokens ?? 4096,
-              stream: false,
-            };
-            applyOpenAICompatibleReasoningConfig(payload, profile);
-            if (tools && tools.length > 0) {
-              const responseTools = this.opts.sanitizeResponsesToolSchema
-                ? sanitizeResponsesToolDefinitions(tools)
-                : tools;
-              // Responses API 使用扁平化工具格式（与 Chat Completions 不同）
-              payload.tools = responseTools.map(t => ({
-                type: "function",
-                name: t.function.name,
-                description: t.function.description,
-                parameters: t.function.parameters,
-              }));
-            }
-            return {
-              url: buildUrl(profile.baseUrl, "/responses"),
-              init: {
-                method: "POST",
-                headers: {
-                  "content-type": "application/json",
-                  authorization: `Bearer ${profile.apiKey}`,
-                },
-                body: JSON.stringify(payload),
-              },
-            };
-          }
-
-          const cleanMessages = messages.map(m => cleanupMessage(m, profile.model));
+        if (profileWireApi === "responses") {
           const payload: Record<string, unknown> = {
             model: profile.model,
-            messages: cleanMessages,
-            max_tokens: this.opts.maxOutputTokens ?? 4096,
-            stream: false,
+            input: buildResponsesInputFromMessages(messages),
+            max_output_tokens: this.opts.maxOutputTokens ?? 4096,
+            stream: streamDelivery !== undefined,
           };
           applyOpenAICompatibleReasoningConfig(payload, profile);
           if (tools && tools.length > 0) {
-            payload.tools = tools;
-            payload.tool_choice = "auto";
+            const responseTools = this.opts.sanitizeResponsesToolSchema
+              ? sanitizeResponsesToolDefinitions(tools)
+              : tools;
+            payload.tools = responseTools.map(t => ({
+              type: "function",
+              name: t.function.name,
+              description: t.function.description,
+              parameters: t.function.parameters,
+            }));
           }
           return {
-            url: buildUrl(profile.baseUrl, "/chat/completions"),
+            url: buildUrl(profile.baseUrl, "/responses"),
             init: {
               method: "POST",
               headers: {
@@ -3781,8 +3795,68 @@ export class ToolEnabledAgent implements BelldandyAgent {
               body: JSON.stringify(payload),
             },
           };
-        },
-      });
+        }
+
+        const cleanMessages = messages.map(m => cleanupMessage(m, profile.model));
+        const payload: Record<string, unknown> = {
+          model: profile.model,
+          messages: cleanMessages,
+          max_tokens: this.opts.maxOutputTokens ?? 4096,
+          stream: streamDelivery !== undefined,
+        };
+        applyOpenAICompatibleReasoningConfig(payload, profile);
+        if (tools && tools.length > 0) {
+          payload.tools = tools;
+          payload.tool_choice = "auto";
+        }
+        return {
+          url: buildUrl(profile.baseUrl, "/chat/completions"),
+          init: {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${profile.apiKey}`,
+            },
+            body: JSON.stringify(payload),
+          },
+        };
+      };
+
+      let res: Response;
+      let streamedResponse: Awaited<ReturnType<typeof consumeModelResponseStreamWithFailover>>["response"] | undefined;
+      if (streamDelivery) {
+        const result = await consumeModelResponseStreamWithFailover({
+          failoverClient: this.failoverClient,
+          buildRequest,
+          resolveProtocol: (profile) => ({
+            protocol: (profile.protocol as ApiProtocol) ?? this.opts.protocol ?? detectProtocol(profile.baseUrl),
+            wireApi: resolveWireApiForProfile(profile, this.opts.wireApi),
+          }),
+          onAttemptStart: () => streamDelivery.beginAttempt(),
+          onTextDelta: async (delta, control) => {
+            if (await streamDelivery.push(delta)) control.commit();
+          },
+          signal: abortSignal,
+          timeoutMs: requestTimeoutMs,
+          minimumTimeoutMs: minimumAdaptiveTimeoutMs,
+          maxRetries: this.opts.maxRetries,
+          retryBackoffMs: this.opts.retryBackoffMs,
+          onSummary: recordFailoverSummary,
+        });
+        res = result.transportResponse;
+        streamedResponse = result.response;
+      } else {
+        const result = await this.failoverClient.fetchWithFailover({
+          buildRequest,
+          signal: abortSignal,
+          timeoutMs: requestTimeoutMs,
+          minimumTimeoutMs: minimumAdaptiveTimeoutMs,
+          maxRetries: this.opts.maxRetries,
+          retryBackoffMs: this.opts.retryBackoffMs,
+          onSummary: recordFailoverSummary,
+        });
+        res = result.response;
+      }
       logModelPhase("[model-call] fetch_resolved", {
         status: res.status,
         ok: res.ok,
@@ -3804,6 +3878,63 @@ export class ToolEnabledAgent implements BelldandyAgent {
           errorPreviewLength: text.length,
         });
         return { ok: false, error: `模型调用失败（HTTP ${res.status}）：${text}` };
+      }
+
+      if (streamedResponse) {
+        currentPhase = "extract_stream_response";
+        const toolCalls: OpenAIToolCall[] | undefined = streamedResponse.toolCalls.length > 0
+          ? streamedResponse.toolCalls.map((toolCall) => ({
+            id: toolCall.id,
+            type: "function" as const,
+            function: {
+              name: toolCall.name,
+              arguments: toolCall.arguments,
+            },
+          }))
+          : undefined;
+        const streamUsage = streamedResponse.usage;
+        const usage: AnthropicUsage | undefined = streamUsage ? {
+          input_tokens: streamUsage.inputTokens ?? 0,
+          output_tokens: streamUsage.outputTokens ?? 0,
+          cache_creation_input_tokens: streamUsage.cacheCreationInputTokens ?? 0,
+          cache_read_input_tokens: streamUsage.cacheReadInputTokens ?? 0,
+          prompt_cache_hit_tokens: streamUsage.promptCacheHitTokens ?? 0,
+          prompt_cache_miss_tokens: streamUsage.promptCacheMissTokens ?? 0,
+        } : undefined;
+        if (
+          !streamedResponse.content.trim()
+          && (!toolCalls || toolCalls.length === 0)
+          && streamedResponse.reasoningContent?.trim()
+        ) {
+          return {
+            ok: false,
+            error: `模型返回空内容。finish_reason=${streamedResponse.finishReason || "unknown"}，reasoning_content=present(${streamedResponse.reasoningContent.trim().length})。`,
+          };
+        }
+        logModelPhase("[model-call] response_extracted", {
+          parser: `${usedProtocol}:${usedWireApi}:stream`,
+          contentLength: streamedResponse.content.length,
+          toolCallCount: toolCalls?.length ?? 0,
+          reasoningContentLength: streamedResponse.reasoningContent?.length ?? 0,
+          usageInputTokens: usage?.input_tokens ?? 0,
+          usageOutputTokens: usage?.output_tokens ?? 0,
+        });
+        return {
+          ok: true,
+          content: streamedResponse.content,
+          toolCalls,
+          reasoning_content: streamedResponse.reasoningContent,
+          usage,
+          rawUsage: streamUsage ? {
+            inputTokens: streamUsage.inputTokens,
+            outputTokens: streamUsage.outputTokens,
+            totalTokens: streamUsage.totalTokens,
+            cacheCreationInputTokens: streamUsage.cacheCreationInputTokens,
+            cacheReadInputTokens: streamUsage.cacheReadInputTokens,
+            promptCacheHitTokens: streamUsage.promptCacheHitTokens,
+            promptCacheMissTokens: streamUsage.promptCacheMissTokens,
+          } : undefined,
+        };
       }
 
       // 按实际使用的协议解析响应
@@ -3977,6 +4108,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           return { ok: false, error: STOP_REQUESTED_ERROR };
         }
         return { ok: false, error: `模型调用超时（${effectiveTimeoutMs}ms）` };
+      }
+      if (err instanceof FailoverAttemptError && err.committed) {
+        return {
+          ok: false,
+          error: err.message,
+          interrupted: toAgentInterrupted(err),
+        };
       }
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

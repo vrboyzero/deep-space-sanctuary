@@ -1,4 +1,4 @@
-import type { AgentBudgetExhausted, AgentUsage, BelldandyAgent } from "@belldandy/agent";
+import type { AgentBudgetExhausted, AgentInterrupted, AgentUsage, BelldandyAgent } from "@belldandy/agent";
 import { registerConversationToolEventObserver } from "./query-runtime-side-effects.js";
 
 type AgentRunInput = Parameters<BelldandyAgent["run"]>[0];
@@ -86,12 +86,17 @@ export type QueryRuntimeAgentUsage = {
 
 export type QueryRuntimeAgentBudgetExhausted = Omit<AgentBudgetExhausted, "type">;
 
+export type QueryRuntimeAgentInterrupted = Omit<AgentInterrupted, "type"> & {
+  partialText: string;
+};
+
 export type QueryRuntimeAgentRunSummary = {
   receivedFinal: boolean;
   fullText: string;
   finalText: string;
   latestStatus?: string;
   budgetExhausted?: QueryRuntimeAgentBudgetExhausted;
+  interrupted?: QueryRuntimeAgentInterrupted;
   latestUsage?: QueryRuntimeAgentUsage;
   durationMs: number;
   statusCount: number;
@@ -103,7 +108,7 @@ export type QueryRuntimeAgentRunSummary = {
 
 export type QueryRuntimeAgentRunResult = Pick<
   QueryRuntimeAgentRunSummary,
-  "finalText" | "budgetExhausted" | "latestUsage" | "durationMs" | "toolCallCount" | "toolResultCount" | "toolEventCount"
+  "finalText" | "budgetExhausted" | "interrupted" | "latestUsage" | "durationMs" | "toolCallCount" | "toolResultCount" | "toolEventCount"
 >;
 
 export async function runAgentWithLifecycle(
@@ -116,6 +121,7 @@ export async function runAgentWithLifecycle(
     onToolCall?: (item: QueryRuntimeAgentToolCall) => void;
     onToolResult?: (item: QueryRuntimeAgentToolResult) => void;
     onBudgetExhausted?: (item: QueryRuntimeAgentBudgetExhausted) => void;
+    onInterrupted?: (item: QueryRuntimeAgentInterrupted) => void;
     onUsage?: (item: AgentUsage) => void;
     onFinal?: (item: { text: string }) => void;
     onToolEvent?: (detail: Record<string, unknown>) => void;
@@ -137,6 +143,7 @@ export async function runAgentWithLifecycle(
   let receivedFinal = false;
   let latestStatus: string | undefined;
   let budgetExhausted: QueryRuntimeAgentBudgetExhausted | undefined;
+  let interrupted: QueryRuntimeAgentInterrupted | undefined;
   let latestUsage: QueryRuntimeAgentUsage | undefined;
   let statusCount = 0;
   let deltaCount = 0;
@@ -160,6 +167,23 @@ export async function runAgentWithLifecycle(
         input.onStatus?.({ status: item.status });
         continue;
       }
+
+      if (item.type === "interrupted") {
+        if (!receivedFinal && !interrupted) {
+          interrupted = {
+            reason: item.reason,
+            error: item.error,
+            committed: item.committed,
+            ...(item.code ? { code: item.code } : {}),
+            partialText: fullText,
+          };
+          input.onInterrupted?.(interrupted);
+        }
+        continue;
+      }
+
+      // interrupted 锁存后只保留状态与 usage 观测，禁止迟到内容覆盖 partial。
+      if (interrupted && item.type !== "usage") continue;
 
       if (item.type === "delta") {
         deltaCount += 1;
@@ -268,6 +292,7 @@ export async function runAgentWithLifecycle(
       finalText,
       latestStatus,
       ...(budgetExhausted ? { budgetExhausted } : {}),
+      ...(interrupted ? { interrupted } : {}),
       latestUsage,
       durationMs: Date.now() - runStartedAt,
       statusCount,
@@ -332,6 +357,7 @@ export async function runAgentToCompletionWithLifecycle(
   return {
     finalText: result.finalText,
     ...(result.budgetExhausted ? { budgetExhausted: result.budgetExhausted } : {}),
+    ...(result.interrupted ? { interrupted: result.interrupted } : {}),
     latestUsage: result.latestUsage,
     durationMs: result.durationMs,
     toolCallCount: result.toolCallCount,

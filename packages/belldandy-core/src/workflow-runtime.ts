@@ -233,6 +233,7 @@ export class WorkflowRuntime {
     // 2. 创建或恢复 Journal
     const journalId = opts.resumeJournalId ?? `wf_${randomUUID()}`;
     const journal = new WorkflowJournal(this.db);
+    const leaseOwnerId = `wf_run_${randomUUID()}`;
 
     // 2.5 跨版本 migration：resume 时如果 scriptHash 变化，尝试迁移旧记录
     if (opts.resumeJournalId) {
@@ -315,6 +316,7 @@ export class WorkflowRuntime {
         parentConversationId: opts.parentConversationId,
         channel: opts.channel,
         journalId,
+        leaseOwnerId,
         maxConcurrent,
         batchLimits: resolveWorkflowBatchLimits(this.readEnv),
         abortSignal: runController.signal,

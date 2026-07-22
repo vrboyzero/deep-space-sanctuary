@@ -1,7 +1,18 @@
 import { readResponseTextBounded, type JsonObject } from "@belldandy/protocol";
 
 import type { AgentRunInput, AgentStreamItem, BelldandyAgent } from "./index.js";
-import { FailoverClient, type ModelProfile, type FailoverExecutionSummary, type FailoverLogger } from "./failover-client.js";
+import {
+  FailoverAttemptError,
+  FailoverClient,
+  type ModelProfile,
+  type FailoverExecutionSummary,
+  type FailoverLogger,
+} from "./failover-client.js";
+import {
+  consumeModelResponseStreamWithFailover,
+  toAgentInterrupted,
+} from "./model-response-stream-failover.js";
+import { createModelStreamTextDelivery } from "./model-stream-delivery.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 import {
@@ -243,26 +254,69 @@ export class OpenAIChatAgent implements BelldandyAgent {
         ? Math.max(this.opts.timeoutMs, minimumAdaptiveTimeoutMs)
         : this.opts.timeoutMs;
 
-      // 使用容灾客户端发送请求
+      const recordFailoverSummary = (summary: FailoverExecutionSummary) => {
+        this.opts.onRuntimeResilienceEvent?.({
+          source: "openai_chat",
+          phase: "primary_chat",
+          agentId: input.agentId,
+          conversationId: input.conversationId,
+          summary,
+        });
+      };
+      const buildRequest = (profile: ModelProfile) => this.buildRequest(profile, messages);
+
+      if (this.opts.stream) {
+        const delivery = createModelStreamTextDelivery();
+        const responsePromise = consumeModelResponseStreamWithFailover({
+          failoverClient: this.failoverClient,
+          buildRequest,
+          resolveProtocol: (profile) => ({
+            protocol: (profile.protocol as ApiProtocol) ?? this.protocol,
+            wireApi: resolveWireApiForProfile(profile, this.opts.wireApi),
+          }),
+          onAttemptStart: () => delivery.beginAttempt(),
+          onTextDelta: async (delta, control) => {
+            if (await delivery.push(delta)) control.commit();
+          },
+          signal: input.abortSignal,
+          timeoutMs: requestTimeoutMs,
+          minimumTimeoutMs: minimumAdaptiveTimeoutMs,
+          maxRetries: this.opts.maxRetries,
+          retryBackoffMs: this.opts.retryBackoffMs,
+          onSummary: recordFailoverSummary,
+        });
+        const deliveredResponsePromise = responsePromise.then(
+          async (result) => {
+            await delivery.complete();
+            return result;
+          },
+          async (error) => {
+            if (error instanceof FailoverAttemptError && error.committed) {
+              await delivery.interrupt();
+            } else {
+              await delivery.abort();
+            }
+            throw error;
+          },
+        );
+        for await (const delta of delivery.deltas) {
+          yield { type: "delta", delta };
+        }
+        await deliveredResponsePromise;
+        yield { type: "final", text: delivery.getText() };
+        yield { type: "status", status: "done" };
+        return;
+      }
+
       const { response: res, profile: usedProfile } = await this.failoverClient.fetchWithFailover({
+        buildRequest,
         signal: input.abortSignal,
         timeoutMs: requestTimeoutMs,
         minimumTimeoutMs: minimumAdaptiveTimeoutMs,
         maxRetries: this.opts.maxRetries,
         retryBackoffMs: this.opts.retryBackoffMs,
-        onSummary: (summary) => {
-          this.opts.onRuntimeResilienceEvent?.({
-            source: "openai_chat",
-            phase: "primary_chat",
-            agentId: input.agentId,
-            conversationId: input.conversationId,
-            summary,
-          });
-        },
-        buildRequest: (profile) => this.buildRequest(profile, messages),
+        onSummary: recordFailoverSummary,
       });
-
-      // 实际使用的协议（跟随 failover 选中的 profile）
       const actualProtocol: ApiProtocol = (usedProfile.protocol as ApiProtocol) ?? this.protocol;
       const actualWireApi = resolveWireApiForProfile(usedProfile, this.opts.wireApi);
 
@@ -273,43 +327,18 @@ export class OpenAIChatAgent implements BelldandyAgent {
         return;
       }
 
-      if (!this.opts.stream) {
-        const json = (await res.json()) as JsonObject;
-        const content = this.getNonStreamContent(json, actualProtocol, actualWireApi);
-        yield* emitChunkedFinal(content);
-        return;
-      }
-
-      const body = res.body;
-      if (!body) {
-        yield { type: "final", text: "模型调用失败：响应体为空" };
-        yield { type: "status", status: "error" };
-        return;
-      }
-
-      let out = "";
-      for await (const item of parseSseStream(body as any, actualProtocol, actualWireApi)) {
-        if (item.type === "delta") {
-          out += item.delta;
-          yield item;
-        }
-        if (item.type === "final") {
-          yield { type: "final", text: out };
-          yield { type: "status", status: "done" };
-          return;
-        }
-        if (item.type === "error") {
-          yield { type: "final", text: item.message };
-          yield { type: "status", status: "error" };
-          return;
-        }
-      }
-
-      yield { type: "final", text: out };
-      yield { type: "status", status: "done" };
+      const json = (await res.json()) as JsonObject;
+      const responseContent = this.getNonStreamContent(json, actualProtocol, actualWireApi);
+      yield* emitChunkedFinal(responseContent);
+      return;
     } catch (err) {
       if (wasExternallyAborted(err, input.abortSignal)) {
         yield { type: "status", status: "stopped" };
+        return;
+      }
+      if (err instanceof FailoverAttemptError && err.committed) {
+        yield toAgentInterrupted(err);
+        yield { type: "status", status: "error" };
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
@@ -613,89 +642,6 @@ function splitText(text: string, size: number): string[] {
 
 function wasExternallyAborted(_error: unknown, signal?: AbortSignal): boolean {
   return signal?.aborted === true;
-}
-
-type ParsedSseItem =
-  | { type: "delta"; delta: string }
-  | { type: "final" }
-  | { type: "error"; message: string };
-
-async function* parseSseStream(
-  body: ReadableStream<Uint8Array>,
-  protocol: ApiProtocol,
-  wireApi: OpenAIWireApi
-): AsyncIterable<ParsedSseItem> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    while (true) {
-      const idx = buffer.indexOf("\n\n");
-      if (idx < 0) break;
-      const eventBlock = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-
-      const dataLines = eventBlock
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l.startsWith("data:"))
-        .map((l) => l.slice("data:".length).trim());
-
-      for (const data of dataLines) {
-        if (data === "[DONE]") {
-          yield { type: "final" };
-          return;
-        }
-        try {
-          const json = JSON.parse(data) as any;
-
-          if (protocol === "anthropic") {
-            // Anthropic SSE 格式
-            // { type: "content_block_delta", delta: { type: "text_delta", text: "..." } }
-            if (json.type === "content_block_delta" && json.delta?.text) {
-              yield { type: "delta", delta: json.delta.text };
-            }
-            // 消息结束标记
-            if (json.type === "message_stop") {
-              yield { type: "final" };
-              return;
-            }
-          } else {
-            if (wireApi === "responses") {
-              // Responses SSE: response.output_text.delta / response.completed
-              if (json?.type === "response.output_text.delta" && typeof json.delta === "string" && json.delta.length) {
-                yield { type: "delta", delta: json.delta };
-                continue;
-              }
-              if (json?.type === "response.completed") {
-                yield { type: "final" };
-                return;
-              }
-              if (json?.type === "response.error" || json?.type === "error") {
-                const message = json?.error?.message ?? "模型流返回错误";
-                yield { type: "error", message };
-                return;
-              }
-            } else {
-              // OpenAI Chat Completions SSE 格式
-              const delta = json?.choices?.[0]?.delta?.content;
-              if (typeof delta === "string" && delta.length) {
-                yield { type: "delta", delta };
-              }
-            }
-          }
-        } catch {
-          yield { type: "error", message: "模型流解析失败" };
-          return;
-        }
-      }
-    }
-  }
 }
 
 function buildResponsesInput(messages: Array<{ role: string; content: any }>): Array<Record<string, unknown>> {

@@ -5,6 +5,15 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { FilesystemCapability } from "@belldandy/protocol";
 import { ConversationStore, conversationAsyncFs } from "./conversation.js";
 import { CompactionRuntimeTracker } from "./compaction-runtime.js";
+import { conversationMetaAsyncFs } from "./conversation-tool-artifact-persistence.js";
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
+}
 
 describe("ConversationStore", () => {
     afterEach(() => {
@@ -1322,12 +1331,12 @@ describe("ConversationStore", () => {
         expect(store.getRecentToolResults(id, { toolName: "run_command", success: false, query: "eperm" })).toHaveLength(1);
     });
 
-    it("should persist combined tool artifacts in one final meta snapshot", () => {
+    it("should persist combined tool artifacts asynchronously in one final meta snapshot", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-artifacts-"));
         const dataDir = path.join(tempDir, "sessions");
         try {
             const store = new ConversationStore({ dataDir });
-            const persistSpy = vi.spyOn(store as any, "persistConversationMeta");
+            const syncWriteSpy = vi.spyOn(fs, "writeFileSync");
 
             store.recordToolArtifacts("conv-tool-artifacts", {
                 toolDigest: {
@@ -1359,7 +1368,7 @@ describe("ConversationStore", () => {
                 },
             });
 
-            expect(persistSpy).toHaveBeenCalledTimes(1);
+            expect(syncWriteSpy).not.toHaveBeenCalled();
             expect(store.getToolDigests("conv-tool-artifacts")).toMatchObject([
                 expect.objectContaining({ toolCallId: "call-artifacts-1", target: "src/app.ts" }),
             ]);
@@ -1370,7 +1379,9 @@ describe("ConversationStore", () => {
                 expect.objectContaining({ sourceKey: "file_read:src/app.ts", priority: 6 }),
             ]);
 
-            // 重建 Store，确认单次写入的最终快照可用于进程重启后的恢复。
+            await store.waitForPendingPersistence("conv-tool-artifacts");
+
+            // 等待异步 lane 后重建 Store，确认最终快照可用于进程重启后的恢复。
             const reloaded = new ConversationStore({ dataDir });
             expect(reloaded.getToolDigests("conv-tool-artifacts")).toMatchObject([
                 expect.objectContaining({ toolCallId: "call-artifacts-1", target: "src/app.ts" }),
@@ -1382,6 +1393,67 @@ describe("ConversationStore", () => {
                 expect.objectContaining({ sourceKey: "file_read:src/app.ts", priority: 6 }),
             ]);
         } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("should keep a newer synchronous meta mutation when a tool artifact write is pending", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-artifact-fence-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const id = "conv-tool-artifact-fence";
+        const firstWrite = createDeferred();
+        const writeFile = conversationMetaAsyncFs.writeFile.bind(conversationMetaAsyncFs);
+        let writeCount = 0;
+        vi.spyOn(conversationMetaAsyncFs, "writeFile").mockImplementation(async (filePath, data, encoding) => {
+            writeCount += 1;
+            if (writeCount === 1) {
+                await firstWrite.promise;
+            }
+            await writeFile(filePath, data, encoding);
+        });
+
+        try {
+            const store = new ConversationStore({ dataDir });
+            const syncWriteSpy = vi.spyOn(fs, "writeFileSync");
+            store.recordToolArtifacts(id, {
+                toolDigest: {
+                    toolName: "file_read",
+                    success: true,
+                    summary: "file_read succeeded",
+                    toolCallId: "call-fence-1",
+                },
+                recentToolResult: {
+                    toolCallId: "call-fence-1",
+                    toolName: "file_read",
+                    success: true,
+                    summary: "file_read succeeded",
+                    content: "latest result",
+                },
+            });
+            await vi.waitFor(() => expect(writeCount).toBe(1));
+
+            store.setActiveCounters(id, [{
+                name: "run",
+                startTime: 1,
+                baseInputTokens: 2,
+                baseOutputTokens: 3,
+                savedGlobalInputTokens: 5,
+                savedGlobalOutputTokens: 8,
+            }]);
+            expect(syncWriteSpy).not.toHaveBeenCalled();
+
+            firstWrite.resolve();
+            await store.waitForPendingPersistence(id);
+
+            const reloaded = new ConversationStore({ dataDir });
+            expect(reloaded.getToolDigests(id)).toMatchObject([
+                expect.objectContaining({ toolCallId: "call-fence-1" }),
+            ]);
+            expect(reloaded.getActiveCounters(id)).toMatchObject([
+                expect.objectContaining({ name: "run", savedGlobalInputTokens: 5, savedGlobalOutputTokens: 8 }),
+            ]);
+        } finally {
+            firstWrite.resolve();
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
     });

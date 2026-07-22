@@ -1,4 +1,5 @@
 import path from "node:path";
+import { withGoalRegistryFileLock } from "./goal-registry-file-lock.js";
 
 const mutationTails = new Map<string, Promise<void>>();
 
@@ -8,8 +9,8 @@ function getMutationKey(stateDir: string): string {
 }
 
 /**
- * 同一 Node 进程内，按规范化 stateDir 串行执行 Goal registry mutation。
- * 这是 OPT-GW06 的首个切片；跨进程锁和完整 GoalTransaction 仍由后续切片负责。
+ * 按规范化 stateDir 在进程内排队，并在执行 mutation 前取得 Goal registry 跨进程文件锁。
+ * 完整 GoalTransaction 与多文件 commit/recovery 仍由后续切片负责。
  */
 export async function withGoalRegistryMutationLock<T>(
   stateDir: string,
@@ -33,7 +34,7 @@ export async function withGoalRegistryMutationLock<T>(
 
   await predecessor.catch(() => undefined);
   try {
-    return await mutation();
+    return await withGoalRegistryFileLock(stateDir, mutation);
   } finally {
     // 无论当前 mutation 成功或失败，都必须唤醒同 stateDir 的下一项。
     releaseCurrent();

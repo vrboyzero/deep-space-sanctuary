@@ -238,6 +238,15 @@ export type AgentStatus = {
   status: "running" | "done" | "error" | "stopped";
 };
 
+/** Provider 流在提交可见内容后失败时的可诊断终态。 */
+export type AgentInterrupted = {
+  type: "interrupted";
+  reason: "provider_stream_error" | "provider_stream_timeout" | "provider_stream_protocol";
+  error: string;
+  committed: boolean;
+  code?: string;
+};
+
 /** ReAct 硬预算耗尽时的可诊断终态；final/status 会紧随其后。 */
 export type AgentBudgetExhausted = {
   type: "budget_exhausted";
@@ -387,6 +396,7 @@ export type AgentStreamItem =
   | AgentDelta
   | AgentFinal
   | AgentStatus
+  | AgentInterrupted
   | AgentBudgetExhausted
   | AgentToolCall
   | AgentToolResult

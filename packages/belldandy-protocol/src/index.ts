@@ -63,6 +63,7 @@ export type {
 } from "./token-usage-upload.js";
 export {
   createTokenUsageUploadScheduler,
+  drainTokenUsageUploads,
   getTokenUsageUploadRuntimeSnapshot,
   uploadTokenUsage,
 } from "./token-usage-upload.js";

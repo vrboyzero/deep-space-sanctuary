@@ -15,7 +15,7 @@ const defaultMessageCounts = [100, 1_000];
 const defaultMessageBytes = 256;
 const defaultViewport = { width: 1_280, height: 720 };
 const minimumStartupResourceCount = 10;
-const expectedRenderModuleResourceCount = 3;
+const expectedRenderModuleResourceCount = 6;
 const startupCacheModes = ["cold", "hot"];
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -152,6 +152,15 @@ function normalizeStartupScenario(scenario, sampleRuns, minimumResourceCount) {
     if (assetGlobalCount !== 3 || sample?.appBootstrapReady !== true || sample?.appShellPresent !== true) {
       throw new Error(`${prefix} did not reach the expected full WebChat shell state.`);
     }
+    if (
+      sample?.firstInteractionName !== "theme_toggle"
+      || sample?.firstInteractionStateChanged !== true
+    ) {
+      throw new Error(`${prefix} did not complete the fixed first interaction.`);
+    }
+    if (sample?.panelId !== "settings" || sample?.panelVisible !== true) {
+      throw new Error(`${prefix} did not complete the fixed Settings first-open interaction.`);
+    }
     const pageErrorCount = parseCount(
       sample?.pageErrorCount,
       `${prefix}.pageErrorCount`,
@@ -170,6 +179,28 @@ function normalizeStartupScenario(scenario, sampleRuns, minimumResourceCount) {
       assetGlobalCount,
       appBootstrapReady: true,
       appShellPresent: true,
+      firstInteractionName: "theme_toggle",
+      firstInteractionDurationMs: round(requireNumber(
+        sample?.firstInteractionDurationMs,
+        `${prefix}.firstInteractionDurationMs`,
+      )),
+      firstInteractionStateChanged: true,
+      panelId: "settings",
+      panelFirstOpenDurationMs: round(requireNumber(
+        sample?.panelFirstOpenDurationMs,
+        `${prefix}.panelFirstOpenDurationMs`,
+      )),
+      panelVisible: true,
+      panelResourceDelta: parseCount(
+        sample?.panelResourceDelta,
+        `${prefix}.panelResourceDelta`,
+        { allowZero: true },
+      ),
+      panelDomNodeDelta: parseCount(
+        sample?.panelDomNodeDelta,
+        `${prefix}.panelDomNodeDelta`,
+        { allowZero: true },
+      ),
       pageErrorCount,
     };
   });
@@ -184,6 +215,30 @@ function normalizeStartupScenario(scenario, sampleRuns, minimumResourceCount) {
     transferSummary: summarizeValues(
       samples.map((sample) => sample.transferSizeBytes),
       "bytes_per_fixture",
+    ),
+    resourceCountSummary: summarizeValues(
+      samples.map((sample) => sample.resourceCount),
+      "resources_per_fixture",
+    ),
+    domNodeSummary: summarizeValues(
+      samples.map((sample) => sample.domNodeCount),
+      "dom_nodes_per_fixture",
+    ),
+    firstInteractionSummary: summarizeValues(
+      samples.map((sample) => sample.firstInteractionDurationMs),
+      "milliseconds_per_fixture",
+    ),
+    panelFirstOpenSummary: summarizeValues(
+      samples.map((sample) => sample.panelFirstOpenDurationMs),
+      "milliseconds_per_fixture",
+    ),
+    panelResourceDeltaSummary: summarizeValues(
+      samples.map((sample) => sample.panelResourceDelta),
+      "resources_per_fixture",
+    ),
+    panelDomNodeDeltaSummary: summarizeValues(
+      samples.map((sample) => sample.panelDomNodeDelta),
+      "dom_nodes_per_fixture",
     ),
   };
 }
@@ -574,22 +629,50 @@ async function navigateFullShell(page, pageErrors, baseUrl, sequence) {
     () => globalThis.__SS_WEBCHAT_STARTUP__?.marks?.some((mark) => mark?.stage === "app.bootstrap.ready"),
     { timeout: 30_000 },
   );
-  const sample = await page.evaluate(() => {
+  const sample = await page.evaluate(async () => {
     const startup = globalThis.__SS_WEBCHAT_STARTUP__;
     const marks = Array.isArray(startup?.marks) ? startup.marks : [];
     const readyMark = marks.findLast((mark) => mark?.stage === "app.bootstrap.ready");
     const resources = performance.getEntriesByType("resource");
+    const startupDomNodeCount = document.querySelectorAll("*").length;
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const themeToggle = document.querySelector("#themeToggleBtn");
+    const themeBefore = document.documentElement.dataset.theme || "";
+    const firstInteractionStartedAt = performance.now();
+    themeToggle?.click();
+    await nextFrame();
+    const firstInteractionDurationMs = performance.now() - firstInteractionStartedAt;
+    const themeAfter = document.documentElement.dataset.theme || "";
+
+    const openSettings = document.querySelector("#openSettings");
+    const settingsModal = document.querySelector("#settingsModal");
+    const panelResourcesBefore = performance.getEntriesByType("resource").length;
+    const panelDomNodesBefore = document.querySelectorAll("*").length;
+    const panelFirstOpenStartedAt = performance.now();
+    openSettings?.click();
+    await nextFrame();
+    const panelFirstOpenDurationMs = performance.now() - panelFirstOpenStartedAt;
+    const panelResourcesAfter = performance.getEntriesByType("resource").length;
+    const panelDomNodesAfter = document.querySelectorAll("*").length;
     return {
       durationMs: readyMark.atMs - startup.parseStartedAtMs,
       resourceCount: resources.length,
       transferSizeBytes: resources.reduce((total, entry) => total + (entry.transferSize || 0), 0),
       decodedBodySizeBytes: resources.reduce((total, entry) => total + (entry.decodedBodySize || 0), 0),
       startupMarkCount: marks.length,
-      domNodeCount: document.querySelectorAll("*").length,
+      domNodeCount: startupDomNodeCount,
       assetGlobalCount: [globalThis.marked, globalThis.dagre, globalThis.DOMPurify]
         .filter(Boolean).length,
       appBootstrapReady: Boolean(readyMark),
       appShellPresent: Boolean(document.querySelector("main.layout")),
+      firstInteractionName: "theme_toggle",
+      firstInteractionDurationMs,
+      firstInteractionStateChanged: Boolean(themeToggle) && themeBefore !== themeAfter,
+      panelId: "settings",
+      panelFirstOpenDurationMs,
+      panelVisible: Boolean(settingsModal) && !settingsModal.classList.contains("hidden"),
+      panelResourceDelta: panelResourcesAfter - panelResourcesBefore,
+      panelDomNodeDelta: panelDomNodesAfter - panelDomNodesBefore,
     };
   });
   return {

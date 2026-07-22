@@ -388,6 +388,134 @@ describe("chat events pairing", () => {
     expect(messagesEl.querySelector(".system-msg")?.textContent).toBe("Interrupted");
   });
 
+  it("preserves the partial bubble and shows an interrupted state for the active conversation", () => {
+    document.body.innerHTML = "<div id=\"messages\"></div>";
+    const messagesEl = document.getElementById("messages");
+    const appendMessage = vi.fn((kind, text) => {
+      if (kind === "system") {
+        const systemEl = document.createElement("div");
+        systemEl.className = "system-msg";
+        systemEl.textContent = text;
+        messagesEl.appendChild(systemEl);
+        return systemEl;
+      }
+      const wrapper = document.createElement("div");
+      wrapper.className = `msg-wrapper ${kind}`;
+      const bubble = document.createElement("div");
+      bubble.className = `msg ${kind}`;
+      bubble.textContent = text;
+      wrapper.appendChild(bubble);
+      messagesEl.appendChild(wrapper);
+      return bubble;
+    });
+    const renderAssistantMessage = vi.fn((target, text) => {
+      target.textContent = text;
+    });
+    const onConversationStopped = vi.fn();
+    const feature = createChatEventsFeature({
+      appendMessage,
+      renderAssistantMessage,
+      forceScrollToBottom: vi.fn(),
+      getCanvasApp: () => null,
+      getActiveConversationId: () => "conv-interrupted",
+      onConversationDelta: vi.fn(),
+      onConversationFinal: vi.fn(),
+      onConversationStopped,
+      getStoppedMessageText: () => "Interrupted",
+    });
+
+    feature.beginStreamingReply({ timestampMs: 1, isLatest: false });
+    feature.handleEvent("chat.delta", {
+      conversationId: "conv-interrupted",
+      delta: "partial answer",
+    });
+
+    const handled = feature.handleEvent("conversation.run.interrupted", {
+      conversationId: "conv-interrupted",
+      runId: "run-interrupted",
+      reason: "provider_stream_error",
+      hadPartialResponse: true,
+    });
+
+    expect(handled).toBe(true);
+    expect(onConversationStopped).toHaveBeenCalledWith({
+      conversationId: "conv-interrupted",
+      runId: "run-interrupted",
+      reason: "provider_stream_error",
+      hadPartialResponse: true,
+    });
+    expect(messagesEl.querySelectorAll(".msg-wrapper.bot")).toHaveLength(1);
+    expect(messagesEl.querySelector(".msg.bot")?.textContent).toBe("partial answer");
+    expect(messagesEl.querySelectorAll(".system-msg")).toHaveLength(1);
+    expect(messagesEl.querySelector(".system-msg")?.textContent).toBe("Interrupted");
+
+    feature.handleEvent("chat.delta", {
+      conversationId: "conv-interrupted",
+      delta: "new reply",
+    });
+    expect(messagesEl.querySelectorAll(".msg-wrapper.bot")).toHaveLength(2);
+  });
+
+  it("does not change the active bubble when another conversation is interrupted", () => {
+    document.body.innerHTML = "<div id=\"messages\"></div>";
+    const messagesEl = document.getElementById("messages");
+    const appendMessage = vi.fn((kind, text) => {
+      if (kind === "system") {
+        const systemEl = document.createElement("div");
+        systemEl.className = "system-msg";
+        systemEl.textContent = text;
+        messagesEl.appendChild(systemEl);
+        return systemEl;
+      }
+      const wrapper = document.createElement("div");
+      wrapper.className = `msg-wrapper ${kind}`;
+      const bubble = document.createElement("div");
+      bubble.className = `msg ${kind}`;
+      wrapper.appendChild(bubble);
+      messagesEl.appendChild(wrapper);
+      return bubble;
+    });
+    const renderAssistantMessage = vi.fn((target, text) => {
+      target.textContent = text;
+    });
+    const onConversationStopped = vi.fn();
+    const feature = createChatEventsFeature({
+      appendMessage,
+      renderAssistantMessage,
+      forceScrollToBottom: vi.fn(),
+      getCanvasApp: () => null,
+      getActiveConversationId: () => "conv-active",
+      onConversationDelta: vi.fn(),
+      onConversationStopped,
+      getStoppedMessageText: () => "Interrupted",
+    });
+
+    feature.beginStreamingReply();
+    feature.handleEvent("chat.delta", {
+      conversationId: "conv-active",
+      delta: "active partial",
+    });
+    const handled = feature.handleEvent("conversation.run.interrupted", {
+      conversationId: "conv-background",
+      runId: "run-background",
+      hadPartialResponse: true,
+    });
+    feature.handleEvent("chat.delta", {
+      conversationId: "conv-active",
+      delta: " continues",
+    });
+
+    expect(handled).toBe(true);
+    expect(onConversationStopped).toHaveBeenCalledWith({
+      conversationId: "conv-background",
+      runId: "run-background",
+      hadPartialResponse: true,
+    });
+    expect(messagesEl.querySelectorAll(".msg-wrapper.bot")).toHaveLength(1);
+    expect(messagesEl.querySelector(".msg.bot")?.textContent).toBe("active partial continues");
+    expect(messagesEl.querySelector(".system-msg")).toBeNull();
+  });
+
   it("measures 10/100/1000-character streaming renders without forwarding message content", () => {
     const target = document.createElement("div");
     const measureStreamingRender = vi.fn((input, render) => render());

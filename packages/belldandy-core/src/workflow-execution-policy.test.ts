@@ -23,9 +23,40 @@ describe("WorkflowExecutionPolicy", () => {
       workflowRoot: path.join(stateDir, "workflows"),
       allowInline: false,
       allowLegacyFiles: false,
+      maxFileBytes: 1024 * 1024,
     });
     expect(policy.approvedFileHashes.size).toBe(0);
   });
+
+  it.each([
+    ["1024", 1024],
+    [String(16 * 1024 * 1024), 16 * 1024 * 1024],
+  ])("脚本字节上限接受合法边界 %s", async (raw, expected) => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-workflow-policy-"));
+    tempDirs.push(stateDir);
+
+    const policy = resolveWorkflowExecutionPolicy({
+      stateDir,
+      readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES" ? raw : undefined,
+    });
+
+    expect(policy.maxFileBytes).toBe(expected);
+  });
+
+  it.each(["0", "-1", "1023", "1.5", "1048576junk", String(16 * 1024 * 1024 + 1)])(
+    "脚本字节上限非法值 %s 回退安全默认值",
+    async (raw) => {
+      const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-workflow-policy-"));
+      tempDirs.push(stateDir);
+
+      const policy = resolveWorkflowExecutionPolicy({
+        stateDir,
+        readEnv: (name) => name === "BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES" ? raw : undefined,
+      });
+
+      expect(policy.maxFileBytes).toBe(1024 * 1024);
+    },
+  );
 
   it("只接受相对路径和 sha256 身份均有效的批准 manifest", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-workflow-policy-"));

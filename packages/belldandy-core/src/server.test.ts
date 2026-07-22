@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -193,6 +194,96 @@ test("message.send keeps budget exhaustion as a failed terminal state", async ()
       conversationId: "conv-budget-terminal",
     });
     expect(trace?.stages.map((item: any) => item.stage)).toContain("failed");
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("message.send preserves interrupted partial output without an overwriting chat.final", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-stream-interrupted-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield { type: "status" as const, status: "running" as const };
+      yield { type: "delta" as const, delta: "partial answer" };
+      yield {
+        type: "interrupted",
+        reason: "provider_stream_error",
+        error: "stream reset",
+        committed: true,
+      };
+      yield { type: "delta" as const, delta: " late delta" };
+      yield { type: "final" as const, text: "late final" };
+      yield { type: "status" as const, status: "error" as const };
+    },
+  };
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    agentFactory: () => agent,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-send-stream-interrupted",
+      method: "message.send",
+      params: { conversationId: "conv-stream-interrupted", text: "hello" },
+    }));
+
+    await waitFor(() => frames.some((frame) => (
+      frame.type === "event" && frame.event === "conversation.run.interrupted"
+    )));
+    await sleep(50);
+
+    expect(frames).toContainEqual(expect.objectContaining({
+      type: "event",
+      event: "chat.delta",
+      payload: expect.objectContaining({ delta: "partial answer" }),
+    }));
+    expect(frames.find((frame) => frame.event === "conversation.run.interrupted")?.payload).toMatchObject({
+      conversationId: "conv-stream-interrupted",
+      reason: "provider_stream_error",
+      error: "stream reset",
+      hadPartialResponse: true,
+    });
+    expect(frames.some((frame) => frame.event === "chat.final")).toBe(false);
+    expect(conversationStore.get("conv-stream-interrupted")?.messages.some((message) => (
+      message.role === "assistant"
+    ))).toBe(false);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "stream-interrupted-doctor",
+      method: "system.doctor",
+      params: {},
+    }));
+    await waitFor(() => frames.some((frame) => (
+      frame.type === "res" && frame.id === "stream-interrupted-doctor"
+    )));
+    const doctor = frames.find((frame) => frame.type === "res" && frame.id === "stream-interrupted-doctor");
+    const trace = doctor?.payload?.queryRuntime?.traces?.find(
+      (item: any) => item.traceId === "message-send-stream-interrupted",
+    );
+    expect(trace).toMatchObject({
+      method: "message.send",
+      status: "failed",
+      conversationId: "conv-stream-interrupted",
+    });
   } finally {
     ws.close();
     await closeP;
@@ -2876,7 +2967,30 @@ test("durable extraction request limiter records blocked request usage and keeps
 test("message.send userUuid overrides handshake userUuid for agent input and token upload", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const seenUserUuids: Array<string | undefined> = [];
-  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 200 }));
+  const receivedUploads: Array<{ method: string; url: string; authorization: string; body: string }> = [];
+  const uploadServer = http.createServer((request, response) => {
+    void (async () => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      receivedUploads.push({
+        method: request.method ?? "",
+        url: request.url ?? "",
+        authorization: request.headers.authorization ?? "",
+        body: Buffer.concat(chunks).toString("utf-8"),
+      });
+      response.writeHead(204);
+      response.end();
+    })();
+  });
+  await new Promise<void>((resolve, reject) => {
+    uploadServer.once("error", reject);
+    uploadServer.listen(0, "127.0.0.1", resolve);
+  });
+  const uploadAddress = uploadServer.address();
+  if (!uploadAddress || typeof uploadAddress === "string") {
+    throw new Error("Token usage upload test server address unavailable.");
+  }
+  const uploadUrl = `http://127.0.0.1:${uploadAddress.port}/api/internal/token-usage`;
   const agent: BelldandyAgent = {
     async *run(input) {
       seenUserUuids.push(input.userUuid);
@@ -2897,8 +3011,9 @@ test("message.send userUuid overrides handshake userUuid for agent input and tok
   try {
     await withEnv({
       BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED: "true",
-      BELLDANDY_TOKEN_USAGE_UPLOAD_URL: "http://token-upload.local/api/internal/token-usage",
+      BELLDANDY_TOKEN_USAGE_UPLOAD_URL: uploadUrl,
       BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY: "gro_test_upload_key",
+      BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT: "true",
     }, async () => {
       const server = await startGatewayServer({
         port: 0,
@@ -2944,15 +3059,13 @@ test("message.send userUuid overrides handshake userUuid for agent input and tok
         }));
 
         await waitFor(() => frames.some((f) => f.type === "res" && f.id === reqId && f.ok === true));
-        await waitFor(() => fetchSpy.mock.calls.length > 0);
+        await waitFor(() => receivedUploads.length > 0);
 
         expect(seenUserUuids).toEqual(["message-uuid"]);
-        const [url, init] = fetchSpy.mock.calls[0];
-        expect(String(url)).toBe("http://token-upload.local/api/internal/token-usage");
-        expect(init && typeof init === "object" ? (init as RequestInit).headers : undefined).toMatchObject({
-          Authorization: "Bearer gro_test_upload_key",
-        });
-        expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
+        expect(receivedUploads[0]?.method).toBe("POST");
+        expect(receivedUploads[0]?.url).toBe("/api/internal/token-usage");
+        expect(receivedUploads[0]?.authorization).toBe("Bearer gro_test_upload_key");
+        expect(JSON.parse(receivedUploads[0]?.body ?? "{}")).toMatchObject({
           userUuid: "message-uuid",
           deltaTokens: 9,
         });
@@ -2963,7 +3076,9 @@ test("message.send userUuid overrides handshake userUuid for agent input and tok
       }
     });
   } finally {
-    fetchSpy.mockRestore();
+    await new Promise<void>((resolve, reject) => {
+      uploadServer.close((error) => error ? reject(error) : resolve());
+    });
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });

@@ -119,6 +119,7 @@ test("config.update accepts system and model env settings and redacts auth/video
           BELLDANDY_ALLOWED_ORIGINS: "http://localhost:5173",
           BELLDANDY_ATTACHMENT_MAX_FILE_BYTES: "12345",
           BELLDANDY_OPENAI_WIRE_API: "responses",
+          BELLDANDY_TOOL_AGENT_STREAMING_ENABLED: "true",
           BELLDANDY_OPENAI_THINKING: "enabled",
           BELLDANDY_OPENAI_REASONING_EFFORT: "max",
           BELLDANDY_RESPONSES_SANITIZE_TOOL_SCHEMA: "true",
@@ -151,6 +152,7 @@ test("config.update accepts system and model env settings and redacts auth/video
     expect(readRes.payload?.config?.BELLDANDY_AUTH_MODE).toBe("token");
     expect(readRes.payload?.config?.BELLDANDY_ALLOWED_ORIGINS).toBe("http://localhost:5173");
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_WIRE_API).toBe("responses");
+    expect(readRes.payload?.config?.BELLDANDY_TOOL_AGENT_STREAMING_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_THINKING).toBe("enabled");
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_REASONING_EFFORT).toBe("max");
     expect(readRes.payload?.config?.BELLDANDY_OPENAI_PROXY_URL).toBe("http://127.0.0.1:7890");
@@ -165,6 +167,7 @@ test("config.update accepts system and model env settings and redacts auth/video
     expect(envLocalContent).toContain('BELLDANDY_AUTH_MODE="token"');
     expect(envLocalContent).toContain('BELLDANDY_AUTH_TOKEN="setup-test-token"');
     expect(envLocalContent).toContain('BELLDANDY_OPENAI_WIRE_API="responses"');
+    expect(envLocalContent).toContain('BELLDANDY_TOOL_AGENT_STREAMING_ENABLED="true"');
     expect(envLocalContent).toContain('BELLDANDY_WORKFLOW_MAX_TOKENS="80000"');
     expect(envLocalContent).toContain('BELLDANDY_VIDEO_FILE_API_KEY="video-secret"');
   } finally {
@@ -540,6 +543,7 @@ test("config.update accepts system governance env settings and keeps extra works
           BELLDANDY_TOKEN_USAGE_UPLOAD_URL: "http://127.0.0.1:3001/api/internal/token-usage",
           BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY: "gro_secret_key",
           BELLDANDY_TOKEN_USAGE_UPLOAD_TIMEOUT_MS: "3000",
+          BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT: "true",
           BELLDANDY_TOKEN_USAGE_STRICT_UUID: "true",
           BELLDANDY_AUTO_TASK_TIME_ENABLED: "true",
           BELLDANDY_AUTO_TASK_TOKEN_ENABLED: "false",
@@ -584,6 +588,7 @@ test("config.update accepts system governance env settings and keeps extra works
     expect(readRes.payload?.config?.BELLDANDY_WEBHOOK_PREAUTH_MAX_BYTES).toBe("65536");
     expect(readRes.payload?.config?.BELLDANDY_TOKEN_USAGE_UPLOAD_ENABLED).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY).toBe("[REDACTED]");
+    expect(readRes.payload?.config?.BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT).toBe("true");
     expect(readRes.payload?.config?.BELLDANDY_AUTO_TASK_TOKEN_ENABLED).toBe("false");
     expect(readRes.payload?.config?.BELLDANDY_EXTRA_WORKSPACE_ROOTS).toBe("E:/tools,D:/projects");
     expect(readRes.payload?.config?.BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE).toBe("full");
@@ -598,6 +603,7 @@ test("config.update accepts system governance env settings and keeps extra works
     const envLocalContent = await fs.promises.readFile(path.join(envDir, ".env.local"), "utf-8");
     expect(envContent).toContain('BELLDANDY_EXTRA_WORKSPACE_ROOTS="E:/tools,D:/projects"');
     expect(envLocalContent).toContain('BELLDANDY_TOKEN_USAGE_UPLOAD_APIKEY="gro_secret_key"');
+    expect(envLocalContent).toContain('BELLDANDY_TOKEN_USAGE_UPLOAD_TRUSTED_PRIVATE_ENDPOINT="true"');
     expect(envLocalContent).toContain('BELLDANDY_STATE_DIR_WINDOWS="C:/Users/admin/.star_sanctuary"');
     expect(envLocalContent).toContain('BELLDANDY_WEB_GOVERNANCE_DETAIL_MODE="full"');
     expect(envLocalContent).toContain('BELLDANDY_PROMPT_FOCUS_ENABLED="false"');
@@ -1439,6 +1445,7 @@ test("config.update persists workflow retry and batch hard caps", async () => {
   try {
     await pairWebSocketClient(ws, frames, stateDir);
     const updates = {
+      BELLDANDY_WORKFLOW_MAX_SCRIPT_BYTES: "1048576",
       BELLDANDY_WORKFLOW_MAX_RETRIES: "3",
       BELLDANDY_WORKFLOW_MAX_BATCH_ITEMS: "250",
       BELLDANDY_WORKFLOW_MAX_BATCH_QUEUED_BYTES: "2097152",
