@@ -150,6 +150,11 @@ Windows-specific guidance:
 ## Commit & Pull Request Guidelines
 Recent history mixes free-form messages with Conventional Commit style, but prefer `fix(scope): subject`, `feat(scope): subject`, `docs: subject`, or similar focused commits. Keep each commit scoped to one concern.
 
+### 双仓库推送默认规则
+- 日常开发提交的默认推送目标是本地 `main` 到 `private/main`，执行前先确认当前分支为 `main`，再使用 `git push private main`。
+- 未经用户明确要求，不得推送到 `origin/main`，也不得创建面向 `origin` 的 tag、GitHub Release 或其他公开发版动作。
+- 若当前不在 `main`，不得自行假定应以 `HEAD:main` 覆盖 `private/main`；应先由用户明确目标分支或合并策略。
+
 PRs should include:
 - a short problem/solution summary,
 - affected modules or paths,
