@@ -63,12 +63,15 @@ export function normalizeMaxTotalTokens(value: number | undefined): number {
   return normalizePositiveLimit(value, DEFAULT_MAX_TOTAL_TOKENS);
 }
 
-/** 0 明确表示禁止高风险 Tool；负数和非法值回退到安全默认值。 */
+/** 0 明确表示不限制高风险 Tool；负数和非法值回退到安全默认值。 */
 export function normalizeMaxHighRiskToolCalls(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return DEFAULT_MAX_HIGH_RISK_TOOL_CALLS;
   }
-  return Math.floor(value);
+  if (value === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(1, Math.floor(value));
 }
 
 /**

@@ -1158,6 +1158,48 @@ test("conversation.timeline.get returns readable projection for transcript parti
       partialViewId: expect.any(String),
     });
 
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-timeline-page",
+      method: "conversation.timeline.get",
+      params: { conversationId, pageSize: 2, previewChars: 48 },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-timeline-page" && f.ok === true));
+    const timelinePageRes = frames.find((f) => f.type === "res" && f.id === "conversation-timeline-page");
+    expect(timelinePageRes.payload.timeline).toMatchObject({
+      manifest: {
+        conversationId,
+        source: "conversation.timeline.page",
+      },
+      summary: {
+        eventCount: 2,
+        itemCount: 2,
+      },
+      page: {
+        cursorStatus: "initial",
+        nextCursor: expect.any(String),
+      },
+    });
+    expect(timelinePageRes.payload.timeline.items.some((item: any) => item.kind === "restore_result")).toBe(false);
+
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "conversation-timeline-page-next",
+      method: "conversation.timeline.get",
+      params: {
+        conversationId,
+        pageSize: 2,
+        cursor: timelinePageRes.payload.timeline.page.nextCursor,
+        previewChars: 48,
+      },
+    }));
+    await waitFor(() => frames.some((f) => f.type === "res" && f.id === "conversation-timeline-page-next" && f.ok === true));
+    const timelinePageNextRes = frames.find((f) => f.type === "res" && f.id === "conversation-timeline-page-next");
+    expect(timelinePageNextRes.payload.timeline).toMatchObject({
+      manifest: { source: "conversation.timeline.page" },
+      page: { cursorStatus: "valid" },
+    });
+
     ws.send(JSON.stringify({ type: "req", id: "system-doctor-timeline", method: "system.doctor", params: {} }));
     await waitFor(() => frames.some((f) => f.type === "res" && f.id === "system-doctor-timeline" && f.ok === true));
     const doctorRes = frames.find((f) => f.type === "res" && f.id === "system-doctor-timeline");

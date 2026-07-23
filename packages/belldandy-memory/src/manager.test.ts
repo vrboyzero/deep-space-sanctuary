@@ -3054,6 +3054,152 @@ describe("MemoryManager guardrails", () => {
     });
   });
 
+  it("singleflights and reuses successful query embeddings across concurrent retrievals", async () => {
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    const embedQuery = vi.fn(async () => [0.1]);
+    (manager as any).embeddingProvider = {
+      modelName: "shared-query-embedding",
+      embed: async () => [0.1],
+      embedBatch: async () => [],
+      embedQuery,
+    };
+
+    const first = manager.search("singleflight query embedding", { limit: 3, routingPolicy: "chunk_only" });
+    const second = manager.search("singleflight query embedding", { limit: 3, routingPolicy: "chunk_only" });
+    await Promise.all([first, second]);
+    await manager.search("singleflight query embedding", { limit: 3, routingPolicy: "chunk_only" });
+
+    expect(embedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cache a late query embedding after every retrieval consumer cancels", async () => {
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    let resolveLateEmbedding!: (vector: number[]) => void;
+    const embedQuery = vi.fn()
+      .mockImplementationOnce(async () => await new Promise<number[]>((resolve) => {
+        resolveLateEmbedding = resolve;
+      }))
+      .mockResolvedValueOnce([0.2]);
+    (manager as any).embeddingProvider = {
+      modelName: "cancelled-query-embedding",
+      embed: async () => [0.1],
+      embedBatch: async () => [],
+      embedQuery,
+    };
+
+    const controller = new AbortController();
+    const cancelled = manager.search("cancelled query embedding", {
+      limit: 3,
+      routingPolicy: "chunk_only",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(embedQuery).toHaveBeenCalledTimes(1));
+    controller.abort(new Error("caller stopped"));
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    resolveLateEmbedding([0.1]);
+    await Promise.resolve();
+
+    await manager.search("cancelled query embedding", { limit: 3, routingPolicy: "chunk_only" });
+    expect(embedQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start derived retrieval chains when the absolute deadline already passed", async () => {
+    const inventory = {
+      listPage: vi.fn(async () => ({ status: "ready" as const, items: [] })),
+    };
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      sessionArtifactInventory: inventory,
+    });
+    const store = (manager as any).store;
+    const taskSummarySpy = vi.spyOn(store, "listTaskSummaries");
+    const experienceCandidateSpy = vi.spyOn(store, "searchExperienceDerivedCandidateIds");
+    const experienceDetailSpy = vi.spyOn(store, "getExperienceDerivedCandidates");
+
+    const execution = await manager.searchWithDiagnostics("expired derived retrieval", {
+      limit: 3,
+      routingPolicy: "chunk_only",
+      deadlineMs: Date.now() - 1,
+    });
+
+    expect(inventory.listPage).not.toHaveBeenCalled();
+    expect(taskSummarySpy).not.toHaveBeenCalled();
+    expect(experienceCandidateSpy).not.toHaveBeenCalled();
+    expect(experienceDetailSpy).not.toHaveBeenCalled();
+    expect(execution.diagnostics.derived).toEqual({
+      session: expect.objectContaining({
+        admitted: false,
+        skipped: true,
+        skipReason: "deadline",
+        deadline: { exceededBeforeStart: true, exceededAfterCompletion: false },
+      }),
+      task: expect.objectContaining({
+        admitted: false,
+        skipped: true,
+        skipReason: "deadline",
+        deadline: { exceededBeforeStart: true, exceededAfterCompletion: false },
+      }),
+      experience: expect.objectContaining({
+        admitted: false,
+        skipped: true,
+        skipReason: "deadline",
+        deadline: { exceededBeforeStart: true, exceededAfterCompletion: false },
+      }),
+    });
+  });
+
+  it("reports a post-local deadline without claiming SQLite interruption", async () => {
+    manager = createManager({ workspaceRoot: docsDir, stateDir });
+    const store = (manager as any).store;
+    const originalListTaskSummaries = store.listTaskSummaries.bind(store);
+    const taskSummarySpy = vi.spyOn(store, "listTaskSummaries").mockImplementation((...args: any[]) => {
+      const until = Date.now() + 60;
+      while (Date.now() < until) {
+        // 模拟不可由 AbortSignal 打断的本地 SQLite 同步语句。
+      }
+      return originalListTaskSummaries(...args);
+    });
+    const experienceCandidateSpy = vi.spyOn(store, "searchExperienceDerivedCandidateIds");
+
+    const execution = await manager.searchWithDiagnostics("local sqlite deadline", {
+      limit: 3,
+      routingPolicy: "chunk_only",
+      deadlineMs: Date.now() + 25,
+    });
+
+    expect(taskSummarySpy).toHaveBeenCalledTimes(1);
+    expect(experienceCandidateSpy).not.toHaveBeenCalled();
+    expect(execution.diagnostics.derived).toMatchObject({
+      task: {
+        admitted: true,
+        skipped: false,
+        deadline: {
+          exceededBeforeStart: false,
+          exceededAfterCompletion: true,
+        },
+      },
+      experience: {
+        admitted: false,
+        skipped: true,
+        skipReason: "deadline",
+        deadline: {
+          exceededBeforeStart: true,
+          exceededAfterCompletion: false,
+        },
+      },
+      session: {
+        admitted: false,
+        skipped: true,
+        skipReason: "deadline",
+        deadline: {
+          exceededBeforeStart: true,
+          exceededAfterCompletion: false,
+        },
+      },
+    });
+  });
+
   it("rejects caller cancellation and ignores a late embedding result", async () => {
     const filePath = path.join(docsDir, "cancelled-retrieval.md");
     await fs.writeFile(filePath, "# Cancelled\ncancelled retrieval marker\n", "utf-8");
@@ -4191,6 +4337,7 @@ describe("MemoryManager guardrails", () => {
         content,
       });
     }
+    const pruneSpy = vi.spyOn(store, "pruneEmbeddingCache");
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -4208,6 +4355,7 @@ describe("MemoryManager guardrails", () => {
         expect.closeTo(0.2, 5),
       ]);
       expect(store.getVectorStatus().cached).toBe(2);
+      expect(pruneSpy).not.toHaveBeenCalled();
       const failureScope = (manager as any).computeEmbeddingFailureScope();
       const ledger = (manager as any).embeddingFailureLedger;
       expect(ledger.getRecord(failureScope, "embedding-poison")).toMatchObject({
@@ -4220,6 +4368,7 @@ describe("MemoryManager guardrails", () => {
       expect(warningOutput).not.toContain("poison embedding");
     } finally {
       warnSpy.mockRestore();
+      pruneSpy.mockRestore();
     }
   });
 
@@ -4258,6 +4407,47 @@ describe("MemoryManager guardrails", () => {
     ]);
   });
 
+  it("rebuilds a legacy vector table from an undeclared provider's first real response", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "embedding-rebuild-legacy-dimension",
+      sourcePath: path.join(docsDir, "embedding-rebuild-legacy-dimension.md"),
+      sourceType: "file",
+      memoryType: "working",
+      content: "replace legacy vector dimensions",
+    });
+    store.prepareVectorStore(3);
+    store.upsertChunkVector(
+      "embedding-rebuild-legacy-dimension",
+      [0.1, 0.2, 0.3],
+      "legacy-model",
+    );
+    const embedBatch = vi.fn(async () => [[0.4, 0.5]]);
+    (manager as any).embeddingProvider = {
+      modelName: "undeclared-legacy-dimension-test",
+      discoverDimensionFromResponse: true,
+      embed: async () => [0.4, 0.5],
+      embedBatch,
+    };
+
+    await (manager as any).processPendingEmbeddings();
+
+    expect(embedBatch).toHaveBeenCalledWith(
+      ["replace legacy vector dimensions"],
+      { signal: undefined },
+    );
+    expect(store.getVectorDimensions()).toBe(2);
+    expect(store.getChunkVector("embedding-rebuild-legacy-dimension")).toEqual([
+      expect.closeTo(0.4, 5),
+      expect.closeTo(0.5, 5),
+    ]);
+  });
+
   it("stops failed embedding requests without logging provider errors or passage content", async () => {
     manager = createManager({
       workspaceRoot: docsDir,
@@ -4280,6 +4470,7 @@ describe("MemoryManager guardrails", () => {
         throw new Error("provider error marker");
       },
     };
+    const pruneSpy = vi.spyOn(store, "pruneEmbeddingCache");
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -4287,12 +4478,73 @@ describe("MemoryManager guardrails", () => {
 
       expect(store.getChunkVector("embedding-failed-request")).toBeNull();
       expect(store.getVectorStatus().cached).toBe(0);
+      expect(pruneSpy).not.toHaveBeenCalled();
       const warningOutput = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(warningOutput).toContain("Embedding batch request failed");
       expect(warningOutput).not.toContain("private passage marker");
       expect(warningOutput).not.toContain("provider error marker");
     } finally {
       warnSpy.mockRestore();
+      pruneSpy.mockRestore();
+    }
+  });
+
+  it("prunes the persistent embedding cache only after a completed sync pass", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store;
+    store.upsertChunk({
+      id: "embedding-retention-success",
+      sourcePath: path.join(docsDir, "embedding-retention-success.md"),
+      sourceType: "file",
+      memoryType: "working",
+      content: "complete embedding pass",
+    });
+    (manager as any).embeddingProvider = {
+      modelName: "embedding-retention-test",
+      dimension: 2,
+      embed: async () => [0.1, 0.2],
+      embedBatch: async () => [[0.1, 0.2]],
+    };
+    const pruneSpy = vi.spyOn(store, "pruneEmbeddingCache");
+
+    try {
+      await (manager as any).processPendingEmbeddings();
+
+      expect(pruneSpy).toHaveBeenCalledTimes(1);
+      expect(store.getChunkVector("embedding-retention-success")).toEqual([
+        expect.closeTo(0.1, 5),
+        expect.closeTo(0.2, 5),
+      ]);
+    } finally {
+      pruneSpy.mockRestore();
+    }
+  });
+
+  it("does not scan the persistent embedding cache after an empty sync pass", async () => {
+    manager = createManager({
+      workspaceRoot: docsDir,
+      stateDir,
+    });
+
+    const store = (manager as any).store;
+    (manager as any).embeddingProvider = {
+      modelName: "empty-embedding-retention-test",
+      dimension: 2,
+      embed: async () => [0.1, 0.2],
+      embedBatch: async () => [[0.1, 0.2]],
+    };
+    const pruneSpy = vi.spyOn(store, "pruneEmbeddingCache");
+
+    try {
+      await (manager as any).processPendingEmbeddings();
+
+      expect(pruneSpy).not.toHaveBeenCalled();
+    } finally {
+      pruneSpy.mockRestore();
     }
   });
 

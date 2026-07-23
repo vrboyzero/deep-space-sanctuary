@@ -3,6 +3,7 @@ import type {
   SessionTranscriptCompactBoundaryEvent,
   SessionTranscriptEvent,
   SessionTranscriptMessageEvent,
+  SessionTranscriptPageReadResult,
   SessionTranscriptPartialCompactionViewEvent,
 } from "./session-transcript.js";
 
@@ -10,6 +11,9 @@ export const SESSION_TIMELINE_SCHEMA_VERSION = 1;
 
 export type SessionTimelineWarningCode =
   | "transcript_empty"
+  | "transcript_truncated"
+  | "transcript_corrupt"
+  | "transcript_cursor_invalidated"
   | "conversation_fallback_used"
   | "no_compact_boundary"
   | "restore_fallback_to_raw";
@@ -114,10 +118,46 @@ export type SessionTimelineProjection = {
   warnings: SessionTimelineWarningCode[];
 };
 
+export type SessionTimelinePageItem = Exclude<SessionTimelineItem, SessionTimelineRestoreResultItem>;
+
+export type SessionTimelinePage = {
+  manifest: {
+    schemaVersion: number;
+    conversationId: string;
+    projectedAt: number;
+    source: "conversation.timeline.page";
+    revision?: string;
+  };
+  items: SessionTimelinePageItem[];
+  summary: {
+    eventCount: number;
+    itemCount: number;
+    messageCount: number;
+    compactBoundaryCount: number;
+    partialCompactionCount: number;
+    latestEventAt?: number;
+  };
+  page: {
+    pageSize: number;
+    cursorStatus: SessionTranscriptPageReadResult["cursorStatus"];
+    cursorInvalidationReason?: SessionTranscriptPageReadResult["cursorInvalidationReason"];
+    nextCursor?: string;
+  };
+  warnings: SessionTimelineWarningCode[];
+};
+
 type BuildSessionTimelineProjectionInput = {
   conversationId: string;
   transcriptEvents: SessionTranscriptEvent[];
   restore: SessionRestoreView;
+  projectedAt?: number;
+  previewChars?: number;
+};
+
+type BuildSessionTimelinePageInput = {
+  conversationId: string;
+  transcriptPage: SessionTranscriptPageReadResult;
+  pageSize: number;
   projectedAt?: number;
   previewChars?: number;
 };
@@ -162,6 +202,12 @@ function buildWarnings(
   if (transcriptEvents.length === 0) {
     warnings.push("transcript_empty");
   }
+  if (restore.diagnostics.transcriptRead?.truncated) {
+    warnings.push("transcript_truncated");
+  }
+  if (restore.diagnostics.transcriptRead?.corrupt) {
+    warnings.push("transcript_corrupt");
+  }
   if (restore.diagnostics.source === "conversation_fallback") {
     warnings.push("conversation_fallback_used");
   }
@@ -174,84 +220,118 @@ function buildWarnings(
   return warnings;
 }
 
+function buildTimelinePageWarnings(
+  transcriptPage: SessionTranscriptPageReadResult,
+): SessionTimelineWarningCode[] {
+  const warnings: SessionTimelineWarningCode[] = [];
+  if (transcriptPage.events.length === 0 && transcriptPage.cursorStatus === "initial") {
+    warnings.push("transcript_empty");
+  }
+  if (transcriptPage.diagnostics.truncated) {
+    warnings.push("transcript_truncated");
+  }
+  if (transcriptPage.diagnostics.corrupt) {
+    warnings.push("transcript_corrupt");
+  }
+  if (transcriptPage.cursorStatus === "invalidated") {
+    warnings.push("transcript_cursor_invalidated");
+  }
+  return warnings;
+}
+
+function resolvePreviewChars(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(24, Math.floor(value))
+    : 120;
+}
+
+function resolveProjectedAt(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : Date.now();
+}
+
+function buildTimelineItem(
+  event: SessionTranscriptEvent,
+  previewChars: number,
+): SessionTimelinePageItem | undefined {
+  if (isMessageEvent(event)) {
+    const preview = buildPreview(event.payload.message.content, previewChars);
+    return {
+      kind: "message",
+      eventId: event.eventId,
+      eventType: event.type,
+      createdAt: event.createdAt,
+      messageId: event.payload.message.id,
+      role: event.payload.message.role,
+      contentPreview: preview.preview,
+      contentLength: preview.length,
+      truncated: preview.truncated,
+      agentId: event.payload.message.agentId,
+    };
+  }
+
+  if (isCompactBoundaryEvent(event)) {
+    return {
+      kind: "compact_boundary",
+      eventId: event.eventId,
+      eventType: event.type,
+      createdAt: event.createdAt,
+      boundaryId: event.payload.boundary.id,
+      trigger: event.payload.boundary.trigger,
+      tier: event.payload.boundary.tier,
+      compactedMessageCount: event.payload.boundary.compactedMessageCount,
+      preCompactTokenCount: event.payload.boundary.preCompactTokenCount,
+      postCompactTokenCount: event.payload.boundary.postCompactTokenCount,
+      tokenDelta: event.payload.boundary.preCompactTokenCount - event.payload.boundary.postCompactTokenCount,
+      fallbackUsed: event.payload.boundary.fallbackUsed,
+      rebuildTriggered: event.payload.boundary.rebuildTriggered,
+      preservedSegment: { ...event.payload.boundary.preservedSegment },
+      summaryRefKind: event.payload.summaryRef?.kind,
+      partialCompactionViewId: event.payload.summaryRef?.partialCompactionViewId,
+    };
+  }
+
+  if (!isPartialCompactionEvent(event)) {
+    return undefined;
+  }
+
+  const view = event.payload.view;
+  return {
+    kind: "partial_compaction",
+    eventId: event.eventId,
+    eventType: event.type,
+    createdAt: event.createdAt,
+    boundaryId: event.payload.boundaryId,
+    partialViewId: view.id,
+    direction: view.direction,
+    pivotMessageId: view.pivotMessageId,
+    pivotMessageCount: view.pivotMessageCount,
+    compactedMessageCount: view.compactedMessageCount,
+    summaryMessageCount: view.summaryMessages.length,
+    originalTokens: view.originalTokens,
+    compactedTokens: view.compactedTokens,
+    tokenDelta: view.originalTokens - view.compactedTokens,
+    fallbackUsed: view.fallbackUsed,
+    tier: view.tier,
+  };
+}
+
 export function buildSessionTimelineProjection(
   input: BuildSessionTimelineProjectionInput,
 ): SessionTimelineProjection {
-  const previewChars = typeof input.previewChars === "number" && Number.isFinite(input.previewChars)
-    ? Math.max(24, Math.floor(input.previewChars))
-    : 120;
-  const projectedAt = typeof input.projectedAt === "number" && Number.isFinite(input.projectedAt)
-    ? Math.max(0, Math.floor(input.projectedAt))
-    : Date.now();
+  const previewChars = resolvePreviewChars(input.previewChars);
+  const projectedAt = resolveProjectedAt(input.projectedAt);
   const latestEventAt = input.transcriptEvents.length > 0
     ? input.transcriptEvents[input.transcriptEvents.length - 1]?.createdAt
     : undefined;
 
   const items: SessionTimelineItem[] = [];
   for (const event of input.transcriptEvents) {
-    if (isMessageEvent(event)) {
-      const preview = buildPreview(event.payload.message.content, previewChars);
-      items.push({
-        kind: "message",
-        eventId: event.eventId,
-        eventType: event.type,
-        createdAt: event.createdAt,
-        messageId: event.payload.message.id,
-        role: event.payload.message.role,
-        contentPreview: preview.preview,
-        contentLength: preview.length,
-        truncated: preview.truncated,
-        agentId: event.payload.message.agentId,
-      });
-      continue;
+    const item = buildTimelineItem(event, previewChars);
+    if (item) {
+      items.push(item);
     }
-
-    if (isCompactBoundaryEvent(event)) {
-      items.push({
-        kind: "compact_boundary",
-        eventId: event.eventId,
-        eventType: event.type,
-        createdAt: event.createdAt,
-        boundaryId: event.payload.boundary.id,
-        trigger: event.payload.boundary.trigger,
-        tier: event.payload.boundary.tier,
-        compactedMessageCount: event.payload.boundary.compactedMessageCount,
-        preCompactTokenCount: event.payload.boundary.preCompactTokenCount,
-        postCompactTokenCount: event.payload.boundary.postCompactTokenCount,
-        tokenDelta: event.payload.boundary.preCompactTokenCount - event.payload.boundary.postCompactTokenCount,
-        fallbackUsed: event.payload.boundary.fallbackUsed,
-        rebuildTriggered: event.payload.boundary.rebuildTriggered,
-        preservedSegment: { ...event.payload.boundary.preservedSegment },
-        summaryRefKind: event.payload.summaryRef?.kind,
-        partialCompactionViewId: event.payload.summaryRef?.partialCompactionViewId,
-      });
-      continue;
-    }
-
-    if (!isPartialCompactionEvent(event)) {
-      continue;
-    }
-
-    const view = event.payload.view;
-    const tokenDelta = view.originalTokens - view.compactedTokens;
-    items.push({
-      kind: "partial_compaction",
-      eventId: event.eventId,
-      eventType: event.type,
-      createdAt: event.createdAt,
-      boundaryId: event.payload.boundaryId,
-      partialViewId: view.id,
-      direction: view.direction,
-      pivotMessageId: view.pivotMessageId,
-      pivotMessageCount: view.pivotMessageCount,
-      compactedMessageCount: view.compactedMessageCount,
-      summaryMessageCount: view.summaryMessages.length,
-      originalTokens: view.originalTokens,
-      compactedTokens: view.compactedTokens,
-      tokenDelta,
-      fallbackUsed: view.fallbackUsed,
-      tier: view.tier,
-    });
   }
 
   items.push({
@@ -299,5 +379,45 @@ export function buildSessionTimelineProjection(
       partialViewId: input.restore.partialView?.id,
     },
     warnings: buildWarnings(input.transcriptEvents, input.restore),
+  };
+}
+
+export function buildSessionTimelinePage(
+  input: BuildSessionTimelinePageInput,
+): SessionTimelinePage {
+  const previewChars = resolvePreviewChars(input.previewChars);
+  const projectedAt = resolveProjectedAt(input.projectedAt);
+  const transcriptEvents = input.transcriptPage.events;
+  const latestEventAt = transcriptEvents.length > 0
+    ? transcriptEvents[transcriptEvents.length - 1]?.createdAt
+    : undefined;
+  const items = transcriptEvents
+    .map((event) => buildTimelineItem(event, previewChars))
+    .filter((item): item is SessionTimelinePageItem => Boolean(item));
+
+  return {
+    manifest: {
+      schemaVersion: SESSION_TIMELINE_SCHEMA_VERSION,
+      conversationId: input.conversationId,
+      projectedAt,
+      source: "conversation.timeline.page",
+      revision: input.transcriptPage.revision,
+    },
+    items,
+    summary: {
+      eventCount: transcriptEvents.length,
+      itemCount: items.length,
+      messageCount: transcriptEvents.filter(isMessageEvent).length,
+      compactBoundaryCount: transcriptEvents.filter(isCompactBoundaryEvent).length,
+      partialCompactionCount: transcriptEvents.filter(isPartialCompactionEvent).length,
+      latestEventAt,
+    },
+    page: {
+      pageSize: input.pageSize,
+      cursorStatus: input.transcriptPage.cursorStatus,
+      cursorInvalidationReason: input.transcriptPage.cursorInvalidationReason,
+      nextCursor: input.transcriptPage.nextCursor,
+    },
+    warnings: buildTimelinePageWarnings(input.transcriptPage),
   };
 }

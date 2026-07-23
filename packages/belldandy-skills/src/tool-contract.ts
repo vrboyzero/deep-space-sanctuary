@@ -21,6 +21,15 @@ export type ToolOutputPersistencePolicy =
   | "artifact"
   | "external-state";
 
+/**
+ * 仅供已完成独立审计的 Tool 显式接入 Executor admission；未声明时保持既有执行语义。
+ * `utf8-text-policy` 只适用于文本结果，避免截断 JSON 等结构化输出。
+ */
+export type ToolExecutionAdmission = {
+  deadline?: "policy";
+  output?: "utf8-text-policy";
+};
+
 export type ToolContractFamily =
   | "network-read"
   | "workspace-read"
@@ -53,6 +62,7 @@ export interface ToolContract {
   activityDescription: string;
   resultSchema: ToolResultSchema;
   outputPersistencePolicy: ToolOutputPersistencePolicy;
+  executionAdmission?: ToolExecutionAdmission;
 }
 
 export type ToolWithContract<T extends Tool = Tool> = T & {

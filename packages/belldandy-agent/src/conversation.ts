@@ -23,7 +23,10 @@ import {
     createSessionTranscriptMessageEvent,
     createSessionTranscriptPartialCompactionViewEvent,
     readSessionTranscriptFile,
+    readSessionTranscriptFileResult,
+    readSessionTranscriptPage,
     type SessionTranscriptEvent,
+    type SessionTranscriptReadResult,
 } from "./session-transcript.js";
 import {
     buildTranscriptRelinkedHistory,
@@ -41,9 +44,19 @@ import {
     type SessionTranscriptExportRedactionMode,
 } from "./session-transcript-export.js";
 import {
+    buildSessionTimelinePage,
     buildSessionTimelineProjection,
+    type SessionTimelinePage,
     type SessionTimelineProjection,
 } from "./session-timeline.js";
+import {
+    getSessionTranscriptBoundaryIndexPath,
+    readSessionTranscriptBoundaryIndex,
+    rebuildSessionTranscriptBoundaryIndex,
+    refreshSessionTranscriptBoundaryIndexRevision,
+    toTranscriptRelinkArtifacts,
+    writeSessionTranscriptBoundaryIndexFromEvents,
+} from "./session-transcript-boundary-index.js";
 import { readBoundedTailLines } from "./conversation-tail-reader.js";
 import type {
     ConversationPlanState,
@@ -62,6 +75,11 @@ import {
     type ConversationLifecycleSnapshot,
 } from "./conversation-lifecycle.js";
 import { ConversationToolArtifactMetaPersistence } from "./conversation-tool-artifact-persistence.js";
+import {
+    SessionArtifactInventory,
+    type SessionArtifactInventoryPage,
+    type SessionArtifactInventoryPageOptions,
+} from "./session-artifact-inventory.js";
 
 /**
  * 对话消息
@@ -993,6 +1011,7 @@ export class ConversationStore {
     private readonly ttlSeconds: number;
     private readonly dataDir?: string;
     private readonly dataDirCapability?: FilesystemCapability;
+    private readonly sessionArtifactInventory?: SessionArtifactInventory;
     private readonly compactionOpts?: CompactionOptions;
     private readonly summarizer?: SummarizerFn;
     private readonly summarizerModelName?: string;
@@ -1017,6 +1036,7 @@ export class ConversationStore {
                 rootPath: this.dataDir,
                 label: "conversation data directory",
             });
+            this.sessionArtifactInventory = new SessionArtifactInventory({ rootDir: this.dataDir });
         }
     }
 
@@ -1326,6 +1346,10 @@ export class ConversationStore {
 
     private getSessionTranscriptFilePath(id: string): string | undefined {
         return this.getConversationFilePath(id, ".transcript.jsonl");
+    }
+
+    private getSessionTranscriptBoundaryIndexFilePath(id: string): string | undefined {
+        return getSessionTranscriptBoundaryIndexPath(this.getSessionTranscriptFilePath(id));
     }
 
     private getConversationFilePath(id: string, suffix: string): string | undefined {
@@ -1705,6 +1729,7 @@ export class ConversationStore {
             if (!transcriptFilePath) return;
             try {
                 await appendSessionTranscriptEvent(transcriptFilePath, transcriptEvent);
+                await this.refreshSessionTranscriptBoundaryIndex(id, transcriptEvent, transcriptFilePath);
             } catch (err) {
                 if (this.shouldIgnoreAppendError(transcriptFilePath, err as NodeJS.ErrnoException)) {
                     return;
@@ -1733,6 +1758,7 @@ export class ConversationStore {
         await this.enqueueAppendWrite(id, async () => {
             try {
                 await appendSessionTranscriptEvent(transcriptFilePath, event);
+                await this.refreshSessionTranscriptBoundaryIndex(id, event, transcriptFilePath);
             } catch (err) {
                 if (this.shouldIgnoreAppendError(transcriptFilePath, err as NodeJS.ErrnoException)) {
                     return;
@@ -1771,6 +1797,26 @@ export class ConversationStore {
             this.sessionDigestStates.delete(id);
             this.sessionMemories.delete(id);
         });
+    }
+
+    private async refreshSessionTranscriptBoundaryIndex(
+        id: string,
+        event: SessionTranscriptEvent,
+        transcriptFilePath: string,
+    ): Promise<void> {
+        const indexPath = this.getSessionTranscriptBoundaryIndexFilePath(id);
+        if (!indexPath) return;
+        try {
+            if (event.type === "compact_boundary_recorded" || event.type === "partial_compaction_view_recorded") {
+                await rebuildSessionTranscriptBoundaryIndex(transcriptFilePath, indexPath);
+            } else {
+                await refreshSessionTranscriptBoundaryIndexRevision(transcriptFilePath, indexPath);
+            }
+        } catch (err) {
+            if (!this.shouldIgnoreAppendError(indexPath, err as NodeJS.ErrnoException)) {
+                console.warn(`Failed to refresh session transcript boundary index for ${id}:`, err);
+            }
+        }
     }
 
     /** 仅返回资源水位，不暴露消息、摘要或其它会话正文。 */
@@ -2033,12 +2079,13 @@ export class ConversationStore {
 
     private async buildConversationRestoreViewFromTranscriptSnapshot(
         id: string,
-        transcriptSnapshot?: SessionTranscriptEvent[],
+        transcriptSnapshot?: SessionTranscriptReadResult,
     ): Promise<SessionRestoreView> {
         const generation = this.lifecycle.captureGeneration(id);
         const conversation = await this.getAsync(id, generation);
         const compactionState = await this.getCompactionStateAsync(id, generation);
-        const transcriptEvents = transcriptSnapshot ?? await this.getSessionTranscriptEvents(id);
+        const transcriptRead = transcriptSnapshot ?? await this.readSessionTranscript(id);
+        const transcriptEvents = transcriptRead.events;
         const transcriptArtifacts = deriveTranscriptRelinkArtifacts(transcriptEvents);
         const boundary = this.preferLatestCompactBoundary(
             conversation?.compactBoundaries?.[0],
@@ -2056,6 +2103,7 @@ export class ConversationStore {
             compactionState,
             currentBoundary: boundary,
             currentPartialView: partialView,
+            transcriptReadDiagnostics: transcriptRead.diagnostics,
         });
     }
 
@@ -2068,8 +2116,9 @@ export class ConversationStore {
         options?: { mode?: SessionTranscriptExportRedactionMode },
     ): Promise<SessionTranscriptExportBundle> {
         await this.waitForPendingPersistence(id);
-        const transcriptEvents = await this.getSessionTranscriptEvents(id);
-        const restore = await this.buildConversationRestoreViewFromTranscriptSnapshot(id, transcriptEvents);
+        const transcriptRead = await this.readSessionTranscript(id);
+        const transcriptEvents = transcriptRead.events;
+        const restore = await this.buildConversationRestoreViewFromTranscriptSnapshot(id, transcriptRead);
         return buildSessionTranscriptExportBundle({
             conversationId: id,
             transcriptEvents,
@@ -2082,12 +2131,29 @@ export class ConversationStore {
         id: string,
         options?: { previewChars?: number },
     ): Promise<SessionTimelineProjection> {
-        const transcriptEvents = await this.getSessionTranscriptEvents(id);
-        const restore = await this.buildConversationRestoreViewFromTranscriptSnapshot(id, transcriptEvents);
+        const transcriptRead = await this.readSessionTranscript(id);
+        const transcriptEvents = transcriptRead.events;
+        const restore = await this.buildConversationRestoreViewFromTranscriptSnapshot(id, transcriptRead);
         return buildSessionTimelineProjection({
             conversationId: id,
             transcriptEvents,
             restore,
+            previewChars: options?.previewChars,
+        });
+    }
+
+    async buildConversationTimelinePage(
+        id: string,
+        options?: { cursor?: string; pageSize?: number; previewChars?: number },
+    ): Promise<SessionTimelinePage> {
+        const transcriptPage = await readSessionTranscriptPage(this.getSessionTranscriptFilePath(id), {
+            cursor: options?.cursor,
+            pageSize: options?.pageSize,
+        });
+        return buildSessionTimelinePage({
+            conversationId: id,
+            transcriptPage,
+            pageSize: options?.pageSize ?? 100,
             previewChars: options?.previewChars,
         });
     }
@@ -2112,7 +2178,7 @@ export class ConversationStore {
             || (latestBoundary?.trigger === "partial_from" && !partialView)
         );
         if (shouldHydrateFromTranscript) {
-            const transcriptArtifacts = deriveTranscriptRelinkArtifacts(await this.getSessionTranscriptEvents(id));
+            const transcriptArtifacts = await this.getTranscriptRelinkArtifacts(id);
             latestBoundary = this.preferLatestCompactBoundary(latestBoundary, transcriptArtifacts.boundary as CompactBoundaryRecord | undefined);
             partialView = this.preferLatestPartialCompactionView(partialView, transcriptArtifacts.partialView as PartialCompactionViewRecord | undefined);
             if (conversation) {
@@ -2996,6 +3062,36 @@ export class ConversationStore {
         return readSessionTranscriptFile(this.getSessionTranscriptFilePath(id));
     }
 
+    private async getTranscriptRelinkArtifacts(id: string): Promise<ReturnType<typeof deriveTranscriptRelinkArtifacts>> {
+        const transcriptFilePath = this.getSessionTranscriptFilePath(id);
+        const indexPath = this.getSessionTranscriptBoundaryIndexFilePath(id);
+        try {
+            const index = await readSessionTranscriptBoundaryIndex(transcriptFilePath, indexPath);
+            if (index) {
+                return toTranscriptRelinkArtifacts(index);
+            }
+        } catch (err) {
+            console.warn(`Failed to read session transcript boundary index for ${id}:`, err);
+        }
+
+        const transcriptRead = await this.readSessionTranscript(id);
+        const artifacts = deriveTranscriptRelinkArtifacts(transcriptRead.events);
+        if (!transcriptRead.diagnostics.truncated) {
+            await writeSessionTranscriptBoundaryIndexFromEvents(
+                transcriptFilePath,
+                indexPath,
+                transcriptRead.events,
+            ).catch((err) => {
+                console.warn(`Failed to rebuild session transcript boundary index for ${id}:`, err);
+            });
+        }
+        return artifacts;
+    }
+
+    private async readSessionTranscript(id: string): Promise<SessionTranscriptReadResult> {
+        return readSessionTranscriptFileResult(this.getSessionTranscriptFilePath(id));
+    }
+
     private async readPersistedConversationIdFromTranscript(filePath: string): Promise<string | undefined> {
         try {
             const raw = await conversationAsyncFs.readFile(filePath, "utf-8");
@@ -3136,6 +3232,29 @@ export class ConversationStore {
 
         summaries.sort((left, right) => right.updatedAt - left.updatedAt);
         return typeof limit === "number" ? summaries.slice(0, limit) : summaries;
+    }
+
+    /**
+     * 返回当前会话根目录的有界 digest/session-memory 清单。
+     * 此 API 不读取 transcript，也不合并其它 Agent 或 state root。
+     */
+    async listSessionArtifactInventoryPage(
+        options?: SessionArtifactInventoryPageOptions,
+    ): Promise<SessionArtifactInventoryPage> {
+        if (!this.sessionArtifactInventory) {
+            return {
+                status: "unavailable",
+                items: [],
+                diagnostics: {
+                    scannedDirectoryEntries: 0,
+                    artifactCandidates: 0,
+                    metadataBytesRead: 0,
+                    ignoredArtifactCandidates: 0,
+                    unavailableReason: "root_unavailable",
+                },
+            };
+        }
+        return this.sessionArtifactInventory.listPage(options);
     }
 
     private enqueueSessionDigestStateWrite(id: string, task: () => Promise<void>): Promise<void> {

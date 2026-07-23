@@ -20,6 +20,7 @@ const CONVERSATION_FILE_SUFFIXES = [
   ".jsonl",
   ".meta.json",
   ".transcript.jsonl",
+  ".transcript.boundary-index.json",
   ".compaction.json",
   ".digest.json",
   ".session-memory.json",
@@ -201,6 +202,11 @@ export class ResidentConversationStore extends ConversationStore {
   async buildConversationTimeline(...args: Parameters<ConversationStore["buildConversationTimeline"]>): ReturnType<ConversationStore["buildConversationTimeline"]> {
     const [id, options] = args;
     return this.withConversationStore(id, (store) => store.buildConversationTimeline(id, options)) as ReturnType<ConversationStore["buildConversationTimeline"]>;
+  }
+
+  async buildConversationTimelinePage(...args: Parameters<ConversationStore["buildConversationTimelinePage"]>): ReturnType<ConversationStore["buildConversationTimelinePage"]> {
+    const [id, options] = args;
+    return this.withConversationStore(id, (store) => store.buildConversationTimelinePage(id, options)) as ReturnType<ConversationStore["buildConversationTimelinePage"]>;
   }
 
   async getConversationHistoryCompacted(...args: Parameters<ConversationStore["getConversationHistoryCompacted"]>): ReturnType<ConversationStore["getConversationHistoryCompacted"]> {

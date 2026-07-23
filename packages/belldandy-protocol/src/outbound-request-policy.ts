@@ -163,7 +163,12 @@ export class OutboundRequestPolicy {
     if (addresses.length === 0 || addresses.some((entry) => !isValidAddress(entry))) {
       throw new OutboundRequestPolicyError("dns_unavailable", "Outbound DNS did not return a usable address.");
     }
-    if (!this.allowPrivateNetwork && addresses.some((entry) => isRestrictedAddress(entry.address))) {
+    const restrictedAddresses = addresses.filter((entry) => isRestrictedAddress(entry.address));
+    const allowDnsProxySyntheticAddresses = !literalAddress
+      && this.allowedHosts.length > 0
+      && matchesHostRule(hostname, this.allowedHosts)
+      && restrictedAddresses.every((entry) => isDnsProxySyntheticAddress(entry.address));
+    if (!this.allowPrivateNetwork && restrictedAddresses.length > 0 && !allowDnsProxySyntheticAddresses) {
       throw new OutboundRequestPolicyError("private_network_not_allowed", "Outbound private or reserved network targets are not allowed.");
     }
     return addresses.map((entry) => ({ ...entry }));
@@ -349,6 +354,19 @@ function isRestrictedAddress(address: string): boolean {
     return parsed.toIPv4Address().range() !== "unicast";
   }
   return parsed.range() !== "unicast";
+}
+
+function isDnsProxySyntheticAddress(address: string): boolean {
+  const parsed = parseIpAddress(address);
+  if (!parsed) return false;
+  const ipv4 = parsed instanceof ipaddr.IPv6 && parsed.isIPv4MappedAddress()
+    ? parsed.toIPv4Address()
+    : parsed;
+  if (!(ipv4 instanceof ipaddr.IPv4)) return false;
+
+  // RFC 2544 benchmarking addresses are commonly used by local DNS proxy fake-IP modes.
+  const [firstOctet, secondOctet] = ipv4.toByteArray();
+  return firstOctet === 198 && (secondOctet === 18 || secondOctet === 19);
 }
 
 function parseIpAddress(address: string) {

@@ -161,6 +161,19 @@ function normalizeStartupScenario(scenario, sampleRuns, minimumResourceCount) {
     if (sample?.panelId !== "settings" || sample?.panelVisible !== true) {
       throw new Error(`${prefix} did not complete the fixed Settings first-open interaction.`);
     }
+    if (
+      sample?.experiencePanelId !== "experience"
+      || sample?.experiencePanelVisible !== true
+      || sample?.experienceModuleLoadedBeforeOpen !== false
+      || sample?.experienceModuleLoaded !== true
+      || sample?.experienceContentReady !== true
+    ) {
+      throw new Error(`${prefix} did not complete the Experience first-open interaction.`);
+    }
+    const experienceResourceDelta = parseCount(
+      sample?.experienceResourceDelta,
+      `${prefix}.experienceResourceDelta`,
+    );
     const pageErrorCount = parseCount(
       sample?.pageErrorCount,
       `${prefix}.pageErrorCount`,
@@ -201,6 +214,21 @@ function normalizeStartupScenario(scenario, sampleRuns, minimumResourceCount) {
         `${prefix}.panelDomNodeDelta`,
         { allowZero: true },
       ),
+      experiencePanelId: "experience",
+      experienceFirstOpenDurationMs: round(requireNumber(
+        sample?.experienceFirstOpenDurationMs,
+        `${prefix}.experienceFirstOpenDurationMs`,
+      )),
+      experiencePanelVisible: true,
+      experienceModuleLoadedBeforeOpen: false,
+      experienceModuleLoaded: true,
+      experienceContentReady: true,
+      experienceResourceDelta,
+      experienceDomNodeDelta: Math.round(requireNumber(
+        sample?.experienceDomNodeDelta,
+        `${prefix}.experienceDomNodeDelta`,
+        { minimum: Number.MIN_SAFE_INTEGER },
+      )),
       pageErrorCount,
     };
   });
@@ -238,6 +266,18 @@ function normalizeStartupScenario(scenario, sampleRuns, minimumResourceCount) {
     ),
     panelDomNodeDeltaSummary: summarizeValues(
       samples.map((sample) => sample.panelDomNodeDelta),
+      "dom_nodes_per_fixture",
+    ),
+    experienceFirstOpenSummary: summarizeValues(
+      samples.map((sample) => sample.experienceFirstOpenDurationMs),
+      "milliseconds_per_fixture",
+    ),
+    experienceResourceDeltaSummary: summarizeValues(
+      samples.map((sample) => sample.experienceResourceDelta),
+      "resources_per_fixture",
+    ),
+    experienceDomNodeDeltaSummary: summarizeValues(
+      samples.map((sample) => sample.experienceDomNodeDelta),
       "dom_nodes_per_fixture",
     ),
   };
@@ -654,6 +694,44 @@ async function navigateFullShell(page, pageErrors, baseUrl, sequence) {
     const panelFirstOpenDurationMs = performance.now() - panelFirstOpenStartedAt;
     const panelResourcesAfter = performance.getEntriesByType("resource").length;
     const panelDomNodesAfter = document.querySelectorAll("*").length;
+    const panelVisible = Boolean(settingsModal) && !settingsModal.classList.contains("hidden");
+
+    document.querySelector("#closeSettings")?.click();
+    await nextFrame();
+    const experienceButton = document.querySelector("#switchExperience");
+    const experienceSection = document.querySelector("#experienceWorkbenchSection");
+    const experienceContent = document.querySelector("#experienceWorkbenchCapabilityOverview");
+    const experienceContentBefore = experienceContent?.textContent || "";
+    const experienceResourcesBefore = performance.getEntriesByType("resource");
+    const isExperienceModuleResource = (entry) => {
+      try {
+        return new URL(entry?.name || "").pathname.endsWith("/app/features/experience-workbench.js");
+      } catch {
+        return false;
+      }
+    };
+    const experienceModuleLoadedBeforeOpen = experienceResourcesBefore.some(isExperienceModuleResource);
+    const experienceDomNodesBefore = document.querySelectorAll("*").length;
+    const experienceFirstOpenStartedAt = performance.now();
+    experienceButton?.click();
+    const experienceDeadline = performance.now() + 10_000;
+    let experienceModuleLoaded = false;
+    let experienceContentReady = false;
+    let experiencePanelVisible = false;
+    while (performance.now() < experienceDeadline) {
+      const currentResources = performance.getEntriesByType("resource");
+      experienceModuleLoaded = currentResources.some(isExperienceModuleResource);
+      experienceContentReady = Boolean(experienceContent)
+        && (experienceContent.textContent || "") !== experienceContentBefore;
+      experiencePanelVisible = Boolean(experienceSection)
+        && !experienceSection.classList.contains("hidden");
+      if (experienceModuleLoaded && experienceContentReady && experiencePanelVisible) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await nextFrame();
+    const experienceFirstOpenDurationMs = performance.now() - experienceFirstOpenStartedAt;
+    const experienceResourcesAfter = performance.getEntriesByType("resource").length;
+    const experienceDomNodesAfter = document.querySelectorAll("*").length;
     return {
       durationMs: readyMark.atMs - startup.parseStartedAtMs,
       resourceCount: resources.length,
@@ -670,9 +748,17 @@ async function navigateFullShell(page, pageErrors, baseUrl, sequence) {
       firstInteractionStateChanged: Boolean(themeToggle) && themeBefore !== themeAfter,
       panelId: "settings",
       panelFirstOpenDurationMs,
-      panelVisible: Boolean(settingsModal) && !settingsModal.classList.contains("hidden"),
+      panelVisible,
       panelResourceDelta: panelResourcesAfter - panelResourcesBefore,
       panelDomNodeDelta: panelDomNodesAfter - panelDomNodesBefore,
+      experiencePanelId: "experience",
+      experienceFirstOpenDurationMs,
+      experiencePanelVisible,
+      experienceModuleLoadedBeforeOpen,
+      experienceModuleLoaded,
+      experienceContentReady,
+      experienceResourceDelta: experienceResourcesAfter - experienceResourcesBefore.length,
+      experienceDomNodeDelta: experienceDomNodesAfter - experienceDomNodesBefore,
     };
   });
   return {

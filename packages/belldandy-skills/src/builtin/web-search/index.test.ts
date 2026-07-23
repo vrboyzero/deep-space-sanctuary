@@ -56,4 +56,14 @@ describe("web_search tool", () => {
     expect(result.error).toContain("query 必须是非空字符串");
     expect(result.failureKind).toBe("input_error");
   });
+
+  it("opts into the network-read Executor deadline and text output admission", () => {
+    expect(webSearchTool.contract).toMatchObject({
+      family: "network-read",
+      executionAdmission: {
+        deadline: "policy",
+        output: "utf8-text-policy",
+      },
+    });
+  });
 });

@@ -4,6 +4,11 @@ export { MemoryStore } from "./store.js";
 /** better-sqlite3 的 Database 实例类型，供同进程治理模块（如 WorkflowJournal）共享 db 句柄时使用 */
 export type SqliteDatabase = InstanceType<typeof Database>;
 export { MemoryIndexer } from "./indexer.js";
+export type {
+  SessionArtifactInventoryItem,
+  SessionArtifactInventoryPage,
+  SessionArtifactInventoryProvider,
+} from "./session-artifact-inventory.js";
 export { ResultReranker, type RerankerOptions, type GetVectorFn, type GetVectorsFn } from "./reranker.js";
 export {
   MEMORY_CLASS_VALUES,
@@ -57,6 +62,13 @@ export {
   listGlobalMemoryManagers,
   resetGlobalMemoryManagers,
 } from "./manager.js";
+export {
+  buildDerivedRetrievalDoctorReport,
+  createDerivedRetrievalRuntimeSnapshot,
+  type DerivedRetrievalDoctorCheck,
+  type DerivedRetrievalDoctorReport,
+  type DerivedRetrievalRuntimeSnapshot,
+} from "./derived-retrieval-doctor.js";
 export {
   DurableExtractionRuntime,
   type DurableExtractionRuntimeOptions,

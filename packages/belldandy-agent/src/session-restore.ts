@@ -4,7 +4,11 @@ import {
   deriveTranscriptRelinkArtifacts,
   type TranscriptRelinkPartialCompactionView,
 } from "./session-transcript-relink.js";
-import type { SessionTranscriptEvent, SessionTranscriptMessageEvent } from "./session-transcript.js";
+import type {
+  SessionTranscriptEvent,
+  SessionTranscriptMessageEvent,
+  SessionTranscriptReadDiagnostics,
+} from "./session-transcript.js";
 import type { CompactBoundaryRecord, ConversationMessage, PartialCompactionViewRecord } from "./conversation.js";
 
 export type SessionRestoreHistoryMessage = {
@@ -23,6 +27,7 @@ export type SessionRestoreDiagnostics = {
   fallbackReason?: "no_boundary" | "relink_failed";
   boundarySource?: "transcript" | "conversation_meta";
   partialViewSource?: "transcript" | "conversation_meta";
+  transcriptRead?: SessionTranscriptReadDiagnostics;
 };
 
 export type SessionRestoreView = {
@@ -42,6 +47,7 @@ type BuildConversationRestoreViewInput = {
   compactionState: CompactionState;
   currentBoundary?: CompactBoundaryRecord;
   currentPartialView?: PartialCompactionViewRecord;
+  transcriptReadDiagnostics?: SessionTranscriptReadDiagnostics;
 };
 
 function isTranscriptMessageEvent(event: SessionTranscriptEvent): event is SessionTranscriptMessageEvent {
@@ -113,6 +119,7 @@ export function buildConversationRestoreView(input: BuildConversationRestoreView
     partialViewSource: transcriptArtifacts.partialView
       ? "transcript"
       : (input.currentPartialView ? "conversation_meta" : undefined),
+    transcriptRead: input.transcriptReadDiagnostics,
   };
 
   const rawHistory = toHistory(rawMessages);

@@ -80,7 +80,7 @@ import { createMemoryRuntimeFeature } from "./app/features/memory-runtime.js";
 import { createMemoryViewerFeature } from "./app/features/memory-viewer.js";
 import { createMemoryViewerEmptyStateFeature } from "./app/features/memory-viewer-empty-state.js";
 import { createExperienceWorkbenchControlsFeature } from "./app/features/experience-workbench-controls.js";
-import { createExperienceWorkbenchFeature } from "./app/features/experience-workbench.js";
+import { createExperienceWorkbenchLazyOwner } from "./app/features/experience-workbench-loader.js";
 import { createSessionNavigationFeature } from "./app/features/session-navigation.js";
 import { createSessionDigestFeature } from "./app/features/session-digest.js";
 import { createPlanPanelFeature } from "./app/features/plan-panel.js";
@@ -908,7 +908,7 @@ window.addEventListener("pagehide", () => {
   goalsRuntimeFeature?.dispose();
   goalsSpecialistPanelsFeature?.dispose();
   experienceWorkbenchControlsFeature.dispose();
-  experienceWorkbenchFeature?.dispose();
+  experienceWorkbenchLazyOwner?.dispose();
   canvasContextFeature?.dispose();
   memoryDreamControlsFeature.dispose();
   memoryViewerControlsFeature.dispose();
@@ -947,6 +947,7 @@ let memoryRuntimeFeature = null;
 let memoryViewerFeature = null;
 let memoryViewerEmptyStateFeature = null;
 let experienceWorkbenchFeature = null;
+let experienceWorkbenchLazyOwner = null;
 let emailInboundSessionBannerFeature = null;
 let sessionDigestFeature = null;
 let sessionPlanFeature = null;
@@ -1086,7 +1087,7 @@ const setupGuidanceFeature = createSetupGuidanceFeature({
 const switchMode = (mode) => {
   const result = appShellFeature.switchMode(mode);
   bridgeRuntimeFeature?.setViewActive?.(mode === "bridge");
-  experienceWorkbenchFeature?.setViewActive?.(mode === "experience");
+  experienceWorkbenchLazyOwner?.setViewActive(mode === "experience");
   return result;
 };
 webChatRuntimeContext = createWebChatRuntimeContext({
@@ -1805,7 +1806,7 @@ goalsSpecialistPanelsFeature = createGoalsSpecialistPanelsRuntimeFeature({
   runGoalCheckpointEscalation: (goalId, nodeId, checkpointId) => runGoalCheckpointEscalation(goalId, nodeId, checkpointId),
   openExperienceWorkbench: async (options = {}) => {
     switchMode("experience");
-    await experienceWorkbenchFeature?.openExperienceWorkbench?.(options);
+    await openExperienceWorkbench(options);
   },
   applyGoalContinuationFocus: (goalId) => applyGoalContinuationFocus(goalId),
 });
@@ -1886,7 +1887,7 @@ memoryDetailRenderFeature = createMemoryDetailRenderFeature({
   openExperienceCandidate: async (candidateId) => {
     if (!candidateId) return;
     switchMode("experience");
-    await experienceWorkbenchFeature?.openExperienceWorkbench?.({ candidateId, preferFirst: false });
+    await openExperienceWorkbench({ candidateId, preferFirst: false });
   },
   openTaskFromAudit: (taskId) => openTaskFromAudit(taskId),
   openMemoryFromAudit: (chunkId) => openMemoryFromAudit(chunkId),
@@ -1990,72 +1991,76 @@ memoryViewerFeature = createMemoryViewerFeature({
   t: localeController.t,
 });
 
-experienceWorkbenchFeature = createExperienceWorkbenchFeature({
-  refs: {
-    experienceWorkbenchSection,
-    experienceWorkbenchTitleEl,
-    experienceWorkbenchStatsEl,
-    experienceWorkbenchTabCandidatesBtn,
-    experienceWorkbenchTabCapabilityAcquisitionBtn,
-    experienceWorkbenchTabAssetsBtn,
-    experienceWorkbenchTabUsageOverviewBtn,
-    experienceWorkbenchCandidatesPaneEl,
-    experienceWorkbenchCapabilityPaneEl,
-    experienceWorkbenchCapabilityOverviewEl,
-    experienceWorkbenchAssetsPaneEl,
-    experienceWorkbenchAssetsListEl,
-    experienceWorkbenchAssetsDetailEl,
-    experienceWorkbenchUsagePaneEl,
-    experienceWorkbenchUsageOverviewEl,
-    experienceWorkbenchQueryEl,
-    experienceWorkbenchTypeFilterEl,
-    experienceWorkbenchStatusFilterEl,
-    experienceWorkbenchResetFiltersBtn,
-    experienceWorkbenchCleanupConsumedBtn,
-    experienceGenerateTaskIdEl,
-    experienceGenerateMethodBtn,
-    experienceGenerateSkillBtn,
-    experienceWorkbenchListEl,
-    experienceWorkbenchDetailEl,
-    experienceSynthesisModalEl,
-    experienceSynthesisModalTitleEl,
-    experienceSynthesisModalSummaryEl,
-    experienceSynthesisModalStatusEl,
-    experienceSynthesisModalListEl,
-    experienceSynthesisModalCloseBtn,
-    experienceSynthesisModalCancelBtn,
-    experienceSynthesisModalSubmitBtn,
-    experienceSynthesisModalConsumeSourcesEl,
-    experienceSynthesisModalConsumeSourcesLabelEl,
+experienceWorkbenchLazyOwner = createExperienceWorkbenchLazyOwner({
+  createOptions: {
+    refs: {
+      experienceWorkbenchSection,
+      experienceWorkbenchTitleEl,
+      experienceWorkbenchStatsEl,
+      experienceWorkbenchTabCandidatesBtn,
+      experienceWorkbenchTabCapabilityAcquisitionBtn,
+      experienceWorkbenchTabAssetsBtn,
+      experienceWorkbenchTabUsageOverviewBtn,
+      experienceWorkbenchCandidatesPaneEl,
+      experienceWorkbenchCapabilityPaneEl,
+      experienceWorkbenchCapabilityOverviewEl,
+      experienceWorkbenchAssetsPaneEl,
+      experienceWorkbenchAssetsListEl,
+      experienceWorkbenchAssetsDetailEl,
+      experienceWorkbenchUsagePaneEl,
+      experienceWorkbenchUsageOverviewEl,
+      experienceWorkbenchQueryEl,
+      experienceWorkbenchTypeFilterEl,
+      experienceWorkbenchStatusFilterEl,
+      experienceWorkbenchResetFiltersBtn,
+      experienceWorkbenchCleanupConsumedBtn,
+      experienceGenerateTaskIdEl,
+      experienceGenerateMethodBtn,
+      experienceGenerateSkillBtn,
+      experienceWorkbenchListEl,
+      experienceWorkbenchDetailEl,
+      experienceSynthesisModalEl,
+      experienceSynthesisModalTitleEl,
+      experienceSynthesisModalSummaryEl,
+      experienceSynthesisModalStatusEl,
+      experienceSynthesisModalListEl,
+      experienceSynthesisModalCloseBtn,
+      experienceSynthesisModalCancelBtn,
+      experienceSynthesisModalSubmitBtn,
+      experienceSynthesisModalConsumeSourcesEl,
+      experienceSynthesisModalConsumeSourcesLabelEl,
+    },
+    isConnected: () => Boolean(ws && isReady),
+    sendReq,
+    makeId,
+    getExperienceWorkbenchState: () => experienceWorkbenchState,
+    getMemoryViewerState: () => memoryViewerState,
+    getSelectedAgentId: () => getCurrentAgentSelection(),
+    getSelectedAgentLabel: () => getCurrentAgentLabel(),
+    createCandidateDetailPanel: (candidate, ownerDocument) => (
+      memoryViewerFeature?.createCandidateDetailPanel(candidate, ownerDocument) || null
+    ),
+    getTaskUsageOverviewViewModel: () => memoryDetailRenderFeature.getTaskUsageOverviewViewModel(),
+    loadTaskUsageOverview: () => loadTaskUsageOverview(),
+    generateExperienceCandidate: (taskId, candidateType) => memoryRuntimeFeature?.generateExperienceCandidate?.(taskId, candidateType),
+    openToolSettingsTab: (tab) => settingsRuntimeFeature?.openToolSettingsTab?.(tab),
+    formatDateTime,
+    openTaskFromWorkbench: async (taskId) => {
+      switchMode("memory");
+      await openTaskFromAudit(taskId);
+    },
+    openMemoryFromWorkbench: async (chunkId) => {
+      switchMode("memory");
+      await openMemoryFromAudit(chunkId);
+    },
+    openSourcePath: (sourcePath, options) => openSourcePath(sourcePath, options),
+    showNotice,
+    t: localeController.t,
   },
-  isConnected: () => Boolean(ws && isReady),
-  sendReq,
-  makeId,
-  getExperienceWorkbenchState: () => experienceWorkbenchState,
-  getMemoryViewerState: () => memoryViewerState,
-  getSelectedAgentId: () => getCurrentAgentSelection(),
-  getSelectedAgentLabel: () => getCurrentAgentLabel(),
-  createCandidateDetailPanel: (candidate, ownerDocument) => (
-    memoryViewerFeature?.createCandidateDetailPanel(candidate, ownerDocument) || null
-  ),
-  getTaskUsageOverviewViewModel: () => memoryDetailRenderFeature.getTaskUsageOverviewViewModel(),
-  loadTaskUsageOverview: () => loadTaskUsageOverview(),
-  generateExperienceCandidate: (taskId, candidateType) => memoryRuntimeFeature?.generateExperienceCandidate?.(taskId, candidateType),
-  openToolSettingsTab: (tab) => settingsRuntimeFeature?.openToolSettingsTab?.(tab),
-  formatDateTime,
-  openTaskFromWorkbench: async (taskId) => {
-    switchMode("memory");
-    await openTaskFromAudit(taskId);
+  onFeatureCreated: (feature) => {
+    experienceWorkbenchFeature = feature;
   },
-  openMemoryFromWorkbench: async (chunkId) => {
-    switchMode("memory");
-    await openMemoryFromAudit(chunkId);
-  },
-  openSourcePath: (sourcePath, options) => openSourcePath(sourcePath, options),
-  showNotice,
-  t: localeController.t,
 });
-experienceWorkbenchFeature.bindUi();
 
 memoryRuntimeFeature = createMemoryRuntimeFeature({
   refs: {
@@ -2190,13 +2195,13 @@ agentRuntimeFeature = createAgentRuntimeFeature({
   onAgentIdentityChanged: () => {
     memoryViewerFeature?.syncMemoryViewerHeaderTitle?.();
     memoryViewerFeature?.syncSharedReviewFilterUi?.();
-    experienceWorkbenchFeature?.syncExperienceWorkbenchHeaderTitle?.();
+    experienceWorkbenchLazyOwner?.syncExperienceWorkbenchHeaderTitle();
     void refreshExperienceWorkbenchForAgentSwitch();
   },
   onAgentCatalogChanged: () => {
     memoryViewerFeature?.syncMemoryViewerHeaderTitle?.();
     memoryViewerFeature?.syncSharedReviewFilterUi?.();
-    experienceWorkbenchFeature?.syncExperienceWorkbenchHeaderTitle?.();
+    experienceWorkbenchLazyOwner?.syncExperienceWorkbenchHeaderTitle();
   },
   showNotice,
   localeController,
@@ -2283,7 +2288,12 @@ async function refreshMemoryViewerForAgentSwitch(agentId = getCurrentAgentSelect
 }
 
 async function refreshExperienceWorkbenchForAgentSwitch(agentId = getCurrentAgentSelection()) {
-  return experienceWorkbenchFeature?.refreshExperienceWorkbenchForAgentSwitch(agentId);
+  try {
+    return await experienceWorkbenchLazyOwner?.refreshExperienceWorkbenchForAgentSwitch(agentId);
+  } catch {
+    showExperienceWorkbenchLoadFailure();
+    return undefined;
+  }
 }
 
 function syncAgentRuntimeEntry(agentId, patch = {}) {
@@ -3754,7 +3764,29 @@ async function loadMemoryViewer(forceSelectFirst = false) {
 }
 
 async function loadExperienceWorkbench(forceSelectFirst = false) {
-  return experienceWorkbenchFeature?.loadExperienceWorkbench(forceSelectFirst);
+  try {
+    return await experienceWorkbenchLazyOwner?.loadExperienceWorkbench(forceSelectFirst);
+  } catch {
+    showExperienceWorkbenchLoadFailure();
+    return undefined;
+  }
+}
+
+async function openExperienceWorkbench(options = {}) {
+  try {
+    return await experienceWorkbenchLazyOwner?.openExperienceWorkbench(options);
+  } catch {
+    showExperienceWorkbenchLoadFailure();
+    return undefined;
+  }
+}
+
+function showExperienceWorkbenchLoadFailure() {
+  showNotice(
+    localeController.t("sidebar.experienceWorkbench", {}, "Experience Workbench"),
+    localeController.t("experience.loadFailed", {}, "Failed to load experience candidates."),
+    "error",
+  );
 }
 
 async function loadMemoryViewerStats() {

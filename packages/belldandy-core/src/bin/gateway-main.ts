@@ -3092,73 +3092,6 @@ if (agentRegistry && toolsEnabled) {
     runtimeStore: subTaskRuntimeStore,
   }));
 
-  // ── 动态工作流 WorkflowRuntime 装配 ──
-  // 复用 global memory manager 的 SQLite db 句柄；memory 未启用时不创建 WorkflowRuntime
-  const workflowMemoryManager = getGlobalMemoryManager({});
-  if (workflowMemoryManager) {
-    try {
-      const dbHandle = workflowMemoryManager.getDbHandleForSharedSchema();
-      workflowRuntime = new WorkflowRuntime({
-        db: dbHandle,
-        agentRegistry,
-        conversationStore,
-        readEnv: readEnv,
-        workflowExecutionPolicy: resolveWorkflowExecutionPolicy({ stateDir, readEnv }),
-        resolveWorkflowAgentLaunchSpec: (input) => normalizeAgentLaunchSpecWithCatalog({
-          instruction: input.instruction,
-          parentConversationId: input.parentConversationId,
-          agentId: "default",
-          modelOverride: input.modelOverride,
-          role: input.role,
-          allowedToolFamilies: input.allowedToolFamilies,
-          maxToolRiskLevel: input.maxToolRiskLevel,
-          timeoutMs: input.timeoutMs,
-          delegationProtocol: input.delegationProtocol,
-        }, {
-          agentRegistry,
-          defaults: {
-            timeoutMs: parseInt(readEnv("BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS") ?? "300000", 10),
-          },
-        }),
-        resolveAgentExecutionFingerprintInputs: (input) => {
-          const profile = agentRegistry.getProfile(input.profileId) ?? agentRegistry.getProfile(input.agentId);
-          const inspection = profile
-            ? gatewayPromptInspectionRuntime.buildEffectiveAgentPromptInspection(profile)
-            : undefined;
-          return {
-            agentProfileId: profile?.id ?? input.profileId ?? input.agentId,
-            systemPromptHash: typeof inspection?.metadata?.systemPromptFingerprint === "string"
-              ? inspection.metadata.systemPromptFingerprint
-              : undefined,
-            toolPolicyHash: computeWorkflowToolPolicyHash({
-              role: input.role,
-              permissionMode: input.permissionMode,
-              allowedToolFamilies: input.allowedToolFamilies,
-              maxToolRiskLevel: input.maxToolRiskLevel,
-              policySummary: input.policySummary,
-            }),
-          };
-        },
-        logger: {
-          info: (m, d) => logger.info("workflow", m, d),
-          warn: (m, d) => logger.warn("workflow", m, d),
-          error: (m, d) => logger.error("workflow", m, d),
-          debug: (m, d) => logger.debug("workflow", m, d),
-        },
-      });
-      toolExecutor.setWorkflowRuntime(workflowRuntime);
-      toolExecutor.registerTool(runWorkflowTool, { origin: "workflow" });
-      // 注册 builtin 工作流
-      registerCodeAuditBuiltinWorkflow();
-      registerParallelResearchBuiltinWorkflow();
-      logger.info("workflow", `WorkflowRuntime initialized (run_workflow tool registered, builtins: code-audit, parallel-research)`);
-    } catch (err) {
-      logger.warn("workflow", `Failed to initialize WorkflowRuntime: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  } else {
-    logger.info("workflow", `WorkflowRuntime skipped (memory manager not available)`);
-  }
-
   updateSubTask = createSubTaskUpdateController({
     runtimeStore: subTaskRuntimeStore,
     orchestrator: subAgentOrchestrator,
@@ -3402,6 +3335,69 @@ logger.info(
   "memory",
   `Scoped MemoryManagers initialized (bindings=${scopedMemoryManagers.records.length}, unique=${new Set(scopedMemoryManagers.records.map((item) => item.stateDir)).size}, teamShared=${teamSharedMemoryEnabled}, summary=${summaryEnabled}, evolution=${evolutionEnabled}, taskMemory=${taskMemoryEnabled}, taskStatsCarveOut=${taskStatsCarveOutEnabled}, experienceAuto=${experienceAutoPromotionEnabled}, methodAuto=${effectiveExperienceAutoMethodEnabled}, skillAuto=${effectiveExperienceAutoSkillEnabled}, methodGenerateConfirm=${methodGenerationConfirmRequired}, skillGenerateConfirm=${skillGenerationConfirmRequired}, methodPublishConfirm=${methodPublishConfirmRequired}, skillPublishConfirm=${skillPublishConfirmRequired})`,
 );
+
+if (agentRegistry && toolsEnabled) {
+  // Workflow 与 Memory 共用同一 SQLite schema，必须在 scoped manager 注册完成后装配。
+  const workflowMemoryManager = scopedMemoryManagers.defaultManager;
+  try {
+    const dbHandle = workflowMemoryManager.getDbHandleForSharedSchema();
+    workflowRuntime = new WorkflowRuntime({
+      db: dbHandle,
+      agentRegistry,
+      conversationStore,
+      readEnv: readEnv,
+      workflowExecutionPolicy: resolveWorkflowExecutionPolicy({ stateDir, readEnv }),
+      resolveWorkflowAgentLaunchSpec: (input) => normalizeAgentLaunchSpecWithCatalog({
+        instruction: input.instruction,
+        parentConversationId: input.parentConversationId,
+        agentId: "default",
+        modelOverride: input.modelOverride,
+        role: input.role,
+        allowedToolFamilies: input.allowedToolFamilies,
+        maxToolRiskLevel: input.maxToolRiskLevel,
+        timeoutMs: input.timeoutMs,
+        delegationProtocol: input.delegationProtocol,
+      }, {
+        agentRegistry,
+        defaults: {
+          timeoutMs: parseInt(readEnv("BELLDANDY_WORKFLOW_AGENT_TIMEOUT_MS") ?? "300000", 10),
+        },
+      }),
+      resolveAgentExecutionFingerprintInputs: (input) => {
+        const profile = agentRegistry.getProfile(input.profileId) ?? agentRegistry.getProfile(input.agentId);
+        const inspection = profile
+          ? gatewayPromptInspectionRuntime.buildEffectiveAgentPromptInspection(profile)
+          : undefined;
+        return {
+          agentProfileId: profile?.id ?? input.profileId ?? input.agentId,
+          systemPromptHash: typeof inspection?.metadata?.systemPromptFingerprint === "string"
+            ? inspection.metadata.systemPromptFingerprint
+            : undefined,
+          toolPolicyHash: computeWorkflowToolPolicyHash({
+            role: input.role,
+            permissionMode: input.permissionMode,
+            allowedToolFamilies: input.allowedToolFamilies,
+            maxToolRiskLevel: input.maxToolRiskLevel,
+            policySummary: input.policySummary,
+          }),
+        };
+      },
+      logger: {
+        info: (m, d) => logger.info("workflow", m, d),
+        warn: (m, d) => logger.warn("workflow", m, d),
+        error: (m, d) => logger.error("workflow", m, d),
+        debug: (m, d) => logger.debug("workflow", m, d),
+      },
+    });
+    toolExecutor.setWorkflowRuntime(workflowRuntime);
+    toolExecutor.registerTool(runWorkflowTool, { origin: "workflow" });
+    registerCodeAuditBuiltinWorkflow();
+    registerParallelResearchBuiltinWorkflow();
+    logger.info("workflow", "WorkflowRuntime initialized (run_workflow tool registered, builtins: code-audit, parallel-research)");
+  } catch (err) {
+    logger.warn("workflow", `Failed to initialize WorkflowRuntime: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 // ========== 后台任务调度：pause/resume + 空闲摘要 ==========
 

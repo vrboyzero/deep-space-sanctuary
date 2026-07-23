@@ -33,6 +33,17 @@ export function createMemoryRetrievalRequest(input: {
     controller.abort(createAbortError(source));
   };
   const onCallerAbort = (): void => abort("caller");
+  const checkDeadline = (): boolean => {
+    if (
+      !abortSource
+      && typeof input.deadlineMs === "number"
+      && Number.isFinite(input.deadlineMs)
+      && Date.now() >= input.deadlineMs
+    ) {
+      abort("deadline");
+    }
+    return abortSource === "deadline";
+  };
 
   if (input.signal?.aborted) {
     abort("caller");
@@ -81,7 +92,7 @@ export function createMemoryRetrievalRequest(input: {
   return {
     signal: controller.signal,
     getAbortSource: () => abortSource,
-    isDeadlineExceeded: () => abortSource === "deadline",
+    isDeadlineExceeded: checkDeadline,
     throwIfCallerAborted: () => {
       if (abortSource === "caller") {
         throw controller.signal.reason;

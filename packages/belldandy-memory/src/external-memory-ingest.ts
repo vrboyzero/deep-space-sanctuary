@@ -203,29 +203,24 @@ export async function materializeObsidianMarkdownChunks(
     try {
       const inspection = await inspectExternalIngestFile(root, file.path);
       if (!inspection.ok) {
-        skippedFiles.push({ path: file.path, reason: inspection.reason });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       if (
         (file.identity && !sameExternalIngestPathIdentity(file.identity, inspection.identity))
         || (!file.identity && file.realPath && !sameCanonicalPath(file.realPath, inspection.realPath))
       ) {
-        skippedFiles.push({ path: file.path, reason: "path_changed_since_preview" });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       if (inspection.size > limits.maxFileBytes) {
-        skippedFiles.push({ path: file.path, reason: "max_file_bytes_exceeded" });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       if (materializedBytes + inspection.size > limits.maxTotalBytes) {
-        skippedFiles.push({ path: file.path, reason: "max_total_bytes_exceeded" });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
 
       const read = await readUtf8FileBounded(inspection.realPath, limits.maxFileBytes);
       if (read.status !== "ok") {
-        skippedFiles.push({ path: file.path, reason: "max_file_bytes_exceeded" });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       // 读取期间若路径被替换，重新确认它仍是 preview 认可的同一 canonical 文件。
       const verifiedInspection = await inspectExternalIngestFile(root, file.path);
@@ -233,32 +228,19 @@ export async function materializeObsidianMarkdownChunks(
         !verifiedInspection.ok
         || !sameExternalIngestPathIdentity(inspection.identity, verifiedInspection.identity)
       ) {
-        skippedFiles.push({
-          path: file.path,
-          reason: verifiedInspection.ok ? "path_changed_since_preview" : verifiedInspection.reason,
-        });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
 
       const content = read.content;
       if (hashExternalContent(content) !== file.contentHash) {
-        skippedFiles.push({
-          path: file.path,
-          reason: "changed_since_preview",
-        });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       const chunkTexts = chunker.splitText(content);
       if (chunkTexts.length <= 0) {
-        skippedFiles.push({
-          path: file.path,
-          reason: "empty_content",
-        });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       if (importedChunkCount + chunkTexts.length > limits.maxChunks) {
-        skippedFiles.push({ path: file.path, reason: "max_chunks_exceeded" });
-        continue;
+        throw new ExternalIngestSnapshotError(file.path);
       }
       const baseId = createHash("md5").update(file.path).digest("hex");
       const chunks = chunkTexts.map((chunkContent, index) => ({
@@ -289,8 +271,11 @@ export async function materializeObsidianMarkdownChunks(
       importedFileCount += 1;
       importedChunkCount += chunks.length;
       materializedBytes += read.bytesRead;
-    } catch {
-      skippedFiles.push({ path: file.path, reason: "read_failed" });
+    } catch (error) {
+      if (error instanceof ExternalIngestSnapshotError) {
+        throw error;
+      }
+      throw new ExternalIngestSnapshotError(file.path);
     }
   }
 
@@ -305,6 +290,13 @@ export async function materializeObsidianMarkdownChunks(
     staleFilesRemoved: 0,
     staleChunksRemoved: 0,
   };
+}
+
+class ExternalIngestSnapshotError extends Error {
+  constructor(filePath: string) {
+    super(`external ingest snapshot changed since preview: ${filePath}`);
+    this.name = "ExternalIngestSnapshotError";
+  }
 }
 
 export function annotateExternalIngestPreviewRescan(

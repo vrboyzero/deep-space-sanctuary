@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { resolveMemorySourceIdentity } from "./memory-source-registry.js";
-import type { ExperienceCandidate } from "./experience-types.js";
+import type { ExperienceDerivedCandidate } from "./experience-derived-search.js";
 import type { MemorySearchFilter, MemorySearchResult } from "./types.js";
 
 type ExperienceDerivedSurface = {
@@ -15,14 +15,14 @@ type ExperienceDerivedSurface = {
   score: number;
   sourceClass: "curated";
   matchReasons: string[];
-  candidateType: ExperienceCandidate["type"];
-  candidateStatus: ExperienceCandidate["status"];
+  candidateType: ExperienceDerivedCandidate["type"];
+  candidateStatus: ExperienceDerivedCandidate["status"];
   qualityScore?: number;
 };
 
 export function buildExperienceDerivedSearchResults(input: {
   query: string;
-  candidates: ExperienceCandidate[];
+  candidates: ExperienceDerivedCandidate[];
   limit?: number;
   includeContent?: boolean;
   filter?: MemorySearchFilter;
@@ -88,9 +88,9 @@ export function buildExperienceDerivedSearchResults(input: {
   });
 }
 
-function dedupeCandidates(candidates: ExperienceCandidate[]): ExperienceCandidate[] {
+function dedupeCandidates(candidates: ExperienceDerivedCandidate[]): ExperienceDerivedCandidate[] {
   const seen = new Set<string>();
-  const results: ExperienceCandidate[] = [];
+  const results: ExperienceDerivedCandidate[] = [];
   for (const candidate of candidates) {
     if (!candidate?.id || seen.has(candidate.id)) {
       continue;
@@ -101,20 +101,17 @@ function dedupeCandidates(candidates: ExperienceCandidate[]): ExperienceCandidat
   return results;
 }
 
-function isSearchableExperienceCandidate(candidate: ExperienceCandidate): boolean {
+function isSearchableExperienceCandidate(candidate: ExperienceDerivedCandidate): boolean {
   if (!candidate || !candidate.id || !candidate.content) {
-    return false;
-  }
-  if (candidate.metadata?.synthesisConsumed?.consumed) {
     return false;
   }
   return candidate.status === "accepted" || candidate.status === "published";
 }
 
-function buildExperienceSurface(candidate: ExperienceCandidate, normalizedQuery: string): ExperienceDerivedSurface | null {
+function buildExperienceSurface(candidate: ExperienceDerivedCandidate, normalizedQuery: string): ExperienceDerivedSurface | null {
   const highlights = extractExperienceHighlights(candidate.content, 6);
   const summaryText = compactText(
-    `经验${candidate.type === "method" ? "方法" : "技能"} ${candidate.title}：${candidate.summary || highlights[0] || candidate.sourceTaskSnapshot.summary || ""}`,
+    `经验${candidate.type === "method" ? "方法" : "技能"} ${candidate.title}：${candidate.summary || highlights[0] || candidate.sourceTaskSummary || ""}`,
     220,
   );
   if (!summaryText) {
@@ -127,22 +124,19 @@ function buildExperienceSurface(candidate: ExperienceCandidate, normalizedQuery:
     `Title: ${candidate.title}`,
     candidate.summary ? `Summary: ${candidate.summary}` : undefined,
     typeof candidate.qualityScore === "number" ? `Quality Score: ${candidate.qualityScore}` : undefined,
-    candidate.sourceTaskSnapshot.title ? `Source Task: ${candidate.sourceTaskSnapshot.title}` : undefined,
-    candidate.sourceTaskSnapshot.summary ? `Task Summary: ${candidate.sourceTaskSnapshot.summary}` : undefined,
+    candidate.sourceTaskTitle ? `Source Task: ${candidate.sourceTaskTitle}` : undefined,
+    candidate.sourceTaskSummary ? `Task Summary: ${candidate.sourceTaskSummary}` : undefined,
     ...highlights.map((item) => `Highlight: ${item}`),
   ].filter((line): line is string => Boolean(line));
 
   const scoreFields = [
-    { label: "标题/摘要", values: [candidate.title, candidate.summary, candidate.slug] },
+    { label: "标题/摘要", values: [candidate.title, candidate.summary] },
     { label: "经验片段", values: highlights },
     {
       label: "来源任务",
       values: [
-        candidate.sourceTaskSnapshot.title,
-        candidate.sourceTaskSnapshot.objective,
-        candidate.sourceTaskSnapshot.summary,
-        candidate.sourceTaskSnapshot.outcome,
-        candidate.sourceTaskSnapshot.reflection,
+        candidate.sourceTaskTitle,
+        candidate.sourceTaskSummary,
       ],
     },
     {
@@ -221,7 +215,7 @@ function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
 }
 
-function resolveUpdatedAt(candidate: ExperienceCandidate): string {
+function resolveUpdatedAt(candidate: ExperienceDerivedCandidate): string {
   return candidate.acceptedAt || candidate.reviewedAt || candidate.createdAt;
 }
 

@@ -24,7 +24,7 @@ import type {
   MCPRuntimeCapabilities,
   WorkflowRuntimeCapabilities,
 } from "./types.js";
-import { getToolContract, type ToolContract } from "./tool-contract.js";
+import { getToolContract, type ToolContract, type ToolExecutionAdmission } from "./tool-contract.js";
 import {
   evaluateLaunchPermissionMode,
   evaluateLaunchRolePolicy,
@@ -39,7 +39,11 @@ import {
   type ToolContractAccessPolicy,
   resolveSafeScopesForChannel,
 } from "./security-matrix.js";
-import { isAbortError, readAbortReason } from "./abort-utils.js";
+import { isAbortError, raceWithAbort, readAbortReason } from "./abort-utils.js";
+import {
+  applyToolResultOutputAdmission,
+  createToolExecutionDeadlineAdmission,
+} from "./tool-execution-admission.js";
 import {
   buildFailureToolCallResult,
   normalizeToolCallResultFailureKind,
@@ -161,6 +165,8 @@ export type ToolRegistryInventoryEntry = {
   loadingMode: "core" | "deferred";
   contractName?: string;
   contractStatus: "governed" | "missing" | "name-mismatch";
+  family?: ToolContract["family"];
+  executionAdmission?: ToolExecutionAdmission;
 };
 
 export type ToolRegistryReplacement = {
@@ -1027,6 +1033,8 @@ export class ToolExecutor {
           ...(registration.originId ? { originId: registration.originId } : {}),
           loadingMode: tool.definition.loadingMode ?? "core",
           ...(contract ? { contractName: contract.name } : {}),
+          ...(contract ? { family: contract.family } : {}),
+          ...(contract?.executionAdmission ? { executionAdmission: contract.executionAdmission } : {}),
           contractStatus,
         };
       })
@@ -1374,7 +1382,7 @@ export class ToolExecutor {
   ): Promise<ToolCallResult> {
     const start = Date.now();
     const launchSpec = normalizeRuntimeLaunchSpec(runtimeContext?.launchSpec);
-    const abortSignal = runtimeContext?.abortSignal;
+    const parentAbortSignal = runtimeContext?.abortSignal;
 
     const tool = this.tools.get(request.name);
 
@@ -1426,6 +1434,8 @@ export class ToolExecutor {
       return result;
     }
 
+    const deadlineAdmission = createToolExecutionDeadlineAdmission(tool, this.policy, parentAbortSignal);
+    const abortSignal = deadlineAdmission?.abortSignal ?? parentAbortSignal;
     const context: ToolContext = {
       conversationId,
       workspaceRoot: this.workspaceRoot,
@@ -1481,12 +1491,35 @@ export class ToolExecutor {
         error: readAbortReason(abortSignal),
         failureKind: "environment_error",
       });
+      deadlineAdmission?.cleanup();
       this.audit(result, conversationId, request.arguments);
       return result;
     }
 
     try {
-      const result = normalizeToolCallResultFailureKind(await tool.execute(effectiveArguments, context));
+      const execution = tool.execute(effectiveArguments, context);
+      const executedResult = await raceWithAbort(execution, abortSignal);
+      if (deadlineAdmission?.wasTimedOut()) {
+        const result = buildFailureToolCallResult({
+          id: request.id,
+          name: request.name,
+          start,
+          error: `工具执行超时（${deadlineAdmission.deadlineMs}ms）`,
+          failureKind: "environment_error",
+          metadata: {
+            deadlineExceeded: true,
+            deadlineMs: deadlineAdmission.deadlineMs,
+            lateResultDiscarded: true,
+          },
+        });
+        this.audit(result, conversationId, request.arguments);
+        return result;
+      }
+      const result = applyToolResultOutputAdmission(
+        tool,
+        normalizeToolCallResultFailureKind(executedResult),
+        this.policy,
+      );
       // 确保 id 匹配请求
       result.id = request.id;
       result.durationMs = Date.now() - start;
@@ -1498,14 +1531,27 @@ export class ToolExecutor {
         id: request.id,
         name: request.name,
         start,
-        error: isAbortError(err)
+        error: deadlineAdmission?.wasTimedOut()
+          ? `工具执行超时（${deadlineAdmission.deadlineMs}ms）`
+          : isAbortError(err)
           ? readAbortReason(abortSignal)
           : (err instanceof Error ? err.message : String(err)),
-        metadata: argumentValidationMetadata,
-        ...(isAbortError(err) ? { failureKind: "environment_error" as const } : {}),
+        metadata: deadlineAdmission?.wasTimedOut()
+          ? {
+            ...(argumentValidationMetadata ?? {}),
+            deadlineExceeded: true,
+            deadlineMs: deadlineAdmission.deadlineMs,
+            lateResultDiscarded: true,
+          }
+          : argumentValidationMetadata,
+        ...(isAbortError(err) || deadlineAdmission?.wasTimedOut()
+          ? { failureKind: "environment_error" as const }
+          : {}),
       });
       this.audit(result, conversationId, request.arguments);
       return result;
+    } finally {
+      deadlineAdmission?.cleanup();
     }
   }
 

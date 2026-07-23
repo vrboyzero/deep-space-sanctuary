@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { loadRuntimeEnvFiles, readTrimmedEnv } from "./env.js";
+import { checkGatewayPortAvailability } from "./gateway-port-availability.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_GATEWAY_PORT = 28889;
@@ -144,7 +145,7 @@ function stringifyCommandForLog(commandLine: string | null | undefined): string 
   return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }
 
-function createPowerShellRunner(): GatewayPreflightRunner {
+export function createPowerShellGatewayPreflightRunner(): GatewayPreflightRunner {
   const runPowerShellJson = async (script: string): Promise<GatewayProcessInfo | null> => {
     let stdout = "";
     try {
@@ -301,7 +302,8 @@ export async function preflightGatewayCleanup(params: GatewayPreflightParams): P
   const stopTimeoutMs = params.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   const ownershipTokens = uniqueOwnershipTokens(params.ownershipTokens);
   const port = resolveGatewayPort(params.env ?? process.env, stateDir, params.port);
-  const runner = params.runner ?? (process.platform === "win32" ? createPowerShellRunner() : null);
+  const hadPidMarker = fs.existsSync(getDaemonPidFile(stateDir)) || fs.existsSync(getForegroundPidFile(stateDir));
+  const runner = params.runner ?? (process.platform === "win32" ? createPowerShellGatewayPreflightRunner() : null);
   const cleanedPids: number[] = [];
   const checkedPids = new Set<number>();
 
@@ -329,7 +331,7 @@ export async function preflightGatewayCleanup(params: GatewayPreflightParams): P
   });
   for (const pid of cleanedPids) checkedPids.add(pid);
 
-  if (runner) {
+  if (runner && (hadPidMarker || await checkGatewayPortAvailability(port) !== "available")) {
     const portOwner = await runner.findPortOwner(port);
     if (portOwner && !checkedPids.has(portOwner.pid)) {
       const cleaned = await cleanupProcessByPid({

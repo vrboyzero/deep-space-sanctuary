@@ -106,4 +106,5 @@ test("root build defaults to the incremental TypeScript graph while preserving f
   expect(packageJson.scripts?.["build:incremental"]).toBe("tsc -b");
   expect(packageJson.scripts?.build).toBe("pnpm run build:incremental && pnpm run verify:build");
   expect(packageJson.scripts?.["build:force"]).toBe("tsc -b --force");
+  expect(packageJson.scripts?.["build:release"]).toBe("pnpm run rebuild");
 });

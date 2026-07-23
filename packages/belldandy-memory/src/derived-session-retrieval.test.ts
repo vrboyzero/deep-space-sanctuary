@@ -6,6 +6,20 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { buildDreamConversationArtifactPath } from "./dream-input.js";
 import { MemoryManager } from "./manager.js";
+import type { SessionArtifactInventoryItem, SessionArtifactInventoryProvider } from "./session-artifact-inventory.js";
+
+function createSessionArtifactInventory(
+  items: SessionArtifactInventoryItem[],
+): SessionArtifactInventoryProvider {
+  return {
+    async listPage(options) {
+      return {
+        status: "ready",
+        items: items.slice(0, options?.limit),
+      };
+    },
+  };
+}
 
 describe("derived session retrieval integration", () => {
   const cleanupDirs = new Set<string>();
@@ -54,6 +68,12 @@ describe("derived session retrieval integration", () => {
       workspaceRoot: docsDir,
       stateDir,
       taskMemoryEnabled: true,
+      sessionArtifactInventory: createSessionArtifactInventory([{
+        safeConversationId,
+        conversationId,
+        newestFileMs: Date.now(),
+        sessionMemoryPath,
+      }]),
     });
 
     try {
@@ -79,6 +99,18 @@ describe("derived session retrieval integration", () => {
         id: execution.items[0]?.id,
         sourceClass: "derived",
       });
+      expect(execution.diagnostics.derived?.session).toMatchObject({
+        admitted: true,
+        candidateCount: 1,
+        detailCount: 1,
+        readByteCount: expect.any(Number),
+        resultCount: 1,
+        skipped: false,
+        deadline: {
+          exceededBeforeStart: false,
+          exceededAfterCompletion: false,
+        },
+      });
     } finally {
       manager.close();
     }
@@ -93,12 +125,13 @@ describe("derived session retrieval integration", () => {
     await fs.mkdir(sessionsDir, { recursive: true });
 
     const conversationId = "conv-digest-search";
-    await fs.writeFile(
-      buildDreamConversationArtifactPath({
+    const digestPath = buildDreamConversationArtifactPath({
         sessionsDir,
         conversationId,
         suffix: ".digest.json",
-      }),
+      });
+    await fs.writeFile(
+      digestPath,
       JSON.stringify({
         conversationId,
         rollingSummary: "最近一轮在收口 gateway retry fallback 策略。",
@@ -112,6 +145,12 @@ describe("derived session retrieval integration", () => {
       workspaceRoot: docsDir,
       stateDir,
       taskMemoryEnabled: true,
+      sessionArtifactInventory: createSessionArtifactInventory([{
+        safeConversationId: conversationId,
+        conversationId,
+        newestFileMs: Date.now(),
+        digestPath,
+      }]),
     });
 
     try {
@@ -146,12 +185,13 @@ describe("derived session retrieval integration", () => {
     await fs.mkdir(sessionsDir, { recursive: true });
 
     const conversationId = "conv-family-aware";
-    await fs.writeFile(
-      buildDreamConversationArtifactPath({
+    const sessionMemoryPath = buildDreamConversationArtifactPath({
         sessionsDir,
         conversationId,
         suffix: ".session-memory.json",
-      }),
+      });
+    await fs.writeFile(
+      sessionMemoryPath,
       JSON.stringify({
         summary: "当前在补统一检索派生层。",
         currentWork: "已把任务复盘接进统一检索。",
@@ -160,12 +200,13 @@ describe("derived session retrieval integration", () => {
       }),
       "utf-8",
     );
-    await fs.writeFile(
-      buildDreamConversationArtifactPath({
+    const digestPath = buildDreamConversationArtifactPath({
         sessionsDir,
         conversationId,
         suffix: ".digest.json",
-      }),
+      });
+    await fs.writeFile(
+      digestPath,
       JSON.stringify({
         conversationId,
         rollingSummary: "最近一轮在继续接 viewer 懒加载，并核对统一检索行为。",
@@ -178,6 +219,13 @@ describe("derived session retrieval integration", () => {
       workspaceRoot: docsDir,
       stateDir,
       taskMemoryEnabled: true,
+      sessionArtifactInventory: createSessionArtifactInventory([{
+        safeConversationId: conversationId,
+        conversationId,
+        newestFileMs: Date.now(),
+        digestPath,
+        sessionMemoryPath,
+      }]),
     });
 
     try {
@@ -231,6 +279,85 @@ describe("derived session retrieval integration", () => {
 
       expect(execution.items).toEqual([]);
       expect(execution.diagnostics.stages.raw.count).toBe(0);
+    } finally {
+      manager.close();
+    }
+  });
+
+  it("does not fall back to scanning the raw sessions directory without a root-bound provider", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-derived-session-no-provider-"));
+    cleanupDirs.add(stateDir);
+    const docsDir = path.join(stateDir, "docs");
+    const sessionsDir = path.join(stateDir, "sessions");
+    await fs.mkdir(docsDir, { recursive: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sessionsDir, "conv-no-provider.session-memory.json"),
+      JSON.stringify({
+        summary: "不应由裸目录扫描进入检索。",
+        currentGoal: "阻断 legacy session scan。",
+        updatedAt: Date.parse("2026-05-21T11:30:00.000Z"),
+      }),
+      "utf-8",
+    );
+
+    const manager = new MemoryManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+    });
+
+    try {
+      const execution = await manager.searchWithDiagnostics("legacy session scan", {
+        limit: 3,
+        routingPolicy: "chunk_only",
+      });
+
+      expect(execution.items.filter((item) => item.id.startsWith("derived-session:"))).toEqual([]);
+      expect(execution.diagnostics.derived?.session).toMatchObject({
+        admitted: false,
+        skipped: true,
+        skipReason: "unavailable",
+      });
+    } finally {
+      manager.close();
+    }
+  });
+
+  it("skips an oversized artifact without reading it", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-derived-session-byte-limit-"));
+    cleanupDirs.add(stateDir);
+    const docsDir = path.join(stateDir, "docs");
+    const sessionsDir = path.join(stateDir, "sessions");
+    await fs.mkdir(docsDir, { recursive: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionMemoryPath = path.join(sessionsDir, "conv-too-large.session-memory.json");
+    await fs.writeFile(sessionMemoryPath, JSON.stringify({
+      summary: "oversized artifact must not be read",
+      currentGoal: "oversized artifact must not be read",
+      padding: "x".repeat(64 * 1024),
+      updatedAt: Date.parse("2026-05-21T11:40:00.000Z"),
+    }), "utf-8");
+
+    const manager = new MemoryManager({
+      workspaceRoot: docsDir,
+      stateDir,
+      taskMemoryEnabled: true,
+      sessionArtifactInventory: createSessionArtifactInventory([{
+        safeConversationId: "conv-too-large",
+        conversationId: "conv-too-large",
+        newestFileMs: Date.now(),
+        sessionMemoryPath,
+      }]),
+    });
+
+    try {
+      const execution = await manager.searchWithDiagnostics("oversized artifact", {
+        limit: 3,
+        routingPolicy: "chunk_only",
+      });
+
+      expect(execution.items.filter((item) => item.id.startsWith("derived-session:"))).toEqual([]);
     } finally {
       manager.close();
     }

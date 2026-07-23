@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ConversationStore } from "./conversation.js";
+import { sessionTranscriptReadStreamFs } from "./session-transcript.js";
 
 function createTranscriptStore(label: string): {
     store: ConversationStore;
@@ -23,7 +24,7 @@ describe("ConversationStore transcript single-read projections", () => {
         const { store, conversationId, tempDir } = createTranscriptStore("export");
         try {
             await store.waitForPendingPersistence(conversationId);
-            const transcriptRead = vi.spyOn(store, "getSessionTranscriptEvents");
+            const transcriptRead = vi.spyOn(sessionTranscriptReadStreamFs, "createReadStream");
 
             const exported = await store.buildConversationTranscriptExport(conversationId);
 
@@ -39,7 +40,7 @@ describe("ConversationStore transcript single-read projections", () => {
         const { store, conversationId, tempDir } = createTranscriptStore("timeline");
         try {
             await store.waitForPendingPersistence(conversationId);
-            const transcriptRead = vi.spyOn(store, "getSessionTranscriptEvents");
+            const transcriptRead = vi.spyOn(sessionTranscriptReadStreamFs, "createReadStream");
 
             const timeline = await store.buildConversationTimeline(conversationId);
 
@@ -52,6 +53,47 @@ describe("ConversationStore transcript single-read projections", () => {
                 kind: "restore_result",
                 canonicalExtractionCount: 2,
             });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("builds a cursor-bound timeline page without constructing the full restore projection", async () => {
+        const { store, conversationId, tempDir } = createTranscriptStore("timeline-page");
+        try {
+            await store.waitForPendingPersistence(conversationId);
+            const transcriptRead = vi.spyOn(sessionTranscriptReadStreamFs, "createReadStream");
+
+            const firstPage = await store.buildConversationTimelinePage(conversationId, { pageSize: 1 });
+
+            expect(transcriptRead).toHaveBeenCalledTimes(1);
+            expect(firstPage).toMatchObject({
+                manifest: {
+                    conversationId,
+                    source: "conversation.timeline.page",
+                },
+                summary: {
+                    eventCount: 1,
+                    itemCount: 1,
+                    messageCount: 1,
+                },
+                page: {
+                    cursorStatus: "initial",
+                    nextCursor: expect.any(String),
+                },
+            });
+            expect(firstPage.items).toHaveLength(1);
+
+            const secondPage = await store.buildConversationTimelinePage(conversationId, {
+                cursor: firstPage.page.nextCursor,
+                pageSize: 1,
+            });
+            expect(transcriptRead).toHaveBeenCalledTimes(2);
+            expect(secondPage).toMatchObject({
+                summary: { eventCount: 1, messageCount: 1 },
+                page: { cursorStatus: "valid" },
+            });
+            expect(secondPage.page.nextCursor).toBeUndefined();
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

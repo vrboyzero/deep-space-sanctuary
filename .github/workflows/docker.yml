@@ -254,7 +254,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Build workspace
-        run: pnpm build
+        run: pnpm build:release
 
       - name: Build release-light assets
         run: pnpm build:release-light -- --version=${{ steps.version.outputs.VERSION }}
@@ -372,7 +372,7 @@ jobs:
 
       - name: Build workspace
         working-directory: ${{ env.SHORT_WORKSPACE }}
-        run: pnpm build
+        run: pnpm build:release
 
       - name: Prefetch Windows portable dependencies
         working-directory: ${{ env.SHORT_WORKSPACE }}

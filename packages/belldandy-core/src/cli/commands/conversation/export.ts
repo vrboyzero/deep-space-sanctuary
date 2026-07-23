@@ -1,11 +1,11 @@
 import { defineCommand } from "citty";
+import { writeSessionTranscriptExportBundle } from "@belldandy/agent";
 import { createCLIContext } from "../../shared/context.js";
 import {
   createConversationStoreForCLI,
   hasTranscriptLikeData,
   recordConversationCLIExport,
   resolveConversationCLIOutputPath,
-  writeConversationCommandOutput,
 } from "./_shared.js";
 import {
   applyTranscriptExportProjection,
@@ -71,7 +71,6 @@ export default defineCommand({
       restoreView,
     });
     const pretty = args.pretty !== false;
-    const serialized = JSON.stringify(projectedBundle, null, pretty ? 2 : 0);
     const outputPath = await resolveConversationCLIOutputPath({
       output: typeof args.output === "string" ? args.output : undefined,
       outputDir: typeof args["output-dir"] === "string" ? args["output-dir"] : undefined,
@@ -81,24 +80,25 @@ export default defineCommand({
       extension: "json",
     });
     if (outputPath) {
-      const targetPath = await writeConversationCommandOutput(outputPath, serialized);
+      await writeSessionTranscriptExportBundle(outputPath, projectedBundle, { pretty });
       await recordConversationCLIExport({
         stateDir: ctx.stateDir,
         conversationId,
         artifact: "transcript",
         format: "json",
-        outputPath: targetPath,
+        outputPath,
         mode: projectedBundle.manifest.redactionMode,
         projectionFilter: projectedBundle.projectionFilter,
       });
       if (ctx.json) {
-        ctx.output({ output: targetPath, conversationId, mode: projectedBundle.manifest.redactionMode });
+        ctx.output({ output: outputPath, conversationId, mode: projectedBundle.manifest.redactionMode });
       } else {
-        ctx.success(`Transcript export written to ${targetPath}`);
+        ctx.success(`Transcript export written to ${outputPath}`);
       }
       return;
     }
 
+    const serialized = JSON.stringify(projectedBundle, null, pretty ? 2 : 0);
     console.log(serialized);
   },
 });

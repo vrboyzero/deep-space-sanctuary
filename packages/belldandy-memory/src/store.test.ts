@@ -145,6 +145,111 @@ describe("MemoryStore", () => {
     ]);
   });
 
+  it("prunes expired and oldest embedding cache entries without deleting indexed vectors", () => {
+    for (const id of ["cache-retention-expired", "cache-retention-old", "cache-retention-new"]) {
+      store.upsertChunk({
+        id,
+        sourcePath: `/tmp/${id}.md`,
+        sourceType: "file",
+        memoryType: "other",
+        content: id,
+      });
+    }
+    store.upsertChunkVectorsBatch([
+      { chunkId: "cache-retention-expired", embedding: [0.1, 0.2], cacheHash: "cache-retention-expired" },
+      { chunkId: "cache-retention-old", embedding: [0.3, 0.4], cacheHash: "cache-retention-old" },
+      { chunkId: "cache-retention-new", embedding: [0.5, 0.6], cacheHash: "cache-retention-new" },
+    ], "test-model");
+
+    const db = store.getDbHandleForSharedSchema();
+    const setCreatedAt = db.prepare("UPDATE embedding_cache SET created_at = ? WHERE content_hash = ?");
+    setCreatedAt.run("2026-06-01T00:00:00.000Z", "cache-retention-expired");
+    setCreatedAt.run("2026-07-21T00:00:00.000Z", "cache-retention-old");
+    setCreatedAt.run("2026-07-22T00:00:00.000Z", "cache-retention-new");
+
+    const result = store.pruneEmbeddingCache({
+      maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      maxEntries: 1,
+      maxBytes: 1024,
+      nowMs: Date.parse("2026-07-23T00:00:00.000Z"),
+    });
+
+    expect(result).toEqual({
+      expired: 1,
+      overflow: 1,
+      remaining: 1,
+      remainingBytes: 8,
+    });
+    expect(store.getCachedEmbedding("cache-retention-expired")).toBeNull();
+    expect(store.getCachedEmbedding("cache-retention-old")).toBeNull();
+    expect(store.getCachedEmbedding("cache-retention-new")).toEqual([
+      expect.closeTo(0.5, 5),
+      expect.closeTo(0.6, 5),
+    ]);
+    for (const id of ["cache-retention-expired", "cache-retention-old", "cache-retention-new"]) {
+      expect(store.getChunkVector(id)).not.toBeNull();
+    }
+  });
+
+  it("uses the byte budget to retain the newest embedding cache entries", () => {
+    store.cacheEmbedding("cache-byte-old", [0.1, 0.2], "test-model");
+    store.cacheEmbedding("cache-byte-middle", [0.3, 0.4], "test-model");
+    store.cacheEmbedding("cache-byte-new", [0.5, 0.6], "test-model");
+
+    const db = store.getDbHandleForSharedSchema();
+    const setCreatedAt = db.prepare("UPDATE embedding_cache SET created_at = ? WHERE content_hash = ?");
+    setCreatedAt.run("2026-07-20T00:00:00.000Z", "cache-byte-old");
+    setCreatedAt.run("2026-07-21T00:00:00.000Z", "cache-byte-middle");
+    setCreatedAt.run("2026-07-22T00:00:00.000Z", "cache-byte-new");
+
+    expect(store.getEmbeddingCacheStatus()).toEqual({
+      entryCount: 3,
+      totalBytes: 24,
+      oldestCreatedAt: "2026-07-20T00:00:00.000Z",
+    });
+
+    const result = store.pruneEmbeddingCache({
+      maxAgeMs: 30 * 24 * 60 * 60 * 1000,
+      maxEntries: 10,
+      maxBytes: 16,
+      nowMs: Date.parse("2026-07-23T00:00:00.000Z"),
+    });
+
+    expect(result).toEqual({
+      expired: 0,
+      overflow: 1,
+      remaining: 2,
+      remainingBytes: 16,
+    });
+    expect(store.getCachedEmbedding("cache-byte-old")).toBeNull();
+    expect(store.getCachedEmbedding("cache-byte-middle")).not.toBeNull();
+    expect(store.getCachedEmbedding("cache-byte-new")).not.toBeNull();
+    expect(store.getEmbeddingCacheStatus()).toEqual({
+      entryCount: 2,
+      totalBytes: 16,
+      oldestCreatedAt: "2026-07-21T00:00:00.000Z",
+    });
+  });
+
+  it("skips vector search when a query uses a different dimension than the vec0 table", () => {
+    store.upsertChunk({
+      id: "mismatched-query-dimension",
+      sourcePath: "/tmp/mismatched-query-dimension.md",
+      sourceType: "file",
+      memoryType: "other",
+      content: "keyword fallback remains available",
+    });
+    store.prepareVectorStore(3);
+    store.upsertChunkVector(
+      "mismatched-query-dimension",
+      [0.1, 0.2, 0.3],
+      "test-model",
+    );
+
+    expect(() => store.searchVector([0.1, 0.2])).not.toThrow();
+    expect(store.searchVector([0.1, 0.2])).toEqual([]);
+  });
+
   it("rolls back every vector and cache write when one cache insert fails", () => {
     for (const id of ["batch-rollback-a", "batch-rollback-b"]) {
       store.upsertChunk({

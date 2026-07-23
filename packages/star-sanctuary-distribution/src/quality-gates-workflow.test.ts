@@ -285,6 +285,21 @@ test("tag release forwards its resolved version to release-light build and verif
   );
 });
 
+test("release jobs use the explicit clean BuildGraph without changing ordinary CI builds", () => {
+  const workflow = readDockerWorkflow();
+  const rootPackage = readRootPackageJson();
+  const buildAndTestJob = readWorkflowJob(workflow, "build-and-test");
+  const releaseJob = readWorkflowJob(workflow, "release");
+  const windowsReleaseJob = readWorkflowJob(workflow, "release-windows-assets");
+
+  expect(rootPackage.scripts?.["build:release"]).toBe("pnpm run rebuild");
+  expect(buildAndTestJob).toContain("run: pnpm build");
+  expect(buildAndTestJob).not.toContain("run: pnpm build:release");
+  expect(releaseJob).toContain("run: pnpm build:release");
+  expect(windowsReleaseJob).toContain("run: pnpm build:release");
+  expect(workflow.match(/run: pnpm build:release$/gm)).toHaveLength(2);
+});
+
 test("tag release-light stays independent from Docker Hub publishing while Windows assets remain opt-in", () => {
   const workflow = readDockerWorkflow().replace(/\r\n/g, "\n");
   const publishStart = workflow.indexOf("  publish:\n");

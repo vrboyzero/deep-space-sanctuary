@@ -71,6 +71,19 @@ describe("ReAct run budgets", () => {
     expect(budget.highRiskToolCalls).toBe(1);
   });
 
+  it("treats zero high-risk tool calls as unlimited", () => {
+    const budget = new ReActRunBudgetTracker({
+      maxTotalTokens: 100,
+      maxHighRiskToolCalls: 0,
+    });
+
+    expect(normalizeMaxHighRiskToolCalls(0)).toBe(Number.POSITIVE_INFINITY);
+    for (let index = 0; index < 10; index++) {
+      expect(budget.reserveHighRiskToolCall()).toBeUndefined();
+    }
+    expect(budget.highRiskToolCalls).toBe(10);
+  });
+
   it("aborts the run at the wall-time deadline and forwards parent cancellation", () => {
     vi.useFakeTimers();
     const parent = new AbortController();

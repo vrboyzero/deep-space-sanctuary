@@ -920,6 +920,14 @@ export async function handleSystemDoctorMethod(
       kinds: ["topic", "profile", "global"],
     });
   });
+  const memoryDerivedRetrievalStage = captureDoctorStage(doctorPerformanceStages, "memory_derived_retrieval", () => {
+    const manager = resolveScopedMemoryManager(params);
+    return manager?.getDerivedRetrievalDoctorReport();
+  });
+  const memoryEmbeddingCacheStage = captureDoctorStage(doctorPerformanceStages, "memory_embedding_cache", () => {
+    const manager = resolveScopedMemoryManager(params);
+    return manager?.getEmbeddingCacheDoctorReport();
+  });
   const optionalCapabilitiesStage = captureDoctorStage(doctorPerformanceStages, "optional_capabilities", () => buildOptionalCapabilitiesDoctorReport());
   const cameraRuntimeStage = captureDoctorStage(doctorPerformanceStages, "camera_runtime", () => buildCameraRuntimeDoctorReport({
     context: {
@@ -1100,6 +1108,8 @@ export async function handleSystemDoctorMethod(
     memorySourceInventoryResult,
     memorySharedGovernanceResult,
     memoryTreeLifecycleResult,
+    memoryDerivedRetrievalResult,
+    memoryEmbeddingCacheResult,
     optionalCapabilitiesResult,
     cameraRuntimeResult,
     extensionMarketplaceResult,
@@ -1117,6 +1127,8 @@ export async function handleSystemDoctorMethod(
     memorySourceInventoryStage,
     memorySharedGovernanceStage,
     memoryTreeLifecycleStage,
+    memoryDerivedRetrievalStage,
+    memoryEmbeddingCacheStage,
     optionalCapabilitiesStage,
     cameraRuntimeStage,
     extensionMarketplaceStage,
@@ -1135,6 +1147,8 @@ export async function handleSystemDoctorMethod(
   const memorySourceInventory = unwrapDoctorStageResult(memorySourceInventoryResult);
   const memorySharedGovernance = unwrapDoctorStageResult(memorySharedGovernanceResult);
   const memoryTreeLifecycle = unwrapDoctorStageResult(memoryTreeLifecycleResult);
+  const memoryDerivedRetrieval = unwrapDoctorStageResult(memoryDerivedRetrievalResult);
+  const memoryEmbeddingCache = unwrapDoctorStageResult(memoryEmbeddingCacheResult);
   const optionalCapabilities = unwrapDoctorStageResult(optionalCapabilitiesResult);
   const cameraRuntime = unwrapDoctorStageResult(cameraRuntimeResult);
   const extensionMarketplace = unwrapDoctorStageResult(extensionMarketplaceResult);
@@ -1272,6 +1286,26 @@ export async function handleSystemDoctorMethod(
     checks.push({
       id: "memory_tree_lifecycle",
       name: "Memory Tree Lifecycle",
+      status: "warn",
+      message: "Memory manager unavailable.",
+    });
+  }
+  if (memoryDerivedRetrieval) {
+    checks.push(...memoryDerivedRetrieval.checks);
+  } else {
+    checks.push({
+      id: "memory_derived_retrieval",
+      name: "Memory Derived Retrieval",
+      status: "warn",
+      message: "Memory manager unavailable.",
+    });
+  }
+  if (memoryEmbeddingCache) {
+    checks.push(...memoryEmbeddingCache.checks);
+  } else {
+    checks.push({
+      id: "memory_embedding_cache",
+      name: "Memory Embedding Cache",
       status: "warn",
       message: "Memory manager unavailable.",
     });
@@ -2066,6 +2100,8 @@ export async function handleSystemDoctorMethod(
       ...(memorySourceInventory ? { memorySourceInventory } : {}),
       ...(memorySharedGovernance ? { memorySharedGovernance } : {}),
       ...(memoryTreeLifecycle ? { memoryTreeLifecycle } : {}),
+      ...(memoryDerivedRetrieval ? { memoryDerivedRetrieval } : {}),
+      ...(memoryEmbeddingCache ? { memoryEmbeddingCache } : {}),
       deploymentBackends,
       optionalCapabilities,
       ...(cameraRuntime ? { cameraRuntime } : {}),

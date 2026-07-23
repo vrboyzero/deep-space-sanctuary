@@ -65,6 +65,25 @@ describe("derived task retrieval integration", () => {
         },
       });
 
+      const instrumentedStore = (manager as unknown as {
+        store: {
+          getTaskDetails: (...taskIds: [string[]]) => unknown;
+          getTaskDerivedDetails: (...taskIds: [string[]]) => unknown;
+        };
+      }).store;
+      const originalGetTaskDetails = instrumentedStore.getTaskDetails.bind(instrumentedStore);
+      const originalGetTaskDerivedDetails = instrumentedStore.getTaskDerivedDetails.bind(instrumentedStore);
+      let fullDetailCalls = 0;
+      let derivedDetailCalls = 0;
+      instrumentedStore.getTaskDetails = (...taskIds) => {
+        fullDetailCalls += 1;
+        return originalGetTaskDetails(...taskIds);
+      };
+      instrumentedStore.getTaskDerivedDetails = (...taskIds) => {
+        derivedDetailCalls += 1;
+        return originalGetTaskDerivedDetails(...taskIds);
+      };
+
       const execution = await manager.searchWithDiagnostics("继续接 viewer 懒加载", {
         limit: 3,
         routingPolicy: "chunk_only",
@@ -87,6 +106,20 @@ describe("derived task retrieval integration", () => {
       expect(execution.diagnostics.stages.raw.topHits[0]).toMatchObject({
         id: "derived-task:task-derived-search-1:task_resume_context",
         sourceClass: "derived",
+      });
+      expect(derivedDetailCalls).toBe(1);
+      expect(fullDetailCalls).toBe(0);
+      expect(execution.diagnostics.derived?.task).toMatchObject({
+        admitted: true,
+        candidateCount: 1,
+        detailCount: 1,
+        readByteCount: 0,
+        resultCount: 1,
+        skipped: false,
+        deadline: {
+          exceededBeforeStart: false,
+          exceededAfterCompletion: false,
+        },
       });
     } finally {
       manager.close();

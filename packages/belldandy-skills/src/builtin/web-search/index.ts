@@ -122,4 +122,8 @@ export const webSearchTool: Tool = withToolContract({
         description: "Formatted web search result text.",
     },
     outputPersistencePolicy: "conversation",
+    executionAdmission: {
+        deadline: "policy",
+        output: "utf8-text-policy",
+    },
 });

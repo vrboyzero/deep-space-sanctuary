@@ -84,6 +84,42 @@ describe("OutboundRequestPolicy", () => {
     expect(result.addresses).toEqual([{ address, family }]);
   });
 
+  it("allows DNS proxy synthetic addresses only for an explicitly allowlisted hostname", async () => {
+    const requestAdapter = async () => new Response("ok", { status: 200 });
+    const allowlisted = new OutboundRequestPolicy({
+      allowedHosts: ["model.example.test"],
+      dnsLookup: async () => [{ address: "198.18.0.42", family: 4 }],
+      requestAdapter,
+    });
+    const unrestrictedHost = new OutboundRequestPolicy({
+      dnsLookup: async () => [{ address: "198.18.0.42", family: 4 }],
+      requestAdapter,
+    });
+    const literalAddress = new OutboundRequestPolicy({
+      allowedHosts: ["198.18.0.42"],
+      requestAdapter,
+    });
+    const mixedPrivateAnswer = new OutboundRequestPolicy({
+      allowedHosts: ["model.example.test"],
+      dnsLookup: async () => [
+        { address: "198.18.0.42", family: 4 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+      requestAdapter,
+    });
+
+    const result = await allowlisted.request({ url: "https://model.example.test/v1/models" });
+
+    expect(await result.response.text()).toBe("ok");
+    expect(result.addresses).toEqual([{ address: "198.18.0.42", family: 4 }]);
+    await expect(unrestrictedHost.request({ url: "https://model.example.test/v1/models" }))
+      .rejects.toMatchObject({ code: "private_network_not_allowed" });
+    await expect(literalAddress.request({ url: "https://198.18.0.42/v1/models" }))
+      .rejects.toMatchObject({ code: "private_network_not_allowed" });
+    await expect(mixedPrivateAnswer.request({ url: "https://model.example.test/v1/models" }))
+      .rejects.toMatchObject({ code: "private_network_not_allowed" });
+  });
+
   it("pins the adapter input to checked addresses and rechecks redirect targets", async () => {
     const requests: Array<{ address: string; url: string }> = [];
     const policy = new OutboundRequestPolicy({

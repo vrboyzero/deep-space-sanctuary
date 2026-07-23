@@ -18,9 +18,17 @@ import {
   type ExternalIngestBatchResult,
 } from "./external-ingest-transaction.js";
 import {
+  installExperienceDerivedSearchSchema as installExperienceDerivedSearchSchemaInDb,
+  readExperienceDerivedCandidates,
+  searchExperienceDerivedCandidateIds as searchExperienceDerivedCandidateIdsInDb,
+  type ExperienceDerivedCandidate,
+} from "./experience-derived-search.js";
+import { readTaskDerivedDetailBatchRows } from "./task-derived-detail-batch.js";
+import {
   publishMemoryTreeKindTransaction,
   type MemoryTreeKindPublication,
 } from "./memory-tree-publication.js";
+import { readMemoryTreeNodeDetailsBatch } from "./memory-tree-detail-batch.js";
 import { readTaskDetailBatchRows } from "./task-detail-batch.js";
 import {
   buildMemoryExactDedupApplyPlan,
@@ -41,6 +49,7 @@ import type {
   ResumeContextSnapshot,
   TaskActivityKind,
   TaskActivityRecord,
+  TaskDerivedDetail,
   TaskActivityState,
   TaskMemoryRelation,
   TaskRecord,
@@ -50,6 +59,7 @@ import type {
   TaskToolCallSummary,
   TaskWorkRecapSnapshot,
 } from "./task-types.js";
+
 import type {
   ExperienceAssetType,
   ExperienceCandidate,
@@ -74,6 +84,7 @@ import type {
   MemoryTreeEdgeListFilter,
   MemoryTreeEdgeRecord,
   MemoryTreeNodeKind,
+  MemoryTreeNodeDetailResult,
   MemoryTreeNodeListFilter,
   MemoryTreeNodeRecord,
   MemoryTreeReportListFilter,
@@ -101,6 +112,26 @@ import {
   type ProfileStateEventFilter,
   type UpsertProfileStateEntryInput,
 } from "./profile-state-types.js";
+
+export type EmbeddingCacheRetentionPolicy = {
+  maxAgeMs: number;
+  maxEntries: number;
+  maxBytes: number;
+  nowMs?: number;
+};
+
+export type EmbeddingCachePruneResult = {
+  expired: number;
+  overflow: number;
+  remaining: number;
+  remainingBytes: number;
+};
+
+export type EmbeddingCacheStatus = {
+  entryCount: number;
+  totalBytes: number;
+  oldestCreatedAt?: string;
+};
 
 const KNOWN_MEMORY_CATEGORIES = ["preference", "experience", "fact", "decision", "entity", "other"] as const;
 const TASK_CHANGE_SEQ_META_KEY = "task_change_seq";
@@ -502,6 +533,8 @@ export class MemoryStore {
   private vecDims: number | null = null;
   /** 当前 SQLite 是否支持 FTS5（better-sqlite3 默认编译 FTS5） */
   private hasFts5: boolean;
+  /** Experience 派生检索的 FTS schema 已安装且旧库 rebuild 成功。 */
+  private hasExperienceFts = false;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -555,6 +588,7 @@ export class MemoryStore {
       // 否则会出现"关键词检索命中为 0"的假性失效。
       this.ensureFtsRebuiltIfNeeded();
       this.ensureTaskFtsRebuiltIfNeeded();
+      this.hasExperienceFts = this.installExperienceDerivedSearchSchema().ready;
     } catch (err) {
       const msg = String((err as Error).message ?? err);
       if (msg.includes("fts5") || msg.includes("no such module")) {
@@ -1123,6 +1157,26 @@ export class MemoryStore {
     return details;
   }
 
+  /**
+   * 给派生检索使用的轻量批量投影，不读取 memory link 或 experience usage。
+   */
+  getTaskDerivedDetails(taskIds: string[]): TaskDerivedDetail[] {
+    this.ensureOpen();
+    const batch = readTaskDerivedDetailBatchRows(this.db, taskIds);
+    const details: TaskDerivedDetail[] = [];
+
+    for (const taskId of batch.taskIds) {
+      const taskRow = batch.taskRowsById.get(taskId);
+      if (!taskRow) continue;
+      details.push(rowToTaskDerivedDetail(
+        taskRow,
+        batch.recentActivityTitleRowsByTaskId.get(taskId) ?? [],
+      ));
+    }
+
+    return details;
+  }
+
   getTaskByConversation(conversationId: string): TaskRecord | null {
     this.ensureOpen();
     const stmt = this.db.prepare(`
@@ -1371,6 +1425,31 @@ export class MemoryStore {
     `);
     const rows = stmt.all(...params, limit, safeOffset) as Record<string, unknown>[];
     return rows.map(rowToExperienceCandidate);
+  }
+
+  /**
+   * 先用 FTS 或受控 title/summary fallback 取得 Experience 候选 ID。
+   * 不读取候选正文；FTS 不可用时允许降低正文命中召回，但绝不回退为全表 content scan。
+   */
+  searchExperienceDerivedCandidateIds(
+    query: string,
+    limit = 24,
+    filter?: ExperienceCandidateListFilter,
+  ): string[] {
+    this.ensureOpen();
+    return searchExperienceDerivedCandidateIdsInDb({
+      db: this.db,
+      query,
+      limit,
+      filter,
+      useFts: this.hasExperienceFts,
+    });
+  }
+
+  /** 只读取 Experience 派生 surface 所需的有限字段和有界正文前缀。 */
+  getExperienceDerivedCandidates(candidateIds: string[]): ExperienceDerivedCandidate[] {
+    this.ensureOpen();
+    return readExperienceDerivedCandidates(this.db, candidateIds);
   }
 
   getExperienceCandidateStats(filter?: ExperienceCandidateListFilter): ExperienceCandidateStats {
@@ -1733,6 +1812,19 @@ export class MemoryStore {
       LIMIT 1
     `).get(nodeId) as Record<string, unknown> | undefined;
     return row ? rowToMemoryNodeRecord(row) : null;
+  }
+
+  getMemoryTreeNodeDetails(
+    nodeIds: string[],
+    options: { chunkLimit?: number } = {},
+  ): Map<string, MemoryTreeNodeDetailResult> {
+    this.ensureOpen();
+    return readMemoryTreeNodeDetailsBatch(this.db, nodeIds, options, {
+      node: rowToMemoryNodeRecord,
+      edge: rowToMemoryEdgeRecord,
+      chunk: (row) => rowToSearchResult(row, 1),
+      source: rowToMemorySourceRecord,
+    });
   }
 
   deleteMemoryTreeNodesByKind(kind: MemoryTreeNodeKind): void {
@@ -3433,13 +3525,79 @@ export class MemoryStore {
     return vectorFromBuffer(row.embedding);
   }
 
+  /** 只返回 cache 治理所需的匿名聚合；原始时间仅供领域 Doctor 转换为年龄。 */
+  getEmbeddingCacheStatus(): EmbeddingCacheStatus {
+    this.ensureOpen();
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) AS entry_count,
+        COALESCE(SUM(length(embedding)), 0) AS total_bytes,
+        MIN(created_at) AS oldest_created_at
+      FROM embedding_cache
+    `).get() as {
+      entry_count: number;
+      total_bytes: number;
+      oldest_created_at: string | null;
+    };
+    return {
+      entryCount: row.entry_count,
+      totalBytes: row.total_bytes,
+      ...(row.oldest_created_at ? { oldestCreatedAt: row.oldest_created_at } : {}),
+    };
+  }
+
+  /**
+   * 清理可重建的 passage embedding cache。读取不更新 created_at，故按最近写入顺序保留，
+   * 不将其表述为读取 LRU；chunks_vec 中已经索引的向量不受影响。
+   */
+  pruneEmbeddingCache(policy: EmbeddingCacheRetentionPolicy): EmbeddingCachePruneResult {
+    this.ensureOpen();
+    const retention = normalizeEmbeddingCacheRetentionPolicy(policy);
+    const cutoff = new Date(retention.nowMs - retention.maxAgeMs).toISOString();
+    const expired = this.db.prepare(`
+      DELETE FROM embedding_cache
+      WHERE created_at < ?
+    `).run(cutoff).changes;
+    const overflow = this.db.prepare(`
+      WITH ranked AS (
+        SELECT
+          content_hash,
+          ROW_NUMBER() OVER (ORDER BY created_at DESC, content_hash DESC) AS recency_rank,
+          SUM(length(embedding)) OVER (
+            ORDER BY created_at DESC, content_hash DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS retained_bytes
+        FROM embedding_cache
+      )
+      DELETE FROM embedding_cache
+      WHERE content_hash IN (
+        SELECT content_hash
+        FROM ranked
+        WHERE recency_rank > ? OR retained_bytes > ?
+      )
+    `).run(retention.maxEntries, retention.maxBytes).changes;
+    const remaining = this.db.prepare(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(length(embedding)), 0) AS bytes
+      FROM embedding_cache
+    `).get() as { count: number; bytes: number };
+
+    return {
+      expired,
+      overflow,
+      remaining: remaining.count,
+      remainingBytes: remaining.bytes,
+    };
+  }
+
   /**
    * 向量搜索：返回与查询向量最相似的 chunks
    * filter 通过 post-filter 实现（chunks_vec 无 metadata 列）
    */
   searchVector(queryVec: EmbeddingVector, limit = 10, filter?: MemorySearchFilter, includeContent = true): MemorySearchResult[] {
     this.ensureOpen();
-    if (!this.vecDims) return [];
+    // vec0 rejects a mismatched query vector. During a provider dimension migration the
+    // memory manager may receive a new query before its derived vector table is rebuilt.
+    if (!this.vecDims || queryVec.length !== this.vecDims) return [];
 
     const blob = vectorToBuffer(queryVec);
     const { clause: filterClause, params: filterParams } = this.buildFilterClause(filter);
@@ -3706,6 +3864,18 @@ export class MemoryStore {
    * 兼容老库：如果 chunks 与 chunks_fts 数量不一致，则执行一次 rebuild。
    * 这能修复"FTS 表后加但未 rebuild 导致的关键词检索失效"以及"部分数据未被索引"的问题。
    */
+  private installExperienceDerivedSearchSchema(): { ready: boolean; rebuilt: boolean } {
+    const result = installExperienceDerivedSearchSchemaInDb({
+      db: this.db,
+      getMeta: (key) => this.getMeta(key),
+      setMeta: (key, value) => this.setMeta(key, value),
+    });
+    if (!result.ready) {
+      console.warn("[belldandy-memory] Experience derived FTS is unavailable; using bounded title/summary fallback.");
+    }
+    return result;
+  }
+
   private ensureFtsRebuiltIfNeeded(): void {
     if (!this.hasFts5) return;
     try {
@@ -4086,6 +4256,33 @@ function rowToExperienceUsageStats(row: Record<string, unknown>): ExperienceUsag
   };
 }
 
+function rowToTaskDerivedDetail(
+  row: Record<string, unknown>,
+  recentActivityRows: Record<string, unknown>[],
+): TaskDerivedDetail {
+  return {
+    id: String(row.id),
+    conversationId: String(row.conversation_id),
+    agentId: optionalString(row.agent_id),
+    source: String(row.source) as TaskSource,
+    title: optionalString(row.title),
+    objective: optionalString(row.objective),
+    summary: optionalString(row.summary),
+    reflection: optionalString(row.reflection),
+    toolCalls: safeParseToolCalls(row.tool_calls_json),
+    artifactPaths: safeParseStringArray(row.artifact_paths_json),
+    status: String(row.status) as TaskStatus,
+    startedAt: String(row.started_at),
+    finishedAt: optionalString(row.finished_at),
+    updatedAt: String(row.updated_at),
+    workRecap: safeParseTaskWorkRecap(asNullableString(row.work_recap_json)),
+    resumeContext: safeParseResumeContext(asNullableString(row.resume_context_json)),
+    recentActivityTitles: recentActivityRows
+      .map((activity) => optionalString(activity.title))
+      .filter((title): title is string => Boolean(title)),
+  };
+}
+
 function toTaskExperienceUsageSummary(
   usage: ExperienceUsage,
   statsRow?: Record<string, unknown>,
@@ -4344,4 +4541,24 @@ function asNullableString(value: unknown): string | null {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeEmbeddingCacheRetentionPolicy(policy: EmbeddingCacheRetentionPolicy): Required<EmbeddingCacheRetentionPolicy> {
+  const maxAgeMs = Math.floor(policy.maxAgeMs);
+  const maxEntries = Math.floor(policy.maxEntries);
+  const maxBytes = Math.floor(policy.maxBytes);
+  const nowMs = Math.floor(policy.nowMs ?? Date.now());
+  if (!Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) {
+    throw new Error("Embedding cache retention maxAgeMs must be a positive safe integer.");
+  }
+  if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+    throw new Error("Embedding cache retention maxEntries must be a positive safe integer.");
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("Embedding cache retention maxBytes must be a positive safe integer.");
+  }
+  if (!Number.isSafeInteger(nowMs)) {
+    throw new Error("Embedding cache retention nowMs must be a safe integer.");
+  }
+  return { maxAgeMs, maxEntries, maxBytes, nowMs };
 }

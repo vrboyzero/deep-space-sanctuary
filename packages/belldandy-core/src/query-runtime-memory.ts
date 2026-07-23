@@ -199,7 +199,7 @@ export async function handleConversationTranscriptExportWithQueryRuntime(
 
 export async function handleConversationTimelineGetWithQueryRuntime(
   ctx: QueryRuntimeMemoryContext,
-  params: { conversationId: string; previewChars?: number },
+  params: { conversationId: string; previewChars?: number; cursor?: string; pageSize?: number },
 ): Promise<GatewayResFrame> {
   const runtime = new QueryRuntime({
     method: "conversation.timeline.get" as const,
@@ -212,18 +212,27 @@ export async function handleConversationTimelineGetWithQueryRuntime(
       conversationId: params.conversationId,
       detail: {
         previewChars: params.previewChars,
+        pageSize: params.pageSize,
+        cursorProvided: Boolean(params.cursor),
       },
     });
 
-    const timeline = await ctx.conversationStore.buildConversationTimeline(params.conversationId, {
-      previewChars: params.previewChars,
-    });
+    const timeline = params.cursor !== undefined || params.pageSize !== undefined
+      ? await ctx.conversationStore.buildConversationTimelinePage(params.conversationId, {
+        cursor: params.cursor,
+        pageSize: params.pageSize,
+        previewChars: params.previewChars,
+      })
+      : await ctx.conversationStore.buildConversationTimeline(params.conversationId, {
+        previewChars: params.previewChars,
+      });
     queryRuntime.mark("timeline_built", {
       conversationId: params.conversationId,
       detail: {
         itemCount: timeline.summary.itemCount,
         warningCount: timeline.warnings.length,
-        restoreSource: timeline.summary.restore.source,
+        ...("restore" in timeline.summary ? { restoreSource: timeline.summary.restore.source } : {}),
+        ...("page" in timeline ? { cursorStatus: timeline.page.cursorStatus } : {}),
       },
     });
     queryRuntime.mark("completed", { conversationId: params.conversationId });

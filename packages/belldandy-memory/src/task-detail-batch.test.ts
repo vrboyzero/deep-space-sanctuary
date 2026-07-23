@@ -109,6 +109,70 @@ describe("task detail batch projection", () => {
       sourceCandidateTitle: "Batch projection method",
     });
   });
+
+  it("returns bounded derived details in requested order without full task detail joins", () => {
+    const taskA = {
+      ...createTask("task-derived-a", "conv-derived-a", "2026-07-17T10:00:00.000Z"),
+      reflection: "derived reflection",
+      toolCalls: [{ toolName: "file_read", success: true }],
+      artifactPaths: ["/tmp/derived-a.md"],
+    };
+    const taskB = createTask("task-derived-b", "conv-derived-b", "2026-07-17T11:00:00.000Z");
+    store.createTask(taskA);
+    store.createTask(taskB);
+
+    for (let index = 0; index < 5; index += 1) {
+      store.createTaskActivity(createActivity(taskA, index));
+    }
+    store.createTaskActivity({
+      ...createActivity(taskA, 5),
+      kind: "task_completed",
+      title: "must be excluded",
+    });
+
+    const actual = store.getTaskDerivedDetails([taskB.id, "missing-task", taskA.id, taskB.id, "  "]);
+
+    expect(actual.map((task) => task.id)).toEqual([taskB.id, taskA.id]);
+    expect(actual[1]).toMatchObject({
+      id: taskA.id,
+      conversationId: taskA.conversationId,
+      reflection: "derived reflection",
+      toolCalls: [{ toolName: "file_read", success: true }],
+      artifactPaths: ["/tmp/derived-a.md"],
+      recentActivityTitles: [
+        "task-derived-a activity 4",
+        "task-derived-a activity 3",
+        "task-derived-a activity 2",
+      ],
+    });
+    expect(Object.keys(actual[1] ?? {}).sort()).toEqual([
+      "agentId",
+      "artifactPaths",
+      "conversationId",
+      "finishedAt",
+      "id",
+      "objective",
+      "recentActivityTitles",
+      "reflection",
+      "resumeContext",
+      "source",
+      "startedAt",
+      "status",
+      "summary",
+      "title",
+      "toolCalls",
+      "updatedAt",
+      "workRecap",
+    ]);
+  });
+
+  it("splits derived detail requests before SQLite bind parameter limits", () => {
+    const requestedIds = Array.from({ length: 901 }, (_, index) => `task-derived-batch-${index}`);
+
+    const actual = store.getTaskDerivedDetails(requestedIds);
+
+    expect(actual).toEqual([]);
+  });
 });
 
 function getLegacyTaskDetail(store: MemoryStore, taskId: string): TaskExperienceDetail | null {

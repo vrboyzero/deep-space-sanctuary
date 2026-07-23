@@ -27,6 +27,8 @@ export interface EmbeddingProvider {
     embedPassage?(text: string, context?: EmbeddingRequestContext): Promise<EmbeddingVector>;
     /** 可选 metadata，不携带密钥或请求正文。 */
     readonly dimension?: number;
+    /** Provider 的维度由首个真实响应协商，而不是由静态 metadata 声明。 */
+    readonly discoverDimensionFromResponse?: boolean;
     readonly modelName?: string;
 }
 

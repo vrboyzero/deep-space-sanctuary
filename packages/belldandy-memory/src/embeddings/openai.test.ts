@@ -51,6 +51,18 @@ describe("OpenAIEmbeddingProvider outbound transport", () => {
     openAIClientOptions.length = 0;
   });
 
+  it("only declares a default dimension for text-embedding-3 models", () => {
+    const compatibleProvider = new OpenAIEmbeddingProvider({
+      model: "text-embedding-v4",
+    });
+    const openAIProvider = new OpenAIEmbeddingProvider({
+      model: "text-embedding-3-small",
+    });
+
+    expect(compatibleProvider.dimension).toBeUndefined();
+    expect(openAIProvider.dimension).toBe(1536);
+  });
+
   it("returns embeddings through the configured pinned endpoint policy", async () => {
     const request = vi.fn(async (_input: OutboundRequestInput) => ({
       response: Response.json({ data: [{ embedding: [0.25, -0.5] }] }),

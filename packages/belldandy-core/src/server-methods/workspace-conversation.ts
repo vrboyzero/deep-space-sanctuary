@@ -474,19 +474,30 @@ export async function handleWorkspaceConversationMethod(
       const params = req.params as {
         conversationId?: string;
         previewChars?: number;
+        cursor?: string;
+        pageSize?: number;
       } | undefined;
       const conversationId = typeof params?.conversationId === "string" ? params.conversationId.trim() : "";
       const previewChars = typeof params?.previewChars === "number" && Number.isFinite(params.previewChars)
         ? Math.max(24, Math.floor(params.previewChars))
         : undefined;
+      const cursor = typeof params?.cursor === "string" && params.cursor.trim()
+        ? params.cursor.trim()
+        : undefined;
+      const pageSize = typeof params?.pageSize === "number" && Number.isFinite(params.pageSize)
+        ? Math.max(1, Math.min(500, Math.floor(params.pageSize)))
+        : undefined;
 
       if (!conversationId) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "conversationId is required" } };
       }
+      if (typeof params?.cursor === "string" && params.cursor.length > 2048) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "cursor is too long" } };
+      }
 
       return handleConversationTimelineGetWithQueryRuntime(
         createConversationRuntimeContext(req.id, ctx),
-        { conversationId, previewChars },
+        { conversationId, previewChars, cursor, pageSize },
       );
     }
 

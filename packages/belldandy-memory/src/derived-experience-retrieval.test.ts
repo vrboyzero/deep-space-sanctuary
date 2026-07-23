@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MemoryManager } from "./manager.js";
 
@@ -64,6 +64,10 @@ describe("derived experience retrieval integration", () => {
         reviewedAt: "2026-05-21T10:10:00.000Z",
         acceptedAt: "2026-05-21T10:12:00.000Z",
       });
+      const legacyListSpy = vi.spyOn(manager, "listExperienceCandidates");
+      const store = (manager as any).store;
+      const candidateIdSpy = vi.spyOn(store, "searchExperienceDerivedCandidateIds");
+      const detailSpy = vi.spyOn(store, "getExperienceDerivedCandidates");
 
       const execution = await manager.searchWithDiagnostics("viewer lazy loading", {
         limit: 3,
@@ -88,6 +92,24 @@ describe("derived experience retrieval integration", () => {
       expect(execution.diagnostics.stages.raw.topHits[0]).toMatchObject({
         id: "derived-experience:exp_viewer_lazy_loading",
         sourceClass: "curated",
+      });
+      expect(legacyListSpy).not.toHaveBeenCalled();
+      expect(candidateIdSpy).toHaveBeenCalledWith("viewer lazy loading", 24, expect.objectContaining({
+        status: ["accepted", "published"],
+        synthesisConsumed: false,
+      }));
+      expect(detailSpy).toHaveBeenCalledTimes(1);
+      expect(execution.diagnostics.derived?.experience).toMatchObject({
+        admitted: true,
+        candidateCount: 1,
+        detailCount: 1,
+        readByteCount: expect.any(Number),
+        resultCount: 1,
+        skipped: false,
+        deadline: {
+          exceededBeforeStart: false,
+          exceededAfterCompletion: false,
+        },
       });
     } finally {
       manager.close();

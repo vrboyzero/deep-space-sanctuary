@@ -133,6 +133,30 @@ export interface TaskRecord {
   updatedAt: string;
 }
 
+/**
+ * 派生检索使用的有界 Task 投影。
+ * 它故意不包含 session、memory link、experience usage 或其他完整详情字段。
+ */
+export interface TaskDerivedDetail {
+  id: string;
+  conversationId: string;
+  title?: string;
+  objective?: string;
+  summary?: string;
+  reflection?: string;
+  status: TaskStatus;
+  source: TaskSource;
+  startedAt: string;
+  finishedAt?: string;
+  updatedAt: string;
+  agentId?: string;
+  toolCalls?: TaskToolCallSummary[];
+  artifactPaths?: string[];
+  workRecap?: TaskWorkRecapSnapshot;
+  resumeContext?: ResumeContextSnapshot;
+  recentActivityTitles: string[];
+}
+
 export interface TaskSearchFilter {
   agentId?: string;
   status?: TaskStatus | TaskStatus[];

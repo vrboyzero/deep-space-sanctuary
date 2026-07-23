@@ -114,6 +114,7 @@ export {
   listToolContracts,
   withToolContract,
 } from "./tool-contract.js";
+export type { ToolExecutionAdmission } from "./tool-contract.js";
 export {
   buildToolBehaviorContractSummary,
   getToolBehaviorContract,

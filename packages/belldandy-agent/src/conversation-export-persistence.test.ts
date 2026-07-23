@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConversationStore } from "./conversation.js";
 import { conversationMetaAsyncFs } from "./conversation-tool-artifact-persistence.js";
+import { sessionTranscriptReadStreamFs } from "./session-transcript.js";
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
     let resolve!: () => void;
@@ -46,7 +47,7 @@ describe("ConversationStore export persistence gate", () => {
                 content: "persist before export",
             },
         });
-        const transcriptRead = vi.spyOn(store, "getSessionTranscriptEvents");
+        const transcriptRead = vi.spyOn(sessionTranscriptReadStreamFs, "createReadStream");
 
         try {
             await vi.waitFor(() => expect(conversationMetaAsyncFs.writeFile).toHaveBeenCalled());

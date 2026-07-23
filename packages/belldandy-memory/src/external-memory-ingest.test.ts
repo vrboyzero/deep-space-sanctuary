@@ -127,15 +127,10 @@ describe("external memory ingest boundaries", () => {
       return;
     }
 
-    const materialized = await materializeObsidianMarkdownChunks(preview, {
+    await expect(materializeObsidianMarkdownChunks(preview, {
       appliedAt: "2026-07-17T00:00:00.000Z",
       reportId: "report-external-boundary",
-    });
-
-    expect(materialized.chunksBySourcePath).toEqual([]);
-    expect(materialized.skippedFiles).toEqual([
-      expect.objectContaining({ path: notePath, reason: "symlink_not_allowed" }),
-    ]);
+    })).rejects.toThrow(`external ingest snapshot changed since preview: ${notePath}`);
   });
 
   it("rejects the entire materialization when the configured root identity changes", async () => {
@@ -152,5 +147,23 @@ describe("external memory ingest boundaries", () => {
       appliedAt: "2026-07-17T00:00:00.000Z",
       reportId: "report-external-root-replaced",
     })).rejects.toThrow("external ingest root changed since preview");
+  });
+
+  it("rejects the entire multi-file materialization when one approved file changes after preview", async () => {
+    const stablePath = path.join(vaultDir, "a-stable.md");
+    const changedPath = path.join(vaultDir, "z-changed.md");
+    await fs.writeFile(stablePath, "# Stable\n\npreviewed stable note", "utf-8");
+    await fs.writeFile(changedPath, "# Changed\n\npreviewed changed note", "utf-8");
+    const preview = await previewObsidianMarkdownDirectoryIngest(createSource());
+    expect(preview.fileManifest
+      .filter((file) => file.status === "eligible")
+      .map((file) => file.path)).toEqual([stablePath, changedPath]);
+
+    await fs.writeFile(changedPath, "# Changed\n\nreplacement content after review", "utf-8");
+
+    await expect(materializeObsidianMarkdownChunks(preview, {
+      appliedAt: "2026-07-23T00:00:00.000Z",
+      reportId: "report-external-snapshot-changed",
+    })).rejects.toThrow(`external ingest snapshot changed since preview: ${changedPath}`);
   });
 });

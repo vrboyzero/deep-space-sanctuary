@@ -27,7 +27,8 @@ export interface OpenAIEmbeddingOptions {
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     private openai: OpenAI;
     readonly modelName: string;
-    readonly dimension: number;
+    readonly dimension: number | undefined;
+    readonly discoverDimensionFromResponse: boolean;
     private queryPrefix: string;
     private passagePrefix: string;
 
@@ -43,7 +44,12 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         });
         this.modelName = options.model || "text-embedding-3-small";
         // text-embedding-3-small default is 1536, but can be scaled down. 3-large is 3072.
-        this.dimension = options.dimension || 1536;
+        // OpenAI-compatible models may have provider-specific dimensions. Only declare the
+        // OpenAI text-embedding-3 default; otherwise let MemoryManager derive it from a real response.
+        this.dimension = this.modelName.includes("text-embedding-3")
+            ? options.dimension || 1536
+            : options.dimension;
+        this.discoverDimensionFromResponse = this.dimension === undefined;
         this.queryPrefix = options.queryPrefix ?? "";
         this.passagePrefix = options.passagePrefix ?? "";
 

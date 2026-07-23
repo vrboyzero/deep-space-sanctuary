@@ -1,28 +1,24 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
+import {
+  buildDerivedRetrievalReport,
+  hasDerivedRetrievalDeadlinePassed,
+  type DerivedRetrievalExecution,
+} from "./derived-retrieval-report.js";
 import { resolveMemorySourceIdentity } from "./memory-source-registry.js";
 import type { DreamSessionDigest, DreamSessionMemory } from "./dream-types.js";
+import type {
+  SessionArtifactInventoryItem,
+  SessionArtifactInventoryProvider,
+} from "./session-artifact-inventory.js";
 import type { MemorySearchFilter, MemorySearchResult, MemoryType } from "./types.js";
 
-const SESSION_DIGEST_SUFFIX = ".digest.json";
-const SESSION_MEMORY_SUFFIX = ".session-memory.json";
-const SESSION_META_SUFFIX = ".meta.json";
-const SESSION_TRANSCRIPT_SUFFIX = ".transcript.jsonl";
-const SESSION_MESSAGES_SUFFIX = ".jsonl";
-const DEFAULT_SESSION_SCAN_LIMIT = 24;
+const DERIVED_SESSION_CANDIDATE_LIMIT = 24;
+const DERIVED_SESSION_READ_CONCURRENCY = 4;
+const DERIVED_SESSION_FILE_BYTE_LIMIT = 64 * 1024;
+const DERIVED_SESSION_TOTAL_BYTE_LIMIT = 256 * 1024;
 
-type SessionArtifactCandidate = {
-  safeConversationId: string;
-  newestFileMs: number;
-  hasDigest: boolean;
-  hasSessionMemory: boolean;
-  digestPath?: string;
-  sessionMemoryPath?: string;
-  metaPath?: string;
-  transcriptPath?: string;
-  messagesPath?: string;
-};
+type SessionArtifactCandidate = SessionArtifactInventoryItem;
 
 type SessionDerivedSurfaceKind =
   | "session_memory_resume"
@@ -44,48 +40,98 @@ type SessionDerivedSurface = {
 };
 
 export async function collectDerivedSessionSearchResults(input: {
-  stateDir: string;
+  sessionArtifactInventory?: SessionArtifactInventoryProvider;
   query: string;
   limit?: number;
   filter?: MemorySearchFilter;
   includeContent?: boolean;
   signal?: AbortSignal;
-}): Promise<MemorySearchResult[]> {
+  deadlineMs?: number;
+}): Promise<DerivedRetrievalExecution> {
+  if (hasDerivedRetrievalDeadlinePassed(input.deadlineMs)) {
+    return {
+      items: [],
+      report: buildDerivedRetrievalReport({
+        admitted: false,
+        skipped: true,
+        skipReason: "deadline",
+        deadlineExceededBeforeStart: true,
+      }),
+    };
+  }
   input.signal?.throwIfAborted();
   const normalizedQuery = normalizeQuery(input.query);
   if (!normalizedQuery) {
-    return [];
+    return {
+      items: [],
+      report: buildDerivedRetrievalReport({
+        admitted: false,
+        skipped: true,
+        skipReason: "empty_query",
+      }),
+    };
   }
   if (input.filter?.scope === "shared") {
-    return [];
+    return {
+      items: [],
+      report: buildDerivedRetrievalReport({
+        admitted: false,
+        skipped: true,
+        skipReason: "scope",
+      }),
+    };
   }
   if (!allowsSessionMemoryType(input.filter?.memoryType)) {
-    return [];
+    return {
+      items: [],
+      report: buildDerivedRetrievalReport({
+        admitted: false,
+        skipped: true,
+        skipReason: "memory_type",
+      }),
+    };
   }
 
-  const sessionsDir = path.join(input.stateDir, "sessions");
-  const candidates = await listSessionArtifactCandidates(sessionsDir, input.signal);
+  const candidatePage = await listSessionArtifactCandidates(input.sessionArtifactInventory, input.limit, input.signal);
+  if (candidatePage.unavailable) {
+    return {
+      items: [],
+      report: buildDerivedRetrievalReport({
+        admitted: false,
+        skipped: true,
+        skipReason: "unavailable",
+      }),
+    };
+  }
+  const candidates = candidatePage.items;
   if (candidates.length <= 0) {
-    return [];
+    return {
+      items: [],
+      report: buildDerivedRetrievalReport({
+        admitted: true,
+      }),
+    };
   }
 
   const includeContent = input.includeContent !== false;
   const limit = Math.max(1, Math.min(4, Math.floor(input.limit ?? 3)));
-  const surfaces = (await Promise.all(
-    candidates
-      .slice(0, Math.max(limit * 6, 8))
-      .map((candidate) => buildBestSessionSurface({
-        candidate,
-        query: normalizedQuery,
-        filter: input.filter,
-        signal: input.signal,
-      })),
+  const readBudget = new SessionArtifactReadBudget(DERIVED_SESSION_TOTAL_BYTE_LIMIT);
+  const surfaces = (await mapWithConcurrency(
+    candidates.slice(0, Math.min(DERIVED_SESSION_CANDIDATE_LIMIT, Math.max(limit * 6, 8))),
+    DERIVED_SESSION_READ_CONCURRENCY,
+    (candidate) => buildBestSessionSurface({
+      candidate,
+      query: normalizedQuery,
+      filter: input.filter,
+      signal: input.signal,
+      readBudget,
+    }),
   ))
     .filter((item): item is SessionDerivedSurface => Boolean(item))
     .sort(compareSessionDerivedSurface)
     .slice(0, limit);
 
-  return surfaces.map((surface) => {
+  const items = surfaces.map((surface) => {
     const identity = resolveMemorySourceIdentity({
       id: `derived-session:${surface.safeConversationId}:${surface.kind}`,
       sourceKind: surface.sourceKind,
@@ -122,99 +168,43 @@ export async function collectDerivedSessionSearchResults(input: {
       },
     } satisfies MemorySearchResult;
   });
+  return {
+    items,
+    report: buildDerivedRetrievalReport({
+      admitted: true,
+      candidateCount: candidates.length,
+      detailCount: readBudget.detailCount,
+      readByteCount: readBudget.readByteCount,
+      resultCount: items.length,
+      deadlineExceededAfterCompletion: hasDerivedRetrievalDeadlinePassed(input.deadlineMs),
+    }),
+  };
 }
 
 async function listSessionArtifactCandidates(
-  sessionsDir: string,
+  inventory: SessionArtifactInventoryProvider | undefined,
+  requestedLimit: number | undefined,
   signal?: AbortSignal,
-): Promise<SessionArtifactCandidate[]> {
-  try {
-    signal?.throwIfAborted();
-    const entries = await fs.readdir(sessionsDir, { withFileTypes: true });
-    signal?.throwIfAborted();
-    const groups = new Map<string, SessionArtifactCandidate>();
-
-    await Promise.all(entries.map(async (entry) => {
-      signal?.throwIfAborted();
-      if (!entry.isFile()) return;
-      const fileName = entry.name;
-      const suffix = resolveArtifactSuffix(fileName);
-      if (!suffix) return;
-
-      const safeConversationId = fileName.slice(0, -suffix.length);
-      if (!safeConversationId) return;
-
-      const filePath = path.join(sessionsDir, fileName);
-      let newestFileMs = 0;
-      try {
-        const stat = await fs.stat(filePath);
-        signal?.throwIfAborted();
-        newestFileMs = Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : 0;
-      } catch {
-        signal?.throwIfAborted();
-        newestFileMs = 0;
-      }
-
-      const existing = groups.get(safeConversationId);
-      const candidate = existing ?? {
-        safeConversationId,
-        newestFileMs: 0,
-        hasDigest: false,
-        hasSessionMemory: false,
-      };
-      candidate.newestFileMs = Math.max(candidate.newestFileMs, newestFileMs);
-      if (suffix === SESSION_DIGEST_SUFFIX) {
-        candidate.hasDigest = true;
-        candidate.digestPath = filePath;
-      }
-      if (suffix === SESSION_MEMORY_SUFFIX) {
-        candidate.hasSessionMemory = true;
-        candidate.sessionMemoryPath = filePath;
-      }
-      if (suffix === SESSION_META_SUFFIX) {
-        candidate.metaPath = filePath;
-      }
-      if (suffix === SESSION_TRANSCRIPT_SUFFIX) {
-        candidate.transcriptPath = filePath;
-      }
-      if (suffix === SESSION_MESSAGES_SUFFIX && !fileName.endsWith(SESSION_TRANSCRIPT_SUFFIX)) {
-        candidate.messagesPath = filePath;
-      }
-      groups.set(safeConversationId, candidate);
-    }));
-    signal?.throwIfAborted();
-
-    return [...groups.values()]
-      .filter((item) => item.hasDigest || item.hasSessionMemory)
-      .sort((left, right) => right.newestFileMs - left.newestFileMs)
-      .slice(0, DEFAULT_SESSION_SCAN_LIMIT);
-  } catch (error) {
-    signal?.throwIfAborted();
-    const code = (error as NodeJS.ErrnoException | undefined)?.code;
-    if (code === "ENOENT") {
-      return [];
-    }
-    throw error;
+): Promise<{ items: SessionArtifactCandidate[]; unavailable: boolean }> {
+  signal?.throwIfAborted();
+  if (!inventory) {
+    return { items: [], unavailable: true };
   }
-}
-
-function resolveArtifactSuffix(fileName: string): string | undefined {
-  if (fileName.endsWith(SESSION_MEMORY_SUFFIX)) {
-    return SESSION_MEMORY_SUFFIX;
+  const limit = Math.min(
+    DERIVED_SESSION_CANDIDATE_LIMIT,
+    Math.max(8, Math.floor(requestedLimit ?? 3) * 6),
+  );
+  const page = await inventory.listPage({ limit });
+  signal?.throwIfAborted();
+  if (page.status !== "ready") {
+    return { items: [], unavailable: true };
   }
-  if (fileName.endsWith(SESSION_DIGEST_SUFFIX)) {
-    return SESSION_DIGEST_SUFFIX;
-  }
-  if (fileName.endsWith(SESSION_META_SUFFIX)) {
-    return SESSION_META_SUFFIX;
-  }
-  if (fileName.endsWith(SESSION_TRANSCRIPT_SUFFIX)) {
-    return SESSION_TRANSCRIPT_SUFFIX;
-  }
-  if (fileName.endsWith(SESSION_MESSAGES_SUFFIX)) {
-    return SESSION_MESSAGES_SUFFIX;
-  }
-  return undefined;
+  return {
+    items: page.items
+      .filter((item) => Boolean(item.digestPath || item.sessionMemoryPath))
+      .slice(0, DERIVED_SESSION_CANDIDATE_LIMIT),
+    unavailable: false,
+  };
 }
 
 async function buildBestSessionSurface(input: {
@@ -222,22 +212,22 @@ async function buildBestSessionSurface(input: {
   query: string;
   filter?: MemorySearchFilter;
   signal?: AbortSignal;
+  readBudget: SessionArtifactReadBudget;
 }): Promise<SessionDerivedSurface | null> {
   input.signal?.throwIfAborted();
   const [sessionDigest, sessionMemory] = await Promise.all([
     input.candidate.digestPath
-      ? readJsonFile<DreamSessionDigest>(input.candidate.digestPath, input.signal)
+      ? readJsonFile<DreamSessionDigest>(input.candidate.digestPath, input.readBudget, input.signal)
       : Promise.resolve(undefined),
     input.candidate.sessionMemoryPath
-      ? readJsonFile<DreamSessionMemory>(input.candidate.sessionMemoryPath, input.signal)
+      ? readJsonFile<DreamSessionMemory>(input.candidate.sessionMemoryPath, input.readBudget, input.signal)
       : Promise.resolve(undefined),
   ]);
   input.signal?.throwIfAborted();
-  const conversationId = await resolveConversationId(input.candidate, sessionDigest, input.signal);
 
   const surfaces = buildSessionSurfaces({
     candidate: input.candidate,
-    conversationId,
+    conversationId: input.candidate.conversationId,
     sessionDigest,
     sessionMemory,
   });
@@ -262,7 +252,10 @@ function buildSessionSurfaces(input: {
 
   if (input.sessionMemory) {
     const updatedAt = toIsoTimestamp(input.sessionMemory.updatedAt) ?? toIsoTimestamp(input.candidate.newestFileMs);
-    const sourcePath = input.candidate.sessionMemoryPath ?? path.join("", input.candidate.safeConversationId + SESSION_MEMORY_SUFFIX);
+    const sourcePath = input.candidate.sessionMemoryPath;
+    if (!sourcePath) {
+      return surfaces;
+    }
     const summary = compactText(
       `会话续做：${input.sessionMemory.nextStep || input.sessionMemory.currentWork || input.sessionMemory.currentGoal || input.sessionMemory.summary || ""}`,
       220,
@@ -345,7 +338,10 @@ function buildSessionSurfaces(input: {
 
   if (input.sessionDigest) {
     const updatedAt = toIsoTimestamp(input.sessionDigest.lastDigestAt) ?? toIsoTimestamp(input.candidate.newestFileMs);
-    const sourcePath = input.candidate.digestPath ?? path.join("", input.candidate.safeConversationId + SESSION_DIGEST_SUFFIX);
+    const sourcePath = input.candidate.digestPath;
+    if (!sourcePath) {
+      return surfaces;
+    }
     const digestSummary = compactText(
       `会话 digest：${input.sessionDigest.rollingSummary || input.sessionDigest.archivalSummary || ""}`,
       220,
@@ -539,69 +535,80 @@ function isWithinDateRange(updatedAt: string | undefined, filter?: MemorySearchF
   return true;
 }
 
-async function readJsonFile<T>(filePath: string, signal?: AbortSignal): Promise<T | undefined> {
+async function readJsonFile<T>(
+  filePath: string,
+  readBudget: SessionArtifactReadBudget,
+  signal?: AbortSignal,
+): Promise<T | undefined> {
+  signal?.throwIfAborted();
+  const handle = await fs.open(filePath, "r").catch(() => undefined);
+  if (!handle) return undefined;
   try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > DERIVED_SESSION_FILE_BYTE_LIMIT || !readBudget.tryReserve(stat.size)) {
+      return undefined;
+    }
+    const buffer = Buffer.alloc(Math.max(0, stat.size));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    readBudget.recordRead(bytesRead);
     signal?.throwIfAborted();
-    const raw = await fs.readFile(filePath, { encoding: "utf-8", signal });
-    signal?.throwIfAborted();
-    return JSON.parse(raw) as T;
+    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf-8")) as T;
   } catch {
     signal?.throwIfAborted();
     return undefined;
+  } finally {
+    await handle.close().catch(() => {});
   }
 }
 
-async function resolveConversationId(
-  candidate: SessionArtifactCandidate,
-  sessionDigest?: DreamSessionDigest,
-  signal?: AbortSignal,
-): Promise<string> {
-  signal?.throwIfAborted();
-  const fromDigest = normalizeText(sessionDigest?.conversationId);
-  if (fromDigest) {
-    return fromDigest;
+class SessionArtifactReadBudget {
+  private remainingBytes: number;
+  private readDetails = 0;
+  private readBytes = 0;
+
+  constructor(totalBytes: number) {
+    this.remainingBytes = totalBytes;
   }
 
-  if (candidate.metaPath) {
-    const parsedMeta = await readJsonFile<{ conversationId?: unknown }>(candidate.metaPath, signal);
-    const fromMeta = normalizeText(parsedMeta?.conversationId);
-    if (fromMeta) {
-      return fromMeta;
+  tryReserve(byteLength: number): boolean {
+    const normalized = Number.isFinite(byteLength) ? Math.max(0, Math.floor(byteLength)) : 0;
+    if (normalized > this.remainingBytes) {
+      return false;
     }
+    this.remainingBytes -= normalized;
+    return true;
   }
 
-  for (const transcriptPath of [candidate.transcriptPath, candidate.messagesPath]) {
-    if (!transcriptPath) {
-      continue;
-    }
-    try {
-      signal?.throwIfAborted();
-      const raw = await fs.readFile(transcriptPath, { encoding: "utf-8", signal });
-      signal?.throwIfAborted();
-      const firstLine = raw.split(/\r?\n/).find((line) => line.trim());
-      if (!firstLine) {
-        continue;
-      }
-      const parsed = JSON.parse(firstLine) as { conversationId?: unknown };
-      const fromTranscript = normalizeText(parsed.conversationId);
-      if (fromTranscript) {
-        return fromTranscript;
-      }
-    } catch {
-      signal?.throwIfAborted();
-      continue;
-    }
+  recordRead(byteLength: number): void {
+    const normalized = Number.isFinite(byteLength) ? Math.max(0, Math.floor(byteLength)) : 0;
+    this.readDetails += 1;
+    this.readBytes += normalized;
   }
 
-  return !candidate.safeConversationId.includes("%")
-    ? candidate.safeConversationId
-    : candidate.safeConversationId;
+  get detailCount(): number {
+    return this.readDetails;
+  }
+
+  get readByteCount(): number {
+    return this.readBytes;
+  }
 }
 
-function normalizeText(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), values.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index]);
+    }
+  }));
+  return results;
 }

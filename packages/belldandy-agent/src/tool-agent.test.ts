@@ -793,7 +793,7 @@ describe("before_agent_start system prompt overrides", () => {
     expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
   });
 
-  it("blocks a high-risk tool before ToolExecutor execution when its run budget is exhausted", async () => {
+  it("allows a high-risk tool when its run budget is configured as unlimited", async () => {
     const execute = vi.fn(async () => ({
       id: "unexpected",
       name: "workspace_write",
@@ -801,19 +801,24 @@ describe("before_agent_start system prompt overrides", () => {
       output: "unexpected",
       durationMs: 0,
     }));
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
-      choices: [{
-        message: {
-          content: "",
-          tool_calls: [{
-            id: "call-high-risk",
-            type: "function",
-            function: { name: "workspace_write", arguments: "{}" },
-          }],
-        },
-      }],
-      usage: { prompt_tokens: 1, completion_tokens: 1 },
-    }));
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-high-risk",
+              type: "function",
+              function: { name: "workspace_write", arguments: "{}" },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{ message: { content: "tool completed" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
     const agent = new ToolEnabledAgent({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "test-key",
@@ -843,14 +848,13 @@ describe("before_agent_start system prompt overrides", () => {
       text: "write workspace",
     }));
 
-    expect(execute).not.toHaveBeenCalled();
-    expect(items).toContainEqual({
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(items).not.toContainEqual(expect.objectContaining({
       type: "budget_exhausted",
       budget: "high_risk_tool_calls",
-      limit: 0,
-      observed: 1,
-    });
-    expect(items[items.length - 1]).toEqual({ type: "status", status: "error" });
+    }));
+    expect(items.find((item) => item.type === "final")?.text).toBe("tool completed");
+    expect(items[items.length - 1]).toEqual({ type: "status", status: "done" });
   });
 
   it("emits usage before the structured terminal event when provider token usage exceeds the run budget", async () => {

@@ -125,14 +125,25 @@ export {
   type ToolDigestRecord,
 } from "./conversation.js";
 export {
+  DEFAULT_SESSION_TRANSCRIPT_PAGE_SIZE,
+  DEFAULT_SESSION_TRANSCRIPT_READ_LIMITS,
+  MAX_SESSION_TRANSCRIPT_PAGE_SIZE,
   type SessionTranscriptCompactBoundaryEvent,
   type SessionTranscriptCompactBoundaryPayload,
   type SessionTranscriptEvent,
   type SessionTranscriptEventType,
+  type SessionTranscriptCursorInvalidationReason,
+  type SessionTranscriptCursorStatus,
   type SessionTranscriptMessageEvent,
   type SessionTranscriptMessagePayload,
+  type SessionTranscriptPageOptions,
+  type SessionTranscriptPageReadResult,
   type SessionTranscriptPartialCompactionViewEvent,
   type SessionTranscriptPartialCompactionViewPayload,
+  type SessionTranscriptReadDiagnostics,
+  type SessionTranscriptReadLimits,
+  type SessionTranscriptReadResult,
+  type SessionTranscriptTruncatedReason,
 } from "./session-transcript.js";
 export {
   type TranscriptRelinkArtifacts,
@@ -153,11 +164,18 @@ export {
   type SessionTranscriptExportRedactionMode,
 } from "./session-transcript-export.js";
 export {
+  writeSessionTranscriptExportBundle,
+  type SessionTranscriptExportWriteOptions,
+} from "./session-transcript-export-writer.js";
+export {
   SESSION_TIMELINE_SCHEMA_VERSION,
+  buildSessionTimelinePage,
   buildSessionTimelineProjection,
   type SessionTimelineCompactBoundaryItem,
   type SessionTimelineItem,
   type SessionTimelineMessageItem,
+  type SessionTimelinePage,
+  type SessionTimelinePageItem,
   type SessionTimelinePartialCompactionItem,
   type SessionTimelineProjection,
   type SessionTimelineRestoreResultItem,
@@ -562,6 +580,15 @@ export {
   type SummarizerContext,
   type SummarizerFn,
 } from "./compaction.js";
+export {
+  SessionArtifactInventory,
+  SessionArtifactInventoryCursorError,
+  type SessionArtifactInventoryDiagnostics,
+  type SessionArtifactInventoryItem,
+  type SessionArtifactInventoryLimits,
+  type SessionArtifactInventoryPage,
+  type SessionArtifactInventoryPageOptions,
+} from "./session-artifact-inventory.js";
 export {
   CompactionRuntimeTracker,
   type CompactionRuntimeReport,

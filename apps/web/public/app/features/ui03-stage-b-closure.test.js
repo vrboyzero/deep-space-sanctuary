@@ -38,12 +38,12 @@ describe("UI03 stage B closure", () => {
     const memoryViewerWiring = sliceBetween(
       appSource,
       "memoryViewerFeature = createMemoryViewerFeature({",
-      "experienceWorkbenchFeature = createExperienceWorkbenchFeature({",
+      "experienceWorkbenchLazyOwner = createExperienceWorkbenchLazyOwner({",
     );
     const experienceWiring = sliceBetween(
       appSource,
-      "experienceWorkbenchFeature = createExperienceWorkbenchFeature({",
-      "experienceWorkbenchFeature.bindUi();",
+      "experienceWorkbenchLazyOwner = createExperienceWorkbenchLazyOwner({",
+      "memoryRuntimeFeature = createMemoryRuntimeFeature({",
     );
 
     expect(memoryDetailWiring).not.toContain("escapeHtml,");

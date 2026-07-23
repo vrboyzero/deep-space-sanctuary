@@ -2289,6 +2289,36 @@ describe("ConversationStore", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("should surface transcript read corruption through restore, export, and timeline diagnostics", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
+        const dataDir = path.join(tempDir, "sessions");
+        const id = "conv-transcript-read-diagnostics";
+        const store = new ConversationStore({ dataDir });
+
+        store.addMessage(id, "user", "valid transcript event");
+        await store.waitForPendingPersistence(id);
+        fs.appendFileSync(path.join(dataDir, `${id}.transcript.jsonl`), "not-json\n", "utf8");
+
+        const reloaded = new ConversationStore({ dataDir });
+        const restore = await reloaded.buildConversationRestoreView(id);
+        const exported = await reloaded.buildConversationTranscriptExport(id);
+        const timeline = await reloaded.buildConversationTimeline(id);
+
+        expect(restore.diagnostics.transcriptRead).toMatchObject({
+            truncated: false,
+            corrupt: true,
+            malformedLineCount: 1,
+            eventCount: 1,
+        });
+        expect(exported.restore.diagnostics.transcriptRead).toMatchObject({
+            corrupt: true,
+            malformedLineCount: 1,
+        });
+        expect(timeline.warnings).toContain("transcript_corrupt");
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
     it("should build readable timeline projection from transcript-based restore after full compaction", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "belldandy-conversation-"));
         const dataDir = path.join(tempDir, "sessions");

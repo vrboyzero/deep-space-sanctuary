@@ -4,6 +4,8 @@ import type { Tool, ToolCallRequest, ToolContext, ToolCallResult } from "./types
 import { ToolExecutor, DEFAULT_POLICY } from "./executor.js";
 import { withToolContract } from "./tool-contract.js";
 import { createToolSearchTool } from "./builtin/tool-search.js";
+import { fetchTool } from "./builtin/fetch.js";
+import { webSearchTool } from "./builtin/web-search/index.js";
 import { resolveSafeScopesForChannel } from "./security-matrix.js";
 
 // Mock 工具：echo
@@ -2263,6 +2265,156 @@ describe("ToolExecutor", () => {
     expect(exposedNames).toHaveLength(17);
     expect(persistedSelections.at(-1)).toHaveLength(16);
     expect(persistedSelections.at(-1)?.slice(0, 2)).toEqual(["deferred_20", "deferred_19"]);
+  });
+
+  it("drops a late non-cooperative network-read result after the policy deadline", async () => {
+    let receivedAbort = false;
+    let lateToolSettled = false;
+    const auditLogger = vi.fn();
+    const lateTool = withToolContract({
+      definition: {
+        name: "late_network_read",
+        description: "ignores abort until its delayed result is ready",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(_args, context): Promise<ToolCallResult> {
+        context.abortSignal?.addEventListener("abort", () => {
+          receivedAbort = true;
+        }, { once: true });
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        lateToolSettled = true;
+        return {
+          id: "",
+          name: "late_network_read",
+          success: true,
+          output: "late result",
+          durationMs: 0,
+        };
+      },
+    }, {
+      family: "network-read",
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      needsPermission: false,
+      riskLevel: "low",
+      channels: ["gateway"],
+      safeScopes: ["remote-safe"],
+      activityDescription: "Read a remote resource",
+      resultSchema: { kind: "text", description: "plain text" },
+      outputPersistencePolicy: "conversation",
+      executionAdmission: { deadline: "policy", output: "utf8-text-policy" },
+    });
+    const executor = new ToolExecutor({
+      tools: [lateTool],
+      workspaceRoot: "/tmp/test",
+      policy: { maxTimeoutMs: 10, maxResponseBytes: 16 },
+      auditLogger,
+    });
+
+    const result = await executor.execute({
+      id: "late-network-read",
+      name: "late_network_read",
+      arguments: {},
+    }, "conv-deadline");
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "工具执行超时（10ms）",
+      failureKind: "environment_error",
+      metadata: {
+        deadlineExceeded: true,
+        deadlineMs: 10,
+        lateResultDiscarded: true,
+      },
+    });
+    expect(receivedAbort).toBe(true);
+    expect(lateToolSettled).toBe(false);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(lateToolSettled).toBe(true);
+    await vi.waitFor(() => expect(auditLogger).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports the admitted family and origin while applying the text output budget", async () => {
+    const textTool = withToolContract({
+      definition: {
+        name: "network_read_output",
+        description: "returns a bounded network-read fixture",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(): Promise<ToolCallResult> {
+        return {
+          id: "",
+          name: "network_read_output",
+          success: true,
+          output: "猫咪abc",
+          durationMs: 0,
+        };
+      },
+    }, {
+      family: "network-read",
+      isReadOnly: true,
+      isConcurrencySafe: true,
+      needsPermission: false,
+      riskLevel: "low",
+      channels: ["gateway"],
+      safeScopes: ["remote-safe"],
+      activityDescription: "Read a remote resource",
+      resultSchema: { kind: "text", description: "plain text" },
+      outputPersistencePolicy: "conversation",
+      executionAdmission: { deadline: "policy", output: "utf8-text-policy" },
+    });
+    const executor = new ToolExecutor({
+      tools: [textTool],
+      workspaceRoot: "/tmp/test",
+      policy: { maxTimeoutMs: 1_000, maxResponseBytes: 4 },
+      initialToolOrigin: "builtin",
+    });
+
+    const result = await executor.execute({
+      id: "network-read-output",
+      name: "network_read_output",
+      arguments: {},
+    }, "conv-output");
+
+    expect(result).toMatchObject({
+      success: true,
+      output: "猫",
+      metadata: {
+        outputTruncated: true,
+        outputBytes: 3,
+        outputOriginalBytes: 9,
+        outputLimitBytes: 4,
+      },
+    });
+    expect(executor.getRegistryInventory().entries).toEqual([expect.objectContaining({
+      name: "network_read_output",
+      origin: "builtin",
+      family: "network-read",
+      executionAdmission: { deadline: "policy", output: "utf8-text-policy" },
+    })]);
+  });
+
+  it("keeps the selected network-read family inventory explicit", () => {
+    const executor = new ToolExecutor({
+      tools: [fetchTool, webSearchTool],
+      workspaceRoot: "/tmp/test",
+      initialToolOrigin: "builtin",
+    });
+
+    expect(executor.getRegistryInventory().entries).toEqual([
+      expect.objectContaining({
+        name: "web_fetch",
+        origin: "builtin",
+        family: "network-read",
+      }),
+      expect.objectContaining({
+        name: "web_search",
+        origin: "builtin",
+        family: "network-read",
+        executionAdmission: { deadline: "policy", output: "utf8-text-policy" },
+      }),
+    ]);
   });
 });
 

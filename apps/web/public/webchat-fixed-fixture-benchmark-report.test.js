@@ -31,6 +31,14 @@ function createStartupScenario(cacheMode) {
       panelVisible: true,
       panelResourceDelta: 0,
       panelDomNodeDelta: 0,
+      experiencePanelId: "experience",
+      experienceFirstOpenDurationMs: durationMs * 2,
+      experiencePanelVisible: true,
+      experienceModuleLoadedBeforeOpen: false,
+      experienceModuleLoaded: true,
+      experienceContentReady: true,
+      experienceResourceDelta: 7,
+      experienceDomNodeDelta: 2,
       pageErrorCount: 0,
     })),
   };
@@ -154,6 +162,24 @@ test("B00 WebChat benchmark reports a complete cold/hot and fixed-render fixture
       p95: 0,
       sampleCount: 5,
     },
+    experienceFirstOpenSummary: {
+      unit: "milliseconds_per_fixture",
+      median: 6,
+      p95: 10,
+      sampleCount: 5,
+    },
+    experienceResourceDeltaSummary: {
+      unit: "resources_per_fixture",
+      median: 7,
+      p95: 7,
+      sampleCount: 5,
+    },
+    experienceDomNodeDeltaSummary: {
+      unit: "dom_nodes_per_fixture",
+      median: 2,
+      p95: 2,
+      sampleCount: 5,
+    },
   });
   expect(report.scenarios[3]).toMatchObject({
     id: "render_1000",
@@ -163,6 +189,31 @@ test("B00 WebChat benchmark reports a complete cold/hot and fixed-render fixture
     wrapperCount: 1_000,
     assistantBodyCount: 500,
   });
+});
+
+test("WebChat benchmark rejects an Experience first-open sample that did not finish loading", async () => {
+  const benchmarkModule = await import(
+    pathToFileURL(path.join(workspaceRoot, "scripts", "run-webchat-fixed-fixture-benchmark.mjs")).href,
+  );
+  const scenarios = createInputScenarios();
+  scenarios[0].samples[0].experienceModuleLoaded = false;
+
+  expect(() => benchmarkModule.createWebchatFixedFixtureBenchmarkReport({
+    generatedAt: "2026-07-23T00:00:00.000Z",
+    environment: {},
+    source: {},
+    fixture: {
+      warmupRuns: 1,
+      sampleRuns: 5,
+      messageCounts: [100, 1_000],
+      messageBytes: 256,
+      viewport: { width: 1_280, height: 720 },
+      startupTarget: "full_webchat_shell",
+      minimumStartupResourceCount: 10,
+      renderModuleResourceCount: 6,
+    },
+    scenarios,
+  })).toThrow("did not complete the Experience first-open interaction");
 });
 
 test("WebChat benchmark rejects an incomplete startup/render matrix", async () => {

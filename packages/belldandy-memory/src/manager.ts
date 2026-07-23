@@ -1,4 +1,7 @@
-import { MemoryStore, type TaskSummaryRecord } from "./store.js";
+import {
+    MemoryStore,
+    type TaskSummaryRecord,
+} from "./store.js";
 import type { SqliteDatabase } from "./index.js";
 import {
     MemoryIndexer,
@@ -38,8 +41,28 @@ import { TaskSummarizer } from "./task-summarizer.js";
 import { shouldAutoPromoteTaskByPolicy } from "./task-auto-promotion-policy.js";
 import { buildTaskDerivedSearchResults } from "./derived-task-retrieval.js";
 import { collectDerivedSessionSearchResults } from "./derived-session-retrieval.js";
+import {
+  buildDeadlineSkippedDerivedRetrievalExecution,
+  buildDerivedRetrievalReport,
+  hasDerivedRetrievalDeadlinePassed,
+  type DerivedRetrievalExecution,
+  type DerivedRetrievalReport,
+} from "./derived-retrieval-report.js";
+import {
+    buildDerivedRetrievalDoctorReport,
+    createDerivedRetrievalRuntimeSnapshot,
+    type DerivedRetrievalDoctorReport,
+    type DerivedRetrievalRuntimeSnapshot,
+} from "./derived-retrieval-doctor.js";
+import {
+    buildEmbeddingCacheDoctorReport,
+    DEFAULT_EMBEDDING_CACHE_RETENTION,
+    type EmbeddingCacheDoctorReport,
+} from "./embedding-cache-doctor.js";
+import type { SessionArtifactInventoryProvider } from "./session-artifact-inventory.js";
 import { buildExperienceDerivedSearchResults } from "./derived-experience-retrieval.js";
 import { createMemoryRetrievalRequest } from "./memory-retrieval-deadline.js";
+import { buildQueryEmbeddingCacheKey, QueryEmbeddingCache } from "./query-embedding-cache.js";
 import { applySearchResultSourceRegistryHints } from "./search-result-source-registry.js";
 import {
     buildGlobalMemoryTreeNodes,
@@ -100,7 +123,6 @@ import {
     buildMemoryTreeLifecycleReport,
     type MemoryTreeLifecycleReport,
 } from "./memory-tree-lifecycle-report.js";
-import { buildMemoryTreeSourceRecordFromEdge } from "./memory-tree-source-links.js";
 import {
     applyMemoryTreeNodeRoutingBoost,
     resolveMemoryTreeNodeRoutingPlan,
@@ -171,6 +193,7 @@ import type { MemoryModelPrivacyRuntime } from "./memory-model-privacy.js";
 import type {
     TaskActivityRecord,
     TaskConversationStore,
+    TaskDerivedDetail,
     TaskMemoryRelation,
     TaskRecord,
     TaskSearchFilter,
@@ -681,6 +704,11 @@ export type MemorySearchDiagnostics = {
     scoreSignalAppliedCount: number;
     sourceClassMix: Record<string, number>;
     nodeAssisted: MemorySearchNodeAssistedDiagnostics;
+    derived?: {
+        session: DerivedRetrievalReport;
+        task: DerivedRetrievalReport;
+        experience: DerivedRetrievalReport;
+    };
     stages: {
         raw: MemorySearchStageSnapshot;
         scoreAware: MemorySearchStageSnapshot;
@@ -745,6 +773,8 @@ export interface MemoryManagerOptions {
     taskSummaryMinToolCalls?: number;
     taskSummaryMinTokenTotal?: number;
     conversationStore?: TaskConversationStore;
+    /** Host 按当前 Memory state root 提供的只读 session artifact inventory。 */
+    sessionArtifactInventory?: SessionArtifactInventoryProvider;
     /** P5: Task 完成后自动生成经验候选（只落到 experience_candidates） */
     experienceAutoPromotionEnabled?: boolean;
     experienceAutoMethodEnabled?: boolean;
@@ -817,6 +847,7 @@ export class MemoryManager {
     private indexer: MemoryIndexer;
     private indexCoordinator: IndexCoordinator;
     private readonly memoryTreeRefreshQueue: MemoryTreeRefreshQueue;
+    private readonly queryEmbeddingCache: QueryEmbeddingCache;
     private reranker: ResultReranker;
     private embeddingProvider: EmbeddingProvider;
     private workspaceRoot: string;
@@ -858,6 +889,8 @@ export class MemoryManager {
     private experienceAutoMethodEnabled: boolean;
     private experienceAutoSkillEnabled: boolean;
     private publishStateDir: string;
+    private readonly sessionArtifactInventory?: SessionArtifactInventoryProvider;
+    private latestDerivedRetrievalSnapshot?: DerivedRetrievalRuntimeSnapshot;
 
     private logEmbeddingSyncSummary(stats: {
         batchCount: number;
@@ -882,6 +915,7 @@ export class MemoryManager {
         this.workspaceRoot = options.workspaceRoot;
         this.additionalRoots = options.additionalRoots ?? [];
         this.additionalFiles = options.additionalFiles ?? [];
+        this.queryEmbeddingCache = new QueryEmbeddingCache();
 
         // Default store path: .star_sanctuary/memory.sqlite（带旧目录回退）
         const workspaceStateDir = resolveWorkspaceStateDir(options.workspaceRoot);
@@ -996,6 +1030,7 @@ export class MemoryManager {
         }
         this.stateDir = options.stateDir || resolveStateDir(process.env);
         this.publishStateDir = options.stateDir || workspaceStateDir;
+        this.sessionArtifactInventory = options.sessionArtifactInventory;
         this.embeddingQueryPrefix = options.embeddingQueryPrefix ?? "";
         this.embeddingPassagePrefix = options.embeddingPassagePrefix ?? "";
         this.deepRetrievalEnabled = options.deepRetrievalEnabled ?? false;
@@ -1168,36 +1203,54 @@ export class MemoryManager {
                 limit,
                 filter,
                 includeContent,
+                deadlineMs,
             });
             const derivedExperienceResults = this.collectDerivedExperienceSearchResults(query, {
                 limit,
                 filter,
                 includeContent,
+                deadlineMs,
             });
             const keywordResults = this.store.searchKeyword(query, limit * 4, filter, includeContent);
             const derivedSessionPromise = retrieval.isDeadlineExceeded()
-                ? Promise.resolve<MemorySearchResult[]>([])
+                ? Promise.resolve<DerivedRetrievalExecution>(buildDeadlineSkippedDerivedRetrievalExecution())
                 : retrieval.waitFor(collectDerivedSessionSearchResults({
-                    stateDir: this.stateDir,
+                    sessionArtifactInventory: this.sessionArtifactInventory,
                     query,
                     limit,
                     filter,
                     includeContent,
                     signal: retrieval.signal,
+                    deadlineMs,
                 })).catch((error: unknown) => {
                     retrieval.throwIfCallerAborted();
-                    if (retrieval.isDeadlineExceeded()) return [];
+                    if (retrieval.isDeadlineExceeded()) {
+                        return {
+                            items: [],
+                            report: buildDerivedRetrievalReport({
+                                admitted: true,
+                                deadlineExceededAfterCompletion: true,
+                            }),
+                        };
+                    }
                     throw error;
                 });
 
             let embeddingFallbackReason: MemorySearchDiagnostics["embeddingFallbackReason"];
             const embeddingPromise = retrieval.isDeadlineExceeded()
                 ? Promise.resolve<number[] | null>(null)
-                : retrieval.waitFor(Promise.resolve().then(() => (
-                    this.embeddingProvider.embedQuery
-                        ? this.embeddingProvider.embedQuery(query, { signal: retrieval.signal, deadlineMs })
-                        : this.embeddingProvider.embed(query, { signal: retrieval.signal, deadlineMs })
-                ))).catch((error: unknown) => {
+                : retrieval.waitFor(this.queryEmbeddingCache.resolve(buildQueryEmbeddingCacheKey({
+                    query,
+                    modelName: this.embeddingProvider.modelName,
+                    queryPrefix: this.embeddingQueryPrefix,
+                }), {
+                    signal: retrieval.signal,
+                    load: ({ signal: querySignal }) => (
+                        this.embeddingProvider.embedQuery
+                            ? this.embeddingProvider.embedQuery(query, { signal: querySignal, deadlineMs })
+                            : this.embeddingProvider.embed(query, { signal: querySignal, deadlineMs })
+                    ),
+                })).catch((error: unknown) => {
                     retrieval.throwIfCallerAborted();
                     if (retrieval.isDeadlineExceeded()) {
                         embeddingFallbackReason = "deadline";
@@ -1211,7 +1264,7 @@ export class MemoryManager {
                 embeddingFallbackReason = "deadline";
             }
 
-            const [candidateQueryVec, derivedSessionResults] = await Promise.all([
+            const [candidateQueryVec, derivedSessionExecution] = await Promise.all([
                 embeddingPromise,
                 derivedSessionPromise,
             ]);
@@ -1232,9 +1285,9 @@ export class MemoryManager {
                 })
                 : keywordResults.slice(0, limit * 2);
             const seededResults = applySearchResultSourceRegistryHints(dedupeMemorySearchResults([
-                ...derivedTaskResults,
-                ...derivedExperienceResults,
-                ...derivedSessionResults,
+                ...derivedTaskResults.items,
+                ...derivedExperienceResults.items,
+                ...derivedSessionExecution.items,
                 ...rawResults,
             ]));
             let nodeAssisted = {
@@ -1275,6 +1328,12 @@ export class MemoryManager {
                 deepRetrievalApplied = true;
             }
 
+            const derived = {
+                session: derivedSessionExecution.report,
+                task: derivedTaskResults.report,
+                experience: derivedExperienceResults.report,
+            };
+            this.latestDerivedRetrievalSnapshot = createDerivedRetrievalRuntimeSnapshot({ reports: derived });
             return {
                 items,
                 diagnostics: {
@@ -1288,6 +1347,7 @@ export class MemoryManager {
                     scoreSignalAppliedCount,
                     sourceClassMix: buildMemorySearchSourceClassMix(items),
                     nodeAssisted: finalizeNodeAssistedDiagnostics(nodeAssisted.diagnostics, items),
+                    derived,
                     stages: {
                         raw: buildMemorySearchStageSnapshot(seededResults),
                         scoreAware: buildMemorySearchStageSnapshot(scoreAwareResults),
@@ -1299,6 +1359,17 @@ export class MemoryManager {
         } finally {
             retrieval.dispose();
         }
+    }
+
+    getDerivedRetrievalDoctorReport(): DerivedRetrievalDoctorReport {
+        return buildDerivedRetrievalDoctorReport(this.latestDerivedRetrievalSnapshot);
+    }
+
+    getEmbeddingCacheDoctorReport(): EmbeddingCacheDoctorReport {
+        return buildEmbeddingCacheDoctorReport({
+            cache: this.store.getEmbeddingCacheStatus(),
+            retention: DEFAULT_EMBEDDING_CACHE_RETENTION,
+        });
     }
 
     async embedRetrievalQuery(text: string): Promise<number[] | null> {
@@ -3169,19 +3240,14 @@ export class MemoryManager {
     }
 
     getMemoryTreeNodeDetail(nodeId: string, options: { chunkLimit?: number } = {}): MemoryTreeNodeDetailResult | null {
-        const node = this.store.getMemoryTreeNode(nodeId);
-        if (!node) {
-            return null;
-        }
-        const edges = this.store.listMemoryTreeEdges({ parentNodeId: nodeId });
-        const chunks = this.resolveMemoryTreeEdgeChunks(edges, options.chunkLimit);
-        const sources = this.resolveMemoryTreeEdgeSources(edges);
-        return {
-            node,
-            edges,
-            chunks,
-            sources,
-        };
+        return this.getMemoryTreeNodeDetails([nodeId], options).get(nodeId) ?? null;
+    }
+
+    getMemoryTreeNodeDetails(
+        nodeIds: string[],
+        options: { chunkLimit?: number } = {},
+    ): Map<string, MemoryTreeNodeDetailResult> {
+        return this.store.getMemoryTreeNodeDetails(nodeIds, options);
     }
 
     listMemoryTreeEdges(filter?: MemoryTreeEdgeListFilter): MemoryTreeEdgeRecord[] {
@@ -3217,10 +3283,12 @@ export class MemoryManager {
                 return compareMemoryTreeNodeRecency(a.node, b.node);
             })
             .slice(0, limit);
+        const details = this.getMemoryTreeNodeDetails(
+            ranked.map((item) => item.node.id),
+            { chunkLimit: options.chunkLimitPerNode },
+        );
         return ranked.map((item) => {
-            const detail = this.getMemoryTreeNodeDetail(item.node.id, {
-                chunkLimit: options.chunkLimitPerNode,
-            });
+            const detail = details.get(item.node.id);
             return {
                 node: item.node,
                 score: item.score,
@@ -3230,41 +3298,6 @@ export class MemoryManager {
                 sources: detail?.sources ?? [],
             };
         });
-    }
-
-    private resolveMemoryTreeEdgeChunks(edges: MemoryTreeEdgeRecord[], chunkLimit?: number): MemorySearchResult[] {
-        const limit = typeof chunkLimit === "number" && Number.isFinite(chunkLimit)
-            ? Math.max(1, Math.floor(chunkLimit))
-            : 20;
-        const chunks: MemorySearchResult[] = [];
-        for (const edge of edges) {
-            if (edge.childType !== "chunk") {
-                continue;
-            }
-            const chunk = this.store.getChunk(edge.childId);
-            if (!chunk) {
-                continue;
-            }
-            chunks.push(chunk);
-            if (chunks.length >= limit) {
-                break;
-            }
-        }
-        return chunks;
-    }
-
-    private resolveMemoryTreeEdgeSources(edges: MemoryTreeEdgeRecord[]): MemoryTreeSourceRecord[] {
-        const sourceEdges = edges.filter((edge) => edge.childType === "source");
-        if (sourceEdges.length <= 0) {
-            return [];
-        }
-        const ids = dedupeStrings(sourceEdges.map((edge) => edge.childId));
-        const sourceMap = new Map(
-            this.store.listMemorySources(Math.max(ids.length, 1), { ids })
-                .map((item) => [item.id, item] as const),
-        );
-        return sourceEdges.map((edge) => sourceMap.get(edge.childId) || buildMemoryTreeSourceRecordFromEdge(edge))
-            .filter((item): item is MemoryTreeSourceRecord => Boolean(item));
     }
 
     previewExactDedup(filter?: MemorySearchFilter, options: { maxGroups?: number } = {}): MemoryExactDedupPreviewReport {
@@ -3653,15 +3686,55 @@ export class MemoryManager {
         limit: number;
         filter?: MemorySearchFilter;
         includeContent: boolean;
-    }): MemorySearchResult[] {
+        deadlineMs?: number;
+    }): DerivedRetrievalExecution {
+        if (hasDerivedRetrievalDeadlinePassed(input.deadlineMs)) {
+            return buildDeadlineSkippedDerivedRetrievalExecution();
+        }
         const normalizedQuery = normalizeTaskLookupQuery(query);
         if (!normalizedQuery) {
-            return [];
+            return {
+                items: [],
+                report: buildDerivedRetrievalReport({
+                    admitted: false,
+                    skipped: true,
+                    skipReason: "empty_query",
+                }),
+            };
         }
         if (input.filter?.scope === "shared") {
-            return [];
+            return {
+                items: [],
+                report: buildDerivedRetrievalReport({
+                    admitted: false,
+                    skipped: true,
+                    skipReason: "scope",
+                }),
+            };
         }
         const taskFilter = toTaskSearchFilterFromMemoryFilter(input.filter);
+        const resumeLimit = clampTaskLookupLimit(taskFilter?.status ? 8 : 6);
+        const similarLimit = clampTaskLookupLimit(Math.max(3, Math.min(input.limit, 5)));
+        const recentTaskIds = this.store
+            .listTaskSummaries(Math.max(resumeLimit * 6, similarLimit * 4, 24), taskFilter)
+            .filter((task) => task.status !== "running")
+            .map((task) => task.id);
+        const resumeSearchLimit = Math.max(resumeLimit * 4, 12);
+        const searchTaskIds = this.searchTasks(normalizedQuery, {
+            limit: Math.max(resumeSearchLimit, similarLimit * 5, 15),
+            filter: taskFilter,
+        }).map((task) => task.id);
+        const candidateTaskIds = [...new Set([...recentTaskIds, ...searchTaskIds])];
+        const detailsById = new Map(
+            this.store.getTaskDerivedDetails(candidateTaskIds)
+                .map((task) => [task.id, task]),
+        );
+        const recentCandidates = taskDetailsForIds(recentTaskIds, detailsById);
+        const resumeSearchCandidates = taskDetailsForIds(
+            searchTaskIds.slice(0, resumeSearchLimit),
+            detailsById,
+        );
+        const similarSearchCandidates = taskDetailsForIds(searchTaskIds, detailsById);
         const candidates: TaskWorkShortcutItem[] = [];
         const seenTaskIds = new Set<string>();
         const push = (item: TaskWorkShortcutItem | null | undefined) => {
@@ -3669,43 +3742,91 @@ export class MemoryManager {
             seenTaskIds.add(item.taskId);
             candidates.push(item);
         };
-        push(this.getResumeContext({
-            query: normalizedQuery,
-            filter: taskFilter,
-        }));
-        for (const item of this.findSimilarPastWork({
-            query: normalizedQuery,
-            limit: Math.max(3, Math.min(input.limit, 5)),
-            filter: taskFilter,
-        })) {
-            push(item);
+        const resumeCandidate = rankTaskShortcutCandidates([
+            ...recentCandidates,
+            ...resumeSearchCandidates,
+        ], normalizedQuery, { resumeMode: true })[0];
+        if (resumeCandidate) {
+            push(toTaskWorkShortcutItem(resumeCandidate.task, resumeCandidate.matchReasons));
         }
-        return buildTaskDerivedSearchResults({
+        for (const item of rankTaskShortcutCandidates([
+            ...similarSearchCandidates,
+            ...recentCandidates,
+        ], normalizedQuery).slice(0, similarLimit)) {
+            push(toTaskWorkShortcutItem(item.task, item.matchReasons));
+        }
+        const items = buildTaskDerivedSearchResults({
             items: candidates,
             limit: Math.max(1, Math.min(input.limit, 3)),
             includeContent: input.includeContent,
         });
+        return {
+            items,
+            report: buildDerivedRetrievalReport({
+                admitted: true,
+                candidateCount: candidateTaskIds.length,
+                detailCount: detailsById.size,
+                resultCount: items.length,
+                deadlineExceededAfterCompletion: hasDerivedRetrievalDeadlinePassed(input.deadlineMs),
+            }),
+        };
     }
 
     private collectDerivedExperienceSearchResults(query: string, input: {
         limit: number;
         filter?: MemorySearchFilter;
         includeContent: boolean;
-    }): MemorySearchResult[] {
-        const candidates = this.listExperienceCandidates(200, {
+        deadlineMs?: number;
+    }): DerivedRetrievalExecution {
+        if (hasDerivedRetrievalDeadlinePassed(input.deadlineMs)) {
+            return buildDeadlineSkippedDerivedRetrievalExecution();
+        }
+        if (!query.trim()) {
+            return {
+                items: [],
+                report: buildDerivedRetrievalReport({
+                    admitted: false,
+                    skipped: true,
+                    skipReason: "empty_query",
+                }),
+            };
+        }
+        if (input.filter?.scope === "shared") {
+            return {
+                items: [],
+                report: buildDerivedRetrievalReport({
+                    admitted: false,
+                    skipped: true,
+                    skipReason: "scope",
+                }),
+            };
+        }
+        const candidateIds = this.store.searchExperienceDerivedCandidateIds(query, 24, {
             status: ["accepted", "published"],
             synthesisConsumed: false,
             ...(typeof input.filter?.agentId === "string" && input.filter.agentId.trim()
                 ? { agentId: input.filter.agentId.trim() }
                 : {}),
         });
-        return buildExperienceDerivedSearchResults({
+        const candidates = this.store.getExperienceDerivedCandidates(candidateIds);
+        const items = buildExperienceDerivedSearchResults({
             query,
             candidates,
             limit: Math.max(1, Math.min(input.limit, 2)),
             filter: input.filter,
             includeContent: input.includeContent,
         });
+        return {
+            items,
+            report: buildDerivedRetrievalReport({
+                admitted: true,
+                candidateCount: candidateIds.length,
+                detailCount: candidates.length,
+                readByteCount: candidates.reduce((total, candidate) => total + Buffer.byteLength(candidate.content), 0),
+                resultCount: items.length,
+                deadlineExceededAfterCompletion: hasDerivedRetrievalDeadlinePassed(input.deadlineMs),
+            }),
+        };
     }
 
     getTaskActivities(taskId: string, limit = 200): TaskActivityRecord[] {
@@ -4388,7 +4509,7 @@ export class MemoryManager {
         }
         const providerName = this.embeddingProvider.modelName ?? "unknown";
         const failureScope = this.computeEmbeddingFailureScope();
-        const pendingCursor = new PendingEmbeddingCandidateCursor({
+        const createPendingCursor = (): PendingEmbeddingCandidateCursor => new PendingEmbeddingCandidateCursor({
             listPage: (limit, afterRowId) => this.store.getPendingEmbeddingCandidatePage(limit, afterRowId),
             getBackoffChunkIds: (chunkIds) => this.embeddingFailureLedger.getBackoffChunkIds(
                 failureScope,
@@ -4396,10 +4517,14 @@ export class MemoryManager {
                 Date.now(),
             ),
         });
+        let pendingCursor = createPendingCursor();
+        let hadEmbeddingFailure = false;
+        let syncCompleted = false;
         const recordFailures = (chunkIds: string[], reason: EmbeddingFailureReason): void => {
             if (chunkIds.length === 0) {
                 return;
             }
+            hadEmbeddingFailure = true;
             this.embeddingFailureLedger.recordFailures({
                 scope: failureScope,
                 chunkIds,
@@ -4417,8 +4542,17 @@ export class MemoryManager {
             apiRequestCount: 0,
             apiChunkCount: 0,
         };
-        let dims = resolveEmbeddingDimension(this.embeddingProvider.dimension)
-            ?? this.store.getVectorDimensions();
+        const declaredDimension = resolveEmbeddingDimension(this.embeddingProvider.dimension);
+        const discoverDimensionFromResponse = this.embeddingProvider.discoverDimensionFromResponse === true;
+        // Provider 未声明维度时，首次真实响应会写入此标记。它与失败退避使用相同的
+        // 模型/前缀作用域，避免每次无待处理 chunk 的同步都额外发送 probe 请求。
+        const discoveredDimensionMetaKey = `embedding_discovered_dimension:${failureScope}`;
+        const discoveredDimension = discoverDimensionFromResponse && declaredDimension === null
+            ? resolveEmbeddingDimension(Number(this.store.getMeta(discoveredDimensionMetaKey)))
+            : null;
+        let dims = declaredDimension
+            ?? discoveredDimension
+            ?? (discoverDimensionFromResponse ? null : this.store.getVectorDimensions());
         let signature: string | null = null;
         let prefetchedVectors: ReturnType<typeof validateEmbeddingBatchResponse> | null = null;
         let prefetchedPending: MemoryChunk[] | null = null;
@@ -4434,7 +4568,22 @@ export class MemoryManager {
             prepareEmbeddingStore(dims);
         } else {
             // 未声明维度的 Provider 直接使用首个真实 passage 响应，避免额外的可计费 probe。
-            const initialCandidates = pendingCursor.take(this.embeddingBatchSize);
+            // 旧 vec0 表已填满时没有 pending chunk；仅在尚未协商过维度时取一个现有 chunk，
+            // 以便识别升级前错误保留的表维度并触发安全重建。
+            let initialCandidates = pendingCursor.take(this.embeddingBatchSize);
+            if (
+                discoverDimensionFromResponse
+                && initialCandidates.length === 0
+                && this.store.getVectorStatus().indexed > 0
+            ) {
+                const legacyCandidates = this.store.getInitialEmbeddingCandidates(this.embeddingBatchSize);
+                const blockedChunkIds = this.embeddingFailureLedger.getBackoffChunkIds(
+                    failureScope,
+                    legacyCandidates.map((candidate) => candidate.id),
+                    Date.now(),
+                );
+                initialCandidates = legacyCandidates.filter((candidate) => !blockedChunkIds.has(candidate.id));
+            }
             if (initialCandidates.length === 0) {
                 return;
             }
@@ -4467,6 +4616,12 @@ export class MemoryManager {
                     return;
                 }
                 prepareEmbeddingStore(prefetchedVectors.dimension);
+                if (discoverDimensionFromResponse) {
+                    this.store.setMeta(discoveredDimensionMetaKey, String(prefetchedVectors.dimension));
+                }
+                // prepareEmbeddingStore may have rebuilt the derived vec0 table. Recreate the cursor
+                // so the remaining chunks are read against its current state rather than the old table.
+                pendingCursor = createPendingCursor();
             } catch {
                 if (this.closed || signal?.aborted) {
                     return;
@@ -4491,7 +4646,10 @@ export class MemoryManager {
             const validatedResponse = prefetchedVectors;
             prefetchedPending = null;
             prefetchedVectors = null;
-            if (pending.length === 0) break;
+            if (pending.length === 0) {
+                syncCompleted = true;
+                break;
+            }
             if (validatedResponse === null) {
                 embeddingStats.batchCount += 1;
                 embeddingStats.totalChunks += pending.length;
@@ -4632,6 +4790,23 @@ export class MemoryManager {
         }
 
         this.logEmbeddingSyncSummary(embeddingStats);
+        if (
+            syncCompleted
+            && embeddingStats.totalChunks > 0
+            && !hadEmbeddingFailure
+            && !this.closed
+            && !signal?.aborted
+        ) {
+            this.pruneEmbeddingCacheAfterCompletedSync();
+        }
+    }
+
+    private pruneEmbeddingCacheAfterCompletedSync(): void {
+        try {
+            this.store.pruneEmbeddingCache(DEFAULT_EMBEDDING_CACHE_RETENTION);
+        } catch {
+            console.warn("[MemoryManager] Embedding cache retention failed.");
+        }
     }
 
     /**
@@ -5391,6 +5566,7 @@ candidateType 必须是以下之一：user / feedback / project / reference
             return this.closePromise;
         }
         this.closed = true;
+        this.queryEmbeddingCache.close();
         this.backgroundPauseGate.close();
         this.evolutionRequests.abortAll("Memory manager is closing.");
         this.indexCoordinator.stopAcceptingWatchEvents();
@@ -5651,8 +5827,10 @@ function classifyImportance(score: number): MemoryImportance {
     return "low";
 }
 
+type TaskShortcutCandidate = TaskExperienceDetail | TaskDerivedDetail;
+
 type RankedTaskShortcutCandidate = {
-    task: TaskExperienceDetail;
+    task: TaskShortcutCandidate;
     score: number;
     resumePriority: number;
     matchReasons: string[];
@@ -5669,7 +5847,7 @@ function normalizeTaskLookupQuery(value?: string): string | undefined {
     return trimmed ? trimmed : undefined;
 }
 
-function toTaskWorkShortcutItem(task: TaskExperienceDetail, matchReasons?: string[]): TaskWorkShortcutItem {
+function toTaskWorkShortcutItem(task: TaskShortcutCandidate, matchReasons?: string[]): TaskWorkShortcutItem {
     return {
         taskId: task.id,
         conversationId: task.conversationId,
@@ -5691,9 +5869,9 @@ function toTaskWorkShortcutItem(task: TaskExperienceDetail, matchReasons?: strin
     };
 }
 
-function dedupeTaskShortcutCandidates(items: TaskExperienceDetail[]): TaskExperienceDetail[] {
+function dedupeTaskShortcutCandidates<T extends TaskShortcutCandidate>(items: T[]): T[] {
     const seen = new Set<string>();
-    const result: TaskExperienceDetail[] = [];
+    const result: T[] = [];
     for (const item of items) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
@@ -5702,8 +5880,22 @@ function dedupeTaskShortcutCandidates(items: TaskExperienceDetail[]): TaskExperi
     return result;
 }
 
+function taskDetailsForIds(
+    taskIds: string[],
+    detailsById: ReadonlyMap<string, TaskDerivedDetail>,
+): TaskDerivedDetail[] {
+    const details: TaskDerivedDetail[] = [];
+    for (const taskId of taskIds) {
+        const detail = detailsById.get(taskId);
+        if (detail) {
+            details.push(detail);
+        }
+    }
+    return details;
+}
+
 function rankTaskShortcutCandidates(
-    candidates: TaskExperienceDetail[],
+    candidates: TaskShortcutCandidate[],
     query?: string,
     options: {
         resumeMode?: boolean;
@@ -5750,7 +5942,7 @@ function resolveTaskShortcutTimestamp(task: Pick<TaskRecord, "finishedAt" | "upd
     return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
-function computeResumePriority(task: TaskExperienceDetail): number {
+function computeResumePriority(task: TaskShortcutCandidate): number {
     let priority = 0;
     switch (task.status) {
         case "partial":
@@ -5772,7 +5964,13 @@ function computeResumePriority(task: TaskExperienceDetail): number {
     return priority;
 }
 
-function collectRecentActivityTitles(task: TaskExperienceDetail, limit = 3): string[] {
+function collectRecentActivityTitles(task: TaskShortcutCandidate, limit = 3): string[] {
+    if ("recentActivityTitles" in task) {
+        return task.recentActivityTitles
+            .map((title) => sanitizeTaskShortcutText(title))
+            .filter((title): title is string => Boolean(title))
+            .slice(0, limit);
+    }
     const collected: string[] = [];
     for (const activity of [...(task.activities ?? [])].reverse()) {
         if (activity.kind === "task_completed") continue;
@@ -5784,7 +5982,7 @@ function collectRecentActivityTitles(task: TaskExperienceDetail, limit = 3): str
     return collected;
 }
 
-function scoreTaskShortcut(task: TaskExperienceDetail, query?: string): { score: number; matchReasons: string[] } {
+function scoreTaskShortcut(task: TaskShortcutCandidate, query?: string): { score: number; matchReasons: string[] } {
     const normalizedQuery = normalizeTaskShortcutText(query);
     if (!normalizedQuery) {
         return { score: 0, matchReasons: [] };
@@ -5863,7 +6061,7 @@ function sanitizeTaskShortcutText(value?: string): string | undefined {
     return trimmed ? trimmed : undefined;
 }
 
-function computeTaskShortcutRecencyBoost(task: TaskExperienceDetail): number {
+function computeTaskShortcutRecencyBoost(task: TaskShortcutCandidate): number {
     const timestamp = resolveTaskShortcutTimestamp(task);
     if (!Number.isFinite(timestamp)) return 0;
     const ageHours = (Date.now() - timestamp) / (1000 * 60 * 60);

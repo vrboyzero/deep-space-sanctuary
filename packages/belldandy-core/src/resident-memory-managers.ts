@@ -1,7 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { buildDefaultProfile, isResidentAgentProfile, type AgentRegistry, type AgentProfile } from "@belldandy/agent";
+import {
+  buildDefaultProfile,
+  ConversationStore,
+  isResidentAgentProfile,
+  type AgentRegistry,
+  type AgentProfile,
+} from "@belldandy/agent";
 import {
   MemoryManager,
   registerGlobalMemoryManager,
@@ -18,7 +24,7 @@ import {
 
 type SharedMemoryManagerOptions = Omit<
   MemoryManagerOptions,
-  "workspaceRoot" | "additionalRoots" | "additionalFiles" | "storePath" | "modelsDir" | "stateDir"
+  "workspaceRoot" | "additionalRoots" | "additionalFiles" | "storePath" | "modelsDir" | "stateDir" | "sessionArtifactInventory"
 > & {
   stateDir: string;
   modelsDir: string;
@@ -45,6 +51,7 @@ function createMemoryManagerForStateDir(
   });
   fs.mkdirSync(memoryIndexPaths.sessionsDir, { recursive: true });
   fs.mkdirSync(path.join(managerStateDir, "memory"), { recursive: true });
+  const sessionArtifactStore = new ConversationStore({ dataDir: memoryIndexPaths.sessionsDir });
 
   return new MemoryManager({
     ...options,
@@ -54,6 +61,9 @@ function createMemoryManagerForStateDir(
     storePath: path.join(managerStateDir, "memory.sqlite"),
     modelsDir: options.modelsDir,
     stateDir: managerStateDir,
+    sessionArtifactInventory: {
+      listPage: (pageOptions) => sessionArtifactStore.listSessionArtifactInventoryPage(pageOptions),
+    },
   });
 }
 

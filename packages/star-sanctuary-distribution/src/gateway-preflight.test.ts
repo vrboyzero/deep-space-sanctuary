@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -72,8 +73,10 @@ test("preflight kills owned gateway PID from foreground marker and clears the ma
 test("preflight reads BELLDANDY_PORT from env files and blocks unknown external listeners", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const stateDir = createTempStateDir();
+  const listener = net.createServer();
+  const occupiedPort = await listenOnEphemeralPort(listener);
   let seenPort: number | null = null;
-  fs.writeFileSync(path.join(stateDir, ".env.local"), "BELLDANDY_PORT=38889\n", "utf-8");
+  fs.writeFileSync(path.join(stateDir, ".env.local"), `BELLDANDY_PORT=${occupiedPort}\n`, "utf-8");
 
   const runner: GatewayPreflightRunner = {
     async inspectProcess(pid) {
@@ -97,17 +100,88 @@ test("preflight reads BELLDANDY_PORT from env files and blocks unknown external 
     },
   };
 
+  try {
+    await expect(preflightGatewayCleanup({
+      label: "Test",
+      stateDir,
+      ownershipTokens: ["E:/project/star-sanctuary/packages/belldandy-core/src/bin/gateway.ts"],
+      runner,
+    })).rejects.toThrow(`Port ${occupiedPort} is already in use by PID 9988`);
+  } finally {
+    await closeServer(listener);
+  }
+
+  expect(seenPort).toBe(occupiedPort);
+});
+
+test("preflight skips the owner runner only when the dual-stack probe proves a marker-free port is available", async () => {
+  const stateDir = createTempStateDir();
+  const port = await reserveFreePort();
+  const findPortOwner = vi.fn(async () => null);
+  const runner: GatewayPreflightRunner = {
+    async inspectProcess() {
+      throw new Error("marker-free preflight must not inspect a process");
+    },
+    findPortOwner,
+    async forceKill() {
+      throw new Error("marker-free preflight must not kill a process");
+    },
+  };
+
   await expect(preflightGatewayCleanup({
     label: "Test",
     stateDir,
-    ownershipTokens: ["E:/project/star-sanctuary/packages/belldandy-core/src/bin/gateway.ts"],
+    port,
+    ownershipTokens: ["marker-free-test"],
     runner,
-  })).rejects.toThrow("Port 38889 is already in use by PID 9988");
+  })).resolves.toEqual({ port, cleanedPids: [] });
 
-  expect(seenPort).toBe(38889);
+  expect(findPortOwner).not.toHaveBeenCalled();
 });
 
 test("resolves a gateway port from an already loaded environment", () => {
   expect(resolveGatewayPortFromEnv({ BELLDANDY_PORT: "38889" })).toBe(38889);
   expect(resolveGatewayPortFromEnv({ BELLDANDY_PORT: "not-a-port" })).toBe(28889);
 });
+
+async function reserveFreePort(): Promise<number> {
+  const server = net.createServer();
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "0.0.0.0", () => {
+      server.off("error", reject);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Failed to resolve test port."));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+  return port;
+}
+
+async function listenOnEphemeralPort(server: net.Server): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "0.0.0.0", () => {
+      server.off("error", reject);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Failed to resolve test port."));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+}
+
+async function closeServer(server: net.Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
