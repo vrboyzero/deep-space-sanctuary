@@ -190,7 +190,7 @@ star-sanctuary/
 - `apps/web/public/app/features/canvas-resource-picker-empty-view.js`: Canvas resource picker empty state 的单节点 DOM/textContent owner；保留 `.canvas-picker-body` root、完整 dialog/non-empty row、listener 与 resource fetch/create 接线
 - `apps/web/public/app.js`: 前端总装配
 - `apps/web/public/app/features/chat-ui.js`: 聊天气泡、渲染、媒体展示；button-keyed copy feedback timer、document delegation dispose 与无正文 lifecycle snapshot
-- `apps/web/public/app/features/chat-events.js`: 服务端事件归并与聊天流状态；投影 `conversation.run.interrupted`，为活动会话保留 partial bubble、追加本地化中断状态并收口 streaming cache，非活动会话只收口对应 cache；同时持有 tool result/notice 去重窗口、generation 清理、pagehide dispose 和无正文 snapshot
+- `apps/web/public/app/features/chat-events.js`: 服务端事件归并与聊天流状态；投影 `conversation.run.interrupted`，为活动会话保留 partial bubble、追加本地化中断状态并收口 streaming cache，非活动会话只收口对应 cache；同时持有助手自动播放音频的当前 owner、暂停入口、tool result/notice 去重窗口、generation 清理、pagehide dispose 和无正文 snapshot
 - `apps/web/public/app/features/pairing-required-prompt.js`: pairing required 卡片和 ChatEvents CLI-only fallback 的 DOM/textContent 构造 owner；持有 open settings/approve 状态与 notice 行为，Gateway code/message/clientId 不经过 HTML sink
 - `apps/web/public/app/features/rich-content-renderer.js`: DOMPurify 富内容清理、CSP 前 style 标记/属性预过滤、媒体 URL allowlist、外链 browsing-context/referrer 约束与受限 TrustedHTML policy；相邻 `rich-content-sink-inventory.test.js` 以 AST 固定 production HTML sink 分类、唯一富内容提交点及 enforced CSP/Trusted Types Gate
 - `apps/web/public/app/features/runtime-style-registry.js` / `apps/web/public/runtime-style-closure.css`: WebChat 唯一 runtime CSSOM rule owner；`index.html` 预加载同源 stylesheet，固定允许属性、rule 释放与无 inline-style fallback
@@ -312,7 +312,9 @@ star-sanctuary/
 - `apps/web/public/app/features/app-shell.js`: WebChat 主视图切换与 notice stack；notice timer/listener/action closure 的统一移除、pagehide dispose 与无正文 lifecycle snapshot
 - `apps/web/public/app/features/locale.js`: WebChat locale 翻译与 select/subscriber registry；locale option 的 DOM/value/textContent owner、可移除 DOM listener、pagehide dispose 和无正文 lifecycle snapshot
 - `apps/web/public/app/features/theme.js`: WebChat theme persistence；复用 PanelTaskScope 的 transition timer replacement、toggle listener activate/deactivate、retained theme 重投影、终态 pagehide dispose 与无正文 lifecycle snapshot
-- `apps/web/public/app/features/voice.js`: Voice shortcut、MediaRecorder/WebSpeech 输入与附件提交；统一 listener/interval/media/permission/FileReader owner、迟到 settlement 隔离、pagehide dispose 与无正文 lifecycle snapshot
+- `apps/web/public/app/features/natural-voice-audio.js` / `natural-voice-audio-worklet.js`: WebChat 自然对话的同源 PCM 采集、`1000 ms` 有界预滚、重采样与 16 kHz mono PCM16 WAV 编码；音频仅在浏览器内存中处理
+- `apps/web/public/app/features/natural-voice-input.js`: WebChat 自然对话的 AudioWorklet PCM/RMS 分段、开始/持续阈值、每轮结束停顿快照、单 pending turn、最大时长与 media/worklet/AbortSignal 生命周期 owner；只向上提交完整 WAV turn，不改变 Gateway/STT 契约
+- `apps/web/public/app/features/voice.js`: `🎤` 按键录音/`👄` 自然对话模式、Voice shortcut、灵敏度、结束停顿与本地持久化、MediaRecorder/WebSpeech 输入和音频附件提交编排；统一 listener/interval/media/permission/FileReader owner、迟到 settlement 隔离、pagehide dispose 与无正文 lifecycle snapshot
 - `apps/web/public/app/features/bridge-runtime.js`: Bridge session panel 的 loading/normal summary stats、session list/detail、empty/error 与 action 的 DOM/textContent/attribute owner；持有 activate/deactivate polling、pagehide dispose、迟到响应隔离和无正文 timer snapshot
 - `apps/web/public/app/features/goals-state-runtime.js`: Goal live-update debounce、pending payload 合并、settled entry 删除、pagehide dispose 与无正文 lifecycle snapshot
 - `apps/web/public/app/features/subtasks-overview.js`: Subtask list/detail view-model、详情 action delegation、loading/empty/error 与 live-update debounce；pending payload 合并、settled entry 删除、pagehide dispose 与无正文 lifecycle snapshot，完整详情结构由相邻 `subtasks-detail-view.js` 持有

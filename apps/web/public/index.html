@@ -608,6 +608,8 @@
         <button id="attachBtn" class="attach-btn" data-i18n-title="composer.attachTitle" title="添加附件">+</button>
         <button id="voiceBtn" class="voice-btn" data-i18n-title="voice.titleWithoutShortcut" title="语音输入（点击切换录音）">🎤</button>
         <span id="voiceDuration" class="voice-duration hidden">00:00</span>
+        <span id="naturalVoiceStatus" class="natural-voice-status hidden" role="status" aria-live="polite"></span>
+        <button id="naturalVoiceBtn" type="button" class="voice-btn" data-i18n-title="voice.naturalStartTitle" title="开启自然对话" aria-label="开启自然对话" aria-pressed="false">👄</button>
         <input type="file" id="fileInput" class="hidden" multiple
           accept=".jpg,.jpeg,.png,.gif,.webp,.txt,.md,.json,.log,.mp4,.mov,.avi,.webm,.mkv" />
         <textarea id="prompt" class="input" data-i18n-placeholder="composer.promptPlaceholder" placeholder="输入消息… (可拖拽文件到此)" rows="1"></textarea>
@@ -665,6 +667,34 @@
             </div>
           </div>
           <div id="channelSecurityPendingList" class="doctor-grid"></div>
+
+          <hr class="theme-divider">
+
+          <div class="form-group">
+            <label class="form-label" data-i18n="settings.voiceInputModeLabel">语音输入模式</label>
+            <div class="voice-mode-segment" role="group" data-i18n-aria-label="settings.voiceInputModeLabel" aria-label="语音输入模式">
+              <button id="cfgVoiceModeManual" type="button" class="button active" aria-pressed="true" data-i18n="settings.voiceInputModeManual">按键录音</button>
+              <button id="cfgVoiceModeNatural" type="button" class="button" aria-pressed="false" data-i18n="settings.voiceInputModeNatural">自然对话</button>
+            </div>
+            <div class="form-help" id="cfgVoiceModeStatus" data-i18n="voice.manualModeStatus">按键录音不会持续占用麦克风。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgVoiceSensitivity" data-i18n="settings.voiceSensitivityLabel">语音灵敏度</label>
+            <select id="cfgVoiceSensitivity" class="input" disabled>
+              <option value="low" data-i18n="settings.voiceSensitivityLow">低</option>
+              <option value="standard" selected data-i18n="settings.voiceSensitivityStandard">标准</option>
+              <option value="high" data-i18n="settings.voiceSensitivityHigh">高</option>
+            </select>
+            <div class="form-help" data-i18n="settings.voiceSensitivityHelp">嘈杂环境可降低灵敏度；声音较轻时可提高。</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgNaturalVoiceSilence" data-i18n="settings.naturalVoiceSilenceLabel">结束停顿时间</label>
+            <div class="voice-silence-control">
+              <input id="cfgNaturalVoiceSilence" type="range" min="0.8" max="5.0" step="0.1" value="1.8" disabled />
+              <output id="cfgNaturalVoiceSilenceValue" for="cfgNaturalVoiceSilence">1.8 秒</output>
+            </div>
+            <div class="form-help" data-i18n="settings.naturalVoiceSilenceHelp">说完后持续安静多长时间才自动发送；思考停顿较多时可调大。</div>
+          </div>
 
           <hr class="theme-divider">
 

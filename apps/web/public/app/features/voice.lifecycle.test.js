@@ -90,8 +90,9 @@ function createFeature(overrides = {}) {
   const promptEl = document.createElement("textarea");
   const composerSection = document.createElement("section");
   const voiceButtonEl = document.createElement("button");
+  const naturalButtonEl = document.createElement("button");
   const voiceDurationEl = document.createElement("span");
-  document.body.append(promptEl, composerSection, voiceButtonEl, voiceDurationEl);
+  document.body.append(promptEl, composerSection, voiceButtonEl, naturalButtonEl, voiceDurationEl);
 
   const callbacks = {
     addAttachment: vi.fn(),
@@ -112,6 +113,7 @@ function createFeature(overrides = {}) {
     promptEl,
     composerSection,
     voiceButtonEl,
+    naturalButtonEl,
     voiceDurationEl,
     getIsSettingsOpen: () => false,
     syncPromptHeight: callbacks.syncPromptHeight,
@@ -131,6 +133,7 @@ function createFeature(overrides = {}) {
     feature,
     promptEl,
     voiceButtonEl,
+    naturalButtonEl,
     voiceDurationEl,
   };
 }
@@ -157,6 +160,185 @@ afterEach(() => {
 });
 
 describe("voice feature lifecycle", () => {
+  it("switches between the composer natural button and immediate manual recording", async () => {
+    const stream = createStream();
+    installMediaRecorder(vi.fn().mockResolvedValue(stream));
+    const naturalController = {
+      dispose: vi.fn(),
+      getSnapshot: vi.fn(() => ({ state: "paused", hasMicrophone: false })),
+      pause: vi.fn(),
+      start: vi.fn().mockResolvedValue(true),
+    };
+    const { feature, naturalButtonEl, voiceButtonEl } = createFeature({
+      createNaturalVoiceInputFactory: vi.fn(() => naturalController),
+      modeStorageKey: "voice-mode-composer-test",
+    });
+
+    naturalButtonEl.click();
+    await flushPromises();
+    expect(naturalController.start).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem("voice-mode-composer-test")).toBe("natural");
+    expect(naturalButtonEl.getAttribute("aria-pressed")).toBe("true");
+
+    voiceButtonEl.click();
+    await flushPromises();
+    expect(naturalController.pause).toHaveBeenCalledWith("manual_recording");
+    expect(localStorage.getItem("voice-mode-composer-test")).toBe("manual");
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(feature.getRuntimeSnapshot()).toMatchObject({
+      voiceMode: "manual",
+      activeRecorderCount: 1,
+      activeAudioWorkletCount: 0,
+    });
+
+    feature.dispose();
+  });
+
+  it("persists the user pause duration and exposes the normalized value", async () => {
+    const naturalController = {
+      dispose: vi.fn(),
+      getSnapshot: vi.fn(() => ({ state: "paused", hasMicrophone: false })),
+      pause: vi.fn(),
+      start: vi.fn().mockResolvedValue(true),
+    };
+    localStorage.setItem("voice-silence-test", "invalid");
+    const { feature } = createFeature({
+      createNaturalVoiceInputFactory: vi.fn(() => naturalController),
+      silenceStorageKey: "voice-silence-test",
+    });
+    const modeNaturalBtn = document.createElement("button");
+    const silenceEl = document.createElement("input");
+    const silenceValueEl = document.createElement("output");
+    silenceEl.type = "range";
+    silenceEl.min = "0.8";
+    silenceEl.max = "5";
+    silenceEl.step = "0.1";
+
+    feature.bindSettingsUI({ modeNaturalBtn, silenceEl, silenceValueEl });
+    expect(silenceEl.value).toBe("1.8");
+    expect(feature.getRuntimeSnapshot().voiceSilenceMs).toBe(1_800);
+
+    modeNaturalBtn.click();
+    await flushPromises();
+    silenceEl.value = "2.4";
+    silenceEl.dispatchEvent(new Event("input"));
+
+    expect(localStorage.getItem("voice-silence-test")).toBe("2400");
+    expect(feature.getRuntimeSnapshot().voiceSilenceMs).toBe(2_400);
+    expect(silenceValueEl.value).toBe("2.4 s");
+
+    feature.dispose();
+  });
+
+  it("does not acquire the microphone when natural mode cannot send", async () => {
+    const naturalController = {
+      dispose: vi.fn(),
+      getSnapshot: vi.fn(() => ({ state: "paused", hasMicrophone: false })),
+      pause: vi.fn(),
+      start: vi.fn().mockResolvedValue(true),
+    };
+    const onNaturalVoiceError = vi.fn();
+    const { feature } = createFeature({
+      canStartNaturalVoice: () => false,
+      createNaturalVoiceInputFactory: vi.fn(() => naturalController),
+      modeStorageKey: "voice-mode-offline-test",
+      onNaturalVoiceError,
+    });
+    const modeNaturalBtn = document.createElement("button");
+
+    feature.bindSettingsUI({ modeNaturalBtn });
+    modeNaturalBtn.click();
+    await flushPromises();
+
+    expect(naturalController.start).not.toHaveBeenCalled();
+    expect(onNaturalVoiceError).toHaveBeenCalledWith(expect.objectContaining({ code: "not_connected" }));
+    expect(localStorage.getItem("voice-mode-offline-test")).toBe("manual");
+
+    feature.dispose();
+  });
+
+  it("settles a natural turn without mutating the manual attachment queue", async () => {
+    let naturalCallbacks;
+    const naturalController = {
+      dispose: vi.fn(),
+      getSnapshot: vi.fn(() => ({ state: "paused", hasMicrophone: false })),
+      pause: vi.fn(),
+      start: vi.fn().mockResolvedValue(true),
+    };
+    const onNaturalTurnReady = vi.fn().mockResolvedValue(undefined);
+    const { callbacks, feature } = createFeature({
+      createNaturalVoiceInputFactory: vi.fn((options) => {
+        naturalCallbacks = options;
+        return naturalController;
+      }),
+      onNaturalTurnReady,
+    });
+
+    await naturalCallbacks.onTurnReady({
+      blob: new Blob(["voice"], { type: "audio/wav" }),
+      durationMs: 640,
+      mimeType: "audio/wav",
+      reason: "silence",
+      signal: new AbortController().signal,
+    });
+
+    expect(onNaturalTurnReady).toHaveBeenCalledWith(expect.objectContaining({
+      attachment: expect.objectContaining({
+        name: expect.stringMatching(/^natural_voice_\d+\.wav$/),
+        type: "audio",
+        mimeType: "audio/wav",
+        content: expect.stringMatching(/^data:audio\/wav/),
+      }),
+      durationMs: 640,
+      reason: "silence",
+    }));
+    expect(callbacks.addAttachment).not.toHaveBeenCalled();
+    expect(callbacks.onSendMessage).not.toHaveBeenCalled();
+
+    feature.dispose();
+  });
+
+  it("starts remembered natural mode only after an explicit user action", async () => {
+    const naturalController = {
+      dispose: vi.fn(),
+      getSnapshot: vi.fn(() => ({ state: "paused", hasMicrophone: false })),
+      pause: vi.fn(),
+      start: vi.fn().mockResolvedValue(true),
+    };
+    const createNaturalVoiceInputFactory = vi.fn(() => naturalController);
+    const naturalStatusEl = document.createElement("span");
+    localStorage.setItem("voice-mode-test", "natural");
+    const { feature } = createFeature({
+      createNaturalVoiceInputFactory,
+      modeStorageKey: "voice-mode-test",
+      naturalStatusEl,
+      sensitivityStorageKey: "voice-sensitivity-test",
+    });
+    const modeManualBtn = document.createElement("button");
+    const modeNaturalBtn = document.createElement("button");
+    const sensitivityEl = document.createElement("select");
+    const modeStatusEl = document.createElement("span");
+
+    feature.bindSettingsUI({ modeManualBtn, modeNaturalBtn, modeStatusEl, sensitivityEl });
+    expect(createNaturalVoiceInputFactory).toHaveBeenCalledTimes(1);
+    expect(naturalController.start).not.toHaveBeenCalled();
+    expect(modeNaturalBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(naturalStatusEl.classList.contains("hidden")).toBe(false);
+
+    modeNaturalBtn.click();
+    await flushPromises();
+    expect(naturalController.start).toHaveBeenCalledTimes(1);
+
+    modeManualBtn.click();
+    expect(naturalController.pause).toHaveBeenCalledWith("manual_mode");
+    expect(localStorage.getItem("voice-mode-test")).toBe("manual");
+    expect(modeManualBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(naturalStatusEl.classList.contains("hidden")).toBe(true);
+
+    feature.dispose();
+    expect(naturalController.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("owns settings, button, global key, timer, recorder, and stream resources", async () => {
     vi.useFakeTimers();
     const stream = createStream();
@@ -170,7 +352,7 @@ describe("voice feature lifecycle", () => {
     feature.bindSettingsUI({ inputEl, statusEl, defaultBtn, clearBtn });
     feature.bindGlobalKeyTarget(document);
     expect(feature.getRuntimeSnapshot()).toMatchObject({
-      listenerCount: 7,
+      listenerCount: 9,
       activeTimerCount: 0,
       disposed: false,
     });
@@ -193,8 +375,14 @@ describe("voice feature lifecycle", () => {
       pendingMediaRequestCount: 0,
       activeStreamCount: 0,
       activeRecorderCount: 0,
+      activeAudioWorkletCount: 0,
+      activeAudioContextCount: 0,
       activeRecognitionCount: 0,
       pendingFileReaderCount: 0,
+      pendingNaturalTurnCount: 0,
+      voiceMode: "manual",
+      voiceSensitivity: "standard",
+      voiceSilenceMs: 1800,
       disposed: true,
     });
     expect(vi.getTimerCount()).toBe(0);

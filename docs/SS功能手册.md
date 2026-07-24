@@ -128,6 +128,15 @@
 - 看工作区文件树、编辑文件、打开设置
 - 查看 Goals、Subtasks、Memory、Dream、Experience、Doctor 等面板
 
+### 语音输入使用方式
+
+- 默认使用“按键录音”，原有麦克风按钮和语音快捷键保持不变。
+- 点击输入栏中的 `👄`，或在“设置”中将“语音输入模式”切换为“自然对话”后，浏览器会申请麦克风权限；开启后直接说话即可，持续安静到设定时间后会自动发送这一轮语音。
+- 自然对话下再次点击 `👄` 可暂停或继续聆听；点击 `🎤` 会立即释放自然对话麦克风、切回“按键录音”并开始录音。
+- “语音灵敏度”默认使用“标准”。嘈杂环境可选“低”，声音较轻时可选“高”。
+- “结束停顿时间”默认 `1.8 秒`，可在 `0.8～5.0 秒` 之间按 `0.1 秒` 调整；思考停顿较多时可调大，该设置保存在当前浏览器。
+- 页面被隐藏、Gateway 断线、配对或配置失败，以及手动发送文字/附件时，自然对话会暂停，需要用户再次点击 `👄` 继续。
+
 ### 技术实现
 
 - 总装配入口在 `apps/web/public/app.js`
@@ -135,6 +144,9 @@
 - 全局状态在 `apps/web/public/app/bootstrap/state.js`
 - 本地持久化在 `apps/web/public/app/features/persistence.js`
 - 主要功能都拆在 `apps/web/public/app/features/**`
+- 自然对话分段与媒体生命周期在 `apps/web/public/app/features/natural-voice-input.js`
+- PCM 预滚、重采样与 WAV 编码在 `apps/web/public/app/features/natural-voice-audio.js`，音频采集 worklet 在 `natural-voice-audio-worklet.js`
+- 手动/自然语音模式编排在 `apps/web/public/app/features/voice.js`
 
 ### 主要前端模块
 

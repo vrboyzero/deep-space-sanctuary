@@ -4272,11 +4272,15 @@ test("memory.search returns session-derived resume results through the RPC surfa
   const workspaceRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-memory-search-session-derived-workspace-"));
   const sessionsDir = path.join(stateDir, "sessions");
   await fs.promises.mkdir(sessionsDir, { recursive: true });
+  const conversationStore = new ConversationStore({ dataDir: sessionsDir });
 
   const memoryManager = new MemoryManager({
     workspaceRoot,
     stateDir,
     taskMemoryEnabled: true,
+    sessionArtifactInventory: {
+      listPage: (options) => conversationStore.listSessionArtifactInventoryPage(options),
+    },
   });
   registerGlobalMemoryManager(memoryManager);
 

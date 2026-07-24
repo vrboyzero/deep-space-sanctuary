@@ -17,6 +17,7 @@ import {
   CONTENT_PANEL_VISIBLE_KEY,
   CONTROL_PANEL_VISIBLE_KEY,
   MODEL_ID_KEY,
+  NATURAL_VOICE_SILENCE_MS_KEY,
   SESSION_AUTH_TOKEN_KEY,
   SESSION_AUTH_REMEMBER_KEY,
   STORE_KEY,
@@ -24,6 +25,8 @@ import {
   UUID_KEY,
   VOICE_SHORTCUT_DISABLED_VALUE,
   VOICE_SHORTCUT_KEY,
+  VOICE_INPUT_MODE_KEY,
+  VOICE_SENSITIVITY_KEY,
   WEBCHAT_DEBUG_KEY,
   WORKSPACE_ROOTS_KEY,
 } from "./app/bootstrap/storage-keys.js";
@@ -129,6 +132,8 @@ const {
   promptEl,
   voiceBtn,
   voiceDurationEl,
+  naturalVoiceStatusEl,
+  naturalVoiceBtn,
   messagesEl,
   modelPickerEl,
   modelFilterEl,
@@ -1156,10 +1161,15 @@ voiceFeature = createVoiceFeature({
   storageKey: VOICE_SHORTCUT_KEY,
   disabledValue: VOICE_SHORTCUT_DISABLED_VALUE,
   defaultShortcut: DEFAULT_VOICE_SHORTCUT,
+  modeStorageKey: VOICE_INPUT_MODE_KEY,
+  sensitivityStorageKey: VOICE_SENSITIVITY_KEY,
+  silenceStorageKey: NATURAL_VOICE_SILENCE_MS_KEY,
   promptEl,
   composerSection,
   voiceButtonEl: voiceBtn,
+  naturalButtonEl: naturalVoiceBtn,
   voiceDurationEl,
+  naturalStatusEl: naturalVoiceStatusEl,
   getIsSettingsOpen: () => Boolean(settingsModal && !settingsModal.classList.contains("hidden")),
   syncPromptHeight: () => promptController.syncHeight(),
   estimateDataUrlBytes,
@@ -1176,6 +1186,32 @@ voiceFeature = createVoiceFeature({
     attachmentsFeature?.renderAttachmentsPreview(hintMessage);
   },
   onSendMessage: () => handleComposerPrimaryAction(),
+  onNaturalSpeechStarted: () => {
+    chatEventsFeature?.pauseAssistantAudio?.();
+    void requestActiveConversationRunStop();
+  },
+  onNaturalTurnReady: async ({ attachment, signal }) => {
+    if (signal?.aborted || !attachment) return false;
+    await sendMessage({
+      pendingAttachmentsOverride: [attachment],
+      source: "natural_voice",
+    });
+    return !signal?.aborted;
+  },
+  onNaturalVoiceError: ({ code, message }) => {
+    showNotice?.(
+      localeController.t(
+        code === "turn_submit_failed" ? "voice.naturalTurnFailedTitle" : "voice.naturalStartFailedTitle",
+        {},
+        code === "turn_submit_failed" ? "语音发送失败" : "自然对话未启动",
+      ),
+      message || localeController.t("voice.naturalError", {}, "自然对话不可用"),
+      "error",
+      4200,
+    );
+  },
+  isAssistantAudioPlaying: () => chatEventsFeature?.isAssistantAudioPlaying?.() === true,
+  canStartNaturalVoice: () => Boolean(ws && isReady),
   t: localeController.t,
   getSpeechRecognitionLocale: () => localeController.getSpeechRecognitionLocale(),
 });
@@ -1482,6 +1518,7 @@ chatNetworkFeature = createChatNetworkFeature({
   onAgentListLoaded: (agents, selectedAgentId) => syncAgentCatalog(agents, selectedAgentId),
   onEvent: (event, payload) => handleEvent(event, payload),
   onConnectionStateChanged: ({ ready }) => {
+    voiceFeature?.handleConnectionStateChanged?.({ ready });
     if (!ready) {
       agentSessionCacheFeature.clearGeneration();
       taskTokenHistoryByConversation.clearGeneration();
@@ -2546,6 +2583,7 @@ function buildAttachmentsPayload(attachments) {
 }
 
 async function sendMessage(options = {}) {
+  const isNaturalVoiceTurn = options.source === "natural_voice";
   const hasTextOverride = typeof options.textOverride === "string";
   const text = hasTextOverride ? options.textOverride.trim() : promptEl.value.trim();
   const pendingAttachments = Array.isArray(options.pendingAttachmentsOverride)
@@ -2559,12 +2597,25 @@ async function sendMessage(options = {}) {
   };
 
   if (!text && !pendingAttachments.length) return;
+  if (!isNaturalVoiceTurn) {
+    voiceFeature?.pauseNaturalVoice?.("manual_message");
+  }
   if (!hasTextOverride) {
     promptEl.value = "";
     promptController.syncHeight();
   }
 
   if (!ws || !isReady) {
+    if (isNaturalVoiceTurn) {
+      voiceFeature?.pauseNaturalVoice?.("connection_lost");
+      showNotice?.(
+        localeController.t("voice.naturalTurnFailedTitle", {}, "语音发送失败"),
+        localeController.t("settings.notConnectedError", {}, "当前未连接到 Gateway。"),
+        "error",
+        4200,
+      );
+      return false;
+    }
     queuedText = text;
     connect();
     return;
@@ -2781,6 +2832,7 @@ async function sendMessage(options = {}) {
 
   if (payload && payload.ok === false) {
     if (payload.error && payload.error.code === "pairing_required") {
+      if (isNaturalVoiceTurn) voiceFeature?.pauseNaturalVoice?.("pairing_required");
       const msg = payload.error.message ? String(payload.error.message) : "Pairing required.";
       if (!hasTextOverride) {
         restorePromptText(text);
@@ -2805,11 +2857,15 @@ async function sendMessage(options = {}) {
       return;
     }
     if (payload.error && payload.error.code === "config_required") {
+      if (isNaturalVoiceTurn) voiceFeature?.pauseNaturalVoice?.("config_required");
       if (botMsgEl) {
         botMsgEl.textContent = `${localeController.t("runtime.configRequired", { message: payload.error.message }, `Configuration missing: ${payload.error.message}`)}\n${localeController.t("runtime.configRequiredHint", {}, "Click the settings icon (⚙️) in the top-right corner to complete the configuration.")}`;
       }
       toggleSettings(true); // Auto open settings
       return;
+    }
+    if (isNaturalVoiceTurn) {
+      throw new Error(payload.error?.message || localeController.t("voice.naturalError", {}, "自然对话不可用"));
     }
   }
 
@@ -2831,6 +2887,7 @@ async function sendMessage(options = {}) {
     void loadConversationMeta(activeConversationId, { renderMessages: false });
     void sessionDigestFeature?.loadSessionDigest(activeConversationId);
   }
+  return payload?.ok !== false;
 }
 
 // ... existing handleEvent ...

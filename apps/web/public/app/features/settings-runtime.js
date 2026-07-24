@@ -75,6 +75,12 @@ export function createSettingsRuntimeFeature({
     cfgVoiceShortcutStatus,
     cfgVoiceShortcutDefault,
     cfgVoiceShortcutClear,
+    cfgVoiceModeManual,
+    cfgVoiceModeNatural,
+    cfgVoiceModeStatus,
+    cfgVoiceSensitivity,
+    cfgNaturalVoiceSilence,
+    cfgNaturalVoiceSilenceValue,
     cfgFacetAnchor,
     cfgInjectAgents,
     cfgInjectSoul,
@@ -143,6 +149,12 @@ export function createSettingsRuntimeFeature({
     statusEl: cfgVoiceShortcutStatus,
     defaultBtn: cfgVoiceShortcutDefault,
     clearBtn: cfgVoiceShortcutClear,
+    modeManualBtn: cfgVoiceModeManual,
+    modeNaturalBtn: cfgVoiceModeNatural,
+    modeStatusEl: cfgVoiceModeStatus,
+    sensitivityEl: cfgVoiceSensitivity,
+    silenceEl: cfgNaturalVoiceSilence,
+    silenceValueEl: cfgNaturalVoiceSilenceValue,
   });
   localeController?.bindSelect?.(cfgLocale);
 

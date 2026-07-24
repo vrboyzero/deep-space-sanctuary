@@ -107,15 +107,13 @@ function readSource(relativePath: string): string {
 }
 
 describe("outbound request owner inventory", () => {
-  it("keeps raw fetch calls behind an explicit cross-OPT owner", () => {
-    expect(findMatchingFiles(/(?:\bglobalThis\.fetch|(?<![.\w$])fetch)\s*\(/u)).toEqual([
-      TOKEN_USAGE_UPLOAD_SOURCE,
-    ]);
+  it("keeps production source free of raw fetch calls", () => {
+    expect(findMatchingFiles(/(?:\bglobalThis\.fetch|(?<![.\w$])fetch)\s*\(/u)).toEqual([]);
 
     const source = readSource(TOKEN_USAGE_UPLOAD_SOURCE);
-    expect(source).toContain("P02");
-    expect(source).toContain("trusted-private");
-    expect(source.match(/(?<![.\w$])fetch\s*\(/gu)).toHaveLength(1);
+    expect(source).toContain("new OutboundRequestPolicy");
+    expect(source).toContain("policy.request");
+    expect(source.match(/(?<![.\w$])fetch\s*\(/gu)).toBeNull();
   });
 
   it("keeps direct Node HTTP client calls inside OutboundRequestPolicy", () => {

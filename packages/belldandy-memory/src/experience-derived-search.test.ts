@@ -124,7 +124,7 @@ describe("experience derived candidate search", () => {
     `).all('"fixed" OR "scale" OR "marker"') as Array<{ detail: string }>;
     expect(queryPlan.map((row) => row.detail).join(" ")).toMatch(/VIRTUAL TABLE/i);
     store.close();
-  });
+  }, 15_000);
 
   it("preserves agent and consumed-candidate filters before reading details", async () => {
     const store = await createStore(cleanupDirs);

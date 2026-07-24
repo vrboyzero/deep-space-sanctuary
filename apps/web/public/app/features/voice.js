@@ -1,3 +1,17 @@
+import { createNaturalVoiceInput } from "./natural-voice-input.js";
+import { normalizeNaturalVoiceSilenceMs } from "./natural-voice-audio.js";
+
+const VOICE_INPUT_MODES = Object.freeze({
+  manual: "manual",
+  natural: "natural",
+});
+
+const VOICE_SENSITIVITY_THRESHOLDS = Object.freeze({
+  low: 0.075,
+  standard: 0.045,
+  high: 0.028,
+});
+
 function createNoopVoiceInputController() {
   return {
     isSupported: false,
@@ -7,6 +21,7 @@ function createNoopVoiceInputController() {
     async toggle() {
       return false;
     },
+    pause() {},
     updateTitle() {},
     dispose() {},
     getRuntimeSnapshot() {
@@ -31,10 +46,15 @@ export function createVoiceFeature({
   storageKey,
   disabledValue,
   defaultShortcut,
+  modeStorageKey = "belldandy.webchat.voiceInputMode",
+  sensitivityStorageKey = "belldandy.webchat.voiceSensitivity",
+  silenceStorageKey = "belldandy.webchat.naturalVoiceSilenceMs",
   promptEl,
   composerSection,
   voiceButtonEl,
+  naturalButtonEl,
   voiceDurationEl,
+  naturalStatusEl,
   getIsSettingsOpen,
   syncPromptHeight,
   estimateDataUrlBytes,
@@ -44,11 +64,20 @@ export function createVoiceFeature({
   addAttachment,
   renderAttachmentsPreview,
   onSendMessage,
+  onNaturalSpeechStarted = () => {},
+  onNaturalTurnReady = async () => {},
+  onNaturalVoiceError = () => {},
+  isAssistantAudioPlaying = () => false,
+  canStartNaturalVoice = () => true,
+  createNaturalVoiceInputFactory = createNaturalVoiceInput,
   t = (_key, _params, fallback) => fallback ?? "",
   getSpeechRecognitionLocale = () => "zh-CN",
 }) {
   let disposed = false;
   let shortcutBinding = loadVoiceShortcutSetting();
+  let voiceMode = loadVoiceModeSetting();
+  let voiceSensitivity = loadVoiceSensitivitySetting();
+  let voiceSilenceMs = loadVoiceSilenceSetting();
   let shortcutCaptureActive = false;
   let shortcutInputEl = null;
   let shortcutStatusEl = null;
@@ -56,10 +85,308 @@ export function createVoiceFeature({
   let shortcutClearBtn = null;
   let globalKeyTarget = null;
   const settingsListenerEntries = [];
-  let voiceInputController = initVoiceInput();
+  let modeManualBtn = null;
+  let modeNaturalBtn = null;
+  let modeStatusEl = null;
+  let sensitivityEl = null;
+  let silenceEl = null;
+  let silenceValueEl = null;
+  let naturalButtonListenerBound = false;
+  let voiceInputController = null;
+  let naturalSnapshot = {
+    state: "paused",
+    hasMicrophone: false,
+    isCapturing: false,
+    pendingTurnCount: 0,
+  };
+  const naturalVoiceInput = createNaturalVoiceInputFactory({
+    getSpeechEndMs: () => voiceSilenceMs,
+    getSpeechThresholds: () => getNaturalSpeechThresholds(),
+    onError: (error) => handleNaturalVoiceError(error),
+    onSpeechStarted: (snapshot) => onNaturalSpeechStarted(snapshot),
+    onStateChange: (snapshot) => {
+      naturalSnapshot = snapshot;
+      renderNaturalVoiceUi();
+    },
+    onTurnReady: (turn) => settleNaturalVoiceTurn(turn),
+  });
+  naturalSnapshot = naturalVoiceInput?.getSnapshot?.() || naturalSnapshot;
+  voiceInputController = initVoiceInput();
+  bindNaturalVoiceButton();
+  renderNaturalVoiceUi();
 
   function getDefaultVoiceShortcut() {
     return cloneShortcut(defaultShortcut);
+  }
+
+  function loadVoiceModeSetting() {
+    try {
+      return localStorage.getItem(modeStorageKey) === VOICE_INPUT_MODES.natural
+        ? VOICE_INPUT_MODES.natural
+        : VOICE_INPUT_MODES.manual;
+    } catch {
+      return VOICE_INPUT_MODES.manual;
+    }
+  }
+
+  function loadVoiceSensitivitySetting() {
+    try {
+      const value = localStorage.getItem(sensitivityStorageKey);
+      return Object.hasOwn(VOICE_SENSITIVITY_THRESHOLDS, value) ? value : "standard";
+    } catch {
+      return "standard";
+    }
+  }
+
+  function loadVoiceSilenceSetting() {
+    try {
+      return normalizeNaturalVoiceSilenceMs(localStorage.getItem(silenceStorageKey));
+    } catch {
+      return normalizeNaturalVoiceSilenceMs(undefined);
+    }
+  }
+
+  function persistLocalSetting(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Local voice preferences remain best-effort and never block input.
+    }
+  }
+
+  function getNaturalSpeechThresholds() {
+    const baseThreshold = VOICE_SENSITIVITY_THRESHOLDS[voiceSensitivity]
+      || VOICE_SENSITIVITY_THRESHOLDS.standard;
+    return {
+      start: isAssistantAudioPlaying() ? baseThreshold * 1.35 : baseThreshold,
+      continue: baseThreshold * 0.62,
+    };
+  }
+
+  function getNaturalStatusText(state) {
+    const labels = {
+      preparing: t("voice.naturalPreparing", {}, "正在准备麦克风"),
+      listening: t("voice.naturalListening", {}, "正在听"),
+      capturing: t("voice.naturalCapturing", {}, "正在聆听"),
+      submitting: t("voice.naturalSubmitting", {}, "正在理解"),
+      paused: t("voice.naturalPaused", {}, "已暂停聆听"),
+      error: t("voice.naturalError", {}, "自然对话不可用"),
+    };
+    return labels[state] || labels.paused;
+  }
+
+  function getNaturalButtonTitle() {
+    if (voiceMode !== VOICE_INPUT_MODES.natural) {
+      return t("voice.naturalStartTitle", {}, "开启自然对话");
+    }
+    const activeStates = new Set(["preparing", "listening", "capturing", "submitting"]);
+    return activeStates.has(naturalSnapshot.state)
+      ? t("voice.naturalPauseTitle", {}, "暂停自然对话")
+      : t("voice.naturalResumeTitle", {}, "继续自然对话");
+  }
+
+  function renderVoiceModeSetting() {
+    const naturalSelected = voiceMode === VOICE_INPUT_MODES.natural;
+    modeManualBtn?.setAttribute("aria-pressed", String(!naturalSelected));
+    modeNaturalBtn?.setAttribute("aria-pressed", String(naturalSelected));
+    modeManualBtn?.classList.toggle("active", !naturalSelected);
+    modeNaturalBtn?.classList.toggle("active", naturalSelected);
+    if (sensitivityEl) {
+      sensitivityEl.value = voiceSensitivity;
+      sensitivityEl.disabled = !naturalSelected;
+    }
+    if (silenceEl) {
+      silenceEl.value = (voiceSilenceMs / 1_000).toFixed(1);
+      silenceEl.disabled = !naturalSelected;
+    }
+    if (silenceValueEl) {
+      const seconds = (voiceSilenceMs / 1_000).toFixed(1);
+      silenceValueEl.value = t(
+        "voice.silenceDurationValue",
+        { seconds },
+        `${seconds} s`,
+      );
+      silenceValueEl.textContent = silenceValueEl.value;
+    }
+    if (modeStatusEl) {
+      modeStatusEl.textContent = naturalSelected
+        ? getNaturalStatusText(naturalSnapshot.state)
+        : t("voice.manualModeStatus", {}, "按键录音不会持续占用麦克风。");
+    }
+  }
+
+  function renderNaturalVoiceUi() {
+    renderVoiceModeSetting();
+    voiceInputController?.updateTitle?.();
+    if (voiceButtonEl) {
+      voiceButtonEl.classList.remove(
+        "natural-listening",
+        "natural-capturing",
+        "natural-submitting",
+      );
+    }
+    if (naturalButtonEl) {
+      const title = getNaturalButtonTitle();
+      naturalButtonEl.title = title;
+      naturalButtonEl.setAttribute("aria-label", title);
+      naturalButtonEl.setAttribute("aria-pressed", String(voiceMode === VOICE_INPUT_MODES.natural));
+      naturalButtonEl.classList.remove(
+        "natural-listening",
+        "natural-capturing",
+        "natural-submitting",
+      );
+    }
+    if (voiceMode !== VOICE_INPUT_MODES.natural) {
+      naturalStatusEl?.classList.add("hidden");
+      naturalStatusEl?.removeAttribute("data-state");
+      return;
+    }
+
+    voiceDurationEl?.classList.add("hidden");
+    naturalStatusEl?.classList.remove("hidden");
+    if (naturalStatusEl) {
+      naturalStatusEl.textContent = getNaturalStatusText(naturalSnapshot.state);
+      naturalStatusEl.dataset.state = naturalSnapshot.state;
+    }
+    if (naturalSnapshot.state === "listening" || naturalSnapshot.state === "preparing") {
+      naturalButtonEl?.classList.add("natural-listening");
+    } else if (naturalSnapshot.state === "capturing") {
+      naturalButtonEl?.classList.add("natural-capturing");
+    } else if (naturalSnapshot.state === "submitting") {
+      naturalButtonEl?.classList.add("natural-submitting");
+    }
+  }
+
+  function bindNaturalVoiceButton() {
+    if (!naturalButtonEl || naturalButtonListenerBound) return;
+    naturalButtonEl.addEventListener("click", toggleNaturalVoice);
+    naturalButtonListenerBound = true;
+  }
+
+  function switchToManualMode(reason = "manual_mode") {
+    naturalVoiceInput?.pause?.(reason);
+    voiceMode = VOICE_INPUT_MODES.manual;
+    persistLocalSetting(modeStorageKey, voiceMode);
+    renderNaturalVoiceUi();
+  }
+
+  async function startNaturalMode() {
+    if (!canStartNaturalVoice()) {
+      voiceMode = VOICE_INPUT_MODES.manual;
+      persistLocalSetting(modeStorageKey, voiceMode);
+      renderNaturalVoiceUi();
+      onNaturalVoiceError({
+        code: "not_connected",
+        message: t("settings.notConnectedError", {}, "当前未连接到 Gateway。"),
+      });
+      return false;
+    }
+    voiceInputController?.pause?.();
+    voiceMode = VOICE_INPUT_MODES.natural;
+    persistLocalSetting(modeStorageKey, voiceMode);
+    renderNaturalVoiceUi();
+    const started = await naturalVoiceInput?.start?.();
+    if (!started && !disposed && voiceMode === VOICE_INPUT_MODES.natural) {
+      switchToManualMode("start_failed");
+    }
+    return Boolean(started);
+  }
+
+  function handleNaturalVoiceError(error) {
+    naturalSnapshot = naturalVoiceInput?.getSnapshot?.() || { ...naturalSnapshot, state: "error" };
+    onNaturalVoiceError(error);
+    if (!disposed && voiceMode === VOICE_INPUT_MODES.natural) {
+      voiceMode = VOICE_INPUT_MODES.manual;
+      persistLocalSetting(modeStorageKey, voiceMode);
+    }
+    renderNaturalVoiceUi();
+  }
+
+  function toggleNaturalVoice() {
+    const activeStates = new Set(["preparing", "listening", "capturing", "submitting"]);
+    if (activeStates.has(naturalSnapshot.state)) {
+      naturalVoiceInput?.pause?.("user_pause");
+      naturalSnapshot = naturalVoiceInput?.getSnapshot?.() || { ...naturalSnapshot, state: "paused" };
+      renderNaturalVoiceUi();
+      return false;
+    }
+    void startNaturalMode();
+    return true;
+  }
+
+  function readBlobAsDataUrl(blob, signal) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      const cleanup = () => {
+        reader.onloadend = null;
+        reader.onerror = null;
+        signal?.removeEventListener?.("abort", handleAbort);
+      };
+      const handleAbort = () => {
+        cleanup();
+        try {
+          reader.abort();
+        } catch {
+          // A completed FileReader no longer needs cancellation.
+        }
+        const error = new Error("Natural voice turn aborted.");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (signal?.aborted) {
+        handleAbort();
+        return;
+      }
+      reader.onerror = () => {
+        const error = reader.error || new Error("Failed to read the natural voice recording.");
+        cleanup();
+        reject(error);
+      };
+      reader.onloadend = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        cleanup();
+        resolve(result);
+      };
+      signal?.addEventListener?.("abort", handleAbort, { once: true });
+      try {
+        reader.readAsDataURL(blob);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+
+  async function settleNaturalVoiceTurn(turn = {}) {
+    const { blob, durationMs, mimeType = blob?.type || "audio/webm", reason, signal } = turn;
+    if (!(blob instanceof Blob) || signal?.aborted) return false;
+    const content = await readBlobAsDataUrl(blob, signal);
+    if (!content || signal?.aborted || disposed) return false;
+
+    const audioBytes = estimateDataUrlBytes(content);
+    const attachmentLimits = getAttachmentLimits();
+    const ext = mimeType.includes("mp4") ? "m4a" : (mimeType.includes("wav") ? "wav" : "webm");
+    const fileName = `natural_voice_${Date.now()}.${ext}`;
+    if (audioBytes > attachmentLimits.maxFileBytes) {
+      renderAttachmentsPreview(
+        `⚠️ 语音附件未发送：${fileName} 超过单文件上限 ${formatBytes(attachmentLimits.maxFileBytes)}。`,
+      );
+      return false;
+    }
+    if (audioBytes > attachmentLimits.maxTotalBytes) {
+      renderAttachmentsPreview(
+        `⚠️ 语音附件未发送：总大小会超过 ${formatBytes(attachmentLimits.maxTotalBytes)}。`,
+      );
+      return false;
+    }
+
+    await onNaturalTurnReady({
+      attachment: { name: fileName, type: "audio", mimeType, content },
+      durationMs,
+      reason,
+      signal,
+    });
+    return !signal?.aborted;
   }
 
   function isVoiceShortcutFunctionKey(code) {
@@ -229,6 +556,7 @@ export function createVoiceFeature({
 
   function shouldHandleVoiceShortcut(event) {
     if (disposed) return false;
+    if (voiceMode !== VOICE_INPUT_MODES.manual) return false;
     if (!shortcutBinding || !voiceInputController.isSupported) return false;
     if (!matchesVoiceShortcut(event, shortcutBinding)) return false;
     if (event.defaultPrevented || event.repeat || event.isComposing) return false;
@@ -238,13 +566,30 @@ export function createVoiceFeature({
     return true;
   }
 
-  function bindSettingsUI({ inputEl, statusEl, defaultBtn, clearBtn }) {
+  function bindSettingsUI({
+    inputEl,
+    statusEl,
+    defaultBtn,
+    clearBtn,
+    modeManualBtn: nextModeManualBtn,
+    modeNaturalBtn: nextModeNaturalBtn,
+    modeStatusEl: nextModeStatusEl,
+    sensitivityEl: nextSensitivityEl,
+    silenceEl: nextSilenceEl,
+    silenceValueEl: nextSilenceValueEl,
+  }) {
     if (disposed) return;
     unbindSettingsUI();
     shortcutInputEl = inputEl || null;
     shortcutStatusEl = statusEl || null;
     shortcutDefaultBtn = defaultBtn || null;
     shortcutClearBtn = clearBtn || null;
+    modeManualBtn = nextModeManualBtn || null;
+    modeNaturalBtn = nextModeNaturalBtn || null;
+    modeStatusEl = nextModeStatusEl || null;
+    sensitivityEl = nextSensitivityEl || null;
+    silenceEl = nextSilenceEl || null;
+    silenceValueEl = nextSilenceValueEl || null;
 
     const handleShortcutFocus = () => {
       if (disposed) return;
@@ -309,6 +654,27 @@ export function createVoiceFeature({
       persistVoiceShortcutSetting(null);
       renderVoiceShortcutSetting();
     };
+    const handleManualMode = () => {
+      if (disposed) return;
+      switchToManualMode("manual_mode");
+    };
+    const handleNaturalMode = () => {
+      if (disposed) return;
+      void startNaturalMode();
+    };
+    const handleSensitivityChange = () => {
+      if (disposed || !sensitivityEl) return;
+      const value = sensitivityEl.value;
+      voiceSensitivity = Object.hasOwn(VOICE_SENSITIVITY_THRESHOLDS, value) ? value : "standard";
+      persistLocalSetting(sensitivityStorageKey, voiceSensitivity);
+      renderVoiceModeSetting();
+    };
+    const handleSilenceChange = () => {
+      if (disposed || !silenceEl) return;
+      voiceSilenceMs = normalizeNaturalVoiceSilenceMs(Number(silenceEl.value) * 1_000);
+      persistLocalSetting(silenceStorageKey, String(voiceSilenceMs));
+      renderVoiceModeSetting();
+    };
 
     if (shortcutInputEl) {
       addSettingsListener(shortcutInputEl, "focus", handleShortcutFocus);
@@ -321,6 +687,20 @@ export function createVoiceFeature({
     if (shortcutClearBtn) {
       addSettingsListener(shortcutClearBtn, "click", handleShortcutClear);
     }
+    if (modeManualBtn) {
+      addSettingsListener(modeManualBtn, "click", handleManualMode);
+    }
+    if (modeNaturalBtn) {
+      addSettingsListener(modeNaturalBtn, "click", handleNaturalMode);
+    }
+    if (sensitivityEl) {
+      addSettingsListener(sensitivityEl, "change", handleSensitivityChange);
+    }
+    if (silenceEl) {
+      addSettingsListener(silenceEl, "input", handleSilenceChange);
+      addSettingsListener(silenceEl, "change", handleSilenceChange);
+    }
+    renderVoiceModeSetting();
   }
 
   function addSettingsListener(target, type, handler) {
@@ -338,16 +718,24 @@ export function createVoiceFeature({
     shortcutStatusEl = null;
     shortcutDefaultBtn = null;
     shortcutClearBtn = null;
+    modeManualBtn = null;
+    modeNaturalBtn = null;
+    modeStatusEl = null;
+    sensitivityEl = null;
+    silenceEl = null;
+    silenceValueEl = null;
   }
 
   function bindGlobalKeyTarget(target) {
     if (disposed || target === globalKeyTarget) return;
     if (globalKeyTarget) {
       globalKeyTarget.removeEventListener("keydown", handleGlobalKeydown);
+      globalKeyTarget.removeEventListener("visibilitychange", handleVisibilityChange);
     }
     globalKeyTarget = target || null;
     if (globalKeyTarget) {
       globalKeyTarget.addEventListener("keydown", handleGlobalKeydown);
+      globalKeyTarget.addEventListener("visibilitychange", handleVisibilityChange);
     }
   }
 
@@ -355,6 +743,7 @@ export function createVoiceFeature({
     if (disposed) return;
     if (show) {
       renderVoiceShortcutSetting();
+      renderVoiceModeSetting();
       return;
     }
     shortcutCaptureActive = false;
@@ -366,6 +755,13 @@ export function createVoiceFeature({
     event.stopPropagation();
     void voiceInputController.toggle();
     return true;
+  }
+
+  function handleVisibilityChange() {
+    if (disposed || !globalKeyTarget?.hidden || voiceMode !== VOICE_INPUT_MODES.natural) return;
+    naturalVoiceInput?.pause?.("page_hidden");
+    naturalSnapshot = naturalVoiceInput?.getSnapshot?.() || { ...naturalSnapshot, state: "paused" };
+    renderNaturalVoiceUi();
   }
 
   function initVoiceInput() {
@@ -410,6 +806,9 @@ export function createVoiceFeature({
         }
         return startRecording();
       },
+      pause() {
+        stopRecording();
+      },
       updateTitle() {
         if (disposed) return;
         const title = describeVoiceShortcutForTitle();
@@ -432,6 +831,9 @@ export function createVoiceFeature({
 
     function handleVoiceButtonClick() {
       if (disposed) return;
+      if (voiceMode === VOICE_INPUT_MODES.natural) {
+        switchToManualMode("manual_recording");
+      }
       void controller.toggle();
     }
 
@@ -664,6 +1066,7 @@ export function createVoiceFeature({
       }
       voiceButtonEl.classList.remove("recording", "listening");
       voiceDurationEl?.classList.add("hidden");
+      if (voiceMode === VOICE_INPUT_MODES.natural) renderNaturalVoiceUi();
     }
 
     function disposeVoiceInput() {
@@ -720,24 +1123,46 @@ export function createVoiceFeature({
     unbindSettingsUI();
     if (globalKeyTarget) {
       globalKeyTarget.removeEventListener("keydown", handleGlobalKeydown);
+      globalKeyTarget.removeEventListener("visibilitychange", handleVisibilityChange);
       globalKeyTarget = null;
+    }
+    naturalVoiceInput?.dispose?.();
+    if (naturalButtonEl && naturalButtonListenerBound) {
+      naturalButtonEl.removeEventListener("click", toggleNaturalVoice);
+      naturalButtonListenerBound = false;
     }
     voiceInputController.dispose();
   }
 
+  function pauseNaturalVoice(reason = "external_pause") {
+    if (disposed || voiceMode !== VOICE_INPUT_MODES.natural) return false;
+    naturalVoiceInput?.pause?.(reason);
+    naturalSnapshot = naturalVoiceInput?.getSnapshot?.() || { ...naturalSnapshot, state: "paused" };
+    renderNaturalVoiceUi();
+    return true;
+  }
+
   function getRuntimeSnapshot() {
     const inputSnapshot = voiceInputController.getRuntimeSnapshot();
+    const currentNaturalSnapshot = naturalVoiceInput?.getSnapshot?.() || naturalSnapshot;
     return {
       listenerCount:
         settingsListenerEntries.length
-        + (globalKeyTarget ? 1 : 0)
-        + inputSnapshot.voiceButtonListenerCount,
-      activeTimerCount: inputSnapshot.activeTimerCount,
+        + (globalKeyTarget ? 2 : 0)
+        + inputSnapshot.voiceButtonListenerCount
+        + (naturalButtonListenerBound ? 1 : 0),
+      activeTimerCount: inputSnapshot.activeTimerCount + (currentNaturalSnapshot.activeFrameCount || 0),
       pendingMediaRequestCount: inputSnapshot.pendingMediaRequestCount,
-      activeStreamCount: inputSnapshot.activeStreamCount,
-      activeRecorderCount: inputSnapshot.activeRecorderCount,
+      activeStreamCount: inputSnapshot.activeStreamCount + (currentNaturalSnapshot.activeStreamCount || 0),
+      activeRecorderCount: inputSnapshot.activeRecorderCount + (currentNaturalSnapshot.activeRecorderCount || 0),
+      activeAudioWorkletCount: currentNaturalSnapshot.activeAudioWorkletCount || 0,
+      activeAudioContextCount: currentNaturalSnapshot.activeAudioContextCount || 0,
       activeRecognitionCount: inputSnapshot.activeRecognitionCount,
       pendingFileReaderCount: inputSnapshot.pendingFileReaderCount,
+      pendingNaturalTurnCount: currentNaturalSnapshot.pendingTurnCount || 0,
+      voiceMode,
+      voiceSensitivity,
+      voiceSilenceMs,
       disposed,
     };
   }
@@ -748,11 +1173,15 @@ export function createVoiceFeature({
     dispose,
     getRuntimeSnapshot,
     handleGlobalKeydown,
+    handleConnectionStateChanged({ ready } = {}) {
+      if (!ready) pauseNaturalVoice("connection_lost");
+    },
     onSettingsToggle,
+    pauseNaturalVoice,
     refreshLocale() {
       if (disposed) return;
       renderVoiceShortcutSetting();
-      voiceInputController.updateTitle();
+      renderNaturalVoiceUi();
     },
   };
 }

@@ -25,11 +25,9 @@ describe("WebChat app lifecycle wiring", () => {
     const settingsDisposeBlock = settingsSource.match(
       /function dispose\(\) \{\s*if \(disposed\) return;([\s\S]*?)\n  \}/,
     )?.[0] ?? "";
-    const doctorDisposeCalls = settingsSource.match(
-      /disposeDoctorObservabilityCardRendering\(doctorStatusEl\);/g,
-    ) ?? [];
+    const doctorDisposeCalls = settingsSource.match(/doctorObservabilityLoader\.dispose\(doctorStatusEl\);/g) ?? [];
 
-    expect(settingsDisposeBlock).toContain("disposeDoctorObservabilityCardRendering(doctorStatusEl);");
+    expect(settingsDisposeBlock).toContain("doctorObservabilityLoader.dispose(doctorStatusEl);");
     expect(doctorDisposeCalls).toHaveLength(1);
   });
 

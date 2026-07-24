@@ -5,6 +5,32 @@ import { describe, expect, it, vi } from "vitest";
 import { createChatEventsFeature } from "./chat-events.js";
 
 describe("chat events pairing", () => {
+  it("pauses the assistant audio that it started automatically", () => {
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const target = document.createElement("div");
+    const feature = createChatEventsFeature({
+      appendMessage: vi.fn(() => target),
+      forceScrollToBottom: vi.fn(),
+      getCanvasApp: () => null,
+      renderAssistantMessage: (element) => {
+        element.innerHTML = '<audio controls src="/generated/reply.mp3"></audio>';
+      },
+    });
+
+    feature.handleEvent("chat.final", { text: "reply" });
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(feature.isAssistantAudioPlaying()).toBe(true);
+
+    expect(feature.pauseAssistantAudio()).toBe(true);
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(feature.isAssistantAudioPlaying()).toBe(false);
+
+    feature.dispose();
+    playSpy.mockRestore();
+    pauseSpy.mockRestore();
+  });
+
   it("bounds tool notice dedupe keys and resets them with the connection generation", () => {
     const showNotice = vi.fn();
     const feature = createChatEventsFeature({

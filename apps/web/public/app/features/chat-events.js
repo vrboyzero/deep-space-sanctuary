@@ -50,6 +50,7 @@ export function createChatEventsFeature({
   const handledToolNoticeKeys = createBoundedKeySet(dedupeMaxEntries);
   let generationClearCount = 0;
   let disposed = false;
+  let activeAssistantAudio = null;
 
   function scheduleFrameFlush() {
     if (pendingFrameFlushHandle !== null) {
@@ -154,9 +155,39 @@ export function createChatEventsFeature({
   function autoplayAssistantAudio(target) {
     const audioEl = target?.querySelector("audio");
     if (!audioEl) return;
-    audioEl.play().catch((err) => {
+    pauseAssistantAudio();
+    activeAssistantAudio = audioEl;
+    const clearIfCurrent = () => {
+      if (activeAssistantAudio === audioEl) activeAssistantAudio = null;
+    };
+    audioEl.addEventListener("ended", clearIfCurrent, { once: true });
+    audioEl.addEventListener("pause", clearIfCurrent, { once: true });
+    try {
+      const playback = audioEl.play();
+      playback?.catch?.((err) => {
+        clearIfCurrent();
+        console.warn("Auto-play blocked:", err);
+      });
+    } catch (err) {
+      clearIfCurrent();
       console.warn("Auto-play blocked:", err);
-    });
+    }
+  }
+
+  function pauseAssistantAudio() {
+    const audioEl = activeAssistantAudio;
+    if (!audioEl) return false;
+    activeAssistantAudio = null;
+    try {
+      audioEl.pause();
+    } catch {
+      // Playback may have ended between voice detection and the pause request.
+    }
+    return true;
+  }
+
+  function isAssistantAudioPlaying() {
+    return Boolean(activeAssistantAudio && !activeAssistantAudio.ended);
   }
 
   function isActiveConversationPayload(payload) {
@@ -184,6 +215,7 @@ export function createChatEventsFeature({
 
   function clearGeneration() {
     if (disposed) return;
+    pauseAssistantAudio();
     clearPendingUiEvents();
     renderedToolResultPreviewKeys.clear();
     handledToolNoticeKeys.clear();
@@ -193,6 +225,7 @@ export function createChatEventsFeature({
 
   function dispose() {
     if (disposed) return;
+    pauseAssistantAudio();
     clearPendingUiEvents();
     renderedToolResultPreviewKeys.dispose();
     handledToolNoticeKeys.dispose();
@@ -606,6 +639,8 @@ export function createChatEventsFeature({
   return {
     beginStreamingReply,
     handleEvent,
+    isAssistantAudioPlaying,
+    pauseAssistantAudio,
     resetStreamingState,
     clearGeneration,
     dispose,
