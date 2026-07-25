@@ -1,0 +1,121 @@
+name: Coding Agent Review
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      permission_mode:
+        description: Local workspace permission for this ephemeral job
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - workspace-write
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coding-agent-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Bounded coding agent review
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AUTO_OPEN_BROWSER: "false"
+      BELLDANDY_AGENT_PROVIDER: openai
+      BELLDANDY_AUTH_MODE: token
+      BELLDANDY_COMMUNITY_API_ENABLED: "false"
+      BELLDANDY_ENV_DIR: ${{ runner.temp }}/star-sanctuary-ci-state
+      BELLDANDY_HOST: 127.0.0.1
+      BELLDANDY_OPENAI_API_KEY: ${{ secrets.BELLDANDY_OPENAI_API_KEY }}
+      BELLDANDY_OPENAI_BASE_URL: ${{ vars.BELLDANDY_OPENAI_BASE_URL || 'https://api.openai.com/v1' }}
+      BELLDANDY_OPENAI_MODEL: ${{ vars.BELLDANDY_OPENAI_MODEL || 'gpt-4o-mini' }}
+      BELLDANDY_PORT: "28889"
+      BELLDANDY_STATE_DIR: ${{ runner.temp }}/star-sanctuary-ci-state
+      BELLDANDY_TOOLS_ENABLED: "true"
+      CI_PERMISSION_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.permission_mode || 'plan' }}
+
+    steps:
+      - name: Checkout repository without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.23.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Reject missing model credentials
+        shell: bash
+        run: |
+          if [ -z "${BELLDANDY_OPENAI_API_KEY:-}" ]; then
+            echo "::error::BELLDANDY_OPENAI_API_KEY is required for trusted CI runs."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify contracts
+        run: pnpm build
+
+      - name: Generate an ephemeral Gateway token
+        shell: bash
+        run: |
+          node --input-type=module -e "import crypto from 'node:crypto'; import fs from 'node:fs'; const token=crypto.randomBytes(32).toString('hex'); console.log('::add-mask::'+token); fs.appendFileSync(process.env.GITHUB_ENV, 'BELLDANDY_AUTH_TOKEN='+token+'\n');"
+
+      - name: Start the local Gateway
+        shell: bash
+        run: |
+          node packages/belldandy-core/dist/bin/bdd.js start > "${RUNNER_TEMP}/star-sanctuary-gateway.log" 2>&1 &
+          echo "BELLDANDY_GATEWAY_PID=$!" >> "${GITHUB_ENV}"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "http://127.0.0.1:${BELLDANDY_PORT}/health" > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Local Gateway did not become healthy."
+          exit 1
+
+      - name: Run bounded coding agent
+        run: >-
+          node scripts/run-coding-agent-ci.mjs
+          --workspace "${{ github.workspace }}"
+          --state-dir "${{ runner.temp }}/star-sanctuary-ci-state"
+          --artifact-dir "${{ runner.temp }}/coding-agent-artifacts"
+          --prompt-file "examples/ci/review-prompt.md"
+          --output-schema "examples/ci/review-output.schema.json"
+          --mode "${{ env.CI_PERMISSION_MODE }}"
+
+      - name: Stop the local Gateway
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${BELLDANDY_GATEWAY_PID:-}" ]; then
+            kill "${BELLDANDY_GATEWAY_PID}" 2>/dev/null || true
+          fi
+
+      - name: Upload reviewable coding agent artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: coding-agent-review
+          path: ${{ runner.temp }}/coding-agent-artifacts
+          if-no-files-found: error
+          retention-days: 7

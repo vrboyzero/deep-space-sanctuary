@@ -133,6 +133,63 @@ type PreparedPatchOperation =
     | { kind: "delete"; absolute: string; relative: string }
     | { kind: "update"; absolute: string; relative: string; newContent: string; move?: { absolute: string; relative: string } };
 
+function resolveMutationWorkspaceRoot(absolute: string, context: ToolContext): string {
+    const scope = resolveRuntimeFilesystemScope(context);
+    const roots = [scope.workspaceRoot, ...(scope.extraWorkspaceRoots ?? [])];
+    for (const root of roots) {
+        if (isUnderRoot(absolute, path.resolve(root)).ok) return path.resolve(root);
+    }
+    throw new Error("Workspace mutation target is outside its resolved workspace root.");
+}
+
+function collectMutationGroups(operations: readonly PreparedPatchOperation[], context: ToolContext): Map<string, Array<{ absolutePath: string; relativePath: string }>> {
+    const groups = new Map<string, Array<{ absolutePath: string; relativePath: string }>>();
+    const add = (absolute: string, relative: string) => {
+        const workspaceRoot = resolveMutationWorkspaceRoot(absolute, context);
+        const targets = groups.get(workspaceRoot) ?? [];
+        if (!targets.some((target) => target.absolutePath === absolute)) {
+            targets.push({ absolutePath: absolute, relativePath: relative });
+        }
+        groups.set(workspaceRoot, targets);
+    };
+    for (const operation of operations) {
+        add(operation.absolute, operation.relative);
+        if (operation.kind === "update" && operation.move) {
+            add(operation.move.absolute, operation.move.relative);
+        }
+    }
+    return groups;
+}
+
+async function prepareWorkspaceMutations(
+    context: ToolContext,
+    groups: ReadonlyMap<string, readonly { absolutePath: string; relativePath: string }[]>,
+): Promise<void> {
+    if (!context.workspaceMutationObserver || !context.workspaceRevisionId) return;
+    for (const [workspaceRoot, targets] of groups) {
+        await context.workspaceMutationObserver.prepareMutations({
+            workspaceRevisionId: context.workspaceRevisionId,
+            workspaceRoot,
+            toolName: "apply_patch",
+            targets,
+        });
+    }
+}
+
+async function commitWorkspaceMutation(
+    context: ToolContext,
+    absolute: string,
+    relative: string,
+): Promise<void> {
+    if (!context.workspaceMutationObserver || !context.workspaceRevisionId) return;
+    await context.workspaceMutationObserver.commitMutations({
+        workspaceRevisionId: context.workspaceRevisionId,
+        workspaceRoot: resolveMutationWorkspaceRoot(absolute, context),
+        toolName: "apply_patch",
+        targets: [{ absolutePath: absolute, relativePath: relative }],
+    });
+}
+
 // ============ apply_patch Tool ============
 
 export const applyPatchTool: Tool = withToolContract({
@@ -261,18 +318,21 @@ export const applyPatchTool: Tool = withToolContract({
             }
 
             throwIfAborted(context.abortSignal);
+            await prepareWorkspaceMutations(context, collectMutationGroups(operations, context));
 
             // 3. 进入提交阶段后不再响应 stop，优先保证补丁整体一致性。
             for (const operation of operations) {
                 if (operation.kind === "add") {
                     await ensureDir(operation.absolute);
                     await fs.writeFile(operation.absolute, operation.contents, "utf8");
+                    await commitWorkspaceMutation(context, operation.absolute, operation.relative);
                     recordSummary("added", operation.relative);
                     continue;
                 }
 
                 if (operation.kind === "delete") {
                     await fs.rm(operation.absolute, { force: true });
+                    await commitWorkspaceMutation(context, operation.absolute, operation.relative);
                     recordSummary("deleted", operation.relative);
                     continue;
                 }
@@ -280,12 +340,15 @@ export const applyPatchTool: Tool = withToolContract({
                 if (operation.move) {
                     await ensureDir(operation.move.absolute);
                     await fs.writeFile(operation.move.absolute, operation.newContent, "utf8");
+                    await commitWorkspaceMutation(context, operation.move.absolute, operation.move.relative);
                     await fs.rm(operation.absolute, { force: true });
+                    await commitWorkspaceMutation(context, operation.absolute, operation.relative);
                     recordSummary("modified", `${operation.relative} -> ${operation.move.relative}`);
                     continue;
                 }
 
                 await fs.writeFile(operation.absolute, operation.newContent, "utf8");
+                await commitWorkspaceMutation(context, operation.absolute, operation.relative);
                 recordSummary("modified", operation.relative);
             }
 

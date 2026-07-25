@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyPatchTool } from "./index.js";
 import type { ToolContext } from "../../types.js";
 
@@ -225,6 +225,44 @@ describe("apply_patch tool", () => {
 
     expect(result.success).toBe(true);
     await expect(fs.readFile(path.join(tempDir, "crlf.txt"), "utf-8")).resolves.toBe("alpha\r\ngamma\r\n");
+  });
+
+  it("prepares every patch target before writes and commits each successful mutation", async () => {
+    await fs.writeFile(path.join(tempDir, "source.txt"), "before\n", "utf-8");
+    const workspaceMutationObserver = {
+      prepareMutations: vi.fn(async () => {}),
+      commitMutations: vi.fn(async () => {}),
+    };
+
+    const result = await applyPatchTool.execute(
+      {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          "*** Move to: moved.txt",
+          "@@",
+          "-before",
+          "+after",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      {
+        ...baseContext,
+        workspaceRevisionId: "gateway-run-patch",
+        workspaceMutationObserver,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRevisionId: "gateway-run-patch",
+      toolName: "apply_patch",
+      targets: expect.arrayContaining([
+        { absolutePath: path.join(tempDir, "source.txt"), relativePath: "source.txt" },
+        { absolutePath: path.join(tempDir, "moved.txt"), relativePath: "moved.txt" },
+      ]),
+    }));
+    expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledTimes(2);
   });
 
   it("should stop before applying any writes when abortSignal is already aborted", async () => {

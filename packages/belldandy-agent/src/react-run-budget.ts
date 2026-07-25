@@ -8,7 +8,7 @@ export const DEFAULT_MAX_RUN_WALL_TIME_MS = 300_000;
 export const DEFAULT_MAX_TOTAL_TOKENS = 128_000;
 export const DEFAULT_MAX_HIGH_RISK_TOOL_CALLS = 4;
 
-export type ReActRunBudgetKind = "wall_time_ms" | "total_tokens" | "high_risk_tool_calls";
+export type ReActRunBudgetKind = "wall_time_ms" | "total_tokens" | "high_risk_tool_calls" | "cost_usd";
 
 export type ReActRunBudgetExhausted = {
   budget: ReActRunBudgetKind;
@@ -26,11 +26,14 @@ export type ReActRunBudgetUsage = {
   /** Provider 未返回 usage 时使用的本地 prompt / output 估算。 */
   fallbackInputTokens?: number;
   fallbackOutputTokens?: number;
+  /** 有可用定价信息时的本次模型调用 USD 成本。 */
+  costUsd?: number;
 };
 
 export type ReActRunBudgetTrackerOptions = {
   maxTotalTokens: number;
   maxHighRiskToolCalls: number;
+  maxCostUsd?: number;
 };
 
 export type ReActRunAbortController = {
@@ -51,6 +54,13 @@ function normalizeNonNegativeNumber(value: number | undefined): number {
     return 0;
   }
   return Math.floor(value);
+}
+
+function normalizePositiveCostLimit(value: number | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
 }
 
 /** 非正或非法 wall-time 不允许关闭安全默认值。 */
@@ -121,12 +131,15 @@ export function createReActRunAbortController(
 export class ReActRunBudgetTracker {
   readonly maxTotalTokens: number;
   readonly maxHighRiskToolCalls: number;
+  readonly maxCostUsd?: number;
   totalTokens = 0;
   highRiskToolCalls = 0;
+  totalCostUsd = 0;
 
   constructor(options: ReActRunBudgetTrackerOptions) {
     this.maxTotalTokens = normalizeMaxTotalTokens(options.maxTotalTokens);
     this.maxHighRiskToolCalls = normalizeMaxHighRiskToolCalls(options.maxHighRiskToolCalls);
+    this.maxCostUsd = normalizePositiveCostLimit(options.maxCostUsd);
   }
 
   /**
@@ -150,6 +163,14 @@ export class ReActRunBudgetTracker {
         observed: this.totalTokens,
       };
     }
+    this.totalCostUsd += normalizeNonNegativeDecimal(usage.costUsd);
+    if (this.maxCostUsd !== undefined && this.totalCostUsd > this.maxCostUsd) {
+      return {
+        budget: "cost_usd",
+        limit: this.maxCostUsd,
+        observed: this.totalCostUsd,
+      };
+    }
     return undefined;
   }
 
@@ -166,4 +187,11 @@ export class ReActRunBudgetTracker {
     this.highRiskToolCalls = observed;
     return undefined;
   }
+}
+
+function normalizeNonNegativeDecimal(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return value;
 }

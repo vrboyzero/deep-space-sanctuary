@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/agent-run-event-v1.json",
+  "title": "Star Sanctuary AgentRunEvent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "seq",
+    "timestampMs",
+    "source",
+    "binding",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "version": {
+      "const": "v1"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestampMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source": {
+      "enum": [
+        "conversation",
+        "goal",
+        "workflow",
+        "subtask"
+      ]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentRunId"
+      ],
+      "properties": {
+        "agentRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "goalId"
+          ],
+          "properties": {
+            "goalId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "nodeId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "workflow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "journalId"
+          ],
+          "properties": {
+            "journalId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workflowRunId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "subtask": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "taskId"
+          ],
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "worktreeId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspaceCheckpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspaceCheckpointId",
+            "recoveryGuarantee"
+          ],
+          "properties": {
+            "workspaceCheckpointId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recoveryGuarantee": {
+              "enum": [
+                "exact",
+                "managed_worktree",
+                "detect_only"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "type": {
+      "enum": [
+        "run.started",
+        "run.status",
+        "message.delta",
+        "tool.started",
+        "tool.completed",
+        "permission.requested",
+        "run.usage",
+        "run.budget_exhausted",
+        "run.cancelled",
+        "run.interrupted",
+        "run.completed",
+        "run.failed"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "conversation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "required": [
+              "conversationId"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "goal"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "required": [
+              "goal"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "workflow"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "required": [
+              "workflow"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "subtask"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "required": [
+              "subtask"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

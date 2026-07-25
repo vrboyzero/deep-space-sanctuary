@@ -34,6 +34,7 @@ import type {
   GatewayResFrame,
   GatewayEventFrame,
   ConversationRunStopParams,
+  CodingRunOptions,
   MessageSendParams,
   ChatMessageMeta,
 } from "@belldandy/protocol";
@@ -160,6 +161,11 @@ import {
 } from "./server-websocket-runtime.js";
 import { handleSystemDoctorMethod } from "./server-methods/system-doctor.js";
 import { handleWorkspaceConversationMethod } from "./server-methods/workspace-conversation.js";
+import { handleWorkspaceRevisionMethod } from "./server-methods/workspace-revision.js";
+import { handleCodingRunMethod } from "./server-methods/coding-run.js";
+import { handleCodingRunSubscriptionMethod } from "./server-methods/coding-run-subscription.js";
+import { createCodingRunGatewayEventBroker, type CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 import { handleWorkflowMethod } from "./server-methods/workflow.js";
 import { buildChannelSecurityDoctorReport } from "./channel-security-doctor.js";
 import {
@@ -181,6 +187,7 @@ import type { ChannelSecurityApprovalRequestInput } from "@belldandy/channels";
 import type { BackgroundContinuationRuntimeDoctorReport } from "./background-continuation-runtime.js";
 import type { CronRuntimeDoctorReport } from "./cron/observability.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
+import type { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 import {
   GatewayShutdownCoordinator,
   type GatewayShutdownRequest,
@@ -238,6 +245,10 @@ export type GatewayServerOptions = {
   conversationStoreOptions?: { maxHistory?: number; ttlSeconds?: number };
   conversationStore?: ConversationStore; // [NEW] Allow passing shared instance
   conversationRunRegistry?: ConversationRunRegistry;
+  /** Conversation coding-run v1 事件的有界投影；不保存领域状态。 */
+  codingRunEventBroker?: CodingRunGatewayEventBroker;
+  /** confirm 工具调用的 worker-scoped pending permission 真源。 */
+  pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle?: TopLevelConversationLifecycle;
   topLevelConversationLifecycleOptions?: ConstructorParameters<typeof TopLevelConversationLifecycle>[0];
   getCompactionRuntimeReport?: () => CompactionRuntimeReport | undefined;
@@ -365,6 +376,8 @@ export type GatewayServerOptions = {
   ) => Promise<SubTaskRecord | undefined>;
   /** 动态工作流运行时（由 Gateway 装配后注入） */
   workflowRuntime?: WorkflowRuntimeCapabilities;
+  /** 受控文件工具的用户轮次恢复点运行时。 */
+  workspaceRevisionRuntime?: WorkspaceRevisionRuntime;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
   commanderMode?: "on" | "off" | "auto";
   /** 发送前附件/长输入压缩策略。 */
@@ -901,6 +914,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     opts.agentRegistry?.list().filter((profile) => isResidentAgentProfile(profile)).map((profile) => profile.id) ?? ["default"],
   );
   const conversationRunRegistry = opts.conversationRunRegistry ?? new ConversationRunRegistry();
+  const codingRunEventBroker = opts.codingRunEventBroker ?? createCodingRunGatewayEventBroker();
   const topLevelConversationLifecycle = opts.topLevelConversationLifecycle
     ?? new TopLevelConversationLifecycle(opts.topLevelConversationLifecycleOptions);
   const memoryUsageAccounting = opts.memoryUsageAccounting ?? new MemoryRuntimeUsageAccounting({
@@ -1373,6 +1387,8 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     modelConfigPath: opts.modelConfigPath,
     conversationStore,
     conversationRunRegistry,
+    codingRunEventBroker,
+    pendingToolPermissionRuntime: opts.pendingToolPermissionRuntime,
     topLevelConversationLifecycle,
     durableExtractionRuntime,
     resolveDreamRuntime,
@@ -1410,6 +1426,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     updateSubTask: opts.updateSubTask,
     stopSubTask: opts.stopSubTask,
     workflowRuntime: opts.workflowRuntime,
+    workspaceRevisionRuntime: opts.workspaceRevisionRuntime,
     commanderMode: opts.commanderMode,
     preflightCompressionPolicy: opts.preflightCompressionPolicy,
     tokenUsageUploadConfig,
@@ -1956,6 +1973,7 @@ async function handleReq(
         modelFallbacks: ctx.modelFallbacks,
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
+        codingRunEventBroker: ctx.codingRunEventBroker,
         topLevelConversationLifecycle: ctx.topLevelConversationLifecycle,
         getConversationPromptSnapshot: ctx.getConversationPromptSnapshot,
         durableExtractionRuntime: ctx.durableExtractionRuntime,
@@ -2291,6 +2309,32 @@ async function handleReq(
       });
     }
 
+    case "workspace.revision.list":
+    case "workspace.revision.preview":
+    case "workspace.revision.restore": {
+      return handleWorkspaceRevisionMethod(req, {
+        runtime: ctx.workspaceRevisionRuntime,
+      });
+    }
+
+    case "coding.run.control": {
+      return handleCodingRunMethod(req, {
+        conversationRunRegistry: ctx.conversationRunRegistry,
+        goalManager: ctx.goalManager,
+        subTaskRuntimeStore: ctx.subTaskRuntimeStore,
+        resumeSubTask: ctx.resumeSubTask,
+        stopSubTask: ctx.stopSubTask,
+        workflowRuntime: ctx.workflowRuntime,
+        pendingToolPermissionRuntime: ctx.pendingToolPermissionRuntime,
+      });
+    }
+
+    case "coding.run.subscribe": {
+      return handleCodingRunSubscriptionMethod(req, ws, {
+        eventBroker: ctx.codingRunEventBroker,
+      });
+    }
+
     case "subtask.list":
     case "subtask.get":
     case "subtask.resume":
@@ -2384,6 +2428,8 @@ function parseMessageSendParams(value: unknown): { ok: true; value: MessageSendP
   // 解析 senderInfo 和 roomContext（用于 office.goddess.ai 社区）
   const senderInfo = obj.senderInfo && typeof obj.senderInfo === "object" ? obj.senderInfo as any : undefined;
   const roomContext = obj.roomContext && typeof obj.roomContext === "object" ? obj.roomContext as any : undefined;
+  const codingRun = parseCodingRunOptions(obj.codingRun);
+  if (!codingRun.ok) return codingRun;
 
   return {
     ok: true,
@@ -2399,8 +2445,114 @@ function parseMessageSendParams(value: unknown): { ok: true; value: MessageSendP
       senderInfo,
       roomContext,
       clientContext,
+      ...(codingRun.value ? { codingRun: codingRun.value } : {}),
     },
   };
+}
+
+function parseCodingRunOptions(
+  value: unknown,
+): { ok: true; value?: CodingRunOptions } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (!isObjectRecord(value)) return { ok: false, message: "codingRun must be an object" };
+  const allowedKeys = new Set([
+    "cwd",
+    "toolAllow",
+    "toolDeny",
+    "permissionMode",
+    "maxWallTimeMs",
+    "maxTurns",
+    "maxTokens",
+    "maxCostUsd",
+  ]);
+  const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unknownKey) return { ok: false, message: `codingRun.${unknownKey} is not supported` };
+
+  const cwdRaw = value.cwd;
+  let cwd: string | undefined;
+  if (cwdRaw !== undefined) {
+    if (typeof cwdRaw !== "string" || !cwdRaw.trim()) {
+      return { ok: false, message: "codingRun.cwd must be a non-empty absolute path" };
+    }
+    if (!path.isAbsolute(cwdRaw.trim())) {
+      return { ok: false, message: "codingRun.cwd must be an absolute path" };
+    }
+    cwd = path.resolve(cwdRaw.trim());
+  }
+
+  const toolAllow = parseCodingRunToolList(value.toolAllow, "toolAllow");
+  if (!toolAllow.ok) return toolAllow;
+  const toolDeny = parseCodingRunToolList(value.toolDeny, "toolDeny");
+  if (!toolDeny.ok) return toolDeny;
+
+  const permissionMode = value.permissionMode;
+  if (
+    permissionMode !== undefined
+    && permissionMode !== "plan"
+    && permissionMode !== "acceptEdits"
+    && permissionMode !== "confirm"
+  ) {
+    return { ok: false, message: "codingRun.permissionMode must be plan, acceptEdits, or confirm" };
+  }
+
+  const maxWallTimeMs = parseCodingRunPositiveInteger(value.maxWallTimeMs, "maxWallTimeMs", 1_000);
+  if (!maxWallTimeMs.ok) return maxWallTimeMs;
+  const maxTurns = parseCodingRunPositiveInteger(value.maxTurns, "maxTurns");
+  if (!maxTurns.ok) return maxTurns;
+  const maxTokens = parseCodingRunPositiveInteger(value.maxTokens, "maxTokens");
+  if (!maxTokens.ok) return maxTokens;
+
+  let maxCostUsd: number | undefined;
+  if (value.maxCostUsd !== undefined) {
+    if (typeof value.maxCostUsd !== "number" || !Number.isFinite(value.maxCostUsd) || value.maxCostUsd <= 0) {
+      return { ok: false, message: "codingRun.maxCostUsd must be a positive finite number" };
+    }
+    maxCostUsd = value.maxCostUsd;
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...(cwd ? { cwd } : {}),
+      ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
+      ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
+      ...(permissionMode ? { permissionMode } : {}),
+      ...(maxWallTimeMs.value ? { maxWallTimeMs: maxWallTimeMs.value } : {}),
+      ...(maxTurns.value ? { maxTurns: maxTurns.value } : {}),
+      ...(maxTokens.value ? { maxTokens: maxTokens.value } : {}),
+      ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+    },
+  };
+}
+
+function parseCodingRunToolList(
+  value: unknown,
+  field: "toolAllow" | "toolDeny",
+): { ok: true; value?: string[] } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (!Array.isArray(value) || value.length === 0 || value.length > 128) {
+    return { ok: false, message: `codingRun.${field} must contain 1-128 tool names` };
+  }
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim() || item.trim().length > 160) {
+      return { ok: false, message: `codingRun.${field} contains an invalid tool name` };
+    }
+    normalized.push(item.trim());
+  }
+  return { ok: true, value: [...new Set(normalized)] };
+}
+
+function parseCodingRunPositiveInteger(
+  value: unknown,
+  field: string,
+  minimum = 1,
+): { ok: true; value?: number } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+    return { ok: false, message: `codingRun.${field} must be an integer of at least ${minimum}` };
+  }
+  return { ok: true, value };
 }
 
 function parseConversationRunStopParams(

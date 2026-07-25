@@ -134,6 +134,7 @@ export function buildGatewayServerOptions(input: GatewayServerRuntimeInput): Gat
     updateSubTask: input.updateSubTask,
     stopSubTask: input.stopSubTask,
     workflowRuntime: input.workflowRuntime,
+    workspaceRevisionRuntime: input.workspaceRevisionRuntime,
     commanderMode: input.commanderMode,
     ttsEnabled: input.ttsEnabled,
     ttsSynthesize: input.ttsSynthesize,

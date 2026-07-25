@@ -96,6 +96,7 @@ const runtimeAwareTool: Tool = withToolContract({
         defaultCwd: context.defaultCwd,
         toolSet: context.launchSpec?.toolSet ?? [],
         permissionMode: context.launchSpec?.permissionMode,
+        workspaceRevisionId: context.workspaceRevisionId,
         methods: context.agentCatalogPreferences?.methods ?? [],
         skills: context.agentCatalogPreferences?.skills ?? [],
       }),
@@ -444,6 +445,7 @@ describe("ToolExecutor", () => {
       workspaceRoot: "/tmp/test",
     });
     const runtimeContext = {
+      workspaceRevisionId: "gateway-message-run-1",
       launchSpec: {
         cwd: "/tmp/test/subdir",
         toolSet: ["runtime_aware"],
@@ -482,9 +484,41 @@ describe("ToolExecutor", () => {
       defaultCwd: "/tmp/test/subdir",
       toolSet: ["runtime_aware"],
       permissionMode: "confirm",
+      workspaceRevisionId: "gateway-message-run-1",
       methods: [],
       skills: [],
     });
+  });
+
+  it("gives launchSpec toolDeny precedence over its toolSet", async () => {
+    const executor = new ToolExecutor({
+      tools: [runtimeAwareTool],
+      workspaceRoot: "/tmp/test",
+    });
+    const runtimeContext = {
+      launchSpec: {
+        toolSet: ["runtime_aware"],
+        toolDeny: ["runtime_aware"],
+      },
+    };
+
+    expect(executor.getDefinitions("default", "conv-1", runtimeContext)).toEqual([]);
+    expect(executor.getToolAvailability("runtime_aware", "default", "conv-1", runtimeContext)).toMatchObject({
+      available: false,
+      reasonCode: "denied-by-launch-tool-deny",
+    });
+
+    const result = await executor.execute(
+      { id: "req-tool-deny", name: "runtime_aware", arguments: {} },
+      "conv-1",
+      "default",
+      undefined,
+      undefined,
+      undefined,
+      runtimeContext,
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("toolDeny");
   });
 
   it("should inject lightweight agent catalog preferences into tool context", async () => {
@@ -546,6 +580,82 @@ describe("ToolExecutor", () => {
     expect(executor.getToolAvailability("exec_contract", "default", "conv-1", {
       launchSpec: { permissionMode: "acceptEdits" },
     })?.reasonCode).toBe("blocked-by-launch-permission-mode");
+  });
+
+  it("only exposes confirm-mode tools when an exact pending permission controller can deny or allow them", async () => {
+    const execute = vi.fn(async () => ({
+      id: "",
+      name: "confirm_write",
+      success: true,
+      output: "written",
+      durationMs: 1,
+    }));
+    const confirmTool = withToolContract({
+      definition: {
+        name: "confirm_write",
+        description: "requires a per-run confirmation",
+        parameters: { type: "object", properties: {} },
+      },
+      execute,
+    }, {
+      family: "workspace-write",
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      needsPermission: true,
+      riskLevel: "high",
+      channels: ["gateway"],
+      safeScopes: ["local-safe"],
+      activityDescription: "Write after explicit confirmation",
+      resultSchema: { kind: "text", description: "write result" },
+      outputPersistencePolicy: "artifact",
+    });
+    const runtimeContext = {
+      agentRunId: "run-confirm-1",
+      launchSpec: { permissionMode: "confirm" as const },
+    };
+    const unavailable = new ToolExecutor({ tools: [confirmTool], workspaceRoot: "/tmp/test" });
+    expect(unavailable.getDefinitions("default", "conv-1", runtimeContext)).toEqual([]);
+
+    const request = vi.fn(async () => "allow" as const);
+    const allowed = new ToolExecutor({
+      tools: [confirmTool],
+      workspaceRoot: "/tmp/test",
+      permissionController: { request },
+    });
+    expect(allowed.getDefinitions("default", "conv-1", runtimeContext).map((item) => item.function.name))
+      .toEqual(["confirm_write"]);
+    await expect(allowed.execute(
+      { id: "tool-confirm-1", name: "confirm_write", arguments: {} },
+      "conv-1",
+      "default",
+      undefined,
+      undefined,
+      undefined,
+      runtimeContext,
+    )).resolves.toMatchObject({ success: true });
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "conv-1",
+      agentRunId: "run-confirm-1",
+      toolCallId: "tool-confirm-1",
+      toolName: "confirm_write",
+    }));
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    const denied = new ToolExecutor({
+      tools: [confirmTool],
+      workspaceRoot: "/tmp/test",
+      permissionController: { request: async () => "deny" },
+    });
+    await expect(denied.execute(
+      { id: "tool-confirm-2", name: "confirm_write", arguments: {} },
+      "conv-1",
+      "default",
+      undefined,
+      undefined,
+      undefined,
+      runtimeContext,
+    )).resolves.toMatchObject({ success: false, failureKind: "permission_or_policy" });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("should enforce launchSpec role policy by tool family and risk level", () => {

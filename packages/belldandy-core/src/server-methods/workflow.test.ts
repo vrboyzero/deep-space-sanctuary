@@ -15,6 +15,7 @@ function createMockWorkflowRuntime(): WorkflowRuntimeCapabilities {
       return {
         success: true,
         output: "rpc workflow output",
+        workflowRunId: "wfr_rpc_001",
         journalId: "wf_rpc_001",
         scriptHash: "rpc_hash",
         workflowName: "rpc-wf",
@@ -25,6 +26,7 @@ function createMockWorkflowRuntime(): WorkflowRuntimeCapabilities {
     stop: vi.fn(async () => true),
     getStatus: vi.fn(() => ({
       status: "done",
+      workflowRunId: "wfr_rpc_001",
       journalId: "wf_rpc_001",
       workflowName: "rpc-wf",
       scriptHash: "rpc_hash",

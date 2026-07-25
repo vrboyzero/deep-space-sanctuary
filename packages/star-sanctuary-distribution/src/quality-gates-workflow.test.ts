@@ -78,6 +78,19 @@ test("quality gate pins every remote action to a full commit SHA", () => {
   }
 });
 
+test("quality gate verifies coding CI compatibility on Windows and Linux", () => {
+  const workflow = readQualityGatesWorkflow();
+  const codingCiJob = readWorkflowJob(workflow, "coding-ci-contract");
+
+  expect(codingCiJob).toContain("runs-on: ${{ matrix.os }}");
+  expect(codingCiJob).toContain("ubuntu-latest");
+  expect(codingCiJob).toContain("windows-latest");
+  expect(codingCiJob).toContain("persist-credentials: false");
+  expect(codingCiJob).toContain("run: pnpm build");
+  expect(codingCiJob).toContain("run: pnpm verify:coding-ci");
+  expect(codingCiJob).not.toMatch(/\b(?:contents|packages|actions|attestations|id-token): write\b/);
+});
+
 test("Docker workflow grants repository write permission only to the GitHub Release job", () => {
   const workflow = readDockerWorkflow();
   const buildAndTestJob = readWorkflowJob(workflow, "build-and-test");

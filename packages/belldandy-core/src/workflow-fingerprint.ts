@@ -34,6 +34,8 @@ export type WorkflowFingerprintInput = {
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: string;
   delegationHash?: string;
+  cwd?: string;
+  isolationMode?: string;
   workflowArgs?: Record<string, unknown>;
 };
 
@@ -108,6 +110,8 @@ export function computeWorkflowFingerprint(input: WorkflowFingerprintInput): str
     allowedToolFamilies: [...(input.allowedToolFamilies ?? [])].sort(),
     maxToolRiskLevel: input.maxToolRiskLevel ?? "",
     delegationHash: input.delegationHash ?? "",
+    cwd: input.cwd ?? "",
+    isolationMode: input.isolationMode ?? "",
     workflowArgs: input.workflowArgs ?? {},
   };
   const canonical = stableCanonicalize(payload);
@@ -184,6 +188,8 @@ export function computeMigrationFingerprint(
     allowedToolFamilies: Array.isArray(opts.allowedToolFamilies) ? opts.allowedToolFamilies : undefined,
     maxToolRiskLevel: typeof opts.maxToolRiskLevel === "string" ? opts.maxToolRiskLevel : undefined,
     delegationHash: opts.delegationProtocol ? computeStableHash(opts.delegationProtocol) : undefined,
+    cwd: typeof opts.cwd === "string" ? opts.cwd : undefined,
+    isolationMode: typeof opts.isolationMode === "string" ? opts.isolationMode : undefined,
     workflowArgs,
   });
 }

@@ -190,6 +190,11 @@ const GATEWAY_METHOD_NAMES = [
   "conversation.memory.extraction.get",
   "conversation.memory.extract",
   "conversation.restore",
+  "workspace.revision.list",
+  "workspace.revision.preview",
+  "workspace.revision.restore",
+  "coding.run.control",
+  "coding.run.subscribe",
   "subtask.list",
   "subtask.get",
   "subtask.resume",
@@ -279,7 +284,8 @@ function isReadMethod(method: string): boolean {
     || method === "conversation.meta"
     || method === "conversation.timeline.get"
     || method === "conversation.preflight_compression.retrieve"
-    || method === "conversation.tool_result_reference.retrieve";
+    || method === "conversation.tool_result_reference.retrieve"
+    || method === "coding.run.subscribe";
 }
 
 function resolveRisk(method: string): GatewayMethodRisk {

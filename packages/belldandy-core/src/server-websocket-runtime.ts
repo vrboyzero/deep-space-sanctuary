@@ -80,6 +80,7 @@ const DEFAULT_EVENTS = [
   "chat.final",
   "conversation.run.interrupted",
   "conversation.run.stopped",
+  "coding.run.event",
   "agent.status",
   "agent.budget_exhausted",
   "token.usage",

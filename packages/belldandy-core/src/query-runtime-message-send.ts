@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import type { WebSocket } from "ws";
+import type { CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
 import type { AgentPromptDelta, AgentRegistry, BelldandyAgent, CompressionResult, ConversationStore } from "@belldandy/agent";
 import type { DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableExtractionRuntime } from "@belldandy/memory";
 import {
@@ -16,6 +17,7 @@ import type { MemoryRuntimeBudgetGuard, MemoryRuntimeUsageAccounting } from "./m
 import { preparePromptWithAttachments, type AttachmentPromptLimits } from "./attachment-understanding-runner.js";
 import { detectChatCommanderTrigger, buildChatCommanderHintText } from "./chat-commander-trigger.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
+import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 import { runAgentWithLifecycle, type QueryRuntimeAgentBudgetExhausted } from "./query-runtime-agent-run.js";
 import { QueryRuntime, type QueryRuntimeObserver } from "./query-runtime.js";
 import type {
@@ -63,6 +65,8 @@ export type MessageSendQueryRuntimeContext = {
     agentRegistry?: AgentRegistry;
     conversationStore: ConversationStore;
     conversationRunRegistry: ConversationRunRegistry;
+    codingRunEventBroker?: CodingRunGatewayEventBroker;
+    pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
     topLevelConversationLifecycle?: TopLevelConversationLifecycle;
     runtimeObserver?: QueryRuntimeObserver<"message.send">;
     residentAgentRuntime?: ResidentAgentRuntimeRegistry;
@@ -241,6 +245,7 @@ export async function handleMessageSendWithQueryRuntime(
       requestedAgentId,
       createOpts,
     });
+    assertCodingRunCapabilities(agent, request.params.codingRun);
 
     queryRuntime.mark("agent_created", {
       conversationId,
@@ -422,6 +427,10 @@ export async function handleMessageSendWithQueryRuntime(
         return true;
       },
     });
+    runtimeDeps.codingRunEventBroker?.registerConversationRun({
+      conversationId,
+      agentRunId: runId,
+    });
 
     lifecycleLeaseTransferred = true;
     void runAgentInBackground({
@@ -449,6 +458,7 @@ export async function handleMessageSendWithQueryRuntime(
       attachmentPromptLimits: preparedPrompt.attachmentPromptLimits,
       senderInfo: request.params.senderInfo,
       clientContext: request.params.clientContext,
+      codingRun: request.params.codingRun,
       from: request.params.from,
       routeDecision: {
         requestedRoute: requestedModelId,
@@ -627,6 +637,7 @@ type MessageSendBackgroundInput = {
   attachmentPromptLimits: AttachmentPromptLimits;
   senderInfo?: unknown;
   clientContext?: MessageSendParams["clientContext"];
+  codingRun?: MessageSendParams["codingRun"];
   from?: string;
   routeDecision?: {
     requestedRoute?: string;
@@ -780,6 +791,7 @@ function buildMessageSendAgentRunInput(
   input: MessageSendBackgroundInput,
   media: MessageSendQueryRuntimeContext["media"],
 ): any {
+  const codingRunLaunchSpec = buildCodingRunLaunchSpec(input.codingRun);
   const runInput: any = {
     conversationId: input.conversationId,
     text: input.promptText,
@@ -792,6 +804,7 @@ function buildMessageSendAgentRunInput(
     roomContext: input.normalizedRoomContext,
     meta: {
       ...(input.ctx.request.requestChannel ? { _toolRequestChannel: input.ctx.request.requestChannel } : {}),
+      ...(codingRunLaunchSpec ? { _agentLaunchSpec: codingRunLaunchSpec } : {}),
       runId: input.runId,
       currentMessageTime: {
         timestampMs: input.userMessageTimestamp,
@@ -828,6 +841,41 @@ function buildMessageSendAgentRunInput(
   }
 
   return runInput;
+}
+
+export class CodingRunCapabilityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodingRunCapabilityError";
+  }
+}
+
+function assertCodingRunCapabilities(
+  agent: BelldandyAgent,
+  codingRun: MessageSendParams["codingRun"],
+): void {
+  if (codingRun?.maxCostUsd === undefined) return;
+  if (agent.getCodingRunCapabilities?.().maxCostUsd === true) return;
+  throw new CodingRunCapabilityError(
+    "This Agent cannot enforce maxCostUsd because valid model usage pricing is unavailable.",
+  );
+}
+
+function buildCodingRunLaunchSpec(
+  codingRun: MessageSendParams["codingRun"],
+): Record<string, unknown> | undefined {
+  if (!codingRun) return undefined;
+  const launchSpec = {
+    ...(codingRun.cwd ? { cwd: codingRun.cwd, isolationMode: "cwd" } : {}),
+    ...(codingRun.toolAllow?.length ? { toolSet: [...codingRun.toolAllow] } : {}),
+    ...(codingRun.toolDeny?.length ? { toolDeny: [...codingRun.toolDeny] } : {}),
+    ...(codingRun.permissionMode ? { permissionMode: codingRun.permissionMode } : {}),
+    ...(codingRun.maxWallTimeMs ? { maxRunWallTimeMs: codingRun.maxWallTimeMs } : {}),
+    ...(codingRun.maxTurns ? { toolLoopIterationBudget: codingRun.maxTurns } : {}),
+    ...(codingRun.maxTokens ? { maxTotalTokens: codingRun.maxTokens } : {}),
+    ...(codingRun.maxCostUsd ? { maxCostUsd: codingRun.maxCostUsd } : {}),
+  };
+  return Object.keys(launchSpec).length > 0 ? launchSpec : undefined;
 }
 
 function buildMessageSendAttachmentStats(
@@ -2259,6 +2307,7 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
       });
     }
   } finally {
+    ctx.runtime.pendingToolPermissionRuntime?.cancelRun(input.runId);
     ctx.runtime.conversationRunRegistry.clear(input.conversationId, input.runId);
     await input.lifecycleLease?.release();
   }

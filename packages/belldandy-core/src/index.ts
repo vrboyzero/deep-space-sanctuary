@@ -1,6 +1,74 @@
 export { startGatewayServer } from "./server.js";
 export type { GatewayServer, GatewayServerOptions } from "./server.js";
 export {
+  agentRunEventV1JsonSchema,
+  CODING_RUN_EXIT_CODES,
+  CODING_RUN_PROTOCOL_VERSION,
+  createAgentRunEventSequencer,
+  isAgentRunEventV1,
+  isCodingRunSubscriptionV1,
+  isRunControlV1,
+  runControlV1JsonSchema,
+  sanitizeCodingRunData,
+  toSafeCodingRunErrorMessage,
+} from "./coding-run/contracts.js";
+export { createConversationLifecycleEventAdapter } from "./coding-run/conversation-lifecycle-adapter.js";
+export { CodingRunGatewayEventBroker, createCodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+export { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
+export { GatewayCodingRunSubscriptionSession } from "./coding-run/gateway-subscription-session.js";
+export {
+  createGoalCodingRunView,
+  createSubtaskCodingRunView,
+  createWorkflowJournalCodingRunView,
+} from "./coding-run/source-adapters.js";
+export {
+  CodingRunNdjsonClient,
+  createCodingRunNdjsonServer,
+} from "./coding-run/stdio.js";
+export { WorkspaceRevisionRuntime } from "./workspace-revision.js";
+export type {
+  WorkspaceRevisionRestoreChange,
+  WorkspaceRevisionRestorePreview,
+  WorkspaceRevisionRestoreResult,
+  WorkspaceRevisionRuntimeOptions,
+  WorkspaceRevisionSummary,
+} from "./workspace-revision.js";
+export type {
+  AgentRunEvent,
+  AgentRunEventSequencer,
+  AgentRunEventType,
+  CodingContextBinding,
+  CodingRunErrorCode,
+  CodingRunSubscription,
+  CodingRunSubscriptionErrorCode,
+  CodingRunSource,
+  RunControl,
+  WorkspaceRevisionCheckpoint,
+  WorkspaceRevisionCheckpointRef,
+} from "./coding-run/contracts.js";
+export type {
+  CodingRunGatewayEventSubscription,
+  CodingRunGatewayEventSubscriptionResult,
+} from "./coding-run/gateway-event-broker.js";
+export type {
+  PendingToolPermissionResponse,
+  PendingToolPermissionResponseResult,
+} from "./coding-run/pending-tool-permission-runtime.js";
+export type { GatewayCodingRunSubscriptionResult } from "./coding-run/gateway-subscription-session.js";
+export type {
+  CodingRunAdapterStatus,
+  CodingRunSourceView,
+  GoalCodingRunView,
+  SubtaskCodingRunView,
+  WorkflowJournalCodingRunView,
+} from "./coding-run/source-adapters.js";
+export type {
+  CodingRunConversationRequest,
+  CodingRunConversationResponse,
+  CodingRunControlResponse,
+  CodingRunNdjsonClientOptions,
+} from "./coding-run/stdio.js";
+export {
   DEFAULT_TOP_LEVEL_CONVERSATION_IDLE_TTL_MS,
   DEFAULT_TOP_LEVEL_CONVERSATION_MAX_IDLE,
   TopLevelConversationLifecycle,

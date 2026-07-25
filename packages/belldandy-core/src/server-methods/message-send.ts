@@ -13,6 +13,7 @@ import type { DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableE
 import type { ConversationStore } from "@belldandy/agent";
 import type { MemoryRuntimeBudgetGuard, MemoryRuntimeUsageAccounting } from "../memory-runtime-budget.js";
 import {
+  CodingRunCapabilityError,
   MessageSendConfigurationError,
   handleConversationRunStopWithQueryRuntime,
   handleMessageSendWithQueryRuntime,
@@ -36,6 +37,8 @@ type MessageSendMethodContext = Pick<
   | "modelFallbacks"
   | "conversationStore"
   | "conversationRunRegistry"
+  | "codingRunEventBroker"
+  | "pendingToolPermissionRuntime"
   | "topLevelConversationLifecycle"
   | "getConversationPromptSnapshot"
   | "durableExtractionRuntime"
@@ -174,6 +177,8 @@ export async function handleMessageSendMethod(
         agentRegistry: ctx.agentRegistry,
         conversationStore: ctx.conversationStore,
         conversationRunRegistry: ctx.conversationRunRegistry,
+        codingRunEventBroker: ctx.codingRunEventBroker,
+        pendingToolPermissionRuntime: ctx.pendingToolPermissionRuntime,
         topLevelConversationLifecycle: ctx.topLevelConversationLifecycle,
         runtimeObserver: ctx.queryRuntimeTraceStore.createObserver<"message.send">(),
         residentAgentRuntime: ctx.residentAgentRuntime,
@@ -211,7 +216,10 @@ export async function handleMessageSendMethod(
       },
       io: {
         broadcastEvent: ctx.broadcastEvent,
-        sendEvent: sendGatewayEvent,
+        sendEvent: (target, frame) => {
+          ctx.codingRunEventBroker.publishGatewayEvent({ event: frame.event, payload: frame.payload });
+          sendGatewayEvent(target, frame);
+        },
         toChatMessageMeta: ctx.toChatMessageMeta,
       },
       effects: {
@@ -225,6 +233,14 @@ export async function handleMessageSendMethod(
       },
     });
   } catch (error) {
+    if (error instanceof CodingRunCapabilityError) {
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { code: "coding_run_unsupported", message: error.message },
+      };
+    }
     if (error instanceof MessageSendConfigurationError) {
       return {
         type: "res",

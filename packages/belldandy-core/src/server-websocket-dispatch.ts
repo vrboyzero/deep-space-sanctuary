@@ -50,6 +50,9 @@ import type { ToolsConfigManager } from "./tools-config.js";
 import type { SubTaskRecord, SubTaskRuntimeStore } from "./task-runtime.js";
 import type { GatewayWebSocketConnectionContext } from "./server-websocket-runtime.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
+import type { WorkspaceRevisionRuntime } from "./workspace-revision.js";
+import type { CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 
 type GatewayLog = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -80,6 +83,8 @@ export type GatewayWebSocketRequestContext = {
   modelConfigPath?: string;
   conversationStore: ConversationStore;
   conversationRunRegistry: ConversationRunRegistry;
+  codingRunEventBroker: CodingRunGatewayEventBroker;
+  pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle: TopLevelConversationLifecycle;
   durableExtractionRuntime?: DurableExtractionRuntime;
   resolveDreamRuntime?: (agentId?: string) => DreamRuntime | null;
@@ -148,6 +153,8 @@ export type GatewayWebSocketRequestContext = {
   }>;
   /** 动态工作流运行时（由 Gateway 装配后注入） */
   workflowRuntime?: import("@belldandy/skills").WorkflowRuntimeCapabilities;
+  /** 受控文件工具的用户轮次恢复点运行时。 */
+  workspaceRevisionRuntime?: WorkspaceRevisionRuntime;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
   commanderMode?: "on" | "off" | "auto";
   /** 发送前附件/长输入压缩策略。业务逻辑在 query runtime 内执行，这里只透传配置。 */
@@ -191,6 +198,8 @@ export function buildGatewayWebSocketRequestContext(
     modelConfigPath: options.modelConfigPath,
     conversationStore: options.conversationStore,
     conversationRunRegistry: options.conversationRunRegistry,
+    codingRunEventBroker: options.codingRunEventBroker,
+    pendingToolPermissionRuntime: options.pendingToolPermissionRuntime,
     topLevelConversationLifecycle: options.topLevelConversationLifecycle,
     durableExtractionRuntime: options.durableExtractionRuntime,
     resolveDreamRuntime: options.resolveDreamRuntime,
@@ -229,6 +238,8 @@ export function buildGatewayWebSocketRequestContext(
     takeoverSubTask: options.takeoverSubTask,
     updateSubTask: options.updateSubTask,
     stopSubTask: options.stopSubTask,
+    workflowRuntime: options.workflowRuntime,
+    workspaceRevisionRuntime: options.workspaceRevisionRuntime,
     tokenUsageUploadConfig: options.tokenUsageUploadConfig,
     broadcast: options.broadcast,
     broadcastEvent: options.broadcastEvent,

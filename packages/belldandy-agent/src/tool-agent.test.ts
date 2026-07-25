@@ -889,6 +889,95 @@ describe("before_agent_start system prompt overrides", () => {
     expect(items[budgetIndex + 2]).toEqual({ type: "status", status: "error" });
   });
 
+  it("only lets a launch spec tighten the configured token budget", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
+      choices: [{
+        message: { content: "done" },
+      }],
+      usage: { prompt_tokens: 8, completion_tokens: 3 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      maxTotalTokens: 100,
+      toolExecutor: createToolExecutor(),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-launch-token-budget",
+      text: "answer briefly",
+      meta: {
+        _agentLaunchSpec: {
+          maxTotalTokens: 10,
+        },
+      },
+    }));
+
+    expect(items).toContainEqual({
+      type: "budget_exhausted",
+      budget: "total_tokens",
+      limit: 10,
+      observed: 11,
+    });
+  });
+
+  it("stops a priced run after its per-run USD budget is exceeded", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(createJsonResponse({
+      choices: [{
+        message: { content: "done" },
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 10 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      usagePricing: {
+        inputUsdPer1M: 1,
+        outputUsdPer1M: 1,
+      },
+      toolExecutor: createToolExecutor(),
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-cost-budget",
+      text: "answer briefly",
+      meta: {
+        _agentLaunchSpec: {
+          maxCostUsd: 0.00001,
+        },
+      },
+    }));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "budget_exhausted",
+      budget: "cost_usd",
+      limit: 0.00001,
+      observed: 0.00002,
+    }));
+    expect(items.find((item) => item.type === "final")?.text).toContain("费用预算超限");
+  });
+
+  it("fails clearly when a cost-limited run has no pricing information", async () => {
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolExecutor: createToolExecutor(),
+    });
+
+    await expect(collectItems(agent.run({
+      conversationId: "conv-cost-budget-no-pricing",
+      text: "answer briefly",
+      meta: {
+        _agentLaunchSpec: {
+          maxCostUsd: 0.25,
+        },
+      },
+    }))).rejects.toThrow("no valid usage pricing");
+  });
+
   it("aborts a pending model request when the wall-time budget expires", async () => {
     vi.useFakeTimers();
     try {
@@ -3116,6 +3205,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
           },
         },
         _toolRequestChannel: "web",
+        runId: "gateway-message-run-1",
       },
     }));
 
@@ -3135,6 +3225,8 @@ describe("ToolEnabledAgent hook timeouts", () => {
         },
       },
       channel: "web",
+      agentRunId: "gateway-message-run-1",
+      workspaceRevisionId: "gateway-message-run-1",
     });
     expect(execute).toHaveBeenCalledWith(
       expect.anything(),
@@ -3157,6 +3249,8 @@ describe("ToolEnabledAgent hook timeouts", () => {
           },
         },
         channel: "web",
+        agentRunId: "gateway-message-run-1",
+        workspaceRevisionId: "gateway-message-run-1",
         abortSignal: expect.any(AbortSignal),
       }),
     );

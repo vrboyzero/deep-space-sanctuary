@@ -34,6 +34,10 @@ export type AgentCallOptions = {
   delegationProtocol?: DelegationProtocol;
   /** 单次调用超时（毫秒） */
   timeoutMs?: number;
+  /** 子 Agent 的源仓库内工作目录；worktree 隔离时必填。 */
+  cwd?: string;
+  /** 目前只支持受管 Git worktree 隔离。 */
+  isolationMode?: "worktree";
   /**
    * 当前 Workflow 节点允许的重试次数；默认 0。运行时环境预算仍是不可放宽的硬上限。
    * 仅 orchestrator 返回结构化失败时可重试，取消、预算或 Journal 错误不会重试。

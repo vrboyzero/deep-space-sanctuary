@@ -120,7 +120,7 @@ export type WorkflowJournalSettleInput = WorkflowJournalLeaseIdentity & (
       tokenCount?: number;
       resultJson?: string;
     }
-  | { status: "error"; error: string }
+  | { status: "error"; error: string; resultJson?: string }
   | { status: "skipped" }
 );
 
@@ -308,11 +308,12 @@ export class WorkflowJournal {
       fingerprint: string;
       lease_owner_id: string;
       lease_generation: number;
+      result_json: string | null;
       error: string;
       completed_at: number;
     }>(`
       UPDATE workflow_journal
-      SET status = 'error', result = NULL, result_json = NULL,
+      SET status = 'error', result = NULL, result_json = :result_json,
           error = :error, token_count = NULL, completed_at = :completed_at,
           lease_owner_id = NULL, lease_expires_at = NULL
       WHERE journal_id = :journal_id AND fingerprint = :fingerprint
@@ -658,7 +659,11 @@ export class WorkflowJournal {
       }).changes === 1;
     }
     if (input.status === "error") {
-      return this.stmtSettlePendingError.run({ ...identity, error: input.error }).changes === 1;
+      return this.stmtSettlePendingError.run({
+        ...identity,
+        error: input.error,
+        result_json: input.resultJson ?? null,
+      }).changes === 1;
     }
     return this.stmtSettlePendingSkipped.run(identity).changes === 1;
   }

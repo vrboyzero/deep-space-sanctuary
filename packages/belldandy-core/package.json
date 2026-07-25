@@ -34,15 +34,24 @@
     "@belldandy/plugins": "workspace:*",
     "@belldandy/protocol": "workspace:*",
     "@belldandy/skills": "workspace:*",
+    "@clack/prompts": "^0.10.0",
     "@star-sanctuary/distribution": "workspace:*",
+    "ajv": "8.20.0",
     "citty": "^0.1.6",
     "esbuild": "^0.25.10",
-    "@clack/prompts": "^0.10.0",
     "express": "^5.1.0",
+    "ink": "7.1.1",
     "nodemailer": "^9.0.3",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
+    "react": "19.2.8",
+    "string-width": "8.2.0",
+    "strip-ansi": "7.1.2",
     "typescript": "^5.7.3",
+    "wrap-ansi": "10.0.0",
     "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.8"
   }
 }

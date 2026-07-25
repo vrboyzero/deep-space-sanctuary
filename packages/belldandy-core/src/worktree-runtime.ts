@@ -1,11 +1,12 @@
-import { execFile as execFileCallback } from "node:child_process";
-import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import type { AgentLaunchSpec } from "@belldandy/agent";
 
-const execFile = promisify(execFileCallback);
+import {
+  ManagedWorktreeRuntime,
+  type ManagedWorktree,
+  type ManagedWorktreeStatus,
+} from "./managed-worktree.js";
 
 export type WorktreeRuntimeStatus =
   | "not_requested"
@@ -47,147 +48,41 @@ type RuntimeLogger = {
   debug?: (message: string, data?: unknown) => void;
 };
 
-function sanitizeTaskBranch(taskId: string): string {
-  return `belldandy-${taskId}`
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 64) || "belldandy-subtask";
-}
-
-function buildGitEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: "",
-  };
-}
-
-async function runGit(args: string[], cwd: string): Promise<string> {
-  const { stdout } = await execFile("git", args, {
-    cwd,
-    env: buildGitEnv(),
-    windowsHide: true,
-  });
-  return String(stdout ?? "").trim();
-}
-
-async function resolveExistingPath(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * Backward-compatible subtask adapter. Owner-specific force cleanup remains here,
+ * while path validation, Git creation, reconciliation and cleanup live in the shared layer.
+ */
 export class SubTaskWorktreeRuntime {
-  private readonly worktreesDir: string;
-  private readonly logger?: RuntimeLogger;
+  private readonly managedWorktrees: ManagedWorktreeRuntime;
 
   constructor(stateDir: string, logger?: RuntimeLogger) {
-    this.worktreesDir = path.join(stateDir, "subtasks", "worktrees");
-    this.logger = logger;
-  }
-
-  private isManagedWorktreePath(targetPath: string): boolean {
-    const relative = path.relative(this.worktreesDir, path.resolve(targetPath));
-    return !(relative.startsWith("..") || path.isAbsolute(relative));
-  }
-
-  private async resolveReconciledCwd(runtime: PersistedSubTaskWorktreeRuntime): Promise<string | undefined> {
-    const worktreePath = runtime.worktreePath ? path.resolve(runtime.worktreePath) : undefined;
-    if (!worktreePath) return runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : undefined;
-
-    const repoRoot = runtime.worktreeRepoRoot ? path.resolve(runtime.worktreeRepoRoot) : undefined;
-    const requestedCwd = runtime.cwd ? path.resolve(runtime.cwd) : undefined;
-    const previousResolvedCwd = runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : undefined;
-
-    if (requestedCwd && repoRoot) {
-      const relativeCwd = path.relative(repoRoot, requestedCwd);
-      if (!(relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
-        const relativeTarget = relativeCwd && relativeCwd !== "." ? path.join(worktreePath, relativeCwd) : worktreePath;
-        if (await resolveExistingPath(relativeTarget)) {
-          return relativeTarget;
-        }
-      }
-    }
-
-    if (previousResolvedCwd && await resolveExistingPath(previousResolvedCwd)) {
-      return previousResolvedCwd;
-    }
-
-    return await resolveExistingPath(worktreePath) ? worktreePath : previousResolvedCwd;
+    this.managedWorktrees = new ManagedWorktreeRuntime(stateDir, logger);
   }
 
   async prepareTaskLaunch(taskId: string, launchSpec: AgentLaunchSpec): Promise<PreparedSubTaskLaunchSpec> {
-    const baseCwd = launchSpec.cwd ? path.resolve(launchSpec.cwd) : undefined;
+    const requestedCwd = launchSpec.cwd ? path.resolve(launchSpec.cwd) : undefined;
     if (launchSpec.isolationMode !== "worktree") {
       return {
         launchSpec,
         summary: {
-          resolvedCwd: baseCwd,
+          requestedCwd,
+          resolvedCwd: requestedCwd,
           worktreeStatus: "not_requested",
         },
       };
     }
-
-    if (!baseCwd) {
+    if (!requestedCwd) {
       throw new Error("isolationMode=worktree requires launchSpec.cwd.");
     }
 
-    await fs.mkdir(this.worktreesDir, { recursive: true });
-
-    const repoRoot = await runGit(["rev-parse", "--show-toplevel"], baseCwd)
-      .catch((error) => {
-        throw new Error(
-          `Failed to resolve git repository for worktree isolation: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-    if (!repoRoot) {
-      throw new Error("Failed to resolve git repository root for worktree isolation.");
-    }
-
-    const relativeCwd = path.relative(repoRoot, baseCwd);
-    if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
-      throw new Error(`Launch cwd is outside of the resolved repository root: ${baseCwd}`);
-    }
-
-    const worktreePath = path.join(this.worktreesDir, taskId);
-    const worktreeBranch = sanitizeTaskBranch(taskId);
-
-    if (await resolveExistingPath(worktreePath)) {
-      throw new Error(`Worktree path already exists for task ${taskId}: ${worktreePath}`);
-    }
-
-    this.logger?.info?.("Creating subtask worktree runtime.", {
-      taskId,
-      repoRoot,
-      baseCwd,
-      worktreePath,
-      worktreeBranch,
+    const worktree = await this.managedWorktrees.prepare({
+      id: taskId,
+      ownerKind: "subtask",
+      cwd: requestedCwd,
     });
-
-    try {
-      await runGit(["worktree", "add", "-b", worktreeBranch, worktreePath, "HEAD"], repoRoot);
-    } catch (error) {
-      throw new Error(`Failed to create git worktree: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    const relativeTarget = relativeCwd && relativeCwd !== "." ? path.join(worktreePath, relativeCwd) : worktreePath;
-    const resolvedCwd = await resolveExistingPath(relativeTarget) ? relativeTarget : worktreePath;
     return {
-      launchSpec: {
-        ...launchSpec,
-        cwd: resolvedCwd,
-      },
-      summary: {
-        resolvedCwd,
-        worktreePath,
-        worktreeRepoRoot: repoRoot,
-        worktreeBranch,
-        worktreeStatus: "created",
-      },
+      launchSpec: { ...launchSpec, cwd: worktree.resolvedCwd },
+      summary: this.toSummary(worktree),
     };
   }
 
@@ -197,9 +92,6 @@ export class SubTaskWorktreeRuntime {
   ): Promise<SubTaskWorktreeRuntimeSummary> {
     const requestedCwd = runtime.cwd ? path.resolve(runtime.cwd) : undefined;
     const previousResolvedCwd = runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : undefined;
-    const worktreePath = runtime.worktreePath ? path.resolve(runtime.worktreePath) : undefined;
-    const worktreeRepoRoot = runtime.worktreeRepoRoot ? path.resolve(runtime.worktreeRepoRoot) : undefined;
-
     if (runtime.isolationMode !== "worktree") {
       return {
         requestedCwd,
@@ -208,64 +100,19 @@ export class SubTaskWorktreeRuntime {
       };
     }
 
-    if (!worktreePath) {
+    const worktree = this.fromPersisted(taskId, runtime);
+    if (!worktree) {
       return {
         requestedCwd,
         resolvedCwd: previousResolvedCwd ?? requestedCwd,
-        worktreeRepoRoot,
+        worktreeRepoRoot: runtime.worktreeRepoRoot ? path.resolve(runtime.worktreeRepoRoot) : undefined,
         worktreeBranch: runtime.worktreeBranch,
         worktreeStatus: "failed",
         worktreeError: "Missing persisted worktree path for worktree-isolated task.",
       };
     }
-
-    if (!this.isManagedWorktreePath(worktreePath)) {
-      return {
-        requestedCwd,
-        resolvedCwd: previousResolvedCwd ?? requestedCwd,
-        worktreePath,
-        worktreeRepoRoot,
-        worktreeBranch: runtime.worktreeBranch,
-        worktreeStatus: "failed",
-        worktreeError: `Persisted worktree path is outside the managed subtask runtime root: ${worktreePath}`,
-      };
-    }
-
-    if (!(await resolveExistingPath(worktreePath))) {
-      return {
-        requestedCwd,
-        resolvedCwd: previousResolvedCwd ?? requestedCwd,
-        worktreePath,
-        worktreeRepoRoot,
-        worktreeBranch: runtime.worktreeBranch,
-        worktreeStatus: "missing",
-        worktreeError: `Persisted worktree path is missing: ${worktreePath}`,
-      };
-    }
-
-    const resolvedCwd = await this.resolveReconciledCwd({
-      ...runtime,
-      cwd: requestedCwd,
-      resolvedCwd: previousResolvedCwd,
-      worktreePath,
-      worktreeRepoRoot,
-    });
-
-    this.logger?.info?.("Reconciled persisted subtask worktree runtime.", {
-      taskId,
-      worktreePath,
-      requestedCwd,
-      resolvedCwd,
-    });
-
-    return {
-      requestedCwd,
-      resolvedCwd,
-      worktreePath,
-      worktreeRepoRoot,
-      worktreeBranch: runtime.worktreeBranch,
-      worktreeStatus: "created",
-    };
+    const reconciled = await this.managedWorktrees.reconcile(worktree);
+    return this.toSummary(reconciled, previousResolvedCwd);
   }
 
   async cleanupTaskRuntime(
@@ -274,10 +121,6 @@ export class SubTaskWorktreeRuntime {
   ): Promise<SubTaskWorktreeRuntimeSummary> {
     const requestedCwd = runtime.cwd ? path.resolve(runtime.cwd) : undefined;
     const previousResolvedCwd = runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : undefined;
-    const worktreePath = runtime.worktreePath ? path.resolve(runtime.worktreePath) : undefined;
-    const worktreeRepoRoot = runtime.worktreeRepoRoot ? path.resolve(runtime.worktreeRepoRoot) : undefined;
-    const worktreeBranch = runtime.worktreeBranch?.trim() || undefined;
-
     if (runtime.isolationMode !== "worktree") {
       return {
         requestedCwd,
@@ -286,66 +129,71 @@ export class SubTaskWorktreeRuntime {
       };
     }
 
-    if (worktreePath && !this.isManagedWorktreePath(worktreePath)) {
+    const worktree = this.fromPersisted(taskId, runtime);
+    if (!worktree) {
       return {
         requestedCwd,
         resolvedCwd: previousResolvedCwd ?? requestedCwd,
-        worktreePath,
-        worktreeRepoRoot,
-        worktreeBranch,
         worktreeStatus: "remove_failed",
-        worktreeError: `Refusing to remove unmanaged worktree path: ${worktreePath}`,
+        worktreeError: "Missing persisted worktree path for worktree-isolated task.",
       };
     }
-
-    const worktreeExists = worktreePath ? await resolveExistingPath(worktreePath) : false;
-    const repoRootExists = worktreeRepoRoot ? await resolveExistingPath(worktreeRepoRoot) : false;
-
-    this.logger?.info?.("Cleaning up subtask worktree runtime.", {
-      taskId,
-      worktreePath,
-      worktreeRepoRoot,
-      worktreeBranch,
-      worktreeExists,
-      repoRootExists,
-    });
-
     try {
-      if (worktreeExists && worktreePath && worktreeRepoRoot && repoRootExists) {
-        await runGit(["worktree", "remove", "--force", worktreePath], worktreeRepoRoot);
-      } else if (worktreeExists && worktreePath) {
-        await fs.rm(worktreePath, { recursive: true, force: true });
-      }
-
-      if (worktreeRepoRoot && repoRootExists) {
-        await runGit(["worktree", "prune"], worktreeRepoRoot).catch(() => "");
-        if (worktreeBranch) {
-          const branchListing = await runGit(["branch", "--list", worktreeBranch], worktreeRepoRoot).catch(() => "");
-          if (branchListing.trim()) {
-            await runGit(["branch", "-D", worktreeBranch], worktreeRepoRoot);
-          }
-        }
-        await runGit(["worktree", "prune"], worktreeRepoRoot).catch(() => "");
-      }
+      const cleaned = await this.managedWorktrees.cleanup(worktree, undefined);
+      return {
+        ...this.toSummary(worktree, previousResolvedCwd),
+        worktreeStatus: cleaned.status === "removed" ? "removed" : "remove_failed",
+        worktreeError: cleaned.reason,
+      };
     } catch (error) {
       return {
-        requestedCwd,
-        resolvedCwd: previousResolvedCwd ?? requestedCwd,
-        worktreePath,
-        worktreeRepoRoot,
-        worktreeBranch,
+        ...this.toSummary(worktree, previousResolvedCwd),
         worktreeStatus: "remove_failed",
         worktreeError: error instanceof Error ? error.message : String(error),
       };
     }
+  }
 
+  private fromPersisted(taskId: string, runtime: PersistedSubTaskWorktreeRuntime): ManagedWorktree | undefined {
+    const worktreePath = runtime.worktreePath ? path.resolve(runtime.worktreePath) : undefined;
+    if (!worktreePath) return undefined;
+    const requestedCwd = runtime.cwd ? path.resolve(runtime.cwd) : runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : worktreePath;
     return {
+      id: taskId,
+      ownerKind: "subtask",
       requestedCwd,
-      resolvedCwd: previousResolvedCwd ?? requestedCwd,
+      resolvedCwd: runtime.resolvedCwd ? path.resolve(runtime.resolvedCwd) : worktreePath,
       worktreePath,
-      worktreeRepoRoot,
-      worktreeBranch,
-      worktreeStatus: "removed",
+      repoRoot: runtime.worktreeRepoRoot ? path.resolve(runtime.worktreeRepoRoot) : worktreePath,
+      branch: runtime.worktreeBranch?.trim() || `belldandy-${taskId}`,
+      // Legacy subtask records predate baseRef. It is not used by subtask cleanup.
+      baseRef: "",
+      status: "created",
     };
+  }
+
+  private toSummary(worktree: ManagedWorktree, fallbackResolvedCwd?: string): SubTaskWorktreeRuntimeSummary {
+    return {
+      requestedCwd: worktree.requestedCwd,
+      resolvedCwd: worktree.resolvedCwd || fallbackResolvedCwd,
+      worktreePath: worktree.worktreePath,
+      worktreeRepoRoot: worktree.repoRoot,
+      worktreeBranch: worktree.branch,
+      worktreeStatus: toRuntimeStatus(worktree.status),
+      worktreeError: worktree.error,
+    };
+  }
+}
+
+function toRuntimeStatus(status: ManagedWorktreeStatus): WorktreeRuntimeStatus {
+  switch (status) {
+    case "created":
+    case "failed":
+    case "missing":
+    case "removed":
+    case "remove_failed":
+      return status;
+    case "retained":
+      return "remove_failed";
   }
 }

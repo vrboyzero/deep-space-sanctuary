@@ -147,6 +147,17 @@ describe("computeStableHash", () => {
     // undefined 在稳定序列化中被忽略，与 null 产生相同 hash
     expect(computeStableHash(null)).toBe(computeStableHash(undefined));
   });
+
+  it("cwd 或隔离模式变化时指纹不同", () => {
+    const normal = computeWorkflowFingerprint(makeInput({ cwd: "C:/repo/packages/demo" }));
+    const isolated = computeWorkflowFingerprint(makeInput({
+      cwd: "C:/repo/packages/demo",
+      isolationMode: "worktree",
+    }));
+    const otherCwd = computeWorkflowFingerprint(makeInput({ cwd: "C:/repo/packages/other" }));
+    expect(normal).not.toBe(isolated);
+    expect(normal).not.toBe(otherCwd);
+  });
 });
 
 describe("computeWorkflowToolPolicyHash", () => {

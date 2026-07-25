@@ -283,8 +283,15 @@ export type ToolRuntimeLaunchSpec = {
   timeoutMs?: number;
   cwd?: string;
   toolSet?: string[];
+  /** 单次运行显式拒绝的工具；与 toolSet 同时存在时 deny 优先。 */
+  toolDeny?: string[];
   permissionMode?: string;
   isolationMode?: string;
+  /** 以下预算仅用于收紧本次运行，调用方不得以此提升 Profile 上限。 */
+  maxRunWallTimeMs?: number;
+  toolLoopIterationBudget?: number;
+  maxTotalTokens?: number;
+  maxCostUsd?: number;
   parentTaskId?: string;
   role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];
@@ -297,10 +304,51 @@ export type ToolRuntimeLaunchSpec = {
 export type ToolExecutionRuntimeContext = {
   launchSpec?: ToolRuntimeLaunchSpec;
   channel?: ToolContractChannel;
+  /** 当前活动 Agent worker/run 的稳定标识；缺失时交互式工具审批必须失败关闭。 */
+  agentRunId?: string;
+  /** 可选受管 worktree 标识；存在时必须与权限响应精确匹配。 */
+  worktreeId?: string;
+  /** Gateway message.send 为当前用户请求生成的稳定运行标识。 */
+  workspaceRevisionId?: string;
   bridgeGovernanceTaskId?: string;
   agentWhitelistMode?: "default" | "governed_bridge_internal";
   /** 执行链协作式中断信号 */
   abortSignal?: AbortSignal;
+};
+
+/** skills 只依赖此窄接口，不拥有或持久化 Gateway 权限状态。 */
+export type PendingToolPermissionRequest = {
+  conversationId: string;
+  agentRunId: string;
+  worktreeId?: string;
+  toolCallId: string;
+  toolName: string;
+  abortSignal?: AbortSignal;
+};
+
+export type ToolPermissionController = {
+  request(input: PendingToolPermissionRequest): Promise<"allow" | "deny">;
+};
+
+/** 文件工具向 core 请求受控工作区快照的窄接口，避免 skills 依赖 core。 */
+export type WorkspaceMutationTarget = {
+  absolutePath: string;
+  relativePath: string;
+};
+
+export type WorkspaceMutationObserver = {
+  prepareMutations(input: {
+    workspaceRevisionId: string;
+    workspaceRoot: string;
+    toolName: string;
+    targets: readonly WorkspaceMutationTarget[];
+  }): Promise<void>;
+  commitMutations(input: {
+    workspaceRevisionId: string;
+    workspaceRoot: string;
+    toolName: string;
+    targets: readonly WorkspaceMutationTarget[];
+  }): Promise<void>;
 };
 
 export type MCPRuntimeToolCallRequest = {
@@ -365,6 +413,7 @@ export type WorkflowRunOptionsLike = {
 export type WorkflowRunResultLike = {
   success: boolean;
   output: string;
+  workflowRunId: string;
   journalId: string;
   scriptHash: string;
   workflowName: string;
@@ -378,11 +427,26 @@ export type WorkflowRunResultLike = {
   error?: string;
 };
 
+export type WorkflowRuntimeStatusLike = {
+  status: string;
+  stopRequested?: boolean;
+  workflowRunId: string;
+  journalId: string;
+};
+
 export type WorkflowRuntimeCapabilities = {
   run(opts: WorkflowRunOptionsLike): Promise<WorkflowRunResultLike>;
   stop(journalId: string, reason?: string): Promise<boolean>;
-  getStatus?(journalId: string): unknown | null;
-  listActiveRuns?(): Array<{ journalId: string; status: string; workflowName: string; startedAt: number }>;
+  stopRun?(journalId: string, workflowRunId: string, reason?: string): Promise<boolean>;
+  getStatus?(journalId: string): WorkflowRuntimeStatusLike | null;
+  getStatusByRunId?(workflowRunId: string): WorkflowRuntimeStatusLike | null;
+  listActiveRuns?(): Array<{
+    workflowRunId: string;
+    journalId: string;
+    status: string;
+    workflowName: string;
+    startedAt: number;
+  }>;
   getRuntimeSnapshot?(): {
     activeRunCount: number;
     activeAgentCount: number;
@@ -2075,6 +2139,10 @@ export type ToolContext = {
   };
   /** 当前运行的 launchSpec 摘要（用于工具级约束/展示） */
   launchSpec?: ToolRuntimeLaunchSpec;
+  /** 当前用户请求的工作区恢复点标识；非 Gateway 请求保持为空。 */
+  workspaceRevisionId?: string;
+  /** 由 core 注入的受控文件变更观察器。 */
+  workspaceMutationObserver?: WorkspaceMutationObserver;
   /** 用户UUID（用于身份权力验证） */
   userUuid?: string;
   /** 消息发送者信息（用于身份上下文） */

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { MemoryStore } from "@belldandy/memory";
 import {
@@ -12,7 +14,23 @@ import {
   type AgentStreamItem,
 } from "@belldandy/agent";
 import { registerBuiltinWorkflow, clearBuiltinWorkflows } from "./workflow-builtin-registry.js";
+import { WorkflowJournal } from "./workflow-journal.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
+
+const execFile = promisify(execFileCallback);
+
+async function runGit(args: string[], cwd: string): Promise<string> {
+  const { stdout } = await execFile("git", args, {
+    cwd,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+    },
+  });
+  return String(stdout ?? "").trim();
+}
 
 // ─── Mock Agent ───────────────────────────────────────────────────────────
 
@@ -86,6 +104,20 @@ async function writeFile(tempDir: string, name: string, content: string): Promis
   return filePath;
 }
 
+async function createGitWorktreeFixture(tempDir: string) {
+  const repoDir = path.join(tempDir, "repo");
+  const nestedDir = path.join(repoDir, "packages", "demo");
+  await fs.mkdir(nestedDir, { recursive: true });
+  await fs.writeFile(path.join(repoDir, "README.md"), "demo repo\n", "utf-8");
+  await fs.writeFile(path.join(nestedDir, "index.ts"), "export const demo = true;\n", "utf-8");
+  await runGit(["init"], repoDir);
+  await runGit(["config", "user.name", "Belldandy Test"], repoDir);
+  await runGit(["config", "user.email", "belldandy@example.com"], repoDir);
+  await runGit(["add", "."], repoDir);
+  await runGit(["commit", "-m", "init"], repoDir);
+  return { repoDir, nestedDir };
+}
+
 // ─── 测试 ─────────────────────────────────────────────────────────────────
 
 describe("WorkflowRuntime", () => {
@@ -118,6 +150,7 @@ describe("WorkflowRuntime", () => {
     });
     expect(result.success).toBe(true);
     expect(result.output).toBe("scan result: clean");
+    expect(result.workflowRunId).toMatch(/^wfr_/);
     expect(result.journalId).toMatch(/^wf_/);
     expect(result.scriptHash).toMatch(/^[0-9a-f]{64}$/);
     expect(result.workflowName).toBe("test-wf");
@@ -144,6 +177,101 @@ describe("WorkflowRuntime", () => {
     expect(result.output).toBe("builtin result");
     expect(result.workflowName).toBe("simple-builtin");
   });
+
+  it("worktree-isolated workflow agent uses the managed cwd and records a removable artifact", async () => {
+    const observedCwds: string[] = [];
+    const f = await setupRuntime("unused", {
+      agentFactory: () => ({
+        async *run(input): AsyncIterable<AgentStreamItem> {
+          const launchSpec = input.meta?._agentLaunchSpec as { cwd?: string } | undefined;
+          if (!launchSpec?.cwd) throw new Error("expected managed worktree cwd");
+          observedCwds.push(launchSpec.cwd);
+          await fs.writeFile(path.join(launchSpec.cwd, "generated.ts"), "export const generated = true;\n", "utf-8");
+          yield { type: "status", status: "running" };
+          yield { type: "final", text: "worktree result" };
+          yield { type: "status", status: "done" };
+        },
+      } satisfies BelldandyAgent),
+    });
+    cleanups.push(f.cleanup);
+    const fixture = await createGitWorktreeFixture(f.tempDir);
+    registerBuiltinWorkflow({
+      name: "worktree-isolated",
+      scriptHash: "worktree-isolated-v1",
+      default: async (ctx) => ctx.agent("write generated file", {
+        callKey: "worktree/0",
+        cwd: fixture.nestedDir,
+        isolationMode: "worktree",
+      }),
+    });
+
+    const result = await f.runtime.run({
+      source: { kind: "builtin", name: "worktree-isolated" },
+      parentConversationId: "conv-worktree",
+      channel: "test",
+      stateDir: f.tempDir,
+    });
+
+    expect(result).toMatchObject({ success: true, output: "worktree result" });
+    expect(observedCwds).toHaveLength(1);
+    expect(observedCwds[0]).toContain(path.join("subtasks", "worktrees"));
+    expect(observedCwds[0]).not.toBe(fixture.nestedDir);
+    await expect(fs.access(path.join(fixture.nestedDir, "generated.ts"))).rejects.toThrow();
+    expect(await runGit(["status", "--porcelain"], fixture.repoDir)).toBe("");
+
+    const journal = new WorkflowJournal(f.store.getDbHandleForSharedSchema());
+    const row = journal.listByJournal(result.journalId).find((item) => item.status === "done");
+    const metadata = JSON.parse(row?.resultJson ?? "{}") as {
+      worktree?: { worktreePath?: string; branch?: string; ownerKind?: string };
+      artifact?: { status?: string; patchPath?: string; backupRoot?: string };
+      cleanup?: { status?: string };
+    };
+    expect(metadata).toMatchObject({
+      worktree: { ownerKind: "workflow_call" },
+      artifact: { status: "complete" },
+      cleanup: { status: "removed" },
+    });
+    await expect(fs.readFile(String(metadata.artifact?.patchPath), "utf-8")).resolves.toBe("");
+    await expect(fs.readFile(path.join(String(metadata.artifact?.backupRoot), "packages", "demo", "generated.ts"), "utf-8"))
+      .resolves.toContain("generated = true");
+    await expect(fs.access(String(metadata.worktree?.worktreePath))).rejects.toThrow();
+    expect(await runGit(["branch", "--list", String(metadata.worktree?.branch)], fixture.repoDir)).toBe("");
+  }, 20_000);
+
+  it("worktree-isolated workflow agent rejects a dirty source before spawning", async () => {
+    let spawnCount = 0;
+    const f = await setupRuntime("unused", {
+      agentFactory: () => ({
+        async *run(): AsyncIterable<AgentStreamItem> {
+          spawnCount++;
+          yield { type: "final", text: "unexpected" };
+        },
+      } satisfies BelldandyAgent),
+    });
+    cleanups.push(f.cleanup);
+    const fixture = await createGitWorktreeFixture(f.tempDir);
+    await fs.writeFile(path.join(fixture.repoDir, "README.md"), "dirty source\n", "utf-8");
+    registerBuiltinWorkflow({
+      name: "dirty-worktree",
+      scriptHash: "dirty-worktree-v1",
+      default: async (ctx) => ctx.agent("must not start", {
+        callKey: "worktree/0",
+        cwd: fixture.nestedDir,
+        isolationMode: "worktree",
+      }),
+    });
+
+    const result = await f.runtime.run({
+      source: { kind: "builtin", name: "dirty-worktree" },
+      parentConversationId: "conv-worktree-dirty",
+      channel: "test",
+      stateDir: f.tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/clean source repository/i);
+    expect(spawnCount).toBe(0);
+  }, 20_000);
 
   it("inline 模式默认拒绝", async () => {
     const f = await setupRuntime();
@@ -237,15 +365,20 @@ describe("WorkflowRuntime", () => {
     });
     await agentStarted;
     expect(f.runtime.getRuntimeSnapshot().maxQueuedAgentCount).toBe(1);
+    const [activeRun] = f.runtime.listActiveRuns();
+    expect(activeRun).toMatchObject({ journalId, status: "running" });
+    expect(activeRun?.workflowRunId).toMatch(/^wfr_/);
 
-    await expect(f.runtime.stop(journalId, "Workflow stop requested.")).resolves.toBe(true);
+    await expect(f.runtime.stopRun(journalId, "wfr_stale", "Workflow stop requested.")).resolves.toBe(false);
+    await expect(f.runtime.stopRun(journalId, activeRun!.workflowRunId, "Workflow stop requested.")).resolves.toBe(true);
+    await expect(f.runtime.stopRun(journalId, activeRun!.workflowRunId, "Workflow stop requested.")).resolves.toBe(true);
     const result = await pending;
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Workflow stop requested.");
     expect(observedSignal?.aborted).toBe(true);
     expect(observedSignal?.reason).toBe("Workflow stop requested.");
-    expect(f.runtime.getStatus(journalId)?.status).toBe("partial");
+    expect(f.runtime.getStatus(journalId)).toMatchObject({ status: "partial", stopRequested: true });
   });
 
   it("非法 workflow queue cap 会回退为默认上限", async () => {
@@ -444,9 +577,15 @@ describe("WorkflowRuntime", () => {
     const status = f.runtime.getStatus(result.journalId);
     expect(status).not.toBeNull();
     expect(status?.status).toBe("done");
+    expect(status?.workflowRunId).toBe(result.workflowRunId);
     expect(status?.journalId).toBe(result.journalId);
     expect(status?.stats.done).toBe(1);
     expect(status?.budgetUsage?.calls).toBe(1);
+    expect(f.runtime.getStatusByRunId(result.workflowRunId)).toMatchObject({
+      workflowRunId: result.workflowRunId,
+      journalId: result.journalId,
+      status: "done",
+    });
   });
 
   it("getStatus 不存在的 journalId 返回 null", () => {

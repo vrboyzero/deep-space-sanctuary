@@ -19,7 +19,8 @@ star-sanctuary/
 │   │           ├── bootstrap/              # DOM 引用、前端全局状态、storage keys
 │   │           ├── features/               # 按业务拆分的前端功能模块
 │   │           └── i18n/                   # 多语言字典
-│   └── browser-extension/                 # Chrome Relay 扩展
+│   ├── browser-extension/                 # Chrome Relay 扩展
+│   └── vscode-extension/                  # VS Code coding-run stdio Adapter
 ├── packages/
 │   ├── belldandy-protocol/                # 协议类型、state dir 解析、公共类型
 │   ├── belldandy-agent/                   # Agent runtime、prompt、conversation、sub-agent
@@ -48,7 +49,7 @@ star-sanctuary/
 | `@belldandy/agent` | Agent runtime、conversation、workspace prompt、failover、sub-agent orchestration | `packages/belldandy-agent/src/index.ts` |
 | `@belldandy/skills` | ToolExecutor、security matrix、builtin tools、skills registry | `packages/belldandy-skills/src/index.ts` |
 | `@belldandy/memory` | SQLite/FTS/vector retrieval、task、experience、durable extraction | `packages/belldandy-memory/src/index.ts` |
-| `@belldandy/core` | CLI、Gateway 装配、HTTP/WS server、query-runtime、goals、cron、doctor | `packages/belldandy-core/src/index.ts` |
+| `@belldandy/core` | CLI、交互式 TUI、Gateway 装配、HTTP/WS server、query-runtime、goals、cron、doctor | `packages/belldandy-core/src/index.ts` |
 | `@belldandy/channels` | 外部渠道适配、router 与有界入站调度 | `packages/belldandy-channels/src/index.ts` |
 | `@belldandy/mcp` | MCP 配置、连接管理、工具桥接 | `packages/belldandy-mcp/src/index.ts` |
 | `@belldandy/plugins` | 插件加载、Tool/Hook/Skill 所有权、卸载生命周期与 hooks 聚合 | `packages/belldandy-plugins/src/index.ts` |
@@ -56,6 +57,7 @@ star-sanctuary/
 | `@star-sanctuary/distribution` | runtime 路径解析、bootstrap auth token、portable/single-exe 运行时处理与前台 Gateway supervisor lifecycle | `packages/star-sanctuary-distribution/src/index.ts` |
 | `apps/web` | WebChat 前端功能编排与 UI | `apps/web/public/app.js` |
 | `apps/browser-extension` | 浏览器扩展侧 Relay client、tab/CDP 管理与单一连接生命周期 | `apps/browser-extension/background.js` |
+| `apps/vscode-extension` | VS Code 侧 coding-run stdio 进程桥、工作区提问、限长模型流、真实 Gateway 事件摘要、精确取消/订阅/审批与原生 Source Control 入口；不拥有 Gateway、领域状态机、diff 或权限真源 | `apps/vscode-extension/extension.cjs` |
 
 ## 3. 常用入口文件
 
@@ -77,6 +79,9 @@ star-sanctuary/
 - `scripts/verify-winget-assets.mjs`: 校验本地生成的 `winget` 资产与 manifests 一致性
 - `scripts/normalize-osv-report.mjs`: 将固定 OSV-Scanner 输出收敛为 dependency governance 报告，供 Quality Gate fixture 与仓库依赖扫描复用
 - `scripts/evaluate-dependency-audit-gate.mjs`: 对依赖扫描报告执行 findings/failure/freshness 的 fail-closed Gate 判定
+- `scripts/run-coding-agent-ci.mjs`: 复用构建后 Headless CLI 的通用 CI 包装器；强制干净 Git 基线、只读/显式 workspace-write profile、固定预算、v1 事件连续性和工作区外可审查 patch/result/manifest artifact，不执行 push、merge 或自动 apply
+- `scripts/verify-coding-ci-contract.mjs`: 对 CI 示例、Core 导出 Schema、输出 Schema、Node/pnpm/协议/退出码兼容矩阵与 Windows/Linux Quality Gate 接线执行失败关闭校验
+- `examples/ci/`: 默认只读 GitHub Actions/通用 CI 示例、结构化 review prompt/output Schema、`AgentRunEvent v1` 静态 Schema、artifact 说明及迁移/回滚兼容矩阵
 - `scripts/run-build-benchmark.mjs`: 运行 B00 TypeScript forced/incremental BuildGraph 基准并输出不设性能阈值的 JSON 报告
 - `scripts/run-distribution-integrity-benchmark.mjs`: 运行 D02 runtime manifest 完整性校验的固定 small/medium/large fixture 基准，记录 hash p50/p95、RSS 采样与等长篡改拒绝证据
 - `scripts/run-portable-recovery-benchmark.mjs`: 运行 D03 portable recovery 的固定 many-small/large-asset 压缩 payload 基准；每个 sample 以独立子进程调用公开恢复 owner，记录 p50/p95、吞吐、maxRSS/external/arrayBuffers 与恢复后完整性证据，SEA 明确不在测量范围
@@ -91,12 +96,21 @@ star-sanctuary/
 - `scripts/run-mcp-in-memory-benchmark.mjs`: 使用 SDK linked in-memory transport 连接真实 MCPClient/McpServer，运行 B00 connect/discover、Tool call、Resource read 与 disconnect 生命周期基准
 - `scripts/run-browser-relay-benchmark.mjs`: 使用确定性 fake timer 与内存 fake WebSocket 运行 B00 Browser Relay controller lifecycle、消息、发送、旧 socket 事件和重连基准
 - `scripts/run-webchat-fixed-fixture-benchmark.mjs`: 使用仅绑定 loopback 的 headless Chromium fixture 运行 B00 WebChat full-shell 冷/热启动、UI05 theme 首交互/Settings 与 Experience 首开及 100/1,000 条固定消息渲染基准，记录 startup/首开资源、DOM delta、Experience preloaded/module/content-ready 与 page error 证据
+- `scripts/smoke-tui-pty.py` / `smoke-tui-wsl.mjs`: 使用构建产物和真实 Unix PTY 验证 TUI 正常布局、极窄降级、恢复布局、键盘输入、`Ctrl+C` 退出及 alternate-screen 成对清理；Windows 主机通过 WSL 薄包装运行
 - `docs/Star Sanctuary使用手册.md`: 当前版用户手册，聚焦 Agent / 工具 / Agent Teams 的使用与配置说明
 - `docs/指挥模式与动态工作流使用说明.md`: 指挥模式与动态工作流（DW）的使用说明、脚本编写、API 参考
 
 ### Gateway / CLI
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
 - `packages/belldandy-core/src/cli/main.ts`: CLI 根命令定义
+- `packages/belldandy-core/src/cli/commands/agent/`: `bdd agent run` / `continue` / `inspect` / `cancel` 的 Headless Conversation 命令；只适配既有 Conversation，不创建 Goal、Workflow、Subtask 或 `planState`
+- `packages/belldandy-core/src/cli/commands/coding-run/stdio.ts`: `bdd coding-run stdio` 进程入口；stdin/stdout 只承载 NDJSON，通过 Gateway 转发受限 Conversation 请求、已验证 control 与单个 cursor 事件订阅，不直接拥有领域运行时
+- `packages/belldandy-core/src/cli/commands/tui.ts`: `bdd tui` 入口；只在交互式 stdin/stdout 下启动全屏工作台，非 TTY 以稳定错误码拒绝
+- `packages/belldandy-core/src/tui/`: Ink/React 最小编程工作台；组合 Conversation、精确工具审批、Workspace Revision、只读 Git/worktree 与 Console 快照，并复用 `coding-run` stdio/Gateway 协议，不拥有第二套运行真源
+- `packages/belldandy-core/src/cli/shared/gateway-conversation-run.ts`: 本地 Gateway WebSocket 运行客户端；将 Conversation 生命周期投影为有界的 `AgentRunEvent v1` 流，并处理配对、超时和取消
+- `packages/belldandy-core/src/cli/shared/output-schema.ts`: Headless 最终输出的可选 JSON Schema 加载与校验
+- `packages/belldandy-core/src/coding-run/`: 编程运行 v1 契约、Conversation 生命周期/Gateway 事件适配器、Goal/Workflow/Subtask 只读运行视图、`gateway-event-broker.ts` 的有界 cursor 事件真源、`gateway-subscription-session.ts` 的单订阅持久会话与固定三次 cursor 续订、受限 `conversation.request`、双向 NDJSON server/client、stdio 进程桥、JSONL 安全规范化与来源控制 guard；不拥有领域状态机
+- `packages/belldandy-core/src/workspace-revision.ts`: 受控文件工具的 `WorkspaceRevisionCheckpoint` 持久化、首次 preimage、hash 冲突检测、dry-run/显式 restore 与保留期清理；不接管 shell、MCP 或人工写入
 - `packages/belldandy-core/src/bin/gateway.ts`: Gateway 开发态 bootstrap 入口（先做 dev/runtime 旧 `dist` 预检，再加载主装配）
 - `packages/belldandy-core/src/bin/gateway-main.ts`: Gateway 总装配入口；持有后台/外部 runtime handle，创建唯一 shutdown request owner，在 scoped MemoryManager 创建后装配共享 SQLite schema 的 WorkflowRuntime，并注册资源、配置 watcher 与进程信号转发
 - `packages/belldandy-core/src/gateway-shutdown-coordinator.ts`: GW04 显式阶段关闭协调器内核；负责资源注册顺序、单步/整体 deadline、幂等 generation、失败隔离与纯计数诊断，不接管领域内部 lifecycle
@@ -111,7 +125,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/experience-synthesis-model-request.ts`: experience synthesis configured-endpoint 的 chat-completions 请求装配、公网 HTTPS pinned/零 redirect transport、总/idle timeout 与 1 MiB 成功/错误 JSON 原始字节限界 owner
 - `packages/belldandy-core/src/bin/gateway-prompt-sections.ts`: Agent runtime prompt sections 组装，包含 Team / identity governance 静态 section
 - `packages/belldandy-core/src/server.ts`: Gateway 主服务与方法分发中心；装配 Core shutdown phases，对外暴露 typed shutdown request 与资源注册转发，并在最终阶段单飞关闭 WebSocket/HTTP/socket transport
-- `packages/belldandy-core/src/server-methods/`: RPC 方法分域处理
+- `packages/belldandy-core/src/server-methods/`: RPC 方法分域处理；其中 `coding-run.ts` 负责 `coding.run.control` 的来源绑定复核与转发，`coding-run-subscription.ts` 仅对完整 Conversation binding 提供配对保护的 v1 cursor 事件读取；未具备等价核验的来源保持 fail-closed
 - `packages/belldandy-core/src/runtime-resource-observability.ts`: Gateway 低频、有界的 event-loop、进程内存与聚合队列快照采样，供 `system.doctor` 使用
 - `packages/belldandy-core/src/tool-audit-log.ts`: Tool audit 日志级别与无正文 success/failure 摘要格式化；失败只展示稳定 failure kind、字节数与短 hash
 - `packages/belldandy-core/src/tool-audit-runtime-resource.ts`: 将 Tool audit 的无正文 backlog 快照映射为 `tool_audit` 通用资源水位，不向 Doctor 扩散审计正文或 sink 失败详情
@@ -167,7 +181,7 @@ star-sanctuary/
 
 ### API / RPC / HTTP
 - `packages/belldandy-core/src/server.ts`: RPC 请求分发总入口
-- `packages/belldandy-core/src/server-methods/`: `models` / `goal` / `memory` / `dream` / `tools` / `workspace` / `subtask`
+- `packages/belldandy-core/src/server-methods/`: `models` / `goal` / `memory` / `dream` / `tools` / `workspace` / `workspace revision` / `coding run control/subscription` / `subtask`
 - `packages/belldandy-core/src/server-http-routes.ts`: `/health`、`/api/message`、webhook、静态资源，以及包含 `style-src-attr 'none'` 与 Trusted Types enforcement 的 WebChat CSP、基础浏览器安全响应头
 - `packages/belldandy-core/src/generated-artifact-http.ts`: `/generated` 的词法/canonical admission、regular-file 与已打开句柄发送 owner，保持 GET/HEAD/cache/range 静态响应契约
 - `packages/belldandy-core/src/avatar-static-http.ts`: `/avatar` state-dir 的专属 canonical/no-follow/opened-handle admission；链接、路径替换或缺失目标直接 404，不 fall through 到其他静态目录
@@ -443,8 +457,9 @@ star-sanctuary/
 
 ### Dynamic Workflows（DW）
 - `packages/belldandy-agent/src/workflow-context.ts`: `WorkflowContext` 类型定义（agent / parallel / parallelMap / pipeline / workflow / phase / log / args / abortSignal），含节点级显式 `maxRetries` soft request
-- `packages/belldandy-core/src/workflow-context-impl.ts`: `createWorkflowContext()` 工厂实现，只装配 Agent fingerprint/cache/Journal、batch/retry owner、workflow composition 与父级取消信号透传
-- `packages/belldandy-core/src/workflow-runtime.ts`: `WorkflowRuntime` 执行引擎（脚本加载、Journal 创建/恢复、BudgetGuard、orchestrator、hard-cap 注入、主动 deadline 与父/子 workflow 取消桥接、跨版本 migration）
+- `packages/belldandy-core/src/managed-worktree.ts`: `subtask` / `workflow_call` / `user_session` 共享 Git worktree owner；负责干净基线、受管路径、tracked patch/未跟踪备份 artifact、reconcile 与按 owner 的安全 cleanup，绝不自动 apply 主仓
+- `packages/belldandy-core/src/workflow-context-impl.ts`: `createWorkflowContext()` 工厂实现；装配 Agent fingerprint/cache/Journal、batch/retry、workflow composition、父级取消，以及 `cwd` + `isolationMode: "worktree"` 的 `workflow_call` 隔离与 Journal artifact 摘要
+- `packages/belldandy-core/src/workflow-runtime.ts`: `WorkflowRuntime` 执行引擎（脚本加载、Journal 创建/恢复、独立 `workflowRunId`、BudgetGuard、orchestrator、hard-cap 注入、主动 deadline、受管 worktree runtime 与父/子 workflow 取消桥接、跨版本 migration）
 - `packages/belldandy-core/src/workflow-run-controller.ts`: 单次 Workflow 的 deadline/父级取消 owner，以及环境硬上限与调用请求的预算合并
 - `packages/belldandy-core/src/workflow-batch-runner.ts`: `parallel` / `parallelMap` / `pipeline` 共用的固定 worker lazy batch owner，执行 items、queued bytes、aggregate output bytes hard cap 与 abort race 结算
 - `packages/belldandy-core/src/workflow-agent-call-runner.ts`: `ctx.agent()` 的 canonical retry owner；默认零重试，每次 attempt 独立取得 call/token reservation 并消费统一 retry 预算
@@ -521,6 +536,15 @@ star-sanctuary/
 - `apps/browser-extension/relay-connection-controller.js`: 扩展唯一 socket、generation、退避重连、debugger listener 与 suspend 清理所有权
 - `apps/browser-extension/background.js`: 扩展 service worker 装配、tab attach、CDP command forwarding 与 Relay Badge
 - `packages/belldandy-skills/src/builtin/browser/tools.ts`: Browser navigation URL admission owner；默认 `public-web` 仅允许公网目标，只有显式 `privileged-local-browser` profile 可提升私网能力，并继续继承 host allow/deny 与 HTTP 开关；Chrome 实际连接 pinning 不属于该 owner
+
+### VS Code Coding Run Adapter
+- `apps/vscode-extension/extension.cjs`: Extension Host 装配；Explorer 显示 bridge、订阅、终态、事件计数和 pending tool 安全摘要，并提供工作区提问、Conversation/Workflow 精确取消、Conversation 精确订阅、pending allow/deny 与原生 Source Control 命令；所有运行和控制均经本地 stdio bridge/Gateway。
+- `apps/vscode-extension/src/stdio-client.cjs`: 不经 shell 启动 `bdd coding-run stdio`，负责有界 NDJSON 帧、请求关联、退出清理、受限 Conversation 请求、精确绑定控制（含 optional worktree 的 `permission.respond`）和订阅事件/中断分流；不自动重放控制。
+- `apps/vscode-extension/src/conversation-request.cjs`: 解析活动本地工作区绝对 cwd，并只接受 stdio 返回的完整 Conversation binding，供请求后自动订阅使用。
+- `apps/vscode-extension/src/stream-output.cjs`: 只消费 `message.delta` 的独立 32,000 字符 OutputChannel 边界；不显示工具参数或工具输出，达到上限后停止追加正文。
+- `apps/vscode-extension/src/permission-request.cjs`: 将 `permission.requested` 事件收缩为仅含 worker、tool call、可选 worktree 和工具名的安全摘要，拒绝不完整或控制字符标识。
+- `apps/vscode-extension/src/settings.cjs`: machine-scoped command/stateDir 的安全解析；非法 command 回退 `bdd`，非法 stateDir 回退 bridge 默认状态目录。
+- `apps/vscode-extension/test/extension-host.cjs`: 最小 Extension Host 验证，检查扩展激活和公开命令注册。
 
 ### Config / Runtime / Distribution
 - `package.json`: 根构建命令；默认 `build` 走 TypeScript 增量图，`build:force` 保留强制重建入口

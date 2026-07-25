@@ -15,6 +15,7 @@ import type {
   ConversationStoreInterface,
   ITokenCounterService,
   ToolExecutionRuntimeContext,
+  ToolPermissionController,
   ToolRuntimeLaunchSpec,
   ToolCatalogEntry,
   ToolCatalogFamilyEntry,
@@ -22,12 +23,14 @@ import type {
   ToolDiscoveryEntriesOptions,
   ToolDiscoveryFamilyDefinition,
   MCPRuntimeCapabilities,
+  WorkspaceMutationObserver,
   WorkflowRuntimeCapabilities,
 } from "./types.js";
 import { getToolContract, type ToolContract, type ToolExecutionAdmission } from "./tool-contract.js";
 import {
   evaluateLaunchPermissionMode,
   evaluateLaunchRolePolicy,
+  normalizeLaunchPermissionMode,
   normalizeLaunchAllowedToolFamilies,
   normalizeLaunchMaxToolRiskLevel,
   normalizeLaunchRole,
@@ -125,6 +128,8 @@ export type ToolExecutorOptions = {
   broadcast?: (event: string, payload: Record<string, unknown>) => void;
   /** 可选：MCP 调用能力（由 Gateway 注入，供 bridge mcp transport 复用现有 MCP runtime） */
   mcp?: MCPRuntimeCapabilities;
+  /** 由 core 注入的受控文件变更观察器；仅文件工具使用。 */
+  workspaceMutationObserver?: WorkspaceMutationObserver;
   /** 可选：bridge session 与 subtask runtime 的治理接线能力 */
   bridgeSessionGovernance?: BridgeSessionGovernanceCapabilities;
   /** 可选：仅用于运行时观测的工具广播观察器 */
@@ -137,6 +142,8 @@ export type ToolExecutorOptions = {
   onTokenCounterSet?: (conversationId: string, counter: ITokenCounterService) => void;
   /** 可选：统一 contract 安全矩阵策略 */
   contractAccessPolicy?: ToolContractAccessPolicy;
+  /** confirm 模式的窄权限决策接口；缺失时继续失败关闭。 */
+  permissionController?: ToolPermissionController;
   /** 生产运行时要求每个注册 Tool 都具备名称一致的治理 contract。 */
   requireToolContracts?: boolean;
   /** 初始 Tool pool 的 inventory 来源；动态注册可单独指定。 */
@@ -230,6 +237,16 @@ function normalizeStringList(value: unknown): string[] | undefined {
   return items.length > 0 ? [...new Set(items)] : undefined;
 }
 
+function normalizeLaunchPositiveInteger(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function normalizeLaunchPositiveNumber(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
 function normalizeBridgeSubtaskSemantics(value: unknown): BridgeSubtaskSemantics | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -259,8 +276,13 @@ function normalizeRuntimeLaunchSpec(value: ToolRuntimeLaunchSpec | undefined): T
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) && Number(value.timeoutMs) > 0 ? Number(value.timeoutMs) : undefined,
     cwd: normalizeOptionalString(value.cwd),
     toolSet: normalizeStringList(value.toolSet),
+    toolDeny: normalizeStringList(value.toolDeny),
     permissionMode: normalizeOptionalString(value.permissionMode),
     isolationMode: normalizeOptionalString(value.isolationMode),
+    maxRunWallTimeMs: normalizeLaunchPositiveInteger(value.maxRunWallTimeMs),
+    toolLoopIterationBudget: normalizeLaunchPositiveInteger(value.toolLoopIterationBudget),
+    maxTotalTokens: normalizeLaunchPositiveInteger(value.maxTotalTokens),
+    maxCostUsd: normalizeLaunchPositiveNumber(value.maxCostUsd),
     parentTaskId: normalizeOptionalString(value.parentTaskId),
     role: normalizeLaunchRole(value.role),
     allowedToolFamilies: normalizeLaunchAllowedToolFamilies(value.allowedToolFamilies),
@@ -332,6 +354,7 @@ export type ToolAvailabilityReasonCode =
   | "not-in-agent-whitelist"
   | "conversation-restricted"
   | "excluded-by-launch-toolset"
+  | "denied-by-launch-tool-deny"
   | "blocked-by-launch-role-policy"
   | "blocked-by-launch-permission-mode";
 
@@ -815,6 +838,7 @@ export class ToolExecutor {
   private readonly isToolAllowedInConversation?: (toolName: string, conversationId: string, agentId?: string) => boolean;
   private readonly getAgentCatalogPreferences?: (agentId?: string) => { methods?: string[]; skills?: string[] } | undefined;
   private readonly contractAccessPolicy?: ToolContractAccessPolicy;
+  private readonly permissionController?: ToolPermissionController;
   private readonly requireToolContracts: boolean;
   private conversationStore?: ConversationStoreInterface; // 移除 readonly，允许后期绑定
   private allowedConversationKinds?: ConversationAccessKind[];
@@ -823,6 +847,7 @@ export class ToolExecutor {
   private readonly loadedDeferredToolNames = new Map<string, Set<string>>();
   private broadcast?: (event: string, payload: Record<string, unknown>) => void;
   private mcp?: MCPRuntimeCapabilities;
+  private workspaceMutationObserver?: WorkspaceMutationObserver;
   private bridgeSessionGovernance?: BridgeSessionGovernanceCapabilities;
   private workflowRuntime?: WorkflowRuntimeCapabilities;
   private broadcastObserver?: (event: string, payload: Record<string, unknown>, meta: {
@@ -852,12 +877,14 @@ export class ToolExecutor {
     this.isToolAllowedInConversation = options.isToolAllowedInConversation;
     this.getAgentCatalogPreferences = options.getAgentCatalogPreferences;
     this.contractAccessPolicy = options.contractAccessPolicy;
+    this.permissionController = options.permissionController;
     this.requireToolContracts = options.requireToolContracts ?? false;
     this.deferredToolNames = new Set(options.deferredToolNames ?? []);
     this.conversationStore = options.conversationStore;
     this.allowedConversationKinds = options.allowedConversationKinds;
     this.broadcast = options.broadcast;
     this.mcp = options.mcp;
+    this.workspaceMutationObserver = options.workspaceMutationObserver;
     this.bridgeSessionGovernance = options.bridgeSessionGovernance;
     this.broadcastObserver = options.broadcastObserver;
     this.onTokenCounterSet = options.onTokenCounterSet;
@@ -1443,6 +1470,8 @@ export class ToolExecutor {
       abortSignal,
       extraWorkspaceRoots: this.extraWorkspaceRoots.length > 0 ? this.extraWorkspaceRoots : undefined,
       defaultCwd: launchSpec?.cwd,
+      workspaceRevisionId: normalizeOptionalString(runtimeContext?.workspaceRevisionId),
+      workspaceMutationObserver: this.workspaceMutationObserver,
       agentId,
       agentCatalogPreferences: this.getAgentCatalogPreferences?.(agentId),
       launchSpec,
@@ -1494,6 +1523,35 @@ export class ToolExecutor {
       deadlineAdmission?.cleanup();
       this.audit(result, conversationId, request.arguments);
       return result;
+    }
+
+    if (this.requiresPendingPermission(tool, launchSpec, runtimeContext)) {
+      let decision: "allow" | "deny" = "deny";
+      try {
+        decision = await this.permissionController!.request({
+          conversationId,
+          agentRunId: runtimeContext!.agentRunId!.trim(),
+          ...(normalizeOptionalString(runtimeContext?.worktreeId)
+            ? { worktreeId: normalizeOptionalString(runtimeContext?.worktreeId) }
+            : {}),
+          toolCallId: request.id,
+          toolName: request.name,
+          ...(parentAbortSignal ? { abortSignal: parentAbortSignal } : {}),
+        });
+      } catch {
+        // 权限控制器故障不得让需要确认的工具降级为可执行。
+      }
+      if (decision !== "allow") {
+        const result = buildFailureToolCallResult({
+          id: request.id,
+          name: request.name,
+          start,
+          error: "Tool permission was not granted.",
+          failureKind: "permission_or_policy",
+        });
+        this.audit(result, conversationId, request.arguments);
+        return result;
+      }
     }
 
     try {
@@ -1670,6 +1728,14 @@ export class ToolExecutor {
       }
     }
 
+    if (launchSpec?.toolDeny?.includes(toolName)) {
+      return {
+        ...this.buildAvailabilityState(toolName, alwaysEnabled, false, "denied-by-launch-tool-deny"),
+        allowed: false,
+        reason: "runtime",
+      };
+    }
+
     if (launchSpec?.toolSet && !launchSpec.toolSet.includes(toolName)) {
       return {
         ...this.buildAvailabilityState(toolName, alwaysEnabled, false, "excluded-by-launch-toolset"),
@@ -1692,7 +1758,7 @@ export class ToolExecutor {
     }
 
     const permissionDecision = evaluateLaunchPermissionMode(tool, launchSpec);
-    if (!permissionDecision.allowed) {
+    if (!permissionDecision.allowed && !this.requiresPendingPermission(tool, launchSpec, runtimeContext)) {
       return {
         name: toolName,
         available: false,
@@ -1732,6 +1798,17 @@ export class ToolExecutor {
       ...this.buildAvailabilityState(toolName, alwaysEnabled, true, "available"),
       allowed: true,
     };
+  }
+
+  private requiresPendingPermission(
+    tool: Tool,
+    launchSpec: ToolRuntimeLaunchSpec | undefined,
+    runtimeContext?: ToolExecutionRuntimeContext,
+  ): boolean {
+    return normalizeLaunchPermissionMode(launchSpec?.permissionMode) === "confirm"
+      && getToolContract(tool)?.needsPermission === true
+      && Boolean(this.permissionController)
+      && Boolean(normalizeOptionalString(runtimeContext?.agentRunId));
   }
 
   private resolveContractAccessPolicy(
@@ -1971,6 +2048,7 @@ export class ToolExecutor {
       case "not-in-agent-whitelist":
       case "conversation-restricted":
       case "excluded-by-launch-toolset":
+      case "denied-by-launch-tool-deny":
       case "blocked-by-launch-role-policy":
       case "blocked-by-launch-permission-mode":
         return reason;
@@ -2016,6 +2094,8 @@ export class ToolExecutor {
         return `工具 ${toolName} 不允许在当前会话中使用`;
       case "excluded-by-launch-toolset":
         return `工具 ${toolName} 不在当前 launchSpec 的 toolSet 内`;
+      case "denied-by-launch-tool-deny":
+        return `工具 ${toolName} 被当前 launchSpec 的 toolDeny 拒绝`;
       case "blocked-by-launch-role-policy":
         return `工具 ${toolName} 被当前 launchSpec 的 role policy 阻止`;
       case "blocked-by-launch-permission-mode":

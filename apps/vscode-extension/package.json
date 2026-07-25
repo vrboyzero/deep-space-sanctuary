@@ -1,0 +1,90 @@
+{
+  "name": "star-sanctuary-vscode",
+  "displayName": "Star Sanctuary",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VS Code adapter for Star Sanctuary coding-run controls.",
+  "publisher": "star-sanctuary",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.116.0"
+  },
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onView:starSanctuary.codingRuns",
+    "onCommand:starSanctuary.codingRun.start",
+    "onCommand:starSanctuary.codingRun.stop",
+    "onCommand:starSanctuary.codingRun.cancelConversation",
+    "onCommand:starSanctuary.codingRun.cancelWorkflow",
+    "onCommand:starSanctuary.codingRun.subscribeConversation",
+    "onCommand:starSanctuary.codingRun.allowPermission",
+    "onCommand:starSanctuary.codingRun.denyPermission",
+    "onCommand:starSanctuary.codingRun.ask",
+    "onCommand:starSanctuary.codingRun.viewChanges"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "starSanctuary.codingRun.start",
+        "title": "Star Sanctuary: Start Coding Run Bridge"
+      },
+      {
+        "command": "starSanctuary.codingRun.stop",
+        "title": "Star Sanctuary: Stop Coding Run Bridge"
+      },
+      {
+        "command": "starSanctuary.codingRun.cancelConversation",
+        "title": "Star Sanctuary: Cancel Conversation Run"
+      },
+      {
+        "command": "starSanctuary.codingRun.cancelWorkflow",
+        "title": "Star Sanctuary: Cancel Workflow Run"
+      },
+      {
+        "command": "starSanctuary.codingRun.subscribeConversation",
+        "title": "Star Sanctuary: Subscribe to Conversation Run"
+      },
+      {
+        "command": "starSanctuary.codingRun.allowPermission",
+        "title": "Star Sanctuary: Allow Pending Tool"
+      },
+      {
+        "command": "starSanctuary.codingRun.denyPermission",
+        "title": "Star Sanctuary: Deny Pending Tool"
+      },
+      {
+        "command": "starSanctuary.codingRun.ask",
+        "title": "Star Sanctuary: Ask in Active Workspace"
+      },
+      {
+        "command": "starSanctuary.codingRun.viewChanges",
+        "title": "Star Sanctuary: View Workspace Changes"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "starSanctuary.codingRuns",
+          "name": "Star Sanctuary"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Star Sanctuary",
+      "properties": {
+        "starSanctuary.codingRun.command": {
+          "type": "string",
+          "default": "bdd",
+          "scope": "machine",
+          "description": "Executable used to start the local bdd coding-run stdio bridge. The extension starts it without a shell."
+        },
+        "starSanctuary.codingRun.stateDir": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional absolute Star Sanctuary state directory passed to the local bdd coding-run stdio bridge."
+        }
+      }
+    }
+  }
+}

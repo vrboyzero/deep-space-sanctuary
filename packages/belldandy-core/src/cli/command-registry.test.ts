@@ -121,4 +121,16 @@ describe("CommandRegistry", () => {
     expect(Object.keys(subCommands)).toContain("console");
     expect(meta?.name).toBe("console");
   });
+
+  it("exposes builtin tui command", async () => {
+    const subCommands = getRootCLICommands();
+    const tuiLoader = subCommands.tui as () => Promise<ReturnType<typeof defineCommand>>;
+    const loadedTuiCommand = await tuiLoader();
+    const meta = typeof loadedTuiCommand.meta === "function"
+      ? await loadedTuiCommand.meta()
+      : await loadedTuiCommand.meta;
+
+    expect(Object.keys(subCommands)).toContain("tui");
+    expect(meta?.name).toBe("tui");
+  });
 });

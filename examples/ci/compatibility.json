@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "coding-agent-ci-compatibility/v1",
+  "testedPackageVersion": "0.5.4",
+  "nodeEngine": ">=22.12.0",
+  "packageManager": "pnpm@10.23.0",
+  "supportedOperatingSystems": [
+    "linux",
+    "windows"
+  ],
+  "liveTemplateOperatingSystem": "linux",
+  "protocolVersion": "v1",
+  "artifactSchemaVersion": "coding-agent-ci/v1",
+  "supportedModes": [
+    "plan",
+    "workspace-write"
+  ],
+  "limits": {
+    "timeoutMs": 300000,
+    "maxTurns": 12,
+    "maxTokens": 24000
+  },
+  "exitCodes": {
+    "success": 0,
+    "invalidInput": 2,
+    "permissionDenied": 3,
+    "executionFailed": 4,
+    "cancelled": 5,
+    "outputSchemaInvalid": 6,
+    "gatewayUnavailable": 7,
+    "interrupted": 8
+  }
+}

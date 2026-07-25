@@ -680,19 +680,23 @@ function readToolExecutionRuntimeContext(meta?: JsonObject): ToolExecutionRuntim
   if (!meta || typeof meta !== "object") return undefined;
   const launchSpec = (meta as Record<string, unknown>)._agentLaunchSpec;
   const requestChannel = (meta as Record<string, unknown>)._toolRequestChannel;
+  const workspaceRevisionId = (meta as Record<string, unknown>).runId;
   const hasLaunchSpec = Boolean(launchSpec) && typeof launchSpec === "object" && !Array.isArray(launchSpec);
+  const hasWorkspaceRevisionId = typeof workspaceRevisionId === "string" && workspaceRevisionId.trim().length > 0;
   const channel = requestChannel === "cli"
     || requestChannel === "web"
     || requestChannel === "browser-extension"
     || requestChannel === "gateway"
     ? requestChannel
     : undefined;
-  if (!hasLaunchSpec && !channel) {
+  if (!hasLaunchSpec && !channel && !hasWorkspaceRevisionId) {
     return undefined;
   }
   return {
     ...(hasLaunchSpec ? { launchSpec: launchSpec as ToolExecutionRuntimeContext["launchSpec"] } : {}),
     ...(channel ? { channel } : {}),
+    ...(hasWorkspaceRevisionId ? { agentRunId: workspaceRevisionId.trim() } : {}),
+    ...(hasWorkspaceRevisionId ? { workspaceRevisionId: workspaceRevisionId.trim() } : {}),
   };
 }
 
@@ -1033,6 +1037,54 @@ function normalizeMaxToolCalls(value: number | undefined): number {
     return DEFAULT_MAX_TOOL_CALLS;
   }
   return Math.max(0, Math.floor(value));
+}
+
+function normalizePositiveRunLimit(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function normalizePositiveCostUsd(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function restrictRunLimit(configured: number, requested: unknown): number {
+  const requestedLimit = normalizePositiveRunLimit(requested);
+  if (requestedLimit === undefined) return configured;
+  if (configured <= 0) return requestedLimit;
+  return Math.min(configured, requestedLimit);
+}
+
+function resolveRunBudgets(input: {
+  launchSpec?: ToolExecutionRuntimeContext["launchSpec"];
+  maxRunWallTimeMs: number;
+  maxTotalTokens: number;
+  toolLoopIterationBudget: number;
+}): {
+  maxRunWallTimeMs: number;
+  maxTotalTokens: number;
+  toolLoopIterationBudget: number;
+  maxCostUsd?: number;
+} {
+  return {
+    maxRunWallTimeMs: restrictRunLimit(input.maxRunWallTimeMs, input.launchSpec?.maxRunWallTimeMs),
+    maxTotalTokens: restrictRunLimit(input.maxTotalTokens, input.launchSpec?.maxTotalTokens),
+    toolLoopIterationBudget: restrictRunLimit(input.toolLoopIterationBudget, input.launchSpec?.toolLoopIterationBudget),
+    ...(normalizePositiveCostUsd(input.launchSpec?.maxCostUsd) !== undefined
+      ? { maxCostUsd: normalizePositiveCostUsd(input.launchSpec?.maxCostUsd) }
+      : {}),
+  };
+}
+
+function hasUsagePricing(pricing: ModelUsagePricing | undefined): pricing is ModelUsagePricing {
+  return Boolean(
+    pricing
+    && Number.isFinite(pricing.inputUsdPer1M)
+    && pricing.inputUsdPer1M >= 0
+    && Number.isFinite(pricing.outputUsdPer1M)
+    && pricing.outputUsdPer1M >= 0,
+  );
 }
 
 function normalizeToolLoopWarningFraction(value: number | undefined): number {
@@ -1936,9 +1988,22 @@ export class ToolEnabledAgent implements BelldandyAgent {
     this.starweaverVisibleNotifyFingerprint.set(input.conversationId, fingerprint);
   }
 
+  getCodingRunCapabilities(): { maxCostUsd: boolean } {
+    return { maxCostUsd: hasUsagePricing(this.opts.usagePricing) };
+  }
+
   async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
     const startTime = Date.now();
     const runtimeContext = readToolExecutionRuntimeContext(input.meta);
+    const runBudgets = resolveRunBudgets({
+      launchSpec: runtimeContext?.launchSpec,
+      maxRunWallTimeMs: this.opts.maxRunWallTimeMs,
+      maxTotalTokens: this.opts.maxTotalTokens,
+      toolLoopIterationBudget: this.opts.toolLoopIterationBudget,
+    });
+    if (runBudgets.maxCostUsd !== undefined && !hasUsagePricing(this.opts.usagePricing)) {
+      throw new Error("This coding run requested maxCostUsd, but the selected Agent profile has no valid usage pricing.");
+    }
     const resolvedAgentId = input.agentId ?? runtimeContext?.launchSpec?.agentId ?? runtimeContext?.launchSpec?.profileId ?? "tool-agent";
     let runSystemPrompt = this.opts.systemPrompt;
     let hookSystemPromptUsed = false;
@@ -2041,7 +2106,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
       // Wall-time 从 ReAct 实际开始计量，并将父级停止与本轮 deadline 合并到同一信号。
       const runBudgetStartedAt = Date.now();
-      const maxRunWallTimeMs = this.opts.maxRunWallTimeMs;
+      const maxRunWallTimeMs = runBudgets.maxRunWallTimeMs;
       const activeRunAbortController = createReActRunAbortController(
         input.abortSignal,
         maxRunWallTimeMs,
@@ -2210,8 +2275,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let runSuccess = true;
     let runError: string | undefined;
     const runBudget = new ReActRunBudgetTracker({
-      maxTotalTokens: this.opts.maxTotalTokens,
+      maxTotalTokens: runBudgets.maxTotalTokens,
       maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
+      ...(runBudgets.maxCostUsd === undefined ? {} : { maxCostUsd: runBudgets.maxCostUsd }),
     });
 
     // ReAct 循环内压缩状态
@@ -2418,7 +2484,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           return;
         }
         const nextModelCallIndex = modelCallCount + 1;
-        const iterationBudget = this.opts.toolLoopIterationBudget;
+        const iterationBudget = runBudgets.toolLoopIterationBudget;
         if (iterationBudget > 0) {
           const warningThreshold = Math.max(1, Math.ceil(iterationBudget * this.opts.toolLoopWarningFraction));
           if (
@@ -2772,6 +2838,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           response.reasoning_content,
           response.toolCalls?.map((toolCall) => JSON.stringify(toolCall)).join("\n"),
         ].filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
+        const usageCostForBudget = response.usage
+          ? calculateUsageCostUsd({
+            inputTokens: response.usage.input_tokens,
+            outputTokens: response.usage.output_tokens,
+            cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: response.usage.cache_creation_input_tokens ?? 0,
+            cacheHitTokens: response.usage.prompt_cache_hit_tokens ?? 0,
+            pricing: this.opts.usagePricing,
+          })
+          : undefined;
         const totalTokenBudgetExhausted = runBudget.recordModelUsage({
           providerUsageAvailable: response.usage !== undefined,
           inputTokens: response.usage?.input_tokens ?? 0,
@@ -2781,13 +2857,17 @@ export class ToolEnabledAgent implements BelldandyAgent {
           fallbackInputTokens: lastLocalPromptEstimate?.totalPromptTokens
             ?? estimateMessagesTotal(requestMessages, dispatchTokenEstimateContext),
           fallbackOutputTokens: estimateTokens(fallbackOutputTokenSource, dispatchTokenEstimateContext),
+          ...(usageCostForBudget ? { costUsd: usageCostForBudget.totalUsd } : {}),
         });
         if (totalTokenBudgetExhausted) {
+          const error = totalTokenBudgetExhausted.budget === "cost_usd"
+            ? `累计费用预算超限（最大 $${totalTokenBudgetExhausted.limit.toFixed(8)}，已累计 $${totalTokenBudgetExhausted.observed.toFixed(8)}）。已停止后续模型和工具调用。`
+            : `累计 token 预算超限（最大 ${totalTokenBudgetExhausted.limit} token，已累计 ${totalTokenBudgetExhausted.observed}）。请拆分任务、收敛上下文，或仅为受控 Profile 提高预算后继续。`;
           yield* emitBudgetExhausted(
             totalTokenBudgetExhausted.budget,
             totalTokenBudgetExhausted.limit,
             totalTokenBudgetExhausted.observed,
-            `累计 token 预算超限（最大 ${totalTokenBudgetExhausted.limit} token，已累计 ${totalTokenBudgetExhausted.observed}）。请拆分任务、收敛上下文，或仅为受控 Profile 提高预算后继续。`,
+            error,
           );
           return;
         }

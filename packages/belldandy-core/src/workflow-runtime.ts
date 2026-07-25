@@ -36,6 +36,7 @@ import {
 } from "./workflow-run-controller.js";
 import { resolveWorkflowBatchLimits } from "./workflow-batch-runner.js";
 import { computeMigrationFingerprint } from "./workflow-fingerprint.js";
+import { ManagedWorktreeRuntime } from "./managed-worktree.js";
 import {
   loadWorkflowScript,
   type WorkflowScriptSource,
@@ -80,6 +81,8 @@ export type WorkflowRunOptions = {
 export type WorkflowRunResult = {
   success: boolean;
   output: string;
+  /** 单次 runtime 执行实例标识；不随 resumeJournalId 复用。 */
+  workflowRunId: string;
   journalId: string;
   scriptHash: string;
   workflowName: string;
@@ -103,6 +106,9 @@ export type WorkflowRuntimeStatus =
 
 export type WorkflowRuntimeStatusInfo = {
   status: WorkflowRuntimeStatus;
+  /** 仅表示该精确运行实例已接受过显式 stop；用于安全地确认断连重试。 */
+  stopRequested?: boolean;
+  workflowRunId: string;
   journalId: string;
   workflowName?: string;
   scriptHash?: string;
@@ -158,6 +164,7 @@ export type AgentExecutionFingerprintInputResolver = (input: {
 };
 
 type ActiveRun = {
+  workflowRunId: string;
   journalId: string;
   status: WorkflowRuntimeStatus;
   scriptHash: string;
@@ -168,6 +175,7 @@ type ActiveRun = {
   orchestrator: SubAgentOrchestrator;
   runController: WorkflowRunController;
   budgetBaseline: WorkflowBudgetUsage;
+  stopRequested?: boolean;
   error?: string;
   startedAt: number;
 };
@@ -192,7 +200,10 @@ export class WorkflowRuntime {
   private readonly logger?: WorkflowRuntimeDeps["logger"];
   private readonly resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
   private readonly resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
+  /** 以不可复用的 runtime instance id 索引，避免 resume journal 混淆控制目标。 */
   private readonly activeRuns = new Map<string, ActiveRun>();
+  /** 兼容既有 journalId 查询接口，始终指向该 Journal 最近一次运行。 */
+  private readonly activeRunIdsByJournal = new Map<string, string>();
 
   constructor(deps: WorkflowRuntimeDeps) {
     this.db = deps.db;
@@ -207,6 +218,7 @@ export class WorkflowRuntime {
 
   async run(opts: WorkflowRunOptions): Promise<WorkflowRunResult> {
     const startedAt = Date.now();
+    const workflowRunId = `wfr_${randomUUID()}`;
 
     // 1. 加载脚本
     let script: LoadedWorkflowScript;
@@ -221,6 +233,7 @@ export class WorkflowRuntime {
       return {
         success: false,
         output: "",
+        workflowRunId,
         journalId: "",
         scriptHash: "",
         workflowName: "",
@@ -284,6 +297,7 @@ export class WorkflowRuntime {
 
     // 5. 注册 active run
     const activeRun: ActiveRun = {
+      workflowRunId,
       journalId,
       status: "running",
       scriptHash: script.scriptHash,
@@ -296,7 +310,8 @@ export class WorkflowRuntime {
       budgetBaseline: budgetGuard.getUsage(),
       startedAt,
     };
-    this.activeRuns.set(journalId, activeRun);
+    this.activeRuns.set(workflowRunId, activeRun);
+    this.activeRunIdsByJournal.set(journalId, workflowRunId);
 
     // 6. 构建 WorkflowContext 并执行脚本。
     let output = "";
@@ -335,6 +350,9 @@ export class WorkflowRuntime {
         depth: opts.depth ?? 0,
         maxDepth: 1,
         stateDir: opts.stateDir,
+        managedWorktreeRuntime: opts.stateDir
+          ? new ManagedWorktreeRuntime(opts.stateDir, this.logger)
+          : undefined,
       });
       if (runController.signal.aborted) {
         throw new Error(readWorkflowAbortReason(runController.signal));
@@ -386,6 +404,7 @@ export class WorkflowRuntime {
     const result = {
       success,
       output,
+      workflowRunId,
       journalId,
       scriptHash: script.scriptHash,
       workflowName: script.workflowName,
@@ -405,37 +424,48 @@ export class WorkflowRuntime {
    * 中止运行中的工作流。
    */
   async stop(journalId: string, reason = "Stopped by user"): Promise<boolean> {
-    const run = this.activeRuns.get(journalId);
-    if (!run) return false;
-    if (run.status !== "running") return false;
+    const run = this.getRunByJournal(journalId);
+    return run ? this.stopActiveRun(run, reason) : false;
+  }
 
-    run.status = "stopping";
-    run.runController.abort(reason);
-
-    // 尝试停止 orchestrator 中正在运行的 session
-    // orchestrator.stopSession 需要 sessionId，这里通过 listSessions 找到当前运行中的
-    const sessions = run.orchestrator.listSessions();
-    for (const session of sessions) {
-      if (session.status === "running" || session.status === "pending") {
-        await run.orchestrator.stopSession(session.id, reason);
-      }
-    }
-
-    return true;
+  /**
+   * 仅停止同时匹配 Journal 和 runtime instance 的工作流。
+   * 外部控制面必须使用此接口，不能把可复用的 journalId 当作运行身份。
+   */
+  async stopRun(journalId: string, workflowRunId: string, reason = "Stopped by user"): Promise<boolean> {
+    const run = this.activeRuns.get(workflowRunId);
+    if (!run || run.journalId !== journalId) return false;
+    return this.stopActiveRun(run, reason);
   }
 
   /**
    * 查询运行状态与 Journal 统计。
    */
   getStatus(journalId: string): WorkflowRuntimeStatusInfo | null {
-    const run = this.activeRuns.get(journalId);
+    const run = this.getRunByJournal(journalId);
     if (!run) return null;
+
+    return this.toStatusInfo(run);
+  }
+
+  /** 按精确 runtime instance 查询状态，供需核验 binding 的外部 adapter 使用。 */
+  getStatusByRunId(workflowRunId: string): WorkflowRuntimeStatusInfo | null {
+    const run = this.activeRuns.get(workflowRunId);
+    if (!run) return null;
+
+    return this.toStatusInfo(run);
+  }
+
+  private toStatusInfo(run: ActiveRun): WorkflowRuntimeStatusInfo {
+    const { journalId } = run;
 
     const stats = run.journal.getStats(journalId);
     const budgetUsage = diffBudgetUsage(run.budgetGuard.getUsage(), run.budgetBaseline);
 
     return {
       status: run.status,
+      ...(run.stopRequested ? { stopRequested: true } : {}),
+      workflowRunId: run.workflowRunId,
       journalId,
       workflowName: run.workflowName,
       scriptHash: run.scriptHash,
@@ -455,12 +485,19 @@ export class WorkflowRuntime {
   /**
    * 列出所有 active runs。
    */
-  listActiveRuns(): Array<{ journalId: string; status: WorkflowRuntimeStatus; workflowName: string; startedAt: number }> {
+  listActiveRuns(): Array<{
+    workflowRunId: string;
+    journalId: string;
+    status: WorkflowRuntimeStatus;
+    workflowName: string;
+    startedAt: number;
+  }> {
     // 机会式清理已结束且超过默认保留期的记录，避免 doctor 视角持续膨胀。
     this.cleanup();
     return [...this.activeRuns.values()]
       .filter((run) => run.status === "running" || run.status === "stopping")
       .map((run) => ({
+      workflowRunId: run.workflowRunId,
       journalId: run.journalId,
       status: run.status,
       workflowName: run.workflowName,
@@ -500,13 +537,40 @@ export class WorkflowRuntime {
   cleanup(maxAgeMs: number = 3_600_000): number {
     const now = Date.now();
     let cleaned = 0;
-    for (const [id, run] of this.activeRuns) {
+    for (const [workflowRunId, run] of this.activeRuns) {
       if (run.status !== "running" && run.status !== "stopping" && now - run.startedAt >= maxAgeMs) {
-        this.activeRuns.delete(id);
+        this.activeRuns.delete(workflowRunId);
+        if (this.activeRunIdsByJournal.get(run.journalId) === workflowRunId) {
+          this.activeRunIdsByJournal.delete(run.journalId);
+        }
         cleaned++;
       }
     }
     return cleaned;
+  }
+
+  private getRunByJournal(journalId: string): ActiveRun | undefined {
+    const workflowRunId = this.activeRunIdsByJournal.get(journalId);
+    return workflowRunId ? this.activeRuns.get(workflowRunId) : undefined;
+  }
+
+  private async stopActiveRun(run: ActiveRun, reason: string): Promise<boolean> {
+    if (run.stopRequested) return true;
+    if (run.status !== "running") return false;
+
+    run.stopRequested = true;
+    run.status = "stopping";
+    run.runController.abort(reason);
+
+    // orchestrator.stopSession 需要 sessionId，这里停止该 workflow 的运行中/排队 session。
+    const sessions = run.orchestrator.listSessions();
+    for (const session of sessions) {
+      if (session.status === "running" || session.status === "pending") {
+        await run.orchestrator.stopSession(session.id, reason);
+      }
+    }
+
+    return true;
   }
 
   // ─── 跨版本 migration ────────────────────────────────────────────────────

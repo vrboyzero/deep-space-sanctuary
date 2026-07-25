@@ -17,6 +17,7 @@ export type GatewayMethodResult<T> =
   | {
     ok: false;
     error: string;
+    errorCode?: string;
     paired: boolean;
     wsUrl: string;
   };
@@ -81,7 +82,7 @@ export async function invokeGatewayMethod<T>(input: {
     const finish = (
       result:
         | { ok: true; payload: T }
-        | { ok: false; error: string },
+        | { ok: false; error: string; errorCode?: string },
     ) => {
       if (settled) return;
       settled = true;
@@ -101,6 +102,7 @@ export async function invokeGatewayMethod<T>(input: {
         error: result.error,
         paired,
         wsUrl,
+        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
       });
     };
 
@@ -198,7 +200,7 @@ export async function invokeGatewayMethod<T>(input: {
           pendingPairingRetry = true;
           return;
         }
-        finish({ ok: false, error: errorMessage });
+        finish({ ok: false, error: errorMessage, errorCode });
       }
     });
 

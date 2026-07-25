@@ -51,6 +51,12 @@ import {
   computeStableHash,
   computeWorkflowToolPolicyHash,
 } from "./workflow-fingerprint.js";
+import {
+  ManagedWorktreeRuntime,
+  type ManagedWorktree,
+  type ManagedWorktreeArtifact,
+  type ManagedWorktreeCleanupResult,
+} from "./managed-worktree.js";
 import type { AgentExecutionFingerprintInputResolver } from "./workflow-runtime.js";
 
 const WORKFLOW_PENDING_LEASE_MS = 30_000;
@@ -128,6 +134,8 @@ export type WorkflowContextDeps = {
    * 可选：stateDir，子工作流 file 模式加载脚本时需要。
    */
   stateDir?: string;
+  /** Dynamic Workflow 的 workflow_call owner 使用的共享受管 worktree runtime。 */
+  managedWorktreeRuntime?: ManagedWorktreeRuntime;
   /**
    * 可选：把真实生效的 agent profile / prompt / tool policy 指纹输入
    * 注入到 workflow fingerprint，避免缓存命中与实际执行语义脱节。
@@ -147,6 +155,8 @@ export type WorkflowContextDeps = {
     | "maxToolRiskLevel"
     | "timeoutMs"
     | "delegationProtocol"
+    | "cwd"
+    | "isolationMode"
   >) => AgentLaunchSpec;
 };
 
@@ -178,6 +188,7 @@ export interface WorkflowRuntimeLike {
 export interface WorkflowRunResultLike {
   success: boolean;
   output: string;
+  workflowRunId: string;
   journalId: string;
   error?: string;
 }
@@ -206,6 +217,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
     stateDir,
     resolveAgentExecutionFingerprintInputs,
     resolveWorkflowAgentLaunchSpec,
+    managedWorktreeRuntime,
     abortSignal,
   } = deps;
 
@@ -218,6 +230,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
 
     async agent(prompt, opts): Promise<string> {
       throwIfWorkflowAborted(abortSignal);
+      validateWorkflowWorktreeOptions(opts);
       const callKey = opts?.callKey ?? `${phaseId}/${agentCallIndex}`;
       agentCallIndex++;
 
@@ -231,6 +244,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
           maxToolRiskLevel: opts?.maxToolRiskLevel,
           timeoutMs: opts?.timeoutMs,
           delegationProtocol: opts?.delegationProtocol,
+          cwd: opts?.cwd,
+          isolationMode: opts?.isolationMode,
         })
         : typeof (orchestrator as unknown as { resolveLaunchSpec?: (...args: unknown[]) => unknown }).resolveLaunchSpec === "function"
           ? (orchestrator as unknown as {
@@ -244,6 +259,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
             maxToolRiskLevel: opts?.maxToolRiskLevel,
             timeoutMs: opts?.timeoutMs,
             delegationProtocol: opts?.delegationProtocol,
+            cwd: opts?.cwd,
+            isolationMode: opts?.isolationMode,
           })
           : normalizeAgentLaunchSpecWithCatalog({
         instruction: prompt,
@@ -255,6 +272,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         maxToolRiskLevel: opts?.maxToolRiskLevel,
         timeoutMs: opts?.timeoutMs,
         delegationProtocol: opts?.delegationProtocol,
+        cwd: opts?.cwd,
+        isolationMode: opts?.isolationMode,
       });
       const resolvedFingerprintInputs = resolveAgentExecutionFingerprintInputs?.({
         agentId: resolvedLaunchSpec.agentId,
@@ -285,6 +304,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         allowedToolFamilies: resolvedLaunchSpec.allowedToolFamilies,
         maxToolRiskLevel: resolvedLaunchSpec.maxToolRiskLevel,
         policySummary: resolvedLaunchSpec.policySummary,
+        cwd: resolvedLaunchSpec.cwd,
+        isolationMode: resolvedLaunchSpec.isolationMode,
       };
 
       // 计算 fingerprint
@@ -305,6 +326,8 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
         delegationHash: opts?.delegationProtocol
           ? computeStableHash(opts.delegationProtocol)
           : undefined,
+        cwd: resolvedLaunchSpec.cwd,
+        isolationMode: resolvedLaunchSpec.isolationMode,
         workflowArgs: args,
       });
 
@@ -333,10 +356,14 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
 
       // 调用 orchestrator。这里统一走 launchSpec，避免 legacy spawnOpts 丢失
       // role / timeout / tool 限制 / modelOverride 等字段。
-      const spawnOpts: SpawnOptions = {
+      let spawnOpts: SpawnOptions = {
         launchSpec: {
           ...resolvedLaunchSpec,
-          context: { _workflowJournalId: journalId, _workflowCallKey: callKey },
+          context: {
+            ...resolvedLaunchSpec.context,
+            _workflowJournalId: journalId,
+            _workflowCallKey: callKey,
+          },
         },
         abortSignal,
         onSessionCreated: (sid, agentId) => {
@@ -357,8 +384,33 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
       };
       const renewal = startPendingClaimRenewal(journal, claimIdentity);
       try {
-        let callResult;
+        let callResult: Awaited<ReturnType<typeof runWorkflowAgentCall>> | undefined;
+        let invocationError: unknown;
+        let preparedWorktree: ManagedWorktree | undefined;
+        let worktreeMetadata: string | undefined;
         try {
+          if (opts?.isolationMode === "worktree") {
+            if (!managedWorktreeRuntime || !resolvedLaunchSpec.cwd) {
+              throw new Error("Workflow worktree isolation requires a configured stateDir and cwd.");
+            }
+            preparedWorktree = await managedWorktreeRuntime.prepare({
+              id: buildWorkflowWorktreeId(journalId, fingerprint),
+              ownerKind: "workflow_call",
+              cwd: resolvedLaunchSpec.cwd,
+            });
+            spawnOpts = {
+              ...spawnOpts,
+              launchSpec: {
+                ...spawnOpts.launchSpec,
+                cwd: preparedWorktree.resolvedCwd,
+                isolationMode: "worktree",
+                context: {
+                  ...spawnOpts.launchSpec.context,
+                  _managedWorktreeId: preparedWorktree.id,
+                },
+              },
+            };
+          }
           callResult = await runWorkflowAgentCall({
             requestedMaxRetries: opts?.maxRetries,
             budgetGuard,
@@ -369,16 +421,47 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
             estimateTokens: (output) => Math.ceil(output.length / 4),
           });
         } catch (error) {
+          invocationError = error;
+        }
+
+        if (preparedWorktree) {
+          try {
+            const artifact = await managedWorktreeRuntime!.collectArtifact(preparedWorktree);
+            const cleanup = await managedWorktreeRuntime!.cleanup(preparedWorktree, artifact);
+            worktreeMetadata = serializeWorkflowWorktreeMetadata(preparedWorktree, artifact, cleanup);
+            if (artifact.status === "incomplete" && !invocationError) {
+              invocationError = new Error(`Workflow worktree artifact is incomplete: ${artifact.error ?? "unknown error"}`);
+            }
+          } catch (error) {
+            invocationError ??= error;
+            worktreeMetadata = serializeWorkflowWorktreeMetadata(preparedWorktree);
+          }
+        }
+
+        if (invocationError) {
           if (renewal.lost || !journal.settlePending({
             ...claimIdentity,
             status: "error",
-            error: toErrorMessage(error),
+            error: toErrorMessage(invocationError),
+            resultJson: worktreeMetadata,
+          })) {
+            throw new WorkflowPendingClaimLostError(callKey);
+          }
+          throw invocationError;
+        }
+
+        if (!callResult) {
+          const error = new Error("Workflow agent call completed without a result.");
+          if (renewal.lost || !journal.settlePending({
+            ...claimIdentity,
+            status: "error",
+            error: error.message,
+            resultJson: worktreeMetadata,
           })) {
             throw new WorkflowPendingClaimLostError(callKey);
           }
           throw error;
         }
-
         const { result, tokenCount } = callResult;
         if (result.success) {
           if (renewal.lost || !journal.settlePending({
@@ -386,6 +469,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
             status: "done",
             result: result.output,
             tokenCount,
+            resultJson: worktreeMetadata,
           })) {
             throw new WorkflowPendingClaimLostError(callKey);
           }
@@ -402,6 +486,7 @@ export function createWorkflowContext(deps: WorkflowContextDeps): WorkflowContex
           ...claimIdentity,
           status: "error",
           error: result.error ?? "unknown error",
+          resultJson: worktreeMetadata,
         })) {
           throw new WorkflowPendingClaimLostError(callKey);
         }
@@ -591,6 +676,32 @@ function createWorkflowAbortError(signal: AbortSignal | undefined): Error {
     return new Error(signal.reason.trim());
   }
   return new Error("Workflow stopped by user.");
+}
+
+function validateWorkflowWorktreeOptions(opts: AgentCallOptions | undefined): void {
+  if (opts?.isolationMode !== undefined && opts.isolationMode !== "worktree") {
+    throw new Error(`Unsupported workflow isolation mode: ${String(opts.isolationMode)}`);
+  }
+  if (opts?.isolationMode === "worktree" && !opts.cwd?.trim()) {
+    throw new Error("Workflow worktree isolation requires cwd.");
+  }
+}
+
+function buildWorkflowWorktreeId(journalId: string, fingerprint: string): string {
+  return `workflow-${journalId}-${fingerprint.slice(0, 12)}`;
+}
+
+function serializeWorkflowWorktreeMetadata(
+  worktree: ManagedWorktree,
+  artifact?: ManagedWorktreeArtifact,
+  cleanup?: ManagedWorktreeCleanupResult,
+): string {
+  return JSON.stringify({
+    version: 1,
+    worktree,
+    artifact,
+    cleanup,
+  });
 }
 
 function toErrorMessage(error: unknown): string {

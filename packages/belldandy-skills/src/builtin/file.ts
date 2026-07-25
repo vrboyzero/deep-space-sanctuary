@@ -202,6 +202,47 @@ function resolveAndValidatePath(
   return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
 }
 
+function resolveMutationWorkspaceRoot(
+  absolute: string,
+  scope: ReturnType<typeof resolveRuntimeFilesystemScope>,
+): string {
+  const roots = [scope.workspaceRoot, ...(scope.extraWorkspaceRoots ?? [])];
+  for (const root of roots) {
+    if (isUnderRoot(absolute, root).ok) return path.resolve(root);
+  }
+  throw new Error("Workspace mutation target is outside its resolved workspace root.");
+}
+
+async function prepareWorkspaceMutation(
+  context: ToolContext,
+  workspaceRoot: string,
+  toolName: string,
+  target: { absolute: string; relative: string },
+): Promise<void> {
+  if (!context.workspaceMutationObserver || !context.workspaceRevisionId) return;
+  await context.workspaceMutationObserver.prepareMutations({
+    workspaceRevisionId: context.workspaceRevisionId,
+    workspaceRoot,
+    toolName,
+    targets: [{ absolutePath: target.absolute, relativePath: target.relative }],
+  });
+}
+
+async function commitWorkspaceMutation(
+  context: ToolContext,
+  workspaceRoot: string,
+  toolName: string,
+  target: { absolute: string; relative: string },
+): Promise<void> {
+  if (!context.workspaceMutationObserver || !context.workspaceRevisionId) return;
+  await context.workspaceMutationObserver.commitMutations({
+    workspaceRevisionId: context.workspaceRevisionId,
+    workspaceRoot,
+    toolName,
+    targets: [{ absolutePath: target.absolute, relativePath: target.relative }],
+  });
+}
+
 const MAX_REGEX_REPLACE_PATTERN_LENGTH = 256;
 const MAX_REGEX_REPLACE_TARGET_BYTES = 256_000;
 const ALLOWED_REGEX_REPLACE_FLAGS = new Set(["d", "g", "i", "m", "s", "u", "v", "y"]);
@@ -575,6 +616,7 @@ export const fileWriteTool: Tool = withToolContract({
     }
 
     const { absolute, relative } = pathResult;
+    const mutationWorkspaceRoot = resolveMutationWorkspaceRoot(absolute, scope);
 
     // 受保护文件（优先拦截）
     if (isProtectedFile(relative)) {
@@ -680,6 +722,7 @@ export const fileWriteTool: Tool = withToolContract({
               return makeError("未匹配到正则内容，未做替换");
             }
             const next = text.replace(re, content);
+            await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
             await fs.writeFile(absolute, next, "utf-8");
           } else {
             const startLine = Number(args.startLine);
@@ -698,6 +741,7 @@ export const fileWriteTool: Tool = withToolContract({
             const insertLines = content.split(/\r?\n/);
             lines.splice(startIdx, endIdx - startIdx + 1, ...insertLines);
             const next = lines.join(newline);
+            await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
             await fs.writeFile(absolute, next, "utf-8");
           }
         } else {
@@ -713,11 +757,13 @@ export const fileWriteTool: Tool = withToolContract({
           const insertLines = content.split(/\r?\n/);
           lines.splice(index, 0, ...insertLines);
           const next = lines.join(newline);
+          await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
           await fs.writeFile(absolute, next, "utf-8");
         }
 
         await applyExecutableBit();
 
+        await commitWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
         const updatedStat = await fs.stat(absolute);
         return {
           id,
@@ -735,6 +781,7 @@ export const fileWriteTool: Tool = withToolContract({
       }
 
       const writeBuffer = encoding === "base64" ? Buffer.from(content, "base64") : null;
+      await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
 
       if (mode === "append") {
         if (writeBuffer) {
@@ -752,6 +799,7 @@ export const fileWriteTool: Tool = withToolContract({
 
       await applyExecutableBit();
 
+      await commitWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
       const finalStat = await fs.stat(absolute);
       const bytesWritten = writeBuffer ? writeBuffer.length : Buffer.byteLength(content, "utf-8");
 
@@ -841,7 +889,8 @@ export const fileDeleteTool: Tool = withToolContract({
       return makeError(pathResult.error);
     }
 
-    const { relative } = pathResult;
+    const { absolute, relative } = pathResult;
+    const mutationWorkspaceRoot = resolveMutationWorkspaceRoot(absolute, scope);
 
     // 受保护文件（优先拦截）
     if (isProtectedFile(relative)) {
@@ -865,7 +914,9 @@ export const fileDeleteTool: Tool = withToolContract({
     }
 
     try {
-      await fs.unlink(pathResult.absolute);
+      await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
+      await fs.unlink(absolute);
+      await commitWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
 
       return {
         id,

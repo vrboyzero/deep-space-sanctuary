@@ -149,6 +149,21 @@ export type GatewayFrame =
   | GatewayResFrame
   | GatewayEventFrame;
 
+/**
+ * Headless coding-run 对一次 Conversation 运行施加的收紧型限制。
+ * 这些字段不会创建新的领域运行状态；Gateway 仅将它们映射为本次 Agent launch 的运行时约束。
+ */
+export type CodingRunOptions = {
+  cwd?: string;
+  toolAllow?: string[];
+  toolDeny?: string[];
+  permissionMode?: "plan" | "acceptEdits" | "confirm";
+  maxWallTimeMs?: number;
+  maxTurns?: number;
+  maxTokens?: number;
+  maxCostUsd?: number;
+};
+
 export type MessageSendParams = {
   conversationId?: string;
   text: string;
@@ -164,6 +179,8 @@ export type MessageSendParams = {
   agentId?: string;
   /** 指定使用的模型 ID（可选，缺省使用默认模型） */
   modelId?: string;
+  /** 仅供 Headless coding-run 使用的单次运行限制。 */
+  codingRun?: CodingRunOptions;
   /** 用户UUID（可选，用于身份权力验证） */
   userUuid?: string;
   /** 消息发送者信息（用于身份上下文） */

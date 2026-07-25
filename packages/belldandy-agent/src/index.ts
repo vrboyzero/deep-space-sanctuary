@@ -268,7 +268,7 @@ export type AgentInterrupted = {
 /** ReAct 硬预算耗尽时的可诊断终态；final/status 会紧随其后。 */
 export type AgentBudgetExhausted = {
   type: "budget_exhausted";
-  budget: "tool_loop_iterations" | "tool_calls" | "wall_time_ms" | "total_tokens" | "high_risk_tool_calls";
+  budget: "tool_loop_iterations" | "tool_calls" | "wall_time_ms" | "total_tokens" | "high_risk_tool_calls" | "cost_usd";
   limit: number;
   observed: number;
 };
@@ -420,10 +420,17 @@ export type AgentStreamItem =
   | AgentToolResult
   | AgentUsage;
 
+export type CodingRunCapabilities = {
+  /** 运行时是否可以基于真实模型定价强制 maxCostUsd。 */
+  maxCostUsd: boolean;
+};
+
 export interface BelldandyAgent {
   run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
   /** 释放指定会话的纯内存状态；实现不得删除 canonical 持久化数据。 */
   releaseConversation?(conversationId: string): void | Promise<void>;
+  /** 未实现时视为不支持可强制的 coding-run 费用预算。 */
+  getCodingRunCapabilities?(): CodingRunCapabilities;
 }
 
 export class MockAgent implements BelldandyAgent {

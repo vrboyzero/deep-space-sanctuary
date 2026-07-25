@@ -313,6 +313,52 @@ description: 通过额外根目录读取
       expect(content).toBe("new content");
     });
 
+    it("prepares a workspace revision before writing and commits the resulting hash after success", async () => {
+      await fs.writeFile(path.join(tempDir, "tracked.txt"), "before", "utf-8");
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileWriteTool.execute(
+        { path: "tracked.txt", content: "after" },
+        {
+          ...baseContext,
+          workspaceRevisionId: "gateway-run-1",
+          workspaceMutationObserver,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceRevisionId: "gateway-run-1",
+        toolName: "file_write",
+        targets: [{ absolutePath: path.join(tempDir, "tracked.txt"), relativePath: "tracked.txt" }],
+      }));
+      expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not create a workspace revision when replace validation rejects the write", async () => {
+      await fs.writeFile(path.join(tempDir, "no-match.txt"), "before", "utf-8");
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileWriteTool.execute(
+        { path: "no-match.txt", content: "after", mode: "replace", regex: "missing" },
+        {
+          ...baseContext,
+          workspaceRevisionId: "gateway-run-invalid-write",
+          workspaceMutationObserver,
+        },
+      );
+
+      expect(result.success).toBe(false);
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+    });
+
     it("should append to file", async () => {
       await fs.writeFile(path.join(tempDir, "append.txt"), "line1\n", "utf-8");
 
@@ -509,6 +555,27 @@ description: 通过额外根目录读取
   });
 
   describe("file_delete", () => {
+    it("prepares and commits a workspace revision around deletion", async () => {
+      await fs.writeFile(path.join(tempDir, "tracked-delete.txt"), "before", "utf-8");
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileDeleteTool.execute(
+        { path: "tracked-delete.txt" },
+        {
+          ...baseContext,
+          workspaceRevisionId: "gateway-run-2",
+          workspaceMutationObserver,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledTimes(1);
+      expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledTimes(1);
+    });
+
     it("should enforce allowedPaths whitelist", async () => {
       await fs.mkdir(path.join(tempDir, "allowed"), { recursive: true });
       await fs.mkdir(path.join(tempDir, "blocked"), { recursive: true });

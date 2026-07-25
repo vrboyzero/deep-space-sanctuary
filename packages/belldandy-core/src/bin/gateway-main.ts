@@ -70,6 +70,8 @@ import {
   reconcileRuntimeLostBridgeSubtasks,
 } from "../bridge-subtask-runtime.js";
 import { SubTaskWorktreeRuntime } from "../worktree-runtime.js";
+import { WorkspaceRevisionRuntime } from "../workspace-revision.js";
+import { PendingToolPermissionRuntime } from "../coding-run/pending-tool-permission-runtime.js";
 import { normalizeEmailOutboundDraft } from "../email-outbound-contract.js";
 import { createFileEmailOutboundAuditStore, resolveEmailOutboundAuditStorePath } from "../email-outbound-audit-store.js";
 import { EmailOutboundConfirmationStore } from "../email-outbound-confirmation-store.js";
@@ -1280,10 +1282,24 @@ const AGENT_META_ALWAYS_ALLOWED_TOOLS = new Set<string>([
   SWITCH_FAQI_TOOL_NAME,
   switchFacetTool.definition.name,
 ]);
+const workspaceRevisionRuntime = new WorkspaceRevisionRuntime({ stateDir });
+const pendingToolPermissionRuntime = new PendingToolPermissionRuntime({
+  onRequested: (request) => {
+    emitConversationToolEvent(request.conversationId, {
+      kind: "coding_run_permission_requested",
+      agentRunId: request.agentRunId,
+      ...(request.worktreeId ? { worktreeId: request.worktreeId } : {}),
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+    });
+  },
+});
 const toolExecutor: ToolExecutor = new ToolExecutor({
   tools: runtimeToolsToRegister,
   workspaceRoot: stateDir, // Use the resolved state directory as the workspace root for file operations
   stateDir,
+  workspaceMutationObserver: workspaceRevisionRuntime,
+  permissionController: pendingToolPermissionRuntime,
   extraWorkspaceRoots, // 额外允许 file_read/file_write/file_delete 的根目录（如其他盘符）
   alwaysEnabledTools: toolsEnabled ? [TOOL_SETTINGS_CONTROL_NAME, TOOL_SEARCH_NAME] : [],
   policy: toolsPolicy,
@@ -3357,6 +3373,8 @@ if (agentRegistry && toolsEnabled) {
         maxToolRiskLevel: input.maxToolRiskLevel,
         timeoutMs: input.timeoutMs,
         delegationProtocol: input.delegationProtocol,
+        cwd: input.cwd,
+        isolationMode: input.isolationMode,
       }, {
         agentRegistry,
         defaults: {
@@ -4174,6 +4192,7 @@ const serverOptions = buildGatewayServerOptions({
   logger,
   toolsConfigManager,
   toolExecutor: toolsEnabled ? toolExecutor : undefined,
+  pendingToolPermissionRuntime,
   toolControlConfirmationStore,
   externalOutboundConfirmationStore,
   externalOutboundSenderRegistry,
@@ -4298,6 +4317,7 @@ const serverOptions = buildGatewayServerOptions({
   updateSubTask,
   stopSubTask,
   workflowRuntime,
+  workspaceRevisionRuntime,
   commanderMode,
   preflightCompressionPolicy,
   ttsEnabled: isTtsEnabledFn,
