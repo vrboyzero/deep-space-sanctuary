@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 
 import type { BelldandyAgent } from "@belldandy/agent";
 import { startGatewayServer } from "../../server.js";
@@ -67,6 +68,65 @@ describe("Gateway Conversation CLI stream", () => {
       });
     } finally {
       await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("emits one failed terminal without replay when Gateway closes after accepting a run", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-restart-"));
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Test Gateway did not expose a TCP port.");
+    let messageSendCount = 0;
+    server.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (raw) => {
+        const frame = JSON.parse(raw.toString("utf-8")) as Record<string, unknown>;
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "message.send") return;
+        messageSendCount += 1;
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { conversationId: "restart-conversation", runId: "restart-run" },
+        }));
+        setTimeout(() => socket.close(1012, "Injected Gateway restart"), 0);
+      });
+    });
+    const events: AgentRunEvent[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(address.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const result = await runGatewayConversation({
+          stateDir,
+          prompt: "restart boundary",
+          timeoutMs: 5_000,
+          onEvent: (event) => events.push(event),
+        });
+
+        expect(result).toMatchObject({
+          binding: { conversationId: "restart-conversation", agentRunId: "restart-run" },
+          terminalType: "run.failed",
+          timedOut: false,
+        });
+      });
+      expect(messageSendCount).toBe(1);
+      expect(events.map((event) => event.type)).toEqual(["run.started", "run.failed"]);
+      expect(events.at(-1)?.payload).toMatchObject({ error: { code: "gateway_unavailable" } });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
   });

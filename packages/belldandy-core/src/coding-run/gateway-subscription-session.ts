@@ -88,6 +88,9 @@ export class GatewayCodingRunSubscriptionSession {
       let requestId = "";
       let requestSettled = false;
       let pairingInFlight = false;
+      let pairingApproved = false;
+      let pairingResponsePending = false;
+      let pairingRetryCount = 0;
       const timeout = setTimeout(() => {
         finish(failure("gateway_unavailable", "Timed out while subscribing to Gateway coding run events."));
         socket.close();
@@ -117,6 +120,26 @@ export class GatewayCodingRunSubscriptionSession {
           },
         }));
       };
+      const retrySubscriptionAfterPairing = () => {
+        if (!pairingResponsePending || !pairingApproved || requestId || requestSettled) return;
+        if (pairingRetryCount >= 1) {
+          finish(failure("permission_required", "Gateway still requires pairing after the subscription retry."));
+          return;
+        }
+        pairingResponsePending = false;
+        pairingRetryCount += 1;
+        sendSubscription();
+      };
+      const handlePairingRequiredResponse = () => {
+        // Pairing events and failed requests are separate asynchronous Gateway frames.
+        requestId = "";
+        pairingResponsePending = true;
+        retrySubscriptionAfterPairing();
+      };
+      const markPairingApproved = () => {
+        pairingApproved = true;
+        retrySubscriptionAfterPairing();
+      };
 
       socket.on("message", (data) => {
         void this.handleMessage({
@@ -132,6 +155,8 @@ export class GatewayCodingRunSubscriptionSession {
           setPairingInFlight: (value) => { pairingInFlight = value; },
           isPairingInFlight: () => pairingInFlight,
           requestId: () => requestId,
+          handlePairingRequiredResponse,
+          markPairingApproved,
         });
       });
       socket.on("error", (error) => {
@@ -161,6 +186,8 @@ export class GatewayCodingRunSubscriptionSession {
     setPairingInFlight: (value: boolean) => void;
     isPairingInFlight: () => boolean;
     requestId: () => string;
+    handlePairingRequiredResponse: () => void;
+    markPairingApproved: () => void;
   }): Promise<void> {
     const frame = parseRecord(input.raw);
     if (!frame) {
@@ -196,7 +223,7 @@ export class GatewayCodingRunSubscriptionSession {
           input.finish(failure("permission_required", approved.message));
           return;
         }
-        input.sendSubscription();
+        input.markPairingApproved();
       } catch (error) {
         input.finish(failure("permission_required", toSafeCodingRunErrorMessage(error)));
       } finally {
@@ -207,6 +234,10 @@ export class GatewayCodingRunSubscriptionSession {
     if (frame.type === "res" && frame.id === input.requestId()) {
       if (frame.ok !== true) {
         const error = isRecord(frame.error) ? frame.error : {};
+        if (error.code === "pairing_required") {
+          input.handlePairingRequiredResponse();
+          return;
+        }
         const code = toSubscriptionErrorCode(error.code);
         const message = typeof error.message === "string" ? error.message : "Gateway subscription request failed.";
         const result = failure(code, toSafeCodingRunErrorMessage(message));

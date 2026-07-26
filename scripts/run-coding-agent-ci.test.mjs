@@ -47,6 +47,8 @@ describe("coding agent CI runner", () => {
       stateDir: "C:/fixture/state",
       outputSchemaPath: "C:/fixture/review-output.schema.json",
       profile: resolveCodingCiProfile("workspace-write"),
+      conversationId: "coding-ci-fixture-run",
+      modelId: "deepseek-v4-flash",
     });
 
     expect(args).toEqual([
@@ -54,6 +56,8 @@ describe("coding agent CI runner", () => {
       "--jsonl",
       "--cwd", path.resolve("C:/fixture/workspace"),
       "--state-dir", path.resolve("C:/fixture/state"),
+      "--conversation-id", "coding-ci-fixture-run",
+      "--model-id", "deepseek-v4-flash",
       "--permission-mode", "accept-edits",
       "--tool-allow", "file_read,list_files,apply_patch,file_write,file_delete",
       "--tool-deny", "run_command,spawn_subagent",
@@ -63,6 +67,101 @@ describe("coding agent CI runner", () => {
       "--output-schema", path.resolve("C:/fixture/review-output.schema.json"),
     ]);
     expect(args.join(" ")).not.toMatch(/\b(?:push|merge|apply)\b/);
+  });
+
+  it("projects the frozen command-control profile without auto-approving host commands", () => {
+    const profile = resolveCodingCiProfile("command-control");
+    expect(profile).toEqual({
+      mode: "command-control",
+      permissionMode: "confirm",
+      toolAllow: ["file_read", "list_files", "run_command"],
+    });
+
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      "--permission-mode", "confirm",
+      "--tool-allow", "file_read,list_files,run_command",
+      "--tool-deny", "spawn_subagent",
+    ]));
+    expect(args.join(" ")).not.toContain("accept-edits");
+  });
+
+  it("projects the frozen safety-probe profile without auto-approving host commands", () => {
+    const profile = resolveCodingCiProfile("safety-probe");
+    expect(profile).toEqual({
+      mode: "safety-probe",
+      permissionMode: "confirm",
+      toolAllow: ["file_read", "list_files", "run_command"],
+    });
+
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      "--permission-mode", "confirm",
+      "--tool-allow", "file_read,list_files,run_command",
+      "--tool-deny", "spawn_subagent",
+    ]));
+    expect(args.join(" ")).not.toContain("accept-edits");
+  });
+
+  it("projects the frozen git-local profile without mutation tools or auto-approval", () => {
+    const profile = resolveCodingCiProfile("git-local");
+    expect(profile).toEqual({
+      mode: "git-local",
+      permissionMode: "confirm",
+      toolAllow: ["file_read", "list_files", "run_command"],
+      toolDeny: ["spawn_subagent", "apply_patch", "file_write", "file_delete"],
+    });
+
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      "--permission-mode", "confirm",
+      "--tool-allow", "file_read,list_files,run_command",
+      "--tool-deny", "spawn_subagent,apply_patch,file_write,file_delete",
+    ]));
+    expect(args.join(" ")).not.toContain("accept-edits");
+  });
+
+  it("projects the frozen recovery-control profile with bounded workspace writes", async () => {
+    const profile = resolveCodingCiProfile("recovery-control");
+    expect(profile).toEqual({
+      mode: "recovery-control",
+      permissionMode: "acceptEdits",
+      toolAllow: ["file_read", "list_files", "apply_patch", "file_write"],
+      toolDeny: ["run_command", "spawn_subagent", "file_delete"],
+    });
+
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      "--permission-mode", "accept-edits",
+      "--tool-allow", "file_read,list_files,apply_patch,file_write",
+      "--tool-deny", "run_command,spawn_subagent,file_delete",
+    ]));
+
+    const root = await createGitFixture();
+    await fs.writeFile(path.join(root, "tracked.txt"), "recovered\n", "utf-8");
+    expect(collectWorkspaceArtifact({ workspace: root, mode: "recovery-control" })).toMatchObject({
+      changedPaths: ["tracked.txt"],
+    });
   });
 
   it("accepts one continuous v1 event stream with a unique terminal event", () => {
@@ -101,6 +200,8 @@ describe("coding agent CI runner", () => {
     const planRoot = await createGitFixture();
     await fs.writeFile(path.join(planRoot, "tracked.txt"), "changed\n", "utf-8");
     expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "plan" })).toThrow(/read-only/i);
+    expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "command-control" })).toThrow(/read-only/i);
+    expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "safety-probe" })).toThrow(/read-only/i);
 
     const sensitiveRoot = await createGitFixture();
     await fs.writeFile(path.join(sensitiveRoot, "credentials.json"), "{}\n", "utf-8");
@@ -176,6 +277,97 @@ describe("coding agent CI runner", () => {
         },
       });
       expect(output).toEqual({ summary: "clean fixture", findings: [] });
+      await expect(fs.readFile(path.join(artifactDir, "changes.patch"), "utf-8")).resolves.toBe("");
+    } finally {
+      await server.close();
+    }
+  }, 20_000);
+
+  it("injects one exact cancellation after run.started and leaves no tool or workspace side effect", async () => {
+    const workspace = await createGitFixture();
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-ci-cancel-state-"));
+    tempRoots.push(stateDir);
+    const artifactDir = path.join(stateDir, "artifacts");
+    const promptPath = path.join(stateDir, "prompt.md");
+    const outputSchemaPath = path.join(stateDir, "output.schema.json");
+    await fs.writeFile(promptPath, "Wait for benchmark cancellation.", "utf-8");
+    await fs.writeFile(outputSchemaPath, JSON.stringify({
+      type: "object",
+      additionalProperties: false,
+      required: ["summary"],
+      properties: { summary: { type: "string" } },
+    }), "utf-8");
+
+    let modelCallCount = 0;
+    let abortSignalCount = 0;
+    const agent = {
+      async *run(input) {
+        modelCallCount += 1;
+        await new Promise((resolve) => {
+          if (input.abortSignal?.aborted) {
+            abortSignalCount += 1;
+            resolve();
+            return;
+          }
+          input.abortSignal?.addEventListener("abort", () => {
+            abortSignalCount += 1;
+            resolve();
+          }, { once: true });
+        });
+        yield { type: "final", text: JSON.stringify({ summary: "must not be delivered" }) };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+
+    try {
+      const result = await runNode([
+        path.resolve("scripts/run-coding-agent-ci.mjs"),
+        "--workspace", workspace,
+        "--state-dir", stateDir,
+        "--artifact-dir", artifactDir,
+        "--prompt-file", promptPath,
+        "--output-schema", outputSchemaPath,
+        "--mode", "plan",
+        "--cancel-on-run-start", "true",
+      ], workspace, {
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      });
+
+      const manifest = JSON.parse(await fs.readFile(path.join(artifactDir, "manifest.json"), "utf-8"));
+      const cancellation = JSON.parse(await fs.readFile(path.join(artifactDir, "cancel-injection.json"), "utf-8"));
+      const events = (await fs.readFile(path.join(artifactDir, "events.jsonl"), "utf-8"))
+        .split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+
+      expect(result.exitCode).not.toBe(0);
+      expect(manifest).toMatchObject({
+        terminalType: "run.cancelled",
+        changedPaths: [],
+        checks: { eventContract: true, artifactPolicy: true },
+      });
+      expect(cancellation).toMatchObject({
+        schemaVersion: "coding-agent-cancel-injection/v1",
+        trigger: "run.started",
+        status: "confirmed",
+        observedStartedSeq: 1,
+        cancellationRequestCount: 1,
+        cancelExitCode: 0,
+        binding: manifest.binding,
+        terminalType: "run.cancelled",
+      });
+      expect(cancellation.terminalSeq).toBe(events.at(-1).seq);
+      expect(events.filter((event) => event.type === "run.cancelled")).toHaveLength(1);
+      expect(events.filter((event) => event.type.startsWith("tool.") || event.type === "permission.requested"))
+        .toHaveLength(0);
+      expect(modelCallCount).toBe(1);
+      expect(abortSignalCount).toBe(1);
       await expect(fs.readFile(path.join(artifactDir, "changes.patch"), "utf-8")).resolves.toBe("");
     } finally {
       await server.close();

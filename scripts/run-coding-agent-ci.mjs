@@ -31,6 +31,7 @@ const SENSITIVE_PATH_PATTERNS = [
   "token",
 ];
 const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
+const CANCELLATION_REQUEST_TIMEOUT_MS = 15_000;
 const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 
@@ -50,7 +51,30 @@ export function resolveCodingCiProfile(value) {
       toolAllow: ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
     };
   }
-  throw new Error("--mode must be plan or workspace-write.");
+  if (mode === "command-control" || mode === "safety-probe") {
+    return {
+      mode,
+      permissionMode: "confirm",
+      toolAllow: ["file_read", "list_files", "run_command"],
+    };
+  }
+  if (mode === "recovery-control") {
+    return {
+      mode,
+      permissionMode: "acceptEdits",
+      toolAllow: ["file_read", "list_files", "apply_patch", "file_write"],
+      toolDeny: ["run_command", "spawn_subagent", "file_delete"],
+    };
+  }
+  if (mode === "git-local") {
+    return {
+      mode,
+      permissionMode: "confirm",
+      toolAllow: ["file_read", "list_files", "run_command"],
+      toolDeny: ["spawn_subagent", "apply_patch", "file_write", "file_delete"],
+    };
+  }
+  throw new Error("--mode must be plan, workspace-write, command-control, safety-probe, recovery-control, or git-local.");
 }
 
 export function buildAgentRunArgs(input) {
@@ -59,9 +83,13 @@ export function buildAgentRunArgs(input) {
     "--jsonl",
     "--cwd", path.resolve(input.workspace),
     "--state-dir", path.resolve(input.stateDir),
+    ...(input.conversationId ? ["--conversation-id", input.conversationId] : []),
+    ...(input.modelId ? ["--model-id", input.modelId] : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
     "--tool-allow", input.profile.toolAllow.join(","),
-    "--tool-deny", "run_command,spawn_subagent",
+    "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")
+      ? ["spawn_subagent"]
+      : ["run_command", "spawn_subagent"])).join(","),
     "--timeout", String(CODING_CI_LIMITS.timeoutMs),
     "--max-turns", String(CODING_CI_LIMITS.maxTurns),
     "--max-tokens", String(CODING_CI_LIMITS.maxTokens),
@@ -128,7 +156,7 @@ export function collectWorkspaceArtifact(input) {
   const untrackedPaths = splitNull(runGit(workspace, ["ls-files", "--others", "--exclude-standard", "-z", "--", "."]).stdout);
   const changedPaths = [...new Set([...trackedPaths, ...untrackedPaths])].sort((left, right) => left.localeCompare(right));
 
-  if (input.mode === "plan" && changedPaths.length > 0) {
+  if (input.mode !== "workspace-write" && input.mode !== "recovery-control" && changedPaths.length > 0) {
     throw new Error(`Read-only CI run changed ${changedPaths.length} workspace path(s).`);
   }
   const sensitivePaths = changedPaths.filter(isSensitivePath);
@@ -185,10 +213,9 @@ async function main() {
     args: buildAgentRunArgs(options),
     cwd: options.workspace,
     prompt,
+    stateDir: options.stateDir,
+    cancelOnRunStart: options.cancelOnRunStart,
   });
-
-  const diagnostics = sanitizeDiagnostic(child.stderr);
-  await fs.writeFile(path.join(options.artifactDir, "diagnostics.log"), diagnostics, "utf-8");
 
   const parsed = parseJsonl(child.stdout);
   const canonicalJsonl = parsed.events.map((event) => JSON.stringify(event)).join("\n");
@@ -208,6 +235,30 @@ async function main() {
   if (parsed.errors.length > 0) {
     eventContractError = `Agent stdout contained ${parsed.errors.length} invalid JSONL record(s).`;
   }
+
+  const cancellationArtifact = options.cancelOnRunStart
+    ? buildCancellationArtifact({
+      cancellation: child.cancellation,
+      events: parsed.events,
+      eventContract,
+    })
+    : undefined;
+  if (cancellationArtifact) {
+    await fs.writeFile(
+      path.join(options.artifactDir, "cancel-injection.json"),
+      `${JSON.stringify(cancellationArtifact, null, 2)}\n`,
+      "utf-8",
+    );
+  }
+
+  const diagnostics = [
+    sanitizeDiagnostic(child.stderr).trim(),
+    child.cancellation?.stderr ? sanitizeDiagnostic(child.cancellation.stderr).trim() : "",
+    cancellationArtifact && cancellationArtifact.status !== "confirmed"
+      ? `Cancellation injection status: ${cancellationArtifact.status}.`
+      : "",
+  ].filter(Boolean).join("\n");
+  await fs.writeFile(path.join(options.artifactDir, "diagnostics.log"), diagnostics ? `${diagnostics}\n` : "", "utf-8");
 
   let workspaceArtifact = { changedPaths: [], patch: "" };
   let artifactPolicyError;
@@ -287,6 +338,8 @@ function resolveMainOptions(argv) {
     artifactDir,
     promptFile: path.resolve(requireValue(values, "prompt-file")),
     stateDir: path.resolve(requireValue(values, "state-dir")),
+    conversationId: values.get("conversation-id"),
+    modelId: values.get("model-id"),
     outputSchemaPath: path.resolve(
       values.get("output-schema") ?? path.join(workspaceRoot, "examples", "ci", "review-output.schema.json"),
     ),
@@ -294,6 +347,7 @@ function resolveMainOptions(argv) {
       values.get("bdd-entry") ?? path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js"),
     ),
     profile: resolveCodingCiProfile(values.get("mode")),
+    cancelOnRunStart: resolveOptionalBoolean(values, "cancel-on-run-start"),
   };
 }
 
@@ -318,6 +372,15 @@ function requireValue(values, key) {
   return value.trim();
 }
 
+function resolveOptionalBoolean(values, key) {
+  const value = values.get(key);
+  if (value === undefined) return false;
+  if (value !== "true" && value !== "false") {
+    throw new Error(`--${key} must be true or false.`);
+  }
+  return value === "true";
+}
+
 function assertOutsideWorkspace(workspace, artifactDir) {
   const relative = path.relative(workspace, artifactDir);
   if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
@@ -336,6 +399,17 @@ async function runAgentProcess(input) {
     let stdout = "";
     let stderr = "";
     let capturedBytes = 0;
+    let stdoutRemainder = "";
+    const cancellation = input.cancelOnRunStart
+      ? {
+        observedStartedSeq: null,
+        binding: null,
+        requestCount: 0,
+        result: undefined,
+        stderr: "",
+      }
+      : undefined;
+    let cancellationPromise;
     const capture = (target, chunk) => {
       const text = String(chunk);
       capturedBytes += Buffer.byteLength(text);
@@ -346,14 +420,133 @@ async function runAgentProcess(input) {
       }
       return target + text;
     };
+    const observeAgentEvent = (event) => {
+      if (!cancellation || cancellationPromise || event?.type !== "run.started") return;
+      const binding = getAgentRunBinding(event);
+      if (!binding || !Number.isInteger(event.seq) || event.seq < 1) return;
+      cancellation.observedStartedSeq = event.seq;
+      cancellation.binding = binding;
+      cancellation.requestCount = 1;
+      cancellationPromise = runAgentCancellation({
+        bddEntry: input.bddEntry,
+        cwd: input.cwd,
+        stateDir: input.stateDir,
+        binding,
+      }).then((result) => {
+        cancellation.result = result;
+        cancellation.stderr = result.stderr;
+      });
+    };
+    const observeStdout = (chunk) => {
+      if (!cancellation) return;
+      stdoutRemainder += String(chunk);
+      const lines = stdoutRemainder.split(/\r?\n/);
+      stdoutRemainder = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          observeAgentEvent(JSON.parse(line));
+        } catch {
+          // The canonical JSONL validator reports malformed Agent output after the process exits.
+        }
+      }
+    };
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
-    child.stdout.on("data", (chunk) => { stdout = capture(stdout, chunk); });
+    child.stdout.on("data", (chunk) => {
+      stdout = capture(stdout, chunk);
+      observeStdout(chunk);
+    });
     child.stderr.on("data", (chunk) => { stderr = capture(stderr, chunk); });
     child.once("error", reject);
-    child.once("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
+    child.once("close", async (exitCode) => {
+      await cancellationPromise;
+      resolve({ exitCode, stdout, stderr, cancellation });
+    });
     child.stdin.end(input.prompt);
   });
+}
+
+function getAgentRunBinding(event) {
+  const binding = event?.binding;
+  if (!binding || typeof binding !== "object"
+    || typeof binding.conversationId !== "string" || !binding.conversationId.trim()
+    || typeof binding.agentRunId !== "string" || !binding.agentRunId.trim()) {
+    return undefined;
+  }
+  return {
+    conversationId: binding.conversationId,
+    agentRunId: binding.agentRunId,
+  };
+}
+
+function buildCancellationArtifact(input) {
+  const terminal = input.events.at(-1);
+  const cancellation = input.cancellation;
+  const terminalMatchesBinding = Boolean(
+    cancellation?.binding
+      && terminal?.binding?.conversationId === cancellation.binding.conversationId
+      && terminal?.binding?.agentRunId === cancellation.binding.agentRunId,
+  );
+  let status = "not_observed";
+  if (cancellation?.binding) {
+    if (cancellation.requestCount !== 1 || cancellation.result?.exitCode !== 0 || cancellation.result?.timedOut) {
+      status = "failed";
+    } else if (input.eventContract?.terminalType === "run.cancelled" && terminalMatchesBinding) {
+      status = "confirmed";
+    } else {
+      status = "requested";
+    }
+  }
+  return {
+    schemaVersion: "coding-agent-cancel-injection/v1",
+    trigger: "run.started",
+    status,
+    observedStartedSeq: cancellation?.observedStartedSeq ?? null,
+    cancellationRequestCount: cancellation?.requestCount ?? 0,
+    cancelExitCode: cancellation?.result?.exitCode ?? null,
+    binding: cancellation?.binding ?? null,
+    terminalType: typeof terminal?.type === "string" ? terminal.type : null,
+    terminalSeq: Number.isInteger(terminal?.seq) ? terminal.seq : null,
+  };
+}
+
+async function runAgentCancellation(input) {
+  return await new Promise((resolve) => {
+    const child = spawn(process.execPath, [
+      input.bddEntry,
+      "agent", "cancel",
+      "--conversation-id", input.binding.conversationId,
+      "--run-id", input.binding.agentRunId,
+      "--state-dir", input.stateDir,
+      "--reason", "Benchmark cancellation injected after run.started.",
+    ], {
+      cwd: input.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, CANCELLATION_REQUEST_TIMEOUT_MS);
+    child.stderr.setEncoding("utf-8");
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      resolve({ exitCode: null, stderr: safeErrorMessage(error), timedOut });
+    });
+    child.once("close", (exitCode) => {
+      clearTimeout(timeout);
+      resolve({ exitCode: exitCode ?? null, stderr, timedOut });
+    });
+  });
+}
+
+function safeErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error ?? "unknown error");
 }
 
 function parseJsonl(stdout) {

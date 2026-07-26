@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/coding-agent-fault-injection-v1.json",
+  "title": "Coding Agent Gateway Fault Injection v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskId",
+    "fault",
+    "status",
+    "disconnectedAfterSeq",
+    "resumedFromSeq",
+    "disconnectCount",
+    "reconnectCount",
+    "binding"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-fault-injection/v1" },
+    "taskId": { "const": "gateway.disconnect-recovery" },
+    "fault": { "const": "gateway_disconnect" },
+    "status": { "enum": ["not_injected", "injected", "recovered", "failed"] },
+    "disconnectedAfterSeq": { "type": ["integer", "null"], "minimum": 1 },
+    "resumedFromSeq": { "type": ["integer", "null"], "minimum": 1 },
+    "disconnectCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "reconnectCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "binding": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["conversationId", "agentRunId"],
+          "properties": {
+            "conversationId": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "agentRunId": { "type": "string", "minLength": 1, "maxLength": 300 }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "recovered" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "disconnectedAfterSeq": { "type": "integer", "minimum": 1 },
+          "resumedFromSeq": { "type": "integer", "minimum": 1 },
+          "disconnectCount": { "const": 1 },
+          "reconnectCount": { "const": 1 },
+          "binding": { "type": "object" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "not_injected" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "disconnectedAfterSeq": { "type": "null" },
+          "resumedFromSeq": { "type": "null" },
+          "disconnectCount": { "const": 0 },
+          "reconnectCount": { "const": 0 },
+          "binding": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

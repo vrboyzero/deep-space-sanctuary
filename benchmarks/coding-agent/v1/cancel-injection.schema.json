@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.local/schemas/coding-agent-cancel-injection-v1.json",
+  "title": "Coding Agent Client Cancellation Injection v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "trigger",
+    "status",
+    "observedStartedSeq",
+    "cancellationRequestCount",
+    "cancelExitCode",
+    "binding",
+    "terminalType",
+    "terminalSeq"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-cancel-injection/v1" },
+    "trigger": { "const": "run.started" },
+    "status": { "enum": ["not_observed", "requested", "confirmed", "failed"] },
+    "observedStartedSeq": { "type": ["integer", "null"], "minimum": 1 },
+    "cancellationRequestCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "cancelExitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+    "binding": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["conversationId", "agentRunId"],
+          "properties": {
+            "conversationId": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "agentRunId": { "type": "string", "minLength": 1, "maxLength": 300 }
+          }
+        }
+      ]
+    },
+    "terminalType": { "type": ["string", "null"], "enum": ["run.cancelled", "run.interrupted", "run.completed", "run.failed", null] },
+    "terminalSeq": { "type": ["integer", "null"], "minimum": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "confirmed" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "observedStartedSeq": { "type": "integer", "minimum": 1 },
+          "cancellationRequestCount": { "const": 1 },
+          "cancelExitCode": { "const": 0 },
+          "binding": { "type": "object" },
+          "terminalType": { "const": "run.cancelled" },
+          "terminalSeq": { "type": "integer", "minimum": 2 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "not_observed" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "observedStartedSeq": { "type": "null" },
+          "cancellationRequestCount": { "const": 0 },
+          "cancelExitCode": { "type": "null" },
+          "binding": { "type": "null" }
+        }
+      }
+    }
+  ]
+}
