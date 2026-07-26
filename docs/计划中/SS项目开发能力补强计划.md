@@ -919,16 +919,50 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过；Schema、离线重算契约、CI 参数透传和 README/项目地图保持一致。
 - 本切片未启动 Gateway、未调用 Provider、未消耗新增费用；真实 artifact 与默认 state 均未被写入。
 
+#### 阶段 0D-5 实现结论：真实费用守卫装配预检（2026-07-26）
+
+##### 已完成内容
+
+1. **`H:\.star_sanctuary` 配置只读预检**：
+   - 只输出配置是否存在及模型是否匹配的布尔结果，不回显、复制或写入 API Key、Base URL 和其他敏感值。
+   - 确认 `deepseek-v4-flash` primary 路由、Base URL 与 API Key 均已配置，但 `BELLDANDY_MODEL_INPUT_USD_PER_1M`、`BELLDANDY_MODEL_OUTPUT_USD_PER_1M` 均未配置。
+   - 现有 `ToolEnabledAgent.getCodingRunCapabilities()` 与 Gateway `assertCodingRunCapabilities()` 会在无有效定价时拒绝 `maxCostUsd` 请求，拒绝发生在 Agent run 与 Provider 调用之前；因此当前 `$3.00` 参数不能被表述为已生效的真实费用守卫。
+
+2. **三个独立 Windows 装配 artifact（本机忽略目录）**：
+   - `artifacts/coding-agent-stage0d-core-windows-preflight-20260726-113831/` 因 benchmark 子进程仍连接默认 `28889` 而失败，`record_only` 保留为 host/port 未透传证据。
+   - `artifacts/coding-agent-stage0d-core-windows-preflight-20260726-114136/` 已连接 `28991`，但被配置源中的旧 Origin 白名单以 `401` 拒绝，`record_only` 保留为 env-dir 与隔离端口装配证据。
+   - `artifacts/coding-agent-stage0d-core-windows-preflight-20260726-114418/` 显式统一 Gateway/Headless state、host、port、auth 与 `http://127.0.0.1:28991` Origin；受控 Gateway PID `41144` 仅绑定 loopback，并关闭 warmup、外部渠道、MCP、Cron、Heartbeat、Email、Active Notify、Browser Relay 与更新检查。
+
+3. **单任务费用前置 Gate 验证**：
+   - 只请求 `feature.cross-file`，runner 写出 1 份当前 manifest 的 Windows artifact 后停止，没有启动第二个 Core Task 或 WSL2 批次。
+   - Gateway 返回 `cannot enforce maxCostUsd because valid model usage pricing is unavailable`；artifact 记录 `maxCostUsd=3`、`usage.observation.status=not_reached`、`costUsd=null`、0 个 v1 事件、0 个唯一终态，机器 evaluator 保持 `product_workflow` 失败。
+   - 由于请求在 Agent run 前被拒绝且 primary warmup 已关闭，三次预检均未进入产品内 Provider 请求路径；`not_reached` 本身仍不作为外部账单证明。
+
+4. **`benchmarks/coding-agent/README.md` 修改**：
+   - 明确真实费用守卫必须具备 primary 模型输入/输出 USD 定价；无定价时只能形成配置失败证据，不得猜测价格或纳入模型基线。
+
+5. **效果**：
+   - 隔离 state、loopback、Origin 与 Headless 连接链已闭环，当前剩余阻塞收敛为可验证的模型定价缺口。
+   - 缺少定价时系统会在真实模型请求前失败关闭，避免把无法累计成本的 `--max-cost-usd` 误报为有效预算上限。
+   - 技术债裁决：当前 Provider 的真实输入/输出 USD 定价及 `.env.local` 写入按 `defer` 等待用户提供可核对值并重新授权 HITL；在此之前不继续真实 Provider benchmark。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 1 个定向测试文件、8 个测试全部通过（含 `maxCostUsd` capability 在 Agent 启动前失败关闭的既有集成测试）。
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过；最后一份 artifact 的聚合 dry-run 返回 `partial 1/72`、缺口 71。
+- 三个受控 Gateway 均已停止，PID `21140`、`40816`、`41144` 已收敛，`127.0.0.1:28991` 无监听；未修改或重新生成 `C:\Users\admin\.star_sanctuary` 的 `.env` / `.env.local`。
+
 ### 后续计划
 
-下一步继续**阶段 0D：先完成真实调用前的隔离 state 闭环，再补齐 SS 基线**。先由用户人工确认并清理本轮在 `C:\Users\admin\.star_sanctuary` 意外生成的 `.env`、`.env.local`，然后基于本轮提交冻结 source commit，复核隔离 Gateway 实际 state、配对、模型路由与 `$3.00` 守卫均生效。这样先做，是因为 state 失配曾在模型执行前失败，而 usage 守卫只有真实 Provider 事件能最终验证；在该敏感 state 未确认清理前不能再次启动真实 Gateway。完成后需用户再次确认仍可使用 `30 CNY` 预算，再只运行一个 Windows Core Task：仅当 artifact 出现 `provider_reported`、可计算 `costUsd`、唯一终态与完整清理时，才继续第二个 task 和 WSL2 小批次。当前还缺的关键闭环是 72 个同版本有效样本、Provider 实账与 event 成本的人工核对、全矩阵 `completed` report 重算及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
+下一步继续**阶段 0D：先补齐可核对的 primary 模型定价，再运行一个真实 Windows Core Task**。先由用户提供当前 `deepseek-v4-flash` Provider/路由的 `BELLDANDY_MODEL_INPUT_USD_PER_1M` 与 `BELLDANDY_MODEL_OUTPUT_USD_PER_1M` 数值，并明确授权修改 `H:\.star_sanctuary\.env.local`；不能从模型名称猜测代理或路由价格。这样先做，是因为当前 state、loopback、Origin 和费用能力拒绝路径已经闭环，唯一阻止 `$3.00` 守卫生效的是定价缺失。配置后仍只运行 `feature.cross-file` 一次；仅当 artifact 同时出现 `provider_reported`、有限 `costUsd`、唯一终态、完整约定文件与 PID 清理时，才继续第二个 Windows task 和 WSL2 小批次。当前还缺的关键闭环是 72 个同版本有效样本、Provider 实账与 event 成本的人工核对、全矩阵 `completed` report 重算及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
 
 ## 实施计划进度表
 
 | 阶段 | 优先级 | 状态 | 工作量 | 关键闭环 |
 |---|---|---|---:|---|
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
-| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-4 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算、全部 12 task harness、前台 Gateway state-dir 传递及脱敏 usage/费用守卫。首批 2 个 Core Task 因 state 失配在配对前失败，仅 `record_only`；当前有效 evidence 仍为 restart 6/72。后续真实调用须先人工清理意外默认 state、冻结本轮 source 并确认仍可使用预算，再以单 task 验证 Provider usage/cost artifact 后补齐 completed report |
+| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-5 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算、全部 12 task harness、前台 Gateway state-dir 传递、脱敏 usage/费用守卫及真实隔离装配预检。当前模型路由/API Key 已就绪，但 primary 输入/输出 USD 定价缺失，`maxCostUsd` 在 Provider 调用前失败关闭；当前有效 evidence 仍为 restart 6/72。后续须在 HITL 下配置可核对定价，再以单 task 验证 Provider usage/cost artifact 后补齐 completed report |
 | 阶段 1：项目规则链与代码导航 | P0 | 待启动 | 8-12 人日 | 危险工具关闭时仍能正确加载规则、搜索和分段读取 |
 | 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 待启动 | 15-25 人日 | 构建/测试可在 sandbox 中运行，权限和隔离可验证且失败关闭 |
 | 阶段 3：真实 diff/review 与恢复保证 | P0 | 待启动 | 8-12 人日 | 修改可审查、可归因，恢复边界明确且不覆盖用户改动 |

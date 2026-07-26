@@ -52,6 +52,8 @@ corepack pnpm benchmark:coding-agent:stage0d:core:wsl --distribution Ubuntu-22.0
 
 `--max-cost-usd` 在单次模型调用返回后检查累计成本，不能证明任何 Provider 不会对正在进行的最后一次调用收费；汇率和 Provider 账单也需由操作者以实际账单复核。因此该守卫是继续小批量 benchmark 的前置条件，不是费用结算证明。`not_reached` 仅表示 Headless 事件流没有收到 `run.usage`，不能据此断言 Provider 未被调用或未计费。
 
+真实费用守卫还要求 Gateway 的当前 primary 模型同时配置 `BELLDANDY_MODEL_INPUT_USD_PER_1M` 与 `BELLDANDY_MODEL_OUTPUT_USD_PER_1M`。缺失或无效时，所选 Agent 的 `maxCostUsd` capability 为 `false`，Gateway 会在创建 run 和调用 Provider 前拒绝请求；这类 artifact 只能记录为配置失败证据，不能纳入模型基线。不得为了通过门禁猜测价格，必须使用当前 Provider/路由的可核对 USD 定价，并在修改 `.env` / `.env.local` 前遵守项目 HITL 规则。
+
 运行静态 Gate：
 
 ```powershell
