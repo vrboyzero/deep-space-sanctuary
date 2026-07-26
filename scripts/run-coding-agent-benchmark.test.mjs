@@ -422,51 +422,58 @@ describe("coding agent benchmark stage 0B runner", () => {
     const artifactRoot = path.join(root, "artifacts");
     const stateRoot = path.join(root, "state");
     const runId = "process-restart-windows-integration";
+    const previousAllowedOrigins = process.env.BELLDANDY_ALLOWED_ORIGINS;
+    process.env.BELLDANDY_ALLOWED_ORIGINS = "http://127.0.0.1:1";
 
-    const report = await runStage0BSuite({
-      platform: "windows-native",
-      taskIds: ["gateway.process-restart"],
-      fixtureRoot,
-      artifactRoot,
-      stateRoot,
-      attempt: 1,
-      runIds: { "gateway.process-restart": runId },
-      model: { provider: "fixture", id: "gateway-restart-fixture", credentialsConfigured: false },
-      generatedAt: "2026-07-26T00:00:00.000Z",
-    });
+    try {
+      const report = await runStage0BSuite({
+        platform: "windows-native",
+        taskIds: ["gateway.process-restart"],
+        fixtureRoot,
+        artifactRoot,
+        stateRoot,
+        attempt: 1,
+        runIds: { "gateway.process-restart": runId },
+        model: { provider: "fixture", id: "gateway-restart-fixture", credentialsConfigured: false },
+        generatedAt: "2026-07-26T00:00:00.000Z",
+      });
 
-    const runDir = path.join(artifactRoot, runId);
-    const diagnostics = await fs.readFile(path.join(runDir, "diagnostics.log"), "utf-8");
-    const restartDiagnostic = await fs.readFile(path.join(runDir, "restart-injection.json"), "utf-8");
-    expect(report.runs, `${diagnostics}\n${restartDiagnostic}`).toEqual([expect.objectContaining({
-      taskId: "gateway.process-restart",
-      status: "passed",
-      failureCategory: null,
-      evaluation: expect.objectContaining({
-        taskCompleted: true,
-        testsPassed: true,
-        regressionCount: 0,
-      }),
-    })]);
-    const restart = JSON.parse(await fs.readFile(path.join(runDir, "restart-injection.json"), "utf-8"));
-    const events = (await fs.readFile(path.join(runDir, "events.jsonl"), "utf-8"))
-      .split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-    expect(restart).toMatchObject({
-      status: "confirmed",
-      observedStartedSeq: 1,
-      messageSendRequestCount: 1,
-      subscription: { errorCode: "not_found", eventCount: 0 },
-      cancellation: { accepted: false, state: "not_found" },
-      cleanup: {
-        managedGatewayProcessCount: 0,
-        originalGateway: { exited: true },
-        replacementGateway: { exited: true },
-      },
-    });
-    expect(restart.originalGateway.pid).not.toBe(restart.replacementGateway.pid);
-    expect(events.map((event) => event.type)).toEqual(["run.started", "run.failed"]);
-    expect(events.at(-1)).toMatchObject({ payload: { error: { code: "gateway_unavailable" } } });
-    await expect(fs.readFile(path.join(runDir, "changes.patch"), "utf-8")).resolves.toBe("");
+      const runDir = path.join(artifactRoot, runId);
+      const diagnostics = await fs.readFile(path.join(runDir, "diagnostics.log"), "utf-8");
+      const restartDiagnostic = await fs.readFile(path.join(runDir, "restart-injection.json"), "utf-8");
+      expect(report.runs, `${diagnostics}\n${restartDiagnostic}`).toEqual([expect.objectContaining({
+        taskId: "gateway.process-restart",
+        status: "passed",
+        failureCategory: null,
+        evaluation: expect.objectContaining({
+          taskCompleted: true,
+          testsPassed: true,
+          regressionCount: 0,
+        }),
+      })]);
+      const restart = JSON.parse(await fs.readFile(path.join(runDir, "restart-injection.json"), "utf-8"));
+      const events = (await fs.readFile(path.join(runDir, "events.jsonl"), "utf-8"))
+        .split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+      expect(restart).toMatchObject({
+        status: "confirmed",
+        observedStartedSeq: 1,
+        messageSendRequestCount: 1,
+        subscription: { errorCode: "not_found", eventCount: 0 },
+        cancellation: { accepted: false, state: "not_found" },
+        cleanup: {
+          managedGatewayProcessCount: 0,
+          originalGateway: { exited: true },
+          replacementGateway: { exited: true },
+        },
+      });
+      expect(restart.originalGateway.pid).not.toBe(restart.replacementGateway.pid);
+      expect(events.map((event) => event.type)).toEqual(["run.started", "run.failed"]);
+      expect(events.at(-1)).toMatchObject({ payload: { error: { code: "gateway_unavailable" } } });
+      await expect(fs.readFile(path.join(runDir, "changes.patch"), "utf-8")).resolves.toBe("");
+    } finally {
+      if (previousAllowedOrigins === undefined) delete process.env.BELLDANDY_ALLOWED_ORIGINS;
+      else process.env.BELLDANDY_ALLOWED_ORIGINS = previousAllowedOrigins;
+    }
   }, 30_000);
 
   windowsIt("runs both explicitly selected stage 0C Git local-delivery tasks through the shared artifact chain", async () => {

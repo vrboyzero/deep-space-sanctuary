@@ -270,6 +270,7 @@ async function startFixtureGateway(input) {
       ...process.env,
       BELLDANDY_HOST: "127.0.0.1",
       BELLDANDY_AUTH_MODE: "none",
+      BELLDANDY_ALLOWED_ORIGINS: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
