@@ -278,7 +278,12 @@ export async function startForeground(stateDir?: string): Promise<void> {
       const child = fork(resolveGatewayScript(), [], {
         stdio: "inherit",
         execArgv: EXT === ".ts" ? ["--import", "tsx"] : [],
-        env: launchEnv,
+        // The Gateway resolves its state directory from the environment after the
+        // supervisor starts it, so preserve an explicit CLI --state-dir here.
+        env: {
+          ...launchEnv,
+          BELLDANDY_STATE_DIR: resolvedStateDir,
+        },
       });
       if (child.pid) {
         writeForegroundPid(resolvedStateDir, child.pid);

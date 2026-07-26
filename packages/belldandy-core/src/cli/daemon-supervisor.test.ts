@@ -142,5 +142,7 @@ test("startForeground delegates restart and signal ownership to the shared super
   await lifecycleOptions.launch();
 
   expect(forkMock).toHaveBeenCalledTimes(1);
+  const [, , childOptions] = forkMock.mock.calls[0];
+  expect(childOptions.env?.BELLDANDY_STATE_DIR).toBe(stateDir);
   expect(writeForegroundPidMock).toHaveBeenCalledWith(stateDir, 5432);
 });

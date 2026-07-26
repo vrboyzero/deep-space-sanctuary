@@ -864,16 +864,43 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过；新 Windows/WSL 入口、README、项目地图和 manifest/task 接线一致。
 - 历史样本聚合 dry-run 以 manifest hash 漂移失败关闭，未写入输出目录、未调用 Gateway/Provider；`git diff --check` 通过，仅有 Git 的 LF/CRLF 工作区提示，无空白错误。
 
+#### 阶段 0D-3 实现结论：隔离 Gateway state 传递与首批 Core Task 失败关闭（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/cli/daemon.ts` 修复**：
+   - 前台 supervisor fork Gateway 时显式传递已解析的 `BELLDANDY_STATE_DIR`，使 `bdd start --state-dir <dir>` 的子进程继续使用同一 state，而非重新落到用户默认目录。
+
+2. **`packages/belldandy-core/src/cli/daemon-supervisor.test.ts` 扩展**：
+   - 新增 state-dir 子进程环境回归断言；断言只读取该键，避免测试失败时展开完整父进程环境。
+
+3. **`artifacts/coding-agent-stage0d-core-windows-a1/` 首批 artifact（本机忽略目录）与失败归因**：
+   - 在 source commit `9a348fb` 上尝试 `feature.cross-file` 与 `tests.failed-diagnosis` 各 1 次；两份 report 的 source identity、冻结 manifest 和 artifact 路径可被聚合器 dry-run 读取，覆盖矩阵为 `2/72`。
+   - 实际 Gateway 子进程未继承 `--state-dir`，回退到 `C:\Users\admin\.star_sanctuary`；benchmark CLI 在隔离 state 写入 pairing 授权，而 Gateway 在默认 state 校验，两个 run 都在模型执行前以 `pairing code not found or expired` 失败，`events.jsonl` 为空、machine verdict 为 `product_workflow`。
+   - Gateway 启动阶段有一次 `deepseek-v4-flash` warmup 成功，但该事件没有可消费 usage；不得将它或这两份空事件 artifact 计入同模型任务能力、Token 或费用基线。该批按 `record_only` 保留，不填补有效 72 样本矩阵。
+   - 意外默认 state 在 `C:\Users\admin\.star_sanctuary` 新建了 `.env` 与 `.env.local`；其中检测到非空敏感配置。受当前执行策略限制，自动删除被拒绝，未删除任何文件；需人工仅核对并清理这两个本轮新建文件，`H:\.star_sanctuary` 原配置未被修改。
+
+4. **效果**：
+   - 以最小代码修改封闭前台 Gateway 的 state 传播缺口，后续隔离 Gateway 不应再错误写入或读取用户默认 state。
+   - 首批失败已形成可复现诊断，而非被错误归类为模型能力失败；真实模型调用、费用和任务完成度保持“未验证”。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 1 个定向测试文件、3 个测试全部通过（含新增 state-dir 子进程传递回归）。
+- `corepack pnpm verify:coding-ci` 通过；首批 artifact 的 `aggregate-coding-agent-benchmark --dry-run` 返回 `partial 2/72`。
+- 隔离 Gateway 与 runner 均已停止，`127.0.0.1:28991` 无监听、无关联 Node 进程；`git diff --check` 通过。
+
 ### 后续计划
 
-下一步继续**阶段 0D：形成并关闭 SS 基线**。用户已于 2026-07-26 授权使用 `H:\.star_sanctuary\.env.local` 当前默认路由的 `deepseek-v4-flash`，API key 仅通过隔离 Gateway 进程环境读取且绝不写入 artifact；累计费用上限为 **30 CNY**，达到上限或需要提高上限时必须停止并重新申请。先将当前 harness 改动提交为固定 source commit，再以 2 个 Windows Core Task 样本作为首批，确认实际模型路由、非敏感 usage、Gateway/子进程清理和 artifact 契约；若 run usage 被现有事件脱敏为 `null`，不得伪造费用或无界扩批，保留实际证据并在下一批前报告。首批稳定后，在隔离 Gateway 上按 11 个非 restart task × Windows/WSL2 × 3 attempts 补齐其余样本，每批将明确选定的 source report 汇入新的基线目录后执行 `--verify`。这是因为全部 12 个 task 现已可运行，但历史 report 的 manifest hash 不能跨冻结版本复用，且剩余任务会启动真实 Coding CI/模型链。当前还缺的关键闭环是其余 66 个同版本有效样本、全矩阵 `completed` report 的重算、按任务/平台/失败归因的最终结论，以及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
+下一步继续**阶段 0D：先恢复可证明的隔离与费用观测，再补齐 SS 基线**。先完成两项不触发 Provider 的闭环：确认用户已人工清理本轮在 `C:\Users\admin\.star_sanctuary` 意外生成的 `.env`、`.env.local`，并为 Coding CI 事件/报告补充可脱敏、可累计的实际 usage 证据或明确的不可观测失败标记。这是因为本轮 source state 传递已修复，但首次任务在配对前失败，且 warmup/空事件均不能判断费用；在 usage 仍为 `null` 时继续发起新的真实任务将无法遵守累计 **30 CNY** 上限。完成这些本地闭环并重新冻结 source commit 后，需再次确认可用费用，再重跑这两个 Windows Core Task 作为新的 attempt 1；仅当实际模型路由、配对 state、usage、artifact 契约和进程清理同时成立时，才按小批次补齐剩余 Windows/WSL2 矩阵并执行聚合 `--verify`。当前还缺的关键闭环是 72 个同版本有效样本、总费用可观察/可限额、全矩阵 `completed` report 重算及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
 
 ## 实施计划进度表
 
 | 阶段 | 优先级 | 状态 | 工作量 | 关键闭环 |
 |---|---|---|---:|---|
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
-| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-2 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算和全部 12 task harness。历史 18 个 artifact 因旧 manifest hash 保留为诊断而不能复用；当前仅 restart 6/72 有效，剩余 66 个会产生真实模型调用，须先取得 provider/凭据/费用上限授权并固定 source 后补齐 completed report |
+| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-3 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算、全部 12 task harness 与前台 Gateway state-dir 传递修复。首批 2 个 Core Task 因 state 失配在配对前失败，仅 `record_only`；当前有效 evidence 仍为 restart 6/72。后续真实调用须先清理意外默认 state 并解决 usage 可观测/费用限额，再在新的冻结 source 上补齐 completed report |
 | 阶段 1：项目规则链与代码导航 | P0 | 待启动 | 8-12 人日 | 危险工具关闭时仍能正确加载规则、搜索和分段读取 |
 | 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 待启动 | 15-25 人日 | 构建/测试可在 sandbox 中运行，权限和隔离可验证且失败关闭 |
 | 阶段 3：真实 diff/review 与恢复保证 | P0 | 待启动 | 8-12 人日 | 修改可审查、可归因，恢复边界明确且不覆盖用户改动 |
