@@ -38,6 +38,7 @@ import type { ConversationPromptSnapshotArtifact } from "./conversation-prompt-s
 import { resolveDeepSeekTierRoute } from "./deepseek-tier-routing.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
 import { resolveProjectRules } from "./project-rules.js";
+import { buildCodingRunPromptOverride } from "./coding-run-prompt.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -793,6 +794,7 @@ function buildMessageSendAgentRunInput(
   media: MessageSendQueryRuntimeContext["media"],
 ): any {
   const codingRunLaunchSpec = buildCodingRunLaunchSpec(input.codingRun);
+  const codingRunPromptOverride = buildCodingRunPromptOverride(input.codingRun);
   const runInput: any = {
     conversationId: input.conversationId,
     text: input.promptText,
@@ -803,6 +805,7 @@ function buildMessageSendAgentRunInput(
     userUuid: input.effectiveUserUuid,
     senderInfo: input.senderInfo,
     roomContext: input.normalizedRoomContext,
+    ...(codingRunPromptOverride ? { promptOverride: codingRunPromptOverride } : {}),
     meta: {
       ...(input.ctx.request.requestChannel ? { _toolRequestChannel: input.ctx.request.requestChannel } : {}),
       ...(codingRunLaunchSpec ? { _agentLaunchSpec: codingRunLaunchSpec } : {}),
@@ -867,6 +870,7 @@ function buildCodingRunLaunchSpec(
 ): Record<string, unknown> | undefined {
   if (!codingRun) return undefined;
   const launchSpec = {
+    commandSandbox: "required",
     ...(codingRun.cwd ? { cwd: codingRun.cwd, isolationMode: "cwd" } : {}),
     ...(codingRun.toolAllow?.length ? { toolSet: [...codingRun.toolAllow] } : {}),
     ...(codingRun.toolDeny?.length ? { toolDeny: [...codingRun.toolDeny] } : {}),

@@ -223,12 +223,12 @@ describe("coding agent benchmark stage 0B runner", () => {
     expect(invocations.map((input) => input.mode)).toEqual([
       "workspace-write",
       "command-control",
-      "plan",
+      "navigation-read",
     ]);
     expect(report.runs.map((run) => [run.taskId, run.execution.profile, run.failureCategory])).toEqual([
       ["feature.cross-file", "workspace-write", "product_workflow"],
       ["tests.failed-diagnosis", "command-control", "product_workflow"],
-      ["navigation.large-repository", "plan", "product_workflow"],
+      ["navigation.large-repository", "navigation-read", "product_workflow"],
     ]);
   });
 
@@ -724,10 +724,10 @@ describe("coding agent benchmark stage 0B runner", () => {
       expect(compiledReport.ok).toBe(true);
       expect(compiledRun.ok).toBe(true);
       if (!compiledReport.ok || !compiledRun.ok) return;
-      expect(compiledReport.validator.validateOutput(JSON.stringify(report))).toEqual({ ok: true });
+      expect(compiledReport.validator.validateOutput(JSON.stringify(report))).toMatchObject({ ok: true });
 
       for (const run of report.runs) {
-        expect(compiledRun.validator.validateOutput(JSON.stringify(run))).toEqual({ ok: true });
+        expect(compiledRun.validator.validateOutput(JSON.stringify(run))).toMatchObject({ ok: true });
         const runDir = path.join(artifactRoot, run.runId);
         const codingCiManifest = JSON.parse(await fs.readFile(
           path.join(runDir, "coding-ci-manifest.json"),

@@ -111,6 +111,22 @@ describe("list_files", () => {
     expect(payload.limits?.maxResponseBytes).toBe(768);
   });
 
+  it("omits denied nested directories and their contents from recursive listings", async () => {
+    await fs.mkdir(path.join(stateDir, ".git", "objects"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, ".git", "objects", "secret-object"), "hidden", "utf-8");
+    await fs.mkdir(path.join(stateDir, "src"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "src", "visible.ts"), "export {};", "utf-8");
+
+    const result = await listFilesTool.execute({ path: ".", recursive: true, depth: 5 }, baseContext);
+
+    expect(result.success).toBe(true);
+    const payload = JSON.parse(result.output) as { entries: Array<{ path: string }> };
+    expect(payload.entries.map((entry) => entry.path)).toContain("src/visible.ts");
+    expect(payload.entries.map((entry) => entry.path)).not.toContain(".git");
+    expect(payload.entries.map((entry) => entry.path)).not.toContain(".git/objects");
+    expect(payload.entries.map((entry) => entry.path)).not.toContain(".git/objects/secret-object");
+  });
+
   it("stops traversal at the hard entry limit", async () => {
     const totalEntries = 1_005;
     for (let offset = 0; offset < totalEntries; offset += 100) {

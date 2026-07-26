@@ -1,3 +1,5 @@
+import { sanitizeCommandPermissionPreview } from "@belldandy/skills";
+
 import {
   createAgentRunEventSequencer,
   toSafeCodingRunErrorMessage,
@@ -101,11 +103,15 @@ export function createGatewayConversationEventAdapter(input: {
         const toolCallId = getNonEmptyString(gatewayPayload.toolCallId);
         const toolName = getNonEmptyString(gatewayPayload.toolName);
         if (!toolCallId || !toolName) return undefined;
+        const commandPreview = toolName === "run_command" || toolName === "command_job"
+          ? sanitizeCommandPermissionPreview(gatewayPayload.commandPreview)
+          : undefined;
         return emit("permission.requested", {
           permission: {
             toolCallId,
             toolName,
             ...(getNonEmptyString(gatewayPayload.worktreeId) ? { worktreeId: gatewayPayload.worktreeId } : {}),
+            ...(commandPreview ? { commandPreview } : {}),
           },
         });
       }

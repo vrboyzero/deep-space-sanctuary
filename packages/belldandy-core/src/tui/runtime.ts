@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
@@ -30,12 +31,20 @@ import {
   type GatewayMethodResult,
 } from "../cli/shared/gateway-rpc.js";
 import type {
+  WorkspaceRevisionRestoreConflictArtifact,
   WorkspaceRevisionRestorePreview,
   WorkspaceRevisionRestoreResult,
   WorkspaceRevisionSummary,
 } from "../workspace-revision.js";
+import {
+  WorkspaceChangeRecoveryRuntime,
+} from "../workspace-change-recovery.js";
+import {
+  WorkspaceChangeSnapshotRuntime,
+} from "../workspace-change-snapshot.js";
 import type {
   TuiChatEntry,
+  TuiChangeSnapshotResult,
   TuiConversationBinding,
   TuiPermissionRequest,
   TuiRuntimeSnapshot,
@@ -72,12 +81,20 @@ export type CodingTuiRuntimeOptions = {
   invokeGateway?: InvokeGateway;
 };
 
+type PendingTuiChangeSnapshot = {
+  baselineId: string;
+};
+
 export class CodingTuiRuntime {
   readonly stateDir: string;
   readonly cwd: string;
   private readonly client: TuiCodingRunClient;
   private readonly requestTimeoutMs: number;
   private readonly invokeGateway: InvokeGateway;
+  private readonly changeSnapshotRuntime: WorkspaceChangeSnapshotRuntime;
+  private readonly changeRecoveryRuntime: WorkspaceChangeRecoveryRuntime;
+  private readonly pendingChangeSnapshots = new Map<string, PendingTuiChangeSnapshot | TuiChangeSnapshotResult>();
+  private readonly completedChangeSnapshots = new Map<string, TuiChangeSnapshotResult>();
 
   constructor(options: CodingTuiRuntimeOptions) {
     this.stateDir = path.resolve(options.stateDir);
@@ -85,11 +102,14 @@ export class CodingTuiRuntime {
     this.client = options.client;
     this.requestTimeoutMs = normalizePositiveInteger(options.requestTimeoutMs, DEFAULT_TUI_REQUEST_TIMEOUT_MS);
     this.invokeGateway = options.invokeGateway ?? ((request) => invokeGatewayMethod(request));
+    this.changeSnapshotRuntime = new WorkspaceChangeSnapshotRuntime({ stateDir: this.stateDir });
+    this.changeRecoveryRuntime = new WorkspaceChangeRecoveryRuntime({ stateDir: this.stateDir });
   }
 
   async requestConversation(prompt: string, conversationId?: string): Promise<TuiConversationBinding> {
     const text = prompt.trim();
     if (!text) throw new Error("A non-empty prompt is required.");
+    const changeSnapshot = await this.captureChangeSnapshot();
     const response = await withTimeout(
       this.client.conversation({
         version: CODING_RUN_PROTOCOL_VERSION,
@@ -103,6 +123,7 @@ export class CodingTuiRuntime {
     if (!response.ok) throw new Error(response.error.message);
     const binding = readConversationBinding(response.result);
     if (!binding) throw new Error("Gateway returned an incomplete Conversation binding.");
+    this.pendingChangeSnapshots.set(binding.agentRunId, changeSnapshot);
 
     const subscription = await withTimeout(
       this.client.subscribe({
@@ -115,6 +136,62 @@ export class CodingTuiRuntime {
     );
     if (!subscription.ok) throw new Error(subscription.error.message);
     return binding;
+  }
+
+  async completeChangeSnapshot(agentRunId: string): Promise<TuiChangeSnapshotResult | undefined> {
+    const completed = this.completedChangeSnapshots.get(agentRunId);
+    if (completed) return completed;
+    const pending = this.pendingChangeSnapshots.get(agentRunId);
+    if (!pending) return undefined;
+    this.pendingChangeSnapshots.delete(agentRunId);
+    if ("status" in pending) {
+      this.completedChangeSnapshots.set(agentRunId, pending);
+      return pending;
+    }
+    try {
+      const recovery = await this.changeRecoveryRuntime.getCandidate({
+        revisionId: agentRunId,
+        workspaceRoot: this.cwd,
+      });
+      const snapshot = await this.changeSnapshotRuntime.createSnapshot({
+        baselineId: pending.baselineId,
+        revisionId: agentRunId,
+        recovery,
+      });
+      const page = await this.changeSnapshotRuntime.readSnapshotPage({ snapshotId: snapshot.snapshotId });
+      const result: TuiChangeSnapshotResult = { status: "available", snapshot, page };
+      this.completedChangeSnapshots.set(agentRunId, result);
+      return result;
+    } catch (error) {
+      const result: TuiChangeSnapshotResult = {
+        status: "unavailable",
+        error: toSafeCodingRunErrorMessage(error),
+      };
+      this.completedChangeSnapshots.set(agentRunId, result);
+      return result;
+    }
+  }
+
+  async recomputeChangeSnapshot(agentRunId: string): Promise<TuiChangeSnapshotResult | undefined> {
+    const previous = this.completedChangeSnapshots.get(agentRunId);
+    if (previous?.status !== "available" || !previous.snapshot) return undefined;
+    try {
+      const recovery = await this.changeRecoveryRuntime.getCandidate({
+        revisionId: agentRunId,
+        workspaceRoot: this.cwd,
+      });
+      const snapshot = await this.changeSnapshotRuntime.createSnapshot({
+        baselineId: previous.snapshot.baseline.baselineId,
+        revisionId: agentRunId,
+        recovery,
+      });
+      const page = await this.changeSnapshotRuntime.readSnapshotPage({ snapshotId: snapshot.snapshotId });
+      const result: TuiChangeSnapshotResult = { status: "available", snapshot, page };
+      this.completedChangeSnapshots.set(agentRunId, result);
+      return result;
+    } catch (error) {
+      return { status: "unavailable", error: toSafeCodingRunErrorMessage(error) };
+    }
   }
 
   async respondPermission(request: TuiPermissionRequest, decision: "allow" | "deny"): Promise<void> {
@@ -216,6 +293,20 @@ export class CodingTuiRuntime {
       },
       hints: snapshot.hints.slice(0, 6),
     };
+  }
+
+  private async captureChangeSnapshot(): Promise<PendingTuiChangeSnapshot | TuiChangeSnapshotResult> {
+    const baselineId = `tui-run-${randomUUID()}`;
+    try {
+      await this.changeSnapshotRuntime.captureBaseline({
+        baselineId,
+        workspaceRoot: this.cwd,
+        source: "run_start",
+      });
+      return { baselineId };
+    } catch (error) {
+      return { status: "unavailable", error: toSafeCodingRunErrorMessage(error) };
+    }
   }
 
   async close(): Promise<void> {
@@ -348,10 +439,12 @@ function parseRevisionPreview(payload: Record<string, unknown>): WorkspaceRevisi
   if (!summary || typeof payload.canRestore !== "boolean" || !Array.isArray(payload.changes)) {
     throw new Error("Gateway returned an invalid workspace revision preview.");
   }
+  const conflictArtifact = parseRevisionConflictArtifact(payload.conflictArtifact);
   return {
     ...summary,
     canRestore: payload.canRestore,
     changes: parseRevisionChanges(payload.changes),
+    ...(conflictArtifact ? { conflictArtifact } : {}),
   };
 }
 
@@ -395,8 +488,31 @@ function parseRevisionChanges(value: unknown[]): WorkspaceRevisionRestorePreview
       return [];
     }
     const reason = readString(item.reason);
-    return [{ relativePath, action, ...(reason ? { reason } : {}) }];
+    const recordedAfterHash = readSha256(item.recordedAfterHash);
+    const currentHash = readSha256(item.currentHash);
+    return [{
+      relativePath,
+      action,
+      ...(reason ? { reason } : {}),
+      ...(recordedAfterHash ? { recordedAfterHash } : {}),
+      ...(currentHash ? { currentHash } : {}),
+    }];
   });
+}
+
+function parseRevisionConflictArtifact(value: unknown): WorkspaceRevisionRestoreConflictArtifact | undefined {
+  if (!isRecord(value)) return undefined;
+  const artifactPath = readString(value.artifactPath);
+  const capturedAtMs = isFiniteNumber(value.capturedAtMs) ? value.capturedAtMs : undefined;
+  const conflictCount = typeof value.conflictCount === "number" && Number.isSafeInteger(value.conflictCount)
+    ? value.conflictCount
+    : undefined;
+  if (!artifactPath || capturedAtMs === undefined || conflictCount === undefined || conflictCount < 1) return undefined;
+  return { artifactPath, capturedAtMs, conflictCount };
+}
+
+function readSha256(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
 }
 
 function readConversationBinding(value: unknown): TuiConversationBinding | undefined {

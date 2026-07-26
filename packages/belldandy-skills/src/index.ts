@@ -28,6 +28,8 @@ export type {
   AgentCapabilities,
   ToolRuntimeLaunchSpec,
   ToolExecutionRuntimeContext,
+  CommandPermissionPreviewAction,
+  CommandPermissionPreview,
   PendingToolPermissionRequest,
   ToolPermissionController,
   WorkspaceMutationObserver,
@@ -96,6 +98,10 @@ export type { SkillRegistryInventory, SkillRegistryInventoryEntry } from "./skil
 export { publishSkillCandidate, getUserSkillsDir } from "./skill-publisher.js";
 
 export { ToolExecutor, DEFAULT_POLICY } from "./executor.js";
+export {
+  buildCommandPermissionPreview,
+  sanitizeCommandPermissionPreview,
+} from "./command-plan.js";
 export {
   buildFailureToolCallResult,
   inferToolFailureKindFromError,
@@ -177,12 +183,14 @@ export { fetchTool } from "./builtin/fetch.js";
 export { fileReadTool, fileWriteTool, fileDeleteTool } from "./builtin/file.js";
 export { resolvePrivilegedWorkspaceWriteChannels } from "./builtin/privileged-workspace-write-contract.js";
 export { listFilesTool } from "./builtin/list-files.js";
+export { textSearchTool } from "./builtin/text-search.js";
+export { fileGlobTool } from "./builtin/file-glob.js";
 export { applyPatchTool } from "./builtin/apply-patch/index.js";
 export { webSearchTool } from "./builtin/web-search/index.js";
 export { createToolSearchTool, TOOL_SEARCH_NAME } from "./builtin/tool-search.js";
 export { planCurrentGetTool } from "./builtin/plan-current-get.js";
 export { planCurrentUpdateTool } from "./builtin/plan-current-update.js";
-export { runCommandTool, processManagerTool, terminalTool } from "./builtin/system/index.js";
+export { commandJobTool, runCommandTool, processManagerTool, shutdownCommandJobs, terminalTool } from "./builtin/system/index.js";
 export {
   bridgeTargetListTool,
   bridgeTargetDiagnoseTool,

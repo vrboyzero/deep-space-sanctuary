@@ -98,6 +98,7 @@ type DirectoryListingState = {
 async function listDirectory(
     dir: string,
     workspaceRoot: string,
+    deniedPaths: string[],
     recursive: boolean,
     maxDepth: number,
     currentDepth: number,
@@ -117,6 +118,9 @@ async function listDirectory(
             }
             const fullPath = path.join(dir, item.name);
             const relativePath = path.relative(workspaceRoot, fullPath).replace(/\\/g, "/");
+            if (isDeniedPath(relativePath, deniedPaths)) {
+                continue;
+            }
 
             if (item.isDirectory()) {
                 state.entries.push({
@@ -129,6 +133,7 @@ async function listDirectory(
                     await listDirectory(
                         fullPath,
                         workspaceRoot,
+                        deniedPaths,
                         recursive,
                         maxDepth,
                         currentDepth + 1,
@@ -298,6 +303,7 @@ export const listFilesTool: Tool = withToolContract({
             await listDirectory(
                 absolute,
                 effectiveRoot,
+                context.policy.deniedPaths,
                 recursive,
                 depth,
                 1,
@@ -354,7 +360,7 @@ export const listFilesTool: Tool = withToolContract({
     isConcurrencySafe: true,
     needsPermission: false,
     riskLevel: "low",
-    channels: ["gateway", "web"],
+    channels: ["gateway", "web", "cli"],
     safeScopes: ["local-safe", "web-safe"],
     activityDescription: "List files and directories inside the workspace",
     resultSchema: {

@@ -81,6 +81,7 @@ star-sanctuary/
 - `scripts/evaluate-dependency-audit-gate.mjs`: 对依赖扫描报告执行 findings/failure/freshness 的 fail-closed Gate 判定
 - `scripts/run-coding-agent-ci.mjs`: 复用构建后 Headless CLI 的通用 CI 包装器；强制干净 Git 基线、只读/显式 workspace-write profile、固定 token/turn 预算及可选 `max-cost-usd` 透传、v1 事件连续性和工作区外可审查 patch/result/manifest artifact；benchmark 可在首个 `run.started` 后使用既有 `agent cancel` 精确注入一次取消，不执行 push、merge 或自动 apply
 - `scripts/verify-coding-ci-contract.mjs`: 对 CI 示例、Core 导出 Schema、输出 Schema、Node/pnpm/协议/退出码兼容矩阵与 Windows/Linux Quality Gate 接线执行失败关闭校验
+- `scripts/verify-command-sandbox-oci-fixture.mjs`: 显式、非默认的 Docker/Podman OCI isolation/job fixture；只使用已运行 daemon 与预加载的 digest-pinned Node 镜像，验证只读 root/workspace、受限 workspace-write、`network none`、pipe/PTY job 输出与 resize/cancel、lease/container 回收，不启动 daemon 或拉取镜像
 - `examples/ci/`: 默认只读 GitHub Actions/通用 CI 示例、结构化 review prompt/output Schema、`AgentRunEvent v1` 静态 Schema、artifact 说明及迁移/回滚兼容矩阵
 - `benchmarks/coding-agent/v1/`: 项目编程 benchmark v1 的版本化 task manifest、失败分类、指标语义及 manifest/run/report/fault/cancel/restart-injection JSON Schema；只保存可提交契约，不保存运行 artifact 或凭据
 - `scripts/coding-agent-benchmark-contract.mjs`: 项目编程 task manifest 语义校验、机器评估运行记录校验与 report-only 指标聚合 owner；聚合脱敏 usage observation / USD cost，`completed` 必须覆盖完整 task/platform/sample 矩阵
@@ -113,15 +114,19 @@ star-sanctuary/
 ### Gateway / CLI
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
 - `packages/belldandy-core/src/cli/main.ts`: CLI 根命令定义
-- `packages/belldandy-core/src/cli/commands/agent/`: `bdd agent run` / `continue` / `inspect` / `cancel` 的 Headless Conversation 命令；`inspect` 兼容既有 `--conversation-id` Gateway 元数据模式，并通过 `--cwd` 提供本地项目规则来源/优先级/哈希/预算诊断；不创建 Goal、Workflow、Subtask 或 `planState`
+- `packages/belldandy-core/src/cli/commands/agent/`: `bdd agent run` / `continue` / `inspect` / `cancel` 的 Headless Conversation 命令；`run` 与 `continue` 会将可选 `--output-schema` 作为不可执行的数据契约附加到本次模型提示，并在终态继续作严格本地校验；带 `codingRun.cwd` 的单次 run 还会生成只读、hash 绑定的 workspace change artifact，并在终态 summary 投影同一 run 的 `revisionId`、`baselineId`、`snapshotId`；`inspect` 兼容既有 `--conversation-id` Gateway 元数据模式，并通过 `--cwd` 提供本地项目规则来源/优先级/哈希/预算诊断；不创建 Goal、Workflow、Subtask 或 `planState`
 - `packages/belldandy-core/src/project-rules.ts`: coding run 项目规则 owner；从最近 Git 根到 cwd 逐层发现项目 `AGENTS.md`，保持 state workspace 身份规则分离，并负责 canonical path、root-to-cwd 优先级、单文件/总预算、symlink/非普通文件/权限拒绝诊断与 prompt 片段构建
+- `packages/belldandy-core/src/coding-run-prompt.ts`: coding run 单次最小静态 prompt owner；只为带 `codingRun` 的受信任运行替换常驻人格静态 prompt，并要求可用 sandboxed `run_command` 使用结构化 `commandPlan`；项目规则仍由 `project-rules` delta 独立注入
 - `packages/belldandy-core/src/cli/commands/coding-run/stdio.ts`: `bdd coding-run stdio` 进程入口；stdin/stdout 只承载 NDJSON，通过 Gateway 转发受限 Conversation 请求、已验证 control 与单个 cursor 事件订阅，不直接拥有领域运行时
 - `packages/belldandy-core/src/cli/commands/tui.ts`: `bdd tui` 入口；只在交互式 stdin/stdout 下启动全屏工作台，非 TTY 以稳定错误码拒绝
-- `packages/belldandy-core/src/tui/`: Ink/React 最小编程工作台；组合 Conversation、精确工具审批、Workspace Revision、只读 Git/worktree 与 Console 快照，并复用 `coding-run` stdio/Gateway 协议，不拥有第二套运行真源
+- `packages/belldandy-core/src/tui/`: Ink/React 最小编程工作台；组合 Conversation、精确工具审批、Workspace Revision、只读 Git/worktree、当前 run 的 hash 绑定 diff 首 hunk与恢复保证等级、Console 快照；restore 实际成功后仅按原 run baseline 重算当前 diff，不拥有 revision 写入、review verdict 或第二套运行真源，并复用 `coding-run` stdio/Gateway 协议
 - `packages/belldandy-core/src/cli/shared/gateway-conversation-run.ts`: 本地 Gateway WebSocket 运行客户端；将 Conversation 生命周期投影为有界的 `AgentRunEvent v1` 流，并处理配对、超时和取消
-- `packages/belldandy-core/src/cli/shared/output-schema.ts`: Headless 最终输出的可选 JSON Schema 加载与校验
+- `packages/belldandy-core/src/cli/shared/output-schema.ts`: Headless 最终输出的可选 JSON Schema 加载、明确 JSON 代码块归一化与严格 AJV 校验 owner；模型可见 Schema 数据契约由 `agent/run.ts` 组装
 - `packages/belldandy-core/src/coding-run/`: 编程运行 v1 契约、Conversation 生命周期/Gateway 事件适配器、Goal/Workflow/Subtask 只读运行视图、`gateway-event-broker.ts` 的有界 cursor 事件真源、`gateway-subscription-session.ts` 的单订阅持久会话与固定三次 cursor 续订、受限 `conversation.request`、双向 NDJSON server/client、stdio 进程桥、JSONL 安全规范化与来源控制 guard；不拥有领域状态机
-- `packages/belldandy-core/src/workspace-revision.ts`: 受控文件工具的 `WorkspaceRevisionCheckpoint` 持久化、首次 preimage、hash 冲突检测、dry-run/显式 restore 与保留期清理；不接管 shell、MCP 或人工写入
+- `packages/belldandy-core/src/workspace-revision.ts`: 受控文件工具的 `WorkspaceRevisionCheckpoint` 持久化、首次 preimage、hash 冲突检测、仅含相对路径/hash 的 conflict artifact、dry-run/最终 apply 前复检的显式 restore 与保留期清理；不接管 shell、MCP 或人工写入，也不提供跨文件事务或强制覆盖
+- `packages/belldandy-core/src/workspace-change-snapshot.ts`: run-start、Git HEAD、指定 revision 与显式 worktree base 的只读 diff/review snapshot owner；将 Git 基线解析为不可变 commit 后从 tree/blob 物化到 artifact，统一 Git/普通目录的 baseline/current/diff hash、可选且严格校验的 `revisionId`、二进制/精确重命名/超大 diff 状态与 hunk cursor 分页，artifact 不写入 workspace、Git index 或 restore 路径
+- `packages/belldandy-core/src/workspace-change-recovery.ts`: snapshot 恢复保证等级 owner；仅根据同一 run 的已提交 Workspace Revision 覆盖判定 `exact`，受管 worktree 必须由可信 owner 显式提供，其余变更失败关闭为 `detect_only`
+- `packages/belldandy-core/src/workspace-change-review.ts`: 基于既有 snapshot 的只读 verdict owner；记录前复核 diff hash 并继承可选 `revisionId`，验证时重建同一 baseline/关联的 snapshot 并以 hash 判定 valid/invalidated；`verifyAfterRestore()` 仅接受已应用且 ID 匹配的 outcome，否则返回 `not_applicable`，旧 artifact 缺少关联时保持兼容，review artifact 位于 snapshot 自排除 storage 内
 - `packages/belldandy-core/src/bin/gateway.ts`: Gateway 开发态 bootstrap 入口（先做 dev/runtime 旧 `dist` 预检，再加载主装配）
 - `packages/belldandy-core/src/bin/gateway-main.ts`: Gateway 总装配入口；持有后台/外部 runtime handle，创建唯一 shutdown request owner，在 scoped MemoryManager 创建后装配共享 SQLite schema 的 WorkflowRuntime，并注册资源、配置 watcher 与进程信号转发
 - `packages/belldandy-core/src/gateway-shutdown-coordinator.ts`: GW04 显式阶段关闭协调器内核；负责资源注册顺序、单步/整体 deadline、幂等 generation、失败隔离与纯计数诊断，不接管领域内部 lifecycle
@@ -189,6 +194,10 @@ star-sanctuary/
 - `packages/belldandy-core/src/channel-security-store.ts`: 渠道安全审批配置
 - `packages/belldandy-skills/src/security-matrix.ts`: 工具安全矩阵
 - `packages/belldandy-skills/src/runtime-policy.ts`: tool launch/runtime policy
+- `packages/belldandy-skills/src/builtin/workspace-navigation.ts`: `text_search` / `file_glob` 共用的受限工作区遍历 owner；集中处理 workspace / extra root、`lstat` / realpath 边界、层级 `.gitignore`、隐藏/敏感/策略路径、include/exclude 与稳定排序
+- `packages/belldandy-skills/src/builtin/text-search.ts`: 不经 Shell 的工作区文本搜索 owner；提供 fixed/regex、glob、上下文、二进制/超大文件边界、响应预算和输入绑定的稳定分页 cursor
+- `packages/belldandy-skills/src/builtin/file-glob.ts`: 不经 Shell 的受限文件发现 owner；提供 include/exclude、`.gitignore`/隐藏路径策略、稳定排序、结果数/响应预算截断和 skip 审计
+- `packages/belldandy-skills/src/builtin/file.ts`: `file_read` 的路径/敏感策略、分段 `offset` / `limit`、文件绑定 `nextCursor` 与 no-follow realpath 复核，以及 workspace 写入/删除工具
 
 ### API / RPC / HTTP
 - `packages/belldandy-core/src/server.ts`: RPC 请求分发总入口
@@ -488,9 +497,16 @@ star-sanctuary/
 
 ### Tools / Skills / Plugins / MCP
 - `packages/belldandy-skills/src/executor.ts`: ToolExecutor、整批拒绝的 batch 上限、保持结果顺序的有界并发 worker pool、空 deferred selection 的会话内存回收、Tool 可选会话状态释放钩子的故障隔离，以及只输出 bytes/hash/failure kind 的有界异步 Tool audit 接线
+- `packages/belldandy-skills/src/command-plan.ts`: sandbox-required `run_command` 的结构化 `executable` / `argv` / 相对 cwd / env diff / network / write scope / stdin / timeout 解析、脱敏审计摘要和 secret-free 审批预览 owner；拒绝 shell entrypoint、交互 stdin 和非 `network: none`
+- `packages/belldandy-skills/src/command-sandbox.ts`: coding run 命令的 OCI（Docker/Podman）sandbox 配置、digest-pinned image、runtime probe、无 Shell invocation 和短生命周期 env-file owner；目标平台后端不可用时返回可审计的 fail-closed 拒绝，禁止回退到宿主命令执行或自动拉取镜像
+- `packages/belldandy-skills/src/command-sandbox-lease.ts`: 单次 OCI 容器的 generated lease/container name、workspace 外 `cidfile`、显式 `rm --force`、有界 cleanup 与无敏感值生命周期元数据 owner；清理失败保持 fail-closed
+- `packages/belldandy-skills/src/command-job.ts`: sandbox command job 的稳定 UUID、stdin/PTY resize、UTF-8 output cursor、策略收紧的 timeout、进程树取消、终态历史与 Gateway 重启后的 `lost` 恢复 owner；只持久化非敏感生命周期元数据
+- `packages/belldandy-skills/src/command-job-runtime.ts`: OCI CLI 子进程与可选 `node-pty` 的无 Shell 运行时适配；缓存监听器注册前的输出/终态，并保持分片 UTF-8 不损坏
+- `packages/belldandy-skills/src/command-job-pty-host-runtime.ts` / `command-job-pty-host.ts`: PTY command job 的隔离 host Adapter 与窄 IPC helper；把可能阻塞的原生 `node-pty.spawn` 移出 Gateway 进程，并以 job deadline 监督 host 进程树、stdin/resize、输出和终态转发
+- `packages/belldandy-skills/src/builtin/system/command-job.ts`: `command_job` 的 start/read/write/resize/cancel/status/list 工具入口；仅在 sandbox-required coding run 中启动，并由 job owner 收敛 OCI lease、env-file 与进程清理
 - `packages/belldandy-skills/src/tool-audit-dispatcher.ts`: 已脱敏 Tool audit 的单飞异步投递、等待队列上限和无正文运行水位
 - `packages/belldandy-skills/src/builtin/timer.ts`: 按 conversation/agent 隔离的进程内 Timer owner、每 namespace timer 上限、单 timer lap history 上限、会话释放钩子与无正文资源计数 snapshot
-- `packages/belldandy-skills/src/builtin/system/exec.ts`: `run_command` 命令策略、timeout/输出硬上限、跨平台 process-tree 终止与有界 close drain
+- `packages/belldandy-skills/src/builtin/system/exec.ts`: `run_command` legacy 宿主 Shell 路径与 sandbox-required `commandPlan` 路径的分流、realpath 挂载边界、timeout/输出硬上限、跨平台 process-tree 终止与有界 close drain；OCI 路径以 lease/CID 显式回收容器，PTY/job 生命周期仍由后续阶段接入
 - `packages/belldandy-skills/src/builtin/system/process-lease.ts`: Unix process group 与 Windows `taskkill /T /F` 的幂等终止 owner、hard-kill fallback 和 close 观测
 - `packages/belldandy-skills/src/builtin/system/pty.ts`: PTY active session owner、总数/空闲 TTL/输出硬上限、有界 terminal snapshot ring 与 shutdown-all
 - `packages/belldandy-skills/src/builtin/agent-bridge/sessions.ts` / `runtime-pty.ts`: PTY terminal snapshot 到 Bridge closed record/artifact 的单飞、原子发布收敛，以及 Gateway 可调用的统一 Bridge shutdown seam

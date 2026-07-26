@@ -44,6 +44,7 @@
     "aggregate:coding-agent:baseline": "node scripts/aggregate-coding-agent-benchmark.mjs",
     "verify:coding-benchmark": "node --import tsx scripts/verify-coding-agent-benchmark-contract.mjs",
     "verify:coding-ci": "node scripts/verify-coding-ci-contract.mjs",
+    "verify:command-sandbox-oci": "node --import tsx scripts/verify-command-sandbox-oci-fixture.mjs",
     "verify:webchat": "node scripts/verify-webchat-modules.mjs",
     "verify:webchat:security": "node scripts/verify-webchat-security-policy.mjs",
     "build": "pnpm run build:incremental && pnpm run verify:build",

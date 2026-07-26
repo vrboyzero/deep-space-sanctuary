@@ -1,4 +1,8 @@
-import type { PendingToolPermissionRequest, ToolPermissionController } from "@belldandy/skills";
+import {
+  sanitizeCommandPermissionPreview,
+  type PendingToolPermissionRequest,
+  type ToolPermissionController,
+} from "@belldandy/skills";
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
 
@@ -8,6 +12,7 @@ type PendingPermissionRecord = {
   worktreeId?: string;
   toolCallId: string;
   toolName: string;
+  commandPreview?: PendingToolPermissionRequest["commandPreview"];
   resolve: (decision: "allow" | "deny") => void;
   timeout: NodeJS.Timeout;
   abortSignal?: AbortSignal;
@@ -78,6 +83,7 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
           ...(record.worktreeId ? { worktreeId: record.worktreeId } : {}),
           toolCallId: record.toolCallId,
           toolName: record.toolName,
+          ...(record.commandPreview ? { commandPreview: record.commandPreview } : {}),
         });
       } catch {
         // 事件转发故障会由固定超时关闭，不可绕过审批。
@@ -147,12 +153,16 @@ function normalizeRequest(input: PendingToolPermissionRequest): Omit<PendingPerm
   const toolName = normalizeString(input.toolName);
   if (!conversationId || !agentRunId || !toolCallId || !toolName) return undefined;
   const worktreeId = normalizeString(input.worktreeId);
+  const commandPreview = isCommandToolName(toolName)
+    ? sanitizeCommandPermissionPreview(input.commandPreview)
+    : undefined;
   return {
     conversationId,
     agentRunId,
     ...(worktreeId ? { worktreeId } : {}),
     toolCallId,
     toolName,
+    ...(commandPreview ? { commandPreview } : {}),
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
   };
 }
@@ -191,4 +201,8 @@ function normalizeString(value: unknown): string | undefined {
 
 function toKey(agentRunId: string, toolCallId: string): string {
   return `${agentRunId}\u0000${toolCallId}`;
+}
+
+function isCommandToolName(toolName: string): boolean {
+  return toolName === "run_command" || toolName === "command_job";
 }

@@ -28,6 +28,11 @@ import type {
 } from "./types.js";
 import { getToolContract, type ToolContract, type ToolExecutionAdmission } from "./tool-contract.js";
 import {
+  evaluateCommandSandboxAdmission,
+  normalizeCommandSandboxRequirement,
+} from "./command-sandbox.js";
+import { buildCommandPermissionPreview, parseCommandPlan, sanitizeCommandPlanForAudit } from "./command-plan.js";
+import {
   evaluateLaunchPermissionMode,
   evaluateLaunchRolePolicy,
   normalizeLaunchPermissionMode,
@@ -279,6 +284,7 @@ function normalizeRuntimeLaunchSpec(value: ToolRuntimeLaunchSpec | undefined): T
     toolDeny: normalizeStringList(value.toolDeny),
     permissionMode: normalizeOptionalString(value.permissionMode),
     isolationMode: normalizeOptionalString(value.isolationMode),
+    commandSandbox: normalizeCommandSandboxRequirement(value.commandSandbox),
     maxRunWallTimeMs: normalizeLaunchPositiveInteger(value.maxRunWallTimeMs),
     toolLoopIterationBudget: normalizeLaunchPositiveInteger(value.toolLoopIterationBudget),
     maxTotalTokens: normalizeLaunchPositiveInteger(value.maxTotalTokens),
@@ -1439,6 +1445,50 @@ export class ToolExecutor {
       return result;
     }
 
+    const commandJobAction = request.name === "command_job" && typeof request.arguments.action === "string"
+      ? request.arguments.action
+      : undefined;
+    const commandSandboxAdmission = commandJobAction && commandJobAction !== "start"
+      ? { allowed: true } as const
+      : await evaluateCommandSandboxAdmission({
+        family: getToolContract(tool)?.family,
+        launchSpec,
+        readEnv: (name) => {
+          const value = process.env[name];
+          return value && value.trim() ? value.trim() : undefined;
+        },
+      });
+    if (!commandSandboxAdmission.allowed) {
+      const result = buildFailureToolCallResult({
+        id: request.id,
+        name: request.name,
+        start,
+        error: commandSandboxAdmission.message,
+        failureKind: "permission_or_policy",
+        metadata: commandSandboxAdmission.metadata,
+      });
+      this.audit(result, conversationId, request.arguments);
+      return result;
+    }
+
+    if ((request.name === "run_command" || (request.name === "command_job" && commandJobAction === "start"))
+      && getToolContract(tool)?.family === "command-exec"
+      && launchSpec?.commandSandbox === "required") {
+      const commandPlan = parseCommandPlan(request.arguments.commandPlan);
+      if (!commandPlan.ok) {
+        const result = buildFailureToolCallResult({
+          id: request.id,
+          name: request.name,
+          start,
+          error: commandPlan.message,
+          failureKind: "input_error",
+          metadata: { commandPlanErrorCode: commandPlan.code },
+        });
+        this.audit(result, conversationId, request.arguments);
+        return result;
+      }
+    }
+
     const argumentPreflight = preflightToolArguments(tool, request.arguments);
     const argumentValidationMetadata = buildToolArgumentPreflightMetadata(tool, argumentPreflight);
     const effectiveArguments = argumentPreflight.arguments;
@@ -1528,6 +1578,10 @@ export class ToolExecutor {
     if (this.requiresPendingPermission(tool, launchSpec, runtimeContext)) {
       let decision: "allow" | "deny" = "deny";
       try {
+        const commandPreview = buildCommandPermissionPreview({
+          toolName: request.name,
+          arguments: effectiveArguments,
+        });
         decision = await this.permissionController!.request({
           conversationId,
           agentRunId: runtimeContext!.agentRunId!.trim(),
@@ -1536,6 +1590,7 @@ export class ToolExecutor {
             : {}),
           toolCallId: request.id,
           toolName: request.name,
+          ...(commandPreview ? { commandPreview } : {}),
           ...(parentAbortSignal ? { abortSignal: parentAbortSignal } : {}),
         });
       } catch {
@@ -1674,7 +1729,8 @@ export class ToolExecutor {
 
     // 审计事件先在当前调用栈完成有界脱敏，再交给旁路 dispatcher 异步投递。
     try {
-      const redactedArguments = redactSensitiveValue(args, {
+      const auditArguments = sanitizeCommandPlanForAudit(args);
+      const redactedArguments = redactSensitiveValue(auditArguments, {
         maxDepth: 6,
         maxKeys: 50,
         maxArrayEntries: 50,
@@ -1686,7 +1742,7 @@ export class ToolExecutor {
         conversationId,
         toolName: result.name,
         argumentsSummary: summarizeAuditText(JSON.stringify(redactedArguments)),
-        safeArguments: projectSafeAuditArguments(args),
+        safeArguments: projectSafeAuditArguments(auditArguments),
         success: result.success,
         outputSummary: summarizeAuditText(result.output),
         errorSummary: result.error ? summarizeAuditText(result.error) : undefined,

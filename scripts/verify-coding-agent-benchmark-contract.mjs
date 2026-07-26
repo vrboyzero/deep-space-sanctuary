@@ -230,7 +230,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
 }
 
 function validateRunnerProfiles(failures, manifest) {
-  for (const mode of ["plan", "workspace-write", "command-control", "safety-probe", "recovery-control", "git-local"]) {
+  for (const mode of ["plan", "navigation-read", "workspace-write", "command-control", "safety-probe", "recovery-control", "git-local"]) {
     const actual = resolveCodingCiProfile(mode);
     const expected = manifest.suite?.executionProfiles?.[mode];
     const expectedToolDeny = mode === "command-control" || mode === "safety-probe"

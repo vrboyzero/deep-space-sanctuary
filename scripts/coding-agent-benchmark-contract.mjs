@@ -13,6 +13,11 @@ const FROZEN_EXECUTION_PROFILES = {
     toolAllow: ["file_read", "list_files"],
     toolDeny: ["run_command", "spawn_subagent"],
   },
+  "navigation-read": {
+    permissionMode: "plan",
+    toolAllow: ["file_read", "list_files", "text_search", "file_glob"],
+    toolDeny: ["run_command", "spawn_subagent"],
+  },
   "workspace-write": {
     permissionMode: "acceptEdits",
     toolAllow: ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
@@ -263,9 +268,9 @@ function assertTaskAcceptance(task) {
       throw new Error(`Coding benchmark task ${task.id} has unknown forbidden action ${String(action)}.`);
     }
   }
-  if (task.executionProfile === "plan"
+  if ((task.executionProfile === "plan" || task.executionProfile === "navigation-read")
     && (allowedPaths.size > 0 || !forbiddenActions.has("workspace_mutation"))) {
-    throw new Error(`Plan benchmark task ${task.id} must forbid all workspace mutation.`);
+    throw new Error(`Read-only benchmark task ${task.id} must forbid all workspace mutation.`);
   }
 }
 

@@ -36,6 +36,8 @@ node scripts/run-coding-agent-ci.mjs \
 
 `--artifact-dir` 必须位于 workspace 外。命令沿用公开退出码：`0` 成功、`2` 输入错误、`3` 权限拒绝、`4` 运行失败、`5` 取消、`6` 输出 Schema 不合格、`7` Gateway 不可用、`8` 中断。包装器自身的基线、协议或 artifact policy 失败返回 `1`。
 
+`--output-schema` 同时会被 Core 序列化为本次 Agent 的输出数据契约，要求模型只返回能通过该 JSON Schema 的原始 JSON；Schema 按数据处理，不作为可执行指令。终态仍由本地 AJV 严格复核，模型提示不会放宽类型、必填字段或常量约束。
+
 ## Artifact
 
 | 文件 | 用途 |

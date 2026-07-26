@@ -38,12 +38,12 @@ function killDirectChild(child: ChildProcess): void {
   }
 }
 
-function signalUnixProcessGroup(child: ChildProcess, signal: NodeJS.Signals): boolean {
-  if (typeof child.pid !== "number") {
+function signalUnixProcessGroup(pid: number | undefined, signal: NodeJS.Signals): boolean {
+  if (typeof pid !== "number") {
     return false;
   }
   try {
-    process.kill(-child.pid, signal);
+    process.kill(-pid, signal);
     return true;
   } catch {
     return false;
@@ -74,31 +74,21 @@ export function shouldDetachProcessTree(): boolean {
   return process.platform !== "win32";
 }
 
+export type ProcessTreeLeaseTarget = {
+  pid?: number;
+  closePromise: Promise<void>;
+  isCloseObserved: () => boolean;
+  killDirect: (signal: NodeJS.Signals) => void;
+};
+
 /**
- * 持有 shell 进程及其子孙的终止责任；终止结果始终有界，调用方可据此再提交唯一终态。
+ * Holds the process-tree termination responsibility for either a ChildProcess or a
+ * PTY-backed process. The result is bounded so the job owner can publish one terminal state.
  */
-export class ProcessLease {
-  private readonly child: ChildProcess;
-  private readonly closePromise: Promise<void>;
-  private closeObserved = false;
+export class ProcessTreeLease {
   private terminationPromise: Promise<ProcessTerminationResult> | null = null;
 
-  constructor(child: ChildProcess) {
-    this.child = child;
-    this.closePromise = new Promise<void>((resolve) => {
-      const markClosed = () => {
-        if (this.closeObserved) return;
-        this.closeObserved = true;
-        resolve();
-      };
-      child.once("close", markClosed);
-      child.once("error", () => {
-        if (typeof child.pid !== "number") {
-          markClosed();
-        }
-      });
-    });
-  }
+  constructor(private readonly target: ProcessTreeLeaseTarget) {}
 
   terminate(): Promise<ProcessTerminationResult> {
     if (!this.terminationPromise) {
@@ -108,7 +98,7 @@ export class ProcessLease {
   }
 
   private async terminateInternal(): Promise<ProcessTerminationResult> {
-    if (this.closeObserved) {
+    if (this.target.isCloseObserved()) {
       return {
         method: "already_closed",
         hardKillUsed: false,
@@ -116,31 +106,27 @@ export class ProcessLease {
       };
     }
 
-    if (process.platform === "win32" && typeof this.child.pid === "number") {
+    if (process.platform === "win32" && typeof this.target.pid === "number") {
       await Promise.all([
-        runWindowsTaskkill(this.child.pid),
-        waitBounded(this.closePromise, TASKKILL_WAIT_MS),
+        runWindowsTaskkill(this.target.pid),
+        waitBounded(this.target.closePromise, TASKKILL_WAIT_MS),
       ]);
-      if (!this.closeObserved) {
-        killDirectChild(this.child);
-        await waitBounded(this.closePromise, HARD_EXIT_WAIT_MS);
+      if (!this.target.isCloseObserved()) {
+        this.target.killDirect("SIGKILL");
+        await waitBounded(this.target.closePromise, HARD_EXIT_WAIT_MS);
       }
       return {
         method: "taskkill",
         hardKillUsed: true,
-        closeObserved: this.closeObserved,
+        closeObserved: this.target.isCloseObserved(),
       };
     }
 
-    const groupSignaled = signalUnixProcessGroup(this.child, "SIGTERM");
+    const groupSignaled = signalUnixProcessGroup(this.target.pid, "SIGTERM");
     if (!groupSignaled) {
-      try {
-        this.child.kill("SIGTERM");
-      } catch {
-        // 进程可能已退出。
-      }
+      this.target.killDirect("SIGTERM");
     }
-    if (await waitBounded(this.closePromise, GRACEFUL_EXIT_WAIT_MS)) {
+    if (await waitBounded(this.target.closePromise, GRACEFUL_EXIT_WAIT_MS)) {
       return {
         method: groupSignaled ? "process_group" : "direct_child",
         hardKillUsed: false,
@@ -148,14 +134,52 @@ export class ProcessLease {
       };
     }
 
-    if (!signalUnixProcessGroup(this.child, "SIGKILL")) {
-      killDirectChild(this.child);
+    if (!signalUnixProcessGroup(this.target.pid, "SIGKILL")) {
+      this.target.killDirect("SIGKILL");
     }
-    await waitBounded(this.closePromise, HARD_EXIT_WAIT_MS);
+    await waitBounded(this.target.closePromise, HARD_EXIT_WAIT_MS);
     return {
       method: groupSignaled ? "process_group" : "direct_child",
       hardKillUsed: true,
-      closeObserved: this.closeObserved,
+      closeObserved: this.target.isCloseObserved(),
     };
+  }
+}
+
+/** Retains the legacy ChildProcess constructor while sharing the PTY-safe tree terminator. */
+export class ProcessLease {
+  private readonly lease: ProcessTreeLease;
+
+  constructor(child: ChildProcess) {
+    let closeObserved = false;
+    const closePromise = new Promise<void>((resolve) => {
+      const markClosed = () => {
+        if (closeObserved) return;
+        closeObserved = true;
+        resolve();
+      };
+      child.once("close", markClosed);
+      child.once("error", () => {
+        if (typeof child.pid !== "number") {
+          markClosed();
+        }
+      });
+    });
+    this.lease = new ProcessTreeLease({
+      pid: child.pid,
+      closePromise,
+      isCloseObserved: () => closeObserved,
+      killDirect: (signal) => {
+        try {
+          child.kill(signal);
+        } catch {
+          // The child may already be in an exit race.
+        }
+      },
+    });
+  }
+
+  terminate(): Promise<ProcessTerminationResult> {
+    return this.lease.terminate();
   }
 }

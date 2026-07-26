@@ -138,6 +138,7 @@ describe("Gateway shutdown closure", () => {
       "shutdownMcp: shutdownMCPIntegration",
       "browserRelay: browserRelayRuntimeHandle",
       "shutdownAgentBridge: agentBridgeEnabled ? shutdownBridgeSessions : undefined",
+      "shutdownCommandJobs",
     ]) {
       expect(source).toContain(registration);
     }

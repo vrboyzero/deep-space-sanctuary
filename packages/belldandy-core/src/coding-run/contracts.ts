@@ -625,7 +625,11 @@ export function sanitizeCodingRunData(value: unknown, depth = 0): unknown {
   const result: Record<string, unknown> = {};
   try {
     for (const [key, item] of Object.entries(value)) {
-      result[key] = isSensitiveField(key) ? "[REDACTED]" : sanitizeCodingRunData(item, depth + 1);
+      result[key] = isSensitiveField(key)
+        ? "[REDACTED]"
+        : key === "env" && isRecord(item)
+        ? Object.fromEntries(Object.keys(item).map((environmentKey) => [environmentKey, "[REDACTED]"]))
+        : sanitizeCodingRunData(item, depth + 1);
     }
   } catch {
     return "[UNSERIALIZABLE]";

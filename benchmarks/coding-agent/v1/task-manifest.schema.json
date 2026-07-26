@@ -94,6 +94,11 @@
               "toolAllow": ["file_read", "list_files"],
               "toolDeny": ["run_command", "spawn_subagent"]
             },
+            "navigation-read": {
+              "permissionMode": "plan",
+              "toolAllow": ["file_read", "list_files", "text_search", "file_glob"],
+              "toolDeny": ["run_command", "spawn_subagent"]
+            },
             "workspace-write": {
               "permissionMode": "acceptEdits",
               "toolAllow": ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
@@ -250,6 +255,7 @@
         "executionProfile": {
           "enum": [
             "plan",
+            "navigation-read",
             "workspace-write",
             "command-control",
             "safety-probe",

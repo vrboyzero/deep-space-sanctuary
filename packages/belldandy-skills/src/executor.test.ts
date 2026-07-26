@@ -5,6 +5,10 @@ import { ToolExecutor, DEFAULT_POLICY } from "./executor.js";
 import { withToolContract } from "./tool-contract.js";
 import { createToolSearchTool } from "./builtin/tool-search.js";
 import { fetchTool } from "./builtin/fetch.js";
+import { fileReadTool } from "./builtin/file.js";
+import { listFilesTool } from "./builtin/list-files.js";
+import { textSearchTool } from "./builtin/text-search.js";
+import { fileGlobTool } from "./builtin/file-glob.js";
 import { webSearchTool } from "./builtin/web-search/index.js";
 import { resolveSafeScopesForChannel } from "./security-matrix.js";
 
@@ -655,6 +659,236 @@ describe("ToolExecutor", () => {
       undefined,
       runtimeContext,
     )).resolves.toMatchObject({ success: false, failureKind: "permission_or_policy" });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed before requesting permission when a coding command sandbox is unavailable", async () => {
+    const execute = vi.fn(async () => ({
+      id: "",
+      name: "sandboxed_command",
+      success: true,
+      output: "must-not-run",
+      durationMs: 1,
+    }));
+    const commandTool = withToolContract({
+      definition: {
+        name: "sandboxed_command",
+        description: "requires a coding command sandbox",
+        parameters: { type: "object", properties: {} },
+      },
+      execute,
+    }, {
+      family: "command-exec",
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      needsPermission: true,
+      riskLevel: "critical",
+      channels: ["gateway"],
+      safeScopes: ["privileged"],
+      activityDescription: "Execute inside a coding sandbox",
+      resultSchema: { kind: "text", description: "sandbox output" },
+      outputPersistencePolicy: "conversation",
+    });
+    const request = vi.fn(async () => "allow" as const);
+    const executor = new ToolExecutor({
+      tools: [commandTool],
+      workspaceRoot: "/tmp/test",
+      permissionController: { request },
+    });
+
+    const result = await executor.execute(
+      { id: "tool-sandbox-1", name: "sandboxed_command", arguments: {} },
+      "conv-1",
+      "default",
+      undefined,
+      undefined,
+      undefined,
+      {
+        agentRunId: "run-sandbox-1",
+        launchSpec: { permissionMode: "confirm", commandSandbox: "required" },
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "permission_or_policy",
+      metadata: {
+        commandSandboxRequirement: "required",
+        commandSandboxStatus: "unavailable",
+        commandSandboxPlatform: process.platform,
+      },
+    });
+    expect(request).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for command job start while allowing lifecycle controls during a sandbox probe outage", async () => {
+    const execute = vi.fn(async (args: Record<string, unknown>) => ({
+      id: "",
+      name: "command_job",
+      success: true,
+      output: JSON.stringify({ action: args.action }),
+      durationMs: 1,
+    }));
+    const commandJob = withToolContract({
+      definition: {
+        name: "command_job",
+        description: "controls a sandbox command job",
+        parameters: { type: "object", properties: {} },
+      },
+      execute,
+    }, {
+      family: "command-exec",
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      needsPermission: true,
+      riskLevel: "critical",
+      channels: ["gateway"],
+      safeScopes: ["privileged"],
+      activityDescription: "Manage a sandbox command job",
+      resultSchema: { kind: "text", description: "command job result" },
+      outputPersistencePolicy: "conversation",
+    });
+    const request = vi.fn(async () => "allow" as const);
+    const executor = new ToolExecutor({
+      tools: [commandJob],
+      workspaceRoot: "/tmp/test",
+      permissionController: { request },
+    });
+    const runtimeContext = {
+      agentRunId: "run-command-job-1",
+      launchSpec: { permissionMode: "confirm" as const, commandSandbox: "required" as const },
+    };
+
+    vi.stubEnv("BELLDANDY_COMMAND_SANDBOX_BACKEND", "");
+    vi.stubEnv("BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME", "");
+    vi.stubEnv("BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE", "");
+    try {
+      await expect(executor.execute(
+        {
+          id: "tool-command-job-start",
+          name: "command_job",
+          arguments: {
+            action: "start",
+            commandPlan: {
+              executable: "node",
+              argv: ["-e", "process.exit(0)"],
+              network: "none",
+              writeScope: "workspace-readonly",
+              stdinMode: "closed",
+            },
+          },
+        },
+        "conv-1",
+        "default",
+        undefined,
+        undefined,
+        undefined,
+        runtimeContext,
+      )).resolves.toMatchObject({
+        success: false,
+        failureKind: "permission_or_policy",
+        metadata: { commandSandboxStatus: "unavailable" },
+      });
+      expect(request).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+
+      for (const action of ["read", "status", "cancel"]) {
+        await expect(executor.execute(
+          {
+            id: `tool-command-job-${action}`,
+            name: "command_job",
+            arguments: { action, jobId: "11111111-1111-4111-8111-111111111111" },
+          },
+          "conv-1",
+          "default",
+          undefined,
+          undefined,
+          undefined,
+          runtimeContext,
+        )).resolves.toMatchObject({ success: true, output: JSON.stringify({ action }) });
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls.map(([args]) => args.action)).toEqual(["read", "status", "cancel"]);
+  });
+
+  it("projects only sanitized command plan details to a pending permission request", async () => {
+    const execute = vi.fn(async () => ({
+      id: "",
+      name: "run_command",
+      success: true,
+      output: "ok",
+      durationMs: 1,
+    }));
+    const runCommand = withToolContract({
+      definition: {
+        name: "run_command",
+        description: "runs a governed command",
+        parameters: { type: "object", properties: {} },
+      },
+      execute,
+    }, {
+      family: "command-exec",
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      needsPermission: true,
+      riskLevel: "critical",
+      channels: ["gateway"],
+      safeScopes: ["privileged"],
+      activityDescription: "Run a governed command",
+      resultSchema: { kind: "text", description: "command result" },
+      outputPersistencePolicy: "conversation",
+    });
+    const request = vi.fn(async () => "allow" as const);
+    const executor = new ToolExecutor({
+      tools: [runCommand],
+      workspaceRoot: "/tmp/test",
+      permissionController: { request },
+    });
+
+    await expect(executor.execute(
+      {
+        id: "tool-command-preview",
+        name: "run_command",
+        arguments: {
+          commandPlan: {
+            executable: "node",
+            argv: ["--token=do-not-leak", "--version"],
+            env: { PRIVATE_TOKEN: "do-not-leak" },
+            network: "none",
+            writeScope: "workspace-readonly",
+            stdinMode: "closed",
+          },
+        },
+      },
+      "conv-1",
+      "default",
+      undefined,
+      undefined,
+      undefined,
+      {
+        agentRunId: "run-command-preview",
+        launchSpec: { permissionMode: "confirm" },
+      },
+    )).resolves.toMatchObject({ success: true });
+
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: "run_command",
+      commandPreview: expect.objectContaining({
+        kind: "command",
+        action: "run",
+        commandPlan: expect.objectContaining({
+          executable: "node",
+          argv: ["--token=[REDACTED]", "--version"],
+          environmentKeys: ["PRIVATE_TOKEN"],
+        }),
+      }),
+    }));
+    expect(JSON.stringify(request.mock.calls[0]?.[0])).not.toContain("do-not-leak");
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
@@ -1409,6 +1643,33 @@ describe("ToolExecutor", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("不允许在当前端使用");
+  });
+
+  it("exposes bounded workspace navigation tools to a CLI coding run", () => {
+    const executor = new ToolExecutor({
+      tools: [fileReadTool, listFilesTool, textSearchTool, fileGlobTool],
+      workspaceRoot: "/tmp/test",
+      contractAccessPolicy: {
+        channel: "gateway",
+        allowedSafeScopes: resolveSafeScopesForChannel("gateway"),
+        includeToolsWithoutContract: false,
+      },
+    });
+
+    const definitions = executor.getDefinitions("default", "conv-cli-coding-run", {
+      channel: "cli",
+      launchSpec: {
+        toolSet: ["file_read", "list_files", "text_search", "file_glob"],
+        permissionMode: "plan",
+      },
+    });
+
+    expect(definitions.map((definition) => definition.function.name)).toEqual([
+      "file_read",
+      "list_files",
+      "text_search",
+      "file_glob",
+    ]);
   });
 
   it("should expose availability reasons for registered tools", () => {

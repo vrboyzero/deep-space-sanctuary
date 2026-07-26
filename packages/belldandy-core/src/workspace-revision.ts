@@ -45,15 +45,28 @@ export type WorkspaceRevisionSummary = {
   recoveryGuarantee: "exact";
 };
 
+export type WorkspaceRevisionChangeCoverage = WorkspaceRevisionSummary & {
+  changedPaths: string[];
+};
+
 export type WorkspaceRevisionRestoreChange = {
   relativePath: string;
   action: "restore" | "delete" | "unchanged" | "conflict";
   reason?: string;
+  recordedAfterHash?: string;
+  currentHash?: string;
+};
+
+export type WorkspaceRevisionRestoreConflictArtifact = {
+  artifactPath: string;
+  capturedAtMs: number;
+  conflictCount: number;
 };
 
 export type WorkspaceRevisionRestorePreview = WorkspaceRevisionSummary & {
   canRestore: boolean;
   changes: WorkspaceRevisionRestoreChange[];
+  conflictArtifact?: WorkspaceRevisionRestoreConflictArtifact;
 };
 
 export type WorkspaceRevisionRestoreResult = WorkspaceRevisionRestorePreview & {
@@ -170,6 +183,10 @@ function isFileStateEqual(left: FileState, right: FileState): boolean {
   return !left.exists || left.sha256 === (right as Extract<FileState, { exists: true }>).sha256;
 }
 
+function getStateHash(state: FileState | undefined): string | undefined {
+  return state?.exists ? state.sha256 : undefined;
+}
+
 function toSummary(manifest: RevisionManifest): WorkspaceRevisionSummary {
   return {
     revisionId: manifest.revisionId,
@@ -282,6 +299,18 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       .sort((left, right) => right.updatedAtMs - left.updatedAtMs || left.revisionId.localeCompare(right.revisionId));
   }
 
+  async getChangeCoverage(input: { revisionId: string; workspaceRoot: string }): Promise<WorkspaceRevisionChangeCoverage> {
+    const revisionId = normalizeRevisionId(input);
+    const loaded = await this.loadManifestForWorkspace(revisionId, input.workspaceRoot);
+    return {
+      ...toSummary(loaded.manifest),
+      changedPaths: [...new Set(loaded.manifest.files
+        .filter((entry) => entry.after !== undefined)
+        .map((entry) => entry.relativePath))]
+        .sort((left, right) => left.localeCompare(right)),
+    };
+  }
+
   async previewRestore(input: { revisionId: string; workspaceId?: string }): Promise<WorkspaceRevisionRestorePreview> {
     const loaded = await this.findManifest(input);
     const changes: WorkspaceRevisionRestoreChange[] = [];
@@ -299,24 +328,33 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
         } else if (isFileStateEqual(current, entry.before)) {
           changes.push({ relativePath: entry.relativePath, action: "unchanged" });
         } else {
+          const recordedAfterHash = getStateHash(entry.after);
+          const currentHash = getStateHash(current);
           changes.push({
             relativePath: entry.relativePath,
             action: "conflict",
             reason: "current file hash differs from the recorded tool result",
+            ...(recordedAfterHash ? { recordedAfterHash } : {}),
+            ...(currentHash ? { currentHash } : {}),
           });
         }
       } catch (error) {
         changes.push({
           relativePath: entry.relativePath,
           action: "conflict",
-          reason: error instanceof Error ? error.message : String(error),
+          reason: "unable to verify the current file state safely",
         });
       }
     }
+    const conflicts = changes.filter((change) => change.action === "conflict");
+    const conflictArtifact = conflicts.length > 0
+      ? await this.writeRestoreConflictArtifact(loaded, conflicts)
+      : undefined;
     return {
       ...toSummary(loaded.manifest),
       canRestore: changes.every((change) => change.action !== "conflict"),
       changes,
+      ...(conflictArtifact ? { conflictArtifact } : {}),
     };
   }
 
@@ -326,7 +364,9 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       return { ...preview, applied: false };
     }
     const loaded = await this.findManifest(input);
-    const changesByPath = new Map(preview.changes.map((change) => [change.relativePath, change]));
+    const finalPreview = await this.previewRestore(input);
+    if (!finalPreview.canRestore) return { ...finalPreview, applied: false };
+    const changesByPath = new Map(finalPreview.changes.map((change) => [change.relativePath, change]));
     const entries = loaded.manifest.files.filter((entry) => {
       const action = changesByPath.get(entry.relativePath)?.action;
       return action === "restore" || action === "delete";
@@ -343,12 +383,9 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       }
     }
 
+    // 所有目标在写入前已二次验证；发现冲突时会在上方返回，不会留下部分恢复结果。
     for (const entry of entries) {
       const targetPath = path.resolve(loaded.manifest.workspaceRoot, entry.relativePath);
-      const current = await this.readFileState(targetPath);
-      if (!entry.after || !isFileStateEqual(current, entry.after)) {
-        throw new Error(`Workspace revision restore conflict: ${entry.relativePath}`);
-      }
       if (!entry.before.exists) {
         await fs.unlink(targetPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") throw error;
@@ -364,7 +401,7 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       await writeFileAtomic(targetPath, contents, entry.before.mode);
       await fs.chmod(targetPath, entry.before.mode).catch(() => {});
     }
-    return { ...preview, applied: true };
+    return { ...finalPreview, applied: true };
   }
 
   /** 仅删除已超过保留期的整组恢复点；不会作为 prepare/restore 的隐式副作用执行。 */
@@ -496,6 +533,26 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
     const loaded = { manifest, directory };
     await this.saveManifest(loaded);
     return loaded;
+  }
+
+  private async writeRestoreConflictArtifact(
+    loaded: LoadedManifest,
+    conflicts: WorkspaceRevisionRestoreChange[],
+  ): Promise<WorkspaceRevisionRestoreConflictArtifact> {
+    const capturedAtMs = Date.now();
+    const artifactPath = path.join(
+      loaded.directory,
+      "restore-conflicts",
+      `${capturedAtMs}-${crypto.randomUUID()}.json`,
+    );
+    await writeFileAtomic(artifactPath, `${JSON.stringify({
+      version: 1,
+      revisionId: loaded.manifest.revisionId,
+      workspaceId: loaded.manifest.workspaceId,
+      capturedAtMs,
+      conflicts,
+    }, null, 2)}\n`, 0o600);
+    return { artifactPath, capturedAtMs, conflictCount: conflicts.length };
   }
 
   private async loadManifestForWorkspace(revisionId: string, workspaceRoot: string): Promise<LoadedManifest> {

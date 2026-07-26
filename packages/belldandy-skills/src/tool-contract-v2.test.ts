@@ -108,6 +108,7 @@ describe("tool contract v2", () => {
 
   it("provides detailed defaults for high-value tool profiles without runtime governance input", () => {
     const runCommand = getToolContractV2("run_command");
+    const commandJob = getToolContractV2("command_job");
     const applyPatch = getToolContractV2("apply_patch");
     const fileWrite = getToolContractV2("file_write");
     const fileDelete = getToolContractV2("file_delete");
@@ -132,9 +133,20 @@ describe("tool contract v2", () => {
       hasGovernanceContract: false,
       hasBehaviorContract: true,
     });
-    expect(runCommand?.confirmWhen.join("\n")).toContain("shell control operators");
+    expect(runCommand?.confirmWhen.join("\n")).toContain("executable, argv");
     expect(runCommand?.preflightChecks.join("\n")).toContain("stdout/stderr");
     expect(runCommand?.fallbackStrategy.join("\n")).toContain("head/tail");
+
+    expect(commandJob).toMatchObject({
+      family: "command-exec",
+      riskLevel: "critical",
+      needsPermission: true,
+      hasGovernanceContract: false,
+      hasBehaviorContract: false,
+    });
+    expect(commandJob?.preflightChecks.join("\n")).toContain("shell-free commandPlan");
+    expect(commandJob?.preflightChecks.join("\n")).toContain("stdin as sensitive");
+    expect(commandJob?.expectedOutput.join("\n")).toContain("stable job ID");
 
     expect(applyPatch?.preflightChecks.join("\n")).toContain("3000 lines");
     expect(applyPatch?.expectedOutput.join("\n")).toContain("added, modified, and deleted");

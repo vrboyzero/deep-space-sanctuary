@@ -63,6 +63,7 @@ export async function runGatewayConversation(input: {
     let requestInFlight = false;
     let pairingApprovalInFlight = false;
     let pairingRequired = false;
+    let pairingApproved = false;
     let runRequestId = "";
     let stopRequestId = "";
     let binding: GatewayConversationRunResult["binding"] | undefined;
@@ -176,6 +177,10 @@ export async function runGatewayConversation(input: {
       if (settled || !helloReceived || requestInFlight || pairingApprovalInFlight || socket.readyState !== WebSocket.OPEN) {
         return;
       }
+      if (initialRequestDelay) {
+        clearTimeout(initialRequestDelay);
+        initialRequestDelay = undefined;
+      }
       requestInFlight = true;
       runRequestId = `bdd-agent-run-${randomUUID()}`;
       socket.send(JSON.stringify({
@@ -212,9 +217,9 @@ export async function runGatewayConversation(input: {
           failBeforeRun(new GatewayConversationRunError(approved.message, "permission_denied"));
           return;
         }
+        pairingApproved = true;
         pairingRequired = false;
-        requestInFlight = false;
-        retry = true;
+        retry = !requestInFlight;
       } catch (error) {
         failBeforeRun(new GatewayConversationRunError(
           error instanceof Error ? error.message : String(error),
@@ -303,6 +308,11 @@ export async function runGatewayConversation(input: {
         const errorCode = readGatewayErrorCode(frame);
         if (errorCode === "pairing_required") {
           pairingRequired = true;
+          if (pairingApproved && !pairingApprovalInFlight) {
+            pairingApproved = false;
+            pairingRequired = false;
+            sendRunRequest();
+          }
           return;
         }
         failBeforeRun(new GatewayConversationRunError(

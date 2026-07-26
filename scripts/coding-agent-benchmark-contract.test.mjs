@@ -77,6 +77,11 @@ describe("coding agent benchmark contract", () => {
         toolAllow: ["file_read", "list_files"],
         toolDeny: ["run_command", "spawn_subagent"],
       },
+      "navigation-read": {
+        permissionMode: "plan",
+        toolAllow: ["file_read", "list_files", "text_search", "file_glob"],
+        toolDeny: ["run_command", "spawn_subagent"],
+      },
       "workspace-write": {
         permissionMode: "acceptEdits",
         toolAllow: ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
@@ -216,7 +221,7 @@ describe("coding agent benchmark contract", () => {
 
     expect(compiled.ok).toBe(true);
     if (!compiled.ok) return;
-    expect(compiled.validator.validateOutput(JSON.stringify(manifest))).toEqual({ ok: true });
+    expect(compiled.validator.validateOutput(JSON.stringify(manifest))).toMatchObject({ ok: true });
 
     const incomplete = structuredClone(manifest);
     delete incomplete.tasks[0].evaluator;
@@ -409,7 +414,7 @@ describe("coding agent benchmark contract", () => {
     const compiled = compileOutputSchema(reportSchema);
     expect(compiled.ok).toBe(true);
     if (compiled.ok) {
-      expect(compiled.validator.validateOutput(JSON.stringify(report))).toEqual({ ok: true });
+      expect(compiled.validator.validateOutput(JSON.stringify(report))).toMatchObject({ ok: true });
     }
   });
 
@@ -440,7 +445,7 @@ describe("coding agent benchmark contract", () => {
 
     expect(compiled.ok).toBe(true);
     if (!compiled.ok) return;
-    expect(compiled.validator.validateOutput(JSON.stringify(report))).toEqual({ ok: true });
+    expect(compiled.validator.validateOutput(JSON.stringify(report))).toMatchObject({ ok: true });
 
     const missingArtifact = structuredClone(report);
     delete missingArtifact.runs[0].artifacts.events;
@@ -601,7 +606,7 @@ describe("coding agent benchmark contract", () => {
 
     expect(compiled.ok).toBe(true);
     if (!compiled.ok) return;
-    expect(compiled.validator.validateOutput(JSON.stringify(run))).toEqual({ ok: true });
+    expect(compiled.validator.validateOutput(JSON.stringify(run))).toMatchObject({ ok: true });
 
     const missingExecution = structuredClone(run);
     delete missingExecution.execution;
@@ -686,6 +691,7 @@ function runRecord(input) {
 
 function executionProfileForTask(taskId) {
   if (taskId === "bug.reproducible-fix") return "workspace-write";
+  if (taskId === "navigation.large-repository") return "navigation-read";
   if (taskId === "safety.boundary-enforcement") return "safety-probe";
   if (taskId === "gateway.disconnect-recovery") return "recovery-control";
   return "plan";

@@ -5,6 +5,7 @@ import {
   MAX_TUI_STREAM_CHARS,
   createInitialTuiState,
   reduceTuiState,
+  type TuiChangeSnapshotResult,
 } from "./state.js";
 
 function event(
@@ -108,6 +109,19 @@ describe("TUI state", () => {
           toolCallId: "tool-1",
           toolName: "file_write",
           worktreeId: "worktree-1",
+          commandPreview: {
+            kind: "command",
+            action: "run",
+            commandPlan: {
+              executable: "node",
+              argv: ["--token", "must-not-leak", "--version"],
+              cwd: ".",
+              environmentKeys: ["PRIVATE_TOKEN"],
+              network: "none",
+              writeScope: "workspace-readonly",
+              stdinMode: "closed",
+            },
+          },
           arguments: { secret: "must-not-leak" },
         },
       }),
@@ -140,6 +154,46 @@ describe("TUI state", () => {
     });
     expect(state.pendingPermission).toBeUndefined();
     expect(state.notice).toBe("Tool permission denied.");
+  });
+
+  it("retains a validated command preview for the active command approval only", () => {
+    let state = createInitialTuiState("E:\\workspace");
+    state = reduceTuiState(state, {
+      type: "conversation.accepted",
+      binding: { conversationId: "conversation-1", agentRunId: "run-1" },
+      prompt: "Run tests",
+    });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: event(1, "permission.requested", {
+        permission: {
+          toolCallId: "tool-command-1",
+          toolName: "command_job",
+          commandPreview: {
+            kind: "command",
+            action: "start",
+            commandPlan: {
+              executable: "node",
+              argv: ["--token", "must-not-leak", "--version"],
+              cwd: ".",
+              environmentKeys: ["PRIVATE_TOKEN"],
+              network: "none",
+              writeScope: "workspace-readonly",
+              stdinMode: "pty",
+            },
+          },
+        },
+      }),
+    });
+
+    expect(state.pendingPermission).toMatchObject({
+      toolName: "command_job",
+      commandPreview: {
+        action: "start",
+        commandPlan: { argv: ["--token", "[REDACTED]", "--version"] },
+      },
+    });
+    expect(JSON.stringify(state)).not.toContain("must-not-leak");
   });
 
   it("requires a restorable dry-run preview before opening restore confirmation", () => {
@@ -178,4 +232,69 @@ describe("TUI state", () => {
     expect(state.restoreConfirmation).toBeUndefined();
     expect(state.notice).toContain("cannot be restored");
   });
+
+  it("retains the active run diff snapshot and ignores a late snapshot from an older run", () => {
+    const result = createChangeSnapshotResult();
+    let state = createInitialTuiState("E:\\workspace");
+    state = reduceTuiState(state, {
+      type: "conversation.accepted",
+      binding: { conversationId: "conversation-1", agentRunId: "run-1" },
+      prompt: "Change a file",
+    });
+    state = reduceTuiState(state, {
+      type: "change.snapshot.completed",
+      agentRunId: "run-1",
+      result,
+    });
+
+    expect(state.changeSnapshot).toBe(result);
+    expect(state.notice).toContain("Run diff ready");
+
+    state = reduceTuiState(state, {
+      type: "conversation.accepted",
+      binding: { conversationId: "conversation-2", agentRunId: "run-2" },
+      prompt: "Start another run",
+    });
+    state = reduceTuiState(state, {
+      type: "change.snapshot.completed",
+      agentRunId: "run-1",
+      result,
+    });
+
+    expect(state.changeSnapshot).toBeUndefined();
+  });
 });
+
+function createChangeSnapshotResult(): TuiChangeSnapshotResult {
+  return {
+    status: "available",
+    snapshot: {
+      version: 1,
+      snapshotId: "snapshot-1",
+      baseline: { baselineId: "baseline-1", source: "run_start", hash: "sha256:baseline" },
+      workspaceRoot: "E:\\workspace",
+      currentHash: "sha256:current",
+      diffHash: "sha256:diff",
+      capturedAtMs: 1,
+      files: [{ path: "note.txt", status: "modified", binary: false, diffAvailable: true }],
+      hunkCount: 1,
+      truncated: false,
+      truncationReasons: [],
+      coverage: {
+        complete: true,
+        fileCount: 1,
+        storedFileCount: 1,
+        storedBytes: 12,
+        omittedFileCount: 0,
+        reasons: [],
+      },
+      recovery: { recoveryGuarantee: "detect_only", reason: "checkpoint_missing" },
+      artifacts: { summaryPath: "summary.json", patchPath: "changes.patch" },
+    },
+    page: {
+      snapshotId: "snapshot-1",
+      diffHash: "sha256:diff",
+      hunks: [{ path: "note.txt", binary: false, patch: "@@ -1 +1 @@\n-before\n+after" }],
+    },
+  };
+}

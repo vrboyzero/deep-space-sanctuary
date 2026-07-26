@@ -137,4 +137,24 @@ describe("coding-run public protocol boundary", () => {
     });
     expect(() => JSON.stringify(payload)).not.toThrow();
   });
+
+  it("redacts every structured command environment value regardless of its field name", () => {
+    expect(sanitizeCodingRunData({
+      commandPlan: {
+        executable: "node",
+        env: {
+          PRIVATE_TOKEN: "must-not-leak",
+          LOG_LEVEL: "debug",
+        },
+      },
+    })).toEqual({
+      commandPlan: {
+        executable: "node",
+        env: {
+          PRIVATE_TOKEN: "[REDACTED]",
+          LOG_LEVEL: "[REDACTED]",
+        },
+      },
+    });
+  });
 });

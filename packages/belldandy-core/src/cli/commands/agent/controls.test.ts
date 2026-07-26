@@ -158,6 +158,64 @@ describe("bdd agent controls", () => {
     }
   });
 
+  it("sends the output schema contract when continuing a Conversation", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-continue-schema-"));
+    const conversationId = "agent-cli-continue-schema";
+    let observedPrompt = "";
+    const agent: BelldandyAgent = {
+      async *run(input) {
+        if (input.text.includes("## Output Schema Contract")) observedPrompt = input.text;
+        yield { type: "final", text: JSON.stringify({ status: "continued" }) };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          conversationId,
+          prompt: "Start the structured conversation.",
+          jsonl: true,
+          writeStdout: () => {},
+          writeStderr: () => {},
+        })).toBe(0);
+
+        expect(await continueAgentRunCommand({
+          stateDir,
+          conversationId,
+          prompt: "Continue and return the requested JSON.",
+          jsonl: true,
+          outputSchema: {
+            type: "object",
+            required: ["status"],
+            additionalProperties: false,
+            properties: { status: { const: "continued" } },
+          },
+          writeStdout: () => {},
+          writeStderr: () => {},
+        })).toBe(0);
+      });
+
+      expect(observedPrompt).toContain("## Output Schema Contract");
+      expect(observedPrompt).toContain('"status":{"const":"continued"}');
+      expect(observedPrompt).toContain("Return only raw JSON that validates against this schema.");
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("cancels only the bound active Conversation run", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-cancel-"));
     const agent: BelldandyAgent = {

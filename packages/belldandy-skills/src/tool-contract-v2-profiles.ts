@@ -104,12 +104,12 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     needsPermission: true,
     isReadOnly: false,
     isConcurrencySafe: false,
-    activityDescription: "Execute a shell command on the host inside allowed workspace boundaries",
+    activityDescription: "Execute a governed development command; coding runs use a sandboxed argv plan when a backend is available",
     outputPersistencePolicy: "conversation",
     channels: ["gateway", "web"] satisfies ToolContract["channels"],
     safeScopes: ["privileged"] satisfies ToolContract["safeScopes"],
     recommendedWhen: [
-      "Need a short non-interactive shell command to inspect repo state, build output, or process diagnostics",
+      "Need a short non-interactive command plan to inspect repo state, build output, or process diagnostics",
       "Need host toolchain behavior that cannot be expressed through dedicated workspace or patch tools",
     ],
     avoidWhen: [
@@ -118,12 +118,12 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     ],
     confirmWhen: [
       "The command writes files outside the obvious target path, mutates environment variables, or launches long-lived processes",
-      "The command uses shell control operators, redirection, or broad globs that materially expand the execution scope",
+      "The requested executable, argv, cwd, environment keys, write scope, or network policy materially expand the execution scope",
     ],
     preflightChecks: [
-      "State the intended cwd, expected side effects, and whether stdout/stderr are the only outputs you need",
-      "Check safelist, blocklist, and whether the command may touch network, external services, or privileged paths",
-      "Avoid shell redirection like >, <, or 2>/dev/null; run_command already captures stdout/stderr and Unix shell snippets are brittle on Windows",
+      "State the intended cwd, executable, argv, expected side effects, and whether stdout/stderr are the only outputs you need",
+      "For sandboxed coding runs use commandPlan with network none, an explicit write scope, and closed stdin",
+      "Do not use shell redirection, pipes, command substitution, or a shell entrypoint; run_command already captures stdout/stderr",
     ],
     fallbackStrategy: [
       "Prefer workspace and patch tools when you only need repository state or a deterministic file edit",
@@ -135,10 +135,52 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Blocked executions should explain the policy reason instead of partially running the command",
     ],
     sideEffectSummary: [
-      "May create or modify files, spawn subprocesses, and mutate external state depending on the command body",
-      "Command validation reduces blast radius but does not make a destructive command inherently safe",
+      "May create or modify files inside the approved sandbox workspace and execute project code",
+      "Sandboxing constrains host exposure but does not make destructive workspace changes recoverable or inherently safe",
     ],
-    userVisibleRiskNote: "宿主机命令执行工具。执行前应确认 cwd、命令文本、影响范围，以及失败后的回滚路径。",
+    userVisibleRiskNote: "命令执行工具。Coding run 必须在可用 OCI 沙箱内使用结构化 argv；执行前确认 cwd、环境变量键、写入范围和回滚路径。",
+  },
+  command_job: {
+    family: "command-exec",
+    riskLevel: "critical",
+    needsPermission: true,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    activityDescription: "Start and control a sandboxed background command job with cursor-based terminal output",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["privileged"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "A sandboxed build, test, or interactive program must continue after the start call returns",
+      "The task needs explicit stdin, terminal resize, paged output, status, or cancellation controls",
+    ],
+    avoidWhen: [
+      "A short closed-stdin command can return all required output through run_command",
+      "Dedicated workspace, search, or patch tools can complete the task without executing project code",
+    ],
+    confirmWhen: [
+      "Starting a job with workspace writes, a PTY, or a long timeout changes the expected execution scope",
+      "Writing stdin may contain credentials or destructive interactive input",
+    ],
+    preflightChecks: [
+      "For start, provide a shell-free commandPlan with network none, explicit writeScope, and stdinMode closed, pipe, or pty",
+      "For write, resize, read, status, and cancel, use exactly the jobId returned by start",
+      "Treat stdin as sensitive: never echo it in follow-up text or expect it to appear in audit output",
+    ],
+    fallbackStrategy: [
+      "Use run_command for bounded non-interactive work",
+      "If the OCI backend or node-pty is unavailable, report the fail-closed diagnostic instead of falling back to a host shell",
+      "Use cursor reads rather than repeatedly requesting the whole terminal buffer",
+    ],
+    expectedOutput: [
+      "A stable job ID, lifecycle status, cursor bounds, and paged terminal output without replaying prior pages",
+      "Cancellation reports process-tree and sandbox-lease cleanup metadata or a fail-closed cleanup error",
+    ],
+    sideEffectSummary: [
+      "Starts project code only inside the approved OCI sandbox and can retain a bounded in-memory terminal buffer",
+      "Gateway restart marks unfinished jobs lost; stdin and terminal output are intentionally not persisted",
+    ],
+    userVisibleRiskNote: "后台命令 job。仅 sandbox-required coding run 可启动；stdin 不回显，PTY 仅在 node-pty 可用时启用，取消会回收整个进程树与 OCI lease。",
   },
   apply_patch: {
     family: "patch",
@@ -350,7 +392,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     isConcurrencySafe: true,
     activityDescription: "Read a file from the workspace or an allowed extra workspace root",
     outputPersistencePolicy: "conversation",
-    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    channels: ["gateway", "web", "cli"] satisfies ToolContract["channels"],
     safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
     recommendedWhen: [
       "Need the exact current contents of a known file before editing, reviewing, or answering from repository context",
@@ -364,7 +406,8 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "The file may contain secrets, credentials, or personal data even if the path itself is not blocked",
     ],
     preflightChecks: [
-      "Confirm the path, expected encoding, and whether partial reads or maxBytes truncation could hide relevant context",
+      "Confirm the path, expected encoding, and whether offset/limit or maxBytes truncation could hide relevant context",
+      "Reuse nextCursor only with the same unchanged file and encoding; otherwise restart from an explicit offset",
       "Prefer reading a focused file over dumping many large files into the context window",
     ],
     fallbackStrategy: [
@@ -372,8 +415,8 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Use browser or network tools only when the source of truth is not in the workspace",
     ],
     expectedOutput: [
-      "JSON text including path, size, bytesRead, truncation flag, encoding, and content",
-      "Missing file, denied path, or sensitive-path access should return explicit read errors",
+      "JSON text including path, size, bytesRead, actual byte range, truncation flag, encoding, content, and nextCursor when more bytes remain",
+      "Missing file, denied path, sensitive path, symlink target, stale cursor, or invalid range should return explicit read errors",
     ],
     sideEffectSummary: [
       "Does not mutate the workspace, but may expose sensitive or high-volume content into the model context",
@@ -418,6 +461,86 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Read-only directory enumeration, but can still flood context with irrelevant file inventories if scoped poorly",
     ],
     userVisibleRiskNote: "目录枚举本身风险低，真正的问题是范围过大造成上下文噪声和判断漂移。",
+  },
+  text_search: {
+    family: "workspace-read",
+    riskLevel: "low",
+    needsPermission: false,
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    activityDescription: "Search bounded text matches in the workspace without invoking a shell",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web", "cli"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need to localize implementation, symbols, error messages, or tests before opening an exact file",
+      "Need deterministic fixed-text or regular-expression search while host command execution is unavailable",
+    ],
+    avoidWhen: [
+      "You already know an exact path and only need its contents; prefer file_read",
+      "The request needs semantic/vector retrieval rather than current workspace text matches",
+    ],
+    confirmWhen: [
+      "Overriding .gitignore can include generated or vendor content; keep the search path and glob narrow",
+    ],
+    preflightChecks: [
+      "Set the narrowest path and glob that can contain the target",
+      "Keep maxResults and contextLines bounded so a broad match cannot flood the conversation",
+      "Do not use includeIgnored to bypass denied, hidden, or sensitive path boundaries",
+    ],
+    fallbackStrategy: [
+      "Use file_read after search returns a target path and line range",
+      "Use list_files only when the project structure itself is unknown and a text query is not yet available",
+    ],
+    expectedOutput: [
+      "JSON text with path, line, column, bounded excerpts, ignore diagnostics, and a stable nextCursor when more matches remain",
+      "Invalid regex, cursor mismatch, policy-denied paths, and too-small response budgets should return explicit errors",
+    ],
+    sideEffectSummary: [
+      "Read-only workspace search; it does not execute project code or a host shell command",
+      "Search still reads matching source text into the model context, so broad patterns can increase context use",
+    ],
+    userVisibleRiskNote: "只读代码搜索工具。默认遵守 .gitignore 和路径策略；即使显式覆盖 ignore，也不能读取敏感、隐藏或策略禁止路径。",
+  },
+  file_glob: {
+    family: "workspace-read",
+    riskLevel: "low",
+    needsPermission: false,
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    activityDescription: "Discover bounded workspace file paths without invoking a shell",
+    outputPersistencePolicy: "conversation",
+    channels: ["gateway", "web", "cli"] satisfies ToolContract["channels"],
+    safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need to discover candidate source, test, or configuration files before opening a specific path",
+      "Need stable include/exclude glob filtering while host command execution is unavailable",
+    ],
+    avoidWhen: [
+      "You already know an exact file path and should use file_read directly",
+      "You need text or symbol matches rather than a path inventory; prefer text_search",
+    ],
+    confirmWhen: [
+      "Overriding .gitignore can include generated or vendor paths; keep the search path and include patterns narrow",
+    ],
+    preflightChecks: [
+      "Set the narrowest path, include, and exclude patterns that can contain the target",
+      "Do not use includeIgnored or includeHidden to bypass sensitive or policy-denied path boundaries",
+      "Keep maxResults bounded so broad file inventories do not flood the conversation",
+    ],
+    fallbackStrategy: [
+      "Use file_read after glob returns an exact target path",
+      "Use text_search when a known identifier, error message, or literal can localize the target more directly",
+    ],
+    expectedOutput: [
+      "JSON text with stable file paths, include/exclude criteria, ignore diagnostics, and truncation metadata",
+      "Policy-denied paths, invalid glob input, and too-small response budgets should return explicit errors",
+    ],
+    sideEffectSummary: [
+      "Read-only workspace navigation; it does not execute project code or a host shell command",
+      "Broad inventories can still consume context, so output remains bounded by result and response limits",
+    ],
+    userVisibleRiskNote: "只读文件发现工具。默认遵守 .gitignore 和路径策略；显式覆盖 ignore 或隐藏文件时，敏感与策略禁止路径仍不可见。",
   },
   web_fetch: {
     family: "network-read",
@@ -615,7 +738,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     isConcurrencySafe: false,
     activityDescription: "Create or patch the current conversation plan state for complex multi-step work",
     outputPersistencePolicy: "external-state",
-    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    channels: ["gateway", "web", "cli"] satisfies ToolContract["channels"],
     safeScopes: ["local-safe", "web-safe"] satisfies ToolContract["safeScopes"],
     recommendedWhen: [
       "Need to lazily create or maintain a single current plan for a complex multi-step task that will span multiple turns, modules, or blockers",
@@ -905,7 +1028,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     isConcurrencySafe: true,
     activityDescription: "List local desktop display and window targets that can be used for screen capture",
     outputPersistencePolicy: "conversation",
-    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    channels: ["gateway", "web", "cli"] satisfies ToolContract["channels"],
     safeScopes: ["local-safe"] satisfies ToolContract["safeScopes"],
     recommendedWhen: [
       "Need to discover available displays or windows before choosing a screen capture target",

@@ -41,6 +41,28 @@ describe("coding agent CI runner", () => {
     expect(() => resolveCodingCiProfile("confirm")).toThrow(/mode/i);
   });
 
+  it("projects navigation-read as an immutable read-only navigation profile", () => {
+    const profile = resolveCodingCiProfile("navigation-read");
+    expect(profile).toEqual({
+      mode: "navigation-read",
+      permissionMode: "plan",
+      toolAllow: ["file_read", "list_files", "text_search", "file_glob"],
+    });
+
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      "--permission-mode", "plan",
+      "--tool-allow", "file_read,list_files,text_search,file_glob",
+      "--tool-deny", "run_command,spawn_subagent",
+    ]));
+    expect(args.join(" ")).not.toMatch(/apply_patch|file_write|file_delete|accept-edits/);
+  });
+
   it("builds one fixed-budget JSONL invocation without shell or push tools", () => {
     const args = buildAgentRunArgs({
       workspace: "C:/fixture/workspace",
@@ -202,6 +224,7 @@ describe("coding agent CI runner", () => {
     const planRoot = await createGitFixture();
     await fs.writeFile(path.join(planRoot, "tracked.txt"), "changed\n", "utf-8");
     expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "plan" })).toThrow(/read-only/i);
+    expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "navigation-read" })).toThrow(/read-only/i);
     expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "command-control" })).toThrow(/read-only/i);
     expect(() => collectWorkspaceArtifact({ workspace: planRoot, mode: "safety-probe" })).toThrow(/read-only/i);
 

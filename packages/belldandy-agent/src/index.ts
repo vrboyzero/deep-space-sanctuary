@@ -1,4 +1,5 @@
 import type { JsonObject } from "@belldandy/protocol";
+import type { SystemPromptSection } from "./system-prompt.js";
 import type {
   AgentBudgetCompetition,
   AgentPrefixDrift,
@@ -226,6 +227,11 @@ export type AgentRunInput = {
    * Compatible with OpenAI's content array format.
    */
   content?: string | Array<AgentContentPart>;
+  /**
+   * Trusted runtime-only replacement for the static agent prompt in one run.
+   * RPC callers must not be allowed to populate this field directly.
+   */
+  promptOverride?: AgentRunPromptOverride;
   meta?: JsonObject;
   /** 当前 Agent ID（传递给 ToolExecutor 用于 per-agent workspace 定位） */
   agentId?: string;
@@ -239,6 +245,12 @@ export type AgentRunInput = {
   roomContext?: RoomContext;
   /** 外部中断信号（用于停止当前 run） */
   abortSignal?: AbortSignal;
+};
+
+export type AgentRunPromptOverride = {
+  text: string;
+  sections?: SystemPromptSection[];
+  metadata?: JsonObject;
 };
 
 export type AgentDelta = {

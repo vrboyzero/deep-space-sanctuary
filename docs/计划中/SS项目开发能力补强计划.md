@@ -1006,7 +1006,7 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
    - 完整事实基线为通过 `11/72`、失败 `61/72`：restart `6/6` 通过，client cancel `5/6` 通过，其余 task 未通过；所有失败均保留真实 `product_workflow` 归因。
    - 任务完成率 `15.28%`、测试通过率 `53.33%`、patch 接受率 `5.56%`、危险操作拦截率 `50%`、recovery 成功率 `0%`；这些结果成为后续阶段的回归起点，不按期望值修饰。
    - 当前 source 新增可观测费用 `$0.02789341`，加上旧 source 历史费用 `$0.03478757` 后累计 `$0.06268098 / $3.00`；54 个 run 为 `provider_reported`、6 个 cancel 为 `unavailable`、6 个 recovery 与 6 个 restart 为 `not_reached`。
-   - 技术债裁决为 `defer`：Provider 人民币实账与 `$0.06268098` 事件 USD 估值仍需人工核对；该外部核对不阻塞阶段 1 的独立产品切片，但完成前阶段 0 继续保持“部分完成”。
+   - 用户已完成人工核对：Provider 人民币实账与事件 USD 估值均确认累计 `$0.06268098` 没有错误，且不超过可核对实际成本；阶段 0 的外部账务闭环完成。
 
 ##### 验证结果
 
@@ -1016,7 +1016,7 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - 聚合 dry-run 返回 `completed 72/72`、缺口 0；正式聚合后 `corepack pnpm aggregate:coding-agent:baseline --verify` 返回 `verified completed 72 run(s)`。
 - 18 份正式 Gateway 日志未出现渠道、Embedding 或实际 compaction 调用标记；Windows `28991`、WSL loopback `28991`、restart fixture 与内部 daemon 进程均已收敛。
 
-#### 阶段 1-1 实现结论：项目规则链与 cwd 上下文诊断（2026-07-26）
+#### 阶段 1-1 实现结论：项目规则链、受控 coding prompt 与结构化终态（2026-07-26）
 
 ##### 已完成内容
 
@@ -1025,8 +1025,10 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
    - 非 Git 目录以 cwd 作为可观察降级根；规则来源记录适用目录、优先级、SHA-256、字节数和最终项目规则 prompt 摘要。
    - 单文件上限固定为 `64 KiB`、单次项目规则总上限固定为 `128 KiB`；超限、总预算耗尽、symlink、非普通文件及 `EACCES` / `EPERM` 均跳过并返回结构化诊断，不静默截断或越界读取。
 
-2. **`packages/belldandy-core/src/query-runtime-message-send.ts` 与 `packages/belldandy-agent/src/prompt-snapshot.ts` 接入**：
+2. **`packages/belldandy-core/src/query-runtime-message-send.ts`、`coding-run-prompt.ts` 与 `packages/belldandy-agent/src/index.ts` 接入**：
    - 仅对带 `codingRun.cwd` 的单次 run 动态解析项目规则，并作为 `project-rules` system delta 进入既有 Agent prompt、provider-native system block 和 prompt snapshot 观测链。
+   - `codingRun` 单次 run 使用 `bounded-coding-run-v1` 最小静态 prompt；state `AGENTS.md`、`SOUL.md`、Bootstrap、全量工具/团队/方法论不再进入该静态部分，项目规则、身份 authority、启动工具约束仍保留为独立动态 delta。
+   - `promptOverride` 是受信任的运行时内部字段，RPC 调用方不能直接写入；Tool Agent 与无工具 OpenAI Agent 均将 override 一致用于 Provider 请求、provider-native system block、prompt snapshot 和 usage 元数据。
    - state workspace / per-agent `AGENTS.md` 继续由 Gateway 启动期身份 workspace 持有；项目规则不写入 stateDir，也不改变身份文件归属。
    - delta metadata 保留 cwd、项目根、来源列表、优先级、内容哈希、大小、预算与跳过诊断，便于运行后核查。
 
@@ -1034,35 +1036,531 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
    - `bdd agent inspect` 兼容既有 `--conversation-id` Gateway 元数据模式，并新增与其互斥的 `--cwd` 本地项目规则诊断模式。
    - `--cwd` 输出 root、来源类型、适用目录、优先级、SHA-256、大小、跳过原因及 prompt 字符数/哈希，不回显规则正文；同时明确 state workspace 身份规则未混入项目 prompt。
 
-4. **测试与项目导航同步**：
-   - 新增 resolver 的 Git/非 Git、嵌套优先级、单文件/总预算、symlink、非普通文件测试，并扩展 CLI/Gateway 与 ToolAgent prompt snapshot 集成回归。
-   - `docs/project-map.md` 已登记项目规则 owner、CLI 入口和 `message.send` 单次注入边界。
+4. **`packages/belldandy-core/src/cli/shared/output-schema.ts` 与 `cli/commands/agent/run.ts` 修改**：
+   - `--output-schema` 先按原始文本严格解析 JSON；仅在输出包含唯一、明确标注的 `json` 代码块时提取其内容，再进行既有 AJV Schema 校验。
+   - Schema 校验成功后，CLI JSONL 的 `run.completed.payload.output.text` 归一化为原始 JSON；多代码块、非 JSON 块、任意 JSON 片段扫描和不匹配 Schema 的输出仍失败关闭。
 
-5. **效果**：
+5. **测试与项目导航同步**：
+   - 新增 resolver 的 Git/非 Git、嵌套优先级、单文件/总预算、symlink、非普通文件测试，并扩展 CLI/Gateway 与 ToolAgent prompt snapshot 集成回归。
+   - `docs/project-map.md` 已登记项目规则 owner、coding run 最小 prompt、CLI 入口和 `message.send` 单次注入边界。
+
+6. **效果**：
    - `bdd agent run --cwd` 现在能够在危险 Shell 工具关闭时直接获得目标仓项目规则，根规则先、近层规则后，不再把 SS 身份 `AGENTS.md` 误当项目规则。
    - `bdd agent inspect --cwd ... --json` 可在不连接 Gateway、不启动模型的情况下复算并审查规则链，规则正文不会出现在诊断输出中。
+   - Windows 冻结样本的静态 coding prompt 为 `1023` 字符，实际 system prompt 为 `2337` 字符 / 约 `597` token；相对旧样本的 `39987` 字符 / 约 `17550` token，固定 `24000` token 预算不再因常驻人格 prompt 耗尽。
+   - Windows 与 WSL2 的 `rules.nested-precedence` 均返回 `nested` 和 `packages/demo/AGENTS.md`，终态 JSON 可由机器评估消费；两端均为 `changed_paths=0`，事件未出现 `.git` 路径。
    - 技术债裁决为 `record_only`：既有 `AgentPromptDeltaType` 中少数 Commander/Delegation 历史类型与清洗白名单仍需在其所属功能切片单独核对，本轮只接入并验证 `project-rules`，不扩大修改面。
 
 ##### 验证结果
 
-- TypeScript 编译无错误，`@belldandy/agent` 与 `@belldandy/core` build 均通过。
-- 4 个定向测试文件、93 个测试全部通过（含 8 个新增项目规则 Unit/Integration 测试及 1 个扩展的 ToolAgent system prompt 回归测试）。
+- TypeScript 编译无错误，Windows `corepack pnpm build` 与 WSL staging 原生 `corepack pnpm build` 均通过。
+- 4 个定向测试文件、94 个测试全部通过（含新增 coding prompt override、单 JSON 代码块归一化及 Provider snapshot/usage 回归测试）。
 - Windows 实际执行 `bdd agent inspect --cwd . --json` 成功返回 1 个项目来源、root-to-cwd 优先级、内容/prompt SHA-256 和空跳过列表，未回显规则正文。
-- WSL 临时 `chmod 000` fixture 返回 `rule_file_unreadable / EACCES` 且规则数为 0；临时目录已清理。未启动 Provider、未运行付费 benchmark、未产生新增模型费用。
+- WSL 临时 `chmod 000` fixture 返回 `rule_file_unreadable / EACCES` 且规则数为 0；临时目录已清理。冻结 `rules.nested-precedence` 的 Windows 与 WSL2 实际 Provider 样本均通过，分别使用 `$0.00045422` 与 `$0.00047817`。
+- 本阶段已保留 7 个 Provider artifact，新增事件 USD 估值 `$0.00390303`，累计 `$0.06658401 / $3.00`；阶段 0 的 `$0.06268098` 人工账务核对仍有效。新增阶段 1 估值的 Provider 人民币实账核对裁决为 `defer`，待后续人工账单核对，不将事件估值表述为实账。
+
+#### 阶段 1-2 实现结论：受限 `text_search` 代码导航原语（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/builtin/text-search.ts` 新建**：
+   - 新增不依赖 Shell 的 `text_search`，支持 fixed/regex、大小写、相对搜索根的 glob、最大结果数、上下文行和输入指纹绑定的稳定 cursor。
+   - 递归扫描限制在 workspace / extra workspace root 内；根目录、递归目录、`.gitignore` 和文件读取均通过 `lstat` 检查，符号链接、越界、敏感、隐藏、二进制、超大、策略禁止与不可读路径不会进入结果。
+   - 默认按层级 `.gitignore` 处理规则及否定规则；`includeIgnored` 只显式覆盖 ignore，并在结果 metadata / payload 中保留审计标记，不能绕过敏感、隐藏或策略边界。
+   - 结果按稳定路径和行号排序；单行、单页和总响应字节均有上限，无法容纳至少一条匹配时明确失败，不返回损坏 JSON。
+
+2. **`packages/belldandy-skills/src/index.ts`、`tool-contract-v2-profiles.ts`、`executor.test.ts` 接入/修改**：
+   - 导出低风险、只读 `workspace-read` Contract，允许 `gateway`、`web` 和 `cli` 安全域。
+   - CLI coding run 的受限 tool set 现在可发现 `text_search`，与既有 `file_read` / `list_files` 一同受 Contract、launch spec 和 permission mode 约束。
+
+3. **`packages/belldandy-core/src/bin/gateway-main.ts` 与 `cli/shared/output-schema.test.ts` 修改/新建**：
+   - Gateway builtin pool、core tool 列表和启动日志登记 `text_search`，危险 Shell 工具关闭时仍可直接提供代码定位能力。
+   - 为 `--output-schema` 补多 `json` 代码块负向回归，确认唯一代码块归一化不会放宽为任意片段扫描。
+
+4. **效果**：
+   - Agent 可在大型工作区按关键字或正则精确定位当前代码，不再依赖递归列目录或开启宿主 Shell。
+   - 搜索结果可在有限上下文预算内继续分页，且 cursor 不能被不同查询、路径、ignore 或大小写条件复用。
+   - `.gitignore` 覆盖保持可观察，Windows 与 WSL2 均对相同 fixture 返回一致的工具层行为。
+
+##### 验证结果
+
+- TypeScript 编译无错误，Windows 与 WSL staging 的 `corepack pnpm build` 均通过。
+- 70 个定向测试全部通过（含 5 个新增 `text_search` 行为测试、1 个多 JSON 代码块负向测试及 CLI coding-run Contract 可见性回归）。
+- Windows 与 WSL2 均验证 fixed/regex、glob、上下文、cursor、`.gitignore`、隐藏/敏感/二进制/策略路径、响应预算和 CLI 受限工具发现；未调用 Provider，因此累计事件 USD 估值仍为 `$0.06658401 / $3.00`。
+
+#### 阶段 1-3 实现结论：受限 `file_glob` 与分页/分段 `file_read`（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/builtin/workspace-navigation.ts` 新建**：
+   - 抽取 `text_search` 与 `file_glob` 共用的受限工作区遍历边界，统一处理 workspace / extra workspace root、`lstat` / realpath、符号链接、层级 `.gitignore`、隐藏/敏感/策略路径及稳定排序。
+   - 统一 include/exclude 的 glob 过滤和 skip 诊断；嵌套 ignore、被忽略搜索根和 policy 边界均在下钻前停止。
+
+2. **`packages/belldandy-skills/src/builtin/file-glob.ts` 与 `file-glob.test.ts` 新建**：
+   - 新增不经 Shell 的 `file_glob`，支持 include/exclude、搜索根、`.gitignore` 覆盖、隐藏路径显式包含、最大结果数与响应字节预算。
+   - 返回稳定排序的路径清单、截断状态和 ignore/skip 审计；敏感、策略禁止和工作区外路径不能因 ignore 覆盖而暴露。
+
+3. **`packages/belldandy-skills/src/builtin/text-search.ts`、`file.ts` 与对应测试修改**：
+   - `text_search` 改为复用共享导航层，保留 fixed/regex、上下文、二进制识别、响应预算和输入绑定 cursor 行为。
+   - `file_read` 新增 `offset` / `limit`、文件状态和 encoding 绑定的 `nextCursor`、实际字节范围、旧 `maxBytes` 兼容；读取前以 `lstat` / realpath 复核直接链接、解析后越界、敏感和策略禁止路径。
+
+4. **`packages/belldandy-skills/src/index.ts`、`tool-contract-v2-profiles.ts`、`executor.test.ts` 与 `packages/belldandy-core/src/bin/gateway-main.ts` 接入/修改**：
+   - 导出并注册 `file_glob`，加入 Gateway builtin pool、core tool 名称和安全工具日志。
+   - `file_glob` 与分段 `file_read` 的 Tool Contract V2 允许 `gateway`、`web`、`cli` 受限安全域；CLI coding run 的受限工具集可发现三种导航原语。
+
+5. **`docs/project-map.md` 更新**：
+   - 登记共享导航 owner、`file_glob`、分段 `file_read` 和其主要安全/分页边界。
+
+##### 效果
+
+- Agent 在危险 Shell 未开启时，可以先按路径模式发现候选文件、再精确搜索、最后通过稳定 cursor 读取大文件后续分段，减少递归枚举和首段截断造成的定位盲区。
+- `text_search` 与 `file_glob` 对 ignore、隐藏、敏感、策略路径和符号链接采用同一套可审计语义，Windows 与 WSL2 fixture 返回一致。
+- `file_read` 的后续段不能被不同路径、不同 encoding 或文件变更复用，且直接符号链接会失败关闭。
+
+##### 验证结果
+
+- TypeScript 编译无错误，Windows `corepack pnpm build` 与 WSL staging 原生 `corepack pnpm build` 均通过。
+- 7 个定向测试文件、124 个测试全部通过（含 8 个新增共享导航、`file_glob` 与分段 `file_read` 测试）。
+- Windows 与 WSL2 均实际验证 include/exclude、嵌套 `.gitignore`、隐藏/敏感/策略边界、稳定排序、响应预算、byte range/cursor、文件变更 cursor 失效及直接符号链接拒绝；未调用 Provider，因此累计事件 USD 估值仍为 `$0.06658401 / $3.00`。
+
+#### 阶段 1-4 实现结论：只读大仓库导航与输出 Schema 数据契约（2026-07-26）
+
+##### 已完成内容
+
+1. **`benchmarks/coding-agent/v1/task-manifest.json` 与 `task-manifest.schema.json` 修改**：
+   - 新增 `navigation-read` 执行 profile，仅允许 `file_read`、`list_files`、`text_search`、`file_glob`，继续禁止 `run_command` 与 `spawn_subagent`。
+   - 将冻结的 `navigation.large-repository` 任务切换到该 profile，使真实定位回归能覆盖阶段 1 的三种受限导航原语，而不放开宿主 Shell。
+
+2. **`packages/belldandy-core/src/cli/commands/agent/run.ts` 扩展**：
+   - `--output-schema` 在发往 Gateway 前序列化为明确的、不可执行的输出数据契约，要求模型只返回能通过 Schema 的原始 JSON。
+   - 保留本地 AJV 严格校验；唯一明确 JSON 代码块归一化后的文本会同步回写终态事件，不放宽类型、必填字段或常量约束。
+   - `bdd agent continue` 继续复用同一入口，因此同样获得 Schema 契约与终态校验，不形成第二条实现链。
+
+3. **`packages/belldandy-core/src/cli/commands/agent/run.test.ts` 与 `controls.test.ts` 修改**：
+   - 固化 `lineHint: { const: 97 }` 会作为模型可见契约传递，并确认直接 run 的终态仍按该 Schema 通过。
+   - 新增同一 Conversation 的 `continue --output-schema` 集成回归，确认续读提示包含精确 Schema，且结构化终态继续通过校验。
+
+4. **`examples/ci/README.md` 与 `docs/project-map.md` 更新**：
+   - 明确 CI 使用的 `--output-schema` 既是模型输出数据契约，也是本地严格校验门禁；项目地图登记 `run` / `continue` 的共同职责与 owner 边界。
+
+5. **效果**：
+   - `navigation.large-repository` 的 Windows 与 WSL2 真实 Provider 样本均返回 `lateSegmentAnchor`、`src/segments/segment-071.mjs` 和数值 `lineHint: 97`；机器 evaluator 均为 `passed`，零工作区改动。
+   - 两端事件仅出现受限读取工具：Windows 使用 `text_search`、`file_read`，WSL2 使用 `list_files`、`text_search`、`file_read`；未调用 Shell，冻结的忽略私有文件约束保持由任务 evaluator 校验。
+   - `navigation-schema-aggregate-a2` 聚合保留为单任务双平台的预期 `partial 2/72` 覆盖，不将该局部样本误表述为阶段 0 全量基线或整体能力评分。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows 当前 `corepack pnpm build` 通过；WSL staging 的同一运行时代码构建已通过。
+- Windows `19` 个阶段 1 定向测试文件、`276` 个测试全部通过；WSL2 `18` 个跨平台定向文件通过，`263 passed | 11 skipped`，Windows 专用 launcher 测试按平台排除。
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 均通过；Windows `28991` 无监听，WSL 无 Gateway 进程。
+- 双平台真实 artifact 已聚合到 `artifacts/coding-agent-stage1-rules-206883b/navigation-schema-aggregate-a2/`。本批 4 次 Provider 事件 USD 估值合计 `$0.00162297`（含修复前两次 Schema 失败样本），累计 `$0.06820698 / $3.00`；阶段 0 的 `$0.06268098` 人工人民币实账核对仍有效，阶段 1 新增估值的实账核对继续按 `defer` 保留。
+
+#### 阶段 2-1 实现结论：受治理命令入口与 fail-closed sandbox 能力探针（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/query-runtime-message-send.ts` 与 `packages/belldandy-core/src/cli/commands/agent/run.test.ts` 修改**：
+   - 每个 `codingRun` 的内部 launch spec 固定携带 `commandSandbox: "required"`。
+   - CLI coding-run 集成断言覆盖该运行时约束的 Gateway 投影，避免后续接线静默丢失 sandbox 要求。
+
+2. **`packages/belldandy-skills/src/types.ts`、`command-sandbox.ts` 与 `command-sandbox.test.ts` 新建/修改**：
+   - 定义窄化的 `commandSandbox: "required"` 运行时契约和命令 sandbox 准入 owner。
+   - 当前未配置真实 OS sandbox backend 时，`command-exec` 返回 `sandbox_unavailable` 语义和平台、要求、状态元数据，不允许退回宿主执行。
+
+3. **`packages/belldandy-skills/src/executor.ts`、`executor.test.ts`、`builtin/system/exec.ts` 与 `exec.test.ts` 修改**：
+   - ToolExecutor 在请求人工审批和进入工具实现前执行 sandbox 准入，拒绝结果统一为 `permission_or_policy` 并进入既有审计路径。
+   - `run_command` 自身保留同一防御性检查，避免未来调用方绕过 Executor 后以 `shell: true` 回退到宿主。
+
+4. **`docs/project-map.md` 更新**：
+   - 登记 `command-sandbox.ts` 的模块归属、职责和 fail-closed 边界。
+
+##### 效果
+
+- coding profile 不能在目标平台缺少 sandbox backend 时获得宿主命令执行；拒绝发生在审批请求和命令启动之前，并返回可诊断元数据。
+- 既有非 coding 高权限命令路径不因本切片改变行为；该要求只作用于 `command-exec` family 的 coding launch spec。
+- 本切片明确不宣称已经具备真实 OS sandbox、结构化 argv/command plan、PTY/job、stdin/resize/cursor 或跨平台进程树清理闭环。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows 主工作区与 WSL2 staging 的 `corepack pnpm build` 均通过。
+- Windows 与 WSL2 的 4 个定向测试文件、111 个测试全部通过，覆盖 coding launch spec 投影、Executor 审批前拒绝、`run_command` 防御性拒绝和非命令工具不受影响。
+- WSL2 首次测试失败仅因 staging 未同步已修改的 `run.test.ts` 断言；同步后复跑通过，未修改产品运行时代码。staging 中既有 `packages/belldandy-browser/bin/relay.mjs` 在同步前后 SHA-256 一致。
+
+#### 阶段 2-2 实现结论：结构化 argv/command plan 与 OCI sandbox backend（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/command-plan.ts`、`command-sandbox.ts` 与对应测试新建/扩展**：
+   - 新增 `commandPlan` 的 `executable`、`argv`、相对 cwd、env diff、`network`、`writeScope`、`stdinMode` 与 timeout 解析；拒绝 shell entrypoint、交互 stdin、网络访问、路径穿越和未声明字段。
+   - 选定本机 OCI CLI（Docker/Podman）为首个跨 Windows/WSL/Linux backend；仅接受 digest 固定、预加载的镜像，probe 只检查 daemon，不启动容器或拉取镜像。
+   - OCI invocation 固定 `--pull=never`、`--network none`、只读容器根文件系统、能力丢弃、`no-new-privileges`、PID/CPU/内存/tmpfs 边界、显式 entrypoint 与单一 canonical workspace bind mount。
+
+2. **`packages/belldandy-skills/src/builtin/system/exec.ts`、`executor.ts` 与 `tool-contract-v2-profiles.ts` 修改**：
+   - `sandbox-required` coding run 不再进入 `shell: true` 路径，必须经结构化 plan 生成 argv；Executor 在请求审批前继续进行 backend 准入，backend 可用但 plan 不合法时也在审批前拒绝。
+   - sandbox cwd 经 realpath 再选择最窄允许根；env 通过一次性、工作区外的受限文件交给 OCI CLI，正常和失败路径均清理，清理失败会以无路径诊断失败关闭。
+   - 结构化 plan、后端、网络和写入范围进入 Tool metadata；审计与 coding-run 事件只保留 env key，所有 env value 都脱敏。
+
+3. **`packages/belldandy-core/src/coding-run-prompt.ts`、`coding-run/contracts.ts` 与配置/导航文档修改**：
+   - 最小 coding prompt 明确要求 sandboxed `run_command` 使用 `commandPlan`，不发送 Shell 字符串、管道、重定向或 shell entrypoint。
+   - `.env.example`、发行模板、README 和项目地图登记 `BELLDANDY_COMMAND_SANDBOX_*` 配置与 fail-closed 语义；该配置不进入 WebChat 设置面，仍由本机受信任配置管理。
+
+4. **效果**：
+   - 已配置且 daemon 可达时，coding run 只能以无 Shell 的 OCI argv 执行项目代码，容器不能访问网络、自动拉镜像或挂载工作区外路径。
+   - backend 缺失、daemon 不可达、镜像未 digest 固定、cwd 解析越界或 plan 非法时均不会请求执行宿主命令。
+   - 本切片不宣称 PTY/job、stdin/resize、长期后台任务、OCI lease/container ID 恢复或完整进程树闭环已经完成。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows `corepack pnpm build` 通过。
+- 5 个定向测试文件、112 个测试全部通过（含 8 个新增 command plan、OCI invocation/env-file、镜像 pin 与 env 脱敏回归）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 均通过；后者只有既有 LF/CRLF 提示。
+- Windows 实际 OCI probe 在 Docker CLI 存在但 daemon 未启动时返回 `sandbox_unavailable / runtime_unavailable`，未启动 Docker Desktop、未拉取镜像、未执行宿主命令。
+- WSL2 的 mounted-workspace 定向测试未执行：共享 Windows `node_modules` 缺少 Linux `@rollup/rollup-linux-x64-gnu` optional dependency。裁决为 `defer`，待使用 `/tmp` frozen-lockfile staging 后补双平台实际 backend smoke；未重装或覆盖共享依赖。
+
+#### 阶段 2-3 实现结论：OCI sandbox lease、读写策略与隔离 fixture（2026-07-26）
+
+##### 已完成内容
+
+1. **packages/belldandy-skills/src/command-sandbox-lease.ts 与 command-sandbox-lease.test.ts 新建**：
+   - 每次 OCI 执行生成独立 lease ID、容器名和工作区外 CID 文件；OCI invocation 改为带 name、cidfile 和 lease label 的显式生命周期，不再依赖 --rm 隐式回收。
+   - 正常退出、超时、取消和 runtime 失败后均经无 Shell 的 rm --force 回收；CID 可用时优先按 CID 清理，失败保留无敏感值的 lease/container 元数据并 fail-closed。
+
+2. **packages/belldandy-skills/src/command-sandbox.ts、builtin/system/exec.ts 与对应测试修改/新建**：
+   - 只读计划仅以 readonly bind mount 挂载 canonical workspace；显式可写计划也只拥有该单一 workspace bind mount，容器 root 继续只读、网络继续为 none。
+   - 工具终态先处理 OCI lease 与 artifacts，再清理工作区外 env-file；即使容器清理失败，两个临时文件路径仍会尝试清理，任一清理失败都会保持 environment_error。
+
+3. **scripts/verify-command-sandbox-oci-fixture.mjs、package.json、README、环境模板与项目地图修改**：
+   - 新增显式的 verify:command-sandbox-oci 入口，固定检验 root filesystem 只读、workspace 只读、workspace 写入和 network none 四项 fixture，以及每次容器回收。
+   - 入口只使用已运行 daemon 和预加载的 digest 固定 Node 镜像；不启动 daemon、不拉取镜像，也不进入默认 build/test。
+
+4. **效果**：
+   - sandbox-required coding run 的容器执行具备可审计、可定位、可显式清理的 lease/container identity，停止路径不再只依赖 OCI CLI 客户端存活。
+   - 读写 scope 的容器参数和固定 fixture 同时覆盖，workspace 外路径、容器 root 和网络仍保持收紧边界。
+   - 缺少 backend、镜像或 runtime 时继续 fail-closed；本切片未开放 PTY、stdin、resize、cursor 或后台 job。
+
+##### 验证结果
+
+- TypeScript 编译无错误：Windows 主工作区的 corepack pnpm build 通过。
+- 8 个定向测试文件、119 个测试全部通过（含 7 个新增 lease、清理失败、写入 scope 与 OCI fixture 契约测试）。
+- corepack pnpm verify:coding-benchmark 与 corepack pnpm verify:coding-ci 通过。
+- 手动 OCI fixture 入口在未配置 backend、runtime 和 digest 镜像时于容器启动前 fail-closed；本机 Docker CLI 存在，但 docker version 报 dockerDesktopLinuxEngine pipe 不存在，未启动 Docker Desktop、未拉取镜像。
+- Windows/WSL2 的真实 OCI fixture 未执行：当前缺少已运行 daemon、预加载 Node 镜像，且 WSL2 仍缺独立 frozen-lockfile staging。裁决为 defer。
+
+#### 阶段 2-4 实现结论：PTY/job 生命周期、进程树与 cursor 收敛（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/command-job.ts`、`command-job-runtime.ts` 与测试新建/扩展**：
+   - 建立以稳定 UUID 为 key 的 command job owner，统一持有 stdin、PTY resize、UTF-8 字节 cursor、终态历史、超时、进程树终止及 OCI cleanup 回调。
+   - pipe/PTY 运行时缓存监听器注册前的输出和终态；pipe 流使用 `StringDecoder` 保持跨 chunk 的 UTF-8 字符完整，避免 cursor 返回替换字符或丢失快速进程的终态。
+   - `timeoutMs` 现在会被实际执行，并在启动期取消到达时等待真实进程出现后再终止；默认 timeout 有界，工具入口继续受 `ToolPolicy.maxTimeoutMs` 收紧。
+
+2. **`packages/belldandy-skills/src/builtin/system/command-job.ts`、`packages/belldandy-core/src/bin/gateway-main.ts` 与 shutdown 资源修改**：
+   - 新增只面向 sandbox-required coding run 的 `command_job` start/read/write/resize/cancel/status/list 入口；OCI lease ID 复用为 job ID，lease、env-file 与进程树由同一 owner 清理。
+   - Gateway shutdown 会先取消活动 job；重启时只恢复非敏感生命周期元数据，未终态 job 标为 `lost` 并尝试按生成的容器名收敛 lease，输出和 stdin 不持久化。
+
+3. **效果**：
+   - 长命令可以从稳定 cursor 读取输出，并能精确写入 stdin、调整 PTY、取消或查询终态；过期 cursor 和 Gateway 重启都有可诊断结果。
+   - 进程启动、快速退出、超时和 Gateway shutdown 不再留下没有 owner 的本地进程或 OCI cleanup 路径。
+   - 没有安装 `node-pty` 的交互式请求保持失败关闭，不降级为宿主 Shell。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 3 个定向测试文件、10 个测试全部通过（含新增 timeout、启动期取消、早期输出/终态回放、快速退出 cleanup 和分片 UTF-8 回归）。
+- Gateway shutdown 的 command job owner 接线由阶段 2 定向集覆盖；真实 OCI fixture 未执行，继续遵守已有 defer 条件。
+
+#### 阶段 2-5 实现结论：命令审批安全预览（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/command-plan.ts`、`types.ts` 与 `executor.ts` 修改**：
+   - 审批请求新增严格的 `CommandPermissionPreview` 投影；仅命令工具可以生成，env 只保留键名，stdin 只保留“已提供”标记，敏感 argv、赋值和 URL query 值会被掩码。
+   - ToolExecutor 在审批前使用参数预检后的 command plan 构建预览，不改变现有 tool-call、conversation、agent-run 与 worktree 的精确绑定。
+
+2. **`packages/belldandy-core/src/coding-run/pending-tool-permission-runtime.ts`、`gateway-conversation-event-adapter.ts`、`tui/state.ts` 与 `tui/app.tsx` 修改**：
+   - pending runtime、Gateway event adapter 和 TUI state 都会再次校验 preview，并丢弃附加在非命令工具上的字段。
+   - TUI 审批栏在固定高度内显示 action、已脱敏 command plan、job/cursor/resize 摘要；既有 Allow/Deny 键位和审批响应契约不变。
+
+3. **效果**：
+   - 用户审批前可以看到命令的可执行文件、argv、cwd、网络、写入范围、stdin 模式和环境键名，而不会看到 env value、stdin 正文或识别出的敏感参数。
+   - 跨 Gateway 事件和 TUI 的预览是有界、可重验的投影，不接受原始工具参数的隐式透传。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 14 个阶段 2 定向测试文件、147 个测试全部通过，含命令 preview 脱敏、审批精确绑定、Gateway 再投影、TUI 状态、job timeout 与进程树回归。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 和 `git diff --check` 通过；后者仅输出既有 LF/CRLF 提示。
+
+#### 补阶段 2-6 实现结论：Windows OCI PTY host 与可重复 backend Gate（2026-07-27）
+
+##### 已完成内容
+
+1. **`command-job-pty-host-runtime.ts`、`command-job-pty-host.ts` 与对应测试新建**：
+   - 在现有 `CommandJobProcess` interface 后新增隔离 PTY host Adapter 与窄 IPC helper，把可能阻塞的原生 `node-pty.spawn` 移出 Gateway 进程。
+   - host 启动受同一 job deadline 监督；握手超时、IPC 失败和晚到进程均终止 host 进程树，stdin、resize、输出和终态只通过受限消息转发。
+   - 隔离 host 使用 node-pty 默认 ConPTY backend，原 `useConptyDll` 的 AttachConsole 风险由可终止子进程收敛，不再阻塞 Gateway 事件循环。
+
+2. **`command-job.ts`、`command-job-runtime.ts` 与 `builtin/system/command-job.ts` 修改**：
+   - `timeoutMs` 从持久化 `starting` 状态开始生效，异步 runtime factory 超时后执行 cleanup，晚到进程立即终止。
+   - `command_job` 将策略收紧后的同一 timeout 传给 PTY host watchdog；pipe 路径和既有 job/cursor/lease interface 不变。
+
+3. **`verify-command-sandbox-oci-fixture.mjs`、README 与项目地图扩展**：
+   - 显式 `verify:command-sandbox-oci` 现在顺序验证四项 isolation fixture，以及真实 pipe/PTY job 的输出、cursor、resize、cancel 和 lease/container 回收。
+   - source 与 build 运行态均从 helper 自身模块目录启动 host，容器命令 cwd 仍保持受控 workspace，不依赖临时目录解析 `tsx`。
+
+4. **效果**：
+   - Windows 原生 ConPTY 启动不再能同步阻塞 Gateway；真实 Docker PTY job 可以输出、resize、取消并回收容器。
+   - 后续 Windows/WSL 使用同一条显式命令验证隔离和 job 生命周期，避免一次性手工 smoke 漂移。
+   - 启动失败继续 fail-closed，不会回退宿主 Shell、扩大网络或挂载范围。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 8 个阶段 2 定向测试文件、34 个测试全部通过，含 4 个新增 PTY host interface/watchdog/IPC 失败回归和 OCI job fixture 契约。
+- Windows `corepack pnpm verify:command-sandbox-oci` 通过全部 OCI isolation 与 pipe/PTY command job fixtures；验证后 sandbox lease label 容器数与 PTY host 残留进程数均为 `0`。
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过。
+
+#### 阶段 3-1 实现结论：只读 run-start diff/review snapshot（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts` 与 `workspace-change-snapshot.test.ts` 新建**：
+   - 在 stateDir artifact 下保存 run-start 工作区镜像，不写入 workspace、Git index 或 Git 历史。
+   - 支持 Git 与普通目录的 baseline/current/diff hash、修改/新增/删除、精确内容重命名、二进制和超大 diff 状态，以及绑定 snapshot ID 的 hunk cursor 分页。
+   - stateDir 位于 workspace 内时排除自身 artifact，避免审查结果被 snapshot 产物污染。
+
+2. **`packages/belldandy-core/src/cli/commands/agent/run.ts` 与 `run.test.ts` 修改**：
+   - 带 `codingRun.cwd` 的 Headless run 在 Gateway 请求前捕获 baseline，并在终态 JSONL `payload.changes` 投影 baseline/current/diff hash、文件数、截断状态及 artifact/patch 路径。
+   - snapshot 失败仅返回 `unavailable`，不改变既有 run 退出码、终态顺序或 output-schema 失败投影。
+
+3. **`packages/belldandy-core/src/tui/runtime.ts`、`state.ts`、`app.tsx` 与对应测试修改**：
+   - TUI run-start 捕获 baseline，终态幂等生成 snapshot；snapshot 不可用时 Conversation 仍可开始。
+   - Changes 的既有 Workspace 框显示当前 run 的文件/hunk 状态、diff hash 与首个 unified hunk 的有限片段；晚到的旧 run 结果按 `agentRunId` 丢弃。
+
+4. **`docs/project-map.md` 更新**：
+   - 登记 workspace change snapshot 的 owner 边界，以及 Headless/TUI 对只读审查 artifact 的接线位置。
+
+5. **效果**：
+   - Headless 与 TUI 都能审查同一次 run 前后的文件系统差异，并以 hash 识别审查对象，而不是将当前工作区状态误认为历史结果。
+   - 二进制、精确重命名和容量受限的差异明确带状态，不伪造可审 hunk；紧凑 TUI 仍同时保留状态、hash 与补丁证据。
+   - 本切片未宣称支持相似度重命名、恢复、stage/commit 或 Git 远端写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 5 个定向测试文件、32 个测试全部通过，覆盖 snapshot Git/非 Git、artifact 自排除、Headless 终态投影、TUI 终态幂等与紧凑 Changes 展示。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2a 实现结论：hash 绑定 review verdict 有效性（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts` 扩展**：
+   - 新增公开 `readSnapshot()`，以副本返回已持久化的 summary，供 review module 复核 snapshot ID、baseline 与 diff hash，而不暴露其私有 artifact 路径。
+
+2. **`packages/belldandy-core/src/workspace-change-review.ts` 与 `workspace-change-review.test.ts` 新建**：
+   - 新增 `record()` / `verify()` 深模块 interface；record 先核对 caller diff hash 与真实 snapshot，verify 以同一 baseline 重新生成只读 snapshot 并返回 `valid` 或 `invalidated`。
+   - review verdict 仅允许 `approved` / `needs_changes`；ID、hash、持久化记录均失败关闭，review artifact 存在 snapshot 自排除 storage 内。
+
+3. **`packages/belldandy-core/src/index.ts` 与 `docs/project-map.md` 修改**：
+   - 将 snapshot/review runtime 与类型作为 core 公共模块导出，项目地图登记 review owner 和自排除约束。
+
+4. **效果**：
+   - 已审 diff 在工作区随后变化后不能继续被视为有效；无变化时 verdict 保持有效，Git index 和 workspace 文件不由 review 操作写入。
+   - stateDir 位于 workspace 时，review record 也不会污染待审 diff。
+   - 本切片不包含用户提交 verdict 的 TUI/CLI 交互，也不包含 Git `HEAD`、revision 或 worktree base 作为实际 diff 基线。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 6 个定向测试文件、35 个测试全部通过（含 3 个新增 review validity、伪造 hash、Git index 与 self-storage 回归）。
+- Git 与普通目录均验证 review hash 失效；验证过程只写 stateDir artifact，未写 Git index 或 workspace 内容。
+
+#### 阶段 3-2b 实现结论：Git 实际基线物化（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts` 扩展**：
+   - `WorkspaceChangeSnapshotRuntime.captureBaseline()` 新增 `git_head`、`git_revision` 与 `worktree_base` source；后两者要求调用方提供 revision，所有 Git ref 都先解析为不可变 commit SHA，并同时写入 baseline/snapshot 元数据。
+   - Git baseline 通过只读 `rev-parse`、`ls-tree` 与流式 `cat-file` 将目标 tree/blob 保存到既有 stateDir artifact，再复用已有未跟踪文件、二进制、容量状态、unified hunk 和 cursor 逻辑；不执行 checkout、不写 Git index、worktree 或历史。
+   - Git tree 仅保留请求 workspace root 下的路径，并继续排除 stateDir 自身 artifact；canonical content hash 不再包含未参与 diff 判定的宿主 mode，避免 Windows Git 标准 mode 与 `lstat` 权限位造成空 diff 的 hash 漂移。
+
+2. **`packages/belldandy-core/src/workspace-change-snapshot.test.ts` 扩展**：
+   - 覆盖指定 revision、Git HEAD 与显式 worktree base 分别作为真实 baseline 的补丁内容和不可变 SHA；验证预先存在的工作区修改、未跟踪文件和 Git index/status 不被 snapshot 操作改变。
+   - 覆盖嵌套 workspace scope，以及干净 Git HEAD 在 Windows 权限位差异下仍产生空 diff 且 baseline/current hash 一致。
+
+3. **`docs/project-map.md` 修改**：
+   - 更新 snapshot owner 的四类 baseline、Git tree/blob artifact 物化和无写入边界。
+
+4. **效果**：
+   - 调用方现在可以可靠审查“相对 HEAD / 指定 revision / 已知 worktree base 的修改”，而不再把运行开始时的文件镜像误作 Git 基线。
+   - 已持久化的 baseline 绑定解析后的 commit，不受之后分支移动影响；review 继续通过同一 baseline 重算 hash。
+   - `worktree_base` 不猜测 Git worktree 的历史基点，必须由拥有该生命周期的调用方传入已知 base revision；本切片不新增 CLI/TUI 选择控件，也不开放 restore、stage、commit 或远端 Git 写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 6 个定向测试文件、39 个测试全部通过（含 4 个新增 Git 实际基线、嵌套 scope 与跨平台 mode hash 回归）。
+- 指定 revision、HEAD 和 worktree base 均验证为实际 diff 基准；测试确认 Git index/status 未被 snapshot 写入。
+
+#### 阶段 3-2c 实现结论：恢复保证等级投影（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-recovery.ts` 与 `workspace-change-recovery.test.ts` 新建**：
+   - 新增独立的恢复等级 owner：仅当同一 `WorkspaceRevision` checkpoint 覆盖 snapshot 的全部变更路径时输出 `exact`；普通 Git worktree 不会被推断为受管 worktree。
+   - `managed_worktree` 仅接受未来可信 lifecycle owner 显式提供的 ID；Shell、MCP、未知路径、跨 workspace、部分 checkpoint 覆盖与重命名源路径缺失均降级为 `detect_only`。
+   - checkpoint 缺失或 artifact 读取异常按失败关闭原则返回 `checkpoint_missing`，不把可疑改动标为可自动恢复。
+
+2. **`workspace-revision.ts`、`workspace-change-snapshot.ts`、`workspace-change-review.ts` 及对应测试修改**：
+   - `WorkspaceRevisionRuntime.getChangeCoverage()` 只暴露已提交的相对路径覆盖范围；snapshot 以此计算并持久化恢复等级，`diffHash` 继续只绑定补丁内容。
+   - 历史 snapshot artifact 缺少 recovery 字段时读取为 `detect_only/checkpoint_missing`，保持 version 1 兼容；review 复核时恢复等级变化不会使相同 diff verdict 失效。
+
+3. **`cli/commands/agent/run.ts`、`tui/runtime.ts`、`tui/app.tsx` 与对应测试修改**：
+   - Headless 终态 JSONL `payload.changes` 新增 recovery guarantee、checkpoint/worktree reference 或 detect-only reason。
+   - TUI 在终态以当前 `agentRunId` 查询 checkpoint candidate，Changes 视图以紧凑摘要同时显示 diff 规模与恢复等级；旧/不完整 UI snapshot 安全降级而不抛错。
+
+4. **`index.ts` 与 `docs/project-map.md` 修改**：
+   - 导出恢复等级 runtime/type，并登记 snapshot、review 与 TUI/Headless 对该单一恢复语义的职责边界。
+
+5. **效果**：
+   - 用户可以区分“当前 diff 可精确恢复”和“只检测到改动但不能承诺自动恢复”，不会将 Shell 或未知写入错误标为 safe restore。
+   - Headless 与 TUI 对同一 run 使用相同 checkpoint 证据；变更审查仍只以 baseline/current/diff hash 判断内容是否变化。
+   - 本切片不改变 restore 的写操作、冲突处理、Git stage/commit/worktree remove 或远端 Git 行为。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 8 个定向测试文件、48 个测试全部通过，覆盖 exact、partial、缺失、跨 workspace、重命名、旧 artifact、Headless 投影、TUI 投影与 review hash 不变性。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2d 实现结论：restore 冲突证据与停止（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-revision.ts` 与 `workspace-revision.test.ts` 修改**：
+   - `previewRestore()` 对 hash 不一致的文件返回记录的 Agent 最终 hash、当前 hash 与稳定冲突原因，并在 checkpoint stateDir 下写入只含相对路径、hash、存在性结论和时间戳的 conflict artifact；不记录文件内容或 workspace 绝对路径。
+   - `restore({ apply: true })` 在初始 dry-run 成功后、首个文件写入前再次完成全部目标的 preview gate；任一目标此时冲突即返回 `applied: false` 与证据 artifact，已检测冲突不会造成其他目标部分恢复。
+   - preimage 完整性与路径安全检查仍在写入前执行；本切片不宣称跨文件系统的全局事务或处理 final gate 之后的外部竞态。
+
+2. **`tui/runtime.ts`、`tui/app.tsx` 及对应测试修改**：
+   - Gateway 既有 preview/result 透传保持兼容；TUI 严格校验 SHA-256 与 artifact 元数据，拒绝不合法字段。
+   - Changes 的 Revision Checkpoints 区在窄面板稳定显示首个冲突相对路径、Agent/current 短 hash，避免展示文件内容或敏感底层路径。
+
+3. **`index.ts` 与 `docs/project-map.md` 修改**：
+   - 导出冲突 artifact 类型，并更新 Workspace Revision 的冲突证据、最终 gate 与 TUI 呈现边界。
+
+4. **效果**：
+   - 用户在 restore 前和 restore 被停止后都可获得同一份冲突依据；用户并行修改在最终 gate 前被检测时不会被自动覆盖。
+   - 多文件恢复不再会因已检测到的单文件冲突而先改写其他文件；TUI 可直接判断冲突来自哪个文件及两侧状态是否一致。
+   - 本切片不开放强制覆盖、Git stage/commit/worktree remove 或远端 Git 写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 3 定向测试文件、53 个测试全部通过，覆盖冲突 hash/artifact 无内容泄漏、静态多文件零写入、dry-run 与最终 gate 间的用户写入、Gateway/TUI 严格投影和窄终端呈现。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2e 实现结论：TUI restore 后原基线 diff 重算（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/runtime.ts` 与 `tui/runtime.test.ts` 修改**：
+   - TUI 在 run-start 保存只读 baseline，并在终态生成对应的 change snapshot；同一 `agentRunId` 的完成结果保持幂等。
+   - 新增 `recomputeChangeSnapshot()`：仅从已完成 snapshot 读取原始 `baselineId` 重建当前工作区 diff；重算失败返回 `unavailable`，不替换此前可用的缓存结果。
+   - 覆盖 restore 后文件回到 baseline 时，新的 snapshot 为 0 files / 0 hunks 且恢复等级为 `detect_only/no_changes`，未知 run 不产生伪造结果。
+
+2. **`packages/belldandy-core/src/tui/app.tsx`、`tui/state.ts` 及对应测试修改**：
+   - Restore RPC 返回 `applied: true` 后才触发重算，并将结果仅投影到当前活跃 run；被冲突停止或未实际写入的 restore 不刷新历史 diff。
+   - Changes 视图保留有限的当前 run 文件/hunk 与恢复等级摘要；晚到的旧 run snapshot 继续按 `agentRunId` 丢弃。
+   - Ink 交互回归覆盖从 prompt、checkpoint preview、二次确认到成功 restore 后显示 `Run diff 0 files 0 hunks` 的完整路径。
+
+3. **`docs/project-map.md` 修改**：
+   - 明确 TUI 负责将 restore 成功后的 snapshot 重新绑定到首次 run baseline，不拥有 revision 写入或 review verdict 真源。
+
+4. **效果**：
+   - 用户完成一次允许的 restore 后，TUI 不再显示已经失效的旧 diff，而是显示相对于同一次 run 起点的当前可审对象。
+   - restore 被冲突 gate 停止、snapshot 失败或旧 run 结果晚到时，不会把错误状态伪装为成功恢复或覆盖当前 run 的审查结果。
+   - 本切片不新增 Headless restore 终态、review verdict 自动重判、相似度重命名、强制覆盖、Git stage/commit/worktree remove 或远端 Git 写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 3 定向测试文件、56 个测试全部通过，含 restore 后原基线 diff 重算、baseline artifact 缺失时保留旧 snapshot，以及 TUI 全交互回归。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2f 实现结论：snapshot/review/revision 可追溯关联（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts` 与 `workspace-change-snapshot.test.ts` 修改**：
+   - Snapshot 新增可选 `revisionId`，创建时严格校验并持久化，读取时同样校验；缺失字段的旧 artifact 保持可读，伪造或越界 ID 失败关闭。
+   - `readSnapshot()` 与后续重算均保留关联，不把 recovery checkpoint、文件名或路径猜测成 revision ID。
+
+2. **`packages/belldandy-core/src/workspace-change-review.ts` 与 `workspace-change-review.test.ts` 修改**：
+   - 新建 review 自动继承已验证 snapshot 的 `revisionId`；`verify()` 重建当前 snapshot 时继续携带同一关联。
+   - 没有关联字段的历史 snapshot/review 仍按原始 diff hash 校验，且不会被自动补写为某次 restore 的对象。
+
+3. **`packages/belldandy-core/src/cli/commands/agent/run.ts`、`tui/runtime.ts` 及对应测试修改**：
+   - Headless terminal `changes` summary 现在返回 `revisionId`、`baselineId` 与 `snapshotId`，其中 `revisionId` 与终态 `agentRunId` 相同，可与 `workspace.revision.restore` result 可靠对照。
+   - TUI 首次 snapshot 与 restore 后重算都传入当前 run ID，避免相同 baseline 的不同 run 在审查记录中失去来源。
+
+4. **`docs/project-map.md` 修改**：
+   - 记录 Headless change summary、snapshot/review artifact 的 revision linkage 边界和旧 artifact 的兼容语义。
+
+5. **效果**：
+   - Headless/TUI consumer 可以从同一稳定 ID 追溯 run 终态、snapshot、review 与 restore result，而不是通过时间、路径或内容相似性猜测关联。
+   - 损坏的关联字段不会进入 review artifact；历史没有关联的数据继续按既有 hash 语义工作。
+   - 本切片不自动重判 verdict、不新增 review/restore Gateway 命令，不改变 restore 写入、强制覆盖、Git stage/commit/worktree remove 或远端 Git 行为。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 3 定向测试文件、57 个测试全部通过，覆盖 Headless JSONL 关联、TUI 重算关联、review 重验保留关联、旧 artifact 兼容与损坏 ID 失败关闭。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2g 实现结论：成功 restore 的 review 只读重判（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-review.ts` 与 `workspace-change-review.test.ts` 修改**：
+   - 新增 `verifyAfterRestore()`：仅在调用方提供 `applied: true`、review 已关联 revision 且 ID 精确匹配时，才从 review 的原 baseline 重建当前 snapshot 并返回 `valid` 或 `invalidated`。
+   - 未实际应用、历史 review 无关联或 revision 不匹配时返回 `not_applicable` 与稳定原因，不重建 snapshot，不猜测关联。
+   - 重判仍只读 snapshot/review artifact；不调用 restore、不写 workspace，也不修改已记录 verdict。
+
+2. **`packages/belldandy-core/src/index.ts` 修改**：
+   - 导出 `WorkspaceChangeReviewRestoreVerification`，让 core consumer 可以在无需依赖 TUI 的情况下处理 `valid`、`invalidated` 与未适用分支。
+
+3. **`docs/project-map.md` 修改**：
+   - 记录 restore 后 review 重判的只读边界及其未适用状态。
+
+4. **效果**：
+   - 在有明确关联时，调用方可确认 restore 后旧 verdict 是否已经因当前 diff 改变而失效，且不会把未应用或另一 run 的 restore 混入判断。
+   - 重判本身没有任何文件系统写入或恢复副作用；当前 public API 的 outcome 仍由调用方提供，尚未把它作为 Gateway 可信 receipt。
+   - 本切片不新增 Gateway/Headless review RPC、TUI review 控件、可信 restore receipt、强制覆盖、Git stage/commit/worktree remove 或远端 Git 写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 3 定向测试文件、58 个测试全部通过，覆盖成功且匹配的 restore 后 invalidated verdict，以及未应用、无关联、ID 不匹配的 `not_applicable` 分支。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
 
 ### 后续计划
 
-按用户要求暂停在**阶段 1-1 项目规则链与 cwd 上下文诊断已实现**的断点，不继续进入下一切片。恢复后先针对冻结的 `rules.nested-precedence` 在 Windows/WSL2 做回归并复核实际 prompt/诊断 artifact；这样先做，是因为实现级 Unit/Integration 已通过，但阶段 0 的 `0/6` 产品事实基线尚未被新 source 覆盖。完成该回归后，再按独立纵向切片推进 `text_search`、`file_glob` 与分页/分段 `file_read`。阶段 1 当前还缺的关键闭环是冻结 benchmark 回归、代码搜索、glob、分段读取及对应跨平台验证；阶段 0 的 Provider 人民币实账核对继续按 `defer` 保留。若恢复后运行付费批次，费用 prior 必须从累计 `$0.06268098 / $3.00` 继续计算。
+阶段 2-6 的 Windows backend 已完成：Docker `29.1.3` 使用预加载 digest-pinned Node 镜像通过只读 root/workspace、受限 workspace-write、`network none`、pipe/PTY 输出、cursor、resize、cancel、进程树和 lease/container 回收；配置仅注入验证进程，未写入 `.env.local`。Windows PTY split task 已关闭。阶段 2 当前仅剩 WSL 外部 Gate：`Ubuntu-22.04` 的 Docker CLI/daemon 可达，但仍未提供不复用 Windows `node_modules` 的 `/tmp` frozen-lockfile staging，因此 WSL `verify:command-sandbox-oci` 未执行，阶段 2 继续保持进行中且 coding profile 继续 fail-closed。最小恢复条件是提供该 staging，并以同一 digest-pinned 镜像和仅进程级 sandbox 配置运行现有显式 Gate；该环境依赖按 8.2 裁决为 `defer`，恢复后立即重入。
+
+阶段 3-2g 已提供成功且 ID 匹配时的 core review 重判，并对未应用、无关联和 ID 不匹配失败关闭；它仍不把调用方传入的 outcome 当作 Gateway 可信凭据。下一步优先建立由 `WorkspaceRevisionRuntime` 在真实 restore 成功后写入的最小 restore receipt，并在 Gateway/Headless 只读入口以该 receipt 驱动 review 重判。优先做它，是因为这能把当前正确但进程内的 API 变为可信的消费者契约，避免外部参数声称“已恢复”后被误解为审计证据。当前还缺的关键闭环是可信 restore receipt 与 Gateway/Headless 投影、相似度重命名，以及 final gate 之后的外部文件系统竞态边界；这些继续保持为阶段 3 后续切片，不提前开放强制覆盖、stage、commit、worktree remove 或远端 Git 操作。
 
 ## 实施计划进度表
 
 | 阶段 | 优先级 | 状态 | 工作量 | 关键闭环 |
 |---|---|---|---:|---|
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
-| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-7 已完成） | 4-6 人日 | 已完成 12 tasks × Windows/WSL2 × 3 attempts 的同一 source `72/72` completed report、离线重算、隔离 Gateway、三项定价与真实 usage/cost 链；事实基线通过 `11/72`，新增可观测费用 `$0.02789341`，含旧 source 历史费用累计 `$0.06268098 / $3.00`。技术闭环已满足阶段 1 回归前置，当前仅剩 Provider 人民币实账与事件 USD 估值的人工核对，按外部依赖 `defer` 保留，完成前不将阶段 0 标为已完成 |
-| 阶段 1：项目规则链与代码导航 | P0 | 部分完成（1-1 项目规则链与 `inspect --cwd` 已完成） | 8-12 人日 | 已完成 Git 根到 cwd 的项目 `AGENTS.md` 优先级、身份隔离、预算/跳过诊断与单次 run prompt 接入；当前待冻结 benchmark 回归，以及 `text_search`、`file_glob`、分页/分段 `file_read` 和跨平台闭环 |
-| 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 待启动 | 15-25 人日 | 构建/测试可在 sandbox 中运行，权限和隔离可验证且失败关闭 |
-| 阶段 3：真实 diff/review 与恢复保证 | P0 | 待启动 | 8-12 人日 | 修改可审查、可归因，恢复边界明确且不覆盖用户改动 |
+| 阶段 0：同任务 benchmark | P0 | 已完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-7 已完成） | 4-6 人日 | 已完成 12 tasks × Windows/WSL2 × 3 attempts 的同一 source `72/72` completed report、离线重算、隔离 Gateway、三项定价与真实 usage/cost 链；事实基线通过 `11/72`，新增可观测费用 `$0.02789341`，含旧 source 历史费用累计 `$0.06268098 / $3.00`。含旧 source 历史费用累计 `$0.06268098 / $3.00` 已经用户完成 Provider 人民币实账与事件 USD 估值人工核对，确认不超过可核对实际成本；技术与外部账务闭环均完成 |
+| 阶段 1：项目规则链与代码导航 | P0 | 已完成（1-1 至 1-4） | 8-12 人日 | 已完成 Git 根到 cwd 的项目 `AGENTS.md` 优先级、身份隔离、预算/跳过诊断、最小单次 run prompt、模型可见且本地严格校验的输出 Schema、无 Shell 的 `text_search` / `file_glob` / 分段 `file_read`，以及冻结 `navigation.large-repository` 的 Windows/WSL2 Provider 双平台机器评估与 usage/cost 聚合。单任务聚合为预期 `partial 2/72`，不替代阶段 0 已完成的全量基线；阶段 1 新增事件 USD 估值累计 `$0.00552600`，总累计 `$0.06820698 / $3.00`，实账核对为 `defer` |
+| 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 进行中（2-1 至 2-5 已完成；2-6 Windows 全部通过，WSL staging 为 defer） | 15-25 人日 | 已建立 sandbox-required 准入、结构化 argv/command plan、命令审批安全预览、OCI lease/CID 显式清理、只读/可写/network-none fixture，以及有界 timeout、隔离 PTY host、job/cursor/resize/cancel、进程树清理和 Gateway 重启后的 `lost` 状态。2026-07-27 Windows Docker `29.1.3` 以预加载 digest-pinned Node 镜像通过显式 isolation + pipe/PTY job Gate，验证后容器与 host 残留均为 `0`；WSL Docker daemon 可达但仍缺独立 frozen-lockfile staging。Docker/Podman 仅接受 digest-pinned 预加载镜像、无网络、无自动拉取和最窄工作区挂载；WSL Gate 关闭前不得关闭阶段 2 |
+| 阶段 3：真实 diff/review 与恢复保证 | P0 | 进行中（3-1、3-2a 至 3-2g 已完成） | 8-12 人日 | 已建立 Git/非 Git 的 run-start 只读 snapshot、Git HEAD/指定 revision/显式 worktree base 的不可变 artifact 基线、baseline/current/diff hash、hunk cursor、二进制/精确重命名/超大 diff 状态、Headless artifact、TUI 首 hunk、hash 绑定 review verdict、exact/managed-worktree/detect-only 恢复等级、restore 冲突 artifact/final gate、restore 成功后基于原 baseline 的 TUI diff 重算、snapshot/review/revision 稳定关联，以及成功且匹配 restore 的只读 review 重判；后续补可信 restore receipt 与 Gateway/Headless 投影、相似度重命名和 final gate 后竞态边界，确保不覆盖用户改动 |
 | 阶段 4：用户 worktree 与 Git 本地交付 | P1 | 待启动 | 10-15 人日 | 隔离开发、冲突停机、本地 stage/commit 可追溯 |
 | 阶段 5：steering 与领域投影 | P1 | 待启动 | 10-18 人日 | 长任务可干预、可恢复，各状态域保持单一真源 |
 | 阶段 6：互操作、SDK 与项目扩展 | P1 | 待启动 | 10-15 人日 | 标准客户端可复用 runtime，旧 consumer 保持兼容 |

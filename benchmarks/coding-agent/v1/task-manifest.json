@@ -16,6 +16,11 @@
         "toolAllow": ["file_read", "list_files"],
         "toolDeny": ["run_command", "spawn_subagent"]
       },
+      "navigation-read": {
+        "permissionMode": "plan",
+        "toolAllow": ["file_read", "list_files", "text_search", "file_glob"],
+        "toolDeny": ["run_command", "spawn_subagent"]
+      },
       "workspace-write": {
         "permissionMode": "acceptEdits",
         "toolAllow": ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
@@ -143,7 +148,7 @@
       "id": "navigation.large-repository",
       "category": "large_repo_navigation",
       "title": "Navigate ignored files and a large source tree",
-      "executionProfile": "plan",
+      "executionProfile": "navigation-read",
       "platforms": ["windows-native", "wsl2-linux"],
       "fixture": { "generatorId": "large-repository-navigation-v1", "version": 1, "resetStrategy": "regenerate" },
       "prompt": "Locate the requested symbol in the large repository, read the required late file segment, and respect ignore rules.",

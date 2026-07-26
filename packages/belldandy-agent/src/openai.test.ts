@@ -169,6 +169,68 @@ describe("OpenAIChatAgent prompt snapshot", () => {
     expect((snapshots[0].inputMeta as any)?.promptDeltas).toBeUndefined();
   });
 
+  it("uses a trusted per-run prompt override instead of the resident prompt", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{
+        message: {
+          content: "done",
+        },
+      }],
+    }));
+
+    const snapshots: any[] = [];
+    const agent = new OpenAIChatAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      stream: false,
+      systemPrompt: "resident-system-prompt",
+      systemPromptSections: [{
+        id: "workspace-soul",
+        label: "SOUL.md",
+        source: "workspace",
+        priority: 20,
+        text: "resident-system-prompt",
+      }],
+      onPromptSnapshot: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-openai-run-prompt-override",
+      text: "hello",
+      promptOverride: {
+        text: "coding-run-system-prompt",
+        sections: [{
+          id: "coding-run-base",
+          label: "coding-run-base",
+          source: "core",
+          priority: 0,
+          text: "coding-run-system-prompt",
+        }],
+        metadata: {
+          codingRunPromptMode: "bounded-coding-run-v1",
+        },
+      },
+    }));
+
+    expect(items).toContainEqual({ type: "final", text: "done" });
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      systemPrompt: "coding-run-system-prompt",
+      providerNativeSystemBlocks: [
+        expect.objectContaining({
+          blockType: "static-capability",
+          sourceSectionIds: ["coding-run-base"],
+        }),
+      ],
+      inputMeta: {
+        codingRunPromptMode: "bounded-coding-run-v1",
+      },
+    });
+  });
+
   it("maps caller aborts to stopped without emitting a final message", async () => {
     let markFetchStarted!: () => void;
     const fetchStarted = new Promise<void>((resolve) => {

@@ -27,12 +27,38 @@ export {
 } from "./coding-run/stdio.js";
 export { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 export type {
+  WorkspaceRevisionRestoreConflictArtifact,
   WorkspaceRevisionRestoreChange,
   WorkspaceRevisionRestorePreview,
   WorkspaceRevisionRestoreResult,
   WorkspaceRevisionRuntimeOptions,
   WorkspaceRevisionSummary,
 } from "./workspace-revision.js";
+export { WorkspaceChangeRecoveryRuntime, resolveWorkspaceChangeRecovery } from "./workspace-change-recovery.js";
+export type {
+  WorkspaceChangeRecovery,
+  WorkspaceChangeRecoveryCandidate,
+  WorkspaceChangeRecoveryFile,
+} from "./workspace-change-recovery.js";
+export { WorkspaceChangeSnapshotRuntime } from "./workspace-change-snapshot.js";
+export type {
+  WorkspaceChangeBaseline,
+  WorkspaceChangeBaselineSource,
+  WorkspaceChangeCoverage,
+  WorkspaceChangeFile,
+  WorkspaceChangeFileStatus,
+  WorkspaceChangeHunk,
+  WorkspaceChangeSnapshot,
+  WorkspaceChangeSnapshotPage,
+  WorkspaceChangeSnapshotRuntimeOptions,
+} from "./workspace-change-snapshot.js";
+export { WorkspaceChangeReviewRuntime } from "./workspace-change-review.js";
+export type {
+  WorkspaceChangeReview,
+  WorkspaceChangeReviewRestoreVerification,
+  WorkspaceChangeReviewVerification,
+  WorkspaceChangeReviewVerdict,
+} from "./workspace-change-review.js";
 export type {
   AgentRunEvent,
   AgentRunEventSequencer,

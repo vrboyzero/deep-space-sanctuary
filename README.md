@@ -662,15 +662,23 @@ BELLDANDY_EMBEDDING_MODEL=text-embedding-3-large
 
 # 自定义工具策略文件
 # BELLDANDY_TOOLS_POLICY_FILE=./config/tools-policy.json
+
+# Coding run 命令沙箱：需本机 OCI daemon 与预加载的 digest 固定镜像；未配置时命令执行会拒绝，不回退到宿主 Shell
+# BELLDANDY_COMMAND_SANDBOX_BACKEND=oci
+# BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME=docker
+# BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE=registry.example.com/belldandy-command-sandbox@sha256:<64-hex-digest>
 ```
 
 工具策略文件现已提供三挡示例：
+
+手动执行 corepack pnpm verify:command-sandbox-oci 可验证根文件系统只读、工作区读写边界、网络隔离、pipe/PTY job 输出与 resize/cancel，以及容器回收。它只使用已运行的本机 daemon 与预加载镜像，不会启动 daemon 或拉取镜像；该镜像需要包含 node。
 
 - `config/tools-policy.strict.json`：最保守档
 - `config/tools-policy.balanced.json`：平衡推荐档
 - `config/tools-policy.open.json`：受控开放档
 
 默认建议优先采用 `balanced`，再按你是否需要 `run_command`、MCP、浏览器自动化、Webhook 等能力逐步放开。
+Coding run 的 `run_command` 还要求可用的本机 Docker/Podman OCI backend 与预加载的 digest 固定镜像；后端缺失、daemon 不可达或镜像未就绪时会明确拒绝，且不会自动下载镜像或执行宿主 Shell。
 
 ### 定时任务与上下文压缩
 

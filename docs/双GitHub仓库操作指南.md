@@ -46,7 +46,7 @@ git branch --show-current
 ```bash
 # 1. 正常添加并提交代码
 git add .
-git commit -m "推进SS项目优化实施方案计划v2.md 中，完成到OPT-A07 ，具体优化效果见 SS项目优化实施方案v2总结说明.md"
+git commit -m "推过SS项目编程能力增强，SS项目开发能力补强计划.md中阶段 3推进中"
 
 # 2. 推送当前分支到私有仓库
 # 这里当前分支就是 main，所以这样写没有问题

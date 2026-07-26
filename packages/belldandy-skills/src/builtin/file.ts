@@ -170,7 +170,7 @@ function resolveAndValidatePath(
   relativePath: string,
   workspaceRoot: string,
   extraWorkspaceRoots?: string[]
-): { ok: true; absolute: string; relative: string } | { ok: false; error: string } {
+): { ok: true; absolute: string; relative: string; effectiveRoot: string } | { ok: false; error: string } {
   const trimmed = (relativePath || "").trim();
   if (!trimmed) {
     return { ok: false, error: "路径不能为空" };
@@ -188,13 +188,14 @@ function resolveAndValidatePath(
 
   const underMain = isUnderRoot(absolute, mainRoot);
   if (underMain.ok) {
-    return { ok: true, absolute, relative: underMain.relative };
+    return { ok: true, absolute, relative: underMain.relative, effectiveRoot: mainRoot };
   }
   if (extraWorkspaceRoots?.length) {
     for (const extra of extraWorkspaceRoots) {
-      const underExtra = isUnderRoot(absolute, path.resolve(extra));
+      const effectiveRoot = path.resolve(extra);
+      const underExtra = isUnderRoot(absolute, effectiveRoot);
       if (underExtra.ok) {
-        return { ok: true, absolute, relative: underExtra.relative };
+        return { ok: true, absolute, relative: underExtra.relative, effectiveRoot };
       }
     }
   }
@@ -370,10 +371,135 @@ function detectRegexReplaceRisk(pattern: string, flags: string): string | null {
 
 // ============ file_read 工具 ============
 
+const DEFAULT_FILE_READ_MAX_BYTES = 100 * 1024;
+const MAX_FILE_READ_BYTES = 1024 * 1024;
+const MAX_FILE_READ_CURSOR_CHARS = 2_048;
+
+type FileReadInput = {
+  path: string;
+  encoding: "utf-8" | "base64";
+  limit: number;
+  offset?: number;
+  cursor?: string;
+};
+
+type FileReadCursor = {
+  version: 1;
+  fingerprint: string;
+  offset: number;
+};
+
+function normalizeFileReadInput(args: Record<string, unknown>):
+  | { ok: true; value: FileReadInput }
+  | { ok: false; error: string } {
+  const path = typeof args.path === "string" ? args.path.trim() : "";
+  if (!path) return { ok: false, error: "参数错误：path 必须是非空字符串" };
+
+  const encoding = args.encoding === undefined ? "utf-8" : args.encoding;
+  if (encoding !== "utf-8" && encoding !== "base64") {
+    return { ok: false, error: "参数错误：encoding 必须是 utf-8 或 base64" };
+  }
+
+  if (args.limit !== undefined && args.maxBytes !== undefined) {
+    return { ok: false, error: "参数错误：limit 与 maxBytes 不能同时指定" };
+  }
+  const limit = normalizeFileReadLimit(args.limit, args.maxBytes);
+  if (!limit.ok) return limit;
+
+  const offset = args.offset === undefined ? undefined : args.offset;
+  if (offset !== undefined && (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0)) {
+    return { ok: false, error: "参数错误：offset 必须是非负安全整数" };
+  }
+
+  const cursor = args.cursor === undefined ? undefined : args.cursor;
+  if (cursor !== undefined && (typeof cursor !== "string" || !cursor.trim() || cursor.length > MAX_FILE_READ_CURSOR_CHARS)) {
+    return { ok: false, error: "参数错误：cursor 无效或过长" };
+  }
+  if (cursor !== undefined && offset !== undefined) {
+    return { ok: false, error: "参数错误：cursor 与 offset 不能同时指定" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      path,
+      encoding,
+      limit: limit.value,
+      ...(offset === undefined ? {} : { offset }),
+      ...(typeof cursor === "string" ? { cursor: cursor.trim() } : {}),
+    },
+  };
+}
+
+function normalizeFileReadLimit(
+  limit: unknown,
+  legacyMaxBytes: unknown,
+): { ok: true; value: number } | { ok: false; error: string } {
+  if (limit !== undefined) {
+    if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit <= 0 || limit > MAX_FILE_READ_BYTES) {
+      return { ok: false, error: `参数错误：limit 必须是 1 到 ${MAX_FILE_READ_BYTES} 的安全整数` };
+    }
+    return { ok: true, value: limit };
+  }
+
+  if (typeof legacyMaxBytes === "number" && Number.isFinite(legacyMaxBytes) && legacyMaxBytes > 0) {
+    return { ok: true, value: Math.min(Math.floor(legacyMaxBytes), MAX_FILE_READ_BYTES) };
+  }
+  return { ok: true, value: DEFAULT_FILE_READ_MAX_BYTES };
+}
+
+function buildFileReadFingerprint(input: {
+  realPath: string;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  encoding: FileReadInput["encoding"];
+}): string {
+  return crypto.createHash("sha256").update(JSON.stringify({
+    version: 1,
+    path: input.realPath.replace(/\\/g, "/").toLowerCase(),
+    size: input.size,
+    mtimeMs: input.mtimeMs,
+    ctimeMs: input.ctimeMs,
+    encoding: input.encoding,
+  })).digest("hex").slice(0, 32);
+}
+
+function decodeFileReadCursor(
+  value: string | undefined,
+  fingerprint: string,
+): { ok: true; value?: FileReadCursor } | { ok: false; error: string } {
+  if (!value) return { ok: true };
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf-8")) as Partial<FileReadCursor>;
+    const offset = parsed.offset;
+    if (
+      parsed.version !== 1
+      || parsed.fingerprint !== fingerprint
+      || typeof offset !== "number"
+      || !Number.isSafeInteger(offset)
+      || offset < 0
+    ) {
+      return { ok: false, error: "参数错误：cursor 与当前文件或读取条件不匹配" };
+    }
+    return { ok: true, value: { version: 1, fingerprint, offset } };
+  } catch {
+    return { ok: false, error: "参数错误：cursor 格式无效" };
+  }
+}
+
+function encodeFileReadCursor(input: { fingerprint: string; offset: number }): string {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    fingerprint: input.fingerprint,
+    offset: input.offset,
+  } satisfies FileReadCursor), "utf-8").toString("base64url");
+}
+
 export const fileReadTool: Tool = withToolContract({
   definition: {
     name: "file_read",
-    description: "读取工作区内文件内容。路径必须是相对于工作区根目录的相对路径，禁止读取敏感文件（如 .env、密钥等）。",
+    description: "读取工作区内文件内容。支持 offset/limit 分段读取与稳定 cursor；路径必须在工作区范围内，禁止读取敏感文件（如 .env、密钥等）。",
     parameters: {
       type: "object",
       properties: {
@@ -388,7 +514,19 @@ export const fileReadTool: Tool = withToolContract({
         },
         maxBytes: {
           type: "number",
-          description: "最大读取字节数（默认 102400，即 100KB）",
+          description: "兼容字段：最大读取字节数（默认 102400，即 100KB）；不能与 limit 同时指定",
+        },
+        offset: {
+          type: "number",
+          description: "读取起始字节偏移，默认 0；不能与 cursor 同时指定",
+        },
+        limit: {
+          type: "number",
+          description: "单段最大读取字节数，默认 102400，最大 1048576；不能与 maxBytes 同时指定",
+        },
+        cursor: {
+          type: "string",
+          description: "上一段返回的 nextCursor；仅可用于同一未变文件和相同 encoding",
         },
       },
       required: ["path"],
@@ -410,20 +548,17 @@ export const fileReadTool: Tool = withToolContract({
       })
     );
 
-    // 参数校验
-    const pathArg = args.path;
-    if (typeof pathArg !== "string" || !pathArg.trim()) {
-      return makeError("参数错误：path 必须是非空字符串", "input_error");
-    }
+    const input = normalizeFileReadInput(args);
+    if (!input.ok) return makeError(input.error, "input_error");
 
     // 路径验证（主工作区或 extraWorkspaceRoots）
     const scope = resolveRuntimeFilesystemScope(context);
-    const pathResult = resolveAndValidatePath(pathArg, scope.workspaceRoot, scope.extraWorkspaceRoots);
+    const pathResult = resolveAndValidatePath(input.value.path, scope.workspaceRoot, scope.extraWorkspaceRoots);
     if (!pathResult.ok) {
       return makeError(pathResult.error);
     }
 
-    const { absolute, relative } = pathResult;
+    const { absolute, relative, effectiveRoot } = pathResult;
 
     // 黑名单检查
     const denied = isDeniedPath(relative, context.policy.deniedPaths);
@@ -436,33 +571,64 @@ export const fileReadTool: Tool = withToolContract({
       return makeError("禁止读取敏感文件（如 .env、密钥、凭证等）", "permission_or_policy");
     }
 
-    // 读取文件
-    const encoding = (args.encoding as "utf-8" | "base64") || "utf-8";
-    const maxBytes = typeof args.maxBytes === "number" && args.maxBytes > 0
-      ? Math.min(args.maxBytes, 1024 * 1024) // 最大 1MB
-      : 100 * 1024; // 默认 100KB
-
     try {
-      const stat = await fs.stat(absolute);
+      const stat = await fs.lstat(absolute);
 
+      if (stat.isSymbolicLink()) {
+        return makeError("禁止读取符号链接文件", "permission_or_policy");
+      }
       if (!stat.isFile()) {
         return makeError(`路径不是文件：${relative}`);
+      }
+
+      const [realEffectiveRoot, realFile] = await Promise.all([
+        fs.realpath(effectiveRoot),
+        fs.realpath(absolute),
+      ]);
+      const realBoundary = isUnderRoot(realFile, realEffectiveRoot);
+      if (!realBoundary.ok) {
+        return makeError("文件经解析后越出工作区边界", "permission_or_policy");
+      }
+      const realDenied = isDeniedPath(realBoundary.relative, context.policy.deniedPaths);
+      if (realDenied) {
+        return makeError(`禁止访问路径：${realDenied}`, "permission_or_policy");
+      }
+      if (isSensitivePath(realBoundary.relative)) {
+        return makeError("禁止读取敏感文件（如 .env、密钥、凭证等）", "permission_or_policy");
+      }
+
+      const fingerprint = buildFileReadFingerprint({
+        realPath: realFile,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+        encoding: input.value.encoding,
+      });
+      const cursor = decodeFileReadCursor(input.value.cursor, fingerprint);
+      if (!cursor.ok) return makeError(cursor.error, "input_error");
+      const offset = cursor.value?.offset ?? input.value.offset ?? 0;
+      if (offset > stat.size) {
+        return makeError("参数错误：offset 超出文件大小", "input_error");
       }
 
       // 读取文件（限制大小）
       const handle = await fs.open(absolute, "r");
       try {
-        const buffer = Buffer.alloc(Math.min(stat.size, maxBytes));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        const buffer = Buffer.alloc(Math.min(stat.size - offset, input.value.limit));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
 
         let content: string;
-        if (encoding === "base64") {
+        if (input.value.encoding === "base64") {
           content = buffer.subarray(0, bytesRead).toString("base64");
         } else {
           content = buffer.subarray(0, bytesRead).toString("utf-8");
         }
 
-        const truncated = stat.size > maxBytes;
+        const endOffset = offset + bytesRead;
+        const truncated = endOffset < stat.size;
+        const nextCursor = truncated
+          ? encodeFileReadCursor({ fingerprint, offset: endOffset })
+          : undefined;
 
         const manager = getGlobalMemoryManager({
           agentId: context.agentId,
@@ -486,7 +652,12 @@ export const fileReadTool: Tool = withToolContract({
             size: stat.size,
             bytesRead,
             truncated,
-            encoding,
+            range: {
+              offset,
+              endOffset,
+            },
+            ...(nextCursor ? { nextCursor } : {}),
+            encoding: input.value.encoding,
             content,
           }),
           durationMs: Date.now() - start,
@@ -511,7 +682,7 @@ export const fileReadTool: Tool = withToolContract({
   isConcurrencySafe: true,
   needsPermission: false,
   riskLevel: "low",
-  channels: ["gateway", "web"],
+  channels: ["gateway", "web", "cli"],
   safeScopes: ["local-safe", "web-safe"],
   activityDescription: "Read a file from the workspace or an allowed extra workspace root",
   resultSchema: {

@@ -2005,7 +2005,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
       throw new Error("This coding run requested maxCostUsd, but the selected Agent profile has no valid usage pricing.");
     }
     const resolvedAgentId = input.agentId ?? runtimeContext?.launchSpec?.agentId ?? runtimeContext?.launchSpec?.profileId ?? "tool-agent";
-    let runSystemPrompt = this.opts.systemPrompt;
+    const runPromptOverride = input.promptOverride;
+    let runSystemPrompt = runPromptOverride ? runPromptOverride.text : this.opts.systemPrompt;
+    const runSystemPromptSections = runPromptOverride ? runPromptOverride.sections : this.opts.systemPromptSections;
+    const runSystemPromptMetadata = runPromptOverride ? runPromptOverride.metadata : this.opts.systemPromptMetadata;
     let hookSystemPromptUsed = false;
     let prependContext: string | undefined;
     let hookPromptDeltas: AgentPromptDelta[] | undefined;
@@ -2158,7 +2161,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let currentSystemPromptState = buildEffectiveSystemPromptState({
       systemPrompt: runSystemPrompt,
       runtimePromptDeltas: baseRunPromptDeltas,
-      systemPromptMetadata: this.opts.systemPromptMetadata,
+      systemPromptMetadata: runSystemPromptMetadata,
     });
     const messages: Message[] = buildInitialMessages(
       currentSystemPromptState.text,
@@ -2172,7 +2175,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     // Phase 4 步骤 2：independent block 文本（identity-authority 独立 block）
     let currentIndependentBlockText = "";
     let providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
-      sections: hookSystemPromptUsed ? undefined : this.opts.systemPromptSections,
+      sections: hookSystemPromptUsed ? undefined : runSystemPromptSections,
       deltas: currentRunPromptDeltas,
       fallbackText: runSystemPrompt,
     });
@@ -2210,7 +2213,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       currentSystemPromptState = buildEffectiveSystemPromptState({
         systemPrompt: runSystemPrompt,
         runtimePromptDeltas: deltasForSystemPrompt,
-        systemPromptMetadata: this.opts.systemPromptMetadata,
+        systemPromptMetadata: runSystemPromptMetadata,
       });
       setSystemPromptMessage(messages, currentSystemPromptState.text);
       // 构建 transient tail 文本（稍后在发送请求前注入）
@@ -2218,7 +2221,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       // Phase 4 步骤 2：构建 independent block 文本（identity-authority 独立 block）
       currentIndependentBlockText = splitResult.splitActivated ? buildIndependentBlockText(splitResult.independentBlockDeltas) : "";
       providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
-        sections: hookSystemPromptUsed ? undefined : this.opts.systemPromptSections,
+        sections: hookSystemPromptUsed ? undefined : runSystemPromptSections,
         deltas: deltasForSystemPrompt,
         fallbackText: runSystemPrompt,
       });
@@ -2255,7 +2258,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           deltas: snapshotDeltas,
           providerNativeSystemBlocks,
           inputMeta: mergePromptSnapshotInputMeta(
-            this.opts.systemPromptMetadata,
+            runSystemPromptMetadata,
             {
               ...(input.meta ?? {}),
               ...(lastPrefixShape ? { prefixShape: lastPrefixShape as unknown as JsonObject } : {}),
@@ -2354,19 +2357,19 @@ export class ToolEnabledAgent implements BelldandyAgent {
         ...(totalCacheMiss > 0 ? { cacheMissTokens: totalCacheMiss } : {}),
         modelCalls: modelCallCount,
         ...(this.opts.cacheSupport ? { cacheSupport: this.opts.cacheSupport } : {}),
-        ...(typeof this.opts.systemPromptMetadata?.systemPromptFingerprint === "string"
-          ? { systemPromptFingerprint: this.opts.systemPromptMetadata.systemPromptFingerprint }
+        ...(typeof runSystemPromptMetadata?.systemPromptFingerprint === "string"
+          ? { systemPromptFingerprint: runSystemPromptMetadata.systemPromptFingerprint }
           : {}),
-        ...(typeof this.opts.systemPromptMetadata?.structureSignature === "string"
-          ? { structureSignature: this.opts.systemPromptMetadata.structureSignature }
+        ...(typeof runSystemPromptMetadata?.structureSignature === "string"
+          ? { structureSignature: runSystemPromptMetadata.structureSignature }
           : {}),
-        ...(this.opts.systemPromptMetadata?.warmupCoordination
-          && typeof this.opts.systemPromptMetadata.warmupCoordination === "object"
-          ? { warmupCoordination: this.opts.systemPromptMetadata.warmupCoordination }
+        ...(runSystemPromptMetadata?.warmupCoordination
+          && typeof runSystemPromptMetadata.warmupCoordination === "object"
+          ? { warmupCoordination: runSystemPromptMetadata.warmupCoordination }
           : {}),
-        ...(this.opts.systemPromptMetadata?.cacheFamilyAffinity
-          && typeof this.opts.systemPromptMetadata.cacheFamilyAffinity === "object"
-          ? { cacheFamilyAffinity: this.opts.systemPromptMetadata.cacheFamilyAffinity }
+        ...(runSystemPromptMetadata?.cacheFamilyAffinity
+          && typeof runSystemPromptMetadata.cacheFamilyAffinity === "object"
+          ? { cacheFamilyAffinity: runSystemPromptMetadata.cacheFamilyAffinity }
           : {}),
         ...(totalInputCostUsd > 0 ? { inputCostUsd: totalInputCostUsd } : {}),
         ...(totalOutputCostUsd > 0 ? { outputCostUsd: totalOutputCostUsd } : {}),
@@ -2694,7 +2697,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               providerNativeSystemBlocks,
               model: currentTokenEstimateModel,
             });
-            const previousComparableSnapshot = readPrefixComparableSnapshot(this.opts.systemPromptMetadata);
+            const previousComparableSnapshot = readPrefixComparableSnapshot(runSystemPromptMetadata);
             lastPrefixDrift = classifyPrefixDrift({
               previous: previousComparableSnapshot,
               current: {

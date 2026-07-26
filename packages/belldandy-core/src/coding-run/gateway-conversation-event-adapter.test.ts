@@ -176,6 +176,19 @@ describe("Gateway Conversation coding-run event adapter", () => {
         toolCallId: "tool-permission",
         toolName: "apply_patch",
         arguments: { secret: "must-not-leak" },
+        commandPreview: {
+          kind: "command",
+          action: "run",
+          commandPlan: {
+            executable: "node",
+            argv: ["--token=must-not-leak"],
+            cwd: ".",
+            environmentKeys: ["PRIVATE_TOKEN"],
+            network: "none",
+            writeScope: "workspace-readonly",
+            stdinMode: "closed",
+          },
+        },
       },
     });
 
@@ -185,5 +198,51 @@ describe("Gateway Conversation coding-run event adapter", () => {
       payload: { permission: { toolCallId: "tool-permission", toolName: "apply_patch" } },
     });
     expect(events[1]?.payload).not.toHaveProperty("arguments");
+    expect(events[1]?.payload.permission).not.toHaveProperty("commandPreview");
+  });
+
+  it("projects only a sanitized command preview for a pending command permission", () => {
+    const events: AgentRunEvent[] = [];
+    const adapter = createGatewayConversationEventAdapter({ onEvent: (event) => events.push(event) });
+    adapter.start({ agentRunId: "run-command-permission", conversationId: "conversation-command-permission" });
+    adapter.consume({
+      event: "tool_event",
+      payload: {
+        conversationId: "conversation-command-permission",
+        runId: "run-command-permission",
+        kind: "coding_run_permission_requested",
+        toolCallId: "tool-command-permission",
+        toolName: "command_job",
+        commandPreview: {
+          kind: "command",
+          action: "start",
+          commandPlan: {
+            executable: "node",
+            argv: ["--token", "must-not-leak", "--version"],
+            cwd: ".",
+            environmentKeys: ["PRIVATE_TOKEN"],
+            network: "none",
+            writeScope: "workspace-readonly",
+            stdinMode: "pty",
+          },
+        },
+      },
+    });
+
+    expect(events[1]).toMatchObject({
+      type: "permission.requested",
+      payload: {
+        permission: {
+          toolCallId: "tool-command-permission",
+          toolName: "command_job",
+          commandPreview: {
+            kind: "command",
+            action: "start",
+            commandPlan: { argv: ["--token", "[REDACTED]", "--version"] },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(events[1])).not.toContain("must-not-leak");
   });
 });

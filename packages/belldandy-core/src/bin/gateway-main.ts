@@ -166,6 +166,8 @@ import {
   fileWriteTool,
   fileDeleteTool,
   listFilesTool,
+  textSearchTool,
+  fileGlobTool,
   createMemorySearchTool,
   createMemoryGetTool,
   memoryReadTool,
@@ -203,7 +205,9 @@ import {
   clearMediaUnderstandingCache,
   synthesizeSpeech,
   transcribeSpeech,
+  commandJobTool,
   runCommandTool,
+  shutdownCommandJobs,
   bridgeTargetListTool,
   bridgeTargetDiagnoseTool,
   bridgeRunTool,
@@ -994,6 +998,8 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       fileWriteTool,
       fileDeleteTool,
       listFilesTool,
+      textSearchTool,
+      fileGlobTool,
       createMemorySearchTool(),
       createMemoryGetTool(),
       memoryReadTool,
@@ -1102,6 +1108,9 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
     tool: runCommandTool,
   },
   {
+    tool: commandJobTool,
+  },
+  {
     group: "browser",
     tools: [
       browserOpenTool,
@@ -1176,7 +1185,7 @@ const gatewayContractAccessPolicy: ToolContractAccessPolicy = {
   channel: "gateway",
   allowedSafeScopes: resolveSafeScopesForChannel("gateway"),
   includeToolsWithoutContract: false,
-  blockedToolNames: dangerousToolsEnabled ? [] : [runCommandTool.definition.name],
+  blockedToolNames: dangerousToolsEnabled ? [] : [runCommandTool.definition.name, commandJobTool.definition.name],
 };
 
 const toolsToRegister = toolsEnabled
@@ -1266,6 +1275,9 @@ const CORE_TOOL_NAMES = new Set<string>([
   applyPatchTool.definition.name,
   fileReadTool.definition.name,
   listFilesTool.definition.name,
+  textSearchTool.definition.name,
+  fileGlobTool.definition.name,
+  commandJobTool.definition.name,
   runCommandTool.definition.name,
 ]);
 
@@ -1291,6 +1303,7 @@ const pendingToolPermissionRuntime = new PendingToolPermissionRuntime({
       ...(request.worktreeId ? { worktreeId: request.worktreeId } : {}),
       toolCallId: request.toolCallId,
       toolName: request.toolName,
+      ...(request.commandPreview ? { commandPreview: request.commandPreview } : {}),
     });
   },
 });
@@ -1437,10 +1450,10 @@ if (toolsEnabled) {
 
 // 4. Log enabled tools
 if (toolsEnabled) {
-  const safeTools = "web_fetch, apply_patch, file_read, file_write, file_delete, list_files, memory_search, memory_get, memory_read, memory_write, memory_share_promote, task_search, task_get, task_recent, conversation_list, conversation_read, experience_candidate_get, experience_candidate_list, experience_usage_get, experience_usage_list, ptc_runtime, browser_*, log_read, log_search";
+  const safeTools = "web_fetch, apply_patch, file_read, file_write, file_delete, list_files, text_search, file_glob, memory_search, memory_get, memory_read, memory_write, memory_share_promote, task_search, task_get, task_recent, conversation_list, conversation_read, experience_candidate_get, experience_candidate_list, experience_usage_get, experience_usage_list, ptc_runtime, browser_*, log_read, log_search";
   if (dangerousToolsEnabled) {
-    logger.warn("tools", "⚠️ DANGEROUS_TOOLS_ENABLED=true: run_command is active");
-    logger.info("tools", `Tools enabled: ${safeTools}, run_command`);
+    logger.warn("tools", "⚠️ DANGEROUS_TOOLS_ENABLED=true: run_command and command_job are active");
+    logger.info("tools", `Tools enabled: ${safeTools}, run_command, command_job`);
   } else {
     logger.info("tools", `Tools enabled: ${safeTools}`);
   }
@@ -4643,5 +4656,6 @@ server.registerShutdownResources({
   shutdownMcp: shutdownMCPIntegration,
   browserRelay: browserRelayRuntimeHandle,
   shutdownAgentBridge: agentBridgeEnabled ? shutdownBridgeSessions : undefined,
+  shutdownCommandJobs,
 });
 shutdownRequestOwner.installSignalHandlers();

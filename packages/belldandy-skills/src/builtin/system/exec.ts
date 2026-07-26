@@ -1,9 +1,23 @@
-import type { Tool, ToolCallResult, ToolExecPolicy } from "../../types.js";
+import type { Tool, ToolCallResult, ToolContext, ToolExecPolicy } from "../../types.js";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
 import { withToolContract } from "../../tool-contract.js";
 import { resolveRuntimeFilesystemScope } from "../../runtime-policy.js";
+import {
+    buildOciSandboxInvocation,
+    buildSandboxRuntimeEnvironment,
+    createOciSandboxEnvironmentFile,
+    evaluateCommandSandboxAdmission,
+    type OciCommandSandboxConfig,
+} from "../../command-sandbox.js";
+import {
+    createOciSandboxLease,
+    type OciSandboxLease,
+    type OciSandboxLeaseRelease,
+} from "../../command-sandbox-lease.js";
+import { parseCommandPlan, summarizeCommandPlanForAudit, type CommandPlan } from "../../command-plan.js";
+import { resolveSandboxWorkspace } from "../../command-sandbox-workspace.js";
 import { readAbortReason, throwIfAborted } from "../../abort-utils.js";
 import { buildFailureToolCallResult, inferToolFailureKindFromError } from "../../failure-kind.js";
 import { ProcessLease, type ProcessTerminationResult, shouldDetachProcessTree } from "./process-lease.js";
@@ -902,16 +916,273 @@ function splitCommandSegments(
     return { ok: true, segments };
 }
 
+type CommandResultFactory = (
+    success: boolean,
+    output: string,
+    error?: string,
+    failureKind?: ToolCallResult["failureKind"],
+    metadata?: ToolCallResult["metadata"],
+) => ToolCallResult;
+
+async function executeSandboxedCommand(input: {
+    context: ToolContext;
+    plan: CommandPlan;
+    sandbox: OciCommandSandboxConfig;
+    makeResult: CommandResultFactory;
+}): Promise<ToolCallResult> {
+    const scope = resolveRuntimeFilesystemScope(input.context);
+    const mount = await resolveSandboxWorkspace({
+        cwd: input.plan.cwd ?? input.context.defaultCwd,
+        workspaceRoot: scope.workspaceRoot,
+        extraWorkspaceRoots: scope.extraWorkspaceRoots,
+    });
+    if (!mount.ok) {
+        input.context.logger?.warn(`[Security Block] sandbox cwd=${input.plan.cwd ?? input.context.defaultCwd ?? scope.workspaceRoot} -> ${mount.reason}`);
+        return input.makeResult(false, "", `Security Error: ${mount.reason}`, "permission_or_policy");
+    }
+
+    const timeoutMs = Math.min(
+        input.plan.timeoutMs ?? DEFAULT_COMMAND_POLICY_TIMEOUT_MS,
+        normalizePositiveLimit(input.context.policy.maxTimeoutMs, DEFAULT_COMMAND_POLICY_TIMEOUT_MS),
+    );
+    const outputLimitBytes = normalizePositiveLimit(
+        input.context.policy.maxResponseBytes,
+        DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+    );
+    const commandPlan = summarizeCommandPlanForAudit(input.plan);
+    const sandboxMetadata: NonNullable<ToolCallResult["metadata"]> = {
+        commandSandboxBackend: input.sandbox.backend,
+        commandSandboxRuntime: input.sandbox.runtime,
+        commandSandboxImage: input.sandbox.image,
+        commandSandboxNetwork: input.plan.network,
+        commandSandboxWriteScope: input.plan.writeScope,
+        commandPlan,
+    };
+
+    try {
+        throwIfAborted(input.context.abortSignal);
+    } catch {
+        return input.makeResult(false, "", readAbortReason(input.context.abortSignal), "environment_error", sandboxMetadata);
+    }
+
+    let environmentFile: Awaited<ReturnType<typeof createOciSandboxEnvironmentFile>> | undefined;
+    let sandboxLease: OciSandboxLease | undefined;
+    let executionResult: ToolCallResult;
+    try {
+        const lease = await createOciSandboxLease({ config: input.sandbox });
+        sandboxLease = lease;
+        environmentFile = await createOciSandboxEnvironmentFile(input.plan.env);
+        const invocation = buildOciSandboxInvocation({
+            config: input.sandbox,
+            workspaceRoot: mount.workspaceRoot,
+            cwd: mount.cwd,
+            plan: input.plan,
+            lease: lease.binding,
+            ...(environmentFile.path ? { environmentFile: environmentFile.path } : {}),
+        });
+        input.context.logger?.info(`[exec:sandbox] ${JSON.stringify(commandPlan)} in ${mount.cwd}`);
+
+        executionResult = await new Promise((resolve) => {
+            const child = spawn(invocation.executable, invocation.args, {
+                cwd: invocation.cwd,
+                shell: false,
+                detached: shouldDetachProcessTree(),
+                env: buildSandboxRuntimeEnvironment(),
+                stdio: ["ignore", "pipe", "pipe"],
+                windowsHide: true,
+            });
+            lease.markRuntimeStarted();
+            const processLease = new ProcessLease(child);
+            const outputCollector = createProcessOutputCollector(outputLimitBytes);
+            let settled = false;
+            let terminationIntent: "abort" | "timeout" | null = null;
+
+            const buildMetadata = (
+                termination?: ProcessTerminationResult,
+            ): ToolCallResult["metadata"] => {
+                const outputMetadata = outputCollector.metadata();
+                if (!termination) {
+                    return {
+                        ...sandboxMetadata,
+                        ...lease.metadata(),
+                        ...(outputMetadata ?? {}),
+                    };
+                }
+                return {
+                    ...sandboxMetadata,
+                    ...lease.metadata(),
+                    ...(outputMetadata ?? {}),
+                    processTerminationReason: terminationIntent ?? "unknown",
+                    processTerminationMethod: termination.method,
+                    processHardKillUsed: termination.hardKillUsed,
+                    processCloseObserved: termination.closeObserved,
+                };
+            };
+
+            const finalize = (result: ToolCallResult) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutTimer);
+                input.context.abortSignal?.removeEventListener("abort", onAbort);
+                resolve(result);
+            };
+
+            const terminateAndFinalize = (
+                reason: "abort" | "timeout",
+                error: () => string,
+            ) => {
+                if (settled || terminationIntent) return;
+                terminationIntent = reason;
+                clearTimeout(timeoutTimer);
+                input.context.abortSignal?.removeEventListener("abort", onAbort);
+                void processLease.terminate().then((termination) => {
+                    finalize(input.makeResult(
+                        false,
+                        outputCollector.read("stdout"),
+                        error(),
+                        "environment_error",
+                        buildMetadata(termination),
+                    ));
+                });
+            };
+
+            const onAbort = () => terminateAndFinalize(
+                "abort",
+                () => readAbortReason(input.context.abortSignal),
+            );
+            const timeoutTimer = setTimeout(() => {
+                terminateAndFinalize(
+                    "timeout",
+                    () => `Timeout after ${timeoutMs}ms\nStderr: ${outputCollector.read("stderr")}`,
+                );
+            }, timeoutMs);
+            input.context.abortSignal?.addEventListener("abort", onAbort, { once: true });
+            if (input.context.abortSignal?.aborted) onAbort();
+
+            child.stdout?.on("data", (data) => {
+                if (!settled) outputCollector.append("stdout", data);
+            });
+            child.stderr?.on("data", (data) => {
+                if (!settled) outputCollector.append("stderr", data);
+            });
+            child.on("close", (code) => {
+                if (terminationIntent) return;
+                const stdout = outputCollector.read("stdout");
+                const stderr = outputCollector.read("stderr");
+                if (code === 0) {
+                    finalize(input.makeResult(true, stdout, undefined, undefined, buildMetadata()));
+                    return;
+                }
+                finalize(input.makeResult(
+                    false,
+                    stdout,
+                    `Sandbox process exited with code ${code}\nStderr: ${stderr}`,
+                    inferToolFailureKindFromError(stderr || `Sandbox process exited with code ${code}`),
+                    buildMetadata(),
+                ));
+            });
+            child.on("error", (err) => {
+                if (terminationIntent) return;
+                finalize(input.makeResult(
+                    false,
+                    outputCollector.read("stdout"),
+                    `Sandbox spawn error: ${err.message}`,
+                    "environment_error",
+                    buildMetadata(),
+                ));
+            });
+        });
+    } catch (error) {
+        executionResult = input.makeResult(
+            false,
+            "",
+            error instanceof Error ? `Sandbox setup error: ${error.message}` : "Sandbox setup error.",
+            "environment_error",
+            sandboxMetadata,
+        );
+    }
+
+    let finalMetadata: NonNullable<ToolCallResult["metadata"]> = {
+        ...(executionResult.metadata ?? {}),
+    };
+    let terminalCleanupError: string | undefined;
+    if (sandboxLease) {
+        let release: OciSandboxLeaseRelease;
+        try {
+            release = await sandboxLease.release();
+        } catch {
+            release = { status: "cleanup_failed" };
+        }
+        const leaseMetadata = sandboxLease.metadata(release);
+        finalMetadata = {
+            ...finalMetadata,
+            ...leaseMetadata,
+        };
+        if (release.status === "cleanup_failed") {
+            input.context.logger?.error(
+                `[exec:sandbox] lease cleanup failed for ${leaseMetadata.commandSandboxContainerName}`,
+            );
+            terminalCleanupError = "Sandbox container cleanup failed; investigate the reported lease before another command is run.";
+        }
+        try {
+            await sandboxLease.cleanupArtifacts();
+        } catch {
+            terminalCleanupError ??= "Sandbox lease artifact cleanup failed after command execution.";
+            finalMetadata = {
+                ...finalMetadata,
+                commandSandboxLeaseArtifactCleanupFailed: true,
+            };
+        }
+    }
+
+    try {
+        await environmentFile?.cleanup();
+    } catch {
+        finalMetadata = {
+            ...finalMetadata,
+            commandSandboxEnvironmentCleanupFailed: true,
+        };
+        terminalCleanupError ??= "Sandbox environment cleanup failed after command execution.";
+    }
+    if (terminalCleanupError) {
+        return input.makeResult(
+            false,
+            executionResult.output,
+            terminalCleanupError,
+            "environment_error",
+            finalMetadata,
+        );
+    }
+    return {
+        ...executionResult,
+        metadata: finalMetadata,
+    };
+}
+
 export const runCommandTool: Tool = withToolContract({
     definition: {
         name: "run_command",
-        description: "在宿主机执行 Shell 命令。仅允许安全列表内的开发工具 (git, npm, ls, etc.)。**禁止** sudo, mkfs 等高危操作。",
+        description: "执行受治理的开发命令。sandbox-required coding run 必须提供无 Shell 的 commandPlan；非 coding 旧调用仍使用受限宿主 Shell 路径。",
         parameters: {
             type: "object",
             properties: {
                 command: {
                     type: "string",
-                    description: "要执行的 Shell 命令",
+                    description: "旧版宿主 Shell 命令；sandbox-required coding run 不接受此字段。",
+                },
+                commandPlan: {
+                    type: "object",
+                    description: "Sandbox 命令计划：executable、argv、相对 cwd、env diff、network、writeScope、stdinMode 和可选 timeoutMs。",
+                    properties: {
+                        executable: { type: "string" },
+                        argv: { type: "array", items: { type: "string" } },
+                        cwd: { type: "string" },
+                        env: { type: "object", additionalProperties: { type: "string" } },
+                        network: { type: "string", enum: ["none"] },
+                        writeScope: { type: "string", enum: ["workspace-readonly", "workspace-readwrite"] },
+                        stdinMode: { type: "string", enum: ["closed"] },
+                        timeoutMs: { type: "integer", minimum: 1 },
+                    },
                 },
                 cwd: {
                     type: "string",
@@ -922,7 +1193,6 @@ export const runCommandTool: Tool = withToolContract({
                     description: "超时时间（毫秒），默认 5000",
                 },
             },
-            required: ["command"],
         },
     },
 
@@ -958,9 +1228,65 @@ export const runCommandTool: Tool = withToolContract({
                 })
         );
 
+        if (context.launchSpec?.commandSandbox === "required") {
+            const commandSandboxAdmission = await evaluateCommandSandboxAdmission({
+                family: "command-exec",
+                launchSpec: context.launchSpec,
+                readEnv: context.readEnv,
+            });
+            if (!commandSandboxAdmission.allowed) {
+                return makeResult(
+                    false,
+                    "",
+                    commandSandboxAdmission.message,
+                    "permission_or_policy",
+                    commandSandboxAdmission.metadata,
+                );
+            }
+            if (!commandSandboxAdmission.sandbox) {
+                return makeResult(false, "", "Sandbox backend admission returned no executable backend.", "environment_error");
+            }
+            const commandPlan = parseCommandPlan(args.commandPlan);
+            if (!commandPlan.ok) {
+                return makeResult(false, "", commandPlan.message, "input_error", {
+                    commandPlanErrorCode: commandPlan.code,
+                });
+            }
+            if (commandPlan.plan.stdinMode !== "closed") {
+                return makeResult(
+                    false,
+                    "",
+                    "Interactive command plans must be started through command_job so stdin, cursor, cancellation, and cleanup have one owner.",
+                    "input_error",
+                    { commandPlanErrorCode: "interactive_requires_command_job" },
+                );
+            }
+            return executeSandboxedCommand({
+                context,
+                plan: commandPlan.plan,
+                sandbox: commandSandboxAdmission.sandbox,
+                makeResult,
+            });
+        }
+
         const commandRaw = args.command as string;
         if (!commandRaw || typeof commandRaw !== "string") {
             return makeResult(false, "", "Command is required", "input_error");
+        }
+
+        const commandSandboxAdmission = await evaluateCommandSandboxAdmission({
+            family: "command-exec",
+            launchSpec: context.launchSpec,
+            readEnv: context.readEnv,
+        });
+        if (!commandSandboxAdmission.allowed) {
+            return makeResult(
+                false,
+                "",
+                commandSandboxAdmission.message,
+                "permission_or_policy",
+                commandSandboxAdmission.metadata,
+            );
         }
 
         // 路径拦截优先：禁止触达 SOUL.md

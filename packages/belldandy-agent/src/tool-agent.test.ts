@@ -247,6 +247,83 @@ describe("before_agent_start system prompt overrides", () => {
     });
   });
 
+  it("uses a trusted per-run prompt override for requests, snapshots, and usage", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{
+        message: {
+          content: "done",
+        },
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+    const snapshots: AgentPromptSnapshot[] = [];
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      systemPrompt: "resident-system-prompt",
+      systemPromptSections: [{
+        id: "workspace-soul",
+        label: "SOUL.md",
+        source: "workspace",
+        priority: 20,
+        text: "resident-soul",
+      }],
+      systemPromptMetadata: {
+        systemPromptFingerprint: "resident-prompt",
+      },
+      toolExecutor: createToolExecutor(),
+      onPromptSnapshot: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-run-prompt-override",
+      text: "inspect files",
+      promptOverride: {
+        text: "coding-run-system-prompt",
+        sections: [{
+          id: "coding-run-base",
+          label: "coding-run-base",
+          source: "core",
+          priority: 0,
+          text: "coding-run-system-prompt",
+        }],
+        metadata: {
+          codingRunPromptMode: "bounded-coding-run-v1",
+          systemPromptFingerprint: "coding-run-prompt",
+        },
+      },
+    }));
+
+    expect(items).toContainEqual({ type: "final", text: "done" });
+    const requestInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+    const payload = JSON.parse(String(requestInit?.body ?? "{}"));
+    expect(payload.messages[0]).toEqual({
+      role: "system",
+      content: "coding-run-system-prompt",
+    });
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      systemPrompt: "coding-run-system-prompt",
+      providerNativeSystemBlocks: [
+        expect.objectContaining({
+          blockType: "static-capability",
+          sourceSectionIds: ["coding-run-base"],
+        }),
+      ],
+      inputMeta: {
+        codingRunPromptMode: "bounded-coding-run-v1",
+        systemPromptFingerprint: "coding-run-prompt",
+      },
+    });
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      systemPromptFingerprint: "coding-run-prompt",
+    }));
+  });
+
   it("adapts stable prefix split injection for single_system_only models", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
       choices: [{

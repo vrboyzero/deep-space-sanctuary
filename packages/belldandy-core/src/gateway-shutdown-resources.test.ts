@@ -70,6 +70,9 @@ describe("registerGatewayShutdownResources", () => {
       shutdownAgentBridge: vi.fn(async () => {
         events.push("agent-bridge.abort");
       }),
+      shutdownCommandJobs: vi.fn(async () => {
+        events.push("command-jobs.abort");
+      }),
     };
     const coordinator = new GatewayShutdownCoordinator();
     registerGatewayShutdownResources(coordinator, resources);
@@ -85,6 +88,7 @@ describe("registerGatewayShutdownResources", () => {
       "active-notify.close",
       "channels.stop",
       "agent-bridge.abort",
+      "command-jobs.abort",
       "cron.drain",
       "heartbeat.drain",
     ]);
@@ -99,6 +103,7 @@ describe("registerGatewayShutdownResources", () => {
       "active-notify.close",
       "channels.stop",
       "agent-bridge.abort",
+      "command-jobs.abort",
       "cron.drain",
       "heartbeat.drain",
       "mcp.close",

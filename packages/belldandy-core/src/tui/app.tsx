@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import { toSafeCodingRunErrorMessage, type AgentRunEvent } from "../coding-run/contracts.js";
+import type { WorkspaceChangeRecovery } from "../workspace-change-recovery.js";
 import type { CodingTuiRuntime } from "./runtime.js";
 import {
   createInitialTuiState,
@@ -34,11 +35,6 @@ export function CodingTuiApp(input: {
     };
   }, [stdout]);
 
-  useEffect(() => {
-    input.onEventRegistration((event) => dispatch({ type: "run.event", event }));
-    input.onErrorRegistration((message) => dispatch({ type: "notice.changed", notice: message }));
-  }, [input]);
-
   const runTask = useCallback(async (task: () => Promise<void>) => {
     dispatch({ type: "busy.changed", busy: true });
     try {
@@ -49,6 +45,19 @@ export function CodingTuiApp(input: {
       dispatch({ type: "busy.changed", busy: false });
     }
   }, []);
+
+  useEffect(() => {
+    input.onEventRegistration((event) => {
+      dispatch({ type: "run.event", event });
+      if (!isTerminalRunEvent(event)) return;
+      void input.runtime.completeChangeSnapshot(event.binding.agentRunId)
+        .then((result) => {
+          if (result) dispatch({ type: "change.snapshot.completed", agentRunId: event.binding.agentRunId, result });
+        })
+        .catch(() => dispatch({ type: "notice.changed", notice: "Run diff unavailable." }));
+    });
+    input.onErrorRegistration((message) => dispatch({ type: "notice.changed", notice: message }));
+  }, [input]);
 
   const refreshSessions = useCallback(async () => {
     const conversations = await input.runtime.listConversations();
@@ -150,6 +159,14 @@ export function CodingTuiApp(input: {
     await runTask(async () => {
       const result = await input.runtime.restoreRevision(preview.revisionId, preview.workspaceId);
       dispatch({ type: "revision.restored", result });
+      if (result.applied) {
+        const snapshot = await input.runtime.recomputeChangeSnapshot(preview.revisionId);
+        if (snapshot?.status === "available") {
+          dispatch({ type: "change.snapshot.completed", agentRunId: preview.revisionId, result: snapshot });
+        } else if (snapshot) {
+          dispatch({ type: "notice.changed", notice: "Restored, but the run diff could not be refreshed." });
+        }
+      }
       await refreshChanges();
     });
   }, [input.runtime, refreshChanges, runTask, state.restoreConfirmation, state.revisionPreview]);
@@ -236,7 +253,8 @@ export function CodingTuiApp(input: {
   });
 
   const compact = dimensions.columns < 80;
-  const bodyHeight = Math.max(5, dimensions.rows - 5);
+  const footerHeight = state.pendingPermission?.commandPreview ? 3 : 2;
+  const bodyHeight = Math.max(5, dimensions.rows - footerHeight - 3);
   if (dimensions.columns < 32 || dimensions.rows < 10) {
     return (
       <Box width={dimensions.columns} height={dimensions.rows} paddingX={1}>
@@ -336,14 +354,16 @@ function SessionsView({ state, width, height }: { state: TuiState; width: number
 
 function ChangesView(input: { state: TuiState; width: number; height: number; compact: boolean }) {
   const workspace = input.state.workspaceChanges;
+  const conflict = input.state.revisionPreview?.changes.find((change) => change.action === "conflict");
   const workspaceLines = workspace
     ? [
       workspace.repoRoot ? `${workspace.branch ?? "detached"}  ${workspace.worktree ? "managed worktree" : "primary worktree"}` : workspace.cwd,
       `tracked ${workspace.trackedChanges}  untracked ${workspace.untrackedChanges}  conflicts ${workspace.conflictChanges}`,
       ...(workspace.error ? [workspace.error] : []),
+      ...formatChangeSnapshotLines(input.state.changeSnapshot),
       ...workspace.changedPaths.slice(0, Math.max(1, Math.floor(input.height / 2) - 3)),
     ]
-    : ["Workspace status unavailable."];
+    : ["Workspace status unavailable.", ...formatChangeSnapshotLines(input.state.changeSnapshot)];
   const leftWidth = input.compact ? input.width : Math.max(30, Math.floor(input.width * 0.5));
   const rightWidth = input.compact ? input.width : input.width - leftWidth;
   const upperHeight = input.compact ? Math.max(3, Math.floor(input.height / 2)) : input.height;
@@ -369,9 +389,39 @@ function ChangesView(input: { state: TuiState; width: number; height: number; co
             preview: {input.state.revisionPreview.changes.filter((change) => change.action !== "unchanged").length} changes
           </Text>
         )}
+        {conflict && (
+          <>
+            <Text color="red">conflict {truncateTuiIdentifier(conflict.relativePath, Math.max(8, rightWidth - 14))}</Text>
+            <Text color="red">agent {formatConflictHash(conflict.recordedAfterHash)} current {formatConflictHash(conflict.currentHash)}</Text>
+          </>
+        )}
       </Box>
     </Box>
   );
+}
+
+function formatChangeSnapshotLines(result: TuiState["changeSnapshot"]): string[] {
+  if (!result) return [];
+  if (result.status !== "available" || !result.snapshot) return ["Run diff unavailable."];
+  const hunk = result.page?.hunks[0];
+  const patchLines = hunk?.patch.split(/\r?\n/) ?? [];
+  return [
+    `Run diff ${result.snapshot.files.length} files ${result.snapshot.hunkCount} hunks${result.snapshot.truncated ? " truncated" : ""}; ${formatRecoveryLine(result.snapshot.recovery)}`,
+    ...(hunk
+      ? [`hunk ${hunk.path} ${patchLines[0] ?? ""}`, ...patchLines.slice(1, 3)]
+      : []),
+  ];
+}
+
+function formatRecoveryLine(recovery: WorkspaceChangeRecovery | undefined): string {
+  if (!recovery) return "Recovery detect-only checkpoint missing";
+  if (recovery.recoveryGuarantee === "exact") return `Recovery exact checkpoint ${truncateTuiIdentifier(recovery.checkpointId, 22)}`;
+  if (recovery.recoveryGuarantee === "managed_worktree") return `Recovery managed worktree ${truncateTuiIdentifier(recovery.worktreeId, 22)}`;
+  return `Recovery detect-only ${recovery.reason.replace(/_/g, " ")}`;
+}
+
+function formatConflictHash(value: string | undefined): string {
+  return value ? truncateTuiIdentifier(value, 10) : "missing";
 }
 
 function RuntimeView({ state, width, height }: { state: TuiState; width: number; height: number }) {
@@ -399,10 +449,15 @@ function RuntimeView({ state, width, height }: { state: TuiState; width: number;
 
 function Footer(input: { state: TuiState; width: number; modalChoice: number }) {
   if (input.state.pendingPermission) {
+    const preview = input.state.pendingPermission.commandPreview;
+    const toolNameWidth = Math.max(4, Math.min(24, Math.floor((input.width - 22) / 2)));
     return (
-      <Box height={2} borderStyle="single" borderColor="yellow" paddingX={1} justifyContent="space-between">
-        <Text>{truncateTuiIdentifier(input.state.pendingPermission.toolName, 24)} ({truncateTuiIdentifier(input.state.pendingPermission.toolCallId, 24)})</Text>
-        <Text><Text inverse={input.modalChoice === 0}> Allow </Text> <Text inverse={input.modalChoice === 1}> Deny </Text></Text>
+      <Box height={preview ? 3 : 2} borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+        <Box height={1} justifyContent="space-between">
+          <Text>{truncateTuiIdentifier(input.state.pendingPermission.toolName, toolNameWidth)} ({truncateTuiIdentifier(input.state.pendingPermission.toolCallId, toolNameWidth)})</Text>
+          <Text><Text inverse={input.modalChoice === 0}> Allow </Text> <Text inverse={input.modalChoice === 1}> Deny </Text></Text>
+        </Box>
+        {preview && <Text dimColor>{toVisibleLines(formatCommandPermissionPreview(preview), Math.max(8, input.width - 4), 1)[0]}</Text>}
       </Box>
     );
   }
@@ -424,11 +479,39 @@ function Footer(input: { state: TuiState; width: number; modalChoice: number }) 
   );
 }
 
+function formatCommandPermissionPreview(preview: NonNullable<TuiState["pendingPermission"]>["commandPreview"]): string {
+  if (!preview) return "";
+  const parts: string[] = [preview.action];
+  if (preview.commandPlan) {
+    const plan = preview.commandPlan;
+    parts.push(`${plan.executable}${plan.argv.length > 0 ? ` ${plan.argv.join(" ")}` : ""}`);
+    parts.push(`cwd=${plan.cwd}`);
+    parts.push(`env=${plan.environmentKeys.length > 0 ? plan.environmentKeys.join(",") : "-"}`);
+    parts.push(`network=${plan.network}`);
+    parts.push(`write=${plan.writeScope}`);
+    parts.push(`stdin=${plan.stdinMode}`);
+    if (plan.timeoutMs) parts.push(`timeout=${plan.timeoutMs}ms`);
+  }
+  if (preview.jobId) parts.push(`job=${truncateTuiIdentifier(preview.jobId, 12)}`);
+  if (preview.stdinProvided) parts.push("stdin=provided");
+  if (preview.cursor !== undefined) parts.push(`cursor=${preview.cursor}`);
+  if (preview.maxBytes !== undefined) parts.push(`max=${preview.maxBytes}`);
+  if (preview.cols !== undefined && preview.rows !== undefined) parts.push(`size=${preview.cols}x${preview.rows}`);
+  return parts.join(" | ");
+}
+
 function readDimensions(stdout: NodeJS.WriteStream): { columns: number; rows: number } {
   return {
     columns: Math.max(1, stdout.columns || 80),
     rows: Math.max(1, stdout.rows || 24),
   };
+}
+
+function isTerminalRunEvent(event: AgentRunEvent): boolean {
+  return event.type === "run.completed"
+    || event.type === "run.failed"
+    || event.type === "run.cancelled"
+    || event.type === "run.interrupted";
 }
 
 function removeLastCharacter(value: string): string {

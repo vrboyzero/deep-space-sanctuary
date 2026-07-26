@@ -106,7 +106,7 @@ describe("coding agent benchmark repository contract", () => {
       reconnectCount: 1,
       binding: { conversationId: "conversation-recovery", agentRunId: "run-recovery" },
     };
-    expect(compiled.validator.validateOutput(JSON.stringify(recovered))).toEqual({ ok: true });
+    expect(compiled.validator.validateOutput(JSON.stringify(recovered))).toMatchObject({ ok: true });
     expect(compiled.validator.validateOutput(JSON.stringify({
       ...recovered,
       reconnectCount: 0,
@@ -132,7 +132,7 @@ describe("coding agent benchmark repository contract", () => {
       terminalType: "run.cancelled",
       terminalSeq: 2,
     };
-    expect(compiled.validator.validateOutput(JSON.stringify(confirmed))).toEqual({ ok: true });
+    expect(compiled.validator.validateOutput(JSON.stringify(confirmed))).toMatchObject({ ok: true });
     expect(compiled.validator.validateOutput(JSON.stringify({
       ...confirmed,
       cancellationRequestCount: 0,

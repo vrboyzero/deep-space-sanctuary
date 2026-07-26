@@ -37,6 +37,7 @@ export type GatewayShutdownResources = {
   shutdownMcp?: () => Promise<void>;
   browserRelay?: AsyncCloseHandle;
   shutdownAgentBridge?: () => Promise<unknown>;
+  shutdownCommandJobs?: () => Promise<unknown>;
 };
 
 function createDeferredDrain(stop: () => Promise<void>): {
@@ -163,6 +164,15 @@ export function registerGatewayShutdownResources(
       phase: "abort_active",
       run: async () => {
         await resources.shutdownAgentBridge!();
+      },
+    });
+  }
+  if (resources.shutdownCommandJobs) {
+    coordinator.register({
+      id: "command-jobs",
+      phase: "abort_active",
+      run: async () => {
+        await resources.shutdownCommandJobs!();
       },
     });
   }

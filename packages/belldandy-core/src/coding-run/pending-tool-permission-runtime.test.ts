@@ -10,14 +10,40 @@ describe("PendingToolPermissionRuntime", () => {
       conversationId: "conversation-1",
       agentRunId: "run-1",
       toolCallId: "tool-1",
-      toolName: "file_write",
+      toolName: "run_command",
+      commandPreview: {
+        kind: "command",
+        action: "run",
+        commandPlan: {
+          executable: "node",
+          argv: ["--version"],
+          cwd: ".",
+          environmentKeys: ["LOG_LEVEL"],
+          network: "none",
+          writeScope: "workspace-readonly",
+          stdinMode: "closed",
+        },
+      },
     });
 
     expect(onRequested).toHaveBeenCalledWith({
       conversationId: "conversation-1",
       agentRunId: "run-1",
       toolCallId: "tool-1",
-      toolName: "file_write",
+      toolName: "run_command",
+      commandPreview: {
+        kind: "command",
+        action: "run",
+        commandPlan: {
+          executable: "node",
+          argv: ["--version"],
+          cwd: ".",
+          environmentKeys: ["LOG_LEVEL"],
+          network: "none",
+          writeScope: "workspace-readonly",
+          stdinMode: "closed",
+        },
+      },
     });
     expect(runtime.respond({
       agentRunId: "run-other",
@@ -54,6 +80,39 @@ describe("PendingToolPermissionRuntime", () => {
       .toEqual({ ok: true, accepted: true, alreadyResolved: true });
     expect(runtime.respond({ agentRunId: "run-1", toolCallId: "tool-1", decision: "allow" }))
       .toEqual({ ok: false, code: "permission_denied" });
+  });
+
+  it("drops a command preview attached to a non-command permission", async () => {
+    const onRequested = vi.fn();
+    const runtime = new PendingToolPermissionRuntime({ onRequested });
+    const pending = runtime.request({
+      conversationId: "conversation-1",
+      agentRunId: "run-non-command",
+      toolCallId: "tool-non-command",
+      toolName: "file_write",
+      commandPreview: {
+        kind: "command",
+        action: "run",
+        commandPlan: {
+          executable: "node",
+          argv: ["--token=must-not-leak"],
+          cwd: ".",
+          environmentKeys: ["PRIVATE_TOKEN"],
+          network: "none",
+          writeScope: "workspace-readonly",
+          stdinMode: "closed",
+        },
+      },
+    });
+
+    expect(onRequested).toHaveBeenCalledWith({
+      conversationId: "conversation-1",
+      agentRunId: "run-non-command",
+      toolCallId: "tool-non-command",
+      toolName: "file_write",
+    });
+    runtime.cancelRun("run-non-command");
+    await expect(pending).resolves.toBe("deny");
   });
 
   it("fails closed when the run aborts, times out, or tries to reuse a tool call id", async () => {

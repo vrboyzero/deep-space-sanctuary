@@ -204,6 +204,10 @@ export class OpenAIChatAgent implements BelldandyAgent {
     yield { type: "status", status: "running" };
 
     try {
+      const runPromptOverride = input.promptOverride;
+      const runSystemPrompt = runPromptOverride ? runPromptOverride.text : this.opts.systemPrompt;
+      const runSystemPromptSections = runPromptOverride ? runPromptOverride.sections : this.opts.systemPromptSections;
+      const runSystemPromptMetadata = runPromptOverride ? runPromptOverride.metadata : this.opts.systemPromptMetadata;
       let content = input.content || input.text;
 
       // Preprocess: upload local videos to Moonshot
@@ -225,13 +229,13 @@ export class OpenAIChatAgent implements BelldandyAgent {
       }
 
       const systemPromptState = buildEffectiveSystemPromptState({
-        systemPrompt: this.opts.systemPrompt,
-        systemPromptMetadata: this.opts.systemPromptMetadata,
+        systemPrompt: runSystemPrompt,
+        systemPromptMetadata: runSystemPromptMetadata,
       });
       const messages = buildMessages(systemPromptState.text, content, input.history);
       const promptDeltas = readPromptSnapshotDeltas(input.meta);
       const providerNativeSystemBlocks = buildProviderNativeSystemBlocks({
-        sections: this.opts.systemPromptSections,
+        sections: runSystemPromptSections,
         deltas: promptDeltas,
         fallbackText: systemPromptState.text,
       });
@@ -243,7 +247,7 @@ export class OpenAIChatAgent implements BelldandyAgent {
         deltas: promptDeltas,
         providerNativeSystemBlocks,
         inputMeta: mergePromptSnapshotInputMeta(
-          this.opts.systemPromptMetadata,
+          runSystemPromptMetadata,
           input.meta,
           systemPromptState.truncationReason,
         ),

@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 
@@ -94,10 +94,94 @@ describe("WorkspaceRevisionRuntime", () => {
       const preview = await runtime.previewRestore({ revisionId });
       expect(preview.canRestore).toBe(false);
       expect(preview.changes).toEqual([
-        expect.objectContaining({ relativePath: "note.txt", action: "conflict" }),
+        expect.objectContaining({
+          relativePath: "note.txt",
+          action: "conflict",
+          recordedAfterHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          currentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
       ]);
-      await expect(runtime.restore({ revisionId, apply: true })).resolves.toMatchObject({ applied: false, canRestore: false });
+      expect(preview.conflictArtifact).toMatchObject({
+        artifactPath: expect.any(String),
+        conflictCount: 1,
+      });
+      const artifact = await fs.readFile(String(preview.conflictArtifact?.artifactPath), "utf-8");
+      expect(artifact).toContain('"relativePath": "note.txt"');
+      expect(artifact).toContain('"recordedAfterHash"');
+      expect(artifact).toContain('"currentHash"');
+      expect(artifact).not.toContain("agent change");
+      expect(artifact).not.toContain("user change");
+      expect(artifact).not.toContain(fixture.workspaceRoot);
+      await expect(runtime.restore({ revisionId, apply: true })).resolves.toMatchObject({
+        applied: false,
+        canRestore: false,
+        conflictArtifact: { conflictCount: 1 },
+      });
       await expect(fs.readFile(file, "utf-8")).resolves.toBe("user change");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops an apply before every workspace write when any checkpoint target conflicts", async () => {
+    const fixture = await createFixture("belldandy-workspace-revision-atomic-conflict-");
+    try {
+      const first = path.join(fixture.workspaceRoot, "first.txt");
+      const second = path.join(fixture.workspaceRoot, "second.txt");
+      await fs.writeFile(first, "before first", "utf-8");
+      await fs.writeFile(second, "before second", "utf-8");
+      const runtime = new WorkspaceRevisionRuntime({ stateDir: fixture.stateDir });
+      const revisionId = "run-workspace-revision-atomic-conflict";
+      const targets = [target(fixture.workspaceRoot, "first.txt"), target(fixture.workspaceRoot, "second.txt")];
+      await runtime.prepareMutations({ revisionId, workspaceRoot: fixture.workspaceRoot, toolName: "apply_patch", targets });
+      await fs.writeFile(first, "agent first", "utf-8");
+      await fs.writeFile(second, "agent second", "utf-8");
+      await runtime.commitMutations({ revisionId, workspaceRoot: fixture.workspaceRoot, toolName: "apply_patch", targets });
+      await fs.writeFile(second, "user second", "utf-8");
+
+      await expect(runtime.restore({ revisionId, apply: true })).resolves.toMatchObject({
+        applied: false,
+        canRestore: false,
+        changes: expect.arrayContaining([
+          expect.objectContaining({ relativePath: "second.txt", action: "conflict" }),
+        ]),
+      });
+      await expect(fs.readFile(first, "utf-8")).resolves.toBe("agent first");
+      await expect(fs.readFile(second, "utf-8")).resolves.toBe("user second");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks every target after dry-run and before the first restore write", async () => {
+    const fixture = await createFixture("belldandy-workspace-revision-race-gate-");
+    try {
+      const first = path.join(fixture.workspaceRoot, "first.txt");
+      const second = path.join(fixture.workspaceRoot, "second.txt");
+      await fs.writeFile(first, "before first", "utf-8");
+      await fs.writeFile(second, "before second", "utf-8");
+      const runtime = new WorkspaceRevisionRuntime({ stateDir: fixture.stateDir });
+      const revisionId = "run-workspace-revision-race-gate";
+      const targets = [target(fixture.workspaceRoot, "first.txt"), target(fixture.workspaceRoot, "second.txt")];
+      await runtime.prepareMutations({ revisionId, workspaceRoot: fixture.workspaceRoot, toolName: "apply_patch", targets });
+      await fs.writeFile(first, "agent first", "utf-8");
+      await fs.writeFile(second, "agent second", "utf-8");
+      await runtime.commitMutations({ revisionId, workspaceRoot: fixture.workspaceRoot, toolName: "apply_patch", targets });
+
+      const originalPreview = runtime.previewRestore.bind(runtime);
+      let previewCalls = 0;
+      vi.spyOn(runtime, "previewRestore").mockImplementation(async (input) => {
+        previewCalls += 1;
+        if (previewCalls === 2) await fs.writeFile(second, "user second", "utf-8");
+        return originalPreview(input);
+      });
+
+      await expect(runtime.restore({ revisionId, apply: true })).resolves.toMatchObject({
+        applied: false,
+        changes: expect.arrayContaining([expect.objectContaining({ relativePath: "second.txt", action: "conflict" })]),
+      });
+      await expect(fs.readFile(first, "utf-8")).resolves.toBe("agent first");
+      await expect(fs.readFile(second, "utf-8")).resolves.toBe("user second");
     } finally {
       await fs.rm(fixture.rootDir, { recursive: true, force: true });
     }

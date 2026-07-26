@@ -1,4 +1,5 @@
 import type { PersistedConversationSummary } from "@belldandy/agent";
+import { sanitizeCommandPermissionPreview, type CommandPermissionPreview } from "@belldandy/skills";
 
 import type { AgentRunEvent } from "../coding-run/contracts.js";
 import type {
@@ -6,6 +7,10 @@ import type {
   WorkspaceRevisionRestoreResult,
   WorkspaceRevisionSummary,
 } from "../workspace-revision.js";
+import type {
+  WorkspaceChangeSnapshot,
+  WorkspaceChangeSnapshotPage,
+} from "../workspace-change-snapshot.js";
 
 export const MAX_TUI_STREAM_CHARS = 32_000;
 export const MAX_TUI_CHAT_ENTRIES = 40;
@@ -25,6 +30,7 @@ export type TuiPermissionRequest = {
   toolCallId: string;
   toolName: string;
   worktreeId?: string;
+  commandPreview?: CommandPermissionPreview;
 };
 
 export type TuiToolSummary = {
@@ -60,6 +66,13 @@ export type TuiRuntimeSnapshot = {
   hints: string[];
 };
 
+export type TuiChangeSnapshotResult = {
+  status: "available" | "unavailable";
+  snapshot?: WorkspaceChangeSnapshot;
+  page?: WorkspaceChangeSnapshotPage;
+  error?: string;
+};
+
 export type TuiState = {
   cwd: string;
   tab: TuiTab;
@@ -75,6 +88,7 @@ export type TuiState = {
   conversations: PersistedConversationSummary[];
   selectedConversationIndex: number;
   workspaceChanges?: TuiWorkspaceChangeSummary;
+  changeSnapshot?: TuiChangeSnapshotResult;
   revisions: WorkspaceRevisionSummary[];
   selectedRevisionIndex: number;
   revisionPreview?: WorkspaceRevisionRestorePreview;
@@ -102,6 +116,7 @@ export type TuiAction =
     decision: "allow" | "deny";
   }
   | { type: "workspace.loaded"; summary: TuiWorkspaceChangeSummary }
+  | { type: "change.snapshot.completed"; agentRunId: string; result: TuiChangeSnapshotResult }
   | { type: "revisions.loaded"; revisions: WorkspaceRevisionSummary[] }
   | { type: "revision.index.selected"; index: number }
   | { type: "revision.previewed"; preview: WorkspaceRevisionRestorePreview }
@@ -149,6 +164,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         stream: { text: "", truncated: false },
         tools: [],
         pendingPermission: undefined,
+        changeSnapshot: undefined,
         restoreConfirmation: undefined,
         notice: undefined,
         chat: appendLimited(state.chat, { role: "user", text: action.prompt }, MAX_TUI_CHAT_ENTRIES),
@@ -197,6 +213,16 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     }
     case "workspace.loaded":
       return { ...state, workspaceChanges: action.summary };
+    case "change.snapshot.completed":
+      if (!state.binding
+        || state.binding.agentRunId !== action.agentRunId) {
+        return state;
+      }
+      return {
+        ...state,
+        changeSnapshot: action.result,
+        notice: action.result.status === "available" ? "Run diff ready." : "Run diff unavailable.",
+      };
     case "revisions.loaded": {
       const revisions = action.revisions.slice(0, 100);
       return {
@@ -341,11 +367,15 @@ function readPermission(event: AgentRunEvent): TuiPermissionRequest | undefined 
   const toolName = readIdentifier(permission?.toolName);
   if (!toolCallId || !toolName) return undefined;
   const worktreeId = readIdentifier(permission?.worktreeId);
+  const commandPreview = toolName === "run_command" || toolName === "command_job"
+    ? sanitizeCommandPermissionPreview(permission?.commandPreview)
+    : undefined;
   return {
     agentRunId: event.binding.agentRunId,
     toolCallId,
     toolName,
     ...(worktreeId ? { worktreeId } : {}),
+    ...(commandPreview ? { commandPreview } : {}),
   };
 }
 

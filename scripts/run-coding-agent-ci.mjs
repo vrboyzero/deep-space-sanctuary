@@ -44,6 +44,13 @@ export function resolveCodingCiProfile(value) {
       toolAllow: ["file_read", "list_files"],
     };
   }
+  if (mode === "navigation-read") {
+    return {
+      mode,
+      permissionMode: "plan",
+      toolAllow: ["file_read", "list_files", "text_search", "file_glob"],
+    };
+  }
   if (mode === "workspace-write") {
     return {
       mode,
@@ -74,7 +81,7 @@ export function resolveCodingCiProfile(value) {
       toolDeny: ["spawn_subagent", "apply_patch", "file_write", "file_delete"],
     };
   }
-  throw new Error("--mode must be plan, workspace-write, command-control, safety-probe, recovery-control, or git-local.");
+  throw new Error("--mode must be plan, navigation-read, workspace-write, command-control, safety-probe, recovery-control, or git-local.");
 }
 
 export function buildAgentRunArgs(input) {
@@ -540,21 +547,24 @@ async function runAgentCancellation(input) {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    let stdout = "";
     let stderr = "";
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill();
     }, CANCELLATION_REQUEST_TIMEOUT_MS);
+    child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child.once("error", (error) => {
       clearTimeout(timeout);
-      resolve({ exitCode: null, stderr: safeErrorMessage(error), timedOut });
+      resolve({ exitCode: null, stdout, stderr: safeErrorMessage(error), timedOut });
     });
     child.once("close", (exitCode) => {
       clearTimeout(timeout);
-      resolve({ exitCode: exitCode ?? null, stderr, timedOut });
+      resolve({ exitCode: exitCode ?? null, stdout, stderr, timedOut });
     });
   });
 }

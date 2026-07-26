@@ -123,6 +123,85 @@ describe("file tools", () => {
       expect(output.bytesRead).toBe(1024);
     });
 
+    it("should read bounded byte ranges and resume with a file-bound cursor", async () => {
+      await fs.writeFile(path.join(tempDir, "paged.txt"), "0123456789", "utf-8");
+      await fs.writeFile(path.join(tempDir, "other.txt"), "abcdefghij", "utf-8");
+
+      const first = await fileReadTool.execute({
+        path: "paged.txt",
+        offset: 2,
+        limit: 3,
+      }, baseContext);
+
+      expect(first.success).toBe(true);
+      const firstOutput = JSON.parse(first.output);
+      expect(firstOutput).toMatchObject({
+        path: "paged.txt",
+        size: 10,
+        bytesRead: 3,
+        content: "234",
+        range: { offset: 2, endOffset: 5 },
+        truncated: true,
+        nextCursor: expect.any(String),
+      });
+
+      const second = await fileReadTool.execute({
+        path: "paged.txt",
+        limit: 3,
+        cursor: firstOutput.nextCursor,
+      }, baseContext);
+      expect(second.success).toBe(true);
+      expect(JSON.parse(second.output)).toMatchObject({
+        content: "567",
+        range: { offset: 5, endOffset: 8 },
+        truncated: true,
+      });
+
+      const mismatched = await fileReadTool.execute({
+        path: "other.txt",
+        cursor: firstOutput.nextCursor,
+      }, baseContext);
+      expect(mismatched.success).toBe(false);
+      expect(mismatched.error).toContain("cursor");
+      expect(mismatched.failureKind).toBe("input_error");
+
+      await fs.appendFile(path.join(tempDir, "paged.txt"), "x", "utf-8");
+      const stale = await fileReadTool.execute({
+        path: "paged.txt",
+        cursor: firstOutput.nextCursor,
+      }, baseContext);
+      expect(stale.success).toBe(false);
+      expect(stale.error).toContain("cursor");
+    });
+
+    it("should reject an offset beyond the file size", async () => {
+      await fs.writeFile(path.join(tempDir, "short.txt"), "short", "utf-8");
+
+      const result = await fileReadTool.execute({ path: "short.txt", offset: 6 }, baseContext);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("offset");
+      expect(result.failureKind).toBe("input_error");
+    });
+
+    it("should reject direct symlink targets when the platform allows creating them", async () => {
+      const target = path.join(tempDir, "target.txt");
+      const link = path.join(tempDir, "linked.txt");
+      await fs.writeFile(target, "target", "utf-8");
+      try {
+        await fs.symlink(target, link, "file");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+        throw error;
+      }
+
+      const result = await fileReadTool.execute({ path: "linked.txt" }, baseContext);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("符号链接");
+      expect(result.failureKind).toBe("permission_or_policy");
+    });
+
     it("should read nested files", async () => {
       await fs.mkdir(path.join(tempDir, "a", "b", "c"), { recursive: true });
       await fs.writeFile(path.join(tempDir, "a", "b", "c", "deep.txt"), "deep content", "utf-8");

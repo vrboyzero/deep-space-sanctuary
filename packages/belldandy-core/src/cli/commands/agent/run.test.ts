@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { BelldandyAgent } from "@belldandy/agent";
+import type { AgentRunPromptOverride, BelldandyAgent } from "@belldandy/agent";
 import { isAgentRunEventV1 } from "../../../coding-run/contracts.js";
 import { startGatewayServer } from "../../../server.js";
 import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, withEnv } from "../../../server-testkit.js";
@@ -174,6 +174,7 @@ describe("bdd agent run", () => {
       expect(observedLaunchSpec).toEqual({
         cwd,
         isolationMode: "cwd",
+        commandSandbox: "required",
         toolSet: ["file_read", "run_command"],
         toolDeny: ["run_command"],
         permissionMode: "confirm",
@@ -187,15 +188,86 @@ describe("bdd agent run", () => {
     }
   });
 
+  it("writes a hash-bound change artifact into the headless terminal event", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-change-artifact-"));
+    const cwd = path.join(stateDir, "workspace");
+    await fs.promises.mkdir(cwd, { recursive: true });
+    await fs.promises.writeFile(path.join(cwd, "note.txt"), "before\n", "utf-8");
+    const agent: BelldandyAgent = {
+      async *run() {
+        await fs.promises.writeFile(path.join(cwd, "note.txt"), "after\n", "utf-8");
+        yield { type: "final", text: "done" };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stdout: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "change note",
+          jsonl: true,
+          codingRun: { cwd },
+          writeStdout: (text) => stdout.push(text),
+          writeStderr: () => {},
+        })).toBe(0);
+      });
+
+      const terminal = JSON.parse(stdout.join("").trim().split("\n").at(-1) ?? "{}") as {
+        type?: string;
+        binding?: { agentRunId?: string };
+        payload?: { changes?: Record<string, unknown> };
+      };
+      expect(terminal).toMatchObject({
+        type: "run.completed",
+        payload: {
+          changes: {
+            status: "available",
+            revisionId: expect.any(String),
+            baselineId: expect.any(String),
+            snapshotId: expect.any(String),
+            changedFileCount: 1,
+            baselineHash: expect.stringMatching(/^sha256:/),
+            currentHash: expect.stringMatching(/^sha256:/),
+            diffHash: expect.stringMatching(/^sha256:/),
+            recoveryGuarantee: "detect_only",
+            recoveryReason: "checkpoint_missing",
+            artifactPath: expect.any(String),
+            patchPath: expect.any(String),
+          },
+        },
+      });
+      expect(terminal.payload?.changes?.revisionId).toBe(terminal.binding?.agentRunId);
+      await expect(fs.promises.readFile(String(terminal.payload?.changes?.artifactPath), "utf-8"))
+        .resolves.toContain(String(terminal.payload?.changes?.revisionId));
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("injects cwd project rules into one coding run without mixing state identity rules", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-project-rules-"));
     const workspaceRoot = path.join(stateDir, "workspace");
     const packageDir = path.join(workspaceRoot, "packages", "core");
     const cwd = path.join(packageDir, "src");
     let observedPromptDeltas: Array<Record<string, unknown>> | undefined;
+    let observedPromptOverride: AgentRunPromptOverride | undefined;
     const agent: BelldandyAgent = {
       async *run(input) {
         observedPromptDeltas = input.meta?.promptDeltas as Array<Record<string, unknown>> | undefined;
+        observedPromptOverride = input.promptOverride;
         yield { type: "final", text: "done" };
       },
     };
@@ -249,6 +321,13 @@ describe("bdd agent run", () => {
       const deltaText = String(projectRulesDelta?.text ?? "");
       expect(deltaText.indexOf("root-project-rule")).toBeLessThan(deltaText.indexOf("package-project-rule"));
       expect(deltaText).not.toContain("identity-only-rule");
+      expect(observedPromptOverride).toMatchObject({
+        text: expect.stringContaining("# Bounded Coding Run"),
+        metadata: {
+          codingRunPromptMode: "bounded-coding-run-v1",
+        },
+      });
+      expect(observedPromptOverride?.text).not.toContain("identity-only-rule");
     } finally {
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -359,6 +438,127 @@ describe("bdd agent run", () => {
       });
       expect(events.some((event) => event.type === "run.completed")).toBe(false);
       expect(stderr).toEqual([]);
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("normalizes one fenced JSON result before emitting a schema-validated terminal event", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-schema-fence-"));
+    const agent: BelldandyAgent = {
+      async *run() {
+        yield {
+          type: "final",
+          text: [
+            "The requested result is below.",
+            "",
+            "```json",
+            '{"summary":"valid"}',
+            "```",
+          ].join("\n"),
+        };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stdout: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const exitCode = await runAgentRunCommand({
+          stateDir,
+          prompt: "return JSON",
+          jsonl: true,
+          outputSchema: {
+            type: "object",
+            required: ["summary"],
+            properties: { summary: { const: "valid" } },
+            additionalProperties: false,
+          },
+          writeStdout: (text) => stdout.push(text),
+          writeStderr: () => {},
+        });
+
+        expect(exitCode).toBe(0);
+      });
+
+      const events = stdout.join("").trim().split("\n").map((line) => JSON.parse(line) as {
+        type: string;
+        payload: { output?: { text?: string } };
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "run.completed",
+        payload: { output: { text: '{"summary":"valid"}' } },
+      });
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("sends an exact output schema contract to the Agent before validating its final JSON", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-schema-contract-"));
+    let observedPrompt = "";
+    const agent: BelldandyAgent = {
+      async *run(input) {
+        observedPrompt = input.text;
+        yield {
+          type: "final",
+          text: JSON.stringify({
+            symbol: "lateSegmentAnchor",
+            sourcePath: "src/segments/segment-071.mjs",
+            lineHint: 97,
+          }),
+        };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "Locate lateSegmentAnchor and return the requested JSON.",
+          jsonl: true,
+          codingRun: { cwd: stateDir },
+          outputSchema: {
+            type: "object",
+            required: ["symbol", "sourcePath", "lineHint"],
+            additionalProperties: false,
+            properties: {
+              symbol: { const: "lateSegmentAnchor" },
+              sourcePath: { const: "src/segments/segment-071.mjs" },
+              lineHint: { const: 97 },
+            },
+          },
+          writeStdout: () => {},
+          writeStderr: () => {},
+        })).toBe(0);
+      });
+
+      expect(observedPrompt).toContain("## Output Schema Contract");
+      expect(observedPrompt).toContain('"lineHint":{"const":97}');
+      expect(observedPrompt).toContain("Return only raw JSON that validates against this schema.");
     } finally {
       await server.close();
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});

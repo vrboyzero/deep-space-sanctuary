@@ -287,6 +287,8 @@ export type ToolRuntimeLaunchSpec = {
   toolDeny?: string[];
   permissionMode?: string;
   isolationMode?: string;
+  /** Coding runs may require an OS command sandbox; absence of a backend must fail closed. */
+  commandSandbox?: "required";
   /** 以下预算仅用于收紧本次运行，调用方不得以此提升 Profile 上限。 */
   maxRunWallTimeMs?: number;
   toolLoopIterationBudget?: number;
@@ -316,6 +318,38 @@ export type ToolExecutionRuntimeContext = {
   abortSignal?: AbortSignal;
 };
 
+export type CommandPermissionPreviewAction =
+  | "run"
+  | "start"
+  | "read"
+  | "write"
+  | "resize"
+  | "cancel"
+  | "status"
+  | "list";
+
+/** A bounded, secret-free projection of a command request for an approval surface. */
+export type CommandPermissionPreview = {
+  kind: "command";
+  action: CommandPermissionPreviewAction;
+  commandPlan?: {
+    executable: string;
+    argv: string[];
+    cwd: string;
+    environmentKeys: string[];
+    network: "none";
+    writeScope: "workspace-readonly" | "workspace-readwrite";
+    stdinMode: "closed" | "pipe" | "pty";
+    timeoutMs?: number;
+  };
+  jobId?: string;
+  stdinProvided?: true;
+  cursor?: number;
+  maxBytes?: number;
+  cols?: number;
+  rows?: number;
+};
+
 /** skills 只依赖此窄接口，不拥有或持久化 Gateway 权限状态。 */
 export type PendingToolPermissionRequest = {
   conversationId: string;
@@ -323,6 +357,8 @@ export type PendingToolPermissionRequest = {
   worktreeId?: string;
   toolCallId: string;
   toolName: string;
+  /** Commands receive only this scrubbed projection, never raw tool arguments. */
+  commandPreview?: CommandPermissionPreview;
   abortSignal?: AbortSignal;
 };
 

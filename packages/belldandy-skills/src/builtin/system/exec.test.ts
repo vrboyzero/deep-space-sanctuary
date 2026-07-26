@@ -37,11 +37,30 @@ const mockContext: ToolContext = {
 const isWindows = process.platform === "win32";
 
 describe("run_command (Platform-aware Safelist)", () => {
-    it("should expose cli in contract channels", () => {
-        expect(getToolContract(runCommandTool)?.channels).toEqual(expect.arrayContaining(["gateway", "web", "cli"]));
+  it("should expose cli in contract channels", () => {
+    expect(getToolContract(runCommandTool)?.channels).toEqual(expect.arrayContaining(["gateway", "web", "cli"]));
+  });
+
+  it("fails closed for a coding-run command when no sandbox backend is configured", async () => {
+    const result = await runCommandTool.execute({ command: "echo must-not-run" }, {
+      ...mockContext,
+      launchSpec: { commandSandbox: "required" },
     });
 
-    // 通用命令测试（所有平台）
+    expect(result).toMatchObject({
+      success: false,
+      failureKind: "permission_or_policy",
+      output: "",
+      metadata: {
+        commandSandboxRequirement: "required",
+        commandSandboxStatus: "unavailable",
+        commandSandboxPlatform: process.platform,
+      },
+    });
+    expect(result.error).toContain("requires an OS sandbox");
+  });
+
+  // 通用命令测试（所有平台）
     it("should allow common 'pwd' command on all platforms", async () => {
         const result = await runCommandTool.execute({ command: "pwd" }, mockContext);
         // 即使执行失败，也不应该是安全错误
