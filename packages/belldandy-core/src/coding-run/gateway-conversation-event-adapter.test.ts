@@ -42,6 +42,22 @@ describe("Gateway Conversation coding-run event adapter", () => {
       },
     });
     adapter.consume({
+      event: "token.usage",
+      payload: {
+        conversationId: "conversation-123",
+        runId: "run-123",
+        inputTokens: 25,
+        outputTokens: 9,
+        totalCostUsd: 0.0125,
+        modelCalls: 2,
+        providerRawUsage: {
+          inputTokens: 25,
+          outputTokens: 9,
+          apiKey: "do-not-leak",
+        },
+      },
+    });
+    adapter.consume({
       event: "chat.final",
       payload: { conversationId: "conversation-123", runId: "run-123", text: "Done" },
     });
@@ -51,11 +67,54 @@ describe("Gateway Conversation coding-run event adapter", () => {
       "run.status",
       "tool.started",
       "tool.completed",
+      "run.usage",
       "run.completed",
     ]);
-    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(events[2]).toMatchObject({ payload: { tool: { arguments: { apiKey: "[REDACTED]" } } } });
     expect(events[3]).toMatchObject({ payload: { tool: { output: { token: "[REDACTED]" } } } });
+    expect(events[4]).toMatchObject({
+      payload: {
+        usage: {
+          source: "provider_reported",
+          input: 25,
+          output: 9,
+          modelCalls: 2,
+          costUsd: 0.0125,
+        },
+      },
+    });
+    expect(events[4]?.payload).not.toHaveProperty("usage.providerRawUsage");
+    expect(JSON.stringify(events[4])).not.toContain("do-not-leak");
+  });
+
+  it("marks normalized usage as unavailable when Gateway has no provider usage evidence", () => {
+    const events: AgentRunEvent[] = [];
+    const adapter = createGatewayConversationEventAdapter({ onEvent: (event) => events.push(event) });
+    adapter.start({ agentRunId: "run-usage-unavailable", conversationId: "conversation-usage-unavailable" });
+
+    adapter.consume({
+      event: "token.usage",
+      payload: {
+        conversationId: "conversation-usage-unavailable",
+        runId: "run-usage-unavailable",
+        inputTokens: 7,
+        outputTokens: 3,
+        totalCostUsd: 0.004,
+      },
+    });
+
+    expect(events[1]).toMatchObject({
+      type: "run.usage",
+      payload: {
+        usage: {
+          source: "unavailable",
+          input: 7,
+          output: 3,
+          costUsd: 0.004,
+        },
+      },
+    });
   });
 
   it("turns an errored Gateway status followed by chat.final into a failed run", () => {

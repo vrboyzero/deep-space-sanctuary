@@ -361,6 +361,58 @@ describe("coding agent benchmark contract", () => {
     })).toThrow(/completed.*full task.*platform.*sample matrix/i);
   });
 
+  it("aggregates only sanitized provider-reported costs and observation states", async () => {
+    const manifest = await loadCodingAgentBenchmarkManifest();
+    const providerReported = runRecord({
+      runId: "run-usage-provider",
+      taskId: "rules.nested-precedence",
+      platform: "windows-native",
+      taskCompleted: true,
+      durationMs: 100,
+    });
+    providerReported.usage.observation = { status: "provider_reported", costUsd: 0.125 };
+    providerReported.execution.maxCostUsd = 3;
+    const unavailable = runRecord({
+      runId: "run-usage-unavailable",
+      taskId: "rules.nested-precedence",
+      platform: "wsl2-linux",
+      taskCompleted: true,
+      durationMs: 100,
+    });
+    unavailable.usage.observation = { status: "unavailable", costUsd: null };
+
+    const report = createCodingAgentBenchmarkReport({
+      status: "partial",
+      generatedAt: "2026-07-26T00:00:00.000Z",
+      manifest,
+      manifestSha256: "a".repeat(64),
+      source: {
+        commit: "b".repeat(40),
+        workspaceDirty: false,
+        lockfileSha256: "c".repeat(64),
+      },
+      runs: [providerReported, unavailable],
+    });
+
+    expect(report.summary).toMatchObject({
+      usageObservation: {
+        providerReportedRunCount: 1,
+        unavailableRunCount: 1,
+        notReachedRunCount: 0,
+      },
+      metrics: { cost_usd: { sampleCount: 1, value: 0.125 } },
+    });
+    const reportSchema = JSON.parse(await fs.readFile(
+      path.resolve("benchmarks/coding-agent/v1/benchmark-report.schema.json"),
+      "utf-8",
+    ));
+    const compiled = compileOutputSchema(reportSchema);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.validator.validateOutput(JSON.stringify(report))).toEqual({ ok: true });
+    }
+  });
+
   it("publishes a JSON Schema for report consumers", async () => {
     const manifest = await loadCodingAgentBenchmarkManifest();
     const report = createCodingAgentBenchmarkReport({

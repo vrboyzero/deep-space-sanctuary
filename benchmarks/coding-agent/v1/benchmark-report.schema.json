@@ -191,7 +191,8 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1
-        }
+        },
+        "maxCostUsd": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "environment": {
@@ -267,7 +268,16 @@
       "properties": {
         "durationMs": { "type": "number", "minimum": 0 },
         "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
-        "outputTokens": { "type": ["integer", "null"], "minimum": 0 }
+        "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "costUsd"],
+          "properties": {
+            "status": { "enum": ["provider_reported", "unavailable", "not_reached"] },
+            "costUsd": { "type": ["number", "null"], "minimum": 0 }
+          }
+        }
       }
     },
     "artifacts": {
@@ -336,7 +346,18 @@
             "recovery_success_rate": { "$ref": "#/$defs/rate" },
             "duration_ms": { "$ref": "#/$defs/distribution" },
             "input_tokens": { "$ref": "#/$defs/nullableSum" },
-            "output_tokens": { "$ref": "#/$defs/nullableSum" }
+            "output_tokens": { "$ref": "#/$defs/nullableSum" },
+            "cost_usd": { "$ref": "#/$defs/nullableSum" }
+          }
+        },
+        "usageObservation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["providerReportedRunCount", "unavailableRunCount", "notReachedRunCount"],
+          "properties": {
+            "providerReportedRunCount": { "type": "integer", "minimum": 0 },
+            "unavailableRunCount": { "type": "integer", "minimum": 0 },
+            "notReachedRunCount": { "type": "integer", "minimum": 0 }
           }
         }
       }

@@ -110,7 +110,7 @@ export function createGatewayConversationEventAdapter(input: {
         });
       }
       if (event === "token.usage") {
-        return emit("run.usage", { usage: omitGatewayRunIdentifiers(gatewayPayload) });
+        return emit("run.usage", { usage: projectGatewayUsage(gatewayPayload) });
       }
       if (event === "agent.budget_exhausted") {
         budgetExhausted = true;
@@ -178,9 +178,46 @@ function getMatchingGatewayPayload(value: unknown, binding: GatewayRunBinding): 
     : undefined;
 }
 
-function omitGatewayRunIdentifiers(value: Record<string, unknown>): Record<string, unknown> {
-  const { conversationId: _conversationId, runId: _runId, agentId: _agentId, ...rest } = value;
-  return rest;
+function projectGatewayUsage(value: Record<string, unknown>): Record<string, unknown> {
+  const providerReported = hasProviderUsage(value.providerRawUsage);
+  const input = getNonNegativeNumber(value.inputTokens);
+  const output = getNonNegativeNumber(value.outputTokens);
+  const cacheCreation = getNonNegativeNumber(value.cacheCreationTokens);
+  const cacheRead = getNonNegativeNumber(value.cacheReadTokens);
+  const modelCalls = getNonNegativeInteger(value.modelCalls);
+  const costUsd = getNonNegativeNumber(value.totalCostUsd);
+  return {
+    source: providerReported ? "provider_reported" : "unavailable",
+    ...(input === undefined ? {} : { input }),
+    ...(output === undefined ? {} : { output }),
+    ...(cacheCreation === undefined ? {} : { cacheCreation }),
+    ...(cacheRead === undefined ? {} : { cacheRead }),
+    ...(modelCalls === undefined ? {} : { modelCalls }),
+    ...(costUsd === undefined ? {} : { costUsd }),
+  };
+}
+
+function hasProviderUsage(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return [
+    value.promptTokens,
+    value.completionTokens,
+    value.totalTokens,
+    value.inputTokens,
+    value.outputTokens,
+    value.cacheCreationInputTokens,
+    value.cacheReadInputTokens,
+    value.promptCacheHitTokens,
+    value.promptCacheMissTokens,
+  ].some((item) => getNonNegativeNumber(item) !== undefined);
+}
+
+function getNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function getNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function isTerminalEventType(type: AgentRunEvent["type"]): boolean {

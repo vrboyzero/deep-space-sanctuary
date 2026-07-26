@@ -891,16 +891,44 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - `corepack pnpm verify:coding-ci` 通过；首批 artifact 的 `aggregate-coding-agent-benchmark --dry-run` 返回 `partial 2/72`。
 - 隔离 Gateway 与 runner 均已停止，`127.0.0.1:28991` 无监听、无关联 Node 进程；`git diff --check` 通过。
 
+#### 阶段 0D-4 实现结论：脱敏 usage/费用观测与小批次预算守卫（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/gateway-conversation-event-adapter.ts` 与测试扩展**：
+   - 将 Gateway `token.usage` 投影为 Coding Run 专用白名单摘要：`source`、`input`、`output`、cache 数量、`modelCalls` 与 `costUsd`；不再把原始 Gateway payload、`providerRawUsage` 或任何凭据形状字段写入 JSONL。
+   - 解决通用脱敏器将 `inputTokens` / `outputTokens` 键名误判为敏感字段、导致数值变成 `[REDACTED]` 的问题，同时不放宽其他事件的全局脱敏规则。
+
+2. **`scripts/run-coding-agent-benchmark.mjs`、`scripts/run-coding-agent-ci.mjs` 与测试扩展**：
+   - benchmark report 将 usage 归类为 `provider_reported`、`unavailable` 或 `not_reached`；只有第一种可记录 `costUsd`。`not_reached` 仅表示事件链未收到 usage，不能推断 Provider 未调用或未计费。
+   - 真实凭据 run 使用阶段 0D 的 `$3.00` 运行池：以用户确认的 `30 CNY`、`8 CNY/USD` 保守换算并预留 `6 CNY` 缓冲；每个子任务接收当前剩余额度的 `--max-cost-usd`。
+   - 若任一 run 没有 Provider 已报告 usage 或没有可计算的 USD 成本，runner 停止后续 task；费用额度到达后也停止。fixture / 无凭据集成测试不启用该守卫。
+
+3. **`benchmarks/coding-agent/v1/benchmark-*.schema.json`、`scripts/coding-agent-benchmark-contract.mjs`、README 与项目地图修改**：
+   - v1 run/report 契约以可选字段兼容旧 artifact，新增 `usage.observation`、逐 run `execution.maxCostUsd`、聚合 `cost_usd` 与状态计数；旧 evidence 没有 observation 时保持原有离线重算结果。
+   - README 明确 USD/CNY 换算只是运行守卫而非账单结算，且单次模型调用返回后才能检查成本，仍需以 Provider 实际账单复核。
+
+4. **效果**：
+   - 下一次真实 benchmark 能从 event artifact 区分“Provider 回报了 usage”“运行有 usage 但无法证明 Provider 回报”与“事件链没有 usage”，不会再将被脱敏的数值误报为不可观测。
+   - 下一次真实调用具备单任务与串行剩余额度的失败关闭路径；仍不会写入 API key、原始 Provider 响应、请求体或真实费用账单。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 5 个定向测试文件、47 个测试全部通过（含新增 Gateway usage 白名单、三态 observation、成本聚合、公开 Schema 与费用守卫测试）。
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过；Schema、离线重算契约、CI 参数透传和 README/项目地图保持一致。
+- 本切片未启动 Gateway、未调用 Provider、未消耗新增费用；真实 artifact 与默认 state 均未被写入。
+
 ### 后续计划
 
-下一步继续**阶段 0D：先恢复可证明的隔离与费用观测，再补齐 SS 基线**。先完成两项不触发 Provider 的闭环：确认用户已人工清理本轮在 `C:\Users\admin\.star_sanctuary` 意外生成的 `.env`、`.env.local`，并为 Coding CI 事件/报告补充可脱敏、可累计的实际 usage 证据或明确的不可观测失败标记。这是因为本轮 source state 传递已修复，但首次任务在配对前失败，且 warmup/空事件均不能判断费用；在 usage 仍为 `null` 时继续发起新的真实任务将无法遵守累计 **30 CNY** 上限。完成这些本地闭环并重新冻结 source commit 后，需再次确认可用费用，再重跑这两个 Windows Core Task 作为新的 attempt 1；仅当实际模型路由、配对 state、usage、artifact 契约和进程清理同时成立时，才按小批次补齐剩余 Windows/WSL2 矩阵并执行聚合 `--verify`。当前还缺的关键闭环是 72 个同版本有效样本、总费用可观察/可限额、全矩阵 `completed` report 重算及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
+下一步继续**阶段 0D：先完成真实调用前的隔离 state 闭环，再补齐 SS 基线**。先由用户人工确认并清理本轮在 `C:\Users\admin\.star_sanctuary` 意外生成的 `.env`、`.env.local`，然后基于本轮提交冻结 source commit，复核隔离 Gateway 实际 state、配对、模型路由与 `$3.00` 守卫均生效。这样先做，是因为 state 失配曾在模型执行前失败，而 usage 守卫只有真实 Provider 事件能最终验证；在该敏感 state 未确认清理前不能再次启动真实 Gateway。完成后需用户再次确认仍可使用 `30 CNY` 预算，再只运行一个 Windows Core Task：仅当 artifact 出现 `provider_reported`、可计算 `costUsd`、唯一终态与完整清理时，才继续第二个 task 和 WSL2 小批次。当前还缺的关键闭环是 72 个同版本有效样本、Provider 实账与 event 成本的人工核对、全矩阵 `completed` report 重算及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
 
 ## 实施计划进度表
 
 | 阶段 | 优先级 | 状态 | 工作量 | 关键闭环 |
 |---|---|---|---:|---|
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
-| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-3 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算、全部 12 task harness 与前台 Gateway state-dir 传递修复。首批 2 个 Core Task 因 state 失配在配对前失败，仅 `record_only`；当前有效 evidence 仍为 restart 6/72。后续真实调用须先清理意外默认 state 并解决 usage 可观测/费用限额，再在新的冻结 source 上补齐 completed report |
+| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-4 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算、全部 12 task harness、前台 Gateway state-dir 传递及脱敏 usage/费用守卫。首批 2 个 Core Task 因 state 失配在配对前失败，仅 `record_only`；当前有效 evidence 仍为 restart 6/72。后续真实调用须先人工清理意外默认 state、冻结本轮 source 并确认仍可使用预算，再以单 task 验证 Provider usage/cost artifact 后补齐 completed report |
 | 阶段 1：项目规则链与代码导航 | P0 | 待启动 | 8-12 人日 | 危险工具关闭时仍能正确加载规则、搜索和分段读取 |
 | 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 待启动 | 15-25 人日 | 构建/测试可在 sandbox 中运行，权限和隔离可验证且失败关闭 |
 | 阶段 3：真实 diff/review 与恢复保证 | P0 | 待启动 | 8-12 人日 | 修改可审查、可归因，恢复边界明确且不覆盖用户改动 |

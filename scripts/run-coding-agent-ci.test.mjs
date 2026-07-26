@@ -49,6 +49,7 @@ describe("coding agent CI runner", () => {
       profile: resolveCodingCiProfile("workspace-write"),
       conversationId: "coding-ci-fixture-run",
       modelId: "deepseek-v4-flash",
+      maxCostUsd: 3,
     });
 
     expect(args).toEqual([
@@ -64,6 +65,7 @@ describe("coding agent CI runner", () => {
       "--timeout", "300000",
       "--max-turns", "12",
       "--max-tokens", "24000",
+      "--max-cost-usd", "3",
       "--output-schema", path.resolve("C:/fixture/review-output.schema.json"),
     ]);
     expect(args.join(" ")).not.toMatch(/\b(?:push|merge|apply)\b/);

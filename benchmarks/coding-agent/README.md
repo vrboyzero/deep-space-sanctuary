@@ -48,6 +48,10 @@ corepack pnpm benchmark:coding-agent:stage0d:core:wsl --distribution Ubuntu-22.0
 
 这两条命令会启动真实 Coding CI/Provider 链，必须在获得凭据、费用上限和隔离 Gateway 授权后执行；它们不是静态验证命令，也不应与默认 0B tracer-bullet 混跑。
 
+当 `--credentials-configured true` 时，runner 会把每个子任务的剩余费用额度传给 `bdd agent run --max-cost-usd`。当前阶段 0D 的操作上限为 `$3.00`：以 `30 CNY` 总额度、`8 CNY/USD` 保守换算并预留 `6 CNY` 缓冲得出。run artifact 的 `usage.observation` 只记录白名单化的 `provider_reported`、`unavailable` 或 `not_reached` 状态，以及仅在 Provider 已报告 usage 时记录的 `costUsd`；不会保存 Provider 原始响应、请求或凭据。若首个真实 run 没有 Provider 已报告的 usage 或没有可计算的 USD 成本，runner 不会启动后续 task。
+
+`--max-cost-usd` 在单次模型调用返回后检查累计成本，不能证明任何 Provider 不会对正在进行的最后一次调用收费；汇率和 Provider 账单也需由操作者以实际账单复核。因此该守卫是继续小批量 benchmark 的前置条件，不是费用结算证明。`not_reached` 仅表示 Headless 事件流没有收到 `run.usage`，不能据此断言 Provider 未被调用或未计费。
+
 运行静态 Gate：
 
 ```powershell

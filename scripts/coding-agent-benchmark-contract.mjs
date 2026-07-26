@@ -331,6 +331,14 @@ export function createCodingAgentBenchmarkReport(input) {
       failuresByCategory[run.failureCategory] = (failuresByCategory[run.failureCategory] ?? 0) + 1;
     }
   }
+  const usageObservations = input.runs
+    .map((run) => run.usage.observation)
+    .filter((observation) => observation !== undefined);
+  const usageObservationSummary = usageObservations.length === 0 ? undefined : {
+    providerReportedRunCount: usageObservations.filter((item) => item.status === "provider_reported").length,
+    unavailableRunCount: usageObservations.filter((item) => item.status === "unavailable").length,
+    notReachedRunCount: usageObservations.filter((item) => item.status === "not_reached").length,
+  };
 
   return {
     schemaVersion: CODING_AGENT_BENCHMARK_REPORT_VERSION,
@@ -370,7 +378,11 @@ export function createCodingAgentBenchmarkReport(input) {
         duration_ms: summarizeDistribution(input.runs.map((run) => run.usage.durationMs)),
         input_tokens: nullableSum(input.runs.map((run) => run.usage.inputTokens)),
         output_tokens: nullableSum(input.runs.map((run) => run.usage.outputTokens)),
+        ...(usageObservationSummary ? {
+          cost_usd: nullableSum(usageObservations.map((item) => item.costUsd)),
+        } : {}),
       },
+      ...(usageObservationSummary ? { usageObservation: usageObservationSummary } : {}),
     },
   };
 }
@@ -430,6 +442,10 @@ function assertRunRecord(run, tasksById, manifest) {
   }
   if (run.execution?.profile !== task.executionProfile) {
     throw new Error(`Coding benchmark run ${run.runId} execution profile drifted from the manifest.`);
+  }
+  if (run.execution.maxCostUsd !== undefined
+    && (!Number.isFinite(run.execution.maxCostUsd) || run.execution.maxCostUsd <= 0)) {
+    throw new Error(`Coding benchmark run ${run.runId} has an invalid maxCostUsd.`);
   }
   if (JSON.stringify(run.execution?.budgets) !== JSON.stringify(manifest.suite.budgets)) {
     throw new Error(`Coding benchmark run ${run.runId} execution budgets drifted from the manifest.`);
@@ -515,6 +531,18 @@ function assertRunRecord(run, tasksById, manifest) {
     const value = run.usage[field];
     if (value !== null && (!Number.isInteger(value) || value < 0)) {
       throw new Error(`Coding benchmark run ${run.runId} has invalid ${field}.`);
+    }
+  }
+  if (run.usage.observation !== undefined) {
+    const observation = run.usage.observation;
+    if (!observation || typeof observation !== "object" || Array.isArray(observation)
+      || (observation.status !== "provider_reported"
+        && observation.status !== "unavailable"
+        && observation.status !== "not_reached")
+      || (observation.costUsd !== null
+        && (!Number.isFinite(observation.costUsd) || observation.costUsd < 0))
+      || (observation.status !== "provider_reported" && observation.costUsd !== null)) {
+      throw new Error(`Coding benchmark run ${run.runId} has an invalid usage observation.`);
     }
   }
   const artifactFields = [

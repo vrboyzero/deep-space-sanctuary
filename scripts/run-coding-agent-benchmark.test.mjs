@@ -12,6 +12,8 @@ import {
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 
 import {
+  consumeBenchmarkUsageBudget,
+  createBenchmarkUsageBudget,
   extractBenchmarkTokenUsage,
   resolveBenchmarkRuntimePlatform,
   runStage0BSuite,
@@ -27,6 +29,30 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
+  it("reserves part of the 30 CNY ceiling and fails closed when real-run cost is unavailable", () => {
+    const budget = createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    });
+
+    expect(budget).toMatchObject({ maxCostUsd: 3, remainingCostUsd: 3, observedCostUsd: 0 });
+    expect(consumeBenchmarkUsageBudget(budget, {
+      status: "provider_reported",
+      costUsd: 0.75,
+    })).toEqual({ continueRunning: true, reason: null });
+    expect(budget).toMatchObject({ remainingCostUsd: 2.25, observedCostUsd: 0.75 });
+    expect(consumeBenchmarkUsageBudget(budget, {
+      status: "unavailable",
+      costUsd: null,
+    })).toEqual({ continueRunning: false, reason: "usage_unavailable" });
+    expect(createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "fixture-model",
+      credentialsConfigured: false,
+    })).toBeUndefined();
+  });
+
   it("keeps the subscription probe stdin open until its matching response arrives", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-restart-subscription-probe-"));
     tempRoots.push(root);
@@ -93,12 +119,27 @@ describe("coding agent benchmark stage 0B runner", () => {
     })).toThrow(/Windows native/i);
   });
 
-  it("uses the last cumulative usage event and preserves unavailable tokens as null", () => {
+  it("uses the last normalized usage event and distinguishes unavailable observations", () => {
     expect(extractBenchmarkTokenUsage([
-      { type: "run.usage", payload: { usage: { inputTokens: 10, outputTokens: 4 } } },
-      { type: "run.usage", payload: { usage: { inputTokens: 25, outputTokens: 9 } } },
-    ])).toEqual({ inputTokens: 25, outputTokens: 9 });
-    expect(extractBenchmarkTokenUsage([])).toEqual({ inputTokens: null, outputTokens: null });
+      { type: "run.usage", payload: { usage: { source: "provider_reported", input: 10, output: 4, costUsd: 0.002 } } },
+      { type: "run.usage", payload: { usage: { source: "provider_reported", input: 25, output: 9, costUsd: 0.006 } } },
+    ])).toEqual({
+      inputTokens: 25,
+      outputTokens: 9,
+      observation: { status: "provider_reported", costUsd: 0.006 },
+    });
+    expect(extractBenchmarkTokenUsage([
+      { type: "run.usage", payload: { usage: { source: "unavailable", input: 7, output: 3, costUsd: 0.004 } } },
+    ])).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      observation: { status: "unavailable", costUsd: null },
+    });
+    expect(extractBenchmarkTokenUsage([])).toEqual({
+      inputTokens: null,
+      outputTokens: null,
+      observation: { status: "not_reached", costUsd: null },
+    });
   });
 
   windowsIt("runs the three explicit stage 0D core tasks through their frozen profiles", async () => {

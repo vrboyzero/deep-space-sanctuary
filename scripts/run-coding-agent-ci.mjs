@@ -93,6 +93,9 @@ export function buildAgentRunArgs(input) {
     "--timeout", String(CODING_CI_LIMITS.timeoutMs),
     "--max-turns", String(CODING_CI_LIMITS.maxTurns),
     "--max-tokens", String(CODING_CI_LIMITS.maxTokens),
+    ...(Number.isFinite(input.maxCostUsd) && input.maxCostUsd > 0
+      ? ["--max-cost-usd", String(input.maxCostUsd)]
+      : []),
     "--output-schema", path.resolve(input.outputSchemaPath),
   ];
 }
@@ -340,6 +343,7 @@ function resolveMainOptions(argv) {
     stateDir: path.resolve(requireValue(values, "state-dir")),
     conversationId: values.get("conversation-id"),
     modelId: values.get("model-id"),
+    maxCostUsd: resolveOptionalPositiveNumber(values, "max-cost-usd"),
     outputSchemaPath: path.resolve(
       values.get("output-schema") ?? path.join(workspaceRoot, "examples", "ci", "review-output.schema.json"),
     ),
@@ -379,6 +383,16 @@ function resolveOptionalBoolean(values, key) {
     throw new Error(`--${key} must be true or false.`);
   }
   return value === "true";
+}
+
+function resolveOptionalPositiveNumber(values, key) {
+  const value = values.get(key);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`--${key} must be a positive finite number.`);
+  }
+  return parsed;
 }
 
 function assertOutsideWorkspace(workspace, artifactDir) {

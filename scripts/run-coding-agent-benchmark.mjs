@@ -50,6 +50,9 @@ const manifestPath = path.join(workspaceRoot, "benchmarks", "coding-agent", "v1"
 const codingCiRunnerPath = path.join(workspaceRoot, "scripts", "run-coding-agent-ci.mjs");
 const bddEntryPath = path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
 
+// Keep a 20% reserve against the user-approved 30 CNY ceiling at an 8 CNY/USD guard rate.
+export const STAGE_0D_BENCHMARK_USAGE_BUDGET_USD = 3;
+
 export function resolveBenchmarkRuntimePlatform(input = {}, runtime = {}) {
   const requestedPlatform = input.platform ?? "windows-native";
   const actualPlatform = runtime.platform ?? process.platform;
@@ -80,10 +83,40 @@ export function resolveBenchmarkRuntimePlatform(input = {}, runtime = {}) {
 export function extractBenchmarkTokenUsage(events) {
   const usageEvents = events.filter((event) => event?.type === "run.usage");
   const usage = usageEvents.at(-1)?.payload?.usage;
+  const status = usageEvents.length === 0
+    ? "not_reached"
+    : usage?.source === "provider_reported" ? "provider_reported" : "unavailable";
   return {
-    inputTokens: readTokenCount(usage, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]),
-    outputTokens: readTokenCount(usage, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens"]),
+    inputTokens: readTokenCount(usage, ["input", "inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]),
+    outputTokens: readTokenCount(usage, ["output", "outputTokens", "output_tokens", "completionTokens", "completion_tokens"]),
+    observation: {
+      status,
+      costUsd: status === "provider_reported" ? readNonNegativeNumber(usage?.costUsd) : null,
+    },
   };
+}
+
+export function createBenchmarkUsageBudget(model) {
+  if (model?.credentialsConfigured !== true) return undefined;
+  return {
+    maxCostUsd: STAGE_0D_BENCHMARK_USAGE_BUDGET_USD,
+    remainingCostUsd: STAGE_0D_BENCHMARK_USAGE_BUDGET_USD,
+    observedCostUsd: 0,
+  };
+}
+
+export function consumeBenchmarkUsageBudget(budget, observation) {
+  if (!budget) return { continueRunning: true, reason: null };
+  if (observation?.status !== "provider_reported"
+    || !Number.isFinite(observation.costUsd)
+    || observation.costUsd < 0) {
+    return { continueRunning: false, reason: "usage_unavailable" };
+  }
+  budget.observedCostUsd = roundCostUsd(budget.observedCostUsd + observation.costUsd);
+  budget.remainingCostUsd = roundCostUsd(Math.max(0, budget.maxCostUsd - budget.observedCostUsd));
+  return budget.remainingCostUsd > 0
+    ? { continueRunning: true, reason: null }
+    : { continueRunning: false, reason: "cost_cap_reached" };
 }
 
 export async function runStage0BSuite(input, dependencies = {}) {
@@ -108,6 +141,7 @@ export async function runStage0BSuite(input, dependencies = {}) {
     throw new Error(`Stage 0B attempt must be within 1-${manifest.suite.sampleRuns}.`);
   }
   const taskIds = resolveTaskIds(input.taskIds);
+  const usageBudget = createBenchmarkUsageBudget(input.model);
 
   const runs = [];
   for (const taskId of taskIds) {
@@ -123,7 +157,10 @@ export async function runStage0BSuite(input, dependencies = {}) {
       model: input.model,
       runtimePlatform,
       childEnv: input.childEnv,
+      maxCostUsd: usageBudget?.remainingCostUsd,
     }, dependencies));
+    const budgetDecision = consumeBenchmarkUsageBudget(usageBudget, runs.at(-1)?.usage?.observation);
+    if (!budgetDecision.continueRunning) break;
   }
 
   const report = createCodingAgentBenchmarkReport({
@@ -217,6 +254,7 @@ export async function runStage0BTask(input, dependencies = {}) {
     mode: task.executionProfile,
     cancelOnRunStart: isCancellationTask,
     childEnv: input.childEnv,
+    maxCostUsd: input.maxCostUsd,
   });
   const durationMs = Math.max(0, Date.now() - startedAt);
   await preserveCodingCiManifest(artifactDir, runner.exitCode);
@@ -273,6 +311,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       profile: task.executionProfile,
       budgets: { ...input.manifest.suite.budgets },
       infrastructureRetries: 0,
+      ...(input.maxCostUsd === undefined ? {} : { maxCostUsd: input.maxCostUsd }),
     },
     environment: {
       osRelease: os.release(),
@@ -287,6 +326,7 @@ export async function runStage0BTask(input, dependencies = {}) {
       durationMs,
       inputTokens: tokenUsage.inputTokens,
       outputTokens: tokenUsage.outputTokens,
+      observation: tokenUsage.observation,
     },
     artifacts: {
       manifest: `${input.runId}/manifest.json`,
@@ -354,6 +394,7 @@ async function executeCodingCiProcess(input) {
       "--prompt-file", input.promptPath,
       "--output-schema", input.outputSchemaPath,
       "--mode", input.mode,
+      ...(input.maxCostUsd === undefined ? [] : ["--max-cost-usd", String(input.maxCostUsd)]),
       ...(input.cancelOnRunStart ? ["--cancel-on-run-start", "true"] : []),
     ];
     const child = spawn(process.execPath, args, {
@@ -629,6 +670,14 @@ function readTokenCount(usage, keys) {
     if (Number.isInteger(value) && value >= 0) return value;
   }
   return null;
+}
+
+function readNonNegativeNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function roundCostUsd(value) {
+  return Number(value.toFixed(8));
 }
 
 function resolveGatewayTarget(childEnv) {

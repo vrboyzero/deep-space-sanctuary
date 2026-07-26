@@ -79,17 +79,17 @@ star-sanctuary/
 - `scripts/verify-winget-assets.mjs`: 校验本地生成的 `winget` 资产与 manifests 一致性
 - `scripts/normalize-osv-report.mjs`: 将固定 OSV-Scanner 输出收敛为 dependency governance 报告，供 Quality Gate fixture 与仓库依赖扫描复用
 - `scripts/evaluate-dependency-audit-gate.mjs`: 对依赖扫描报告执行 findings/failure/freshness 的 fail-closed Gate 判定
-- `scripts/run-coding-agent-ci.mjs`: 复用构建后 Headless CLI 的通用 CI 包装器；强制干净 Git 基线、只读/显式 workspace-write profile、固定预算、v1 事件连续性和工作区外可审查 patch/result/manifest artifact；benchmark 可在首个 `run.started` 后使用既有 `agent cancel` 精确注入一次取消，不执行 push、merge 或自动 apply
+- `scripts/run-coding-agent-ci.mjs`: 复用构建后 Headless CLI 的通用 CI 包装器；强制干净 Git 基线、只读/显式 workspace-write profile、固定 token/turn 预算及可选 `max-cost-usd` 透传、v1 事件连续性和工作区外可审查 patch/result/manifest artifact；benchmark 可在首个 `run.started` 后使用既有 `agent cancel` 精确注入一次取消，不执行 push、merge 或自动 apply
 - `scripts/verify-coding-ci-contract.mjs`: 对 CI 示例、Core 导出 Schema、输出 Schema、Node/pnpm/协议/退出码兼容矩阵与 Windows/Linux Quality Gate 接线执行失败关闭校验
 - `examples/ci/`: 默认只读 GitHub Actions/通用 CI 示例、结构化 review prompt/output Schema、`AgentRunEvent v1` 静态 Schema、artifact 说明及迁移/回滚兼容矩阵
 - `benchmarks/coding-agent/v1/`: 项目编程 benchmark v1 的版本化 task manifest、失败分类、指标语义及 manifest/run/report/fault/cancel/restart-injection JSON Schema；只保存可提交契约，不保存运行 artifact 或凭据
-- `scripts/coding-agent-benchmark-contract.mjs`: 项目编程 task manifest 语义校验、机器评估运行记录校验与 report-only 指标聚合 owner；`completed` 必须覆盖完整 task/platform/sample 矩阵
+- `scripts/coding-agent-benchmark-contract.mjs`: 项目编程 task manifest 语义校验、机器评估运行记录校验与 report-only 指标聚合 owner；聚合脱敏 usage observation / USD cost，`completed` 必须覆盖完整 task/platform/sample 矩阵
 - `scripts/coding-agent-benchmark-fixtures.mjs`: 阶段 0B 规则/bug、阶段 0C interactive-control/safety-boundary/gateway-recovery/client-cancel/process-restart/Git 本地交付，以及阶段 0D cross-file/failed-test/large-repository 确定性 fixture 的 generator/evaluator owner；只接受空工作区，判定依据为实际 Git diff、完整只读快照、固定测试、PTY/权限/恢复/取消/重启事件、dirty worktree/额外 commit/Git symlink 边界、sentinel、进程收敛与 artifact
 - `scripts/coding-agent-recovery-harness.mjs`: 阶段 0C Gateway 断线外部注入与 cursor 续读 owner；透明代理只断开首个目标写事件后的 Headless 连接，再通过既有 coding-run stdio 订阅恢复证据，不重放模型或工具副作用
 - `scripts/coding-agent-process-restart-harness.mjs`: 阶段 0C 受控 loopback Gateway 子进程、首个已接受 run 的 PID 级重启、旧 binding 的订阅/取消探测与收敛 artifact owner；不复用用户 Gateway 或环境配置
 - `scripts/coding-agent-process-restart-gateway.mjs`: process-restart harness 专用惰性 fixture Gateway 入口；不注册渠道或读取项目环境配置
 - `scripts/aggregate-coding-agent-benchmark.mjs`: 阶段 0D 基线 evidence 聚合与离线重算校验 owner；只接受显式 report、拒绝覆盖/样本重复/source 漂移/缺失 artifact，并把保留 source report 与声明文件汇成 partial 或 completed baseline
-- `scripts/run-coding-agent-benchmark.mjs`: 阶段 0B/0C/0D Windows native 与 WSL2 Linux runner；严格核对实际平台指纹和显式 task 白名单，串联 fixture、既有 Coding CI Headless 链、六类逐 run artifact 与 partial benchmark report；client-cancel/process-restart 额外保存外部生命周期证据，不执行远端 Git 写入
+- `scripts/run-coding-agent-benchmark.mjs`: 阶段 0B/0C/0D Windows native 与 WSL2 Linux runner；严格核对实际平台指纹和显式 task 白名单，串联 fixture、既有 Coding CI Headless 链、六类逐 run artifact 与 partial benchmark report；将 Gateway usage 归一化为无敏感字段名的摘要，真实凭据 run 按剩余额度透传 `max-cost-usd`，usage/cost 不可观测时停止后续 task；client-cancel/process-restart 额外保存外部生命周期证据，不执行远端 Git 写入
 - `scripts/run-coding-agent-benchmark-wsl.mjs`: 阶段 0C Windows host launcher；使用 WSL `wslpath` 和无 shell 的 `wsl.exe --exec` 参数数组启动 Linux runner，token auth 只通过 child env/`WSLENV` 转交，不进入参数或 artifact
 - `scripts/verify-coding-agent-benchmark-contract.mjs`: 对 benchmark manifest、六份 Schema、README、根脚本、项目地图和 Windows/Linux Quality Gate 接线执行失败关闭校验
 - `scripts/run-build-benchmark.mjs`: 运行 B00 TypeScript forced/incremental BuildGraph 基准并输出不设性能阈值的 JSON 报告

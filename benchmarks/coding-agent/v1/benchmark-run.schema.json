@@ -92,7 +92,8 @@
             "maxTokens": { "type": "integer", "const": 24000 }
           }
         },
-        "infrastructureRetries": { "type": "integer", "minimum": 0, "maximum": 1 }
+        "infrastructureRetries": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxCostUsd": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "environment": {
@@ -161,7 +162,16 @@
       "properties": {
         "durationMs": { "type": "number", "minimum": 0 },
         "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
-        "outputTokens": { "type": ["integer", "null"], "minimum": 0 }
+        "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "costUsd"],
+          "properties": {
+            "status": { "enum": ["provider_reported", "unavailable", "not_reached"] },
+            "costUsd": { "type": ["number", "null"], "minimum": 0 }
+          }
+        }
       }
     },
     "artifacts": {
