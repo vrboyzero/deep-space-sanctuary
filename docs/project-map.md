@@ -113,7 +113,8 @@ star-sanctuary/
 ### Gateway / CLI
 - `packages/belldandy-core/src/bin/bdd.ts`: CLI 进程入口
 - `packages/belldandy-core/src/cli/main.ts`: CLI 根命令定义
-- `packages/belldandy-core/src/cli/commands/agent/`: `bdd agent run` / `continue` / `inspect` / `cancel` 的 Headless Conversation 命令；只适配既有 Conversation，不创建 Goal、Workflow、Subtask 或 `planState`
+- `packages/belldandy-core/src/cli/commands/agent/`: `bdd agent run` / `continue` / `inspect` / `cancel` 的 Headless Conversation 命令；`inspect` 兼容既有 `--conversation-id` Gateway 元数据模式，并通过 `--cwd` 提供本地项目规则来源/优先级/哈希/预算诊断；不创建 Goal、Workflow、Subtask 或 `planState`
+- `packages/belldandy-core/src/project-rules.ts`: coding run 项目规则 owner；从最近 Git 根到 cwd 逐层发现项目 `AGENTS.md`，保持 state workspace 身份规则分离，并负责 canonical path、root-to-cwd 优先级、单文件/总预算、symlink/非普通文件/权限拒绝诊断与 prompt 片段构建
 - `packages/belldandy-core/src/cli/commands/coding-run/stdio.ts`: `bdd coding-run stdio` 进程入口；stdin/stdout 只承载 NDJSON，通过 Gateway 转发受限 Conversation 请求、已验证 control 与单个 cursor 事件订阅，不直接拥有领域运行时
 - `packages/belldandy-core/src/cli/commands/tui.ts`: `bdd tui` 入口；只在交互式 stdin/stdout 下启动全屏工作台，非 TTY 以稳定错误码拒绝
 - `packages/belldandy-core/src/tui/`: Ink/React 最小编程工作台；组合 Conversation、精确工具审批、Workspace Revision、只读 Git/worktree 与 Console 快照，并复用 `coding-run` stdio/Gateway 协议，不拥有第二套运行真源
@@ -197,7 +198,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/avatar-static-http.ts`: `/avatar` state-dir 的专属 canonical/no-follow/opened-handle admission；链接、路径替换或缺失目标直接 404，不 fall through 到其他静态目录
 - `packages/belldandy-core/src/query-runtime-http.ts`: community/webhook 鉴权与 Agent 执行链；有效 owner 请求复用 Gateway 顶层 lifecycle，重复 webhook 不重复计租
 - `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，先验证 canonical target 仍在 generated root 内，再本地打开保存目录/定位文件
-- `packages/belldandy-core/src/query-runtime-agent-run.ts` / `query-runtime-message-send.ts`: Agent item 汇聚与 `message.send` 主执行链；从 history 准备到后台 finalizer 的顶层 lifecycle lease、tool result metadata / `failureKind` / follow-up runtime marks 透传，以及 `budget_exhausted` / Provider stream `interrupted` 的失败终态收尾，后者保留当前 partial 且不制造或持久化 final
+- `packages/belldandy-core/src/query-runtime-agent-run.ts` / `query-runtime-message-send.ts`: Agent item 汇聚与 `message.send` 主执行链；从 history 准备到后台 finalizer 的顶层 lifecycle lease、tool result metadata / `failureKind` / follow-up runtime marks 透传；带 `codingRun.cwd` 的单次 run 在此解析项目规则并追加可观测 `project-rules` system delta，不修改 Gateway 启动期身份 prompt；同时负责 `budget_exhausted` / Provider stream `interrupted` 的失败终态收尾，后者保留当前 partial 且不制造或持久化 final
 - `packages/belldandy-core/src/resident-auto-run.ts`: resident 主动运行与 reminder-only 写入；在首次 Store 访问前取得共享顶层 lease，并在完整 run 或同步写入完成后归还
 - `packages/belldandy-core/src/attachment-understanding-runner.ts`: 附件落盘、图片/视频自动识别摘要注入、音频转写缓存复用
 - `packages/belldandy-core/src/preflight-compression-config.ts` / `preflight-compression-sidecar.ts` / `preflight-compression-governance.ts`: 发送前附件预压缩配置、sidecar 原文回取、TTL/最大条目清理治理与 doctor 观测

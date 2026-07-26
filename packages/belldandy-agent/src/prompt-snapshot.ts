@@ -26,7 +26,8 @@ export type AgentPromptDeltaType =
   | "tool-post-verification"
   | "delegation-result-review"
   | "launch-spec"
-  | "chat-commander-hint";
+  | "chat-commander-hint"
+  | "project-rules";
 
 export type AgentPromptDeltaRole = "system" | "user-prelude" | "attachment";
 
@@ -296,6 +297,7 @@ function normalizePromptSnapshotDeltaType(value: unknown): AgentPromptDeltaType 
     case "tool-failure-recovery":
     case "tool-search-follow-up":
     case "tool-post-verification":
+    case "project-rules":
       return value;
     default:
       return undefined;

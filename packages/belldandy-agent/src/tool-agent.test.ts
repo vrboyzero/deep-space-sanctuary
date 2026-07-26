@@ -424,6 +424,13 @@ describe("before_agent_start system prompt overrides", () => {
         runId: "run-runtime-deltas",
         promptDeltas: [
           {
+            id: "project-rules-test",
+            deltaType: "project-rules",
+            role: "system",
+            text: "# Project Rules\nroot-project-rule",
+            source: "project-rules",
+          },
+          {
             id: "attachment-1",
             deltaType: "attachment",
             role: "attachment",
@@ -437,6 +444,7 @@ describe("before_agent_start system prompt overrides", () => {
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0].systemPrompt).toContain("## Identity Context (Runtime)");
     expect(snapshots[0].systemPrompt).toContain("## Runtime Identity Authority");
+    expect(snapshots[0].systemPrompt).toContain("root-project-rule");
     expect(snapshots[0].deltas).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "runtime-identity-context",
@@ -451,6 +459,12 @@ describe("before_agent_start system prompt overrides", () => {
           actorRelation: "owner",
           recommendedAction: "execute",
         }),
+      }),
+      expect.objectContaining({
+        id: "project-rules-test",
+        deltaType: "project-rules",
+        role: "system",
+        source: "project-rules",
       }),
       expect.objectContaining({
         id: "attachment-1",
@@ -472,7 +486,7 @@ describe("before_agent_start system prompt overrides", () => {
       }),
       expect.objectContaining({
         blockType: "dynamic-runtime",
-        sourceDeltaIds: ["runtime-identity-context", "runtime-identity-authority"],
+        sourceDeltaIds: ["runtime-identity-context", "runtime-identity-authority", "project-rules-test"],
         cacheControlEligible: false,
       }),
     ]);

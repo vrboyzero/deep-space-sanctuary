@@ -37,6 +37,7 @@ import type { ResidentAgentRuntimeRegistry } from "./resident-agent-runtime.js";
 import type { ConversationPromptSnapshotArtifact } from "./conversation-prompt-snapshot.js";
 import { resolveDeepSeekTierRoute } from "./deepseek-tier-routing.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
+import { resolveProjectRules } from "./project-rules.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -876,6 +877,39 @@ function buildCodingRunLaunchSpec(
     ...(codingRun.maxCostUsd ? { maxCostUsd: codingRun.maxCostUsd } : {}),
   };
   return Object.keys(launchSpec).length > 0 ? launchSpec : undefined;
+}
+
+async function buildProjectRulesPromptDelta(
+  codingRun: MessageSendParams["codingRun"],
+): Promise<AgentPromptDelta | undefined> {
+  const cwd = codingRun?.cwd?.trim();
+  if (!cwd) return undefined;
+
+  const resolution = await resolveProjectRules({ cwd });
+  if (resolution.rules.length === 0) return undefined;
+
+  return {
+    id: `project-rules-${resolution.prompt.contentHash.replace(/^sha256:/, "").slice(0, 16)}`,
+    deltaType: "project-rules",
+    role: "system",
+    text: resolution.prompt.text,
+    source: "project-rules",
+    metadata: {
+      cwd: resolution.cwd,
+      root: resolution.root.path,
+      rootSource: resolution.root.source,
+      sourceCount: resolution.prompt.sourceCount,
+      contentHash: resolution.prompt.contentHash,
+      sources: resolution.rules.map((rule) => ({
+        path: rule.path,
+        scopeDir: rule.scopeDir,
+        priority: rule.priority,
+        contentHash: rule.contentHash,
+        sizeBytes: rule.sizeBytes,
+      })),
+      diagnostics: resolution.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+    },
+  };
 }
 
 function buildMessageSendAttachmentStats(
@@ -2224,7 +2258,13 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
     ctx.runtime.residentAgentRuntime?.markStatus(input.requestedAgentId ?? "default", "running");
     ctx.runtime.residentAgentRuntime?.touchConversation(input.requestedAgentId ?? "default", input.conversationId);
 
-    const runInput = buildMessageSendAgentRunInput(input, ctx.media);
+    const projectRulesDelta = await buildProjectRulesPromptDelta(input.codingRun);
+    const runInput = buildMessageSendAgentRunInput({
+      ...input,
+      ...(projectRulesDelta
+        ? { promptDeltas: [...input.promptDeltas, projectRulesDelta] }
+        : {}),
+    }, ctx.media);
     state.run.setRunMeta(runInput.meta && typeof runInput.meta === "object" ? runInput.meta as Record<string, unknown> : undefined);
     const isTts = ctx.media.ttsEnabled?.() ?? false;
     const streamAdapter = createMessageSendStreamAdapter({

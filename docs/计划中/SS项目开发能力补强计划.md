@@ -1016,9 +1016,43 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - 聚合 dry-run 返回 `completed 72/72`、缺口 0；正式聚合后 `corepack pnpm aggregate:coding-agent:baseline --verify` 返回 `verified completed 72 run(s)`。
 - 18 份正式 Gateway 日志未出现渠道、Embedding 或实际 compaction 调用标记；Windows `28991`、WSL loopback `28991`、restart fixture 与内部 daemon 进程均已收敛。
 
+#### 阶段 1-1 实现结论：项目规则链与 cwd 上下文诊断（2026-07-26）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/project-rules.ts` 新建**：
+   - 从 canonical cwd 向上定位最近 Git 根，并按 Git 根到 cwd 的顺序逐层发现项目 `AGENTS.md`；越近规则后置，冲突时只覆盖更上层项目规则，不覆盖平台、身份、权限或安全指令。
+   - 非 Git 目录以 cwd 作为可观察降级根；规则来源记录适用目录、优先级、SHA-256、字节数和最终项目规则 prompt 摘要。
+   - 单文件上限固定为 `64 KiB`、单次项目规则总上限固定为 `128 KiB`；超限、总预算耗尽、symlink、非普通文件及 `EACCES` / `EPERM` 均跳过并返回结构化诊断，不静默截断或越界读取。
+
+2. **`packages/belldandy-core/src/query-runtime-message-send.ts` 与 `packages/belldandy-agent/src/prompt-snapshot.ts` 接入**：
+   - 仅对带 `codingRun.cwd` 的单次 run 动态解析项目规则，并作为 `project-rules` system delta 进入既有 Agent prompt、provider-native system block 和 prompt snapshot 观测链。
+   - state workspace / per-agent `AGENTS.md` 继续由 Gateway 启动期身份 workspace 持有；项目规则不写入 stateDir，也不改变身份文件归属。
+   - delta metadata 保留 cwd、项目根、来源列表、优先级、内容哈希、大小、预算与跳过诊断，便于运行后核查。
+
+3. **`packages/belldandy-core/src/cli/commands/agent/inspect.ts` 扩展**：
+   - `bdd agent inspect` 兼容既有 `--conversation-id` Gateway 元数据模式，并新增与其互斥的 `--cwd` 本地项目规则诊断模式。
+   - `--cwd` 输出 root、来源类型、适用目录、优先级、SHA-256、大小、跳过原因及 prompt 字符数/哈希，不回显规则正文；同时明确 state workspace 身份规则未混入项目 prompt。
+
+4. **测试与项目导航同步**：
+   - 新增 resolver 的 Git/非 Git、嵌套优先级、单文件/总预算、symlink、非普通文件测试，并扩展 CLI/Gateway 与 ToolAgent prompt snapshot 集成回归。
+   - `docs/project-map.md` 已登记项目规则 owner、CLI 入口和 `message.send` 单次注入边界。
+
+5. **效果**：
+   - `bdd agent run --cwd` 现在能够在危险 Shell 工具关闭时直接获得目标仓项目规则，根规则先、近层规则后，不再把 SS 身份 `AGENTS.md` 误当项目规则。
+   - `bdd agent inspect --cwd ... --json` 可在不连接 Gateway、不启动模型的情况下复算并审查规则链，规则正文不会出现在诊断输出中。
+   - 技术债裁决为 `record_only`：既有 `AgentPromptDeltaType` 中少数 Commander/Delegation 历史类型与清洗白名单仍需在其所属功能切片单独核对，本轮只接入并验证 `project-rules`，不扩大修改面。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`@belldandy/agent` 与 `@belldandy/core` build 均通过。
+- 4 个定向测试文件、93 个测试全部通过（含 8 个新增项目规则 Unit/Integration 测试及 1 个扩展的 ToolAgent system prompt 回归测试）。
+- Windows 实际执行 `bdd agent inspect --cwd . --json` 成功返回 1 个项目来源、root-to-cwd 优先级、内容/prompt SHA-256 和空跳过列表，未回显规则正文。
+- WSL 临时 `chmod 000` fixture 返回 `rule_file_unreadable / EACCES` 且规则数为 0；临时目录已清理。未启动 Provider、未运行付费 benchmark、未产生新增模型费用。
+
 ### 后续计划
 
-继续**阶段 1：先实现项目规则链与上下文诊断的最小纵向切片**。下一步先检索 `bdd agent run` 的 cwd、stateDir 身份规则加载和 prompt 构建边界，再用失败测试冻结“从目标 Git 根到 cwd 逐层发现 `AGENTS.md`、越近优先、身份规则与项目规则来源分离”的行为；随后接入 `bdd agent inspect --cwd ...` 的来源、适用目录、哈希与跳过原因诊断。这样先做，是因为完整基线中 `rules.nested-precedence` 为 `0/6`，且该能力是后续搜索、编辑和命令执行都依赖的项目上下文入口。当前还缺的关键闭环是非 Git 目录、symlink、权限拒绝、超大规则文件和冲突诊断，以及修复后的 Windows/WSL 定向测试与冻结 benchmark 回归；代码搜索、glob、分段读取属于阶段 1 的后续独立切片，本轮不混入。阶段 0 的 Provider 人民币实账核对继续按 `defer` 保留，获得账单证据后再回写费用一致性结论。
+按用户要求暂停在**阶段 1-1 项目规则链与 cwd 上下文诊断已实现**的断点，不继续进入下一切片。恢复后先针对冻结的 `rules.nested-precedence` 在 Windows/WSL2 做回归并复核实际 prompt/诊断 artifact；这样先做，是因为实现级 Unit/Integration 已通过，但阶段 0 的 `0/6` 产品事实基线尚未被新 source 覆盖。完成该回归后，再按独立纵向切片推进 `text_search`、`file_glob` 与分页/分段 `file_read`。阶段 1 当前还缺的关键闭环是冻结 benchmark 回归、代码搜索、glob、分段读取及对应跨平台验证；阶段 0 的 Provider 人民币实账核对继续按 `defer` 保留。若恢复后运行付费批次，费用 prior 必须从累计 `$0.06268098 / $3.00` 继续计算。
 
 ## 实施计划进度表
 
@@ -1026,7 +1060,7 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 |---|---|---|---:|---|
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
 | 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-7 已完成） | 4-6 人日 | 已完成 12 tasks × Windows/WSL2 × 3 attempts 的同一 source `72/72` completed report、离线重算、隔离 Gateway、三项定价与真实 usage/cost 链；事实基线通过 `11/72`，新增可观测费用 `$0.02789341`，含旧 source 历史费用累计 `$0.06268098 / $3.00`。技术闭环已满足阶段 1 回归前置，当前仅剩 Provider 人民币实账与事件 USD 估值的人工核对，按外部依赖 `defer` 保留，完成前不将阶段 0 标为已完成 |
-| 阶段 1：项目规则链与代码导航 | P0 | 待启动 | 8-12 人日 | 危险工具关闭时仍能正确加载规则、搜索和分段读取 |
+| 阶段 1：项目规则链与代码导航 | P0 | 部分完成（1-1 项目规则链与 `inspect --cwd` 已完成） | 8-12 人日 | 已完成 Git 根到 cwd 的项目 `AGENTS.md` 优先级、身份隔离、预算/跳过诊断与单次 run prompt 接入；当前待冻结 benchmark 回归，以及 `text_search`、`file_glob`、分页/分段 `file_read` 和跨平台闭环 |
 | 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 待启动 | 15-25 人日 | 构建/测试可在 sandbox 中运行，权限和隔离可验证且失败关闭 |
 | 阶段 3：真实 diff/review 与恢复保证 | P0 | 待启动 | 8-12 人日 | 修改可审查、可归因，恢复边界明确且不覆盖用户改动 |
 | 阶段 4：用户 worktree 与 Git 本地交付 | P1 | 待启动 | 10-15 人日 | 隔离开发、冲突停机、本地 stage/commit 可追溯 |

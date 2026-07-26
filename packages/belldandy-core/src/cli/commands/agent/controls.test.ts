@@ -9,7 +9,7 @@ import { startGatewayServer } from "../../../server.js";
 import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, withEnv } from "../../../server-testkit.js";
 import { cancelAgentRunCommand } from "./cancel.js";
 import { continueAgentRunCommand } from "./continue.js";
-import { inspectAgentConversation } from "./inspect.js";
+import { inspectAgentConversation, inspectAgentProjectRules } from "./inspect.js";
 import { runAgentRunCommand } from "./run.js";
 
 afterEach(async () => {
@@ -17,6 +17,77 @@ afterEach(async () => {
 });
 
 describe("bdd agent controls", () => {
+  it("inspects cwd project rule precedence without exposing rule content or mixing identity rules", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-inspect-state-"));
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-inspect-rules-"));
+    const cwd = path.join(root, "packages", "core");
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+
+    try {
+      await fs.promises.mkdir(path.join(root, ".git"));
+      await fs.promises.mkdir(cwd, { recursive: true });
+      await fs.promises.writeFile(path.join(stateDir, "AGENTS.md"), "identity-private-content\n", "utf-8");
+      await fs.promises.writeFile(path.join(root, "AGENTS.md"), "root-private-content\n", "utf-8");
+      await fs.promises.writeFile(path.join(cwd, "AGENTS.md"), "cwd-private-content\n", "utf-8");
+
+      expect(await inspectAgentProjectRules({
+        stateDir,
+        cwd,
+        json: true,
+        writeStdout: (text) => stdout.push(text),
+        writeStderr: (text) => stderr.push(text),
+      })).toBe(0);
+
+      const canonicalRoot = await fs.promises.realpath(root);
+      const canonicalCwd = await fs.promises.realpath(cwd);
+      expect(JSON.parse(stdout.join(""))).toMatchObject({
+        kind: "project-rules",
+        requestedCwd: path.resolve(cwd),
+        cwd: canonicalCwd,
+        root: {
+          path: canonicalRoot,
+          source: "git",
+        },
+        precedence: "root-to-cwd-later-wins",
+        identityRules: {
+          source: "state-workspace",
+          stateDir: path.resolve(stateDir),
+          includedInProjectPrompt: false,
+        },
+        sources: [
+          {
+            source: "project",
+            path: path.join(canonicalRoot, "AGENTS.md"),
+            appliesTo: canonicalRoot,
+            priority: 0,
+            contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+            sizeBytes: expect.any(Number),
+          },
+          {
+            source: "project",
+            path: path.join(canonicalCwd, "AGENTS.md"),
+            appliesTo: canonicalCwd,
+            priority: 1,
+            contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+            sizeBytes: expect.any(Number),
+          },
+        ],
+        skipped: [],
+        prompt: {
+          contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+          charLength: expect.any(Number),
+          sourceCount: 2,
+        },
+      });
+      expect(stdout.join("")).not.toContain("private-content");
+      expect(stderr).toEqual([]);
+    } finally {
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+      await fs.promises.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("continues one Conversation and inspects its Gateway-owned metadata", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-controls-"));
     const conversationId = "agent-cli-continue";

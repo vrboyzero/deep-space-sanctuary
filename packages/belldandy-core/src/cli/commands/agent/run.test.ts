@@ -187,6 +187,73 @@ describe("bdd agent run", () => {
     }
   });
 
+  it("injects cwd project rules into one coding run without mixing state identity rules", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-project-rules-"));
+    const workspaceRoot = path.join(stateDir, "workspace");
+    const packageDir = path.join(workspaceRoot, "packages", "core");
+    const cwd = path.join(packageDir, "src");
+    let observedPromptDeltas: Array<Record<string, unknown>> | undefined;
+    const agent: BelldandyAgent = {
+      async *run(input) {
+        observedPromptDeltas = input.meta?.promptDeltas as Array<Record<string, unknown>> | undefined;
+        yield { type: "final", text: "done" };
+      },
+    };
+
+    try {
+      await fs.promises.mkdir(path.join(workspaceRoot, ".git"), { recursive: true });
+      await fs.promises.mkdir(cwd, { recursive: true });
+      await fs.promises.writeFile(path.join(stateDir, "AGENTS.md"), "identity-only-rule\n", "utf-8");
+      await fs.promises.writeFile(path.join(workspaceRoot, "AGENTS.md"), "root-project-rule\n", "utf-8");
+      await fs.promises.writeFile(path.join(packageDir, "AGENTS.md"), "package-project-rule\n", "utf-8");
+
+      const server = await startGatewayServer({
+        port: 0,
+        auth: { mode: "none" },
+        webRoot: resolveWebRoot(),
+        stateDir,
+        agentFactory: () => agent,
+      });
+
+      try {
+        await withEnv({
+          BELLDANDY_HOST: "127.0.0.1",
+          BELLDANDY_PORT: String(server.port),
+          BELLDANDY_AUTH_MODE: "none",
+        }, async () => {
+          expect(await runAgentRunCommand({
+            stateDir,
+            prompt: "follow project rules",
+            jsonl: true,
+            timeoutMs: 5_000,
+            codingRun: { cwd },
+            writeStdout: () => {},
+            writeStderr: () => {},
+          })).toBe(0);
+        });
+      } finally {
+        await server.close();
+      }
+
+      const projectRulesDelta = observedPromptDeltas?.find((delta) => delta.deltaType === "project-rules");
+      expect(projectRulesDelta).toMatchObject({
+        role: "system",
+        source: "project-rules",
+        metadata: {
+          cwd: await fs.promises.realpath(cwd),
+          root: await fs.promises.realpath(workspaceRoot),
+          rootSource: "git",
+          sourceCount: 2,
+        },
+      });
+      const deltaText = String(projectRulesDelta?.text ?? "");
+      expect(deltaText.indexOf("root-project-rule")).toBeLessThan(deltaText.indexOf("package-project-rule"));
+      expect(deltaText).not.toContain("identity-only-rule");
+    } finally {
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("fails before starting when the selected Agent cannot enforce maxCostUsd", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-cost-capability-"));
     const agent: BelldandyAgent = {
