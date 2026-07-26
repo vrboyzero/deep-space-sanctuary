@@ -191,6 +191,7 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "restart-injection.json",
     "CODING_BENCHMARK_EVENTS_PATH",
     "BELLDANDY_DANGEROUS_TOOLS_ENABLED=true",
+    "--prior-observed-cost-usd",
     "WSLENV",
     "回退到 primary",
     "coding-agent-benchmark-fixtures.mjs",

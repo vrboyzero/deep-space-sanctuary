@@ -2,6 +2,8 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolvePriorObservedCostUsd } from "./run-coding-agent-benchmark.mjs";
+
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 
@@ -18,6 +20,9 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
     throw new Error("credentialsConfigured must be a boolean.");
   }
   const attempt = Number.isInteger(input.attempt) ? input.attempt : 1;
+  const priorObservedCostUsd = input.priorObservedCostUsd === undefined
+    ? undefined
+    : resolvePriorObservedCostUsd(input.priorObservedCostUsd);
   const authMode = input.authMode ?? "none";
   if (authMode !== "none" && authMode !== "token") {
     throw new Error("authMode must be none or token.");
@@ -55,6 +60,9 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       "--credentials-configured", String(credentialsConfigured),
       "--attempt", String(attempt),
       ...(input.taskId ? ["--task-id", requireInput(input, "taskId")] : []),
+      ...(priorObservedCostUsd === undefined
+        ? []
+        : ["--prior-observed-cost-usd", String(priorObservedCostUsd)]),
     ],
   };
 }
@@ -133,6 +141,9 @@ async function main() {
     authMode: values.get("auth-mode"),
     authToken: process.env.BELLDANDY_AUTH_TOKEN,
     taskId: values.get("task-id"),
+    ...(values.has("prior-observed-cost-usd") ? {
+      priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
+    } : {}),
   });
   const child = spawn(invocation.command, invocation.args, {
     cwd: defaultWorkspaceRoot,

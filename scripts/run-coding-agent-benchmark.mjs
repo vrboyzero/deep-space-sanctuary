@@ -96,12 +96,29 @@ export function extractBenchmarkTokenUsage(events) {
   };
 }
 
-export function createBenchmarkUsageBudget(model) {
-  if (model?.credentialsConfigured !== true) return undefined;
+export function resolvePriorObservedCostUsd(value = 0) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("Stage 0D prior observed cost must be a non-negative finite number.");
+  }
+  const priorObservedCostUsd = roundCostUsd(value);
+  if (priorObservedCostUsd >= STAGE_0D_BENCHMARK_USAGE_BUDGET_USD) {
+    throw new Error("Stage 0D prior observed cost must remain below the $3.00 usage budget.");
+  }
+  return priorObservedCostUsd;
+}
+
+export function createBenchmarkUsageBudget(model, options = {}) {
+  const priorObservedCostUsd = resolvePriorObservedCostUsd(options.priorObservedCostUsd);
+  if (model?.credentialsConfigured !== true) {
+    if (priorObservedCostUsd > 0) {
+      throw new Error("Stage 0D prior observed cost requires credentialsConfigured=true.");
+    }
+    return undefined;
+  }
   return {
     maxCostUsd: STAGE_0D_BENCHMARK_USAGE_BUDGET_USD,
-    remainingCostUsd: STAGE_0D_BENCHMARK_USAGE_BUDGET_USD,
-    observedCostUsd: 0,
+    remainingCostUsd: roundCostUsd(STAGE_0D_BENCHMARK_USAGE_BUDGET_USD - priorObservedCostUsd),
+    observedCostUsd: priorObservedCostUsd,
   };
 }
 
@@ -141,7 +158,9 @@ export async function runStage0BSuite(input, dependencies = {}) {
     throw new Error(`Stage 0B attempt must be within 1-${manifest.suite.sampleRuns}.`);
   }
   const taskIds = resolveTaskIds(input.taskIds);
-  const usageBudget = createBenchmarkUsageBudget(input.model);
+  const usageBudget = createBenchmarkUsageBudget(input.model, {
+    priorObservedCostUsd: input.priorObservedCostUsd,
+  });
 
   const runs = [];
   for (const taskId of taskIds) {
@@ -780,6 +799,9 @@ async function main() {
       id: requireValue(values, "model-id"),
       credentialsConfigured: credentialsValue === "true",
     },
+    ...(values.has("prior-observed-cost-usd") ? {
+      priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
+    } : {}),
   });
   const platform = report.runs[0]?.platform ?? "unknown";
   console.log(

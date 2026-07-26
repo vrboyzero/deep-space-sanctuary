@@ -89,8 +89,8 @@ star-sanctuary/
 - `scripts/coding-agent-process-restart-harness.mjs`: 阶段 0C 受控 loopback Gateway 子进程、首个已接受 run 的 PID 级重启、旧 binding 的订阅/取消探测与收敛 artifact owner；不复用用户 Gateway 或环境配置
 - `scripts/coding-agent-process-restart-gateway.mjs`: process-restart harness 专用惰性 fixture Gateway 入口；不注册渠道或读取项目环境配置
 - `scripts/aggregate-coding-agent-benchmark.mjs`: 阶段 0D 基线 evidence 聚合与离线重算校验 owner；只接受显式 report、拒绝覆盖/样本重复/source 漂移/缺失 artifact，并把保留 source report 与声明文件汇成 partial 或 completed baseline
-- `scripts/run-coding-agent-benchmark.mjs`: 阶段 0B/0C/0D Windows native 与 WSL2 Linux runner；严格核对实际平台指纹和显式 task 白名单，串联 fixture、既有 Coding CI Headless 链、六类逐 run artifact 与 partial benchmark report；将 Gateway usage 归一化为无敏感字段名的摘要，真实凭据 run 按剩余额度透传 `max-cost-usd`，usage/cost 不可观测时停止后续 task；client-cancel/process-restart 额外保存外部生命周期证据，不执行远端 Git 写入
-- `scripts/run-coding-agent-benchmark-wsl.mjs`: 阶段 0C Windows host launcher；使用 WSL `wslpath` 和无 shell 的 `wsl.exe --exec` 参数数组启动 Linux runner，token auth 只通过 child env/`WSLENV` 转交，不进入参数或 artifact
+- `scripts/run-coding-agent-benchmark.mjs`: 阶段 0B/0C/0D Windows native 与 WSL2 Linux runner；严格核对实际平台指纹和显式 task 白名单，串联 fixture、既有 Coding CI Headless 链、六类逐 run artifact 与 partial benchmark report；将 Gateway usage 归一化为无敏感字段名的摘要，真实凭据 run 按剩余额度透传 `max-cost-usd`，分批续跑可将已验证 prior cost 从固定总额度中扣减，usage/cost 不可观测时停止后续 task；client-cancel/process-restart 额外保存外部生命周期证据，不执行远端 Git 写入
+- `scripts/run-coding-agent-benchmark-wsl.mjs`: 阶段 0C Windows host launcher；使用 WSL `wslpath` 和无 shell 的 `wsl.exe --exec` 参数数组启动 Linux runner，透传分批续跑的 prior cost，token auth 只通过 child env/`WSLENV` 转交，不进入参数或 artifact
 - `scripts/verify-coding-agent-benchmark-contract.mjs`: 对 benchmark manifest、六份 Schema、README、根脚本、项目地图和 Windows/Linux Quality Gate 接线执行失败关闭校验
 - `scripts/run-build-benchmark.mjs`: 运行 B00 TypeScript forced/incremental BuildGraph 基准并输出不设性能阈值的 JSON 报告
 - `scripts/run-distribution-integrity-benchmark.mjs`: 运行 D02 runtime manifest 完整性校验的固定 small/medium/large fixture 基准，记录 hash p50/p95、RSS 采样与等长篡改拒绝证据

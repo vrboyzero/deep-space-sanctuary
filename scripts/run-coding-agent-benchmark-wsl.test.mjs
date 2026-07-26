@@ -17,6 +17,7 @@ describe("coding agent benchmark WSL launcher", () => {
       credentialsConfigured: true,
       attempt: 2,
       taskId: "command.interactive-control",
+      priorObservedCostUsd: 0.75,
     }, {
       toWslPath(value) {
         return `/mnt/e/${path.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
@@ -40,6 +41,7 @@ describe("coding agent benchmark WSL launcher", () => {
       "--credentials-configured", "true",
       "--attempt", "2",
       "--task-id", "command.interactive-control",
+      "--prior-observed-cost-usd", "0.75",
     ]);
     expect(invocation.args.join(" ")).not.toContain("api-key");
   });

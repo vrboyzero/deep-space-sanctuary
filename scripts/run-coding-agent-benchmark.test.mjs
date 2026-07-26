@@ -51,6 +51,59 @@ describe("coding agent benchmark stage 0B runner", () => {
       id: "fixture-model",
       credentialsConfigured: false,
     })).toBeUndefined();
+
+    const resumedBudget = createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { priorObservedCostUsd: 0.75 });
+    expect(resumedBudget).toMatchObject({
+      maxCostUsd: 3,
+      remainingCostUsd: 2.25,
+      observedCostUsd: 0.75,
+    });
+    expect(() => createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { priorObservedCostUsd: 3 })).toThrow(/prior observed cost/i);
+    expect(() => createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "priced-model",
+      credentialsConfigured: true,
+    }, { priorObservedCostUsd: -0.01 })).toThrow(/prior observed cost/i);
+    expect(() => createBenchmarkUsageBudget({
+      provider: "fixture",
+      id: "fixture-model",
+      credentialsConfigured: false,
+    }, { priorObservedCostUsd: 0.01 })).toThrow(/credentialsConfigured=true/i);
+  });
+
+  windowsIt("deducts prior observed cost before invoking a resumed real task", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-resumed-budget-"));
+    tempRoots.push(root);
+    const invocations = [];
+
+    await runStage0BSuite({
+      platform: "windows-native",
+      taskIds: ["feature.cross-file"],
+      fixtureRoot: path.join(root, "fixtures"),
+      artifactRoot: path.join(root, "artifacts"),
+      stateRoot: path.join(root, "state"),
+      attempt: 1,
+      runIds: { "feature.cross-file": "resumed-budget-windows-a1-test" },
+      model: { provider: "fixture", id: "priced-model", credentialsConfigured: true },
+      priorObservedCostUsd: 0.75,
+      generatedAt: "2026-07-26T00:00:00.000Z",
+    }, {
+      async executeCodingCi(input) {
+        invocations.push(input);
+        return { exitCode: 4, stdout: "", stderr: "resumed budget fixture" };
+      },
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0].maxCostUsd).toBe(2.25);
   });
 
   it("keeps the subscription probe stdin open until its matching response arrives", async () => {
