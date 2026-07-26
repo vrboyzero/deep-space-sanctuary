@@ -38,7 +38,7 @@ export function calculateUsageCostUsd(input: {
   const cacheSavingsUsd = input.pricing.cacheReadUsdPer1M
     ? (Math.max(0, input.cacheHitTokens ?? 0) / 1_000_000) * Math.max(0, input.pricing.inputUsdPer1M - input.pricing.cacheReadUsdPer1M)
     : 0;
-  const totalUsd = inputUsd + outputUsd + cacheReadUsd + cacheCreationUsd;
+  const totalUsd = Math.max(0, inputUsd - cacheSavingsUsd) + outputUsd + cacheReadUsd + cacheCreationUsd;
   return {
     inputUsd: roundUsd(inputUsd),
     outputUsd: roundUsd(outputUsd),

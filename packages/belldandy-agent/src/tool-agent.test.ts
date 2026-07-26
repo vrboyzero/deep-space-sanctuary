@@ -4225,9 +4225,19 @@ describe("ToolEnabledAgent hook timeouts", () => {
     const items = await collectItems(agent.run({
       conversationId: "conv-cache-observability",
       text: "hello",
+      meta: {
+        _agentLaunchSpec: {
+          maxCostUsd: 0.0003,
+        },
+      },
     }));
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(items.some((item) => item.type === "budget_exhausted")).toBe(false);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "final",
+      text: "cache observed",
+    }));
     expect(items).toContainEqual(expect.objectContaining({
       type: "usage",
       inputTokens: 100,
@@ -4237,6 +4247,7 @@ describe("ToolEnabledAgent hook timeouts", () => {
       cacheSupport: "supported",
       systemPromptFingerprint: "fp-deepseek-1",
       cacheSavingsUsd: 0.00012,
+      totalCostUsd: 0.00028,
     }));
   });
 

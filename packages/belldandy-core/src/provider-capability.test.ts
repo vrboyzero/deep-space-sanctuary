@@ -58,13 +58,12 @@ describe("provider capability", () => {
     });
   });
 
-  it("calculates usage cost with cache token pricing", () => {
+  it("calculates Anthropic-style cache token pricing independently", () => {
     expect(calculateUsageCostUsd({
       input_tokens: 1000,
       output_tokens: 500,
       cache_read_input_tokens: 250,
       cache_creation_input_tokens: 400,
-      prompt_cache_hit_tokens: 800,
     }, {
       inputUsdPer1M: 2,
       outputUsdPer1M: 8,
@@ -76,8 +75,29 @@ describe("provider capability", () => {
       outputUsd: 0.004,
       cacheReadUsd: 0.000125,
       cacheCreationUsd: 0.0004,
-      cacheSavingsUsd: 0.0012,
+      cacheSavingsUsd: 0,
       totalUsd: 0.006525,
+    });
+  });
+
+  it("deducts DeepSeek prompt cache savings from total cost", () => {
+    expect(calculateUsageCostUsd({
+      input_tokens: 100,
+      output_tokens: 25,
+      prompt_cache_hit_tokens: 80,
+      prompt_cache_miss_tokens: 20,
+    }, {
+      inputUsdPer1M: 2,
+      outputUsdPer1M: 8,
+      cacheReadUsdPer1M: 0.5,
+      source: "env",
+    })).toEqual({
+      inputUsd: 0.0002,
+      outputUsd: 0.0002,
+      cacheReadUsd: 0,
+      cacheCreationUsd: 0,
+      cacheSavingsUsd: 0.00012,
+      totalUsd: 0.00028,
     });
   });
 });

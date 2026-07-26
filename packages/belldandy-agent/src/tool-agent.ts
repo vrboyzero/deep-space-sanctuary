@@ -2295,6 +2295,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let totalCacheCreationCostUsd = 0;
     let totalCacheReadCostUsd = 0;
     let totalCacheSavingsUsd = 0;
+    let totalUsageCostUsd = 0;
     let modelCallCount = 0;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
     let lastRequestShape: AgentUsage["requestShape"] | undefined;
@@ -2373,7 +2374,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         ...(totalCacheCreationCostUsd > 0 ? { cacheCreationCostUsd: totalCacheCreationCostUsd } : {}),
         ...(totalCacheSavingsUsd > 0 ? { cacheSavingsUsd: totalCacheSavingsUsd } : {}),
         ...(totalInputCostUsd > 0 || totalOutputCostUsd > 0 || totalCacheReadCostUsd > 0 || totalCacheCreationCostUsd > 0
-          ? { totalCostUsd: totalInputCostUsd + totalOutputCostUsd + totalCacheReadCostUsd + totalCacheCreationCostUsd }
+          ? { totalCostUsd: totalUsageCostUsd }
           : {}),
         ...(usageCalibration ? { usageCalibration } : {}),
         ...(lastProviderRawUsage ? { providerRawUsage: { ...lastProviderRawUsage } } : {}),
@@ -2795,10 +2796,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
             totalCacheReadCostUsd += usageCost.cacheReadUsd;
             totalCacheCreationCostUsd += usageCost.cacheCreationUsd;
             totalCacheSavingsUsd += usageCost.cacheSavingsUsd;
+            totalUsageCostUsd += usageCost.totalUsd;
           }
           tokenCounter.notifyUsage(u.input_tokens, u.output_tokens, usageCost
             ? {
-                inputCostUsd: usageCost.inputUsd + usageCost.cacheReadUsd + usageCost.cacheCreationUsd,
+                inputCostUsd: Math.max(0, usageCost.totalUsd - usageCost.outputUsd),
                 outputCostUsd: usageCost.outputUsd,
               }
             : undefined);
