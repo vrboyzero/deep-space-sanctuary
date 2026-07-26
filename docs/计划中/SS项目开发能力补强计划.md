@@ -984,16 +984,48 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - TDD 红灯确认旧实现返回 `$0.00040` 并错误触发预算超限；修复后返回 `$0.00028`、Agent 正常完成，Anthropic 独立缓存 token 计价回归通过。
 - 未修改 `.env` / `.env.local`、未启动 Gateway、未调用 Provider，也未消耗新增费用。
 
+#### 阶段 0D-7 实现结论：隔离双平台完整事实基线（2026-07-26）
+
+##### 已完成内容
+
+1. **`scripts/coding-agent-process-restart-harness.mjs` 与 `scripts/run-coding-agent-benchmark.test.mjs` 修改**：
+   - restart fixture Gateway 显式清除继承的 `BELLDANDY_ALLOWED_ORIGINS`，避免用户配置中的 Origin 白名单在 WebSocket binding 建立前关闭测试链。
+   - 新增错误宿主 Origin 下仍能完成 restart harness 的真实集成回归；旧实现稳定复现 0 个终态，修复后双平台各 3 次 restart 样本全部通过。
+
+2. **`artifacts/coding-agent-stage0d-baseline-0107c0b/` 本机忽略编排与 evidence 新建**：
+   - Windows/WSL 批次使用独立 state/env，只从 `H:\.star_sanctuary` 向受控进程读取 primary API key、Base URL 与三项定价；渠道凭据不进入批次环境。
+   - 显式关闭渠道路由、Discord、Email、MCP、Embedding、warmup、usage upload、compaction 等非必要外联模块，并以 Gateway 日志标记失败关闭。
+   - WSL recovery 改用 WSL 内部 loopback Gateway；Linux Git fixture 保留在 WSL 原生 evidence 中，只复制聚合所需 artifact，避免 Windows UNC 无法物化 symlink。
+
+3. **`/var/tmp/star-sanctuary-stage0d-0107c0b` 与 `completed-baseline/` 建立**：
+   - WSL staging 固定到 `0107c0b4818ae177c628c6df5c166892cb206b63`，完成 Linux 原生依赖安装和构建，`workspaceDirty=false`。
+   - 21 份显式 source report 聚合为 12 tasks × Windows/WSL2 × 3 attempts 的 `72/72` completed report；聚合器保留 source report、复制声明 artifact，并支持离线重算。
+   - WSL 正式 artifact 复制件逐文件 SHA-256 核验无差异；旧 source `78d9ded` 的 `42/72` 因历史 Gateway 实际启动 Feishu/QQ，只保留为费用与失败诊断 evidence，不纳入正式基线。
+
+4. **效果**：
+   - 完整事实基线为通过 `11/72`、失败 `61/72`：restart `6/6` 通过，client cancel `5/6` 通过，其余 task 未通过；所有失败均保留真实 `product_workflow` 归因。
+   - 任务完成率 `15.28%`、测试通过率 `53.33%`、patch 接受率 `5.56%`、危险操作拦截率 `50%`、recovery 成功率 `0%`；这些结果成为后续阶段的回归起点，不按期望值修饰。
+   - 当前 source 新增可观测费用 `$0.02789341`，加上旧 source 历史费用 `$0.03478757` 后累计 `$0.06268098 / $3.00`；54 个 run 为 `provider_reported`、6 个 cancel 为 `unavailable`、6 个 recovery 与 6 个 restart 为 `not_reached`。
+   - 技术债裁决为 `defer`：Provider 人民币实账与 `$0.06268098` 事件 USD 估值仍需人工核对；该外部核对不阻塞阶段 1 的独立产品切片，但完成前阶段 0 继续保持“部分完成”。
+
+##### 验证结果
+
+- TypeScript 编译无错误，Windows `corepack pnpm build` 与 WSL staging 原生 build 均通过。
+- 1 个完整 runner 测试文件、16 个测试全部通过（含 1 个新增 restart Origin 隔离集成测试）；`corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过。
+- 4 个 PowerShell 编排脚本通过 Windows PowerShell 5.1 语法解析；Windows、WSL NAT 与 WSL 内部 loopback Gateway 健康检查通过。
+- 聚合 dry-run 返回 `completed 72/72`、缺口 0；正式聚合后 `corepack pnpm aggregate:coding-agent:baseline --verify` 返回 `verified completed 72 run(s)`。
+- 18 份正式 Gateway 日志未出现渠道、Embedding 或实际 compaction 调用标记；Windows `28991`、WSL loopback `28991`、restart fixture 与内部 daemon 进程均已收敛。
+
 ### 后续计划
 
-恢复推进后继续**阶段 0D：先在 HITL 下写入已冻结的三项 primary 模型定价，再运行一个真实 Windows Core Task**。先说明 `H:\.star_sanctuary\.env.local` 的修改范围、风险与回滚方式并取得明确确认，然后只写入未命中输入、输出和缓存读取三项 USD 定价，不写缓存创建价格。这样先做，是因为当前 state、loopback、Origin、费用能力拒绝路径和缓存净成本计算均已闭环，尚未验证的是配置落地后的真实 Provider usage/cost 事件链。配置后仍只运行 `feature.cross-file` 一次；仅当 artifact 同时出现 `provider_reported`、有限 `costUsd`、唯一终态、完整约定文件与 PID 清理时，才继续第二个 Windows task 和 WSL2 小批次。当前还缺的关键闭环是 Provider 人民币实账与 event USD 估值的人工核对、72 个同一 source identity 的有效样本、全矩阵 `completed` report 重算及基于事实基线确定阶段 1 的首个产品修复项；完成前阶段 0 继续保持“部分完成”。
+继续**阶段 1：先实现项目规则链与上下文诊断的最小纵向切片**。下一步先检索 `bdd agent run` 的 cwd、stateDir 身份规则加载和 prompt 构建边界，再用失败测试冻结“从目标 Git 根到 cwd 逐层发现 `AGENTS.md`、越近优先、身份规则与项目规则来源分离”的行为；随后接入 `bdd agent inspect --cwd ...` 的来源、适用目录、哈希与跳过原因诊断。这样先做，是因为完整基线中 `rules.nested-precedence` 为 `0/6`，且该能力是后续搜索、编辑和命令执行都依赖的项目上下文入口。当前还缺的关键闭环是非 Git 目录、symlink、权限拒绝、超大规则文件和冲突诊断，以及修复后的 Windows/WSL 定向测试与冻结 benchmark 回归；代码搜索、glob、分段读取属于阶段 1 的后续独立切片，本轮不混入。阶段 0 的 Provider 人民币实账核对继续按 `defer` 保留，获得账单证据后再回写费用一致性结论。
 
 ## 实施计划进度表
 
 | 阶段 | 优先级 | 状态 | 工作量 | 关键闭环 |
 |---|---|---|---:|---|
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
-| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-6 已完成） | 4-6 人日 | 已冻结契约并跑通 Windows/WSL2 tracer-bullet、interactive、safety、同进程 Gateway 断线 cursor 续读、Git 本地交付、客户端精确取消及进程重启失败基线；0D 已提供拒绝重复/漂移/缺失 evidence 的聚合、离线重算、全部 12 task harness、前台 Gateway state-dir 传递、脱敏 usage/费用守卫、真实隔离装配预检，以及 `deepseek-v4-flash` 三项定价换算与缓存净成本修复。当前模型路由/API Key 和定价值已就绪，但尚未在 HITL 下写入 primary USD 定价并验证真实 usage/cost 事件链；restart 6/72 作为历史 evidence 保留，本次 source 变化后仍须重建同一 source identity 的完整矩阵。后续须先配置三项定价，再以单 task 验证 Provider usage/cost artifact 后补齐 completed report |
+| 阶段 0：同任务 benchmark | P0 | 部分完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-7 已完成） | 4-6 人日 | 已完成 12 tasks × Windows/WSL2 × 3 attempts 的同一 source `72/72` completed report、离线重算、隔离 Gateway、三项定价与真实 usage/cost 链；事实基线通过 `11/72`，新增可观测费用 `$0.02789341`，含旧 source 历史费用累计 `$0.06268098 / $3.00`。技术闭环已满足阶段 1 回归前置，当前仅剩 Provider 人民币实账与事件 USD 估值的人工核对，按外部依赖 `defer` 保留，完成前不将阶段 0 标为已完成 |
 | 阶段 1：项目规则链与代码导航 | P0 | 待启动 | 8-12 人日 | 危险工具关闭时仍能正确加载规则、搜索和分段读取 |
 | 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 待启动 | 15-25 人日 | 构建/测试可在 sandbox 中运行，权限和隔离可验证且失败关闭 |
 | 阶段 3：真实 diff/review 与恢复保证 | P0 | 待启动 | 8-12 人日 | 修改可审查、可归因，恢复边界明确且不覆盖用户改动 |
