@@ -31,6 +31,8 @@ import { throwIfAborted } from "../../abort-utils.js";
 const commandJobManagers = new Map<string, Promise<CommandJobManager>>();
 const MAX_COMMAND_JOB_READ_BYTES = 512 * 1024;
 
+export type CommandJobRuntime = Pick<CommandJobManager, "list" | "read" | "cancel">;
+
 function normalizePolicyTimeout(value: unknown): number {
   return Number.isSafeInteger(value) && (value as number) > 0
     ? value as number
@@ -61,11 +63,8 @@ function normalizeCursor(value: unknown): number | undefined {
   return value as number;
 }
 
-async function getCommandJobManager(context: ToolContext): Promise<CommandJobManager> {
-  if (!context.stateDir) {
-    throw new Error("Command jobs require a configured Gateway state directory for restart-safe lifecycle ownership.");
-  }
-  const stateDir = path.resolve(context.stateDir);
+async function getOrCreateCommandJobManager(stateDirInput: string): Promise<CommandJobManager> {
+  const stateDir = path.resolve(stateDirInput);
   let manager = commandJobManagers.get(stateDir);
   if (!manager) {
     manager = (async () => {
@@ -85,6 +84,21 @@ async function getCommandJobManager(context: ToolContext): Promise<CommandJobMan
     commandJobManagers.set(stateDir, manager);
   }
   return await manager;
+}
+
+/** Returns the same live owner used by the command_job Tool without exposing its state directory. */
+export async function getCommandJobRuntime(stateDir: string): Promise<CommandJobRuntime> {
+  if (typeof stateDir !== "string" || !stateDir.trim()) {
+    throw new Error("Command jobs require a configured Gateway state directory for restart-safe lifecycle ownership.");
+  }
+  return await getOrCreateCommandJobManager(stateDir);
+}
+
+async function getCommandJobManager(context: ToolContext): Promise<CommandJobManager> {
+  if (!context.stateDir) {
+    throw new Error("Command jobs require a configured Gateway state directory for restart-safe lifecycle ownership.");
+  }
+  return await getOrCreateCommandJobManager(context.stateDir);
 }
 
 /** Called by Gateway shutdown before its process exits so active sandbox containers are reconciled. */

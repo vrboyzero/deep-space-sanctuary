@@ -87,6 +87,37 @@ describe("CodingTuiRuntime", () => {
     });
   });
 
+  it("reads one stable snapshot hunk at a time without recomputing the workspace", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-hunk-pages-"));
+    temporaryDirectories.push(stateDir);
+    const cwd = path.join(stateDir, "workspace");
+    await fs.mkdir(cwd, { recursive: true });
+    await fs.writeFile(path.join(cwd, "one.txt"), "one before\n", "utf-8");
+    await fs.writeFile(path.join(cwd, "two.txt"), "two before\n", "utf-8");
+    const runtime = new CodingTuiRuntime({ stateDir, cwd, client: createClient() });
+
+    const binding = await runtime.requestConversation("Change both files");
+    await fs.writeFile(path.join(cwd, "one.txt"), "one after\n", "utf-8");
+    await fs.writeFile(path.join(cwd, "two.txt"), "two after\n", "utf-8");
+    const result = await runtime.completeChangeSnapshot(binding.agentRunId);
+
+    expect(result).toMatchObject({
+      status: "available",
+      snapshot: { hunkCount: 2 },
+      page: { hunks: [expect.objectContaining({ path: "one.txt" })], nextCursor: expect.any(String) },
+    });
+    const second = await runtime.readChangeSnapshotPage(
+      result!.snapshot!.snapshotId,
+      result!.page!.nextCursor,
+    );
+    expect(second).toMatchObject({
+      snapshotId: result!.snapshot!.snapshotId,
+      diffHash: result!.snapshot!.diffHash,
+      hunks: [expect.objectContaining({ path: "two.txt" })],
+    });
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it("projects an exact recovery guarantee when the current run checkpoint covers its diff", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-change-recovery-"));
     temporaryDirectories.push(stateDir);
@@ -208,6 +239,296 @@ describe("CodingTuiRuntime", () => {
     });
   });
 
+  it("forwards an active run steer with the exact Conversation binding", async () => {
+    const client = createClient();
+    const runtime = new CodingTuiRuntime({ stateDir: "E:\\state", cwd: "E:\\workspace", client });
+
+    await runtime.steer(
+      { conversationId: "conversation-1", agentRunId: "run-1" },
+      "  Focus on the failing test.  ",
+    );
+
+    expect(client.control).toHaveBeenCalledWith({
+      version: "v1",
+      operation: "conversation.steer",
+      binding: { conversationId: "conversation-1", agentRunId: "run-1" },
+      prompt: "Focus on the failing test.",
+      idempotencyKey: expect.stringMatching(/^tui-steer-/),
+    });
+  });
+
+  it("loads validated pending permissions through the paired Gateway", async () => {
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload({
+        permissions: [{
+          conversationId: "conversation-1",
+          agentRunId: "run-1",
+          worktreeId: "worktree-1",
+          toolCallId: "tool-1",
+          toolName: "command_job",
+          commandPreview: {
+            action: "cancel",
+            jobId: "11111111-1111-4111-8111-111111111111",
+            secret: "must-not-leak",
+          },
+        }],
+      }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    const permissions = await runtime.listPendingPermissions();
+
+    expect(permissions).toEqual([{
+      agentRunId: "run-1",
+      worktreeId: "worktree-1",
+      toolCallId: "tool-1",
+      toolName: "command_job",
+      commandPreview: {
+        kind: "command",
+        action: "cancel",
+        jobId: "11111111-1111-4111-8111-111111111111",
+      },
+    }]);
+    expect(JSON.stringify(permissions)).not.toContain("must-not-leak");
+    expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
+      method: "coding.run.permission.list",
+      params: {},
+    }));
+  });
+
+  it("lists a bounded safe workspace target projection and switches only after exact revalidation", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-worktree-switch-"));
+    temporaryDirectories.push(root);
+    const launchCwd = path.join(root, "launch");
+    const worktreeCwd = path.join(root, "managed");
+    await fs.mkdir(launchCwd, { recursive: true });
+    await fs.mkdir(worktreeCwd, { recursive: true });
+    let returnMismatchedExactTarget = false;
+    const worktree = {
+      worktreeId: "worktree-1",
+      owner: { conversationId: "secret-conversation", runId: "secret-run" },
+      worktreePath: worktreeCwd,
+      repoRoot: launchCwd,
+      baseCommit: "a".repeat(40),
+      currentCommit: "b".repeat(40),
+      branch: "bdd/worktree-1",
+      dirty: true,
+      trackedChanges: 1,
+      untrackedChanges: 0,
+      conflictChanges: 0,
+      extraCommitCount: 0,
+      status: "ready",
+      blockers: [],
+      retention: { status: "retained", reason: "secret-retention" },
+      error: "must-not-leak",
+    };
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      params?: Record<string, unknown>;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload(input.method === "workspace.revision.list"
+        ? {
+          checkpoints: [{
+            revisionId: "revision-launch",
+            workspaceId: "workspace-launch",
+            workspaceRoot: launchCwd,
+            createdAtMs: 1,
+            updatedAtMs: 2,
+            changedFileCount: 1,
+            recoveryGuarantee: "exact",
+          }, {
+            revisionId: "revision-managed",
+            workspaceId: "workspace-managed",
+            workspaceRoot: worktreeCwd,
+            createdAtMs: 3,
+            updatedAtMs: 4,
+            changedFileCount: 2,
+            recoveryGuarantee: "exact",
+          }],
+        }
+        : {
+          worktrees: input.params?.worktreeId
+            ? [{ ...worktree, worktreeId: returnMismatchedExactTarget ? "worktree-other" : worktree.worktreeId }]
+            : [worktree, ...Array.from({ length: 120 }, (_value, index) => ({
+              ...worktree,
+              worktreeId: `worktree-${index + 2}`,
+              worktreePath: path.join(root, `managed-${index + 2}`),
+            }))],
+        }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const client = createClient();
+    const runtime = new CodingTuiRuntime({
+      stateDir: root,
+      cwd: launchCwd,
+      client,
+      invokeGateway,
+    });
+
+    const targets = await runtime.listWorkspaceTargets();
+
+    expect(targets).toHaveLength(100);
+    expect(targets[0]).toMatchObject({ targetKey: "launch", kind: "launch", cwd: launchCwd, status: "ready" });
+    expect(targets[1]).toEqual({
+      targetKey: "worktree:worktree-1",
+      kind: "managed",
+      worktreeId: "worktree-1",
+      cwd: worktreeCwd,
+      branch: "bdd/worktree-1",
+      status: "ready",
+      dirty: true,
+      trackedChanges: 1,
+      untrackedChanges: 0,
+      conflictChanges: 0,
+      extraCommitCount: 0,
+    });
+    expect(JSON.stringify(targets)).not.toContain("secret-");
+    expect(JSON.stringify(targets)).not.toContain("must-not-leak");
+
+    await expect(runtime.switchWorkspace("worktree:worktree-1")).resolves.toMatchObject({
+      targetKey: "worktree:worktree-1",
+      cwd: worktreeCwd,
+    });
+    expect(runtime.cwd).toBe(worktreeCwd);
+    expect(invokeGateway).toHaveBeenLastCalledWith(expect.objectContaining({
+      method: "workspace.worktree.status",
+      params: { worktreeId: "worktree-1" },
+    }));
+    await runtime.requestConversation("Inspect managed worktree");
+    expect(client.conversation).toHaveBeenLastCalledWith(expect.objectContaining({ cwd: worktreeCwd }));
+    await expect(runtime.listRevisions()).resolves.toEqual([
+      expect.objectContaining({ revisionId: "revision-managed", workspaceRoot: worktreeCwd }),
+    ]);
+
+    returnMismatchedExactTarget = true;
+    await expect(runtime.switchWorkspace("worktree:worktree-1")).rejects.toThrow("exact");
+    expect(runtime.cwd).toBe(worktreeCwd);
+  });
+
+  it("uses paired Gateway preview and confirmation without accepting a caller-supplied refspec", async () => {
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      params?: Record<string, unknown>;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => {
+      const payload = input.method === "workspace.remote_delivery.targets"
+        ? {
+          targets: [{
+            remote: "private",
+            url: "https://github.com/example/private.git",
+            pushBranches: ["main"],
+            pullRequestBases: ["main"],
+            repository: "example/private",
+            secret: "must-not-leak",
+          }],
+        }
+        : input.method.endsWith(".preview")
+          ? {
+            operation: "push",
+            canConfirm: true,
+            blockers: [],
+            source: { repoRoot: "E:\\workspace", branch: "main", commit: "a".repeat(40), upstream: null },
+            target: { remote: "private", url: "https://github.com/example/private.git", branch: "main", expectedOid: "b".repeat(40) },
+            diff: { baseOid: "b".repeat(40), sha256: "c".repeat(64), byteLength: 12 },
+            receipt: { receiptId: "remote-delivery-receipt", expiresAtMs: 9999999999999 },
+          }
+          : {
+            operation: "push",
+            applied: true,
+            blockers: [],
+            postcondition: { remoteOid: "a".repeat(40) },
+          };
+      return {
+        ok: true as const,
+        payload: input.parsePayload(payload),
+        paired: true,
+        wsUrl: "ws://127.0.0.1:28889",
+      };
+    });
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    await expect(runtime.listRemoteDeliveryTargets()).resolves.toEqual([{
+      remote: "private",
+      url: "https://github.com/example/private.git",
+      pushBranches: ["main"],
+      pullRequestBases: ["main"],
+      repository: "example/private",
+    }]);
+    const preview = await runtime.previewRemotePush("private", "main");
+    expect(preview).toMatchObject({ canConfirm: true, receipt: { receiptId: "remote-delivery-receipt" } });
+    await expect(runtime.confirmRemotePush("remote-delivery-receipt")).resolves.toMatchObject({ applied: true });
+    expect(invokeGateway).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: "workspace.remote_delivery.push.preview",
+      params: { cwd: "E:\\workspace", remote: "private", targetBranch: "main" },
+    }));
+    expect(invokeGateway).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      method: "workspace.remote_delivery.push.confirm",
+      params: { receiptId: "remote-delivery-receipt", confirm: true },
+    }));
+  });
+
+  it("keeps a run change snapshot bound to its launch workspace after the TUI cwd changes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-worktree-run-snapshot-"));
+    temporaryDirectories.push(root);
+    const firstCwd = path.join(root, "first");
+    const secondCwd = path.join(root, "second");
+    await fs.mkdir(firstCwd, { recursive: true });
+    await fs.mkdir(secondCwd, { recursive: true });
+    await fs.writeFile(path.join(firstCwd, "note.txt"), "before\n", "utf-8");
+    const runtime = new CodingTuiRuntime({
+      stateDir: root,
+      cwd: firstCwd,
+      client: createClient(),
+      invokeGateway: vi.fn(async (input) => ({
+        ok: true as const,
+        payload: input.parsePayload({
+          worktrees: [{
+            worktreeId: "worktree-2",
+            worktreePath: secondCwd,
+            branch: "bdd/worktree-2",
+            status: "ready",
+            dirty: false,
+            trackedChanges: 0,
+            untrackedChanges: 0,
+            conflictChanges: 0,
+            extraCommitCount: 0,
+          }],
+        }),
+        paired: true,
+        wsUrl: "ws://127.0.0.1:28889",
+      })),
+    });
+
+    const binding = await runtime.requestConversation("Change note");
+    await fs.writeFile(path.join(firstCwd, "note.txt"), "after\n", "utf-8");
+    await runtime.switchWorkspace("worktree:worktree-2");
+
+    await expect(runtime.completeChangeSnapshot(binding.agentRunId)).resolves.toMatchObject({
+      status: "available",
+      snapshot: { files: [{ path: "note.txt" }] },
+    });
+    expect(runtime.cwd).toBe(secondCwd);
+  });
+
   it("previews revisions without applying and only writes after an explicit apply call", async () => {
     const client = createClient();
     const invokeGateway = vi.fn(async (input: { method: string; params?: Record<string, unknown> }) => ({
@@ -246,6 +567,129 @@ describe("CodingTuiRuntime", () => {
     expect(invokeGateway).toHaveBeenNthCalledWith(2, expect.objectContaining({
       method: "workspace.revision.restore",
       params: { revisionId: "run-1", workspaceId: "workspace-1", apply: true },
+    }));
+  });
+
+  it("loads validated command job summaries through the paired Gateway", async () => {
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload({
+        jobs: [{
+          jobId: "11111111-1111-4111-8111-111111111111",
+          status: "running",
+          stdinMode: "pty",
+          createdAt: 1,
+          updatedAt: 2,
+          pid: 4101,
+          supportsResize: true,
+          oldestCursor: 0,
+          nextCursor: 20,
+        }],
+      }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    await expect(runtime.listCommandJobs()).resolves.toEqual([
+      expect.objectContaining({
+        jobId: "11111111-1111-4111-8111-111111111111",
+        status: "running",
+        nextCursor: 20,
+      }),
+    ]);
+    expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
+      method: "command.job.list",
+      params: {},
+    }));
+  });
+
+  it("reads a bounded command job output page from an exact cursor", async () => {
+    const jobId = "22222222-2222-4222-8222-222222222222";
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      params?: Record<string, unknown>;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload({
+        jobId,
+        status: "running",
+        stdinMode: "pipe",
+        createdAt: 1,
+        updatedAt: 2,
+        supportsResize: false,
+        oldestCursor: 0,
+        output: "page two",
+        startCursor: 8,
+        nextCursor: 16,
+        hasMore: true,
+        cursorExpired: false,
+        cursorAdjusted: false,
+      }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    await expect(runtime.readCommandJob(jobId, 8)).resolves.toMatchObject({
+      jobId,
+      output: "page two",
+      startCursor: 8,
+      nextCursor: 16,
+      hasMore: true,
+    });
+    expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
+      method: "command.job.read",
+      params: { jobId, cursor: 8, maxBytes: 16 * 1024 },
+    }));
+  });
+
+  it("cancels the exact command job and validates the returned binding", async () => {
+    const jobId = "33333333-3333-4333-8333-333333333333";
+    const invokeGateway = vi.fn(async (input: {
+      method: string;
+      parsePayload: (payload: Record<string, unknown>) => unknown;
+    }) => ({
+      ok: true as const,
+      payload: input.parsePayload({
+        jobId,
+        status: "cancelled",
+        stdinMode: "closed",
+        createdAt: 1,
+        updatedAt: 3,
+        endedAt: 3,
+        supportsResize: false,
+        oldestCursor: 0,
+        nextCursor: 0,
+      }),
+      paired: true,
+      wsUrl: "ws://127.0.0.1:28889",
+    }));
+    const runtime = new CodingTuiRuntime({
+      stateDir: "E:\\state",
+      cwd: "E:\\workspace",
+      client: createClient(),
+      invokeGateway,
+    });
+
+    await expect(runtime.cancelCommandJob(jobId)).resolves.toMatchObject({ jobId, status: "cancelled" });
+    expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
+      method: "command.job.cancel",
+      params: { jobId },
     }));
   });
 

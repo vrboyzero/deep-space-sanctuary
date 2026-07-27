@@ -74,6 +74,21 @@ export type CodingRunSubscription = {
   cursor?: number;
 };
 
+export type CodingRunStatusQuery = {
+  version: typeof CODING_RUN_PROTOCOL_VERSION;
+  source: CodingRunSource;
+  binding: CodingContextBinding;
+};
+
+export type ConversationFollowUpStatusQuery = {
+  version: typeof CODING_RUN_PROTOCOL_VERSION;
+  binding: {
+    agentRunId: string;
+    conversationId: string;
+  };
+  commandId: string;
+};
+
 export type CodingRunErrorCode =
   | "invalid_request"
   | "not_found"
@@ -108,6 +123,36 @@ export type RunControl =
       conversationId: string;
     };
     prompt: string;
+  }
+  | {
+    version: typeof CODING_RUN_PROTOCOL_VERSION;
+    operation: "conversation.follow_up";
+    binding: {
+      agentRunId: string;
+      conversationId: string;
+    };
+    prompt: string;
+    idempotencyKey: string;
+  }
+  | {
+    version: typeof CODING_RUN_PROTOCOL_VERSION;
+    operation: "conversation.replace";
+    binding: {
+      agentRunId: string;
+      conversationId: string;
+    };
+    prompt: string;
+    idempotencyKey: string;
+  }
+  | {
+    version: typeof CODING_RUN_PROTOCOL_VERSION;
+    operation: "conversation.steer";
+    binding: {
+      agentRunId: string;
+      conversationId: string;
+    };
+    prompt: string;
+    idempotencyKey: string;
   }
   | {
     version: typeof CODING_RUN_PROTOCOL_VERSION;
@@ -380,6 +425,66 @@ export const runControlV1JsonSchema = {
     {
       type: "object",
       additionalProperties: false,
+      required: ["version", "operation", "binding", "prompt", "idempotencyKey"],
+      properties: {
+        version: { const: CODING_RUN_PROTOCOL_VERSION },
+        operation: { const: "conversation.follow_up" },
+        binding: {
+          type: "object",
+          additionalProperties: false,
+          required: ["agentRunId", "conversationId"],
+          properties: {
+            agentRunId: { type: "string", minLength: 1 },
+            conversationId: { type: "string", minLength: 1 },
+          },
+        },
+        prompt: { type: "string", minLength: 1, maxLength: 32768 },
+        idempotencyKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["version", "operation", "binding", "prompt", "idempotencyKey"],
+      properties: {
+        version: { const: CODING_RUN_PROTOCOL_VERSION },
+        operation: { const: "conversation.steer" },
+        binding: {
+          type: "object",
+          additionalProperties: false,
+          required: ["agentRunId", "conversationId"],
+          properties: {
+            agentRunId: { type: "string", minLength: 1 },
+            conversationId: { type: "string", minLength: 1 },
+          },
+        },
+        prompt: { type: "string", minLength: 1, maxLength: 32768 },
+        idempotencyKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["version", "operation", "binding", "prompt", "idempotencyKey"],
+      properties: {
+        version: { const: CODING_RUN_PROTOCOL_VERSION },
+        operation: { const: "conversation.replace" },
+        binding: {
+          type: "object",
+          additionalProperties: false,
+          required: ["agentRunId", "conversationId"],
+          properties: {
+            agentRunId: { type: "string", minLength: 1 },
+            conversationId: { type: "string", minLength: 1 },
+          },
+        },
+        prompt: { type: "string", minLength: 1, maxLength: 32768 },
+        idempotencyKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
       required: ["version", "operation", "binding", "toolCallId", "decision"],
       properties: {
         version: { const: CODING_RUN_PROTOCOL_VERSION },
@@ -550,6 +655,25 @@ export function isCodingRunSubscriptionV1(value: unknown): value is CodingRunSub
     && (!hasOwn(value, "cursor") || isNonNegativeInteger(value.cursor));
 }
 
+export function isCodingRunStatusQueryV1(value: unknown): value is CodingRunStatusQuery {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["version", "source", "binding"])
+    && value.version === CODING_RUN_PROTOCOL_VERSION
+    && typeof value.source === "string"
+    && CODING_RUN_SOURCES.has(value.source as CodingRunSource)
+    && isCodingContextBinding(value.source as CodingRunSource, value.binding);
+}
+
+export function isConversationFollowUpStatusQueryV1(
+  value: unknown,
+): value is ConversationFollowUpStatusQuery {
+  return isRecord(value)
+    && value.version === CODING_RUN_PROTOCOL_VERSION
+    && hasOnlyKeys(value, ["version", "binding", "commandId"])
+    && isExactStringBinding(value.binding, ["agentRunId", "conversationId"])
+    && isNonEmptyString(value.commandId);
+}
+
 export function isRunControlV1(value: unknown): value is RunControl {
   if (!isRecord(value) || value.version !== CODING_RUN_PROTOCOL_VERSION || typeof value.operation !== "string") {
     return false;
@@ -564,6 +688,30 @@ export function isRunControlV1(value: unknown): value is RunControl {
     return hasOnlyKeys(value, ["version", "operation", "binding", "prompt"])
       && isExactStringBinding(value.binding, ["conversationId"])
       && isNonEmptyString(value.prompt);
+  }
+  if (value.operation === "conversation.follow_up") {
+    return hasOnlyKeys(value, ["version", "operation", "binding", "prompt", "idempotencyKey"])
+      && isExactStringBinding(value.binding, ["agentRunId", "conversationId"])
+      && isNonEmptyString(value.prompt)
+      && value.prompt.length <= 32_768
+      && isNonEmptyString(value.idempotencyKey)
+      && value.idempotencyKey.length <= 128;
+  }
+  if (value.operation === "conversation.replace") {
+    return hasOnlyKeys(value, ["version", "operation", "binding", "prompt", "idempotencyKey"])
+      && isExactStringBinding(value.binding, ["agentRunId", "conversationId"])
+      && isNonEmptyString(value.prompt)
+      && value.prompt.length <= 32_768
+      && isNonEmptyString(value.idempotencyKey)
+      && value.idempotencyKey.length <= 128;
+  }
+  if (value.operation === "conversation.steer") {
+    return hasOnlyKeys(value, ["version", "operation", "binding", "prompt", "idempotencyKey"])
+      && isExactStringBinding(value.binding, ["agentRunId", "conversationId"])
+      && isNonEmptyString(value.prompt)
+      && value.prompt.length <= 32_768
+      && isNonEmptyString(value.idempotencyKey)
+      && value.idempotencyKey.length <= 128;
   }
   if (value.operation === "permission.respond") {
     return hasOnlyKeys(value, ["version", "operation", "binding", "toolCallId", "decision"])

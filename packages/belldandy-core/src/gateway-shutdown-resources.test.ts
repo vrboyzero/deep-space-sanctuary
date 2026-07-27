@@ -142,6 +142,24 @@ describe("registerGatewayShutdownResources", () => {
     expect(JSON.stringify(result)).not.toContain("sensitive MCP failure");
   });
 
+  it("disposes isolated extension runtimes in the close_external phase", async () => {
+    const dispose = vi.fn(async () => {
+      throw new Error("extension cleanup detail");
+    });
+    const coordinator = new GatewayShutdownCoordinator();
+    registerGatewayShutdownResources(coordinator, {
+      extensionRuntime: { dispose },
+    });
+
+    const result = await coordinator.requestShutdown({ kind: "manual", exitCode: 0 });
+    expect(result).toMatchObject({
+      outcome: "completed_with_failures",
+      failures: [{ stepId: "extension-runtime", phase: "close_external", kind: "step_error" }],
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result)).not.toContain("cleanup detail");
+  });
+
   it("stops memory and dream intake before draining the shared background coordinator", async () => {
     const events: string[] = [];
     let releaseCoordinator!: () => void;

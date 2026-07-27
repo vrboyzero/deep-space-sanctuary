@@ -149,7 +149,7 @@ type SystemDoctorMethodContext = {
   emailInboundAuditStore?: EmailInboundAuditStore;
   emailFollowUpReminderStore?: EmailFollowUpReminderStore;
   pluginRegistry?: PluginRegistry;
-  extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle">;
+  extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle" | "extensionRuntimeSupervisor">;
   skillRegistry?: SkillRegistry;
   getCompactionRuntimeReport?: () => CompactionRuntimeReport | undefined;
   getRuntimeResilienceReport?: () => RuntimeResilienceDoctorReport | undefined;
@@ -1059,6 +1059,7 @@ export async function handleSystemDoctorMethod(
         pluginRegistry: ctx.pluginRegistry,
         skillRegistry: ctx.skillRegistry,
         toolsConfigManager: ctx.toolsConfigManager,
+        hostedExtensionRuntime: ctx.extensionHost?.extensionRuntimeSupervisor?.getSnapshot(),
       })
       : (ctx.extensionHost?.extensionRuntime ?? buildExtensionRuntimeReport({
         pluginRegistry: ctx.pluginRegistry,

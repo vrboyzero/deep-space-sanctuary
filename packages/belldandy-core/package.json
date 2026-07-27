@@ -35,6 +35,7 @@
     "@belldandy/protocol": "workspace:*",
     "@belldandy/skills": "workspace:*",
     "@clack/prompts": "^0.10.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@star-sanctuary/distribution": "workspace:*",
     "ajv": "8.20.0",
     "citty": "^0.1.6",
@@ -49,7 +50,8 @@
     "strip-ansi": "7.1.2",
     "typescript": "^5.7.3",
     "wrap-ansi": "10.0.0",
-    "ws": "^8.21.1"
+    "ws": "^8.21.1",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/react": "19.2.8"

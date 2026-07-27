@@ -6,7 +6,9 @@ export {
   CODING_RUN_PROTOCOL_VERSION,
   createAgentRunEventSequencer,
   isAgentRunEventV1,
+  isConversationFollowUpStatusQueryV1,
   isCodingRunSubscriptionV1,
+  isCodingRunStatusQueryV1,
   isRunControlV1,
   runControlV1JsonSchema,
   sanitizeCodingRunData,
@@ -17,14 +19,25 @@ export { CodingRunGatewayEventBroker, createCodingRunGatewayEventBroker } from "
 export { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 export { GatewayCodingRunSubscriptionSession } from "./coding-run/gateway-subscription-session.js";
 export {
+  createConversationCodingRunView,
   createGoalCodingRunView,
+  createRuntimeLostCodingRunView,
   createSubtaskCodingRunView,
   createWorkflowJournalCodingRunView,
+  createWorkflowRuntimeCodingRunView,
 } from "./coding-run/source-adapters.js";
+export { CodingRunRecoveryMarkerStore } from "./coding-run/recovery-marker-store.js";
 export {
+  CodingRunClient,
+  CodingRunClientRequestError,
   CodingRunNdjsonClient,
   createCodingRunNdjsonServer,
 } from "./coding-run/stdio.js";
+export {
+  CODING_RUN_MCP_TOOL_NAMES,
+  connectCodingRunMcpServer,
+  createCodingRunMcpServer,
+} from "./coding-run/mcp-server.js";
 export { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 export type {
   WorkspaceRevisionRestoreConflictArtifact,
@@ -59,6 +72,38 @@ export type {
   WorkspaceChangeReviewVerification,
   WorkspaceChangeReviewVerdict,
 } from "./workspace-change-review.js";
+export { UserWorktreeRuntime } from "./user-worktree-runtime.js";
+export type {
+  UserWorktreeCreateInput,
+  UserWorktreeDiff,
+  UserWorktreeOwner,
+  UserWorktreeOperation,
+  UserWorktreeOperationAudit,
+  UserWorktreeOperationConfirmInput,
+  UserWorktreeOperationEvidence,
+  UserWorktreeOperationPreview,
+  UserWorktreeOperationPreviewInput,
+  UserWorktreeOperationReceipt,
+  UserWorktreeOperationResult,
+  UserWorktreeRetention,
+  UserWorktreeStatus,
+} from "./user-worktree-runtime.js";
+export {
+  GhPullRequestClient,
+  RemoteDeliveryRuntime,
+  parseRemoteDeliveryTargets,
+} from "./remote-delivery-runtime.js";
+export type {
+  PullRequestClient,
+  PullRequestRecord,
+  RemoteDeliveryAudit,
+  RemoteDeliveryEvidence,
+  RemoteDeliveryOperation,
+  RemoteDeliveryPreview,
+  RemoteDeliveryReceipt,
+  RemoteDeliveryResult,
+  RemoteDeliveryTarget,
+} from "./remote-delivery-runtime.js";
 export type {
   AgentRunEvent,
   AgentRunEventSequencer,
@@ -68,6 +113,8 @@ export type {
   CodingRunSubscription,
   CodingRunSubscriptionErrorCode,
   CodingRunSource,
+  CodingRunStatusQuery,
+  ConversationFollowUpStatusQuery,
   RunControl,
   WorkspaceRevisionCheckpoint,
   WorkspaceRevisionCheckpointRef,
@@ -84,16 +131,48 @@ export type { GatewayCodingRunSubscriptionResult } from "./coding-run/gateway-su
 export type {
   CodingRunAdapterStatus,
   CodingRunSourceView,
+  ConversationCodingRunView,
   GoalCodingRunView,
+  RuntimeLostCodingRunView,
   SubtaskCodingRunView,
   WorkflowJournalCodingRunView,
+  WorkflowRuntimeCodingRunView,
 } from "./coding-run/source-adapters.js";
 export type {
+  CodingRunRecoveryLookup,
+  CodingRunRecoveryMarker,
+  RecoverableCodingRunSource,
+} from "./coding-run/recovery-marker-store.js";
+export type {
+  ConversationCommandIntent,
+  ConversationFollowUpStatus,
+  ConversationFollowUpView,
+  ConversationRunBinding,
+} from "./coding-run/conversation-follow-up-queue.js";
+export type {
+  CodingRunArtifactRequest,
+  CodingRunArtifactResponse,
+  CodingRunClientArtifactInput,
+  CodingRunClientBinding,
+  CodingRunClientCancelInput,
+  CodingRunClientOptions,
+  CodingRunClientPermissionInput,
+  CodingRunClientRequestErrorCode,
+  CodingRunClientRequestOptions,
+  CodingRunClientStartInput,
+  CodingRunClientSteerInput,
+  CodingRunClientSubscribeInput,
   CodingRunConversationRequest,
   CodingRunConversationResponse,
   CodingRunControlResponse,
   CodingRunNdjsonClientOptions,
+  CodingRunSubscriptionErrorFrame,
+  CodingRunSubscriptionResponse,
 } from "./coding-run/stdio.js";
+export type {
+  CodingRunMcpOperationResult,
+  CodingRunMcpOperations,
+} from "./coding-run/mcp-server.js";
 export {
   DEFAULT_TOP_LEVEL_CONVERSATION_IDLE_TTL_MS,
   DEFAULT_TOP_LEVEL_CONVERSATION_MAX_IDLE,

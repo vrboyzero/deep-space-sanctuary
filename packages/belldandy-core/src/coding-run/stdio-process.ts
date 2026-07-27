@@ -12,6 +12,7 @@ import {
   CodingRunControlError,
   CodingRunSubscriptionError,
   createCodingRunNdjsonServer,
+  type CodingRunArtifactRequest,
   type CodingRunConversationRequest,
 } from "./stdio.js";
 import { invokeGatewayMethod } from "../cli/shared/gateway-rpc.js";
@@ -28,6 +29,10 @@ export type GatewaySubscriptionInvocationResult =
   | { ok: true; payload: unknown }
   | { ok: false; error: { code: CodingRunSubscriptionErrorCode; message: string } };
 
+export type GatewayArtifactInvocationResult =
+  | { ok: true; payload: unknown }
+  | { ok: false; error: { code: CodingRunErrorCode; message: string } };
+
 export type CodingRunStdioOptions = {
   stateDir: string;
   conversationFrom?: "vscode" | "tui";
@@ -39,6 +44,10 @@ export type CodingRunStdioOptions = {
     conversation: CodingRunConversationRequest,
     stateDir: string,
   ) => Promise<GatewayConversationInvocationResult>;
+  invokeGatewayArtifact?: (
+    artifact: CodingRunArtifactRequest,
+    stateDir: string,
+  ) => Promise<GatewayArtifactInvocationResult>;
   invokeGatewaySubscription?: (input: {
     subscription: CodingRunSubscription;
     stateDir: string;
@@ -55,6 +64,7 @@ export async function runCodingRunStdio(input: CodingRunStdioOptions): Promise<n
   const invokeGatewayConversation = input.invokeGatewayConversation ?? ((conversation, stateDir) => (
     invokeGatewayCodingRunConversation(conversation, stateDir, input.conversationFrom ?? "vscode")
   ));
+  const invokeGatewayArtifact = input.invokeGatewayArtifact ?? invokeGatewayCodingRunArtifact;
   const gatewaySubscriptionSession = new GatewayCodingRunSubscriptionSession(input.stateDir);
   const invokeGatewaySubscription = input.invokeGatewaySubscription ?? (async ({ subscription, onEvent, onInterrupted }) => {
     const result = await gatewaySubscriptionSession.subscribe({ subscription, onEvent, onInterrupted });
@@ -74,6 +84,13 @@ export async function runCodingRunStdio(input: CodingRunStdioOptions): Promise<n
     },
     handleConversation: async (conversation) => {
       const result = await invokeGatewayConversation(conversation, input.stateDir);
+      if (!result.ok) {
+        throw new CodingRunControlError(result.error.code, result.error.message);
+      }
+      return result.payload;
+    },
+    handleArtifact: async (artifact) => {
+      const result = await invokeGatewayArtifact(artifact, input.stateDir);
       if (!result.ok) {
         throw new CodingRunControlError(result.error.code, result.error.message);
       }
@@ -129,7 +146,7 @@ export async function runCodingRunStdio(input: CodingRunStdioOptions): Promise<n
   }
 }
 
-async function invokeGatewayCodingRunControl(
+export async function invokeGatewayCodingRunControl(
   control: RunControl,
   stateDir: string,
 ): Promise<GatewayControlInvocationResult> {
@@ -155,10 +172,10 @@ async function invokeGatewayCodingRunControl(
  * 编辑器仅能传入提示词、绝对 cwd 与既有会话 ID；工具策略和权限模式由 bridge 固定为 confirm，
  * 不为本地 adapter 创建第二套 Conversation 或放宽 Gateway 的 message.send 边界。
  */
-async function invokeGatewayCodingRunConversation(
+export async function invokeGatewayCodingRunConversation(
   conversation: CodingRunConversationRequest,
   stateDir: string,
-  from: "vscode" | "tui",
+  from: "vscode" | "tui" | "mcp",
 ): Promise<GatewayConversationInvocationResult> {
   const response = await invokeGatewayMethod({
     stateDir,
@@ -174,7 +191,7 @@ async function invokeGatewayCodingRunConversation(
       },
     },
     requestIdPrefix: `bdd-coding-run-${from}-conversation`,
-    clientName: from === "tui" ? "bdd tui" : "bdd coding-run stdio",
+    clientName: from === "tui" ? "bdd tui" : from === "mcp" ? "bdd coding-run mcp" : "bdd coding-run stdio",
     parsePayload: (payload) => {
       const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : "";
       const agentRunId = typeof payload.runId === "string" ? payload.runId.trim() : "";
@@ -194,7 +211,29 @@ async function invokeGatewayCodingRunConversation(
   };
 }
 
-function resolveGatewayErrorCode(errorCode: string | undefined, message: string): CodingRunErrorCode {
+export async function invokeGatewayCodingRunArtifact(
+  artifact: CodingRunArtifactRequest,
+  stateDir: string,
+): Promise<GatewayArtifactInvocationResult> {
+  const response = await invokeGatewayMethod({
+    stateDir,
+    method: "workspace.revision.preview",
+    params: artifact,
+    requestIdPrefix: "bdd-coding-run-artifact",
+    clientName: "bdd coding-run artifact",
+    parsePayload: (payload) => payload,
+  });
+  if (response.ok) return { ok: true, payload: response.payload };
+  return {
+    ok: false,
+    error: {
+      code: resolveGatewayErrorCode(response.errorCode, response.error),
+      message: toSafeCodingRunErrorMessage(response.error),
+    },
+  };
+}
+
+export function resolveGatewayErrorCode(errorCode: string | undefined, message: string): CodingRunErrorCode {
   if (isCodingRunErrorCode(errorCode)) return errorCode;
   if (/pairing|permission|denied/i.test(message)) return "permission_required";
   if (/timed out|websocket|connect|ECONN/i.test(message)) return "gateway_unavailable";

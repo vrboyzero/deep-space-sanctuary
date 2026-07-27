@@ -12,6 +12,7 @@ import type {
 } from "@belldandy/agent";
 import type {
     BelldandyPlugin,
+    PluginActivationPolicy,
     PluginContext,
     PluginDisposer,
     PluginHookMetric,
@@ -48,6 +49,28 @@ type PluginHookRegistration = {
     pluginId: string;
     hooks: AgentHooks;
 };
+
+type NormalizedPluginActivationPolicy = {
+    allowedToolNames: Set<string>;
+    allowedHookNames: Set<PluginHookName>;
+    allowedSkillDirs: Set<string>;
+};
+
+function normalizeFilesystemIdentity(value: string): string {
+    const resolved = path.resolve(value);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function normalizeActivationPolicy(
+    policy: PluginActivationPolicy | undefined,
+): NormalizedPluginActivationPolicy | undefined {
+    if (!policy) return undefined;
+    return {
+        allowedToolNames: new Set(policy.allowedToolNames),
+        allowedHookNames: new Set(policy.allowedHookNames),
+        allowedSkillDirs: new Set(policy.allowedSkillDirs.map(normalizeFilesystemIdentity)),
+    };
+}
 
 type PluginHookMetricState = Omit<PluginHookMetric, "p50DurationMs" | "p95DurationMs"> & {
     durationSamplesMs: number[];
@@ -127,7 +150,8 @@ export class PluginRegistry {
      * Load a plugin from a file path.
      * The file must default export an object implementing BelldandyPlugin.
      */
-    async loadPlugin(filePath: string): Promise<void> {
+    async loadPlugin(filePath: string, policy?: PluginActivationPolicy): Promise<void> {
+        const normalizedPolicy = normalizeActivationPolicy(policy);
         const previousLoad = this.pluginLoadQueue;
         let releaseLoadQueue!: () => void;
         this.pluginLoadQueue = new Promise<void>((resolve) => {
@@ -136,14 +160,17 @@ export class PluginRegistry {
 
         await previousLoad;
         try {
-            await this.loadPluginInOrder(filePath);
+            await this.loadPluginInOrder(filePath, normalizedPolicy);
         } finally {
             // 无论动态 import 或 activate 是否失败，后续插件都必须能继续加载。
             releaseLoadQueue();
         }
     }
 
-    private async loadPluginInOrder(filePath: string): Promise<void> {
+    private async loadPluginInOrder(
+        filePath: string,
+        policy: NormalizedPluginActivationPolicy | undefined,
+    ): Promise<void> {
         try {
             // Dynamic import requires file URL
             const fileUrl = pathToFileURL(path.resolve(filePath)).href;
@@ -169,15 +196,36 @@ export class PluginRegistry {
             const context: PluginContext = {
                 registerTool: (tool: Tool) => {
                     const toolName = tool.definition.name;
+                    if (policy && !policy.allowedToolNames.has(toolName)) {
+                        throw new PluginRegistryRegistrationError(
+                            `Plugin tool registration is not approved: ${toolName}`,
+                        );
+                    }
                     if (this.tools.has(toolName) || stagedTools.has(toolName)) {
                         throw new PluginRegistryRegistrationError(`Duplicate plugin tool registration: ${toolName}`);
                     }
                     stagedTools.set(toolName, tool);
                 },
                 registerHooks: (hooks: AgentHooks) => {
+                    if (policy) {
+                        const unapprovedHook = PLUGIN_HOOK_NAMES.find(
+                            (hookName) => typeof hooks[hookName] === "function"
+                                && !policy.allowedHookNames.has(hookName),
+                        );
+                        if (unapprovedHook) {
+                            throw new PluginRegistryRegistrationError(
+                                `Plugin hook registration is not approved: ${unapprovedHook}`,
+                            );
+                        }
+                    }
                     stagedHooks.push(hooks);
                 },
                 registerSkillDir: (dir: string) => {
+                    if (policy && !policy.allowedSkillDirs.has(normalizeFilesystemIdentity(dir))) {
+                        throw new PluginRegistryRegistrationError(
+                            `Plugin skill directory registration is not approved: ${dir}`,
+                        );
+                    }
                     stagedSkillDirs.add(dir);
                 },
                 onDispose: (disposer: PluginDisposer) => {

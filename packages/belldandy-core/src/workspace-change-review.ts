@@ -5,6 +5,7 @@ import {
   WorkspaceChangeSnapshotRuntime,
   type WorkspaceChangeSnapshot,
 } from "./workspace-change-snapshot.js";
+import { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 
 const REVIEW_VERSION = 1 as const;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -38,11 +39,13 @@ export type WorkspaceChangeReviewRestoreVerification = WorkspaceChangeReviewVeri
 export class WorkspaceChangeReviewRuntime {
   private readonly reviewsDirectory: string;
   private readonly snapshots: WorkspaceChangeSnapshotRuntime;
+  private readonly revisions: WorkspaceRevisionRuntime;
 
-  constructor(options: { stateDir: string }) {
+  constructor(options: { stateDir: string; workspaceRevisionRuntime?: WorkspaceRevisionRuntime }) {
     const stateDir = path.resolve(options.stateDir);
     this.reviewsDirectory = path.join(stateDir, "artifacts", "workspace-change-snapshots", "reviews");
     this.snapshots = new WorkspaceChangeSnapshotRuntime({ stateDir });
+    this.revisions = options.workspaceRevisionRuntime ?? new WorkspaceRevisionRuntime({ stateDir });
   }
 
   async record(input: {
@@ -85,21 +88,27 @@ export class WorkspaceChangeReviewRuntime {
     return this.verifyLoadedReview(review);
   }
 
-  async verifyAfterRestore(input: {
+  async verifyAfterRestoreReceipt(input: {
     reviewId: string;
-    restore: { revisionId: string; applied: boolean };
+    receiptId: string;
   }): Promise<WorkspaceChangeReviewRestoreVerification> {
     const review = await this.loadReview(input.reviewId);
-    const revisionId = normalizeId(input.restore.revisionId, "revisionId");
-    if (input.restore.applied !== true) {
-      return { status: "not_applicable", reason: "restore_not_applied", review };
-    }
     if (!review.revisionId) {
       return { status: "not_applicable", reason: "review_unlinked", review };
     }
-    if (review.revisionId !== revisionId) {
-      return { status: "not_applicable", reason: "revision_mismatch", review };
+    const snapshot = await this.snapshots.readSnapshot({ snapshotId: review.snapshotId });
+    if (
+      snapshot.revisionId !== review.revisionId
+      || snapshot.baseline.baselineId !== review.baselineId
+      || snapshot.diffHash !== review.diffHash
+    ) {
+      throw new Error("Workspace change review linkage is invalid.");
     }
+    await this.revisions.readRestoreReceipt({
+      receiptId: normalizeId(input.receiptId, "receiptId"),
+      revisionId: review.revisionId,
+      workspaceRoot: snapshot.workspaceRoot,
+    });
     return this.verifyLoadedReview(review);
   }
 

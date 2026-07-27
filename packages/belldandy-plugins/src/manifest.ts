@@ -1,6 +1,23 @@
 type RecordLike = Record<string, unknown>;
 
+export const BELLDANDY_LEGACY_EXTENSION_HOST_API_VERSION = 1;
+export const BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION = 2;
+export const BELLDANDY_EXTENSION_HOST_API_VERSION = BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION;
+
 export type ExtensionManifestKind = "plugin" | "skill-pack";
+export type ExtensionPluginHookName = "beforeRun" | "afterRun" | "beforeToolCall" | "afterToolCall";
+export type ExtensionPermission =
+  | `tool:${string}`
+  | `hook:${ExtensionPluginHookName}`
+  | `skill:${string}`;
+
+export interface ExtensionHostCompatibility {
+  hostApi: number;
+}
+
+export interface ExtensionRuntimeDeclaration {
+  capabilities: string[];
+}
 
 export type ExtensionMarketplaceSource =
   | { source: "directory"; path: string }
@@ -31,6 +48,9 @@ export interface ExtensionManifest {
     hooks?: boolean;
     skills?: boolean;
   };
+  compatibility?: ExtensionHostCompatibility;
+  permissions?: ExtensionPermission[];
+  runtime?: ExtensionRuntimeDeclaration;
   dependencies?: string[];
 }
 
@@ -52,6 +72,12 @@ export interface MarketplaceManifest {
 
 const NAME_PATTERN = /^[a-z0-9][-a-z0-9._]*$/i;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const EXTENSION_PLUGIN_HOOK_NAMES = new Set<ExtensionPluginHookName>([
+  "beforeRun",
+  "afterRun",
+  "beforeToolCall",
+  "afterToolCall",
+]);
 
 function isRecordLike(value: unknown): value is RecordLike {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -123,6 +149,66 @@ function parseOptionalStringArray(value: unknown, label: string): string[] | und
 function parseOptionalRelativePathArray(value: unknown, label: string): string[] | undefined {
   const values = parseOptionalStringArray(value, label);
   return values?.map((item, index) => parseOptionalRelativePath(item, `${label}[${index}]`) ?? item);
+}
+
+function parseCompatibility(value: unknown, label: string): ExtensionHostCompatibility | undefined {
+  if (value === undefined) return undefined;
+  const input = assertRecordLike(value, label);
+  if (!Number.isSafeInteger(input.hostApi) || (input.hostApi as number) < 1) {
+    throw new Error(`${label}.hostApi must be a positive integer.`);
+  }
+  return { hostApi: input.hostApi as number };
+}
+
+function parseRuntimeDeclaration(value: unknown, label: string): ExtensionRuntimeDeclaration | undefined {
+  if (value === undefined) return undefined;
+  const input = assertRecordLike(value, label);
+  const capabilities = parseOptionalStringArray(input.capabilities, `${label}.capabilities`);
+  if (!capabilities) {
+    throw new Error(`${label}.capabilities must be an array.`);
+  }
+  return { capabilities };
+}
+
+export function isSupportedExtensionHostApi(kind: ExtensionManifestKind, hostApi: number): boolean {
+  if (kind === "skill-pack") {
+    return hostApi === BELLDANDY_LEGACY_EXTENSION_HOST_API_VERSION
+      || hostApi === BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION;
+  }
+  return hostApi === BELLDANDY_LEGACY_EXTENSION_HOST_API_VERSION
+    || hostApi === BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION;
+}
+
+export function parseExtensionPermissions(
+  value: unknown,
+  label = "Extension permissions",
+): ExtensionPermission[] | undefined {
+  const values = parseOptionalStringArray(value, label);
+  if (!values) return undefined;
+
+  return values.map<ExtensionPermission>((permission, index) => {
+    const separatorIndex = permission.indexOf(":");
+    const kind = permission.slice(0, separatorIndex);
+    const target = permission.slice(separatorIndex + 1);
+    if (!kind || !target) {
+      throw new Error(`${label}[${index}] must use a supported permission prefix.`);
+    }
+
+    if (kind === "tool") {
+      return `tool:${parseRequiredName(target, `${label}[${index}] tool name`)}` as ExtensionPermission;
+    }
+    if (kind === "hook" && EXTENSION_PLUGIN_HOOK_NAMES.has(target as ExtensionPluginHookName)) {
+      return `hook:${target as ExtensionPluginHookName}`;
+    }
+    if (kind === "skill") {
+      const skillDir = parseOptionalRelativePath(target, `${label}[${index}] skill directory`);
+      if (!skillDir) {
+        throw new Error(`${label}[${index}] skill directory is required.`);
+      }
+      return `skill:${skillDir.replace(/\\/g, "/")}` as ExtensionPermission;
+    }
+    throw new Error(`${label}[${index}] must use a supported permission prefix.`);
+  });
 }
 
 function parseManifestKind(value: unknown, label: string): ExtensionManifestKind {
@@ -233,6 +319,9 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
         skills: inputCapabilities.skills === undefined ? undefined : Boolean(inputCapabilities.skills),
       };
     })();
+  const compatibility = parseCompatibility(manifest.compatibility, "Extension manifest.compatibility");
+  const permissions = parseExtensionPermissions(manifest.permissions, "Extension manifest.permissions");
+  const runtime = parseRuntimeDeclaration(manifest.runtime, "Extension manifest.runtime");
 
   return {
     schemaVersion: 1,
@@ -246,6 +335,9 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
       skillDirs,
     },
     capabilities,
+    ...(compatibility ? { compatibility } : {}),
+    ...(permissions ? { permissions } : {}),
+    ...(runtime ? { runtime } : {}),
     dependencies: parseOptionalStringArray(manifest.dependencies, "Extension manifest.dependencies"),
   };
 }

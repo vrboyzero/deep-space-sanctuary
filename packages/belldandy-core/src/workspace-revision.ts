@@ -5,6 +5,7 @@ import path from "node:path";
 import type { WorkspaceMutationObserver, WorkspaceMutationTarget } from "@belldandy/skills";
 
 const MANIFEST_VERSION = 1;
+const RESTORE_RECEIPT_VERSION = 1;
 const DEFAULT_MAX_FILE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -71,6 +72,15 @@ export type WorkspaceRevisionRestorePreview = WorkspaceRevisionSummary & {
 
 export type WorkspaceRevisionRestoreResult = WorkspaceRevisionRestorePreview & {
   applied: boolean;
+  receipt?: WorkspaceRevisionRestoreReceipt;
+};
+
+export type WorkspaceRevisionRestoreReceipt = {
+  version: typeof RESTORE_RECEIPT_VERSION;
+  receiptId: string;
+  revisionId: string;
+  workspaceId: string;
+  restoredAtMs: number;
 };
 
 export type WorkspaceRevisionRuntimeOptions = {
@@ -217,6 +227,26 @@ function parseManifest(value: unknown): RevisionManifest | undefined {
   return candidate as RevisionManifest;
 }
 
+function parseRestoreReceipt(value: unknown): WorkspaceRevisionRestoreReceipt | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Partial<WorkspaceRevisionRestoreReceipt>;
+  if (
+    candidate.version !== RESTORE_RECEIPT_VERSION
+    || typeof candidate.receiptId !== "string"
+    || !REVISION_ID_PATTERN.test(candidate.receiptId)
+    || typeof candidate.revisionId !== "string"
+    || !REVISION_ID_PATTERN.test(candidate.revisionId)
+    || typeof candidate.workspaceId !== "string"
+    || !/^[a-f0-9]{64}$/.test(candidate.workspaceId)
+    || typeof candidate.restoredAtMs !== "number"
+    || !Number.isSafeInteger(candidate.restoredAtMs)
+    || candidate.restoredAtMs < 0
+  ) {
+    return undefined;
+  }
+  return candidate as WorkspaceRevisionRestoreReceipt;
+}
+
 /**
  * 受控文件工具的首次修改前快照。它不观察 shell、MCP 或用户手工写入，恢复前必须
  * 验证当前内容仍是工具最后记录的结果，避免覆盖后续修改。
@@ -311,6 +341,35 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
     };
   }
 
+  async readRestoreReceipt(input: {
+    receiptId: string;
+    revisionId: string;
+    workspaceRoot: string;
+  }): Promise<WorkspaceRevisionRestoreReceipt> {
+    if (!REVISION_ID_PATTERN.test(input.receiptId)) throw new Error("Workspace revision restore receipt id is invalid.");
+    const revisionId = normalizeRevisionId(input);
+    const loaded = await this.loadManifestForWorkspace(revisionId, input.workspaceRoot);
+    const receiptPath = path.join(loaded.directory, "restore-receipts", `${input.receiptId}.json`);
+    let parsed: WorkspaceRevisionRestoreReceipt | undefined;
+    try {
+      parsed = parseRestoreReceipt(JSON.parse(await fs.readFile(receiptPath, "utf-8")));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error("Workspace revision restore receipt was not found.");
+      }
+      throw new Error("Workspace revision restore receipt is invalid.");
+    }
+    if (
+      !parsed
+      || parsed.receiptId !== input.receiptId
+      || parsed.revisionId !== loaded.manifest.revisionId
+      || parsed.workspaceId !== loaded.manifest.workspaceId
+    ) {
+      throw new Error("Workspace revision restore receipt is invalid.");
+    }
+    return parsed;
+  }
+
   async previewRestore(input: { revisionId: string; workspaceId?: string }): Promise<WorkspaceRevisionRestorePreview> {
     const loaded = await this.findManifest(input);
     const changes: WorkspaceRevisionRestoreChange[] = [];
@@ -372,7 +431,8 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       return action === "restore" || action === "delete";
     });
 
-    // 先再次检查所有目标和备份，避免在部分写入后才发现不可恢复项。
+    // 先读取并校验所有备份，随后把每个目标的状态检查尽量贴近实际写入。
+    const restoreContents = new Map<string, Buffer>();
     for (const entry of entries) {
       const targetPath = path.resolve(loaded.manifest.workspaceRoot, entry.relativePath);
       await this.assertTargetPath(loaded.manifest.workspaceRoot, targetPath);
@@ -380,28 +440,47 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
         if (!entry.before.blobPath) throw new Error(`Workspace revision preimage is missing: ${entry.relativePath}`);
         const blobPath = this.resolveBlobPath(loaded.directory, entry.before.blobPath);
         if (!await pathExists(blobPath)) throw new Error(`Workspace revision preimage is unavailable: ${entry.relativePath}`);
+        const contents = await fs.readFile(blobPath);
+        if (hashBuffer(contents) !== entry.before.sha256) {
+          throw new Error(`Workspace revision preimage integrity check failed: ${entry.relativePath}`);
+        }
+        restoreContents.set(entry.relativePath, contents);
       }
     }
 
-    // 所有目标在写入前已二次验证；发现冲突时会在上方返回，不会留下部分恢复结果。
+    // 外部进程仍可能在 final gate 后修改文件；每次写入前复核当前目标，避免覆盖已观察到的用户修改。
     for (const entry of entries) {
       const targetPath = path.resolve(loaded.manifest.workspaceRoot, entry.relativePath);
+      let current: FileState;
+      try {
+        await this.assertTargetPath(loaded.manifest.workspaceRoot, targetPath);
+        current = await this.readFileState(targetPath);
+      } catch {
+        return this.stopRestoreAfterFinalGate({
+          loaded,
+          preview: finalPreview,
+          entry,
+          reason: "unable to verify the current file state safely before restore write",
+        });
+      }
+      if (isFileStateEqual(current, entry.before)) continue;
+      if (!entry.after || !isFileStateEqual(current, entry.after)) {
+        return this.stopRestoreAfterFinalGate({ loaded, preview: finalPreview, entry, current });
+      }
       if (!entry.before.exists) {
         await fs.unlink(targetPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") throw error;
         });
         continue;
       }
-      const blobPath = this.resolveBlobPath(loaded.directory, String(entry.before.blobPath));
-      const contents = await fs.readFile(blobPath);
-      if (hashBuffer(contents) !== entry.before.sha256) {
-        throw new Error(`Workspace revision preimage integrity check failed: ${entry.relativePath}`);
-      }
+      const contents = restoreContents.get(entry.relativePath);
+      if (!contents) throw new Error(`Workspace revision preimage is unavailable: ${entry.relativePath}`);
       await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
       await writeFileAtomic(targetPath, contents, entry.before.mode);
       await fs.chmod(targetPath, entry.before.mode).catch(() => {});
     }
-    return { ...finalPreview, applied: true };
+    const receipt = await this.writeRestoreReceipt(loaded);
+    return { ...finalPreview, applied: true, receipt };
   }
 
   /** 仅删除已超过保留期的整组恢复点；不会作为 prepare/restore 的隐式副作用执行。 */
@@ -553,6 +632,48 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       conflicts,
     }, null, 2)}\n`, 0o600);
     return { artifactPath, capturedAtMs, conflictCount: conflicts.length };
+  }
+
+  private async stopRestoreAfterFinalGate(input: {
+    loaded: LoadedManifest;
+    preview: WorkspaceRevisionRestorePreview;
+    entry: RevisionFileEntry;
+    current?: FileState;
+    reason?: string;
+  }): Promise<WorkspaceRevisionRestoreResult> {
+    const conflict: WorkspaceRevisionRestoreChange = {
+      relativePath: input.entry.relativePath,
+      action: "conflict",
+      reason: input.reason ?? "current file hash differs from the recorded tool result",
+      ...(getStateHash(input.entry.after) ? { recordedAfterHash: getStateHash(input.entry.after) } : {}),
+      ...(getStateHash(input.current) ? { currentHash: getStateHash(input.current) } : {}),
+    };
+    const conflictArtifact = await this.writeRestoreConflictArtifact(input.loaded, [conflict]);
+    return {
+      ...input.preview,
+      canRestore: false,
+      changes: input.preview.changes.map((change) => (
+        change.relativePath === input.entry.relativePath ? conflict : change
+      )),
+      conflictArtifact,
+      applied: false,
+    };
+  }
+
+  private async writeRestoreReceipt(loaded: LoadedManifest): Promise<WorkspaceRevisionRestoreReceipt> {
+    const receipt: WorkspaceRevisionRestoreReceipt = {
+      version: RESTORE_RECEIPT_VERSION,
+      receiptId: `restore-${crypto.randomUUID()}`,
+      revisionId: loaded.manifest.revisionId,
+      workspaceId: loaded.manifest.workspaceId,
+      restoredAtMs: Date.now(),
+    };
+    await writeFileAtomic(
+      path.join(loaded.directory, "restore-receipts", `${receipt.receiptId}.json`),
+      `${JSON.stringify(receipt, null, 2)}\n`,
+      0o600,
+    );
+    return receipt;
   }
 
   private async loadManifestForWorkspace(revisionId: string, workspaceRoot: string): Promise<LoadedManifest> {

@@ -52,6 +52,10 @@ def run_smoke(repo, startup_timeout):
     narrow_at = None
     restore_offset = None
     restored_at = None
+    mouse_changes_at = None
+    mouse_changes_offset = None
+    mouse_chat_at = None
+    mouse_chat_offset = None
     input_at = None
     ctrl_c_at = None
     wait_status = None
@@ -93,11 +97,41 @@ def run_smoke(repo, startup_timeout):
 
             if restore_offset is not None and restored_at is None and b"Star Sanctuary" in data[restore_offset:]:
                 restored_at = time.monotonic()
+
+            if (
+                restored_at is not None
+                and mouse_changes_at is None
+                and time.monotonic() - restored_at >= 0.5
+            ):
+                mouse_changes_offset = len(data)
+                os.write(fd, b"\x1b[<0;18;2M")
+                mouse_changes_at = time.monotonic()
+
+            if (
+                mouse_changes_at is not None
+                and mouse_chat_at is None
+                and (
+                    b"Revision Checkpoints" in data[mouse_changes_offset:]
+                    or time.monotonic() - mouse_changes_at >= 1.0
+                )
+            ):
+                mouse_chat_offset = len(data)
+                os.write(fd, b"\x1b[<0;3;2M")
+                mouse_chat_at = time.monotonic()
+
+            if (
+                mouse_chat_at is not None
+                and input_at is None
+                and (
+                    b"Activity" in data[mouse_chat_offset:]
+                    or time.monotonic() - mouse_chat_at >= 1.0
+                )
+            ):
                 os.write(fd, b"q")
                 input_at = time.monotonic()
 
-            if input_at is not None and ctrl_c_at is None and b"> q" in data[restore_offset:]:
-                if time.monotonic() - input_at >= 0.25:
+            if input_at is not None and ctrl_c_at is None:
+                if b"> q" in data[restore_offset:] or time.monotonic() - input_at >= 1.0:
                     os.write(fd, b"\x03")
                     ctrl_c_at = time.monotonic()
 
@@ -107,16 +141,45 @@ def run_smoke(repo, startup_timeout):
                 break
 
         exit_code = os.waitstatus_to_exitcode(wait_status) if wait_status is not None else None
+        alternate_screen_leave_at = data.rfind(b"\x1b[?1049l")
+        mouse_tracking_leave_at = data.rfind(b"\x1b[?1000l")
+        sgr_mouse_leave_at = data.rfind(b"\x1b[?1006l")
+        bracketed_paste_leave_at = data.rfind(b"\x1b[?2004l")
         result = {
             "exitCode": exit_code,
             "timedOut": timed_out,
             "firstFrame": first_frame_at is not None,
             "narrowFallback": restore_offset is not None,
             "wideLayoutRestored": restored_at is not None,
+            "mouseChangesSent": mouse_changes_at is not None,
+            "mouseChangesRendered": (
+                mouse_changes_offset is not None
+                and b"Revision Checkpoints" in data[mouse_changes_offset:]
+            ),
+            "mouseChatSent": mouse_chat_at is not None,
+            "mouseChatAcceptedInput": mouse_chat_offset is not None and b"> q" in data[mouse_chat_offset:],
+            "mouseTabNavigation": (
+                mouse_changes_at is not None
+                and mouse_chat_at is not None
+                and b"Revision Checkpoints" in data[mouse_changes_offset or 0 :]
+                and b"> q" in data[mouse_chat_offset or 0 :]
+            ),
             "visibleKeyboardInput": input_at is not None and b"> q" in data[restore_offset or 0 :],
             "ctrlCSent": ctrl_c_at is not None,
+            "bracketedPasteEnter": b"\x1b[?2004h" in data,
+            "bracketedPasteLeave": bracketed_paste_leave_at >= 0,
+            "mouseTrackingEnter": b"\x1b[?1000h" in data,
+            "mouseTrackingLeave": mouse_tracking_leave_at >= 0,
+            "sgrMouseEnter": b"\x1b[?1006h" in data,
+            "sgrMouseLeave": sgr_mouse_leave_at >= 0,
             "alternateScreenEnter": b"\x1b[?1049h" in data,
-            "alternateScreenLeave": b"\x1b[?1049l" in data,
+            "alternateScreenLeave": alternate_screen_leave_at >= 0,
+            "inputModesRestoredBeforeScreen": (
+                alternate_screen_leave_at >= 0
+                and 0 <= bracketed_paste_leave_at < alternate_screen_leave_at
+                and 0 <= mouse_tracking_leave_at < alternate_screen_leave_at
+                and 0 <= sgr_mouse_leave_at < alternate_screen_leave_at
+            ),
             "capturedBytes": len(data),
         }
         expected = all(
@@ -126,10 +189,18 @@ def run_smoke(repo, startup_timeout):
                 result["firstFrame"],
                 result["narrowFallback"],
                 result["wideLayoutRestored"],
+                result["mouseTabNavigation"],
                 result["visibleKeyboardInput"],
                 result["ctrlCSent"],
+                result["bracketedPasteEnter"],
+                result["bracketedPasteLeave"],
+                result["mouseTrackingEnter"],
+                result["mouseTrackingLeave"],
+                result["sgrMouseEnter"],
+                result["sgrMouseLeave"],
                 result["alternateScreenEnter"],
                 result["alternateScreenLeave"],
+                result["inputModesRestoredBeforeScreen"],
             ]
         )
         if not expected:
@@ -144,7 +215,7 @@ def main():
     args = parse_args()
     repo = os.path.abspath(args.repo)
     result = run_smoke(repo, max(5.0, args.startup_timeout))
-    print("[tui-pty-smoke] resize and terminal lifecycle passed.")
+    print("[tui-pty-smoke] resize, keyboard/mouse input, and terminal lifecycle passed.")
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

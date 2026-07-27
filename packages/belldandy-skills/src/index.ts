@@ -190,7 +190,20 @@ export { webSearchTool } from "./builtin/web-search/index.js";
 export { createToolSearchTool, TOOL_SEARCH_NAME } from "./builtin/tool-search.js";
 export { planCurrentGetTool } from "./builtin/plan-current-get.js";
 export { planCurrentUpdateTool } from "./builtin/plan-current-update.js";
-export { commandJobTool, runCommandTool, processManagerTool, shutdownCommandJobs, terminalTool } from "./builtin/system/index.js";
+export {
+  commandJobTool,
+  getCommandJobRuntime,
+  runCommandTool,
+  processManagerTool,
+  shutdownCommandJobs,
+  terminalTool,
+  type CommandJobRuntime,
+} from "./builtin/system/index.js";
+export {
+  type CommandJobReadResult,
+  type CommandJobSnapshot,
+  type CommandJobStatus,
+} from "./command-job.js";
 export {
   bridgeTargetListTool,
   bridgeTargetDiagnoseTool,

@@ -6,6 +6,7 @@ import {
   buildOciSandboxInvocation,
   createOciSandboxEnvironmentFile,
   evaluateCommandSandboxAdmission,
+  resolveOciSandboxContainerUser,
   type OciSandboxLeaseBinding,
   type OciCommandSandboxConfig,
 } from "./command-sandbox.js";
@@ -77,6 +78,37 @@ describe("evaluateCommandSandboxAdmission", () => {
   });
 });
 
+describe("resolveOciSandboxContainerUser", () => {
+  it("uses the invoking Unix user's numeric identity and disables the projection on Windows", () => {
+    expect(resolveOciSandboxContainerUser({
+      platform: "linux",
+      getUid: () => 1000,
+      getGid: () => 1000,
+    })).toBe("1000:1000");
+    expect(resolveOciSandboxContainerUser({
+      platform: "win32",
+      getUid: () => {
+        throw new Error("must not read Windows uid");
+      },
+      getGid: () => {
+        throw new Error("must not read Windows gid");
+      },
+    })).toBeUndefined();
+  });
+
+  it("fails closed when a Unix identity is unavailable or invalid", () => {
+    expect(resolveOciSandboxContainerUser({
+      platform: "linux",
+      getUid: () => -1,
+      getGid: () => 1000,
+    })).toBeUndefined();
+    expect(resolveOciSandboxContainerUser({
+      platform: "linux",
+      getUid: () => 1000,
+    })).toBeUndefined();
+  });
+});
+
 describe("buildOciSandboxInvocation", () => {
   it("uses a no-shell OCI invocation with isolated network, scoped mount, and no image pull", () => {
     const workspaceRoot = path.join(process.cwd(), ".tmp-command-sandbox-workspace");
@@ -121,6 +153,14 @@ describe("buildOciSandboxInvocation", () => {
     expect(invocation.args.find((value) => value.startsWith("type=bind,"))).toContain("dst=/workspace,readonly");
     expect(invocation.args).not.toContain("--rm");
     expect(invocation.args).not.toContain("sh");
+    if (process.platform === "win32") {
+      expect(invocation.args).not.toContain("--user");
+    } else {
+      expect(invocation.args).toEqual(expect.arrayContaining([
+        "--user",
+        `${process.getuid()}:${process.getgid()}`,
+      ]));
+    }
   });
 
   it("limits a writable plan to the selected workspace bind mount", () => {

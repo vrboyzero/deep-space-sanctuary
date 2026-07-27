@@ -6,8 +6,10 @@ import {
   FilesystemCapability,
 } from "@belldandy/protocol";
 import {
+  isSupportedExtensionHostApi,
   parseExtensionManifest,
   type ExtensionManifest,
+  type ExtensionPermission,
 } from "@belldandy/plugins";
 
 import type { InstalledExtensionRecord } from "./extension-marketplace-state.js";
@@ -42,6 +44,8 @@ function assertApprovedExtensionRecord(
   sourceKey: string;
   contentSha256: string;
   approvedAt: string;
+  approvedHostApi: number;
+  approvedPermissions: ExtensionPermission[];
 } {
   if (extension.status !== "installed" || !extension.enabled) {
     throw new Error("Marketplace extension is not approved for activation.");
@@ -55,6 +59,25 @@ function assertApprovedExtensionRecord(
   if (!extension.approvedAt) {
     throw new Error("Marketplace extension approval timestamp is unavailable; reinstall the extension.");
   }
+  if (
+    typeof extension.approvedHostApi !== "number"
+    || !Number.isSafeInteger(extension.approvedHostApi)
+    || extension.approvedHostApi < 1
+  ) {
+    throw new Error("Marketplace extension host API approval is unavailable; reinstall the extension.");
+  }
+  if (!Array.isArray(extension.approvedPermissions)) {
+    throw new Error("Marketplace extension permission approval is unavailable; reinstall the extension.");
+  }
+  if (!isSupportedExtensionHostApi(extension.kind, extension.approvedHostApi)) {
+    throw new Error("Marketplace extension approved host API is no longer supported; reinstall the extension.");
+  }
+}
+
+function haveSamePermissions(left: readonly ExtensionPermission[], right: readonly ExtensionPermission[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightPermissions = new Set(right);
+  return left.every((permission) => rightPermissions.has(permission));
 }
 
 async function assertFile(pathname: string, label: string): Promise<void> {
@@ -140,6 +163,12 @@ export async function verifyInstalledMarketplaceExtension(input: {
   const manifest = parseExtensionManifest(JSON.parse(await fs.readFile(manifestPath, "utf-8")) as unknown);
   if (manifest.name !== extension.name || manifest.kind !== extension.kind || manifest.version !== extension.version) {
     throw new Error("Marketplace extension manifest does not match its approved identity.");
+  }
+  if (manifest.compatibility?.hostApi !== extension.approvedHostApi) {
+    throw new Error("Marketplace extension host compatibility does not match the approved trust decision.");
+  }
+  if (!manifest.permissions || !haveSamePermissions(manifest.permissions, extension.approvedPermissions)) {
+    throw new Error("Marketplace extension permissions do not match the approved trust decision.");
   }
 
   let pluginModulePath: string | undefined;

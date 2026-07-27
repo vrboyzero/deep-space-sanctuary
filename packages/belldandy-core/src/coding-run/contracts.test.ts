@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODING_RUN_PROTOCOL_VERSION,
   isAgentRunEventV1,
+  isConversationFollowUpStatusQueryV1,
   isRunControlV1,
   sanitizeCodingRunData,
   type AgentRunEvent,
@@ -70,6 +71,20 @@ describe("coding-run public protocol boundary", () => {
     })).toBe(true);
     expect(isRunControlV1({
       version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.follow_up",
+      binding: { conversationId: "conversation-123", agentRunId: "run-123" },
+      prompt: "run the focused tests next",
+      idempotencyKey: "follow-up-request-123",
+    })).toBe(true);
+    expect(isRunControlV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.replace",
+      binding: { conversationId: "conversation-123", agentRunId: "run-123" },
+      prompt: "replace the current turn",
+      idempotencyKey: "replace-request-123",
+    })).toBe(true);
+    expect(isRunControlV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
       operation: "permission.respond",
       binding: { agentRunId: "run-123", worktreeId: "worktree-123" },
       toolCallId: "tool-123",
@@ -106,6 +121,19 @@ describe("coding-run public protocol boundary", () => {
     })).toBe(false);
     expect(isRunControlV1({
       version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.follow_up",
+      binding: { conversationId: "conversation-123", agentRunId: "run-123" },
+      prompt: "run the focused tests next",
+    })).toBe(false);
+    expect(isRunControlV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.replace",
+      binding: { conversationId: "conversation-123", agentRunId: "run-123" },
+      prompt: "replace the current turn",
+      idempotencyKey: "",
+    })).toBe(false);
+    expect(isRunControlV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
       operation: "goal.resume",
       binding: { agentRunId: "goal-run-123", goal: { goalId: "goal-123" }, subtask: { taskId: "task-123" } },
     })).toBe(false);
@@ -114,6 +142,43 @@ describe("coding-run public protocol boundary", () => {
       operation: "workflow.cancel",
       binding: { agentRunId: "workflow-call-123", workflow: { journalId: "journal-123" } },
       reason: 1,
+    })).toBe(false);
+  });
+
+  it("accepts exact Conversation steer controls and rejects unbounded or unknown input", () => {
+    expect(isRunControlV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.steer",
+      binding: { conversationId: "conversation-a", agentRunId: "run-a" },
+      prompt: "focus on one failing test",
+      idempotencyKey: "request-1",
+    })).toBe(true);
+    expect(isRunControlV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.steer",
+      binding: { conversationId: "conversation-a", agentRunId: "run-a" },
+      prompt: "focus",
+      idempotencyKey: "request-1",
+      immediateProviderInjection: true,
+    })).toBe(false);
+  });
+
+  it("validates an exact follow-up command status query", () => {
+    expect(isConversationFollowUpStatusQueryV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      binding: { conversationId: "conversation-123", agentRunId: "run-123" },
+      commandId: "follow-up-123",
+    })).toBe(true);
+    expect(isConversationFollowUpStatusQueryV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      binding: { conversationId: "conversation-123" },
+      commandId: "follow-up-123",
+    })).toBe(false);
+    expect(isConversationFollowUpStatusQueryV1({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      binding: { conversationId: "conversation-123", agentRunId: "run-123" },
+      commandId: "follow-up-123",
+      includePrompt: true,
     })).toBe(false);
   });
 

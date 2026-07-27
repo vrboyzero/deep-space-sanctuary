@@ -7,9 +7,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HookRegistry } from "@belldandy/agent";
 import { ToolExecutor } from "@belldandy/skills";
 
-import { installMarketplaceExtension } from "./extension-marketplace-service.js";
+import {
+  installMarketplaceExtension,
+  previewMarketplaceExtensionInstall,
+  type InstallMarketplaceExtensionInput,
+} from "./extension-marketplace-service.js";
 import { bridgeLegacyPluginHooks, initializeExtensionHost } from "./extension-host.js";
+import { InMemoryExtensionRuntimeAdapter } from "./extension-runtime-supervisor.js";
 import { ToolsConfigManager } from "./tools-config.js";
+
+async function installConfirmedMarketplaceExtension(
+  input: Omit<InstallMarketplaceExtensionInput, "confirmationHash">,
+) {
+  const preview = await previewMarketplaceExtensionInstall(input);
+  return installMarketplaceExtension({ ...input, confirmationHash: preview.confirmationHash });
+}
 
 describe("initializeExtensionHost", () => {
   const tempDirs: string[] = [];
@@ -314,6 +326,9 @@ describe("initializeExtensionHost", () => {
         name: "market-demo-plugin",
         kind: "plugin",
         version: "1.0.0",
+        compatibility: { hostApi: 2 },
+        permissions: ["tool:market_demo_tool", "skill:skills"],
+        runtime: { capabilities: [] },
         entry: {
           pluginModule: "dist/plugin.mjs",
           skillDirs: ["skills"],
@@ -366,6 +381,8 @@ describe("initializeExtensionHost", () => {
         name: "market-skill-pack",
         kind: "skill-pack",
         version: "0.1.0",
+        compatibility: { hostApi: 1 },
+        permissions: ["skill:skills"],
         entry: {
           skillDirs: ["skills"],
         },
@@ -386,7 +403,7 @@ describe("initializeExtensionHost", () => {
       "utf-8",
     );
 
-    await installMarketplaceExtension({
+    await installConfirmedMarketplaceExtension({
       stateDir,
       marketplace: "official-market",
       source: {
@@ -394,7 +411,7 @@ describe("initializeExtensionHost", () => {
         path: pluginSourceDir,
       },
     });
-    await installMarketplaceExtension({
+    await installConfirmedMarketplaceExtension({
       stateDir,
       marketplace: "official-market",
       source: {
@@ -410,6 +427,7 @@ describe("initializeExtensionHost", () => {
       workspaceRoot: stateDir,
     });
     const logs: string[] = [];
+    const hookRegistry = new HookRegistry();
 
     const result = await initializeExtensionHost({
       stateDir,
@@ -419,12 +437,37 @@ describe("initializeExtensionHost", () => {
       toolExecutor,
       toolsConfigManager,
       activeMcpServers: [],
+      hookRegistry,
+      extensionRuntimeAdapter: new InMemoryExtensionRuntimeAdapter({
+        registrations: {
+          plugin: { id: "market-demo-plugin", name: "Market Demo Plugin", version: "1.0.0" },
+          tools: [{
+            definition: {
+              name: "market_demo_tool",
+              description: "market demo tool",
+              parameters: { type: "object", properties: {} },
+            },
+          }],
+          hooks: [],
+          skillDirs: ["skills"],
+        },
+        invoke: async (invocation) => invocation.kind === "tool"
+          ? {
+              id: invocation.invocationId,
+              name: invocation.toolName,
+              success: true,
+              output: "ok",
+              durationMs: 0,
+            }
+          : undefined,
+      }),
       logger: {
         info: (scope, message) => logs.push(`info:${scope}:${message}`),
         warn: (scope, message) => logs.push(`warn:${scope}:${message}`),
       },
     });
 
+    expect(logs.filter((line) => line.startsWith("warn:marketplace"))).toEqual([]);
     expect(result.extensionRuntime.summary).toEqual({
       pluginCount: 1,
       disabledPluginCount: 0,
@@ -440,8 +483,9 @@ describe("initializeExtensionHost", () => {
     });
     expect(result.extensionRuntime.plugins).toEqual([
       expect.objectContaining({
-        id: "market-demo-plugin",
+        id: "market-demo-plugin@official-market",
         toolNames: ["market_demo_tool"],
+        executionMode: "sandboxed_marketplace",
       }),
     ]);
     expect(result.searchableSkills.map((skill) => skill.name).sort()).toEqual([
@@ -449,7 +493,8 @@ describe("initializeExtensionHost", () => {
       "market-plugin-skill",
     ]);
     expect(result.lifecycle).toMatchObject({
-      pluginToolsRegistered: 1,
+      pluginToolsRegistered: 0,
+      hostedMarketplacePluginToolsRegistered: 1,
       pluginSkillsLoaded: 2,
       installedMarketplaceExtensionsLoaded: 2,
       installedMarketplacePluginsLoaded: 1,
@@ -462,7 +507,8 @@ describe("initializeExtensionHost", () => {
       "skills_search",
       "skill_get",
     ]));
-    expect(logs.some((line) => line.includes("已加载 1 个插件"))).toBe(true);
+    expect(logs.some((line) => line.includes("activated 1 marketplace plugin"))).toBe(true);
+    await result.extensionRuntimeSupervisor?.dispose();
   });
 
   it("skips a marketplace plugin whose approved materialized content has changed", async () => {
@@ -477,10 +523,12 @@ describe("initializeExtensionHost", () => {
       name: "integrity-plugin",
       kind: "plugin",
       version: "1.0.0",
+      compatibility: { hostApi: 1 },
+      permissions: [],
       entry: { pluginModule: "dist/plugin.mjs" },
     }, null, 2), "utf-8");
     await fs.writeFile(path.join(pluginSourceDir, "dist", "plugin.mjs"), "export default {};\n", "utf-8");
-    const installed = await installMarketplaceExtension({
+    const installed = await installConfirmedMarketplaceExtension({
       stateDir,
       marketplace: "official-market",
       source: { source: "directory", path: pluginSourceDir },
@@ -510,5 +558,80 @@ describe("initializeExtensionHost", () => {
     });
     expect(result.extensionRuntime.summary.pluginCount).toBe(0);
     expect(logs.some((line) => line.includes("content integrity mismatch"))).toBe(true);
+  });
+
+  it("skips a marketplace plugin that registers an unapproved tool without failing Gateway startup", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-policy-"));
+    const bundledSkillsDir = path.join(stateDir, "bundled-skills");
+    const pluginSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-policy-source-"));
+    tempDirs.push(stateDir, pluginSourceDir);
+    await fs.mkdir(bundledSkillsDir, { recursive: true });
+    await fs.mkdir(path.join(pluginSourceDir, "dist"), { recursive: true });
+    await fs.writeFile(path.join(pluginSourceDir, "belldandy-extension.json"), JSON.stringify({
+      schemaVersion: 1,
+      name: "policy-plugin",
+      kind: "plugin",
+      version: "1.0.0",
+      compatibility: { hostApi: 2 },
+      permissions: [],
+      runtime: { capabilities: [] },
+      entry: { pluginModule: "dist/plugin.mjs" },
+    }, null, 2), "utf-8");
+    await fs.writeFile(path.join(pluginSourceDir, "dist", "plugin.mjs"), [
+      "export default {",
+      "  id: 'policy-plugin',",
+      "  name: 'Policy Plugin',",
+      "  async activate(context) {",
+      "    context.registerTool({",
+      "      definition: { name: 'hidden_tool', description: 'hidden', parameters: { type: 'object', properties: {} } },",
+      "      async execute() { return { id: '', name: 'hidden_tool', success: true, output: 'hidden' }; },",
+      "    });",
+      "  },",
+      "};",
+      "",
+    ].join("\n"), "utf-8");
+    await installConfirmedMarketplaceExtension({
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory", path: pluginSourceDir },
+    });
+
+    const toolsConfigManager = new ToolsConfigManager(stateDir);
+    await toolsConfigManager.load();
+    const toolExecutor = new ToolExecutor({ tools: [], workspaceRoot: stateDir });
+
+    const logs: string[] = [];
+    const result = await initializeExtensionHost({
+      stateDir,
+      bundledSkillsDir,
+      workspaceRoot: stateDir,
+      toolsEnabled: true,
+      toolExecutor,
+      toolsConfigManager,
+      activeMcpServers: [],
+      hookRegistry: new HookRegistry(),
+      extensionRuntimeAdapter: new InMemoryExtensionRuntimeAdapter({
+        registrations: {
+          plugin: { id: "policy-plugin", name: "Policy Plugin" },
+          tools: [{
+            definition: {
+              name: "hidden_tool",
+              description: "hidden",
+              parameters: { type: "object", properties: {} },
+            },
+          }],
+          hooks: [],
+          skillDirs: [],
+        },
+        invoke: async () => undefined,
+      }),
+      logger: { info: () => {}, warn: (_scope, message) => logs.push(message) },
+    });
+    expect(toolExecutor.getRegisteredToolNames()).not.toContain("hidden_tool");
+    expect(result.lifecycle).toMatchObject({
+      installedMarketplacePluginsLoaded: 0,
+      installedMarketplacePluginsSkipped: 1,
+    });
+    expect(logs.some((line) => line.includes("tool registration is not approved"))).toBe(true);
   });
 });

@@ -218,6 +218,45 @@ export class ManagedWorktreeRuntime {
     };
   }
 
+  /**
+   * Deletes only a newly-created, unchanged worktree after its caller failed to
+   * persist ownership. Any drift is retained for manual recovery.
+   */
+  async abortPreparedWorktree(worktree: ManagedWorktree): Promise<ManagedWorktreeCleanupResult> {
+    this.assertManagedWorktree(worktree);
+    const reconciled = await this.reconcile(worktree);
+    if (reconciled.status !== "created") {
+      return {
+        status: "remove_failed",
+        worktreePath: worktree.worktreePath,
+        branch: worktree.branch,
+        reason: reconciled.error ?? "Prepared worktree is unavailable.",
+      };
+    }
+    try {
+      const [status, branchHead] = await Promise.all([
+        runGit(["status", "--porcelain=v1", "-z"], reconciled.worktreePath),
+        runGit(["rev-parse", "--verify", reconciled.branch], reconciled.repoRoot),
+      ]);
+      if (status) return this.retained(reconciled, "Prepared worktree changed before ownership was persisted; preserving it for recovery.");
+      if (branchHead !== reconciled.baseRef) {
+        return this.retained(reconciled, "Prepared worktree branch changed before ownership was persisted; preserving it for recovery.");
+      }
+      await runGit(["worktree", "remove", reconciled.worktreePath], reconciled.repoRoot);
+      const branchListing = await runGit(["branch", "--list", reconciled.branch], reconciled.repoRoot);
+      if (branchListing) await runGit(["branch", "-d", reconciled.branch], reconciled.repoRoot);
+      await runGit(["worktree", "prune"], reconciled.repoRoot).catch(() => "");
+      return { status: "removed", worktreePath: reconciled.worktreePath, branch: reconciled.branch };
+    } catch (error) {
+      return {
+        status: "remove_failed",
+        worktreePath: reconciled.worktreePath,
+        branch: reconciled.branch,
+        reason: toErrorMessage(error),
+      };
+    }
+  }
+
   async reconcile(worktree: ManagedWorktree): Promise<ManagedWorktree> {
     if (!this.isManagedWorktreePath(worktree.worktreePath)) {
       return { ...worktree, status: "failed", error: `Worktree path is outside the managed root: ${worktree.worktreePath}` };
@@ -408,7 +447,7 @@ export class ManagedWorktreeRuntime {
     }
   }
 
-  private async resolveRepositoryRoot(cwd: string): Promise<string> {
+  async resolveRepositoryRoot(cwd: string): Promise<string> {
     try {
       const repoRoot = await runGit(["rev-parse", "--show-toplevel"], cwd);
       if (!repoRoot) throw new Error("Git returned an empty repository root.");

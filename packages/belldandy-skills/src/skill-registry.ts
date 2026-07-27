@@ -102,6 +102,24 @@ export class SkillRegistry {
     return loadedSources.reduce((count, item) => count + item.skills.length, 0);
   }
 
+  /** 撤销一个插件拥有的全部 Skill；其他来源及其优先级保持不变。 */
+  unloadPluginSkills(pluginId: string): number {
+    let removed = 0;
+    const next = new Map<string, SkillDefinition>();
+    for (const [key, skill] of this.skills) {
+      if (skill.source.type === "plugin" && skill.source.pluginId === pluginId) {
+        removed += 1;
+        continue;
+      }
+      next.set(key, skill);
+    }
+    if (removed === 0) return 0;
+    this.skills = next;
+    this.eligibilityCache.clear();
+    this.catalogGeneration += 1;
+    return removed;
+  }
+
   // ========================================================================
   // 查询
   // ========================================================================

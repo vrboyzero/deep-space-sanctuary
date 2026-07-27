@@ -14,6 +14,115 @@ afterEach(async () => {
 });
 
 describe("ToolEnabledAgent Provider streaming", () => {
+  it("consumes steer input only at the next model-call boundary in the same run", async () => {
+    const provider = await createProvider([
+      (response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ choices: [{ message: { content: "first answer" } }] }));
+      },
+      (response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ choices: [{ message: { content: "steered answer" } }] }));
+      },
+    ]);
+    const consumePending = vi.fn(async ({ modelCallIndex }: { modelCallIndex: number }) =>
+      modelCallIndex === 2
+        ? [{ commandId: "steer-1", prompt: "focus on the regression" }]
+        : []
+    );
+    const sealIfIdle = vi.fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    const agent = new ToolEnabledAgent({
+      baseUrl: provider.baseUrl,
+      apiKey: "local-test-key",
+      model: "local-test-model",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    } as any);
+
+    const items = await collectItems(agent.run({
+      conversationId: "steer-model-boundary",
+      text: "initial task",
+      steering: { consumePending, sealIfIdle },
+    }));
+
+    expect(agent.getCodingRunCapabilities()).toMatchObject({ steerAtModelBoundary: true });
+    expect(provider.payloads).toHaveLength(2);
+    expect(provider.payloads[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: "first answer" }),
+      expect.objectContaining({ role: "user", content: "focus on the regression" }),
+    ]));
+    expect(consumePending).toHaveBeenNthCalledWith(1, { modelCallIndex: 1 });
+    expect(consumePending).toHaveBeenNthCalledWith(2, { modelCallIndex: 2 });
+    expect(items.filter((item) => item.type === "final")).toEqual([
+      { type: "final", text: "steered answer" },
+    ]);
+  });
+
+  it("injects steer after completing the current tool-call transcript", async () => {
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "tool-ok",
+    }));
+    const provider = await createProvider([
+      (response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          choices: [{ message: {
+            content: "",
+            tool_calls: [{
+              id: "call-1",
+              type: "function",
+              function: { name: "echo", arguments: "{}" },
+            }],
+          } }],
+        }));
+      },
+      (response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ choices: [{ message: { content: "done after steer" } }] }));
+      },
+    ]);
+    const agent = new ToolEnabledAgent({
+      baseUrl: provider.baseUrl,
+      apiKey: "local-test-key",
+      model: "local-test-model",
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function",
+          function: { name: "echo", description: "Echo", parameters: { type: "object" } },
+        }],
+        execute,
+      }),
+      streamingEnabled: false,
+    } as any);
+    const steering = {
+      consumePending: vi.fn(async ({ modelCallIndex }: { modelCallIndex: number }) =>
+        modelCallIndex === 2 ? [{ commandId: "steer-1", prompt: "check the tool result" }] : []
+      ),
+      sealIfIdle: vi.fn(() => true),
+    };
+
+    const items = await collectItems(agent.run({
+      conversationId: "steer-after-tool",
+      text: "use echo",
+      steering,
+    }));
+
+    expect(execute).toHaveBeenCalledOnce();
+    const secondMessages = provider.payloads[1]?.messages as Array<{ role?: string; content?: string }>;
+    const toolIndex = secondMessages.findIndex((message) => message.role === "tool");
+    const steerIndex = secondMessages.findIndex((message) =>
+      message.role === "user" && message.content === "check the tool result"
+    );
+    expect(toolIndex).toBeGreaterThanOrEqual(0);
+    expect(steerIndex).toBeGreaterThan(toolIndex);
+    expect(items).toContainEqual({ type: "final", text: "done after steer" });
+  });
+
   it("keeps the existing buffered request and item sequence when streaming is disabled", async () => {
     const provider = await createProvider([
       (response) => {

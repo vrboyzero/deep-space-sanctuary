@@ -4,13 +4,21 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { BelldandyAgent } from "@belldandy/agent";
+import { ConversationStore, type BelldandyAgent } from "@belldandy/agent";
+import { CodingRunRecoveryMarkerStore } from "../../../coding-run/recovery-marker-store.js";
+import { ConversationRunRegistry } from "../../../conversation-run-registry.js";
 import { startGatewayServer } from "../../../server.js";
-import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, withEnv } from "../../../server-testkit.js";
+import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, waitFor, withEnv } from "../../../server-testkit.js";
 import { cancelAgentRunCommand } from "./cancel.js";
 import { continueAgentRunCommand } from "./continue.js";
+import { followUpAgentRunCommand } from "./follow-up.js";
+import { followUpStatusAgentRunCommand } from "./follow-up-status.js";
 import { inspectAgentConversation, inspectAgentProjectRules } from "./inspect.js";
+import { replaceAgentRunCommand } from "./replace.js";
 import { runAgentRunCommand } from "./run.js";
+import { statusAgentRunCommand } from "./status.js";
+import { steerAgentRunCommand } from "./steer.js";
+import { steerStatusAgentRunCommand } from "./steer-status.js";
 
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
@@ -216,6 +224,59 @@ describe("bdd agent controls", () => {
     }
   });
 
+  it("reports an exact Conversation run as interrupted after its runtime owner is lost", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-status-lost-"));
+    const binding = { conversationId: "conversation-lost", agentRunId: "run-lost" };
+    const previousStore = new CodingRunRecoveryMarkerStore(stateDir, {
+      ownerInstanceId: "gateway-before-restart",
+      ownerProcessId: 101,
+      isProcessAlive: () => false,
+    });
+    await previousStore.markActive({ source: "conversation", binding, startedAtMs: 100 });
+    const restartedStore = new CodingRunRecoveryMarkerStore(stateDir, {
+      ownerInstanceId: "gateway-after-restart",
+      ownerProcessId: 202,
+      isProcessAlive: () => false,
+    });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      conversationRunRegistry: new ConversationRunRegistry({ recoveryStore: restartedStore }),
+      agentFactory: () => ({ async *run() { yield { type: "final", text: "unused" }; } }),
+    });
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await statusAgentRunCommand({
+          stateDir,
+          ...binding,
+          json: true,
+          writeStdout: (text) => stdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+      });
+
+      expect(JSON.parse(stdout.join(""))).toMatchObject({
+        source: "conversation",
+        status: "interrupted",
+        binding,
+        evidence: { runtimeState: "lost", lastObservedState: "active" },
+      });
+      expect(stderr).toEqual([]);
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("cancels only the bound active Conversation run", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-cancel-"));
     const agent: BelldandyAgent = {
@@ -269,6 +330,21 @@ describe("bdd agent controls", () => {
         });
         const binding = await bindingReady;
 
+        const statusStdout: string[] = [];
+        expect(await statusAgentRunCommand({
+          stateDir,
+          ...binding,
+          json: true,
+          writeStdout: (text) => statusStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+        expect(JSON.parse(statusStdout.join(""))).toMatchObject({
+          source: "conversation",
+          status: "running",
+          binding,
+          evidence: { registryState: "running" },
+        });
+
         const cancelStdout: string[] = [];
         expect(await cancelAgentRunCommand({
           stateDir,
@@ -288,6 +364,323 @@ describe("bdd agent controls", () => {
         expect(stderr).toEqual([]);
       });
     } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 10_000);
+
+  it("queues and observes a bound Conversation follow-up", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-follow-up-"));
+    const prompts: string[] = [];
+    let finishFirstRun: (() => void) | undefined;
+    const firstRunPending = new Promise<void>((resolve) => {
+      finishFirstRun = resolve;
+    });
+    const agent: BelldandyAgent = {
+      async *run(input) {
+        prompts.push(input.text);
+        yield { type: "status", status: "running" };
+        if (prompts.length === 1) await firstRunPending;
+        yield { type: "final", text: `echo:${input.text}` };
+        yield { type: "status", status: "done" };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    let resolveBinding: ((binding: { conversationId: string; agentRunId: string }) => void) | undefined;
+    const bindingReady = new Promise<{ conversationId: string; agentRunId: string }>((resolve) => {
+      resolveBinding = resolve;
+    });
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const run = runAgentRunCommand({
+          stateDir,
+          prompt: "first turn",
+          jsonl: true,
+          writeStdout: (text) => {
+            const event = JSON.parse(text) as { type?: string; binding?: { conversationId?: string; agentRunId?: string } };
+            if (event.type === "run.started" && event.binding?.conversationId && event.binding.agentRunId) {
+              resolveBinding?.({
+                conversationId: event.binding.conversationId,
+                agentRunId: event.binding.agentRunId,
+              });
+            }
+          },
+          writeStderr: (text) => stderr.push(text),
+        });
+        const binding = await bindingReady;
+        const enqueueStdout: string[] = [];
+        expect(await followUpAgentRunCommand({
+          stateDir,
+          ...binding,
+          prompt: "second turn",
+          idempotencyKey: "cli-follow-up-1",
+          json: true,
+          writeStdout: (text) => enqueueStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+        const queued = JSON.parse(enqueueStdout.join(""));
+        expect(queued).toMatchObject({
+          accepted: true,
+          replayed: false,
+          operation: "conversation.follow_up",
+          command: { status: "queued", sourceBinding: binding },
+        });
+
+        finishFirstRun?.();
+        expect(await run).toBe(0);
+        await waitFor(() => prompts.length === 2);
+
+        const statusStdout: string[] = [];
+        expect(await followUpStatusAgentRunCommand({
+          stateDir,
+          ...binding,
+          commandId: queued.command.commandId,
+          json: true,
+          writeStdout: (text) => statusStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+        const status = JSON.parse(statusStdout.join(""));
+        expect(status).toMatchObject({
+          status: "delivered",
+          sourceBinding: binding,
+          nextBinding: { conversationId: binding.conversationId },
+        });
+        expect(status.nextBinding.agentRunId).not.toBe(binding.agentRunId);
+        expect(prompts).toEqual(["first turn", "second turn"]);
+        expect(stderr).toEqual([]);
+      });
+    } finally {
+      finishFirstRun?.();
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 10_000);
+
+  it("replaces a bound Conversation run and exposes the replacement command", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-replace-"));
+    const prompts: string[] = [];
+    const agent: BelldandyAgent = {
+      async *run(input) {
+        prompts.push(input.text);
+        yield { type: "status", status: "running" };
+        if (prompts.length === 1) {
+          await new Promise<void>((resolve) => {
+            if (input.abortSignal?.aborted) {
+              resolve();
+              return;
+            }
+            input.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield { type: "status", status: "stopped" };
+          return;
+        }
+        yield { type: "final", text: `done:${input.text}` };
+        yield { type: "status", status: "done" };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    let resolveBinding: ((binding: { conversationId: string; agentRunId: string }) => void) | undefined;
+    const bindingReady = new Promise<{ conversationId: string; agentRunId: string }>((resolve) => {
+      resolveBinding = resolve;
+    });
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const run = runAgentRunCommand({
+          stateDir,
+          prompt: "obsolete turn",
+          jsonl: true,
+          writeStdout: (text) => {
+            const event = JSON.parse(text) as { type?: string; binding?: { conversationId?: string; agentRunId?: string } };
+            if (event.type === "run.started" && event.binding?.conversationId && event.binding.agentRunId) {
+              resolveBinding?.({
+                conversationId: event.binding.conversationId,
+                agentRunId: event.binding.agentRunId,
+              });
+            }
+          },
+          writeStderr: (text) => stderr.push(text),
+        });
+        const binding = await bindingReady;
+        const replaceStdout: string[] = [];
+        expect(await replaceAgentRunCommand({
+          stateDir,
+          ...binding,
+          prompt: "replacement turn",
+          idempotencyKey: "cli-replace-1",
+          json: true,
+          writeStdout: (text) => replaceStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+        const replacement = JSON.parse(replaceStdout.join(""));
+        expect(replacement).toMatchObject({
+          accepted: true,
+          stopRequested: true,
+          operation: "conversation.replace",
+          command: { intent: "replace", status: "queued", sourceBinding: binding },
+        });
+
+        expect(await run).toBe(5);
+        await waitFor(() => prompts.length === 2);
+        const statusStdout: string[] = [];
+        expect(await followUpStatusAgentRunCommand({
+          stateDir,
+          ...binding,
+          commandId: replacement.command.commandId,
+          json: true,
+          writeStdout: (text) => statusStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+        expect(JSON.parse(statusStdout.join(""))).toMatchObject({
+          intent: "replace",
+          status: "delivered",
+          sourceBinding: binding,
+          nextBinding: { conversationId: binding.conversationId },
+        });
+        expect(prompts).toEqual(["obsolete turn", "replacement turn"]);
+        expect(stderr).toEqual([]);
+      });
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 10_000);
+
+  it("steers the same Conversation run at its next model boundary", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-steer-"));
+    const conversationStore = new ConversationStore({ dataDir: path.join(stateDir, "sessions") });
+    let releaseFirstModel: (() => void) | undefined;
+    const firstModelPending = new Promise<void>((resolve) => {
+      releaseFirstModel = resolve;
+    });
+    const deliveredPrompts: string[] = [];
+    let runCalls = 0;
+    const agent: BelldandyAgent = {
+      getCodingRunCapabilities: () => ({ maxCostUsd: false, steerAtModelBoundary: true }),
+      async *run(input) {
+        runCalls++;
+        yield { type: "status", status: "running" };
+        await firstModelPending;
+        if (!input.steering) throw new Error("steering mailbox missing");
+        if (input.steering.sealIfIdle()) {
+          yield { type: "final", text: "completed without steer" };
+          yield { type: "status", status: "done" };
+          return;
+        }
+        const commands = await input.steering.consumePending({ modelCallIndex: 2 });
+        deliveredPrompts.push(...commands.map((command) => command.prompt));
+        input.steering.sealIfIdle();
+        yield { type: "final", text: `steered:${commands.map((command) => command.prompt).join("|")}` };
+        yield { type: "status", status: "done" };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      conversationStore,
+      agentFactory: () => agent,
+    });
+    let resolveBinding: ((binding: { conversationId: string; agentRunId: string }) => void) | undefined;
+    const bindingReady = new Promise<{ conversationId: string; agentRunId: string }>((resolve) => {
+      resolveBinding = resolve;
+    });
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const run = runAgentRunCommand({
+          stateDir,
+          prompt: "initial turn",
+          jsonl: true,
+          writeStdout: (text) => {
+            const event = JSON.parse(text) as { type?: string; binding?: { conversationId?: string; agentRunId?: string } };
+            if (event.type === "run.started" && event.binding?.conversationId && event.binding.agentRunId) {
+              resolveBinding?.({
+                conversationId: event.binding.conversationId,
+                agentRunId: event.binding.agentRunId,
+              });
+            }
+          },
+          writeStderr: (text) => stderr.push(text),
+        });
+        const binding = await bindingReady;
+        const steerStdout: string[] = [];
+        expect(await steerAgentRunCommand({
+          stateDir,
+          ...binding,
+          prompt: "focus the regression",
+          idempotencyKey: "cli-steer-1",
+          json: true,
+          writeStdout: (text) => steerStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+        const steer = JSON.parse(steerStdout.join(""));
+        expect(steer).toMatchObject({
+          accepted: true,
+          replayed: false,
+          operation: "conversation.steer",
+          command: { intent: "steer", status: "queued", sourceBinding: binding },
+        });
+
+        releaseFirstModel?.();
+        expect(await run).toBe(0);
+        const statusStdout: string[] = [];
+        expect(await steerStatusAgentRunCommand({
+          stateDir,
+          ...binding,
+          commandId: steer.command.commandId,
+          json: true,
+          writeStdout: (text) => statusStdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).toBe(0);
+
+        expect(JSON.parse(statusStdout.join(""))).toMatchObject({
+          intent: "steer",
+          status: "delivered",
+          sourceBinding: binding,
+          deliveredModelCallIndex: 2,
+        });
+        expect(runCalls).toBe(1);
+        expect(deliveredPrompts).toEqual(["focus the regression"]);
+        expect((await conversationStore.getConversationHistoryCompacted(binding.conversationId)).history)
+          .toEqual([
+            { role: "user", content: "initial turn" },
+            { role: "user", content: "focus the regression" },
+            { role: "assistant", content: "steered:focus the regression" },
+          ]);
+        expect(stderr).toEqual([]);
+      });
+    } finally {
+      releaseFirstModel?.();
       await server.close();
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }

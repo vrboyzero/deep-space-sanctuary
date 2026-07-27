@@ -8,8 +8,10 @@ import {
   isValidExtensionName,
   isValidMarketplaceName,
   parseExtensionMarketplaceSource,
+  parseExtensionPermissions,
   type ExtensionManifestKind,
   type ExtensionMarketplaceSource,
+  type ExtensionPermission,
 } from "@belldandy/plugins";
 
 const EXTENSION_STATE_DIRNAME = "extensions";
@@ -47,6 +49,10 @@ export interface InstalledExtensionRecord {
   contentSha256?: string;
   /** 与 contentSha256 同一批准动作产生的时间。 */
   approvedAt?: string;
+  /** 安装批准时声明的 Extension Host API；旧记录缺失时保持 fail-closed。 */
+  approvedHostApi?: number;
+  /** 安装批准时规范化后的最小权限快照。 */
+  approvedPermissions?: ExtensionPermission[];
   installedAt: string;
   lastUpdated?: string;
   status: InstalledExtensionStatus;
@@ -100,6 +106,14 @@ function assertOptionalSha256(value: unknown, label: string): string | undefined
     throw new Error(`${label} must be a SHA-256 digest.`);
   }
   return normalized?.toLowerCase();
+}
+
+function assertOptionalPositiveInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+  return value as number;
 }
 
 function assertMarketplaceName(value: unknown, label: string): string {
@@ -201,6 +215,14 @@ function parseInstalledExtensionRecord(
     sourceKey: assertOptionalString(record.sourceKey, `Installed extension "${id}".sourceKey`),
     contentSha256: assertOptionalSha256(record.contentSha256, `Installed extension "${id}".contentSha256`),
     approvedAt: assertOptionalString(record.approvedAt, `Installed extension "${id}".approvedAt`),
+    approvedHostApi: assertOptionalPositiveInteger(
+      record.approvedHostApi,
+      `Installed extension "${id}".approvedHostApi`,
+    ),
+    approvedPermissions: parseExtensionPermissions(
+      record.approvedPermissions,
+      `Installed extension "${id}".approvedPermissions`,
+    ),
     installedAt: assertString(record.installedAt, `Installed extension "${id}".installedAt`),
     lastUpdated: assertOptionalString(record.lastUpdated, `Installed extension "${id}".lastUpdated`),
     status: assertExtensionStatus(record.status, `Installed extension "${id}".status`),
@@ -349,6 +371,11 @@ export async function upsertInstalledExtension(
     sourceKey: record.sourceKey?.trim() || undefined,
     contentSha256: assertOptionalSha256(record.contentSha256, "Installed extension.contentSha256"),
     approvedAt: record.approvedAt?.trim() || undefined,
+    approvedHostApi: assertOptionalPositiveInteger(record.approvedHostApi, "Installed extension.approvedHostApi"),
+    approvedPermissions: parseExtensionPermissions(
+      record.approvedPermissions,
+      "Installed extension.approvedPermissions",
+    ),
     installedAt: existing?.installedAt ?? record.installedAt ?? nowIso(),
     lastUpdated: record.lastUpdated?.trim() || undefined,
     status: record.status,

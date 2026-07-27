@@ -100,5 +100,107 @@ describe("extension marketplace source service", () => {
       sourceState: prepared,
     })).rejects.toThrow("is not ready to materialize");
   });
+
+  it("preserves the approved materialized tree when a replacement fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-state-"));
+    const approvedSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-approved-"));
+    const invalidSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-invalid-"));
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-outside-"));
+    tempDirs.push(stateDir, approvedSourceDir, invalidSourceDir, outsideDir);
+
+    for (const [sourceDir, marker] of [
+      [approvedSourceDir, "approved-version"],
+      [invalidSourceDir, "invalid-version"],
+    ] as const) {
+      await fs.writeFile(path.join(sourceDir, "belldandy-extension.json"), JSON.stringify({
+        schemaVersion: 1,
+        name: "demo-plugin",
+        kind: "plugin",
+        version: "1.0.0",
+        entry: { pluginModule: "plugin.mjs" },
+      }, null, 2), "utf-8");
+      await fs.writeFile(path.join(sourceDir, "plugin.mjs"), `export default "${marker}";\n`, "utf-8");
+    }
+    await fs.symlink(
+      outsideDir,
+      path.join(invalidSourceDir, "linked-outside"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const approvedSource = await prepareExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory", path: approvedSourceDir },
+    });
+    const approved = await materializeExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      extensionName: "demo-plugin",
+      sourceState: approvedSource,
+    });
+
+    const invalidSource = await prepareExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory", path: invalidSourceDir },
+    });
+    await expect(materializeExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      extensionName: "demo-plugin",
+      sourceState: invalidSource,
+    })).rejects.toThrow();
+
+    await expect(fs.readFile(path.join(approved.materializedPath, "plugin.mjs"), "utf-8"))
+      .resolves.toContain("approved-version");
+  });
+
+  it("preserves the approved tree when replacement content does not match the confirmed hash", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-state-"));
+    const approvedSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-approved-"));
+    const changedSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-changed-"));
+    tempDirs.push(stateDir, approvedSourceDir, changedSourceDir);
+
+    for (const [sourceDir, marker] of [
+      [approvedSourceDir, "approved-version"],
+      [changedSourceDir, "changed-version"],
+    ] as const) {
+      await fs.writeFile(path.join(sourceDir, "belldandy-extension.json"), JSON.stringify({
+        schemaVersion: 1,
+        name: "demo-plugin",
+        kind: "plugin",
+        version: "1.0.0",
+        entry: { pluginModule: "plugin.mjs" },
+      }, null, 2), "utf-8");
+      await fs.writeFile(path.join(sourceDir, "plugin.mjs"), `export default "${marker}";\n`, "utf-8");
+    }
+
+    const approvedSource = await prepareExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory", path: approvedSourceDir },
+    });
+    const approved = await materializeExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      extensionName: "demo-plugin",
+      sourceState: approvedSource,
+    });
+    const changedSource = await prepareExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory", path: changedSourceDir },
+    });
+
+    await expect(materializeExtensionMarketplaceSource({
+      stateDir,
+      marketplace: "official-market",
+      extensionName: "demo-plugin",
+      sourceState: changedSource,
+      expectedContentSha256: approved.contentSha256,
+    })).rejects.toThrow("changed after trust confirmation");
+    await expect(fs.readFile(path.join(approved.materializedPath, "plugin.mjs"), "utf-8"))
+      .resolves.toContain("approved-version");
+  });
 });
 

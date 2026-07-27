@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION,
   PluginRegistry,
   PluginRegistryDirectoryError,
   PluginRegistryRegistrationError,
@@ -29,8 +30,15 @@ import {
   type ExtensionRuntimeReport,
 } from "./extension-runtime.js";
 import { listInstalledExtensions } from "./extension-marketplace-state.js";
-import { verifyInstalledMarketplaceExtension } from "./extension-integrity.js";
+import {
+  verifyInstalledMarketplaceExtension,
+} from "./extension-integrity.js";
 import type { ToolsConfigManager } from "./tools-config.js";
+import {
+  ExtensionRuntimeSupervisor,
+  type ExtensionRuntimeAdapter,
+  type ExtensionRuntimeGrant,
+} from "./extension-runtime-supervisor.js";
 
 export interface ExtensionHostLogger {
   info(scope: string, message: string): void;
@@ -48,6 +56,9 @@ export interface InitializeExtensionHostOptions {
   activeMcpServers?: string[];
   pluginRegistry?: PluginRegistry;
   skillRegistry?: SkillRegistry;
+  hookRegistry?: HookRegistry;
+  extensionRuntimeAdapter?: ExtensionRuntimeAdapter;
+  extensionRuntimeUnavailableReason?: string;
 }
 
 type LegacyPluginHookName = "beforeRun" | "afterRun" | "beforeToolCall" | "afterToolCall";
@@ -79,6 +90,10 @@ export interface ExtensionHostLifecycleSummary {
   eligibilityRefreshed: boolean;
   loadCompletedAt?: Date;
   hookBridge: ExtensionHostHookBridgeSummary;
+  hostedMarketplacePluginToolsRegistered?: number;
+  installedMarketplacePluginsSkipped?: number;
+  extensionRuntimeHostStatus?: "active" | "unavailable" | "not_required";
+  extensionRuntimeHostReason?: string;
 }
 
 export interface ExtensionHostState {
@@ -88,6 +103,7 @@ export interface ExtensionHostState {
   promptSkills: SkillDefinition[];
   searchableSkills: SkillDefinition[];
   lifecycle: ExtensionHostLifecycleSummary;
+  extensionRuntimeSupervisor?: ExtensionRuntimeSupervisor;
 }
 
 const LEGACY_PLUGIN_HOOK_BRIDGE_REGISTRATIONS: Array<{
@@ -216,8 +232,12 @@ export async function initializeExtensionHost(
     installedMarketplaceSkillPacksLoaded: 0,
     eligibilityRefreshed: false,
     hookBridge: createEmptyHookBridgeSummary("plugin-bridge"),
+    hostedMarketplacePluginToolsRegistered: 0,
+    installedMarketplacePluginsSkipped: 0,
+    extensionRuntimeHostStatus: "not_required",
   };
   const marketplaceSkillDirs = new Map<string, string[]>();
+  const hostedRuntimeGrants: ExtensionRuntimeGrant[] = [];
 
   if (fs.existsSync(pluginsDir)) {
     try {
@@ -243,19 +263,49 @@ export async function initializeExtensionHost(
       });
       const { manifest } = verified;
 
-      if (manifest.kind === "plugin" && verified.pluginModulePath) {
-        await pluginRegistry.loadPlugin(verified.pluginModulePath);
-        lifecycle.installedMarketplacePluginsLoaded += 1;
-      }
-
-      if (verified.skillDirs.length > 0) {
-        marketplaceSkillDirs.set(extension.id, verified.skillDirs);
-      }
-
-      lifecycle.installedMarketplaceExtensionsLoaded += 1;
       if (manifest.kind === "skill-pack") {
+        if (verified.skillDirs.length > 0) {
+          marketplaceSkillDirs.set(extension.id, verified.skillDirs);
+        }
+        lifecycle.installedMarketplaceExtensionsLoaded += 1;
         lifecycle.installedMarketplaceSkillPacksLoaded += 1;
+        continue;
       }
+
+      if (!verified.pluginModulePath || manifest.compatibility?.hostApi !== BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION) {
+        lifecycle.installedMarketplacePluginsSkipped! += 1;
+        lifecycle.extensionRuntimeHostStatus = "unavailable";
+        lifecycle.extensionRuntimeHostReason = "host_api_upgrade_required";
+        input.logger.warn(
+          "marketplace",
+          `installed marketplace plugin requires isolated Host API ${BELLDANDY_ISOLATED_EXTENSION_HOST_API_VERSION}: ${extension.id}`,
+        );
+        continue;
+      }
+      if (!input.extensionRuntimeAdapter || !input.hookRegistry) {
+        lifecycle.installedMarketplacePluginsSkipped! += 1;
+        lifecycle.extensionRuntimeHostStatus = "unavailable";
+        lifecycle.extensionRuntimeHostReason = input.extensionRuntimeUnavailableReason ?? "sandbox_unavailable";
+        input.logger.warn(
+          "marketplace",
+          `installed marketplace plugin load skipped because the sandbox-required Extension Host is unavailable: ${extension.id}`,
+        );
+        continue;
+      }
+      hostedRuntimeGrants.push({
+        extensionId: extension.id,
+        extensionName: extension.name,
+        installPath: verified.installPath,
+        pluginModuleRelativePath: manifest.entry.pluginModule!,
+        contentSha256: extension.contentSha256!,
+        hostApi: manifest.compatibility.hostApi,
+        permissions: [...(manifest.permissions ?? [])],
+        runtimeCapabilities: [...(manifest.runtime?.capabilities ?? [])],
+        skillDirs: (manifest.entry.skillDirs ?? []).map((relativePath, index) => ({
+          relativePath: relativePath.replace(/\\/g, "/"),
+          absolutePath: verified.skillDirs[index]!,
+        })),
+      });
     } catch (error) {
       if (error instanceof PluginRegistryRegistrationError) {
         throw error;
@@ -291,6 +341,7 @@ export async function initializeExtensionHost(
     );
   }
 
+  let extensionRuntimeSupervisor: ExtensionRuntimeSupervisor | undefined;
   try {
     const bundledCount = await skillRegistry.loadBundledSkills(input.bundledSkillsDir);
     lifecycle.bundledSkillsLoaded = bundledCount;
@@ -316,6 +367,43 @@ export async function initializeExtensionHost(
       if (pluginCount > 0) input.logger.info("skills", `loaded ${pluginCount} plugin skills`);
     }
 
+    if (hostedRuntimeGrants.length > 0 && input.extensionRuntimeAdapter && input.hookRegistry) {
+      extensionRuntimeSupervisor = new ExtensionRuntimeSupervisor({
+        stateDir: input.stateDir,
+        adapter: input.extensionRuntimeAdapter,
+        toolExecutor: input.toolExecutor,
+        hookRegistry: input.hookRegistry,
+        skillRegistry,
+      });
+      lifecycle.extensionRuntimeHostStatus = "active";
+      delete lifecycle.extensionRuntimeHostReason;
+      for (const grant of hostedRuntimeGrants) {
+        try {
+          await extensionRuntimeSupervisor.activateVerifiedExtension(grant);
+          const session = extensionRuntimeSupervisor.getSnapshot().sessions
+            .find((item) => item.extensionId === grant.extensionId);
+          lifecycle.hostedMarketplacePluginToolsRegistered! += session?.toolNames.length ?? 0;
+          lifecycle.pluginSkillsLoaded += session?.skillCount ?? 0;
+          lifecycle.installedMarketplaceExtensionsLoaded += 1;
+          lifecycle.installedMarketplacePluginsLoaded += 1;
+          input.toolsConfigManager.registerPluginTools(grant.extensionId, session?.toolNames ?? []);
+        } catch (error) {
+          lifecycle.installedMarketplacePluginsSkipped! += 1;
+          input.logger.warn(
+            "marketplace",
+            `installed extension runtime activation skipped: ${grant.extensionId}: ${String(error)}`,
+            error,
+          );
+        }
+      }
+      if (lifecycle.installedMarketplacePluginsLoaded > 0) {
+        input.logger.info(
+          "marketplace",
+          `activated ${lifecycle.installedMarketplacePluginsLoaded} marketplace plugin(s) in the isolated Extension Host`,
+        );
+      }
+    }
+
     input.logger.info("skills", `total: ${skillRegistry.size} skills loaded`);
     registerGlobalSkillRegistry(skillRegistry);
   } catch (error) {
@@ -329,6 +417,7 @@ export async function initializeExtensionHost(
     pluginRegistry,
     skillRegistry,
     toolsConfigManager: input.toolsConfigManager,
+    hostedExtensionRuntime: extensionRuntimeSupervisor?.getSnapshot(),
   });
   const skillManagementToolsRegistered = extensionRuntime.registry.skillManagementTools
     .filter((item) => item.shouldRegister)
@@ -355,6 +444,7 @@ export async function initializeExtensionHost(
     pluginRegistry,
     skillRegistry,
     toolsConfigManager: input.toolsConfigManager,
+    hostedExtensionRuntime: extensionRuntimeSupervisor?.getSnapshot(),
   });
   const promptSkills = listEnabledPromptSkills({
     skillRegistry,
@@ -378,6 +468,7 @@ export async function initializeExtensionHost(
     promptSkills,
     searchableSkills,
     lifecycle,
+    ...(extensionRuntimeSupervisor ? { extensionRuntimeSupervisor } : {}),
   };
 }
 

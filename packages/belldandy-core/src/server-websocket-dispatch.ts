@@ -50,7 +50,10 @@ import type { ToolsConfigManager } from "./tools-config.js";
 import type { SubTaskRecord, SubTaskRuntimeStore } from "./task-runtime.js";
 import type { GatewayWebSocketConnectionContext } from "./server-websocket-runtime.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
+import type { WorkspaceChangeReviewRuntime } from "./workspace-change-review.js";
 import type { WorkspaceRevisionRuntime } from "./workspace-revision.js";
+import type { UserWorktreeRuntime } from "./user-worktree-runtime.js";
+import type { RemoteDeliveryRuntime } from "./remote-delivery-runtime.js";
 import type { CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
 import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 
@@ -119,7 +122,7 @@ export type GatewayWebSocketRequestContext = {
   setGovernanceDetailMode?: (value: string | undefined) => void;
   sttTranscribe?: (opts: TranscribeOptions) => Promise<TranscribeResult | null>;
   pluginRegistry?: PluginRegistry;
-  extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle">;
+  extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle" | "extensionRuntimeSupervisor">;
   skillRegistry?: SkillRegistry;
   goalManager?: GoalManager;
   subTaskRuntimeStore?: SubTaskRuntimeStore;
@@ -155,6 +158,12 @@ export type GatewayWebSocketRequestContext = {
   workflowRuntime?: import("@belldandy/skills").WorkflowRuntimeCapabilities;
   /** 受控文件工具的用户轮次恢复点运行时。 */
   workspaceRevisionRuntime?: WorkspaceRevisionRuntime;
+  /** 只读的 restore 后变更审查重判运行时。 */
+  workspaceChangeReviewRuntime?: WorkspaceChangeReviewRuntime;
+  /** 用户级受管 worktree 的只读状态投影。 */
+  userWorktreeRuntime?: UserWorktreeRuntime;
+  /** receipt-bound remote push / pull request owner。 */
+  remoteDeliveryRuntime?: RemoteDeliveryRuntime;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
   commanderMode?: "on" | "off" | "auto";
   /** 发送前附件/长输入压缩策略。业务逻辑在 query runtime 内执行，这里只透传配置。 */
@@ -240,6 +249,9 @@ export function buildGatewayWebSocketRequestContext(
     stopSubTask: options.stopSubTask,
     workflowRuntime: options.workflowRuntime,
     workspaceRevisionRuntime: options.workspaceRevisionRuntime,
+    workspaceChangeReviewRuntime: options.workspaceChangeReviewRuntime,
+    userWorktreeRuntime: options.userWorktreeRuntime,
+    remoteDeliveryRuntime: options.remoteDeliveryRuntime,
     tokenUsageUploadConfig: options.tokenUsageUploadConfig,
     broadcast: options.broadcast,
     broadcastEvent: options.broadcastEvent,

@@ -38,6 +38,9 @@ export type GatewayShutdownResources = {
   browserRelay?: AsyncCloseHandle;
   shutdownAgentBridge?: () => Promise<unknown>;
   shutdownCommandJobs?: () => Promise<unknown>;
+  extensionRuntime?: {
+    dispose: () => Promise<void>;
+  };
 };
 
 function createDeferredDrain(stop: () => Promise<void>): {
@@ -224,6 +227,13 @@ export function registerGatewayShutdownResources(
       id: "channels",
       phase: "close_external",
       run: channelDrain.wait,
+    });
+  }
+  if (resources.extensionRuntime) {
+    coordinator.register({
+      id: "extension-runtime",
+      phase: "close_external",
+      run: () => resources.extensionRuntime!.dispose(),
     });
   }
   if (resources.shutdownMcp) {

@@ -1,9 +1,11 @@
 import type { GatewayReqFrame, GatewayResFrame } from "@belldandy/protocol";
 
+import type { WorkspaceChangeReviewRuntime } from "../workspace-change-review.js";
 import type { WorkspaceRevisionRuntime } from "../workspace-revision.js";
 
 type WorkspaceRevisionMethodContext = {
   runtime?: WorkspaceRevisionRuntime;
+  reviewRuntime?: WorkspaceChangeReviewRuntime;
 };
 
 function asParams(value: unknown): Record<string, unknown> | undefined {
@@ -25,10 +27,54 @@ function readRevisionLookup(value: unknown):
   return { ok: true, value: { revisionId, ...(workspaceId ? { workspaceId } : {}) } };
 }
 
+function readReviewReceiptLookup(value: unknown):
+  | { ok: true; value: { reviewId: string; receiptId: string } }
+  | { ok: false; message: string } {
+  const params = asParams(value);
+  const reviewId = typeof params?.reviewId === "string" ? params.reviewId.trim() : "";
+  const receiptId = typeof params?.receiptId === "string" ? params.receiptId.trim() : "";
+  if (!reviewId) return { ok: false, message: "reviewId must be a non-empty string" };
+  if (!receiptId) return { ok: false, message: "receiptId must be a non-empty string" };
+  if (!params || Object.keys(params).some((key) => key !== "reviewId" && key !== "receiptId")) {
+    return { ok: false, message: "params contains unsupported fields" };
+  }
+  return { ok: true, value: { reviewId, receiptId } };
+}
+
 export async function handleWorkspaceRevisionMethod(
   req: GatewayReqFrame,
   ctx: WorkspaceRevisionMethodContext,
 ): Promise<GatewayResFrame> {
+  if (req.method === "workspace.change.review.verify_after_restore") {
+    if (!ctx.reviewRuntime) {
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { code: "unsupported", message: "Workspace change review runtime is unavailable." },
+      };
+    }
+    const parsed = readReviewReceiptLookup(req.params);
+    if (!parsed.ok) {
+      return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: parsed.message } };
+    }
+    try {
+      return {
+        type: "res",
+        id: req.id,
+        ok: true,
+        payload: await ctx.reviewRuntime.verifyAfterRestoreReceipt(parsed.value),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { code: "workspace_change_review_failed", message },
+      };
+    }
+  }
   if (!ctx.runtime) {
     return {
       type: "res",

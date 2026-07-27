@@ -273,4 +273,71 @@ describe("coding-run NDJSON stdio transport", () => {
       error: { code: "invalid_request", message: "Invalid coding run conversation request." },
     }]);
   });
+
+  it("routes a read-only artifact request without changing existing frame kinds", async () => {
+    const output: string[] = [];
+    const handleArtifact = vi.fn(async (artifact) => ({
+      revisionId: artifact.revisionId,
+      changes: [{ relativePath: "result.txt", action: "restore" }],
+    }));
+    const server = createCodingRunNdjsonServer({
+      write: (line) => { output.push(line); },
+      handleControl: async () => undefined,
+      handleArtifact,
+    });
+
+    await server.consume(`${JSON.stringify({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "artifact.request",
+      id: "artifact-1",
+      artifact: {
+        revisionId: "run-1",
+        workspaceId: "workspace-1",
+      },
+    })}\n`);
+
+    expect(handleArtifact).toHaveBeenCalledWith({
+      revisionId: "run-1",
+      workspaceId: "workspace-1",
+    });
+    expect(output.map((line) => JSON.parse(line))).toEqual([{
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "artifact.response",
+      id: "artifact-1",
+      ok: true,
+      result: {
+        revisionId: "run-1",
+        changes: [{ relativePath: "result.txt", action: "restore" }],
+      },
+    }]);
+  });
+
+  it("correlates an artifact response in the low-level TypeScript transport", async () => {
+    const written: string[] = [];
+    const client = new CodingRunNdjsonClient({
+      write: (line) => { written.push(line); },
+      createRequestId: () => "artifact-client-1",
+    });
+
+    const pending = client.artifact({ revisionId: "run-1" });
+    expect(JSON.parse(written[0])).toEqual({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "artifact.request",
+      id: "artifact-client-1",
+      artifact: { revisionId: "run-1" },
+    });
+
+    client.consume(`${JSON.stringify({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "artifact.response",
+      id: "artifact-client-1",
+      ok: true,
+      result: { revisionId: "run-1", canRestore: true },
+    })}\n`);
+
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      result: { revisionId: "run-1", canRestore: true },
+    });
+  });
 });

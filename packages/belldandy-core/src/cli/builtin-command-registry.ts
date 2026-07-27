@@ -90,7 +90,7 @@ const BUILTIN_CLI_COMMANDS: readonly CommandDescriptor[] = [
     visibility: "public",
     channels: ["cli"],
     safeScopes: ["local-safe"],
-    description: "Bridge coding run controls over local NDJSON stdio",
+    description: "Bridge coding runs over local NDJSON or MCP stdio",
     handler: async () => (await import("./commands/coding-run.js")).default,
   },
   {

@@ -5,6 +5,7 @@ import type { PluginLoadErrorRecord } from "@belldandy/plugins";
 import type { SkillDefinition, SkillRegistry } from "@belldandy/skills";
 
 import type { ToolsConfigManager } from "./tools-config.js";
+import type { ExtensionRuntimeSupervisorSnapshot } from "./extension-runtime-supervisor.js";
 
 export const SKILL_MANAGEMENT_TOOL_NAMES = ["skills_list", "skills_search", "skill_get"] as const;
 
@@ -28,6 +29,7 @@ type ExtensionPluginRuntimeItem = {
   toolNames: string[];
   skillDirs: string[];
   disabled: boolean;
+  executionMode: "privileged_legacy" | "sandboxed_marketplace";
 };
 
 type ExtensionRegistryPlan = {
@@ -114,17 +116,29 @@ export function buildExtensionRuntimeReport(input: {
   pluginRegistry?: PluginRegistry;
   skillRegistry?: SkillRegistry;
   toolsConfigManager?: ToolsConfigManager;
+  hostedExtensionRuntime?: ExtensionRuntimeSupervisorSnapshot;
 }): ExtensionRuntimeReport {
   const disabled = getDisabledConfig(input.toolsConfigManager);
 
   const pluginDiagnostics = input.pluginRegistry?.getDiagnostics();
   const pluginHookMetrics = pluginDiagnostics?.hookMetrics ?? [];
   const pluginHookPolicies = pluginDiagnostics?.hookPolicies ?? [];
-  const plugins = (input.pluginRegistry?.listPlugins() ?? []).map((plugin) => ({
+  const plugins: ExtensionPluginRuntimeItem[] = (input.pluginRegistry?.listPlugins() ?? []).map((plugin) => ({
     ...plugin,
     toolNames: [...plugin.toolNames].sort((a, b) => a.localeCompare(b)),
     disabled: disabled.plugins.includes(plugin.id),
+    executionMode: "privileged_legacy" as const,
   }));
+  for (const hosted of input.hostedExtensionRuntime?.sessions ?? []) {
+    plugins.push({
+      id: hosted.extensionId,
+      name: hosted.extensionName,
+      toolNames: [...hosted.toolNames].sort((a, b) => a.localeCompare(b)),
+      skillDirs: [],
+      disabled: disabled.plugins.includes(hosted.extensionId),
+      executionMode: "sandboxed_marketplace",
+    });
+  }
 
   const skills = (input.skillRegistry?.listSkills() ?? [])
     .map((skill) => {

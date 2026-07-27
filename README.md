@@ -667,11 +667,23 @@ BELLDANDY_EMBEDDING_MODEL=text-embedding-3-large
 # BELLDANDY_COMMAND_SANDBOX_BACKEND=oci
 # BELLDANDY_COMMAND_SANDBOX_OCI_RUNTIME=docker
 # BELLDANDY_COMMAND_SANDBOX_OCI_IMAGE=registry.example.com/belldandy-command-sandbox@sha256:<64-hex-digest>
+
+# Marketplace Plugin 隔离 Host：未配置/不可用时跳过 Plugin，不回退进程内执行
+# BELLDANDY_EXTENSION_HOST_BACKEND=oci
+# BELLDANDY_EXTENSION_HOST_OCI_RUNTIME=docker
+# BELLDANDY_EXTENSION_HOST_OCI_IMAGE=registry.example.com/belldandy-extension-host@sha256:<64-hex-digest>
+
+# 受控 push/PR：默认无 allowlist 时全部拒绝；remote URL、push branch 与 PR base 均 exact match
+# BELLDANDY_REMOTE_DELIVERY_TARGETS_JSON=[{"remote":"private","url":"https://github.com/example/private.git","pushBranches":["main","feature/exact"],"pullRequestBases":["main"],"repository":"example/private"}]
 ```
 
 工具策略文件现已提供三挡示例：
 
 手动执行 corepack pnpm verify:command-sandbox-oci 可验证根文件系统只读、工作区读写边界、网络隔离、pipe/PTY job 输出与 resize/cancel，以及容器回收。它只使用已运行的本机 daemon 与预加载镜像，不会启动 daemon 或拉取镜像；该镜像需要包含 node。
+
+Marketplace `hostApi: 2` Plugin 必须声明 `runtime.capabilities: []`，并只在 sandbox-required Extension Host 中执行；`hostApi: 1` Plugin 不再自动执行，v1 数据型 skill-pack 继续兼容。`stateDir/plugins` 属于管理员显式信任的 `privileged_legacy` 路径，仍在 Gateway 进程内运行。可用 `corepack pnpm verify:extension-runtime-oci` 显式验证模块顶层、activate、Tool/Hook 的 sentinel 隔离和容器/lease 回收；该命令同样不会启动 daemon 或拉取镜像。
+
+远端 Git 交付默认关闭。配置 `BELLDANDY_REMOTE_DELIVERY_TARGETS_JSON` 后，Gateway 仍只接受 pairing-protected preview/confirm：receipt 会绑定 repo、HEAD、upstream、remote URL hash、远端目标 OID、branch 与 diff hash，确认前全部复核；push 固定使用非 force exact refspec，成功后以 `ls-remote` 复核。TUI Changes 仅在当前 branch 恰好匹配一个 allowlist target 时提供受控 push；PR 通过同一 Gateway 契约执行，正文只经 stdin 交给已登录的 GitHub CLI，不写入 receipt/audit。自动 merge、tag、release 与生产发布不在此能力范围内。
 
 - `config/tools-policy.strict.json`：最保守档
 - `config/tools-policy.balanced.json`：平衡推荐档

@@ -171,6 +171,148 @@ describe("PluginRegistry", () => {
     expect(registry.getAllTools()).toHaveLength(1);
   });
 
+  it("rejects a tool registration outside the activation policy", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-policy-"));
+    tempDirs.push(dir);
+    const pluginPath = path.join(dir, "policy-plugin.mjs");
+    await fs.writeFile(
+      pluginPath,
+      [
+        "export default {",
+        "  id: 'policy-plugin',",
+        "  name: 'Policy Plugin',",
+        "  async activate(context) {",
+        "    context.registerTool({",
+        "      definition: { name: 'undeclared_tool', description: 'blocked', parameters: { type: 'object', properties: {} } },",
+        "      async execute() { return { id: '', name: 'undeclared_tool', success: true, output: 'blocked' }; },",
+        "    });",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const registry = new PluginRegistry();
+    await expect(registry.loadPlugin(pluginPath, {
+      allowedToolNames: [],
+      allowedHookNames: [],
+      allowedSkillDirs: [],
+    })).rejects.toBeInstanceOf(PluginRegistryRegistrationError);
+    expect(registry.getPluginIds()).toEqual([]);
+    expect(registry.getAllTools()).toEqual([]);
+  });
+
+  it("rejects an undeclared hook in a staged hook registration", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-hook-policy-"));
+    tempDirs.push(dir);
+    const pluginPath = path.join(dir, "hook-policy-plugin.mjs");
+    await fs.writeFile(
+      pluginPath,
+      [
+        "export default {",
+        "  id: 'hook-policy-plugin',",
+        "  name: 'Hook Policy Plugin',",
+        "  async activate(context) {",
+        "    context.registerHooks({ beforeRun() {}, afterRun() {} });",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const registry = new PluginRegistry();
+    await expect(registry.loadPlugin(pluginPath, {
+      allowedToolNames: [],
+      allowedHookNames: ["beforeRun"],
+      allowedSkillDirs: [],
+    })).rejects.toThrow("Plugin hook registration is not approved: afterRun");
+    expect(registry.getPluginIds()).toEqual([]);
+    expect(registry.getLegacyHookAvailability()).toEqual({
+      beforeRun: false,
+      afterRun: false,
+      beforeToolCall: false,
+      afterToolCall: false,
+    });
+  });
+
+  it("rejects a skill directory outside the activation policy", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-skill-policy-"));
+    tempDirs.push(dir);
+    const pluginPath = path.join(dir, "skill-policy-plugin.mjs");
+    const approvedDir = path.join(dir, "approved-skills");
+    const unapprovedDir = path.join(dir, "unapproved-skills");
+    await fs.writeFile(
+      pluginPath,
+      [
+        "export default {",
+        "  id: 'skill-policy-plugin',",
+        "  name: 'Skill Policy Plugin',",
+        "  async activate(context) {",
+        `    context.registerSkillDir(${JSON.stringify(unapprovedDir)});`,
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const registry = new PluginRegistry();
+    await expect(registry.loadPlugin(pluginPath, {
+      allowedToolNames: [],
+      allowedHookNames: [],
+      allowedSkillDirs: [approvedDir],
+    })).rejects.toThrow("Plugin skill directory registration is not approved");
+    expect(registry.getPluginIds()).toEqual([]);
+    expect(registry.getPluginSkillDirs()).toEqual(new Map());
+  });
+
+  it("loads registrations that exactly match the activation policy", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-policy-allowed-"));
+    tempDirs.push(dir);
+    const skillDir = path.join(dir, "skills");
+    const pluginPath = path.join(dir, "allowed-plugin.mjs");
+    await fs.writeFile(
+      pluginPath,
+      [
+        "export default {",
+        "  id: 'allowed-plugin',",
+        "  name: 'Allowed Plugin',",
+        "  async activate(context) {",
+        "    context.registerTool({",
+        "      definition: { name: 'allowed_tool', description: 'allowed', parameters: { type: 'object', properties: {} } },",
+        "      async execute() { return { id: '', name: 'allowed_tool', success: true, output: 'allowed' }; },",
+        "    });",
+        "    context.registerHooks({ beforeToolCall() {} });",
+        `    context.registerSkillDir(${JSON.stringify(skillDir)});`,
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const registry = new PluginRegistry();
+    await registry.loadPlugin(pluginPath, {
+      allowedToolNames: ["allowed_tool"],
+      allowedHookNames: ["beforeToolCall"],
+      allowedSkillDirs: [skillDir],
+    });
+
+    expect(registry.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "allowed-plugin",
+        toolNames: ["allowed_tool"],
+        skillDirs: [skillDir],
+      }),
+    ]);
+    expect(registry.getLegacyHookAvailability().beforeToolCall).toBe(true);
+  });
+
   it("serializes concurrent plugin loads to preserve unique tool ownership", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-plugin-registry-concurrent-load-"));

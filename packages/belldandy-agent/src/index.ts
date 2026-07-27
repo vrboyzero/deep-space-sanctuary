@@ -245,7 +245,20 @@ export type AgentRunInput = {
   roomContext?: RoomContext;
   /** 外部中断信号（用于停止当前 run） */
   abortSignal?: AbortSignal;
+  /** 仅由可信运行时注入；普通 RPC 调用方不得构造。 */
+  steering?: AgentRunSteeringMailbox;
 };
+
+export type AgentRunSteerCommand = {
+  commandId: string;
+  prompt: string;
+};
+
+export interface AgentRunSteeringMailbox {
+  consumePending(input: { modelCallIndex: number }): Promise<AgentRunSteerCommand[]>;
+  /** 无待处理输入时原子关闭 mailbox；返回 false 表示调用方应继续下一次模型调用。 */
+  sealIfIdle(): boolean;
+}
 
 export type AgentRunPromptOverride = {
   text: string;
@@ -435,6 +448,8 @@ export type AgentStreamItem =
 export type CodingRunCapabilities = {
   /** 运行时是否可以基于真实模型定价强制 maxCostUsd。 */
   maxCostUsd: boolean;
+  /** 仅表示可在下一次模型调用前注入，不表示可修改已发出的 Provider stream。 */
+  steerAtModelBoundary?: boolean;
 };
 
 export interface BelldandyAgent {

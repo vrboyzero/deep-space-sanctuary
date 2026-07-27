@@ -73,6 +73,120 @@ describe("WorkspaceChangeSnapshotRuntime", () => {
     await expect(fs.readFile(snapshot.artifacts.patchPath, "utf-8")).resolves.toContain("diff --git a/note.txt b/note.txt");
   });
 
+  it("projects a unique bounded text near-rename with its similarity and content hunk", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-near-rename-");
+    const previousPath = path.join(fixture.workspaceRoot, "docs", "guide.txt");
+    const nextPath = path.join(fixture.workspaceRoot, "docs", "guide-v2.txt");
+    await fs.mkdir(path.dirname(previousPath), { recursive: true });
+    await fs.writeFile(previousPath, "alpha\nbeta\ngamma\ndelta\nepsilon\n", "utf-8");
+    const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+    const baseline = await runtime.captureBaseline({
+      baselineId: "near-rename-1",
+      workspaceRoot: fixture.workspaceRoot,
+      source: "run_start",
+    });
+    await fs.rm(previousPath);
+    await fs.writeFile(nextPath, "alpha\nbeta\ngamma\ndelta\nzeta\n", "utf-8");
+
+    const snapshot = await runtime.createSnapshot({ baselineId: baseline.baselineId });
+    const page = await runtime.readSnapshotPage({ snapshotId: snapshot.snapshotId });
+
+    expect(snapshot.files).toEqual([expect.objectContaining({
+      path: "docs/guide-v2.txt",
+      previousPath: "docs/guide.txt",
+      status: "renamed",
+      renameSimilarity: 0.8,
+      diffAvailable: true,
+    })]);
+    expect(page.hunks).toEqual([expect.objectContaining({
+      path: "docs/guide-v2.txt",
+      previousPath: "docs/guide.txt",
+      patch: expect.stringContaining("-epsilon"),
+    })]);
+    expect(page.hunks[0]?.patch).toContain("+zeta");
+  });
+
+  it("keeps low-similarity text moves as separate deletion and addition", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-low-similarity-rename-");
+    const previousPath = path.join(fixture.workspaceRoot, "docs", "guide.txt");
+    const nextPath = path.join(fixture.workspaceRoot, "docs", "guide-v2.txt");
+    await fs.mkdir(path.dirname(previousPath), { recursive: true });
+    await fs.writeFile(previousPath, "alpha\nbeta\ngamma\ndelta\nepsilon\n", "utf-8");
+    const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+    const baseline = await runtime.captureBaseline({
+      baselineId: "low-similarity-rename-1",
+      workspaceRoot: fixture.workspaceRoot,
+      source: "run_start",
+    });
+    await fs.rm(previousPath);
+    await fs.writeFile(nextPath, "alpha\nbeta\nzeta\neta\ntheta\n", "utf-8");
+
+    const snapshot = await runtime.createSnapshot({ baselineId: baseline.baselineId });
+
+    expect(snapshot.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "docs/guide.txt", status: "deleted" }),
+      expect.objectContaining({ path: "docs/guide-v2.txt", status: "added" }),
+    ]));
+    expect(snapshot.files).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "renamed" }),
+    ]));
+  });
+
+  it("keeps an ambiguous near-rename as separate additions and deletions", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-ambiguous-rename-");
+    const firstPath = path.join(fixture.workspaceRoot, "docs", "first.txt");
+    const secondPath = path.join(fixture.workspaceRoot, "docs", "second.txt");
+    const nextPath = path.join(fixture.workspaceRoot, "docs", "guide-v2.txt");
+    const source = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
+    await fs.mkdir(path.dirname(firstPath), { recursive: true });
+    await Promise.all([fs.writeFile(firstPath, source, "utf-8"), fs.writeFile(secondPath, source, "utf-8")]);
+    const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+    const baseline = await runtime.captureBaseline({
+      baselineId: "ambiguous-rename-1",
+      workspaceRoot: fixture.workspaceRoot,
+      source: "run_start",
+    });
+    await Promise.all([fs.rm(firstPath), fs.rm(secondPath)]);
+    await fs.writeFile(nextPath, "alpha\nbeta\ngamma\ndelta\nzeta\n", "utf-8");
+
+    const snapshot = await runtime.createSnapshot({ baselineId: baseline.baselineId });
+
+    expect(snapshot.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "docs/first.txt", status: "deleted" }),
+      expect.objectContaining({ path: "docs/second.txt", status: "deleted" }),
+      expect.objectContaining({ path: "docs/guide-v2.txt", status: "added" }),
+    ]));
+    expect(snapshot.files).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "renamed" }),
+    ]));
+  });
+
+  it("does not use binary content for a near-rename", async () => {
+    const fixture = await createFixture("belldandy-change-snapshot-binary-rename-");
+    const previousPath = path.join(fixture.workspaceRoot, "data", "before.bin");
+    const nextPath = path.join(fixture.workspaceRoot, "data", "after.bin");
+    await fs.mkdir(path.dirname(previousPath), { recursive: true });
+    await fs.writeFile(previousPath, Buffer.from([0, 1, 2, 3, 4, 5]));
+    const runtime = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+    const baseline = await runtime.captureBaseline({
+      baselineId: "binary-rename-1",
+      workspaceRoot: fixture.workspaceRoot,
+      source: "run_start",
+    });
+    await fs.rm(previousPath);
+    await fs.writeFile(nextPath, Buffer.from([0, 1, 2, 3, 4, 6]));
+
+    const snapshot = await runtime.createSnapshot({ baselineId: baseline.baselineId });
+
+    expect(snapshot.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "data/before.bin", status: "deleted", binary: true }),
+      expect.objectContaining({ path: "data/after.bin", status: "added", binary: true }),
+    ]));
+    expect(snapshot.files).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "renamed" }),
+    ]));
+  });
+
   it("persists an exact checkpoint recovery only when the supplied checkpoint covers the snapshot", async () => {
     const fixture = await createFixture("belldandy-change-snapshot-recovery-");
     await fs.writeFile(path.join(fixture.workspaceRoot, "note.txt"), "before\n", "utf-8");
@@ -247,9 +361,15 @@ describe("WorkspaceChangeSnapshotRuntime", () => {
     const worktreeSnapshot = await runtime.createSnapshot({ baselineId: worktreeBaseline.baselineId });
     const headPage = await runtime.readSnapshotPage({ snapshotId: headSnapshot.snapshotId });
     const worktreePage = await runtime.readSnapshotPage({ snapshotId: worktreeSnapshot.snapshotId });
+    const rereadWorktreeBaseline = await runtime.readBaseline({ baselineId: worktreeBaseline.baselineId });
 
     expect(headBaseline).toMatchObject({ source: "git_head", revision: headRevision });
     expect(worktreeBaseline).toMatchObject({ source: "worktree_base", revision: baseRevision });
+    expect(rereadWorktreeBaseline).toMatchObject({
+      baselineId: worktreeBaseline.baselineId,
+      source: "worktree_base",
+      revision: baseRevision,
+    });
     expect(headPage.hunks.find((hunk) => hunk.path === "tracked.txt")?.patch).toContain("-head revision");
     expect(worktreePage.hunks.find((hunk) => hunk.path === "tracked.txt")?.patch).toContain("-worktree base");
     expect(headSnapshot.diffHash).not.toBe(worktreeSnapshot.diffHash);

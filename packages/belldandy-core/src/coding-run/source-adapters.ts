@@ -17,6 +17,21 @@ export type CodingRunAdapterStatus =
   | "cancelled"
   | "interrupted";
 
+export type ConversationCodingRunView = {
+  source: "conversation";
+  status: CodingRunAdapterStatus;
+  recovery: { operation: "conversation.continue" };
+  binding: CodingContextBinding & { conversationId: string };
+  evidence: {
+    registryState: "running" | "stop_requested" | "stopped";
+    agentId?: string;
+    startedAtMs: number;
+    stopRequestedAtMs?: number;
+    stoppedAtMs?: number;
+    hasStopReason: boolean;
+  };
+};
+
 export type GoalCodingRunView = {
   source: "goal";
   status: CodingRunAdapterStatus;
@@ -48,6 +63,38 @@ export type WorkflowJournalCodingRunView = {
   };
 };
 
+export type WorkflowRuntimeCodingRunView = {
+  source: "workflow";
+  status: CodingRunAdapterStatus;
+  recovery: { operation: "workflow.resume" };
+  binding: CodingContextBinding;
+  evidence: {
+    runtimeStatus: "running" | "stopping" | "partial" | "done" | "error" | "budget_exceeded";
+    stopRequested: boolean;
+    total: number;
+    pending: number;
+    done: number;
+    errors: number;
+    skipped: number;
+    totalTokens: number;
+    cacheHits: number;
+    hasError: boolean;
+  };
+};
+
+export type RuntimeLostCodingRunView = {
+  source: "conversation" | "workflow";
+  status: "interrupted";
+  recovery: { operation: "conversation.continue" | "workflow.resume" };
+  binding: CodingContextBinding;
+  evidence: {
+    runtimeState: "lost";
+    lastObservedState: "active";
+    startedAtMs: number;
+    lastObservedAtMs: number;
+  };
+};
+
 export type SubtaskCodingRunView = {
   source: "subtask";
   status: CodingRunAdapterStatus;
@@ -68,8 +115,11 @@ export type SubtaskCodingRunView = {
 };
 
 export type CodingRunSourceView =
+  | ConversationCodingRunView
   | GoalCodingRunView
   | WorkflowJournalCodingRunView
+  | WorkflowRuntimeCodingRunView
+  | RuntimeLostCodingRunView
   | SubtaskCodingRunView;
 
 type GoalCodingRunViewInput = {
@@ -90,6 +140,20 @@ type GoalCodingRunViewInput = {
   runId?: string;
 };
 
+type ConversationCodingRunViewInput = {
+  handle: {
+    conversationId: string;
+    runId: string;
+    agentId?: string;
+    startedAt: number;
+    state: "running" | "stop_requested" | "stopped";
+    stopRequestedAt?: number;
+    stoppedAt?: number;
+    stopReason?: string;
+    stop: (reason?: string) => boolean | Promise<boolean>;
+  };
+};
+
 type WorkflowJournalCodingRunViewInput = {
   /** 由 WorkflowRuntime 为单次执行生成，不能使用可复用的 Journal record id 代替。 */
   workflowRunId: string;
@@ -106,6 +170,25 @@ type WorkflowJournalCodingRunViewInput = {
     result: string | null;
     resultJson: string | null;
     error: string | null;
+  };
+};
+
+type WorkflowRuntimeCodingRunViewInput = {
+  status: {
+    workflowRunId: string;
+    journalId: string;
+    status: "running" | "stopping" | "partial" | "done" | "error" | "budget_exceeded";
+    stopRequested?: boolean;
+    stats: {
+      total: number;
+      pending: number;
+      done: number;
+      errors: number;
+      skipped: number;
+      totalTokens: number;
+      cacheHits: number;
+    };
+    error?: string;
   };
 };
 
@@ -128,6 +211,34 @@ type SubtaskCodingRunViewInput = {
     };
   };
 };
+
+/**
+ * ConversationRunRegistry 是 active Conversation 的唯一 owner；投影不暴露 stop callback 或原因正文。
+ */
+export function createConversationCodingRunView(
+  input: ConversationCodingRunViewInput,
+): ConversationCodingRunView {
+  const conversationId = requireIdentifier(input.handle.conversationId, "Conversation id");
+  const agentRunId = requireIdentifier(input.handle.runId, "Conversation run id");
+  return {
+    source: "conversation",
+    status: input.handle.state === "stopped" ? "cancelled" : "running",
+    recovery: { operation: "conversation.continue" },
+    binding: { agentRunId, conversationId },
+    evidence: {
+      registryState: input.handle.state,
+      ...(firstIdentifier(input.handle.agentId) ? { agentId: firstIdentifier(input.handle.agentId) } : {}),
+      startedAtMs: toTimestamp(input.handle.startedAt),
+      ...(typeof input.handle.stopRequestedAt === "number"
+        ? { stopRequestedAtMs: toTimestamp(input.handle.stopRequestedAt) }
+        : {}),
+      ...(typeof input.handle.stoppedAt === "number"
+        ? { stoppedAtMs: toTimestamp(input.handle.stoppedAt) }
+        : {}),
+      hasStopReason: Boolean(firstIdentifier(input.handle.stopReason)),
+    },
+  };
+}
 
 /**
  * 将 Goal 的既有状态投影为编程运行视图；不会推进 Goal 或 node 状态。
@@ -203,6 +314,74 @@ export function createWorkflowJournalCodingRunView(
   };
 }
 
+/** Active Workflow runtime projection; the runtime remains the execution-state owner. */
+export function createWorkflowRuntimeCodingRunView(
+  input: WorkflowRuntimeCodingRunViewInput,
+): WorkflowRuntimeCodingRunView {
+  const workflowRunId = requireIdentifier(input.status.workflowRunId, "Workflow runtime run id");
+  const journalId = requireIdentifier(input.status.journalId, "Workflow Journal id");
+  return {
+    source: "workflow",
+    status: mapWorkflowRuntimeStatus(input.status.status),
+    recovery: { operation: "workflow.resume" },
+    binding: {
+      agentRunId: workflowRunId,
+      workflow: { journalId, workflowRunId },
+    },
+    evidence: {
+      runtimeStatus: input.status.status,
+      stopRequested: input.status.stopRequested === true,
+      total: toCount(input.status.stats.total),
+      pending: toCount(input.status.stats.pending),
+      done: toCount(input.status.stats.done),
+      errors: toCount(input.status.stats.errors),
+      skipped: toCount(input.status.stats.skipped),
+      totalTokens: toCount(input.status.stats.totalTokens),
+      cacheHits: toCount(input.status.stats.cacheHits),
+      hasError: Boolean(firstIdentifier(input.status.error)),
+    },
+  };
+}
+
+/** Persisted marker projection used only when the previous runtime owner is no longer alive. */
+export function createRuntimeLostCodingRunView(input: {
+  source: "conversation" | "workflow";
+  binding: CodingContextBinding;
+  startedAtMs: number;
+  updatedAtMs: number;
+}): RuntimeLostCodingRunView {
+  const agentRunId = requireIdentifier(input.binding.agentRunId, "Agent run id");
+  let binding: CodingContextBinding;
+  if (input.source === "conversation") {
+    binding = {
+      agentRunId,
+      conversationId: requireIdentifier(input.binding.conversationId ?? "", "Conversation id"),
+    };
+  } else {
+    const journalId = requireIdentifier(input.binding.workflow?.journalId ?? "", "Workflow Journal id");
+    const workflowRunId = requireIdentifier(input.binding.workflow?.workflowRunId ?? "", "Workflow runtime run id");
+    if (agentRunId !== workflowRunId) {
+      throw new Error("Workflow agent run id must match the runtime run id.");
+    }
+    binding = {
+      agentRunId,
+      workflow: { journalId, workflowRunId },
+    };
+  }
+  return {
+    source: input.source,
+    status: "interrupted",
+    recovery: { operation: input.source === "conversation" ? "conversation.continue" : "workflow.resume" },
+    binding,
+    evidence: {
+      runtimeState: "lost",
+      lastObservedState: "active",
+      startedAtMs: toTimestamp(input.startedAtMs),
+      lastObservedAtMs: toTimestamp(input.updatedAtMs),
+    },
+  };
+}
+
 /**
  * Commander/Subtask 的运行视图保留 taskId 与 agentRunId 的独立含义，不输出路径或正文。
  */
@@ -269,6 +448,15 @@ function mapWorkflowStatus(
     : "queued";
 }
 
+function mapWorkflowRuntimeStatus(
+  status: WorkflowRuntimeCodingRunViewInput["status"]["status"],
+): CodingRunAdapterStatus {
+  if (status === "running" || status === "stopping") return "running";
+  if (status === "done") return "completed";
+  if (status === "partial") return "interrupted";
+  return "failed";
+}
+
 function mapSubtaskStatus(
   status: SubTaskStatus,
   bridgeSessionState: "active" | "closed" | "runtime-lost" | "orphaned" | undefined,
@@ -296,4 +484,12 @@ function requireIdentifier(value: string, label: string): string {
     throw new Error(`${label} must be a non-empty string.`);
   }
   return normalized;
+}
+
+function toTimestamp(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+function toCount(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }

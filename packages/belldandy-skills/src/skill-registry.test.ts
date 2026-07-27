@@ -151,4 +151,28 @@ describe("SkillRegistry", () => {
       .rejects.toThrow(/Duplicate plugin skill registration: plugin-shared/);
     expect(registry.size).toBe(1);
   });
+
+  it("unloads one plugin owner and reveals the shadowed bundled skill", async () => {
+    const bundledDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-skill-registry-unload-bundled-"));
+    const pluginDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-skill-registry-unload-plugin-"));
+    tempDirs.push(bundledDir, pluginDir);
+    await writeSkill(bundledDir, "bundled", "shared-unload-skill");
+    await writeSkill(pluginDir, "plugin", "shared-unload-skill");
+
+    const registry = new SkillRegistry();
+    await registry.loadBundledSkills(bundledDir);
+    await registry.loadPluginSkills(new Map([["plugin-one", [pluginDir]]]));
+    expect(registry.getSkill("shared-unload-skill")?.source).toEqual({
+      type: "plugin",
+      pluginId: "plugin-one",
+    });
+
+    expect(registry.unloadPluginSkills("plugin-one")).toBe(1);
+    expect(registry.getSkill("shared-unload-skill")?.source).toEqual({ type: "bundled" });
+    expect(registry.getRegistryInventory()).toMatchObject({
+      totalSkillCount: 1,
+      catalogGeneration: 3,
+      shadowedNames: [],
+    });
+  });
 });

@@ -7,6 +7,50 @@ import {
 } from "./manifest.js";
 
 describe("manifest parsing", () => {
+  it("parses the Host API v2 runtime declaration separately from registration permissions", () => {
+    const manifest = parseExtensionManifest({
+      schemaVersion: 1,
+      name: "isolated-plugin",
+      kind: "plugin",
+      version: "1.0.0",
+      compatibility: { hostApi: 2 },
+      permissions: ["tool:pure_echo"],
+      runtime: { capabilities: [] },
+      entry: { pluginModule: "dist/plugin.mjs" },
+    });
+
+    expect(manifest.permissions).toEqual(["tool:pure_echo"]);
+    expect(manifest.runtime).toEqual({ capabilities: [] });
+  });
+
+  it("parses host compatibility and fine-grained activation permissions", () => {
+    const manifest = parseExtensionManifest({
+      schemaVersion: 1,
+      name: "trusted-plugin",
+      kind: "plugin",
+      version: "1.0.0",
+      compatibility: {
+        hostApi: 1,
+      },
+      permissions: [
+        "tool:trusted_search",
+        "hook:beforeToolCall",
+        "skill:skills\\common",
+      ],
+      entry: {
+        pluginModule: "dist/plugin.mjs",
+        skillDirs: ["skills/common"],
+      },
+    });
+
+    expect(manifest.compatibility).toEqual({ hostApi: 1 });
+    expect(manifest.permissions).toEqual([
+      "tool:trusted_search",
+      "hook:beforeToolCall",
+      "skill:skills/common",
+    ]);
+  });
+
   it("parses minimal plugin extension manifest", () => {
     const manifest = parseExtensionManifest({
       schemaVersion: 1,

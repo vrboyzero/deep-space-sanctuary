@@ -53,6 +53,39 @@ export type OciSandboxLeaseBinding = {
   cidFile: string;
 };
 
+export function resolveOciSandboxContainerUser(input: {
+  platform: NodeJS.Platform;
+  getUid?: () => number;
+  getGid?: () => number;
+}): string | undefined {
+  if (input.platform === "win32") return undefined;
+
+  const uid = input.getUid?.();
+  const gid = input.getGid?.();
+  if (
+    typeof uid !== "number"
+    || !Number.isSafeInteger(uid)
+    || uid < 0
+    || typeof gid !== "number"
+    || !Number.isSafeInteger(gid)
+    || gid < 0
+  ) {
+    return undefined;
+  }
+
+  return `${uid}:${gid}`;
+}
+
+function resolveCurrentOciSandboxContainerUser(): string | undefined {
+  const getUid = process.getuid;
+  const getGid = process.getgid;
+  return resolveOciSandboxContainerUser({
+    platform: process.platform,
+    getUid: typeof getUid === "function" ? getUid : undefined,
+    getGid: typeof getGid === "function" ? getGid : undefined,
+  });
+}
+
 const SANDBOX_UNAVAILABLE_MESSAGE =
   "Command execution is unavailable because this coding run requires an OS sandbox, but no usable sandbox backend is configured.";
 
@@ -227,6 +260,7 @@ export function buildOciSandboxInvocation(input: {
   const workspaceRoot = path.resolve(input.workspaceRoot);
   assertMountPath(workspaceRoot, "Sandbox workspace root");
   assertOciSandboxLeaseBinding(input.lease);
+  const containerUser = resolveCurrentOciSandboxContainerUser();
   const mount = [
     "type=bind",
     `src=${workspaceRoot}`,
@@ -265,6 +299,8 @@ export function buildOciSandboxInvocation(input: {
     mount,
     "--workdir",
     resolveContainerCwd(workspaceRoot, input.cwd),
+    // Keep Unix bind-mount writes scoped to the identity that owns the selected workspace.
+    ...(containerUser ? ["--user", containerUser] : []),
     ...(input.environmentFile ? ["--env-file", input.environmentFile] : []),
     "--entrypoint",
     input.plan.executable,

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { ensureDefaultEnvFiles, resolveEnvFilePaths, resolveGatewayRuntimePaths } from "@star-sanctuary/distribution";
 import { loadProjectEnvFiles } from "../cli/shared/env-loader.js";
 import { buildAutoOpenTargetUrl, resolveLauncherSetupAuth } from "./launcher-auth.js";
@@ -70,8 +71,16 @@ import {
   reconcileRuntimeLostBridgeSubtasks,
 } from "../bridge-subtask-runtime.js";
 import { SubTaskWorktreeRuntime } from "../worktree-runtime.js";
+import { WorkspaceChangeReviewRuntime } from "../workspace-change-review.js";
 import { WorkspaceRevisionRuntime } from "../workspace-revision.js";
+import { UserWorktreeRuntime } from "../user-worktree-runtime.js";
+import {
+  GhPullRequestClient,
+  RemoteDeliveryRuntime,
+  parseRemoteDeliveryTargets,
+} from "../remote-delivery-runtime.js";
 import { PendingToolPermissionRuntime } from "../coding-run/pending-tool-permission-runtime.js";
+import { CodingRunRecoveryMarkerStore } from "../coding-run/recovery-marker-store.js";
 import { normalizeEmailOutboundDraft } from "../email-outbound-contract.js";
 import { createFileEmailOutboundAuditStore, resolveEmailOutboundAuditStorePath } from "../email-outbound-audit-store.js";
 import { EmailOutboundConfirmationStore } from "../email-outbound-confirmation-store.js";
@@ -340,6 +349,7 @@ import { resolveWorkflowExecutionPolicy } from "../workflow-execution-policy.js"
 import { runWorkflowTool, RUN_WORKFLOW_TOOL_NAME } from "@belldandy/skills";
 import { buildContextInjectionPrelude } from "../context-injection.js";
 import { bridgeLegacyPluginHooks, initializeExtensionHost } from "../extension-host.js";
+import { createOciExtensionRuntimeAdapter } from "../extension-runtime-oci-adapter.js";
 import { truncateToolTranscriptContent } from "../tool-transcript.js";
 import { buildAgentRuntimePromptSections } from "./gateway-prompt-sections.js";
 import { enrichDelegationProtocolTeamWithIdentity } from "../team-identity-governance.js";
@@ -757,7 +767,8 @@ const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
 
 // --- Background Run Coordination ---
 
-const conversationRunRegistry = new ConversationRunRegistry();
+const codingRunRecoveryStore = new CodingRunRecoveryMarkerStore(stateDir);
+const conversationRunRegistry = new ConversationRunRegistry({ recoveryStore: codingRunRecoveryStore });
 const backgroundRunCoordinator = new BackgroundRunCoordinator({
   getForegroundActiveCount: () => conversationRunRegistry.getRuntimeSnapshot().activeCount,
 });
@@ -1295,6 +1306,16 @@ const AGENT_META_ALWAYS_ALLOWED_TOOLS = new Set<string>([
   switchFacetTool.definition.name,
 ]);
 const workspaceRevisionRuntime = new WorkspaceRevisionRuntime({ stateDir });
+const workspaceChangeReviewRuntime = new WorkspaceChangeReviewRuntime({
+  stateDir,
+  workspaceRevisionRuntime,
+});
+const userWorktreeRuntime = new UserWorktreeRuntime(stateDir);
+const remoteDeliveryRuntime = new RemoteDeliveryRuntime({
+  stateDir,
+  targets: parseRemoteDeliveryTargets(readEnv("BELLDANDY_REMOTE_DELIVERY_TARGETS_JSON")),
+  pullRequests: new GhPullRequestClient(),
+});
 const pendingToolPermissionRuntime = new PendingToolPermissionRuntime({
   onRequested: (request) => {
     emitConversationToolEvent(request.conversationId, {
@@ -1502,6 +1523,7 @@ if (mcpEnabled && toolsEnabled) {
 }
 
 // 4.2 Prepare extension host runtime
+const hookRegistry = new HookRegistry();
 const activeMcpServers: string[] = [];
 try {
   const mcpModule = await import("../mcp/index.js");
@@ -1513,6 +1535,20 @@ try {
   }
 } catch { /* MCP not available */ }
 
+const gatewayMainDirectory = path.dirname(fileURLToPath(import.meta.url));
+const currentExtensionHostRoot = path.resolve(gatewayMainDirectory, "..");
+const builtExtensionHostRoot = path.resolve(gatewayMainDirectory, "..", "..", "dist");
+const extensionHostRoot = fs.existsSync(path.join(currentExtensionHostRoot, "extension-runtime-host-process.js"))
+  ? currentExtensionHostRoot
+  : builtExtensionHostRoot;
+const extensionRuntimeAdmission = await createOciExtensionRuntimeAdapter({
+  stateDir,
+  hostRoot: extensionHostRoot,
+});
+if (!extensionRuntimeAdmission.available && extensionRuntimeAdmission.reason !== "not_configured") {
+  logger.warn("marketplace", `sandbox-required Extension Host unavailable: ${extensionRuntimeAdmission.reason}`);
+}
+
 const extensionHost = await initializeExtensionHost({
   stateDir,
   bundledSkillsDir: runtimePaths.bundledSkillsDir,
@@ -1522,6 +1558,10 @@ const extensionHost = await initializeExtensionHost({
   toolsConfigManager,
   logger,
   activeMcpServers,
+  hookRegistry,
+  ...(extensionRuntimeAdmission.available
+    ? { extensionRuntimeAdapter: extensionRuntimeAdmission.adapter }
+    : { extensionRuntimeUnavailableReason: extensionRuntimeAdmission.reason }),
 });
 
 const {
@@ -1752,8 +1792,6 @@ if (
 }
 
 // 7.5 Hook System: HookRegistry + Context Injection
-const hookRegistry = new HookRegistry();
-
 // Context Injection: 对话开始时自动注入最近记忆摘要
 const contextInjectionEnabled = memoryRuntimeSwitches.contextInjectionEnabled;
 const carryoverContextEnabled = readEnv("BELLDANDY_CARRYOVER_CONTEXT_ENABLED") !== "false";
@@ -3374,6 +3412,7 @@ if (agentRegistry && toolsEnabled) {
       db: dbHandle,
       agentRegistry,
       conversationStore,
+      recoveryStore: codingRunRecoveryStore,
       readEnv: readEnv,
       workflowExecutionPolicy: resolveWorkflowExecutionPolicy({ stateDir, readEnv }),
       resolveWorkflowAgentLaunchSpec: (input) => normalizeAgentLaunchSpecWithCatalog({
@@ -4331,6 +4370,9 @@ const serverOptions = buildGatewayServerOptions({
   stopSubTask,
   workflowRuntime,
   workspaceRevisionRuntime,
+  workspaceChangeReviewRuntime,
+  userWorktreeRuntime,
+  remoteDeliveryRuntime,
   commanderMode,
   preflightCompressionPolicy,
   ttsEnabled: isTtsEnabledFn,
@@ -4657,5 +4699,6 @@ server.registerShutdownResources({
   browserRelay: browserRelayRuntimeHandle,
   shutdownAgentBridge: agentBridgeEnabled ? shutdownBridgeSessions : undefined,
   shutdownCommandJobs,
+  extensionRuntime: extensionHost.extensionRuntimeSupervisor,
 });
 shutdownRequestOwner.installSignalHandlers();

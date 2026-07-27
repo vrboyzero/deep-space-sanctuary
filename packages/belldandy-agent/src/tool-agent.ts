@@ -1988,8 +1988,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
     this.starweaverVisibleNotifyFingerprint.set(input.conversationId, fingerprint);
   }
 
-  getCodingRunCapabilities(): { maxCostUsd: boolean } {
-    return { maxCostUsd: hasUsagePricing(this.opts.usagePricing) };
+  getCodingRunCapabilities(): { maxCostUsd: boolean; steerAtModelBoundary: true } {
+    return {
+      maxCostUsd: hasUsagePricing(this.opts.usagePricing),
+      steerAtModelBoundary: true,
+    };
   }
 
   async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
@@ -2630,6 +2633,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
 
+        const steerCommands = input.steering
+          ? await input.steering.consumePending({ modelCallIndex: nextModelCallIndex })
+          : [];
+        for (const command of steerCommands) {
+          messages.push({ role: "user", content: command.prompt });
+        }
+
         const tools = this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
         const toolNames = tools.map((tool) => tool.function.name);
         const requestMessages = applyStablePrefixSplitMessageLayout(messages, {
@@ -2909,6 +2919,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
           toolNamesPreview: toolNames.slice(0, 12),
         });
         if (!toolCalls || toolCalls.length === 0) {
+          if (input.steering && !input.steering.sealIfIdle()) {
+            messages.push({
+              role: "assistant",
+              content: response.content || contentForDisplay,
+            });
+            continue;
+          }
           // 无工具调用，输出最终结果（已剥离协议块）
           logDebug("[tool-check] no tool calls; returning text result");
           yield* yieldItem(buildUsageItem());

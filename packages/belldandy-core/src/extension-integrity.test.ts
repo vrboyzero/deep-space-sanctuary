@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { installMarketplaceExtension } from "./extension-marketplace-service.js";
+import {
+  installMarketplaceExtension,
+  previewMarketplaceExtensionInstall,
+} from "./extension-marketplace-service.js";
 import { upsertInstalledExtension } from "./extension-marketplace-state.js";
 import { computeMaterializedExtensionContentSha256 } from "./extension-marketplace-source.js";
 import { verifyInstalledMarketplaceExtension } from "./extension-integrity.js";
@@ -22,13 +25,20 @@ async function createInstalledPluginFixture(tempDirs: string[]): Promise<{
     name: "trusted-plugin",
     kind: "plugin",
     version: "1.0.0",
+    compatibility: { hostApi: 1 },
+    permissions: ["tool:trusted_search"],
     entry: { pluginModule: "dist/plugin.mjs" },
   }, null, 2), "utf-8");
   await fs.writeFile(path.join(sourceDir, "dist", "plugin.mjs"), "export default {};\n", "utf-8");
-  const result = await installMarketplaceExtension({
+  const installInput = {
     stateDir,
     marketplace: "official-market",
-    source: { source: "directory", path: sourceDir },
+    source: { source: "directory" as const, path: sourceDir },
+  };
+  const preview = await previewMarketplaceExtensionInstall(installInput);
+  const result = await installMarketplaceExtension({
+    ...installInput,
+    confirmationHash: preview.confirmationHash,
   });
   return { stateDir, installed: result.installed };
 }
@@ -91,6 +101,8 @@ describe("Marketplace extension integrity", () => {
       name: "other-plugin",
       kind: "plugin",
       version: "1.0.0",
+      compatibility: { hostApi: 1 },
+      permissions: ["tool:trusted_search"],
       entry: { pluginModule: "dist/plugin.mjs" },
     }, null, 2), "utf-8");
     const updatedLedger = await upsertInstalledExtension(stateDir, {
@@ -101,5 +113,28 @@ describe("Marketplace extension integrity", () => {
 
     await expect(verifyInstalledMarketplaceExtension({ stateDir, extension: updated }))
       .rejects.toThrow("manifest does not match its approved identity");
+  });
+
+  it("rejects permission drift even when the content hash is recomputed", async () => {
+    const { stateDir, installed } = await createInstalledPluginFixture(tempDirs);
+    const manifestPath = path.join(installed.installPath, "belldandy-extension.json");
+    await fs.writeFile(manifestPath, JSON.stringify({
+      schemaVersion: 1,
+      name: "trusted-plugin",
+      kind: "plugin",
+      version: "1.0.0",
+      compatibility: { hostApi: 1 },
+      permissions: ["tool:unapproved_tool"],
+      entry: { pluginModule: "dist/plugin.mjs" },
+    }, null, 2), "utf-8");
+    const updatedLedger = await upsertInstalledExtension(stateDir, {
+      ...installed,
+      contentSha256: await computeMaterializedExtensionContentSha256(installed.installPath),
+    });
+
+    await expect(verifyInstalledMarketplaceExtension({
+      stateDir,
+      extension: updatedLedger.extensions[installed.id],
+    })).rejects.toThrow("permissions do not match the approved trust decision");
   });
 });

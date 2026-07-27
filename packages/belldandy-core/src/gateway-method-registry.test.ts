@@ -23,6 +23,94 @@ describe("GatewayMethodRegistry", () => {
       requiresPairing: true,
       risk: "code-execution",
     });
+    expect(inventory.find((item) => item.method === "workspace.change.review.verify_after_restore")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.status")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.create")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.diff")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.apply.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.apply.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.remove.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.remove.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.stage.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.commit.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.branch.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.branch.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.remote_delivery.push.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.remote_delivery.push.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "admin",
+    });
+    expect(inventory.find((item) => item.method === "workspace.remote_delivery.pull_request.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "admin",
+    });
+    expect(inventory.find((item) => item.method === "coding.run.status")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "coding.run.follow_up.status")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "coding.run.steer.status")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "coding.run.permission.list")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "command.job.list")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "command.job.read")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "command.job.cancel")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
   });
 
   it("不会把可分发但未在旧目录列出的写方法遗漏为公开未授权能力", () => {

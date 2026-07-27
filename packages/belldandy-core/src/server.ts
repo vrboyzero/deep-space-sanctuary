@@ -131,7 +131,7 @@ import { buildDelegationObservabilitySnapshot } from "./subtask-result-envelope.
 import { getToolAuditRuntimeResourceQueueSnapshots } from "./tool-audit-runtime-resource.js";
 import type { ToolExecutor, TranscribeOptions, TranscribeResult, SkillRegistry, WorkflowRuntimeCapabilities } from "@belldandy/skills";
 import type { ToolExecutionRuntimeContext } from "@belldandy/skills";
-import { listToolContractsV2, TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
+import { getCommandJobRuntime, listToolContractsV2, TOOL_SETTINGS_CONTROL_NAME } from "@belldandy/skills";
 import type { PluginRegistry } from "@belldandy/plugins";
 import type { WebhookConfig, IdempotencyManager } from "./webhook/index.js";
 import type { GoalManager } from "./goals/manager.js";
@@ -162,7 +162,10 @@ import {
 import { handleSystemDoctorMethod } from "./server-methods/system-doctor.js";
 import { handleWorkspaceConversationMethod } from "./server-methods/workspace-conversation.js";
 import { handleWorkspaceRevisionMethod } from "./server-methods/workspace-revision.js";
+import { handleWorkspaceWorktreeMethod } from "./server-methods/workspace-worktree.js";
+import { handleRemoteDeliveryMethod } from "./server-methods/remote-delivery.js";
 import { handleCodingRunMethod } from "./server-methods/coding-run.js";
+import { handleCommandJobMethod } from "./server-methods/command-job.js";
 import { handleCodingRunSubscriptionMethod } from "./server-methods/coding-run-subscription.js";
 import { createCodingRunGatewayEventBroker, type CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
 import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
@@ -187,7 +190,10 @@ import type { ChannelSecurityApprovalRequestInput } from "@belldandy/channels";
 import type { BackgroundContinuationRuntimeDoctorReport } from "./background-continuation-runtime.js";
 import type { CronRuntimeDoctorReport } from "./cron/observability.js";
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
+import type { WorkspaceChangeReviewRuntime } from "./workspace-change-review.js";
 import type { WorkspaceRevisionRuntime } from "./workspace-revision.js";
+import type { UserWorktreeRuntime } from "./user-worktree-runtime.js";
+import type { RemoteDeliveryRuntime } from "./remote-delivery-runtime.js";
 import {
   GatewayShutdownCoordinator,
   type GatewayShutdownRequest,
@@ -291,7 +297,7 @@ export type GatewayServerOptions = {
   /** 插件注册表（用于获取已加载插件列表） */
   pluginRegistry?: PluginRegistry;
   /** 扩展宿主快照（用于统一 extension runtime / lifecycle 诊断） */
-  extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle">;
+  extensionHost?: Pick<ExtensionHostState, "extensionRuntime" | "lifecycle" | "extensionRuntimeSupervisor">;
   /** 可选：检查当前是否已配置好 AI 模型（用于 hello-ok 中告知前端是否需要引导配置）*/
   isConfigured?: () => boolean;
   /** 启动阶段观测钩子（只读） */
@@ -378,6 +384,12 @@ export type GatewayServerOptions = {
   workflowRuntime?: WorkflowRuntimeCapabilities;
   /** 受控文件工具的用户轮次恢复点运行时。 */
   workspaceRevisionRuntime?: WorkspaceRevisionRuntime;
+  /** 只读的 restore 后变更审查重判运行时。 */
+  workspaceChangeReviewRuntime?: WorkspaceChangeReviewRuntime;
+  /** 用户级受管 worktree 的只读状态投影。 */
+  userWorktreeRuntime?: UserWorktreeRuntime;
+  /** receipt-bound remote push / pull request owner。 */
+  remoteDeliveryRuntime?: RemoteDeliveryRuntime;
   /** Commander 模式（"on" | "off" | "auto"），用于 chat commander 显式触发判定 */
   commanderMode?: "on" | "off" | "auto";
   /** 发送前附件/长输入压缩策略。 */
@@ -1427,6 +1439,9 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     stopSubTask: opts.stopSubTask,
     workflowRuntime: opts.workflowRuntime,
     workspaceRevisionRuntime: opts.workspaceRevisionRuntime,
+    workspaceChangeReviewRuntime: opts.workspaceChangeReviewRuntime,
+    userWorktreeRuntime: opts.userWorktreeRuntime,
+    remoteDeliveryRuntime: opts.remoteDeliveryRuntime,
     commanderMode: opts.commanderMode,
     preflightCompressionPolicy: opts.preflightCompressionPolicy,
     tokenUsageUploadConfig,
@@ -2311,12 +2326,51 @@ async function handleReq(
 
     case "workspace.revision.list":
     case "workspace.revision.preview":
-    case "workspace.revision.restore": {
+    case "workspace.revision.restore":
+    case "workspace.change.review.verify_after_restore": {
       return handleWorkspaceRevisionMethod(req, {
         runtime: ctx.workspaceRevisionRuntime,
+        reviewRuntime: ctx.workspaceChangeReviewRuntime,
       });
     }
 
+    case "workspace.worktree.status":
+    case "workspace.worktree.create":
+    case "workspace.worktree.diff":
+    case "workspace.worktree.apply.preview":
+    case "workspace.worktree.apply.confirm":
+    case "workspace.worktree.remove.preview":
+    case "workspace.worktree.remove.confirm":
+    case "workspace.worktree.stage.preview":
+    case "workspace.worktree.stage.confirm":
+    case "workspace.worktree.commit.preview":
+    case "workspace.worktree.commit.confirm":
+    case "workspace.worktree.branch.preview":
+    case "workspace.worktree.branch.confirm": {
+      return handleWorkspaceWorktreeMethod(req, {
+        runtime: ctx.userWorktreeRuntime,
+        conversationRunRegistry: ctx.conversationRunRegistry,
+        additionalWorkspaceRoots: ctx.additionalWorkspaceRoots,
+      });
+    }
+
+    case "workspace.remote_delivery.targets":
+    case "workspace.remote_delivery.push.preview":
+    case "workspace.remote_delivery.push.confirm":
+    case "workspace.remote_delivery.pull_request.preview":
+    case "workspace.remote_delivery.pull_request.confirm":
+    case "workspace.remote_delivery.audit.list": {
+      return handleRemoteDeliveryMethod(req, {
+        runtime: ctx.remoteDeliveryRuntime,
+        userWorktreeRuntime: ctx.userWorktreeRuntime,
+        additionalWorkspaceRoots: ctx.additionalWorkspaceRoots,
+      });
+    }
+
+    case "coding.run.status":
+    case "coding.run.follow_up.status":
+    case "coding.run.steer.status":
+    case "coding.run.permission.list":
     case "coding.run.control": {
       return handleCodingRunMethod(req, {
         conversationRunRegistry: ctx.conversationRunRegistry,
@@ -2333,6 +2387,21 @@ async function handleReq(
       return handleCodingRunSubscriptionMethod(req, ws, {
         eventBroker: ctx.codingRunEventBroker,
       });
+    }
+
+    case "command.job.list":
+    case "command.job.read":
+    case "command.job.cancel": {
+      try {
+        return handleCommandJobMethod(req, { runtime: await getCommandJobRuntime(ctx.stateDir) });
+      } catch {
+        return {
+          type: "res",
+          id: req.id,
+          ok: false,
+          error: { code: "command_job_unavailable", message: "Command job runtime is unavailable." },
+        };
+      }
     }
 
     case "subtask.list":

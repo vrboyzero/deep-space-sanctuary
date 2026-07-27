@@ -16,6 +16,7 @@ import {
 import { registerBuiltinWorkflow, clearBuiltinWorkflows } from "./workflow-builtin-registry.js";
 import { WorkflowJournal } from "./workflow-journal.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
+import type { CodingRunRecoveryMarkerStore } from "./coding-run/recovery-marker-store.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -64,6 +65,7 @@ async function setupRuntime(
     allowInline?: boolean;
     agentFactory?: () => BelldandyAgent;
     readEnv?: (name: string) => string | undefined;
+    recoveryStore?: Pick<CodingRunRecoveryMarkerStore, "markActive" | "markSettled" | "lookup">;
   } = {},
 ) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `belldandy-wf-runtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`));
@@ -75,6 +77,7 @@ async function setupRuntime(
     db: store.getDbHandleForSharedSchema(),
     agentRegistry,
     conversationStore,
+    recoveryStore: options.recoveryStore,
     workflowExecutionPolicy: {
       workflowRoot: tempDir,
       allowInline: options.allowInline === true,
@@ -156,6 +159,42 @@ describe("WorkflowRuntime", () => {
     expect(result.workflowName).toBe("test-wf");
     expect(result.stats.agentCalls).toBe(1);
     expect(result.stats.cacheHits).toBe(0);
+  });
+
+  it("persists and settles an exact Workflow runtime recovery marker", async () => {
+    const recoveryStore = {
+      markActive: vi.fn(async () => undefined),
+      markSettled: vi.fn(async () => true),
+      lookup: vi.fn(async () => ({ state: "settled" as const })),
+    };
+    const f = await setupRuntime("unused", { recoveryStore });
+    cleanups.push(f.cleanup);
+    registerBuiltinWorkflow({
+      name: "recovery-marker",
+      scriptHash: "recovery-marker-v1",
+      default: async () => "done",
+    });
+
+    const result = await f.runtime.run({
+      source: { kind: "builtin", name: "recovery-marker" },
+      parentConversationId: "conv-recovery",
+      channel: "test",
+    });
+
+    const binding = {
+      agentRunId: result.workflowRunId,
+      workflow: { journalId: result.journalId, workflowRunId: result.workflowRunId },
+    };
+    expect(recoveryStore.markActive).toHaveBeenCalledWith({
+      source: "workflow",
+      binding,
+      startedAtMs: expect.any(Number),
+    });
+    expect(recoveryStore.markSettled).toHaveBeenCalledWith({ source: "workflow", binding });
+    await expect(f.runtime.getRecoveryStatusByRunId(
+      result.journalId,
+      result.workflowRunId,
+    )).resolves.toEqual({ state: "settled" });
   });
 
   it("builtin 模式端到端运行成功", async () => {

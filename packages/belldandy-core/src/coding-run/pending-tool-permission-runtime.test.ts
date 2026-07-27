@@ -3,6 +3,62 @@ import { describe, expect, it, vi } from "vitest";
 import { PendingToolPermissionRuntime } from "./pending-tool-permission-runtime.js";
 
 describe("PendingToolPermissionRuntime", () => {
+  it("lists multiple pending requests as bounded safe owner snapshots", async () => {
+    const runtime = new PendingToolPermissionRuntime();
+    const first = runtime.request({
+      conversationId: "conversation-1",
+      agentRunId: "run-1",
+      toolCallId: "tool-1",
+      toolName: "file_write",
+    });
+    const second = runtime.request({
+      conversationId: "conversation-2",
+      agentRunId: "run-2",
+      worktreeId: "worktree-2",
+      toolCallId: "tool-2",
+      toolName: "command_job",
+      commandPreview: {
+        kind: "command",
+        action: "cancel",
+        jobId: "11111111-1111-4111-8111-111111111111",
+      },
+    });
+    const extras = Array.from({ length: 99 }, (_value, index) => runtime.request({
+      conversationId: `conversation-extra-${index}`,
+      agentRunId: `run-extra-${index}`,
+      toolCallId: `tool-extra-${index}`,
+      toolName: "file_read",
+    }));
+
+    const pending = runtime.list();
+
+    expect(pending).toHaveLength(100);
+    expect(pending.slice(0, 2)).toEqual([
+      {
+        conversationId: "conversation-1",
+        agentRunId: "run-1",
+        toolCallId: "tool-1",
+        toolName: "file_write",
+      },
+      {
+        conversationId: "conversation-2",
+        agentRunId: "run-2",
+        worktreeId: "worktree-2",
+        toolCallId: "tool-2",
+        toolName: "command_job",
+        commandPreview: { action: "cancel", jobId: "11111111-1111-4111-8111-111111111111" },
+      },
+    ]);
+    expect(JSON.stringify(pending)).not.toContain("abortSignal");
+    expect(JSON.stringify(pending)).not.toContain("timeout");
+    expect(JSON.stringify(pending)).not.toContain("tool-extra-98");
+
+    runtime.cancelRun("run-1");
+    runtime.cancelRun("run-2");
+    for (let index = 0; index < extras.length; index += 1) runtime.cancelRun(`run-extra-${index}`);
+    await expect(Promise.all([first, second, ...extras])).resolves.toEqual(Array(101).fill("deny"));
+  });
+
   it("only resolves an exact active run and tool-call binding", async () => {
     const onRequested = vi.fn();
     const runtime = new PendingToolPermissionRuntime({ onRequested });

@@ -15,6 +15,13 @@ export interface PluginContext {
     onDispose(disposer: PluginDisposer): void;
 }
 
+/** Marketplace 激活时由已验证 manifest 派生；未传入时保留 legacy 本地插件行为。 */
+export interface PluginActivationPolicy {
+    allowedToolNames: readonly string[];
+    allowedHookNames: readonly PluginHookName[];
+    allowedSkillDirs: readonly string[];
+}
+
 export interface BelldandyPlugin {
     id: string;
     name: string;

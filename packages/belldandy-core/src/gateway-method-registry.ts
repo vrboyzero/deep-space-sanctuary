@@ -193,8 +193,35 @@ const GATEWAY_METHOD_NAMES = [
   "workspace.revision.list",
   "workspace.revision.preview",
   "workspace.revision.restore",
+  "workspace.change.review.verify_after_restore",
+  "workspace.worktree.status",
+  "workspace.worktree.create",
+  "workspace.worktree.diff",
+  "workspace.worktree.apply.preview",
+  "workspace.worktree.apply.confirm",
+  "workspace.worktree.remove.preview",
+  "workspace.worktree.remove.confirm",
+  "workspace.worktree.stage.preview",
+  "workspace.worktree.stage.confirm",
+  "workspace.worktree.commit.preview",
+  "workspace.worktree.commit.confirm",
+  "workspace.worktree.branch.preview",
+  "workspace.worktree.branch.confirm",
+  "workspace.remote_delivery.targets",
+  "workspace.remote_delivery.push.preview",
+  "workspace.remote_delivery.push.confirm",
+  "workspace.remote_delivery.pull_request.preview",
+  "workspace.remote_delivery.pull_request.confirm",
+  "workspace.remote_delivery.audit.list",
+  "coding.run.status",
+  "coding.run.follow_up.status",
+  "coding.run.steer.status",
+  "coding.run.permission.list",
   "coding.run.control",
   "coding.run.subscribe",
+  "command.job.list",
+  "command.job.read",
+  "command.job.cancel",
   "subtask.list",
   "subtask.get",
   "subtask.resume",
@@ -273,6 +300,8 @@ const ADMIN_METHODS = new Set<string>([
   "dream.commons.export_now",
   "workspace.write",
   "artifact.reveal",
+  "workspace.remote_delivery.push.confirm",
+  "workspace.remote_delivery.pull_request.confirm",
 ]);
 
 function isReadMethod(method: string): boolean {
@@ -285,7 +314,17 @@ function isReadMethod(method: string): boolean {
     || method === "conversation.timeline.get"
     || method === "conversation.preflight_compression.retrieve"
     || method === "conversation.tool_result_reference.retrieve"
-    || method === "coding.run.subscribe";
+    || method === "coding.run.subscribe"
+    || method === "workspace.change.review.verify_after_restore"
+    || method === "workspace.worktree.diff"
+    || method === "workspace.worktree.apply.preview"
+    || method === "workspace.worktree.remove.preview"
+    || method === "workspace.worktree.stage.preview"
+    || method === "workspace.worktree.commit.preview"
+    || method === "workspace.worktree.branch.preview"
+    || method === "workspace.remote_delivery.targets"
+    || method === "workspace.remote_delivery.push.preview"
+    || method === "workspace.remote_delivery.pull_request.preview";
 }
 
 function resolveRisk(method: string): GatewayMethodRisk {

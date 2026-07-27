@@ -131,6 +131,34 @@ describe("ManagedWorktreeRuntime", () => {
     }
   }, 15_000);
 
+  it("only discards a clean, unchanged worktree after an ownership persistence failure", async () => {
+    const fixture = await createGitFixture("belldandy-managed-worktree-abort-");
+    try {
+      const runtime = new ManagedWorktreeRuntime(fixture.stateDir);
+      const clean = await runtime.prepare({
+        id: "user-clean-abort",
+        ownerKind: "user_session",
+        cwd: fixture.nestedDir,
+      });
+      await expect(runtime.abortPreparedWorktree(clean)).resolves.toMatchObject({ status: "removed" });
+      await expect(fs.access(clean.worktreePath)).rejects.toThrow();
+
+      const changed = await runtime.prepare({
+        id: "user-changed-abort",
+        ownerKind: "user_session",
+        cwd: fixture.nestedDir,
+      });
+      await fs.writeFile(path.join(changed.resolvedCwd, "index.ts"), "export const demo = false;\n", "utf-8");
+      await expect(runtime.abortPreparedWorktree(changed)).resolves.toMatchObject({
+        status: "retained",
+        reason: expect.stringMatching(/changed before ownership/i),
+      });
+      await expect(fs.access(changed.worktreePath)).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
+
   it("retains workflow worktrees when their checked-out branch drifts or enters a merge conflict", async () => {
     const fixture = await createGitFixture("belldandy-managed-worktree-conflict-");
     try {

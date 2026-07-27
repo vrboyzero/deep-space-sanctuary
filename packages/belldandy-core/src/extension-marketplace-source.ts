@@ -9,6 +9,7 @@ import { getExtensionMarketplaceStateDir } from "./extension-marketplace-state.j
 const MARKETPLACE_SOURCE_CACHE_DIRNAME = "source-cache";
 const MARKETPLACE_MATERIALIZED_DIRNAME = "materialized";
 const MARKETPLACE_SOURCE_METADATA_FILENAME = "source-state.json";
+const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 
 export type ExtensionMarketplaceFetchStatus = "ready" | "deferred";
 
@@ -43,6 +44,7 @@ export interface MaterializeExtensionMarketplaceSourceOptions {
     "marketplace" | "source" | "sourceKey" | "status" | "resolvedSourcePath"
   >;
   manifestPath?: string;
+  expectedContentSha256?: string;
 }
 
 export interface MaterializedExtensionMarketplaceSource {
@@ -108,7 +110,7 @@ function serializeMarketplaceSource(source: ExtensionMarketplaceSource): string 
   }
 }
 
-function buildMarketplaceSourceKey(source: ExtensionMarketplaceSource): string {
+export function computeExtensionMarketplaceSourceKey(source: ExtensionMarketplaceSource): string {
   return crypto.createHash("sha256").update(serializeMarketplaceSource(source)).digest("hex").slice(0, 16);
 }
 
@@ -201,7 +203,7 @@ export async function prepareExtensionMarketplaceSource(
   input: PrepareExtensionMarketplaceSourceOptions,
 ): Promise<PrepareExtensionMarketplaceSourceResult> {
   const marketplace = sanitizePathSegment(input.marketplace, "marketplace");
-  const sourceKey = buildMarketplaceSourceKey(input.source);
+  const sourceKey = computeExtensionMarketplaceSourceKey(input.source);
   const cacheDir = getMarketplaceSourceCachePath(input.stateDir, marketplace, sourceKey);
   await fs.mkdir(cacheDir, { recursive: true });
 
@@ -259,31 +261,79 @@ export async function materializeExtensionMarketplaceSource(
   }
 
   const materializedPath = getMaterializedExtensionPath(input.stateDir, marketplace, extensionName);
-  await fs.rm(materializedPath, { recursive: true, force: true }).catch(() => {});
+  const operationId = crypto.randomUUID();
+  const stagingPath = `${materializedPath}.staging-${operationId}`;
+  const backupPath = `${materializedPath}.backup-${operationId}`;
   await fs.mkdir(path.dirname(materializedPath), { recursive: true });
-  await fs.cp(input.sourceState.resolvedSourcePath, materializedPath, {
-    recursive: true,
-    force: true,
-    errorOnExist: false,
-  });
 
-  const manifestPath = resolveMaterializedManifestPath(materializedPath, input.manifestPath);
-  const manifestStat = await fs.stat(manifestPath).catch((error) => {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-      return null;
+  try {
+    await fs.cp(input.sourceState.resolvedSourcePath, stagingPath, {
+      recursive: true,
+      force: true,
+      errorOnExist: false,
+    });
+
+    const stagingManifestPath = resolveMaterializedManifestPath(stagingPath, input.manifestPath);
+    const manifestStat = await fs.stat(stagingManifestPath).catch((error) => {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    const contentSha256 = await computeMaterializedExtensionContentSha256(stagingPath);
+    if (input.expectedContentSha256 !== undefined) {
+      if (!SHA256_PATTERN.test(input.expectedContentSha256)) {
+        throw new Error("Expected marketplace extension content SHA-256 is invalid.");
+      }
+      if (contentSha256 !== input.expectedContentSha256.toLowerCase()) {
+        throw new Error("Marketplace extension source changed after trust confirmation.");
+      }
     }
-    throw error;
-  });
 
-  return {
-    version: 1,
-    marketplace,
-    extensionName,
-    sourceKey: input.sourceState.sourceKey,
-    materializedPath,
-    manifestPath: manifestStat?.isFile() ? manifestPath : undefined,
-    contentSha256: await computeMaterializedExtensionContentSha256(materializedPath),
-    materializedAt: nowIso(),
-    strategy: "copy",
-  };
+    // Validate the complete tree before moving the previous approved version aside.
+    let previousMoved = false;
+    try {
+      await fs.rename(materializedPath, backupPath);
+      previousMoved = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    try {
+      await fs.rename(stagingPath, materializedPath);
+    } catch (error) {
+      if (previousMoved) {
+        try {
+          await fs.rename(backupPath, materializedPath);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            "Marketplace extension replacement failed and the previous materialized tree could not be restored.",
+          );
+        }
+      }
+      throw error;
+    }
+
+    if (previousMoved) {
+      await fs.rm(backupPath, { recursive: true, force: true }).catch(() => {});
+    }
+    return {
+      version: 1,
+      marketplace,
+      extensionName,
+      sourceKey: input.sourceState.sourceKey,
+      materializedPath,
+      manifestPath: manifestStat?.isFile()
+        ? resolveMaterializedManifestPath(materializedPath, input.manifestPath)
+        : undefined,
+      contentSha256,
+      materializedAt: nowIso(),
+      strategy: "copy",
+    };
+  } finally {
+    await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => {});
+  }
 }

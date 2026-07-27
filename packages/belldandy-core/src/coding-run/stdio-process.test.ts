@@ -111,6 +111,36 @@ describe("coding run stdio process bridge", () => {
     }]);
   });
 
+  it("maps a read-only artifact request to the injected Gateway bridge", async () => {
+    const output: string[] = [];
+    const requests: unknown[] = [];
+    const exitCode = await runCodingRunStdio({
+      stateDir: "state-dir",
+      input: chunks([`${JSON.stringify({
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "artifact.request",
+        id: "artifact-1",
+        artifact: { revisionId: "run-1", workspaceId: "workspace-1" },
+      })}\n`]),
+      writeStdout: (line) => { output.push(line); },
+      writeStderr: () => undefined,
+      invokeGatewayArtifact: async (artifact) => {
+        requests.push(artifact);
+        return { ok: true, payload: { revisionId: "run-1", canRestore: true } };
+      },
+    });
+
+    expect(exitCode).toBe(0);
+    expect(requests).toEqual([{ revisionId: "run-1", workspaceId: "workspace-1" }]);
+    expect(output.map((line) => JSON.parse(line))).toEqual([{
+      version: CODING_RUN_PROTOCOL_VERSION,
+      type: "artifact.response",
+      id: "artifact-1",
+      ok: true,
+      result: { revisionId: "run-1", canRestore: true },
+    }]);
+  });
+
   it("starts a real Gateway Conversation then subscribes to its streamed events through stdio", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-stdio-conversation-"));
     const agent: BelldandyAgent = {

@@ -2,6 +2,11 @@ import crypto from "node:crypto";
 
 import type { WebSocket } from "ws";
 import type { CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+import type {
+  ConversationFollowUpClaim,
+  ConversationRunBinding,
+} from "./coding-run/conversation-follow-up-queue.js";
+import { ConversationSteerMailbox } from "./coding-run/conversation-steer-mailbox.js";
 import type { AgentPromptDelta, AgentRegistry, BelldandyAgent, CompressionResult, ConversationStore } from "@belldandy/agent";
 import type { DurableExtractionDigestSnapshot, DurableExtractionRecord, DurableExtractionRuntime } from "@belldandy/memory";
 import {
@@ -60,6 +65,8 @@ export type MessageSendQueryRuntimeContext = {
     requestChannel?: ToolContractChannel;
     userUuid?: string;
     stateDir: string;
+    /** 仅供 Conversation owner 的内部串行交接使用，不来自 Gateway 请求。 */
+    followUpClaim?: ConversationFollowUpClaim;
   };
   runtime: {
     log: QueryRuntimeLogger;
@@ -197,6 +204,20 @@ export async function handleMessageSendWithQueryRuntime(
     const autoStopPreviousRun = request.params.autoStopPreviousRun === true;
     const conversationId = request.params.conversationId ?? crypto.randomUUID();
     const runId = crypto.randomUUID();
+    if (!runtimeDeps.conversationRunRegistry.isConversationStartAllowed(
+      conversationId,
+      request.followUpClaim?.commandId,
+    )) {
+      return {
+        type: "res",
+        id: request.requestId,
+        ok: false,
+        error: {
+          code: "conversation_reserved",
+          message: "Conversation is reserved for a queued follow-up handoff.",
+        },
+      };
+    }
     const effectiveUserUuid = request.params.userUuid ?? request.userUuid;
     const previousPromptSnapshot = runtimeDeps.getConversationPromptSnapshot
       ? await runtimeDeps.getConversationPromptSnapshot({ conversationId })
@@ -415,7 +436,31 @@ export async function handleMessageSendWithQueryRuntime(
       });
     }
 
-    runtimeDeps.conversationRunRegistry.register({
+    const steeringMailbox = agent.getCodingRunCapabilities?.().steerAtModelBoundary === true
+      ? new ConversationSteerMailbox({
+          binding: { conversationId, agentRunId: runId },
+          onDeliver: async (command) => {
+            const steerMessage = runtimeDeps.conversationStore.addMessage(
+              conversationId,
+              "user",
+              command.prompt,
+              {
+                agentId: requestedAgentId,
+                channel: "webchat",
+                timestampMs: Date.now(),
+              },
+            );
+            await runtimeDeps.conversationStore.waitForPendingPersistence(conversationId);
+            runtimeDeps.log.debug("coding-run", "Conversation steer input persisted for model-boundary delivery.", {
+              conversationId,
+              runId,
+              commandId: command.commandId,
+              userTimestampMs: steerMessage.timestamp,
+            });
+          },
+        })
+      : undefined;
+    await runtimeDeps.conversationRunRegistry.registerDurable({
       conversationId,
       runId,
       agentId: requestedAgentId ?? "default",
@@ -428,6 +473,9 @@ export async function handleMessageSendWithQueryRuntime(
         abortController.abort(readMessageSendStopReason(undefined, reason));
         return true;
       },
+    }, {
+      ...(request.followUpClaim ? { followUp: request.followUpClaim } : {}),
+      ...(steeringMailbox ? { steering: steeringMailbox } : {}),
     });
     runtimeDeps.codingRunEventBroker?.registerConversationRun({
       conversationId,
@@ -445,6 +493,8 @@ export async function handleMessageSendWithQueryRuntime(
       requestedAgentId,
       effectiveUserUuid,
       runId,
+      followUpQueueBinding: request.followUpClaim?.queueBinding,
+      steeringMailbox,
       userMessageTimestamp: userMessage.timestamp,
       userText,
       history,
@@ -624,6 +674,8 @@ type MessageSendBackgroundInput = {
   requestedAgentId?: string;
   effectiveUserUuid?: string;
   runId: string;
+  followUpQueueBinding?: ConversationRunBinding;
+  steeringMailbox?: ConversationSteerMailbox;
   userMessageTimestamp: number;
   userText: string;
   history: Array<unknown>;
@@ -800,6 +852,7 @@ function buildMessageSendAgentRunInput(
     text: input.promptText,
     userInput: input.userText,
     abortSignal: input.abortController.signal,
+    ...(input.steeringMailbox ? { steering: input.steeringMailbox } : {}),
     history: input.history,
     agentId: input.requestedAgentId,
     userUuid: input.effectiveUserUuid,
@@ -2352,7 +2405,70 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
     }
   } finally {
     ctx.runtime.pendingToolPermissionRuntime?.cancelRun(input.runId);
+    await ctx.runtime.conversationRunRegistry
+      .settleRecoveryMarker(input.conversationId, input.runId)
+      .catch((error) => {
+        ctx.runtime.log.warn("coding-run", "Failed to settle Conversation recovery marker.", {
+          conversationId: input.conversationId,
+          runId: input.runId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     ctx.runtime.conversationRunRegistry.clear(input.conversationId, input.runId);
-    await input.lifecycleLease?.release();
+    await handOffConversationFollowUp(input);
+  }
+}
+
+async function handOffConversationFollowUp(input: MessageSendBackgroundInput): Promise<void> {
+  const { ctx } = input;
+  const completedBinding: ConversationRunBinding = {
+    conversationId: input.conversationId,
+    agentRunId: input.runId,
+  };
+  const queueBindings = input.followUpQueueBinding
+    && input.followUpQueueBinding.agentRunId !== completedBinding.agentRunId
+    ? [input.followUpQueueBinding, completedBinding]
+    : [completedBinding];
+  let claim: ConversationFollowUpClaim | undefined;
+  for (const binding of queueBindings) {
+    claim = ctx.runtime.conversationRunRegistry.claimNextFollowUp(binding);
+    if (claim) break;
+  }
+
+  await input.lifecycleLease?.release();
+  if (!claim) return;
+
+  try {
+    const params: MessageSendParams = {
+      ...ctx.request.params,
+      conversationId: input.conversationId,
+      text: claim.prompt,
+      autoStopPreviousRun: false,
+    };
+    delete params.attachments;
+    const response = await handleMessageSendWithQueryRuntime({
+      ...ctx,
+      request: {
+        ...ctx.request,
+        requestId: `${ctx.request.requestId}:follow-up:${claim.commandId}`,
+        params,
+        followUpClaim: claim,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(response.error?.code ?? "follow_up_start_failed");
+    }
+  } catch {
+    const failureMessage = "Conversation follow-up could not start a serial Agent run.";
+    ctx.runtime.conversationRunRegistry.markFollowUpFailed(claim, failureMessage);
+    for (const binding of queueBindings) {
+      ctx.runtime.conversationRunRegistry.failRemainingFollowUps(binding, failureMessage);
+    }
+    ctx.runtime.log.warn("coding-run", "Conversation follow-up handoff failed.", {
+      conversationId: input.conversationId,
+      sourceRunId: claim.queueBinding.agentRunId,
+      commandId: claim.commandId,
+      errorCode: "follow_up_start_failed",
+    });
   }
 }

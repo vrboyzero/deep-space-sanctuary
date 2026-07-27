@@ -1,10 +1,16 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
 
 import type { PersistedConversationSummary } from "@belldandy/agent";
+import {
+  sanitizeCommandPermissionPreview,
+  type CommandJobReadResult,
+  type CommandJobSnapshot,
+} from "@belldandy/skills";
 
 import {
   CODING_RUN_PROTOCOL_VERSION,
@@ -43,11 +49,17 @@ import {
   WorkspaceChangeSnapshotRuntime,
 } from "../workspace-change-snapshot.js";
 import type {
+  RemoteDeliveryPreview,
+  RemoteDeliveryResult,
+  RemoteDeliveryTarget,
+} from "../remote-delivery-runtime.js";
+import type {
   TuiChatEntry,
   TuiChangeSnapshotResult,
   TuiConversationBinding,
   TuiPermissionRequest,
   TuiRuntimeSnapshot,
+  TuiWorkspaceTarget,
   TuiWorkspaceChangeSummary,
 } from "./state.js";
 
@@ -55,6 +67,8 @@ const execFile = promisify(execFileCallback);
 const DEFAULT_TUI_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CHANGED_PATHS = 100;
 const MAX_DIFF_STAT_LINES = 40;
+const MAX_TUI_COMMAND_JOB_READ_BYTES = 16 * 1024;
+const MAX_TUI_WORKSPACE_TARGETS = 100;
 
 export type TuiCodingRunClient = {
   conversation: (conversation: CodingRunConversationRequest) => Promise<CodingRunConversationResponse>;
@@ -83,11 +97,14 @@ export type CodingTuiRuntimeOptions = {
 
 type PendingTuiChangeSnapshot = {
   baselineId: string;
+  workspaceRoot: string;
 };
 
 export class CodingTuiRuntime {
   readonly stateDir: string;
-  readonly cwd: string;
+  private readonly launchCwd: string;
+  private currentCwd: string;
+  private currentWorktreeId?: string;
   private readonly client: TuiCodingRunClient;
   private readonly requestTimeoutMs: number;
   private readonly invokeGateway: InvokeGateway;
@@ -95,10 +112,12 @@ export class CodingTuiRuntime {
   private readonly changeRecoveryRuntime: WorkspaceChangeRecoveryRuntime;
   private readonly pendingChangeSnapshots = new Map<string, PendingTuiChangeSnapshot | TuiChangeSnapshotResult>();
   private readonly completedChangeSnapshots = new Map<string, TuiChangeSnapshotResult>();
+  private readonly changeSnapshotWorkspaceRoots = new Map<string, string>();
 
   constructor(options: CodingTuiRuntimeOptions) {
     this.stateDir = path.resolve(options.stateDir);
-    this.cwd = path.resolve(options.cwd);
+    this.launchCwd = path.resolve(options.cwd);
+    this.currentCwd = this.launchCwd;
     this.client = options.client;
     this.requestTimeoutMs = normalizePositiveInteger(options.requestTimeoutMs, DEFAULT_TUI_REQUEST_TIMEOUT_MS);
     this.invokeGateway = options.invokeGateway ?? ((request) => invokeGatewayMethod(request));
@@ -106,15 +125,20 @@ export class CodingTuiRuntime {
     this.changeRecoveryRuntime = new WorkspaceChangeRecoveryRuntime({ stateDir: this.stateDir });
   }
 
+  get cwd(): string {
+    return this.currentCwd;
+  }
+
   async requestConversation(prompt: string, conversationId?: string): Promise<TuiConversationBinding> {
     const text = prompt.trim();
     if (!text) throw new Error("A non-empty prompt is required.");
-    const changeSnapshot = await this.captureChangeSnapshot();
+    const workspaceRoot = this.cwd;
+    const changeSnapshot = await this.captureChangeSnapshot(workspaceRoot);
     const response = await withTimeout(
       this.client.conversation({
         version: CODING_RUN_PROTOCOL_VERSION,
         text,
-        cwd: this.cwd,
+        cwd: workspaceRoot,
         ...(conversationId?.trim() ? { conversationId: conversationId.trim() } : {}),
       }),
       this.requestTimeoutMs,
@@ -124,6 +148,7 @@ export class CodingTuiRuntime {
     const binding = readConversationBinding(response.result);
     if (!binding) throw new Error("Gateway returned an incomplete Conversation binding.");
     this.pendingChangeSnapshots.set(binding.agentRunId, changeSnapshot);
+    this.changeSnapshotWorkspaceRoots.set(binding.agentRunId, workspaceRoot);
 
     const subscription = await withTimeout(
       this.client.subscribe({
@@ -151,14 +176,14 @@ export class CodingTuiRuntime {
     try {
       const recovery = await this.changeRecoveryRuntime.getCandidate({
         revisionId: agentRunId,
-        workspaceRoot: this.cwd,
+        workspaceRoot: pending.workspaceRoot,
       });
       const snapshot = await this.changeSnapshotRuntime.createSnapshot({
         baselineId: pending.baselineId,
         revisionId: agentRunId,
         recovery,
       });
-      const page = await this.changeSnapshotRuntime.readSnapshotPage({ snapshotId: snapshot.snapshotId });
+      const page = await this.readChangeSnapshotPage(snapshot.snapshotId);
       const result: TuiChangeSnapshotResult = { status: "available", snapshot, page };
       this.completedChangeSnapshots.set(agentRunId, result);
       return result;
@@ -174,18 +199,19 @@ export class CodingTuiRuntime {
 
   async recomputeChangeSnapshot(agentRunId: string): Promise<TuiChangeSnapshotResult | undefined> {
     const previous = this.completedChangeSnapshots.get(agentRunId);
-    if (previous?.status !== "available" || !previous.snapshot) return undefined;
+    const workspaceRoot = this.changeSnapshotWorkspaceRoots.get(agentRunId);
+    if (previous?.status !== "available" || !previous.snapshot || !workspaceRoot) return undefined;
     try {
       const recovery = await this.changeRecoveryRuntime.getCandidate({
         revisionId: agentRunId,
-        workspaceRoot: this.cwd,
+        workspaceRoot,
       });
       const snapshot = await this.changeSnapshotRuntime.createSnapshot({
         baselineId: previous.snapshot.baseline.baselineId,
         revisionId: agentRunId,
         recovery,
       });
-      const page = await this.changeSnapshotRuntime.readSnapshotPage({ snapshotId: snapshot.snapshotId });
+      const page = await this.readChangeSnapshotPage(snapshot.snapshotId);
       const result: TuiChangeSnapshotResult = { status: "available", snapshot, page };
       this.completedChangeSnapshots.set(agentRunId, result);
       return result;
@@ -205,6 +231,40 @@ export class CodingTuiRuntime {
       toolCallId: request.toolCallId,
       decision,
     }), this.requestTimeoutMs, "Tool permission response timed out.");
+    if (!response.ok) throw new Error(response.error.message);
+  }
+
+  async listPendingPermissions(): Promise<TuiPermissionRequest[]> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "coding.run.permission.list",
+      params: {},
+      requestIdPrefix: "bdd-tui-permission-list",
+      clientName: "bdd tui",
+      parsePayload: parsePendingPermissionList,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as TuiPermissionRequest[];
+  }
+
+  async readChangeSnapshotPage(snapshotId: string, cursor?: string) {
+    return this.changeSnapshotRuntime.readSnapshotPage({
+      snapshotId,
+      ...(cursor ? { cursor } : {}),
+      maxHunks: 1,
+    });
+  }
+
+  async steer(binding: TuiConversationBinding, prompt: string): Promise<void> {
+    const text = prompt.trim();
+    if (!text) throw new Error("A non-empty steer prompt is required.");
+    const response = await withTimeout(this.client.control({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.steer",
+      binding,
+      prompt: text,
+      idempotencyKey: `tui-steer-${randomUUID()}`,
+    }), this.requestTimeoutMs, "Conversation steer timed out.");
     if (!response.ok) throw new Error(response.error.message);
   }
 
@@ -235,7 +295,105 @@ export class CodingTuiRuntime {
     return inspectWorkspaceChanges(this.cwd);
   }
 
+  async listWorkspaceTargets(): Promise<TuiWorkspaceTarget[]> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "workspace.worktree.status",
+      params: {},
+      requestIdPrefix: "bdd-tui-worktree-list",
+      clientName: "bdd tui",
+      parsePayload: parseWorkspaceTargetList,
+    });
+    if (!result.ok) throw new Error(result.error);
+    const managed = (result.payload as TuiWorkspaceTarget[])
+      .filter((target) => !samePath(target.cwd, this.launchCwd));
+    return [createLaunchWorkspaceTarget(this.launchCwd), ...managed].slice(0, MAX_TUI_WORKSPACE_TARGETS);
+  }
+
+  async listRemoteDeliveryTargets(): Promise<RemoteDeliveryTarget[]> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "workspace.remote_delivery.targets",
+      params: {
+        cwd: this.cwd,
+        ...(this.currentWorktreeId ? { worktreeId: this.currentWorktreeId } : {}),
+      },
+      requestIdPrefix: "bdd-tui-remote-targets",
+      clientName: "bdd tui",
+      parsePayload: parseRemoteDeliveryTargets,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as RemoteDeliveryTarget[];
+  }
+
+  async previewRemotePush(remote: string, targetBranch: string): Promise<RemoteDeliveryPreview> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "workspace.remote_delivery.push.preview",
+      params: {
+        cwd: this.cwd,
+        ...(this.currentWorktreeId ? { worktreeId: this.currentWorktreeId } : {}),
+        remote,
+        targetBranch,
+      },
+      requestIdPrefix: "bdd-tui-remote-push-preview",
+      clientName: "bdd tui",
+      parsePayload: parseRemoteDeliveryPreview,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as RemoteDeliveryPreview;
+  }
+
+  async confirmRemotePush(receiptId: string): Promise<RemoteDeliveryResult> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "workspace.remote_delivery.push.confirm",
+      params: { receiptId, confirm: true },
+      requestIdPrefix: "bdd-tui-remote-push-confirm",
+      clientName: "bdd tui",
+      parsePayload: parseRemoteDeliveryResult,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as RemoteDeliveryResult;
+  }
+
+  async switchWorkspace(targetKey: string): Promise<TuiWorkspaceTarget> {
+    if (targetKey === "launch") {
+      const cwd = await resolveExistingDirectory(this.launchCwd);
+      const target = createLaunchWorkspaceTarget(cwd);
+      this.currentCwd = cwd;
+      this.currentWorktreeId = undefined;
+      return target;
+    }
+    const worktreeId = targetKey.startsWith("worktree:")
+      ? readSafeWorktreeId(targetKey.slice("worktree:".length))
+      : undefined;
+    if (!worktreeId) throw new Error("Workspace switch requires an exact managed worktree target.");
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "workspace.worktree.status",
+      params: { worktreeId },
+      requestIdPrefix: "bdd-tui-worktree-status",
+      clientName: "bdd tui",
+      parsePayload: parseWorkspaceTargetList,
+    });
+    if (!result.ok) throw new Error(result.error);
+    const targets = result.payload as TuiWorkspaceTarget[];
+    const target = targets.length === 1 && targets[0]?.worktreeId === worktreeId
+      ? targets[0]
+      : undefined;
+    if (!target || target.targetKey !== targetKey || target.status === "unavailable") {
+      throw new Error("Gateway did not return the exact available managed worktree target.");
+    }
+    const cwd = await resolveExistingDirectory(target.cwd);
+    const resolved = { ...target, cwd };
+    this.currentCwd = cwd;
+    this.currentWorktreeId = worktreeId;
+    return resolved;
+  }
+
   async listRevisions(): Promise<WorkspaceRevisionSummary[]> {
+    const workspaceRoot = this.cwd;
     const result = await this.invokeGateway({
       stateDir: this.stateDir,
       method: "workspace.revision.list",
@@ -245,7 +403,8 @@ export class CodingTuiRuntime {
       parsePayload: parseRevisionList,
     });
     if (!result.ok) throw new Error(result.error);
-    return result.payload as WorkspaceRevisionSummary[];
+    return (result.payload as WorkspaceRevisionSummary[])
+      .filter((revision) => samePath(revision.workspaceRoot, workspaceRoot));
   }
 
   async previewRevision(revisionId: string, workspaceId?: string): Promise<WorkspaceRevisionRestorePreview> {
@@ -274,6 +433,55 @@ export class CodingTuiRuntime {
     return result.payload as WorkspaceRevisionRestoreResult;
   }
 
+  async listCommandJobs(): Promise<CommandJobSnapshot[]> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "command.job.list",
+      params: {},
+      requestIdPrefix: "bdd-tui-command-job-list",
+      clientName: "bdd tui",
+      parsePayload: parseCommandJobList,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as CommandJobSnapshot[];
+  }
+
+  async readCommandJob(jobId: string, cursor?: number): Promise<CommandJobReadResult> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "command.job.read",
+      params: {
+        jobId,
+        ...(cursor !== undefined ? { cursor } : {}),
+        maxBytes: MAX_TUI_COMMAND_JOB_READ_BYTES,
+      },
+      requestIdPrefix: "bdd-tui-command-job-read",
+      clientName: "bdd tui",
+      parsePayload: parseCommandJobReadResult,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as CommandJobReadResult;
+  }
+
+  async cancelCommandJob(jobId: string): Promise<CommandJobSnapshot> {
+    const result = await this.invokeGateway({
+      stateDir: this.stateDir,
+      method: "command.job.cancel",
+      params: { jobId },
+      requestIdPrefix: "bdd-tui-command-job-cancel",
+      clientName: "bdd tui",
+      parsePayload: (payload) => {
+        const snapshot = parseCommandJobSnapshot(payload);
+        if (!snapshot || snapshot.jobId !== jobId) {
+          throw new Error("Gateway returned an invalid command job cancellation result.");
+        }
+        return snapshot;
+      },
+    });
+    if (!result.ok) throw new Error(result.error);
+    return result.payload as CommandJobSnapshot;
+  }
+
   async loadRuntimeSnapshot(): Promise<TuiRuntimeSnapshot> {
     const snapshot = await buildConsoleSnapshot(this.stateDir);
     return {
@@ -295,15 +503,15 @@ export class CodingTuiRuntime {
     };
   }
 
-  private async captureChangeSnapshot(): Promise<PendingTuiChangeSnapshot | TuiChangeSnapshotResult> {
+  private async captureChangeSnapshot(workspaceRoot: string): Promise<PendingTuiChangeSnapshot | TuiChangeSnapshotResult> {
     const baselineId = `tui-run-${randomUUID()}`;
     try {
       await this.changeSnapshotRuntime.captureBaseline({
         baselineId,
-        workspaceRoot: this.cwd,
+        workspaceRoot,
         source: "run_start",
       });
-      return { baselineId };
+      return { baselineId, workspaceRoot };
     } catch (error) {
       return { status: "unavailable", error: toSafeCodingRunErrorMessage(error) };
     }
@@ -432,6 +640,233 @@ function parseRevisionList(payload: Record<string, unknown>): WorkspaceRevisionS
     const summary = parseRevisionSummary(item);
     return summary ? [summary] : [];
   });
+}
+
+function parseWorkspaceTargetList(payload: Record<string, unknown>): TuiWorkspaceTarget[] {
+  const worktrees = Array.isArray(payload.worktrees)
+    ? payload.worktrees.slice(0, MAX_TUI_WORKSPACE_TARGETS)
+    : [];
+  return worktrees.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const worktreeId = readSafeWorktreeId(value.worktreeId);
+    const cwd = readAbsolutePath(value.worktreePath);
+    const branch = readTuiIdentifier(value.branch);
+    const status = value.status;
+    if (!worktreeId || !cwd || !branch
+      || (status !== "ready" && status !== "blocked" && status !== "unavailable")) {
+      return [];
+    }
+    const target: TuiWorkspaceTarget = {
+      targetKey: `worktree:${worktreeId}`,
+      kind: "managed",
+      worktreeId,
+      cwd,
+      branch,
+      status,
+    };
+    if (typeof value.dirty === "boolean") target.dirty = value.dirty;
+    for (const field of ["trackedChanges", "untrackedChanges", "conflictChanges", "extraCommitCount"] as const) {
+      const count = readNonNegativeSafeInteger(value[field]);
+      if (count !== undefined) target[field] = count;
+    }
+    return [target];
+  });
+}
+
+function parseRemoteDeliveryTargets(payload: Record<string, unknown>): RemoteDeliveryTarget[] {
+  const targets = Array.isArray(payload.targets) ? payload.targets.slice(0, 50) : [];
+  return targets.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const remote = readSafeWorktreeId(value.remote);
+    const url = readBoundedText(value.url, 2048);
+    const pushBranches = readStringList(value.pushBranches, 100);
+    const pullRequestBases = value.pullRequestBases === undefined
+      ? undefined
+      : readStringList(value.pullRequestBases, 100);
+    const repository = value.repository === undefined ? undefined : readTuiIdentifier(value.repository);
+    if (!remote || !url || !pushBranches || pushBranches.length === 0
+      || (value.pullRequestBases !== undefined && !pullRequestBases)
+      || (value.repository !== undefined && !repository)) return [];
+    return [{
+      remote,
+      url,
+      pushBranches,
+      ...(pullRequestBases ? { pullRequestBases } : {}),
+      ...(repository ? { repository } : {}),
+    }];
+  });
+}
+
+function parseRemoteDeliveryPreview(payload: Record<string, unknown>): RemoteDeliveryPreview {
+  if (payload.operation !== "push" || typeof payload.canConfirm !== "boolean") {
+    throw new Error("Gateway returned an invalid remote push preview.");
+  }
+  const blockers = readStringList(payload.blockers, 100);
+  if (!blockers) throw new Error("Gateway returned invalid remote push blockers.");
+  const preview: RemoteDeliveryPreview = { operation: "push", canConfirm: payload.canConfirm, blockers };
+  if (isRecord(payload.source)) {
+    const repoRoot = readAbsolutePath(payload.source.repoRoot);
+    const branch = readTuiIdentifier(payload.source.branch);
+    const commit = readGitOid(payload.source.commit);
+    const upstream = payload.source.upstream === null ? null : readTuiIdentifier(payload.source.upstream);
+    if (!repoRoot || !branch || !commit || upstream === undefined) {
+      throw new Error("Gateway returned an invalid remote push source.");
+    }
+    preview.source = { repoRoot, branch, commit, upstream };
+  }
+  if (isRecord(payload.target)) {
+    const remote = readSafeWorktreeId(payload.target.remote);
+    const url = readBoundedText(payload.target.url, 2048);
+    const branch = readTuiIdentifier(payload.target.branch);
+    const expectedOid = payload.target.expectedOid === null ? null : readGitOid(payload.target.expectedOid);
+    if (!remote || !url || !branch || expectedOid === undefined) {
+      throw new Error("Gateway returned an invalid remote push target.");
+    }
+    preview.target = { remote, url, branch, expectedOid };
+  }
+  if (isRecord(payload.diff)) {
+    const baseBranch = payload.diff.baseBranch === undefined ? undefined : readTuiIdentifier(payload.diff.baseBranch);
+    const baseOid = readGitOid(payload.diff.baseOid);
+    const diffHash = readSha256(payload.diff.sha256);
+    const byteLength = readNonNegativeSafeInteger(payload.diff.byteLength);
+    if (!baseOid || !diffHash || byteLength === undefined
+      || (payload.diff.baseBranch !== undefined && !baseBranch)) {
+      throw new Error("Gateway returned an invalid remote push diff.");
+    }
+    preview.diff = { ...(baseBranch ? { baseBranch } : {}), baseOid, sha256: diffHash, byteLength };
+  }
+  if (isRecord(payload.receipt)) {
+    const receiptId = readTuiIdentifier(payload.receipt.receiptId);
+    const expiresAtMs = readNonNegativeSafeInteger(payload.receipt.expiresAtMs);
+    if (!receiptId || expiresAtMs === undefined) throw new Error("Gateway returned an invalid remote push receipt.");
+    preview.receipt = { receiptId, expiresAtMs };
+  }
+  if (preview.canConfirm && (!preview.source || !preview.target || !preview.diff || !preview.receipt || blockers.length > 0)) {
+    throw new Error("Gateway returned an incomplete confirmable remote push preview.");
+  }
+  return preview;
+}
+
+function parseRemoteDeliveryResult(payload: Record<string, unknown>): RemoteDeliveryResult {
+  if (payload.operation !== "push" || typeof payload.applied !== "boolean") {
+    throw new Error("Gateway returned an invalid remote push result.");
+  }
+  const blockers = readStringList(payload.blockers, 100);
+  if (!blockers) throw new Error("Gateway returned invalid remote push blockers.");
+  const result: RemoteDeliveryResult = { operation: "push", applied: payload.applied, blockers };
+  if (isRecord(payload.postcondition)) {
+    const remoteOid = readGitOid(payload.postcondition.remoteOid);
+    if (!remoteOid) throw new Error("Gateway returned an invalid remote push postcondition.");
+    result.postcondition = { remoteOid };
+  }
+  if (result.applied && (!result.postcondition || blockers.length > 0)) {
+    throw new Error("Gateway returned an incomplete successful remote push result.");
+  }
+  return result;
+}
+
+function parseCommandJobList(payload: Record<string, unknown>): CommandJobSnapshot[] {
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  return jobs.flatMap((item) => {
+    const snapshot = parseCommandJobSnapshot(item);
+    return snapshot ? [snapshot] : [];
+  });
+}
+
+function parsePendingPermissionList(payload: Record<string, unknown>): TuiPermissionRequest[] {
+  const permissions = Array.isArray(payload.permissions) ? payload.permissions.slice(0, 100) : [];
+  return permissions.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const conversationId = readTuiIdentifier(value.conversationId);
+    const agentRunId = readTuiIdentifier(value.agentRunId);
+    const worktreeId = readTuiIdentifier(value.worktreeId);
+    const toolCallId = readTuiIdentifier(value.toolCallId);
+    const toolName = readTuiIdentifier(value.toolName);
+    if (!conversationId || !agentRunId || !toolCallId || !toolName) return [];
+    const commandPreview = (toolName === "run_command" || toolName === "command_job") && isRecord(value.commandPreview)
+      ? sanitizeCommandPermissionPreview({ ...value.commandPreview, kind: "command" })
+      : undefined;
+    return [{
+      agentRunId,
+      ...(worktreeId ? { worktreeId } : {}),
+      toolCallId,
+      toolName,
+      ...(commandPreview ? { commandPreview } : {}),
+    }];
+  });
+}
+
+function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined {
+  if (!isRecord(value)) return undefined;
+  const jobId = readString(value.jobId);
+  const status = value.status;
+  const stdinMode = value.stdinMode;
+  const createdAt = readNonNegativeSafeInteger(value.createdAt);
+  const updatedAt = readNonNegativeSafeInteger(value.updatedAt);
+  const oldestCursor = readNonNegativeSafeInteger(value.oldestCursor);
+  const nextCursor = readNonNegativeSafeInteger(value.nextCursor);
+  if (!jobId
+    || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(jobId)
+    || (status !== "running" && status !== "completed" && status !== "cancelled" && status !== "failed" && status !== "lost")
+    || (stdinMode !== "closed" && stdinMode !== "pipe" && stdinMode !== "pty")
+    || createdAt === undefined
+    || updatedAt === undefined
+    || oldestCursor === undefined
+    || nextCursor === undefined
+    || oldestCursor > nextCursor
+    || typeof value.supportsResize !== "boolean") {
+    return undefined;
+  }
+  const snapshot: CommandJobSnapshot = {
+    jobId,
+    status,
+    stdinMode,
+    createdAt,
+    updatedAt,
+    supportsResize: value.supportsResize,
+    oldestCursor,
+    nextCursor,
+  };
+  const endedAt = readNonNegativeSafeInteger(value.endedAt);
+  const pid = readNonNegativeSafeInteger(value.pid);
+  const timeoutMs = readNonNegativeSafeInteger(value.timeoutMs);
+  const deadlineAt = readNonNegativeSafeInteger(value.deadlineAt);
+  const exitCode = typeof value.exitCode === "number" && Number.isSafeInteger(value.exitCode) ? value.exitCode : undefined;
+  const signal = typeof value.signal === "string" || typeof value.signal === "number" ? value.signal : undefined;
+  const error = readString(value.error);
+  return {
+    ...snapshot,
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    ...(pid !== undefined ? { pid } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(deadlineAt !== undefined ? { deadlineAt } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(signal !== undefined ? { signal } : {}),
+    ...(error ? { error } : {}),
+  };
+}
+
+function parseCommandJobReadResult(payload: Record<string, unknown>): CommandJobReadResult {
+  const snapshot = parseCommandJobSnapshot(payload);
+  const startCursor = readNonNegativeSafeInteger(payload.startCursor);
+  if (!snapshot
+    || typeof payload.output !== "string"
+    || startCursor === undefined
+    || startCursor < snapshot.oldestCursor
+    || startCursor > snapshot.nextCursor
+    || typeof payload.hasMore !== "boolean"
+    || typeof payload.cursorExpired !== "boolean"
+    || typeof payload.cursorAdjusted !== "boolean") {
+    throw new Error("Gateway returned an invalid command job output page.");
+  }
+  return {
+    ...snapshot,
+    output: payload.output,
+    startCursor,
+    hasMore: payload.hasMore,
+    cursorExpired: payload.cursorExpired,
+    cursorAdjusted: payload.cursorAdjusted,
+  };
 }
 
 function parseRevisionPreview(payload: Record<string, unknown>): WorkspaceRevisionRestorePreview {
@@ -582,8 +1017,70 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function readBoundedText(value: unknown, maxLength: number): string | undefined {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= maxLength
+    && !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : undefined;
+}
+
+function readStringList(value: unknown, limit: number): string[] | undefined {
+  if (!Array.isArray(value) || value.length > limit) return undefined;
+  const strings = value.map((item) => readTuiIdentifier(item));
+  return strings.every((item): item is string => Boolean(item)) ? strings : undefined;
+}
+
+function readGitOid(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{40,64}$/i.test(value) ? value.toLowerCase() : undefined;
+}
+
+function readTuiIdentifier(value: unknown): string | undefined {
+  const normalized = readString(value);
+  return normalized && normalized.length <= 256 && !/[\u0000-\u001f\u007f]/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function readSafeWorktreeId(value: unknown): string | undefined {
+  const normalized = readTuiIdentifier(value);
+  return normalized && /^[A-Za-z0-9._-]+$/.test(normalized) ? normalized : undefined;
+}
+
+function readAbsolutePath(value: unknown): string | undefined {
+  const normalized = readString(value);
+  return normalized
+    && normalized.length <= 4096
+    && !/[\u0000-\u001f\u007f]/.test(normalized)
+    && path.isAbsolute(normalized)
+    ? path.resolve(normalized)
+    : undefined;
+}
+
+function createLaunchWorkspaceTarget(cwd: string): TuiWorkspaceTarget {
+  return { targetKey: "launch", kind: "launch", cwd, status: "ready" };
+}
+
+async function resolveExistingDirectory(cwd: string): Promise<string> {
+  const resolved = await fs.realpath(cwd);
+  const stats = await fs.stat(resolved);
+  if (!stats.isDirectory()) throw new Error("Workspace target is not an accessible directory.");
+  return path.resolve(resolved);
+}
+
+function samePath(left: string, right: string): boolean {
+  return process.platform === "win32"
+    ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+    : path.resolve(left) === path.resolve(right);
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function readNonNegativeSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

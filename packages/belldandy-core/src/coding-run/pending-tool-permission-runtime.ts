@@ -5,6 +5,7 @@ import {
 } from "@belldandy/skills";
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
+const MAX_PENDING_PERMISSION_SNAPSHOTS = 100;
 
 type PendingPermissionRecord = {
   conversationId: string;
@@ -31,6 +32,13 @@ export type PendingToolPermissionResponse = {
   worktreeId?: string;
   toolCallId: string;
   decision: "allow" | "deny";
+};
+
+export type PendingToolPermissionSnapshot = Pick<
+  PendingPermissionRecord,
+  "conversationId" | "agentRunId" | "worktreeId" | "toolCallId" | "toolName"
+> & {
+  commandPreview?: Omit<NonNullable<PendingToolPermissionRequest["commandPreview"]>, "kind">;
 };
 
 export type PendingToolPermissionResponseResult =
@@ -89,6 +97,25 @@ export class PendingToolPermissionRuntime implements ToolPermissionController {
         // 事件转发故障会由固定超时关闭，不可绕过审批。
       }
     });
+  }
+
+  list(): PendingToolPermissionSnapshot[] {
+    return [...this.pending.values()]
+      .slice(0, MAX_PENDING_PERMISSION_SNAPSHOTS)
+      .map((record) => {
+        const safePreview = sanitizeCommandPermissionPreview(record.commandPreview);
+        const commandPreview = safePreview
+          ? (({ kind: _kind, ...preview }) => preview)(safePreview)
+          : undefined;
+        return {
+          conversationId: record.conversationId,
+          agentRunId: record.agentRunId,
+          ...(record.worktreeId ? { worktreeId: record.worktreeId } : {}),
+          toolCallId: record.toolCallId,
+          toolName: record.toolName,
+          ...(commandPreview ? { commandPreview } : {}),
+        };
+      });
   }
 
   respond(input: PendingToolPermissionResponse): PendingToolPermissionResponseResult {

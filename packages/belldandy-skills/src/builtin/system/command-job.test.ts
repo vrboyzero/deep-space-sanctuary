@@ -37,7 +37,7 @@ vi.mock("../../command-job-runtime.js", () => ({
   createCommandJobProcess: mocks.createProcess,
 }));
 
-import { commandJobTool, shutdownCommandJobs } from "./command-job.js";
+import { commandJobTool, getCommandJobRuntime, shutdownCommandJobs } from "./command-job.js";
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
 const sandbox = {
@@ -142,6 +142,17 @@ describe("command_job", () => {
     stdinMode: "pty",
     timeoutMs: 9_000,
   };
+
+  it("shares one live manager with stateDir consumers", async () => {
+    const started = await commandJobTool.execute({ action: "start", commandPlan: plan }, context());
+    expect(started.success).toBe(true);
+
+    const runtime = await getCommandJobRuntime(stateDir);
+
+    expect(runtime.list()).toEqual([
+      expect.objectContaining({ jobId: JOB_ID, status: "running" }),
+    ]);
+  });
 
   it("owns sandbox job stdin, cursor reads, resize, and cancellation without exposing stdin in output", async () => {
     const started = await commandJobTool.execute({ action: "start", commandPlan: plan }, context());

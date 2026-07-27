@@ -425,6 +425,7 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 6. **阻塞与技术债重入**：外部权限、环境缺失或已裁决为 `defer` 的事项不占用当前持续队列；记录准确命令、错误、影响和最小恢复条件后，转向仍可闭环的下一切片。只有新证据改变优先级、依赖恢复或用户明确恢复时才重入；新发现按第 10 节的 `fix_now`、`split_task`、`defer`、`record_only` 裁决，不顺手扩大当前阶段。
 7. **保持仓库边界**：超过 3000 行的文件优先把新逻辑放入相邻模块，原文件只做装配、注册或转发；结构、入口或模块归属变化时同步更新 `docs/project-map.md`。Grok Build 与 Claude Code 本地快照只作为版本锁定的设计证据：先以 SS 当前源码和测试确认适配性，并遵守第 2.4 节的许可与独立实现边界。
 8. **持续执行不扩大授权**：删除/覆盖大量文件、依赖主版本升级、真实数据或生产操作、发布，以及 push/PR 等外部写入仍按 HITL 暂停确认。Git 操作继续遵守双仓库规则；未经用户明确要求不得推送，尤其不得推送 `origin/main`。失败触发 Fix Mode，同一证据集连续三轮仍无进展时停止试错并回写阻塞证据。
+9. **配置化**：新增限制、开关或可调设置时，应在保留安全默认值兜底的前提下尽量提供对应环境变量，并同步 `.env.example`、发行模板与配置审计；非法或缺失配置必须回退到默认值。若因安全边界、兼容性或缺少稳定 owner 不提供环境变量，阶段结论必须说明原因。
 
 ## 9. 架构边界与关键风险
 
@@ -1321,6 +1322,32 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - Windows `corepack pnpm verify:command-sandbox-oci` 通过全部 OCI isolation 与 pipe/PTY command job fixtures；验证后 sandbox lease label 容器数与 PTY host 残留进程数均为 `0`。
 - `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过。
 
+#### 阶段 2-6 实现结论：WSL OCI Gate 闭环（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/command-sandbox.ts` 与 `command-sandbox.test.ts` 修改**：
+   - OCI invocation 在 Unix/WSL 仅投影当前宿主的有效数值 UID/GID 为 `--user uid:gid`；Windows、缺失身份或非法身份不传该参数。
+   - 新增 UID/GID 投影的 Linux、Windows 与无效输入回归，保持只读 root、最窄 workspace bind mount、`network none`、capability drop 和 no-new-privileges 不变。
+
+2. **`pnpm-workspace.yaml` 修改**：
+   - 将已直接用于 PTY command job 的 `node-pty` 移入显式 `onlyBuiltDependencies`，继续忽略 `onnxruntime-node` 与 `protobufjs`。
+   - WSL Linux 安装会以本地 node-gyp、Python、make、g++ 和已提供的 Node headers 编译缺失的 `pty.node`，不依赖 Windows `node_modules`。
+
+3. **`docs/project-map.md` 修改**：
+   - 补充 OCI invocation 的 Unix/WSL 最小身份投影边界，明确它不扩大容器的挂载、网络或 capability 权限。
+
+4. **效果**：
+   - Docker Desktop WSL bind mount 在保留最小 write scope 的前提下可由 `workspace-readwrite` 容器写入，不再因宿主 UID/GID 映射导致错误拒绝。
+   - 独立 `/tmp` frozen-lockfile staging 可离线生成 Linux PTY 原生模块；WSL OCI isolation、pipe/PTY 输出、resize、cancel 与 lease/container 回收均已通过。
+   - 本切片不写入 `.env.local`，不自动拉取镜像，不回退宿主 Shell，也不开放远端 Git 操作。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 7 个阶段 2 定向测试文件、30 个测试全部通过（含 2 个新增 Unix/WSL UID/GID 投影回归）。
+- `Ubuntu-22.04` staging 在 `corepack pnpm install --offline --frozen-lockfile` 后，以预加载 digest-pinned Node 镜像运行 `corepack pnpm verify:command-sandbox-oci` 通过；lease label 容器残留为 `0`。
+
 #### 阶段 3-1 实现结论：只读 run-start diff/review snapshot（2026-07-27）
 
 ##### 已完成内容
@@ -1546,11 +1573,845 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - 9 个阶段 3 定向测试文件、58 个测试全部通过，覆盖成功且匹配的 restore 后 invalidated verdict，以及未应用、无关联、ID 不匹配的 `not_applicable` 分支。
 - `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
 
-### 后续计划
+#### 阶段 3-2h 实现结论：可信 restore receipt 与 Gateway review 重判（2026-07-27）
 
-阶段 2-6 的 Windows backend 已完成：Docker `29.1.3` 使用预加载 digest-pinned Node 镜像通过只读 root/workspace、受限 workspace-write、`network none`、pipe/PTY 输出、cursor、resize、cancel、进程树和 lease/container 回收；配置仅注入验证进程，未写入 `.env.local`。Windows PTY split task 已关闭。阶段 2 当前仅剩 WSL 外部 Gate：`Ubuntu-22.04` 的 Docker CLI/daemon 可达，但仍未提供不复用 Windows `node_modules` 的 `/tmp` frozen-lockfile staging，因此 WSL `verify:command-sandbox-oci` 未执行，阶段 2 继续保持进行中且 coding profile 继续 fail-closed。最小恢复条件是提供该 staging，并以同一 digest-pinned 镜像和仅进程级 sandbox 配置运行现有显式 Gate；该环境依赖按 8.2 裁决为 `defer`，恢复后立即重入。
+##### 已完成内容
 
-阶段 3-2g 已提供成功且 ID 匹配时的 core review 重判，并对未应用、无关联和 ID 不匹配失败关闭；它仍不把调用方传入的 outcome 当作 Gateway 可信凭据。下一步优先建立由 `WorkspaceRevisionRuntime` 在真实 restore 成功后写入的最小 restore receipt，并在 Gateway/Headless 只读入口以该 receipt 驱动 review 重判。优先做它，是因为这能把当前正确但进程内的 API 变为可信的消费者契约，避免外部参数声称“已恢复”后被误解为审计证据。当前还缺的关键闭环是可信 restore receipt 与 Gateway/Headless 投影、相似度重命名，以及 final gate 之后的外部文件系统竞态边界；这些继续保持为阶段 3 后续切片，不提前开放强制覆盖、stage、commit、worktree remove 或远端 Git 操作。
+1. **`packages/belldandy-core/src/workspace-revision.ts`、`workspace-revision.test.ts` 修改**：
+   - `restore({ apply: true })` 仅在全部目标写入完成后，在对应 checkpoint 内以原子 artifact 写入最小 restore receipt，并将其投影到成功 result。
+   - receipt 只包含 version、receipt ID、revision ID、workspace ID 与时间戳；读取时严格校验 artifact 位置、ID、revision/workspace 绑定和 JSON 结构。
+   - dry-run、冲突停止、跨 workspace 同名 revision、缺失或损坏 artifact 均不产生或不能读取 receipt。
+
+2. **`packages/belldandy-core/src/workspace-change-review.ts`、`server-methods/workspace-revision.ts`、Gateway 装配与对应测试修改**：
+   - 移除调用方提供 `applied` outcome 的 review 重判入口；`verifyAfterRestoreReceipt()` 先复核 review/snapshot 关联，再以 snapshot workspace 读取 runtime receipt，失败时不重建 snapshot。
+   - Gateway 新增需配对的只读 RPC `workspace.change.review.verify_after_restore`；只接受 `reviewId` 与 `receiptId`，显式拒绝 `applied`、`revisionId` 等调用方声明字段。
+   - Gateway 主装配持有同一个 revision runtime 与 review runtime；Headless consumer 可通过该 Gateway 只读 RPC 获取重判结果，未新增独立 CLI 或恢复写入通道。
+
+3. **`docs/project-map.md` 修改**：
+   - 记录 restore receipt、review receipt 驱动重判和失败关闭的 owner 边界。
+
+4. **效果**：
+   - restore 后的 review 重判不再把外部参数当作“已恢复”证据，只有实际 runtime 成功写入的 receipt 才能触发。
+   - receipt 不能跨工作区或 revision 复用，损坏状态存储不会被伪装为成功重判。
+   - 本切片不新增可调开关或环境变量：receipt 是固定的 checkpoint 审计契约，配置化会削弱失败关闭默认值；不改变 restore 写入、相似度重命名、强制覆盖、Git stage/commit/worktree remove 或远端 Git 行为。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 4 个定向测试文件、14 个测试全部通过，覆盖成功 receipt、dry-run/冲突无 receipt、跨 workspace、损坏 artifact、缺失 receipt 无 snapshot 重建及 Gateway 参数拒绝。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2i 实现结论：有界文本相似度重命名（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts` 与 `workspace-change-snapshot.test.ts` 修改**：
+   - 在原有 hash 完全相等的精确重命名之后，对已存储、非二进制、至多 128 KiB 的文本删除/新增候选执行行 token 重合度比较；候选每侧最多 64 个、最多 256 个不同非空 token。
+   - 仅当相似度至少 80% 且旧/新两侧都是唯一最佳匹配时，投影单个 `renamed` 文件、`previousPath` 与 `renameSimilarity`；低相似、并列、二进制、超限或 artifact 读取失败均保留 delete/add。
+   - 相似重命名进入既有 Git no-index hunk 流，产出实际内容 patch；精确重命名继续保留 `similarity index 100%` 元数据 hunk。
+
+2. **`docs/project-map.md` 修改**：
+   - 记录 snapshot 对精确与有界近似重命名的只读归因边界。
+
+3. **效果**：
+   - 有少量内容编辑的文本移动不再被误呈现为无关联的删除和新增，review、TUI hunk 与 Headless snapshot artifact 可使用同一来源证据。
+   - 模糊、二进制或资源异常场景不会猜测重命名，维持更保守的 delete/add。
+   - 本切片不新增环境变量：候选数量、文件大小和 token 上限是避免 snapshot 扫描放大的固定安全边界，当前没有稳定的外部配置 owner；不改变 workspace 写入、restore、强制覆盖、Git stage/commit/worktree remove 或远端 Git 行为。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 5 个定向测试文件、30 个测试全部通过，覆盖精确/近似重命名、低相似、并列歧义、二进制、receipt、review 与 Gateway 只读契约。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3-2j 实现结论：post-gate restore 写入前复核（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-revision.ts` 与 `workspace-revision.test.ts` 修改**：
+   - 在最终全量 preview gate 后，先读取并校验所有 preimage，再在每个目标实际写入前重新验证路径与当前 hash；目标已经回到 before state 时跳过写入。
+   - post-gate 发现 hash/路径异常时，写入既有无内容 conflict artifact，返回 `applied: false`，停止后续写入且不生成 restore receipt；已先完成的目标如实保留，不伪装成跨文件回滚。
+   - 增加确定性 fixture：第二次 preview 返回后注入用户写入，确认该文件不被覆盖、冲突证据可读且 result 无 receipt。
+
+2. **`docs/project-map.md` 修改**：
+   - 明确 final gate 与逐目标写入前复核的边界，以及 post-gate 冲突不等于跨文件事务。
+
+3. **效果**：
+   - final gate 之后、目标写入之前已被观察到的用户修改会被保留，restore 显式停止并留下诊断证据。
+   - preimage 完整性先于逐目标检查完成，缩小 state check 到实际替换之间的窗口。
+   - 本切片不新增环境变量：该复核是恢复安全默认值而非可选策略；普通文件系统的最后一次检查与原子替换之间仍存在不可消除的内核级竞态，且跨文件原子回滚继续不在承诺范围内。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 3 定向测试文件、61 个测试全部通过，覆盖 Headless artifact、TUI restore、snapshot/review/recovery、receipt、近似重命名与 post-gate 冲突停止。
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过。
+- `git diff --check` 通过；仅输出仓库既有 LF/CRLF 工作树提示。
+
+#### 阶段 3 实现结论：真实 diff/review 与恢复保证（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts`、`workspace-change-review.ts`、`workspace-change-recovery.ts` 与对应测试扩展**：
+   - 已形成 Git/非 Git 不可变基线、hash 绑定 diff/review、hunk cursor、二进制/超大 diff、精确及有界文本近似重命名、恢复等级与 Headless artifact 的单一只读链路。
+   - review 通过 workspace/revision 严格绑定的 restore receipt 重判；缺失、损坏或伪造凭据失败关闭。
+
+2. **`packages/belldandy-core/src/workspace-revision.ts`、Gateway/TUI/Headless 接线与对应测试扩展**：
+   - 已提供 restore preview、冲突 artifact、final gate、逐目标写入前复核与可信 receipt；Gateway 只读入口不信任调用方的 restore outcome。
+   - TUI/Headless 复用同一 snapshot artifact 和恢复等级，restore 成功后按原始 baseline 重算 diff。
+
+3. **`docs/project-map.md` 与计划文档修改**：
+   - 已记录 source owner、可观察的失败关闭路径与不提供跨文件事务、强制覆盖、Git 写入或远端交付的边界。
+
+4. **效果**：
+   - 用户在审查、恢复前后可看到同一 hash 绑定的真实 diff、来源和恢复保证，不会把未知写入或调用方声明误作可信恢复。
+   - 并行用户修改在可观测窗口内会停止并保留证据；不可消除的底层文件系统竞态与可能的已写入前序目标保持显式风险，不被宣称为原子恢复。
+   - 阶段 3 的闭环到此完成；阶段 4 才会处理受控 Git worktree、stage/commit 等独立本地交付能力。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 3 定向测试文件、61 个测试全部通过。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过。
+
+#### 阶段 4-1 实现结论：用户 worktree 只读状态投影（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/user-worktree-runtime.ts` 新建**：
+   - 持久化 `user_session` worktree 的 conversation/run owner 绑定；登记前复用 `ManagedWorktreeRuntime.reconcile()` 验证受管路径、工作树根和分支，拒绝任意路径与非用户 owner。
+   - 只读投影 base/current commit、branch、dirty、tracked/untracked/冲突数量、额外 commit、blocker 和“必须显式用户操作才可删除”的保留状态。
+   - 损坏记录、缺失工作树、分支漂移或 Git 读取异常均输出 `unavailable`，不把未知状态伪装为可操作；登记文件以不覆盖已有记录的原子创建写入。
+
+2. **`packages/belldandy-core/src/server-methods/workspace-worktree.ts`、Gateway 装配与 registry 修改**：
+   - 新增配对保护的只读 RPC `workspace.worktree.status`，可列举或按 `worktreeId` 查询受信登记记录。
+   - RPC 严格拒绝 `worktreePath` 等非白名单字段，未知 ID 返回 `not_found`；不执行 `git worktree`、Git index、branch 或 workspace 写入。
+
+3. **`user-worktree-runtime.test.ts`、`workspace-worktree.test.ts`、`gateway-method-registry.test.ts` 与 `docs/project-map.md` 修改**：
+   - 覆盖 clean、dirty、重命名、额外 commit、合并冲突、分支漂移、损坏登记、未知 ID 与 RPC 参数收口。
+   - 登记阶段 4 新的状态 owner 与 Gateway 只读边界。
+
+4. **效果**：
+   - 后续 create/keep/apply/remove 控制面可基于同一个持久化 owner 与真实 Git 状态决定停机，不再把调用方提供的路径或状态声明当作可信依据。
+   - dirty、冲突、额外 commit、分支漂移和状态存储损坏都可被用户及调用方明确观察，且默认保持 worktree，不会自动删除或合入。
+   - 本切片未开放用户 worktree create/diff/keep/apply/remove、stage/commit/branch、push/PR 或远端写入；没有新增环境变量，因为该状态契约和失败关闭边界没有稳定的外部配置 owner，配置化会削弱统一停机语义。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 4 个定向测试文件、13 个测试全部通过，覆盖 managed worktree 既有安全边界与本切片的只读状态/RPC 失败关闭路径。
+- `corepack pnpm verify:coding-benchmark` 与 `corepack pnpm verify:coding-ci` 通过。
+
+#### 阶段 4-2 实现结论：受控用户 worktree create（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/user-worktree-runtime.ts`、`managed-worktree.ts` 修改**：
+   - create 的 ID/branch 由 conversation/run 的稳定 SHA-256 派生值生成，重复或并发同一绑定请求会复用已登记 worktree，不生成第二个隔离目录。
+   - source 必须先通过既有 clean Git gate；登记失败仅在 worktree 仍为原始 base、无任何改动或额外 commit 时执行无 `--force` 的回收，任一漂移均保留供恢复。
+   - 登记成功后的回读异常不再触发自动回收，避免损坏记录被扩大为数据丢失。
+
+2. **`conversation-run-registry.ts`、`server-methods/workspace-worktree.ts`、Gateway registry/dispatch 修改**：
+   - 新增精确 run lookup；`workspace.worktree.create` 仅接受当前 `running` 的 conversation/run 绑定、绝对 `cwd` 与白名单字段。
+   - 先以真实路径复核 `cwd` 与 Git root 均在 `additionalWorkspaceRoots` 内，再调用 create；用户不能自定 worktree ID、branch 或目标路径。
+   - RPC 为配对保护的 `gateway.write`，owner 不活跃、工作区越界与创建失败各自返回稳定错误；status 仍为 `gateway.read`。
+
+3. **`managed-worktree.test.ts`、`workspace-worktree.test.ts`、`gateway-method-registry.test.ts` 修改**：
+   - 覆盖 clean create、重复请求幂等、错误 run、根目录越界、脏源仓与登记失败时的 clean-only 回收/漂移保留。
+
+4. **效果**：
+   - 用户现在可以在受控 workspace root 内为正在运行的精确 coding run 创建隔离 worktree；源仓不被改写，创建结果立即进入同一 status owner。
+   - 重试不会污染受管目录；任何无法证明仍安全的创建失败都会保留现场，而不是为了清理而强制删除。
+   - 本切片不开放 diff/keep/apply/remove、stage/commit/branch、push/PR 或远端写入；没有新增环境变量，因为允许根目录、配对和 active run 均已有明确 owner，额外开关会绕开而非增强这些安全门。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 5 个定向测试文件、18 个测试全部通过，覆盖 create/status、精确 run 绑定、受管 cleanup 和 Gateway registry/dispatch。
+
+#### 阶段 4-3 实现结论：worktree-base 只读 diff（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/workspace-change-snapshot.ts`、`user-worktree-runtime.ts` 修改**：
+   - 公开只读 `readBaseline()`，供受控 consumer 验证既有 immutable baseline，不暴露 artifact 写路径或 Git 写操作。
+   - 用户 worktree 首次 diff 以稳定 worktree ID 建立 `worktree_base` baseline，严格复核 baseline source、base commit 与 worktree root；随后复用基线创建当前 snapshot、受管恢复等级和有界首个 hunk page。
+   - baseline 缺失可创建，已有 baseline 仅在其记录仍精确匹配时复用；损坏、替换或分支漂移一律停止，不对任意 caller path 生成 diff。
+
+2. **`server-methods/workspace-worktree.ts`、Gateway registry/dispatch 修改**：
+   - 新增配对保护的只读 RPC `workspace.worktree.diff`，仅接收 `worktreeId`，返回 status、snapshot 与有限 hunk page。
+   - diff 被明确归类为 `gateway.read`；不修改 Git index、branch、source worktree 或 managed worktree 内容。
+
+3. **`workspace-change-snapshot.test.ts`、`workspace-worktree.test.ts`、`gateway-method-registry.test.ts` 修改**：
+   - 覆盖 baseline 只读回读、worktree 编辑相对 recorded base 的真实 hunk、managed_worktree recovery、源仓保持 clean 和风险分类。
+
+4. **效果**：
+   - 用户可在隔离 worktree 中先审查真实、hash 绑定的 base diff，再进入未来 apply/remove 决策，不会以当前主仓 HEAD 或调用方声明替代记录 base。
+   - 脏、额外 commit 或冲突工作树仍会如实生成可审 diff；缺失/漂移/损坏状态不被伪装为可安全交付。
+   - 本切片不开放 keep/apply/remove、stage/commit/branch、push/PR 或远端写入；没有新增环境变量，因为 snapshot 的容量、恢复和安全默认值已有单一 runtime owner，额外开关会破坏跨 consumer 的一致性。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 4 个定向测试文件、26 个测试全部通过，覆盖 snapshot 旧/新 artifact、用户 worktree diff、Gateway status/create/diff 和方法风险分类。
+
+#### 阶段 4-4 实现结论：apply/remove 预览、显式确认与最终复核（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/user-worktree-runtime.ts` 扩展**：
+   - 新增 `apply/remove` 只读 preview；仅从已登记的 `user_session` worktree 读取 base/current commit、branch、source target 与 patch，拒绝调用方提交路径、分支、状态或补丁。
+   - `apply` 仅接受未暂存的普通 tracked 文件改动；会停止 target dirty、source HEAD/base 漂移、冲突、额外 commit、未跟踪或暂存改动、空 patch、submodule 和 symlink 边界，并以 Git 原生命令执行 `git apply --check`。
+   - preview 仅在 gate 全部通过后签发 5 分钟短期 receipt，绑定 operation、worktree/base/current/branch、target HEAD 和 patch hash；confirm 必须显式为 `true`，receipt 以原子 hard link 消费后重新执行完整 final gate。
+   - `apply` 在实际写入前再次 `git apply --check`；`remove` 在实际 `git worktree remove` 前重新确认 clean/base/branch，并且始终不用 `--force`。所有失败保留 worktree，写入不包含路径或补丁内容的 evidence artifact。
+
+2. **`packages/belldandy-core/src/server-methods/workspace-worktree.ts`、`server.ts`、`gateway-method-registry.ts` 与 `index.ts` 修改**：
+   - 新增 pairing-protected `workspace.worktree.apply.preview` / `apply.confirm` / `remove.preview` / `remove.confirm`；preview 是 read 风险，confirm 是 write 风险。
+   - Gateway 仅接受 `worktreeId`，或 `worktreeId + receiptId + confirm: true`；未知字段、伪造 target/path/patch 和缺失确认均在参数边界拒绝。
+
+3. **`user-worktree-runtime.test.ts`、`workspace-worktree.test.ts`、`gateway-method-registry.test.ts` 与 `docs/project-map.md` 修改**：
+   - 覆盖 preview 无 source 写入、短期 receipt 过期、target 在确认前漂移、dirty remove、成功 apply/remove、symlink mode 边界和 Gateway 参数/风险分类。
+   - 项目地图已更新为真实的 worktree operation owner 与仍未开放的交付范围。
+
+4. **效果**：
+   - 用户可先查看精确 target、patch hash 与停机原因；本地 Git 写入无法由一次 preview 或调用方声明直接触发。
+   - receipt 过期、重复使用、Git 状态变化或边界文件都会停止；失败不会为清理而强制删除 worktree。
+   - 未新增环境变量：receipt TTL、状态目录和失败关闭策略由唯一 runtime owner 固定管理，外部配置会削弱跨 Gateway consumer 的一致性安全语义。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 3 个阶段 4 定向测试文件、17 个测试全部通过（含 apply/remove preview、receipt、确认与 final gate 回归）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；所有 Git 写入验证只操作临时 fixture，未操作项目真实 worktree。
+
+#### 阶段 4-5 实现结论：stage/commit staged diff 绑定与本地审计（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/user-worktree-runtime.ts` 扩展**：
+   - 新增 `stage/commit` preview 与 confirm；stage 只允许无既有 staged diff、无冲突/未跟踪/额外 commit 的普通 tracked 变更，preview 不写 Git index，confirm 只执行无 Shell 的 `git add -u --`。
+   - commit preview 绑定 base/current commit、branch、staged patch hash、index tree、message hash 与 Git 实际 author/committer identity hash；caller 不能覆盖 author、committer、路径、patch 或 index 状态。
+   - confirm 原子消费短期 receipt 后两次重建 final gate；commit 后继续复核 parent、tree、完整 message、author 与 committer，确认实际提交精确匹配 preview。
+   - 检测 default 或 `core.hooksPath` 下的 `pre-commit`、`prepare-commit-msg`、`commit-msg` hook；存在时失败关闭，避免 hook 在 final gate 后改写 index 或 message。
+   - stage/commit 成功写入只含 receipt、base、branch、patch/index/message/identity hash 与结果 commit 的本地 audit artifact；失败继续保留无内容泄露 evidence。
+
+2. **`packages/belldandy-core/src/server-methods/workspace-worktree.ts`、`server.ts`、`gateway-method-registry.ts` 与 `index.ts` 修改**：
+   - 新增 pairing-protected `workspace.worktree.stage.preview` / `stage.confirm` / `commit.preview` / `commit.confirm`；preview 是 read 风险，confirm 是 write 风险。
+   - commit message 只在 preview 接受并持久绑定；confirm 仍严格只接受 `worktreeId + receiptId + confirm: true`，未知 path、author、message 或结果声明均拒绝。
+
+3. **`user-worktree-runtime.test.ts`、`workspace-worktree.test.ts`、`gateway-method-registry.test.ts` 与 `docs/project-map.md` 修改**：
+   - 覆盖 stage preview 无 index 写入、stage/commit 漂移停机、成功 commit 的 parent/message、成功 audit、local hook 停机与 Gateway 参数/风险分类。
+   - 项目地图已更新 stage/commit 的唯一 runtime owner、安全边界和未开放能力。
+
+4. **效果**：
+   - 用户能在 Git index 或历史写入前看到 staged diff hash、index tree、message 与实际 identity，并用独立 receipt 确认。
+   - worktree、index、message、identity 或 hook 任一变化都会停止，不能把未预览内容静默纳入提交。
+   - 未新增环境变量：receipt TTL、hook 失败关闭和 identity/message 绑定由统一 runtime owner 固定，避免不同 consumer 使用不一致的 commit 安全语义。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 3 个阶段 4 定向测试文件、22 个测试全部通过（含 5 个新增 stage/commit、漂移与 hook 回归）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；Git stage/commit 仅在临时 fixture 中执行。
+
+#### 阶段 4-6 实现结论：命名本地 branch publish 与 ref 复核（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/user-worktree-runtime.ts` 扩展**：
+   - 新增 `branch` preview、短期 receipt、显式 confirm 与 final gate；仅接受已登记 worktree 和用户命名的本地 branch，不接受 remote、force、目标 commit 或 ref 更新声明。
+   - preview 要求受管 worktree clean、无冲突/未跟踪内容、当前 commit 严格晚于 recorded base，使用 `git check-ref-format --branch` 校验命名，并在 source repository 的 `refs/heads/*` 检测碰撞。
+   - receipt 绑定 worktree/base/current commit、受管 source branch、目标 repository、目标 branch 与 branch name hash；confirm 原子消费 receipt 后重跑完整检查，只用非 force 的 `git branch` 创建新 ref。
+   - 创建后以 `rev-parse --verify` 复核目标 ref 精确指向已确认 commit，并将 branch、branch hash 与结果 commit 写入本地 audit；不重命名或切换受管 worktree 当前 branch。
+
+2. **`packages/belldandy-core/src/server-methods/workspace-worktree.ts`、`server.ts` 与 `gateway-method-registry.ts` 修改**：
+   - 新增 pairing-protected `workspace.worktree.branch.preview` / `branch.confirm`；preview 是 read 风险，confirm 是 write 风险。
+   - Gateway preview 只接受 `worktreeId + branch`，confirm 只接受 `worktreeId + receiptId + confirm: true`；remote、重复 branch 名、commit、force 或未知字段在参数边界拒绝。
+
+3. **`user-worktree-runtime.test.ts`、`workspace-worktree.test.ts`、`gateway-method-registry.test.ts` 与 `docs/project-map.md` 修改**：
+   - 覆盖成功发布且不重命名受管 branch、非法 branch name、已存在 ref 保持不变、preview 后 commit 漂移、Gateway remote/confirm 伪造字段拒绝和风险分类。
+   - 项目地图已更新本地 branch publish 的唯一 runtime owner、postcondition 与仍不开放的远端交付边界。
+
+4. **效果**：
+   - 受管 worktree 中已审查和提交的结果可交付为用户命名的本地 branch，而无需改写用户当前工作区或受管内部 branch。
+   - 命名碰撞、commit 漂移、dirty 状态、非后继 commit 或重复 receipt 都会失败关闭，已有 ref 不会被 force 更新。
+   - 阶段 4 本地交付闭环完成；push、PR、remote 写入与自动发布继续排除。未新增环境变量，因为 receipt TTL、branch 命名/ref 校验和禁止 force 是统一安全契约，配置化会造成 consumer 间语义分叉。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 3 个阶段 4 定向测试文件、25 个测试全部通过（含 3 个新增 branch publish、ref 碰撞与 commit 漂移测试，以及 Gateway 参数/风险回归）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；所有 branch/stage/commit 写入只操作临时 Git fixture，未操作项目真实 worktree。
+
+#### 阶段 5-1 实现结论：Conversation authoritative run status 与 CLI 查询（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/contracts.ts` 与 `source-adapters.ts` 扩展**：
+   - 新增严格的 `CodingRunStatusQuery v1`，只接受 source 与完整 `CodingContextBinding`，拒绝未知字段和不匹配的来源 binding。
+   - 新增 Conversation active handle 的只读状态投影；保留 `conversationId + agentRunId` 精确身份、运行时间和安全状态证据，不暴露 stop callback 或 stop reason 正文。
+
+2. **`packages/belldandy-core/src/server-methods/coding-run.ts`、`server.ts` 与 `gateway-method-registry.ts` 修改**：
+   - 新增 pairing-protected、read 风险的 `coding.run.status`，只从当前 `ConversationRunRegistry` 读取精确 active run。
+   - 当前 conversation 的旧 run binding 返回 `run_mismatch`；当前进程没有 active owner 时返回 `not_found`，不根据会话历史猜测运行状态。
+
+3. **`packages/belldandy-core/src/cli/commands/agent/status.ts`、`agent.ts` 与 `index.ts` 修改**：
+   - 新增 `bdd agent status --conversation-id --run-id`，通过 Gateway 查询并输出安全状态投影。
+   - CLI 当前明确只覆盖 Conversation；不伪装成 Goal、Workflow 或 Subtask 的通用任务客户端。
+
+4. **效果**：
+   - 用户可按精确 Conversation/run identity 查询当前运行状态，旧 run 不会错误命中后续运行。
+   - status 查询保持只读且 fail-closed，为后续 steer/cancel 的目标复核提供统一契约。
+   - 未新增环境变量；status binding 与失败关闭语义属于协议不变量，不允许按 consumer 配置分叉。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 阶段 5 联合定向回归 5 个测试文件、32 个测试全部通过（含 6 个新增 Conversation/领域 status 投影与旧 binding 拒绝测试，并覆盖 CLI status 与 Gateway 风险分类接线）。
+- `bdd agent status` 已在临时 Gateway fixture 中验证精确 active Conversation 查询；不匹配 binding 不会触发写操作。
+
+#### 阶段 5-2 实现结论：Goal/Workflow/Subtask authoritative owner 投影（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/source-adapters.ts` 扩展**：
+   - Goal 继续从 Goal 与可选 active node 状态投影；Workflow 新增 active runtime status adapter；Subtask 保持 task ID 与 agent run ID 分离。
+   - 各 adapter 只输出状态、计数、artifact 是否存在等安全证据，不返回 prompt、result/error 正文、路径内容或控制 callback。
+
+2. **`packages/belldandy-core/src/server-methods/coding-run.ts` 接入**：
+   - Goal 通过 `getGoal` 和可选 task graph reader 复核 goal/node/run；Workflow 通过 active runtime 的 `workflowRunId + journalId` 复核；Subtask 通过 store 的 task/session/conversation 复核。
+   - owner 不可用、证据字段不足、实体不存在和 binding 漂移分别返回稳定的 `not_available`、`not_found` 或 `run_mismatch`，不建立第二份状态机。
+
+3. **`source-adapters.test.ts`、`server-methods/coding-run.test.ts` 与 `docs/project-map.md` 修改**：
+   - 覆盖四类来源成功投影、Conversation stop/error 正文隔离、Workflow error 正文隔离，以及 Goal/Workflow/Subtask 旧 binding 拒绝。
+   - 项目地图已记录 status 契约、authoritative owner、CLI 当前范围和 fail-closed 边界。
+
+4. **效果**：
+   - Gateway 现在能用同一查询契约读取四种领域来源，同时各领域仍是自身状态的唯一 owner。
+   - 后续 steering 可先验证 exact binding，再把动作路由给对应 owner，避免将控制发送给旧 run。
+   - 当前仍不把进程重启后的 Conversation/Workflow 缺失误报为已完成；持久化 `interrupted/lost` 解释留给下一切片。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 阶段 5 联合定向回归 5 个测试文件、32 个测试全部通过（含 6 个新增 status adapter/Gateway 测试，并覆盖既有 Goal/Workflow/Subtask control 回归）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；`git diff --check` 仅报告工作区既有 LF/CRLF 转换提示。
+
+#### 阶段 5-3 实现结论：Conversation/Workflow restart runtime-lost 解释（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/recovery-marker-store.ts` 新建**：
+   - 新增只面向 Conversation/Workflow 的持久化 crash marker，严格保存 source、exact binding、active/settled、owner instance/process 与时间戳，不保存 prompt、result/error 或控制 callback。
+   - 新 Gateway 仅在 marker 仍为 active、owner instance 已变化且旧 owner process 不存活时返回 lost；同 owner、仍存活的外部 owner、settled、缺失或损坏文件均不误报。
+   - 状态文件使用串行原子写入和严格 schema；损坏文件禁止覆盖。容量优先保留全部 active marker，active 达到硬上限时拒绝新 run，不让长运行被 settled 历史挤出。
+
+2. **`conversation-run-registry.ts`、`query-runtime-message-send.ts` 与 `workflow-runtime.ts` 修改**：
+   - Conversation 只有在 active marker 成功落盘后才进入 registry；后台 run 的所有终态先 settle marker，再清理内存 handle。
+   - Workflow 在公开 active runtime 前写入 `journalId + workflowRunId` marker，正常/失败/中断终态统一 settle；marker 启动失败会释放已创建的 deadline controller 并停止启动。
+   - active registry/runtime 仍是状态唯一 owner；marker 仅在 owner 丢失时提供 crash 证据，不承接完成、失败或取消状态机。
+
+3. **`source-adapters.ts`、`server-methods/coding-run.ts`、`gateway-main.ts` 与 `index.ts` 接入**：
+   - 新增安全的 `RuntimeLostCodingRunView`，统一映射为 `status=interrupted` 与 `evidence.runtimeState=lost`，不输出 owner instance、PID 或内部文件信息。
+   - `coding.run.status` 始终先查 active owner；同 Conversation/Journal 已有其他 active run 时保持 `run_mismatch`，只有 exact marker 命中才读取 lost 投影。
+   - Gateway 主装配为 ConversationRunRegistry 与 WorkflowRuntime 复用同一 marker store；`bdd agent status` 无需新增参数即可解释 restart 后的 Conversation lost 状态。
+
+4. **效果**：
+   - Gateway 异常退出后，旧的精确 Conversation/Workflow run 不再只显示“当前进程不存在”，而能明确解释为需要 continue/resume 的 interrupted run。
+   - 正常完成的 run、仍在其他存活 owner 中运行的 run、旧 binding 和损坏证据不会被误报为 lost。
+   - 未新增环境变量或数据库迁移；marker 上限、schema 与 fail-closed 规则由单一 runtime owner 固定，避免 consumer 之间产生恢复语义分叉。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 6 个阶段 5 定向测试文件、64 个测试全部通过（含 9 个新增 marker、owner liveness、损坏文件、registry、Workflow、Gateway 与 CLI restart 测试）；收紧后 2 个核心测试文件、32 个测试再次通过。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；CLI restart 场景使用临时 stateDir/Gateway fixture，未操作真实运行状态。
+
+#### 阶段 5-4 实现结论：Conversation 本轮后 follow-up queue（2026-07-27）
+
+##### 已完成内容
+
+1. **`conversation-follow-up-queue.ts` 新建，`contracts.ts` 扩展**：
+   - 新增内存单 owner 的 exact `conversationId + agentRunId` follow-up queue、调用方 idempotency key、每 run 固定 8 条容量、单次 claim 与 Conversation reservation。
+   - 新增 `conversation.follow_up` v1 control 和严格 command status query；同 key 同 prompt 返回同一 command，同 key不同 prompt 返回 `idempotency_conflict`，满队列返回 `queue_full`。
+   - prompt 与内部错误正文只保存在 owner 内存；公开状态只返回 prompt 长度、queued/claimed/delivered/failed、时间、source binding、next binding 与 `hasError`。
+
+2. **`conversation-run-registry.ts` 与 `query-runtime-message-send.ts` 接入**：
+   - Registry 只接受唯一 active owner 的 exact binding，并在当前 run 完成 recovery marker settle/clear 后 claim 下一条 command。
+   - 终态交接为下一轮生成新的 `agentRunId`，但 command 始终由原 source binding 查询；多条 command 逐条串行消费，任意下一轮启动失败会标记当前及剩余队列为 failed。
+   - claim 后 reservation 禁止外部 `message.send` 抢先注册；内部下一轮不重复发送上一轮附件，Gateway 停止接收或 active owner 冲突时保持 fail-closed。
+
+3. **`coding-run.ts`、Gateway registry/server 与 CLI 修改**：
+   - `coding.run.control` 接入 enqueue，新增配对保护的只读 `coding.run.follow_up.status`，风险分类分别保持 write/read。
+   - 新增 `bdd agent follow-up` 与 `bdd agent follow-up-status`；CLI 要求调用方显式提供 idempotency key，可读取 queued command 到 delivered/failed 及其 next binding。
+   - `docs/project-map.md` 已同步新增 queue owner、终态交接、Gateway 方法和 CLI 入口。
+
+4. **效果**：
+   - 用户可在一个 Conversation run 执行中安全排队后续输入；输入只在该轮终态清理后启动，不与当前模型流并发。
+   - 重试不会重复创建 command，多条输入保持串行；旧 run、并发 owner、满队列和下一 run 启动失败均不会静默执行到错误目标。
+   - 未新增环境变量、数据库迁移或通用任务表；容量与 reservation 是所有 consumer 一致的安全契约，状态继续由 Conversation runtime 唯一持有。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 7 个阶段 5 定向/集成测试文件、47 个测试全部通过（含新增契约、幂等冲突、queue full、敏感字段、reservation、多条真实串行交接、启动失败收束与 CLI 测试）。
+- `bdd agent --help` 已显示 `follow-up` / `follow-up-status`；`corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过，后者仅报告工作区既有 LF/CRLF 转换提示。
+
+#### 阶段 5-5 实现结论：Conversation 取消后替换（2026-07-27）
+
+##### 已完成内容
+
+1. **`conversation-follow-up-queue.ts` 与 `contracts.ts` 扩展**：
+   - command 新增 `follow_up` / `replace` intent，并新增严格的 `conversation.replace` v1 control；replacement 继续复用 exact source binding、调用方 idempotency key、有界 owner 队列和安全状态投影。
+   - 同 key 同 prompt 重放返回原 command，不重复产生停止请求；同 key 改变 prompt 返回 `idempotency_conflict`，公开状态不返回 prompt、idempotency key 或内部错误正文。
+
+2. **`conversation-run-registry.ts` 与 `query-runtime-message-send.ts` 接入**：
+   - replacement 仅允许唯一 exact active run 且当前没有 pending command；先登记幂等 command，再请求该 run 停止，登记失败不会影响当前 run。
+   - stop callback 拒绝或抛错时将 replacement 标记为 failed，不启动替代 run；不同 key 在 run 已进入 stopping 时失败关闭，同 key重放不再次 stop。
+   - replacement 只在旧 run 终态清理后复用 reservation 启动新的 `agentRunId`；旧 run 的 AbortSignal 已触发且不产生 final，替代 run 与旧 run 最大并发数保持 1。
+
+3. **`coding-run.ts`、Gateway 接线与 CLI 修改**：
+   - `coding.run.control` 接入 `conversation.replace`，保持 pairing-protected write 风险；状态读取复用 `coding.run.follow_up.status`，并通过 intent 区分 replacement。
+   - 新增 `bdd agent replace --conversation-id --run-id --prompt --idempotency-key`，并接入 `bdd agent --help`；CLI/Gateway 测试覆盖 command 返回、状态读取和真实中断后交接。
+   - `docs/project-map.md` 已同步 replacement owner、串行终态交接、安全边界与 CLI 入口。
+
+4. **效果**：
+   - 用户可精确停止一个仍在运行的 Conversation turn，并在它完全终止后以新 run 执行替代输入，不会并发修改同一会话。
+   - 网络重试不会重复停止当前或后续 run；旧 binding、已有 pending command、stopping 竞态和 stop 失败都保持 fail-closed。
+   - 未新增环境变量、数据库迁移或第二套状态机；replace 使用与 follow-up 相同的 owner、reservation 和安全状态投影。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 7 个阶段 5 定向/集成测试文件、53 个测试全部通过（含新增 replacement intent、幂等重放、pending/stopping 拒绝、stop 失败、真实 AbortSignal/无 final/串行交接与 CLI 测试）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；真实 Gateway fixture 验证替代 run 使用新 `agentRunId` 且最大并发 run 数为 1。
+
+#### 阶段 5-6 实现结论：Conversation 下一模型调用边界即时 steer（2026-07-27）
+
+##### 已完成内容
+
+1. **`index.ts`、`tool-agent.ts` 扩展**：
+   - 新增可信运行时注入的 `AgentRunSteeringMailbox` 与 `steerAtModelBoundary` capability；普通 Agent 默认不声明支持。
+   - ToolAgent 只在下一次模型调用前消费 steer；当前 Provider 调用和当前工具调用均先完整结束，tool-result transcript 先写入上下文，再注入 steer。
+   - 无工具响应准备终止时原子封口 mailbox；若已有 steer，则把当前 assistant 响应保留为同一 run 的中间上下文并继续下一次模型调用。
+
+2. **`conversation-steer-mailbox.ts`、`conversation-run-registry.ts` 新建/修改**：
+   - 新增 exact `conversationId + agentRunId`、调用方 idempotency key、固定容量 8 的单 run mailbox，状态为 `queued` / `claimed` / `delivered` / `failed`。
+   - prompt 上限 32768 字符、idempotency key 上限 128 字符；公开状态只返回长度、时间、source binding、`deliveredModelCallIndex` 与 `hasError`，不暴露 prompt、key 或错误正文。
+   - 只接受唯一 active owner；普通 Agent 返回 `not_available`，run 终态将未消费命令标记 failed，终态 mailbox 最多保留 64 个；pending steer 与 replacement 冲突时返回 `queue_conflict`，不会停止当前 run。
+
+3. **`query-runtime-message-send.ts`、`coding-run.ts`、Gateway 与 CLI 接入**：
+   - 仅为声明安全模型边界 capability 的 Agent 建立 mailbox，并在交付模型前先将 steer 作为 Conversation 用户消息持久化；持久化失败则该命令失败且不注入模型。
+   - 新增 `conversation.steer` control、配对保护的只读 `coding.run.steer.status`，以及 `bdd agent steer` / `bdd agent steer-status`。
+   - Registry、Gateway 与真实 ToolAgent 循环测试覆盖 exact binding、幂等、容量、终态、replace 冲突、无工具继续和 tool-result 后注入顺序。
+
+4. **效果**：
+   - 用户可在不创建新 run、不并发执行 `message.send`、也不取消替换当前 run 的前提下，把一次性指导交给同一 ToolAgent run 的下一次模型调用。
+   - 已经发出的 Provider HTTP/token stream 不会被修改；该限制属于明确协议边界，不将模型边界 steer 伪装成 token stream 中途注入。
+   - 未新增环境变量、数据库迁移或第二套领域状态机；固定容量和长度限制是所有 consumer 一致的安全契约。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm build` 通过。
+- 9 个阶段 5 定向/集成测试文件、68 个测试全部通过（含 steer contract、mailbox 幂等/容量/失败/封口、exact owner、unsupported Agent、replace 冲突、Gateway/CLI、ToolAgent 模型与工具边界及 Conversation 持久化测试）。
+- `bdd agent --help` 已显示 `steer` / `steer-status`；`corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过，后者仅报告工作区既有 LF/CRLF 转换提示。
+
+#### 阶段 6-1 实现结论：SS-as-MCP 最小兼容层（2026-07-27）
+
+##### 已完成内容
+
+1. **`mcp-server.ts` 与 `mcp-process.ts` 新建**：
+   - 在 ACP 尚无实现或依赖、MCP SDK 已锁定的现状下选择 SS-as-MCP stdio；新增 `capabilities`、启动、订阅、审批、steer、取消和只读 artifact 七个 MCP tools。
+   - 每个业务工具显式要求 SS `protocolVersion: "v1"`，并保持 prompt、cwd、identifier、idempotency key 和 cursor 的有界 Schema；不支持版本由 MCP Schema 在触达 Gateway 前失败关闭。
+   - Conversation 事件继续由 `GatewayCodingRunSubscriptionSession` 按 cursor 订阅，并通过标准 `notifications/message` logging notification 交付；每个 MCP 进程只持有一个订阅连接，不缓存或复制 run 状态。
+
+2. **`stdio-process.ts`、CLI 与 core 导出修改**：
+   - 复用原有 confirm-mode `message.send`、`coding.run.control` 和 cursor subscription Gateway adapter，仅增加 `from: "mcp"` 的客户端标识；审批、steer 和取消仍由原 authoritative owner 校验 exact binding。
+   - artifact 只读工具把 `agentRunId` 映射为 Workspace Revision `revisionId`，调用 pairing-protected `workspace.revision.preview`；不提供 restore、apply 或其他文件写入。
+   - 新增 `bdd coding-run mcp`，保留 `bdd coding-run stdio` 帧和进程入口不变；`@belldandy/core` 导出可注入的 MCP server factory，便于标准客户端与测试复用。
+
+3. **依赖与兼容测试修改**：
+   - `@belldandy/core` 显式声明仓库已锁定的 `@modelcontextprotocol/sdk ^1.29.0` 与 `zod ^3.24.0`，离线更新 lockfile，未下载新包或升级主版本。
+   - 新增 SDK linked in-memory 映射测试和真实 Gateway MCP fixture；后者使用官方 MCP `Client` 完成启动、cursor 事件订阅、终态接收和 run-bound revision artifact 读取。
+   - 旧 NDJSON stdio 与 VS Code consumer 联合回归，确认未改变 frame、命令启动、审批、订阅或错误行为。
+
+4. **效果**：
+   - 非 SS 客户端可通过标准 MCP stdio 复用同一 coding runtime，不需要理解 Gateway WebSocket 私有帧或复制运行状态机。
+   - MCP 层不能绕过 pairing、confirm-mode 审批、exact run/toolCall binding、steer 安全模型边界或 artifact 只读限制。
+   - 未新增环境变量、数据库迁移、远程监听、marketplace、ACP 实现或第二套事件存储；MCP 进程退出即可回滚该兼容层。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 4 个 coding-run 定向/集成测试文件、18 个测试全部通过；其中 3 个新增 MCP 测试覆盖工具映射、版本失败、错误脱敏、logging notification 与真实 Gateway 外部客户端闭环。
+- 6 个 VS Code 兼容测试文件、16 个测试全部通过；`bdd coding-run --help` 已显示 `stdio|mcp`，旧 stdio consumer 未回归。
+
+#### 阶段 6-2 实现结论：TypeScript Coding Run SDK（2026-07-27）
+
+##### 已完成内容
+
+1. **`stdio.ts` 扩展与 `client.test.ts` 新建**：
+   - 保留 `CodingRunNdjsonClient` 作为 low-level transport，新增面向 consumer 的 `CodingRunClient`，提供启动、订阅/按 cursor 续订、审批、steer、取消、只读 artifact 与显式关闭六类强类型生命周期方法。
+   - 新增默认 15 秒且可按请求覆盖的 timeout、调用方 `AbortSignal`、pending timer/listener 清理和稳定 `CodingRunClientRequestError`；本地 timeout/abort 只结束等待，不撤销或重放可能已经送达的远端写操作。
+   - 同步/异步 transport 写失败、Gateway 失败和关闭均返回脱敏错误；未声明的响应 error code 作为 `invalid_frame` 失败关闭，不穿透 SDK 类型契约。
+
+2. **`stdio.ts`、`stdio-process.ts` 与 `mcp-process.ts` artifact 接入**：
+   - additive 新增严格 `artifact.request` / `artifact.response`，不修改既有 control、conversation、subscription 或 event frame；低层 client 继续按 request ID 和 frame kind 精确关联。
+   - `runCodingRunStdio` 将 artifact query 转发到 pairing-protected `workspace.revision.preview`，并把共享 Gateway artifact adapter 从 MCP 专属文件收口到 `stdio-process.ts`；MCP 与 NDJSON 不复制 revision owner。
+   - artifact 仅把 run 的 `agentRunId` 映射为 `revisionId` 并读取 preview，不提供 restore、apply 或文件写入。
+
+3. **`index.ts`、兼容测试与 `project-map.md` 修改**：
+   - `@belldandy/core` 根入口导出高/低层 client、artifact 帧、六类输入、请求选项和稳定错误类型；不发布新 npm 包，也不替换现有 VS Code CommonJS adapter。
+   - 新增独立 TypeScript consumer fixture，覆盖六类 exact v1 frame、timeout、迟到响应、AbortSignal、close、相对 cwd、本地无写入、cursor 续订、安全错误和未知 code 失败关闭。
+   - 旧 VS Code adapter、MCP 官方 Client 与真实 Gateway fixture 联合回归，确认 additive frame 和共享 artifact adapter 未改变既有 consumer。
+
+4. **效果**：
+   - 编辑器、CI 和第三方 TypeScript consumer 可复用一个完整、有界的 coding run 生命周期接口，不必再实现 request correlation、pending 清理或错误脱敏。
+   - SDK 不缓存运行状态、不创建第二订阅 owner，断线后由 consumer 使用最后确认的 cursor 显式续订；Gateway 继续拥有 Conversation、审批、steer、取消和 revision 真源。
+   - 未新增环境变量、数据库迁移、远程 transport、自动安装或外部写入；移除 `CodingRunClient` 根导出和 additive artifact handler 即可回滚本切片。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 5 个 SDK/NDJSON/stdio/MCP 定向与集成测试文件、28 个测试全部通过（含 10 个新增阶段 6-2 测试）；官方 MCP Client 通过真实 Gateway 的启动、订阅和 artifact fixture 保持通过。
+- 6 个 VS Code 兼容测试文件、16 个测试全部通过；`corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过，后者仅报告工作区既有 LF/CRLF 转换提示。
+
+#### 阶段 6-3a 实现结论：项目扩展信任、完整性与受控注册基线（2026-07-27）
+
+##### 已完成内容
+
+1. **`manifest.ts`、`extension-marketplace-state.ts` 与 `extension-marketplace-source.ts` 扩展**：
+   - 为 Extension manifest 增加显式 `hostApi` 兼容声明，以及 `tool:`、`hook:`、`skill:` 三类规范化注册许可；旧 ledger 缺少批准快照时保持失败关闭。
+   - 安装记录持久化来源身份、内容 SHA-256、批准时间、批准 Host API 和权限快照；启用前重新校验真实路径、完整内容 hash、manifest identity、兼容版本和权限集合。
+   - 物化改为同级 staging，复制、树校验和确认 hash 复核完成后才切换目录；替换失败恢复旧目录，验证失败只清理 staging，不再先删除已批准版本。
+
+2. **`extension-marketplace-service.ts`、`extension-marketplace-audit.ts` 与 Marketplace CLI 扩展**：
+   - install、update、uninstall 均先生成绑定来源、版本、内容 hash、权限和启用状态的 trust preview，再要求 exact confirmation hash；确认、完成和失败状态写入无正文审计记录。
+   - update 在提交物化目录前复核 preview 内容 hash，关闭确认后源内容漂移窗口；uninstall 根据 `stateDir + marketplace + extension name` 推导唯一受管目录，并经 `FilesystemCapability` 复核后删除，不再直接信任 ledger 的 `installPath`。
+   - 新增 `bdd marketplace audit`，install/update/uninstall 的文本与 JSON 输出均展示确认材料和审计 ID；GitHub 等远程 source adapter 仍保持 deferred，不自动下载。
+
+3. **`extension-integrity.ts`、`extension-host.ts` 与 Plugin Registry 修改**：
+   - Marketplace 扩展只有在 ledger、物化内容、manifest 和批准快照一致时才进入激活路径；声明外的 Tool、Hook 或 Skill dir 注册会拒绝并回滚 staged ownership。
+   - Plugin 激活、并发加载、卸载和 disposer 保持原有原子发布与逆序清理语义；legacy `stateDir/plugins` 继续使用未传 policy 的兼容路径。
+   - 当前 policy 只约束注册结果；Node `import()`、`activate()`、Tool 和 Hook 函数仍在 Gateway 进程内运行，因此本切片不把 manifest 权限表述为执行隔离。
+
+4. **效果**：
+   - 用户确认的来源、版本、内容和注册许可在安装、更新、启动加载三个阶段保持同一身份，漂移时失败关闭。
+   - 更新复制或校验失败不会破坏旧的可用物化目录；损坏 ledger 不能诱导 uninstall 删除受管根外目录。
+   - 项目扩展供应链已有可审计的最小信任闭环，但 Marketplace Plugin 尚未获得 OS 级执行隔离，阶段 6-3 仍未结束。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 与 `corepack pnpm --filter @belldandy/plugins build` 通过。
+- 7 个 Extension/Marketplace 定向测试文件、44 个测试全部通过（含 14 个新增 trust、权限漂移、原子替换、越界卸载和受控注册测试）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；首次并行回归出现一次既有 `known-marketplaces.json` rename `EPERM`，service 单测及完整 7 文件重跑通过，裁决为 `record_only`。
+
+#### 阶段 6-3 权限边界裁决：privileged legacy 与 sandbox-required Extension Host（2026-07-27）
+
+##### 现状与安全结论
+
+- 当前执行链为 `ExtensionHost -> verifyInstalledMarketplaceExtension -> PluginRegistry.loadPlugin -> import() -> activate() -> Tool/Hook`。`PluginActivationPolicy` 在 `activate()` 注册时才生效，无法阻止插件在模块顶层或激活阶段直接访问宿主文件、网络、环境变量、进程和 Node 内置模块。
+- `ToolExecutor` 会在 Hook 修改最终参数后继续执行参数预检、launch permission 和用户审批，但进程内 Hook 自身已经拥有宿主权限；因此现有注册许可不能证明 Hook 或 Plugin 无法绕过 sandbox/审批。
+- 安全 seam 必须放在插件代码 `import()` 之前。仅增加 Registry 检查、`vm` 包装或普通 Node 子进程都不能构成当前计划要求的 OS 执行隔离。
+
+##### Module、Interface 与 Seam
+
+1. **深 Module**：新增由 Core 持有的 `ExtensionRuntimeSupervisor`，集中负责已验证 grant、外部 Host 启动、IPC 协议、原子发布、调用 deadline、审计、撤销和进程回收；Gateway caller 不接触进程、容器或消息关联细节。
+2. **外部 Interface**：保持 `activateVerifiedExtension(grant)`、`revoke(extensionId, reason)`、`dispose()` 和无正文 `getSnapshot()` 四类行为；激活返回只读的 Tool/Hook/Skill 注册描述，不返回插件函数或宿主对象。
+3. **生产 Adapter**：复用阶段 2 的 OCI admission、lease 和 `ProcessLease` 模式，使用 digest-pinned、预加载的专用 Extension Host image；无后端、镜像缺失、协议不匹配或启动超时均失败关闭，禁止回退进程内。
+4. **测试 Adapter**：提供 in-memory Host adapter，在同一 Interface 上验证协议、注册、调用、撤销和失败语义；privileged legacy 不实现该 Adapter，避免被误选为 sandbox fallback。
+
+##### 权限与数据边界
+
+| 路径 | 允许 | 明确禁止 / 不承诺 |
+|---|---|---|
+| `stateDir/plugins` legacy | 管理员显式信任后在 Gateway 进程内加载，保持现有 Plugin Interface | 不属于 Marketplace 隔离承诺；拥有完整 Node/Gateway 权限，Doctor/inventory 必须标记 `privileged_legacy` |
+| Marketplace Plugin Host | 只读挂载已验证 extension tree；只读 rootfs、临时 tmpfs、`network=none`、capabilities 全丢弃、受限 PID/CPU/内存；仅通过有界 IPC 与 Gateway 通信 | 不挂载 workspace/stateDir、Docker socket、用户 HOME 或凭据；不透传宿主环境；无直接网络、宿主文件或宿主进程能力 |
+| Plugin Tool | 注册阶段只发送 JSON Tool definition/contract；调用阶段只接收参数、invocation ID、deadline 和最小会话标识，返回有界 `ToolCallResult` | 不接收 `ToolContext`、ConversationStore、MCP/Workflow capability、logger/broadcast 函数或任意宿主对象；需要资源访问时必须经后续显式 broker capability |
+| Plugin Hook | 只接收该 Hook 明确声明的可序列化事件 DTO，并返回有界修改/阻断结果；`beforeToolCall` 的最终参数仍进入 canonical ToolExecutor 预检与审批 | 不运行同步 `tool_result_persist` 外部 Hook；不允许 Hook 直接调用工具、写状态或把异常正文写入审计；超时/Host 失联按 canonical failure policy 失败关闭或隔离 |
+| Skill pack / Skill dir | Gateway 只从已验证、hash 绑定的只读目录加载数据资产 | Skill 声明不授予 JavaScript 执行、文件写入、网络或进程权限 |
+
+- `hostApi: 1` 的 `tool:/hook:/skill:` 只定义注册许可。真正执行权限必须在下一版 Host contract 中拆为 registration declarations 与 broker capabilities，不能继续用同一个字符串集合混淆“可暴露什么”和“可访问什么”。
+- 6-3b 首个纵向切片的 broker capabilities 固定为空：只支持纯计算 Tool、受控 Hook 和数据型 Skill。workspace 文件、网络、子进程、持久化和 secret 访问均排除；后续每增加一种 capability，都必须由 Gateway adapter 复用既有路径/审批/审计 owner，不能直接增加容器挂载。
+
+##### 生命周期与兼容策略
+
+1. Gateway 在启动 Host 前重新验证 extension identity、内容 hash、Host API 和批准 grant，并生成绑定 `extensionId + contentSha256 + grantGeneration` 的 runtime lease。
+2. 外部 Host 在容器内完成 `import()` 与 `activate()`，保留实际函数，只把描述符发送给 Gateway；全部注册验证成功后，Supervisor 才以 extension owner 原子发布 proxy Tool 和 Hook。
+3. 每次调用携带 lease generation、invocation ID、deadline 和取消信号；Gateway 只接受当前 generation 的响应，迟到、重复、超限或旧 lease 结果丢弃并审计。
+4. disable/update/uninstall/revoke 必须先停止新调用并撤销 Tool/Hook/Skill 可见所有权，再取消活动调用、终止 Host 并确认进程树回收，之后才允许替换或删除物化目录；Gateway shutdown 把 Supervisor 接入 `abort_active`/`close_external` 阶段。
+5. ToolExecutor 已有单项 unregister，HookRegistry 已有按 source unregister；实现前还需为 SkillRegistry 增加按 extension owner 的卸载，并把 Marketplace Hook 从聚合 `plugin-bridge` 改为独立 owner。缺少任一项时不得宣称运行时撤销闭环。
+6. `stateDir/plugins` 保持 privileged legacy 兼容，不自动迁移。Marketplace `hostApi: 1` Plugin 在 sandbox enforcement 生效时默认停止自动执行并要求升级/重新批准；数据型 skill-pack 可在完整性与权限校验通过后继续加载。新的 sandbox contract 使用下一 Host API 版本，不静默改变 v1 语义。
+
+##### 风险、可行性与闭环边界
+
+- **风险等级 / 工作量**：高风险，预计剩余 5-8 人日；主要失败模式是 Host 启动前逃逸、协议混淆、撤销后幽灵 proxy/进程、Hook 参数绕过、输出/日志泄漏、Windows/WSL OCI 行为漂移和 Gateway shutdown 残留。
+- **可行性 / 前置依赖**：已有 OCI fail-closed admission、CID/lease 清理、PTY Host IPC、`ProcessLease`、ToolExecutor/HookRegistry 注销和 extension hash/grant 验证可复用；仍需专用 Host image/entry、版本化 IPC Schema、SkillRegistry ownership、per-extension Hook wiring 和 runtime generation owner。
+- **本轮包含**：冻结 seam、Interface、权限平面、legacy 分类、撤销顺序、兼容策略和首个无 broker capability fixture。
+- **明确排除**：本轮不实现代码、专用镜像、远程下载、签名基础设施、通用网络/文件 broker、容器编排平台，也不把用户主动放入 `stateDir/plugins` 的代码称为不可信隔离插件。
+- **完成标准**：Marketplace Plugin 的模块顶层、activate、Tool 和 Hook 均只在 sandbox-required Host 中运行；无后端不加载；最终 Tool 参数仍经过 canonical 预检/审批；disable/update/uninstall 与 Gateway shutdown 后无可见 ownership、活动调用或 Host/容器残留；Windows native 与 WSL2 fixture 均能证明 workspace/stateDir sentinel 未被读取或修改。
+
+#### 阶段 6-3b 实现结论：sandbox-required Marketplace Extension Host（2026-07-27）
+
+##### 已完成内容
+
+1. **`extension-runtime-contract.ts` 与 `extension-runtime-supervisor.ts` 新建**：
+   - 新增版本化、1 MiB 帧上限和 request correlation 的 NDJSON Host contract；重复、未知、类型不匹配或超限响应均使 session 失败关闭。
+   - Supervisor 只接受 Host API v2 且 broker capability 为空的已验证 grant；Tool、Hook、Skill 按 extension owner 发布，调用绑定 generation、invocation ID、deadline 与取消信号。
+   - revoke 先撤销可见 Tool/Hook/Skill ownership，再取消活动调用并关闭 Host；迟到 generation 结果丢弃，fatal Host 和调用超时自动触发撤销，Gateway shutdown 逆序清理且隔离单点关闭失败。
+
+2. **`extension-runtime-host-process.ts`、`extension-runtime-oci-adapter.ts` 与 `extension-runtime-lease.ts` 新建**：
+   - Marketplace Plugin 的 `import()`、`activate()`、Tool 和 Hook 函数移入外部 Host；Gateway 只接收注册描述和有界调用结果，不向插件传入 workspace/stateDir、宿主对象或 broker capability。
+   - OCI invocation 固定 digest-pinned image、`--pull=never`、双只读挂载、只读 rootfs、`network=none`、cap-drop、no-new-privileges 及 PID/CPU/内存/tmpfs 限制；不自动拉取镜像，也不回退宿主进程执行。
+   - 持久 lease 绑定 `extensionId + contentSha256`；启动前清理 stale lease，活动或损坏 lease 下的 disable/update/uninstall 保持失败关闭，容器清理失败保留恢复证据。
+
+3. **`extension-host.ts`、Gateway、Registry 与 Doctor 接入**：
+   - `stateDir/plugins` 保持进程内兼容并标记 `privileged_legacy`；Marketplace `hostApi: 1` Plugin 不再自动执行，v1/v2 数据型 skill-pack 保持兼容，Hosted Plugin 标记 `sandboxed_marketplace`。
+   - Gateway 提前建立共享 `HookRegistry` 并执行 OCI admission；无 backend、镜像或运行时不可用时跳过 Marketplace Plugin，不回退进程内；Supervisor 接入 `close_external` shutdown phase。
+   - SkillRegistry 支持按插件 owner 卸载并恢复被遮蔽的 bundled Skill；Doctor 从 live Supervisor snapshot 生成报告，避免撤销后继续展示失效运行时。
+
+4. **配置、fixture 与兼容契约补充**：
+   - `.env.example`、`README.md`、`package.json` 与 `project-map.md` 增加 Extension Host 配置、验证命令和模块入口；fixture 只读已构建 `dist`，避免 Windows `node_modules` 在 WSL 下的平台二进制不匹配。
+   - `verify-extension-runtime-oci-fixture.mjs` 覆盖模块顶层、activate、Tool、Hook 四个执行点，检查 workspace/stateDir 不可见、extension/rootfs 不可写、宿主敏感环境不透传、网络仅 loopback，以及 lease label 容器和 lease 目录残留为零。
+   - 不兼容 Host API 的 Marketplace 错误现在准确列出受支持的 v1/v2；新增失败测试先证明旧文案只报告 v2，再以最小修改修正。
+
+5. **效果**：
+   - 已配置且通过 OCI admission 时，Marketplace Plugin 代码不会在 Gateway 进程内执行；无隔离后端时只跳过，不降低权限边界。
+   - 首版 Host 的执行权限固定为纯计算和受控 Hook，workspace 文件、stateDir、网络、子进程、持久化与 secret broker 均未开放。
+   - 代码、契约、失败路径、静态回归和双平台 OCI sentinel 均已闭环；Windows native 与 WSL2 都证明隔离边界和清理行为成立，阶段 6-3b 与阶段 6 完成。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`@belldandy/plugins`、`@belldandy/skills`、`@belldandy/core` 三包构建通过。
+- 15 个 Extension/Marketplace/Registry/Doctor/shutdown/fixture 测试文件、117 个测试全部通过（含 23 个阶段 6-3b 与 Host API 兼容回归测试）。
+- `corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:coding-ci` 与 `git diff --check` 通过；后者仅报告工作区既有 LF/CRLF 转换提示。
+- 初次 `corepack pnpm verify:extension-runtime-oci` 在未注入配置时准确返回 `not_configured`，显式配置后在 Docker Desktop 未启动时准确返回 `runtime_unavailable`；经用户授权启动 Docker Desktop Linux engine 后，确认预加载的 `node:22-bullseye@sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844` 为 Linux/amd64 且 RepoDigest/Image ID 精确一致，全程未拉取或重建镜像。
+- Windows native 与 `Ubuntu-22.04` 分别运行 `corepack pnpm verify:extension-runtime-oci` 均通过；模块顶层、activate、Tool、Hook 无法读取 workspace/stateDir sentinel、无法写 extension/rootfs、无法读取宿主 secret，网络仅含 loopback。两侧复核 extension runtime label/name 容器为空，Docker 总容器数为 `0`，fixture/lease 临时根残留为 `0`。
+
+#### 阶段 7-1 实现结论：TUI 运行中 steer 输入（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/runtime.ts`、`app.tsx` 与 `state.ts` 修改**：
+   - Chat 在 `starting` / `running` 状态下提交非空输入时，通过既有 `coding.run.control` 投递 `conversation.steer`，复用当前 `conversationId + agentRunId` exact binding 和阶段 5 authoritative owner，不启动第二个 Conversation run。
+   - Runtime 为每次用户提交生成有界 `tui-steer-*` 幂等键并沿用 15 秒请求超时；成功后清空对应输入、追加用户可见记录并显示 queued 状态，失败时保留输入供用户决定是否重试。
+   - 同步 in-flight guard 拦截 pending 期间的重复回车；迟到成功只作用于 exact current binding，且不会清除请求期间已输入的新文本。既有 `Ctrl+C` 精确取消和终态事件处理不变。
+
+2. **TUI 单元、Ink 交互与 Gateway 集成测试修改**：
+   - 新增 control frame 测试，锁定 exact binding、trimmed prompt 与 TUI 幂等键，不复制或放宽 steer 协议。
+   - 新增 reducer 与真实 Ink stdin 回归，覆盖 stale binding、成功清空、后续输入保留、连按回车只投递一次，以及活动 run 不触发第二次 `requestConversation`。
+   - 新增真实 Gateway fixture，证明 TUI steer 由同一 Agent run 在下一模型调用边界消费，并保持单一 run ID 与单一终态。
+
+3. **`docs/project-map.md` 修改**：
+   - 登记 TUI 作为 exact-binding steer consumer 的职责，并明确其不拥有 steer 写入真源或第二套运行状态机。
+
+4. **效果**：
+   - 用户无需离开 TUI 即可在活动 coding run 中补充方向，输入不会再静默无效，也不会被误解释为并发新 run。
+   - 重复回车、迟到响应和 stale binding 不会重复排队或破坏下一条输入；Gateway 仍负责 active owner、模型边界与失败关闭校验。
+   - 本切片不新增环境变量：这是 TUI 对既有安全控制契约的一致消费行为，不应成为可关闭的策略分支；不包含 Provider stream 中途注入、富 diff、后台任务、worktree 切换或远端 Git 写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 5 个 TUI 测试文件、31 个测试全部通过（含 4 个新增 steer 单元/交互/集成测试）。
+- 真实 Gateway fixture 证明同一 run 在下一模型边界消费 steer，Agent run 调用数保持 `1`；Docker 总容器及 Extension runtime label/name 容器残留均为 `0`。
+- `corepack pnpm smoke:tui:wsl` 的布局、窄屏恢复、键盘输入、`Ctrl+C` 与 alternate-screen Gate 最终以原始脚本连续两次通过；此前两次执行曾在其余断言均通过后发生退出超时并被 `SIGTERM` 清理，未形成进程残留，作为 WSL 冷态退出时序的剩余间歇风险继续观察。
+
+#### 阶段 7-2 实现结论：TUI 有界 diff hunk 导航与稳定 viewport（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/runtime.ts` 与 `state.ts` 修改**：
+   - TUI 对阶段 3 的不可变 snapshot page 固定每页读取 1 个 hunk；`PageDown` 只使用当前页的 opaque `nextCursor`，`PageUp` 只使用已成功访问的前页 cursor，不重算或重读活动工作区。
+   - 导航结果必须同时匹配当前 `snapshotId + diffHash` 且恰含 1 个 hunk；旧 snapshot、错误 cursor、越界和迟到响应均保持当前状态不变。
+   - 新 run、终态 snapshot 或 restore 后重算 snapshot 会把 hunk index/cursor history 重置到第一页，避免把旧 diff 位置复用到新审查对象。
+
+2. **`packages/belldandy-core/src/tui/app.tsx` 与 `view.ts` 修改**：
+   - Changes 视图新增 `PageDown` / `PageUp` hunk 导航与同步 in-flight guard，显示稳定的 `Hunk i/N path`，不会因连按并发读取同一页。
+   - patch 进入渲染前固定限制为 16000 字符，viewport 按面板高度保留摘要、恢复等级、hunk 标识和开头 patch 行；超限只在视图层标记 truncated，不改变 artifact 或 diff hash。
+   - 窄屏 Changes 将约 65% 可用高度分配给 diff、其余保留 revision checkpoints；新增 leading-line 安全包装，Chat/stream 原有 newest-line 裁剪语义不变。
+
+3. **TUI 测试与 `docs/project-map.md` 修改**：
+   - 新增真实双文件 snapshot cursor 测试、state exact page/重置测试、Ink PageUp/PageDown 测试与 leading viewport 测试。
+   - 项目地图登记 TUI 的有界 hunk cursor 与稳定 viewport consumer 边界；snapshot、artifact 与 cursor 真源仍归阶段 3 runtime。
+
+4. **效果**：
+   - 用户可在 TUI 内逐个审查当前 run 的全部可用 hunk，不再局限于首个 hunk 的两行 patch，也不会把导航误当作实时工作区 diff。
+   - 旧页、并发按键、restore 后旧 cursor 与超长 patch 不会覆盖新审查状态或改变面板尺寸。
+   - 本切片不新增环境变量：单 hunk page 和 16000 字符 viewport 是固定的 UI 资源上限，不是权限或业务策略；不包含 verdict 写入、后台任务、worktree 切换、mouse 或远端 Git。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 5 个 TUI 测试文件、35 个测试全部通过（含 4 个新增 hunk cursor、state、Ink 与 viewport 测试）。
+- `corepack pnpm smoke:tui:wsl` 通过 resize、极窄降级/恢复、键盘输入、`Ctrl+C` 退出与 alternate-screen 成对清理；`git diff --check` 通过，仅输出既有 LF/CRLF 工作树提示。
+
+#### 阶段 7-3 实现结论：TUI command job 后台任务视图与精确取消（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-skills/src/builtin/system/command-job.ts` 与公开导出修改**：
+   - 将原 Tool 私有的 manager 获取逻辑收口为按 canonical `stateDir` 复用的 `CommandJobRuntime` 窄 facade，Tool 与 Gateway consumer 共享同一个 live `CommandJobManager`。
+   - facade 只暴露 `list/read/cancel`，未向 Core 根接口开放 `start/write/resize`，Gateway shutdown 仍由原 manager map 统一收敛活动 job。
+
+2. **`packages/belldandy-core/src/server-methods/command-job.ts`、`gateway-method-registry.ts` 与 `server.ts` 新建/修改**：
+   - 新增 pairing-required 的 `command.job.list/read/cancel`；list/read 归类为 read capability，cancel 归类为 write capability，并与 Gateway 公告/分发目录保持一一对应。
+   - 严格校验 UUID、cursor、`maxBytes` 和允许字段，read 固定收紧到 16 KiB；not-found、cursor 与 owner 异常均返回不含 job ID、状态路径或底层错误正文的稳定错误。
+
+3. **`packages/belldandy-core/src/tui/runtime.ts`、`state.ts` 与 `app.tsx` 修改**：
+   - 在既有 Runtime tab 内增加有界 job 列表与输出 viewport，方向键切换 exact job，PageUp/PageDown 只消费 Gateway 返回的 UTF-8 字节 cursor，不扫描 stateDir 或复制 job 状态机。
+   - Backspace/Delete 仅为当前选中且 running 的 job 打开含 exact UUID 的二次确认；成功响应必须绑定同一 job ID，其他 job 保持不变。
+   - state reducer 拒绝错 job、错 cursor、迟到页和取消后迟到的 running snapshot；terminal 状态与 `updatedAt` 保持单调，窄终端纵向布局和确认框标识均受稳定尺寸约束。
+
+4. **TUI integration 清理修正**：
+   - 在全局 memory manager flush 后再次删除登记的测试 state roots，修复 Windows 上 `usage-accounting.json` 晚写导致的 TUI integration temp 目录重建；复跑未再产生新目录。
+
+5. **效果**：
+   - 用户可在 TUI 内离开聊天流后继续定位长期命令的状态与有界输出，无需切换 Shell 或读取日志目录。
+   - job 输出翻页、选择和取消始终绑定 authoritative owner 的 exact UUID；取消一个 job 不影响其他活动 job。
+   - Gateway 未配对或不可达时不请求后台任务接口，原 Runtime health 快照和既有四个顶级 tab 保持兼容。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 8 个定向测试文件、52 个测试全部通过（含 12 个新增 command job facade、Gateway、Runtime/state/Ink 测试），真实 Gateway TUI integration 5 个用例复跑通过且未新增 temp root。
+- `corepack pnpm smoke:tui:wsl` 最终通过首帧、resize、极窄降级/恢复、键盘输入、`Ctrl+C` 正常退出和 alternate-screen 成对清理；首次执行其余断言均通过但退出等待间歇超时并由 `SIGTERM` 清理，复核无进程残留后原命令重跑以 `exitCode 0` 通过。
+- Docker Desktop Linux 总容器、Extension/command sandbox fixture 与 lease 临时目录、WSL bdd 进程残留均为 `0`；测试清理修正后未新增 TUI temp root，6 个修正前已存在且仅含测试 usage-accounting 的历史目录因当前执行策略禁止递归删除而保留。
+
+#### 阶段 7-4 实现结论：TUI 有界审批队列与 exact allow/deny（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/pending-tool-permission-runtime.ts` 修改**：
+   - 为 authoritative pending Tool permission owner 增加按 `Map` 插入顺序投影、最多 100 条的 `list()`，每次返回新副本。
+   - 仅公开 `agentRunId + worktreeId + toolCallId`、Tool 名称与重新脱敏的 command preview，不暴露 resolver、timer、`AbortSignal` 或可变 owner 内部对象。
+
+2. **`packages/belldandy-core/src/server-methods/coding-run.ts`、`gateway-method-registry.ts` 与 `server.ts` 修改**：
+   - 新增 pairing-required、read 风险的 `coding.run.permission.list`，直接读取同一 pending permission owner，不在 Gateway 方法层复制队列状态。
+   - 缺少 owner 时失败关闭；Gateway 方法目录、公告、风险分类与请求分发保持一一对应。
+
+3. **`packages/belldandy-core/src/tui/runtime.ts`、`state.ts` 与 `app.tsx` 修改**：
+   - TUI 启动和 Runtime refresh 时恢复 authoritative pending 队列，并将快照与实时 `permission.requested` 事件按 exact binding 合并。
+   - 上下键选择请求、左右键选择 allow/deny，响应始终绑定 `agentRunId + worktreeId + toolCallId`；footer 使用稳定 `i/n`，队列为空时不显示审批 modal。
+   - reducer 通过 permission revision 区分新鲜与并发迟到快照，并以 session 内有界 tombstone 阻止已解决项被迟到快照复活；新鲜空快照可清除已超时旧项。
+
+4. **测试与项目地图修改**：
+   - 补充 owner 安全投影、Gateway admission/失败关闭、Runtime 解析、reducer 时序和真实 Ink exact 响应测试。
+   - 登记 pending permission owner、`coding.run.permission.list` 和 TUI 审批队列的职责边界。
+
+5. **效果**：
+   - 多个连续到达或重连后恢复的审批请求可在 TUI 内逐项定位和处理，不会因单槽覆盖而丢失。
+   - 迟到快照、重复事件和已完成 Tool 不会复活旧审批；选择一个请求不会误响应同 run、不同 worktree 或不同 Tool call 的其他请求。
+   - TUI 只消费 Gateway authoritative owner，不持久化审批、不复制权限状态机，也不新增顶级 tab。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 7 个定向测试文件、71 个测试全部通过（含 5 个新增阶段 7-4 owner、Gateway、Runtime/state/Ink 测试），真实 Gateway TUI integration 5 个用例通过。
+- `corepack pnpm smoke:tui:wsl` 以 `exitCode 0` 通过首帧、resize、极窄降级/恢复、键盘输入、`Ctrl+C` 正常退出和 alternate-screen 成对清理。
+- Docker Desktop Linux daemon 健康；预加载 `node:22-bullseye@sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844` 的 RepoDigest、Image ID 与 `linux/amd64` 平台复核一致，Windows native 与 `Ubuntu-22.04` Extension runtime OCI sentinel 均通过，Docker 总容器、Extension/command lease label 容器、fixture/lease 临时根和 WSL 相关进程残留均为 `0`。
+
+#### 阶段 7-5 实现结论：TUI 有界 worktree 选择与 exact cwd 切换（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/runtime.ts` 修改**：
+   - 复用 pairing-protected `workspace.worktree.status`，将 owner 状态收窄为最多 100 个 launch/managed target；不投影 owner identity、retention、error、blocker 正文或 Git hash。
+   - managed worktree 切换前按 exact `worktreeId` 二次查询并校验唯一 ID、可用状态、绝对路径和真实目录；mismatched、malformed、unavailable 或不可访问目标均失败关闭。
+   - Runtime 维护单一 current cwd，切换后的 workspace 检查、新 Conversation 与 Revision 过滤均使用新 cwd；run-start diff 继续单独绑定其启动 workspace，不因随后切换而跨目录重算。
+
+2. **`packages/belldandy-core/src/tui/state.ts` 修改**：
+   - 新增有界 workspace target、Changes pane focus 和 exact selection 状态；并发列表刷新保留当前 cwd，exact 切换结果可原子更新 target 与 cwd。
+   - 活动 run 期间拒绝切换；成功切换后清除旧 workspace 的 summary、run diff/hunk cursor、Revision preview/confirmation/result，并拒绝旧 cwd 的迟到 summary、revision 和 terminal diff。
+   - 切换响应以 `previousCwd + targetKey` 约束；并发列表改变选择不会造成 Runtime 与 reducer cwd 分叉。
+
+3. **`packages/belldandy-core/src/tui/app.tsx` 修改**：
+   - 在既有 Changes 双栏内增加 Worktrees 列表，不新增顶级 tab；左右键切换 Worktrees/Revision focus，上下键选择，Enter 只在空闲状态切换 exact target。
+   - 切换期间使用同步 in-flight/busy guard，完成后统一刷新 Workspace、当前 cwd Revision 与 target 列表；worktree owner 不可用时不拖垮既有 command job 和 permission refresh。
+   - 宽屏和 20 行窄屏均为 worktree 列表设置稳定行数，保留 run diff hunk、patch 与 Revision viewport。
+
+4. **测试与项目地图修改**：
+   - 新增 Runtime 安全投影/上限/exact revalidation/run workspace 绑定、reducer 时序隔离/活动 run 阻断，以及真实 Ink 空闲切换/活动 run 拒绝测试。
+   - 项目地图登记 TUI 作为阶段 4 worktree owner 的只读 consumer，并明确不拥有 worktree 或 Git 写入真源。
+
+5. **效果**：
+   - 用户可在同一 TUI Changes 视图中查看并切换 launch/managed worktree，后续检查和新 run 精确使用选中 cwd。
+   - 活动 run、迟到结果、列表刷新竞态和伪造 Gateway target 不会造成跨 workspace 执行或界面/Runtime cwd 分叉。
+   - 本切片不创建、删除、apply、stage、commit、branch 或持久化 worktree，也不执行 push、PR 或任何远端写入。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- 8 个 TUI/权限定向测试文件、79 个测试全部通过（含 5 个新增阶段 7-5 Runtime/state/Ink 测试），真实 Gateway TUI integration 5 个用例通过；阶段 4 `UserWorktreeRuntime` 与 Gateway worktree 2 个文件、22 个回归测试另行通过。
+- `corepack pnpm smoke:tui:wsl` 最终以 `exitCode 0`、`timedOut false` 通过首帧、resize、极窄降级/恢复、键盘输入、`Ctrl+C` 正常退出和 alternate-screen 成对清理。
+- digest-pinned Node image 的 Image ID 与 RepoDigest 均为 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`，平台为 `linux/amd64`；Docker 总容器、Extension lease 容器、command sandbox lease 容器、fixture/lease 临时根、宿主相关进程和 WSL guest `bdd` 进程残留均为 `0`。`git diff --check` 通过，仅输出工作区既有 LF/CRLF 转换提示。
+
+#### 阶段 7-6 实现结论：TUI 统一 keyboard/mouse 输入契约与终端模式恢复（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/tui/input.ts` 新建**：
+   - 将 keyboard、SGR mouse、pane focus、modal 选择、列表移动/定位、页面导航和文本编辑收敛到同一组纯 UI action；既有 Conversation、Revision、permission、job 和 worktree owner 语义不复制。
+   - 严格解析单个有界 SGR mouse press/wheel 事件，拒绝 release、motion、未知 button、越界坐标和异常 button code；raw CSI/SGR 不再进入 Chat 文本，Kitty release 事件不会重复触发 action。
+   - 仅在 stdin/stdout 均为 TTY 且终端声明为已知兼容族时启用 `1000` button tracking 与 `1006` SGR reporting，并提供幂等反序清理；`TERM=dumb`、非 TTY 或未知终端保持 keyboard-only。
+
+2. **`packages/belldandy-core/src/tui/app.tsx` 修改**：
+   - `useInput` 与 `usePaste` 分离 keyboard/mouse 控制序列和 bracketed paste 文本，统一 action executor 继续调用原有 exact-binding handler。
+   - mouse 可选择现有 tab、列表、Changes pane focus 和 modal 按钮，wheel 复用当前 focus 的列表移动；modal 存在时所有底层 tab/list 点击均被吞掉。
+   - 未新增顶级 tab、可见快捷键说明或第二套状态机；未新增环境变量，因为终端 reporting 属于固定的本地兼容/恢复边界，未知能力按 keyboard-only 失败关闭。
+
+3. **`packages/belldandy-core/src/tui/input.test.ts`、`app.test.tsx` 与 `scripts/smoke-tui-pty.py` 修改**：
+   - 新增 SGR 边界、modal 优先级、keyboard/mouse 同 action、控制序列净化、终端 mode lease 和真实 Ink paste/mouse 路由测试。
+   - WSL PTY sentinel 实际发送 mouse 点击完成 `CHAT → CHANGES → CHAT` 切换，并验证 resize、极窄恢复、键盘输入和 `Ctrl+C`。
+   - sentinel 新增 bracketed-paste、`1000`、`1006` 启停及其在 alternate-screen 退出前恢复的顺序断言；`docs/project-map.md` 同步登记输入 owner 与验证入口。
+
+4. **效果**：
+   - TUI 的 keyboard 和 mouse 不再各自复制业务动作；当前 tab/focus、modal 优先级和 exact selection 使用同一条 action 路径。
+   - 终端 mouse/control 序列不会污染 prompt，bracketed paste 与中文/多字节文本仍按有界可见文本处理。
+   - 支持的终端获得可恢复的 mouse 交互，不支持或无法声明能力的终端保持完整 keyboard 路径；正常退出时 input mode 在 alternate-screen 前恢复。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- Windows native 6 个 TUI 定向测试文件、56 个测试全部通过（含 6 个新增阶段 7-6 input/Ink 测试），其中真实 Gateway TUI integration 5 个用例通过。
+- `corepack pnpm smoke:tui:wsl` 以 `exitCode 0`、`timedOut false` 通过首帧、resize、极窄降级/恢复、SGR mouse 双向 tab 切换、键盘输入和 `Ctrl+C`；bracketed-paste、`1000`、`1006` 与 alternate-screen 均成对恢复，且 input mode 先于 screen 退出。
+- Docker Desktop Server `29.1.3`；digest-pinned Node image 的 Image ID 与 RepoDigest 均匹配 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`，平台为 `linux/amd64`。Docker 总容器、Extension/command lease label 容器、fixture/lease/TUI 临时根及 WSL guest 相关进程残留均为 `0`。
+
+#### 阶段 7-7 实现结论：受控远端 push/PR preview、确认与审计（2026-07-27）
+
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/remote-delivery-runtime.ts` 新建**：
+   - 新增独立 remote delivery owner，以 exact remote URL、push branch 和 PR base allowlist 约束外部写入；拒绝内嵌凭据、重复 remote/branch binding、GitHub repository 漂移和不一致配置。
+   - 5 分钟一次性 receipt 绑定 cwd/repository、source branch、HEAD、upstream、remote URL hash、远端 OID 和 diff hash；confirm 前重新核验所有绑定，Git/`gh` 外部调用均使用 15 秒 deadline。
+   - push 仅执行 non-force exact commit-to-ref refspec 并以 `ls-remote` 复核 postcondition；PR 精确绑定 repository/head/base/commit，body 只经 stdin 传入 `gh`，receipt/audit 不保存 title、body 明文或凭据。
+
+2. **`server-methods/remote-delivery.ts`、Gateway 装配与 registry 修改**：
+   - 新增 `targets`、push preview/confirm、PR preview/confirm 和 audit list 六个 pairing-protected Gateway 方法，并同步公开方法目录、风险分类、请求分发和 `@belldandy/core` 根导出。
+   - preview 只接受允许 workspace root 或 exact managed worktree；confirm 只接受 operation-bound receipt 和显式 `confirm: true`，不接受 remote、refspec、branch 或 force 覆盖字段。
+   - preview 失败生成有界 reason-code evidence；confirm 写入前先落 started audit，成功或失败均更新可诊断审计状态，未新增 merge、tag、release、部署或仓库保护绕过入口。
+
+3. **`packages/belldandy-core/src/tui/app.tsx`、`runtime.ts`、`state.ts` 与 `input.ts` 接入**：
+   - Changes 视图仅在当前 branch 恰好匹配一个 allowlist target 时接受 `Ctrl+P`，通过 pairing-protected Gateway 获取 preview，不允许 TUI 构造 refspec。
+   - 确认 modal 展示 exact remote/branch、commit 和 diff hash；只有二次确认后才提交 receipt，取消、无可确认 preview 或服务端 final gate 失败均不写远端。
+   - PR 保留在 Headless Gateway 契约中，不新增 TUI PR 表单、顶级 tab 或第二套 Git owner；workspace/target 刷新会清除旧 preview 与确认状态。
+
+4. **配置、文档与测试修改**：
+   - `.env.example` 新增受控 target JSON 配置示例，`README.md` 说明安全边界，`docs/project-map.md` 登记 remote owner、Gateway 方法与 TUI consumer。
+   - 新增 runtime、Gateway、registry、TUI input/state/runtime/Ink 测试，覆盖策略拒绝、exact push、receipt 重放/过期、HEAD/remote ref 漂移、PR 绑定/脱敏、确认前零写入和风险分类。
+
+5. **效果**：
+   - 用户可先核实目标 remote/branch、实际 commit 和 diff hash，再通过一次性 receipt 执行受控 push；preview 与 confirm 间发生本地或远端漂移时失败关闭。
+   - PR 创建只能针对已推送的 exact head 和 allowlisted base，外部写入前后均有目标、postcondition 与审计证据，凭据和 PR 正文不进入本地审计。
+   - 阶段 7 完成 TUI 本地生产力与受控远端交付闭环；自动 merge、自动 release、生产发布和绕过仓库保护继续明确排除。
+
+##### 验证结果
+
+- TypeScript 编译无错误，`corepack pnpm --filter @belldandy/core build` 通过。
+- Windows native 7 个定向测试文件、64 个测试全部通过（含 13 个新增阶段 7-7 runtime、Gateway、TUI 测试）；真实 bare remote 覆盖 exact push/postcondition、HEAD/remote ref 漂移、receipt 过期/重放和成功/失败 audit，Ink 测试确认 modal 前不调用 push。
+- `Ubuntu-22.04` 通过构建后的 `dist/remote-delivery-runtime.js` 完成 exact push、receipt 重放拒绝、HEAD 漂移拒绝、remote ref 漂移拒绝和过期失败审计 sentinel；WSL fixture 临时根清理后残留为 `0`。
+- 已授权的真实 `private` GitHub sentinel 通过 exact test-branch push、PR preview/confirm、PR OPEN postcondition 和两条成功 audit；验证后 PR 已关闭、测试分支已删除，开放测试 PR、远端测试分支与本地临时根残留均为 `0`，未触碰 `origin`。
+- Docker Desktop Server `29.1.3`；digest-pinned Node image 的 Image ID 与 RepoDigest 均匹配 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`，平台为 `linux/amd64`。Docker 总容器、Extension/command lease label 容器、Windows/WSL fixture/TUI 临时根及相关进程残留均为 `0`；`git diff --check` 通过，仅输出工作区既有 LF/CRLF 转换提示。
 
 ## 实施计划进度表
 
@@ -1559,9 +2420,9 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 | 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
 | 阶段 0：同任务 benchmark | P0 | 已完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-7 已完成） | 4-6 人日 | 已完成 12 tasks × Windows/WSL2 × 3 attempts 的同一 source `72/72` completed report、离线重算、隔离 Gateway、三项定价与真实 usage/cost 链；事实基线通过 `11/72`，新增可观测费用 `$0.02789341`，含旧 source 历史费用累计 `$0.06268098 / $3.00`。含旧 source 历史费用累计 `$0.06268098 / $3.00` 已经用户完成 Provider 人民币实账与事件 USD 估值人工核对，确认不超过可核对实际成本；技术与外部账务闭环均完成 |
 | 阶段 1：项目规则链与代码导航 | P0 | 已完成（1-1 至 1-4） | 8-12 人日 | 已完成 Git 根到 cwd 的项目 `AGENTS.md` 优先级、身份隔离、预算/跳过诊断、最小单次 run prompt、模型可见且本地严格校验的输出 Schema、无 Shell 的 `text_search` / `file_glob` / 分段 `file_read`，以及冻结 `navigation.large-repository` 的 Windows/WSL2 Provider 双平台机器评估与 usage/cost 聚合。单任务聚合为预期 `partial 2/72`，不替代阶段 0 已完成的全量基线；阶段 1 新增事件 USD 估值累计 `$0.00552600`，总累计 `$0.06820698 / $3.00`，实账核对为 `defer` |
-| 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 进行中（2-1 至 2-5 已完成；2-6 Windows 全部通过，WSL staging 为 defer） | 15-25 人日 | 已建立 sandbox-required 准入、结构化 argv/command plan、命令审批安全预览、OCI lease/CID 显式清理、只读/可写/network-none fixture，以及有界 timeout、隔离 PTY host、job/cursor/resize/cancel、进程树清理和 Gateway 重启后的 `lost` 状态。2026-07-27 Windows Docker `29.1.3` 以预加载 digest-pinned Node 镜像通过显式 isolation + pipe/PTY job Gate，验证后容器与 host 残留均为 `0`；WSL Docker daemon 可达但仍缺独立 frozen-lockfile staging。Docker/Podman 仅接受 digest-pinned 预加载镜像、无网络、无自动拉取和最窄工作区挂载；WSL Gate 关闭前不得关闭阶段 2 |
-| 阶段 3：真实 diff/review 与恢复保证 | P0 | 进行中（3-1、3-2a 至 3-2g 已完成） | 8-12 人日 | 已建立 Git/非 Git 的 run-start 只读 snapshot、Git HEAD/指定 revision/显式 worktree base 的不可变 artifact 基线、baseline/current/diff hash、hunk cursor、二进制/精确重命名/超大 diff 状态、Headless artifact、TUI 首 hunk、hash 绑定 review verdict、exact/managed-worktree/detect-only 恢复等级、restore 冲突 artifact/final gate、restore 成功后基于原 baseline 的 TUI diff 重算、snapshot/review/revision 稳定关联，以及成功且匹配 restore 的只读 review 重判；后续补可信 restore receipt 与 Gateway/Headless 投影、相似度重命名和 final gate 后竞态边界，确保不覆盖用户改动 |
-| 阶段 4：用户 worktree 与 Git 本地交付 | P1 | 待启动 | 10-15 人日 | 隔离开发、冲突停机、本地 stage/commit 可追溯 |
-| 阶段 5：steering 与领域投影 | P1 | 待启动 | 10-18 人日 | 长任务可干预、可恢复，各状态域保持单一真源 |
-| 阶段 6：互操作、SDK 与项目扩展 | P1 | 待启动 | 10-15 人日 | 标准客户端可复用 runtime，旧 consumer 保持兼容 |
-| 阶段 7：TUI 与受控远端交付 | P2 | 待启动 | 12-20 人日 | 终端高效审查/操作，push/PR 经预览确认与审计 |
+| 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 已完成（2-1 至 2-6） | 15-25 人日 | 已建立 sandbox-required 准入、结构化 argv/command plan、命令审批安全预览、OCI lease/CID 显式清理、只读/可写/network-none fixture，以及有界 timeout、隔离 PTY host、job/cursor/resize/cancel、进程树清理和 Gateway 重启后的 `lost` 状态。Windows 与 `Ubuntu-22.04` 使用预加载 digest-pinned Node 镜像均通过显式 isolation + pipe/PTY job Gate，验证后 lease label 容器残留均为 `0`；WSL 独立 frozen-lockfile staging 离线构建 `node-pty`，并以最小 Unix UID/GID 投影解决 Docker Desktop bind-mount 写入映射。Docker/Podman 继续只接受 digest-pinned 预加载镜像、无网络、无自动拉取和最窄工作区挂载 |
+| 阶段 3：真实 diff/review 与恢复保证 | P0 | 已完成（3-1、3-2a 至 3-2j） | 8-12 人日 | 已完成 Git/非 Git 的 run-start 只读 snapshot、Git HEAD/指定 revision/显式 worktree base 的不可变 artifact 基线、baseline/current/diff hash、hunk cursor、二进制/精确与有界文本相似度重命名/超大 diff 状态、Headless artifact、TUI 首 hunk、hash 绑定 review verdict、exact/managed-worktree/detect-only 恢复等级、restore 冲突 artifact/final gate、post-gate 逐目标复核、restore 成功后基于原 baseline 的 TUI diff 重算、snapshot/review/revision 稳定关联、可信 restore receipt 与 Gateway/Headless 只读 review 重判；跨文件事务和最后一次系统调用间竞态为明确不承诺边界 |
+| 阶段 4：用户 worktree 与 Git 本地交付 | P1 | 已完成（4-1 至 4-6） | 10-15 人日 | 已完成受管 owner、active run 绑定、幂等 create、真实 base diff/hunk、apply/remove/stage/commit/branch 的短期 receipt、显式确认、Git native final gate、postcondition 与 audit；本地 branch 只新建不 force 更新，push/PR 与远端写入仍排除 |
+| 阶段 5：steering 与领域投影 | P1 | 已完成（5-1 至 5-6） | 10-18 人日 | 已完成四类来源 exact status、Conversation CLI、Conversation/Workflow restart runtime-lost、终态串行 follow-up、取消后串行 replacement，以及 exact active ToolAgent 下一模型调用边界 steer；不复制领域状态机，不并发 `message.send`，不伪装 Provider stream 中途注入 |
+| 阶段 6：互操作、SDK 与项目扩展 | P1 | 已完成（6-1、6-2、6-3a、6-3b） | 10-15 人日，6-3b 追加 5-8 人日 | 已完成 Gateway-authorized SS-as-MCP stdio、TypeScript SDK、项目扩展 trust/完整性/受控注册，以及 sandbox-required Marketplace Extension Host 的版本化 IPC、OCI fail-closed admission、generation/deadline、Tool/Hook/Skill ownership 撤销、lease 与 shutdown 接线；无后端不回退进程内执行。Windows native 与 WSL2 使用同一预加载 digest-pinned Node image 通过模块顶层/activate/Tool/Hook sentinel 隔离和容器/lease 零残留 Gate |
+| 阶段 7：TUI 与受控远端交付 | P2 | 已完成（7-1 至 7-7） | 12-20 人日 | 已完成活动 run exact-binding steer、单 hunk diff 导航、command job 有界输出/精确取消、authoritative Tool permission 队列、worktree exact cwd 切换、统一 keyboard/mouse action 与可恢复终端 mode；远端交付以 allowlist、一次性 receipt、二次确认、TOCTOU final gate、postcondition 和脱敏 audit 约束 exact push/PR。Windows/WSL failure matrix 与真实 `private` GitHub sentinel 均通过，验证后容器、lease、fixture、测试 PR/分支零残留；自动 merge/release/生产发布继续排除 |

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WorkspaceChangeReviewRuntime } from "./workspace-change-review.js";
 import { WorkspaceChangeSnapshotRuntime } from "./workspace-change-snapshot.js";
+import { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 
 const execFile = promisify(execFileCallback);
 const temporaryDirectories: string[] = [];
@@ -70,22 +71,39 @@ describe("WorkspaceChangeReviewRuntime", () => {
     });
   });
 
-  it("revalidates a linked review after restore only for an applied matching revision", async () => {
+  it("revalidates a linked review only from a matching runtime restore receipt", async () => {
     const fixture = await createFixture("belldandy-change-review-restore-");
     const file = path.join(fixture.workspaceRoot, "note.txt");
     await fs.writeFile(file, "before\n", "utf-8");
     const snapshots = new WorkspaceChangeSnapshotRuntime({ stateDir: fixture.stateDir });
+    const revisions = new WorkspaceRevisionRuntime({ stateDir: fixture.stateDir });
     const baseline = await snapshots.captureBaseline({
       baselineId: "review-restore-baseline",
       workspaceRoot: fixture.workspaceRoot,
       source: "run_start",
     });
+    const targets = [{ absolutePath: file, relativePath: "note.txt" }];
+    await revisions.prepareMutations({
+      revisionId: "review-restore-run-1",
+      workspaceRoot: fixture.workspaceRoot,
+      toolName: "file_write",
+      targets,
+    });
     await fs.writeFile(file, "agent change\n", "utf-8");
+    await revisions.commitMutations({
+      revisionId: "review-restore-run-1",
+      workspaceRoot: fixture.workspaceRoot,
+      toolName: "file_write",
+      targets,
+    });
     const snapshot = await snapshots.createSnapshot({
       baselineId: baseline.baselineId,
       revisionId: "review-restore-run-1",
     });
-    const reviews = new WorkspaceChangeReviewRuntime({ stateDir: fixture.stateDir });
+    const reviews = new WorkspaceChangeReviewRuntime({
+      stateDir: fixture.stateDir,
+      workspaceRevisionRuntime: revisions,
+    });
     const linked = await reviews.record({
       reviewId: "review-restore-linked",
       snapshotId: snapshot.snapshotId,
@@ -93,19 +111,24 @@ describe("WorkspaceChangeReviewRuntime", () => {
       verdict: "approved",
     });
 
-    await expect(reviews.verifyAfterRestore({
+    const snapshotsDirectory = path.join(
+      fixture.stateDir,
+      "artifacts",
+      "workspace-change-snapshots",
+      baseline.baselineId,
+      "snapshots",
+    );
+    await expect(reviews.verifyAfterRestoreReceipt({
       reviewId: linked.reviewId,
-      restore: { revisionId: "review-restore-run-1", applied: false },
-    })).resolves.toMatchObject({ status: "not_applicable", reason: "restore_not_applied" });
-    await expect(reviews.verifyAfterRestore({
-      reviewId: linked.reviewId,
-      restore: { revisionId: "another-run", applied: true },
-    })).resolves.toMatchObject({ status: "not_applicable", reason: "revision_mismatch" });
+      receiptId: "missing-receipt",
+    })).rejects.toThrow(/receipt/i);
+    expect(await fs.readdir(snapshotsDirectory)).toHaveLength(1);
 
-    await fs.writeFile(file, "before\n", "utf-8");
-    await expect(reviews.verifyAfterRestore({
+    const restored = await revisions.restore({ revisionId: "review-restore-run-1", apply: true });
+    expect(restored.receipt).toBeDefined();
+    await expect(reviews.verifyAfterRestoreReceipt({
       reviewId: linked.reviewId,
-      restore: { revisionId: "review-restore-run-1", applied: true },
+      receiptId: String(restored.receipt?.receiptId),
     })).resolves.toMatchObject({
       status: "invalidated",
       review: { revisionId: "review-restore-run-1" },
@@ -122,9 +145,9 @@ describe("WorkspaceChangeReviewRuntime", () => {
       diffHash: unlinkedSnapshot.diffHash,
       verdict: "needs_changes",
     });
-    await expect(reviews.verifyAfterRestore({
+    await expect(reviews.verifyAfterRestoreReceipt({
       reviewId: unlinked.reviewId,
-      restore: { revisionId: "review-restore-run-1", applied: true },
+      receiptId: String(restored.receipt?.receiptId),
     })).resolves.toMatchObject({ status: "not_applicable", reason: "review_unlinked" });
   });
 

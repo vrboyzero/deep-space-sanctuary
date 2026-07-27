@@ -22,13 +22,17 @@ import {
 import { createCodingTuiRuntime } from "./runtime.js";
 import { createInitialTuiState, reduceTuiState } from "./state.js";
 
+const temporaryDirectories: string[] = [];
+
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
 describe("Coding TUI runtime integration", () => {
   it("starts and subscribes to one real Gateway Conversation without duplicating controls", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-runtime-"));
+    temporaryDirectories.push(stateDir);
     const workspace = path.join(stateDir, "workspace");
     await fs.mkdir(workspace);
     const agent: BelldandyAgent = {
@@ -85,8 +89,86 @@ describe("Coding TUI runtime integration", () => {
     }
   }, 15_000);
 
+  it("steers the same real Gateway Conversation at its next model boundary", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-steer-"));
+    temporaryDirectories.push(stateDir);
+    const workspace = path.join(stateDir, "workspace");
+    await fs.mkdir(workspace);
+    let releaseFirstModel: (() => void) | undefined;
+    const firstModelPending = new Promise<void>((resolve) => { releaseFirstModel = resolve; });
+    const deliveredPrompts: string[] = [];
+    let runInvocations = 0;
+    const agent: BelldandyAgent = {
+      getCodingRunCapabilities: () => ({ maxCostUsd: false, steerAtModelBoundary: true }),
+      async *run(input) {
+        runInvocations += 1;
+        yield { type: "status" as const, status: "running" as const };
+        await firstModelPending;
+        if (!input.steering) throw new Error("steering mailbox missing");
+        const commands = await input.steering.consumePending({ modelCallIndex: 2 });
+        deliveredPrompts.push(...commands.map((command) => command.prompt));
+        input.steering.sealIfIdle();
+        yield { type: "final" as const, text: `steered:${deliveredPrompts.join("|")}` };
+        yield { type: "status" as const, status: "done" as const };
+      },
+    };
+    const gateway = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const events: AgentRunEvent[] = [];
+    const errors: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(gateway.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        const runtime = createCodingTuiRuntime({
+          stateDir,
+          cwd: workspace,
+          onEvent: (event) => events.push(event),
+          onSubscriptionError: (error) => errors.push(error.message),
+          onProtocolError: (error) => errors.push(error.message),
+          onBridgeError: (message) => errors.push(message),
+        });
+        try {
+          const binding = await runtime.requestConversation("Start the task.");
+          await waitFor(() => events.some((event) => event.type === "run.started"));
+          await runtime.steer(binding, "Focus on the regression.");
+          releaseFirstModel?.();
+          await waitFor(() => events.some((event) => event.type === "run.completed"));
+
+          expect(runInvocations).toBe(1);
+          expect(deliveredPrompts).toEqual(["Focus on the regression."]);
+          expect(events).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+              type: "run.completed",
+              binding,
+              payload: { output: { text: "steered:Focus on the regression." } },
+            }),
+          ]));
+          expect(new Set(events.map((event) => event.binding.agentRunId))).toEqual(new Set([binding.agentRunId]));
+          expect(errors).toEqual([]);
+        } finally {
+          releaseFirstModel?.();
+          await runtime.close();
+        }
+      });
+    } finally {
+      releaseFirstModel?.();
+      await gateway.close().catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
+
   it("cancels only its bound active Gateway Conversation run", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-cancel-"));
+    temporaryDirectories.push(stateDir);
     const workspace = path.join(stateDir, "workspace");
     await fs.mkdir(workspace);
     const agent: BelldandyAgent = {
@@ -157,6 +239,7 @@ describe("Coding TUI runtime integration", () => {
 
   it("resumes its active subscription from the last confirmed cursor after a forced Gateway disconnect", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-reconnect-"));
+    temporaryDirectories.push(stateDir);
     const workspace = path.join(stateDir, "workspace");
     await fs.mkdir(workspace);
     const broker = createCodingRunGatewayEventBroker();
@@ -239,6 +322,7 @@ describe("Coding TUI runtime integration", () => {
 
   it("shows the same run events as a Headless subscriber without starting another run", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-tui-headless-"));
+    temporaryDirectories.push(stateDir);
     const workspace = path.join(stateDir, "workspace");
     await fs.mkdir(workspace);
     let releaseRun: (() => void) | undefined;

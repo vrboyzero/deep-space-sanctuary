@@ -44,6 +44,10 @@ import {
   WorkflowScriptLoadError,
 } from "./workflow-script-loader.js";
 import type { WorkflowExecutionPolicy } from "./workflow-execution-policy.js";
+import type {
+  CodingRunRecoveryLookup,
+  CodingRunRecoveryMarkerStore,
+} from "./coding-run/recovery-marker-store.js";
 
 const DEFAULT_WORKFLOW_MAX_QUEUE_SIZE = 20;
 
@@ -146,6 +150,7 @@ export type WorkflowRuntimeDeps = {
   };
   resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
   resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
+  recoveryStore?: Pick<CodingRunRecoveryMarkerStore, "markActive" | "markSettled" | "lookup">;
 };
 
 export type AgentExecutionFingerprintInputResolver = (input: {
@@ -200,6 +205,7 @@ export class WorkflowRuntime {
   private readonly logger?: WorkflowRuntimeDeps["logger"];
   private readonly resolveAgentExecutionFingerprintInputs?: AgentExecutionFingerprintInputResolver;
   private readonly resolveWorkflowAgentLaunchSpec?: Parameters<typeof createWorkflowContext>[0]["resolveWorkflowAgentLaunchSpec"];
+  private readonly recoveryStore?: Pick<CodingRunRecoveryMarkerStore, "markActive" | "markSettled" | "lookup">;
   /** 以不可复用的 runtime instance id 索引，避免 resume journal 混淆控制目标。 */
   private readonly activeRuns = new Map<string, ActiveRun>();
   /** 兼容既有 journalId 查询接口，始终指向该 Journal 最近一次运行。 */
@@ -214,6 +220,7 @@ export class WorkflowRuntime {
     this.logger = deps.logger;
     this.resolveAgentExecutionFingerprintInputs = deps.resolveAgentExecutionFingerprintInputs;
     this.resolveWorkflowAgentLaunchSpec = deps.resolveWorkflowAgentLaunchSpec;
+    this.recoveryStore = deps.recoveryStore;
   }
 
   async run(opts: WorkflowRunOptions): Promise<WorkflowRunResult> {
@@ -310,6 +317,19 @@ export class WorkflowRuntime {
       budgetBaseline: budgetGuard.getUsage(),
       startedAt,
     };
+    try {
+      await this.recoveryStore?.markActive({
+        source: "workflow",
+        binding: {
+          agentRunId: workflowRunId,
+          workflow: { journalId, workflowRunId },
+        },
+        startedAtMs: startedAt,
+      });
+    } catch (error) {
+      runController.dispose();
+      throw error;
+    }
     this.activeRuns.set(workflowRunId, activeRun);
     this.activeRunIdsByJournal.set(journalId, workflowRunId);
 
@@ -417,6 +437,19 @@ export class WorkflowRuntime {
       },
       error,
     };
+    await this.recoveryStore?.markSettled({
+      source: "workflow",
+      binding: {
+        agentRunId: workflowRunId,
+        workflow: { journalId, workflowRunId },
+      },
+    }).catch((markerError) => {
+      this.logger?.warn("workflow:recovery_marker_settle_failed", {
+        workflowRunId,
+        journalId,
+        error: markerError instanceof Error ? markerError.message : String(markerError),
+      });
+    });
     return result;
   }
 
@@ -454,6 +487,20 @@ export class WorkflowRuntime {
     if (!run) return null;
 
     return this.toStatusInfo(run);
+  }
+
+  async getRecoveryStatusByRunId(
+    journalId: string,
+    workflowRunId: string,
+  ): Promise<CodingRunRecoveryLookup> {
+    if (!this.recoveryStore) return { state: "not_found" };
+    return this.recoveryStore.lookup({
+      source: "workflow",
+      binding: {
+        agentRunId: workflowRunId,
+        workflow: { journalId, workflowRunId },
+      },
+    });
   }
 
   private toStatusInfo(run: ActiveRun): WorkflowRuntimeStatusInfo {

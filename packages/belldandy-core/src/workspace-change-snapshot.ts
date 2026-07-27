@@ -19,6 +19,11 @@ const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 10_000;
 const DEFAULT_MAX_DIFF_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_HUNKS_PER_PAGE = 32;
+const MAX_SIMILARITY_RENAME_CANDIDATES = 64;
+const MAX_SIMILARITY_RENAME_FILE_BYTES = 128 * 1024;
+const MAX_SIMILARITY_RENAME_TOKENS = 256;
+const MIN_SIMILARITY_RENAME_TOKENS = 3;
+const MIN_SIMILARITY_RENAME_SCORE = 0.8;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export type WorkspaceChangeBaselineSource = "run_start" | "git_head" | "git_revision" | "worktree_base";
@@ -50,6 +55,7 @@ export type WorkspaceChangeFile = {
   path: string;
   status: WorkspaceChangeFileStatus;
   previousPath?: string;
+  renameSimilarity?: number;
   binary: boolean;
   diffAvailable: boolean;
   reason?: "file_too_large" | "unsupported_entry" | "unstable_read" | "diff_limit";
@@ -654,7 +660,129 @@ function entryEqual(left: SnapshotEntry | undefined, right: SnapshotEntry | unde
   return Boolean(left && right && left.kind === right.kind && left.hash === right.hash && left.size === right.size);
 }
 
-function buildChanges(before: SnapshotEntry[], after: SnapshotEntry[]): WorkspaceChangeFile[] {
+type SimilarityRenamePair = {
+  previous: SnapshotEntry;
+  replacement: SnapshotEntry;
+  similarity: number;
+};
+
+function isSimilarityRenameCandidate(entry: SnapshotEntry): boolean {
+  return entry.kind === "file"
+    && entry.stored
+    && !entry.binary
+    && entry.size > 0
+    && entry.size <= MAX_SIMILARITY_RENAME_FILE_BYTES;
+}
+
+async function readSimilarityRenameTokens(storageDirectory: string, entry: SnapshotEntry): Promise<Set<string> | undefined> {
+  try {
+    const contents = await fs.readFile(path.join(storageDirectory, ...entry.path.split("/")));
+    if (contents.includes(0)) return undefined;
+    const tokens = new Set<string>();
+    for (const line of contents.toString("utf-8").replace(/\r\n?/g, "\n").split("\n")) {
+      const normalized = line.trim();
+      if (!normalized) continue;
+      tokens.add(hashText(normalized));
+      if (tokens.size > MAX_SIMILARITY_RENAME_TOKENS) return undefined;
+    }
+    return tokens.size >= MIN_SIMILARITY_RENAME_TOKENS ? tokens : undefined;
+  } catch {
+    // 近似匹配只是归因提示；artifact 异常时保留更保守的 delete/add。
+    return undefined;
+  }
+}
+
+function calculateSimilarityRenameScore(left: Set<string>, right: Set<string>): number {
+  let common = 0;
+  for (const token of left) {
+    if (right.has(token)) common += 1;
+  }
+  return common / Math.max(left.size, right.size);
+}
+
+function selectUniqueBest<T extends { score: number }>(candidates: T[]): T | undefined {
+  let best: T | undefined;
+  let tied = false;
+  for (const candidate of candidates) {
+    if (!best || candidate.score > best.score) {
+      best = candidate;
+      tied = false;
+    } else if (candidate.score === best.score) {
+      tied = true;
+    }
+  }
+  return tied ? undefined : best;
+}
+
+async function findSimilarityRenamePairs(input: {
+  deleted: SnapshotEntry[];
+  added: SnapshotEntry[];
+  beforeDirectory: string;
+  afterDirectory: string;
+}): Promise<SimilarityRenamePair[]> {
+  const deleted = input.deleted.filter(isSimilarityRenameCandidate).sort((left, right) => left.path.localeCompare(right.path));
+  const added = input.added.filter(isSimilarityRenameCandidate).sort((left, right) => left.path.localeCompare(right.path));
+  if (
+    deleted.length === 0
+    || added.length === 0
+    || deleted.length > MAX_SIMILARITY_RENAME_CANDIDATES
+    || added.length > MAX_SIMILARITY_RENAME_CANDIDATES
+  ) {
+    return [];
+  }
+  const beforeTokens = new Map<string, Set<string>>();
+  const afterTokens = new Map<string, Set<string>>();
+  for (const entry of deleted) {
+    const tokens = await readSimilarityRenameTokens(input.beforeDirectory, entry);
+    if (tokens) beforeTokens.set(entry.path, tokens);
+  }
+  for (const entry of added) {
+    const tokens = await readSimilarityRenameTokens(input.afterDirectory, entry);
+    if (tokens) afterTokens.set(entry.path, tokens);
+  }
+
+  type ScoredPair = SimilarityRenamePair & { score: number };
+  const scores: ScoredPair[] = [];
+  for (const previous of deleted) {
+    const previousTokens = beforeTokens.get(previous.path);
+    if (!previousTokens) continue;
+    for (const replacement of added) {
+      const replacementTokens = afterTokens.get(replacement.path);
+      if (!replacementTokens) continue;
+      const score = calculateSimilarityRenameScore(previousTokens, replacementTokens);
+      if (score < MIN_SIMILARITY_RENAME_SCORE) continue;
+      scores.push({
+        previous,
+        replacement,
+        score,
+        similarity: Math.round(score * 100) / 100,
+      });
+    }
+  }
+
+  const bestByPrevious = new Map<string, ScoredPair>();
+  const bestByReplacement = new Map<string, ScoredPair>();
+  for (const previous of deleted) {
+    const best = selectUniqueBest(scores.filter((pair) => pair.previous.path === previous.path));
+    if (best) bestByPrevious.set(previous.path, best);
+  }
+  for (const replacement of added) {
+    const best = selectUniqueBest(scores.filter((pair) => pair.replacement.path === replacement.path));
+    if (best) bestByReplacement.set(replacement.path, best);
+  }
+  return [...bestByPrevious.values()]
+    .filter((pair) => bestByReplacement.get(pair.replacement.path) === pair)
+    .map(({ previous, replacement, similarity }) => ({ previous, replacement, similarity }))
+    .sort((left, right) => left.replacement.path.localeCompare(right.replacement.path));
+}
+
+async function buildChanges(input: {
+  before: SnapshotEntry[];
+  after: SnapshotEntry[];
+  beforeDirectory: string;
+  afterDirectory: string;
+}): Promise<WorkspaceChangeFile[]> {
+  const { before, after } = input;
   const beforeByPath = new Map(before.map((entry) => [entry.path, entry]));
   const afterByPath = new Map(after.map((entry) => [entry.path, entry]));
   const added = after.filter((entry) => !beforeByPath.has(entry.path));
@@ -675,6 +803,25 @@ function buildChanges(before: SnapshotEntry[], after: SnapshotEntry[]): Workspac
       binary: oldEntry.binary || replacement.binary,
       diffAvailable: oldEntry.stored && replacement.stored,
       ...(oldEntry.stored && replacement.stored ? {} : { reason: oldEntry.reason ?? replacement.reason ?? "file_too_large" }),
+    });
+  }
+
+  const similarityPairs = await findSimilarityRenamePairs({
+    deleted: deleted.filter((entry) => !pairedDeleted.has(entry.path)),
+    added: added.filter((entry) => !pairedAdded.has(entry.path)),
+    beforeDirectory: input.beforeDirectory,
+    afterDirectory: input.afterDirectory,
+  });
+  for (const pair of similarityPairs) {
+    pairedAdded.add(pair.replacement.path);
+    pairedDeleted.add(pair.previous.path);
+    changes.push({
+      path: pair.replacement.path,
+      previousPath: pair.previous.path,
+      status: "renamed",
+      renameSimilarity: pair.similarity,
+      binary: false,
+      diffAvailable: true,
     });
   }
 
@@ -880,10 +1027,15 @@ export class WorkspaceChangeSnapshotRuntime {
         maxFiles: this.maxFiles,
       });
       const currentHash = hashText(canonicalEntries(captured.entries));
-      const changes = buildChanges(baseline.entries, captured.entries);
+      const changes = await buildChanges({
+        before: baseline.entries,
+        after: captured.entries,
+        beforeDirectory: baseline.storageDirectory,
+        afterDirectory: path.join(temporaryDirectory, "current"),
+      });
       const diffAliases: DiffAlias[] = [];
       for (const [index, change] of changes.entries()) {
-        if (!change.diffAvailable || change.status === "renamed") continue;
+        if (!change.diffAvailable || (change.status === "renamed" && change.renameSimilarity === undefined)) continue;
         const before = baseline.entries.find((entry) => entry.path === (change.previousPath ?? change.path));
         const current = captured.entries.find((entry) => entry.path === change.path);
         diffAliases.push({ alias: String(index + 1).padStart(6, "0"), change, baseline: before, current });
@@ -935,7 +1087,7 @@ export class WorkspaceChangeSnapshotRuntime {
           if (alias) hunks.push(...splitHunks(normalizeDiffBlock(block, alias), alias));
         }
       }
-      for (const change of changes.filter((item) => item.status === "renamed" && item.diffAvailable)) {
+      for (const change of changes.filter((item) => item.status === "renamed" && item.renameSimilarity === undefined && item.diffAvailable)) {
         hunks.push({
           path: change.path,
           ...(change.previousPath ? { previousPath: change.previousPath } : {}),
@@ -1037,6 +1189,10 @@ export class WorkspaceChangeSnapshotRuntime {
       recovery: { ...snapshot.recovery },
       artifacts: { ...snapshot.artifacts },
     };
+  }
+
+  async readBaseline(input: { baselineId: string }): Promise<WorkspaceChangeBaseline> {
+    return toBaseline(await this.loadBaseline(input.baselineId));
   }
 
   private async loadBaseline(baselineIdInput: string): Promise<SnapshotManifest> {

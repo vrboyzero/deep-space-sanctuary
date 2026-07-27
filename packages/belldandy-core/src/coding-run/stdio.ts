@@ -16,6 +16,7 @@ import {
 } from "./contracts.js";
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CONVERSATION_TEXT_CHARS = 64_000;
 const MAX_CONVERSATION_IDENTIFIER_CHARS = 256;
 
@@ -28,6 +29,16 @@ export type CodingRunConversationRequest = {
 };
 
 export type CodingRunConversationResponse =
+  | { ok: true; result?: unknown }
+  | { ok: false; error: { code: CodingRunErrorCode; message: string } };
+
+/** 只读 Workspace Revision 查询；revisionId 对应 coding run 的 agentRunId。 */
+export type CodingRunArtifactRequest = {
+  revisionId: string;
+  workspaceId?: string;
+};
+
+export type CodingRunArtifactResponse =
   | { ok: true; result?: unknown }
   | { ok: false; error: { code: CodingRunErrorCode; message: string } };
 
@@ -67,25 +78,60 @@ export class CodingRunSubscriptionError extends Error {
   }
 }
 
-type PendingControlRequest = {
+export type CodingRunClientRequestErrorCode =
+  | CodingRunErrorCode
+  | CodingRunSubscriptionErrorCode
+  | "request_timeout"
+  | "request_aborted"
+  | "client_closed"
+  | "transport_error";
+
+/** SDK 只暴露有界错误正文与稳定 code，不透传 transport/Gateway 私密细节。 */
+export class CodingRunClientRequestError extends Error {
+  constructor(
+    readonly code: CodingRunClientRequestErrorCode,
+    message: string,
+  ) {
+    super(toSafeCodingRunErrorMessage(message));
+    this.name = "CodingRunClientRequestError";
+  }
+}
+
+type PendingRequestLifecycle = {
+  timeout?: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  abortListener?: () => void;
+};
+
+type PendingControlRequest = PendingRequestLifecycle & {
   kind: "control";
   resolve: (result: CodingRunControlResponse) => void;
   reject: (error: Error) => void;
 };
 
-type PendingSubscriptionRequest = {
+type PendingSubscriptionRequest = PendingRequestLifecycle & {
   kind: "subscription";
   resolve: (result: CodingRunSubscriptionResponse) => void;
   reject: (error: Error) => void;
 };
 
-type PendingConversationRequest = {
+type PendingConversationRequest = PendingRequestLifecycle & {
   kind: "conversation";
   resolve: (result: CodingRunConversationResponse) => void;
   reject: (error: Error) => void;
 };
 
-type PendingRequest = PendingControlRequest | PendingSubscriptionRequest | PendingConversationRequest;
+type PendingArtifactRequest = PendingRequestLifecycle & {
+  kind: "artifact";
+  resolve: (result: CodingRunArtifactResponse) => void;
+  reject: (error: Error) => void;
+};
+
+type PendingRequest =
+  | PendingControlRequest
+  | PendingSubscriptionRequest
+  | PendingConversationRequest
+  | PendingArtifactRequest;
 
 export type CodingRunNdjsonClientOptions = {
   write: (line: string) => void | Promise<void>;
@@ -96,6 +142,51 @@ export type CodingRunNdjsonClientOptions = {
   maxFrameBytes?: number;
 };
 
+export type CodingRunClientRequestOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+export type CodingRunClientOptions = CodingRunNdjsonClientOptions & {
+  requestTimeoutMs?: number;
+};
+
+export type CodingRunClientStartInput = {
+  prompt: string;
+  cwd: string;
+  conversationId?: string;
+};
+
+export type CodingRunClientBinding = {
+  conversationId: string;
+  agentRunId: string;
+};
+
+export type CodingRunClientSubscribeInput = CodingRunClientBinding & {
+  cursor?: number;
+};
+
+export type CodingRunClientPermissionInput = {
+  agentRunId: string;
+  worktreeId?: string;
+  toolCallId: string;
+  decision: "allow" | "deny";
+};
+
+export type CodingRunClientSteerInput = CodingRunClientBinding & {
+  prompt: string;
+  idempotencyKey: string;
+};
+
+export type CodingRunClientCancelInput = CodingRunClientBinding & {
+  reason?: string;
+};
+
+export type CodingRunClientArtifactInput = {
+  agentRunId: string;
+  workspaceId?: string;
+};
+
 /**
  * 传输与业务运行时解耦的双向 NDJSON server。调用方注入来源控制器，避免 stdio 反向拥有 Goal/Workflow/Subtask。
  */
@@ -104,6 +195,7 @@ export function createCodingRunNdjsonServer(input: {
   handleControl: (control: RunControl) => unknown | Promise<unknown>;
   handleConversation?: (conversation: CodingRunConversationRequest) => unknown | Promise<unknown>;
   handleSubscription?: (subscription: CodingRunSubscription) => unknown | Promise<unknown>;
+  handleArtifact?: (artifact: CodingRunArtifactRequest) => unknown | Promise<unknown>;
   maxFrameBytes?: number;
 }): {
   consume: (chunk: string) => Promise<void>;
@@ -180,12 +272,33 @@ export function createCodingRunNdjsonServer(input: {
           }
           continue;
         }
+        if (isArtifactRequest(parsed)) {
+          try {
+            if (!input.handleArtifact) {
+              throw new CodingRunControlError("not_found", "Coding run artifacts are unavailable.");
+            }
+            const result = await input.handleArtifact(parsed.artifact);
+            await write({
+              version: CODING_RUN_PROTOCOL_VERSION,
+              type: "artifact.response",
+              id: parsed.id,
+              ok: true,
+              ...(result === undefined ? {} : { result: sanitizeCodingRunData(result) }),
+            });
+          } catch (error) {
+            const code = error instanceof CodingRunControlError ? error.code : "internal";
+            await write(artifactFailure(parsed.id, code, toSafeCodingRunErrorMessage(error)));
+          }
+          continue;
+        }
         {
           if (requestId) {
             if (parsed?.type === "conversation.request") {
               await write(conversationFailure(requestId, "invalid_request", "Invalid coding run conversation request."));
             } else if (parsed?.type === "subscription.request") {
               await write(subscriptionFailure(requestId, "invalid_request", "Invalid coding run subscription request."));
+            } else if (parsed?.type === "artifact.request") {
+              await write(artifactFailure(requestId, "invalid_request", "Invalid coding run artifact request."));
             } else {
               await write(controlFailure(requestId, "invalid_request", "Invalid coding run control request."));
             }
@@ -228,8 +341,9 @@ export class CodingRunNdjsonClient {
     this.decoder = createNdjsonDecoder(options.maxFrameBytes);
   }
 
-  control(control: RunControl): Promise<CodingRunControlResponse> {
-    if (this.closed) return Promise.reject(new Error("Coding run NDJSON client is closed."));
+  control(control: RunControl, options?: CodingRunClientRequestOptions): Promise<CodingRunControlResponse> {
+    if (this.closed) return Promise.reject(clientClosedError());
+    if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
     if (!isRunControlV1(control)) {
       return Promise.resolve({
         ok: false,
@@ -240,17 +354,24 @@ export class CodingRunNdjsonClient {
     const response = new Promise<CodingRunControlResponse>((resolve, reject) => {
       this.pending.set(id, { kind: "control", resolve, reject });
     });
-    void Promise.resolve(this.options.write(encodeFrame({
-      version: CODING_RUN_PROTOCOL_VERSION,
-      type: "control.request",
-      id,
-      control,
-    }))).catch((error) => this.rejectPending(id, error));
+    this.configurePending(id, options);
+    if (this.pending.has(id)) {
+      this.writeRequest(id, {
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "control.request",
+        id,
+        control,
+      });
+    }
     return response;
   }
 
-  subscribe(subscription: CodingRunSubscription): Promise<CodingRunSubscriptionResponse> {
-    if (this.closed) return Promise.reject(new Error("Coding run NDJSON client is closed."));
+  subscribe(
+    subscription: CodingRunSubscription,
+    options?: CodingRunClientRequestOptions,
+  ): Promise<CodingRunSubscriptionResponse> {
+    if (this.closed) return Promise.reject(clientClosedError());
+    if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
     if (!isCodingRunSubscriptionV1(subscription)) {
       return Promise.resolve({
         ok: false,
@@ -261,17 +382,24 @@ export class CodingRunNdjsonClient {
     const response = new Promise<CodingRunSubscriptionResponse>((resolve, reject) => {
       this.pending.set(id, { kind: "subscription", resolve, reject });
     });
-    void Promise.resolve(this.options.write(encodeFrame({
-      version: CODING_RUN_PROTOCOL_VERSION,
-      type: "subscription.request",
-      id,
-      subscription,
-    }))).catch((error) => this.rejectPending(id, error));
+    this.configurePending(id, options);
+    if (this.pending.has(id)) {
+      this.writeRequest(id, {
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "subscription.request",
+        id,
+        subscription,
+      });
+    }
     return response;
   }
 
-  conversation(conversation: CodingRunConversationRequest): Promise<CodingRunConversationResponse> {
-    if (this.closed) return Promise.reject(new Error("Coding run NDJSON client is closed."));
+  conversation(
+    conversation: CodingRunConversationRequest,
+    options?: CodingRunClientRequestOptions,
+  ): Promise<CodingRunConversationResponse> {
+    if (this.closed) return Promise.reject(clientClosedError());
+    if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
     if (!isCodingRunConversationRequest(conversation)) {
       return Promise.resolve({
         ok: false,
@@ -282,12 +410,43 @@ export class CodingRunNdjsonClient {
     const response = new Promise<CodingRunConversationResponse>((resolve, reject) => {
       this.pending.set(id, { kind: "conversation", resolve, reject });
     });
-    void Promise.resolve(this.options.write(encodeFrame({
-      version: CODING_RUN_PROTOCOL_VERSION,
-      type: "conversation.request",
-      id,
-      conversation,
-    }))).catch((error) => this.rejectPending(id, error));
+    this.configurePending(id, options);
+    if (this.pending.has(id)) {
+      this.writeRequest(id, {
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "conversation.request",
+        id,
+        conversation,
+      });
+    }
+    return response;
+  }
+
+  artifact(
+    artifact: CodingRunArtifactRequest,
+    options?: CodingRunClientRequestOptions,
+  ): Promise<CodingRunArtifactResponse> {
+    if (this.closed) return Promise.reject(clientClosedError());
+    if (options?.signal?.aborted) return Promise.reject(requestAbortedError());
+    if (!isCodingRunArtifactRequest(artifact)) {
+      return Promise.resolve({
+        ok: false,
+        error: { code: "invalid_request", message: "Invalid coding run artifact request." },
+      });
+    }
+    const id = this.createUniqueRequestId();
+    const response = new Promise<CodingRunArtifactResponse>((resolve, reject) => {
+      this.pending.set(id, { kind: "artifact", resolve, reject });
+    });
+    this.configurePending(id, options);
+    if (this.pending.has(id)) {
+      this.writeRequest(id, {
+        version: CODING_RUN_PROTOCOL_VERSION,
+        type: "artifact.request",
+        id,
+        artifact,
+      });
+    }
     return response;
   }
 
@@ -310,7 +469,7 @@ export class CodingRunNdjsonClient {
       if (isControlResponseFrame(frame)) {
         const pending = this.pending.get(frame.id);
         if (!pending || pending.kind !== "control") continue;
-        this.pending.delete(frame.id);
+        this.takePending(frame.id);
         pending.resolve(frame.ok
           ? { ok: true, ...(hasOwn(frame, "result") ? { result: frame.result } : {}) }
           : { ok: false, error: { code: frame.error.code, message: toSafeCodingRunErrorMessage(frame.error.message) } });
@@ -319,7 +478,7 @@ export class CodingRunNdjsonClient {
       if (isSubscriptionResponseFrame(frame)) {
         const pending = this.pending.get(frame.id);
         if (!pending || pending.kind !== "subscription") continue;
-        this.pending.delete(frame.id);
+        this.takePending(frame.id);
         pending.resolve(frame.ok
           ? { ok: true, ...(hasOwn(frame, "result") ? { result: frame.result } : {}) }
           : { ok: false, error: { code: frame.error.code, message: toSafeCodingRunErrorMessage(frame.error.message) } });
@@ -328,7 +487,16 @@ export class CodingRunNdjsonClient {
       if (isConversationResponseFrame(frame)) {
         const pending = this.pending.get(frame.id);
         if (!pending || pending.kind !== "conversation") continue;
-        this.pending.delete(frame.id);
+        this.takePending(frame.id);
+        pending.resolve(frame.ok
+          ? { ok: true, ...(hasOwn(frame, "result") ? { result: frame.result } : {}) }
+          : { ok: false, error: { code: frame.error.code, message: toSafeCodingRunErrorMessage(frame.error.message) } });
+        continue;
+      }
+      if (isArtifactResponseFrame(frame)) {
+        const pending = this.pending.get(frame.id);
+        if (!pending || pending.kind !== "artifact") continue;
+        this.takePending(frame.id);
         pending.resolve(frame.ok
           ? { ok: true, ...(hasOwn(frame, "result") ? { result: frame.result } : {}) }
           : { ok: false, error: { code: frame.error.code, message: toSafeCodingRunErrorMessage(frame.error.message) } });
@@ -353,9 +521,9 @@ export class CodingRunNdjsonClient {
   close(reason = "Coding run NDJSON client is closed."): void {
     if (this.closed) return;
     this.closed = true;
-    for (const [id, pending] of this.pending) {
-      this.pending.delete(id);
-      pending.reject(new Error(reason));
+    for (const id of Array.from(this.pending.keys())) {
+      const pending = this.takePending(id);
+      pending?.reject(new CodingRunClientRequestError("client_closed", reason));
     }
   }
 
@@ -367,10 +535,144 @@ export class CodingRunNdjsonClient {
   }
 
   private rejectPending(id: string, error: unknown): void {
+    const pending = this.takePending(id);
+    if (!pending) return;
+    pending.reject(error instanceof CodingRunClientRequestError
+      ? error
+      : new CodingRunClientRequestError("transport_error", toSafeCodingRunErrorMessage(error)));
+  }
+
+  private writeRequest(id: string, frame: unknown): void {
+    try {
+      void Promise.resolve(this.options.write(encodeFrame(frame)))
+        .catch((error) => this.rejectPending(id, error));
+    } catch (error) {
+      this.rejectPending(id, error);
+    }
+  }
+
+  private configurePending(id: string, options: CodingRunClientRequestOptions | undefined): void {
     const pending = this.pending.get(id);
     if (!pending) return;
+    if (options?.signal) {
+      const abortListener = () => this.rejectPending(id, requestAbortedError());
+      pending.signal = options.signal;
+      pending.abortListener = abortListener;
+      options.signal.addEventListener("abort", abortListener, { once: true });
+      if (options.signal.aborted) abortListener();
+    }
+    if (!this.pending.has(id) || options?.timeoutMs === undefined) return;
+    const timeoutMs = normalizeRequestTimeout(options.timeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+    pending.timeout = setTimeout(() => {
+      this.rejectPending(id, new CodingRunClientRequestError("request_timeout", "Coding run request timed out."));
+    }, timeoutMs);
+    (pending.timeout as { unref?: () => void }).unref?.();
+  }
+
+  private takePending(id: string): PendingRequest | undefined {
+    const pending = this.pending.get(id);
+    if (!pending) return undefined;
     this.pending.delete(id);
-    pending.reject(new Error(toSafeCodingRunErrorMessage(error)));
+    if (pending.timeout) clearTimeout(pending.timeout);
+    if (pending.signal && pending.abortListener) {
+      pending.signal.removeEventListener("abort", pending.abortListener);
+    }
+    return pending;
+  }
+}
+
+/** 面向编辑器、CI 与第三方 consumer 的受限 coding-run 生命周期接口。 */
+export class CodingRunClient {
+  private readonly transport: CodingRunNdjsonClient;
+  private readonly requestTimeoutMs: number;
+
+  constructor(options: CodingRunClientOptions) {
+    this.transport = new CodingRunNdjsonClient(options);
+    this.requestTimeoutMs = normalizeRequestTimeout(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+  }
+
+  start(input: CodingRunClientStartInput, options?: CodingRunClientRequestOptions): Promise<unknown> {
+    return this.unwrap(this.transport.conversation({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      text: input.prompt,
+      cwd: input.cwd,
+      ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+    }, this.resolveRequestOptions(options)));
+  }
+
+  subscribeRun(input: CodingRunClientSubscribeInput, options?: CodingRunClientRequestOptions): Promise<unknown> {
+    return this.unwrap(this.transport.subscribe({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      binding: { conversationId: input.conversationId, agentRunId: input.agentRunId },
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    }, this.resolveRequestOptions(options)));
+  }
+
+  respondPermission(input: CodingRunClientPermissionInput, options?: CodingRunClientRequestOptions): Promise<unknown> {
+    return this.unwrap(this.transport.control({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "permission.respond",
+      binding: {
+        agentRunId: input.agentRunId,
+        ...(input.worktreeId === undefined ? {} : { worktreeId: input.worktreeId }),
+      },
+      toolCallId: input.toolCallId,
+      decision: input.decision,
+    }, this.resolveRequestOptions(options)));
+  }
+
+  steer(input: CodingRunClientSteerInput, options?: CodingRunClientRequestOptions): Promise<unknown> {
+    return this.unwrap(this.transport.control({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "conversation.steer",
+      binding: { conversationId: input.conversationId, agentRunId: input.agentRunId },
+      prompt: input.prompt,
+      idempotencyKey: input.idempotencyKey,
+    }, this.resolveRequestOptions(options)));
+  }
+
+  cancel(input: CodingRunClientCancelInput, options?: CodingRunClientRequestOptions): Promise<unknown> {
+    return this.unwrap(this.transport.control({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      operation: "cancel",
+      binding: { conversationId: input.conversationId, agentRunId: input.agentRunId },
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+    }, this.resolveRequestOptions(options)));
+  }
+
+  readArtifact(input: CodingRunClientArtifactInput, options?: CodingRunClientRequestOptions): Promise<unknown> {
+    return this.unwrap(this.transport.artifact({
+      revisionId: input.agentRunId,
+      ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
+    }, this.resolveRequestOptions(options)));
+  }
+
+  consume(chunk: string): void {
+    this.transport.consume(chunk);
+  }
+
+  close(reason?: string): void {
+    this.transport.close(reason);
+  }
+
+  private async unwrap(
+    response: Promise<
+      CodingRunConversationResponse
+      | CodingRunControlResponse
+      | CodingRunSubscriptionResponse
+      | CodingRunArtifactResponse
+    >,
+  ): Promise<unknown> {
+    const result = await response;
+    if (result.ok) return result.result;
+    throw new CodingRunClientRequestError(result.error.code, result.error.message);
+  }
+
+  private resolveRequestOptions(options: CodingRunClientRequestOptions | undefined): CodingRunClientRequestOptions {
+    return {
+      ...(options?.signal ? { signal: options.signal } : {}),
+      timeoutMs: normalizeRequestTimeout(options?.timeoutMs, this.requestTimeoutMs),
+    };
   }
 }
 
@@ -450,6 +752,16 @@ function conversationFailure(id: string, code: CodingRunErrorCode, message: stri
   };
 }
 
+function artifactFailure(id: string, code: CodingRunErrorCode, message: string): Record<string, unknown> {
+  return {
+    version: CODING_RUN_PROTOCOL_VERSION,
+    type: "artifact.response",
+    id,
+    ok: false,
+    error: { code, message: toSafeCodingRunErrorMessage(message) },
+  };
+}
+
 function isControlRequest(value: Record<string, unknown> | undefined): value is {
   version: typeof CODING_RUN_PROTOCOL_VERSION;
   type: "control.request";
@@ -490,6 +802,20 @@ function isConversationRequest(value: Record<string, unknown> | undefined): valu
     && value.type === "conversation.request"
     && isNonEmptyString(value.id)
     && isCodingRunConversationRequest(value.conversation);
+}
+
+function isArtifactRequest(value: Record<string, unknown> | undefined): value is {
+  version: typeof CODING_RUN_PROTOCOL_VERSION;
+  type: "artifact.request";
+  id: string;
+  artifact: CodingRunArtifactRequest;
+} {
+  if (!value) return false;
+  return hasOnlyKeys(value, ["version", "type", "id", "artifact"])
+    && value.version === CODING_RUN_PROTOCOL_VERSION
+    && value.type === "artifact.request"
+    && isNonEmptyString(value.id)
+    && isCodingRunArtifactRequest(value.artifact);
 }
 
 function isControlResponseFrame(value: Record<string, unknown> | undefined): value is ControlResponseFrame {
@@ -550,6 +876,22 @@ type ConversationResponseFrame =
       error: { code: CodingRunErrorCode; message: string };
     };
 
+type ArtifactResponseFrame =
+  | {
+      version: typeof CODING_RUN_PROTOCOL_VERSION;
+      type: "artifact.response";
+      id: string;
+      ok: true;
+      result?: unknown;
+    }
+  | {
+      version: typeof CODING_RUN_PROTOCOL_VERSION;
+      type: "artifact.response";
+      id: string;
+      ok: false;
+      error: { code: CodingRunErrorCode; message: string };
+    };
+
 function isSubscriptionResponseFrame(value: Record<string, unknown> | undefined): value is SubscriptionResponseFrame {
   if (!value || value.version !== CODING_RUN_PROTOCOL_VERSION || value.type !== "subscription.response" || !isNonEmptyString(value.id)) {
     return false;
@@ -562,6 +904,16 @@ function isSubscriptionResponseFrame(value: Record<string, unknown> | undefined)
 
 function isConversationResponseFrame(value: Record<string, unknown> | undefined): value is ConversationResponseFrame {
   if (!value || value.version !== CODING_RUN_PROTOCOL_VERSION || value.type !== "conversation.response" || !isNonEmptyString(value.id)) {
+    return false;
+  }
+  if (value.ok === true) return hasOnlyKeys(value, ["version", "type", "id", "ok", "result"]);
+  return value.ok === false
+    && hasOnlyKeys(value, ["version", "type", "id", "ok", "error"])
+    && isControlError(value.error);
+}
+
+function isArtifactResponseFrame(value: Record<string, unknown> | undefined): value is ArtifactResponseFrame {
+  if (!value || value.version !== CODING_RUN_PROTOCOL_VERSION || value.type !== "artifact.response" || !isNonEmptyString(value.id)) {
     return false;
   }
   if (value.ok === true) return hasOnlyKeys(value, ["version", "type", "id", "ok", "result"]);
@@ -617,7 +969,7 @@ function isCodingRunSubscriptionError(value: unknown): value is CodingRunSubscri
 function isControlError(value: unknown): value is { code: CodingRunErrorCode; message: string } {
   return isRecord(value)
     && hasOnlyKeys(value, ["code", "message"])
-    && typeof value.code === "string"
+    && isCodingRunErrorCode(value.code)
     && typeof value.message === "string";
 }
 
@@ -655,6 +1007,12 @@ function isCodingRunConversationRequest(value: unknown): value is CodingRunConve
   return value.conversationId === undefined || isConversationIdentifier(value.conversationId);
 }
 
+function isCodingRunArtifactRequest(value: unknown): value is CodingRunArtifactRequest {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["revisionId", "workspaceId"])) return false;
+  if (!isConversationIdentifier(value.revisionId)) return false;
+  return value.workspaceId === undefined || isConversationIdentifier(value.workspaceId);
+}
+
 function isSafeConversationText(value: unknown): value is string {
   return typeof value === "string"
     && value.trim().length > 0
@@ -667,6 +1025,18 @@ function isConversationIdentifier(value: unknown): value is string {
     && value.trim().length > 0
     && value.trim().length <= MAX_CONVERSATION_IDENTIFIER_CHARS
     && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function normalizeRequestTimeout(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.trunc(value!)) : fallback;
+}
+
+function clientClosedError(): CodingRunClientRequestError {
+  return new CodingRunClientRequestError("client_closed", "Coding run NDJSON client is closed.");
+}
+
+function requestAbortedError(): CodingRunClientRequestError {
+  return new CodingRunClientRequestError("request_aborted", "Coding run request was aborted.");
 }
 
 function parseJsonRecord(line: string): Record<string, unknown> | undefined {
