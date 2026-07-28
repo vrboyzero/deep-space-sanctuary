@@ -486,9 +486,9 @@ export class OciExtensionRuntimeAdapter implements ExtensionRuntimeAdapter {
       lease,
     });
     const launched = await this.launch(invocation, lease, grant);
-    const client = new ExtensionRuntimeProtocolClient(launched.transport, launched.release);
+    const protocolClient = new ExtensionRuntimeProtocolClient(launched.transport, launched.release);
     try {
-      const response = await client.request({
+      const response = await protocolClient.request({
         version: EXTENSION_RUNTIME_PROTOCOL_VERSION,
         type: "activate",
         id: randomUUID(),
@@ -498,7 +498,7 @@ export class OciExtensionRuntimeAdapter implements ExtensionRuntimeAdapter {
       return {
         registrations: response.registrations,
         invoke: async (runtimeInvocation: ExtensionRuntimeInvocation, invocationSignal?: AbortSignal) => {
-          const result = await client.request({
+          const result = await protocolClient.request({
             version: EXTENSION_RUNTIME_PROTOCOL_VERSION,
             type: "invoke",
             id: runtimeInvocation.invocationId,
@@ -507,11 +507,11 @@ export class OciExtensionRuntimeAdapter implements ExtensionRuntimeAdapter {
           if (result.type !== "result") throw new Error("Extension runtime invocation response is invalid.");
           return result.result as ToolCallResult | JsonObject | undefined;
         },
-        onFatal: (listener) => client.onFatal(listener),
-        close: (reason) => client.close(reason),
+        onFatal: (listener) => protocolClient.onFatal(listener),
+        close: (reason) => protocolClient.close(reason),
       };
     } catch (error) {
-      await client.close("activation_failed").catch(() => {});
+      await protocolClient.close("activation_failed").catch(() => {});
       throw error;
     }
   }

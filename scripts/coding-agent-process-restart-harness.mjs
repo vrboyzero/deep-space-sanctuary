@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -18,10 +19,12 @@ export async function executeGatewayProcessRestartCodingCi(input) {
   const supervisor = await startGatewayProcessRestartSupervisor({
     stateDir: input?.stateDir,
     workspace: input?.workspace,
+    sourceRoot: input?.sourceRoot,
+    manifestRevision: input?.manifestRevision ?? "v1",
   });
   const proxy = await startGatewayProcessRestartProxy({ supervisor });
   let runner;
-  let artifact = createRestartArtifact();
+  let artifact = createRestartArtifact(input?.manifestRevision ?? "v1");
 
   try {
     runner = await input.executeCodingCi({
@@ -77,7 +80,7 @@ export async function executeGatewayProcessRestartCodingCi(input) {
       ...artifact,
       subscription,
       cancellation,
-      status: started?.seq === 1
+      status: (input?.manifestRevision === "v2" || started?.seq === 1)
         && injection.messageSendRequestCount === 1
         && subscription.errorCode === "not_found"
         && cancellation.state === "not_found"
@@ -105,13 +108,15 @@ export async function executeGatewayProcessRestartCodingCi(input) {
 export async function startGatewayProcessRestartSupervisor(input) {
   const stateDir = path.resolve(requireNonEmptyString(input?.stateDir, "stateDir"));
   const workspace = path.resolve(requireNonEmptyString(input?.workspace, "workspace"));
+  const manifestRevision = input?.manifestRevision ?? "v1";
+  const sourceRoot = path.resolve(input?.sourceRoot ?? path.join(scriptDir, ".."));
   let active;
   let originalGateway = null;
   let replacementGateway = null;
   let restartPromise;
   let closed = false;
 
-  active = await startFixtureGateway({ stateDir, workspace, port: 0 });
+  active = await startFixtureGateway({ stateDir, workspace, sourceRoot, manifestRevision, port: 0 });
   originalGateway = active.snapshot();
 
   async function restart(binding) {
@@ -121,7 +126,7 @@ export async function startGatewayProcessRestartSupervisor(input) {
       const previous = active;
       await stopFixtureGateway(previous);
       originalGateway = previous.snapshot();
-      active = await startFixtureGateway({ stateDir, workspace, port: previous.port });
+      active = await startFixtureGateway({ stateDir, workspace, sourceRoot, manifestRevision, port: previous.port });
       replacementGateway = active.snapshot();
       return {
         originalGateway: structuredClone(originalGateway),
@@ -258,11 +263,20 @@ export async function startGatewayProcessRestartProxy(input) {
 }
 
 async function startFixtureGateway(input) {
+  const serverRelativePath = input.manifestRevision === "v2"
+    ? "packages/belldandy-core/dist/server.js"
+    : "packages/belldandy-core/src/server.ts";
+  const entrypointSha256 = crypto.createHash("sha256").update(await fs.readFile(path.join(
+    input.sourceRoot,
+    ...serverRelativePath.split("/"),
+  ))).digest("hex");
   const child = spawn(process.execPath, [
-    "--import", "tsx",
+    ...(input.manifestRevision === "v2" ? [] : ["--import", "tsx"]),
     gatewayFixturePath,
     "--state-dir", path.resolve(input.stateDir),
     "--port", String(input.port),
+    "--manifest-revision", input.manifestRevision,
+    "--source-root", input.sourceRoot,
   ], {
     // Resolve the tsx preloader from this repository, not from the regenerated fixture workspace.
     cwd: path.resolve(scriptDir, ".."),
@@ -275,13 +289,16 @@ async function startFixtureGateway(input) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  const record = createGatewayRecord(child);
+  const record = createGatewayRecord(child, input.manifestRevision === "v2" ? {
+    entrypoint: { path: serverRelativePath, sha256: entrypointSha256 },
+    launch: { executable: "node", script: "scripts/coding-agent-process-restart-gateway.mjs" },
+  } : undefined);
   const ready = await waitForGatewayReady(record);
   record.port = ready.port;
   return record;
 }
 
-function createGatewayRecord(child) {
+function createGatewayRecord(child, evidence) {
   const record = {
     child,
     pid: child.pid ?? null,
@@ -299,6 +316,7 @@ function createGatewayRecord(child) {
         exited: this.exited,
         exitCode: this.exitCode,
         signal: this.signal,
+        ...(evidence ?? {}),
       };
     },
   };
@@ -470,11 +488,11 @@ async function runProcess(input) {
   });
 }
 
-function createRestartArtifact() {
+function createRestartArtifact(manifestRevision = "v1") {
   return {
     schemaVersion: "coding-agent-restart-injection/v1",
     taskId: "gateway.process-restart",
-    trigger: "run.started",
+    trigger: manifestRevision === "v2" ? "message.send.accepted" : "run.started",
     status: "not_injected",
     observedStartedSeq: null,
     messageSendRequestCount: 0,

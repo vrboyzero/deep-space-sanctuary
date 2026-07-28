@@ -401,7 +401,7 @@ export const commandJobTool: Tool = withToolContract({
   isConcurrencySafe: false,
   needsPermission: true,
   riskLevel: "critical",
-  channels: ["gateway", "web"],
+  channels: ["gateway", "web", "cli"],
   safeScopes: ["privileged"],
   activityDescription: "Manage sandboxed command jobs",
   resultSchema: {

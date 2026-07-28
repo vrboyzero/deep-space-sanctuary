@@ -4,9 +4,13 @@ import { fileURLToPath } from "node:url";
 
 import { compileOutputSchema } from "../packages/belldandy-core/src/cli/shared/output-schema.ts";
 import {
+  CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE,
   CODING_AGENT_BENCHMARK_MANIFEST_VERSION,
+  CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION,
   CODING_AGENT_BENCHMARK_REPORT_VERSION,
+  CODING_AGENT_BENCHMARK_REPORT_V2_VERSION,
   CODING_AGENT_BENCHMARK_RUN_VERSION,
+  CODING_AGENT_BENCHMARK_RUN_V2_VERSION,
   loadCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
 import { resolveCodingCiProfile } from "./run-coding-agent-ci.mjs";
@@ -44,8 +48,22 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   const faultSchema = await readJson("benchmarks/coding-agent/v1/fault-injection.schema.json");
   const cancelSchema = await readJson("benchmarks/coding-agent/v1/cancel-injection.schema.json");
   const restartSchema = await readJson("benchmarks/coding-agent/v1/restart-injection.schema.json");
+  const manifestV2Path = "benchmarks/coding-agent/v2/task-manifest.json";
+  const manifestV2 = await readJson(manifestV2Path);
+  const benchmarkAgentsV2 = await readJson("benchmarks/coding-agent/v2/agents.json");
+  const manifestV2Schema = await readJson("benchmarks/coding-agent/v2/task-manifest.schema.json");
+  const runV2Schema = await readJson("benchmarks/coding-agent/v2/benchmark-run.schema.json");
+  const reportV2Schema = await readJson("benchmarks/coding-agent/v2/benchmark-report.schema.json");
+  const preflightSchema = await readJson("benchmarks/coding-agent/v2/preflight.schema.json");
+  const approvalContractSchema = await readJson("benchmarks/coding-agent/v2/approval-contract.schema.json");
+  const approvalEvidenceSchema = await readJson("benchmarks/coding-agent/v2/approval-evidence.schema.json");
+  const faultV2Schema = await readJson("benchmarks/coding-agent/v2/fault-injection.schema.json");
+  const cancelV2Schema = await readJson("benchmarks/coding-agent/v2/cancel-injection.schema.json");
+  const restartV2Schema = await readJson("benchmarks/coding-agent/v2/restart-injection.schema.json");
   const readme = await readText("benchmarks/coding-agent/README.md");
   await readText("scripts/coding-agent-benchmark-fixtures.mjs");
+  await readText("scripts/coding-agent-benchmark-approval.mjs");
+  await readText("scripts/coding-agent-benchmark-preflight.mjs");
   await readText("scripts/coding-agent-recovery-harness.mjs");
   await readText("scripts/coding-agent-process-restart-harness.mjs");
   await readText("scripts/coding-agent-process-restart-gateway.mjs");
@@ -62,12 +80,33 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
       failures.push(`coding benchmark manifest failed semantic validation: ${safeMessage(error)}`);
     }
   }
+  if (manifestV2) {
+    try {
+      await loadCodingAgentBenchmarkManifest(path.join(workspaceRoot, manifestV2Path));
+    } catch (error) {
+      failures.push(`coding benchmark v2 manifest failed semantic validation: ${safeMessage(error)}`);
+    }
+  }
   validateSchema(failures, "task manifest", manifestSchema, manifest);
   validateSchema(failures, "benchmark run", runSchema);
   validateSchema(failures, "benchmark report", reportSchema);
   validateSchema(failures, "fault injection", faultSchema);
   validateSchema(failures, "cancel injection", cancelSchema);
   validateSchema(failures, "restart injection", restartSchema);
+  validateSchema(failures, "v2 task manifest", manifestV2Schema, manifestV2);
+  validateSchema(failures, "v2 benchmark run", runV2Schema);
+  validateSchema(failures, "v2 benchmark report", reportV2Schema);
+  validateSchema(failures, "v2 preflight", preflightSchema);
+  validateSchema(failures, "v2 approval contract", approvalContractSchema);
+  validateSchema(failures, "v2 approval evidence", approvalEvidenceSchema);
+  validateSchema(failures, "v2 fault injection", faultV2Schema);
+  validateSchema(failures, "v2 cancel injection", cancelV2Schema);
+  validateSchema(failures, "v2 restart injection", restartV2Schema);
+  if (JSON.stringify(benchmarkAgentsV2) !== JSON.stringify({
+    agents: [CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE],
+  })) {
+    failures.push("v2 benchmark Agent profile drifted from the isolated command-control contract.");
+  }
 
   if (manifestSchema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_MANIFEST_VERSION) {
     failures.push("task manifest Schema version drifted from the public contract.");
@@ -77,6 +116,15 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   }
   if (reportSchema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_REPORT_VERSION) {
     failures.push("benchmark report Schema version drifted from the public contract.");
+  }
+  if (manifestV2Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION) {
+    failures.push("v2 task manifest Schema version drifted from the corrected contract.");
+  }
+  if (runV2Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_RUN_V2_VERSION) {
+    failures.push("v2 benchmark run Schema version drifted from the corrected contract.");
+  }
+  if (reportV2Schema?.properties?.schemaVersion?.const !== CODING_AGENT_BENCHMARK_REPORT_V2_VERSION) {
+    failures.push("v2 benchmark report Schema version drifted from the corrected contract.");
   }
   if (packageJson?.scripts?.["verify:coding-benchmark"]
     !== "node --import tsx scripts/verify-coding-agent-benchmark-contract.mjs") {
@@ -150,11 +198,24 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     !== "node scripts/aggregate-coding-agent-benchmark.mjs") {
     failures.push("package.json must expose the Stage 0D baseline aggregator.");
   }
-  if (manifest) validateRunnerProfiles(failures, manifest);
+  if (manifest) validateRunnerProfiles(failures, manifest, "v1");
+  if (manifestV2) validateRunnerProfiles(failures, manifestV2, "v2");
   for (const requiredText of [
     "coding-agent-benchmark-manifest/v1",
     "coding-agent-benchmark-run/v1",
     "coding-agent-benchmark-report/v1",
+    "coding-agent-benchmark-manifest/v2",
+    "coding-agent-benchmark-run/v2",
+    "coding-agent-benchmark-report/v2",
+    "--manifest-revision v2",
+    "--source-root",
+    "preflight.json",
+    "v2/agents.json",
+    "taskBudgetOverrides",
+    "maxTokens=36000",
+    "maxHighRiskToolCalls=5",
+    "approval-contract.json",
+    "approval-evidence.json",
     "阶段 0A",
     "阶段 0B",
     "benchmark:coding-agent:stage0b",
@@ -203,8 +264,12 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   }
   for (const requiredPath of [
     "benchmarks/coding-agent/v1/",
+    "benchmarks/coding-agent/v2/",
+    "benchmarks/coding-agent/v2/agents.json",
     "scripts/coding-agent-benchmark-contract.mjs",
     "scripts/coding-agent-benchmark-fixtures.mjs",
+    "scripts/coding-agent-benchmark-approval.mjs",
+    "scripts/coding-agent-benchmark-preflight.mjs",
     "scripts/coding-agent-recovery-harness.mjs",
     "scripts/coding-agent-process-restart-harness.mjs",
     "scripts/coding-agent-process-restart-gateway.mjs",
@@ -229,9 +294,9 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
   return failures;
 }
 
-function validateRunnerProfiles(failures, manifest) {
+function validateRunnerProfiles(failures, manifest, revision) {
   for (const mode of ["plan", "navigation-read", "workspace-write", "command-control", "safety-probe", "recovery-control", "git-local"]) {
-    const actual = resolveCodingCiProfile(mode);
+    const actual = resolveCodingCiProfile(mode, revision);
     const expected = manifest.suite?.executionProfiles?.[mode];
     const expectedToolDeny = mode === "command-control" || mode === "safety-probe"
       ? ["spawn_subagent"]
@@ -244,6 +309,8 @@ function validateRunnerProfiles(failures, manifest) {
       ? ["spawn_subagent"]
       : ["run_command", "spawn_subagent"]);
     if (actual.permissionMode !== expected?.permissionMode
+      || actual.agentId !== expected?.agentId
+      || actual.maxHighRiskToolCalls !== expected?.maxHighRiskToolCalls
       || JSON.stringify(actual.toolAllow) !== JSON.stringify(expected?.toolAllow)
       || JSON.stringify(actualToolDeny) !== JSON.stringify(expectedToolDeny)
       || JSON.stringify(expected?.toolDeny) !== JSON.stringify(expectedToolDeny)) {

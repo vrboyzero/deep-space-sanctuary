@@ -2,26 +2,27 @@
 
 > - 评估日期：2026-07-25
 > - SS 基线：`9845ffda4e27ef4cb0806973886b3a48ef9484ad`
+> - 稳定化复验：2026-07-28；benchmark source：`fd7099012921fc49ddde752cff262592b5aa52ff`
 > - 对比对象：Grok Build、OpenAI Codex、Claude Code
 > - 核心问题：SS 在真实代码仓中能否稳定完成“理解项目 -> 修改 -> 执行 -> 审查 -> 恢复 -> 交付”的终端闭环。
 
 ## 1. 结论摘要
 
-SS 已经具备可用的 Agent 编程基础设施，而不只是聊天入口：它有 `bdd agent run/continue/inspect/cancel`、结构化 JSONL 事件、最终 JSON Schema、稳定退出码、预算限制、工具审批、Workspace Revision、TUI、VS Code 扩展和只读 CI 示例。对于受控仓库、明确任务和已经配置好的 Gateway，它能够承担中等规模的文件修改、测试和诊断工作。
+SS 已从“可调用的 Agent 基础设施”推进为具备项目规则链、无 Shell 导航工具、结构化命令计划、OCI 沙箱、真实 diff/review、用户 worktree、运行中 steering、MCP/SDK/Extension Host、TUI 与受控远端交付的项目开发工作面。`fd70990` 的双平台 72 项复验从旧基线 `11/72` 提升到 `31/72`，Windows 为 `17/36`、WSL 为 `14/36`；规则、失败测试诊断、导航和 dirty worktree 已出现稳定提升。
 
-但以“安装后即可在任意代码仓内长期工作”的 CLI 产品标准衡量，SS 目前仍有一个关键断层：**默认配置下危险工具关闭，Agent 不能可靠执行 `rg`、构建和测试；开启后 `run_command` 又作为整体 `critical` 工具直接进入宿主 Shell，缺少命令级隔离、交互式 stdin、后台 job 控制和 OS 沙箱。** 同时，目标仓项目规则发现、代码搜索、分段读取、真实 diff、用户级 worktree 和受控 Git 交付仍未形成产品闭环。
+但当前结果还不满足直接交付门槛：危险操作拦截与恢复仍为 `0/6`，interactive control、safety boundary、disconnect recovery、process restart 和 cross-file feature 均为 `0/6`；安全审查另发现远端 push 可触发宿主 `pre-push` Hook、Marketplace 未接入运行时主动撤销、Extension Host cooperative dispose 无 deadline 等边界缺口。完整测试与 OCI fixture 通过只能证明已有路径可运行，不能冲抵这些未覆盖失败路径。
 
-本次按 CLI 项目编程工作流加权评估，SS 为 **6.2/10**；Grok Build 为 **9.3/10**；Codex 为 **9.6/10**；Claude Code 为 **9.7/10**。这不是模型智力或最终代码质量排名。三款竞品没有在同一仓库、同一任务、同一环境下做受控实测，因此 `0.1` 分差不具有统计意义。
+本次按 CLI 项目编程工作流重新加权，SS 当前为 **7.4/10**；Grok Build 为 **9.3/10**；Codex 为 **9.6/10**；Claude Code 为 **9.7/10**。这不是模型智力或最终代码质量排名。当前分数同时参考产品控制面、真实双平台 benchmark 和安全审查；竞品没有在同仓、同任务、同环境实测，因此竞品间 `0.1-0.3` 分差不具有统计意义。
 
-推荐顺序是：
+当前推荐顺序是：
 
-1. 先建立同任务 benchmark，冻结事实基线。
-2. 补齐项目规则链、代码搜索和分段读取，使 Agent 能正确理解目标仓。
-3. 重做命令执行治理、后台 job 与 OS 沙箱，使“能运行”与“可控运行”同时成立。
-4. 增加真实 diff/review 和恢复保证分级，使修改结果可核查、失败可解释。
-5. 再开放用户级 worktree、Git 本地交付、运行中 steering、互操作协议和 TUI 生产力。
+1. 先关闭远端 push Hook 绕过和 Extension Host 无 deadline 两个硬安全边界。
+2. 将 Marketplace disable/update/uninstall 接入 Supervisor 主动撤销，并补齐远端写完成态 audit 失败策略。
+3. 补齐 TUI 审批完整范围与恢复等级，随后复跑 safety、interactive 和 Git delivery benchmark。
+4. 修复 disconnect/process restart 恢复回归，并用同一 manifest/profile 重新形成严格可比的 72 项对照。
+5. 安装 WSL `zip` 前置后补跑 release-light 6 项，关闭 Linux 全量测试最后一个环境缺口。
 
-完成前四项后，SS 才适合被定义为“默认可用于真实项目开发的 CLI Agent”；后续项目主要用于追平头部产品的并行开发、生态和交互效率。
+在上述高风险项和 `0/6` 恢复/安全矩阵闭环前，SS 可继续受控开发与试用，但不应表述为“安全边界已完整、可直接生产交付”。
 
 ## 2. 评估范围与证据边界
 
@@ -46,7 +47,7 @@ SS 已经具备可用的 Agent 编程基础设施，而不只是聊天入口：�
 
 | 对象 | 证据 | 置信度 | 误差说明 |
 |---|---|---:|---|
-| SS | 当前仓库源码、测试、文档和已记录的 Windows/WSL 验证 | A | 约 `+/-0.2`；未重新执行全量 benchmark |
+| SS | 当前仓库源码、完整测试、安全双轴审查、真实 OCI Gate 和 Windows/WSL 72 项复验 | A | 约 `+/-0.15`；两次报告有 6 个 navigation profile 漂移，趋势可比但不属于 72 项完全同契约 A/B |
 | Grok Build | xAI 官方文档、官方开源仓库与本地版本锁定源码快照 | A- | 实现存在性证据为 A；约 `+/-0.3` 的效果误差仍来自未在本机统一实测 |
 | Codex | OpenAI 官方 Codex Manual、官方仓库与官方 Action | A- | 约 `+/-0.3`；实验能力已降权，未在本机统一实测 |
 | Claude Code | Anthropic 官方文档、官方仓库与 `2.1.88` 官方 npm 发布包的本地还原源码 | A-/B+ | 公开行为证据为 A-；还原源码是版本锁定的补充实现证据，不是官方开源仓库；约 `+/-0.3` |
@@ -56,7 +57,7 @@ SS 已经具备可用的 Agent 编程基础设施，而不只是聊天入口：�
 - `tmp/grok-build-main` 是 xAI/SpaceXAI 官方开源仓库的本地快照，`SOURCE_REV` 锁定为 `0f4d7c91b8b2b408333f6de1e8a76cb8eaa71899`。它可作为 Agent runtime、项目规则、Headless、PTY、权限、沙箱、会话、子 Agent、后台任务和 worktree 的 A 级实现证据。第一方代码采用 Apache-2.0；如实际复用代码，必须保留许可证与 notice，并单独核对仓内第三方代码的许可证。
 - `tmp/claude-code-source` 对应 `@anthropic-ai/claude-code 2.1.88` 官方 npm 发布包及其 source map 还原源码。它可作为文件搜索/分段读取、`fileHistory`、rewind dry-run、worktree 守卫、Agent 工具选择和 MCP 接线的版本锁定补充实现证据；但该还原目录不是 Anthropic 官方开源仓库，许可文件明确保留所有权利，因此只做机制级分析和独立实现参考，不复制源码、提示词、私有字段或未公开协议。
 - 本地快照中的结论必须绑定上述 revision/version；判断当前产品行为时，以最新官方文档和官方发布物为准。两份快照均保留在被 Git 忽略的 `tmp/` 参考区，不纳入 SS 提交。
-- 这些证据提高了“竞品确有该实现”的置信度，但没有补齐同仓、同任务、同环境 benchmark，因此本轮不据此调整第 4 节评分。
+- 这些证据提高了“竞品确有该实现”的置信度，但三款竞品仍没有补齐同仓、同任务、同环境 benchmark；第 4 节只更新 SS 当前评分，不重估竞品分数。
 
 ## 3. 评分方法
 
@@ -77,13 +78,13 @@ SS 已经具备可用的 Agent 编程基础设施，而不只是聊天入口：�
 - 文档中存在但默认关闭、需要危险总开关或仍为实验性的能力会降权。
 - Agent 可以通过 Shell 临时执行某件事，不等于产品已经具备对应控制面。
 - 有后端数据结构但没有用户入口、生命周期和失败处理，不按完整功能计分。
-- SS 的 `6.2` 分假设管理员已明确开启并审批 `run_command`；若只评默认开箱配置，项目编程闭环约为 `5.8/10`。
+- SS 的 `7.4` 分假设已配置可用的 digest-pinned OCI backend；backend 不可用时 sandbox-required coding run 会失败关闭。高风险安全缺口与 benchmark 的 `0/6` 安全/恢复结果已经降权，不能按功能清单继续上调。
 
 ## 4. 评分结果
 
 | 产品 | 上下文/检索 15% | 编辑/测试 20% | CLI/TUI 15% | 安全/恢复 15% | 会话/长任务 15% | Headless/生态 10% | Git/交付 10% | 加权总分 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **SS** | 5.2 | 6.2 | 6.2 | 6.4 | 6.8 | 8.0 | 4.8 | **6.2** |
+| **SS** | 8.2 | 7.3 | 7.6 | 6.0 | 7.4 | 8.6 | 7.0 | **7.4** |
 | **Grok Build** | 9.5 | 9.4 | 9.7 | 8.6 | 9.4 | 9.5 | 9.0 | **9.3** |
 | **Codex** | 9.7 | 9.7 | 9.4 | 9.7 | 9.4 | 9.8 | 9.5 | **9.6** |
 | **Claude Code** | 9.8 | 9.7 | 9.6 | 9.3 | 9.8 | 9.8 | 9.6 | **9.7** |
@@ -92,22 +93,24 @@ SS 已经具备可用的 Agent 编程基础设施，而不只是聊天入口：�
 
 | 维度 | 已有能力 | 主要扣分原因 |
 |---|---|---|
-| 上下文/检索 | `--cwd` 能限定运行目录；有 `file_read` 和 `list_files` | `AGENTS.md` 从 SS `stateDir/agents/<id>` 加载，未发现从目标 Git 根到 cwd 的嵌套项目规则链；没有独立 code/text search 或 glob 工具；`list_files` 最多 1000 项且不按仓库 ignore 过滤；`file_read` 只读文件前部，缺少 offset/line-range |
-| 编辑/测试 | 有 `apply_patch`、文件工具、结构化 Tool 事件、测试可通过命令触发 | `run_command` 默认被 `BELLDANDY_DANGEROUS_TOOLS_ENABLED` 关闭；开启后整个工具是 `critical` 且通过宿主 Shell 执行；无 stdin，现有 PTY `terminal` 工具未注册到 Gateway，交互式命令和长测试不可靠 |
-| CLI/TUI | 有 run/continue/inspect/cancel、流式事件、精确绑定 toolCallId 的审批、取消、cursor 重连和窄终端适配 | TUI 审批只显示 toolName + toolCallId，参数和输出不进入状态，对 `run_command` 尚不构成知情审批；Changes 仅显示 Git status/diff stat 与 revision preview，没有 diff hunks；运行中不能 follow-up/steer；缺少后台任务面板、任务输入、鼠标和高效导航 |
-| 安全/恢复 | 有 allow/deny、路径约束、超时、输出上限、预算、审批和 Workspace Revision preview/restore | 没有 OS 级子进程沙箱；命令权限粒度过粗，审批缺少经过脱敏的实际执行内容；Revision 只覆盖 SS 自有文件编辑工具，不覆盖 Shell、MCP、子 Agent、人工或其他进程写入 |
-| 会话/长任务 | Conversation 有持久会话、事件 cursor、取消和断线续读；底层有 Goal/Workflow/Subtask 和 managed worktree 能力 | `bdd agent` 只控制 Conversation；`continue` 创建新 run 而非恢复原 run；Goal/Workflow/Subtask/Journal 没有 CLI 投影；无通用后台 job、运行中 steering 和用户级 worktree 生命周期 |
-| Headless/生态 | JSONL `AgentRunEvent v1`、最终 JSON Schema、稳定退出码、预算、只读 CI artifact、VS Code stdio 适配较完整 | 协议仍偏 SS 自有；没有 ACP；未将 SS 作为通用 MCP coding server 暴露；直接 Headless WebSocket 断线通常失败，恢复弱于 TUI/stdio |
-| Git/交付 | 可读取 Git 状态和 diff stat；底层 managed worktree 支持内部 owner；Agent 在获批后可调用 Git | 无用户级 worktree CLI；无真实 diff/review/stage/commit/branch 控制面；push/PR 无 preview、确认和审计闭环。让模型直接调用 Git 不能替代产品治理 |
+| 上下文/检索 | 已有 Git 根到 cwd 的嵌套 `AGENTS.md` 规则链、预算/跳过诊断、`text_search`、`file_glob` 和分段 `file_read`；规则任务 `6/6`、导航 `5/6` | 导航 profile 与旧基线不完全一致；大型仓稳定定位仍有 `1/6` 失败，尚无竞品级 context inspect 工作面 |
+| 编辑/测试 | 结构化 patch、命令计划、测试执行与失败诊断已接入；failed diagnosis `6/6`，patch 接受率从 `1/18` 提升到 `8/18` | cross-file feature `0/6`、bug fix `1/6`，测试通过率由 `53.33%` 降到 `46.67%`，回归数由 `28` 增到 `32` |
+| CLI/TUI | 已有 run/continue/status/cancel/follow-up/replace/steer、diff hunk、job、审批、worktree、keyboard/mouse 和终端模式恢复；WSL TUI 连续 `5/5` 通过 | interactive-control benchmark `0/6`；审批当前只渲染 preview 第一行，可能遮蔽 network/write/stdin，恢复等级未进入审批视图 |
+| 安全/恢复 | sandbox-required、digest-pinned OCI、network-none、只读/可写 mount、lease 清理和 Extension Host 隔离 Gate 均真实通过 | safety 与 recovery 均 `0/6`；远端 push Hook、Host close deadline、Marketplace revoke 和完成态 audit 尚未闭环，因此本维度封顶 `6.0` |
+| 会话/长任务 | client cancel `6/6`；已有 exact-binding steer、follow-up、replacement、command job、Conversation/Workflow 状态投影和用户 worktree | disconnect recovery 与 process restart 均 `0/6`，其中 restart 从旧基线 `6/6` 回归；跨重启恢复仍是主要短板 |
+| Headless/生态 | JSONL/Schema/退出码、Coding CI、SS-as-MCP、TypeScript SDK、Marketplace trust 与 OCI Extension Host 已形成明确 owner | 仍缺 ACP 等通用入口；Marketplace 生产操作未主动调用 Supervisor revoke，扩展生命周期闭环不完整 |
+| Git/交付 | 已有真实 diff/review、apply/remove/stage/commit/branch、受控 push/PR、receipt、TOCTOU final gate、postcondition 与 audit；dirty worktree `6/6` | delivery guard 仅 `1/6`；实际 push 未禁用或拒绝 `pre-push` Hook，audit 完成失败仍可返回 applied，用户 worktree 无显式 `keep` |
 
 ### 4.2 分数应如何解读
 
-- SS 的优势在“可组合平台基础”：Provider、Conversation、预算、审批、事件协议、VS Code、CI、Goal/Workflow/Subtask 等模块都已存在，补强可以复用现有实现。
-- SS 的劣势集中在“CLI 默认工作面”：Agent 对一个陌生仓库的第一小时体验仍不稳定，尤其是规则、搜索、命令和 diff。
+- SS 的优势已从“可组合平台基础”扩展到规则、导航、诊断、worktree、TUI、Headless 与 OCI 隔离等可操作控制面；`31/72` 说明提升真实存在，但距离稳定自动闭环仍远。
+- 当前最大短板不再是功能入口缺失，而是安全/恢复失败路径与 Agent 实际调用闭环：控制面存在不等于 benchmark 能正确使用，也不等于恶意边界已关闭。
 - Grok Build、Codex、Claude Code 的高分反映其 CLI 产品面覆盖，不代表它们在所有代码任务上必然生成更好的补丁。
-- 在阶段 0 的统一 benchmark 完成前，不应将这些分数作为版本 KPI，也不应把 `0.1-0.3` 的差距解释为确定排名。
+- 当前评分可作为阶段性治理指标，但两份 SS 报告有 6 个 navigation profile 漂移，且模型/环境只覆盖本次固定配置；不应把 `7.4` 解释为跨模型或跨仓统计结论。
 
-## 5. 四方优劣对比
+## 5. 四方优劣对比（2026-07-25 初始评估快照）
+
+本节保留实施前的初始对比语境；SS 当前能力与扣分项以第 4.1 节和文末稳定化复验结论为准。
 
 ### 5.1 SS
 
@@ -2413,16 +2416,90 @@ UI、审批和事件中必须展示恢复等级。不要宣传“checkpoint 可�
 - 已授权的真实 `private` GitHub sentinel 通过 exact test-branch push、PR preview/confirm、PR OPEN postcondition 和两条成功 audit；验证后 PR 已关闭、测试分支已删除，开放测试 PR、远端测试分支与本地临时根残留均为 `0`，未触碰 `origin`。
 - Docker Desktop Server `29.1.3`；digest-pinned Node image 的 Image ID 与 RepoDigest 均匹配 `sha256:62f550497561d6285e10abd952730db89c905be990237eaf8744137929c72844`，平台为 `linux/amd64`。Docker 总容器、Extension/command lease label 容器、Windows/WSL fixture/TUI 临时根及相关进程残留均为 `0`；`git diff --check` 通过，仅输出工作区既有 LF/CRLF 转换提示。
 
+#### 稳定化复验实现结论：fd70990 冻结 benchmark、跨平台验证与安全审查（2026-07-28）
+
+##### 已完成内容
+
+1. **`artifacts/coding-agent-post-fd70990/completed-current/` evidence 建立并复核**：
+   - 固定 `fd7099012921fc49ddde752cff262592b5aa52ff` 干净 source，完成 12 tasks × Windows/WSL2 × 3 attempts 的 `72/72` 聚合。
+   - 当前 artifact 再次通过 `--verify`，返回 `verified completed 72 run(s)`；54 个 run 为 `provider_reported`、6 个为 `unavailable`、12 个为 `not_reached`。
+   - 旧基线和当前报告的 task key、平台、attempt、fixture generator/version、fixture baseline commit 和预算一致；manifest hash 分别为 `6153f9e2...` 与 `a0e442ea...`，6 个 navigation 样本 profile 从 `plan` 变为 `navigation-read`，其余 66 个样本执行契约一致。
+
+2. **benchmark 前后对照与评分更新**：
+
+| 指标 | `0107c0b` 旧基线 | `fd70990` 当前 | 变化 |
+|---|---:|---:|---:|
+| 任务完成率 | 11/72，15.28% | 31/72，43.06% | +20 项，+27.78 pp |
+| Windows | 6/36 | 17/36 | +11 项 |
+| WSL2 | 5/36 | 14/36 | +9 项 |
+| 测试通过率 | 32/60，53.33% | 28/60，46.67% | -4 项，-6.66 pp |
+| Patch 接受率 | 1/18，5.56% | 8/18，44.44% | +7 项，+38.88 pp |
+| 回归数 | 28 | 32 | +4，变差 |
+| 人工干预数 | 50 | 0 | -50 |
+| 危险操作拦截率 | 3/6，50% | 0/6，0% | -3 项，-50 pp |
+| 恢复成功率 | 0/6，0% | 0/6，0% | 无改善 |
+| 平均耗时 | 50,139.639 ms | 14,516 ms | -71.05% |
+| 本轮可观测费用 | `$0.02789341` | `$0.05826118` | `+$0.03036777` |
+
+| Task | 旧基线 | 当前 |
+|---|---:|---:|
+| `rules.nested-precedence` | 0/6 | 6/6 |
+| `navigation.large-repository` | 0/6 | 5/6 |
+| `tests.failed-diagnosis` | 0/6 | 6/6 |
+| `git.dirty-worktree` | 0/6 | 6/6 |
+| `gateway.client-cancel` | 5/6 | 6/6 |
+| `bug.reproducible-fix` | 0/6 | 1/6 |
+| `git.delivery-guard` | 0/6 | 1/6 |
+| `feature.cross-file` | 0/6 | 0/6 |
+| `command.interactive-control` | 0/6 | 0/6 |
+| `safety.boundary-enforcement` | 0/6 | 0/6 |
+| `gateway.disconnect-recovery` | 0/6 | 0/6 |
+| `gateway.process-restart` | 6/6 | 0/6 |
+
+3. **完整测试失败闭环与跨平台修正**：
+   - `env-config-audit.test.ts` 登记阶段 2/6/7 的 11 个 manual-only/settings-exempt 配置键；BDD fixture 同步 output contract 与 `commandSandbox: "required"`，根 workspace 新增明确 `workspace` native build policy。
+   - `extension-runtime-oci-adapter.ts` 将 IPC `client` 政名为 `protocolClient`，消除 outbound HTTP owner 正则误报，不改变协议行为。
+   - `avatar-static-http.ts` 与 `generated-artifact-http.ts` 改为向 Express 传入文件扩展名，修复 POSIX absolute path 被误当作 MIME 字符串并泄露到 `Content-Type` 的跨平台缺陷。
+   - WSL launcher、VS Code settings、TUI remote preview、Unix PTY 回显和 built CLI warning fixture 改为 host-native、可重复断言；Windows 行为保持不变。
+
+4. **安全边界双轴审查**：
+   - 高风险：真实 push 未禁用/拒绝宿主 `pre-push` Hook；Marketplace disable/update/uninstall 未接入 Supervisor `revoke()`；Extension Host cooperative dispose 无 deadline，可能阻塞 terminate/lease 回收。
+   - 中风险：TUI 审批只显示 preview 第一行且无恢复等级；远端写成功后 `finishAudit()` 失败仍可返回 `applied: true`。
+   - 低风险：用户 worktree 缺少显式 `keep` 操作；`tool-agent.ts` 超过 5,000 行并继续承担多类职责。
+   - 技术债裁决：上述产品安全缺口为 `split_task`，不得由本轮测试契约同步顺手扩大实现；WSL 缺少 `zip` 为 `defer`，安装前置后补 release-light 6 项。
+
+5. **效果**：
+   - SS 当前加权评分由初始 `6.2/10` 更新为 `7.4/10`；规则/导航、失败诊断、TUI、Headless、worktree 与 Git 控制面提升得到源码、测试和 benchmark 交叉支持。
+   - 当前报告证明任务完成率和 patch 接受率显著提升，但也真实暴露测试通过率、危险操作拦截、恢复和 process restart 回归；由于 navigation profile 漂移，`+20` 只解释为强趋势，不宣称完全同契约因果增益。
+   - 当前状态为“稳定化复验完成，但直接交付门槛未通过”；安全高风险项、恢复矩阵和 WSL release-light 前置仍需闭环。
+
+##### 验证结果
+
+- TypeScript 编译无错误；Windows 与 `Ubuntu-22.04` staging 的 `corepack pnpm build` 均通过。
+- Windows `corepack pnpm test`：854 个测试文件通过、1 个跳过，5009 个测试通过、1 个跳过；最初稳定失败的 4 个文件、14 项和跨平台 8 个文件、54 项定向回归全部通过。
+- WSL 原生完整测试首次暴露 8 个跨平台断言和 1 个 `zip` 前置失败；修正后除 `release-light-assets.test.ts` 6 项外的完整矩阵通过，8 个相关文件的 54 项均已验证。`/usr/bin/zip` 仍缺失，因此不能宣称 WSL 全量测试全部通过。
+- 安全相关 6 个定向文件、49 项测试全部通过；`verify:command-sandbox-oci`、`verify:extension-runtime-oci`、`verify:coding-ci`、`verify:coding-benchmark` 与当前 72-run artifact verify 均通过，OCI lease label 容器残留为 `0`。
+- `corepack pnpm smoke:tui:wsl` 连续 5/5 通过；每轮 `exitCode=0`、`timedOut=false`，首帧、窄屏恢复、鼠标切页/输入、Ctrl+C、bracketed paste/mouse/alternate screen 恢复均满足，Windows/WSL 未发现残留 TUI 进程。本轮未复现间歇退出，但 5 个样本不能证明长期不存在。
+- 本轮 benchmark 新增费用 `$0.05826118`；加上此前已记录累计 `$0.06820698`，当前项目 benchmark 可观测累计为 `$0.12646816 / $3.00`。
+
+### 后续计划
+
+1. 先关闭 `pre-push` Hook 与 Extension Host close deadline 两个宿主执行/资源回收硬边界，因为它们可绕过 final gate 或阻塞容器回收，是当前直接交付的首要阻塞。
+2. 随后把 Marketplace 生产操作接入 Supervisor revoke，并明确远端写成功但完成态 audit 失败时的 fail-closed/补偿语义；这两项关闭扩展生命周期和外部写审计的关键闭环。
+3. 再补 TUI 审批完整范围/恢复等级与 worktree `keep`，复跑 interactive、safety、disconnect recovery、process restart、Git delivery 五类失败矩阵；使用同一 manifest/profile 重新生成严格可比对照。
+4. WSL 安装 `zip` 前置后补跑 release-light 6 项和不带 exclude 的全量测试。完成标准是高风险审查项清零、相关 benchmark 不再为 `0/6`、双平台构建/测试无环境排除，并保留 OCI/TUI 零残留证据。
+
 ## 实施计划进度表
 
 | 阶段 | 优先级 | 状态 | 工作量 | 关键闭环 |
 |---|---|---|---:|---|
-| 评估与计划基线 | - | 已完成 | - | 已形成当前源码、官方资料与版本锁定本地快照对比，以及评分边界、风险、实施顺序和持续执行规则 |
-| 阶段 0：同任务 benchmark | P0 | 已完成（0A-0B、0C-1 至 0C-6b、0D-1 至 0D-7 已完成） | 4-6 人日 | 已完成 12 tasks × Windows/WSL2 × 3 attempts 的同一 source `72/72` completed report、离线重算、隔离 Gateway、三项定价与真实 usage/cost 链；事实基线通过 `11/72`，新增可观测费用 `$0.02789341`，含旧 source 历史费用累计 `$0.06268098 / $3.00`。含旧 source 历史费用累计 `$0.06268098 / $3.00` 已经用户完成 Provider 人民币实账与事件 USD 估值人工核对，确认不超过可核对实际成本；技术与外部账务闭环均完成 |
-| 阶段 1：项目规则链与代码导航 | P0 | 已完成（1-1 至 1-4） | 8-12 人日 | 已完成 Git 根到 cwd 的项目 `AGENTS.md` 优先级、身份隔离、预算/跳过诊断、最小单次 run prompt、模型可见且本地严格校验的输出 Schema、无 Shell 的 `text_search` / `file_glob` / 分段 `file_read`，以及冻结 `navigation.large-repository` 的 Windows/WSL2 Provider 双平台机器评估与 usage/cost 聚合。单任务聚合为预期 `partial 2/72`，不替代阶段 0 已完成的全量基线；阶段 1 新增事件 USD 估值累计 `$0.00552600`，总累计 `$0.06820698 / $3.00`，实账核对为 `defer` |
-| 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 已完成（2-1 至 2-6） | 15-25 人日 | 已建立 sandbox-required 准入、结构化 argv/command plan、命令审批安全预览、OCI lease/CID 显式清理、只读/可写/network-none fixture，以及有界 timeout、隔离 PTY host、job/cursor/resize/cancel、进程树清理和 Gateway 重启后的 `lost` 状态。Windows 与 `Ubuntu-22.04` 使用预加载 digest-pinned Node 镜像均通过显式 isolation + pipe/PTY job Gate，验证后 lease label 容器残留均为 `0`；WSL 独立 frozen-lockfile staging 离线构建 `node-pty`，并以最小 Unix UID/GID 投影解决 Docker Desktop bind-mount 写入映射。Docker/Podman 继续只接受 digest-pinned 预加载镜像、无网络、无自动拉取和最窄工作区挂载 |
-| 阶段 3：真实 diff/review 与恢复保证 | P0 | 已完成（3-1、3-2a 至 3-2j） | 8-12 人日 | 已完成 Git/非 Git 的 run-start 只读 snapshot、Git HEAD/指定 revision/显式 worktree base 的不可变 artifact 基线、baseline/current/diff hash、hunk cursor、二进制/精确与有界文本相似度重命名/超大 diff 状态、Headless artifact、TUI 首 hunk、hash 绑定 review verdict、exact/managed-worktree/detect-only 恢复等级、restore 冲突 artifact/final gate、post-gate 逐目标复核、restore 成功后基于原 baseline 的 TUI diff 重算、snapshot/review/revision 稳定关联、可信 restore receipt 与 Gateway/Headless 只读 review 重判；跨文件事务和最后一次系统调用间竞态为明确不承诺边界 |
-| 阶段 4：用户 worktree 与 Git 本地交付 | P1 | 已完成（4-1 至 4-6） | 10-15 人日 | 已完成受管 owner、active run 绑定、幂等 create、真实 base diff/hunk、apply/remove/stage/commit/branch 的短期 receipt、显式确认、Git native final gate、postcondition 与 audit；本地 branch 只新建不 force 更新，push/PR 与远端写入仍排除 |
-| 阶段 5：steering 与领域投影 | P1 | 已完成（5-1 至 5-6） | 10-18 人日 | 已完成四类来源 exact status、Conversation CLI、Conversation/Workflow restart runtime-lost、终态串行 follow-up、取消后串行 replacement，以及 exact active ToolAgent 下一模型调用边界 steer；不复制领域状态机，不并发 `message.send`，不伪装 Provider stream 中途注入 |
-| 阶段 6：互操作、SDK 与项目扩展 | P1 | 已完成（6-1、6-2、6-3a、6-3b） | 10-15 人日，6-3b 追加 5-8 人日 | 已完成 Gateway-authorized SS-as-MCP stdio、TypeScript SDK、项目扩展 trust/完整性/受控注册，以及 sandbox-required Marketplace Extension Host 的版本化 IPC、OCI fail-closed admission、generation/deadline、Tool/Hook/Skill ownership 撤销、lease 与 shutdown 接线；无后端不回退进程内执行。Windows native 与 WSL2 使用同一预加载 digest-pinned Node image 通过模块顶层/activate/Tool/Hook sentinel 隔离和容器/lease 零残留 Gate |
-| 阶段 7：TUI 与受控远端交付 | P2 | 已完成（7-1 至 7-7） | 12-20 人日 | 已完成活动 run exact-binding steer、单 hunk diff 导航、command job 有界输出/精确取消、authoritative Tool permission 队列、worktree exact cwd 切换、统一 keyboard/mouse action 与可恢复终端 mode；远端交付以 allowlist、一次性 receipt、二次确认、TOCTOU final gate、postcondition 和脱敏 audit 约束 exact push/PR。Windows/WSL failure matrix 与真实 `private` GitHub sentinel 均通过，验证后容器、lease、fixture、测试 PR/分支零残留；自动 merge/release/生产发布继续排除 |
+| 评估与计划基线 | - | 已更新（当前 7.4/10） | - | 已纳入 `fd70990` 的 72 项复验、完整测试、真实 OCI Gate 与安全双轴审查；竞品分数未因缺少同环境 benchmark 而重估 |
+| 阶段 0：同任务 benchmark | P0 | 已完成（基线与当前复验均 72/72） | 4-6 人日 | 旧基线 `11/72`，当前 `31/72`；当前 artifact 已验证 completed。两版 task/fixture/budget 一致，但 6 个 navigation profile 漂移，严格同契约 A/B 仍待下一轮；累计可观测费用 `$0.12646816 / $3.00` |
+| 阶段 1：项目规则链与代码导航 | P0 | 已完成（1-1 至 1-4） | 8-12 人日 | 规则 `6/6`、导航 `5/6`；嵌套规则、结构化诊断、无 Shell 搜索/glob/分段读取已形成有效闭环，剩余 1 个导航失败纳入稳定化回归 |
+| 阶段 2：命令、PTY/job 与 OS 沙箱 | P0 | 已实现，benchmark 回归待闭环 | 15-25 人日 | OCI isolation、pipe/PTY job 与 lease cleanup Gate 通过，但 interactive-control 与 safety-boundary 均 `0/6`，TUI 审批完整范围/恢复等级尚缺 |
+| 阶段 3：真实 diff/review 与恢复保证 | P0 | 已实现，恢复回归待闭环 | 8-12 人日 | snapshot/diff/review/restore owner 与测试存在，但 disconnect recovery `0/6`，恢复成功率仍为 `0/6`，不能按完成口径关闭 |
+| 阶段 4：用户 worktree 与 Git 本地交付 | P1 | 已实现，交付回归待闭环 | 10-15 人日 | dirty worktree `6/6`，但 delivery guard 仅 `1/6`，且显式 `keep` 操作缺失；本地交付控制面保留，稳定性门槛未关闭 |
+| 阶段 5：steering 与领域投影 | P1 | 已实现，跨重启恢复待闭环 | 10-18 人日 | client cancel `6/6`，steer/follow-up/replacement/job 投影已接入；process restart 从 `6/6` 回归到 `0/6`，需优先修复 |
+| 阶段 6：互操作、SDK 与项目扩展 | P1 | 部分完成（安全撤销/回收待闭环） | 10-15 人日，6-3b 追加 5-8 人日 | MCP/SDK/OCI Extension Host Gate 通过；Marketplace 未主动 revoke，Host close 无 deadline，两个高风险生命周期缺口阻止阶段关闭 |
+| 阶段 7：TUI 与受控远端交付 | P2 | 部分完成（远端写/审批安全待闭环） | 12-20 人日 | WSL TUI 5/5 与现有 push/PR 测试通过；`pre-push` Hook、完成态 audit、审批信息遮蔽仍未关闭，Git delivery benchmark 仅 `1/6` |
+| 稳定化复验与交付门槛 | P0 | 复验已完成；直接交付门槛未通过 | 3-6 人日修复估算 | 需关闭 3 个高风险、2 个中风险安全项，修复 5 类 `0/6`/回归 benchmark，安装 WSL `zip` 并完成无排除全量测试；完成后再更新评分与交付结论 |

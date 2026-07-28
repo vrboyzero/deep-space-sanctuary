@@ -33,6 +33,7 @@ import { resolveCommanderRuntimeSwitches } from "../commander-runtime-switches.j
 import { resolveMemoryRuntimeSwitches } from "../memory-runtime-switches.js";
 import { resolveTaskMemoryCarveOutEffects } from "../task-memory-carve-out.js";
 import { resolveToolAgentStreamingEnabled } from "../tool-agent-streaming-config.js";
+import { resolveToolResultEventOutputCharLimit } from "../tool-result-event-output.js";
 import { calculateUsageCostUsd, resolveCompactionThreshold, resolveProviderCapabilityFromEnv } from "../provider-capability.js";
 import { resolveCompactionModelRoute } from "../compaction-model-routing.js";
 import { normalizePreferredProviderIds } from "../provider-model-catalog.js";
@@ -487,6 +488,9 @@ process.env.BELLDANDY_ENV_DIR = runtimePaths.envDir;
 const port = Number(readEnv("BELLDANDY_PORT") ?? "28889");
 const host = readEnv("BELLDANDY_HOST") ?? "127.0.0.1"; // Security: Default to localhost
 const authMode = (readEnv("BELLDANDY_AUTH_MODE") ?? "none") as "none" | "token" | "password";
+const toolResultEventOutputCharLimit = resolveToolResultEventOutputCharLimit(
+  readEnv("BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT"),
+);
 const commanderRuntimeSwitches = resolveCommanderRuntimeSwitches(readEnv);
 const commanderMode = commanderRuntimeSwitches.commanderMode;
 const autoOpenBrowser = readEnv("AUTO_OPEN_BROWSER") === "true";
@@ -4375,6 +4379,7 @@ const serverOptions = buildGatewayServerOptions({
   remoteDeliveryRuntime,
   commanderMode,
   preflightCompressionPolicy,
+  toolResultEventOutputCharLimit,
   ttsEnabled: isTtsEnabledFn,
   ttsSynthesize,
   sttTranscribe,

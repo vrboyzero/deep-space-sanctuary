@@ -15,6 +15,7 @@ import {
   consumeBenchmarkUsageBudget,
   createBenchmarkUsageBudget,
   extractBenchmarkTokenUsage,
+  resolveBenchmarkCliSourceRoot,
   resolveBenchmarkRuntimePlatform,
   runStage0BSuite,
 } from "./run-coding-agent-benchmark.mjs";
@@ -29,6 +30,13 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark stage 0B runner", () => {
+  it("requires an explicit source root only for corrected v2 CLI runs", () => {
+    expect(resolveBenchmarkCliSourceRoot(new Map(), "v1")).toBe(path.resolve("."));
+    expect(() => resolveBenchmarkCliSourceRoot(new Map(), "v2")).toThrow(/--source-root is required/i);
+    expect(resolveBenchmarkCliSourceRoot(new Map([["source-root", "C:/source-fd70990"]]), "v2"))
+      .toBe(path.resolve("C:/source-fd70990"));
+  });
+
   it("reserves part of the 30 CNY ceiling and fails closed when real-run cost is unavailable", () => {
     const budget = createBenchmarkUsageBudget({
       provider: "fixture",

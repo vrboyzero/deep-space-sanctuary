@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import crypto, { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -130,6 +131,11 @@ export async function startGatewayDisconnectProxy(input) {
   const upstreamHost = requireNonEmptyString(input?.upstreamHost, "upstreamHost");
   const upstreamPort = requirePort(input?.upstreamPort, "upstreamPort");
   const targetPath = requireNonEmptyString(input?.targetPath, "targetPath").replaceAll("\\", "/");
+  const requireCompletedMutation = input?.requireCompletedMutation === true;
+  const mutationTarget = requireCompletedMutation
+    ? resolveWorkspaceTarget(input?.workspace, targetPath)
+    : undefined;
+  const initialTargetSha256 = mutationTarget ? await hashFile(mutationTarget) : undefined;
   const upstreamOrigin = input?.upstreamOrigin === undefined
     ? undefined
     : requireNonEmptyString(input.upstreamOrigin, "upstreamOrigin");
@@ -154,6 +160,7 @@ export async function startGatewayDisconnectProxy(input) {
     upstreamSockets.add(upstream);
     const pending = [];
     const runRequestIds = new Set();
+    const writeToolCalls = new Map();
     let binding;
     let projectedSeq = 0;
 
@@ -202,12 +209,36 @@ export async function startGatewayDisconnectProxy(input) {
         projectedSeq += 1;
       }
 
-      const shouldDisconnect = !fault
+      if (requireCompletedMutation && binding && isRecoveryWriteToolCall(frame, binding, targetPath)) {
+        writeToolCalls.set(frame.payload.id, {
+          id: frame.payload.id,
+          name: frame.payload.name,
+        });
+      }
+
+      const completedMutation = requireCompletedMutation && binding
+        ? readSuccessfulRecoveryMutation(frame, binding, writeToolCalls)
+        : undefined;
+      const shouldDisconnect = !requireCompletedMutation && !fault
         && binding
         && isRecoveryWriteToolEvent(frame, binding, targetPath);
       if (downstream.readyState !== WebSocket.OPEN) return;
-      downstream.send(data, { binary: isBinary }, () => {
-        if (!shouldDisconnect || fault) return;
+      downstream.send(data, { binary: isBinary }, async () => {
+        if ((!shouldDisconnect && !completedMutation) || fault) return;
+        let mutation;
+        if (completedMutation && mutationTarget && initialTargetSha256) {
+          const completedTargetSha256 = await hashFile(mutationTarget).catch(() => undefined);
+          if (!completedTargetSha256 || completedTargetSha256 === initialTargetSha256 || fault) return;
+          mutation = {
+            trigger: "successful_tool_result_after_content_change",
+            toolCallId: completedMutation.id,
+            toolName: completedMutation.name,
+            targetPath,
+            resultSuccess: true,
+            beforeSha256: initialTargetSha256,
+            afterSha256: completedTargetSha256,
+          };
+        }
         fault = {
           schemaVersion: "coding-agent-fault-injection/v1",
           taskId: "gateway.disconnect-recovery",
@@ -218,6 +249,7 @@ export async function startGatewayDisconnectProxy(input) {
           disconnectCount: 1,
           reconnectCount: 0,
           binding: { ...binding },
+          ...(mutation ? { mutation } : {}),
         };
         resolveFault(fault);
         setTimeout(() => {
@@ -293,14 +325,15 @@ export function buildRecoveredCodingCiArtifacts(input) {
   });
   const terminal = events.at(-1);
   const outputText = terminal?.payload?.output?.text;
-  if (typeof outputText !== "string") throw new Error("Recovered terminal event did not contain output text.");
-  let result;
-  try {
-    result = JSON.parse(outputText);
-  } catch {
-    throw new Error("Recovered terminal output is not valid JSON.");
+  let result = null;
+  if (typeof outputText === "string") {
+    try {
+      const parsed = JSON.parse(outputText);
+      if (isRecord(parsed)) result = parsed;
+    } catch {
+      // Output-schema failures are model evidence; the evaluator classifies them after recovery is preserved.
+    }
   }
-  if (!isRecord(result)) throw new Error("Recovered terminal output must be a JSON object.");
 
   const {
     eventContractError: _eventContractError,
@@ -354,9 +387,27 @@ export function mergeRecoveredAgentEvents(input) {
   if (terminals.length !== 1 || terminals[0] !== combined.at(-1) || terminals[0]?.type !== "run.completed") {
     throw new Error("Recovery continuation must end in exactly one completed terminal event.");
   }
-  const writeAttempts = combined.filter((event) => event?.type === "tool.started"
-    && WRITE_TOOL_NAMES.has(event?.payload?.tool?.name));
-  if (writeAttempts.length !== 1) throw new Error("Recovery continuation must contain exactly one workspace side effect.");
+  const writeToolsById = new Map();
+  let successfulWriteCount = 0;
+  for (const event of combined) {
+    const tool = event?.payload?.tool;
+    const toolId = readNonEmptyString(tool?.id);
+    const toolName = readNonEmptyString(tool?.name);
+    if (event?.type === "tool.started" && toolId && toolName && WRITE_TOOL_NAMES.has(toolName)) {
+      writeToolsById.set(toolId, toolName);
+      continue;
+    }
+    if (event?.type === "tool.completed"
+      && tool?.success === true
+      && toolId
+      && toolName
+      && writeToolsById.get(toolId) === toolName) {
+      successfulWriteCount += 1;
+    }
+  }
+  if (successfulWriteCount !== 1) {
+    throw new Error("Recovery continuation must contain exactly one successful workspace mutation.");
+  }
   return combined.map((event) => ({
     ...event,
     binding: {
@@ -397,6 +448,43 @@ function isRecoveryWriteToolEvent(frame, binding, targetPath) {
   // The proxy must not depend on a provider-specific tool argument representation to inject the fault.
   void targetPath;
   return true;
+}
+
+function isRecoveryWriteToolCall(frame, binding, targetPath) {
+  if (frame?.type !== "event" || frame.event !== "tool_call" || !matchesGatewayBinding(frame.payload, binding)) {
+    return false;
+  }
+  const payload = frame.payload;
+  const name = readNonEmptyString(payload.name);
+  const id = readNonEmptyString(payload.id);
+  if (!id || !name || !WRITE_TOOL_NAMES.has(name)) return false;
+  return JSON.stringify(payload.arguments ?? {}).replaceAll("\\", "/").includes(targetPath);
+}
+
+function readSuccessfulRecoveryMutation(frame, binding, writeToolCalls) {
+  if (frame?.type !== "event" || frame.event !== "tool_result" || !matchesGatewayBinding(frame.payload, binding)) {
+    return undefined;
+  }
+  const payload = frame.payload;
+  if (payload.success !== true) return undefined;
+  const id = readNonEmptyString(payload.id);
+  const known = id ? writeToolCalls.get(id) : undefined;
+  if (!known || payload.name !== known.name) return undefined;
+  return known;
+}
+
+function resolveWorkspaceTarget(workspace, targetPath) {
+  const root = path.resolve(requireNonEmptyString(workspace, "workspace"));
+  const target = path.resolve(root, ...targetPath.split("/"));
+  const relative = path.relative(root, target);
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Recovery mutation target must stay inside the fixture workspace.");
+  }
+  return target;
+}
+
+async function hashFile(target) {
+  return crypto.createHash("sha256").update(await fs.readFile(target)).digest("hex");
 }
 
 function matchesGatewayBinding(value, binding) {

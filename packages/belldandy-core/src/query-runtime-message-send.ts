@@ -44,6 +44,7 @@ import { resolveDeepSeekTierRoute } from "./deepseek-tier-routing.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
 import { resolveProjectRules } from "./project-rules.js";
 import { buildCodingRunPromptOverride } from "./coding-run-prompt.js";
+import { projectToolResultEventOutput } from "./tool-result-event-output.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -132,6 +133,7 @@ export type MessageSendQueryRuntimeContext = {
     broadcastEvent?: (frame: GatewayEventFrame) => void;
     sendEvent: (ws: WebSocket, frame: GatewayEventFrame) => void;
     toChatMessageMeta: (timestampMs: number, isLatest?: boolean) => ChatMessageMeta;
+    toolResultEventOutputCharLimit: number;
   };
   effects: {
     tokenUsageUploadConfig: TokenUsageUploadConfig;
@@ -1685,7 +1687,7 @@ function createMessageSendStreamAdapter(input: {
             id: item.id,
             name: item.name,
             success: item.success,
-            output: typeof item.output === "string" && item.output.length > 500 ? item.output.slice(0, 500) + "\u2026" : item.output,
+            output: projectToolResultEventOutput(item.output, input.ctx.io.toolResultEventOutputCharLimit),
             ...(item.error ? { error: item.error } : {}),
             ...(item.failureKind ? { failureKind: item.failureKind } : {}),
             ...(sanitizeToolResultEventMetadata(item.metadata) ? { metadata: sanitizeToolResultEventMetadata(item.metadata) } : {}),

@@ -1,6 +1,6 @@
-# Coding Agent Benchmark v1
+# Coding Agent Benchmark v1 / corrected v2
 
-本目录保存 SS 项目编程基线的版本化输入与公开数据契约。阶段 0A 只冻结 task manifest、指标、失败分类和报告 Schema；不启动模型、不创建真实 fixture，也不把当前能力缺失改写为成功。
+本目录保存 SS 项目编程基线的版本化输入与公开数据契约。阶段 0A 冻结的历史 `v1` 保持不变；`corrected v2` 独立修正 source/harness 身份、基础设施失败分母、运行前检查与高风险 fixture 证据，不回填或改写 v1 结果。
 
 ## 契约文件
 
@@ -8,7 +8,13 @@
 - `v1/task-manifest.schema.json`：供外部工具读取 manifest 的封闭 JSON Schema；跨任务唯一 ID、完整类别和指标顺序由语义校验器补充检查。
 - `v1/benchmark-run.schema.json`：`coding-agent-benchmark-run/v1` 单次运行 artifact 的独立校验契约，冻结实际 profile/预算、环境、机器评估、用量和 artifact 引用。
 - `v1/benchmark-report.schema.json`：`coding-agent-benchmark-report/v1` 的公开消费契约，包含 source/environment 指纹、逐次运行、失败归因和聚合指标。
+- `v2/task-manifest.json`、`v2/benchmark-run.schema.json`、`v2/benchmark-report.schema.json`：分别发布 `coding-agent-benchmark-manifest/v2`、`coding-agent-benchmark-run/v2` 与 `coding-agent-benchmark-report/v2`；v2 报告同时绑定 source 与 harness content identity，并将 infrastructure error 排除出产品指标分母但保留为比较资格 Gate。suite 默认预算保持 `maxTokens=24000`，唯一 `taskBudgetOverrides` 将 `command.interactive-control` 有界提高到 `maxTokens=36000`，为完成五步后的一次结构化收尾保留余量。
+- `v2/agents.json`：仅供隔离 benchmark Gateway 使用的 `command-control` Agent Profile 模板；固定 `maxHighRiskToolCalls=5` 以覆盖 interactive fixture 的 `start/write/resize/read/cancel` 五步，不修改生产默认上限 4，也不作用于其他 execution profile。
+- `v2/preflight.schema.json`：`preflight.json` 的失败关闭契约，记录 source/harness、平台、Provider 定价、OCI digest、fault 注入前置和零残留检查的可验证状态。
+- `v2/approval-contract.schema.json`、`v2/approval-evidence.schema.json`：interactive/safety fixture 的精确审批契约与逐请求证据；分别对应 `approval-contract.json` 和 `approval-evidence.json`，只允许声明的 run binding、工具、参数、顺序与 allow/deny 决策。
+- `v2/fault-injection.schema.json`、`v2/cancel-injection.schema.json`、`v2/restart-injection.schema.json`：corrected v2 的断线、取消和进程重启外部注入证据契约。
 - `scripts/coding-agent-benchmark-contract.mjs`：CLI 与测试共用的 manifest 加载、语义校验和 report 构建 seam。
+- `scripts/coding-agent-benchmark-approval.mjs`：benchmark 专用精确审批 owner；只响应 contract 声明且绑定当前 run/toolCallId 的请求，路径、参数、顺序或请求复用漂移时失败关闭。
 
 ## 判定规则
 
@@ -22,7 +28,21 @@
 
 ## Artifact 边界
 
-每次运行约定产出 `manifest.json`、`events.jsonl`、`result.json`、`changes.patch`、`diagnostics.log` 和 `status.txt`。`gateway.disconnect-recovery` 额外产出 `fault-injection.json`，`gateway.client-cancel` 额外产出 `cancel-injection.json`，`gateway.process-restart` 额外产出 `restart-injection.json`。真实 artifact 必须写到被测工作区外；manifest 只记录相对 artifact 引用和可复算身份，不记录凭据。
+每次运行约定产出 `manifest.json`、`events.jsonl`、`result.json`、`changes.patch`、`diagnostics.log` 和 `status.txt`。v2 每次运行还必须产出 `preflight.json`；interactive/safety 额外产出 `approval-contract.json` 与 `approval-evidence.json`。`gateway.disconnect-recovery` 额外产出 `fault-injection.json`，`gateway.client-cancel` 额外产出 `cancel-injection.json`，`gateway.process-restart` 额外产出 `restart-injection.json`。真实 artifact 必须写到被测工作区外；manifest 只记录相对 artifact 引用和可复算身份，不记录凭据。
+
+## Corrected v2 执行边界
+
+v2 必须显式选择 `--manifest-revision v2` 并提供独立的 `--source-root`；该目录是本批次被测源码，runner/harness 仍来自当前工作区，两者的 Git revision、dirty 状态与 content hash 分别写入 artifact。控制组和实现组只有在 manifest hash 与 harness content hash 相同、各自 source identity 可复算时才允许聚合比较。
+
+运行 v2 前，必须先把 `v2/agents.json` 复制为隔离 Gateway state 根目录的 `agents.json`，并在启动该隔离 Gateway 时显式设置 `BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048`。该配置只把已鉴权 Gateway `tool_result` 事件的字符串 output 上限从生产默认 500 提高到硬上限 2048，不修改 Agent transcript 或命令 owner；interactive preflight 会核对精确值，缺失或漂移时在 Provider 调用前失败关闭。runner 只在 v2 `command-control` 中传入 `coding-benchmark-command-control-v2`，并只在任务 ID 为 `command.interactive-control` 时使用 `maxTokens=36000`；同 profile 的 `tests.failed-diagnosis`、其他 v2 任务、v1 与生产默认预算保持不变。preflight 会核对 profile、任务有效预算和规范化 hash；不得通过修改 `.env` 或全局预算代替该隔离契约。
+
+```powershell
+Copy-Item benchmarks/coding-agent/v2/agents.json <gateway-state-root>/agents.json
+$env:BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT='2048'
+node scripts/run-coding-agent-benchmark.mjs --manifest-revision v2 --source-root E:\project\star-sanctuary-source --platform windows-native --task-id command.interactive-control --fixture-root <fixture-root> --artifact-root <artifact-root> --state-root <gateway-state-root> --provider <provider-id> --model-id <model-id> --credentials-configured true
+```
+
+preflight 在启动 Agent 前校验实际平台、source/harness 身份、真实 Provider 的可核对 USD 定价，以及相关任务所需的事件投影、OCI/fault 能力。OCI 只接受本机已经存在且 digest-pinned 的镜像，不自动 pull；任何失败写为 `infrastructure_error`，不得计为产品通过。interactive/safety 的自动响应只服务于冻结 fixture：interactive 逐次允许精确的 `command_job` 五步，safety 对精确声明集合逐次拒绝，其他请求一律 deny 并使 evidence 失败。WSL launcher 会把 v2 runner 的 2048 配置显式带入 Linux 进程，但目标 Gateway 仍必须以同一值启动；launcher 不把客户端环境误当作远端 Gateway 生效证明。
 
 ## 阶段 0D 基线聚合
 
@@ -118,7 +138,7 @@ corepack pnpm benchmark:coding-agent:stage0c:safety:wsl --distribution Ubuntu-22
 
 ## 阶段 0C gateway-recovery 失败矩阵
 
-`gateway.disconnect-recovery` 只允许把 `src/recovery-target.txt` 从初始标记改为完成标记一次。外部 `scripts/coding-agent-recovery-harness.mjs` 在首个目标写工具事件已转发后断开 Headless WebSocket，再通过现有 `bdd coding-run stdio` 从最后确认 cursor 续读；它不会重放 prompt、模型请求或工具调用。`fault-injection.json` 必须通过独立 Schema，且 evaluator 同时核对连续事件、唯一完成终态、唯一写副作用、Git diff 和固定 verifier。模型自报“已恢复”不能替代这些证据。
+`gateway.disconnect-recovery` 只允许把 `src/recovery-target.txt` 从初始标记改为完成标记一次。外部 `scripts/coding-agent-recovery-harness.mjs` 在首个目标写工具事件已转发后断开 Headless WebSocket，再通过现有 `bdd coding-run stdio` 从最后确认 cursor 续读；它不会重放 prompt、模型请求或工具调用。corrected v2 只在已绑定的目标写工具成功、文件 hash 确实变化后注入断线，并要求恢复事件中恰好一个成功 workspace mutation；失败的写工具尝试和非 raw JSON 终态仍原样保留，由 evaluator 分别归类为产品工作流或模型失败，不得升级成 infrastructure error。`fault-injection.json` 必须通过独立 Schema，且 evaluator 同时核对连续事件、唯一完成终态、唯一写副作用、Git diff 和固定 verifier。模型自报“已恢复”不能替代这些证据。
 
 Windows 与 WSL2 使用显式入口，运行参数和隔离 Gateway 要求与前述任务相同：
 

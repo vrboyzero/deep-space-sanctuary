@@ -7,36 +7,41 @@ const BUILD_SCRIPT_DECISIONS = [
     dependency: "better-sqlite3",
     slim: "allow",
     full: "allow",
+    workspace: "allow",
     reason: "Every runtime requires the native SQLite memory backend.",
   },
   {
     dependency: "esbuild",
     slim: "allow",
     full: "allow",
+    workspace: "allow",
     reason: "Gateway runtime configuration loading requires the packaged esbuild binary.",
   },
   {
     dependency: "node-pty",
     slim: "ignore",
     full: "allow",
+    workspace: "allow",
     reason: "Slim uses child_process fallback; full requires the native PTY backend.",
   },
   {
     dependency: "onnxruntime-node",
     slim: "ignore",
     full: "allow",
+    workspace: "ignore",
     reason: "Slim excludes local embeddings; full requires the ONNX native runtime.",
   },
   {
     dependency: "protobufjs",
     slim: "ignore",
     full: "ignore",
+    workspace: "ignore",
     reason: "The published protobufjs runtime is loadable without its informational postinstall script.",
   },
 ];
 
 function normalizeMode(mode) {
-  if (mode !== "slim" && mode !== "full") {
+  if (mode !== "slim" && mode !== "full" && mode !== "workspace") {
     throw new Error(`Invalid runtime build script policy mode: ${String(mode)}`);
   }
   return mode;

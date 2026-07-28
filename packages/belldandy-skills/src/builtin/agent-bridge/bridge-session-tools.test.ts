@@ -210,7 +210,7 @@ describe("agent bridge P1 session tools", () => {
     }, baseContext);
     expect(stagedWrite.success).toBe(true);
     const stagedPayload = JSON.parse(stagedWrite.output) as { output: string };
-    expect(stagedPayload.output).not.toContain("submit-line-ok");
+    expect(stagedPayload.output).not.toMatch(/(?:^|\r?\n)submit-line-ok(?:\r?\n|$)/);
 
     const submitResult = await bridgeSessionWriteTool.execute({
       sessionId: started.sessionId,
@@ -219,7 +219,7 @@ describe("agent bridge P1 session tools", () => {
     }, baseContext);
     expect(submitResult.success).toBe(true);
     const submitPayload = JSON.parse(submitResult.output) as { output: string };
-    expect(submitPayload.output).toContain("submit-line-ok");
+    expect(submitPayload.output).toMatch(/(?:^|\r?\n)submit-line-ok(?:\r?\n|$)/);
   }, WINDOWS_PTY_FLOW_TEST_TIMEOUT_MS);
 
   it("aborts bridge_session_read while waiting for output", async () => {

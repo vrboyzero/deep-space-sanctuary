@@ -90,7 +90,7 @@ async function runNode(entryPath: string, args: string[], cwd: string, stdin = "
   return new Promise<ChildResult>((resolve, reject) => {
     const child = spawn(process.execPath, [entryPath, ...args], {
       cwd,
-      env: process.env,
+      env: { ...process.env, NODE_NO_WARNINGS: "1" },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

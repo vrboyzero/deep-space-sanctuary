@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -17,9 +18,10 @@ describe("VS Code coding-run settings", () => {
   });
 
   it("ignores missing, relative, and control-character state directories", () => {
+    const absoluteStateDir = path.join(path.parse(process.cwd()).root, "state-dir");
     expect(resolveCodingRunStateDir(undefined)).toBeUndefined();
     expect(resolveCodingRunStateDir("relative-state")).toBeUndefined();
     expect(resolveCodingRunStateDir("C:\\state\ninvalid")).toBeUndefined();
-    expect(resolveCodingRunStateDir("C:\\state-dir")).toBe("C:\\state-dir");
+    expect(resolveCodingRunStateDir(absoluteStateDir)).toBe(absoluteStateDir);
   });
 });

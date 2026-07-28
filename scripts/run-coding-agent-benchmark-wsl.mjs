@@ -9,12 +9,21 @@ const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 
 export function buildWslBenchmarkInvocation(input, dependencies = {}) {
   const distribution = requireInput(input, "distribution");
-  const workspaceRoot = path.resolve(requireInput(input, "workspaceRoot"));
+  const resolvePath = dependencies.resolvePath ?? path.resolve;
+  const workspaceRoot = resolvePath(requireInput(input, "workspaceRoot"));
   const toWslPath = dependencies.toWslPath ?? ((value) => resolveWslPath(value, distribution));
   const workspaceRootWsl = toWslPath(workspaceRoot);
   const fixtureRootWsl = toWslPath(requireInput(input, "fixtureRoot"));
   const artifactRootWsl = toWslPath(requireInput(input, "artifactRoot"));
   const stateRootWsl = toWslPath(requireInput(input, "stateRoot"));
+  const manifestRevision = input.manifestRevision ?? "v1";
+  if (manifestRevision !== "v1" && manifestRevision !== "v2") {
+    throw new Error("manifestRevision must be v1 or v2.");
+  }
+  const sourceRootWsl = input.sourceRoot ? toWslPath(requireInput(input, "sourceRoot")) : undefined;
+  if (manifestRevision === "v2" && !sourceRootWsl) {
+    throw new Error("sourceRoot is required for manifestRevision v2.");
+  }
   const credentialsConfigured = input.credentialsConfigured;
   if (typeof credentialsConfigured !== "boolean") {
     throw new Error("credentialsConfigured must be a boolean.");
@@ -50,6 +59,9 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       `BELLDANDY_HOST=${input.host ?? "127.0.0.1"}`,
       `BELLDANDY_PORT=${input.port ?? "28889"}`,
       `BELLDANDY_AUTH_MODE=${authMode}`,
+      ...(manifestRevision === "v2"
+        ? ["BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048"]
+        : []),
       "node", `${workspaceRootWsl}/scripts/run-coding-agent-benchmark.mjs`,
       "--platform", "wsl2-linux",
       "--fixture-root", fixtureRootWsl,
@@ -63,6 +75,8 @@ export function buildWslBenchmarkInvocation(input, dependencies = {}) {
       ...(priorObservedCostUsd === undefined
         ? []
         : ["--prior-observed-cost-usd", String(priorObservedCostUsd)]),
+      ...(manifestRevision === "v1" ? [] : ["--manifest-revision", manifestRevision]),
+      ...(sourceRootWsl ? ["--source-root", sourceRootWsl] : []),
     ],
   };
 }
@@ -141,6 +155,8 @@ async function main() {
     authMode: values.get("auth-mode"),
     authToken: process.env.BELLDANDY_AUTH_TOKEN,
     taskId: values.get("task-id"),
+    manifestRevision: values.get("manifest-revision") ?? "v1",
+    sourceRoot: values.get("source-root"),
     ...(values.has("prior-observed-cost-usd") ? {
       priorObservedCostUsd: Number(requireValue(values, "prior-observed-cost-usd")),
     } : {}),

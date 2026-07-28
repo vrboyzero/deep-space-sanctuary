@@ -85,15 +85,19 @@ star-sanctuary/
 - `scripts/verify-extension-runtime-oci-fixture.mjs`: Marketplace Plugin Extension Host 的显式 Windows/WSL OCI fixture；验证模块顶层、activate、Tool/Hook 均看不到 workspace/state/宿主环境 sentinel，extension/rootfs 只读、network none，以及 Supervisor/lease/container 收敛；只使用已运行 daemon 与预加载 digest-pinned Node 镜像
 - `examples/ci/`: 默认只读 GitHub Actions/通用 CI 示例、结构化 review prompt/output Schema、`AgentRunEvent v1` 静态 Schema、artifact 说明及迁移/回滚兼容矩阵
 - `benchmarks/coding-agent/v1/`: 项目编程 benchmark v1 的版本化 task manifest、失败分类、指标语义及 manifest/run/report/fault/cancel/restart-injection JSON Schema；只保存可提交契约，不保存运行 artifact 或凭据
+- `benchmarks/coding-agent/v2/`: corrected v2 的独立 manifest/run/report/preflight/approval/fault/cancel/restart JSON Schema；绑定 source 与 harness identity，基础设施失败不进入产品分母，且不改写 v1 artifact
+- `benchmarks/coding-agent/v2/agents.json`: 隔离 benchmark Gateway 的 command-control Agent Profile 模板；仅该 profile 将单 run 高风险工具预算固定为 5，其他 profile 保持 runtime 默认边界
 - `scripts/coding-agent-benchmark-contract.mjs`: 项目编程 task manifest 语义校验、机器评估运行记录校验与 report-only 指标聚合 owner；聚合脱敏 usage observation / USD cost，`completed` 必须覆盖完整 task/platform/sample 矩阵
 - `scripts/coding-agent-benchmark-fixtures.mjs`: 阶段 0B 规则/bug、阶段 0C interactive-control/safety-boundary/gateway-recovery/client-cancel/process-restart/Git 本地交付，以及阶段 0D cross-file/failed-test/large-repository 确定性 fixture 的 generator/evaluator owner；只接受空工作区，判定依据为实际 Git diff、完整只读快照、固定测试、PTY/权限/恢复/取消/重启事件、dirty worktree/额外 commit/Git symlink 边界、sentinel、进程收敛与 artifact
-- `scripts/coding-agent-recovery-harness.mjs`: 阶段 0C Gateway 断线外部注入与 cursor 续读 owner；透明代理只断开首个目标写事件后的 Headless 连接，再通过既有 coding-run stdio 订阅恢复证据，不重放模型或工具副作用
+- `scripts/coding-agent-benchmark-approval.mjs`: corrected v2 interactive/safety 专用精确审批 owner；按 run/toolCallId/fixture hash 绑定允许 command_job 五步或拒绝声明的 safety 集合，任何路径、参数、顺序或复用漂移均失败关闭
+- `scripts/coding-agent-benchmark-preflight.mjs`: corrected v2 的 source/harness content identity、隔离 Agent Profile、平台、Provider 定价、digest-pinned OCI 与 fault 能力运行前检查 owner；不自动拉取镜像
+- `scripts/coding-agent-recovery-harness.mjs`: 阶段 0C Gateway 断线外部注入与 cursor 续读 owner；corrected v2 只在绑定目标成功 mutation 且内容 hash 变化后断开 Headless，再通过既有 coding-run stdio 订阅恢复证据，不重放模型或工具副作用；失败写尝试与终态输出格式错误保留给 evaluator 做产品/模型归类
 - `scripts/coding-agent-process-restart-harness.mjs`: 阶段 0C 受控 loopback Gateway 子进程、首个已接受 run 的 PID 级重启、旧 binding 的订阅/取消探测与收敛 artifact owner；不复用用户 Gateway 或环境配置
 - `scripts/coding-agent-process-restart-gateway.mjs`: process-restart harness 专用惰性 fixture Gateway 入口；不注册渠道或读取项目环境配置
 - `scripts/aggregate-coding-agent-benchmark.mjs`: 阶段 0D 基线 evidence 聚合与离线重算校验 owner；只接受显式 report、拒绝覆盖/样本重复/source 漂移/缺失 artifact，并把保留 source report 与声明文件汇成 partial 或 completed baseline
 - `scripts/run-coding-agent-benchmark.mjs`: 阶段 0B/0C/0D Windows native 与 WSL2 Linux runner；严格核对实际平台指纹和显式 task 白名单，串联 fixture、既有 Coding CI Headless 链、六类逐 run artifact 与 partial benchmark report；将 Gateway usage 归一化为无敏感字段名的摘要，真实凭据 run 按剩余额度透传 `max-cost-usd`，分批续跑可将已验证 prior cost 从固定总额度中扣减，usage/cost 不可观测时停止后续 task；client-cancel/process-restart 额外保存外部生命周期证据，不执行远端 Git 写入
 - `scripts/run-coding-agent-benchmark-wsl.mjs`: 阶段 0C Windows host launcher；使用 WSL `wslpath` 和无 shell 的 `wsl.exe --exec` 参数数组启动 Linux runner，透传分批续跑的 prior cost，token auth 只通过 child env/`WSLENV` 转交，不进入参数或 artifact
-- `scripts/verify-coding-agent-benchmark-contract.mjs`: 对 benchmark manifest、六份 Schema、README、根脚本、项目地图和 Windows/Linux Quality Gate 接线执行失败关闭校验
+- `scripts/verify-coding-agent-benchmark-contract.mjs`: 对 v1/v2 benchmark manifest、全部公开 Schema、README、根脚本、项目地图和 Windows/Linux Quality Gate 接线执行失败关闭校验
 - `scripts/run-build-benchmark.mjs`: 运行 B00 TypeScript forced/incremental BuildGraph 基准并输出不设性能阈值的 JSON 报告
 - `scripts/run-distribution-integrity-benchmark.mjs`: 运行 D02 runtime manifest 完整性校验的固定 small/medium/large fixture 基准，记录 hash p50/p95、RSS 采样与等长篡改拒绝证据
 - `scripts/run-portable-recovery-benchmark.mjs`: 运行 D03 portable recovery 的固定 many-small/large-asset 压缩 payload 基准；每个 sample 以独立子进程调用公开恢复 owner，记录 p50/p95、吞吐、maxRSS/external/arrayBuffers 与恢复后完整性证据，SEA 明确不在测量范围
@@ -213,6 +217,7 @@ star-sanctuary/
 - `packages/belldandy-core/src/query-runtime-http.ts`: community/webhook 鉴权与 Agent 执行链；有效 owner 请求复用 Gateway 顶层 lifecycle，重复 webhook 不重复计租
 - `packages/belldandy-core/src/query-runtime-artifact.ts`: `/generated` 产物 reveal，先验证 canonical target 仍在 generated root 内，再本地打开保存目录/定位文件
 - `packages/belldandy-core/src/query-runtime-agent-run.ts` / `query-runtime-message-send.ts`: Agent item 汇聚与 `message.send` 主执行链；从 history 准备到后台 finalizer 的顶层 lifecycle lease、tool result metadata / `failureKind` / follow-up runtime marks 透传；为声明 `steerAtModelBoundary` 的 Agent 建立 exact run mailbox，并在 delivery 前先把 steer 作为 Conversation 用户消息持久化；Conversation run 终态清理后在 reservation 保护下 claim 下一条 follow-up/replacement command，移除旧附件并以内部分发启动新的 `agentRunId`，启动失败时停止剩余队列；replacement 仍等待旧 run 终态，不与旧 run 并发，存在 pending steer 时失败关闭；带 `codingRun.cwd` 的单次 run 在此解析项目规则并追加可观测 `project-rules` system delta，不修改 Gateway 启动期身份 prompt；同时负责 `budget_exhausted` / Provider stream `interrupted` 的失败终态收尾，后者保留当前 partial 且不制造或持久化 final
+- `packages/belldandy-core/src/tool-result-event-output.ts`: 已鉴权 Gateway `tool_result.output` 字符串的有界事件投影 owner；生产默认 500 字符、硬上限 2048，非法配置回退默认值，不修改 Agent transcript 或 Tool owner；corrected v2 interactive benchmark 才显式要求 2048
 - `packages/belldandy-core/src/resident-auto-run.ts`: resident 主动运行与 reminder-only 写入；在首次 Store 访问前取得共享顶层 lease，并在完整 run 或同步写入完成后归还
 - `packages/belldandy-core/src/attachment-understanding-runner.ts`: 附件落盘、图片/视频自动识别摘要注入、音频转写缓存复用
 - `packages/belldandy-core/src/preflight-compression-config.ts` / `preflight-compression-sidecar.ts` / `preflight-compression-governance.ts`: 发送前附件预压缩配置、sidecar 原文回取、TTL/最大条目清理治理与 doctor 观测

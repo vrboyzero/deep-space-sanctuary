@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 export const CODING_AGENT_BENCHMARK_MANIFEST_VERSION = "coding-agent-benchmark-manifest/v1";
 export const CODING_AGENT_BENCHMARK_REPORT_VERSION = "coding-agent-benchmark-report/v1";
 export const CODING_AGENT_BENCHMARK_RUN_VERSION = "coding-agent-benchmark-run/v1";
+export const CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION = "coding-agent-benchmark-manifest/v2";
+export const CODING_AGENT_BENCHMARK_REPORT_V2_VERSION = "coding-agent-benchmark-report/v2";
+export const CODING_AGENT_BENCHMARK_RUN_V2_VERSION = "coding-agent-benchmark-run/v2";
 
 const REQUIRED_PLATFORMS = ["windows-native", "wsl2-linux"];
 const FROZEN_EXECUTION_PROFILES = {
@@ -44,11 +47,32 @@ const FROZEN_EXECUTION_PROFILES = {
     toolDeny: ["spawn_subagent", "apply_patch", "file_write", "file_delete"],
   },
 };
+export const CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE = Object.freeze({
+  id: "coding-benchmark-command-control-v2",
+  displayName: "Coding Benchmark Command Control v2",
+  model: "primary",
+  kind: "resident",
+  maxHighRiskToolCalls: 5,
+});
+const FROZEN_EXECUTION_PROFILES_V2 = {
+  ...FROZEN_EXECUTION_PROFILES,
+  "command-control": {
+    agentId: CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE.id,
+    maxHighRiskToolCalls: CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE.maxHighRiskToolCalls,
+    ...FROZEN_EXECUTION_PROFILES["command-control"],
+    toolAllow: ["file_read", "list_files", "run_command", "command_job"],
+  },
+};
 const REQUIRED_EXECUTION_PROFILES = new Set(Object.keys(FROZEN_EXECUTION_PROFILES));
 const FROZEN_BUDGETS = {
   timeoutMs: 300_000,
   maxTurns: 12,
   maxTokens: 24_000,
+};
+const FROZEN_TASK_BUDGET_OVERRIDES_V2 = {
+  "command.interactive-control": {
+    maxTokens: 36_000,
+  },
 };
 const FROZEN_RETRY_POLICY = {
   maxInfrastructureRetries: 1,
@@ -114,6 +138,69 @@ const defaultManifestPath = path.resolve(
   "v1",
   "task-manifest.json",
 );
+const v2ManifestPath = path.resolve(
+  scriptDir,
+  "..",
+  "benchmarks",
+  "coding-agent",
+  "v2",
+  "task-manifest.json",
+);
+const BENCHMARK_CONTRACTS = Object.freeze({
+  v1: Object.freeze({
+    revision: "v1",
+    manifestVersion: CODING_AGENT_BENCHMARK_MANIFEST_VERSION,
+    reportVersion: CODING_AGENT_BENCHMARK_REPORT_VERSION,
+    runVersion: CODING_AGENT_BENCHMARK_RUN_VERSION,
+    suiteId: "ss-project-coding-v1",
+    executionProfiles: FROZEN_EXECUTION_PROFILES,
+    budgets: FROZEN_BUDGETS,
+    taskBudgetOverrides: {},
+    manifestPath: defaultManifestPath,
+    requiresPreflightArtifact: false,
+    requiresHarnessIdentity: false,
+  }),
+  v2: Object.freeze({
+    revision: "v2",
+    manifestVersion: CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION,
+    reportVersion: CODING_AGENT_BENCHMARK_REPORT_V2_VERSION,
+    runVersion: CODING_AGENT_BENCHMARK_RUN_V2_VERSION,
+    suiteId: "ss-project-coding-v2",
+    executionProfiles: FROZEN_EXECUTION_PROFILES_V2,
+    budgets: FROZEN_BUDGETS,
+    taskBudgetOverrides: FROZEN_TASK_BUDGET_OVERRIDES_V2,
+    manifestPath: v2ManifestPath,
+    requiresPreflightArtifact: true,
+    requiresHarnessIdentity: true,
+  }),
+});
+
+export function resolveCodingAgentBenchmarkManifestPath(revision = "v1") {
+  return resolveCodingAgentBenchmarkContractByRevision(revision).manifestPath;
+}
+
+export function resolveCodingAgentBenchmarkContract(revision = "v1") {
+  const contract = resolveCodingAgentBenchmarkContractByRevision(revision);
+  return {
+    revision: contract.revision,
+    manifestVersion: contract.manifestVersion,
+    reportVersion: contract.reportVersion,
+    runVersion: contract.runVersion,
+    suiteId: contract.suiteId,
+    executionProfiles: structuredClone(contract.executionProfiles),
+    budgets: structuredClone(contract.budgets),
+    taskBudgetOverrides: structuredClone(contract.taskBudgetOverrides),
+  };
+}
+
+export function resolveCodingAgentBenchmarkTaskBudgets(manifest, taskId) {
+  const task = manifest?.tasks?.find((candidate) => candidate?.id === taskId);
+  if (!task) throw new Error(`Coding benchmark task ${String(taskId)} is not declared by the manifest.`);
+  return {
+    ...manifest.suite.budgets,
+    ...(manifest.suite.taskBudgetOverrides?.[task.id] ?? {}),
+  };
+}
 
 export async function loadCodingAgentBenchmarkManifest(manifestPath = defaultManifestPath) {
   const resolvedPath = path.resolve(manifestPath);
@@ -130,13 +217,14 @@ export function validateCodingAgentBenchmarkManifest(manifest) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new Error("Coding benchmark manifest must be an object.");
   }
-  if (manifest.schemaVersion !== CODING_AGENT_BENCHMARK_MANIFEST_VERSION) {
+  const contract = resolveCodingAgentBenchmarkContractByManifest(manifest);
+  if (!contract) {
     throw new Error(`Unsupported coding benchmark manifest version: ${String(manifest.schemaVersion)}.`);
   }
   if (!manifest.suite || typeof manifest.suite !== "object" || Array.isArray(manifest.suite)) {
     throw new Error("Coding benchmark manifest requires suite metadata.");
   }
-  assertFrozenSuite(manifest.suite);
+  assertFrozenSuite(manifest.suite, contract);
   if (!Array.isArray(manifest.tasks) || manifest.tasks.length === 0) {
     throw new Error("Coding benchmark manifest requires at least one task.");
   }
@@ -155,11 +243,16 @@ export function validateCodingAgentBenchmarkManifest(manifest) {
     }
     taskIds.add(task.id);
     categories.add(task.category);
-    if (typeof task.fixture?.generatorId !== "string" || !task.fixture.generatorId.endsWith("-v1")) {
+    const fixtureVersionMatch = typeof task.fixture?.generatorId === "string"
+      ? /-v([1-9]\d*)$/.exec(task.fixture.generatorId)
+      : null;
+    if (!fixtureVersionMatch) {
       throw new Error(`Coding benchmark task ${task.id} requires a versioned fixture generator.`);
     }
-    if (task.fixture.version !== 1) {
-      throw new Error(`Coding benchmark task ${task.id} requires fixture version 1.`);
+    if (!Number.isSafeInteger(task.fixture.version)
+      || task.fixture.version < 1
+      || Number(fixtureVersionMatch[1]) !== task.fixture.version) {
+      throw new Error(`Coding benchmark task ${task.id} fixture version must match its generator suffix.`);
     }
     if (task.fixture.resetStrategy !== "regenerate") {
       throw new Error(`Coding benchmark task ${task.id} requires the regenerate reset strategy.`);
@@ -193,9 +286,9 @@ export function validateCodingAgentBenchmarkManifest(manifest) {
   return manifest;
 }
 
-function assertFrozenSuite(suite) {
-  if (suite.id !== "ss-project-coding-v1") {
-    throw new Error("Coding benchmark suite id drifted from ss-project-coding-v1.");
+function assertFrozenSuite(suite, contract) {
+  if (suite.id !== contract.suiteId) {
+    throw new Error(`Coding benchmark suite id drifted from ${contract.suiteId}.`);
   }
   if (typeof suite.title !== "string" || !suite.title.trim()) {
     throw new Error("Coding benchmark suite requires a title.");
@@ -203,18 +296,21 @@ function assertFrozenSuite(suite) {
   if (suite.sampleRuns !== 3) {
     throw new Error("Coding benchmark suite sampleRuns must remain frozen at 3.");
   }
-  if (suite.artifactSchemaVersion !== CODING_AGENT_BENCHMARK_RUN_VERSION
-    || suite.reportSchemaVersion !== CODING_AGENT_BENCHMARK_REPORT_VERSION) {
+  if (suite.artifactSchemaVersion !== contract.runVersion
+    || suite.reportSchemaVersion !== contract.reportVersion) {
     throw new Error("Coding benchmark suite artifact/report versions drifted from the public contract.");
   }
   if (JSON.stringify(suite.requiredPlatforms) !== JSON.stringify(REQUIRED_PLATFORMS)) {
     throw new Error("Coding benchmark suite must use the frozen platform matrix.");
   }
-  if (JSON.stringify(suite.executionProfiles) !== JSON.stringify(FROZEN_EXECUTION_PROFILES)) {
-    throw new Error("Coding benchmark suite execution profiles drifted from the frozen v1 contract.");
+  if (JSON.stringify(suite.executionProfiles) !== JSON.stringify(contract.executionProfiles)) {
+    throw new Error(`Coding benchmark suite execution profiles drifted from the frozen ${contract.revision} contract.`);
   }
   if (JSON.stringify(suite.budgets) !== JSON.stringify(FROZEN_BUDGETS)) {
     throw new Error("Coding benchmark suite budgets drifted from the frozen v1 contract.");
+  }
+  if (JSON.stringify(suite.taskBudgetOverrides ?? {}) !== JSON.stringify(contract.taskBudgetOverrides)) {
+    throw new Error(`Coding benchmark suite task budget overrides drifted from the frozen ${contract.revision} contract.`);
   }
   if (JSON.stringify(suite.retryPolicy) !== JSON.stringify(FROZEN_RETRY_POLICY)) {
     throw new Error("Coding benchmark suite retry policy drifted from the frozen v1 contract.");
@@ -286,6 +382,7 @@ function isSafeManifestPath(value) {
 
 export function createCodingAgentBenchmarkReport(input) {
   const manifest = validateCodingAgentBenchmarkManifest(input?.manifest);
+  const contract = resolveCodingAgentBenchmarkContractByManifest(manifest);
   if (input.status !== "partial" && input.status !== "completed") {
     throw new Error("Coding benchmark report status must be partial or completed.");
   }
@@ -293,7 +390,8 @@ export function createCodingAgentBenchmarkReport(input) {
     throw new Error("Coding benchmark report requires a valid generatedAt timestamp.");
   }
   requireSha256(input.manifestSha256, "manifestSha256");
-  assertSource(input.source);
+  assertRepositoryIdentity(input.source, "source", contract.requiresHarnessIdentity);
+  if (contract.requiresHarnessIdentity) assertRepositoryIdentity(input.harness, "harness", true);
   if (!Array.isArray(input.runs) || input.runs.length === 0) {
     throw new Error("Coding benchmark report requires at least one run.");
   }
@@ -345,8 +443,18 @@ export function createCodingAgentBenchmarkReport(input) {
     notReachedRunCount: usageObservations.filter((item) => item.status === "not_reached").length,
   };
 
+  const productRuns = contract.revision === "v2"
+    ? input.runs.filter((run) => run.status !== "infrastructure_error")
+    : input.runs;
+  const infrastructureErrorRunCount = input.runs.filter((run) => run.status === "infrastructure_error").length;
+  const eligibleForProductComparison = contract.revision !== "v2"
+    ? undefined
+    : input.status === "completed"
+      && input.runs.length === manifest.tasks.length * manifest.suite.requiredPlatforms.length * manifest.suite.sampleRuns
+      && infrastructureErrorRunCount === 0;
+
   return {
-    schemaVersion: CODING_AGENT_BENCHMARK_REPORT_VERSION,
+    schemaVersion: contract.reportVersion,
     status: input.status,
     generatedAt: input.generatedAt,
     benchmark: {
@@ -360,16 +468,22 @@ export function createCodingAgentBenchmarkReport(input) {
       sampleRuns: manifest.suite.sampleRuns,
       requiredPlatforms: [...manifest.suite.requiredPlatforms],
     },
+    ...(contract.requiresHarnessIdentity ? { harness: { ...input.harness } } : {}),
     source: { ...input.source },
     runs: input.runs.map((run) => structuredClone(run)),
     summary: {
       runCount: input.runs.length,
+      ...(contract.revision === "v2" ? {
+        productRunCount: productRuns.length,
+        infrastructureErrorRunCount,
+        eligibleForProductComparison,
+      } : {}),
       passedRunCount: input.runs.filter((run) => run.status === "passed").length,
       failuresByCategory,
       metrics: {
-        task_completion_rate: booleanRate(input.runs.map((run) => run.evaluation.taskCompleted)),
-        test_pass_rate: applicableBooleanRate(input.runs.map((run) => run.evaluation.testsPassed)),
-        patch_acceptance_rate: applicableBooleanRate(input.runs.map((run) => run.evaluation.patchAccepted)),
+        task_completion_rate: booleanRate(productRuns.map((run) => run.evaluation.taskCompleted)),
+        test_pass_rate: applicableBooleanRate(productRuns.map((run) => run.evaluation.testsPassed)),
+        patch_acceptance_rate: applicableBooleanRate(productRuns.map((run) => run.evaluation.patchAccepted)),
         regression_count: { value: sum(input.runs.map((run) => run.evaluation.regressionCount)) },
         manual_intervention_count: {
           value: sum(input.runs.map((run) => run.evaluation.manualInterventionCount)),
@@ -393,10 +507,11 @@ export function createCodingAgentBenchmarkReport(input) {
 }
 
 function assertRunRecord(run, tasksById, manifest) {
+  const contract = resolveCodingAgentBenchmarkContractByManifest(manifest);
   if (!run || typeof run !== "object" || Array.isArray(run)) {
     throw new Error("Coding benchmark run must be an object.");
   }
-  if (run.schemaVersion !== CODING_AGENT_BENCHMARK_RUN_VERSION) {
+  if (run.schemaVersion !== contract.runVersion) {
     throw new Error(`Unsupported coding benchmark run version: ${String(run.schemaVersion)}.`);
   }
   assertNoCredentialFields(run, `run.${String(run.runId ?? "unknown")}`);
@@ -452,7 +567,7 @@ function assertRunRecord(run, tasksById, manifest) {
     && (!Number.isFinite(run.execution.maxCostUsd) || run.execution.maxCostUsd <= 0)) {
     throw new Error(`Coding benchmark run ${run.runId} has an invalid maxCostUsd.`);
   }
-  if (JSON.stringify(run.execution?.budgets) !== JSON.stringify(manifest.suite.budgets)) {
+  if (JSON.stringify(run.execution?.budgets) !== JSON.stringify(resolveCodingAgentBenchmarkTaskBudgets(manifest, task.id))) {
     throw new Error(`Coding benchmark run ${run.runId} execution budgets drifted from the manifest.`);
   }
   if (!Number.isInteger(run.execution?.infrastructureRetries)
@@ -487,6 +602,12 @@ function assertRunRecord(run, tasksById, manifest) {
     if (!categories.has(run.failureCategory)) {
       throw new Error(`Failed coding benchmark run ${run.runId} requires a known failure category.`);
     }
+  }
+  if (contract.revision === "v2"
+    && ((run.status === "infrastructure_error") !== (run.failureCategory === "infrastructure"))) {
+    throw new Error(
+      `Coding benchmark v2 run ${run.runId} must pair infrastructure failures with status=infrastructure_error.`,
+    );
   }
   if (!run.environment || typeof run.environment !== "object" || Array.isArray(run.environment)) {
     throw new Error(`Coding benchmark run ${run.runId} requires an environment fingerprint.`);
@@ -557,6 +678,11 @@ function assertRunRecord(run, tasksById, manifest) {
     "patch",
     "diagnostics",
     "status",
+    ...(contract.requiresPreflightArtifact ? ["preflight"] : []),
+    ...(contract.requiresPreflightArtifact
+      && (task.id === "command.interactive-control" || task.id === "safety.boundary-enforcement")
+      ? ["approvalContract", "approvalEvidence"]
+      : []),
     ...(task.id === "gateway.disconnect-recovery" ? ["faultInjection"] : []),
     ...(task.id === "gateway.client-cancel" ? ["cancelInjection"] : []),
     ...(task.id === "gateway.process-restart" ? ["restartInjection"] : []),
@@ -572,18 +698,23 @@ function assertRunRecord(run, tasksById, manifest) {
   }
 }
 
-function assertSource(source) {
-  if (!source || typeof source !== "object" || Array.isArray(source)) {
-    throw new Error("Coding benchmark report requires source identity.");
+function assertRepositoryIdentity(identity, label, requireWorktreeContentSha256) {
+  if (!identity || typeof identity !== "object" || Array.isArray(identity)) {
+    throw new Error(`Coding benchmark report requires ${label} identity.`);
   }
-  assertExactKeys(source, ["commit", "workspaceDirty", "lockfileSha256"], "Coding benchmark source");
-  if (typeof source.commit !== "string" || !/^[0-9a-f]{40}$/i.test(source.commit)) {
-    throw new Error("Coding benchmark source commit must be a full Git SHA-1.");
+  const keys = ["commit", "workspaceDirty", "lockfileSha256"];
+  if (requireWorktreeContentSha256) keys.push("worktreeContentSha256");
+  assertExactKeys(identity, keys, `Coding benchmark ${label}`);
+  if (typeof identity.commit !== "string" || !/^[0-9a-f]{40}$/i.test(identity.commit)) {
+    throw new Error(`Coding benchmark ${label} commit must be a full Git SHA-1.`);
   }
-  if (typeof source.workspaceDirty !== "boolean") {
-    throw new Error("Coding benchmark source must record workspaceDirty.");
+  if (typeof identity.workspaceDirty !== "boolean") {
+    throw new Error(`Coding benchmark ${label} must record workspaceDirty.`);
   }
-  requireSha256(source.lockfileSha256, "source.lockfileSha256");
+  requireSha256(identity.lockfileSha256, `${label}.lockfileSha256`);
+  if (requireWorktreeContentSha256) {
+    requireSha256(identity.worktreeContentSha256, `${label}.worktreeContentSha256`);
+  }
 }
 
 function assertExactKeys(value, expectedKeys, label) {
@@ -698,4 +829,15 @@ function assertNoCredentialFields(value, location = "manifest") {
 
 function safeMessage(error) {
   return error instanceof Error ? error.message : String(error ?? "unknown error");
+}
+
+function resolveCodingAgentBenchmarkContractByRevision(revision) {
+  const normalized = typeof revision === "string" && revision.trim() ? revision.trim() : "v1";
+  const contract = BENCHMARK_CONTRACTS[normalized];
+  if (!contract) throw new Error(`Unsupported coding benchmark manifest revision: ${normalized}.`);
+  return contract;
+}
+
+function resolveCodingAgentBenchmarkContractByManifest(manifest) {
+  return Object.values(BENCHMARK_CONTRACTS).find((contract) => contract.manifestVersion === manifest?.schemaVersion);
 }

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-approval-evidence-v1.json",
+  "title": "Coding agent benchmark fixture approval evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "manifestRevision",
+    "taskId",
+    "runId",
+    "contractSha256",
+    "fixture",
+    "policyMode",
+    "status",
+    "binding",
+    "requests",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-benchmark-approval-evidence/v1" },
+    "manifestRevision": { "const": "v2" },
+    "taskId": { "enum": ["command.interactive-control", "safety.boundary-enforcement"] },
+    "runId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "contractSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "fixture": { "$ref": "#/$defs/fixture" },
+    "policyMode": { "enum": ["allow_exact_sequence", "deny_exact_set"] },
+    "status": { "enum": ["passed", "failed", "not_run"] },
+    "binding": {
+      "anyOf": [
+        { "$ref": "#/$defs/binding" },
+        { "type": "null" }
+      ]
+    },
+    "requests": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "binding", "toolCallId", "toolName", "action", "operationSha256", "decision", "reason", "responseStatus"],
+        "properties": {
+          "seq": { "type": "integer", "minimum": 0 },
+          "binding": { "$ref": "#/$defs/binding" },
+          "toolCallId": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "toolName": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "action": { "type": ["string", "null"], "maxLength": 100 },
+          "operationSha256": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "decision": { "enum": ["allow", "deny"] },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "responseStatus": { "enum": ["accepted", "rejected", "error", "not_sent"] },
+          "responseErrorCode": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "responseError": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expectedRequestCount", "requestCount", "allowedCount", "deniedCount", "responseFailureCount", "issueCount"],
+      "properties": {
+        "expectedRequestCount": { "type": "integer", "minimum": 0 },
+        "requestCount": { "type": "integer", "minimum": 0 },
+        "allowedCount": { "type": "integer", "minimum": 0 },
+        "deniedCount": { "type": "integer", "minimum": 0 },
+        "responseFailureCount": { "type": "integer", "minimum": 0 },
+        "issueCount": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversationId", "agentRunId"],
+      "properties": {
+        "conversationId": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "agentRunId": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generatorId", "version", "baselineCommit", "path", "sha256"],
+      "properties": {
+        "generatorId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*-v[1-9][0-9]*$" },
+        "version": { "type": "integer", "minimum": 1 },
+        "baselineCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

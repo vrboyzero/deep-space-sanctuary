@@ -18,9 +18,12 @@ describe("coding agent benchmark WSL launcher", () => {
       attempt: 2,
       taskId: "command.interactive-control",
       priorObservedCostUsd: 0.75,
+      manifestRevision: "v2",
+      sourceRoot: "E:/project/star-sanctuary-source-fd70990",
     }, {
+      resolvePath: (value) => path.win32.resolve(value),
       toWslPath(value) {
-        return `/mnt/e/${path.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
+        return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
       },
     });
 
@@ -31,6 +34,7 @@ describe("coding agent benchmark WSL launcher", () => {
       "BELLDANDY_HOST=127.0.0.1",
       "BELLDANDY_PORT=28889",
       "BELLDANDY_AUTH_MODE=none",
+      "BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048",
       "node", "/mnt/e/project/star-sanctuary/scripts/run-coding-agent-benchmark.mjs",
       "--platform", "wsl2-linux",
       "--fixture-root", "/mnt/e/project/star-sanctuary/.tmp/coding-agent-fixtures-wsl",
@@ -42,6 +46,8 @@ describe("coding agent benchmark WSL launcher", () => {
       "--attempt", "2",
       "--task-id", "command.interactive-control",
       "--prior-observed-cost-usd", "0.75",
+      "--manifest-revision", "v2",
+      "--source-root", "/mnt/e/project/star-sanctuary-source-fd70990",
     ]);
     expect(invocation.args.join(" ")).not.toContain("api-key");
   });
@@ -60,12 +66,14 @@ describe("coding agent benchmark WSL launcher", () => {
       authToken: "fixture-auth-token",
     }, {
       baseEnv: { WSLENV: "EXISTING/u" },
+      resolvePath: (value) => path.win32.resolve(value),
       toWslPath(value) {
-        return `/mnt/e/${path.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
+        return `/mnt/e/${path.win32.resolve(value).replace(/^E:[\\/]/i, "").replaceAll("\\", "/")}`;
       },
     });
 
     expect(invocation.args).toContain("BELLDANDY_AUTH_MODE=token");
+    expect(invocation.args).not.toContain("BELLDANDY_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT=2048");
     expect(invocation.args.join(" ")).not.toContain("fixture-auth-token");
     expect(invocation.env).toMatchObject({
       BELLDANDY_AUTH_TOKEN: "fixture-auth-token",

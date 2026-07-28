@@ -1,5 +1,6 @@
 import { constants, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
+import path from "node:path";
 
 import { FilesystemCapability } from "@belldandy/protocol";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
@@ -153,7 +154,7 @@ async function sendOpenedAvatar(
   res.setHeader("Cache-Control", "public, max-age=0");
   res.setHeader("Last-Modified", lastModified);
   res.setHeader("ETag", etag);
-  res.type(filePath);
+  res.type(path.extname(filePath));
 
   if (hasFailedPrecondition(req, etag, lastModified)) {
     await closeFileQuietly(fileHandle);

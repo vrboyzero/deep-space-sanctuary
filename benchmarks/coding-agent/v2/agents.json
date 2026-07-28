@@ -1,0 +1,11 @@
+{
+  "agents": [
+    {
+      "id": "coding-benchmark-command-control-v2",
+      "displayName": "Coding Benchmark Command Control v2",
+      "model": "primary",
+      "kind": "resident",
+      "maxHighRiskToolCalls": 5
+    }
+  ]
+}

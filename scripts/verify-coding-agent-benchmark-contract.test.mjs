@@ -82,7 +82,10 @@ describe("coding agent benchmark repository contract", () => {
     expect(readme).toContain("git.dirty-worktree");
     expect(readme).toContain("git.delivery-guard");
     expect(readme).toContain("回退到 primary");
+    expect(readme).toContain("v2/agents.json");
+    expect(readme).toContain("maxHighRiskToolCalls=5");
     expect(projectMap).toContain("scripts/run-coding-agent-benchmark-wsl.mjs");
+    expect(projectMap).toContain("benchmarks/coding-agent/v2/agents.json");
     expect(projectMap).toContain("scripts/coding-agent-recovery-harness.mjs");
     expect(projectMap).toContain("scripts/aggregate-coding-agent-benchmark.mjs");
   });

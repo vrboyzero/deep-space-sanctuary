@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { resolveCodingAgentBenchmarkContract } from "./coding-agent-benchmark-contract.mjs";
+import {
+  createBenchmarkApprovalController,
+  loadBenchmarkApprovalContract,
+} from "./coding-agent-benchmark-approval.mjs";
+
 export const CODING_CI_CONTRACT_VERSION = "coding-agent-ci/v1";
 export const CODING_CI_LIMITS = Object.freeze({
   timeoutMs: 300_000,
@@ -35,71 +41,60 @@ const CANCELLATION_REQUEST_TIMEOUT_MS = 15_000;
 const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 
-export function resolveCodingCiProfile(value) {
+export function resolveCodingCiProfile(value, manifestRevision = "v1") {
   const mode = typeof value === "string" && value.trim() ? value.trim() : "plan";
-  if (mode === "plan") {
-    return {
-      mode,
-      permissionMode: "plan",
-      toolAllow: ["file_read", "list_files"],
-    };
+  const profile = resolveCodingAgentBenchmarkContract(manifestRevision).executionProfiles[mode];
+  if (!profile) {
+    throw new Error("--mode must be plan, navigation-read, workspace-write, command-control, safety-probe, recovery-control, or git-local.");
   }
-  if (mode === "navigation-read") {
-    return {
-      mode,
-      permissionMode: "plan",
-      toolAllow: ["file_read", "list_files", "text_search", "file_glob"],
-    };
+  const defaultToolDeny = profile.toolAllow.includes("run_command")
+    ? ["spawn_subagent"]
+    : ["run_command", "spawn_subagent"];
+  return {
+    mode,
+    ...(typeof profile.agentId === "string" && profile.agentId.trim()
+      ? { agentId: profile.agentId.trim() }
+      : {}),
+    ...(Number.isInteger(profile.maxHighRiskToolCalls) && profile.maxHighRiskToolCalls >= 0
+      ? { maxHighRiskToolCalls: profile.maxHighRiskToolCalls }
+      : {}),
+    permissionMode: profile.permissionMode,
+    toolAllow: [...profile.toolAllow],
+    ...(JSON.stringify(profile.toolDeny) === JSON.stringify(defaultToolDeny)
+      ? {}
+      : { toolDeny: [...profile.toolDeny] }),
+  };
+}
+
+export function resolveCodingCiLimits(manifestRevision = "v1", taskId) {
+  const contract = resolveCodingAgentBenchmarkContract(manifestRevision);
+  if (contract.revision === "v2" && (typeof taskId !== "string" || !taskId.trim())) {
+    throw new Error("--task-id is required for corrected v2 CI runs.");
   }
-  if (mode === "workspace-write") {
-    return {
-      mode,
-      permissionMode: "acceptEdits",
-      toolAllow: ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
-    };
-  }
-  if (mode === "command-control" || mode === "safety-probe") {
-    return {
-      mode,
-      permissionMode: "confirm",
-      toolAllow: ["file_read", "list_files", "run_command"],
-    };
-  }
-  if (mode === "recovery-control") {
-    return {
-      mode,
-      permissionMode: "acceptEdits",
-      toolAllow: ["file_read", "list_files", "apply_patch", "file_write"],
-      toolDeny: ["run_command", "spawn_subagent", "file_delete"],
-    };
-  }
-  if (mode === "git-local") {
-    return {
-      mode,
-      permissionMode: "confirm",
-      toolAllow: ["file_read", "list_files", "run_command"],
-      toolDeny: ["spawn_subagent", "apply_patch", "file_write", "file_delete"],
-    };
-  }
-  throw new Error("--mode must be plan, navigation-read, workspace-write, command-control, safety-probe, recovery-control, or git-local.");
+  return {
+    ...CODING_CI_LIMITS,
+    ...(contract.taskBudgetOverrides?.[taskId] ?? {}),
+  };
 }
 
 export function buildAgentRunArgs(input) {
+  const limits = input.limits ?? CODING_CI_LIMITS;
   return [
     "agent", "run",
     "--jsonl",
     "--cwd", path.resolve(input.workspace),
     "--state-dir", path.resolve(input.stateDir),
     ...(input.conversationId ? ["--conversation-id", input.conversationId] : []),
+    ...(input.profile.agentId ? ["--agent-id", input.profile.agentId] : []),
     ...(input.modelId ? ["--model-id", input.modelId] : []),
     "--permission-mode", input.profile.permissionMode === "acceptEdits" ? "accept-edits" : input.profile.permissionMode,
     "--tool-allow", input.profile.toolAllow.join(","),
     "--tool-deny", (input.profile.toolDeny ?? (input.profile.toolAllow.includes("run_command")
       ? ["spawn_subagent"]
       : ["run_command", "spawn_subagent"])).join(","),
-    "--timeout", String(CODING_CI_LIMITS.timeoutMs),
-    "--max-turns", String(CODING_CI_LIMITS.maxTurns),
-    "--max-tokens", String(CODING_CI_LIMITS.maxTokens),
+    "--timeout", String(limits.timeoutMs),
+    "--max-turns", String(limits.maxTurns),
+    "--max-tokens", String(limits.maxTokens),
     ...(Number.isFinite(input.maxCostUsd) && input.maxCostUsd > 0
       ? ["--max-cost-usd", String(input.maxCostUsd)]
       : []),
@@ -160,6 +155,18 @@ export function sanitizeDiagnostic(value) {
   );
 }
 
+export function buildBenchmarkPermissionResponseParams(protocolVersion, request) {
+  return {
+    control: {
+      version: protocolVersion,
+      operation: "permission.respond",
+      binding: request.binding,
+      toolCallId: request.toolCallId,
+      decision: request.decision,
+    },
+  };
+}
+
 export function collectWorkspaceArtifact(input) {
   const workspace = path.resolve(input.workspace);
   const trackedPaths = splitNull(runGit(workspace, ["diff", "--name-only", "-z", "HEAD", "--", "."]).stdout);
@@ -210,7 +217,7 @@ async function main() {
   await fs.access(options.bddEntry);
 
   const coreEntry = path.join(
-    workspaceRoot,
+    options.sourceRoot,
     "packages",
     "belldandy-core",
     "dist",
@@ -218,6 +225,32 @@ async function main() {
     "contracts.js",
   );
   const { CODING_RUN_PROTOCOL_VERSION, isAgentRunEventV1 } = await import(pathToFileURL(coreEntry).href);
+  let approvalController;
+  if (options.approvalContractPath) {
+    const { contract, contractSha256 } = await loadBenchmarkApprovalContract(options.approvalContractPath);
+    const gatewayRpcEntry = path.join(
+      options.sourceRoot,
+      "packages",
+      "belldandy-core",
+      "dist",
+      "cli",
+      "shared",
+      "gateway-rpc.js",
+    );
+    const { invokeGatewayMethod } = await import(pathToFileURL(gatewayRpcEntry).href);
+    approvalController = createBenchmarkApprovalController({
+      contract,
+      contractSha256,
+      respondPermission: async (request) => await invokeGatewayMethod({
+        stateDir: options.stateDir,
+        method: "coding.run.control",
+        params: buildBenchmarkPermissionResponseParams(CODING_RUN_PROTOCOL_VERSION, request),
+        requestIdPrefix: "coding-benchmark-permission",
+        clientName: "coding benchmark fixture approval",
+        parsePayload: (payload) => payload,
+      }),
+    });
+  }
   const child = await runAgentProcess({
     bddEntry: options.bddEntry,
     args: buildAgentRunArgs(options),
@@ -225,7 +258,16 @@ async function main() {
     prompt,
     stateDir: options.stateDir,
     cancelOnRunStart: options.cancelOnRunStart,
+    approvalController,
   });
+
+  if (child.approvalEvidence) {
+    await fs.writeFile(
+      path.join(options.artifactDir, "approval-evidence.json"),
+      `${JSON.stringify(child.approvalEvidence, null, 2)}\n`,
+      "utf-8",
+    );
+  }
 
   const parsed = parseJsonl(child.stdout);
   const canonicalJsonl = parsed.events.map((event) => JSON.stringify(event)).join("\n");
@@ -267,6 +309,9 @@ async function main() {
     cancellationArtifact && cancellationArtifact.status !== "confirmed"
       ? `Cancellation injection status: ${cancellationArtifact.status}.`
       : "",
+    child.approvalEvidence && child.approvalEvidence.status !== "passed"
+      ? `Benchmark fixture approval status: ${child.approvalEvidence.status}.`
+      : "",
   ].filter(Boolean).join("\n");
   await fs.writeFile(path.join(options.artifactDir, "diagnostics.log"), diagnostics ? `${diagnostics}\n` : "", "utf-8");
 
@@ -295,7 +340,7 @@ async function main() {
     schemaVersion: CODING_CI_CONTRACT_VERSION,
     protocolVersion: CODING_RUN_PROTOCOL_VERSION,
     mode: options.profile.mode,
-    limits: CODING_CI_LIMITS,
+    limits: options.limits ?? CODING_CI_LIMITS,
     cliExitCode: child.exitCode,
     eventCount: parsed.events.length,
     terminalType: eventContract?.terminalType ?? null,
@@ -306,6 +351,7 @@ async function main() {
       eventContract: !eventContractError,
       artifactPolicy: !artifactPolicyError,
       automaticPush: false,
+      approvalPolicy: child.approvalEvidence ? child.approvalEvidence.status === "passed" : null,
     },
     ...(eventContractError ? { eventContractError } : {}),
     ...(artifactPolicyError ? { artifactPolicyError } : {}),
@@ -324,6 +370,7 @@ async function main() {
       `changed_paths=${manifest.changedPaths.length}`,
       `event_contract=${manifest.checks.eventContract}`,
       `artifact_policy=${manifest.checks.artifactPolicy}`,
+      `approval_policy=${manifest.checks.approvalPolicy ?? "not_applicable"}`,
       "automatic_push=false",
       "",
     ].join("\n"),
@@ -340,6 +387,8 @@ async function main() {
 
 function resolveMainOptions(argv) {
   const values = parseNamedArgs(argv);
+  const manifestRevision = values.get("manifest-revision") ?? "v1";
+  const taskId = values.get("task-id");
   const workspace = path.resolve(requireValue(values, "workspace"));
   const artifactDir = path.resolve(requireValue(values, "artifact-dir"));
   assertOutsideWorkspace(workspace, artifactDir);
@@ -357,7 +406,14 @@ function resolveMainOptions(argv) {
     bddEntry: path.resolve(
       values.get("bdd-entry") ?? path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js"),
     ),
-    profile: resolveCodingCiProfile(values.get("mode")),
+    sourceRoot: path.resolve(values.get("source-root") ?? workspaceRoot),
+    approvalContractPath: values.has("approval-contract")
+      ? path.resolve(requireValue(values, "approval-contract"))
+      : undefined,
+    manifestRevision,
+    taskId,
+    limits: resolveCodingCiLimits(manifestRevision, taskId),
+    profile: resolveCodingCiProfile(values.get("mode"), manifestRevision),
     cancelOnRunStart: resolveOptionalBoolean(values, "cancel-on-run-start"),
   };
 }
@@ -431,6 +487,7 @@ async function runAgentProcess(input) {
       }
       : undefined;
     let cancellationPromise;
+    let approvalChain = Promise.resolve();
     const capture = (target, chunk) => {
       const text = String(chunk);
       capturedBytes += Buffer.byteLength(text);
@@ -459,14 +516,18 @@ async function runAgentProcess(input) {
       });
     };
     const observeStdout = (chunk) => {
-      if (!cancellation) return;
+      if (!cancellation && !input.approvalController) return;
       stdoutRemainder += String(chunk);
       const lines = stdoutRemainder.split(/\r?\n/);
       stdoutRemainder = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          observeAgentEvent(JSON.parse(line));
+          const event = JSON.parse(line);
+          observeAgentEvent(event);
+          if (input.approvalController) {
+            approvalChain = approvalChain.then(() => input.approvalController.observe(event));
+          }
         } catch {
           // The canonical JSONL validator reports malformed Agent output after the process exits.
         }
@@ -482,7 +543,14 @@ async function runAgentProcess(input) {
     child.once("error", reject);
     child.once("close", async (exitCode) => {
       await cancellationPromise;
-      resolve({ exitCode, stdout, stderr, cancellation });
+      await approvalChain;
+      resolve({
+        exitCode,
+        stdout,
+        stderr,
+        cancellation,
+        approvalEvidence: input.approvalController?.finalize(),
+      });
     });
     child.stdin.end(input.prompt);
   });

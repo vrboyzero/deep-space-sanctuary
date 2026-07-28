@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-restart-injection-v1.json",
+  "title": "Coding agent Gateway process restart injection v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskId",
+    "trigger",
+    "status",
+    "observedStartedSeq",
+    "messageSendRequestCount",
+    "binding",
+    "originalGateway",
+    "replacementGateway",
+    "subscription",
+    "cancellation",
+    "cleanup"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "coding-agent-restart-injection/v1" },
+    "taskId": { "const": "gateway.process-restart" },
+    "trigger": { "const": "message.send.accepted" },
+    "status": { "enum": ["not_injected", "injected", "confirmed", "failed"] },
+    "observedStartedSeq": { "type": ["integer", "null"], "minimum": 1 },
+    "messageSendRequestCount": { "type": "integer", "minimum": 0, "maximum": 2 },
+    "binding": { "$ref": "#/$defs/binding" },
+    "originalGateway": { "$ref": "#/$defs/gateway" },
+    "replacementGateway": { "$ref": "#/$defs/gateway" },
+    "subscription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exitCode", "errorCode", "eventCount", "diagnostic"],
+      "properties": {
+        "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "errorCode": { "type": ["string", "null"], "maxLength": 100 },
+        "eventCount": { "type": "integer", "minimum": 0 },
+        "diagnostic": { "type": ["string", "null"], "maxLength": 500 }
+      }
+    },
+    "cancellation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exitCode", "accepted", "state"],
+      "properties": {
+        "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "accepted": { "type": ["boolean", "null"] },
+        "state": { "type": ["string", "null"], "maxLength": 100 }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["managedGatewayProcessCount", "originalGateway", "replacementGateway"],
+      "properties": {
+        "managedGatewayProcessCount": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "originalGateway": { "$ref": "#/$defs/gateway" },
+        "replacementGateway": { "$ref": "#/$defs/gateway" }
+      }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["conversationId", "agentRunId"],
+          "properties": {
+            "conversationId": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "agentRunId": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        }
+      ]
+    },
+    "gateway": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pid", "port", "exited", "exitCode", "signal", "entrypoint", "launch"],
+          "properties": {
+            "pid": { "type": ["integer", "null"], "minimum": 1 },
+            "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+            "exited": { "type": "boolean" },
+            "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+            "signal": { "type": ["string", "null"], "maxLength": 50 },
+            "entrypoint": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": { "const": "packages/belldandy-core/dist/server.js" },
+                "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+              }
+            },
+            "launch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["executable", "script"],
+              "properties": {
+                "executable": { "const": "node" },
+                "script": { "const": "scripts/coding-agent-process-restart-gateway.mjs" }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

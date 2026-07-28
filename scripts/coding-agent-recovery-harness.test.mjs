@@ -94,6 +94,96 @@ describe("coding agent recovery harness", () => {
     });
   });
 
+  it("delays corrected v2 disconnect until the bound mutation succeeded and changed content", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "coding-recovery-v2-mutation-"));
+    cleanups.push(async () => await fs.rm(workspace, { recursive: true, force: true }));
+    const targetPath = path.join(workspace, "src", "recovery-target.txt");
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, "recovery-marker=initial\n", "utf-8");
+
+    const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(upstream, "listening");
+    cleanups.push(async () => await closeWebSocketServer(upstream));
+    upstream.on("connection", (socket) => {
+      socket.send(JSON.stringify({ type: "connect.challenge" }));
+      socket.on("message", (data) => {
+        const frame = JSON.parse(data.toString("utf-8"));
+        if (frame.type === "connect") {
+          socket.send(JSON.stringify({ type: "hello-ok" }));
+          return;
+        }
+        if (frame.type !== "req" || frame.method !== "message.send") return;
+        socket.send(JSON.stringify({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { conversationId: "conversation-v2", runId: "run-v2" },
+        }));
+        socket.send(JSON.stringify({
+          type: "event",
+          event: "tool_call",
+          payload: {
+            conversationId: "conversation-v2",
+            runId: "run-v2",
+            id: "tool-write-v2",
+            name: "file_write",
+            arguments: { path: "src/recovery-target.txt", content: "recovery-marker=completed-once\n" },
+          },
+        }));
+        setTimeout(async () => {
+          await fs.writeFile(targetPath, "recovery-marker=completed-once\n", "utf-8");
+          socket.send(JSON.stringify({
+            type: "event",
+            event: "tool_result",
+            payload: {
+              conversationId: "conversation-v2",
+              runId: "run-v2",
+              id: "tool-write-v2",
+              name: "file_write",
+              success: true,
+            },
+          }));
+        }, 30);
+      });
+    });
+
+    const proxy = await startGatewayDisconnectProxy({
+      upstreamHost: "127.0.0.1",
+      upstreamPort: upstream.address().port,
+      targetPath: "src/recovery-target.txt",
+      workspace,
+      requireCompletedMutation: true,
+    });
+    cleanups.push(async () => await proxy.close());
+    const client = new WebSocket(`ws://127.0.0.1:${proxy.port}`, { origin: "http://127.0.0.1" });
+    const receivedEvents = [];
+    client.on("message", (data) => {
+      const frame = JSON.parse(data.toString("utf-8"));
+      if (frame.event) receivedEvents.push(frame.event);
+      if (frame.type === "connect.challenge") client.send(JSON.stringify({ type: "connect", role: "cli" }));
+      if (frame.type === "hello-ok") {
+        client.send(JSON.stringify({ type: "req", id: "run-request-v2", method: "message.send", params: {} }));
+      }
+    });
+
+    await once(client, "close");
+    const fault = await proxy.waitForFault();
+
+    expect(receivedEvents).toEqual(["tool_call", "tool_result"]);
+    expect(fault).toMatchObject({
+      status: "injected",
+      disconnectedAfterSeq: 3,
+      binding: { conversationId: "conversation-v2", agentRunId: "run-v2" },
+      mutation: {
+        trigger: "successful_tool_result_after_content_change",
+        toolCallId: "tool-write-v2",
+        targetPath: "src/recovery-target.txt",
+        resultSuccess: true,
+      },
+    });
+    expect(fault.mutation.afterSha256).not.toBe(fault.mutation.beforeSha256);
+  });
+
   it("uses an explicit Gateway origin for strict upstream Origin policies", async () => {
     const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await once(upstream, "listening");
@@ -134,6 +224,30 @@ describe("coding agent recovery harness", () => {
     ]);
   });
 
+  it("keeps failed write attempts when exactly one write completes successfully", () => {
+    const binding = { conversationId: "conversation-recovery", agentRunId: "run-recovery" };
+    const initial = [
+      event(1, "run.started", binding),
+      event(2, "tool.started", binding, { tool: { id: "tool-write-failed", name: "apply_patch" } }),
+      event(3, "tool.completed", binding, {
+        tool: { id: "tool-write-failed", name: "apply_patch", success: false },
+      }),
+      event(4, "tool.started", binding, { tool: { id: "tool-write-success", name: "file_write" } }),
+      event(5, "tool.completed", binding, {
+        tool: { id: "tool-write-success", name: "file_write", success: true },
+      }),
+      event(6, "run.failed", binding),
+    ];
+    const resumed = [
+      event(6, "run.completed", binding, { output: { text: "{\"summary\":\"done\"}" } }),
+    ];
+
+    expect(mergeRecoveredAgentEvents({ initial, resumed, cursor: 5 })).toEqual([
+      ...initial.slice(0, 5),
+      ...resumed,
+    ]);
+  });
+
   it("normalizes recovered bindings so artifact equality is independent of source key order", () => {
     const binding = { conversationId: "conversation-recovery", agentRunId: "run-recovery" };
     const events = mergeRecoveredAgentEvents({
@@ -165,6 +279,9 @@ describe("coding agent recovery harness", () => {
     const initial = [
       event(1, "run.started", binding),
       event(2, "tool.started", binding, { tool: { id: "tool-write-1", name: "file_write" } }),
+      event(3, "tool.completed", binding, {
+        tool: { id: "tool-write-1", name: "file_write", success: true },
+      }),
     ];
     expect(() => mergeRecoveredAgentEvents({
       initial,
@@ -173,12 +290,15 @@ describe("coding agent recovery harness", () => {
     })).toThrow(/sequence|cursor/i);
     expect(() => mergeRecoveredAgentEvents({
       initial,
-      cursor: 2,
+      cursor: 3,
       resumed: [
-        event(3, "tool.started", binding, { tool: { id: "tool-write-2", name: "file_write" } }),
-        event(4, "run.completed", binding),
+        event(4, "tool.started", binding, { tool: { id: "tool-write-2", name: "file_write" } }),
+        event(5, "tool.completed", binding, {
+          tool: { id: "tool-write-2", name: "file_write", success: true },
+        }),
+        event(6, "run.completed", binding),
       ],
-    })).toThrow(/side effect/i);
+    })).toThrow(/mutation/i);
   });
 
   it("continues one bound run through the existing coding-run stdio protocol", async () => {
@@ -265,6 +385,68 @@ describe("coding agent recovery harness", () => {
         disconnectedAfterSeq: 2,
         resumedFromSeq: 2,
         disconnectCount: 1,
+        reconnectCount: 1,
+      },
+    });
+  });
+
+  it("preserves recovered evidence when the terminal output is not raw JSON", () => {
+    const binding = { conversationId: "conversation-recovery", agentRunId: "run-recovery" };
+    const initial = [
+      event(1, "run.started", binding),
+      event(2, "tool.started", binding, {
+        tool: { id: "tool-write-1", name: "file_write", arguments: { path: "src/recovery-target.txt" } },
+      }),
+      event(3, "tool.completed", binding, {
+        tool: { id: "tool-write-1", name: "file_write", success: true },
+      }),
+      event(4, "run.failed", binding),
+    ];
+    const resumed = [
+      event(4, "run.completed", binding, {
+        output: { text: "```json\n{\"summary\":\"done\"}\n```" },
+      }),
+    ];
+
+    expect(buildRecoveredCodingCiArtifacts({
+      initialEvents: initial,
+      resumedEvents: resumed,
+      initialManifest: {
+        schemaVersion: "coding-agent-ci/v1",
+        protocolVersion: "v1",
+        mode: "recovery-control",
+        limits: { timeoutMs: 300000, maxTurns: 12, maxTokens: 24000 },
+        cliExitCode: 4,
+        eventCount: 4,
+        terminalType: "run.failed",
+        binding,
+        changedPaths: [],
+        checks: { cleanBaseline: true, eventContract: true, artifactPolicy: true, automaticPush: false },
+      },
+      workspaceArtifact: {
+        changedPaths: ["src/recovery-target.txt"],
+        patch: "fixture patch",
+      },
+      fault: {
+        schemaVersion: "coding-agent-fault-injection/v1",
+        taskId: "gateway.disconnect-recovery",
+        fault: "gateway_disconnect",
+        status: "injected",
+        disconnectedAfterSeq: 3,
+        resumedFromSeq: null,
+        disconnectCount: 1,
+        reconnectCount: 0,
+        binding,
+      },
+    })).toMatchObject({
+      result: null,
+      manifest: {
+        cliExitCode: 0,
+        terminalType: "run.completed",
+      },
+      fault: {
+        status: "recovered",
+        resumedFromSeq: 3,
         reconnectCount: 1,
       },
     });

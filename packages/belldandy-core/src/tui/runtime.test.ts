@@ -420,6 +420,8 @@ describe("CodingTuiRuntime", () => {
   });
 
   it("uses paired Gateway preview and confirmation without accepting a caller-supplied refspec", async () => {
+    const workspaceRoot = path.resolve(os.tmpdir(), "belldandy-tui-remote-delivery-workspace");
+    const stateDir = path.resolve(os.tmpdir(), "belldandy-tui-remote-delivery-state");
     const invokeGateway = vi.fn(async (input: {
       method: string;
       params?: Record<string, unknown>;
@@ -441,7 +443,7 @@ describe("CodingTuiRuntime", () => {
             operation: "push",
             canConfirm: true,
             blockers: [],
-            source: { repoRoot: "E:\\workspace", branch: "main", commit: "a".repeat(40), upstream: null },
+            source: { repoRoot: workspaceRoot, branch: "main", commit: "a".repeat(40), upstream: null },
             target: { remote: "private", url: "https://github.com/example/private.git", branch: "main", expectedOid: "b".repeat(40) },
             diff: { baseOid: "b".repeat(40), sha256: "c".repeat(64), byteLength: 12 },
             receipt: { receiptId: "remote-delivery-receipt", expiresAtMs: 9999999999999 },
@@ -460,8 +462,8 @@ describe("CodingTuiRuntime", () => {
       };
     });
     const runtime = new CodingTuiRuntime({
-      stateDir: "E:\\state",
-      cwd: "E:\\workspace",
+      stateDir,
+      cwd: workspaceRoot,
       client: createClient(),
       invokeGateway,
     });
@@ -478,7 +480,7 @@ describe("CodingTuiRuntime", () => {
     await expect(runtime.confirmRemotePush("remote-delivery-receipt")).resolves.toMatchObject({ applied: true });
     expect(invokeGateway).toHaveBeenNthCalledWith(2, expect.objectContaining({
       method: "workspace.remote_delivery.push.preview",
-      params: { cwd: "E:\\workspace", remote: "private", targetBranch: "main" },
+      params: { cwd: workspaceRoot, remote: "private", targetBranch: "main" },
     }));
     expect(invokeGateway).toHaveBeenNthCalledWith(3, expect.objectContaining({
       method: "workspace.remote_delivery.push.confirm",

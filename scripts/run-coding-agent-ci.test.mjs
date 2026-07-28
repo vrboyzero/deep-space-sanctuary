@@ -13,7 +13,9 @@ import {
 
 import {
   buildAgentRunArgs,
+  buildBenchmarkPermissionResponseParams,
   collectWorkspaceArtifact,
+  resolveCodingCiLimits,
   resolveCodingCiProfile,
   sanitizeDiagnostic,
   validateAgentRunEvents,
@@ -27,6 +29,22 @@ afterEach(async () => {
 });
 
 describe("coding agent CI runner", () => {
+  it("wraps benchmark permission responses in the Gateway RunControl envelope", () => {
+    expect(buildBenchmarkPermissionResponseParams("v1", {
+      binding: { agentRunId: "run-1", worktreeId: "worktree-1" },
+      toolCallId: "tool-1",
+      decision: "allow",
+    })).toEqual({
+      control: {
+        version: "v1",
+        operation: "permission.respond",
+        binding: { agentRunId: "run-1", worktreeId: "worktree-1" },
+        toolCallId: "tool-1",
+        decision: "allow",
+      },
+    });
+  });
+
   it("defaults to a bounded read-only profile and requires explicit workspace-write opt-in", () => {
     expect(resolveCodingCiProfile(undefined)).toEqual({
       mode: "plan",
@@ -113,6 +131,52 @@ describe("coding agent CI runner", () => {
       "--tool-deny", "spawn_subagent",
     ]));
     expect(args.join(" ")).not.toContain("accept-edits");
+  });
+
+  it("routes only corrected v2 command-control through its isolated high-risk budget profile", () => {
+    const profile = resolveCodingCiProfile("command-control", "v2");
+    expect(profile).toEqual({
+      mode: "command-control",
+      agentId: "coding-benchmark-command-control-v2",
+      maxHighRiskToolCalls: 5,
+      permissionMode: "confirm",
+      toolAllow: ["file_read", "list_files", "run_command", "command_job"],
+    });
+
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      "--agent-id", "coding-benchmark-command-control-v2",
+      "--permission-mode", "confirm",
+      "--tool-allow", "file_read,list_files,run_command,command_job",
+    ]));
+
+    for (const mode of ["plan", "navigation-read", "workspace-write", "safety-probe", "recovery-control", "git-local"]) {
+      expect(resolveCodingCiProfile(mode, "v2")).not.toHaveProperty("agentId");
+      expect(resolveCodingCiProfile(mode, "v2")).not.toHaveProperty("maxHighRiskToolCalls");
+    }
+  });
+
+  it("raises the CLI token limit only for the corrected v2 interactive task", () => {
+    const profile = resolveCodingCiProfile("command-control", "v2");
+    const interactiveLimits = resolveCodingCiLimits("v2", "command.interactive-control");
+    const args = buildAgentRunArgs({
+      workspace: "C:/fixture/workspace",
+      stateDir: "C:/fixture/state",
+      outputSchemaPath: "C:/fixture/output.schema.json",
+      profile,
+      limits: interactiveLimits,
+    });
+
+    expect(interactiveLimits).toEqual({ timeoutMs: 300_000, maxTurns: 12, maxTokens: 36_000 });
+    expect(args).toEqual(expect.arrayContaining(["--max-tokens", "36000"]));
+    expect(resolveCodingCiLimits("v2", "tests.failed-diagnosis").maxTokens).toBe(24_000);
+    expect(resolveCodingCiLimits("v1", "command.interactive-control").maxTokens).toBe(24_000);
+    expect(() => resolveCodingCiLimits("v2")).toThrow(/task-id.*required/i);
   });
 
   it("projects the frozen safety-probe profile without auto-approving host commands", () => {

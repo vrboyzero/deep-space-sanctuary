@@ -44,7 +44,7 @@ describe("built bdd agent CLI", () => {
     }), "utf-8");
     const agent: BelldandyAgent = {
       async *run(input) {
-        if (input.text === "invalid") {
+        if (input.text.startsWith("invalid\n\n") && input.text.includes("## Output Schema Contract")) {
           yield { type: "final", text: "not-json" };
           return;
         }
@@ -149,6 +149,7 @@ describe("built bdd agent CLI", () => {
       });
 
       expect(observedLaunchSpec).toEqual({
+        commandSandbox: "required",
         cwd,
         isolationMode: "cwd",
         toolSet: ["file_read", "run_command"],
@@ -177,7 +178,7 @@ async function runNode(entryPath: string, args: string[], cwd: string, stdin = "
   return await new Promise<ChildResult>((resolve, reject) => {
     const child = spawn(process.execPath, [entryPath, ...args], {
       cwd,
-      env: process.env,
+      env: { ...process.env, NODE_NO_WARNINGS: "1" },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

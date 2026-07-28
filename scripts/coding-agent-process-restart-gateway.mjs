@@ -1,13 +1,23 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { startGatewayServer } from "../packages/belldandy-core/src/server.ts";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
 async function main() {
   const values = parseNamedArgs(process.argv.slice(2));
   const stateDir = path.resolve(requireValue(values, "state-dir"));
+  const manifestRevision = values.get("manifest-revision") ?? "v1";
+  if (manifestRevision !== "v1" && manifestRevision !== "v2") {
+    throw new Error("--manifest-revision must be v1 or v2.");
+  }
+  const sourceRoot = path.resolve(values.get("source-root") ?? path.join(scriptDir, ".."));
+  const serverRelativePath = manifestRevision === "v2"
+    ? "packages/belldandy-core/dist/server.js"
+    : "packages/belldandy-core/src/server.ts";
+  const { startGatewayServer } = await import(pathToFileURL(path.join(
+    sourceRoot,
+    ...serverRelativePath.split("/"),
+  )).href);
   const port = Number(requireValue(values, "port"));
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
     throw new Error("--port must be an integer between 0 and 65535.");
@@ -19,7 +29,7 @@ async function main() {
     host: "127.0.0.1",
     port,
     auth: { mode: "none" },
-    webRoot: path.join(scriptDir, "..", "apps", "web", "public"),
+    webRoot: path.join(sourceRoot, "apps", "web", "public"),
     stateDir,
     agentFactory: () => ({
       async *run() {
@@ -32,6 +42,7 @@ async function main() {
     type: "coding-benchmark-gateway-ready",
     pid: process.pid,
     port: gateway.port,
+    entrypoint: serverRelativePath,
   })}\n`);
   await new Promise(() => {});
 }

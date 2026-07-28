@@ -38,8 +38,12 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
   }
 
   const source = inputReports[0].report.source;
+  const harness = inputReports[0].report.harness;
   for (const inputReport of inputReports.slice(1)) {
-    assertSameSource(source, inputReport.report.source, inputReport.reportPath);
+    assertSameIdentity(source, inputReport.report.source, inputReport.reportPath, "source");
+    if (manifest.schemaVersion === "coding-agent-benchmark-manifest/v2") {
+      assertSameIdentity(harness, inputReport.report.harness, inputReport.reportPath, "harness");
+    }
   }
 
   const runs = sortRuns(inputReports.flatMap((inputReport) => inputReport.report.runs), manifest);
@@ -50,6 +54,7 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
     generatedAt,
     manifest,
     manifestSha256,
+    ...(harness ? { harness } : {}),
     source,
     runs,
   });
@@ -125,8 +130,12 @@ export async function verifyCodingAgentBaselineArtifact(input) {
   }
 
   const source = inputReports[0].report.source;
+  const harness = inputReports[0].report.harness;
   for (const inputReport of inputReports.slice(1)) {
-    assertSameSource(source, inputReport.report.source, inputReport.reportPath);
+    assertSameIdentity(source, inputReport.report.source, inputReport.reportPath, "source");
+    if (manifest.schemaVersion === "coding-agent-benchmark-manifest/v2") {
+      assertSameIdentity(harness, inputReport.report.harness, inputReport.reportPath, "harness");
+    }
   }
   const runs = sortRuns(inputReports.flatMap((inputReport) => inputReport.report.runs), manifest);
   assertUniqueRunAttempts(runs);
@@ -136,6 +145,7 @@ export async function verifyCodingAgentBaselineArtifact(input) {
     generatedAt: report.generatedAt,
     manifest,
     manifestSha256,
+    ...(harness ? { harness } : {}),
     source,
     runs,
   });
@@ -212,7 +222,7 @@ async function readInputReport(input) {
 
 function assertInputReportMetadata(input) {
   const { report, reportPath, manifest, manifestSha256 } = input;
-  if (report?.schemaVersion !== "coding-agent-benchmark-report/v1") {
+  if (report?.schemaVersion !== manifest.suite.reportSchemaVersion) {
     throw new Error(`Coding benchmark source report has an unsupported schema version: ${reportPath}.`);
   }
   if (report?.benchmark?.id !== manifest.suite.id
@@ -228,12 +238,13 @@ function assertInputReportMetadata(input) {
   }
 }
 
-function assertSameSource(expected, actual, reportPath) {
+function assertSameIdentity(expected, actual, reportPath, label) {
   const equal = expected?.commit === actual?.commit
     && expected?.workspaceDirty === actual?.workspaceDirty
-    && expected?.lockfileSha256 === actual?.lockfileSha256;
+    && expected?.lockfileSha256 === actual?.lockfileSha256
+    && expected?.worktreeContentSha256 === actual?.worktreeContentSha256;
   if (!equal) {
-    throw new Error(`Coding benchmark source identity drifted: ${reportPath}.`);
+    throw new Error(`Coding benchmark ${label} identity drifted: ${reportPath}.`);
   }
 }
 
@@ -289,6 +300,7 @@ function createBaselineIndex(input) {
     status: report.status,
     generatedAt: report.generatedAt,
     manifestSha256,
+    ...(report.harness ? { harness: structuredClone(report.harness) } : {}),
     source: structuredClone(report.source),
     report: {
       path: "benchmark-report.json",

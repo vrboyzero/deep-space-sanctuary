@@ -1726,3 +1726,61 @@ test("message.send trims duplicated delegation metadata from tool_result events 
     await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("message.send preserves bounded structured tool output when the event limit is explicitly raised", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const conversationStore = new ConversationStore({
+    dataDir: path.join(stateDir, "sessions"),
+  });
+  const structuredOutput = JSON.stringify({ output: "x".repeat(1_100) });
+  const agent: BelldandyAgent = {
+    async *run() {
+      yield { type: "status", status: "running" as const };
+      yield {
+        type: "tool_result" as const,
+        id: "tool-result-bounded-output-1",
+        name: "command_job",
+        success: true,
+        output: structuredOutput,
+      };
+      yield { type: "final" as const, text: "ok" };
+      yield { type: "status", status: "done" as const };
+    },
+  };
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    conversationStore,
+    agentFactory: () => agent,
+    toolResultEventOutputCharLimit: 2_048,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    frames.length = 0;
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "message-send-bounded-tool-result-output",
+      method: "message.send",
+      params: {
+        text: "run bounded output projection test",
+        conversationId: "conv-bounded-tool-result-output",
+      },
+    }));
+
+    await waitFor(() => frames.some((frame) => frame.type === "event" && frame.event === "tool_result"));
+    const toolResultEvent = frames.find((frame) => frame.type === "event" && frame.event === "tool_result");
+    expect(toolResultEvent?.payload?.output).toBe(structuredOutput);
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});

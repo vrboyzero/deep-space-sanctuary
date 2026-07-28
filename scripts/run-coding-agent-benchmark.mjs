@@ -9,7 +9,19 @@ import {
   CODING_AGENT_BENCHMARK_RUN_VERSION,
   createCodingAgentBenchmarkReport,
   loadCodingAgentBenchmarkManifest,
+  resolveCodingAgentBenchmarkTaskBudgets,
+  resolveCodingAgentBenchmarkContract,
+  resolveCodingAgentBenchmarkManifestPath,
 } from "./coding-agent-benchmark-contract.mjs";
+import {
+  createBenchmarkPreflightArtifact,
+  resolveBenchmarkRepositoryIdentity,
+} from "./coding-agent-benchmark-preflight.mjs";
+import {
+  createBenchmarkApprovalContract,
+  createNotRunApprovalEvidence,
+  serializeBenchmarkApprovalContract,
+} from "./coding-agent-benchmark-approval.mjs";
 import {
   STAGE_0B_TASK_IDS,
   STAGE_0D_CORE_TASK_IDS,
@@ -46,9 +58,7 @@ import { collectWorkspaceArtifact, sanitizeDiagnostic } from "./run-coding-agent
 
 const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "..");
-const manifestPath = path.join(workspaceRoot, "benchmarks", "coding-agent", "v1", "task-manifest.json");
 const codingCiRunnerPath = path.join(workspaceRoot, "scripts", "run-coding-agent-ci.mjs");
-const bddEntryPath = path.join(workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
 
 // Keep a 20% reserve against the user-approved 30 CNY ceiling at an 8 CNY/USD guard rate.
 export const STAGE_0D_BENCHMARK_USAGE_BUDGET_USD = 3;
@@ -139,6 +149,10 @@ export function consumeBenchmarkUsageBudget(budget, observation) {
 export async function runStage0BSuite(input, dependencies = {}) {
   const runtimePlatform = resolveBenchmarkRuntimePlatform(input, dependencies.runtime);
   assertModelFingerprint(input?.model);
+  const manifestRevision = input.manifestRevision ?? "v1";
+  const contract = resolveCodingAgentBenchmarkContract(manifestRevision);
+  const selectedManifestPath = resolveCodingAgentBenchmarkManifestPath(manifestRevision);
+  const sourceRoot = path.resolve(input.sourceRoot ?? workspaceRoot);
   const fixtureRoot = path.resolve(input.fixtureRoot);
   const artifactRoot = path.resolve(input.artifactRoot);
   const stateRoot = path.resolve(input.stateRoot);
@@ -149,10 +163,14 @@ export async function runStage0BSuite(input, dependencies = {}) {
   await fs.mkdir(fixtureRoot, { recursive: true });
   await fs.mkdir(stateRoot, { recursive: true });
 
-  const manifestText = await fs.readFile(manifestPath, "utf-8");
-  const manifest = await loadCodingAgentBenchmarkManifest(manifestPath);
+  const manifestText = await fs.readFile(selectedManifestPath, "utf-8");
+  const manifest = await loadCodingAgentBenchmarkManifest(selectedManifestPath);
   await fs.writeFile(path.join(artifactRoot, "task-manifest.json"), manifestText, "utf-8");
-  const source = await resolveSourceIdentity();
+  const resolveIdentity = dependencies.resolveRepositoryIdentity ?? resolveBenchmarkRepositoryIdentity;
+  const source = manifestRevision === "v2"
+    ? await resolveIdentity(sourceRoot)
+    : await resolveSourceIdentity(workspaceRoot);
+  const harness = manifestRevision === "v2" ? await resolveIdentity(workspaceRoot) : undefined;
   const attempt = Number.isInteger(input.attempt) ? input.attempt : 1;
   if (attempt < 1 || attempt > manifest.suite.sampleRuns) {
     throw new Error(`Stage 0B attempt must be within 1-${manifest.suite.sampleRuns}.`);
@@ -170,6 +188,10 @@ export async function runStage0BSuite(input, dependencies = {}) {
       runId,
       attempt,
       manifest,
+      manifestRevision,
+      contract,
+      manifestSha256: sha256(manifestText),
+      sourceRoot,
       fixtureRoot,
       artifactRoot,
       stateRoot,
@@ -187,6 +209,7 @@ export async function runStage0BSuite(input, dependencies = {}) {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     manifest,
     manifestSha256: sha256(manifestText),
+    ...(harness ? { harness } : {}),
     source,
     runs,
   });
@@ -203,6 +226,8 @@ export async function runStage0BTask(input, dependencies = {}) {
     throw new Error("Stage 0B runId must be path-safe.");
   }
   const task = input.manifest.tasks.find((candidate) => candidate.id === input.taskId);
+  const contract = input.contract ?? resolveCodingAgentBenchmarkContract(input.manifestRevision ?? "v1");
+  const executionBudgets = resolveCodingAgentBenchmarkTaskBudgets(input.manifest, task?.id);
   const isInteractiveTask = task?.id === STAGE_0C_INTERACTIVE_TASK_ID;
   const isSafetyTask = task?.id === STAGE_0C_SAFETY_TASK_ID;
   const isRecoveryTask = task?.id === STAGE_0C_RECOVERY_TASK_ID;
@@ -256,39 +281,115 @@ export async function runStage0BTask(input, dependencies = {}) {
   await fs.writeFile(promptPath, `${fixture.prompt}\n`, "utf-8");
   await fs.writeFile(outputSchemaPath, `${JSON.stringify(fixture.outputSchema, null, 2)}\n`, "utf-8");
 
+  let approval;
+  if (input.manifestRevision === "v2" && (isInteractiveTask || isSafetyTask)) {
+    const fixturePath = isInteractiveTask
+      ? "fixture/interactive-command.mjs"
+      : "fixture/boundary-cases.json";
+    const contract = createBenchmarkApprovalContract({
+      manifestRevision: "v2",
+      taskId: task.id,
+      runId: input.runId,
+      conversationId: `coding-benchmark-${input.runId}`,
+      fixture: {
+        generatorId: task.fixture.generatorId,
+        version: task.fixture.version,
+        baselineCommit: fixture.baselineCommit,
+        path: fixturePath,
+        sha256: sha256(await fs.readFile(path.join(workspace, fixturePath))),
+      },
+      policy: fixture.approvalPolicy,
+    });
+    const text = serializeBenchmarkApprovalContract(contract);
+    const contractPath = path.join(artifactDir, "approval-contract.json");
+    await fs.writeFile(contractPath, text, "utf-8");
+    approval = {
+      contract,
+      contractPath,
+      contractSha256: sha256(text),
+    };
+  }
+
+  const bddEntry = path.join(input.sourceRoot ?? workspaceRoot, "packages", "belldandy-core", "dist", "bin", "bdd.js");
+  let preflight;
+  if (input.manifestRevision === "v2") {
+    const readEnv = (name) => Object.hasOwn(input.childEnv ?? {}, name)
+      ? input.childEnv[name]
+      : process.env[name];
+    preflight = await createBenchmarkPreflightArtifact({
+      manifestRevision: input.manifestRevision,
+      manifest: input.manifest,
+      manifestSha256: input.manifestSha256,
+      task,
+      runId: input.runId,
+      sourceRoot: input.sourceRoot,
+      stateDir,
+      pricingRequired: input.model.credentialsConfigured && !isProcessRestartTask,
+      readEnv,
+    }, {
+      ...(dependencies.probeOciImage ? { probeImage: dependencies.probeOciImage } : {}),
+    });
+    await writeJson(path.join(artifactDir, "preflight.json"), preflight);
+  }
+
   const executeCodingCi = isRecoveryTask
     ? dependencies.executeRecoveryCodingCi ?? dependencies.executeCodingCi ?? executeRecoveryCodingCiProcess
     : isProcessRestartTask
       ? dependencies.executeProcessRestartCodingCi ?? executeProcessRestartCodingCiProcess
       : dependencies.executeCodingCi ?? executeCodingCiProcess;
   const startedAt = Date.now();
-  const runner = await executeCodingCi({
-    workspace,
-    artifactDir,
-    stateDir,
-    conversationId: `coding-benchmark-${input.runId}`,
-    modelId: input.model.id,
-    promptPath,
-    outputSchemaPath,
-    mode: task.executionProfile,
-    cancelOnRunStart: isCancellationTask,
-    childEnv: input.childEnv,
-    maxCostUsd: input.maxCostUsd,
-  });
+  const runner = preflight?.status === "failed"
+    ? {
+        exitCode: 4,
+        stdout: "",
+        stderr: `Benchmark preflight failed: ${summarizeFailedPreflight(preflight)}.`,
+      }
+    : await executeCodingCi({
+        workspace,
+        artifactDir,
+        stateDir,
+        conversationId: `coding-benchmark-${input.runId}`,
+        modelId: input.model.id,
+        promptPath,
+        outputSchemaPath,
+        mode: task.executionProfile,
+        taskId: task.id,
+        manifestRevision: input.manifestRevision ?? "v1",
+        sourceRoot: input.sourceRoot ?? workspaceRoot,
+        bddEntry,
+        cancelOnRunStart: isCancellationTask,
+        ...(approval ? { approvalContractPath: approval.contractPath } : {}),
+        childEnv: input.childEnv,
+        maxCostUsd: input.manifestRevision === "v2" && isProcessRestartTask ? undefined : input.maxCostUsd,
+      });
   const durationMs = Math.max(0, Date.now() - startedAt);
   await preserveCodingCiManifest(artifactDir, runner.exitCode);
   await ensureCodingCiArtifacts(artifactDir, runner, {
     cancellation: isCancellationTask,
     processRestart: isProcessRestartTask,
+    manifestRevision: input.manifestRevision ?? "v1",
+    ...(approval ? { approval } : {}),
   });
+  if (preflight && (isRecoveryTask || isProcessRestartTask)) {
+    preflight = await finalizeRuntimeFaultPreflight({
+      preflight,
+      artifactDir,
+      isRecoveryTask,
+      isProcessRestartTask,
+    });
+    await writeJson(path.join(artifactDir, "preflight.json"), preflight);
+  }
 
   let verdict;
-  try {
+  if (preflight?.status === "failed") {
+    verdict = createInfrastructurePreflightVerdict(preflight);
+  } else try {
     verdict = await evaluateFixture({
       task: fixture.task,
       workspace,
       artifactDir,
       runnerExitCode: runner.exitCode,
+      manifestRevision: input.manifestRevision ?? "v1",
       ...(isGitLocalTask ? { boundary: fixture.boundary } : {}),
       ...(isStage0DCoreTask ? { readonlySnapshot: fixture.readonlySnapshot } : {}),
     });
@@ -313,7 +414,7 @@ export async function runStage0BTask(input, dependencies = {}) {
   const events = await readJsonl(path.join(artifactDir, "events.jsonl"));
   const tokenUsage = extractBenchmarkTokenUsage(events);
   const run = {
-    schemaVersion: CODING_AGENT_BENCHMARK_RUN_VERSION,
+    schemaVersion: contract.runVersion ?? CODING_AGENT_BENCHMARK_RUN_VERSION,
     runId: input.runId,
     taskId: task.id,
     attempt: input.attempt,
@@ -328,15 +429,17 @@ export async function runStage0BTask(input, dependencies = {}) {
     failureCategory: verdict.failureCategory,
     execution: {
       profile: task.executionProfile,
-      budgets: { ...input.manifest.suite.budgets },
+      budgets: executionBudgets,
       infrastructureRetries: 0,
-      ...(input.maxCostUsd === undefined ? {} : { maxCostUsd: input.maxCostUsd }),
+      ...(input.maxCostUsd === undefined || (input.manifestRevision === "v2" && isProcessRestartTask)
+        ? {}
+        : { maxCostUsd: input.maxCostUsd }),
     },
     environment: {
       osRelease: os.release(),
       arch: process.arch,
       nodeVersion: process.version,
-      packageManager: await readPackageManager(),
+      packageManager: await readPackageManager(input.sourceRoot ?? workspaceRoot),
       wsl: input.runtimePlatform.wsl,
       model: { ...input.model },
     },
@@ -354,6 +457,11 @@ export async function runStage0BTask(input, dependencies = {}) {
       patch: `${input.runId}/changes.patch`,
       diagnostics: `${input.runId}/diagnostics.log`,
       status: `${input.runId}/status.txt`,
+      ...(input.manifestRevision === "v2" ? { preflight: `${input.runId}/preflight.json` } : {}),
+      ...(approval ? {
+        approvalContract: `${input.runId}/approval-contract.json`,
+        approvalEvidence: `${input.runId}/approval-evidence.json`,
+      } : {}),
       ...(isRecoveryTask ? { faultInjection: `${input.runId}/fault-injection.json` } : {}),
       ...(isCancellationTask ? { cancelInjection: `${input.runId}/cancel-injection.json` } : {}),
       ...(isProcessRestartTask ? { restartInjection: `${input.runId}/restart-injection.json` } : {}),
@@ -413,6 +521,11 @@ async function executeCodingCiProcess(input) {
       "--prompt-file", input.promptPath,
       "--output-schema", input.outputSchemaPath,
       "--mode", input.mode,
+      "--manifest-revision", input.manifestRevision,
+      ...(input.manifestRevision === "v2" ? ["--task-id", input.taskId] : []),
+      "--source-root", input.sourceRoot,
+      "--bdd-entry", input.bddEntry,
+      ...(input.approvalContractPath ? ["--approval-contract", input.approvalContractPath] : []),
       ...(input.maxCostUsd === undefined ? [] : ["--max-cost-usd", String(input.maxCostUsd)]),
       ...(input.cancelOnRunStart ? ["--cancel-on-run-start", "true"] : []),
     ];
@@ -440,6 +553,8 @@ async function executeRecoveryCodingCiProcess(input) {
     upstreamPort: target.port,
     upstreamOrigin: `http://${target.host}:${target.port}`,
     targetPath: "src/recovery-target.txt",
+    workspace: input.workspace,
+    requireCompletedMutation: input.manifestRevision === "v2",
   });
   let runner;
   let fault;
@@ -482,7 +597,7 @@ async function executeRecoveryCodingCiProcess(input) {
     const initialEvents = await readJsonl(path.join(input.artifactDir, "events.jsonl"));
     const initialManifest = await readJson(path.join(input.artifactDir, "manifest.json"));
     const continuation = await runCodingRunCursorContinuation({
-      bddEntry: bddEntryPath,
+      bddEntry: input.bddEntry,
       stateDir: input.stateDir,
       cwd: input.workspace,
       binding: fault.binding,
@@ -564,7 +679,8 @@ async function executeRecoveryCodingCiProcess(input) {
 async function executeProcessRestartCodingCiProcess(input) {
   return await executeGatewayProcessRestartCodingCi({
     ...input,
-    bddEntry: bddEntryPath,
+    bddEntry: input.bddEntry,
+    sourceRoot: input.sourceRoot,
     artifactPath: path.join(input.artifactDir, "restart-injection.json"),
     executeCodingCi: executeCodingCiProcess,
   });
@@ -592,10 +708,20 @@ async function ensureCodingCiArtifacts(artifactDir, runner, options = {}) {
     "changes.patch": "",
     "diagnostics.log": sanitizeDiagnostic(runner.stderr),
     "status.txt": `coding_ci_runner_exit_code=${runner.exitCode}\n`,
+    ...(options.approval ? {
+      "approval-evidence.json": `${JSON.stringify(createNotRunApprovalEvidence({
+        taskId: options.approval.contract.taskId,
+        runId: options.approval.contract.runId,
+        contractSha256: options.approval.contractSha256,
+        fixture: options.approval.contract.fixture,
+        policyMode: options.approval.contract.policy.mode,
+        expectedRequestCount: options.approval.contract.policy.steps.length,
+      }), null, 2)}\n`,
+    } : {}),
     ...(options.cancellation ? {
       "cancel-injection.json": `${JSON.stringify({
         schemaVersion: "coding-agent-cancel-injection/v1",
-        trigger: "run.started",
+        trigger: options.manifestRevision === "v2" ? "message.send.accepted" : "run.started",
         status: "not_observed",
         observedStartedSeq: null,
         cancellationRequestCount: 0,
@@ -641,10 +767,76 @@ async function appendDiagnostics(artifactDir, runnerStderr, verdictDiagnostics) 
   await fs.appendFile(path.join(artifactDir, "diagnostics.log"), `${additions.join("\n")}\n`, "utf-8");
 }
 
-async function resolveSourceIdentity() {
-  const commit = runGit(workspaceRoot, ["rev-parse", "HEAD"]).stdout.trim();
-  const dirty = runGit(workspaceRoot, ["status", "--porcelain=v1", "--untracked-files=all"]).stdout.trim();
-  const lockfile = await fs.readFile(path.join(workspaceRoot, "pnpm-lock.yaml"));
+function summarizeFailedPreflight(preflight) {
+  return Object.entries(preflight?.checks ?? {})
+    .filter(([, check]) => check?.status === "failed")
+    .map(([name, check]) => `${name}:${check.reason ?? "unknown"}`)
+    .join(", ") || "unknown";
+}
+
+function createInfrastructurePreflightVerdict(preflight) {
+  return {
+    status: "infrastructure_error",
+    failureCategory: "infrastructure",
+    evaluation: {
+      source: "machine",
+      taskCompleted: false,
+      testsPassed: null,
+      patchAccepted: null,
+      regressionCount: 0,
+      manualInterventionCount: 0,
+      dangerousOperationBlocked: null,
+      recoverySucceeded: null,
+    },
+    diagnostics: [`Benchmark preflight failed: ${summarizeFailedPreflight(preflight)}.`],
+  };
+}
+
+async function finalizeRuntimeFaultPreflight(input) {
+  let passed = false;
+  let reason = "fault_precondition_not_reached";
+  if (input.isRecoveryTask) {
+    const fault = await readJson(path.join(input.artifactDir, "fault-injection.json"));
+    const mutation = fault?.mutation;
+    passed = fault?.status === "recovered"
+      && fault.disconnectCount === 1
+      && fault.reconnectCount === 1
+      && typeof fault.binding?.conversationId === "string"
+      && typeof fault.binding?.agentRunId === "string"
+      && mutation?.trigger === "successful_tool_result_after_content_change"
+      && mutation.resultSuccess === true
+      && /^[0-9a-f]{64}$/i.test(String(mutation.beforeSha256 ?? ""))
+      && /^[0-9a-f]{64}$/i.test(String(mutation.afterSha256 ?? ""))
+      && mutation.beforeSha256 !== mutation.afterSha256;
+    if (!passed && fault?.status === "failed") reason = "fault_harness_failed";
+  } else if (input.isProcessRestartTask) {
+    const restart = await readJson(path.join(input.artifactDir, "restart-injection.json"));
+    passed = restart?.status === "confirmed"
+      && restart.messageSendRequestCount === 1
+      && typeof restart.binding?.conversationId === "string"
+      && typeof restart.binding?.agentRunId === "string"
+      && Number.isSafeInteger(restart.originalGateway?.pid)
+      && Number.isSafeInteger(restart.replacementGateway?.pid)
+      && restart.originalGateway.pid !== restart.replacementGateway.pid
+      && restart.cleanup?.managedGatewayProcessCount === 0;
+    if (!passed && restart?.status === "failed") reason = "fault_harness_failed";
+  }
+  return {
+    ...input.preflight,
+    status: passed ? input.preflight.status : "failed",
+    checks: {
+      ...input.preflight.checks,
+      fault: passed
+        ? { status: "passed", reason: null }
+        : { status: "failed", reason },
+    },
+  };
+}
+
+async function resolveSourceIdentity(repositoryRoot) {
+  const commit = runGit(repositoryRoot, ["rev-parse", "HEAD"]).stdout.trim();
+  const dirty = runGit(repositoryRoot, ["status", "--porcelain=v1", "--untracked-files=all"]).stdout.trim();
+  const lockfile = await fs.readFile(path.join(repositoryRoot, "pnpm-lock.yaml"));
   return {
     commit,
     workspaceDirty: Boolean(dirty),
@@ -652,8 +844,8 @@ async function resolveSourceIdentity() {
   };
 }
 
-async function readPackageManager() {
-  const packageJson = JSON.parse(await fs.readFile(path.join(workspaceRoot, "package.json"), "utf-8"));
+async function readPackageManager(repositoryRoot) {
+  const packageJson = JSON.parse(await fs.readFile(path.join(repositoryRoot, "package.json"), "utf-8"));
   return String(packageJson.packageManager);
 }
 
@@ -779,14 +971,23 @@ function requireValue(values, key) {
   return value.trim();
 }
 
+export function resolveBenchmarkCliSourceRoot(values, manifestRevision) {
+  return manifestRevision === "v2"
+    ? path.resolve(requireValue(values, "source-root"))
+    : path.resolve(values.get("source-root") ?? workspaceRoot);
+}
+
 async function main() {
   const values = parseNamedArgs(process.argv.slice(2));
+  const manifestRevision = values.get("manifest-revision") ?? "v1";
   const credentialsValue = requireValue(values, "credentials-configured");
   if (credentialsValue !== "true" && credentialsValue !== "false") {
     throw new Error("--credentials-configured must be true or false.");
   }
   const report = await runStage0BSuite({
     platform: requireValue(values, "platform"),
+    manifestRevision,
+    sourceRoot: resolveBenchmarkCliSourceRoot(values, manifestRevision),
     fixtureRoot: requireValue(values, "fixture-root"),
     artifactRoot: requireValue(values, "artifact-root"),
     stateRoot: requireValue(values, "state-root"),

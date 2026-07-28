@@ -54,6 +54,7 @@ import type { EmailOutboundProviderRegistry } from "./email-outbound-provider-re
 import type { EmailInboundAuditStore } from "./email-inbound-audit-store.js";
 import type { EmailFollowUpReminderStore } from "./email-follow-up-reminder-store.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
+import { resolveToolResultEventOutputCharLimit } from "./tool-result-event-output.js";
 import {
   buildPromptObservabilitySummary,
   formatPromptObservabilityHeadline,
@@ -394,6 +395,8 @@ export type GatewayServerOptions = {
   commanderMode?: "on" | "off" | "auto";
   /** 发送前附件/长输入压缩策略。 */
   preflightCompressionPolicy?: PreflightCompressionPolicy;
+  /** Gateway tool_result 事件的字符串 output 投影上限；默认 500，硬上限 2048。 */
+  toolResultEventOutputCharLimit?: number;
   /** Webhook 配置 */
   webhookConfig?: WebhookConfig;
   /** Webhook 幂等性管理器 */
@@ -824,6 +827,9 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
   }
   await ensureWebRoot(opts.webRoot);
   const stateDir = opts.stateDir ?? resolveStateDir();
+  const toolResultEventOutputCharLimit = resolveToolResultEventOutputCharLimit(
+    opts.toolResultEventOutputCharLimit,
+  );
   const avatarDir = path.join(stateDir, "avatar");
   const runtimePreferredProviderIds = Array.isArray(opts.preferredProviderIds)
     ? opts.preferredProviderIds
@@ -1444,6 +1450,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     remoteDeliveryRuntime: opts.remoteDeliveryRuntime,
     commanderMode: opts.commanderMode,
     preflightCompressionPolicy: opts.preflightCompressionPolicy,
+    toolResultEventOutputCharLimit,
     tokenUsageUploadConfig,
     broadcast: (frame) => broadcastEvent?.(frame),
     broadcastEvent: (frame) => broadcastEvent?.(frame),
@@ -2005,6 +2012,7 @@ async function handleReq(
         broadcastEvent: ctx.broadcastEvent,
         queryRuntimeTraceStore: ctx.queryRuntimeTraceStore,
         residentAgentRuntime: ctx.residentAgentRuntime,
+        toolResultEventOutputCharLimit: ctx.toolResultEventOutputCharLimit,
         parseMessageSendParams,
         parseConversationRunStopParams,
         getAttachmentPromptLimits,

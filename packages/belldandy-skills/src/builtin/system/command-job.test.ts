@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { CommandJobProcess, CommandJobProcessExit } from "../../command-job.js";
 import type { ProcessTerminationResult } from "./process-lease.js";
+import { getToolContract } from "../../tool-contract.js";
 
 const mocks = vi.hoisted(() => ({
   buildInvocation: vi.fn(),
@@ -142,6 +143,10 @@ describe("command_job", () => {
     stdinMode: "pty",
     timeoutMs: 9_000,
   };
+
+  it("is available to governed CLI coding runs", () => {
+    expect(getToolContract(commandJobTool)?.channels).toEqual(expect.arrayContaining(["gateway", "web", "cli"]));
+  });
 
   it("shares one live manager with stateDir consumers", async () => {
     const started = await commandJobTool.execute({ action: "start", commandPlan: plan }, context());

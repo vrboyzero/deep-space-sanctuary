@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-agent-benchmark-manifest-v2.json",
+  "title": "Star Sanctuary coding agent benchmark task manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suite",
+    "failureTaxonomy",
+    "metrics",
+    "tasks"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-agent-benchmark-manifest/v2"
+    },
+    "suite": {
+      "$ref": "#/$defs/suite"
+    },
+    "failureTaxonomy": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/failureCategory"
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/metric"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    }
+  },
+  "$defs": {
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "sampleRuns",
+        "artifactSchemaVersion",
+        "reportSchemaVersion",
+        "requiredPlatforms",
+        "executionProfiles",
+        "budgets",
+        "taskBudgetOverrides",
+        "retryPolicy"
+      ],
+      "properties": {
+        "id": {
+          "const": "ss-project-coding-v2"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sampleRuns": {
+          "type": "integer",
+          "const": 3
+        },
+        "artifactSchemaVersion": {
+          "const": "coding-agent-benchmark-run/v2"
+        },
+        "reportSchemaVersion": {
+          "const": "coding-agent-benchmark-report/v2"
+        },
+        "requiredPlatforms": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "windows-native" },
+            { "const": "wsl2-linux" }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "executionProfiles": {
+          "const": {
+            "plan": {
+              "permissionMode": "plan",
+              "toolAllow": ["file_read", "list_files"],
+              "toolDeny": ["run_command", "spawn_subagent"]
+            },
+            "navigation-read": {
+              "permissionMode": "plan",
+              "toolAllow": ["file_read", "list_files", "text_search", "file_glob"],
+              "toolDeny": ["run_command", "spawn_subagent"]
+            },
+            "workspace-write": {
+              "permissionMode": "acceptEdits",
+              "toolAllow": ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
+              "toolDeny": ["run_command", "spawn_subagent"]
+            },
+            "command-control": {
+              "agentId": "coding-benchmark-command-control-v2",
+              "maxHighRiskToolCalls": 5,
+              "permissionMode": "confirm",
+              "toolAllow": ["file_read", "list_files", "run_command", "command_job"],
+              "toolDeny": ["spawn_subagent"]
+            },
+            "safety-probe": {
+              "permissionMode": "confirm",
+              "toolAllow": ["file_read", "list_files", "run_command"],
+              "toolDeny": ["spawn_subagent"]
+            },
+            "recovery-control": {
+              "permissionMode": "acceptEdits",
+              "toolAllow": ["file_read", "list_files", "apply_patch", "file_write"],
+              "toolDeny": ["run_command", "spawn_subagent", "file_delete"]
+            },
+            "git-local": {
+              "permissionMode": "confirm",
+              "toolAllow": ["file_read", "list_files", "run_command"],
+              "toolDeny": ["spawn_subagent", "apply_patch", "file_write", "file_delete"]
+            }
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeoutMs", "maxTurns", "maxTokens"],
+          "properties": {
+            "timeoutMs": { "type": "integer", "const": 300000 },
+            "maxTurns": { "type": "integer", "const": 12 },
+            "maxTokens": { "type": "integer", "const": 24000 }
+          }
+        },
+        "taskBudgetOverrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command.interactive-control"],
+          "properties": {
+            "command.interactive-control": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["maxTokens"],
+              "properties": {
+                "maxTokens": { "type": "integer", "const": 36000 }
+              }
+            }
+          }
+        },
+        "retryPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxInfrastructureRetries", "retryModelFailures"],
+          "properties": {
+            "maxInfrastructureRetries": { "type": "integer", "const": 1 },
+            "retryModelFailures": { "const": false }
+          }
+        }
+      }
+    },
+    "failureCategory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description"],
+      "properties": {
+        "id": {
+          "enum": [
+            "model",
+            "tool",
+            "permission",
+            "platform",
+            "product_workflow",
+            "infrastructure",
+            "fixture",
+            "evaluator"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "aggregation", "source", "description"],
+      "properties": {
+        "id": {
+          "enum": [
+            "task_completion_rate",
+            "test_pass_rate",
+            "patch_acceptance_rate",
+            "regression_count",
+            "manual_intervention_count",
+            "dangerous_operation_block_rate",
+            "recovery_success_rate",
+            "duration_ms",
+            "input_tokens",
+            "output_tokens"
+          ]
+        },
+        "aggregation": {
+          "enum": [
+            "boolean_rate",
+            "applicable_boolean_rate",
+            "sum",
+            "distribution",
+            "nullable_sum"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "title",
+        "executionProfile",
+        "platforms",
+        "fixture",
+        "prompt",
+        "evaluator",
+        "acceptance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$",
+          "maxLength": 100
+        },
+        "category": {
+          "enum": [
+            "project_rules",
+            "cross_file_feature",
+            "bug_fix",
+            "test_diagnosis",
+            "large_repo_navigation",
+            "interactive_command",
+            "safety_boundary",
+            "gateway_recovery",
+            "gateway_client_cancellation",
+            "gateway_process_restart",
+            "git_dirty_worktree",
+            "git_delivery_guard"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "executionProfile": {
+          "enum": [
+            "plan",
+            "navigation-read",
+            "workspace-write",
+            "command-control",
+            "safety-probe",
+            "recovery-control",
+            "git-local"
+          ]
+        },
+        "platforms": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "windows-native" },
+            { "const": "wsl2-linux" }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "fixture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["generatorId", "version", "resetStrategy"],
+          "properties": {
+            "generatorId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*-v[1-9][0-9]*$",
+              "maxLength": 100
+            },
+            "version": { "type": "integer", "minimum": 1 },
+            "resetStrategy": {
+              "const": "regenerate"
+            }
+          }
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 21,
+          "maxLength": 4000
+        },
+        "evaluator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": {
+              "const": "machine"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*-v1$",
+              "maxLength": 100
+            }
+          }
+        },
+        "acceptance": {
+          "$ref": "#/$defs/acceptance"
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "testCommands",
+        "requiredChangedPaths",
+        "allowedChangedPaths",
+        "forbiddenActions"
+      ],
+      "properties": {
+        "testCommands": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "expectedExitCode"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1, "maxLength": 1000 },
+              "expectedExitCode": { "type": "integer", "minimum": 0, "maximum": 255 }
+            }
+          }
+        },
+        "requiredChangedPaths": {
+          "$ref": "#/$defs/changedPaths"
+        },
+        "allowedChangedPaths": {
+          "$ref": "#/$defs/changedPaths"
+        },
+        "forbiddenActions": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "network_access",
+              "external_path_write",
+              "remote_git_write",
+              "evidence_delete",
+              "workspace_mutation",
+              "dangerous_command_execution",
+              "subprocess_escape",
+              "duplicate_side_effect",
+              "user_change_overwrite"
+            ]
+          }
+        }
+      }
+    },
+    "changedPaths": {
+      "type": "array",
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$",
+        "maxLength": 500
+      }
+    }
+  }
+}

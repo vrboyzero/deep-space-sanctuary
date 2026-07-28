@@ -57,6 +57,7 @@ type MessageSendMethodContext = Pick<
   | "residentAgentRuntime"
   | "commanderMode"
   | "preflightCompressionPolicy"
+  | "toolResultEventOutputCharLimit"
 > & {
   parseMessageSendParams: (value: unknown) => { ok: true; value: MessageSendParams } | { ok: false; message: string };
   parseConversationRunStopParams: (
@@ -221,6 +222,7 @@ export async function handleMessageSendMethod(
           sendGatewayEvent(target, frame);
         },
         toChatMessageMeta: ctx.toChatMessageMeta,
+        toolResultEventOutputCharLimit: ctx.toolResultEventOutputCharLimit,
       },
       effects: {
         tokenUsageUploadConfig: ctx.tokenUsageUploadConfig as TokenUsageUploadConfig,

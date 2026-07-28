@@ -168,6 +168,7 @@ export type GatewayWebSocketRequestContext = {
   commanderMode?: "on" | "off" | "auto";
   /** 发送前附件/长输入压缩策略。业务逻辑在 query runtime 内执行，这里只透传配置。 */
   preflightCompressionPolicy?: PreflightCompressionPolicy;
+  toolResultEventOutputCharLimit: number;
 };
 
 type CreateGatewayWebSocketRequestHandlerOptions = Omit<
@@ -267,6 +268,7 @@ export function buildGatewayWebSocketRequestContext(
     runCronJobNow: options.runCronJobNow,
     runCronRecovery: options.runCronRecovery,
     preflightCompressionPolicy: options.preflightCompressionPolicy,
+    toolResultEventOutputCharLimit: options.toolResultEventOutputCharLimit,
   };
 }
 

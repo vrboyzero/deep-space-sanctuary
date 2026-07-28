@@ -54,12 +54,19 @@ describe("runtime build script policy", () => {
     }
   });
 
-  it("reads the current workspace policy through pnpm's structured config output", () => {
-    expect(resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "slim" })).toEqual(
-      expect.objectContaining({ mode: "slim" }),
+  it("reads the current development workspace policy through pnpm's structured config output", () => {
+    expect(resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "workspace" })).toEqual(
+      expect.objectContaining({
+        mode: "workspace",
+        onlyBuiltDependencies: ["better-sqlite3", "esbuild", "node-pty"],
+        ignoredBuiltDependencies: ["onnxruntime-node", "protobufjs"],
+      }),
+    );
+    expect(() => resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "slim" })).toThrow(
+      /undeclared allow.*node-pty.*required ignore.*node-pty/i,
     );
     expect(() => resolveRuntimeBuildScriptPolicy({ cwd: workspaceRoot, mode: "full" })).toThrow(
-      /required allow.*node-pty.*onnxruntime-node/i,
+      /required allow.*onnxruntime-node/i,
     );
   });
 });
