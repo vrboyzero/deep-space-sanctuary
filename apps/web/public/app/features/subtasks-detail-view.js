@@ -75,6 +75,8 @@ export function formatSubtaskStatus(status) {
       return "超时";
     case "stopped":
       return "已停止";
+    case "interrupted":
+      return "运行已中断";
     default:
       return "等待中";
   }
@@ -92,6 +94,8 @@ export function getStatusToneClass(status) {
       return "is-timeout";
     case "stopped":
       return "is-stopped";
+    case "interrupted":
+      return "is-timeout";
     default:
       return "is-pending";
   }
@@ -858,9 +862,9 @@ export function createSubtasksDetailView({
       if (!subtasksDetailEl || !item) return null;
       const ownerDocument = subtasksDetailEl.ownerDocument ?? document;
       const canStop = item.status === "pending" || item.status === "running";
-      const canArchive = !item.archivedAt && ["done", "error", "timeout", "stopped"].includes(item.status);
-      const canResume = !item.archivedAt && ["done", "error", "timeout", "stopped"].includes(item.status);
-      const canTakeover = !item.archivedAt && ["running", "done", "error", "timeout", "stopped"].includes(item.status);
+      const canArchive = !item.archivedAt && ["done", "error", "timeout", "stopped", "interrupted"].includes(item.status);
+      const canResume = !item.archivedAt && ["done", "error", "timeout", "stopped", "interrupted"].includes(item.status);
+      const canTakeover = !item.archivedAt && ["running", "done", "error", "timeout", "stopped", "interrupted"].includes(item.status);
       const outputText = typeof outputContent === "string" && outputContent.trim()
         ? outputContent
         : item?.outputPreview || "";

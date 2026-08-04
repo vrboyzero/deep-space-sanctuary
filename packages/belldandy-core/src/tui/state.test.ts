@@ -67,6 +67,7 @@ describe("TUI state", () => {
       type: "remote-delivery.push.completed",
       result: {
         operation: "push",
+        outcome: "succeeded",
         applied: true,
         blockers: [],
         postcondition: { remoteOid: "a".repeat(40) },
@@ -74,6 +75,21 @@ describe("TUI state", () => {
     });
     expect(state.remoteDeliveryConfirmation).toBeUndefined();
     expect(state.notice).toBe("Remote push verified.");
+  });
+
+  it("requires manual reconciliation when an applied push has an uncertain outcome", () => {
+    const state = reduceTuiState(createInitialTuiState("E:\\workspace"), {
+      type: "remote-delivery.push.completed",
+      result: {
+        operation: "push",
+        outcome: "uncertain",
+        applied: true,
+        blockers: ["audit_persistence_failed"],
+        postcondition: { remoteOid: "a".repeat(40) },
+      },
+    });
+
+    expect(state.notice).toBe("Remote push applied, but audit persistence failed. Manual reconciliation required.");
   });
 
   it("keeps a bounded model stream and ignores duplicate or stale-run events", () => {
@@ -719,6 +735,13 @@ function createCommandJobSnapshot(jobId: string): CommandJobSnapshot {
     supportsResize: false,
     oldestCursor: 0,
     nextCursor: 32,
+    recovery: {
+      lifecycle: "active",
+      process: "attached",
+      output: "memory_only",
+      stdin: "live_only",
+      mutationReplay: "forbidden",
+    },
   };
 }
 

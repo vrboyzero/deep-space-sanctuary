@@ -9,6 +9,7 @@ import {
   CODING_AGENT_BENCHMARK_MANIFEST_VERSION,
   CODING_AGENT_BENCHMARK_REPORT_VERSION,
   createCodingAgentBenchmarkReport,
+  hashCodingAgentBenchmarkManifestText,
   loadCodingAgentBenchmarkManifest,
   validateCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
@@ -51,6 +52,15 @@ const EXPECTED_METRICS = [
 ];
 
 describe("coding agent benchmark contract", () => {
+  it("hashes manifest text independently of platform line endings", () => {
+    const lf = "{\n  \"schemaVersion\": \"coding-agent-benchmark-manifest/v2\"\n}\n";
+    const crlf = lf.replaceAll("\n", "\r\n");
+    const cr = lf.replaceAll("\n", "\r");
+
+    expect(hashCodingAgentBenchmarkManifestText(crlf)).toBe(hashCodingAgentBenchmarkManifestText(lf));
+    expect(hashCodingAgentBenchmarkManifestText(cr)).toBe(hashCodingAgentBenchmarkManifestText(lf));
+  });
+
   it("loads a versioned task manifest that freezes the complete stage 0A task surface", async () => {
     const manifest = await loadCodingAgentBenchmarkManifest();
 

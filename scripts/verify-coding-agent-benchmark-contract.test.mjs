@@ -78,6 +78,7 @@ describe("coding agent benchmark repository contract", () => {
     expect(readme).toContain("tests.failed-diagnosis");
     expect(readme).toContain("navigation.large-repository");
     expect(readme).toContain("aggregate:coding-agent:baseline");
+    expect(readme).toContain("aggregate:coding-agent:baseline --manifest-revision v2");
     expect(readme).toContain("baseline-index.json");
     expect(readme).toContain("git.dirty-worktree");
     expect(readme).toContain("git.delivery-guard");

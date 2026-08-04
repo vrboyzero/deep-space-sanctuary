@@ -29,6 +29,7 @@ import {
   listEnabledSearchableSkills,
   type ExtensionRuntimeReport,
 } from "./extension-runtime.js";
+import { reconcileMarketplaceExtensionAudits } from "./extension-marketplace-audit.js";
 import { listInstalledExtensions } from "./extension-marketplace-state.js";
 import {
   verifyInstalledMarketplaceExtension,
@@ -217,6 +218,7 @@ function ensurePluginToolContract(tool: Tool): Tool {
 export async function initializeExtensionHost(
   input: InitializeExtensionHostOptions,
 ): Promise<ExtensionHostState> {
+  await reconcileMarketplaceExtensionAudits(input.stateDir);
   const pluginRegistry = input.pluginRegistry ?? new PluginRegistry();
   const skillRegistry = input.skillRegistry ?? new SkillRegistry();
   const pluginsDir = path.join(input.stateDir, "plugins");

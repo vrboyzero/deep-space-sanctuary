@@ -108,6 +108,13 @@ describe("CommandJobManager", () => {
       pid: process.pid,
       supportsResize: true,
       nextCursor: 0,
+      recovery: {
+        lifecycle: "active",
+        process: "attached",
+        output: "memory_only",
+        stdin: "live_only",
+        mutationReplay: "forbidden",
+      },
     });
 
     process.emitData("abcdef");
@@ -191,6 +198,13 @@ describe("CommandJobManager", () => {
     expect(terminal).toMatchObject({
       status: "completed",
       cleanup: { commandSandboxLeaseCleanupStatus: "removed" },
+      recovery: {
+        lifecycle: "settled",
+        process: "not_applicable",
+        output: "memory_only",
+        stdin: "closed",
+        mutationReplay: "forbidden",
+      },
     });
     expect(cleanup).toHaveBeenCalledOnce();
   });
@@ -265,6 +279,16 @@ describe("CommandJobManager", () => {
     });
 
     await vi.waitFor(() => expect(() => manager.get(JOB_ID)).not.toThrow());
+    expect(manager.get(JOB_ID)).toMatchObject({
+      status: "running",
+      recovery: {
+        lifecycle: "starting",
+        process: "starting",
+        output: "memory_only",
+        stdin: "unavailable",
+        mutationReplay: "forbidden",
+      },
+    });
     const cancel = manager.cancel(JOB_ID);
     resolveProcess(process);
 
@@ -304,7 +328,40 @@ describe("CommandJobManager", () => {
       jobId: JOB_ID,
       status: "lost",
       error: expect.stringContaining("Gateway restarted"),
+      recovery: {
+        lifecycle: "lost",
+        process: "not_reattachable",
+        output: "unavailable",
+        stdin: "unavailable",
+        mutationReplay: "forbidden",
+      },
     });
     expect(second.read(JOB_ID, { cursor: 0, maxBytes: 64 })).toMatchObject({ output: "", nextCursor: 0 });
+  });
+
+  it("marks output from a persisted terminal job unavailable after restart", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "belldandy-command-job-terminal-restart-"));
+    directories.push(directory);
+    const first = createManager({ store: new CommandJobStateStore(directory) });
+    await first.initialize();
+    await first.start({
+      jobId: JOB_ID,
+      stdinMode: "closed",
+      process: new ImmediateExitJobProcess(),
+    });
+
+    const second = createManager({ store: new CommandJobStateStore(directory) });
+    await second.initialize();
+
+    expect(second.get(JOB_ID)).toMatchObject({
+      status: "completed",
+      recovery: {
+        lifecycle: "settled",
+        process: "not_applicable",
+        output: "unavailable",
+        stdin: "closed",
+        mutationReplay: "forbidden",
+      },
+    });
   });
 });

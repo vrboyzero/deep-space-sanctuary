@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { parseGoalSessionKey } from "./goals/session.js";
 
-const TERMINAL_STATUSES = new Set(["done", "error", "timeout", "stopped"]);
+const TERMINAL_STATUSES = new Set(["done", "error", "timeout", "stopped", "interrupted"]);
 const SAFE_TASK_ID_PATTERN = /^task_[A-Za-z0-9_-]{1,128}$/;
 
 export const DEFAULT_SUBTASK_RETENTION_POLICY: SubTaskRetentionPolicy = {

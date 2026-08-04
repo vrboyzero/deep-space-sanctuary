@@ -1,10 +1,15 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { listMarketplaceExtensionAudits } from "./extension-marketplace-audit.js";
+import {
+  beginMarketplaceExtensionAudit,
+  listMarketplaceExtensionAudits,
+  reconcileMarketplaceExtensionAudits,
+} from "./extension-marketplace-audit.js";
 import {
   disableMarketplaceExtension,
   enableMarketplaceExtension,
@@ -21,7 +26,7 @@ import {
   loadExtensionMarketplaceState,
   upsertInstalledExtension,
 } from "./extension-marketplace-state.js";
-import { writeExtensionRuntimeLease } from "./extension-runtime-lease.js";
+import { getExtensionRuntimeLeaseRoot, writeExtensionRuntimeLease } from "./extension-runtime-lease.js";
 
 async function createPluginSourceDir(version: string): Promise<string> {
   const sourceDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-plugin-"));
@@ -41,6 +46,22 @@ async function createPluginSourceDir(version: string): Promise<string> {
   return sourceDir;
 }
 
+async function writeActiveRuntimeLease(
+  stateDir: string,
+  extensionId: string,
+  contentSha256: string,
+): Promise<void> {
+  const leaseId = randomUUID();
+  await writeExtensionRuntimeLease(stateDir, {
+    version: 1,
+    runtime: "docker",
+    leaseId,
+    containerName: `belldandy-extension-${leaseId.replaceAll("-", "")}`,
+    extensionId,
+    contentSha256,
+  });
+}
+
 describe("extension marketplace service", () => {
   const tempDirs: string[] = [];
 
@@ -51,6 +72,134 @@ describe("extension marketplace service", () => {
         await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
       }
     }
+  });
+
+  it("does not start installation when the confirmed audit hits ENOSPC", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-enospc-confirmed-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const input = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const preview = await previewMarketplaceExtensionInstall(input);
+    const originalWriteFile = fs.writeFile.bind(fs);
+    const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
+      if (String(file).includes(path.join("extensions", "audit"))) {
+        throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      }
+      return originalWriteFile(file, data, options);
+    });
+
+    let thrown: unknown;
+    try {
+      await installMarketplaceExtension({
+        ...input,
+        confirmationHash: preview.confirmationHash,
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      writeFileSpy.mockRestore();
+    }
+
+    expect(thrown).toMatchObject({ code: "ENOSPC" });
+    await expect(getInstalledExtension(stateDir, preview.extensionId)).resolves.toBeUndefined();
+    await expect(getKnownMarketplace(stateDir, "official-market")).resolves.toBeUndefined();
+    await expect(listMarketplaceExtensionAudits(stateDir)).resolves.toEqual([]);
+  });
+
+  it("reconciles a committed update after completion audit ENOSPC without replaying materialization", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-enospc-completion-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const installInput = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const installPreview = await previewMarketplaceExtensionInstall(installInput);
+    const installedV1 = await installMarketplaceExtension({
+      ...installInput,
+      confirmationHash: installPreview.confirmationHash,
+    });
+    await fs.writeFile(path.join(sourceDir, "belldandy-extension.json"), JSON.stringify({
+      schemaVersion: 1,
+      name: "demo-plugin",
+      kind: "plugin",
+      version: "2.0.0",
+      compatibility: { hostApi: 1 },
+      permissions: [],
+      entry: { pluginModule: "dist/plugin.mjs" },
+    }, null, 2), "utf-8");
+    await fs.writeFile(
+      path.join(sourceDir, "dist", "plugin.mjs"),
+      "export default { version: \"2.0.0\" };\n",
+      "utf-8",
+    );
+    const updateInput = { stateDir, extensionId: installedV1.installed.id };
+    const updatePreview = await previewMarketplaceExtensionUpdate(updateInput);
+    const originalWriteFile = fs.writeFile.bind(fs);
+    let auditWriteCount = 0;
+    const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
+      if (String(file).includes(path.join("extensions", "audit"))) {
+        auditWriteCount += 1;
+        if (auditWriteCount >= 2) {
+          throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+        }
+      }
+      return originalWriteFile(file, data, options);
+    });
+
+    let thrown: unknown;
+    try {
+      await updateMarketplaceExtension({
+        ...updateInput,
+        confirmationHash: updatePreview.confirmationHash,
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      writeFileSpy.mockRestore();
+    }
+
+    expect(thrown).toMatchObject({ code: "ENOSPC" });
+    expect(auditWriteCount).toBe(3);
+    const installedV2 = await getInstalledExtension(stateDir, updateInput.extensionId);
+    expect(installedV2).toMatchObject({
+      version: "2.0.0",
+      contentSha256: updatePreview.contentSha256,
+      installedAt: installedV1.installed.installedAt,
+    });
+    const materializedEntryPath = path.join(installedV2!.installPath, "dist", "plugin.mjs");
+    const materializedV2 = await fs.readFile(materializedEntryPath, "utf-8");
+    await expect(listMarketplaceExtensionAudits(stateDir)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: "update",
+          confirmationHash: updatePreview.confirmationHash,
+          status: "confirmed",
+        }),
+      ]),
+    );
+    await expect(reconcileMarketplaceExtensionAudits(stateDir)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: "update",
+          confirmationHash: updatePreview.confirmationHash,
+          status: "completed",
+        }),
+      ]),
+    );
+
+    await fs.writeFile(path.join(sourceDir, "dist", "plugin.mjs"), "export default { version: \"3.0.0\" };\n", "utf-8");
+    await expect(updateMarketplaceExtension({
+      ...updateInput,
+      confirmationHash: updatePreview.confirmationHash,
+    })).rejects.toThrow("Marketplace extension audit already completed");
+    await expect(getInstalledExtension(stateDir, updateInput.extensionId)).resolves.toEqual(installedV2);
+    await expect(fs.readFile(materializedEntryPath, "utf-8")).resolves.toBe(materializedV2);
   });
 
   it("rejects installing an extension without explicit host compatibility", async () => {
@@ -377,6 +526,250 @@ describe("extension marketplace service", () => {
 
     expect((await getInstalledExtension(stateDir, installed.installed.id))?.enabled).toBe(true);
     await expect(fs.stat(installed.installed.installPath)).resolves.toBeDefined();
+  });
+
+  it("revokes an active runtime before disable, update, and uninstall mutations", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-revoke-runtime-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const installInput = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const installPreview = await previewMarketplaceExtensionInstall(installInput);
+    const installed = await installMarketplaceExtension({
+      ...installInput,
+      confirmationHash: installPreview.confirmationHash,
+    });
+    const extensionId = installed.installed.id;
+    const operations: string[] = [];
+    const runtimeCoordinator = {
+      revokeForMutation: async (input: { operation: string }) => {
+        operations.push(input.operation);
+        await fs.rm(getExtensionRuntimeLeaseRoot(stateDir), { recursive: true, force: true });
+      },
+    };
+
+    await writeActiveRuntimeLease(stateDir, extensionId, installed.installed.contentSha256!);
+    await expect(disableMarketplaceExtension(stateDir, extensionId, { runtimeCoordinator }))
+      .resolves.toMatchObject({ enabled: false });
+    await enableMarketplaceExtension(stateDir, extensionId);
+
+    const updateInput = { stateDir, extensionId };
+    const updatePreview = await previewMarketplaceExtensionUpdate(updateInput);
+    await writeActiveRuntimeLease(stateDir, extensionId, installed.installed.contentSha256!);
+    const updated = await updateMarketplaceExtension({
+      ...updateInput,
+      confirmationHash: updatePreview.confirmationHash,
+      runtimeCoordinator,
+    });
+
+    const uninstallInput = { stateDir, extensionId };
+    const uninstallPreview = await previewMarketplaceExtensionUninstall(uninstallInput);
+    await writeActiveRuntimeLease(stateDir, extensionId, updated.installed.contentSha256!);
+    await expect(uninstallMarketplaceExtension({
+      ...uninstallInput,
+      confirmationHash: uninstallPreview.confirmationHash,
+      runtimeCoordinator,
+    })).resolves.toMatchObject({ removed: { id: extensionId } });
+
+    expect(operations).toEqual(["disable", "update", "uninstall"]);
+    expect(await getInstalledExtension(stateDir, extensionId)).toBeUndefined();
+    await expect(fs.stat(installed.installed.installPath)).rejects.toThrow();
+  });
+
+  it("fails closed before any marketplace mutation when runtime revoke fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-revoke-failure-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const installInput = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const installPreview = await previewMarketplaceExtensionInstall(installInput);
+    const installed = await installMarketplaceExtension({
+      ...installInput,
+      confirmationHash: installPreview.confirmationHash,
+    });
+    const extensionId = installed.installed.id;
+    const updateInput = { stateDir, extensionId };
+    const updatePreview = await previewMarketplaceExtensionUpdate(updateInput);
+    const uninstallPreview = await previewMarketplaceExtensionUninstall(updateInput);
+    await writeActiveRuntimeLease(stateDir, extensionId, installed.installed.contentSha256!);
+    const runtimeCoordinator = {
+      revokeForMutation: async () => {
+        throw new Error("runtime revoke failed");
+      },
+    };
+
+    await expect(disableMarketplaceExtension(stateDir, extensionId, { runtimeCoordinator }))
+      .rejects.toThrow(/runtime revoke failed/i);
+    await expect(updateMarketplaceExtension({
+      ...updateInput,
+      confirmationHash: updatePreview.confirmationHash,
+      runtimeCoordinator,
+    })).rejects.toThrow(/runtime revoke failed/i);
+    await expect(uninstallMarketplaceExtension({
+      ...updateInput,
+      confirmationHash: uninstallPreview.confirmationHash,
+      runtimeCoordinator,
+    })).rejects.toThrow(/runtime revoke failed/i);
+
+    expect((await getInstalledExtension(stateDir, extensionId))?.enabled).toBe(true);
+    await expect(fs.stat(installed.installed.installPath)).resolves.toBeDefined();
+    expect((await listMarketplaceExtensionAudits(stateDir)).map((audit) => audit.operation)).toEqual(["install"]);
+  });
+
+  it("blocks an unresolved update before runtime revoke or materialization", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-unresolved-update-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const installInput = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const installPreview = await previewMarketplaceExtensionInstall(installInput);
+    const installed = await installMarketplaceExtension({
+      ...installInput,
+      confirmationHash: installPreview.confirmationHash,
+    });
+    await fs.writeFile(path.join(sourceDir, "belldandy-extension.json"), JSON.stringify({
+      schemaVersion: 1,
+      name: "demo-plugin",
+      kind: "plugin",
+      version: "2.0.0",
+      compatibility: { hostApi: 1 },
+      permissions: [],
+      entry: { pluginModule: "dist/plugin.mjs" },
+    }, null, 2), "utf-8");
+    await fs.writeFile(
+      path.join(sourceDir, "dist", "plugin.mjs"),
+      "export default { version: \"2.0.0\" };\n",
+      "utf-8",
+    );
+    const updateInput = { stateDir, extensionId: installed.installed.id };
+    const updatePreview = await previewMarketplaceExtensionUpdate(updateInput);
+    await beginMarketplaceExtensionAudit(stateDir, {
+      operation: "update",
+      extensionId: updatePreview.extensionId,
+      confirmationHash: updatePreview.confirmationHash,
+      sourceKey: updatePreview.sourceKey,
+      contentSha256: updatePreview.contentSha256,
+      previousContentSha256: updatePreview.currentContentSha256,
+      versionLabel: updatePreview.versionLabel,
+      hostApi: updatePreview.hostApi,
+      permissions: updatePreview.permissions,
+      enabled: updatePreview.enabled,
+    });
+    await writeActiveRuntimeLease(
+      stateDir,
+      installed.installed.id,
+      installed.installed.contentSha256!,
+    );
+    const revokedOperations: string[] = [];
+    const runtimeCoordinator = {
+      revokeForMutation: async (input: { operation: string }) => {
+        revokedOperations.push(input.operation);
+        await fs.rm(getExtensionRuntimeLeaseRoot(stateDir), { recursive: true, force: true });
+      },
+    };
+
+    await expect(updateMarketplaceExtension({
+      ...updateInput,
+      confirmationHash: updatePreview.confirmationHash,
+      runtimeCoordinator,
+    })).rejects.toThrow(/unresolved marketplace extension audit/i);
+
+    expect(revokedOperations).toEqual([]);
+    expect((await getInstalledExtension(stateDir, installed.installed.id))?.contentSha256)
+      .toBe(installed.installed.contentSha256);
+    expect((await listMarketplaceExtensionAudits(stateDir)).at(-1)?.status).toBe("uncertain");
+  });
+
+  it("records an uncertain outcome when completion audit persistence fails after install commits", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-audit-sink-down-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const installInput = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const installPreview = await previewMarketplaceExtensionInstall(installInput);
+    const originalRename = fs.rename.bind(fs);
+    let auditRenameCount = 0;
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+      if (String(newPath).includes(path.join("extensions", "audit"))) {
+        auditRenameCount += 1;
+        if (auditRenameCount === 2) throw new Error("audit sink down");
+      }
+      await originalRename(oldPath, newPath);
+    });
+
+    try {
+      await expect(installMarketplaceExtension({
+        ...installInput,
+        confirmationHash: installPreview.confirmationHash,
+      })).rejects.toThrow("audit sink down");
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    expect((await getInstalledExtension(stateDir, installPreview.extensionId))?.contentSha256)
+      .toBe(installPreview.contentSha256);
+    expect((await listMarketplaceExtensionAudits(stateDir)).at(-1)?.status).toBe("uncertain");
+  });
+
+  it("rejects an install retry whose durable audit already proves the same confirmation completed", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-marketplace-completed-retry-"));
+    const sourceDir = await createPluginSourceDir("1.0.0");
+    tempDirs.push(stateDir, sourceDir);
+    const installInput = {
+      stateDir,
+      marketplace: "official-market",
+      source: { source: "directory" as const, path: sourceDir },
+    };
+    const preview = await previewMarketplaceExtensionInstall(installInput);
+    const audit = await beginMarketplaceExtensionAudit(stateDir, {
+      operation: "install",
+      extensionId: preview.extensionId,
+      confirmationHash: preview.confirmationHash,
+      sourceKey: preview.sourceKey,
+      contentSha256: preview.contentSha256,
+      versionLabel: preview.versionLabel,
+      hostApi: preview.hostApi,
+      permissions: preview.permissions,
+      enabled: preview.enabled,
+    });
+    const installedAt = "2026-08-03T00:00:00.000Z";
+    await upsertInstalledExtension(stateDir, {
+      name: "demo-plugin",
+      kind: "plugin",
+      marketplace: "official-market",
+      version: preview.versionLabel,
+      manifestPath: "belldandy-extension.json",
+      installPath: path.join(stateDir, "extensions", "materialized", "official-market", "demo-plugin"),
+      sourceKey: preview.sourceKey,
+      contentSha256: preview.contentSha256,
+      approvedHostApi: preview.hostApi,
+      approvedPermissions: [],
+      installedAt,
+      status: "installed",
+      enabled: preview.enabled,
+    });
+
+    await expect(installMarketplaceExtension({
+      ...installInput,
+      confirmationHash: preview.confirmationHash,
+    })).rejects.toThrow(/marketplace extension audit already completed/i);
+
+    expect((await getInstalledExtension(stateDir, preview.extensionId))?.installedAt).toBe(installedAt);
+    expect(await listMarketplaceExtensionAudits(stateDir)).toEqual([
+      expect.objectContaining({ auditId: audit.auditId, status: "completed" }),
+    ]);
   });
 });
 

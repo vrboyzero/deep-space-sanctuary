@@ -1,10 +1,11 @@
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentRunPromptOverride, BelldandyAgent } from "@belldandy/agent";
+import { ToolEnabledAgent, type AgentRunPromptOverride, type BelldandyAgent } from "@belldandy/agent";
 import { isAgentRunEventV1 } from "../../../coding-run/contracts.js";
 import { startGatewayServer } from "../../../server.js";
 import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, withEnv } from "../../../server-testkit.js";
@@ -444,6 +445,65 @@ describe("bdd agent run", () => {
     }
   });
 
+  it("preserves an Agent structured-output failure code and original output through Gateway", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-schema-runtime-failure-"));
+    const agent: BelldandyAgent = {
+      async *run() {
+        yield { type: "final", text: "runtime-original-invalid" };
+        yield {
+          type: "status",
+          status: "error",
+          code: "output_schema_invalid",
+          error: "Final output is not valid JSON.",
+        };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stdout: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "return JSON",
+          jsonl: true,
+          outputSchema: { type: "object" },
+          writeStdout: (text) => stdout.push(text),
+          writeStderr: () => {},
+        })).toBe(6);
+      });
+
+      const events = stdout.join("").trim().split("\n").map((line) => JSON.parse(line) as {
+        type: string;
+        payload: { error?: { code?: string; message?: string }; output?: { text?: string } };
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "run.failed",
+        payload: {
+          error: {
+            code: "output_schema_invalid",
+            message: "Final output is not valid JSON.",
+          },
+          output: { text: "runtime-original-invalid" },
+        },
+      });
+      expect(events.some((event) => event.type === "run.completed")).toBe(false);
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("normalizes one fenced JSON result before emitting a schema-validated terminal event", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-schema-fence-"));
     const agent: BelldandyAgent = {
@@ -509,9 +569,11 @@ describe("bdd agent run", () => {
   it("sends an exact output schema contract to the Agent before validating its final JSON", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-schema-contract-"));
     let observedPrompt = "";
+    let observedStructuredOutput: Parameters<BelldandyAgent["run"]>[0]["structuredOutput"];
     const agent: BelldandyAgent = {
       async *run(input) {
         observedPrompt = input.text;
+        observedStructuredOutput = input.structuredOutput;
         yield {
           type: "final",
           text: JSON.stringify({
@@ -559,8 +621,132 @@ describe("bdd agent run", () => {
       expect(observedPrompt).toContain("## Output Schema Contract");
       expect(observedPrompt).toContain('"lineHint":{"const":97}');
       expect(observedPrompt).toContain("Return only raw JSON that validates against this schema.");
+      expect(observedStructuredOutput?.schema).toMatchObject({
+        required: ["symbol", "sourcePath", "lineHint"],
+        properties: {
+          lineHint: { const: 97 },
+        },
+      });
+      expect(observedStructuredOutput?.validateOutput(JSON.stringify({
+        symbol: "lateSegmentAnchor",
+        sourcePath: "src/segments/segment-071.mjs",
+        lineHint: 97,
+      }))).toEqual({
+        ok: true,
+        outputText: '{"symbol":"lateSegmentAnchor","sourcePath":"src/segments/segment-071.mjs","lineHint":97}',
+      });
     } finally {
       await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("repairs one structured output through the real Agent, Gateway, and CLI path", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-schema-integration-"));
+    const providerPayloads: Array<Record<string, unknown>> = [];
+    const providerResponses = [
+      {
+        choices: [{ message: { content: "not-json" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2 },
+      },
+      {
+        choices: [{ message: { content: '{"summary":"repaired"}' } }],
+        usage: { prompt_tokens: 4, completion_tokens: 3 },
+      },
+    ];
+    const provider = http.createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        providerPayloads.push(JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<string, unknown>);
+        const payload = providerResponses.shift();
+        response.writeHead(payload ? 200 : 500, { "content-type": "application/json" });
+        response.end(JSON.stringify(payload ?? { error: { message: "unexpected model call" } }));
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      provider.once("listening", resolve);
+      provider.once("error", reject);
+      provider.listen(0, "127.0.0.1");
+    });
+    const providerAddress = provider.address();
+    if (!providerAddress || typeof providerAddress === "string") throw new Error("Provider did not expose a port.");
+    const execute = vi.fn();
+    const toolExecutor = {
+      getDefinitions: () => [{
+        type: "function" as const,
+        function: {
+          name: "mutate_workspace",
+          description: "Mutates the workspace",
+          parameters: { type: "object" },
+        },
+      }],
+      getRegisteredToolContract: () => undefined,
+      consumeLoadedDeferredToolsForNextTurn: async () => [],
+      setTokenCounter: () => {},
+      clearTokenCounter: () => {},
+      releaseConversation: () => {},
+      execute,
+    } as any;
+    const agent = new ToolEnabledAgent({
+      baseUrl: `http://127.0.0.1:${providerAddress.port}/v1`,
+      apiKey: "test-key",
+      model: "test-model",
+      toolExecutor,
+      streamingEnabled: true,
+    });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => agent,
+    });
+    const stdout: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "return JSON",
+          jsonl: true,
+          outputSchema: {
+            type: "object",
+            required: ["summary"],
+            properties: { summary: { const: "repaired" } },
+            additionalProperties: false,
+          },
+          writeStdout: (text) => stdout.push(text),
+          writeStderr: () => {},
+        })).toBe(0);
+      });
+
+      expect(providerPayloads).toHaveLength(2);
+      expect(providerPayloads[0]?.tools).toHaveLength(1);
+      expect(providerPayloads[1]?.tools).toBeUndefined();
+      expect(execute).not.toHaveBeenCalled();
+      const events = stdout.join("").trim().split("\n").map((line) => JSON.parse(line) as {
+        type: string;
+        payload: Record<string, any>;
+      });
+      expect(events.filter((event) => event.type === "message.delta")
+        .map((event) => String(event.payload.delta ?? "")).join(""))
+        .toBe('{"summary":"repaired"}');
+      expect(JSON.stringify(events)).not.toContain("not-json");
+      expect(events.find((event) => event.type === "run.usage")).toMatchObject({
+        payload: { usage: { input: 7, output: 5, modelCalls: 2 } },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "run.completed",
+        payload: { output: { text: '{"summary":"repaired"}' } },
+      });
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => provider.close(() => resolve()));
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
   });

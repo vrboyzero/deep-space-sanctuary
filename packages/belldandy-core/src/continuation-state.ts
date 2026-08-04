@@ -186,6 +186,7 @@ function buildSubTaskNextAction(record: SubTaskRecord): string {
     case "error":
     case "timeout":
     case "stopped":
+    case "interrupted":
       if (latestTakeover) {
         return "Inspect the latest takeover failure details before deciding whether to relaunch this task again.";
       }
@@ -216,7 +217,8 @@ export function buildSubTaskContinuationState(record: SubTaskRecord): Continuati
       .map((item) => item.message),
     3,
   );
-  const blockerLabels = record.status === "error" || record.status === "timeout" || record.status === "stopped"
+  const blockerLabels = record.status === "error" || record.status === "timeout"
+    || record.status === "stopped" || record.status === "interrupted"
     ? compactStrings([
         record.bridgeSessionRuntime?.blockReason,
         record.error,

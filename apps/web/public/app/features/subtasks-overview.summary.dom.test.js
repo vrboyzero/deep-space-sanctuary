@@ -62,6 +62,7 @@ describe("SubTasks summary DOM owner", () => {
       { status: "error" },
       { status: "timeout" },
       { status: "stopped" },
+      { status: "interrupted" },
       { status: "pending" },
     ])).not.toThrow();
 
@@ -74,7 +75,7 @@ describe("SubTasks summary DOM owner", () => {
       "<img src=x onerror=alert(1)>Done",
       "<img src=x onerror=alert(1)>Failed",
     ]);
-    expect(cards.map((card) => card.querySelector(".memory-stat-value")?.textContent)).toEqual(["6", "1", "1", "3"]);
+    expect(cards.map((card) => card.querySelector(".memory-stat-value")?.textContent)).toEqual(["7", "1", "1", "4"]);
     expect(summary.querySelector("img, script, [onerror]")).toBeNull();
 
     expect(() => feature.renderSubtasksSummary(null)).not.toThrow();

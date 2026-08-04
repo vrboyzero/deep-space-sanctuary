@@ -45,6 +45,7 @@ import type { PreflightCompressionPolicy } from "./preflight-compression-config.
 import { resolveProjectRules } from "./project-rules.js";
 import { buildCodingRunPromptOverride } from "./coding-run-prompt.js";
 import { projectToolResultEventOutput } from "./tool-result-event-output.js";
+import { compileOutputSchema } from "./coding-run/output-schema.js";
 
 type QueryRuntimeLogger = {
   debug: (module: string, message: string, data?: unknown) => void;
@@ -479,10 +480,20 @@ export async function handleMessageSendWithQueryRuntime(
       ...(request.followUpClaim ? { followUp: request.followUpClaim } : {}),
       ...(steeringMailbox ? { steering: steeringMailbox } : {}),
     });
-    runtimeDeps.codingRunEventBroker?.registerConversationRun({
-      conversationId,
-      agentRunId: runId,
-    });
+    try {
+      runtimeDeps.codingRunEventBroker?.registerConversationRun({
+        conversationId,
+        agentRunId: runId,
+      });
+    } catch (error) {
+      await settleConversationRecoveryMarker({
+        runtime: runtimeDeps,
+        conversationId,
+        runId,
+      });
+      runtimeDeps.conversationRunRegistry.clear(conversationId, runId);
+      throw error;
+    }
 
     lifecycleLeaseTransferred = true;
     void runAgentInBackground({
@@ -849,6 +860,7 @@ function buildMessageSendAgentRunInput(
 ): any {
   const codingRunLaunchSpec = buildCodingRunLaunchSpec(input.codingRun);
   const codingRunPromptOverride = buildCodingRunPromptOverride(input.codingRun);
+  const structuredOutput = buildAgentStructuredOutputContract(input.codingRun);
   const runInput: any = {
     conversationId: input.conversationId,
     text: input.promptText,
@@ -861,6 +873,7 @@ function buildMessageSendAgentRunInput(
     senderInfo: input.senderInfo,
     roomContext: input.normalizedRoomContext,
     ...(codingRunPromptOverride ? { promptOverride: codingRunPromptOverride } : {}),
+    ...(structuredOutput ? { structuredOutput } : {}),
     meta: {
       ...(input.ctx.request.requestChannel ? { _toolRequestChannel: input.ctx.request.requestChannel } : {}),
       ...(codingRunLaunchSpec ? { _agentLaunchSpec: codingRunLaunchSpec } : {}),
@@ -900,6 +913,18 @@ function buildMessageSendAgentRunInput(
   }
 
   return runInput;
+}
+
+function buildAgentStructuredOutputContract(
+  codingRun: MessageSendParams["codingRun"],
+): Parameters<BelldandyAgent["run"]>[0]["structuredOutput"] {
+  if (codingRun?.outputSchema === undefined) return undefined;
+  const compiled = compileOutputSchema(codingRun.outputSchema);
+  if (!compiled.ok) throw new Error(compiled.message);
+  return {
+    schema: codingRun.outputSchema,
+    validateOutput: compiled.validator.validateOutput,
+  };
 }
 
 export class CodingRunCapabilityError extends Error {
@@ -1525,7 +1550,7 @@ function createMessageSendStreamAdapter(input: {
   };
 }): {
   handlers: {
-    onStatus: (item: { status: string }) => void;
+    onStatus: (item: { status: string; code?: string; error?: string }) => void;
     onBudgetExhausted: (item: QueryRuntimeAgentBudgetExhausted) => void;
     onToolCall: (item: { id: string; name: string; arguments?: unknown }) => void;
     onToolResult: (item: { id: string; name: string; success: boolean; output?: unknown; error?: string; failureKind?: string; metadata?: unknown }) => void;
@@ -1613,6 +1638,8 @@ function createMessageSendStreamAdapter(input: {
             conversationId: input.conversationId,
             runId: input.runId,
             status: item.status,
+            ...(item.code ? { code: item.code } : {}),
+            ...(item.error ? { error: item.error } : {}),
           },
         });
       },
@@ -2407,18 +2434,59 @@ async function runAgentInBackground(input: MessageSendBackgroundInput): Promise<
     }
   } finally {
     ctx.runtime.pendingToolPermissionRuntime?.cancelRun(input.runId);
-    await ctx.runtime.conversationRunRegistry
-      .settleRecoveryMarker(input.conversationId, input.runId)
-      .catch((error) => {
-        ctx.runtime.log.warn("coding-run", "Failed to settle Conversation recovery marker.", {
-          conversationId: input.conversationId,
-          runId: input.runId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+    const reconciliationDurable = ctx.runtime.codingRunEventBroker?.isReconciliationDurable({
+      conversationId: input.conversationId,
+      agentRunId: input.runId,
+    }) ?? true;
+    if (reconciliationDurable) {
+      await settleConversationRecoveryMarker({
+        runtime: ctx.runtime,
+        conversationId: input.conversationId,
+        runId: input.runId,
       });
+    } else {
+      ctx.runtime.log.warn("coding-run", "Conversation recovery marker remains active because reconciliation journal persistence failed.", {
+        conversationId: input.conversationId,
+        runId: input.runId,
+      });
+    }
     ctx.runtime.conversationRunRegistry.clear(input.conversationId, input.runId);
     await handOffConversationFollowUp(input);
   }
+}
+
+async function settleConversationRecoveryMarker(input: {
+  runtime: Pick<MessageSendQueryRuntimeContext["runtime"], "log" | "conversationRunRegistry" | "codingRunEventBroker">;
+  conversationId: string;
+  runId: string;
+}): Promise<boolean> {
+  let settled = false;
+  try {
+    settled = await input.runtime.conversationRunRegistry
+      .settleRecoveryMarker(input.conversationId, input.runId);
+  } catch (error) {
+    input.runtime.log.warn("coding-run", "Failed to settle Conversation recovery marker.", {
+      conversationId: input.conversationId,
+      runId: input.runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+  if (!settled) return false;
+
+  await input.runtime.codingRunEventBroker
+    ?.removeReconciliationEvidence({
+      conversationId: input.conversationId,
+      agentRunId: input.runId,
+    })
+    .catch((error) => {
+      input.runtime.log.warn("coding-run", "Failed to remove settled Conversation reconciliation evidence.", {
+        conversationId: input.conversationId,
+        runId: input.runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  return true;
 }
 
 async function handOffConversationFollowUp(input: MessageSendBackgroundInput): Promise<void> {

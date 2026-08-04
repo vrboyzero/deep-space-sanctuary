@@ -32,6 +32,8 @@ export function createGatewayConversationEventAdapter(input: {
   let sequencer: AgentRunEventSequencer | undefined;
   let terminalEvent: AgentRunEvent | undefined;
   let gatewayReportedFailure = false;
+  let gatewayFailureCode: CodingRunErrorCode | undefined;
+  let gatewayFailureMessage: string | undefined;
   let budgetExhausted = false;
 
   const emit = (type: AgentRunEvent["type"], payload: Record<string, unknown>): AgentRunEvent | undefined => {
@@ -64,6 +66,12 @@ export function createGatewayConversationEventAdapter(input: {
           ? gatewayPayload.status.trim()
           : "unknown";
         gatewayReportedFailure ||= status === "error";
+        if (status === "error") {
+          gatewayFailureCode = readCodingRunErrorCode(gatewayPayload.code) ?? gatewayFailureCode;
+          gatewayFailureMessage = getNonEmptyString(gatewayPayload.error)
+            ? toSafeCodingRunErrorMessage(String(gatewayPayload.error))
+            : gatewayFailureMessage;
+        }
         return emit("run.status", { status });
       }
       if (event === "chat.delta" && typeof gatewayPayload.delta === "string") {
@@ -153,8 +161,9 @@ export function createGatewayConversationEventAdapter(input: {
         if (gatewayReportedFailure) {
           return emit("run.failed", {
             error: {
-              code: budgetExhausted ? "budget_exhausted" : "internal",
-              message: toSafeCodingRunErrorMessage(text || "Gateway reported an execution failure."),
+              code: gatewayFailureCode ?? (budgetExhausted ? "budget_exhausted" : "internal"),
+              message: gatewayFailureMessage
+                ?? toSafeCodingRunErrorMessage(text || "Gateway reported an execution failure."),
             },
             output: { text },
           });
@@ -235,6 +244,11 @@ function isTerminalEventType(type: AgentRunEvent["type"]): boolean {
 
 function getNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readCodingRunErrorCode(value: unknown): CodingRunErrorCode | undefined {
+  if (value === "output_schema_invalid") return value;
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

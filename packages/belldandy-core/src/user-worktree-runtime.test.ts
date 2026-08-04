@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ManagedWorktreeRuntime } from "./managed-worktree.js";
 import { UserWorktreeRuntime } from "./user-worktree-runtime.js";
@@ -213,6 +213,134 @@ describe("UserWorktreeRuntime", () => {
     }
   }, 20_000);
 
+  it("recovers a completed apply after runtime restart without applying the patch twice", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-apply-restart-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-apply-restart-1");
+      await fs.writeFile(path.join(worktree.resolvedCwd, "index.ts"), "export const demo = false;\n", "utf-8");
+      const preview = await users.preview({ operation: "apply", worktreeId: worktree.id });
+      await expect(users.confirm({
+        operation: "apply",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({ applied: true });
+
+      const restarted = new UserWorktreeRuntime(fixture.stateDir);
+      await expect(restarted.confirm({
+        operation: "apply",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        outcome: "succeeded",
+        applied: true,
+        audit: { status: "succeeded" },
+      });
+      await expect(fs.readFile(path.join(fixture.nestedDir, "index.ts"), "utf-8"))
+        .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "export const demo = false;\n");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("keeps an applied worktree mutation uncertain when completion audit persistence fails", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-apply-audit-failure-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-apply-audit-failure-1");
+      await fs.writeFile(path.join(worktree.resolvedCwd, "index.ts"), "export const demo = false;\n", "utf-8");
+      const preview = await users.preview({ operation: "apply", worktreeId: worktree.id });
+      const originalRename = fs.rename.bind(fs);
+      const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+        if (String(newPath).includes(path.join("user-session-operations", "audit"))) {
+          throw new Error("audit sink down");
+        }
+        await originalRename(oldPath, newPath);
+      });
+      let interrupted;
+      try {
+        interrupted = await users.confirm({
+          operation: "apply",
+          worktreeId: worktree.id,
+          receiptId: preview.receipt?.receiptId ?? "",
+          confirm: true,
+        });
+      } finally {
+        renameSpy.mockRestore();
+      }
+
+      expect(interrupted).toMatchObject({
+        outcome: "uncertain",
+        applied: true,
+        blockers: ["audit_persistence_failed"],
+        audit: { status: "started" },
+      });
+      await expect(fs.readFile(path.join(fixture.nestedDir, "index.ts"), "utf-8"))
+        .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "export const demo = false;\n");
+
+      const restarted = new UserWorktreeRuntime(fixture.stateDir);
+      await expect(restarted.confirm({
+        operation: "apply",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        outcome: "uncertain",
+        applied: false,
+        blockers: ["operation_status_uncertain"],
+        audit: { status: "started" },
+      });
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("fails closed without applying when initial audit persistence runs out of space", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-missing-audit-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-missing-audit-1");
+      await fs.writeFile(path.join(worktree.resolvedCwd, "index.ts"), "export const demo = false;\n", "utf-8");
+      const preview = await users.preview({ operation: "apply", worktreeId: worktree.id });
+      const originalWriteFile = fs.writeFile.bind(fs);
+      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
+        if (String(file).includes(path.join("user-session-operations", "audit"))) {
+          throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+        }
+        await originalWriteFile(file, data, options);
+      });
+      try {
+        await expect(users.confirm({
+          operation: "apply",
+          worktreeId: worktree.id,
+          receiptId: preview.receipt?.receiptId ?? "",
+          confirm: true,
+        })).resolves.toMatchObject({
+          outcome: "failed",
+          applied: false,
+          blockers: ["audit_unavailable"],
+        });
+      } finally {
+        writeFileSpy.mockRestore();
+      }
+
+      const restarted = new UserWorktreeRuntime(fixture.stateDir);
+      await expect(restarted.confirm({
+        operation: "apply",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        outcome: "uncertain",
+        applied: false,
+        blockers: ["operation_status_uncertain"],
+      });
+      await expect(fs.readFile(path.join(fixture.nestedDir, "index.ts"), "utf-8"))
+        .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "export const demo = true;\n");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
   it("consumes an apply receipt and fails closed when the source target changes before the final gate", async () => {
     const fixture = await createGitFixture("belldandy-user-worktree-apply-drift-");
     try {
@@ -374,6 +502,110 @@ describe("UserWorktreeRuntime", () => {
       await expect(runGit(["diff", "--cached", "--name-only"], worktree.worktreePath))
         .resolves.toBe("packages/demo/index.ts");
     } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("recovers a completed stage from durable audit after runtime restart without replaying it", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-stage-restart-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-stage-restart-1");
+      await fs.writeFile(path.join(worktree.resolvedCwd, "index.ts"), "export const demo = false;\n", "utf-8");
+      const preview = await users.preview({ operation: "stage", worktreeId: worktree.id });
+      await expect(users.confirm({
+        operation: "stage",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({ applied: true });
+
+      const restarted = new UserWorktreeRuntime(fixture.stateDir);
+      await expect(restarted.confirm({
+        operation: "stage",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        operation: "stage",
+        outcome: "succeeded",
+        applied: true,
+        canConfirm: false,
+        blockers: [],
+        audit: { status: "succeeded" },
+      });
+      await expect(runGit(["diff", "--cached", "--name-only"], worktree.worktreePath))
+        .resolves.toBe("packages/demo/index.ts");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("reconciles a staged index after completion audit ENOSPC without running git add again", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-stage-audit-enospc-");
+    const originalTraceTarget = process.env.GIT_TRACE2_EVENT;
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-stage-audit-enospc-1");
+      await fs.writeFile(path.join(worktree.resolvedCwd, "index.ts"), "export const demo = false;\n", "utf-8");
+      const preview = await users.preview({ operation: "stage", worktreeId: worktree.id });
+      const originalRename = fs.rename.bind(fs);
+      const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+        if (String(newPath).includes(path.join("user-session-operations", "audit"))) {
+          throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+        }
+        await originalRename(oldPath, newPath);
+      });
+      let interrupted;
+      try {
+        interrupted = await users.confirm({
+          operation: "stage",
+          worktreeId: worktree.id,
+          receiptId: preview.receipt?.receiptId ?? "",
+          confirm: true,
+        });
+      } finally {
+        renameSpy.mockRestore();
+      }
+
+      expect(interrupted).toMatchObject({
+        operation: "stage",
+        outcome: "uncertain",
+        applied: true,
+        blockers: ["audit_persistence_failed"],
+        audit: { status: "started" },
+      });
+      const stagedPaths = await runGit(["diff", "--cached", "--name-only"], worktree.worktreePath);
+      const cachedPatch = await runGit(["diff", "--cached", "--binary", worktree.baseRef, "--"], worktree.worktreePath);
+      const indexTree = await runGit(["write-tree"], worktree.worktreePath);
+      expect(stagedPaths).toBe("packages/demo/index.ts");
+
+      const tracePath = path.join(fixture.rootDir, "restart-git-trace.jsonl");
+      process.env.GIT_TRACE2_EVENT = tracePath;
+      const restarted = new UserWorktreeRuntime(fixture.stateDir);
+      await expect(restarted.confirm({
+        operation: "stage",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        operation: "stage",
+        outcome: "succeeded",
+        applied: true,
+        canConfirm: false,
+        blockers: [],
+        audit: { status: "succeeded" },
+      });
+
+      await expect(runGit(["diff", "--cached", "--name-only"], worktree.worktreePath)).resolves.toBe(stagedPaths);
+      await expect(runGit(["diff", "--cached", "--binary", worktree.baseRef, "--"], worktree.worktreePath)).resolves.toBe(cachedPatch);
+      await expect(runGit(["write-tree"], worktree.worktreePath)).resolves.toBe(indexTree);
+      const traceEvents = (await fs.readFile(tracePath, "utf-8"))
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as { argv?: unknown[] });
+      expect(traceEvents.some((event) => event.argv?.includes("add"))).toBe(false);
+    } finally {
+      if (originalTraceTarget === undefined) delete process.env.GIT_TRACE2_EVENT;
+      else process.env.GIT_TRACE2_EVENT = originalTraceTarget;
       await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
     }
   }, 20_000);

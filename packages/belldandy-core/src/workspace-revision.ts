@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import { promises as fs, createReadStream } from "node:fs";
 import path from "node:path";
 
-import type { WorkspaceMutationObserver, WorkspaceMutationTarget } from "@belldandy/skills";
+import type {
+  WorkspaceMutationObserver,
+  WorkspaceMutationOperation,
+  WorkspaceMutationTarget,
+} from "@belldandy/skills";
 
 const MANIFEST_VERSION = 1;
 const RESTORE_RECEIPT_VERSION = 1;
@@ -10,6 +14,8 @@ const DEFAULT_MAX_FILE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const REVISION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const OPERATION_ID_PATTERN = /^op_[a-f0-9]{64}$/;
+const TOOL_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 type FileState =
   | { exists: false }
@@ -26,6 +32,20 @@ type RevisionFileEntry = {
   committedAtMs?: number;
 };
 
+type RevisionOperationTarget = {
+  relativePath: string;
+  before: FileState;
+  after?: FileState;
+};
+
+type RevisionOperationEntry = {
+  operationId: string;
+  toolName: string;
+  targets: RevisionOperationTarget[];
+  preparedAtMs: number;
+  committedAtMs?: number;
+};
+
 type RevisionManifest = {
   version: typeof MANIFEST_VERSION;
   revisionId: string;
@@ -34,6 +54,7 @@ type RevisionManifest = {
   createdAtMs: number;
   updatedAtMs: number;
   files: RevisionFileEntry[];
+  operations: RevisionOperationEntry[];
 };
 
 export type WorkspaceRevisionSummary = {
@@ -90,12 +111,21 @@ export type WorkspaceRevisionRuntimeOptions = {
   retentionMs?: number;
 };
 
+export type WorkspaceMutationOperationEvidence = {
+  operationId: string;
+  state: "prepared" | "committed" | "missing" | "conflict";
+  workspaceCount: number;
+  targetCount: number;
+  committedTargetCount: number;
+};
+
 type RevisionMutationInput = {
   revisionId?: string;
   workspaceRevisionId?: string;
   workspaceRoot: string;
   toolName: string;
   targets: readonly WorkspaceMutationTarget[];
+  operation?: WorkspaceMutationOperation;
 };
 
 type LoadedManifest = {
@@ -197,6 +227,88 @@ function getStateHash(state: FileState | undefined): string | undefined {
   return state?.exists ? state.sha256 : undefined;
 }
 
+function toOperationFileState(state: BeforeFileState): FileState {
+  return state.exists
+    ? { exists: true, sha256: state.sha256, size: state.size, mode: state.mode }
+    : { exists: false };
+}
+
+function createWorkspaceOperationId(operation: WorkspaceMutationOperation, revisionId: string): string {
+  const conversationId = operation.conversationId?.trim();
+  const agentRunId = operation.agentRunId?.trim();
+  const toolCallId = operation.toolCallId?.trim();
+  if (!conversationId || !agentRunId || !toolCallId || agentRunId !== revisionId) {
+    throw new Error("Workspace mutation operation binding is invalid.");
+  }
+  return `op_${crypto.createHash("sha256")
+    .update(`conversation\0${conversationId}\0${agentRunId}\0${toolCallId}`)
+    .digest("hex")}`;
+}
+
+function isSafeTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isFileState(value: unknown): value is FileState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.exists === false) return Object.keys(candidate).length === 1;
+  return candidate.exists === true
+    && typeof candidate.sha256 === "string"
+    && /^[a-f0-9]{64}$/.test(candidate.sha256)
+    && typeof candidate.size === "number"
+    && Number.isSafeInteger(candidate.size)
+    && candidate.size >= 0
+    && typeof candidate.mode === "number"
+    && Number.isSafeInteger(candidate.mode)
+    && candidate.mode >= 0
+    && Object.keys(candidate).length === 4;
+}
+
+function parseOperationEntry(value: unknown): RevisionOperationEntry | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Partial<RevisionOperationEntry>;
+  if (!OPERATION_ID_PATTERN.test(String(candidate.operationId))
+    || !TOOL_NAME_PATTERN.test(String(candidate.toolName))
+    || !Array.isArray(candidate.targets)
+    || candidate.targets.length === 0
+    || !isSafeTimestamp(candidate.preparedAtMs)
+    || (candidate.committedAtMs !== undefined && !isSafeTimestamp(candidate.committedAtMs))) {
+    return undefined;
+  }
+  const targets: RevisionOperationTarget[] = [];
+  for (const valueTarget of candidate.targets) {
+    if (!valueTarget || typeof valueTarget !== "object" || Array.isArray(valueTarget)) return undefined;
+    const target = valueTarget as Partial<RevisionOperationTarget>;
+    if (typeof target.relativePath !== "string"
+      || !target.relativePath
+      || path.isAbsolute(target.relativePath)
+      || target.relativePath.startsWith("../")
+      || !isFileState(target.before)
+      || (target.after !== undefined && !isFileState(target.after))) {
+      return undefined;
+    }
+    const expectedKeys = target.after === undefined
+      ? ["relativePath", "before"]
+      : ["relativePath", "before", "after"];
+    if (Object.keys(target).length !== expectedKeys.length
+      || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(target, key))) {
+      return undefined;
+    }
+    targets.push(target as RevisionOperationTarget);
+  }
+  const allCommitted = targets.every((target) => target.after !== undefined);
+  if (allCommitted !== (candidate.committedAtMs !== undefined)) return undefined;
+  const expectedKeys = candidate.committedAtMs === undefined
+    ? ["operationId", "toolName", "targets", "preparedAtMs"]
+    : ["operationId", "toolName", "targets", "preparedAtMs", "committedAtMs"];
+  if (Object.keys(candidate).length !== expectedKeys.length
+    || !expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(candidate, key))) {
+    return undefined;
+  }
+  return { ...candidate, targets } as RevisionOperationEntry;
+}
+
 function toSummary(manifest: RevisionManifest): WorkspaceRevisionSummary {
   return {
     revisionId: manifest.revisionId,
@@ -221,10 +333,14 @@ function parseManifest(value: unknown): RevisionManifest | undefined {
     || typeof candidate.createdAtMs !== "number"
     || typeof candidate.updatedAtMs !== "number"
     || !Array.isArray(candidate.files)
+    || (candidate.operations !== undefined && !Array.isArray(candidate.operations))
   ) {
     return undefined;
   }
-  return candidate as RevisionManifest;
+  return {
+    ...(candidate as Omit<RevisionManifest, "operations">),
+    operations: Array.isArray(candidate.operations) ? candidate.operations : [],
+  };
 }
 
 function parseRestoreReceipt(value: unknown): WorkspaceRevisionRestoreReceipt | undefined {
@@ -270,14 +386,35 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
     if (normalizedTargets.length === 0) return;
 
     const loaded = await this.loadOrCreateManifest(revisionId, input.workspaceRoot);
+    const operationId = input.operation
+      ? createWorkspaceOperationId(input.operation, revisionId)
+      : undefined;
+    if (operationId) {
+      const existingOperations = loaded.manifest.operations.filter((entry) => entry.operationId === operationId);
+      if (existingOperations.length > 1
+        || (existingOperations.length === 1
+          && !this.matchesPreparedOperation(existingOperations[0]!, input.toolName, normalizedTargets))) {
+        throw new Error("Workspace mutation operation binding conflicts with its prepared targets.");
+      }
+      if (existingOperations.length === 1) {
+        throw new Error("Workspace mutation operation is already prepared; automatic replay is forbidden.");
+      }
+    }
+
     const existingPaths = new Set(loaded.manifest.files.map((entry) => entry.relativePath));
+    const capturedByPath = new Map<string, { state: BeforeFileState; content?: Buffer }>();
     const pending = [] as Array<{ target: WorkspaceMutationTarget; state: BeforeFileState; content?: Buffer }>;
     for (const target of normalizedTargets) {
-      if (existingPaths.has(target.relativePath)) continue;
+      if (existingPaths.has(target.relativePath)) {
+        if (operationId) {
+          capturedByPath.set(target.relativePath, { state: await this.readFileState(target.absolutePath) });
+        }
+        continue;
+      }
       const captured = await this.captureBeforeState(target.absolutePath);
+      capturedByPath.set(target.relativePath, captured);
       pending.push({ target, ...captured });
     }
-    if (pending.length === 0) return;
 
     const additionalBytes = pending.reduce((sum, entry) => sum + (entry.content?.length ?? 0), 0);
     const usage = await calculateDirectoryBytes(this.storageRoot);
@@ -299,7 +436,20 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
         preparedAtMs: Date.now(),
       });
     }
-    loaded.manifest.updatedAtMs = Date.now();
+    const now = Date.now();
+    if (operationId) {
+      loaded.manifest.operations.push({
+        operationId,
+        toolName: input.toolName,
+        targets: normalizedTargets.map((target) => ({
+          relativePath: target.relativePath,
+          before: toOperationFileState(capturedByPath.get(target.relativePath)!.state),
+        })),
+        preparedAtMs: now,
+      });
+    }
+    if (pending.length === 0 && !operationId) return;
+    loaded.manifest.updatedAtMs = now;
     await this.saveManifest(loaded);
   }
 
@@ -309,17 +459,96 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
     if (normalizedTargets.length === 0) return;
     const loaded = await this.loadManifestForWorkspace(revisionId, input.workspaceRoot);
     const byPath = new Map(loaded.manifest.files.map((entry) => [entry.relativePath, entry]));
+    const operationId = input.operation
+      ? createWorkspaceOperationId(input.operation, revisionId)
+      : undefined;
+    const matchingOperations = operationId
+      ? loaded.manifest.operations.filter((entry) => entry.operationId === operationId)
+      : [];
+    const operation = matchingOperations.length === 1 ? matchingOperations[0] : undefined;
+    if (operationId && (!operation || operation.toolName !== input.toolName)) {
+      throw new Error("Workspace mutation operation is missing or conflicts with its prepared binding.");
+    }
+    const operationTargets = operation
+      ? new Map(operation.targets.map((target) => [target.relativePath, target]))
+      : undefined;
+    if (operationTargets && normalizedTargets.some((target) => !operationTargets.has(target.relativePath))) {
+      throw new Error("Workspace mutation commit contains an unprepared operation target.");
+    }
+    const committedAtMs = Date.now();
     for (const target of normalizedTargets) {
       const entry = byPath.get(target.relativePath);
       if (!entry) {
         throw new Error(`Workspace revision checkpoint is missing prepared path: ${target.relativePath}`);
       }
-      entry.after = await this.readFileState(target.absolutePath);
+      const after = await this.readFileState(target.absolutePath);
+      entry.after = after;
       if (!entry.toolNames.includes(input.toolName)) entry.toolNames.push(input.toolName);
-      entry.committedAtMs = Date.now();
+      entry.committedAtMs = committedAtMs;
+      const operationTarget = operationTargets?.get(target.relativePath);
+      if (operationTarget) operationTarget.after = after;
     }
-    loaded.manifest.updatedAtMs = Date.now();
+    if (operation) {
+      if (operation.targets.every((target) => target.after !== undefined)) {
+        operation.committedAtMs ??= committedAtMs;
+      } else {
+        delete operation.committedAtMs;
+      }
+    }
+    loaded.manifest.updatedAtMs = committedAtMs;
     await this.saveManifest(loaded);
+  }
+
+  async getOperationEvidence(input: {
+    revisionId: string;
+    operationId: string;
+  }): Promise<WorkspaceMutationOperationEvidence> {
+    const revisionId = normalizeRevisionId(input);
+    if (!OPERATION_ID_PATTERN.test(input.operationId)) {
+      throw new Error("Workspace mutation operation id is invalid.");
+    }
+    const { manifests, invalid } = await this.loadManifestsForEvidence(revisionId);
+    const matching: RevisionOperationEntry[] = [];
+    let conflict = invalid;
+    for (const manifest of manifests) {
+      const entries = manifest.operations.filter((entry) => entry.operationId === input.operationId);
+      if (entries.length > 1) conflict = true;
+      matching.push(...entries);
+    }
+    if (matching.length === 0) {
+      return {
+        operationId: input.operationId,
+        state: conflict ? "conflict" : "missing",
+        workspaceCount: 0,
+        targetCount: 0,
+        committedTargetCount: 0,
+      };
+    }
+
+    const parsed = matching.map(parseOperationEntry);
+    if (parsed.some((entry) => !entry)) conflict = true;
+    const valid = parsed.filter((entry): entry is RevisionOperationEntry => Boolean(entry));
+    if (new Set(valid.map((entry) => entry.toolName)).size !== 1) conflict = true;
+    let targetCount = 0;
+    let committedTargetCount = 0;
+    for (const entry of valid) {
+      const relativePaths = entry.targets.map((target) => target.relativePath);
+      if (new Set(relativePaths).size !== relativePaths.length) conflict = true;
+      targetCount += entry.targets.length;
+      committedTargetCount += entry.targets.filter((target) => target.after !== undefined).length;
+    }
+    if (valid.length !== matching.length || targetCount === 0) conflict = true;
+    return {
+      operationId: input.operationId,
+      state: conflict
+        ? "conflict"
+        : committedTargetCount === targetCount
+          ? "committed"
+          : "prepared",
+      workspaceCount: valid.length,
+      targetCount,
+      committedTargetCount,
+    };
   }
 
   async list(): Promise<WorkspaceRevisionSummary[]> {
@@ -495,6 +724,60 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
     return removed;
   }
 
+  private matchesPreparedOperation(
+    operation: RevisionOperationEntry,
+    toolName: string,
+    targets: readonly WorkspaceMutationTarget[],
+  ): boolean {
+    if (operation.toolName !== toolName || !parseOperationEntry(operation)) return false;
+    const expected = operation.targets.map((target) => target.relativePath).sort((left, right) => left.localeCompare(right));
+    const actual = targets.map((target) => target.relativePath).sort((left, right) => left.localeCompare(right));
+    return expected.length === actual.length && expected.every((value, index) => value === actual[index]);
+  }
+
+  private async loadManifestsForEvidence(revisionId: string): Promise<{
+    manifests: RevisionManifest[];
+    invalid: boolean;
+  }> {
+    const workspaceEntries = await fs.readdir(this.storageRoot, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    const manifests: RevisionManifest[] = [];
+    let invalid = false;
+    for (const workspaceEntry of workspaceEntries) {
+      if (!workspaceEntry.isDirectory()) continue;
+      const revisionDirectory = path.join(this.storageRoot, workspaceEntry.name, revisionId);
+      const revisionStat = await fs.stat(revisionDirectory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (!revisionStat) continue;
+      if (!revisionStat.isDirectory()) {
+        invalid = true;
+        continue;
+      }
+      const raw = await fs.readFile(path.join(revisionDirectory, "manifest.json"), "utf-8");
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(raw);
+      } catch {
+        invalid = true;
+        continue;
+      }
+      const manifest = parseManifest(decoded);
+      if (!manifest
+        || manifest.revisionId !== revisionId
+        || manifest.workspaceId !== workspaceEntry.name
+        || manifest.operations.some((operation) => !parseOperationEntry(operation))) {
+        invalid = true;
+        continue;
+      }
+      manifests.push(manifest);
+    }
+    return { manifests, invalid };
+  }
+
   private async captureBeforeState(filePath: string): Promise<{ state: BeforeFileState; content?: Buffer }> {
     const stat = await fs.lstat(filePath).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
@@ -608,6 +891,7 @@ export class WorkspaceRevisionRuntime implements WorkspaceMutationObserver {
       createdAtMs: Date.now(),
       updatedAtMs: Date.now(),
       files: [],
+      operations: [],
     };
     const loaded = { manifest, directory };
     await this.saveManifest(loaded);

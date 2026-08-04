@@ -8,12 +8,20 @@ import { HookRegistry } from "@belldandy/agent";
 import { ToolExecutor } from "@belldandy/skills";
 
 import {
+  beginMarketplaceExtensionAudit,
+  listMarketplaceExtensionAudits,
+} from "./extension-marketplace-audit.js";
+import {
   installMarketplaceExtension,
   previewMarketplaceExtensionInstall,
   type InstallMarketplaceExtensionInput,
 } from "./extension-marketplace-service.js";
 import { bridgeLegacyPluginHooks, initializeExtensionHost } from "./extension-host.js";
 import { InMemoryExtensionRuntimeAdapter } from "./extension-runtime-supervisor.js";
+import {
+  createEmptyInstalledExtensionLedger,
+  saveInstalledExtensionLedger,
+} from "./extension-marketplace-state.js";
 import { ToolsConfigManager } from "./tools-config.js";
 
 async function installConfirmedMarketplaceExtension(
@@ -33,6 +41,44 @@ describe("initializeExtensionHost", () => {
         await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
       }
     }
+  });
+
+  it("reconciles marketplace mutation audits before loading installed extensions", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-extension-host-reconcile-"));
+    const bundledSkillsDir = path.join(stateDir, "bundled-skills");
+    tempDirs.push(stateDir);
+    await fs.mkdir(bundledSkillsDir, { recursive: true });
+    await saveInstalledExtensionLedger(stateDir, createEmptyInstalledExtensionLedger());
+    const audit = await beginMarketplaceExtensionAudit(stateDir, {
+      operation: "uninstall",
+      extensionId: "demo-plugin@official-market",
+      confirmationHash: "6".repeat(64),
+      sourceKey: "directory:demo-plugin",
+      contentSha256: "7".repeat(64),
+      versionLabel: "1.0.0",
+      hostApi: 1,
+      permissions: [],
+      enabled: true,
+    });
+    const toolsConfigManager = new ToolsConfigManager(stateDir);
+    await toolsConfigManager.load();
+
+    await initializeExtensionHost({
+      stateDir,
+      bundledSkillsDir,
+      workspaceRoot: stateDir,
+      toolsEnabled: false,
+      toolExecutor: new ToolExecutor({ tools: [], workspaceRoot: stateDir }),
+      toolsConfigManager,
+      logger: {
+        info: () => {},
+        warn: () => {},
+      },
+    });
+
+    await expect(listMarketplaceExtensionAudits(stateDir)).resolves.toEqual([
+      expect.objectContaining({ auditId: audit.auditId, status: "completed" }),
+    ]);
   });
 
   it("unifies plugin loading, skill loading, registry registration, and enabled-skill selection", async () => {

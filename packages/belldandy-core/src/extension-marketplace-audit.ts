@@ -2,10 +2,15 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { getExtensionMarketplaceStateDir } from "./extension-marketplace-state.js";
+import {
+  getExtensionMarketplaceStateDir,
+  getInstalledExtensionsLedgerPath,
+  loadInstalledExtensionLedger,
+  type InstalledExtensionRecord,
+} from "./extension-marketplace-state.js";
 
 export type MarketplaceExtensionAuditOperation = "install" | "update" | "uninstall";
-export type MarketplaceExtensionAuditStatus = "confirmed" | "completed" | "failed";
+export type MarketplaceExtensionAuditStatus = "confirmed" | "completed" | "failed" | "uncertain";
 
 export interface MarketplaceExtensionAuditRecord {
   version: 1;
@@ -64,7 +69,12 @@ function parseAuditRecord(value: unknown): MarketplaceExtensionAuditRecord {
     || typeof record.confirmationHash !== "string" || !SHA256_PATTERN.test(record.confirmationHash)
     || !Array.isArray(record.permissions) || record.permissions.some((item) => typeof item !== "string")
     || typeof record.enabled !== "boolean"
-    || (record.status !== "confirmed" && record.status !== "completed" && record.status !== "failed")
+    || (
+      record.status !== "confirmed"
+      && record.status !== "completed"
+      && record.status !== "failed"
+      && record.status !== "uncertain"
+    )
     || typeof record.createdAt !== "string" || !record.createdAt
   ) {
     throw new Error("Marketplace extension audit record is invalid.");
@@ -130,6 +140,19 @@ export async function failMarketplaceExtensionAudit(
   });
 }
 
+export async function markMarketplaceExtensionAuditUncertain(
+  stateDir: string,
+  record: MarketplaceExtensionAuditRecord,
+): Promise<MarketplaceExtensionAuditRecord> {
+  const uncertain: MarketplaceExtensionAuditRecord = {
+    ...record,
+    status: "uncertain",
+    completedAt: undefined,
+  };
+  await atomicWriteAudit(stateDir, uncertain);
+  return uncertain;
+}
+
 export async function listMarketplaceExtensionAudits(
   stateDir: string,
 ): Promise<MarketplaceExtensionAuditRecord[]> {
@@ -145,4 +168,62 @@ export async function listMarketplaceExtensionAudits(
   }
   return records.sort((left, right) =>
     left.createdAt.localeCompare(right.createdAt) || left.auditId.localeCompare(right.auditId));
+}
+
+function installedRecordMatchesAudit(
+  installed: InstalledExtensionRecord | undefined,
+  audit: MarketplaceExtensionAuditRecord,
+): boolean {
+  return Boolean(
+    installed
+    && installed.status === "installed"
+    && audit.sourceKey
+    && installed.sourceKey === audit.sourceKey
+    && audit.contentSha256
+    && installed.contentSha256 === audit.contentSha256
+    && installed.version === audit.versionLabel
+    && installed.approvedHostApi === audit.hostApi
+    && installed.enabled === audit.enabled
+    && JSON.stringify(installed.approvedPermissions ?? []) === JSON.stringify(audit.permissions),
+  );
+}
+
+async function installedExtensionLedgerExists(stateDir: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(getInstalledExtensionsLedgerPath(stateDir));
+    return stat.isFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export async function reconcileMarketplaceExtensionAudits(
+  stateDir: string,
+): Promise<MarketplaceExtensionAuditRecord[]> {
+  const [audits, installedLedger, installedLedgerExists] = await Promise.all([
+    listMarketplaceExtensionAudits(stateDir),
+    loadInstalledExtensionLedger(stateDir),
+    installedExtensionLedgerExists(stateDir),
+  ]);
+  const reconciled: MarketplaceExtensionAuditRecord[] = [];
+  for (const audit of audits) {
+    const installed = installedLedger.extensions[audit.extensionId];
+    const targetCommitted = audit.operation === "uninstall"
+      ? installedLedgerExists && installed === undefined
+      : installedRecordMatchesAudit(installed, audit);
+    if (
+      (audit.status === "confirmed" || audit.status === "uncertain")
+      && targetCommitted
+    ) {
+      reconciled.push(await completeMarketplaceExtensionAudit(stateDir, audit));
+      continue;
+    }
+    if (audit.status === "confirmed") {
+      reconciled.push(await markMarketplaceExtensionAuditUncertain(stateDir, audit));
+      continue;
+    }
+    reconciled.push(audit);
+  }
+  return reconciled;
 }

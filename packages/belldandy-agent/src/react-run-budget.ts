@@ -30,6 +30,13 @@ export type ReActRunBudgetUsage = {
   costUsd?: number;
 };
 
+export type ReActModelCallPreflight = {
+  /** 本次调用至少需要发送的输入 token；不预估未知输出。 */
+  minimumInputTokens: number;
+  /** 有价格表时，本次最小输入成本。 */
+  minimumCostUsd?: number;
+};
+
 export type ReActRunBudgetTrackerOptions = {
   maxTotalTokens: number;
   maxHighRiskToolCalls: number;
@@ -170,6 +177,29 @@ export class ReActRunBudgetTracker {
         limit: this.maxCostUsd,
         observed: this.totalCostUsd,
       };
+    }
+    return undefined;
+  }
+
+  /** 在额外模型调用前失败关闭；只读检查，不预扣实际 usage。 */
+  checkModelCallPreflight(input: ReActModelCallPreflight): ReActRunBudgetExhausted | undefined {
+    const projectedTokens = this.totalTokens + normalizeNonNegativeNumber(input.minimumInputTokens);
+    if (projectedTokens > this.maxTotalTokens) {
+      return {
+        budget: "total_tokens",
+        limit: this.maxTotalTokens,
+        observed: projectedTokens,
+      };
+    }
+    if (this.maxCostUsd !== undefined) {
+      const projectedCostUsd = this.totalCostUsd + normalizeNonNegativeDecimal(input.minimumCostUsd);
+      if (projectedCostUsd > this.maxCostUsd) {
+        return {
+          budget: "cost_usd",
+          limit: this.maxCostUsd,
+          observed: projectedCostUsd,
+        };
+      }
     }
     return undefined;
   }

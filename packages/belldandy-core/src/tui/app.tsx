@@ -423,8 +423,8 @@ export function CodingTuiApp(input: {
   }, [input.runtime, runTask, state.commandJobCancelConfirmation]);
 
   const compact = dimensions.columns < 80;
-  const footerHeight = selectedPermission?.commandPreview ? 4 : selectedPermission ? 3 : 2;
-  const bodyHeight = Math.max(5, dimensions.rows - footerHeight - 3);
+  const footerHeight = resolveFooterHeight(state);
+  const bodyHeight = Math.max(5, dimensions.rows - footerHeight - 2);
   const modal: TuiModal | undefined = selectedPermission
     ? "permission"
     : state.restoreConfirmation
@@ -594,7 +594,7 @@ export function CodingTuiApp(input: {
     if (visible) dispatch({ type: "input.changed", input: `${state.input}${visible}` });
   });
 
-  if (dimensions.columns < 32 || dimensions.rows < 10) {
+  if (dimensions.columns < 32 || dimensions.rows < Math.max(10, footerHeight + 7)) {
     return (
       <Box width={dimensions.columns} height={dimensions.rows} paddingX={1}>
         <Text>{toVisibleLines("Terminal too small.", Math.max(1, dimensions.columns - 2), 2).join("\n")}</Text>
@@ -605,7 +605,7 @@ export function CodingTuiApp(input: {
     <Box width={dimensions.columns} height={dimensions.rows} flexDirection="column">
       <Header state={state} />
       <TabBar active={state.tab} />
-      <Box height={bodyHeight} minHeight={5} flexGrow={1}>
+      <Box height={bodyHeight} minHeight={5}>
         {state.tab === "chat" && <ChatView state={state} width={dimensions.columns} height={bodyHeight} compact={compact} />}
         {state.tab === "sessions" && <SessionsView state={state} width={dimensions.columns} height={bodyHeight} />}
         {state.tab === "changes" && <ChangesView state={state} width={dimensions.columns} height={bodyHeight} compact={compact} />}
@@ -787,9 +787,11 @@ function formatRemoteDeliveryLines(state: TuiState): string[] {
     : [];
   const lines = targets.length === 1 ? [`Delivery ${targets[0]!.remote}/${branch}`] : [];
   if (state.remoteDeliveryResult) {
-    lines.push(state.remoteDeliveryResult.applied
-      ? `Push verified ${truncateTuiIdentifier(state.remoteDeliveryResult.postcondition?.remoteOid ?? "unavailable", 12)}`
-      : `Push blocked ${state.remoteDeliveryResult.blockers.join(",")}`);
+    lines.push(state.remoteDeliveryResult.outcome === "uncertain"
+      ? `Push uncertain ${truncateTuiIdentifier(state.remoteDeliveryResult.postcondition?.remoteOid ?? "unavailable", 12)}; manual reconciliation required`
+      : state.remoteDeliveryResult.applied
+        ? `Push verified ${truncateTuiIdentifier(state.remoteDeliveryResult.postcondition?.remoteOid ?? "unavailable", 12)}`
+        : `Push blocked ${state.remoteDeliveryResult.blockers.join(",")}`);
   }
   return lines;
 }
@@ -853,14 +855,19 @@ function RuntimeView({ state, width, height }: { state: TuiState; width: number;
       <Box borderStyle="single" borderColor="gray" width={outputWidth} height={outputHeight} paddingX={1} flexDirection="column">
         <Text bold>Job Output</Text>
         {selected && <Text dimColor>{truncateTuiIdentifier(selected.jobId, Math.max(12, outputWidth - 4))}</Text>}
+        {selected && <Text dimColor>{truncateTuiIdentifier(formatCommandJobRecovery(selected.recovery), Math.max(12, outputWidth - 4))}</Text>}
         {output
-          ? toLeadingVisibleLines(output.output || "[no output]", Math.max(8, outputWidth - 4), Math.max(1, outputHeight - 4)).map((line, index) => (
+          ? toLeadingVisibleLines(output.output || "[no output]", Math.max(8, outputWidth - 4), Math.max(1, outputHeight - 5)).map((line, index) => (
             <Text key={`output-${output.startCursor}-${index}-${line}`}>{line || " "}</Text>
           ))
           : <Text dimColor>{selected ? "Output unavailable." : "No command job selected."}</Text>}
       </Box>
     </Box>
   );
+}
+
+function formatCommandJobRecovery(recovery: TuiState["commandJobs"][number]["recovery"]): string {
+  return `Mutation replay ${recovery.mutationReplay} | lifecycle ${recovery.lifecycle} | process ${recovery.process.replace(/_/g, " ")} | output ${recovery.output.replace(/_/g, " ")} | stdin ${recovery.stdin.replace(/_/g, " ")}`;
 }
 
 function commandJobStatusColor(status: TuiState["commandJobs"][number]["status"]): "green" | "yellow" | "red" | "gray" {
@@ -872,11 +879,12 @@ function commandJobStatusColor(status: TuiState["commandJobs"][number]["status"]
 
 function Footer(input: { state: TuiState; width: number; modalChoice: number }) {
   const pendingPermission = input.state.pendingPermissions[input.state.selectedPermissionIndex];
+  const footerHeight = resolveFooterHeight(input.state);
   if (pendingPermission) {
     const preview = pendingPermission.commandPreview;
     const toolNameWidth = Math.max(4, Math.min(24, Math.floor((input.width - 22) / 2)));
     return (
-      <Box height={preview ? 4 : 3} borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+      <Box height={footerHeight} borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
         <Box height={1} justifyContent="space-between">
           <Text>{input.state.selectedPermissionIndex + 1}/{input.state.pendingPermissions.length} {truncateTuiIdentifier(pendingPermission.toolName, toolNameWidth)} ({truncateTuiIdentifier(pendingPermission.toolCallId, toolNameWidth)})</Text>
           <Text><Text inverse={input.modalChoice === 0}> Allow </Text> <Text inverse={input.modalChoice === 1}> Deny </Text></Text>
@@ -887,7 +895,7 @@ function Footer(input: { state: TuiState; width: number; modalChoice: number }) 
   }
   if (input.state.restoreConfirmation) {
     return (
-      <Box height={2} borderStyle="single" borderColor="red" paddingX={1} justifyContent="space-between">
+      <Box height={footerHeight} borderStyle="single" borderColor="red" paddingX={1} justifyContent="space-between">
         <Text>{truncateTuiIdentifier(input.state.restoreConfirmation.revisionId, Math.max(12, input.width - 34))}</Text>
         <Text><Text inverse={input.modalChoice === 0}> Restore </Text> <Text inverse={input.modalChoice === 1}> Cancel </Text></Text>
       </Box>
@@ -895,7 +903,7 @@ function Footer(input: { state: TuiState; width: number; modalChoice: number }) 
   }
   if (input.state.commandJobCancelConfirmation) {
     return (
-      <Box height={2} borderStyle="single" borderColor="red" paddingX={1} justifyContent="space-between">
+      <Box height={footerHeight} borderStyle="single" borderColor="red" paddingX={1} justifyContent="space-between">
         <Text>{truncateTuiIdentifier(input.state.commandJobCancelConfirmation.jobId, Math.max(8, input.width - 30))}</Text>
         <Text><Text inverse={input.modalChoice === 0}> Cancel Job </Text> <Text inverse={input.modalChoice === 1}> Keep Running </Text></Text>
       </Box>
@@ -903,25 +911,33 @@ function Footer(input: { state: TuiState; width: number; modalChoice: number }) 
   }
   if (input.state.remoteDeliveryConfirmation) {
     const preview = input.state.remoteDeliveryPreview;
-    const target = preview?.target;
-    const commit = preview?.source?.commit ?? "unavailable";
-    const diffHash = preview?.diff?.sha256 ?? "unavailable";
-    const label = `${target?.remote ?? "remote"}/${target?.branch ?? "branch"} ${truncateTuiIdentifier(commit, 10)} diff ${truncateTuiIdentifier(diffHash, 10)}`;
+    const detailLines = formatRemoteDeliveryApprovalLines(preview, Math.max(1, input.width - 4));
+    const title = input.width < 48 ? "Approval" : "User approval only";
     return (
-      <Box height={2} borderStyle="single" borderColor="red" paddingX={1} justifyContent="space-between">
-        <Text>{truncateTuiIdentifier(label, Math.max(12, input.width - 24))}</Text>
-        <Text><Text inverse={input.modalChoice === 0}> Push </Text> <Text inverse={input.modalChoice === 1}> Cancel </Text></Text>
+      <Box height={footerHeight} borderStyle="single" borderColor="red" paddingX={1} flexDirection="column">
+        <Box height={1} justifyContent="space-between">
+          <Text>{title}</Text>
+          <Text><Text inverse={input.modalChoice === 0}> Push </Text> <Text inverse={input.modalChoice === 1}> Cancel </Text></Text>
+        </Box>
+        {detailLines.map((line, index) => <Text key={`${index}-${line}`} dimColor>{line}</Text>)}
       </Box>
     );
   }
   const inputLine = toVisibleLines(input.state.input, Math.max(8, input.width - 6), 1)[0] ?? "";
   return (
-    <Box height={2} borderStyle="single" borderColor={input.state.tab === "chat" ? "cyan" : "gray"} paddingX={1}>
+    <Box height={footerHeight} borderStyle="single" borderColor={input.state.tab === "chat" ? "cyan" : "gray"} paddingX={1}>
       {input.state.tab === "chat"
         ? <Text>&gt; {inputLine}<Text inverse> </Text></Text>
         : <Text color={input.state.notice ? "yellow" : "gray"}>{input.state.notice ?? input.state.tab}</Text>}
     </Box>
   );
+}
+
+function resolveFooterHeight(state: TuiState): number {
+  const pendingPermission = state.pendingPermissions[state.selectedPermissionIndex];
+  if (pendingPermission) return pendingPermission.commandPreview ? 4 : 3;
+  if (state.remoteDeliveryConfirmation) return 10;
+  return 2;
 }
 
 function formatCommandPermissionPreview(preview: TuiState["pendingPermissions"][number]["commandPreview"]): string {
@@ -943,6 +959,25 @@ function formatCommandPermissionPreview(preview: TuiState["pendingPermissions"][
   if (preview.maxBytes !== undefined) parts.push(`max=${preview.maxBytes}`);
   if (preview.cols !== undefined && preview.rows !== undefined) parts.push(`size=${preview.cols}x${preview.rows}`);
   return parts.join(" | ");
+}
+
+function formatRemoteDeliveryApprovalLines(
+  preview: TuiState["remoteDeliveryPreview"],
+  width: number,
+): string[] {
+  const target = preview?.target;
+  const source = preview?.source;
+  const diff = preview?.diff;
+  const lines = [
+    `Target ${target?.remote ?? "unavailable"}/${target?.branch ?? "unavailable"}`,
+    `URL ${target?.url ?? "unavailable"}`,
+    `Current remote ${target?.expectedOid ? target.expectedOid.slice(0, 10) : "new branch"}`,
+    `New commit ${source?.commit ? source.commit.slice(0, 10) : "unavailable"}`,
+    `Diff base ${diff?.baseOid ? diff.baseOid.slice(0, 10) : "unavailable"} | sha256 ${diff?.sha256 ? diff.sha256.slice(0, 10) : "unavailable"} | ${diff?.byteLength ?? "unknown"} bytes`,
+    "External side effect: update remote ref; rollback is not guaranteed",
+    `Delegable ${preview?.approval?.delegable === false ? "no" : "unknown"} | Rememberable ${preview?.approval?.rememberable === false ? "no" : "unknown"}`,
+  ];
+  return lines.map((line) => truncateTuiIdentifier(line, width));
 }
 
 function readDimensions(stdout: NodeJS.WriteStream): { columns: number; rows: number } {

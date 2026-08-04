@@ -79,6 +79,7 @@ export type UserWorktreeOperationEvidence = {
 export type UserWorktreeOperationAudit = {
   artifactId: string;
   capturedAtMs: number;
+  status: "started" | "succeeded" | "uncertain";
   commit?: string;
   publishedBranch?: string;
 };
@@ -130,6 +131,7 @@ export type UserWorktreeOperationConfirmInput = {
 };
 
 export type UserWorktreeOperationResult = UserWorktreeOperationPreview & {
+  outcome: "succeeded" | "failed" | "uncertain";
   applied: boolean;
   audit?: UserWorktreeOperationAudit;
 };
@@ -167,6 +169,13 @@ type UserWorktreeOperationInspection = {
   preview: UserWorktreeOperationPreview;
   receiptBinding?: Omit<UserWorktreeOperationReceiptRecord, "version" | "receiptId" | "createdAtMs" | "expiresAtMs">;
   patch?: string;
+};
+
+type UserWorktreeOperationAuditRecord = UserWorktreeOperationAudit & {
+  version: 1;
+  receiptId: string;
+  operation: UserWorktreeOperation;
+  worktreeId: string;
 };
 
 function buildGitEnv(): NodeJS.ProcessEnv {
@@ -290,6 +299,33 @@ function readOperationReceipt(value: unknown): UserWorktreeOperationReceiptRecor
     ...(typeof candidate.committerIdentityHash === "string" ? { committerIdentityHash: candidate.committerIdentityHash } : {}),
     ...(typeof candidate.publishedBranch === "string" ? { publishedBranch: candidate.publishedBranch } : {}),
     ...(typeof candidate.publishedBranchHash === "string" ? { publishedBranchHash: candidate.publishedBranchHash } : {}),
+  };
+}
+
+function readOperationAudit(value: unknown): UserWorktreeOperationAuditRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.version !== 1
+    || typeof candidate.artifactId !== "string" || !SAFE_ID_PATTERN.test(candidate.artifactId)
+    || typeof candidate.capturedAtMs !== "number" || !Number.isSafeInteger(candidate.capturedAtMs)
+    || (candidate.status !== "started" && candidate.status !== "succeeded" && candidate.status !== "uncertain")
+    || typeof candidate.receiptId !== "string" || !SAFE_ID_PATTERN.test(candidate.receiptId)
+    || !isUserWorktreeOperation(candidate.operation)
+    || typeof candidate.worktreeId !== "string" || !SAFE_ID_PATTERN.test(candidate.worktreeId)
+    || (candidate.commit !== undefined && typeof candidate.commit !== "string")
+    || (candidate.publishedBranch !== undefined && typeof candidate.publishedBranch !== "string")) {
+    return undefined;
+  }
+  return {
+    version: 1,
+    artifactId: candidate.artifactId,
+    capturedAtMs: candidate.capturedAtMs,
+    status: candidate.status,
+    receiptId: candidate.receiptId,
+    operation: candidate.operation,
+    worktreeId: candidate.worktreeId,
+    ...(typeof candidate.commit === "string" ? { commit: candidate.commit } : {}),
+    ...(typeof candidate.publishedBranch === "string" ? { publishedBranch: candidate.publishedBranch } : {}),
   };
 }
 
@@ -519,12 +555,76 @@ export class UserWorktreeRuntime {
     if (input.confirm !== true) {
       return this.operationFailure(input.operation, input.worktreeId, ["confirmation_required"]);
     }
-    const receipt = await this.consumeOperationReceipt(input);
+    const receipt = await this.loadOperationReceipt(input.receiptId);
     if (!receipt) {
       return this.operationFailure(input.operation, input.worktreeId, ["receipt_unavailable"]);
     }
     if (receipt.operation !== input.operation || receipt.worktreeId !== input.worktreeId) {
       return this.operationFailure(input.operation, input.worktreeId, ["receipt_mismatch"]);
+    }
+    if (!await this.consumeOperationReceipt(input)) {
+      const recovered = await this.loadOperationAudit(receipt.receiptId);
+      if (recovered
+        && recovered.operation === input.operation
+        && recovered.worktreeId === input.worktreeId) {
+        if (recovered.status === "started" && receipt.operation === "stage") {
+          const indexTree = await this.reconcileStartedStageOperation(receipt);
+          if (indexTree) {
+            const audit = await this.finishOperationAudit(receipt, recovered, "succeeded", { indexTree });
+            if (audit) {
+              return {
+                operation: input.operation,
+                worktreeId: input.worktreeId,
+                canConfirm: false,
+                blockers: [],
+                outcome: "succeeded",
+                applied: true,
+                audit,
+              };
+            }
+            return {
+              operation: input.operation,
+              worktreeId: input.worktreeId,
+              canConfirm: false,
+              blockers: ["audit_persistence_failed"],
+              outcome: "uncertain",
+              applied: true,
+              audit: recovered,
+            };
+          }
+        }
+        if (recovered.status !== "succeeded") {
+          return {
+            operation: input.operation,
+            worktreeId: input.worktreeId,
+            canConfirm: false,
+            blockers: ["operation_status_uncertain"],
+            outcome: "uncertain",
+            applied: false,
+            audit: recovered,
+          };
+        }
+        return {
+          operation: input.operation,
+          worktreeId: input.worktreeId,
+          canConfirm: false,
+          blockers: [],
+          outcome: "succeeded",
+          applied: true,
+          audit: recovered,
+        };
+      }
+      if (await this.hasOperationReceiptLock(receipt.receiptId)) {
+        return {
+          operation: input.operation,
+          worktreeId: input.worktreeId,
+          canConfirm: false,
+          blockers: ["operation_status_uncertain"],
+          outcome: "uncertain",
+          applied: false,
+        };
+      }
+      return this.operationFailure(input.operation, input.worktreeId, ["receipt_unavailable"]);
     }
     if (receipt.expiresAtMs < Date.now()) {
       return this.operationFailure(input.operation, input.worktreeId, ["receipt_expired"]);
@@ -537,29 +637,52 @@ export class UserWorktreeRuntime {
       ...(input.operation === "branch" && receipt.publishedBranch ? { branchName: receipt.publishedBranch } : {}),
     });
     if (!inspection.receiptBinding || !this.matchesReceipt(inspection.receiptBinding, receipt)) {
-      if (!inspection.receiptBinding) return { ...inspection.preview, applied: false };
+      if (!inspection.receiptBinding) return { ...inspection.preview, outcome: "failed", applied: false };
       return this.operationFailure(input.operation, input.worktreeId, ["receipt_stale"]);
     }
 
+    const startedAudit = await this.beginOperationAudit(receipt);
+    if (!startedAudit) {
+      return this.operationFailure(input.operation, input.worktreeId, ["audit_unavailable"]);
+    }
     try {
-      let audit: UserWorktreeOperationAudit | undefined;
+      let outcome: { indexTree?: string; commit?: string } = {};
       if (input.operation === "apply") {
         await this.applyPatch(inspection.receiptBinding.targetRepoRoot, inspection.patch ?? "");
       } else if (input.operation === "remove") {
         await this.removeWorktree(input.worktreeId);
       } else if (input.operation === "stage") {
         const indexTree = await this.stageWorktree(input.worktreeId, receipt);
-        audit = await this.writeOperationAudit(receipt, { indexTree });
+        outcome = { indexTree };
       } else if (input.operation === "commit") {
         const commit = await this.commitWorktree(input.worktreeId, receipt);
-        audit = await this.writeOperationAudit(receipt, { commit });
+        outcome = { commit };
       } else {
         const commit = await this.publishBranch(input.worktreeId, receipt);
-        audit = await this.writeOperationAudit(receipt, { commit });
+        outcome = { commit };
       }
-      return { ...inspection.preview, applied: true, ...(audit ? { audit } : {}) };
+      const audit = await this.finishOperationAudit(receipt, startedAudit, "succeeded", outcome);
+      if (!audit) {
+        return {
+          ...inspection.preview,
+          canConfirm: false,
+          blockers: ["audit_persistence_failed"],
+          outcome: "uncertain",
+          applied: true,
+          audit: startedAudit,
+        };
+      }
+      return { ...inspection.preview, outcome: "succeeded", applied: true, audit };
     } catch {
-      return this.operationFailure(input.operation, input.worktreeId, ["operation_failed"]);
+      const audit = await this.finishOperationAudit(receipt, startedAudit, "uncertain", {});
+      return {
+        ...inspection.preview,
+        canConfirm: false,
+        blockers: ["operation_status_uncertain"],
+        outcome: "uncertain",
+        applied: false,
+        audit: audit ?? startedAudit,
+      };
     }
   }
 
@@ -956,6 +1079,24 @@ export class UserWorktreeRuntime {
     }
   }
 
+  private async loadOperationReceipt(receiptId: string): Promise<UserWorktreeOperationReceiptRecord | undefined> {
+    if (!SAFE_ID_PATTERN.test(receiptId)) return undefined;
+    try {
+      return readOperationReceipt(JSON.parse(await fs.readFile(this.operationReceiptPath(receiptId), "utf-8")));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async hasOperationReceiptLock(receiptId: string): Promise<boolean> {
+    try {
+      await fs.access(this.operationReceiptLockPath(receiptId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private matchesReceipt(
     binding: Omit<UserWorktreeOperationReceiptRecord, "version" | "receiptId" | "createdAtMs" | "expiresAtMs">,
     receipt: UserWorktreeOperationReceiptRecord,
@@ -1013,6 +1154,54 @@ export class UserWorktreeRuntime {
     ]);
     if (!indexTree || !stagedPaths) throw new Error("Managed user worktree staging did not produce a staged diff.");
     return indexTree;
+  }
+
+  private async reconcileStartedStageOperation(
+    receipt: UserWorktreeOperationReceiptRecord,
+  ): Promise<string | undefined> {
+    if (receipt.operation !== "stage"
+      || !receipt.patchHash
+      || !/^[a-f0-9]{64}$/.test(receipt.patchHash)
+      || !receipt.indexTree) {
+      return undefined;
+    }
+    try {
+      const record = await this.loadRecord(receipt.worktreeId);
+      if (!record) return undefined;
+      const reconciled = await this.managedWorktrees.reconcile(record.worktree);
+      if (reconciled.status !== "created"
+        || reconciled.baseRef !== receipt.baseCommit
+        || reconciled.branch !== receipt.branch
+        || path.resolve(reconciled.worktreePath) !== path.resolve(receipt.targetRepoRoot)) {
+        return undefined;
+      }
+      const [head, branch, unstagedPaths, stagedPaths, stagedChangeModes, patch, indexTree] = await Promise.all([
+        runGit(["rev-parse", "HEAD"], reconciled.worktreePath),
+        runGit(["branch", "--show-current"], reconciled.worktreePath),
+        runGitOutput(["diff", "--name-only", "-z", "--"], reconciled.worktreePath),
+        runGitOutput(["diff", "--cached", "--name-only", "-z", receipt.baseCommit, "--"], reconciled.worktreePath),
+        runGitOutput(["diff", "--cached", "--raw", "-z", "--no-renames", receipt.baseCommit, "--"], reconciled.worktreePath),
+        runGitOutput(
+          ["diff", "--cached", "--binary", "--no-ext-diff", receipt.baseCommit, "--"],
+          reconciled.worktreePath,
+          MAX_OPERATION_PATCH_BYTES,
+        ),
+        runGit(["write-tree"], reconciled.worktreePath),
+      ]);
+      if (head !== receipt.currentCommit
+        || branch !== receipt.branch
+        || unstagedPaths
+        || !stagedPaths
+        || parseUnsafeGitModes(stagedChangeModes).length > 0
+        || createHash("sha256").update(patch).digest("hex") !== receipt.patchHash
+        || !indexTree
+        || indexTree === receipt.indexTree) {
+        return undefined;
+      }
+      return indexTree;
+    } catch {
+      return undefined;
+    }
   }
 
   private async commitWorktree(worktreeId: string, receipt: UserWorktreeOperationReceiptRecord): Promise<string> {
@@ -1075,43 +1264,75 @@ export class UserWorktreeRuntime {
     return patchPath;
   }
 
-  private async writeOperationAudit(
+  private async beginOperationAudit(
     receipt: UserWorktreeOperationReceiptRecord,
-    outcome: { indexTree?: string; commit?: string },
-  ): Promise<UserWorktreeOperationAudit | undefined> {
+  ): Promise<UserWorktreeOperationAuditRecord | undefined> {
     const capturedAtMs = Date.now();
     const artifactId = `worktree-operation-${randomUUID()}`;
+    const audit: UserWorktreeOperationAuditRecord = {
+      version: 1,
+      artifactId,
+      capturedAtMs,
+      status: "started",
+      receiptId: receipt.receiptId,
+      operation: receipt.operation,
+      worktreeId: receipt.worktreeId,
+    };
     try {
       await fs.mkdir(this.operationAuditDir, { recursive: true, mode: 0o700 });
       await fs.writeFile(
-        path.join(this.operationAuditDir, `${artifactId}.json`),
+        this.operationAuditPath(receipt.receiptId),
         `${JSON.stringify({
-          version: 1,
-          artifactId,
-          capturedAtMs,
-          receiptId: receipt.receiptId,
-          operation: receipt.operation,
-          worktreeId: receipt.worktreeId,
+          ...audit,
           baseCommit: receipt.baseCommit,
           branch: receipt.branch,
           patchHash: receipt.patchHash,
-          indexTree: outcome.indexTree ?? receipt.indexTree,
+          indexTree: receipt.indexTree,
           commitMessageHash: receipt.commitMessageHash,
           authorIdentityHash: receipt.authorIdentityHash,
           committerIdentityHash: receipt.committerIdentityHash,
           publishedBranch: receipt.publishedBranch,
           publishedBranchHash: receipt.publishedBranchHash,
-          commit: outcome.commit,
         }, null, 2)}\n`,
         { encoding: "utf-8", mode: 0o600, flag: "wx" },
       );
-      return {
-        artifactId,
-        capturedAtMs,
-        ...(outcome.commit ? { commit: outcome.commit } : {}),
-        ...(receipt.publishedBranch ? { publishedBranch: receipt.publishedBranch } : {}),
-      };
+      return audit;
     } catch {
+      return undefined;
+    }
+  }
+
+  private async finishOperationAudit(
+    receipt: UserWorktreeOperationReceiptRecord,
+    started: UserWorktreeOperationAuditRecord,
+    status: "succeeded" | "uncertain",
+    outcome: { indexTree?: string; commit?: string },
+  ): Promise<UserWorktreeOperationAuditRecord | undefined> {
+    const completed: UserWorktreeOperationAuditRecord = {
+      ...started,
+      status,
+      ...(outcome.commit ? { commit: outcome.commit } : {}),
+      ...(receipt.publishedBranch ? { publishedBranch: receipt.publishedBranch } : {}),
+    };
+    const targetPath = this.operationAuditPath(receipt.receiptId);
+    const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporaryPath, `${JSON.stringify({
+        ...completed,
+        baseCommit: receipt.baseCommit,
+        branch: receipt.branch,
+        patchHash: receipt.patchHash,
+        indexTree: outcome.indexTree ?? receipt.indexTree,
+        commitMessageHash: receipt.commitMessageHash,
+        authorIdentityHash: receipt.authorIdentityHash,
+        committerIdentityHash: receipt.committerIdentityHash,
+        publishedBranchHash: receipt.publishedBranchHash,
+      }, null, 2)}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
+      await fs.rename(temporaryPath, targetPath);
+      await this.cleanupOperationAuditTemps(receipt.receiptId);
+      return completed;
+    } catch {
+      await fs.rm(temporaryPath, { force: true }).catch(() => {});
       return undefined;
     }
   }
@@ -1155,7 +1376,24 @@ export class UserWorktreeRuntime {
     worktreeId: string,
     blockers: string[],
   ): Promise<UserWorktreeOperationResult> {
-    return { ...await this.operationPreviewFailure(operation, worktreeId, blockers), applied: false };
+    return { ...await this.operationPreviewFailure(operation, worktreeId, blockers), outcome: "failed", applied: false };
+  }
+
+  private async loadOperationAudit(receiptId: string): Promise<UserWorktreeOperationAuditRecord | undefined> {
+    try {
+      return readOperationAudit(JSON.parse(await fs.readFile(this.operationAuditPath(receiptId), "utf-8")));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async cleanupOperationAuditTemps(receiptId: string): Promise<void> {
+    if (!SAFE_ID_PATTERN.test(receiptId)) return;
+    const prefix = `${receiptId}.json.`;
+    const entries = await fs.readdir(this.operationAuditDir, { withFileTypes: true }).catch(() => []);
+    await Promise.all(entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".tmp"))
+      .map((entry) => fs.rm(path.join(this.operationAuditDir, entry.name), { force: true }).catch(() => {})));
   }
 
   private async writeOperationEvidence(
@@ -1202,6 +1440,11 @@ export class UserWorktreeRuntime {
   private operationReceiptLockPath(receiptId: string): string {
     if (!SAFE_ID_PATTERN.test(receiptId)) throw new Error("User worktree operation receipt id is invalid.");
     return path.join(this.operationReceiptsDir, `${receiptId}.lock`);
+  }
+
+  private operationAuditPath(receiptId: string): string {
+    if (!SAFE_ID_PATTERN.test(receiptId)) throw new Error("User worktree operation receipt id is invalid.");
+    return path.join(this.operationAuditDir, `${receiptId}.json`);
   }
 
   private async ensureDiffBaseline(worktree: UserWorktreeStatus): Promise<WorkspaceChangeBaseline> {

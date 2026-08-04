@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 
 import { disableMarketplaceExtension } from "../../../extension-marketplace-service.js";
 import { createCLIContext } from "../../shared/context.js";
-import { failCli } from "./shared.js";
+import { createMarketplaceExtensionRuntimeCoordinator, failCli } from "./shared.js";
 
 export default defineCommand({
   meta: { name: "disable", description: "Disable an installed marketplace extension in the ledger" },
@@ -15,7 +15,9 @@ export default defineCommand({
     const ctx = createCLIContext({ json: args.json, stateDir: args["state-dir"] });
 
     try {
-      const record = await disableMarketplaceExtension(ctx.stateDir, args.id);
+      const record = await disableMarketplaceExtension(ctx.stateDir, args.id, {
+        runtimeCoordinator: createMarketplaceExtensionRuntimeCoordinator(ctx.stateDir),
+      });
       if (ctx.json) {
         ctx.output({ status: "disabled", extension: record });
         return;

@@ -244,4 +244,42 @@ describe("coding-run source adapters", () => {
     });
     expect(JSON.stringify(view)).not.toContain("/private");
   });
+
+  it("projects a restart-lost subtask as interrupted without replaying child mutations", () => {
+    const view = createSubtaskCodingRunView({
+      record: {
+        id: "task-lost",
+        sessionId: "agent-session-lost",
+        parentConversationId: "conversation-1",
+        kind: "sub_agent",
+        status: "interrupted",
+        progress: { phase: "interrupted" },
+        recovery: {
+          state: "runtime_lost",
+          previousStatus: "running",
+          detectedAt: 1_700_000_000_000,
+          mutationReplay: "forbidden",
+        },
+        launchSpec: { worktreePath: "/private/worktree" },
+      },
+    });
+
+    expect(view).toMatchObject({
+      source: "subtask",
+      status: "interrupted",
+      recovery: { operation: "subtask.resume" },
+      binding: {
+        agentRunId: "agent-session-lost",
+        subtask: { taskId: "task-lost" },
+      },
+      evidence: {
+        taskStatus: "interrupted",
+        progressPhase: "interrupted",
+        runtimeState: "lost",
+        previousTaskStatus: "running",
+        mutationReplay: "forbidden",
+      },
+    });
+    expect(JSON.stringify(view)).not.toContain("/private");
+  });
 });

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -91,6 +92,148 @@ test("subtask runtime store persists lifecycle, progress, and output artifacts",
   });
   expect(persisted?.notifications.some((item) => item.kind === "completed")).toBe(true);
   expect(persisted?.progress.message).toBe("Task completed.");
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("subtask runtime store marks active sub-agent records interrupted after restart", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-lost-"));
+  const store = new SubTaskRuntimeStore(stateDir);
+  await store.load();
+
+  const pending = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-runtime-lost",
+      agentId: "coder",
+      instruction: "Remain queued across the simulated restart",
+    },
+  });
+  const running = await store.createTask({
+    launchSpec: {
+      parentConversationId: "conv-runtime-lost",
+      agentId: "coder",
+      instruction: "Lose the in-memory runtime owner",
+    },
+  });
+  await store.attachSession(running.id, "sub_runtime_lost_1", "coder", "coder");
+  const bridge = await store.createBridgeSessionTask({
+    parentConversationId: "conv-runtime-lost",
+    agentId: "coder",
+    profileId: "coder",
+    instruction: "Keep the bridge runtime under its dedicated recovery owner",
+    bridgeSession: {
+      targetId: "codex_exec",
+      action: "exec",
+      transport: "pty",
+      cwd: stateDir,
+      commandPreview: "codex exec",
+    },
+  });
+  await store.attachSession(bridge.id, "bridge_runtime_lost_1", "coder", "coder");
+
+  const reloaded = new SubTaskRuntimeStore(stateDir);
+  await reloaded.load();
+  await expect(reloaded.getTask(pending.id)).resolves.toMatchObject({
+    status: "interrupted",
+    progress: { phase: "interrupted" },
+    recovery: {
+      state: "runtime_lost",
+      previousStatus: "pending",
+      mutationReplay: "forbidden",
+    },
+    notifications: expect.arrayContaining([expect.objectContaining({ kind: "interrupted" })]),
+  });
+  const recoveredRunning = await reloaded.getTask(running.id);
+  expect(recoveredRunning).toMatchObject({
+    sessionId: "sub_runtime_lost_1",
+    status: "interrupted",
+    progress: { phase: "interrupted" },
+    recovery: {
+      state: "runtime_lost",
+      previousStatus: "running",
+      mutationReplay: "forbidden",
+    },
+  });
+  await expect(reloaded.getTask(bridge.id)).resolves.toMatchObject({
+    kind: "bridge_session",
+    sessionId: "bridge_runtime_lost_1",
+    status: "running",
+    bridgeSessionRuntime: { state: "active" },
+  });
+  expect((await reloaded.getTask(bridge.id))?.recovery).toBeUndefined();
+
+  const detectedAt = recoveredRunning?.recovery?.detectedAt;
+  const restartedAgain = new SubTaskRuntimeStore(stateDir);
+  await restartedAgain.load();
+  await expect(restartedAgain.getTask(running.id)).resolves.toMatchObject({
+    status: "interrupted",
+    recovery: { detectedAt },
+  });
+
+  await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+});
+
+test("createSubTaskResumeController relaunches a restart-lost task without replaying the old runtime", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-runtime-resume-"));
+  const original = new SubTaskRuntimeStore(stateDir);
+  await original.load();
+  const task = await original.createTask({
+    launchSpec: {
+      parentConversationId: "conv-runtime-resume",
+      agentId: "coder",
+      instruction: "Continue only after explicit recovery",
+      channel: "subtask",
+    },
+  });
+  await original.attachSession(task.id, "sub_runtime_resume_1", "coder", "coder");
+
+  const recovered = new SubTaskRuntimeStore(stateDir);
+  await recovered.load();
+  await expect(recovered.getTask(task.id)).resolves.toMatchObject({
+    status: "interrupted",
+    recovery: { mutationReplay: "forbidden" },
+  });
+
+  const spawnedFrom: string[] = [];
+  const controller = createSubTaskResumeController({
+    runtimeStore: recovered,
+    conversationStore: { get: () => undefined },
+    orchestrator: {
+      getSession: () => undefined,
+      async spawn(opts: any) {
+        spawnedFrom.push(String(opts.resumedFromSessionId));
+        opts.onSessionCreated?.("sub_runtime_resume_2", "coder");
+        return {
+          success: true,
+          output: "Recovered run completed.",
+          sessionId: "sub_runtime_resume_2",
+        };
+      },
+    } as any,
+  });
+
+  await expect(controller(task.id, "Resume after reviewing the persisted recovery state."))
+    .resolves.toMatchObject({ status: "interrupted" });
+  let resumed = await recovered.getTask(task.id);
+  for (let attempt = 0; attempt < 40 && resumed?.status !== "done"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    resumed = await recovered.getTask(task.id);
+  }
+
+  expect(spawnedFrom).toEqual(["sub_runtime_resume_1"]);
+  expect(resumed).toMatchObject({
+    sessionId: "sub_runtime_resume_2",
+    status: "done",
+    outputPreview: "Recovered run completed.",
+  });
+  expect(resumed?.recovery).toBeUndefined();
+  expect(resumed?.resume).toEqual([
+    expect.objectContaining({
+      status: "delivered",
+      deliveredSessionId: "sub_runtime_resume_2",
+      resumedFromSessionId: "sub_runtime_resume_1",
+    }),
+  ]);
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
@@ -540,16 +683,17 @@ test("subtask runtime store batches thought_delta persistence within a short win
 
     const started = Date.now();
     const scratchPath = path.join(stateDir, "tasks", task.id, "scratch", "scratch-coder.md");
-    let persisted: Awaited<ReturnType<SubTaskRuntimeStore["getTask"]>> | undefined;
+    let persisted: { progress?: { message?: string } } | undefined;
     let scratchContent = "";
     while (Date.now() - started < 1_500) {
       if (writeFileSpy.mock.calls.length > 0) {
-        const reloaded = new SubTaskRuntimeStore(stateDir);
-        await reloaded.load();
-        persisted = await reloaded.getTask(task.id);
+        const registry = JSON.parse(await fs.readFile(path.join(stateDir, "subtasks", "registry.json"), "utf-8")) as {
+          items?: Array<{ id?: string; progress?: { message?: string } }>;
+        };
+        persisted = registry.items?.find((item) => item.id === task.id);
         // Registry 先于 artifact 原子写入，必须等待同一次 deferred persist 的 scratch 收尾完成。
         scratchContent = await fs.readFile(scratchPath, "utf-8").catch(() => "");
-        if (persisted?.progress.message === "second delta" && scratchContent.includes("second delta")) {
+        if (persisted?.progress?.message === "second delta" && scratchContent.includes("second delta")) {
           break;
         }
       }
@@ -557,7 +701,7 @@ test("subtask runtime store batches thought_delta persistence within a short win
     }
 
     expect(writeFileSpy.mock.calls.length).toBeGreaterThan(0);
-    expect(persisted?.progress.message).toBe("second delta");
+    expect(persisted?.progress?.message).toBe("second delta");
     expect(scratchContent).toContain("second delta");
   } finally {
     writeFileSpy.mockRestore();
@@ -581,10 +725,22 @@ test("subtask runtime store flushAndClose drains deferred state and rejects new 
 
   await Promise.all([store.flushAndClose(), store.flushAndClose()]);
 
+  const registry = JSON.parse(await fs.readFile(path.join(stateDir, "subtasks", "registry.json"), "utf-8")) as {
+    items?: Array<{ id?: string; progress?: { message?: string } }>;
+  };
+  expect(registry.items?.find((item) => item.id === task.id)?.progress?.message)
+    .toBe("The final deferred progress update must be persisted.");
+
   const reloaded = new SubTaskRuntimeStore(stateDir);
   await reloaded.load();
-  expect((await reloaded.getTask(task.id))?.progress.message)
-    .toBe("The final deferred progress update must be persisted.");
+  expect(await reloaded.getTask(task.id)).toMatchObject({
+    status: "interrupted",
+    recovery: {
+      state: "runtime_lost",
+      previousStatus: "running",
+      mutationReplay: "forbidden",
+    },
+  });
   await expect(store.createTask({
     launchSpec: {
       parentConversationId: "conv-flush-close",
@@ -639,6 +795,10 @@ test("task runtime agent capabilities wrap spawn results into structured task re
 
   const result = await caps.spawnSubAgent!({
     parentConversationId: "conv-caps",
+    parentOperation: {
+      agentRunId: "run-caps",
+      toolCallId: "tool-caps",
+    },
     agentId: "coder",
     instruction: "Implement task bridge",
     abortSignal: controller.signal,
@@ -672,6 +832,10 @@ test("task runtime agent capabilities wrap spawn results into structured task re
   ]);
 
   const persisted = await store.getTask(String(result.taskId));
+  const expectedParentOperationId = `op_${createHash("sha256")
+    .update("conversation\0conv-caps\0run-caps\0tool-caps")
+    .digest("hex")}`;
+  expect(persisted?.parentOperationId).toBe(expectedParentOperationId);
   expect(persisted?.launchSpec.bridgeSubtask).toEqual({
     kind: "review",
     targetId: "codex_exec",
@@ -681,6 +845,15 @@ test("task runtime agent capabilities wrap spawn results into structured task re
     summary: "把 bridge review 语义写进长期任务子任务记录",
   });
   expect(persisted?.launchSpec).not.toHaveProperty("abortSignal");
+
+  await store.flushAndClose();
+  const restartedStore = new SubTaskRuntimeStore(stateDir);
+  await restartedStore.load();
+  const restarted = await restartedStore.getTask(String(result.taskId));
+  expect(restarted?.parentOperationId).toBe(expectedParentOperationId);
+  const registry = await fs.readFile(path.join(stateDir, "subtasks", "registry.json"), "utf-8");
+  expect(registry).not.toContain("tool-caps");
+  expect(registry).not.toContain("run-caps");
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
@@ -1035,7 +1208,7 @@ test("subtask runtime store releases a pending claim left by a previous runtime 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
 });
 
-test("subtask runtime store recovers an interrupted stop claim as retryable", async () => {
+test("subtask runtime store releases an interrupted stop claim into restart-lost recovery", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-subtask-stop-recovery-"));
   const store = new SubTaskRuntimeStore(stateDir);
   await store.load();
@@ -1064,15 +1237,35 @@ test("subtask runtime store recovers an interrupted stop claim as retryable", as
   await reloaded.load();
   const recovered = await reloaded.getTask(task.id);
   expect(recovered).toMatchObject({
-    status: "running",
+    status: "interrupted",
     commandGeneration: 1,
     activeCommandClaim: undefined,
     stopRequestedAt: undefined,
     stopReason: undefined,
+    recovery: {
+      state: "runtime_lost",
+      previousStatus: "running",
+      mutationReplay: "forbidden",
+    },
   });
-  expect(recovered?.notifications.at(-1)).toMatchObject({
-    kind: "stop_failed",
-    message: expect.stringContaining("interrupted"),
+  expect(recovered?.notifications).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      kind: "stop_failed",
+      message: expect.stringContaining("interrupted"),
+    }),
+    expect.objectContaining({ kind: "interrupted" }),
+  ]));
+  await expect(reloaded.requestStop(task.id, "Do not stop a lost owner twice.", {
+    sessionId: "sub_stop_recovery_1",
+    expectedRevision: 1,
+  })).rejects.toThrow("Subtask stop only supports active tasks");
+  await expect(reloaded.requestResume(task.id, "Explicitly relaunch the interrupted task.", {
+    sessionId: "sub_stop_recovery_1",
+    expectedRevision: 1,
+  })).resolves.toMatchObject({
+    item: { status: "interrupted" },
+    resume: { status: "accepted" },
+    claimOwner: true,
   });
 
   await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});

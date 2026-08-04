@@ -5,7 +5,7 @@ import {
   updateMarketplaceExtension,
 } from "../../../extension-marketplace-service.js";
 import { createCLIContext } from "../../shared/context.js";
-import { failCli } from "./shared.js";
+import { createMarketplaceExtensionRuntimeCoordinator, failCli } from "./shared.js";
 
 export default defineCommand({
   meta: { name: "update", description: "Refresh an installed extension from its known marketplace source" },
@@ -39,6 +39,7 @@ export default defineCommand({
       const result = await updateMarketplaceExtension({
         ...input,
         confirmationHash: args["confirm-hash"],
+        runtimeCoordinator: createMarketplaceExtensionRuntimeCoordinator(ctx.stateDir),
       });
 
       if (ctx.json) {

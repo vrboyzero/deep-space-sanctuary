@@ -616,6 +616,112 @@ test("subtask.list and subtask.get expose persisted task runtime records", async
   }
 });
 
+test("subtask.get rejects restart-lost results until an explicit resume completes", async () => {
+  const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
+  const originalStore = new SubTaskRuntimeStore(stateDir);
+  await originalStore.load();
+  const task = await originalStore.createTask({
+    launchSpec: {
+      parentConversationId: "conv-subtask-runtime-lost",
+      agentId: "coder",
+      instruction: "Produce a verified patch before manager fan-in",
+      channel: "subtask",
+      delegationProtocol: {
+        source: "delegate_task",
+        intent: {
+          kind: "ad_hoc",
+          summary: "Produce a verified patch",
+          role: "coder",
+        },
+        contextPolicy: {
+          includeParentConversation: true,
+          includeStructuredContext: true,
+          contextKeys: ["taskId"],
+        },
+        expectedDeliverable: {
+          format: "patch",
+          summary: "Return the patch and verification",
+        },
+        aggregationPolicy: {
+          mode: "single",
+          summarizeFailures: true,
+        },
+        acceptance: {
+          doneDefinition: "The patch and targeted tests are complete.",
+          verificationHints: ["Check targeted tests"],
+        },
+        deliverableContract: {
+          format: "patch",
+          requiredSections: ["Changes made", "Verification"],
+        },
+        launchDefaults: {},
+      },
+    },
+  });
+  await originalStore.attachSession(task.id, "sub_runtime_lost_query_1", "coder", "coder");
+
+  const recoveredStore = new SubTaskRuntimeStore(stateDir);
+  await recoveredStore.load();
+  const server = await startGatewayServer({
+    port: 0,
+    auth: { mode: "none" },
+    webRoot: resolveWebRoot(),
+    stateDir,
+    subTaskRuntimeStore: recoveredStore,
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, { origin: "http://127.0.0.1" });
+  const frames: any[] = [];
+  const closeP = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf-8"))));
+
+  try {
+    await pairWebSocketClient(ws, frames, stateDir);
+    ws.send(JSON.stringify({
+      type: "req",
+      id: "subtask-runtime-lost-get",
+      method: "subtask.get",
+      params: { taskId: task.id },
+    }));
+    await waitFor(() => frames.some((frame) => frame.type === "res" && frame.id === "subtask-runtime-lost-get"));
+
+    const response = frames.find((frame) => frame.type === "res" && frame.id === "subtask-runtime-lost-get");
+    expect(response).toMatchObject({
+      ok: true,
+      payload: {
+        item: {
+          id: task.id,
+          sessionId: "sub_runtime_lost_query_1",
+          status: "interrupted",
+          recovery: {
+            state: "runtime_lost",
+            previousStatus: "running",
+            mutationReplay: "forbidden",
+          },
+        },
+        resultEnvelope: {
+          taskId: task.id,
+          status: "interrupted",
+        },
+        acceptanceGate: {
+          status: "rejected",
+          enforced: true,
+          rejectionConfidence: "high",
+          managerActionHint: "resume the interrupted subtask and verify a newly persisted terminal result before fan-in.",
+        },
+        continuationState: {
+          resumeMode: "recovery",
+          checkpoints: { blockerCount: 2 },
+        },
+      },
+    });
+  } finally {
+    ws.close();
+    await closeP;
+    await server.close();
+    await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 test("subtask.get exposes team shared state and completion gate summaries", async () => {
   const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-test-"));
   const subTaskRuntimeStore = new SubTaskRuntimeStore(stateDir);

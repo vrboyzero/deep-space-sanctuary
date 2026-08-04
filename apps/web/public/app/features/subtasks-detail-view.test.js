@@ -5,10 +5,38 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createSubtasksDetailView } from "./subtasks-detail-view.js";
+import {
+  createSubtasksDetailView,
+  formatSubtaskStatus,
+  getStatusToneClass,
+} from "./subtasks-detail-view.js";
 
 afterEach(() => {
   document.body.replaceChildren();
+});
+
+it("renders restart-lost subtasks as interrupted and resumable", () => {
+  expect(formatSubtaskStatus("interrupted")).toBe("运行已中断");
+  expect(getStatusToneClass("interrupted")).toBe("is-timeout");
+
+  const detail = document.createElement("div");
+  const model = createFullModel();
+  createView(detail).render(createFullModel({
+    item: {
+      ...model.item,
+      status: "interrupted",
+      recovery: {
+        state: "runtime_lost",
+        previousStatus: "running",
+        mutationReplay: "forbidden",
+      },
+    },
+    pendingActionKind: "",
+  }));
+
+  expect(detail.querySelector("[data-subtask-stop]")).toBeNull();
+  expect(detail.querySelector("[data-subtask-resume-input]")).not.toBeNull();
+  expect(detail.querySelector("[data-subtask-resume-send]")?.disabled).toBe(false);
 });
 
 function blockNonEmptyInnerHtml(element) {

@@ -26,6 +26,22 @@ function createContext(overrides: Partial<ToolContext> = {}): ToolContext {
 }
 
 describe("buildSubAgentLaunchSpec delegation protocol", () => {
+  it("threads the parent tool operation into the child launch without changing task content", () => {
+    const spec = buildSubAgentLaunchSpec(createContext({
+      agentRunId: "run-parent-1",
+      toolCallId: "tool-parent-1",
+    }), {
+      instruction: "Inspect the child runtime binding.",
+      channel: "subtask",
+      delegationSource: "delegate_task",
+    });
+
+    expect(spec.parentOperation).toEqual({
+      agentRunId: "run-parent-1",
+      toolCallId: "tool-parent-1",
+    });
+  });
+
   it("builds ad-hoc protocol for delegate_task", () => {
     const spec = buildSubAgentLaunchSpec(createContext(), {
       instruction: "Patch the failing integration test and explain the fix",

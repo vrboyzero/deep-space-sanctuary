@@ -1515,6 +1515,8 @@ export class ToolExecutor {
     const abortSignal = deadlineAdmission?.abortSignal ?? parentAbortSignal;
     const context: ToolContext = {
       conversationId,
+      toolCallId: request.id,
+      agentRunId: normalizeOptionalString(runtimeContext?.agentRunId),
       workspaceRoot: this.workspaceRoot,
       stateDir: this.stateDir,
       abortSignal,

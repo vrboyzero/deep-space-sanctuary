@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -113,6 +114,91 @@ describe("WorkspaceRevisionRuntime", () => {
       await expect(fs.access(path.join(fixture.workspaceRoot, "add.txt"))).rejects.toThrow();
       await expect(fs.readFile(path.join(fixture.workspaceRoot, "update.txt"), "utf-8")).resolves.toBe("before update");
       await expect(fs.readFile(path.join(fixture.workspaceRoot, "delete.txt"), "utf-8")).resolves.toBe("before delete");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("persists operation-level evidence and commits only after every prepared target", async () => {
+    const fixture = await createFixture("belldandy-workspace-revision-operation-");
+    try {
+      const runtime = new WorkspaceRevisionRuntime({ stateDir: fixture.stateDir });
+      const revisionId = "run-workspace-operation-1";
+      const operation = {
+        conversationId: "conversation-workspace-operation-1",
+        agentRunId: revisionId,
+        toolCallId: "tool-call-sensitive-operation-1",
+      };
+      const operationId = createOperationId(operation);
+      const targets = [
+        target(fixture.workspaceRoot, "first.txt"),
+        target(fixture.workspaceRoot, "second.txt"),
+      ];
+
+      await runtime.prepareMutations({
+        revisionId,
+        workspaceRoot: fixture.workspaceRoot,
+        toolName: "apply_patch",
+        targets,
+        operation,
+      });
+      await expect(runtime.getOperationEvidence({ revisionId, operationId })).resolves.toMatchObject({
+        operationId,
+        state: "prepared",
+        workspaceCount: 1,
+        targetCount: 2,
+        committedTargetCount: 0,
+      });
+
+      await fs.writeFile(path.join(fixture.workspaceRoot, "first.txt"), "first", "utf-8");
+      await runtime.commitMutations({
+        revisionId,
+        workspaceRoot: fixture.workspaceRoot,
+        toolName: "apply_patch",
+        targets: [targets[0]!],
+        operation,
+      });
+      await expect(runtime.getOperationEvidence({ revisionId, operationId })).resolves.toMatchObject({
+        state: "prepared",
+        targetCount: 2,
+        committedTargetCount: 1,
+      });
+
+      await fs.writeFile(path.join(fixture.workspaceRoot, "second.txt"), "second", "utf-8");
+      await runtime.commitMutations({
+        revisionId,
+        workspaceRoot: fixture.workspaceRoot,
+        toolName: "apply_patch",
+        targets: [targets[1]!],
+        operation,
+      });
+      const restarted = new WorkspaceRevisionRuntime({ stateDir: fixture.stateDir });
+      await expect(restarted.getOperationEvidence({ revisionId, operationId })).resolves.toMatchObject({
+        operationId,
+        state: "committed",
+        workspaceCount: 1,
+        targetCount: 2,
+        committedTargetCount: 2,
+      });
+      await expect(restarted.prepareMutations({
+        revisionId,
+        workspaceRoot: fixture.workspaceRoot,
+        toolName: "apply_patch",
+        targets,
+        operation,
+      })).rejects.toThrow("already prepared");
+
+      const [summary] = await restarted.list();
+      const manifest = await fs.readFile(path.join(
+        fixture.stateDir,
+        "workspace-revisions",
+        String(summary?.workspaceId),
+        revisionId,
+        "manifest.json",
+      ), "utf-8");
+      expect(manifest).toContain(operationId);
+      expect(manifest).not.toContain(operation.toolCallId);
+      expect(manifest).not.toContain(operation.conversationId);
     } finally {
       await fs.rm(fixture.rootDir, { recursive: true, force: true });
     }
@@ -293,3 +379,9 @@ describe("WorkspaceRevisionRuntime", () => {
     }
   });
 });
+
+function createOperationId(input: { conversationId: string; agentRunId: string; toolCallId: string }): string {
+  return `op_${crypto.createHash("sha256")
+    .update(`conversation\0${input.conversationId}\0${input.agentRunId}\0${input.toolCallId}`)
+    .digest("hex")}`;
+}

@@ -453,9 +453,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         remoteDeliveryConfirmation: undefined,
         remoteDeliveryResult: action.result,
-        notice: action.result.applied
-          ? "Remote push verified."
-          : `Remote push blocked: ${action.result.blockers.join(", ")}`,
+        notice: action.result.outcome === "uncertain"
+          ? "Remote push applied, but audit persistence failed. Manual reconciliation required."
+          : action.result.applied
+            ? "Remote push verified."
+            : `Remote push blocked: ${action.result.blockers.join(", ")}`,
       };
     case "change.snapshot.completed":
       if (!state.binding

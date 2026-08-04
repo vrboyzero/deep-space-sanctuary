@@ -131,6 +131,55 @@ test("buildSubTaskContinuationState falls back to bridge summary for bridge subt
   });
 });
 
+test("buildSubTaskContinuationState exposes restart-lost recovery as a blocker", () => {
+  const record: SubTaskRecord = {
+    id: "task_interrupted_1",
+    kind: "sub_agent",
+    parentConversationId: "conv-interrupted",
+    sessionId: "sub_interrupted_1",
+    agentId: "coder",
+    launchSpec: {
+      agentId: "coder",
+      profileId: "coder",
+      background: true,
+      timeoutMs: 60_000,
+      channel: "subtask",
+    },
+    background: true,
+    status: "interrupted",
+    instruction: "Resume only after runtime recovery review",
+    summary: "Subtask runtime owner was lost.",
+    progress: {
+      phase: "interrupted",
+      message: "Manual resume is required.",
+      lastActivityAt: 1712000000500,
+    },
+    createdAt: 1712000000000,
+    updatedAt: 1712000000500,
+    finishedAt: 1712000000500,
+    error: "Subtask runtime owner was lost.",
+    recovery: {
+      state: "runtime_lost",
+      previousStatus: "running",
+      detectedAt: 1712000000500,
+      mutationReplay: "forbidden",
+    },
+    steering: [],
+    takeover: [],
+    resume: [],
+    notifications: [],
+  };
+
+  expect(buildSubTaskContinuationState(record)).toMatchObject({
+    resumeMode: "recovery",
+    nextAction: "Resume this task from the last recorded state or inspect the failure details first.",
+    checkpoints: {
+      blockerCount: 2,
+      labels: ["Subtask runtime owner was lost.", "Manual resume is required."],
+    },
+  });
+});
+
 test("buildGoalContinuationState normalizes goal handoff into shared shape", () => {
   const handoff: GoalHandoffSnapshot = {
     version: 1,

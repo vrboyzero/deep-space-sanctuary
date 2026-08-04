@@ -55,6 +55,7 @@ import type { WorkspaceRevisionRuntime } from "./workspace-revision.js";
 import type { UserWorktreeRuntime } from "./user-worktree-runtime.js";
 import type { RemoteDeliveryRuntime } from "./remote-delivery-runtime.js";
 import type { CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+import type { CodingRunReconciliationJournalOwner } from "./coding-run/reconciliation-journal.js";
 import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 
 type GatewayLog = {
@@ -87,6 +88,7 @@ export type GatewayWebSocketRequestContext = {
   conversationStore: ConversationStore;
   conversationRunRegistry: ConversationRunRegistry;
   codingRunEventBroker: CodingRunGatewayEventBroker;
+  codingRunReconciliationJournal: CodingRunReconciliationJournalOwner;
   pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle: TopLevelConversationLifecycle;
   durableExtractionRuntime?: DurableExtractionRuntime;
@@ -209,6 +211,7 @@ export function buildGatewayWebSocketRequestContext(
     conversationStore: options.conversationStore,
     conversationRunRegistry: options.conversationRunRegistry,
     codingRunEventBroker: options.codingRunEventBroker,
+    codingRunReconciliationJournal: options.codingRunReconciliationJournal,
     pendingToolPermissionRuntime: options.pendingToolPermissionRuntime,
     topLevelConversationLifecycle: options.topLevelConversationLifecycle,
     durableExtractionRuntime: options.durableExtractionRuntime,

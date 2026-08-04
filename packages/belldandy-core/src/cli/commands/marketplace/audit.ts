@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 
-import { listMarketplaceExtensionAudits } from "../../../extension-marketplace-audit.js";
+import { reconcileMarketplaceExtensionAudits } from "../../../extension-marketplace-audit.js";
 import { createCLIContext } from "../../shared/context.js";
 
 export default defineCommand({
@@ -11,7 +11,7 @@ export default defineCommand({
   },
   async run({ args }) {
     const ctx = createCLIContext({ json: args.json, stateDir: args["state-dir"] });
-    const audits = await listMarketplaceExtensionAudits(ctx.stateDir);
+    const audits = await reconcileMarketplaceExtensionAudits(ctx.stateDir);
 
     if (ctx.json) {
       ctx.output({ audits });

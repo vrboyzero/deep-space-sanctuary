@@ -1,5 +1,6 @@
 import type { AgentRunEvent, CodingContextBinding } from "./contracts.js";
 import { createGatewayConversationEventAdapter, type GatewayConversationEventAdapter } from "./gateway-conversation-event-adapter.js";
+import type { CodingRunReconciliationJournal } from "./reconciliation-journal.js";
 
 const DEFAULT_MAX_EVENTS_PER_RUN = 256;
 const DEFAULT_MAX_TERMINAL_RUNS = 64;
@@ -20,6 +21,7 @@ type StoredConversationRun = {
   adapter: GatewayConversationEventAdapter;
   events: AgentRunEvent[];
   subscribers: Set<Subscriber>;
+  reconciliationDurable: boolean;
   terminalAt?: number;
 };
 
@@ -51,10 +53,18 @@ export class CodingRunGatewayEventBroker {
   private readonly runs = new Map<string, StoredConversationRun>();
   private readonly maxEventsPerRun: number;
   private readonly maxTerminalRuns: number;
+  private readonly reconciliationJournal?: Pick<CodingRunReconciliationJournal, "record">
+    & Partial<Pick<CodingRunReconciliationJournal, "remove">>;
 
-  constructor(input: { maxEventsPerRun?: number; maxTerminalRuns?: number } = {}) {
+  constructor(input: {
+    maxEventsPerRun?: number;
+    maxTerminalRuns?: number;
+    reconciliationJournal?: Pick<CodingRunReconciliationJournal, "record">
+      & Partial<Pick<CodingRunReconciliationJournal, "remove">>;
+  } = {}) {
     this.maxEventsPerRun = normalizePositiveInt(input.maxEventsPerRun, DEFAULT_MAX_EVENTS_PER_RUN);
     this.maxTerminalRuns = normalizePositiveInt(input.maxTerminalRuns, DEFAULT_MAX_TERMINAL_RUNS);
+    this.reconciliationJournal = input.reconciliationJournal;
   }
 
   registerConversationRun(binding: ConversationBinding): boolean {
@@ -71,9 +81,15 @@ export class CodingRunGatewayEventBroker {
       adapter,
       events: [],
       subscribers: new Set(),
+      reconciliationDurable: true,
     };
     this.runs.set(binding.agentRunId, run);
-    adapter.start(run.binding);
+    try {
+      adapter.start(run.binding);
+    } catch (error) {
+      if (this.runs.get(binding.agentRunId) === run) this.runs.delete(binding.agentRunId);
+      throw error;
+    }
     return true;
   }
 
@@ -90,6 +106,17 @@ export class CodingRunGatewayEventBroker {
       this.trimTerminalRuns();
     }
     return getLatestSeq(run) !== previousLatestSeq;
+  }
+
+  isReconciliationDurable(binding: ConversationBinding): boolean {
+    if (!this.reconciliationJournal) return true;
+    const run = this.runs.get(binding.agentRunId);
+    return Boolean(run && matchesBinding(run.binding, binding) && run.reconciliationDurable);
+  }
+
+  async removeReconciliationEvidence(binding: ConversationBinding): Promise<boolean> {
+    if (!isConversationBinding(binding) || !this.reconciliationJournal?.remove) return false;
+    return this.reconciliationJournal.remove(binding);
   }
 
   subscribe(input: {
@@ -158,6 +185,12 @@ export class CodingRunGatewayEventBroker {
   }
 
   private appendEvent(run: StoredConversationRun, event: AgentRunEvent): void {
+    try {
+      this.reconciliationJournal?.record(event);
+    } catch (error) {
+      run.reconciliationDurable = false;
+      throw error;
+    }
     run.events.push(event);
     if (run.events.length > this.maxEventsPerRun) {
       run.events.splice(0, run.events.length - this.maxEventsPerRun);

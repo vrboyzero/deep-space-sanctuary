@@ -5,6 +5,7 @@ import type {
   AgentPrefixDrift,
   AgentPrefixShape,
 } from "./prompt-budget-observability.js";
+import type { AgentStructuredOutputContract } from "./structured-output.js";
 
 export { OpenAIChatAgent, type OpenAIChatAgentOptions } from "./openai.js";
 export {
@@ -23,6 +24,10 @@ export {
   normalizeMaxTotalTokens,
 } from "./react-run-budget.js";
 export { microcompactMessages, type MicrocompactMessage, type MicrocompactOptions, type MicrocompactResult } from "./microcompact.js";
+export type {
+  AgentStructuredOutputContract,
+  StructuredOutputValidationResult,
+} from "./structured-output.js";
 
 // Failover（模型容灾）
 export {
@@ -247,6 +252,8 @@ export type AgentRunInput = {
   abortSignal?: AbortSignal;
   /** 仅由可信运行时注入；普通 RPC 调用方不得构造。 */
   steering?: AgentRunSteeringMailbox;
+  /** 仅由可信运行时注入；校验失败时至多执行一次无工具修复。 */
+  structuredOutput?: AgentStructuredOutputContract;
 };
 
 export type AgentRunSteerCommand = {
@@ -279,6 +286,8 @@ export type AgentFinal = {
 export type AgentStatus = {
   type: "status";
   status: "running" | "done" | "error" | "stopped";
+  code?: "output_schema_invalid";
+  error?: string;
 };
 
 /** Provider 流在提交可见内容后失败时的可诊断终态。 */

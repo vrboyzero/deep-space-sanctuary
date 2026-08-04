@@ -59,6 +59,20 @@ describe("selectSubTaskRetentionCandidates", () => {
     expect(selection.eligibleTaskIds).toEqual(["task_old"]);
     expect(selection.protectedCount).toBe(2);
   });
+
+  it("treats restart-lost records as resumable terminal retention entries", () => {
+    const selection = selectSubTaskRetentionCandidates([
+      { id: "task_interrupted", status: "interrupted", createdAt: 100, finishedAt: 200 },
+    ], {
+      maxTerminalRecords: 0,
+      minTerminalAgeMs: 0,
+    }, 1_000);
+
+    expect(selection).toEqual({
+      eligibleTaskIds: ["task_interrupted"],
+      protectedCount: 0,
+    });
+  });
 });
 
 describe("subtask retention policy and cleanup path", () => {

@@ -443,6 +443,7 @@ describe("CodingTuiRuntime", () => {
             operation: "push",
             canConfirm: true,
             blockers: [],
+            approval: { mode: "user_interaction", delegable: false, rememberable: false },
             source: { repoRoot: workspaceRoot, branch: "main", commit: "a".repeat(40), upstream: null },
             target: { remote: "private", url: "https://github.com/example/private.git", branch: "main", expectedOid: "b".repeat(40) },
             diff: { baseOid: "b".repeat(40), sha256: "c".repeat(64), byteLength: 12 },
@@ -450,6 +451,7 @@ describe("CodingTuiRuntime", () => {
           }
           : {
             operation: "push",
+            outcome: "succeeded",
             applied: true,
             blockers: [],
             postcondition: { remoteOid: "a".repeat(40) },
@@ -476,7 +478,11 @@ describe("CodingTuiRuntime", () => {
       repository: "example/private",
     }]);
     const preview = await runtime.previewRemotePush("private", "main");
-    expect(preview).toMatchObject({ canConfirm: true, receipt: { receiptId: "remote-delivery-receipt" } });
+    expect(preview).toMatchObject({
+      canConfirm: true,
+      approval: { mode: "user_interaction", delegable: false, rememberable: false },
+      receipt: { receiptId: "remote-delivery-receipt" },
+    });
     await expect(runtime.confirmRemotePush("remote-delivery-receipt")).resolves.toMatchObject({ applied: true });
     expect(invokeGateway).toHaveBeenNthCalledWith(2, expect.objectContaining({
       method: "workspace.remote_delivery.push.preview",
@@ -486,6 +492,33 @@ describe("CodingTuiRuntime", () => {
       method: "workspace.remote_delivery.push.confirm",
       params: { receiptId: "remote-delivery-receipt", confirm: true },
     }));
+  });
+
+  it("preserves an uncertain applied remote push for manual reconciliation", async () => {
+    const runtime = new CodingTuiRuntime({
+      stateDir: path.resolve(os.tmpdir(), "belldandy-tui-remote-delivery-uncertain-state"),
+      cwd: path.resolve(os.tmpdir(), "belldandy-tui-remote-delivery-uncertain-workspace"),
+      client: createClient(),
+      invokeGateway: vi.fn(async (input) => ({
+        ok: true as const,
+        payload: input.parsePayload({
+          operation: "push",
+          outcome: "uncertain",
+          applied: true,
+          blockers: ["audit_persistence_failed"],
+          postcondition: { remoteOid: "a".repeat(40) },
+        }),
+        paired: true,
+        wsUrl: "ws://127.0.0.1:28889",
+      })),
+    });
+
+    await expect(runtime.confirmRemotePush("remote-delivery-receipt")).resolves.toMatchObject({
+      outcome: "uncertain",
+      applied: true,
+      blockers: ["audit_persistence_failed"],
+      postcondition: { remoteOid: "a".repeat(40) },
+    });
   });
 
   it("keeps a run change snapshot bound to its launch workspace after the TUI cwd changes", async () => {
@@ -589,6 +622,22 @@ describe("CodingTuiRuntime", () => {
           supportsResize: true,
           oldestCursor: 0,
           nextCursor: 20,
+          recovery: {
+            lifecycle: "active",
+            process: "attached",
+            output: "memory_only",
+            stdin: "live_only",
+            mutationReplay: "forbidden",
+          },
+        }, {
+          jobId: "99999999-9999-4999-8999-999999999999",
+          status: "lost",
+          stdinMode: "pty",
+          createdAt: 1,
+          updatedAt: 2,
+          supportsResize: true,
+          oldestCursor: 0,
+          nextCursor: 0,
         }],
       }),
       paired: true,
@@ -605,7 +654,8 @@ describe("CodingTuiRuntime", () => {
       expect.objectContaining({
         jobId: "11111111-1111-4111-8111-111111111111",
         status: "running",
-        nextCursor: 20,
+      nextCursor: 20,
+      recovery: expect.objectContaining({ lifecycle: "active", mutationReplay: "forbidden" }),
       }),
     ]);
     expect(invokeGateway).toHaveBeenCalledWith(expect.objectContaining({
@@ -636,6 +686,13 @@ describe("CodingTuiRuntime", () => {
         hasMore: true,
         cursorExpired: false,
         cursorAdjusted: false,
+        recovery: {
+          lifecycle: "active",
+          process: "attached",
+          output: "memory_only",
+          stdin: "live_only",
+          mutationReplay: "forbidden",
+        },
       }),
       paired: true,
       wsUrl: "ws://127.0.0.1:28889",
@@ -677,6 +734,13 @@ describe("CodingTuiRuntime", () => {
         supportsResize: false,
         oldestCursor: 0,
         nextCursor: 0,
+        recovery: {
+          lifecycle: "settled",
+          process: "not_applicable",
+          output: "memory_only",
+          stdin: "closed",
+          mutationReplay: "forbidden",
+        },
       }),
       paired: true,
       wsUrl: "ws://127.0.0.1:28889",

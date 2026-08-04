@@ -152,7 +152,8 @@ function deriveBridgeSessionRuntime(
       state: "active",
     };
   }
-  if (record.status === "done" || record.status === "error" || record.status === "timeout" || record.status === "stopped") {
+  if (record.status === "done" || record.status === "error" || record.status === "timeout"
+    || record.status === "stopped" || record.status === "interrupted") {
     return {
       state: "closed",
       ...(closeReason ? { closeReason } : {}),

@@ -590,7 +590,7 @@ test("assistant mode runtime includes long task summary and attention fallback",
         {
           taskId: "subtask-2",
           agentId: "coder",
-          status: "error",
+          status: "interrupted",
           source: "goal_subtask",
           aggregationMode: "main_agent_summary",
           expectedDeliverableSummary: "返回治理摘要",
@@ -614,7 +614,7 @@ test("assistant mode runtime includes long task summary and attention fallback",
     primary: {
       taskId: "subtask-2",
       agentId: "coder",
-      status: "error",
+      status: "interrupted",
       source: "goal_subtask",
       aggregationMode: "main_agent_summary",
       intentSummary: "整理工具治理摘要",
@@ -623,14 +623,14 @@ test("assistant mode runtime includes long task summary and attention fallback",
   });
   expect(report.status).toBe("disabled");
   expect(report.explanation).toMatchObject({
-    attentionReason: "整理工具治理摘要: error",
+    attentionReason: "整理工具治理摘要: interrupted",
   });
   expect(report.focus).toMatchObject({
-    summary: "整理工具治理摘要, status=error, deliverable=返回治理摘要",
+    summary: "整理工具治理摘要, status=interrupted, deliverable=返回治理摘要",
   });
   expect(report.attentionItems).toContainEqual({
     kind: "long_task_attention",
-    summary: "整理工具治理摘要: error, deliverable=返回治理摘要",
+    summary: "整理工具治理摘要: interrupted, deliverable=返回治理摘要",
   });
 });
 

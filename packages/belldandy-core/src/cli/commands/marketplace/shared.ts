@@ -1,5 +1,12 @@
 import type { ExtensionMarketplaceSource } from "@belldandy/plugins";
+import type {
+  MarketplaceExtensionRuntimeCoordinator,
+  MarketplaceExtensionRuntimeMutation,
+} from "../../../extension-marketplace-service.js";
 import type { CLIContext } from "../../shared/context.js";
+import { invokeGatewayMethod } from "../../shared/gateway-rpc.js";
+
+const MARKETPLACE_RUNTIME_REVOKE_TIMEOUT_MS = 15_000;
 
 export function failCli(ctx: CLIContext, message: string): never {
   ctx.error(message);
@@ -55,5 +62,46 @@ export function buildMarketplaceSourceFromArgs(args: Record<string, unknown>): E
     default:
       throw new Error(`Unsupported source type: ${sourceType}`);
   }
+}
+
+export function createMarketplaceExtensionRuntimeCoordinator(
+  stateDir: string,
+): MarketplaceExtensionRuntimeCoordinator {
+  return {
+    async revokeForMutation(input) {
+      const result = await invokeGatewayMethod<{
+        revoked: true;
+        extensionId: string;
+        operation: MarketplaceExtensionRuntimeMutation;
+      }>({
+        stateDir,
+        method: "extension.runtime.revoke",
+        params: {
+          extensionId: input.extensionId,
+          operation: input.operation,
+        },
+        requestIdPrefix: "bdd-marketplace-runtime-revoke",
+        clientName: "bdd marketplace",
+        timeoutMs: MARKETPLACE_RUNTIME_REVOKE_TIMEOUT_MS,
+        parsePayload: (payload) => {
+          if (
+            payload.revoked !== true
+            || payload.extensionId !== input.extensionId
+            || payload.operation !== input.operation
+          ) {
+            throw new Error("Gateway returned an invalid extension runtime revoke result.");
+          }
+          return {
+            revoked: true,
+            extensionId: input.extensionId,
+            operation: input.operation,
+          };
+        },
+      });
+      if (!result.ok) {
+        throw new Error(`Extension runtime revoke failed: ${result.error}`);
+      }
+    },
+  };
 }
 

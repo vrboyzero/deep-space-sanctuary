@@ -67,7 +67,7 @@ export type RemoteDeliveryEvidence = {
 export type RemoteDeliveryAudit = {
   auditId: string;
   capturedAtMs: number;
-  status: "started" | "succeeded" | "failed";
+  status: "started" | "succeeded" | "failed" | "uncertain";
   operation: RemoteDeliveryOperation;
   remote: string;
   targetBranch: string;
@@ -82,6 +82,11 @@ export type RemoteDeliveryPreview = {
   operation: RemoteDeliveryOperation;
   canConfirm: boolean;
   blockers: string[];
+  approval?: {
+    mode: "user_interaction";
+    delegable: false;
+    rememberable: false;
+  };
   source?: {
     repoRoot: string;
     branch: string;
@@ -112,6 +117,7 @@ export type RemoteDeliveryPreview = {
 
 export type RemoteDeliveryResult = {
   operation: RemoteDeliveryOperation;
+  outcome: "succeeded" | "failed" | "uncertain";
   applied: boolean;
   blockers: string[];
   postcondition?: {
@@ -177,10 +183,21 @@ type RuntimeOptions = {
   targets: readonly RemoteDeliveryTarget[];
   pullRequests?: PullRequestClient;
   now?: () => number;
+  persistAudit?: (audit: RemoteDeliveryAudit) => Promise<void>;
+  pushCommit?: (input: {
+    repoRoot: string;
+    remote: string;
+    targetBranch: string;
+    localCommit: string;
+  }) => Promise<void>;
 };
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function auditIdForReceipt(receiptId: string): string {
+  return `remote-delivery-audit-${sha256(receiptId)}`;
 }
 
 function gitEnv(): NodeJS.ProcessEnv {
@@ -358,6 +375,8 @@ export class RemoteDeliveryRuntime {
   private readonly targets: readonly RemoteDeliveryTarget[];
   private readonly pullRequests?: PullRequestClient;
   private readonly now: () => number;
+  private readonly persistAudit?: (audit: RemoteDeliveryAudit) => Promise<void>;
+  private readonly pushCommit: NonNullable<RuntimeOptions["pushCommit"]>;
 
   constructor(options: RuntimeOptions) {
     const stateRoot = path.join(path.resolve(options.stateDir), "remote-delivery");
@@ -377,6 +396,16 @@ export class RemoteDeliveryRuntime {
     });
     this.pullRequests = options.pullRequests;
     this.now = options.now ?? Date.now;
+    this.persistAudit = options.persistAudit;
+    this.pushCommit = options.pushCommit ?? (async (input) => {
+      await runGit([
+        "push",
+        "--porcelain",
+        "--no-verify",
+        input.remote,
+        `${input.localCommit}:refs/heads/${input.targetBranch}`,
+      ], input.repoRoot);
+    });
   }
 
   listTargets(): RemoteDeliveryTarget[] {
@@ -497,17 +526,30 @@ export class RemoteDeliveryRuntime {
     body?: string;
   }): Promise<RemoteDeliveryResult> {
     if (!SAFE_ID_PATTERN.test(input.receiptId) || input.confirm !== true) {
-      return { operation: input.operation, applied: false, blockers: ["invalid_confirmation"] };
-    }
-    if (!await this.claimReceipt(input.receiptId)) {
-      return { operation: input.operation, applied: false, blockers: ["receipt_consumed"] };
+      return { operation: input.operation, outcome: "failed", applied: false, blockers: ["invalid_confirmation"] };
     }
     const receipt = await this.loadReceipt(input.receiptId);
     if (!receipt || receipt.operation !== input.operation) {
-      return { operation: input.operation, applied: false, blockers: ["receipt_invalid"] };
+      return { operation: input.operation, outcome: "failed", applied: false, blockers: ["receipt_invalid"] };
+    }
+    if (!await this.claimReceipt(input.receiptId)) {
+      const recovered = await this.loadReceiptAudit(receipt.receiptId);
+      if (recovered && this.auditMatchesReceipt(recovered, receipt)) {
+        return this.reconcileConsumedReceipt(receipt, recovered);
+      }
+      if (await this.hasReceiptClaim(receipt.receiptId)) {
+        return {
+          operation: receipt.operation,
+          outcome: "uncertain",
+          applied: false,
+          blockers: ["operation_status_uncertain"],
+          ...(recovered ? { audit: recovered } : {}),
+        };
+      }
+      return { operation: input.operation, outcome: "failed", applied: false, blockers: ["receipt_consumed"] };
     }
     const audit = await this.startAudit(receipt);
-    if (!audit) return { operation: input.operation, applied: false, blockers: ["audit_unavailable"] };
+    if (!audit) return { operation: input.operation, outcome: "failed", applied: false, blockers: ["audit_unavailable"] };
     if (this.now() > receipt.expiresAtMs) {
       return this.failed(receipt, audit, ["receipt_expired"]);
     }
@@ -670,6 +712,11 @@ export class RemoteDeliveryRuntime {
       operation: receipt.operation,
       canConfirm: true,
       blockers: [],
+      approval: {
+        mode: "user_interaction",
+        delegable: false,
+        rememberable: false,
+      },
       source: {
         repoRoot: receipt.repoRoot,
         branch: receipt.sourceBranch,
@@ -714,29 +761,42 @@ export class RemoteDeliveryRuntime {
     const final = await this.inspectReceipt(receipt);
     if (final.blockers.length > 0 || !final.inspection) return this.failed(receipt, audit, final.blockers);
     try {
-      await runGit([
-        "push",
-        "--porcelain",
-        receipt.remote,
-        `${receipt.localCommit}:refs/heads/${receipt.targetBranch}`,
-      ], receipt.repoRoot);
+      await this.pushCommit({
+        repoRoot: receipt.repoRoot,
+        remote: receipt.remote,
+        targetBranch: receipt.targetBranch,
+        localCommit: receipt.localCommit,
+      });
     } catch {
-      return this.failed(receipt, audit, ["push_failed"]);
+      return this.reconcileConsumedReceipt(receipt, audit);
     }
     let remoteOid: string | null;
     try {
       remoteOid = await readRemoteOid(receipt.remote, receipt.targetBranch, receipt.repoRoot);
     } catch {
-      return this.failed(receipt, audit, ["postcondition_unavailable"]);
+      return this.finishUncertain(receipt, audit, ["postcondition_unavailable"]);
     }
-    if (remoteOid !== receipt.localCommit) return this.failed(receipt, audit, ["postcondition_failed"]);
+    if (remoteOid !== receipt.localCommit) {
+      return this.finishUncertain(receipt, audit, ["operation_status_uncertain"]);
+    }
     const completed = await this.finishAudit(audit, "succeeded", []);
+    if (!completed) {
+      return {
+        operation: "push",
+        outcome: "uncertain",
+        applied: true,
+        blockers: ["audit_persistence_failed"],
+        postcondition: { remoteOid },
+        audit,
+      };
+    }
     return {
       operation: "push",
+      outcome: "succeeded",
       applied: true,
       blockers: [],
       postcondition: { remoteOid },
-      ...(completed ? { audit: completed } : {}),
+      audit: completed,
     };
   }
 
@@ -769,13 +829,13 @@ export class RemoteDeliveryRuntime {
         headCommit: receipt.localCommit,
       });
     } catch {
-      return this.failed(receipt, audit, ["pull_request_create_failed"]);
+      return this.reconcileConsumedReceipt(receipt, audit);
     }
     let postcondition: PullRequestRecord | undefined;
     try {
       postcondition = await this.pullRequests.get({ repository: receipt.repository, number: created.number });
     } catch {
-      return this.failed(receipt, audit, ["postcondition_unavailable"]);
+      return this.reconcileConsumedReceipt(receipt, audit);
     }
     if (!postcondition
       || postcondition.state !== "OPEN"
@@ -783,19 +843,31 @@ export class RemoteDeliveryRuntime {
       || postcondition.headBranch !== receipt.targetBranch
       || postcondition.baseBranch !== receipt.baseBranch
       || postcondition.headCommit !== receipt.localCommit) {
-      return this.failed(receipt, audit, ["postcondition_failed"]);
+      return this.reconcileConsumedReceipt(receipt, audit);
     }
     const completed = await this.finishAudit(audit, "succeeded", [], postcondition.number);
+    const verifiedPostcondition: NonNullable<RemoteDeliveryResult["postcondition"]> = {
+      remoteOid: receipt.localCommit,
+      pullRequestNumber: postcondition.number,
+      pullRequestState: postcondition.state,
+    };
+    if (!completed) {
+      return {
+        operation: "pull_request",
+        outcome: "uncertain",
+        applied: true,
+        blockers: ["audit_persistence_failed"],
+        postcondition: verifiedPostcondition,
+        audit,
+      };
+    }
     return {
       operation: "pull_request",
+      outcome: "succeeded",
       applied: true,
       blockers: [],
-      postcondition: {
-        remoteOid: receipt.localCommit,
-        pullRequestNumber: postcondition.number,
-        pullRequestState: postcondition.state,
-      },
-      ...(completed ? { audit: completed } : {}),
+      postcondition: verifiedPostcondition,
+      audit: completed,
     };
   }
 
@@ -868,6 +940,139 @@ export class RemoteDeliveryRuntime {
     }
   }
 
+  private async loadReceiptAudit(receiptId: string): Promise<RemoteDeliveryAudit | undefined> {
+    try {
+      return readAudit(JSON.parse(await fs.readFile(this.auditPath(auditIdForReceipt(receiptId)), "utf-8")));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private auditMatchesReceipt(audit: RemoteDeliveryAudit, receipt: ReceiptRecord): boolean {
+    return audit.auditId === auditIdForReceipt(receipt.receiptId)
+      && audit.operation === receipt.operation
+      && audit.remote === receipt.remote
+      && audit.targetBranch === receipt.targetBranch
+      && audit.localCommit === receipt.localCommit
+      && audit.remoteExpectedOid === receipt.remoteExpectedOid
+      && audit.diffHash === receipt.diffHash;
+  }
+
+  private async reconcileConsumedReceipt(
+    receipt: ReceiptRecord,
+    audit: RemoteDeliveryAudit,
+  ): Promise<RemoteDeliveryResult> {
+    if (audit.status === "failed") {
+      return {
+        operation: receipt.operation,
+        outcome: "failed",
+        applied: false,
+        blockers: audit.reasonCodes ?? ["operation_failed"],
+        audit,
+      };
+    }
+    if (audit.status === "succeeded") {
+      if (receipt.operation === "pull_request" && !audit.pullRequestNumber) {
+        return {
+          operation: receipt.operation,
+          outcome: "uncertain",
+          applied: false,
+          blockers: ["operation_status_uncertain"],
+          audit,
+        };
+      }
+      return {
+        operation: receipt.operation,
+        outcome: "succeeded",
+        applied: true,
+        blockers: [],
+        postcondition: receipt.operation === "pull_request"
+          ? {
+            remoteOid: receipt.localCommit,
+            pullRequestNumber: audit.pullRequestNumber,
+            pullRequestState: "OPEN",
+          }
+          : { remoteOid: receipt.localCommit },
+        audit,
+      };
+    }
+    if (receipt.operation === "pull_request") {
+      if (!this.pullRequests) {
+        return this.finishUncertain(receipt, audit, ["pull_request_client_unavailable"]);
+      }
+      let pullRequest: PullRequestRecord | undefined;
+      try {
+        pullRequest = await this.pullRequests.findOpen({
+          repository: receipt.repository,
+          headBranch: receipt.targetBranch,
+          baseBranch: receipt.baseBranch,
+        });
+      } catch {
+        return this.finishUncertain(receipt, audit, ["postcondition_unavailable"]);
+      }
+      if (!pullRequest
+        || pullRequest.state !== "OPEN"
+        || pullRequest.repository !== receipt.repository
+        || pullRequest.headBranch !== receipt.targetBranch
+        || pullRequest.baseBranch !== receipt.baseBranch
+        || pullRequest.headCommit !== receipt.localCommit) {
+        return this.finishUncertain(receipt, audit, ["operation_status_uncertain"]);
+      }
+      const completed = await this.finishAudit(audit, "succeeded", [], pullRequest.number);
+      const postcondition: NonNullable<RemoteDeliveryResult["postcondition"]> = {
+        remoteOid: receipt.localCommit,
+        pullRequestNumber: pullRequest.number,
+        pullRequestState: pullRequest.state,
+      };
+      if (!completed) {
+        return {
+          operation: receipt.operation,
+          outcome: "uncertain",
+          applied: true,
+          blockers: ["audit_persistence_failed"],
+          postcondition,
+          audit,
+        };
+      }
+      return {
+        operation: receipt.operation,
+        outcome: "succeeded",
+        applied: true,
+        blockers: [],
+        postcondition,
+        audit: completed,
+      };
+    }
+    let remoteOid: string | null;
+    try {
+      remoteOid = await readRemoteOid(receipt.remote, receipt.targetBranch, receipt.repoRoot);
+    } catch {
+      return this.finishUncertain(receipt, audit, ["postcondition_unavailable"]);
+    }
+    if (remoteOid !== receipt.localCommit) {
+      return this.finishUncertain(receipt, audit, ["operation_status_uncertain"]);
+    }
+    const completed = await this.finishAudit(audit, "succeeded", []);
+    if (!completed) {
+      return {
+        operation: receipt.operation,
+        outcome: "uncertain",
+        applied: true,
+        blockers: ["audit_persistence_failed"],
+        postcondition: { remoteOid },
+        audit,
+      };
+    }
+    return {
+      operation: receipt.operation,
+      outcome: "succeeded",
+      applied: true,
+      blockers: [],
+      postcondition: { remoteOid },
+      audit: completed,
+    };
+  }
+
   private async claimReceipt(receiptId: string): Promise<boolean> {
     try {
       await fs.mkdir(this.receiptsDir, { recursive: true, mode: 0o700 });
@@ -876,6 +1081,15 @@ export class RemoteDeliveryRuntime {
         mode: 0o600,
         flag: "wx",
       });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async hasReceiptClaim(receiptId: string): Promise<boolean> {
+    try {
+      await fs.access(`${this.receiptPath(receiptId)}.lock`);
       return true;
     } catch {
       return false;
@@ -910,7 +1124,7 @@ export class RemoteDeliveryRuntime {
 
   private async startAudit(receipt: ReceiptRecord): Promise<RemoteDeliveryAudit | undefined> {
     const audit: RemoteDeliveryAudit = {
-      auditId: `remote-delivery-audit-${randomUUID()}`,
+      auditId: auditIdForReceipt(receipt.receiptId),
       capturedAtMs: this.now(),
       status: "started",
       operation: receipt.operation,
@@ -921,6 +1135,10 @@ export class RemoteDeliveryRuntime {
       diffHash: receipt.diffHash,
     };
     try {
+      if (this.persistAudit) {
+        await this.persistAudit(audit);
+        return audit;
+      }
       await fs.mkdir(this.auditDir, { recursive: true, mode: 0o700 });
       await fs.writeFile(this.auditPath(audit.auditId), `${JSON.stringify({
         version: AUDIT_VERSION,
@@ -934,25 +1152,37 @@ export class RemoteDeliveryRuntime {
 
   private async finishAudit(
     audit: RemoteDeliveryAudit,
-    status: "succeeded" | "failed",
+    status: "succeeded" | "failed" | "uncertain",
     reasonCodes: string[],
     pullRequestNumber?: number,
   ): Promise<RemoteDeliveryAudit | undefined> {
     const completed: RemoteDeliveryAudit = {
-      ...audit,
+      auditId: audit.auditId,
+      capturedAtMs: audit.capturedAtMs,
       status,
+      operation: audit.operation,
+      remote: audit.remote,
+      targetBranch: audit.targetBranch,
+      localCommit: audit.localCommit,
+      remoteExpectedOid: audit.remoteExpectedOid,
+      diffHash: audit.diffHash,
       ...(reasonCodes.length > 0 ? { reasonCodes: [...new Set(reasonCodes)] } : {}),
       ...(pullRequestNumber ? { pullRequestNumber } : {}),
     };
     const targetPath = this.auditPath(audit.auditId);
     const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
     try {
+      if (this.persistAudit) {
+        await this.persistAudit(completed);
+        return completed;
+      }
       await fs.writeFile(temporaryPath, `${JSON.stringify({ version: AUDIT_VERSION, ...completed }, null, 2)}\n`, {
         encoding: "utf-8",
         mode: 0o600,
         flag: "wx",
       });
       await fs.rename(temporaryPath, targetPath);
+      await this.cleanupAuditTemps(audit.auditId);
       return completed;
     } catch {
       await fs.rm(temporaryPath, { force: true }).catch(() => {});
@@ -969,15 +1199,41 @@ export class RemoteDeliveryRuntime {
     const completed = await this.finishAudit(audit, "failed", reasonCodes);
     return {
       operation: receipt.operation,
+      outcome: "failed",
       applied: false,
       blockers: reasonCodes,
       ...(completed ? { audit: completed } : {}),
     };
   }
 
+  private async finishUncertain(
+    receipt: ReceiptRecord,
+    audit: RemoteDeliveryAudit,
+    blockers: string[],
+  ): Promise<RemoteDeliveryResult> {
+    const reasonCodes = [...new Set(blockers.length > 0 ? blockers : ["operation_status_uncertain"])];
+    const completed = await this.finishAudit(audit, "uncertain", reasonCodes);
+    return {
+      operation: receipt.operation,
+      outcome: "uncertain",
+      applied: false,
+      blockers: reasonCodes,
+      audit: completed ?? audit,
+    };
+  }
+
   private auditPath(auditId: string): string {
     if (!SAFE_ID_PATTERN.test(auditId)) throw new Error("Remote delivery audit id is invalid.");
     return path.join(this.auditDir, `${auditId}.json`);
+  }
+
+  private async cleanupAuditTemps(auditId: string): Promise<void> {
+    if (!SAFE_ID_PATTERN.test(auditId)) return;
+    const prefix = `${auditId}.json.`;
+    const entries = await fs.readdir(this.auditDir, { withFileTypes: true }).catch(() => []);
+    await Promise.all(entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".tmp"))
+      .map((entry) => fs.rm(path.join(this.auditDir, entry.name), { force: true }).catch(() => {})));
   }
 }
 
@@ -987,7 +1243,8 @@ function readAudit(value: unknown): RemoteDeliveryAudit | undefined {
   if (candidate.version !== AUDIT_VERSION
     || typeof candidate.auditId !== "string" || !SAFE_ID_PATTERN.test(candidate.auditId)
     || typeof candidate.capturedAtMs !== "number" || !Number.isSafeInteger(candidate.capturedAtMs)
-    || (candidate.status !== "started" && candidate.status !== "succeeded" && candidate.status !== "failed")
+    || (candidate.status !== "started" && candidate.status !== "succeeded"
+      && candidate.status !== "failed" && candidate.status !== "uncertain")
     || (candidate.operation !== "push" && candidate.operation !== "pull_request")
     || typeof candidate.remote !== "string" || typeof candidate.targetBranch !== "string"
     || typeof candidate.localCommit !== "string"

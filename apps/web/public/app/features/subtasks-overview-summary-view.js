@@ -2,7 +2,7 @@ const SUMMARY_FIELDS = [
   ["subtasks.statTasks", "Subtasks", (items) => items.length],
   ["subtasks.statRunning", "Running", (items) => items.filter((item) => item?.status === "running").length],
   ["subtasks.statDone", "Done", (items) => items.filter((item) => item?.status === "done").length],
-  ["subtasks.statFailed", "Failed", (items) => items.filter((item) => ["error", "timeout", "stopped"].includes(item?.status)).length],
+  ["subtasks.statFailed", "Failed", (items) => items.filter((item) => ["error", "timeout", "stopped", "interrupted"].includes(item?.status)).length],
 ];
 
 export function createSubtasksOverviewSummaryView({

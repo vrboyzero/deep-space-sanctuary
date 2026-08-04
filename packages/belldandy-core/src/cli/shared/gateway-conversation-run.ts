@@ -23,6 +23,7 @@ export type GatewayConversationRunResult = {
   };
   terminalType: TerminalEventType;
   outputText?: string;
+  errorCode?: CodingRunErrorCode;
   timedOut: boolean;
 };
 
@@ -112,10 +113,15 @@ export async function runGatewayConversation(input: {
       const output = isRecord(terminalEvent.payload.output) && typeof terminalEvent.payload.output.text === "string"
         ? terminalEvent.payload.output.text
         : undefined;
+      const errorCode = isRecord(terminalEvent.payload.error)
+        && typeof terminalEvent.payload.error.code === "string"
+        ? terminalEvent.payload.error.code as CodingRunErrorCode
+        : undefined;
       finish({
         binding,
         terminalType: terminalEvent.type as TerminalEventType,
         ...(output === undefined ? {} : { outputText: output }),
+        ...(errorCode === undefined ? {} : { errorCode }),
         timedOut,
       });
     };

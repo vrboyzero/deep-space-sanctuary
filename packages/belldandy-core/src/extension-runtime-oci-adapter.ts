@@ -30,6 +30,7 @@ const LEASE_ID_PATTERN = /^[a-f0-9-]{36}$/i;
 const CONTAINER_NAME_PATTERN = /^belldandy-extension-[a-f0-9]{32}$/i;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{12,64}$/i;
 const OCI_CONTROL_TIMEOUT_MS = 5_000;
+const DEFAULT_EXTENSION_DISPOSE_TIMEOUT_MS = 5_000;
 const COMPLETED_RESPONSE_ID_LIMIT = 256;
 
 export type OciExtensionRuntimeConfig = {
@@ -72,6 +73,7 @@ export type OciExtensionRuntimeAdapterOptions = {
   config: OciExtensionRuntimeConfig;
   stateDir: string;
   hostRoot: string;
+  disposeTimeoutMs?: number;
   launch?: ExtensionRuntimeLauncher;
 };
 
@@ -333,10 +335,12 @@ class ExtensionRuntimeProtocolClient {
   private readonly unsubscribeExit: () => void;
   private fatalError: Error | undefined;
   private releasePromise: Promise<void> | undefined;
+  private closePromise: Promise<void> | undefined;
 
   constructor(
     private readonly transport: ExtensionRuntimeTransport,
     private readonly release: () => Promise<void>,
+    private readonly disposeTimeoutMs: number,
   ) {
     this.unsubscribeLine = transport.onLine((line) => this.handleLine(line));
     this.unsubscribeExit = transport.onExit((error) => this.failFatal(error));
@@ -383,18 +387,28 @@ class ExtensionRuntimeProtocolClient {
     }
   }
 
-  async close(reason: string): Promise<void> {
+  close(reason: string): Promise<void> {
+    this.closePromise ??= this.closeWithDeadline(reason);
+    return this.closePromise;
+  }
+
+  private async closeWithDeadline(reason: string): Promise<void> {
     if (!this.fatalError) {
       const id = randomUUID();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.disposeTimeoutMs);
+      timer.unref?.();
       try {
         await this.request({
           version: EXTENSION_RUNTIME_PROTOCOL_VERSION,
           type: "dispose",
           id,
           reason,
-        }, "disposed");
+        }, "disposed", controller.signal);
       } catch {
         // Cleanup below remains mandatory even if the Host cannot acknowledge dispose.
+      } finally {
+        clearTimeout(timer);
       }
     }
     await this.finishRelease();
@@ -460,9 +474,14 @@ class ExtensionRuntimeProtocolClient {
 
 export class OciExtensionRuntimeAdapter implements ExtensionRuntimeAdapter {
   private readonly launch: ExtensionRuntimeLauncher;
+  private readonly disposeTimeoutMs: number;
 
   constructor(private readonly options: OciExtensionRuntimeAdapterOptions) {
     this.launch = options.launch ?? createDefaultLauncher(options);
+    this.disposeTimeoutMs = options.disposeTimeoutMs ?? DEFAULT_EXTENSION_DISPOSE_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.disposeTimeoutMs) || this.disposeTimeoutMs <= 0) {
+      throw new Error("Extension runtime dispose timeout must be a positive integer.");
+    }
   }
 
   async activate(grant: ExtensionRuntimeGrant, signal?: AbortSignal): Promise<ExtensionRuntimeSession> {
@@ -486,7 +505,11 @@ export class OciExtensionRuntimeAdapter implements ExtensionRuntimeAdapter {
       lease,
     });
     const launched = await this.launch(invocation, lease, grant);
-    const protocolClient = new ExtensionRuntimeProtocolClient(launched.transport, launched.release);
+    const protocolClient = new ExtensionRuntimeProtocolClient(
+      launched.transport,
+      launched.release,
+      this.disposeTimeoutMs,
+    );
     try {
       const response = await protocolClient.request({
         version: EXTENSION_RUNTIME_PROTOCOL_VERSION,

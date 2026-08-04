@@ -6,6 +6,7 @@ import type {
 import type { SubTaskKind, SubTaskStatus } from "../task-runtime.js";
 import type { WorkflowJournalStatus } from "../workflow-journal.js";
 import type { CodingContextBinding } from "./contracts.js";
+import type { CodingRunReconciliation } from "./reconciliation-journal.js";
 
 export type CodingRunAdapterStatus =
   | "queued"
@@ -92,6 +93,7 @@ export type RuntimeLostCodingRunView = {
     lastObservedState: "active";
     startedAtMs: number;
     lastObservedAtMs: number;
+    reconciliation?: CodingRunReconciliation;
   };
 };
 
@@ -111,6 +113,9 @@ export type SubtaskCodingRunView = {
     hasReviewArtifact: boolean;
     hasManagedWorktree: boolean;
     bridgeSessionState?: "active" | "closed" | "runtime-lost" | "orphaned";
+    runtimeState?: "lost";
+    previousTaskStatus?: "pending" | "running";
+    mutationReplay?: "forbidden";
   };
 };
 
@@ -205,6 +210,12 @@ type SubtaskCodingRunViewInput = {
     scratchPath?: string;
     reviewPath?: string;
     bridgeSessionRuntime?: { state: "active" | "closed" | "runtime-lost" | "orphaned" };
+    recovery?: {
+      state: "runtime_lost";
+      previousStatus: "pending" | "running";
+      detectedAt: number;
+      mutationReplay: "forbidden";
+    };
     launchSpec: {
       role?: "default" | "commander" | "coder" | "researcher" | "verifier";
       worktreePath?: string;
@@ -349,6 +360,7 @@ export function createRuntimeLostCodingRunView(input: {
   binding: CodingContextBinding;
   startedAtMs: number;
   updatedAtMs: number;
+  reconciliation?: CodingRunReconciliation;
 }): RuntimeLostCodingRunView {
   const agentRunId = requireIdentifier(input.binding.agentRunId, "Agent run id");
   let binding: CodingContextBinding;
@@ -378,6 +390,7 @@ export function createRuntimeLostCodingRunView(input: {
       lastObservedState: "active",
       startedAtMs: toTimestamp(input.startedAtMs),
       lastObservedAtMs: toTimestamp(input.updatedAtMs),
+      ...(input.reconciliation ? { reconciliation: input.reconciliation } : {}),
     },
   };
 }
@@ -411,6 +424,13 @@ export function createSubtaskCodingRunView(input: SubtaskCodingRunViewInput): Su
       hasReviewArtifact: Boolean(firstIdentifier(input.record.reviewPath)),
       hasManagedWorktree: Boolean(firstIdentifier(input.record.launchSpec.worktreePath)),
       ...(bridgeSessionState ? { bridgeSessionState } : {}),
+      ...(input.record.recovery?.state === "runtime_lost"
+        ? {
+          runtimeState: "lost" as const,
+          previousTaskStatus: input.record.recovery.previousStatus,
+          mutationReplay: input.record.recovery.mutationReplay,
+        }
+        : {}),
     },
   };
 }
@@ -468,6 +488,7 @@ function mapSubtaskStatus(
   if (status === "done") return "completed";
   if (status === "error" || status === "timeout") return "failed";
   if (status === "stopped") return "cancelled";
+  if (status === "interrupted") return "interrupted";
   return "queued";
 }
 

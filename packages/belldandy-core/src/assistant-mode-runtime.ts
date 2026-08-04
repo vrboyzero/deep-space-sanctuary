@@ -186,11 +186,12 @@ function selectPrimaryLongTask(snapshot?: DelegationObservabilitySnapshot) {
   const rank = (status: string | undefined) => {
     if (status === "running") return 0;
     if (status === "pending") return 1;
-    if (status === "error") return 2;
-    if (status === "timeout") return 3;
-    if (status === "stopped") return 4;
-    if (status === "done") return 5;
-    return 6;
+    if (status === "interrupted") return 2;
+    if (status === "error") return 3;
+    if (status === "timeout") return 4;
+    if (status === "stopped") return 5;
+    if (status === "done") return 6;
+    return 7;
   };
   return [...items].sort((left, right) => rank(left.status) - rank(right.status))[0];
 }
@@ -265,6 +266,7 @@ function resolveAssistantModeStatus(input: {
   }
   const hasAttentionSignal = input.proactiveActions.some((item) => item.status === "failed")
     || (input.cronRuntime?.totals.invalidNextRunJobs ?? 0) > 0
+    || input.longTasks?.primary?.status === "interrupted"
     || input.longTasks?.primary?.status === "error"
     || input.longTasks?.primary?.status === "timeout"
     || input.goals?.primary?.status === "blocked"
@@ -386,7 +388,7 @@ function resolveAssistantModeAttentionReason(input: {
     return "assistant mode master toggle and heartbeat/cron drivers are mismatched";
   }
   const longTask = input.longTasks?.primary;
-  if (longTask && (longTask.status === "error" || longTask.status === "timeout")) {
+  if (longTask && (longTask.status === "interrupted" || longTask.status === "error" || longTask.status === "timeout")) {
     return `${longTask.intentSummary || longTask.taskId}: ${longTask.status}`;
   }
   const goal = input.goals?.primary;
@@ -416,7 +418,11 @@ function resolveAssistantModeFocus(input: {
       ...(runningAction.targetType ? { targetType: runningAction.targetType } : {}),
     };
   }
-  if (input.longTasks?.primary && (input.longTasks.primary.status === "error" || input.longTasks.primary.status === "timeout")) {
+  if (input.longTasks?.primary && (
+    input.longTasks.primary.status === "interrupted"
+    || input.longTasks.primary.status === "error"
+    || input.longTasks.primary.status === "timeout"
+  )) {
     const primary = input.longTasks.primary;
     const parts = [
       primary.intentSummary || `Subtask ${primary.taskId}`,
@@ -543,7 +549,7 @@ function resolveAssistantModeAttentionItems(input: {
     });
   }
   const longTask = input.longTasks?.primary;
-  if (longTask && (longTask.status === "error" || longTask.status === "timeout")) {
+  if (longTask && (longTask.status === "interrupted" || longTask.status === "error" || longTask.status === "timeout")) {
     candidates.push({
       priority: 20,
       kind: "long_task_attention",

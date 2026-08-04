@@ -704,6 +704,14 @@ function parseRemoteDeliveryPreview(payload: Record<string, unknown>): RemoteDel
   const blockers = readStringList(payload.blockers, 100);
   if (!blockers) throw new Error("Gateway returned invalid remote push blockers.");
   const preview: RemoteDeliveryPreview = { operation: "push", canConfirm: payload.canConfirm, blockers };
+  if (isRecord(payload.approval)) {
+    if (payload.approval.mode !== "user_interaction"
+      || payload.approval.delegable !== false
+      || payload.approval.rememberable !== false) {
+      throw new Error("Gateway returned an invalid remote push approval contract.");
+    }
+    preview.approval = { mode: "user_interaction", delegable: false, rememberable: false };
+  }
   if (isRecord(payload.source)) {
     const repoRoot = readAbsolutePath(payload.source.repoRoot);
     const branch = readTuiIdentifier(payload.source.branch);
@@ -741,26 +749,38 @@ function parseRemoteDeliveryPreview(payload: Record<string, unknown>): RemoteDel
     if (!receiptId || expiresAtMs === undefined) throw new Error("Gateway returned an invalid remote push receipt.");
     preview.receipt = { receiptId, expiresAtMs };
   }
-  if (preview.canConfirm && (!preview.source || !preview.target || !preview.diff || !preview.receipt || blockers.length > 0)) {
+  if (preview.canConfirm
+    && (!preview.approval || !preview.source || !preview.target || !preview.diff || !preview.receipt || blockers.length > 0)) {
     throw new Error("Gateway returned an incomplete confirmable remote push preview.");
   }
   return preview;
 }
 
 function parseRemoteDeliveryResult(payload: Record<string, unknown>): RemoteDeliveryResult {
-  if (payload.operation !== "push" || typeof payload.applied !== "boolean") {
+  if (payload.operation !== "push"
+    || (payload.outcome !== "succeeded" && payload.outcome !== "failed" && payload.outcome !== "uncertain")
+    || typeof payload.applied !== "boolean") {
     throw new Error("Gateway returned an invalid remote push result.");
   }
   const blockers = readStringList(payload.blockers, 100);
   if (!blockers) throw new Error("Gateway returned invalid remote push blockers.");
-  const result: RemoteDeliveryResult = { operation: "push", applied: payload.applied, blockers };
+  const result: RemoteDeliveryResult = {
+    operation: "push",
+    outcome: payload.outcome,
+    applied: payload.applied,
+    blockers,
+  };
   if (isRecord(payload.postcondition)) {
     const remoteOid = readGitOid(payload.postcondition.remoteOid);
     if (!remoteOid) throw new Error("Gateway returned an invalid remote push postcondition.");
     result.postcondition = { remoteOid };
   }
-  if (result.applied && (!result.postcondition || blockers.length > 0)) {
-    throw new Error("Gateway returned an incomplete successful remote push result.");
+  if ((result.outcome === "succeeded"
+      && (!result.applied || !result.postcondition || blockers.length > 0))
+    || (result.outcome === "uncertain"
+      && (!result.applied || !result.postcondition || blockers.length === 0))
+    || (result.outcome === "failed" && (result.applied || blockers.length === 0))) {
+    throw new Error("Gateway returned an inconsistent remote push outcome.");
   }
   return result;
 }
@@ -805,6 +825,7 @@ function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined
   const updatedAt = readNonNegativeSafeInteger(value.updatedAt);
   const oldestCursor = readNonNegativeSafeInteger(value.oldestCursor);
   const nextCursor = readNonNegativeSafeInteger(value.nextCursor);
+  const recovery = parseCommandJobRecovery(value.recovery, status, stdinMode);
   if (!jobId
     || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(jobId)
     || (status !== "running" && status !== "completed" && status !== "cancelled" && status !== "failed" && status !== "lost")
@@ -814,7 +835,8 @@ function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined
     || oldestCursor === undefined
     || nextCursor === undefined
     || oldestCursor > nextCursor
-    || typeof value.supportsResize !== "boolean") {
+    || typeof value.supportsResize !== "boolean"
+    || !recovery) {
     return undefined;
   }
   const snapshot: CommandJobSnapshot = {
@@ -826,6 +848,7 @@ function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined
     supportsResize: value.supportsResize,
     oldestCursor,
     nextCursor,
+    recovery,
   };
   const endedAt = readNonNegativeSafeInteger(value.endedAt);
   const pid = readNonNegativeSafeInteger(value.pid);
@@ -844,6 +867,45 @@ function parseCommandJobSnapshot(value: unknown): CommandJobSnapshot | undefined
     ...(signal !== undefined ? { signal } : {}),
     ...(error ? { error } : {}),
   };
+}
+
+function parseCommandJobRecovery(
+  value: unknown,
+  status: unknown,
+  stdinMode: unknown,
+): CommandJobSnapshot["recovery"] | undefined {
+  if (!isRecord(value)
+    || Object.keys(value).length !== 5
+    || !["lifecycle", "process", "output", "stdin", "mutationReplay"]
+      .every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    || value.mutationReplay !== "forbidden") {
+    return undefined;
+  }
+  const recovery = value as CommandJobSnapshot["recovery"];
+  if ((recovery.lifecycle === "starting"
+      && status === "running"
+      && recovery.process === "starting"
+      && recovery.output === "memory_only"
+      && recovery.stdin === (stdinMode === "closed" ? "closed" : "unavailable"))
+    || (recovery.lifecycle === "active"
+      && status === "running"
+      && recovery.process === "attached"
+      && recovery.output === "memory_only"
+      && recovery.stdin === (stdinMode === "closed" ? "closed" : "live_only"))
+    || (recovery.lifecycle === "settled"
+      && status !== "running"
+      && status !== "lost"
+      && recovery.process === "not_applicable"
+      && (recovery.output === "memory_only" || recovery.output === "unavailable")
+      && recovery.stdin === "closed")
+    || (recovery.lifecycle === "lost"
+      && status === "lost"
+      && recovery.process === "not_reattachable"
+      && recovery.output === "unavailable"
+      && recovery.stdin === (stdinMode === "closed" ? "closed" : "unavailable"))) {
+    return recovery;
+  }
+  return undefined;
 }
 
 function parseCommandJobReadResult(payload: Record<string, unknown>): CommandJobReadResult {

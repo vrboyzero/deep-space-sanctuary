@@ -185,7 +185,7 @@ export type SessionInfo = {
   taskId?: string;
   parentId?: string;
   agentId?: string;
-  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped";
+  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped" | "interrupted";
   createdAt: number;
   finishedAt?: number;
   summary?: string;
@@ -266,6 +266,11 @@ export type SpawnSubAgentOptions = {
   isolationMode?: string;
   parentTaskId?: string;
   parentConversationId?: string;
+  /** 父工具调用关联；只供 core 计算脱敏 operation ID，不得原文持久化。 */
+  parentOperation?: {
+    agentRunId: string;
+    toolCallId: string;
+  };
   role?: "default" | "commander" | "coder" | "researcher" | "verifier";
   allowedToolFamilies?: string[];
   maxToolRiskLevel?: "low" | "medium" | "high" | "critical";
@@ -372,18 +377,28 @@ export type WorkspaceMutationTarget = {
   relativePath: string;
 };
 
+export type WorkspaceMutationOperation = {
+  conversationId: string;
+  agentRunId: string;
+  toolCallId: string;
+};
+
 export type WorkspaceMutationObserver = {
   prepareMutations(input: {
     workspaceRevisionId: string;
     workspaceRoot: string;
     toolName: string;
     targets: readonly WorkspaceMutationTarget[];
+    /** 仅用于派生脱敏 operation ID；observer 不得持久化这些原始标识。 */
+    operation?: WorkspaceMutationOperation;
   }): Promise<void>;
   commitMutations(input: {
     workspaceRevisionId: string;
     workspaceRoot: string;
     toolName: string;
     targets: readonly WorkspaceMutationTarget[];
+    /** 必须与 prepare 阶段一致。 */
+    operation?: WorkspaceMutationOperation;
   }): Promise<void>;
 };
 
@@ -2155,6 +2170,10 @@ export interface ITokenCounterService {
 /** 工具执行上下文 */
 export type ToolContext = {
   conversationId: string;
+  /** 当前工具调用 ID；仅用于运行时关联，不得由工具原文持久化。 */
+  toolCallId?: string;
+  /** 当前 Agent run ID；与 toolCallId 共同形成父操作关联。 */
+  agentRunId?: string;
   workspaceRoot: string;
   /** 当前运行时的 stateDir；工具若需跨进程持久化轻量状态，应优先使用这里 */
   stateDir?: string;

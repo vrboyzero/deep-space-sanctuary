@@ -453,6 +453,14 @@ export function buildSubAgentLaunchSpec(
     isolationMode: options.isolationMode ?? inherited?.isolationMode,
     parentTaskId: options.parentTaskId ?? inherited?.parentTaskId,
     parentConversationId: context.conversationId,
+    ...(context.agentRunId && context.toolCallId
+      ? {
+          parentOperation: {
+            agentRunId: context.agentRunId,
+            toolCallId: context.toolCallId,
+          },
+        }
+      : {}),
     role,
     allowedToolFamilies: cloneStringArray(fallbackAllowedToolFamilies),
     maxToolRiskLevel: fallbackMaxRiskLevel,

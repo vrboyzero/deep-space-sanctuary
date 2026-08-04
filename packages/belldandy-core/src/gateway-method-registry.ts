@@ -213,6 +213,7 @@ const GATEWAY_METHOD_NAMES = [
   "workspace.remote_delivery.pull_request.preview",
   "workspace.remote_delivery.pull_request.confirm",
   "workspace.remote_delivery.audit.list",
+  "extension.runtime.revoke",
   "coding.run.status",
   "coding.run.follow_up.status",
   "coding.run.steer.status",
@@ -302,6 +303,7 @@ const ADMIN_METHODS = new Set<string>([
   "artifact.reveal",
   "workspace.remote_delivery.push.confirm",
   "workspace.remote_delivery.pull_request.confirm",
+  "extension.runtime.revoke",
 ]);
 
 function isReadMethod(method: string): boolean {

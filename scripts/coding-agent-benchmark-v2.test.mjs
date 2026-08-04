@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +13,7 @@ import {
   CODING_AGENT_BENCHMARK_REPORT_V2_VERSION,
   CODING_AGENT_BENCHMARK_RUN_V2_VERSION,
   createCodingAgentBenchmarkReport,
+  hashCodingAgentBenchmarkManifestText,
   loadCodingAgentBenchmarkManifest,
   resolveCodingAgentBenchmarkTaskBudgets,
   resolveCodingAgentBenchmarkManifestPath,
@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 
 describe("coding agent benchmark corrected v2 contract", () => {
-  it("raises only the corrected v2 interactive task to a bounded 36000-token budget", async () => {
+  it("uses bounded v2 token overrides only for corrected interactive and safety tasks", async () => {
     const [v1Manifest, v2Manifest] = await Promise.all([
       loadCodingAgentBenchmarkManifest(),
       loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v2")),
@@ -47,21 +47,27 @@ describe("coding agent benchmark corrected v2 contract", () => {
 
     expect(v2Manifest.suite.taskBudgetOverrides).toEqual({
       "command.interactive-control": { maxTokens: 36_000 },
+      "safety.boundary-enforcement": { maxTokens: 32_000 },
     });
     expect(resolveCodingAgentBenchmarkTaskBudgets(v2Manifest, "command.interactive-control")).toEqual({
       timeoutMs: 300_000,
       maxTurns: 12,
       maxTokens: 36_000,
     });
+    expect(resolveCodingAgentBenchmarkTaskBudgets(v2Manifest, "safety.boundary-enforcement")).toEqual({
+      timeoutMs: 300_000,
+      maxTurns: 12,
+      maxTokens: 32_000,
+    });
     expect(resolveCodingAgentBenchmarkTaskBudgets(v2Manifest, "tests.failed-diagnosis").maxTokens).toBe(24_000);
     expect(resolveCodingAgentBenchmarkTaskBudgets(v1Manifest, "command.interactive-control").maxTokens).toBe(24_000);
 
     const drifted = structuredClone(v2Manifest);
-    drifted.suite.taskBudgetOverrides["command.interactive-control"].maxTokens = 36_001;
+    drifted.suite.taskBudgetOverrides["safety.boundary-enforcement"].maxTokens = 32_001;
     expect(() => validateCodingAgentBenchmarkManifest(drifted)).toThrow(/task budget overrides.*v2 contract/i);
   });
 
-  it("keeps v1 as the default and freezes command_job only in the explicit v2 command profile", async () => {
+  it("keeps v1 as the default and freezes corrected command, safety, and recovery contracts in v2", async () => {
     const [defaultManifest, v2Manifest] = await Promise.all([
       loadCodingAgentBenchmarkManifest(),
       loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v2")),
@@ -73,6 +79,10 @@ describe("coding agent benchmark corrected v2 contract", () => {
       "list_files",
       "run_command",
     ]);
+    expect(defaultManifest.suite.executionProfiles["recovery-control"]).toMatchObject({
+      toolAllow: ["file_read", "list_files", "apply_patch", "file_write"],
+      toolDeny: ["run_command", "spawn_subagent", "file_delete"],
+    });
     expect(v2Manifest).toMatchObject({
       schemaVersion: CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION,
       suite: {
@@ -91,6 +101,24 @@ describe("coding agent benchmark corrected v2 contract", () => {
       agentId: "coding-benchmark-command-control-v2",
       maxHighRiskToolCalls: 5,
     });
+    expect(v2Manifest.suite.executionProfiles["recovery-control"]).toEqual({
+      permissionMode: "acceptEdits",
+      toolAllow: ["file_read", "list_files", "file_write"],
+      toolDeny: ["run_command", "spawn_subagent", "file_delete", "apply_patch"],
+    });
+    expect(v2Manifest.tasks.find((task) => task.id === "gateway.disconnect-recovery")?.fixture).toEqual({
+      generatorId: "gateway-recovery-v2",
+      version: 2,
+      resetStrategy: "regenerate",
+    });
+    expect(v2Manifest.tasks.find((task) => task.id === "safety.boundary-enforcement")).toMatchObject({
+      fixture: {
+        generatorId: "safety-boundary-v2",
+        version: 2,
+        resetStrategy: "regenerate",
+      },
+      evaluator: { kind: "machine", id: "safety-boundary-v2" },
+    });
     for (const [name, profile] of Object.entries(v2Manifest.suite.executionProfiles)) {
       if (name === "command-control") continue;
       expect(profile).not.toHaveProperty("agentId");
@@ -98,6 +126,12 @@ describe("coding agent benchmark corrected v2 contract", () => {
     }
     expect(resolveCodingCiProfile("command-control").toolAllow).not.toContain("command_job");
     expect(resolveCodingCiProfile("command-control", "v2").toolAllow).toContain("command_job");
+    expect(resolveCodingCiProfile("recovery-control").toolAllow).toContain("apply_patch");
+    expect(resolveCodingCiProfile("recovery-control", "v2").toolAllow).toEqual([
+      "file_read",
+      "list_files",
+      "file_write",
+    ]);
   });
 
   it("generates the v2 interactive fixture with its command_job verifier and exact approval sequence", async () => {
@@ -601,14 +635,14 @@ describe("coding agent benchmark v2 preflight", () => {
     const source = repositoryIdentity("c");
     const first = await writeV2SourceReport(path.join(root, "first"), {
       manifest,
-      manifestSha256: sha256(manifestText),
+      manifestSha256: hashCodingAgentBenchmarkManifestText(manifestText),
       harness,
       source,
       run: v2Run(task, { runId: "rules-v2-windows-a1", attempt: 1, status: "passed" }),
     });
     const second = await writeV2SourceReport(path.join(root, "second"), {
       manifest,
-      manifestSha256: sha256(manifestText),
+      manifestSha256: hashCodingAgentBenchmarkManifestText(manifestText),
       harness,
       source,
       run: v2Run(task, { runId: "rules-v2-windows-a2", attempt: 2, status: "passed" }),
@@ -962,8 +996,4 @@ async function writeV2SourceReport(root, input) {
   const reportPath = path.join(root, "benchmark-report.json");
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf-8");
   return reportPath;
-}
-
-function sha256(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
 }

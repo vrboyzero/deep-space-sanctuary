@@ -214,6 +214,16 @@ function resolveMutationWorkspaceRoot(
   throw new Error("Workspace mutation target is outside its resolved workspace root.");
 }
 
+function readWorkspaceMutationOperation(context: ToolContext) {
+  return context.agentRunId && context.toolCallId
+    ? {
+        conversationId: context.conversationId,
+        agentRunId: context.agentRunId,
+        toolCallId: context.toolCallId,
+      }
+    : undefined;
+}
+
 async function prepareWorkspaceMutation(
   context: ToolContext,
   workspaceRoot: string,
@@ -226,6 +236,7 @@ async function prepareWorkspaceMutation(
     workspaceRoot,
     toolName,
     targets: [{ absolutePath: target.absolute, relativePath: target.relative }],
+    operation: readWorkspaceMutationOperation(context),
   });
 }
 
@@ -241,6 +252,7 @@ async function commitWorkspaceMutation(
     workspaceRoot,
     toolName,
     targets: [{ absolutePath: target.absolute, relativePath: target.relative }],
+    operation: readWorkspaceMutationOperation(context),
   });
 }
 

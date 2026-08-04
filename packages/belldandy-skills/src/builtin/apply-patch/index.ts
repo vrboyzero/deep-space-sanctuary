@@ -161,6 +161,16 @@ function collectMutationGroups(operations: readonly PreparedPatchOperation[], co
     return groups;
 }
 
+function readWorkspaceMutationOperation(context: ToolContext) {
+    return context.agentRunId && context.toolCallId
+        ? {
+            conversationId: context.conversationId,
+            agentRunId: context.agentRunId,
+            toolCallId: context.toolCallId,
+        }
+        : undefined;
+}
+
 async function prepareWorkspaceMutations(
     context: ToolContext,
     groups: ReadonlyMap<string, readonly { absolutePath: string; relativePath: string }[]>,
@@ -172,6 +182,7 @@ async function prepareWorkspaceMutations(
             workspaceRoot,
             toolName: "apply_patch",
             targets,
+            operation: readWorkspaceMutationOperation(context),
         });
     }
 }
@@ -187,6 +198,7 @@ async function commitWorkspaceMutation(
         workspaceRoot: resolveMutationWorkspaceRoot(absolute, context),
         toolName: "apply_patch",
         targets: [{ absolutePath: absolute, relativePath: relative }],
+        operation: readWorkspaceMutationOperation(context),
     });
 }
 

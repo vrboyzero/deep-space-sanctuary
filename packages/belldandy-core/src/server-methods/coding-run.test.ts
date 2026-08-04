@@ -1,7 +1,12 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { CODING_RUN_PROTOCOL_VERSION } from "../coding-run/contracts.js";
 import { ConversationFollowUpQueue } from "../coding-run/conversation-follow-up-queue.js";
+import { CodingRunReconciliationJournal } from "../coding-run/reconciliation-journal.js";
 import { ConversationRunRegistry } from "../conversation-run-registry.js";
 import { handleCodingRunMethod } from "./coding-run.js";
 
@@ -154,6 +159,108 @@ describe("coding.run.control", () => {
     });
     expect(JSON.stringify([conversation, workflow])).not.toContain("private-owner");
     expect(JSON.stringify([conversation, workflow])).not.toContain("ownerProcessId");
+  });
+
+  it("projects persisted side-effect reconciliation for a lost Conversation run", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-status-reconciliation-"));
+    const conversationBinding = { conversationId: "conversation-durable", agentRunId: "run-durable" };
+    try {
+      const journal = new CodingRunReconciliationJournal(stateDir, {
+        workspaceMutationEvidenceStore: {
+          getOperationEvidence: async ({ operationId }) => ({
+            operationId,
+            state: "committed",
+            workspaceCount: 1,
+            targetCount: 1,
+            committedTargetCount: 1,
+          }),
+        },
+      });
+      journal.record({
+        version: CODING_RUN_PROTOCOL_VERSION,
+        seq: 1,
+        timestampMs: 100,
+        source: "conversation",
+        binding: conversationBinding,
+        type: "run.started",
+        payload: { status: "running" },
+      });
+      journal.record({
+        version: CODING_RUN_PROTOCOL_VERSION,
+        seq: 2,
+        timestampMs: 110,
+        source: "conversation",
+        binding: conversationBinding,
+        type: "tool.started",
+        payload: { tool: { id: "tool-1", name: "file_write", arguments: { secret: "hidden" } } },
+      });
+      journal.record({
+        version: CODING_RUN_PROTOCOL_VERSION,
+        seq: 3,
+        timestampMs: 120,
+        source: "conversation",
+        binding: conversationBinding,
+        type: "tool.completed",
+        payload: { tool: { id: "tool-1", name: "file_write", success: true, output: "hidden" } },
+      });
+
+      const response = await handleCodingRunMethod({
+        type: "req",
+        id: "conversation-durable-status",
+        method: "coding.run.status",
+        params: {
+          query: {
+            version: CODING_RUN_PROTOCOL_VERSION,
+            source: "conversation",
+            binding: conversationBinding,
+          },
+        },
+      }, {
+        conversationRunRegistry: {
+          get: () => undefined,
+          getRun: () => undefined,
+          getRecoveryStatus: async () => ({
+            state: "lost",
+            marker: {
+              source: "conversation",
+              binding: conversationBinding,
+              state: "active",
+              ownerInstanceId: "private-owner",
+              ownerProcessId: 123,
+              startedAtMs: 90,
+              updatedAtMs: 125,
+            },
+          }),
+          requestStop: async () => ({ accepted: false, state: "not_found" }),
+        },
+        codingRunReconciliationJournal: journal,
+      });
+
+      expect(response).toMatchObject({
+        ok: true,
+        payload: {
+          source: "conversation",
+          status: "interrupted",
+          evidence: {
+            runtimeState: "lost",
+            reconciliation: {
+              state: "applied",
+              journalState: "available",
+              observedOperationCount: 1,
+              appliedOperationCount: 1,
+              operations: [{
+                toolName: "file_write",
+                state: "applied",
+                evidence: "workspace_mutation_committed",
+              }],
+            },
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain("hidden");
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("projects Goal, Workflow, and Subtask status from their authoritative owners", async () => {

@@ -14,6 +14,29 @@ function snapshot(jobId: string, status: CommandJobSnapshot["status"] = "running
     supportsResize: false,
     oldestCursor: 0,
     nextCursor: 23,
+    recovery: status === "running"
+      ? {
+        lifecycle: "active",
+        process: "attached",
+        output: "memory_only",
+        stdin: "closed",
+        mutationReplay: "forbidden",
+      }
+      : status === "lost"
+        ? {
+          lifecycle: "lost",
+          process: "not_reattachable",
+          output: "unavailable",
+          stdin: "closed",
+          mutationReplay: "forbidden",
+        }
+        : {
+          lifecycle: "settled",
+          process: "not_applicable",
+          output: "memory_only",
+          stdin: "closed",
+          mutationReplay: "forbidden",
+        },
   };
 }
 

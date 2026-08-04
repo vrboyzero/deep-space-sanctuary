@@ -672,6 +672,13 @@ describe("CodingTuiApp", () => {
       supportsResize: false,
       oldestCursor: 0,
       nextCursor: 16,
+      recovery: {
+        lifecycle: "active" as const,
+        process: "attached" as const,
+        output: "memory_only" as const,
+        stdin: "live_only" as const,
+        mutationReplay: "forbidden" as const,
+      },
     }));
     const runtime = {
       cwd: "E:\\workspace",
@@ -729,6 +736,7 @@ describe("CodingTuiApp", () => {
     stdin.write("\t");
     await vi.waitFor(() => expect(runtime.listCommandJobs).toHaveBeenCalled());
     await vi.waitFor(() => expect(output).toContain("first page 0"));
+    expect(output).toContain("replay forbidden");
 
     stdin.write("\x1b[B");
     await vi.waitFor(() => expect(runtime.readCommandJob).toHaveBeenCalledWith(secondJobId));
@@ -981,6 +989,7 @@ describe("CodingTuiApp", () => {
       operation: "push" as const,
       canConfirm: true,
       blockers: [],
+      approval: { mode: "user_interaction" as const, delegable: false as const, rememberable: false as const },
       source: { repoRoot: "E:\\workspace", branch: "main", commit: "a".repeat(40), upstream: null },
       target: {
         remote: "private",
@@ -1014,6 +1023,7 @@ describe("CodingTuiApp", () => {
       previewRemotePush: vi.fn(async () => preview),
       confirmRemotePush: vi.fn(async () => ({
         operation: "push" as const,
+        outcome: "succeeded" as const,
         applied: true,
         blockers: [],
         postcondition: { remoteOid: "a".repeat(40) },
@@ -1045,8 +1055,32 @@ describe("CodingTuiApp", () => {
     await vi.waitFor(() => expect(output).toContain("Delivery private/main"));
     stdin.write("\x10");
     await vi.waitFor(() => expect(runtime.previewRemotePush).toHaveBeenCalledWith("private", "main"));
-    await vi.waitFor(() => expect(output).toContain("diff ccccccc"));
+    await vi.waitFor(() => expect(output).toContain("User approval only"));
+    expect(output).toContain("Target private/main");
+    expect(output).toContain("https://github.com/example/private.git");
+    expect(output).toContain("Current remote bbbbbbbbbb");
+    expect(output).toContain("New commit aaaaaaaaaa");
+    expect(output).toContain("Diff base bbbbbbbbbb | sha256 cccccccccc | 12 bytes");
+    expect(output).toContain("External side effect: update remote ref; rollback is not guaranteed");
+    expect(output).toContain("Delegable no | Rememberable no");
     expect(runtime.confirmRemotePush).not.toHaveBeenCalled();
+
+    output = "";
+    stdout.columns = 32;
+    stdout.emit("resize");
+    await vi.waitFor(() => expect(output).toContain("Approval"));
+    expect(output).toContain("Push");
+    expect(output).toContain("Cancel");
+    expect(output).toContain("Target private/main");
+    expect(output).toContain("URL https://github.com/ex...");
+    expect(output).toContain("Current remote bbbbbbbbbb");
+    expect(output).toContain("New commit aaaaaaaaaa");
+    expect(output).toContain("Diff base bbbbbbbbbb");
+    expect(output).toContain("External side effect:");
+    expect(output).toContain("Delegable no");
+    expect(output).not.toContain("Terminal too small.");
+    expect(runtime.confirmRemotePush).not.toHaveBeenCalled();
+
     stdin.write("\r");
     await vi.waitFor(() => expect(runtime.confirmRemotePush).toHaveBeenCalledWith("remote-delivery-receipt"));
     await vi.waitFor(() => expect(output).toContain("Push verified"));

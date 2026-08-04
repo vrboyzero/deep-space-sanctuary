@@ -57,8 +57,9 @@ import { GoalRuntimeBindingStore, type GoalRuntimeBindingSource } from "./goal-r
 import { getGoalRegistryEntry } from "./goals/registry.js";
 import { enrichDelegationProtocolTeamWithIdentity } from "./team-identity-governance.js";
 import type { SubTaskWorktreeRuntime, SubTaskWorktreeRuntimeSummary, WorktreeRuntimeStatus } from "./worktree-runtime.js";
+import { createConversationOperationId } from "./coding-run/reconciliation-journal.js";
 
-export type SubTaskStatus = "pending" | "running" | "done" | "error" | "timeout" | "stopped";
+export type SubTaskStatus = "pending" | "running" | "done" | "error" | "timeout" | "stopped" | "interrupted";
 
 export type SubTaskNotificationKind =
   | "queued"
@@ -76,6 +77,7 @@ export type SubTaskNotificationKind =
   | "stop_requested"
   | "stop_failed"
   | "stopped"
+  | "interrupted"
   | "archived"
   | "completed"
   | "failed"
@@ -116,6 +118,13 @@ export type SubTaskProgress = {
   phase: SubTaskStatus;
   message?: string;
   lastActivityAt: number;
+};
+
+export type SubTaskRecovery = {
+  state: "runtime_lost";
+  previousStatus: "pending" | "running";
+  detectedAt: number;
+  mutationReplay: "forbidden";
 };
 
 export type SubTaskNotification = {
@@ -193,6 +202,8 @@ export type SubTaskRecord = {
   id: string;
   kind: SubTaskKind;
   parentConversationId: string;
+  /** 父 Conversation operation 的脱敏标识；不保存原始 tool call ID。 */
+  parentOperationId?: string;
   sessionId?: string;
   agentId: string;
   launchSpec: SubTaskLaunchSpec;
@@ -214,6 +225,7 @@ export type SubTaskRecord = {
   lessonPath?: string;
   outputPreview?: string;
   error?: string;
+  recovery?: SubTaskRecovery;
   bridgeSessionRuntime?: SubTaskBridgeSessionRuntimeState;
   commandGeneration?: number;
   activeCommandClaim?: SubTaskCommandClaim;
@@ -241,6 +253,7 @@ type SubTaskRuntimeState = {
 
 type CreateSubTaskInput = {
   launchSpec: AgentLaunchSpecInput;
+  parentOperationId?: string;
 };
 
 type CreateBridgeSessionTaskInput = {
@@ -334,7 +347,8 @@ function inferNotificationKind(status: Extract<SubTaskStatus, "done" | "error" |
 }
 
 function isTerminalStatus(status: SubTaskStatus): boolean {
-  return status === "done" || status === "error" || status === "timeout" || status === "stopped";
+  return status === "done" || status === "error" || status === "timeout"
+    || status === "stopped" || status === "interrupted";
 }
 
 function inferSummary(record: SubTaskRecord, fallback = ""): string {
@@ -421,6 +435,28 @@ function normalizeBridgeSessionRuntimeState(value: unknown): SubTaskBridgeSessio
     blockReason: typeof record.blockReason === "string" && record.blockReason.trim()
       ? record.blockReason.trim()
       : undefined,
+  };
+}
+
+function normalizeSubTaskRecovery(value: unknown): SubTaskRecovery | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const previousStatus = record.previousStatus === "pending" || record.previousStatus === "running"
+    ? record.previousStatus
+    : undefined;
+  const detectedAt = Number(record.detectedAt);
+  if (record.state !== "runtime_lost"
+    || !previousStatus
+    || !Number.isFinite(detectedAt)
+    || detectedAt < 0
+    || record.mutationReplay !== "forbidden") {
+    return undefined;
+  }
+  return {
+    state: "runtime_lost",
+    previousStatus,
+    detectedAt,
+    mutationReplay: "forbidden",
   };
 }
 
@@ -759,6 +795,7 @@ function cloneRecord(record: SubTaskRecord): SubTaskRecord {
       delegation: cloneDelegationSummary(record.launchSpec.delegation),
     },
     bridgeSessionRuntime: record.bridgeSessionRuntime ? { ...record.bridgeSessionRuntime } : undefined,
+    recovery: record.recovery ? { ...record.recovery } : undefined,
     activeCommandClaim: record.activeCommandClaim ? { ...record.activeCommandClaim } : undefined,
     progress: { ...record.progress },
     scratchPath: record.scratchPath,
@@ -802,6 +839,12 @@ function mergeLaunchSpecWorktreeRuntime(
   }
 
   return next;
+}
+
+function normalizeConversationOperationId(value: unknown): string | undefined {
+  return typeof value === "string" && /^op_[a-f0-9]{64}$/.test(value)
+    ? value
+    : undefined;
 }
 
 function resolveGoalBindingFromTaskRecord(record: SubTaskRecord): {
@@ -899,6 +942,7 @@ export class SubTaskRuntimeStore {
       this.records.clear();
       this.sessionToTask.clear();
       let recoveredInterruptedClaims = false;
+      let recoveredRuntimeOwners = false;
       try {
         const raw = await fs.readFile(this.statePath, "utf-8");
         const parsed = parseSubTaskRuntimeRegistry(raw);
@@ -908,6 +952,7 @@ export class SubTaskRuntimeStore {
             throw new SubTaskRuntimeStateLoadError("invalid_item");
           }
           recoveredInterruptedClaims = this.recoverInterruptedCommandClaim(record) || recoveredInterruptedClaims;
+          recoveredRuntimeOwners = this.recoverRuntimeLostSubTask(record) || recoveredRuntimeOwners;
           this.records.set(record.id, record);
           if (record.sessionId) {
             this.sessionToTask.set(record.sessionId, record.id);
@@ -926,11 +971,11 @@ export class SubTaskRuntimeStore {
         });
         return;
       }
-      if (recoveredInterruptedClaims) {
+      if (recoveredInterruptedClaims || recoveredRuntimeOwners) {
         try {
           await this.persist();
         } catch (error) {
-          this.logger?.warn?.("Failed to persist recovered subtask command claims.", error);
+          this.logger?.warn?.("Failed to persist recovered subtask runtime state.", error);
         }
       }
     })();
@@ -971,6 +1016,7 @@ export class SubTaskRuntimeStore {
         id: `task_${crypto.randomUUID().slice(0, 8)}`,
         kind: "sub_agent",
         parentConversationId: launchSpec.parentConversationId,
+        parentOperationId: normalizeConversationOperationId(input.parentOperationId),
         agentId: launchSpec.agentId,
         launchSpec: createLaunchSpecSummary(launchSpec),
         background: launchSpec.background,
@@ -1365,6 +1411,7 @@ export class SubTaskRuntimeStore {
         record.launchSpec.profileId = profileId.trim();
       }
       record.status = "running";
+      record.recovery = undefined;
       record.updatedAt = now;
       record.finishedAt = undefined;
       record.error = undefined;
@@ -1451,6 +1498,7 @@ export class SubTaskRuntimeStore {
         this.sessionToTask.set(input.sessionId, taskId);
       }
       record.status = input.status;
+      record.recovery = undefined;
       record.updatedAt = now;
       record.finishedAt = now;
       record.error = input.error ?? (input.status === "stopped" ? (record.stopReason || "Task stopped by user.") : undefined);
@@ -2152,6 +2200,7 @@ export class SubTaskRuntimeStore {
       id,
       kind,
       parentConversationId: typeof value.parentConversationId === "string" ? value.parentConversationId : "system",
+      parentOperationId: normalizeConversationOperationId(value.parentOperationId),
       sessionId: typeof value.sessionId === "string" && value.sessionId.trim() ? value.sessionId : undefined,
       agentId: typeof value.agentId === "string" && value.agentId.trim() ? value.agentId : "default",
       launchSpec: {
@@ -2257,6 +2306,7 @@ export class SubTaskRuntimeStore {
       lessonPath: typeof value.lessonPath === "string" && value.lessonPath.trim() ? value.lessonPath : undefined,
       outputPreview: typeof value.outputPreview === "string" ? value.outputPreview : undefined,
       error: typeof value.error === "string" ? value.error : undefined,
+      recovery: normalizeSubTaskRecovery(value.recovery),
       bridgeSessionRuntime: normalizeBridgeSessionRuntimeState(value.bridgeSessionRuntime),
       commandGeneration,
       activeCommandClaim,
@@ -2275,6 +2325,7 @@ export class SubTaskRuntimeStore {
       case "error":
       case "timeout":
       case "stopped":
+      case "interrupted":
         return value;
       default:
         return "pending";
@@ -2298,6 +2349,7 @@ export class SubTaskRuntimeStore {
       case "stop_requested":
       case "stop_failed":
       case "stopped":
+      case "interrupted":
       case "archived":
       case "completed":
       case "failed":
@@ -2402,6 +2454,35 @@ export class SubTaskRuntimeStore {
           ? "takeover_failed"
           : "stop_failed";
     this.pushNotification(record, notificationKind, "A pending command claim was interrupted by a previous runtime instance and can be retried.");
+    return true;
+  }
+
+  private recoverRuntimeLostSubTask(record: SubTaskRecord): boolean {
+    if (record.kind !== "sub_agent" || (record.status !== "pending" && record.status !== "running")) {
+      return false;
+    }
+    const previousStatus = record.status;
+    const detectedAt = Date.now();
+    const message = "Subtask runtime owner was lost before a terminal result was persisted. Manual resume is required.";
+    record.status = "interrupted";
+    record.updatedAt = detectedAt;
+    record.finishedAt = detectedAt;
+    record.stopRequestedAt = undefined;
+    record.stopReason = undefined;
+    record.error = message;
+    record.recovery = {
+      state: "runtime_lost",
+      previousStatus,
+      detectedAt,
+      mutationReplay: "forbidden",
+    };
+    record.progress = {
+      phase: "interrupted",
+      message,
+      lastActivityAt: detectedAt,
+    };
+    record.summary = inferSummary(record, message);
+    this.pushNotification(record, "interrupted", message);
     return true;
   }
 
@@ -2992,6 +3073,13 @@ export function createSubTaskAgentCapabilities(input: {
       });
     const task = await input.runtimeStore.createTask({
       launchSpec,
+      parentOperationId: opts.parentOperation
+        ? createConversationOperationId({
+            conversationId: launchSpec.parentConversationId,
+            agentRunId: opts.parentOperation.agentRunId,
+            toolCallId: opts.parentOperation.toolCallId,
+          })
+        : undefined,
     });
 
     let attachedSessionId: string | undefined;

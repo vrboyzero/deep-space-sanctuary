@@ -16,6 +16,10 @@ export {
 } from "./coding-run/contracts.js";
 export { createConversationLifecycleEventAdapter } from "./coding-run/conversation-lifecycle-adapter.js";
 export { CodingRunGatewayEventBroker, createCodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+export {
+  CodingRunReconciliationJournal,
+  createUnavailableCodingRunReconciliation,
+} from "./coding-run/reconciliation-journal.js";
 export { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 export { GatewayCodingRunSubscriptionSession } from "./coding-run/gateway-subscription-session.js";
 export {
@@ -46,6 +50,7 @@ export type {
   WorkspaceRevisionRestoreResult,
   WorkspaceRevisionRuntimeOptions,
   WorkspaceRevisionSummary,
+  WorkspaceMutationOperationEvidence,
 } from "./workspace-revision.js";
 export { WorkspaceChangeRecoveryRuntime, resolveWorkspaceChangeRecovery } from "./workspace-change-recovery.js";
 export type {
@@ -123,6 +128,11 @@ export type {
   CodingRunGatewayEventSubscription,
   CodingRunGatewayEventSubscriptionResult,
 } from "./coding-run/gateway-event-broker.js";
+export type {
+  CodingRunReconciliation,
+  CodingRunReconciliationJournalOwner,
+  CodingRunReconciliationOperation,
+} from "./coding-run/reconciliation-journal.js";
 export type {
   PendingToolPermissionResponse,
   PendingToolPermissionResponseResult,
@@ -236,6 +246,8 @@ export {
 export type {
   InstallMarketplaceExtensionInput,
   InstallMarketplaceExtensionResult,
+  MarketplaceExtensionRuntimeCoordinator,
+  MarketplaceExtensionRuntimeMutation,
   UninstallMarketplaceExtensionInput,
   UpdateMarketplaceExtensionInput,
 } from "./extension-marketplace-service.js";

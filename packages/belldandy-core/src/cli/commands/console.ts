@@ -217,6 +217,7 @@ function colorizeStatus(status: string): string {
     case "error":
     case "timeout":
     case "stopped":
+    case "interrupted":
       return pc.red(status);
     default:
       return pc.cyan(status);
@@ -309,6 +310,7 @@ function summarizeSubtasks(subtasks: ConsoleSubTaskItem[]) {
           break;
         case "error":
         case "timeout":
+        case "interrupted":
           summary.failed += 1;
           break;
         case "stopped":

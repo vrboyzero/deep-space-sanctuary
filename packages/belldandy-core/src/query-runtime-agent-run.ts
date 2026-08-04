@@ -116,7 +116,7 @@ export async function runAgentWithLifecycle(
   input: {
     conversationId: string;
     runInput: AgentRunInput;
-    onStatus?: (item: { status: string }) => void;
+    onStatus?: (item: { status: string; code?: string; error?: string }) => void;
     onDelta?: (item: { delta: string }) => void;
     onToolCall?: (item: QueryRuntimeAgentToolCall) => void;
     onToolResult?: (item: QueryRuntimeAgentToolResult) => void;
@@ -164,7 +164,11 @@ export async function runAgentWithLifecycle(
       if (item.type === "status") {
         statusCount += 1;
         latestStatus = item.status;
-        input.onStatus?.({ status: item.status });
+        input.onStatus?.({
+          status: item.status,
+          ...(item.code ? { code: item.code } : {}),
+          ...(item.error ? { error: item.error } : {}),
+        });
         continue;
       }
 

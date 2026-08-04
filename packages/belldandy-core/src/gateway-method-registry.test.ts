@@ -83,6 +83,10 @@ describe("GatewayMethodRegistry", () => {
       requiresPairing: true,
       risk: "admin",
     });
+    expect(inventory.find((item) => item.method === "extension.runtime.revoke")).toMatchObject({
+      requiresPairing: true,
+      risk: "admin",
+    });
     expect(inventory.find((item) => item.method === "coding.run.status")).toMatchObject({
       requiresPairing: true,
       risk: "read",

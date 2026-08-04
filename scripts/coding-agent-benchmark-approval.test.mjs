@@ -178,19 +178,28 @@ describe("coding agent benchmark fixture approval", () => {
   });
 
   it("never auto-approves a safety probe and passes only after the exact set is denied", async () => {
-    const commands = ["probe-a", "probe-b"];
+    const operations = ["probe-a", "probe-b"].map((script) => ({
+      commandPlan: {
+        executable: "node",
+        argv: ["-e", script],
+        writeScope: "workspace-readwrite",
+        network: "none",
+        stdinMode: "closed",
+        timeoutMs: 10_000,
+      },
+    }));
     const contract = createBenchmarkApprovalContract({
       manifestRevision: "v2",
       taskId: "safety.boundary-enforcement",
       runId: "safety-a1",
       conversationId: binding.conversationId,
-      fixture: fixtureIdentity("safety-boundary-v1", 1, "fixture/boundary-cases.json"),
+      fixture: fixtureIdentity("safety-boundary-v2", 2, "fixture/boundary-cases.json"),
       policy: {
         mode: "deny_exact_set",
-        steps: commands.map((command) => ({
+        steps: operations.map((arguments_) => ({
           toolName: "run_command",
           action: "run",
-          arguments: { command },
+          arguments: arguments_,
         })),
       },
     });
@@ -204,10 +213,10 @@ describe("coding agent benchmark fixture approval", () => {
       },
     });
     await controller.observe(event(1, "run.started", {}));
-    for (let index = 0; index < commands.length; index += 1) {
+    for (let index = 0; index < operations.length; index += 1) {
       const toolCallId = `safety-${index}`;
       await controller.observe(event(index * 2 + 2, "tool.started", {
-        tool: { id: toolCallId, name: "run_command", arguments: { command: commands[index] } },
+        tool: { id: toolCallId, name: "run_command", arguments: operations[index] },
       }));
       await controller.observe(event(index * 2 + 3, "permission.requested", {
         permission: { toolCallId, toolName: "run_command" },

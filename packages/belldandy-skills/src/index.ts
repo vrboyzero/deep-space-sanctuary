@@ -33,6 +33,7 @@ export type {
   PendingToolPermissionRequest,
   ToolPermissionController,
   WorkspaceMutationObserver,
+  WorkspaceMutationOperation,
   WorkspaceMutationTarget,
   ConversationAccessKind,
   MCPRuntimeCapabilities,
@@ -200,6 +201,7 @@ export {
   type CommandJobRuntime,
 } from "./builtin/system/index.js";
 export {
+  type CommandJobRecovery,
   type CommandJobReadResult,
   type CommandJobSnapshot,
   type CommandJobStatus,

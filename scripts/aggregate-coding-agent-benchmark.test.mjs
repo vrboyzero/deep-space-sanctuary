@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,10 +6,13 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
   aggregateCodingAgentBenchmarkReports,
+  parseCodingAgentBenchmarkAggregationCliArguments,
+  resolveCodingAgentBenchmarkAggregationManifestPath,
   verifyCodingAgentBaselineArtifact,
 } from "./aggregate-coding-agent-benchmark.mjs";
 import {
   createCodingAgentBenchmarkReport,
+  hashCodingAgentBenchmarkManifestText,
   loadCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
 
@@ -26,7 +28,7 @@ beforeAll(async () => {
     fs.readFile(manifestPath, "utf-8"),
     loadCodingAgentBenchmarkManifest(manifestPath),
   ]);
-  manifestSha256 = sha256(manifestText);
+  manifestSha256 = hashCodingAgentBenchmarkManifestText(manifestText);
 });
 
 afterEach(async () => {
@@ -123,6 +125,40 @@ describe("coding agent baseline aggregation", () => {
   });
 });
 
+describe("coding agent baseline aggregation CLI", () => {
+  it("selects the frozen v2 manifest explicitly while preserving the v1 default", () => {
+    expect(resolveCodingAgentBenchmarkAggregationManifestPath({})).toBe(manifestPath);
+    expect(resolveCodingAgentBenchmarkAggregationManifestPath({ manifestRevision: "v2" })).toBe(path.join(
+      workspaceRoot,
+      "benchmarks/coding-agent/v2/task-manifest.json",
+    ));
+    expect(parseCodingAgentBenchmarkAggregationCliArguments([
+      "--manifest-revision", "v2",
+      "--report", "first-report.json",
+      "--dry-run",
+    ])).toMatchObject({
+      manifestRevision: "v2",
+      reportPaths: ["first-report.json"],
+      writeOutput: false,
+      verify: false,
+    });
+  });
+
+  it("rejects ambiguous or invalid manifest selection", () => {
+    expect(() => parseCodingAgentBenchmarkAggregationCliArguments([
+      "--manifest-revision", "v2",
+      "--manifest-revision", "v1",
+    ])).toThrow(/manifest-revision.*once/i);
+    expect(() => parseCodingAgentBenchmarkAggregationCliArguments([
+      "--manifest-revision", "v3",
+    ])).toThrow(/manifest revision/i);
+    expect(() => resolveCodingAgentBenchmarkAggregationManifestPath({
+      manifestPath,
+      manifestRevision: "v2",
+    })).toThrow(/manifestPath.*manifestRevision/i);
+  });
+});
+
 async function makeTempRoot() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-agent-baseline-"));
   tempRoots.push(root);
@@ -214,8 +250,4 @@ function createRun(task, platform, attempt) {
 
 function defaultSource() {
   return { commit: "c".repeat(40), workspaceDirty: true, lockfileSha256: "d".repeat(64) };
-}
-
-function sha256(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
 }

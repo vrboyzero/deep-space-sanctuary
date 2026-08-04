@@ -19,6 +19,14 @@ export const DEFAULT_COMMAND_JOB_TIMEOUT_MS = 300_000;
 export type CommandJobStatus = "running" | "completed" | "cancelled" | "failed" | "lost";
 type PersistedCommandJobStatus = "starting" | CommandJobStatus;
 
+export type CommandJobRecovery = {
+  lifecycle: "starting" | "active" | "settled" | "lost";
+  process: "starting" | "attached" | "not_applicable" | "not_reattachable";
+  output: "memory_only" | "unavailable";
+  stdin: "live_only" | "closed" | "unavailable";
+  mutationReplay: "forbidden";
+};
+
 export type CommandJobProcessExit = {
   exitCode?: number;
   signal?: string | number;
@@ -75,6 +83,7 @@ export type CommandJobSnapshot = {
   processHardKillUsed?: boolean;
   processCloseObserved?: boolean;
   cleanup?: JsonObject;
+  recovery: CommandJobRecovery;
 };
 
 export type CommandJobReadResult = CommandJobSnapshot & {
@@ -123,6 +132,7 @@ type CommandJob = {
     resolve: () => void;
   };
   output: CommandJobOutputBuffer;
+  outputAvailable: boolean;
   process?: CommandJobProcess;
   cleanup?: CommandJobStartInput["cleanup"];
   cleanupResult?: JsonObject;
@@ -402,6 +412,7 @@ export class CommandJobManager {
       deadlineAt: now + timeoutMs,
       startup: createStartupGate(),
       output: new CommandJobOutputBuffer(this.maxOutputBytes),
+      outputAvailable: true,
       cleanup: input.cleanup,
       persistedSandbox: input.persistedSandbox,
     };
@@ -589,6 +600,7 @@ export class CommandJobManager {
           timeoutMs: record.timeoutMs,
           deadlineAt: record.deadlineAt,
           output: new CommandJobOutputBuffer(this.maxOutputBytes),
+          outputAvailable: false,
           persistedSandbox: record.persistedSandbox,
           error: recoveryError ?? "Gateway restarted before the command job reached a terminal state; live output and stdin are unavailable.",
         };
@@ -608,6 +620,7 @@ export class CommandJobManager {
         ...(record.timeoutMs !== undefined ? { timeoutMs: record.timeoutMs } : {}),
         ...(record.deadlineAt !== undefined ? { deadlineAt: record.deadlineAt } : {}),
         output: new CommandJobOutputBuffer(this.maxOutputBytes),
+        outputAvailable: false,
         ...(record.error ? { error: record.error } : {}),
         ...(record.persistedSandbox ? { persistedSandbox: record.persistedSandbox } : {}),
       });
@@ -726,6 +739,7 @@ export class CommandJobManager {
         processCloseObserved: job.termination.closeObserved,
       } : {}),
       ...(job.cleanupResult ? { cleanup: job.cleanupResult } : {}),
+      recovery: projectCommandJobRecovery(job),
     };
   }
 
@@ -757,4 +771,41 @@ export class CommandJobManager {
       await this.options.store?.remove(job.jobId);
     }
   }
+}
+
+function projectCommandJobRecovery(job: CommandJob): CommandJobRecovery {
+  if (job.status === "starting") {
+    return {
+      lifecycle: "starting",
+      process: "starting",
+      output: "memory_only",
+      stdin: job.stdinMode === "closed" ? "closed" : "unavailable",
+      mutationReplay: "forbidden",
+    };
+  }
+  if (job.status === "running") {
+    return {
+      lifecycle: "active",
+      process: "attached",
+      output: "memory_only",
+      stdin: job.stdinMode === "closed" ? "closed" : "live_only",
+      mutationReplay: "forbidden",
+    };
+  }
+  if (job.status === "lost") {
+    return {
+      lifecycle: "lost",
+      process: "not_reattachable",
+      output: "unavailable",
+      stdin: job.stdinMode === "closed" ? "closed" : "unavailable",
+      mutationReplay: "forbidden",
+    };
+  }
+  return {
+    lifecycle: "settled",
+    process: "not_applicable",
+    output: job.outputAvailable ? "memory_only" : "unavailable",
+    stdin: "closed",
+    mutationReplay: "forbidden",
+  };
 }

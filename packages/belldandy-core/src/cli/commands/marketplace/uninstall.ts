@@ -5,7 +5,7 @@ import {
   uninstallMarketplaceExtension,
 } from "../../../extension-marketplace-service.js";
 import { createCLIContext } from "../../shared/context.js";
-import { failCli } from "./shared.js";
+import { createMarketplaceExtensionRuntimeCoordinator, failCli } from "./shared.js";
 
 export default defineCommand({
   meta: { name: "uninstall", description: "Uninstall an installed marketplace extension" },
@@ -39,6 +39,7 @@ export default defineCommand({
       const result = await uninstallMarketplaceExtension({
         ...input,
         confirmationHash: args["confirm-hash"],
+        runtimeCoordinator: createMarketplaceExtensionRuntimeCoordinator(ctx.stateDir),
       });
 
       if (ctx.json) {

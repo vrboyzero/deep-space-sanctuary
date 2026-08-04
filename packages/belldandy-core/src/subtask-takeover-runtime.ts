@@ -1,7 +1,8 @@
 import type { SubTaskRecord, SubTaskRuntimeStore } from "./task-runtime.js";
 
 function isTerminalStatus(status: string): boolean {
-  return status === "done" || status === "error" || status === "timeout" || status === "stopped";
+  return status === "done" || status === "error" || status === "timeout"
+    || status === "stopped" || status === "interrupted";
 }
 
 export function createSubTaskTakeoverDispatcher(input: {

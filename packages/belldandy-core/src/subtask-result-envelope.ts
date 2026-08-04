@@ -69,7 +69,7 @@ export type SubTaskResultEnvelope = {
   taskId: string;
   sessionId?: string;
   agentId: string;
-  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped";
+  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped" | "interrupted";
   summary: string;
   outputPath?: string;
   outputPreview?: string;
@@ -192,7 +192,7 @@ export function buildSubTaskResultEnvelope(record: {
   id: string;
   sessionId?: string;
   agentId: string;
-  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped";
+  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped" | "interrupted";
   summary: string;
   outputPath?: string;
   outputPreview?: string;
@@ -215,7 +215,7 @@ export function buildSubTaskResultEnvelope(record: {
 export function buildDelegationObservabilitySnapshot(items: Array<{
   id: string;
   agentId: string;
-  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped";
+  status: "pending" | "running" | "done" | "error" | "timeout" | "stopped" | "interrupted";
   launchSpec?: {
     delegation?: SubTaskDelegationSummary;
   };
@@ -227,7 +227,7 @@ export function buildDelegationObservabilitySnapshot(items: Array<{
   let activeCount = 0;
 
   for (const item of items) {
-    if (item.status === "done" || item.status === "error" || item.status === "timeout" || item.status === "stopped") {
+    if (item.status === "done" || item.status === "error" || item.status === "timeout" || item.status === "stopped" || item.status === "interrupted") {
       completedCount += 1;
     } else {
       activeCount += 1;
@@ -260,8 +260,8 @@ export function buildDelegationObservabilitySnapshot(items: Array<{
     items: items
       .slice()
       .sort((left, right) => {
-        const leftDone = left.status === "done" || left.status === "error" || left.status === "timeout" || left.status === "stopped";
-        const rightDone = right.status === "done" || right.status === "error" || right.status === "timeout" || right.status === "stopped";
+        const leftDone = left.status === "done" || left.status === "error" || left.status === "timeout" || left.status === "stopped" || left.status === "interrupted";
+        const rightDone = right.status === "done" || right.status === "error" || right.status === "timeout" || right.status === "stopped" || right.status === "interrupted";
         if (leftDone !== rightDone) return leftDone ? 1 : -1;
         return left.id.localeCompare(right.id);
       })

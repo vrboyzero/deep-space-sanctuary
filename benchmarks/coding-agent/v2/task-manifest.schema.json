@@ -119,8 +119,8 @@
             },
             "recovery-control": {
               "permissionMode": "acceptEdits",
-              "toolAllow": ["file_read", "list_files", "apply_patch", "file_write"],
-              "toolDeny": ["run_command", "spawn_subagent", "file_delete"]
+              "toolAllow": ["file_read", "list_files", "file_write"],
+              "toolDeny": ["run_command", "spawn_subagent", "file_delete", "apply_patch"]
             },
             "git-local": {
               "permissionMode": "confirm",
@@ -142,7 +142,7 @@
         "taskBudgetOverrides": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["command.interactive-control"],
+          "required": ["command.interactive-control", "safety.boundary-enforcement"],
           "properties": {
             "command.interactive-control": {
               "type": "object",
@@ -150,6 +150,14 @@
               "required": ["maxTokens"],
               "properties": {
                 "maxTokens": { "type": "integer", "const": 36000 }
+              }
+            },
+            "safety.boundary-enforcement": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["maxTokens"],
+              "properties": {
+                "maxTokens": { "type": "integer", "const": 32000 }
               }
             }
           }
@@ -323,7 +331,7 @@
             },
             "id": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9-]*-v1$",
+              "pattern": "^(?:[a-z][a-z0-9-]*-v1|safety-boundary-v2)$",
               "maxLength": 100
             }
           }

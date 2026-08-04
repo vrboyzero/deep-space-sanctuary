@@ -2,9 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConversationStore, type BelldandyAgent } from "@belldandy/agent";
+import { CODING_RUN_PROTOCOL_VERSION } from "../../../coding-run/contracts.js";
+import { CodingRunReconciliationJournal } from "../../../coding-run/reconciliation-journal.js";
 import { CodingRunRecoveryMarkerStore } from "../../../coding-run/recovery-marker-store.js";
 import { ConversationRunRegistry } from "../../../conversation-run-registry.js";
 import { startGatewayServer } from "../../../server.js";
@@ -19,6 +21,10 @@ import { runAgentRunCommand } from "./run.js";
 import { statusAgentRunCommand } from "./status.js";
 import { steerAgentRunCommand } from "./steer.js";
 import { steerStatusAgentRunCommand } from "./steer-status.js";
+
+function diskFullError(): NodeJS.ErrnoException {
+  return Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+}
 
 afterEach(async () => {
   await cleanupGlobalMemoryManagersForTest();
@@ -233,6 +239,34 @@ describe("bdd agent controls", () => {
       isProcessAlive: () => false,
     });
     await previousStore.markActive({ source: "conversation", binding, startedAtMs: 100 });
+    const journal = new CodingRunReconciliationJournal(stateDir);
+    journal.record({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      seq: 1,
+      timestampMs: 100,
+      source: "conversation",
+      binding,
+      type: "run.started",
+      payload: { status: "running" },
+    });
+    journal.record({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      seq: 2,
+      timestampMs: 110,
+      source: "conversation",
+      binding,
+      type: "tool.started",
+      payload: { tool: { id: "tool-lost", name: "file_write", arguments: { secret: "hidden" } } },
+    });
+    journal.record({
+      version: CODING_RUN_PROTOCOL_VERSION,
+      seq: 3,
+      timestampMs: 120,
+      source: "conversation",
+      binding,
+      type: "tool.completed",
+      payload: { tool: { id: "tool-lost", name: "file_write", success: true, output: "hidden" } },
+    });
     const restartedStore = new CodingRunRecoveryMarkerStore(stateDir, {
       ownerInstanceId: "gateway-after-restart",
       ownerProcessId: 202,
@@ -268,9 +302,242 @@ describe("bdd agent controls", () => {
         source: "conversation",
         status: "interrupted",
         binding,
-        evidence: { runtimeState: "lost", lastObservedState: "active" },
+        evidence: {
+          runtimeState: "lost",
+          lastObservedState: "active",
+          reconciliation: {
+            state: "uncertain",
+            journalState: "available",
+            observedOperationCount: 1,
+            appliedOperationCount: 0,
+            uncertainOperationCount: 1,
+            operations: [{
+              toolName: "file_write",
+              state: "uncertain",
+              evidence: "workspace_mutation_evidence_unavailable",
+            }],
+          },
+        },
       });
+      expect(stdout.join("")).not.toContain("hidden");
       expect(stderr).toEqual([]);
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("does not settle a recovery marker when completion journal persistence hits ENOSPC", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-journal-sink-down-"));
+    const recoveryStore = new CodingRunRecoveryMarkerStore(stateDir, {
+      ownerInstanceId: "gateway-before-sink-failure",
+      ownerProcessId: 101,
+      isProcessAlive: () => false,
+    });
+    const registry = new ConversationRunRegistry({ recoveryStore });
+    const durableJournal = new CodingRunReconciliationJournal(stateDir);
+    const journalWithCompletionFailure = {
+      record: (event: Parameters<CodingRunReconciliationJournal["record"]>[0]) => {
+        if (event.type === "tool.completed") throw diskFullError();
+        return durableJournal.record(event);
+      },
+      reconcile: durableJournal.reconcile.bind(durableJournal),
+    };
+    let sideEffectApplied = false;
+    const agent: BelldandyAgent = {
+      async *run() {
+        yield { type: "tool_call", id: "tool-sink-down", name: "file_write", arguments: { secret: "hidden" } };
+        sideEffectApplied = true;
+        yield { type: "tool_result", id: "tool-sink-down", name: "file_write", success: true, output: "hidden" };
+        yield { type: "final", text: "must-not-complete" };
+      },
+    };
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      conversationRunRegistry: registry,
+      codingRunReconciliationJournal: journalWithCompletionFailure,
+      agentFactory: () => agent,
+    });
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "apply one mutation",
+          conversationId: "conversation-sink-down",
+          jsonl: true,
+          writeStdout: (text) => stdout.push(text),
+          writeStderr: (text) => stderr.push(text),
+        })).not.toBe(0);
+      });
+
+      expect(sideEffectApplied).toBe(true);
+      await waitFor(() => registry.getRuntimeSnapshot().activeCount === 0);
+      expect(registry.getRuntimeSnapshot()).toEqual({ activeCount: 0, stopRequestedCount: 0 });
+      const events = stdout.join("").trim().split("\n").filter(Boolean)
+        .map((line) => JSON.parse(line) as { binding?: { agentRunId?: string }; type?: string });
+      const agentRunId = events.find((event) => event.binding?.agentRunId)?.binding?.agentRunId;
+      expect(agentRunId).toBeTruthy();
+      if (!agentRunId) throw new Error("expected run binding");
+
+      const restartedStore = new CodingRunRecoveryMarkerStore(stateDir, {
+        ownerInstanceId: "gateway-after-sink-failure",
+        ownerProcessId: 202,
+        isProcessAlive: () => false,
+      });
+      await expect(restartedStore.lookup({
+        source: "conversation",
+        binding: { conversationId: "conversation-sink-down", agentRunId },
+      })).resolves.toMatchObject({ state: "lost" });
+      await expect(durableJournal.reconcile({
+        conversationId: "conversation-sink-down",
+        agentRunId,
+      })).resolves.toMatchObject({
+        state: "uncertain",
+        appliedOperationCount: 0,
+        uncertainOperationCount: 1,
+        operations: [{ toolName: "file_write", state: "started" }],
+      });
+      expect(stdout.join("")).not.toContain("hidden");
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("cleans up a durable run before Agent execution when the initial journal record hits ENOSPC", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-initial-journal-failure-"));
+    let activeBinding: { source: "conversation"; binding: { conversationId: string; agentRunId: string } } | undefined;
+    const markSettled = vi.fn(async () => true);
+    const registry = new ConversationRunRegistry({
+      recoveryStore: {
+        markActive: vi.fn(async (input) => {
+          activeBinding = { source: "conversation", binding: { ...input.binding } as { conversationId: string; agentRunId: string } };
+        }),
+        markSettled,
+        lookup: vi.fn(async () => ({ state: "not_found" as const })),
+      },
+    });
+    let agentStarted = false;
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      conversationRunRegistry: registry,
+      codingRunReconciliationJournal: {
+        record: () => { throw diskFullError(); },
+        reconcile: async () => ({
+          state: "uncertain",
+          journalState: "unavailable",
+          observedOperationCount: 0,
+          mutationOperationCount: 0,
+          appliedOperationCount: 0,
+          uncertainOperationCount: 1,
+          reason: "journal_unavailable",
+          operations: [],
+        }),
+      },
+      agentFactory: () => ({
+        async *run() {
+          agentStarted = true;
+          yield { type: "final", text: "must-not-run" };
+        },
+      }),
+    });
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "must fail before execution",
+          conversationId: "conversation-initial-journal-failure",
+          jsonl: true,
+          writeStdout: () => undefined,
+          writeStderr: () => undefined,
+        })).not.toBe(0);
+      });
+
+      expect(agentStarted).toBe(false);
+      expect(registry.getRuntimeSnapshot()).toEqual({ activeCount: 0, stopRequestedCount: 0 });
+      expect(markSettled).toHaveBeenCalledWith(activeBinding);
+    } finally {
+      if (activeBinding) registry.clear(activeBinding.binding.conversationId, activeBinding.binding.agentRunId);
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("removes reconciliation evidence after a durable run settles", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-journal-settled-"));
+    const remove = vi.fn(async () => true);
+    const registry = new ConversationRunRegistry({
+      recoveryStore: {
+        markActive: vi.fn(async () => undefined),
+        markSettled: vi.fn(async () => true),
+        lookup: vi.fn(async () => ({ state: "not_found" as const })),
+      },
+    });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      conversationRunRegistry: registry,
+      codingRunReconciliationJournal: {
+        record: () => true,
+        remove,
+        reconcile: async () => ({
+          state: "none",
+          journalState: "available",
+          observedOperationCount: 0,
+          mutationOperationCount: 0,
+          appliedOperationCount: 0,
+          uncertainOperationCount: 0,
+          operations: [],
+        }),
+      },
+      agentFactory: () => ({
+        async *run() {
+          yield { type: "final", text: "done" };
+        },
+      }),
+    });
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        expect(await runAgentRunCommand({
+          stateDir,
+          prompt: "complete without a mutation",
+          conversationId: "conversation-journal-settled",
+          jsonl: true,
+          writeStdout: () => undefined,
+          writeStderr: () => undefined,
+        })).toBe(0);
+      });
+
+      expect(registry.getRuntimeSnapshot()).toEqual({ activeCount: 0, stopRequestedCount: 0 });
+      expect(remove).toHaveBeenCalledOnce();
+      expect(remove).toHaveBeenCalledWith(expect.objectContaining({
+        conversationId: "conversation-journal-settled",
+      }));
     } finally {
       await server.close();
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});

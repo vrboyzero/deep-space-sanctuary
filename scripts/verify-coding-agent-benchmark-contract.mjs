@@ -208,11 +208,13 @@ export async function collectCodingAgentBenchmarkContractFailures(input = {}) {
     "coding-agent-benchmark-run/v2",
     "coding-agent-benchmark-report/v2",
     "--manifest-revision v2",
+    "aggregate:coding-agent:baseline --manifest-revision v2",
     "--source-root",
     "preflight.json",
     "v2/agents.json",
     "taskBudgetOverrides",
     "maxTokens=36000",
+    "maxTokens=32000",
     "maxHighRiskToolCalls=5",
     "approval-contract.json",
     "approval-evidence.json",
@@ -301,7 +303,9 @@ function validateRunnerProfiles(failures, manifest, revision) {
     const expectedToolDeny = mode === "command-control" || mode === "safety-probe"
       ? ["spawn_subagent"]
       : mode === "recovery-control"
-        ? ["run_command", "spawn_subagent", "file_delete"]
+        ? revision === "v2"
+          ? ["run_command", "spawn_subagent", "file_delete", "apply_patch"]
+          : ["run_command", "spawn_subagent", "file_delete"]
         : mode === "git-local"
           ? ["spawn_subagent", "apply_patch", "file_write", "file_delete"]
         : ["run_command", "spawn_subagent"];

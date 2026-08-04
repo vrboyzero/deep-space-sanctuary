@@ -21,6 +21,7 @@ export type SubTaskRuntimeRetentionObservabilitySnapshot = {
       error: number;
       timeout: number;
       stopped: number;
+      interrupted: number;
     };
     oldestArchivedAt?: number;
     newestArchivedAt?: number;
@@ -30,7 +31,7 @@ export type SubTaskRuntimeRetentionObservabilitySnapshot = {
   compaction?: SubTaskRetentionCompactionReport;
 };
 
-const TERMINAL_STATUSES = new Set(["done", "error", "timeout", "stopped"]);
+const TERMINAL_STATUSES = new Set(["done", "error", "timeout", "stopped", "interrupted"]);
 
 const EMPTY_STATUS_COUNTS: SubTaskRuntimeRetentionObservabilitySnapshot["summary"]["statusCounts"] = {
   pending: 0,
@@ -39,6 +40,7 @@ const EMPTY_STATUS_COUNTS: SubTaskRuntimeRetentionObservabilitySnapshot["summary
   error: 0,
   timeout: 0,
   stopped: 0,
+  interrupted: 0,
 };
 
 /**
@@ -128,7 +130,8 @@ function isKnownStatus(
     || value === "done"
     || value === "error"
     || value === "timeout"
-    || value === "stopped";
+    || value === "stopped"
+    || value === "interrupted";
 }
 
 function normalizeArchivedAt(value: number | undefined): number | undefined {

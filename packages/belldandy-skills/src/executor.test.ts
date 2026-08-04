@@ -283,6 +283,49 @@ describe("ToolExecutor", () => {
     expect(seenSignals[0]).toBe(controller.signal);
   });
 
+  it("should expose the current run and tool call only through the execution context", async () => {
+    let seenContext: Pick<ToolContext, "conversationId" | "agentRunId" | "toolCallId"> | undefined;
+    const correlationAwareTool: Tool = {
+      definition: {
+        name: "correlation_aware",
+        description: "记录当前工具调用关联",
+        parameters: { type: "object", properties: {} },
+      },
+      async execute(_args, context): Promise<ToolCallResult> {
+        seenContext = {
+          conversationId: context.conversationId,
+          agentRunId: context.agentRunId,
+          toolCallId: context.toolCallId,
+        };
+        return {
+          id: "",
+          name: "correlation_aware",
+          success: true,
+          output: "ok",
+          durationMs: 0,
+        };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [correlationAwareTool],
+      workspaceRoot: "/tmp/test",
+    });
+
+    await executor.execute({
+      id: "tool-parent-1",
+      name: "correlation_aware",
+      arguments: {},
+    }, "conversation-parent-1", undefined, undefined, undefined, undefined, {
+      agentRunId: "run-parent-1",
+    });
+
+    expect(seenContext).toEqual({
+      conversationId: "conversation-parent-1",
+      agentRunId: "run-parent-1",
+      toolCallId: "tool-parent-1",
+    });
+  });
+
   it("should stop before running the tool when abortSignal is already aborted", async () => {
     const execute = vi.fn(async (): Promise<ToolCallResult> => ({
       id: "",

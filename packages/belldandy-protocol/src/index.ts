@@ -162,6 +162,8 @@ export type CodingRunOptions = {
   maxTurns?: number;
   maxTokens?: number;
   maxCostUsd?: number;
+  /** Headless structured-output contract; Gateway validates it before trusted Agent injection. */
+  outputSchema?: unknown;
 };
 
 export type MessageSendParams = {

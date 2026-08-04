@@ -159,6 +159,9 @@ export async function runAgentRunCommand(input: AgentRunCommandInput): Promise<n
     return CODING_RUN_EXIT_CODES.invalidInput;
   }
   const gatewayPrompt = outputSchemaContract?.ok ? outputSchemaContract.prompt : prompt;
+  const gatewayCodingRun = schemaResult?.ok
+    ? { ...(input.codingRun ?? {}), outputSchema: input.outputSchema }
+    : input.codingRun;
   const changeCapture = await captureHeadlessChanges(input);
 
   let sawDelta = false;
@@ -183,7 +186,7 @@ export async function runAgentRunCommand(input: AgentRunCommandInput): Promise<n
       ...(input.agentId?.trim() ? { agentId: input.agentId.trim() } : {}),
       ...(input.modelId?.trim() ? { modelId: input.modelId.trim() } : {}),
       ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-      ...(input.codingRun ? { codingRun: input.codingRun } : {}),
+      ...(gatewayCodingRun ? { codingRun: gatewayCodingRun } : {}),
       onEvent: (event) => {
         if (isTerminalEvent(event)) {
           terminalEvent = event;
@@ -244,7 +247,7 @@ export async function runAgentRunCommand(input: AgentRunCommandInput): Promise<n
   if (!input.jsonl) {
     renderHumanCompletion(result, { sawDelta, writeStdout, writeStderr });
   }
-  return exitCodeForTerminalType(result.terminalType);
+  return exitCodeForTerminalType(result.terminalType, result.errorCode);
 }
 
 async function captureHeadlessChanges(input: AgentRunCommandInput): Promise<HeadlessChangeCapture | HeadlessChangeSummary | undefined> {
@@ -346,7 +349,10 @@ function renderHumanCompletion(
   output.writeStderr(`[agent] ${result.terminalType}\n`);
 }
 
-function exitCodeForTerminalType(type: GatewayConversationRunResult["terminalType"]): number {
+function exitCodeForTerminalType(
+  type: GatewayConversationRunResult["terminalType"],
+  errorCode?: GatewayConversationRunResult["errorCode"],
+): number {
   switch (type) {
     case "run.completed":
       return CODING_RUN_EXIT_CODES.success;
@@ -355,7 +361,9 @@ function exitCodeForTerminalType(type: GatewayConversationRunResult["terminalTyp
     case "run.interrupted":
       return CODING_RUN_EXIT_CODES.interrupted;
     case "run.failed":
-      return CODING_RUN_EXIT_CODES.executionFailed;
+      return errorCode === "output_schema_invalid"
+        ? CODING_RUN_EXIT_CODES.outputSchemaInvalid
+        : CODING_RUN_EXIT_CODES.executionFailed;
   }
 }
 

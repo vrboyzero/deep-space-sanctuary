@@ -6,17 +6,17 @@ import { fileURLToPath } from "node:url";
 
 import {
   createCodingAgentBenchmarkReport,
+  hashCodingAgentBenchmarkManifestText,
   loadCodingAgentBenchmarkManifest,
+  resolveCodingAgentBenchmarkManifestPath,
 } from "./coding-agent-benchmark-contract.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
-const workspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 
 export const CODING_AGENT_BASELINE_INDEX_VERSION = "coding-agent-benchmark-baseline-index/v1";
 
 export async function aggregateCodingAgentBenchmarkReports(input) {
-  const manifestPath = path.resolve(input?.manifestPath
-    ?? path.join(workspaceRoot, "benchmarks/coding-agent/v1/task-manifest.json"));
+  const manifestPath = resolveCodingAgentBenchmarkAggregationManifestPath(input);
   const reportPaths = normalizeReportPaths(input?.reportPaths);
   const outputRoot = input?.outputRoot ? path.resolve(input.outputRoot) : null;
   const generatedAt = input?.generatedAt ?? new Date().toISOString();
@@ -31,7 +31,7 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
     fs.readFile(manifestPath, "utf-8"),
     loadCodingAgentBenchmarkManifest(manifestPath),
   ]);
-  const manifestSha256 = sha256(manifestText);
+  const manifestSha256 = hashCodingAgentBenchmarkManifestText(manifestText);
   const inputReports = [];
   for (const reportPath of reportPaths) {
     inputReports.push(await readInputReport({ reportPath, manifest, manifestSha256 }));
@@ -81,6 +81,16 @@ export async function aggregateCodingAgentBenchmarkReports(input) {
   return { report, baselineIndex };
 }
 
+export function resolveCodingAgentBenchmarkAggregationManifestPath(input = {}) {
+  if (input?.manifestPath !== undefined && input?.manifestRevision !== undefined) {
+    throw new Error("Coding benchmark aggregation cannot combine manifestPath with manifestRevision.");
+  }
+  if (input?.manifestPath !== undefined) {
+    return path.resolve(requireInput(input.manifestPath, "manifestPath"));
+  }
+  return path.resolve(resolveCodingAgentBenchmarkManifestPath(input?.manifestRevision ?? "v1"));
+}
+
 export async function verifyCodingAgentBaselineArtifact(input) {
   const outputRoot = path.resolve(requireInput(input?.outputRoot, "outputRoot"));
   const manifestPath = path.join(outputRoot, "task-manifest.json");
@@ -94,7 +104,7 @@ export async function verifyCodingAgentBaselineArtifact(input) {
   ]);
   const report = parseJson(reportText, reportPath);
   const baselineIndex = parseJson(indexText, indexPath);
-  const manifestSha256 = sha256(manifestText);
+  const manifestSha256 = hashCodingAgentBenchmarkManifestText(manifestText);
 
   if (baselineIndex?.schemaVersion !== CODING_AGENT_BASELINE_INDEX_VERSION) {
     throw new Error("Coding benchmark baseline index has an unsupported schema version.");
@@ -451,7 +461,7 @@ function safeMessage(error) {
   return error instanceof Error ? error.message : String(error ?? "unknown error");
 }
 
-function parseCliArguments(argv) {
+export function parseCodingAgentBenchmarkAggregationCliArguments(argv) {
   const options = { reportPaths: [], writeOutput: true, verify: false };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -463,6 +473,14 @@ function parseCliArguments(argv) {
       index += 1;
     } else if (value === "--generated-at") {
       options.generatedAt = requireInput(argv[index + 1], "--generated-at");
+      index += 1;
+    } else if (value === "--manifest-revision") {
+      if (options.manifestRevision !== undefined) {
+        throw new Error("--manifest-revision may only be provided once.");
+      }
+      const manifestRevision = requireInput(argv[index + 1], "--manifest-revision");
+      resolveCodingAgentBenchmarkManifestPath(manifestRevision);
+      options.manifestRevision = manifestRevision;
       index += 1;
     } else if (value === "--dry-run") {
       options.writeOutput = false;
@@ -476,9 +494,12 @@ function parseCliArguments(argv) {
 }
 
 async function main() {
-  const options = parseCliArguments(process.argv.slice(2));
+  const options = parseCodingAgentBenchmarkAggregationCliArguments(process.argv.slice(2));
   if (options.verify) {
-    if (options.reportPaths.length > 0 || !options.outputRoot || !options.writeOutput) {
+    if (options.reportPaths.length > 0
+      || options.manifestRevision !== undefined
+      || !options.outputRoot
+      || !options.writeOutput) {
       throw new Error("--verify requires only --output-root.");
     }
     const verified = await verifyCodingAgentBaselineArtifact({ outputRoot: options.outputRoot });

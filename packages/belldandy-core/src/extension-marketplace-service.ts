@@ -25,7 +25,8 @@ import {
 import {
   beginMarketplaceExtensionAudit,
   completeMarketplaceExtensionAudit,
-  failMarketplaceExtensionAudit,
+  markMarketplaceExtensionAuditUncertain,
+  reconcileMarketplaceExtensionAudits,
   type MarketplaceExtensionAuditRecord,
 } from "./extension-marketplace-audit.js";
 import {
@@ -38,7 +39,7 @@ import {
   type MaterializedExtensionMarketplaceSource,
   type PrepareExtensionMarketplaceSourceResult,
 } from "./extension-marketplace-source.js";
-import { assertExtensionRuntimeInactive } from "./extension-runtime-lease.js";
+import { assertExtensionRuntimeInactive, listExtensionRuntimeLeases } from "./extension-runtime-lease.js";
 
 const DEFAULT_MANIFEST_PATH = "belldandy-extension.json";
 
@@ -83,6 +84,7 @@ export interface UpdateMarketplaceExtensionInput {
   stateDir: string;
   extensionId: string;
   confirmationHash?: string;
+  runtimeCoordinator?: MarketplaceExtensionRuntimeCoordinator;
 }
 
 export interface MarketplaceExtensionUpdatePreview
@@ -99,6 +101,20 @@ export interface UninstallMarketplaceExtensionInput {
   stateDir: string;
   extensionId: string;
   confirmationHash?: string;
+  runtimeCoordinator?: MarketplaceExtensionRuntimeCoordinator;
+}
+
+export type MarketplaceExtensionRuntimeMutation = "disable" | "update" | "uninstall";
+
+export interface MarketplaceExtensionRuntimeCoordinator {
+  revokeForMutation(input: {
+    extensionId: string;
+    operation: MarketplaceExtensionRuntimeMutation;
+  }): Promise<void>;
+}
+
+export interface MarketplaceExtensionMutationOptions {
+  runtimeCoordinator?: MarketplaceExtensionRuntimeCoordinator;
 }
 
 export interface MarketplaceExtensionUninstallPreview {
@@ -177,6 +193,53 @@ function resolveManagedExtensionRemovalPath(
     return materializedRoot.resolveForRemovalPath(expectedPath, "marketplace extension install path");
   } catch {
     throw new Error("Marketplace extension install path is outside the managed materialized root.");
+  }
+}
+
+async function quiesceMarketplaceExtensionRuntime(input: {
+  stateDir: string;
+  extensionId: string;
+  operation: MarketplaceExtensionRuntimeMutation;
+  runtimeCoordinator?: MarketplaceExtensionRuntimeCoordinator;
+}): Promise<void> {
+  const leases = await listExtensionRuntimeLeases(input.stateDir);
+  const active = leases.some((lease) => lease.extensionId === input.extensionId);
+  if (active) {
+    if (!input.runtimeCoordinator) {
+      throw new Error(`Marketplace extension runtime is active; revoke it before mutation: ${input.extensionId}`);
+    }
+    await input.runtimeCoordinator.revokeForMutation({
+      extensionId: input.extensionId,
+      operation: input.operation,
+    });
+  }
+  await assertExtensionRuntimeInactive(input.stateDir, input.extensionId);
+}
+
+async function assertMarketplaceExtensionMutationResolved(
+  stateDir: string,
+  extensionId: string,
+  operation: MarketplaceExtensionAuditRecord["operation"],
+  confirmationHash?: string,
+): Promise<void> {
+  const audits = await reconcileMarketplaceExtensionAudits(stateDir);
+  const unresolved = audits.find((audit) =>
+    audit.extensionId === extensionId
+    && (audit.status === "confirmed" || audit.status === "uncertain"));
+  if (unresolved) {
+    throw new Error(
+      `Unresolved marketplace extension audit blocks mutation: ${unresolved.auditId} (${unresolved.operation}).`,
+    );
+  }
+  const completed = confirmationHash
+    ? audits.find((audit) =>
+      audit.extensionId === extensionId
+      && audit.operation === operation
+      && audit.confirmationHash === confirmationHash
+      && audit.status === "completed")
+    : undefined;
+  if (completed) {
+    throw new Error(`Marketplace extension audit already completed: ${completed.auditId} (${completed.operation}).`);
   }
 }
 
@@ -337,6 +400,12 @@ export async function installMarketplaceExtension(
   input: InstallMarketplaceExtensionInput,
 ): Promise<InstallMarketplaceExtensionResult> {
   const preview = await previewMarketplaceExtensionInstall(input);
+  await assertMarketplaceExtensionMutationResolved(
+    input.stateDir,
+    preview.extensionId,
+    "install",
+    input.confirmationHash,
+  );
   if (!input.confirmationHash || input.confirmationHash !== preview.confirmationHash) {
     throw new Error("Marketplace extension installation requires an exact trust preview confirmation.");
   }
@@ -371,7 +440,7 @@ export async function installMarketplaceExtension(
     const audit = await completeMarketplaceExtensionAudit(input.stateDir, pendingAudit);
     return { ...result, audit };
   } catch (error) {
-    await failMarketplaceExtensionAudit(input.stateDir, pendingAudit).catch(() => {});
+    await markMarketplaceExtensionAuditUncertain(input.stateDir, pendingAudit).catch(() => {});
     throw error;
   }
 }
@@ -379,6 +448,12 @@ export async function installMarketplaceExtension(
 export async function updateMarketplaceExtension(
   input: UpdateMarketplaceExtensionInput,
 ): Promise<InstallMarketplaceExtensionResult> {
+  await assertMarketplaceExtensionMutationResolved(
+    input.stateDir,
+    input.extensionId,
+    "update",
+    input.confirmationHash,
+  );
   const preview = await previewMarketplaceExtensionUpdate(input);
   if (!input.confirmationHash || input.confirmationHash !== preview.confirmationHash) {
     throw new Error("Marketplace extension update requires an exact trust preview confirmation.");
@@ -387,7 +462,12 @@ export async function updateMarketplaceExtension(
   if (!installed) {
     throw new Error(`Installed extension not found: ${input.extensionId}`);
   }
-  await assertExtensionRuntimeInactive(input.stateDir, input.extensionId);
+  await quiesceMarketplaceExtensionRuntime({
+    stateDir: input.stateDir,
+    extensionId: input.extensionId,
+    operation: "update",
+    runtimeCoordinator: input.runtimeCoordinator,
+  });
   const knownMarketplace = await getKnownMarketplace(input.stateDir, installed.marketplace);
   if (!knownMarketplace) {
     throw new Error(`Known marketplace not found: ${installed.marketplace}`);
@@ -425,7 +505,7 @@ export async function updateMarketplaceExtension(
     const audit = await completeMarketplaceExtensionAudit(input.stateDir, pendingAudit);
     return { ...result, audit };
   } catch (error) {
-    await failMarketplaceExtensionAudit(input.stateDir, pendingAudit).catch(() => {});
+    await markMarketplaceExtensionAuditUncertain(input.stateDir, pendingAudit).catch(() => {});
     throw error;
   }
 }
@@ -472,14 +552,29 @@ export async function enableMarketplaceExtension(stateDir: string, extensionId: 
   return setInstalledExtensionEnabled(stateDir, extensionId, true);
 }
 
-export async function disableMarketplaceExtension(stateDir: string, extensionId: string): Promise<InstalledExtensionRecord> {
-  await assertExtensionRuntimeInactive(stateDir, extensionId);
+export async function disableMarketplaceExtension(
+  stateDir: string,
+  extensionId: string,
+  options: MarketplaceExtensionMutationOptions = {},
+): Promise<InstalledExtensionRecord> {
+  await quiesceMarketplaceExtensionRuntime({
+    stateDir,
+    extensionId,
+    operation: "disable",
+    runtimeCoordinator: options.runtimeCoordinator,
+  });
   return setInstalledExtensionEnabled(stateDir, extensionId, false);
 }
 
 export async function uninstallMarketplaceExtension(
   input: UninstallMarketplaceExtensionInput,
 ): Promise<{ removed: InstalledExtensionRecord; audit: MarketplaceExtensionAuditRecord }> {
+  await assertMarketplaceExtensionMutationResolved(
+    input.stateDir,
+    input.extensionId,
+    "uninstall",
+    input.confirmationHash,
+  );
   const preview = await previewMarketplaceExtensionUninstall(input);
   if (!input.confirmationHash || input.confirmationHash !== preview.confirmationHash) {
     throw new Error("Marketplace extension uninstall requires an exact trust preview confirmation.");
@@ -488,7 +583,12 @@ export async function uninstallMarketplaceExtension(
   if (!installed) {
     throw new Error(`Installed extension not found: ${input.extensionId}`);
   }
-  await assertExtensionRuntimeInactive(input.stateDir, input.extensionId);
+  await quiesceMarketplaceExtensionRuntime({
+    stateDir: input.stateDir,
+    extensionId: input.extensionId,
+    operation: "uninstall",
+    runtimeCoordinator: input.runtimeCoordinator,
+  });
   const pendingAudit = await beginMarketplaceExtensionAudit(input.stateDir, {
     operation: "uninstall",
     extensionId: preview.extensionId,
@@ -507,7 +607,7 @@ export async function uninstallMarketplaceExtension(
     const audit = await completeMarketplaceExtensionAudit(input.stateDir, pendingAudit);
     return { removed: installed, audit };
   } catch (error) {
-    await failMarketplaceExtensionAudit(input.stateDir, pendingAudit).catch(() => {});
+    await markMarketplaceExtensionAuditUncertain(input.stateDir, pendingAudit).catch(() => {});
     throw error;
   }
 }

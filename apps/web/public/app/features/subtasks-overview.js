@@ -21,6 +21,8 @@ function formatSubtaskStatus(status) {
       return "超时";
     case "stopped":
       return "已停止";
+    case "interrupted":
+      return "运行已中断";
     default:
       return "等待中";
   }
@@ -38,6 +40,8 @@ function getStatusToneClass(status) {
       return "is-timeout";
     case "stopped":
       return "is-stopped";
+    case "interrupted":
+      return "is-timeout";
     default:
       return "is-pending";
   }

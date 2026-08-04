@@ -43,7 +43,8 @@ function truncateText(value: string | undefined, maxLength: number): string | un
 }
 
 function isTerminalStatus(status: string): boolean {
-  return status === "done" || status === "error" || status === "timeout" || status === "stopped";
+  return status === "done" || status === "error" || status === "timeout"
+    || status === "stopped" || status === "interrupted";
 }
 
 export function isBridgeSessionSubTask(

@@ -478,7 +478,8 @@ function buildSubTaskAcceptanceGateView(
     return null;
   }
 
-  const terminal = item.status === "done" || item.status === "error" || item.status === "timeout" || item.status === "stopped";
+  const terminal = item.status === "done" || item.status === "error" || item.status === "timeout"
+    || item.status === "stopped" || item.status === "interrupted";
   if (!terminal) {
     return {
       status: "pending",
@@ -493,6 +494,25 @@ function buildSubTaskAcceptanceGateView(
       ...(contract?.acceptance?.verificationHints?.length
         ? { verificationHints: [...contract.acceptance.verificationHints] }
         : {}),
+    };
+  }
+
+  if (item.status === "interrupted") {
+    return {
+      status: "rejected",
+      enforced: true,
+      summary: "Acceptance gate rejected because the delegated runtime was interrupted before completion could be verified.",
+      reasons: ["Subtask runtime owner was lost before a terminal result was persisted."],
+      ...(contract?.deliverableContract?.format ? { deliverableFormat: contract.deliverableContract.format } : {}),
+      ...(contract?.deliverableContract?.requiredSections?.length
+        ? { requiredSections: [...contract.deliverableContract.requiredSections] }
+        : {}),
+      ...(contract?.acceptance?.doneDefinition ? { doneDefinition: contract.acceptance.doneDefinition } : {}),
+      ...(contract?.acceptance?.verificationHints?.length
+        ? { verificationHints: [...contract.acceptance.verificationHints] }
+        : {}),
+      rejectionConfidence: "high",
+      managerActionHint: "resume the interrupted subtask and verify a newly persisted terminal result before fan-in.",
     };
   }
 
@@ -712,7 +732,8 @@ function classifyTeamLaneState(
   if (laneTask.status === "running" || laneTask.status === "pending") {
     return "pending";
   }
-  if (laneTask.status === "error" || laneTask.status === "timeout" || laneTask.status === "stopped") {
+  if (laneTask.status === "error" || laneTask.status === "timeout"
+    || laneTask.status === "stopped" || laneTask.status === "interrupted") {
     return "blocker";
   }
   if (acceptanceGate?.status === "rejected") {
@@ -1232,7 +1253,8 @@ export async function handleSubTaskStopWithQueryRuntime(
       },
     });
 
-    if (current.status === "done" || current.status === "error" || current.status === "timeout" || current.status === "stopped") {
+    if (current.status === "done" || current.status === "error" || current.status === "timeout"
+      || current.status === "stopped" || current.status === "interrupted") {
       queryRuntime.mark("completed", {
         conversationId: current.parentConversationId,
         detail: {

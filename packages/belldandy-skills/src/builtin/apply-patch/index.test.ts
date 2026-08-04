@@ -249,6 +249,8 @@ describe("apply_patch tool", () => {
       {
         ...baseContext,
         workspaceRevisionId: "gateway-run-patch",
+        agentRunId: "gateway-run-patch",
+        toolCallId: "tool-apply-patch-1",
         workspaceMutationObserver,
       },
     );
@@ -257,12 +259,24 @@ describe("apply_patch tool", () => {
     expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
       workspaceRevisionId: "gateway-run-patch",
       toolName: "apply_patch",
+      operation: {
+        conversationId: baseContext.conversationId,
+        agentRunId: "gateway-run-patch",
+        toolCallId: "tool-apply-patch-1",
+      },
       targets: expect.arrayContaining([
         { absolutePath: path.join(tempDir, "source.txt"), relativePath: "source.txt" },
         { absolutePath: path.join(tempDir, "moved.txt"), relativePath: "moved.txt" },
       ]),
     }));
     expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledTimes(2);
+    expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledWith(expect.objectContaining({
+      operation: {
+        conversationId: baseContext.conversationId,
+        agentRunId: "gateway-run-patch",
+        toolCallId: "tool-apply-patch-1",
+      },
+    }));
   });
 
   it("should stop before applying any writes when abortSignal is already aborted", async () => {

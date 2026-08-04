@@ -20,6 +20,10 @@ import {
 import type { GoalStatus, GoalTaskGraph } from "../goals/types.js";
 import type { SubTaskKind, SubTaskStatus } from "../task-runtime.js";
 import type { CodingRunRecoveryLookup } from "../coding-run/recovery-marker-store.js";
+import {
+  createUnavailableCodingRunReconciliation,
+  type CodingRunReconciliationJournal,
+} from "../coding-run/reconciliation-journal.js";
 import type {
   ConversationFollowUpEnqueueResult,
   ConversationFollowUpView,
@@ -56,6 +60,12 @@ type SubtaskControlRecord = {
   scratchPath?: string;
   reviewPath?: string;
   bridgeSessionRuntime?: { state: "active" | "closed" | "runtime-lost" | "orphaned" };
+  recovery?: {
+    state: "runtime_lost";
+    previousStatus: "pending" | "running";
+    detectedAt: number;
+    mutationReplay: "forbidden";
+  };
   launchSpec?: {
     role?: "default" | "commander" | "coder" | "researcher" | "verifier";
     worktreePath?: string;
@@ -86,6 +96,7 @@ type WorkflowRunControlStatus = {
 };
 
 type CodingRunMethodContext = {
+  codingRunReconciliationJournal?: Pick<CodingRunReconciliationJournal, "reconcile">;
   conversationRunRegistry?: {
     get: (conversationId: string) => { runId: string } | undefined;
     getRun?: (conversationId: string, runId: string) => {
@@ -375,11 +386,18 @@ async function statusCodingRun(req: GatewayReqFrame, ctx: CodingRunMethodContext
       query.binding.agentRunId,
     );
     if (recovered?.state === "lost") {
+      const reconciliation = ctx.codingRunReconciliationJournal
+        ? await ctx.codingRunReconciliationJournal.reconcile({
+            conversationId: query.binding.conversationId,
+            agentRunId: query.binding.agentRunId,
+          }).catch(() => createUnavailableCodingRunReconciliation())
+        : createUnavailableCodingRunReconciliation();
       return success(req.id, createRuntimeLostCodingRunView({
         source: "conversation",
         binding: recovered.marker.binding,
         startedAtMs: recovered.marker.startedAtMs,
         updatedAtMs: recovered.marker.updatedAtMs,
+        reconciliation,
       }));
     }
     if (recovered?.state === "unavailable" || recovered?.state === "current_owner" || recovered?.state === "live_owner") {

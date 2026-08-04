@@ -107,6 +107,7 @@ import {
   readPrefixComparableSnapshot,
 } from "./prompt-budget-observability.js";
 import { selectToolMessagesForCompression } from "./tool-result-adaptive-keep.js";
+import { createStructuredOutputSession } from "./structured-output.js";
 import {
   createReActRunAbortController,
   normalizeMaxHighRiskToolCalls,
@@ -2280,6 +2281,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     const generatedItems = new AgentEndLedger();
     let runSuccess = true;
     let runError: string | undefined;
+    const structuredOutputSession = input.structuredOutput
+      ? createStructuredOutputSession(input.structuredOutput)
+      : undefined;
     const runBudget = new ReActRunBudgetTracker({
       maxTotalTokens: runBudgets.maxTotalTokens,
       maxHighRiskToolCalls: this.opts.maxHighRiskToolCalls,
@@ -2453,6 +2457,25 @@ export class ToolEnabledAgent implements BelldandyAgent {
       yield* yieldItem({ type: "status", status: "error" });
     };
 
+    const emitStructuredOutputFailure = async function* (
+      rejection: { originalText: string; message: string },
+      budget?: AgentBudgetExhausted,
+      includeSchemaErrorCode = true,
+    ) {
+      runSuccess = false;
+      runError = rejection.message;
+      yield* yieldItem(buildUsageItem());
+      if (budget) yield* yieldItem(budget);
+      yield* yieldItem({ type: "final", text: rejection.originalText });
+      yield* yieldItem({
+        type: "status",
+        status: "error",
+        ...(includeSchemaErrorCode
+          ? { code: "output_schema_invalid" as const, error: rejection.message }
+          : {}),
+      });
+    };
+
     const emitRunAbort = async function* () {
       if (activeRunAbortController.isWallTimeExceeded()) {
         const observed = Math.max(
@@ -2486,11 +2509,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
       try {
       while (true) {
-        if (isRunStopRequested(input.abortSignal)) {
+        const stopRequestedAfterModel = isRunStopRequested(input.abortSignal);
+        if (stopRequestedAfterModel && !structuredOutputSession) {
           yield* emitRunAbort();
           return;
         }
         const nextModelCallIndex = modelCallCount + 1;
+        const structuredOutputRepairCall = structuredOutputSession?.isRepairCall() ?? false;
         const iterationBudget = runBudgets.toolLoopIterationBudget;
         if (iterationBudget > 0) {
           const warningThreshold = Math.max(1, Math.ceil(iterationBudget * this.opts.toolLoopWarningFraction));
@@ -2633,14 +2658,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           }
         }
 
-        const steerCommands = input.steering
+        const steerCommands = input.steering && !structuredOutputRepairCall
           ? await input.steering.consumePending({ modelCallIndex: nextModelCallIndex })
           : [];
         for (const command of steerCommands) {
           messages.push({ role: "user", content: command.prompt });
         }
 
-        const tools = this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
+        const tools = structuredOutputRepairCall
+          ? []
+          : this.opts.toolExecutor.getDefinitions(resolvedAgentId, input.conversationId, runtimeContext);
         const toolNames = tools.map((tool) => tool.function.name);
         const requestMessages = applyStablePrefixSplitMessageLayout(messages, {
           transientText: currentTransientTailText,
@@ -2685,7 +2712,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         });
 
         // 调用模型。流式模式通过相邻单槽 delivery 转发，避免在本文件持有队列和协议状态。
-        const streamDelivery = this.opts.streamingEnabled
+        const streamDelivery = this.opts.streamingEnabled && !structuredOutputSession
           ? createModelStreamTextDelivery()
           : undefined;
         const responsePromise = this.callModel(
@@ -2878,6 +2905,16 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const error = totalTokenBudgetExhausted.budget === "cost_usd"
             ? `累计费用预算超限（最大 $${totalTokenBudgetExhausted.limit.toFixed(8)}，已累计 $${totalTokenBudgetExhausted.observed.toFixed(8)}）。已停止后续模型和工具调用。`
             : `累计 token 预算超限（最大 ${totalTokenBudgetExhausted.limit} token，已累计 ${totalTokenBudgetExhausted.observed}）。请拆分任务、收敛上下文，或仅为受控 Profile 提高预算后继续。`;
+          if (structuredOutputRepairCall && structuredOutputSession) {
+            const rejection = structuredOutputSession.rejectRepair(error);
+            yield* emitStructuredOutputFailure(rejection, {
+              type: "budget_exhausted",
+              budget: totalTokenBudgetExhausted.budget,
+              limit: totalTokenBudgetExhausted.limit,
+              observed: totalTokenBudgetExhausted.observed,
+            }, false);
+            return;
+          }
           yield* emitBudgetExhausted(
             totalTokenBudgetExhausted.budget,
             totalTokenBudgetExhausted.limit,
@@ -2885,10 +2922,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
             error,
           );
           return;
-        }
-
-        if (input.conversationId) {
-          await this.opts.toolExecutor.consumeLoadedDeferredToolsForNextTurn(input.conversationId);
         }
 
         // 输出文本增量（如果有）；先剥离工具调用协议块，避免在对话中展示
@@ -2904,7 +2937,29 @@ export class ToolEnabledAgent implements BelldandyAgent {
           originalContentLength: response.content?.length ?? 0,
           displayContentLength: contentForDisplay.length,
         });
-        if (contentForDisplay && !streamDelivery) {
+        if (stopRequestedAfterModel && structuredOutputSession) {
+          const review = structuredOutputSession.reviewFinal(contentForDisplay);
+          if (review.action !== "accept") {
+            const rejection = structuredOutputSession.rejectRepair(
+              `Structured output repair was not started because the ${maxRunWallTimeMs}ms wall-time budget expired.`,
+            );
+            yield* emitStructuredOutputFailure(rejection, {
+              type: "budget_exhausted",
+              budget: "wall_time_ms",
+              limit: maxRunWallTimeMs,
+              observed: Math.max(maxRunWallTimeMs, Date.now() - runBudgetStartedAt),
+            });
+            return;
+          }
+          yield* emitRunAbort();
+          return;
+        }
+
+        if (input.conversationId && !structuredOutputRepairCall) {
+          await this.opts.toolExecutor.consumeLoadedDeferredToolsForNextTurn(input.conversationId);
+        }
+
+        if (contentForDisplay && !streamDelivery && !structuredOutputSession) {
           for (const delta of splitText(contentForDisplay, 16)) {
             yield* yieldItem({ type: "delta", delta });
           }
@@ -2918,7 +2973,101 @@ export class ToolEnabledAgent implements BelldandyAgent {
           toolDefinitionCount: tools.length,
           toolNamesPreview: toolNames.slice(0, 12),
         });
+        if (structuredOutputRepairCall && toolCalls && toolCalls.length > 0 && structuredOutputSession) {
+          const rejection = structuredOutputSession.rejectRepair(
+            "Structured output repair returned a tool call instead of valid JSON.",
+          );
+          yield* emitStructuredOutputFailure(rejection);
+          return;
+        }
         if (!toolCalls || toolCalls.length === 0) {
+          if (structuredOutputSession) {
+            const review = structuredOutputSession.reviewFinal(contentForDisplay);
+            if (review.action === "repair") {
+              const repairWallTimeObserved = Date.now() - runBudgetStartedAt;
+              if (repairWallTimeObserved >= maxRunWallTimeMs) {
+                const rejection = structuredOutputSession.rejectRepair(
+                  `Structured output repair was not started because the ${maxRunWallTimeMs}ms wall-time budget expired.`,
+                );
+                yield* emitStructuredOutputFailure(rejection, {
+                  type: "budget_exhausted",
+                  budget: "wall_time_ms",
+                  limit: maxRunWallTimeMs,
+                  observed: repairWallTimeObserved,
+                });
+                return;
+              }
+              const repairModelCallIndex = modelCallCount + 1;
+              const iterationBudget = runBudgets.toolLoopIterationBudget;
+              if (iterationBudget > 0 && repairModelCallIndex > iterationBudget) {
+                const rejection = structuredOutputSession.rejectRepair(
+                  `Structured output repair was not started because the model-turn budget is limited to ${iterationBudget}.`,
+                );
+                yield* emitStructuredOutputFailure(rejection, {
+                  type: "budget_exhausted",
+                  budget: "tool_loop_iterations",
+                  limit: iterationBudget,
+                  observed: repairModelCallIndex,
+                });
+                return;
+              }
+              const repairAssistantMessage: Message = {
+                role: "assistant",
+                content: response.content || contentForDisplay,
+              };
+              const repairPromptMessage: Message = { role: "user", content: review.prompt };
+              const repairMessages = applyStablePrefixSplitMessageLayout(
+                [...messages, repairAssistantMessage, repairPromptMessage],
+                {
+                  transientText: currentTransientTailText,
+                  independentBlockText: currentIndependentBlockText,
+                  messageLayout: this.opts.messageLayout,
+                },
+              ) as Message[];
+              const repairTokenEstimateContext = currentTokenEstimateModel
+                ? { model: currentTokenEstimateModel }
+                : undefined;
+              const minimumRepairInputTokens = estimateMessagesTotal(
+                repairMessages,
+                repairTokenEstimateContext,
+              );
+              const minimumRepairCost = calculateUsageCostUsd({
+                inputTokens: minimumRepairInputTokens,
+                outputTokens: 0,
+                pricing: this.opts.usagePricing,
+              });
+              const repairBudgetExhausted = runBudget.checkModelCallPreflight({
+                minimumInputTokens: minimumRepairInputTokens,
+                ...(minimumRepairCost ? { minimumCostUsd: minimumRepairCost.totalUsd } : {}),
+              });
+              if (repairBudgetExhausted) {
+                const budgetLabel = repairBudgetExhausted.budget === "cost_usd" ? "cost" : "token";
+                const rejection = structuredOutputSession.rejectRepair(
+                  `Structured output repair was not started because its minimum prompt exceeds the remaining ${budgetLabel} budget.`,
+                );
+                yield* emitStructuredOutputFailure(rejection, {
+                  type: "budget_exhausted",
+                  budget: repairBudgetExhausted.budget,
+                  limit: repairBudgetExhausted.limit,
+                  observed: repairBudgetExhausted.observed,
+                });
+                return;
+              }
+              messages.push(repairAssistantMessage, repairPromptMessage);
+              continue;
+            }
+            if (review.action === "reject") {
+              yield* emitStructuredOutputFailure(review);
+              return;
+            }
+            for (const delta of splitText(review.outputText, 16)) {
+              yield* yieldItem({ type: "delta", delta });
+            }
+            yield* yieldItem(buildUsageItem());
+            yield* yieldItem({ type: "final", text: review.outputText });
+            yield* yieldItem({ type: "status", status: "done" });
+            return;
+          }
           if (input.steering && !input.steering.sealIfIdle()) {
             messages.push({
               role: "assistant",

@@ -404,6 +404,8 @@ description: 通过额外根目录读取
         {
           ...baseContext,
           workspaceRevisionId: "gateway-run-1",
+          agentRunId: "gateway-run-1",
+          toolCallId: "tool-file-write-1",
           workspaceMutationObserver,
         },
       );
@@ -412,9 +414,20 @@ description: 通过额外根目录读取
       expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
         workspaceRevisionId: "gateway-run-1",
         toolName: "file_write",
+        operation: {
+          conversationId: baseContext.conversationId,
+          agentRunId: "gateway-run-1",
+          toolCallId: "tool-file-write-1",
+        },
         targets: [{ absolutePath: path.join(tempDir, "tracked.txt"), relativePath: "tracked.txt" }],
       }));
-      expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledTimes(1);
+      expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledWith(expect.objectContaining({
+        operation: {
+          conversationId: baseContext.conversationId,
+          agentRunId: "gateway-run-1",
+          toolCallId: "tool-file-write-1",
+        },
+      }));
     });
 
     it("does not create a workspace revision when replace validation rejects the write", async () => {

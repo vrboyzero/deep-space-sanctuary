@@ -94,6 +94,7 @@ import {
 import { buildExtensionGovernanceReport } from "./extension-governance.js";
 import { loadExtensionMarketplaceState } from "./extension-marketplace-state.js";
 import { buildExtensionRuntimeReport } from "./extension-runtime.js";
+import { compileOutputSchema } from "./coding-run/output-schema.js";
 import type { ExtensionHostState } from "./extension-host.js";
 import { handleMessageSendWithQueryRuntime, MessageSendConfigurationError } from "./query-runtime-message-send.js";
 import {
@@ -165,10 +166,15 @@ import { handleWorkspaceConversationMethod } from "./server-methods/workspace-co
 import { handleWorkspaceRevisionMethod } from "./server-methods/workspace-revision.js";
 import { handleWorkspaceWorktreeMethod } from "./server-methods/workspace-worktree.js";
 import { handleRemoteDeliveryMethod } from "./server-methods/remote-delivery.js";
+import { handleExtensionRuntimeMethod } from "./server-methods/extension-runtime.js";
 import { handleCodingRunMethod } from "./server-methods/coding-run.js";
 import { handleCommandJobMethod } from "./server-methods/command-job.js";
 import { handleCodingRunSubscriptionMethod } from "./server-methods/coding-run-subscription.js";
 import { createCodingRunGatewayEventBroker, type CodingRunGatewayEventBroker } from "./coding-run/gateway-event-broker.js";
+import {
+  CodingRunReconciliationJournal,
+  type CodingRunReconciliationJournalOwner,
+} from "./coding-run/reconciliation-journal.js";
 import type { PendingToolPermissionRuntime } from "./coding-run/pending-tool-permission-runtime.js";
 import { handleWorkflowMethod } from "./server-methods/workflow.js";
 import { buildChannelSecurityDoctorReport } from "./channel-security-doctor.js";
@@ -254,6 +260,8 @@ export type GatewayServerOptions = {
   conversationRunRegistry?: ConversationRunRegistry;
   /** Conversation coding-run v1 事件的有界投影；不保存领域状态。 */
   codingRunEventBroker?: CodingRunGatewayEventBroker;
+  /** Conversation tool side effect 的脱敏 append-only journal。 */
+  codingRunReconciliationJournal?: CodingRunReconciliationJournalOwner;
   /** confirm 工具调用的 worker-scoped pending permission 真源。 */
   pendingToolPermissionRuntime?: PendingToolPermissionRuntime;
   topLevelConversationLifecycle?: TopLevelConversationLifecycle;
@@ -932,7 +940,14 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     opts.agentRegistry?.list().filter((profile) => isResidentAgentProfile(profile)).map((profile) => profile.id) ?? ["default"],
   );
   const conversationRunRegistry = opts.conversationRunRegistry ?? new ConversationRunRegistry();
-  const codingRunEventBroker = opts.codingRunEventBroker ?? createCodingRunGatewayEventBroker();
+  const codingRunReconciliationJournal = opts.codingRunReconciliationJournal
+    ?? new CodingRunReconciliationJournal(stateDir, {
+      delegationTaskStore: opts.subTaskRuntimeStore,
+      workspaceMutationEvidenceStore: opts.workspaceRevisionRuntime,
+    });
+  const codingRunEventBroker = opts.codingRunEventBroker ?? createCodingRunGatewayEventBroker({
+    reconciliationJournal: codingRunReconciliationJournal,
+  });
   const topLevelConversationLifecycle = opts.topLevelConversationLifecycle
     ?? new TopLevelConversationLifecycle(opts.topLevelConversationLifecycleOptions);
   const memoryUsageAccounting = opts.memoryUsageAccounting ?? new MemoryRuntimeUsageAccounting({
@@ -1406,6 +1421,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     conversationStore,
     conversationRunRegistry,
     codingRunEventBroker,
+    codingRunReconciliationJournal,
     pendingToolPermissionRuntime: opts.pendingToolPermissionRuntime,
     topLevelConversationLifecycle,
     durableExtractionRuntime,
@@ -2375,6 +2391,12 @@ async function handleReq(
       });
     }
 
+    case "extension.runtime.revoke": {
+      return handleExtensionRuntimeMethod(req, {
+        runtime: ctx.extensionHost?.extensionRuntimeSupervisor,
+      });
+    }
+
     case "coding.run.status":
     case "coding.run.follow_up.status":
     case "coding.run.steer.status":
@@ -2382,6 +2404,7 @@ async function handleReq(
     case "coding.run.control": {
       return handleCodingRunMethod(req, {
         conversationRunRegistry: ctx.conversationRunRegistry,
+        codingRunReconciliationJournal: ctx.codingRunReconciliationJournal,
         goalManager: ctx.goalManager,
         subTaskRuntimeStore: ctx.subTaskRuntimeStore,
         resumeSubTask: ctx.resumeSubTask,
@@ -2541,6 +2564,7 @@ function parseCodingRunOptions(
     "maxTurns",
     "maxTokens",
     "maxCostUsd",
+    "outputSchema",
   ]);
   const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
   if (unknownKey) return { ok: false, message: `codingRun.${unknownKey} is not supported` };
@@ -2586,6 +2610,10 @@ function parseCodingRunOptions(
     }
     maxCostUsd = value.maxCostUsd;
   }
+  if (value.outputSchema !== undefined) {
+    const compiledOutputSchema = compileOutputSchema(value.outputSchema);
+    if (!compiledOutputSchema.ok) return compiledOutputSchema;
+  }
 
   return {
     ok: true,
@@ -2598,6 +2626,7 @@ function parseCodingRunOptions(
       ...(maxTurns.value ? { maxTurns: maxTurns.value } : {}),
       ...(maxTokens.value ? { maxTokens: maxTokens.value } : {}),
       ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+      ...(value.outputSchema === undefined ? {} : { outputSchema: value.outputSchema }),
     },
   };
 }

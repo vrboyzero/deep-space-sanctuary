@@ -194,4 +194,43 @@ describe("OCI extension runtime adapter", () => {
     expect(transport.terminated).toBe(true);
     expect(release).toHaveBeenCalledTimes(1);
   });
+
+  it("forces transport termination and lease release when cooperative dispose exceeds its deadline", async () => {
+    const transport = new FakeTransport();
+    const release = vi.fn(async () => undefined);
+    const adapter = new OciExtensionRuntimeAdapter({
+      config: { backend: "oci", runtime: "docker", image: pinnedImage },
+      stateDir: path.resolve("state"),
+      hostRoot: path.resolve("host"),
+      disposeTimeoutMs: 20,
+      launch: async () => ({ transport, release }),
+    });
+    const activation = adapter.activate(grant());
+    await vi.waitFor(() => expect(transport.written).toHaveLength(1));
+    const activationRequest = JSON.parse(transport.written[0]);
+    transport.respond({
+      version: EXTENSION_RUNTIME_PROTOCOL_VERSION,
+      type: "activated",
+      id: activationRequest.id,
+      ok: true,
+      registrations: {
+        plugin: { id: "pure-plugin", name: "Pure Plugin" },
+        tools: [],
+        hooks: [],
+        skillDirs: [],
+      },
+    });
+    const session = await activation;
+
+    const close = session.close("test_complete");
+    await vi.waitFor(() => expect(transport.written).toHaveLength(2));
+    expect(JSON.parse(transport.written[1])).toMatchObject({
+      type: "dispose",
+      reason: "test_complete",
+    });
+    await expect(close).resolves.toBeUndefined();
+
+    expect(transport.terminated).toBe(true);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
 });

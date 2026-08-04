@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,13 @@ export const CODING_AGENT_BENCHMARK_RUN_VERSION = "coding-agent-benchmark-run/v1
 export const CODING_AGENT_BENCHMARK_MANIFEST_V2_VERSION = "coding-agent-benchmark-manifest/v2";
 export const CODING_AGENT_BENCHMARK_REPORT_V2_VERSION = "coding-agent-benchmark-report/v2";
 export const CODING_AGENT_BENCHMARK_RUN_V2_VERSION = "coding-agent-benchmark-run/v2";
+
+export function hashCodingAgentBenchmarkManifestText(value) {
+  if (typeof value !== "string") {
+    throw new Error("Coding benchmark manifest hash input must be text.");
+  }
+  return crypto.createHash("sha256").update(value.replace(/\r\n?/g, "\n")).digest("hex");
+}
 
 const REQUIRED_PLATFORMS = ["windows-native", "wsl2-linux"];
 const FROZEN_EXECUTION_PROFILES = {
@@ -62,6 +70,11 @@ const FROZEN_EXECUTION_PROFILES_V2 = {
     ...FROZEN_EXECUTION_PROFILES["command-control"],
     toolAllow: ["file_read", "list_files", "run_command", "command_job"],
   },
+  "recovery-control": {
+    ...FROZEN_EXECUTION_PROFILES["recovery-control"],
+    toolAllow: ["file_read", "list_files", "file_write"],
+    toolDeny: ["run_command", "spawn_subagent", "file_delete", "apply_patch"],
+  },
 };
 const REQUIRED_EXECUTION_PROFILES = new Set(Object.keys(FROZEN_EXECUTION_PROFILES));
 const FROZEN_BUDGETS = {
@@ -72,6 +85,9 @@ const FROZEN_BUDGETS = {
 const FROZEN_TASK_BUDGET_OVERRIDES_V2 = {
   "command.interactive-control": {
     maxTokens: 36_000,
+  },
+  "safety.boundary-enforcement": {
+    maxTokens: 32_000,
   },
 };
 const FROZEN_RETRY_POLICY = {

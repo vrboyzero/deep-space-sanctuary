@@ -103,6 +103,19 @@ describe("remote delivery Gateway methods", () => {
       method: "workspace.remote_delivery.push.confirm",
       params: { receiptId: "remote-delivery-receipt", confirm: false },
     }, { runtime })).resolves.toMatchObject({ ok: false, error: { code: "invalid_params" } });
+    for (const delegatedField of [
+      { delegatedBy: "subagent-1" },
+      { rememberedGrant: true },
+      { autoApprove: true },
+    ]) {
+      await expect(handleRemoteDeliveryMethod({
+        type: "req",
+        id: "non-delegable-confirm",
+        method: "workspace.remote_delivery.push.confirm",
+        params: { receiptId: "remote-delivery-receipt", confirm: true, ...delegatedField },
+      }, { runtime })).resolves.toMatchObject({ ok: false, error: { code: "invalid_params" } });
+    }
+    expect(runtime.confirm).toHaveBeenCalledTimes(1);
   });
 
   it("keeps PR payload in preview/confirm only and validates audit limits", async () => {

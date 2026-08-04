@@ -28,6 +28,7 @@ describe("buildSubTaskRuntimeRetentionObservability", () => {
           error: 1,
           timeout: 1,
           stopped: 0,
+          interrupted: 0,
         },
         oldestArchivedAt: 1_000,
         newestArchivedAt: 2_000,
@@ -57,8 +58,23 @@ describe("buildSubTaskRuntimeRetentionObservability", () => {
           error: 0,
           timeout: 0,
           stopped: 1,
+          interrupted: 0,
         },
         headline: "subtasks=2; active=0; terminal=2; archived=0 (terminal=0, active=0); unarchivedTerminal=2",
+      },
+    });
+  });
+
+  it("counts restart-lost records as interrupted terminal state", () => {
+    expect(buildSubTaskRuntimeRetentionObservability([
+      { status: "interrupted" },
+    ], 1_000).summary).toMatchObject({
+      totalCount: 1,
+      activeCount: 0,
+      terminalCount: 1,
+      unarchivedTerminalCount: 1,
+      statusCounts: {
+        interrupted: 1,
       },
     });
   });
