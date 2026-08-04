@@ -344,6 +344,45 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
     ],
     userVisibleRiskNote: "文件写入是高风险工具。写入前应确认路径、模式、编码、文件归属，以及是否在放大超大文件。",
   },
+  file_edit: {
+    family: "workspace-write",
+    riskLevel: "high",
+    needsPermission: true,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    activityDescription: "Replace one unique text occurrence in a previously read workspace file",
+    outputPersistencePolicy: "artifact",
+    channels: ["gateway", "web"] satisfies ToolContract["channels"],
+    safeScopes: ["privileged"] satisfies ToolContract["safeScopes"],
+    recommendedWhen: [
+      "Need one unique local replacement in a previously read UTF-8 workspace file",
+      "Need stale-file protection without expressing a full unified patch",
+    ],
+    avoidWhen: [
+      "The change spans multiple files or multiple hunks and should use apply_patch",
+      "The target is generated, binary, unread, or cannot be identified by one exact unique oldText",
+    ],
+    confirmWhen: [
+      "The replacement touches user-authored source or another privileged workspace path",
+    ],
+    preflightChecks: [
+      "Obtain the exact current oldText and file_read revision for the same path",
+      "Include enough surrounding text to make oldText unique and keep the replacement local",
+    ],
+    fallbackStrategy: [
+      "Use apply_patch for multiple files, multiple hunks, file creation, deletion, or moves",
+      "Follow repairHint and call file_read again when the revision is stale or matchCount is not one",
+    ],
+    expectedOutput: [
+      "Success JSON text with path, replacements, bytesWritten, and totalSize",
+      "Failure JSON text with a stable code, path, optional matchCount, and file_read repairHint",
+    ],
+    sideEffectSummary: [
+      "Mutates exactly one existing UTF-8 workspace file after revision and unique-match validation",
+      "Does not perform automatic retries, regex replacement, or multi-file patching",
+    ],
+    userVisibleRiskNote: "精确编辑仍是高风险写入。必须先读取同一文件，并在 revision 与唯一匹配均成立时执行。",
+  },
   file_delete: {
     family: "workspace-write",
     riskLevel: "high",
@@ -415,7 +454,7 @@ const TOOL_CONTRACT_V2_PROFILES: Record<string, ToolContractV2Profile> = {
       "Use browser or network tools only when the source of truth is not in the workspace",
     ],
     expectedOutput: [
-      "JSON text including path, size, bytesRead, actual byte range, truncation flag, encoding, content, and nextCursor when more bytes remain",
+      "JSON text including path, size, bytesRead, actual byte range, truncation flag, encoding, revision, content, and nextCursor when more bytes remain",
       "Missing file, denied path, sensitive path, symlink target, stale cursor, or invalid range should return explicit read errors",
     ],
     sideEffectSummary: [

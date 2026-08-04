@@ -220,6 +220,8 @@ export type RoomContext = {
 
 export type AgentRunInput = {
   conversationId: string;
+  /** 仅由可信运行时注入；bare 跳过本次运行的隐式上下文与扩展。 */
+  automationProfile?: "bare";
   /**
    * Legacy text field. If `content` is provided, it takes precedence.
    * If only `text` is provided, it will be treated as `{ type: "text", text }`.
@@ -345,6 +347,8 @@ export type AgentUsage = {
   cacheMissTokens?: number;
   /** 本次 run 的模型调用次数 */
   modelCalls: number;
+  /** 其中具备 Provider usage 响应的模型调用次数；缺失表示旧实现无法判定完整性 */
+  providerReportedModelCalls?: number;
   /** provider cache capability */
   cacheSupport?: "supported" | "unsupported" | "unknown";
   /** system prompt prefix fingerprint for cache observability */

@@ -14,6 +14,7 @@ import {
 } from "./model-response-stream-failover.js";
 import { createModelStreamTextDelivery } from "./model-stream-delivery.js";
 import { applyOpenAICompatibleReasoningConfig } from "./openai-reasoning.js";
+import { filterProviderControlFrameSuffix } from "./provider-control-frame.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 import {
   createAgentPromptSnapshot,
@@ -463,12 +464,13 @@ export class OpenAIChatAgent implements BelldandyAgent {
     }
 
     if ((wireApi ?? this.opts.wireApi) === "responses") {
-      return extractResponsesText(json);
+      return filterProviderControlFrameSuffix(extractResponsesText(json));
     }
 
     // OpenAI Chat Completions 格式：{ choices: [{ message: { content: "..." } }] }
     const choices = (json.choices as unknown) as Array<any> | undefined;
-    return choices?.[0]?.message?.content ?? "";
+    const content = choices?.[0]?.message?.content;
+    return typeof content === "string" ? filterProviderControlFrameSuffix(content) : "";
   }
 }
 

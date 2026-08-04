@@ -102,7 +102,7 @@
             },
             "workspace-write": {
               "permissionMode": "acceptEdits",
-              "toolAllow": ["file_read", "list_files", "apply_patch", "file_write", "file_delete"],
+              "toolAllow": ["file_read", "list_files", "file_edit", "apply_patch", "file_write", "file_delete"],
               "toolDeny": ["run_command", "spawn_subagent"]
             },
             "command-control": {

@@ -2556,6 +2556,7 @@ function parseCodingRunOptions(
   if (value === undefined) return { ok: true };
   if (!isObjectRecord(value)) return { ok: false, message: "codingRun must be an object" };
   const allowedKeys = new Set([
+    "automationProfile",
     "cwd",
     "toolAllow",
     "toolDeny",
@@ -2568,6 +2569,11 @@ function parseCodingRunOptions(
   ]);
   const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
   if (unknownKey) return { ok: false, message: `codingRun.${unknownKey} is not supported` };
+
+  const automationProfile = value.automationProfile;
+  if (automationProfile !== undefined && automationProfile !== "bare") {
+    return { ok: false, message: "codingRun.automationProfile must be bare" };
+  }
 
   const cwdRaw = value.cwd;
   let cwd: string | undefined;
@@ -2618,6 +2624,7 @@ function parseCodingRunOptions(
   return {
     ok: true,
     value: {
+      ...(automationProfile ? { automationProfile } : {}),
       ...(cwd ? { cwd } : {}),
       ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
       ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),

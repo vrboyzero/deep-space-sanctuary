@@ -74,6 +74,7 @@ export async function runGatewayConversation(input: {
     let initialRequestDelay: ReturnType<typeof setTimeout> | undefined;
     const pendingEvents: Array<{ event: string; payload: unknown }> = [];
     const adapter = createGatewayConversationEventAdapter({
+      automationProfile: input.codingRun?.automationProfile,
       onEvent: input.onEvent,
     });
     const socket = new WebSocket(wsUrl, { origin: baseUrl });

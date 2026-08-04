@@ -95,6 +95,7 @@ describe("coding agent CI runner", () => {
     expect(args).toEqual([
       "agent", "run",
       "--jsonl",
+      "--automation-profile", "bare",
       "--cwd", path.resolve("C:/fixture/workspace"),
       "--state-dir", path.resolve("C:/fixture/state"),
       "--conversation-id", "coding-ci-fixture-run",
@@ -255,19 +256,56 @@ describe("coding agent CI runner", () => {
   it("accepts one continuous v1 event stream with a unique terminal event", () => {
     const binding = { agentRunId: "run-ci", conversationId: "conv-ci" };
     const events = [
-      event(1, "run.started", binding, { status: "running" }),
+      event(1, "run.started", binding, {
+        status: "running",
+        automationProfile: "bare",
+        capabilities: fixtureCapabilities(),
+      }),
       event(2, "message.delta", binding, { delta: "ok" }),
-      event(3, "run.completed", binding, { output: { text: "{\"summary\":\"ok\",\"findings\":[]}" } }),
+      event(3, "run.completed", binding, {
+        output: { text: "{\"summary\":\"ok\",\"findings\":[]}" },
+        usage: fixtureCompleteUsage(),
+      }),
     ];
 
-    expect(validateAgentRunEvents(events, isFixtureEvent)).toEqual({
+    expect(validateAgentRunEvents(events, isFixtureEvent, {
+      isCodingRunCapabilitiesV1: isFixtureCapabilities,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+    }, "bare")).toEqual({
       binding,
       terminalType: "run.completed",
+      automationProfile: "bare",
+      capabilities: fixtureCapabilities(),
+      usage: fixtureCompleteUsage(),
     });
     expect(() => validateAgentRunEvents([
       events[0],
-      event(3, "run.completed", binding, {}),
-    ], isFixtureEvent)).toThrow(/sequence/i);
+      event(3, "run.completed", binding, { usage: fixtureCompleteUsage() }),
+    ], isFixtureEvent, {
+      isCodingRunCapabilitiesV1: isFixtureCapabilities,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+    })).toThrow(/sequence/i);
+    expect(() => validateAgentRunEvents([
+      event(1, "run.started", binding, { status: "running" }),
+      event(2, "run.completed", binding, {
+        output: { text: "{\"summary\":\"ok\",\"findings\":[]}" },
+        usage: fixtureCompleteUsage(),
+      }),
+    ], isFixtureEvent, {
+      isCodingRunCapabilitiesV1: isFixtureCapabilities,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+    })).toThrow(/capability/i);
+    expect(() => validateAgentRunEvents([
+      events[0],
+      event(2, "run.completed", binding, { usage: { status: "complete" } }),
+    ], isFixtureEvent, {
+      isCodingRunCapabilitiesV1: isFixtureCapabilities,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+    })).toThrow(/usage completeness/i);
+    expect(() => validateAgentRunEvents(events, isFixtureEvent, {
+      isCodingRunCapabilitiesV1: isFixtureCapabilities,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+    }, "managed")).toThrow(/automation profile/i);
   });
 
   it("collects tracked and untracked changes into one reviewable patch", async () => {
@@ -355,12 +393,20 @@ describe("coding agent CI runner", () => {
         schemaVersion: "coding-agent-ci/v1",
         protocolVersion: "v1",
         mode: "plan",
+        automationProfile: "bare",
         cliExitCode: 0,
         terminalType: "run.completed",
+        capabilities: fixtureCapabilities(),
+        usage: {
+          status: "incomplete",
+          reason: "usage_not_reported",
+        },
         changedPaths: [],
         checks: {
           cleanBaseline: true,
           eventContract: true,
+          capabilityHandshake: true,
+          usageComplete: false,
           artifactPolicy: true,
           automaticPush: false,
         },
@@ -438,8 +484,14 @@ describe("coding agent CI runner", () => {
       expect(result.exitCode).not.toBe(0);
       expect(manifest).toMatchObject({
         terminalType: "run.cancelled",
+        usage: { status: "incomplete", reason: "usage_not_reported" },
         changedPaths: [],
-        checks: { eventContract: true, artifactPolicy: true },
+        checks: {
+          eventContract: true,
+          capabilityHandshake: true,
+          usageComplete: false,
+          artifactPolicy: true,
+        },
       });
       expect(cancellation).toMatchObject({
         schemaVersion: "coding-agent-cancel-injection/v1",
@@ -488,6 +540,39 @@ function isFixtureEvent(value) {
       && typeof value.type === "string"
       && value.payload
       && typeof value.payload === "object",
+  );
+}
+
+function fixtureCapabilities() {
+  return {
+    schemaVersion: "coding-run-capabilities/v1",
+    protocolVersion: "v1",
+    eventStream: {
+      sequence: "continuous",
+      terminal: "exactly_one",
+      usageCompleteness: "terminal",
+    },
+  };
+}
+
+function fixtureCompleteUsage() {
+  return {
+    status: "complete",
+    reason: "provider_reported_all_model_calls",
+    modelCalls: 1,
+    providerReportedModelCalls: 1,
+  };
+}
+
+function isFixtureCapabilities(value) {
+  return JSON.stringify(value) === JSON.stringify(fixtureCapabilities());
+}
+
+function isFixtureUsageCompleteness(value) {
+  return Boolean(
+    value
+      && (value.status === "complete" || value.status === "incomplete")
+      && typeof value.reason === "string",
   );
 }
 

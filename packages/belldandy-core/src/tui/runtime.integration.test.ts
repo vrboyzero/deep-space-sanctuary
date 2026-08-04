@@ -75,7 +75,13 @@ describe("Coding TUI runtime integration", () => {
           expect(events.map((event) => event.seq)).toEqual(events.map((_event, index) => index + 1));
           expect(events).toEqual(expect.arrayContaining([
             expect.objectContaining({ type: "message.delta", payload: { delta: "TUI streamed answer" } }),
-            expect.objectContaining({ type: "run.completed", payload: { output: { text: "TUI streamed answer" } } }),
+            expect.objectContaining({
+              type: "run.completed",
+              payload: expect.objectContaining({
+                output: { text: "TUI streamed answer" },
+                usage: { status: "incomplete", reason: "usage_not_reported" },
+              }),
+            }),
           ]));
           expect(new Set(events.map((event) => event.binding.agentRunId))).toEqual(new Set([binding.agentRunId]));
           expect(errors).toEqual([]);
@@ -149,7 +155,10 @@ describe("Coding TUI runtime integration", () => {
             expect.objectContaining({
               type: "run.completed",
               binding,
-              payload: { output: { text: "steered:Focus on the regression." } },
+              payload: expect.objectContaining({
+                output: { text: "steered:Focus on the regression." },
+                usage: { status: "incomplete", reason: "usage_not_reported" },
+              }),
             }),
           ]));
           expect(new Set(events.map((event) => event.binding.agentRunId))).toEqual(new Set([binding.agentRunId]));

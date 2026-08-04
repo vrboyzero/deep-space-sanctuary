@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 
 import type { BelldandyAgent } from "@belldandy/agent";
@@ -16,6 +16,42 @@ afterEach(async () => {
 });
 
 describe("Gateway Conversation CLI stream", () => {
+  it("rejects an unsupported automation profile at the Gateway boundary", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-profile-invalid-"));
+    const run = vi.fn(async function* () {
+      yield { type: "final" as const, text: "unexpected" };
+    });
+    const server = await startGatewayServer({
+      port: 0,
+      auth: { mode: "none" },
+      webRoot: resolveWebRoot(),
+      stateDir,
+      agentFactory: () => ({ run }),
+    });
+
+    try {
+      await withEnv({
+        BELLDANDY_HOST: "127.0.0.1",
+        BELLDANDY_PORT: String(server.port),
+        BELLDANDY_AUTH_MODE: "none",
+      }, async () => {
+        await expect(runGatewayConversation({
+          stateDir,
+          prompt: "invalid profile",
+          codingRun: { automationProfile: "resident" } as never,
+          onEvent: () => {},
+        })).rejects.toMatchObject({
+          code: "execution_failed",
+          message: expect.stringContaining("automationProfile"),
+        });
+      });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("streams one real Gateway Conversation as ordered v1 events", async () => {
     const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-coding-run-"));
     const agent: BelldandyAgent = {

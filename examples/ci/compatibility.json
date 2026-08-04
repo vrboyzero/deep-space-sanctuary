@@ -9,6 +9,8 @@
   ],
   "liveTemplateOperatingSystem": "linux",
   "protocolVersion": "v1",
+  "capabilitySchemaVersion": "coding-run-capabilities/v1",
+  "automationProfile": "bare",
   "artifactSchemaVersion": "coding-agent-ci/v1",
   "supportedModes": [
     "plan",

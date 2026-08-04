@@ -38,6 +38,7 @@ export type AgentRunCommandInput = {
 
 export type AgentRunCliOptionsInput = {
   timeout?: unknown;
+  automationProfile?: unknown;
   cwd?: unknown;
   toolAllow?: unknown;
   toolDeny?: unknown;
@@ -82,6 +83,8 @@ export function resolveAgentRunCliOptions(
 
   const cwd = resolveCwdOption(input.cwd);
   if (!cwd.ok) return cwd;
+  const automationProfile = parseAutomationProfileOption(input.automationProfile);
+  if (!automationProfile.ok) return automationProfile;
   const toolAllow = parseToolListOption(input.toolAllow, "--tool-allow");
   if (!toolAllow.ok) return toolAllow;
   const toolDeny = parseToolListOption(input.toolDeny, "--tool-deny");
@@ -96,6 +99,7 @@ export function resolveAgentRunCliOptions(
   if (!maxCostUsd.ok) return maxCostUsd;
 
   const codingRun: CodingRunOptions = {
+    ...(automationProfile.value ? { automationProfile: automationProfile.value } : {}),
     ...(cwd.value ? { cwd: cwd.value } : {}),
     ...(toolAllow.value ? { toolAllow: toolAllow.value } : {}),
     ...(toolDeny.value ? { toolDeny: toolDeny.value } : {}),
@@ -455,6 +459,16 @@ function parsePermissionModeOption(
   return { ok: false, message: "--permission-mode must be plan, accept-edits, or confirm." };
 }
 
+function parseAutomationProfileOption(
+  value: unknown,
+): { ok: true; value?: CodingRunOptions["automationProfile"] } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value === "string" && value.trim() === "bare") {
+    return { ok: true, value: "bare" };
+  }
+  return { ok: false, message: "--automation-profile must be bare." };
+}
+
 function parsePositiveIntegerOption(
   value: unknown,
   flag: "--max-turns" | "--max-tokens",
@@ -504,6 +518,7 @@ export default defineCommand({
   args: {
     prompt: { type: "string", description: "Prompt text (reads stdin when omitted)" },
     jsonl: { type: "boolean", description: "Write AgentRunEvent v1 records as JSON Lines" },
+    "automation-profile": { type: "string", description: "Deterministic automation profile (bare)" },
     "state-dir": { type: "string", description: "Override state directory" },
     "conversation-id": { type: "string", description: "Continue this Conversation ID" },
     "agent-id": { type: "string", description: "Optional Agent ID" },
@@ -528,6 +543,7 @@ export default defineCommand({
     }
     const runOptions = resolveAgentRunCliOptions({
       timeout: args.timeout,
+      automationProfile: args["automation-profile"],
       cwd: args.cwd,
       toolAllow: args["tool-allow"],
       toolDeny: args["tool-deny"],

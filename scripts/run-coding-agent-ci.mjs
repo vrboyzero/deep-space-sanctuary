@@ -10,6 +10,7 @@ import {
 } from "./coding-agent-benchmark-approval.mjs";
 
 export const CODING_CI_CONTRACT_VERSION = "coding-agent-ci/v1";
+export const CODING_CI_AUTOMATION_PROFILE = "bare";
 export const CODING_CI_LIMITS = Object.freeze({
   timeoutMs: 300_000,
   maxTurns: 12,
@@ -82,6 +83,7 @@ export function buildAgentRunArgs(input) {
   return [
     "agent", "run",
     "--jsonl",
+    "--automation-profile", CODING_CI_AUTOMATION_PROFILE,
     "--cwd", path.resolve(input.workspace),
     "--state-dir", path.resolve(input.stateDir),
     ...(input.conversationId ? ["--conversation-id", input.conversationId] : []),
@@ -102,16 +104,26 @@ export function buildAgentRunArgs(input) {
   ];
 }
 
-export function validateAgentRunEvents(events, isAgentRunEventV1) {
+export function validateAgentRunEvents(
+  events,
+  isAgentRunEventV1,
+  validators = {},
+  expectedAutomationProfile,
+) {
   if (!Array.isArray(events) || events.length === 0) {
     throw new Error("Agent JSONL did not contain any v1 events.");
   }
   if (typeof isAgentRunEventV1 !== "function") {
     throw new Error("AgentRunEvent v1 validator is unavailable.");
   }
+  if (typeof validators.isCodingRunCapabilitiesV1 !== "function"
+    || typeof validators.isCodingRunUsageCompletenessV1 !== "function") {
+    throw new Error("Coding run capability or usage completeness validator is unavailable.");
+  }
 
   const firstBinding = events[0]?.binding;
   let terminalType;
+  let terminalEvent;
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
     if (!isAgentRunEventV1(event)) {
@@ -134,10 +146,22 @@ export function validateAgentRunEvents(events, isAgentRunEventV1) {
         throw new Error("Agent JSONL contains events after its terminal event.");
       }
       terminalType = event.type;
+      terminalEvent = event;
     }
   }
   if (!terminalType) {
     throw new Error("Agent JSONL is missing a terminal event.");
+  }
+  if (events[0]?.type !== "run.started"
+    || !validators.isCodingRunCapabilitiesV1(events[0]?.payload?.capabilities)) {
+    throw new Error("Agent JSONL is missing a valid run.started capability handshake.");
+  }
+  const automationProfile = events[0]?.payload?.automationProfile;
+  if (expectedAutomationProfile !== undefined && automationProfile !== expectedAutomationProfile) {
+    throw new Error(`Agent JSONL automation profile mismatch: expected ${expectedAutomationProfile}.`);
+  }
+  if (!validators.isCodingRunUsageCompletenessV1(terminalEvent?.payload?.usage)) {
+    throw new Error("Agent JSONL terminal event is missing a valid usage completeness declaration.");
   }
   return {
     binding: {
@@ -145,6 +169,9 @@ export function validateAgentRunEvents(events, isAgentRunEventV1) {
       conversationId: firstBinding.conversationId,
     },
     terminalType,
+    ...(automationProfile === undefined ? {} : { automationProfile }),
+    capabilities: events[0].payload.capabilities,
+    usage: terminalEvent.payload.usage,
   };
 }
 
@@ -224,7 +251,12 @@ async function main() {
     "coding-run",
     "contracts.js",
   );
-  const { CODING_RUN_PROTOCOL_VERSION, isAgentRunEventV1 } = await import(pathToFileURL(coreEntry).href);
+  const {
+    CODING_RUN_PROTOCOL_VERSION,
+    isAgentRunEventV1,
+    isCodingRunCapabilitiesV1,
+    isCodingRunUsageCompletenessV1,
+  } = await import(pathToFileURL(coreEntry).href);
   let approvalController;
   if (options.approvalContractPath) {
     const { contract, contractSha256 } = await loadBenchmarkApprovalContract(options.approvalContractPath);
@@ -280,7 +312,10 @@ async function main() {
   let eventContract;
   let eventContractError;
   try {
-    eventContract = validateAgentRunEvents(parsed.events, isAgentRunEventV1);
+    eventContract = validateAgentRunEvents(parsed.events, isAgentRunEventV1, {
+      isCodingRunCapabilitiesV1,
+      isCodingRunUsageCompletenessV1,
+    }, CODING_CI_AUTOMATION_PROFILE);
   } catch (error) {
     eventContractError = sanitizeDiagnostic(error instanceof Error ? error.message : error);
   }
@@ -340,15 +375,21 @@ async function main() {
     schemaVersion: CODING_CI_CONTRACT_VERSION,
     protocolVersion: CODING_RUN_PROTOCOL_VERSION,
     mode: options.profile.mode,
+    automationProfile: eventContract?.automationProfile ?? null,
     limits: options.limits ?? CODING_CI_LIMITS,
     cliExitCode: child.exitCode,
     eventCount: parsed.events.length,
     terminalType: eventContract?.terminalType ?? null,
     binding: eventContract?.binding ?? null,
+    capabilities: eventContract?.capabilities ?? null,
+    usage: eventContract?.usage ?? null,
     changedPaths: workspaceArtifact.changedPaths,
     checks: {
       cleanBaseline: true,
       eventContract: !eventContractError,
+      capabilityHandshake: Boolean(eventContract?.capabilities),
+      automationProfile: eventContract?.automationProfile === CODING_CI_AUTOMATION_PROFILE,
+      usageComplete: eventContract?.usage?.status === "complete",
       artifactPolicy: !artifactPolicyError,
       automaticPush: false,
       approvalPolicy: child.approvalEvidence ? child.approvalEvidence.status === "passed" : null,
@@ -369,6 +410,9 @@ async function main() {
       `terminal_type=${manifest.terminalType ?? "none"}`,
       `changed_paths=${manifest.changedPaths.length}`,
       `event_contract=${manifest.checks.eventContract}`,
+      `capability_handshake=${manifest.checks.capabilityHandshake}`,
+      `automation_profile=${manifest.automationProfile ?? "none"}`,
+      `usage_complete=${manifest.checks.usageComplete}`,
       `artifact_policy=${manifest.checks.artifactPolicy}`,
       `approval_policy=${manifest.checks.approvalPolicy ?? "not_applicable"}`,
       "automatic_push=false",

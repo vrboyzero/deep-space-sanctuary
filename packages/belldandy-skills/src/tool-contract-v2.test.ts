@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { withToolContract } from "./tool-contract.js";
 import { buildToolContractV2Summary, getToolContractV2, listToolContractsV2 } from "./tool-contract-v2.js";
+import { fileEditTool } from "./builtin/file.js";
 import type { Tool } from "./types.js";
 
 const runCommandTool = withToolContract({
@@ -104,6 +105,27 @@ describe("tool contract v2", () => {
       governedTools: ["run_command"],
       missingV2Tools: ["beta_builtin"],
     });
+  });
+
+  it("describes exact edit as the read-before-edit complement to multi-file patching", () => {
+    const fileEdit = getToolContractV2(fileEditTool);
+    const fileRead = getToolContractV2("file_read");
+
+    expect(fileEdit).toMatchObject({
+      name: "file_edit",
+      family: "workspace-write",
+      riskLevel: "high",
+      needsPermission: true,
+      isReadOnly: false,
+      hasGovernanceContract: true,
+      hasBehaviorContract: true,
+    });
+    expect(fileEdit?.recommendedWhen.join("\n")).toContain("unique local replacement");
+    expect(fileEdit?.avoidWhen.join("\n")).toContain("multiple files or multiple hunks");
+    expect(fileEdit?.preflightChecks.join("\n")).toContain("file_read revision");
+    expect(fileEdit?.fallbackStrategy.join("\n")).toContain("apply_patch");
+    expect(fileEdit?.expectedOutput.join("\n")).toContain("repairHint");
+    expect(fileRead?.expectedOutput.join("\n")).toContain("revision");
   });
 
   it("provides detailed defaults for high-value tool profiles without runtime governance input", () => {

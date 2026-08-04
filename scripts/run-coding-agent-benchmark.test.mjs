@@ -184,6 +184,17 @@ describe("coding agent benchmark stage 0B runner", () => {
     expect(extractBenchmarkTokenUsage([
       { type: "run.usage", payload: { usage: { source: "provider_reported", input: 10, output: 4, costUsd: 0.002 } } },
       { type: "run.usage", payload: { usage: { source: "provider_reported", input: 25, output: 9, costUsd: 0.006 } } },
+      {
+        type: "run.completed",
+        payload: {
+          usage: {
+            status: "complete",
+            reason: "provider_reported_all_model_calls",
+            modelCalls: 2,
+            providerReportedModelCalls: 2,
+          },
+        },
+      },
     ])).toEqual({
       inputTokens: 25,
       outputTokens: 9,
@@ -191,6 +202,15 @@ describe("coding agent benchmark stage 0B runner", () => {
     });
     expect(extractBenchmarkTokenUsage([
       { type: "run.usage", payload: { usage: { source: "unavailable", input: 7, output: 3, costUsd: 0.004 } } },
+      { type: "run.completed", payload: { usage: { status: "incomplete", reason: "provider_usage_missing" } } },
+    ])).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      observation: { status: "unavailable", costUsd: null },
+    });
+    expect(extractBenchmarkTokenUsage([
+      { type: "run.usage", payload: { usage: { source: "provider_reported", input: 7, output: 3, costUsd: 0.004 } } },
+      { type: "run.completed", payload: { usage: { status: "incomplete", reason: "provider_usage_missing" } } },
     ])).toEqual({
       inputTokens: 7,
       outputTokens: 3,
@@ -609,6 +629,18 @@ describe("coding agent benchmark stage 0B runner", () => {
         disconnectCount: 1,
         reconnectCount: 1,
       });
+      const recoveredManifest = JSON.parse(await fs.readFile(
+        path.join(artifactRoot, runId, "coding-ci-manifest.json"),
+        "utf-8",
+      ));
+      expect(recoveredManifest).toMatchObject({
+        capabilities: { schemaVersion: "coding-run-capabilities/v1" },
+        usage: { status: "incomplete", reason: "usage_not_reported" },
+        checks: { capabilityHandshake: true, usageComplete: false },
+      });
+      const status = await fs.readFile(path.join(artifactRoot, runId, "status.txt"), "utf-8");
+      expect(status).toContain("capability_handshake=true");
+      expect(status).toContain("usage_complete=false");
     } finally {
       await server.close();
     }

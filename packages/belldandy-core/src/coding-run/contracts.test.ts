@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CODING_RUN_CAPABILITIES,
   CODING_RUN_PROTOCOL_VERSION,
   isAgentRunEventV1,
+  isCodingRunCapabilitiesV1,
+  isCodingRunUsageCompletenessV1,
   isConversationFollowUpStatusQueryV1,
   isRunControlV1,
   sanitizeCodingRunData,
@@ -25,6 +28,42 @@ function createConversationEvent(): AgentRunEvent {
 }
 
 describe("coding-run public protocol boundary", () => {
+  it("publishes an exact v1 Headless capability and terminal usage contract", () => {
+    expect(CODING_RUN_CAPABILITIES).toEqual({
+      schemaVersion: "coding-run-capabilities/v1",
+      protocolVersion: "v1",
+      eventStream: {
+        sequence: "continuous",
+        terminal: "exactly_one",
+        usageCompleteness: "terminal",
+      },
+    });
+    expect(isCodingRunCapabilitiesV1(CODING_RUN_CAPABILITIES)).toBe(true);
+    expect(isCodingRunCapabilitiesV1({
+      ...CODING_RUN_CAPABILITIES,
+      eventStream: { ...CODING_RUN_CAPABILITIES.eventStream, terminal: "best_effort" },
+    })).toBe(false);
+
+    expect(isCodingRunUsageCompletenessV1({
+      status: "complete",
+      reason: "provider_reported_all_model_calls",
+      modelCalls: 2,
+      providerReportedModelCalls: 2,
+    })).toBe(true);
+    expect(isCodingRunUsageCompletenessV1({
+      status: "incomplete",
+      reason: "provider_usage_missing",
+      modelCalls: 2,
+      providerReportedModelCalls: 1,
+    })).toBe(true);
+    expect(isCodingRunUsageCompletenessV1({
+      status: "complete",
+      reason: "provider_reported_all_model_calls",
+      modelCalls: 2,
+      providerReportedModelCalls: 1,
+    })).toBe(false);
+  });
+
   it("accepts only a complete, JSON-serializable v1 Conversation event", () => {
     const valid = createConversationEvent();
 

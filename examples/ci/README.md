@@ -5,6 +5,7 @@
 ## 安全默认值
 
 - GitHub Actions 模板只授予 `contents: read`，checkout 不持久化凭据。
+- CI runner 固定显式请求 `bare` automation profile，隔离旧对话、项目规则、Hook、Plugin/Skill/MCP 隐式注入；identity、权限、sandbox、预算和显式工具白名单仍由既有运行契约强制执行。
 - `pull_request` 默认使用 `plan`，只开放 `file_read`、`list_files`；不可信 fork 不运行带密钥的 job。
 - `workspace-write` 仅可通过可信 `workflow_dispatch` 显式选择，只增加 `apply_patch`、`file_write`、`file_delete`；`run_command` 与子代理保持禁止。
 - 每次运行固定为 300 秒、12 轮和 24000 token，这三类门禁不依赖模型价格表，始终可强制执行。
@@ -38,11 +39,13 @@ node scripts/run-coding-agent-ci.mjs \
 
 `--output-schema` 同时会被 Core 序列化为本次 Agent 的输出数据契约，要求模型只返回能通过该 JSON Schema 的原始 JSON；Schema 按数据处理，不作为可执行指令。终态仍由本地 AJV 严格复核，模型提示不会放宽类型、必填字段或常量约束。
 
+Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `automationProfile`，并确认实际 profile 为 `bare`。当前 `coding-run-capabilities/v1` 声明事件序号连续、全程恰好一个且位于末尾的终态，以及终态必须携带 usage completeness。完成、失败、取消和中断都会在终态 `payload.usage` 中明确给出 `complete` 或 `incomplete`；后者仍是合法协议结果，但表示 Provider usage 不足以支持可信费用核算，自动化不得把已见到的部分 token/cost 当作完整账单。
+
 ## Artifact
 
 | 文件 | 用途 |
 | --- | --- |
-| `manifest.json` | `coding-agent-ci/v1` 运行方式、固定预算、退出码、binding、终态和门禁结果。 |
+| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、固定预算、退出码、binding、capability、终态 usage completeness 和门禁结果。`checks.usageComplete=false` 表示观测不完整，不会伪装成完整费用。 |
 | `events.jsonl` | 通过运行时 guard 的 `AgentRunEvent v1` 规范化事件。 |
 | `result.json` | 通过 `review-output.schema.json` 的最终结构化输出；非完成终态时不存在。 |
 | `changes.patch` | tracked 与 untracked 变更组成的 Git binary patch；`plan` 模式应为空。 |
@@ -51,7 +54,7 @@ node scripts/run-coding-agent-ci.mjs \
 
 ## 兼容、迁移与回滚
 
-- `compatibility.json` 是当前发布门禁矩阵；`schemas/agent-run-event-v1.json` 必须与 Core 导出逐项相同。Linux 与 Windows 都运行静态契约门禁，GitHub live 模板当前以 Linux runner 为基准。
+- `compatibility.json` 是当前发布门禁矩阵，包含协议、capability、automation profile 与 artifact schema 版本；`schemas/agent-run-event-v1.json` 必须与 Core 导出逐项相同。Linux 与 Windows 都运行静态契约门禁，GitHub live 模板当前以 Linux runner 为基准。
 - v1 只能做向后兼容扩展。删除、改名、改变必填字段、退出码或终态语义时必须新增协议或 artifact 版本，不能原地修改 v1。
 - 升级时先运行 `pnpm build` 和 `pnpm verify:coding-ci`，再在测试仓库检查 artifact。旧消费者继续读取 `version: "v1"`；无法兼容时保留旧模板并并行迁移。
 - 回滚时禁用或删除采用方 workflow，并恢复上一版 `examples/ci` 与包装器。模板没有远程仓库写权限，普通回滚不需要撤销 commit 或远程分支；`workspace-write` 的变更只存在于已结束的临时 runner，可直接丢弃对应 job/artifact。

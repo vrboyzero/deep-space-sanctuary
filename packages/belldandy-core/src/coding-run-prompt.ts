@@ -49,12 +49,27 @@ export function buildCodingRunPromptOverride(
   }
 
   const sections = CODING_RUN_SECTIONS.map((section) => ({ ...section }));
+  if (codingRun.automationProfile === "bare") {
+    sections[0] = {
+      ...sections[0],
+      text: [
+        "# Bounded Coding Run",
+        "",
+        "You are Belldandy executing one bounded coding task.",
+        "The latest user request defines the task. Keep work inside the launch workspace and use only the tools and permissions granted to this run.",
+        "",
+        "This bare automation run excludes project rules, prior conversation history, memory, plugins, skills, MCP discovery, and other implicit runtime extensions.",
+        "Platform safety, identity authority, explicit tool permissions, sandbox requirements, and launch budgets remain in force.",
+      ].join("\n"),
+    };
+  }
   const text = renderSystemPromptSections(sections);
   return {
     text,
     sections,
     metadata: {
       codingRunPromptMode: CODING_RUN_PROMPT_MODE,
+      ...(codingRun.automationProfile ? { automationProfile: codingRun.automationProfile } : {}),
       codingRunStaticPromptChars: text.length,
       codingRunStaticSectionIds: sections.map((section) => section.id),
     },

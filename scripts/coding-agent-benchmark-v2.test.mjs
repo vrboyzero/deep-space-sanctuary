@@ -20,10 +20,12 @@ import {
   validateCodingAgentBenchmarkManifest,
 } from "./coding-agent-benchmark-contract.mjs";
 import {
+  createBenchmarkPreflightArtifact,
   evaluateBenchmarkAgentProfilePreflight,
   evaluateBenchmarkEventProjectionPreflight,
   evaluateBenchmarkOciPreflight,
   evaluateBenchmarkPricingPreflight,
+  evaluateBenchmarkWorkspaceWriteClosurePreflight,
   resolveBenchmarkRepositoryIdentity,
 } from "./coding-agent-benchmark-preflight.mjs";
 import { generateStage0CInteractiveFixture } from "./coding-agent-benchmark-fixtures.mjs";
@@ -131,6 +133,38 @@ describe("coding agent benchmark corrected v2 contract", () => {
       "file_read",
       "list_files",
       "file_write",
+    ]);
+  });
+
+  it("adds exact edit only to the corrected v2 workspace-write profile", async () => {
+    const [v1Manifest, v2Manifest] = await Promise.all([
+      loadCodingAgentBenchmarkManifest(),
+      loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v2")),
+    ]);
+
+    expect(v1Manifest.suite.executionProfiles["workspace-write"].toolAllow).toEqual([
+      "file_read",
+      "list_files",
+      "apply_patch",
+      "file_write",
+      "file_delete",
+    ]);
+    expect(v2Manifest.suite.executionProfiles["workspace-write"].toolAllow).toEqual([
+      "file_read",
+      "list_files",
+      "file_edit",
+      "apply_patch",
+      "file_write",
+      "file_delete",
+    ]);
+    expect(resolveCodingCiProfile("workspace-write").toolAllow).not.toContain("file_edit");
+    expect(resolveCodingCiProfile("workspace-write", "v2").toolAllow).toEqual([
+      "file_read",
+      "list_files",
+      "file_edit",
+      "apply_patch",
+      "file_write",
+      "file_delete",
     ]);
   });
 
@@ -393,6 +427,79 @@ describe("coding agent benchmark corrected v2 contract", () => {
 });
 
 describe("coding agent benchmark v2 preflight", () => {
+  it("fails closed when the workspace-write edit/test/review closure is incomplete", async () => {
+    const manifest = await loadCodingAgentBenchmarkManifest(resolveCodingAgentBenchmarkManifestPath("v2"));
+    const task = manifest.tasks.find((item) => item.id === "feature.cross-file");
+    const profile = manifest.suite.executionProfiles[task.executionProfile];
+
+    for (const missingTool of ["file_read", "file_edit", "apply_patch"]) {
+      expect(evaluateBenchmarkWorkspaceWriteClosurePreflight({
+        task,
+        profile: {
+          ...profile,
+          toolAllow: profile.toolAllow.filter((toolName) => toolName !== missingTool),
+        },
+      })).toEqual({
+        status: "failed",
+        reason: "profile_capability_missing",
+        missingTools: [missingTool],
+      });
+    }
+
+    expect(evaluateBenchmarkWorkspaceWriteClosurePreflight({
+      task: {
+        ...task,
+        acceptance: { ...task.acceptance, testCommands: [] },
+      },
+      profile,
+    })).toEqual({
+      status: "failed",
+      reason: "acceptance_test_commands_missing",
+    });
+
+    expect(evaluateBenchmarkWorkspaceWriteClosurePreflight({ task, profile })).toEqual({
+      status: "passed",
+      reason: null,
+      toolAllow: profile.toolAllow,
+      testCommandCount: 1,
+    });
+    expect(evaluateBenchmarkWorkspaceWriteClosurePreflight({
+      task: { executionProfile: "read-only" },
+      profile: manifest.suite.executionProfiles["read-only"],
+    })).toEqual({
+      status: "not_applicable",
+      reason: "task_does_not_require_workspace_write_closure",
+    });
+
+    const driftedManifest = structuredClone(manifest);
+    driftedManifest.suite.executionProfiles["workspace-write"].toolAllow = ["file_read", "apply_patch"];
+    const artifact = await createBenchmarkPreflightArtifact({
+      manifest: driftedManifest,
+      manifestRevision: "v2",
+      task: driftedManifest.tasks.find((item) => item.id === "feature.cross-file"),
+      runId: "workspace-closure-v2-windows-a1",
+      sourceRoot: workspaceRoot,
+      stateDir: workspaceRoot,
+      pricingRequired: false,
+    }, {
+      async readFile(target) {
+        return String(target).endsWith("package.json")
+          ? JSON.stringify({ packageManager: "pnpm@10.10.0" })
+          : "fixture entrypoint";
+      },
+    });
+    expect(artifact).toMatchObject({
+      status: "failed",
+      checks: {
+        workspaceWriteClosure: {
+          status: "failed",
+          reason: "profile_capability_missing",
+          missingTools: ["file_edit"],
+        },
+      },
+    });
+  });
+
   it("requires the exact isolated command-control Agent budget without changing other profiles", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "coding-benchmark-v2-agent-profile-"));
     tempRoots.push(root);

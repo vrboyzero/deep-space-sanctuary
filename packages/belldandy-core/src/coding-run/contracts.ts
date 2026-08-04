@@ -1,5 +1,28 @@
 export const CODING_RUN_PROTOCOL_VERSION = "v1" as const;
 
+export const CODING_RUN_CAPABILITIES = {
+  schemaVersion: "coding-run-capabilities/v1",
+  protocolVersion: CODING_RUN_PROTOCOL_VERSION,
+  eventStream: {
+    sequence: "continuous",
+    terminal: "exactly_one",
+    usageCompleteness: "terminal",
+  },
+} as const;
+
+export type CodingRunCapabilities = typeof CODING_RUN_CAPABILITIES;
+
+export type CodingRunUsageCompleteness = {
+  status: "complete" | "incomplete";
+  reason:
+    | "provider_reported_all_model_calls"
+    | "provider_usage_missing"
+    | "reporting_count_unavailable"
+    | "usage_not_reported";
+  modelCalls?: number;
+  providerReportedModelCalls?: number;
+};
+
 export type CodingRunSource = "conversation" | "goal" | "workflow" | "subtask";
 
 export type GoalRunRef = {
@@ -645,6 +668,50 @@ export function isAgentRunEventV1(value: unknown): value is AgentRunEvent {
   if (typeof value.type !== "string" || !AGENT_RUN_EVENT_TYPES.has(value.type as AgentRunEventType)) return false;
   return isCodingContextBinding(value.source as CodingRunSource, value.binding)
     && isJsonRecord(value.payload);
+}
+
+export function isCodingRunCapabilitiesV1(value: unknown): value is CodingRunCapabilities {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["schemaVersion", "protocolVersion", "eventStream"])) {
+    return false;
+  }
+  if (value.schemaVersion !== CODING_RUN_CAPABILITIES.schemaVersion
+    || value.protocolVersion !== CODING_RUN_CAPABILITIES.protocolVersion
+    || !isRecord(value.eventStream)
+    || !hasOnlyKeys(value.eventStream, ["sequence", "terminal", "usageCompleteness"])) {
+    return false;
+  }
+  return value.eventStream.sequence === CODING_RUN_CAPABILITIES.eventStream.sequence
+    && value.eventStream.terminal === CODING_RUN_CAPABILITIES.eventStream.terminal
+    && value.eventStream.usageCompleteness === CODING_RUN_CAPABILITIES.eventStream.usageCompleteness;
+}
+
+export function isCodingRunUsageCompletenessV1(value: unknown): value is CodingRunUsageCompleteness {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ["status", "reason", "modelCalls", "providerReportedModelCalls"])) {
+    return false;
+  }
+  const modelCalls = value.modelCalls;
+  const providerReportedModelCalls = value.providerReportedModelCalls;
+  const countsAreValid = (modelCalls === undefined || isNonNegativeInteger(modelCalls))
+    && (providerReportedModelCalls === undefined || isNonNegativeInteger(providerReportedModelCalls));
+  if (!countsAreValid) return false;
+
+  if (value.status === "complete") {
+    return value.reason === "provider_reported_all_model_calls"
+      && isPositiveInteger(modelCalls)
+      && providerReportedModelCalls === modelCalls;
+  }
+  if (value.status !== "incomplete") return false;
+  if (value.reason === "usage_not_reported") {
+    return modelCalls === undefined && providerReportedModelCalls === undefined;
+  }
+  if (value.reason === "reporting_count_unavailable") {
+    return modelCalls === undefined || providerReportedModelCalls === undefined;
+  }
+  return value.reason === "provider_usage_missing"
+    && isPositiveInteger(modelCalls)
+    && isNonNegativeInteger(providerReportedModelCalls)
+    && providerReportedModelCalls < modelCalls;
 }
 
 export function isCodingRunSubscriptionV1(value: unknown): value is CodingRunSubscription {

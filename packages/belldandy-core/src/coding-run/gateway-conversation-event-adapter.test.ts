@@ -1,9 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import type { AgentRunEvent } from "./contracts.js";
+import { CODING_RUN_CAPABILITIES, type AgentRunEvent } from "./contracts.js";
 import { createGatewayConversationEventAdapter } from "./gateway-conversation-event-adapter.js";
 
 describe("Gateway Conversation coding-run event adapter", () => {
+  it("records the accepted automation profile in the start handshake", () => {
+    const events: AgentRunEvent[] = [];
+    const adapter = createGatewayConversationEventAdapter({
+      automationProfile: "bare",
+      onEvent: (event) => events.push(event),
+    });
+
+    adapter.start({ agentRunId: "run-bare", conversationId: "conversation-bare" });
+
+    expect(events[0]).toMatchObject({
+      type: "run.started",
+      payload: {
+        automationProfile: "bare",
+        capabilities: CODING_RUN_CAPABILITIES,
+      },
+    });
+  });
+
   it("maps one Gateway run into ordered v1 events and ignores other runs", () => {
     const events: AgentRunEvent[] = [];
     const adapter = createGatewayConversationEventAdapter({
@@ -50,6 +68,7 @@ describe("Gateway Conversation coding-run event adapter", () => {
         outputTokens: 9,
         totalCostUsd: 0.0125,
         modelCalls: 2,
+        providerReportedModelCalls: 2,
         providerRawUsage: {
           inputTokens: 25,
           outputTokens: 9,
@@ -71,6 +90,9 @@ describe("Gateway Conversation coding-run event adapter", () => {
       "run.completed",
     ]);
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(events[0]).toMatchObject({
+      payload: { status: "running", capabilities: CODING_RUN_CAPABILITIES },
+    });
     expect(events[2]).toMatchObject({ payload: { tool: { arguments: { apiKey: "[REDACTED]" } } } });
     expect(events[3]).toMatchObject({ payload: { tool: { output: { token: "[REDACTED]" } } } });
     expect(events[4]).toMatchObject({
@@ -80,12 +102,29 @@ describe("Gateway Conversation coding-run event adapter", () => {
           input: 25,
           output: 9,
           modelCalls: 2,
+          providerReportedModelCalls: 2,
           costUsd: 0.0125,
+          completeness: {
+            status: "complete",
+            reason: "provider_reported_all_model_calls",
+            modelCalls: 2,
+            providerReportedModelCalls: 2,
+          },
         },
       },
     });
     expect(events[4]?.payload).not.toHaveProperty("usage.providerRawUsage");
     expect(JSON.stringify(events[4])).not.toContain("do-not-leak");
+    expect(events[5]).toMatchObject({
+      payload: {
+        usage: {
+          status: "complete",
+          reason: "provider_reported_all_model_calls",
+          modelCalls: 2,
+          providerReportedModelCalls: 2,
+        },
+      },
+    });
   });
 
   it("marks normalized usage as unavailable when Gateway has no provider usage evidence", () => {
@@ -112,6 +151,45 @@ describe("Gateway Conversation coding-run event adapter", () => {
           input: 7,
           output: 3,
           costUsd: 0.004,
+          completeness: {
+            status: "incomplete",
+            reason: "reporting_count_unavailable",
+          },
+        },
+      },
+    });
+  });
+
+  it("marks terminal usage incomplete when Provider usage covers only part of the model calls", () => {
+    const events: AgentRunEvent[] = [];
+    const adapter = createGatewayConversationEventAdapter({ onEvent: (event) => events.push(event) });
+    const binding = { agentRunId: "run-usage-partial", conversationId: "conversation-usage-partial" };
+    adapter.start(binding);
+    adapter.consume({
+      event: "token.usage",
+      payload: {
+        conversationId: binding.conversationId,
+        runId: binding.agentRunId,
+        inputTokens: 7,
+        outputTokens: 3,
+        modelCalls: 2,
+        providerReportedModelCalls: 1,
+        providerRawUsage: { inputTokens: 7, outputTokens: 3 },
+      },
+    });
+    adapter.consume({
+      event: "chat.final",
+      payload: { conversationId: binding.conversationId, runId: binding.agentRunId, text: "Done" },
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "run.completed",
+      payload: {
+        usage: {
+          status: "incomplete",
+          reason: "provider_usage_missing",
+          modelCalls: 2,
+          providerReportedModelCalls: 1,
         },
       },
     });
@@ -155,6 +233,10 @@ describe("Gateway Conversation coding-run event adapter", () => {
     ]);
     expect(events[3]).toMatchObject({
       payload: {
+        usage: {
+          status: "incomplete",
+          reason: "usage_not_reported",
+        },
         error: {
           code: "budget_exhausted",
           message: "token=[REDACTED]",

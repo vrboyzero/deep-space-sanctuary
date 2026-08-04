@@ -48,6 +48,103 @@ describe("ToolEnabledAgent structured output", () => {
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 
+  it("accepts non-streamed JSON after removing a provider control-frame suffix", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      choices: [{ message: {
+        content: '{"status":"ok"}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
+      } }],
+      usage: { prompt_tokens: 3, completion_tokens: 2 },
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-provider-control-frame",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object" },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual({ type: "final", text: '{"status":"ok"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("removes a Responses control-frame suffix after executing a standard tool call", async () => {
+    const responses = [
+      {
+        output: [{
+          type: "function_call",
+          id: "item-inspect",
+          call_id: "call-inspect",
+          name: "inspect_workspace",
+          arguments: "{}",
+        }],
+        usage: { input_tokens: 3, output_tokens: 2 },
+      },
+      {
+        output: [{
+          type: "message",
+          content: [{
+            type: "output_text",
+            text: '{"status":"ok"}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
+          }],
+        }],
+        usage: { input_tokens: 4, output_tokens: 3 },
+      },
+    ];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return jsonResponse(response);
+    });
+    const execute = vi.fn(async (request: { id: string; name: string }) => ({
+      id: request.id,
+      name: request.name,
+      success: true,
+      output: "workspace inspected",
+    }));
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      wireApi: "responses",
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function",
+          function: {
+            name: "inspect_workspace",
+            description: "Inspects the workspace",
+            parameters: { type: "object" },
+          },
+        }],
+        execute,
+      }),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-responses-control-frame",
+      text: "inspect and return status",
+      structuredOutput: {
+        schema: { type: "object" },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(items).toContainEqual({ type: "final", text: '{"status":"ok"}' });
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("repairs one invalid final response without exposing tools or the invalid text", async () => {
     const responses = [
       {
@@ -113,7 +210,131 @@ describe("ToolEnabledAgent structured output", () => {
       inputTokens: 7,
       outputTokens: 5,
       modelCalls: 2,
+      providerReportedModelCalls: 2,
     }));
+    expect(items.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
+  it("reports Provider usage coverage separately when one model call omits usage", async () => {
+    const responses = [
+      { choices: [{ message: { content: "not-json" } }] },
+      {
+        choices: [{ message: { content: "{\"status\":\"ok\"}" } }],
+        usage: { prompt_tokens: 4, completion_tokens: 3 },
+      },
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return jsonResponse(response);
+    });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: true,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-partial-provider-usage",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object" },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 4,
+      outputTokens: 3,
+      modelCalls: 2,
+      providerReportedModelCalls: 1,
+    }));
+  });
+
+  it("counts a failed repair call as missing Provider usage", async () => {
+    const responses = [
+      jsonResponse({
+        choices: [{ message: { content: "not-json" } }],
+        usage: { prompt_tokens: 4, completion_tokens: 3 },
+      }),
+      new Response(JSON.stringify({ error: { message: "provider unavailable" } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    ];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return response;
+    });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-failed-repair-usage",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object" },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "usage",
+      inputTokens: 4,
+      outputTokens: 3,
+      modelCalls: 2,
+      providerReportedModelCalls: 1,
+    }));
+    expect(items.at(-1)).toEqual({ type: "status", status: "error" });
+  });
+
+  it("leaves natural-language permission text to the structured-output repair owner", async () => {
+    const permissionExplanation = '{"status":"ok"}\n\nNote: execution tools were denied permission.';
+    const responses = [
+      {
+        choices: [{ message: { content: permissionExplanation } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2 },
+      },
+      {
+        choices: [{ message: { content: '{"status":"ok"}' } }],
+        usage: { prompt_tokens: 4, completion_tokens: 3 },
+      },
+    ];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return jsonResponse(response);
+    });
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      toolExecutor: createToolExecutor(),
+      streamingEnabled: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "structured-permission-explanation",
+      text: "return status",
+      structuredOutput: {
+        schema: { type: "object" },
+        validateOutput: validateStatusOutput,
+      },
+    } as any));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(items)).not.toContain(permissionExplanation);
+    expect(items).toContainEqual({ type: "final", text: '{"status":"ok"}' });
     expect(items.at(-1)).toEqual({ type: "status", status: "done" });
   });
 

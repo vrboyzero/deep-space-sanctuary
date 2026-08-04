@@ -108,6 +108,11 @@ import {
 } from "./prompt-budget-observability.js";
 import { selectToolMessagesForCompression } from "./tool-result-adaptive-keep.js";
 import { createStructuredOutputSession } from "./structured-output.js";
+import { filterProviderControlFrameSuffix } from "./provider-control-frame.js";
+import {
+  isBareAgentAutomationProfile,
+  selectAgentAutomationPromptDeltas,
+} from "./agent-run-automation.js";
 import {
   createReActRunAbortController,
   normalizeMaxHighRiskToolCalls,
@@ -1168,6 +1173,20 @@ function buildCarryoverFacts(input: {
   return [...new Set(facts)].slice(0, CARRYOVER_CONTEXT_FACT_LIMIT);
 }
 
+function projectCarryoverToolOutput(toolName: string, output: string | undefined): string | undefined {
+  if (toolName !== "file_read" || !output) return output;
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const content = (parsed as Record<string, unknown>).content;
+      if (typeof content === "string") return content;
+    }
+  } catch {
+    // 兼容返回纯文本或旧格式结果的 file_read 实现。
+  }
+  return output;
+}
+
 function inferCarryoverSourceType(toolName: string): "file_read" | "conversation_read" | "tool_result" | "log_read" | "web_result" | "other" {
   switch (toolName) {
     case "file_read":
@@ -1196,14 +1215,15 @@ function buildCarryoverContextRecord(input: {
     return undefined;
   }
   const digest = buildToolDigestRecord(input);
+  const carryoverOutput = projectCarryoverToolOutput(input.toolName, input.output);
   const keyFacts = buildCarryoverFacts({
     summary: digest.summary,
     target: digest.target,
-    output: input.success ? input.output : undefined,
+    output: input.success ? carryoverOutput : undefined,
     error: input.success ? undefined : input.error,
   });
   const summary = input.success
-    ? compactToolDigestText(input.output || digest.summary, 420)
+    ? compactToolDigestText(carryoverOutput || digest.summary, 420)
     : compactToolDigestText(input.error || digest.summary, 420);
   if (!summary || (summary.length < 48 && keyFacts.length === 0)) {
     return undefined;
@@ -1775,12 +1795,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
     event: BeforeCompactionEvent,
     conversationId?: string,
     agentId?: string,
+    hookRunner?: HookRunner,
   ): Promise<void> {
-    if (!this.opts.hookRunner || typeof this.opts.hookRunner.runBeforeCompaction !== "function") return;
+    if (!hookRunner || typeof hookRunner.runBeforeCompaction !== "function") return;
     try {
       await this.withStageTimeout(
         "before_compaction",
-        this.opts.hookRunner.runBeforeCompaction(
+        hookRunner.runBeforeCompaction(
           event,
           this.buildCompactionHookContext(conversationId, agentId),
         ),
@@ -1794,12 +1815,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
     event: AfterCompactionEvent,
     conversationId?: string,
     agentId?: string,
+    hookRunner?: HookRunner,
   ): Promise<void> {
-    if (!this.opts.hookRunner || typeof this.opts.hookRunner.runAfterCompaction !== "function") return;
+    if (!hookRunner || typeof hookRunner.runAfterCompaction !== "function") return;
     try {
       await this.withStageTimeout(
         "after_compaction",
-        this.opts.hookRunner.runAfterCompaction(
+        hookRunner.runAfterCompaction(
           event,
           this.buildCompactionHookContext(conversationId, agentId),
         ),
@@ -1998,6 +2020,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
   async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
     const startTime = Date.now();
+    const bareAutomation = isBareAgentAutomationProfile(input.automationProfile);
+    const runHookRunner = bareAutomation ? undefined : this.opts.hookRunner;
+    const runLegacyHooks = bareAutomation ? undefined : this.opts.hooks;
     const runtimeContext = readToolExecutionRuntimeContext(input.meta);
     const runBudgets = resolveRunBudgets({
       launchSpec: runtimeContext?.launchSpec,
@@ -2030,13 +2055,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
     try {
       // Hook: beforeRun / before_agent_start
       // 优先使用新版 hookRunner，向后兼容旧版 hooks
-      if (this.opts.hookRunner) {
+      if (runHookRunner) {
         try {
           const normalizedPrompt = typeof input.content === "string" ? input.content : input.text;
           const normalizedUserInput = input.userInput?.trim() || normalizedPrompt;
           const hookRes = await this.withStageTimeout(
             "before_agent_start",
-            this.opts.hookRunner.runBeforeAgentStart(
+            runHookRunner.runBeforeAgentStart(
               { prompt: normalizedPrompt, messages: input.history as any, userInput: normalizedUserInput, meta: input.meta }, // TODO: Update hook types for multimodal
               agentHookCtx,
             ),
@@ -2060,12 +2085,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
           yield { type: "final", text: `钩子 before_agent_start 执行失败: ${err}` };
           return;
         }
-      } else if (this.opts.hooks?.beforeRun) {
+      } else if (runLegacyHooks?.beforeRun) {
         // 向后兼容：旧版 hooks
         try {
           const hookRes = await this.withStageTimeout(
             "beforeRun",
-            Promise.resolve(this.opts.hooks.beforeRun({ input }, legacyHookCtx)),
+            Promise.resolve(runLegacyHooks.beforeRun({ input }, legacyHookCtx)),
           );
           if (hookRes && typeof hookRes === "object") {
             input = { ...input, ...hookRes };
@@ -2082,7 +2107,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         return;
       }
 
-      try {
+      if (!bareAutomation) try {
         const starweaverNotify = await this.runStarweaverActiveNotifyPreflight({
           conversationId: input.conversationId,
           agentId: resolvedAgentId,
@@ -2154,7 +2179,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
       launchSpec: runtimeContext?.launchSpec,
     });
     const launchSpecPromptDeltas = buildLaunchSpecPromptDeltas(runtimeContext?.launchSpec);
-    const metaPromptDeltas = readPromptSnapshotDeltas(input.meta);
+    const metaPromptDeltas = selectAgentAutomationPromptDeltas(
+      input.automationProfile,
+      readPromptSnapshotDeltas(input.meta) ?? [],
+    );
     const baseRunPromptDeltas = collectRunPromptDeltas({
       hookPromptDeltas,
       runtimeIdentityDelta,
@@ -2307,6 +2335,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let totalCacheSavingsUsd = 0;
     let totalUsageCostUsd = 0;
     let modelCallCount = 0;
+    let providerReportedModelCallCount = 0;
     let lastProviderRawUsage: AgentUsage["providerRawUsage"] | undefined;
     let lastRequestShape: AgentUsage["requestShape"] | undefined;
     let lastLocalPromptEstimate: AgentUsage["localPromptEstimate"] | undefined;
@@ -2363,6 +2392,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         ...(totalCacheHit > 0 ? { cacheHitTokens: totalCacheHit } : {}),
         ...(totalCacheMiss > 0 ? { cacheMissTokens: totalCacheMiss } : {}),
         modelCalls: modelCallCount,
+        providerReportedModelCalls: providerReportedModelCallCount,
         ...(this.opts.cacheSupport ? { cacheSupport: this.opts.cacheSupport } : {}),
         ...(typeof runSystemPromptMetadata?.systemPromptFingerprint === "string"
           ? { systemPromptFingerprint: runSystemPromptMetadata.systemPromptFingerprint }
@@ -2542,6 +2572,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 input.conversationId,
                 resolvedAgentId,
                 true,
+                runHookRunner,
               );
             } catch (err) {
               logWarn("[tool-loop-budget] forced compaction before budget stop failed", {
@@ -2606,7 +2637,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             tokenCount: microcompactOriginalTokens,
             source: "microcompact",
             compactionMode: "microcompact",
-          }, input.conversationId, resolvedAgentId);
+          }, input.conversationId, resolvedAgentId, runHookRunner);
         }
         const microcompactResult = microcompactMessages(messages, this.opts.microcompact);
         if (microcompactResult.mutated) {
@@ -2631,7 +2662,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             savedTokenCount: Math.max(0, microcompactOriginalTokens - microcompactCompactedTokens),
             reclaimedChars: microcompactResult.reclaimedChars,
             rebuildTriggered: false,
-          }, input.conversationId, resolvedAgentId);
+          }, input.conversationId, resolvedAgentId, runHookRunner);
         } else if (microcompactResult.skippedForPrefixStability) {
           logDebug("[microcompact] skipped destructive rewrite to preserve prefix stability", {
             messageCount: messages.length,
@@ -2650,7 +2681,14 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const currentTokens = estimateMessagesTotal(messages, microcompactEstimateContext);
           if (needsInLoopCompaction(currentTokens, maxInput, triggerFraction)) {
             try {
-              loopCompactionState = await this.compactInLoop(messages, loopCompactionState, input.conversationId, resolvedAgentId);
+              loopCompactionState = await this.compactInLoop(
+                messages,
+                loopCompactionState,
+                input.conversationId,
+                resolvedAgentId,
+                undefined,
+                runHookRunner,
+              );
             } catch (err) {
               logError(`[compaction] in-loop compaction failed: ${err}`);
               // 压缩失败不阻塞，继续执行（trimMessagesToFit 会兜底）
@@ -2761,6 +2799,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             : providerNativeSystemBlocks,
           streamDelivery,
         );
+        modelCallCount++;
         let response: Awaited<typeof responsePromise>;
         if (streamDelivery) {
           const deliveredResponsePromise = responsePromise.then(
@@ -2807,6 +2846,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
         // 记录并累加 usage 信息
         if (response.ok && response.usage) {
           const u = response.usage;
+          providerReportedModelCallCount++;
           lastProviderRawUsage = response.rawUsage ? { ...response.rawUsage } : {
             inputTokens: u.input_tokens,
             outputTokens: u.output_tokens,
@@ -2815,7 +2855,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
             promptCacheHitTokens: u.prompt_cache_hit_tokens ?? 0,
             promptCacheMissTokens: u.prompt_cache_miss_tokens ?? 0,
           };
-          modelCallCount++;
           totalInputTokens += u.input_tokens;
           totalOutputTokens += u.output_tokens;
           totalCacheCreation += u.cache_creation_input_tokens ?? 0;
@@ -2851,8 +2890,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
           if (u.prompt_cache_miss_tokens) parts.push(`cache_miss=${u.prompt_cache_miss_tokens}`);
           if (usageCost) parts.push(`usd=${usageCost.totalUsd.toFixed(8)}`);
           logDebug(`[usage] ${parts.join(" ")}`);
-        } else if (response.ok) {
-          modelCallCount++;
         }
 
         if (!response.ok) {
@@ -3137,11 +3174,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           };
 
           // Hook: beforeToolCall / before_tool_call
-          if (this.opts.hookRunner) {
+          if (runHookRunner) {
             try {
               const hookRes = await this.withStageTimeout(
                 "before_tool_call",
-                this.opts.hookRunner.runBeforeToolCall(
+                runHookRunner.runBeforeToolCall(
                   { toolName: request.name, params: request.arguments },
                   toolHookCtx,
                 ),
@@ -3169,7 +3206,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   output: "",
                   error: blockedError,
                   success: false,
-                  hookRunner: this.opts.hookRunner,
+                  hookRunner: runHookRunner,
                   persistCtx: {
                     agentId: resolvedAgentId,
                     sessionKey: input.conversationId,
@@ -3220,7 +3257,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   toolName: request.name,
                   output: syntheticResult,
                   success: true,
-                  hookRunner: this.opts.hookRunner,
+                  hookRunner: runHookRunner,
                   persistCtx: {
                     agentId: resolvedAgentId,
                     sessionKey: input.conversationId,
@@ -3266,7 +3303,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 output: "",
                 error: hookError,
                 success: false,
-                hookRunner: this.opts.hookRunner,
+                hookRunner: runHookRunner,
                 persistCtx: {
                   agentId: resolvedAgentId,
                   sessionKey: input.conversationId,
@@ -3297,12 +3334,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
               }));
               continue;
             }
-          } else if (this.opts.hooks?.beforeToolCall) {
+          } else if (runLegacyHooks?.beforeToolCall) {
             // 向后兼容：旧版 hooks
             try {
               const hookRes = await this.withStageTimeout(
                 "beforeToolCall",
-                Promise.resolve(this.opts.hooks.beforeToolCall({
+                Promise.resolve(runLegacyHooks.beforeToolCall({
                   toolName: request.name,
                   arguments: request.arguments,
                   id: request.id
@@ -3331,7 +3368,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                   output: "",
                   error: blockedError,
                   success: false,
-                  hookRunner: this.opts.hookRunner,
+                  hookRunner: runHookRunner,
                   persistCtx: {
                     agentId: resolvedAgentId,
                     sessionKey: input.conversationId,
@@ -3387,7 +3424,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 output: "",
                 error: hookError,
                 success: false,
-                hookRunner: this.opts.hookRunner,
+                hookRunner: runHookRunner,
                 persistCtx: {
                   agentId: resolvedAgentId,
                   sessionKey: input.conversationId,
@@ -3458,7 +3495,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 toolName: request.name,
                 output: reusedResult.output,
                 success: true,
-                hookRunner: this.opts.hookRunner,
+                hookRunner: runHookRunner,
                 persistCtx: {
                   agentId: resolvedAgentId,
                   sessionKey: input.conversationId,
@@ -3518,7 +3555,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
               output: "",
               error: duplicateError,
               success: false,
-              hookRunner: this.opts.hookRunner,
+              hookRunner: runHookRunner,
               persistCtx: {
                 agentId: resolvedAgentId,
                 sessionKey: input.conversationId,
@@ -3592,7 +3629,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 output: "",
                 error: nearDuplicateError,
                 success: false,
-                hookRunner: this.opts.hookRunner,
+                hookRunner: runHookRunner,
                 persistCtx: {
                   agentId: resolvedAgentId,
                   sessionKey: input.conversationId,
@@ -3654,7 +3691,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 output: "",
                 error: thrashError,
                 success: false,
-                hookRunner: this.opts.hookRunner,
+                hookRunner: runHookRunner,
                 persistCtx: {
                   agentId: resolvedAgentId,
                   sessionKey: input.conversationId,
@@ -3740,11 +3777,11 @@ export class ToolEnabledAgent implements BelldandyAgent {
           const toolDurationMs = Date.now() - toolStartTime;
 
           // Hook: afterToolCall / after_tool_call
-          if (this.opts.hookRunner) {
+          if (runHookRunner) {
             try {
               await this.withStageTimeout(
                 "after_tool_call",
-                this.opts.hookRunner.runAfterToolCall(
+                runHookRunner.runAfterToolCall(
                   {
                     toolName: result.name,
                     params: request.arguments,
@@ -3758,12 +3795,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
             } catch (err) {
               logError(`钩子 after_tool_call 执行失败: ${err}`);
             }
-          } else if (this.opts.hooks?.afterToolCall) {
+          } else if (runLegacyHooks?.afterToolCall) {
             // 向后兼容：旧版 hooks
             try {
               await this.withStageTimeout(
                 "afterToolCall",
-                Promise.resolve(this.opts.hooks.afterToolCall({
+                Promise.resolve(runLegacyHooks.afterToolCall({
                   toolName: result.name,
                   arguments: request.arguments,
                   result: result.output,
@@ -3801,7 +3838,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
             output: result.output,
             error: result.error,
             success: result.success,
-            hookRunner: this.opts.hookRunner,
+            hookRunner: runHookRunner,
             persistCtx: {
               agentId: resolvedAgentId,
               sessionKey: input.conversationId,
@@ -3861,12 +3898,12 @@ export class ToolEnabledAgent implements BelldandyAgent {
       // Hook: afterRun / agent_end（在清理 token 计数器之前执行，
       // 以便 agent_end hooks 可通过 toolExecutor.getTokenCounter() 访问计数器，
       // 用于扩展 C 自动任务边界检测等场景）
-      if (this.opts.hookRunner) {
+      if (runHookRunner) {
         try {
           const agentEndSnapshot = generatedItems.snapshot();
           await this.withStageTimeout(
             "agent_end",
-            this.opts.hookRunner.runAgentEnd(
+            runHookRunner.runAgentEnd(
               {
                 messages: agentEndSnapshot.items,
                 success: runSuccess,
@@ -3880,13 +3917,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
         } catch (err) {
           logError(`钩子 agent_end 执行失败: ${err}`);
         }
-      } else if (this.opts.hooks?.afterRun) {
+      } else if (runLegacyHooks?.afterRun) {
         // 向后兼容：旧版 hooks
         try {
           const agentEndSnapshot = generatedItems.snapshot();
           await this.withStageTimeout(
             "afterRun",
-            Promise.resolve(this.opts.hooks.afterRun({ input, items: agentEndSnapshot.items }, legacyHookCtx)),
+            Promise.resolve(runLegacyHooks.afterRun({ input, items: agentEndSnapshot.items }, legacyHookCtx)),
           );
         } catch (err) {
           logError(`Hook afterRun failed: ${err}`);
@@ -4235,7 +4272,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       });
       if (usedWireApi === "responses") {
         currentPhase = "extract_responses_payload";
-        const content = extractResponsesText(json);
+        const content = filterProviderControlFrameSuffix(extractResponsesText(json));
         const toolCalls = extractResponsesToolCalls(json);
         const rawUsage = (json as any).usage;
         const usage: AnthropicUsage | undefined = rawUsage ? {
@@ -4290,7 +4327,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
       }
       currentPhase = "extract_chat_choice";
       const message = choice.message;
-      const content = typeof message?.content === "string" ? message.content : "";
+      const content = typeof message?.content === "string"
+        ? filterProviderControlFrameSuffix(message.content)
+        : "";
       const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls as OpenAIToolCall[] : undefined;
       const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
       const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
@@ -4381,6 +4420,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     conversationId?: string,
     agentId?: string,
     force?: boolean,
+    hookRunner?: HookRunner,
   ): Promise<CompactionState> {
     // 提取可压缩的 user/assistant 消息（跳过 system 和 tool 消息）
     const systemMsg = messages[0]?.role === "system" ? messages[0] : null;
@@ -4424,7 +4464,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       compactionMode: "loop",
       deltaMessageCount: Math.max(0, historyMessages.length - keepRecent),
       summarizerModel: this.opts.summarizerModelName,
-    }, conversationId, agentId);
+    }, conversationId, agentId, hookRunner);
 
     const result = await compactIncremental(historyMessages, state, {
       ...this.opts.compaction,
@@ -4504,7 +4544,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
       summarizerModel: this.opts.summarizerModelName,
       savedTokenCount: Math.max(0, result.originalTokens - result.compactedTokens),
       rebuildTriggered: result.rebuildTriggered,
-    }, conversationId, agentId);
+    }, conversationId, agentId, hookRunner);
 
     return result.state;
   }

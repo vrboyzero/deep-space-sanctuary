@@ -232,7 +232,13 @@ describe("coding run stdio process bridge", () => {
         .map((frame) => frame.event as Record<string, unknown>);
       expect(events).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "message.delta", payload: { delta: "streamed workspace answer" } }),
-        expect.objectContaining({ type: "run.completed", payload: { output: { text: "streamed workspace answer" } } }),
+        expect.objectContaining({
+          type: "run.completed",
+          payload: expect.objectContaining({
+            output: { text: "streamed workspace answer" },
+            usage: { status: "incomplete", reason: "usage_not_reported" },
+          }),
+        }),
       ]));
     } finally {
       releaseConversationResponse?.();

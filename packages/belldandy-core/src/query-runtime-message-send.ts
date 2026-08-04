@@ -44,6 +44,10 @@ import { resolveDeepSeekTierRoute } from "./deepseek-tier-routing.js";
 import type { PreflightCompressionPolicy } from "./preflight-compression-config.js";
 import { resolveProjectRules } from "./project-rules.js";
 import { buildCodingRunPromptOverride } from "./coding-run-prompt.js";
+import {
+  isBareCodingRun,
+  projectCodingRunAutomationContext,
+} from "./coding-run-automation-profile.js";
 import { projectToolResultEventOutput } from "./tool-result-event-output.js";
 import { compileOutputSchema } from "./coding-run/output-schema.js";
 
@@ -418,26 +422,34 @@ export async function handleMessageSendWithQueryRuntime(
     // ── Chat Commander 显式触发判定 ──
     // 检测用户消息是否显式要求使用 commander / multi-agent / parallel review / workflow
     // 不做 auto 判定，只响应显式触发或 commanderMode === "on"
-    const commanderTrigger = detectChatCommanderTrigger(userText, runtimeDeps.commanderMode);
     const commanderPromptDeltas: AgentPromptDelta[] = [];
-    if (commanderTrigger.triggered) {
-      commanderPromptDeltas.push({
-        id: `chat-commander-hint-${runId}`,
-        deltaType: "chat-commander-hint",
-        role: "system",
-        text: buildChatCommanderHintText(commanderTrigger),
-        source: "chat-commander-trigger",
-        metadata: {
+    if (!isBareCodingRun(request.params.codingRun)) {
+      const commanderTrigger = detectChatCommanderTrigger(userText, runtimeDeps.commanderMode);
+      if (commanderTrigger.triggered) {
+        commanderPromptDeltas.push({
+          id: `chat-commander-hint-${runId}`,
+          deltaType: "chat-commander-hint",
+          role: "system",
+          text: buildChatCommanderHintText(commanderTrigger),
+          source: "chat-commander-trigger",
+          metadata: {
+            matchedPhrases: commanderTrigger.matchedPhrases,
+            suggestedTools: commanderTrigger.suggestedTools,
+            reason: commanderTrigger.reason,
+          },
+        });
+        runtimeDeps.log.info("chat-commander", `Triggered: ${commanderTrigger.reason}`, {
           matchedPhrases: commanderTrigger.matchedPhrases,
-          suggestedTools: commanderTrigger.suggestedTools,
-          reason: commanderTrigger.reason,
-        },
-      });
-      runtimeDeps.log.info("chat-commander", `Triggered: ${commanderTrigger.reason}`, {
-        matchedPhrases: commanderTrigger.matchedPhrases,
-        runId,
-      });
+          runId,
+        });
+      }
     }
+    const automationContext = projectCodingRunAutomationContext({
+      codingRun: request.params.codingRun,
+      history,
+      explicitPromptDeltas: preparedPrompt.promptDeltas,
+      implicitPromptDeltas: commanderPromptDeltas,
+    });
 
     const steeringMailbox = agent.getCodingRunCapabilities?.().steerAtModelBoundary === true
       ? new ConversationSteerMailbox({
@@ -510,11 +522,14 @@ export async function handleMessageSendWithQueryRuntime(
       steeringMailbox,
       userMessageTimestamp: userMessage.timestamp,
       userText,
-      history,
+      ...(automationContext.automationProfile
+        ? { automationProfile: automationContext.automationProfile }
+        : {}),
+      history: automationContext.history,
       normalizedRoomContext,
       promptText: preparedPrompt.promptText,
       contentParts: preparedPrompt.contentParts,
-      promptDeltas: [...preparedPrompt.promptDeltas, ...commanderPromptDeltas],
+      promptDeltas: automationContext.promptDeltas,
       attachmentCompressionResults: preparedPrompt.attachmentCompressionResults,
       textAttachmentCount: preparedPrompt.textAttachmentCount,
       textAttachmentChars: preparedPrompt.textAttachmentChars,
@@ -691,6 +706,7 @@ type MessageSendBackgroundInput = {
   steeringMailbox?: ConversationSteerMailbox;
   userMessageTimestamp: number;
   userText: string;
+  automationProfile?: "bare";
   history: Array<unknown>;
   normalizedRoomContext?: Record<string, unknown>;
   promptText: string;
@@ -863,6 +879,7 @@ function buildMessageSendAgentRunInput(
   const structuredOutput = buildAgentStructuredOutputContract(input.codingRun);
   const runInput: any = {
     conversationId: input.conversationId,
+    ...(input.automationProfile ? { automationProfile: input.automationProfile } : {}),
     text: input.promptText,
     userInput: input.userText,
     abortSignal: input.abortController.signal,
@@ -952,7 +969,9 @@ function buildCodingRunLaunchSpec(
   const launchSpec = {
     commandSandbox: "required",
     ...(codingRun.cwd ? { cwd: codingRun.cwd, isolationMode: "cwd" } : {}),
-    ...(codingRun.toolAllow?.length ? { toolSet: [...codingRun.toolAllow] } : {}),
+    ...(codingRun.toolAllow?.length
+      ? { toolSet: [...codingRun.toolAllow] }
+      : isBareCodingRun(codingRun) ? { toolSet: [] } : {}),
     ...(codingRun.toolDeny?.length ? { toolDeny: [...codingRun.toolDeny] } : {}),
     ...(codingRun.permissionMode ? { permissionMode: codingRun.permissionMode } : {}),
     ...(codingRun.maxWallTimeMs ? { maxRunWallTimeMs: codingRun.maxWallTimeMs } : {}),
@@ -966,6 +985,7 @@ function buildCodingRunLaunchSpec(
 async function buildProjectRulesPromptDelta(
   codingRun: MessageSendParams["codingRun"],
 ): Promise<AgentPromptDelta | undefined> {
+  if (isBareCodingRun(codingRun)) return undefined;
   const cwd = codingRun?.cwd?.trim();
   if (!cwd) return undefined;
 
@@ -1298,6 +1318,7 @@ function handleMessageSendUsageEvent(input: {
     cacheHitTokens?: number;
     cacheMissTokens?: number;
     modelCalls: number;
+    providerReportedModelCalls?: number;
     cacheSupport?: "supported" | "unsupported" | "unknown";
     systemPromptFingerprint?: string;
     structureSignature?: string;
@@ -1383,6 +1404,9 @@ function handleMessageSendUsageEvent(input: {
   const latestUsage = {
     inputTokens: Number(input.item.inputTokens ?? 0),
     outputTokens: Number(input.item.outputTokens ?? 0),
+    ...(typeof input.item.providerReportedModelCalls === "number"
+      ? { providerReportedModelCalls: Number(input.item.providerReportedModelCalls) }
+      : {}),
     ...(typeof input.item.cacheCreationTokens === "number" ? { cacheCreationTokens: Number(input.item.cacheCreationTokens) } : {}),
     ...(typeof input.item.cacheReadTokens === "number" ? { cacheReadTokens: Number(input.item.cacheReadTokens) } : {}),
     ...(typeof input.item.cacheHitTokens === "number" ? { cacheHitTokens: Number(input.item.cacheHitTokens) } : {}),
@@ -1453,6 +1477,9 @@ function handleMessageSendUsageEvent(input: {
       ...(typeof input.item.cacheHitTokens === "number" ? { cacheHitTokens: input.item.cacheHitTokens } : {}),
       ...(typeof input.item.cacheMissTokens === "number" ? { cacheMissTokens: input.item.cacheMissTokens } : {}),
       modelCalls: input.item.modelCalls,
+      ...(typeof input.item.providerReportedModelCalls === "number"
+        ? { providerReportedModelCalls: input.item.providerReportedModelCalls }
+        : {}),
       ...(typeof input.item.cacheSupport === "string" ? { cacheSupport: input.item.cacheSupport } : {}),
       ...(typeof input.item.systemPromptFingerprint === "string" ? { systemPromptFingerprint: input.item.systemPromptFingerprint } : {}),
       ...(typeof input.item.structureSignature === "string" ? { structureSignature: input.item.structureSignature } : {}),
@@ -1566,6 +1593,7 @@ function createMessageSendStreamAdapter(input: {
       cacheHitTokens?: number;
       cacheMissTokens?: number;
       modelCalls: number;
+      providerReportedModelCalls?: number;
       cacheSupport?: "supported" | "unsupported" | "unknown";
       systemPromptFingerprint?: string;
       structureSignature?: string;

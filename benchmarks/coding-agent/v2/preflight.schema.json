@@ -17,6 +17,7 @@
       "required": ["contractSource", "agentProfile", "executionBudget", "pricing", "oci", "eventProjection", "fault"],
       "properties": {
         "contractSource": { "$ref": "#/$defs/contractSource" },
+        "workspaceWriteClosure": { "$ref": "#/$defs/workspaceWriteClosureCheck" },
         "agentProfile": { "$ref": "#/$defs/agentProfileCheck" },
         "executionBudget": { "$ref": "#/$defs/executionBudgetCheck" },
         "pricing": { "$ref": "#/$defs/check" },
@@ -63,6 +64,26 @@
             "contracts": { "$ref": "#/$defs/entrypoint" }
           }
         }
+      }
+    },
+    "workspaceWriteClosureCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable"] },
+        "reason": { "type": ["string", "null"], "maxLength": 200 },
+        "missingTools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["file_read", "file_edit", "apply_patch"] }
+        },
+        "toolAllow": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "testCommandCount": { "type": "integer", "minimum": 1 }
       }
     },
     "entrypoint": {

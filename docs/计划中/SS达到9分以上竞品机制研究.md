@@ -338,6 +338,20 @@ runner 增加显式 `--source-root`；manifest、fixture 和 runner 来自 bench
 - **完成标准**：cross-file 和 bug 各至少 5/6；tests `>=54/60`、patch `>=15/18`、regressions `<=6`；相邻诊断任务保持 6/6。
 - **预期效果**：减少错误 patch、重复读文件和失败后的无效尝试。
 
+#### P1-A 轻量实现任务卡（2026-08-04）
+
+- **公共 seam**：新增 `file_edit(path, oldText, newText, revision)`；`revision` 只能来自同一路径最近一次 `file_read` 返回值。调用方不需要了解路径策略、唯一匹配算法、stale 校验或 workspace revision 的 prepare/commit 顺序。
+- **owner 与边界**：file 工具模块负责单文件 UTF-8 精确替换、read-before-edit、唯一匹配、stale detection 和结构化 repair hint；既有 `apply_patch` 继续负责多文件、多 hunk、增删与移动，不新增第二套 patch、restore、audit 或 revision owner。
+- **架构影响**：不改变 Tool Executor、WorkspaceRevision 或权限策略接口；新增工具沿用 `workspace-write` family、privileged channels 与既有 mutation observer。v1 benchmark contract 和 r11 artifact 保持冻结，只更新 corrected v2 的 `workspace-write` 工具束。
+- **回滚入口**：移除 `file_edit` 注册、v2 profile 接线和 `file_read` 的 revision 输出即可回到当前行为；由现有 WorkspaceRevision 记录的成功 mutation 继续可 review/restore。
+- **明确排除**：不支持正则、行号、多文件、多处替换、自动猜测目标、自动重读重试或大范围重构；这些需求继续使用 `file_write`/`apply_patch` 或由调用方显式重读后重试。
+
+行为验收：
+
+1. **唯一替换**：Given 调用方用 `file_read` 得到当前 revision，When `oldText` 在同一文件中恰好出现一次并调用 `file_edit`，Then 只替换该处，且既有 WorkspaceRevision 先 prepare、成功写入后 commit。
+2. **陈旧读取**：Given revision 返回后文件已变化，When 使用旧 revision 编辑，Then 文件保持现状，并返回 `stale_file` 与重新 `file_read` 的结构化提示。
+3. **不可确定目标**：Given `oldText` 不存在或出现多次，When 调用 `file_edit`，Then 不产生 mutation，并返回明确 `matchCount` 及重读或缩小匹配范围的结构化提示。
+
 ### 9.5 P1-B：Headless、观测与 worktree 收口
 
 - **风险级别**：中；主要风险是观测数据泄露内容，以及 cleanup sweep 删除不属于当前 owner 的 worktree。
@@ -346,6 +360,35 @@ runner 增加显式 `--source-root`；manifest、fixture 和 runner 来自 bench
 - **范围**：bare automation profile、capability handshake、唯一终态/exit taxonomy、usage completeness、默认脱敏 trace；worktree keep/apply/discard、lock 和 owner-only sweep；TUI 分平台性能 Gate。
 - **完成标准**：事件可按 run/prompt/agent/tool/policy/recovery 关联；敏感内容默认关闭；Git delivery 至少 5/6；双平台完整构建/测试和零残留 Gate 通过。
 - **预期效果**：让 CI、SDK、TUI 和运维看到同一份可验证状态，并关闭最后的交付生命周期缺口。
+
+#### P1-B 切片 1 轻量实现任务卡：Headless capability 与 usage 终态（2026-08-04）
+
+- **公共 seam**：`bdd agent run --jsonl` 的 `AgentRunEvent v1` 事件流，以及 `run-coding-agent-ci.mjs` 生成的 manifest；消费方不需要读取 Gateway 内部状态或推断 usage 缺失原因。
+- **owner 与边界**：`coding-run/contracts.ts` 定义版本化 capability/usage completeness 契约；Gateway Conversation event adapter 负责投影启动 handshake 和终态 usage 摘要；Agent usage owner 只补充 Provider usage 覆盖的模型调用计数；CI runner 负责验证并记录，不成为第二套运行状态 owner。
+- **架构影响**：保持 `AgentRunEvent` 顶层 v1 与既有退出码不变，以 payload 兼容扩展暴露新字段；不改变 Gateway WebSocket、Conversation 或预算裁决接口。旧消费者可忽略新字段，新 runner 对缺少 handshake、缺少唯一终态或缺少 usage 完整性声明失败关闭。
+- **回滚入口**：移除启动 payload 的 capability、终态 usage 摘要、Provider usage 调用计数和 CI manifest 字段即可回到当前 v1 行为；不涉及运行态数据迁移。
+- **明确排除**：本切片不实现 bare profile、默认脱敏 trace、worktree keep/apply/discard、owner lock/sweep 或 TUI 性能门禁；这些继续由 P1-B 后续切片闭环。
+
+行为验收：
+
+1. **能力握手**：Given Headless run 被 Gateway 接受，When 输出首个 `run.started`，Then payload 包含版本化 capability，明确连续序列、唯一终态与终态 usage completeness 能力。
+2. **usage 完整性**：Given 一次 run 有一个或多个模型调用，When 到达任意终态，Then 终态明确标记 Provider usage 是否覆盖全部模型调用；缺失或部分覆盖不能被写成完整或零 usage。
+3. **CI 失败关闭**：Given CI runner 消费 JSONL，When handshake、连续序列、唯一终态或终态 usage 声明缺失/非法，Then event contract 失败；合法但不完整的 usage 保留可机读状态，不伪装为完整成功。
+
+#### P1-B 切片 2 轻量实现任务卡：bare automation profile（2026-08-04）
+
+- **公共 seam**：`CodingRunOptions.automationProfile` 与 `bdd agent run --automation-profile bare`；Coding CI 必须显式选择 profile，Gateway 与 Agent 只把它解释为本次运行的确定性上下文/扩展隔离，不创建新的领域运行状态。
+- **owner 与边界**：Protocol 定义唯一合法值；CLI/Gateway 负责校验和透传；Gateway message-send owner 负责移除项目规则、旧 conversation history 与隐式 prompt delta；Agent 单次 run owner 负责跳过 hooks、skills/plugins/MCP/memory 等通过 hook runner 注入的隐式扩展。显式 prompt、附件/音频、runtime identity authority、tool allow/deny、permission、sandbox 与 wall-time/turn/token/cost budget 保持既有 owner 和执行路径。
+- **架构影响**：只增加兼容可选字段和一次运行级开关，不修改共享 Agent 实例，不改变 Conversation 持久化、Gateway WebSocket 或权限模型。超大 `query-runtime-message-send.ts` 与 `tool-agent.ts` 仅保留装配/分支，profile 解析和投影优先放相邻小模块。
+- **失败 fixture**：非法 profile 在 CLI 与 Gateway 边界失败关闭；bare 输入夹带旧 history、项目 `AGENTS.md`、commander/隐式 prompt delta 或 hook runner 时，Agent 实际模型输入与 hook 计数必须证明它们未生效；同时用既有受限工具/预算投影测试证明 profile 不扩大权限。
+- **回滚入口**：移除可选 Protocol/CLI 字段、Gateway bare 投影、Agent 单次 hook gate 与 CI 参数/manifest 字段即可恢复当前行为；无状态迁移或 artifact 重写。
+- **明确排除**：本切片不实现默认脱敏 trace、worktree keep/apply/discard、owner lock/sweep、TUI 性能 Gate，也不运行需要新敏感 Provider state 的 P1-A A/B。
+
+行为验收：
+
+1. **确定性最小上下文**：Given Headless run 显式选择 `bare`，When Gateway 构造 Agent 输入，Then 只保留本次显式 prompt 与附件/音频，不注入旧 conversation history、项目规则、commander 或其他隐式 prompt delta。
+2. **隐式扩展隔离**：Given 共享 Agent 配置了 hook runner 或 legacy hooks，When 执行 bare run，Then before/after run、tool、transcript persist 与 compaction hooks 均不执行，且不改变同一 Agent 后续普通 run 的 hook 行为。
+3. **安全边界不变**：Given bare run 同时携带 identity、tool allow/deny、permission、sandbox 与预算约束，When Agent 启动并尝试工作，Then这些约束仍按既有可信 owner 生效，profile 不能扩大工具、身份或预算权限。
 
 ### 9.6 P2：高级并行控制面
 
@@ -3784,19 +3827,186 @@ P0/P1 的粗略总工作量为 **24-38 人日**，不含 P2、模型调优、公
 - 关键功能验证通过：初次非法 -> 单次 no-tool repair -> 合法 JSON；二次非法/repair Tool call 保留首次原文；turn/token/cost/wall-time 门禁和 repair 后置 token/cost 超限均保持可诊断终态。
 - `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；本环节未运行全仓测试、新 corrected v2 Provider 批次或 S2 control token 故障矩阵，r11 artifact 与累计 Provider 费用不变。
 
+#### Structured output S2 实现结论：Provider control frame 文本边界（2026-08-04）
+
+##### 已完成内容
+
+1. **`provider-control-frame.ts` 新建**：
+   - 新增有界状态化 Provider 文本边界，只识别 r11 已取证的 `DSML parameter -> invoke -> tool_calls` 三段结束帧，不扩展或猜测未知私有协议。
+   - 仅当帧前内容是完整 raw JSON 或单一显式 JSON code block 时移除精确尾帧；普通文本、JSON 字符串、未知顺序和不完整尾帧逐字保留。
+   - 流式候选缓冲固定为 256 字符，超界候选失败关闭为原文，不新增配置或环境变量。
+
+2. **`model-response-stream.ts`、`tool-agent.ts` 与 `openai.ts` 接入**：
+   - OpenAI Chat Completions 与 Responses 的流式 delta 在协议 completion 前统一裁决跨 chunk 尾帧，过滤前原始字节继续计入响应上限。
+   - Tool Agent 和无工具 Agent 的非流式 Chat/Responses 内容复用同一边界，标准 Tool call 仍由既有结构化字段解析并只执行一次。
+   - Anthropic 分支保持原文；自然语言权限说明不由 S2 删除，继续交给 S1 单次 no-tool repair owner。
+
+3. **`model-response-stream.test.ts`、`structured-output.test.ts` 与 `openai.test.ts` 扩展**：
+   - 新增 12 个 S2 测试，覆盖 r11 跨 chunk 泄漏、raw/fenced JSON、Chat/Responses、流式/非流式、Tool/无 Tool 和原始响应字节上限。
+   - 防误删矩阵覆盖普通文本、JSON 字符串、不完整 frame、Anthropic 隔离和权限说明 repair 分层。
+   - 四个核心 red-green 切片分别证明流式 Chat、非流式 Chat、Responses Tool call 与无工具 Agent 在接线前失败、最小实现后通过。
+
+4. **`docs/project-map.md` 更新**：
+   - 记录 control frame owner、精确识别范围、256 字符缓冲、OpenAI 接线和失败关闭边界。
+
+5. **效果**：
+   - r11 中合法 JSON 后泄漏 DSML 结束帧的产品路径可在 Provider 协议边界恢复严格结构化终态，无需消耗 S1 repair model call。
+   - 普通 prose 与 JSON 字符串不会因包含相似字面量而被静默改写，未知或截断 frame 不会被误判为成功清理。
+   - S2 不放宽 Core validator、不改写 r11 artifact，也不把两份自然语言权限说明错误归类为协议帧。
+
+##### 验证结果
+
+- TypeScript 完整 build 无错误，48 项 Web asset manifest 正常生成，workspace entrypoint verifier 通过。
+- 8 个 Agent/Core 定向测试文件共 `146/146` 通过，包含 12 个新增 S2 行为与故障注入测试。
+- 全仓 Vitest：`868` 个测试文件通过、`2` 个跳过；`5175` 个测试通过、`3` 个跳过，零失败。
+- 关键功能验证通过：跨 chunk DSML 尾帧被精确移除；Chat/Responses 与 Tool/无 Tool 收敛到同一结果；普通文本、JSON 字符串、不完整 frame 和 Anthropic 文本逐字保留；可移除帧仍计入原始响应大小门禁。
+- `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；无 crash child 残留，`.env/.env.local` 与 r11 artifact 无 diff；未运行新 corrected v2 Provider 批次，累计 Provider 费用保持 `$0.16482273 / $3.00`。
+
+#### P1-A 环节 1 实现结论：read-before-edit 与 exact edit 核心原语（2026-08-04）
+
+##### 已完成内容
+
+1. **`file.ts` 扩展**：
+   - `file_read` 成功结果新增绑定真实路径与当前文件状态的 64 字符 opaque `revision`，同一未变文件保持稳定，文件变化后失效。
+   - 新增公开 `file_edit(path, oldText, newText, revision)` seam，复用现有 workspace scope、deny/sensitive/allowlist、文件扩展名与 privileged channel 策略。
+   - 在 mutation 前闭合 read-before-edit、三次 stale 检查、有效 UTF-8、唯一字面量匹配与符号链接拒绝；成功路径复用既有 WorkspaceRevision prepare/commit owner。
+   - 缺少 revision、stale、零匹配和多匹配返回 JSON `code/path/matchCount/repairHint`，不自动猜测目标、重读重试或静默替换第一处。
+
+2. **`file.test.ts` 扩展**：
+   - 以公开 builtin tool interface 建立 6 个逐条 red-green 切片，覆盖 revision 稳定性、缺少读取凭证、stale、零匹配、多匹配和唯一替换。
+   - 失败场景均断言文件不变且 WorkspaceRevision observer 零调用；成功场景断言 prepare 在旧内容仍存在时发生、commit 在新内容落盘后发生，并校验 operation identity。
+
+3. **效果**：
+   - 单文件局部修改具备确定性选择与可修复失败反馈，不再依赖正则、行号或宽泛 patch 猜测唯一目标。
+   - 文件在读取后变化时失败关闭，不会用旧上下文覆盖新内容。
+   - `apply_patch` 的多文件、多 hunk 职责保持不变；本环节尚未把 `file_edit` 注册到 Gateway 或 corrected v2 profile，因此不提前声称 benchmark 可见。
+
+##### 验证结果
+
+- Skills TypeScript 编译无错误（`corepack pnpm --filter @belldandy/skills build`）。
+- `file.test.ts` 共 `45/45` 通过，包含 6 个新增 revision/exact-edit 测试。
+- 关键功能验证通过：旧 revision 在 mutation 前返回 `stale_file`；零/多匹配返回准确 `matchCount`；唯一匹配只替换一次并按 prepare -> write -> commit 顺序接入现有 revision owner。
+- `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；尚未运行 Gateway 注册、tool contract v2、corrected v2 profile、完整 build/全仓测试或新 Provider benchmark。
+
+#### P1-A 环节 2 实现结论：Gateway 接线与 capability closure（2026-08-04）
+
+##### 已完成内容
+
+1. **`index.ts`、`gateway-main.ts` 接入**：
+   - 从 Skills 公共入口导出 `fileEditTool`，并注册到 Gateway builtin 工具池与安全工具日志。
+   - `file_edit` 不加入 `CORE_TOOL_NAMES`，继续沿用 `file_write/file_delete` 的 deferred discovery；未扩大 `acceptEdits` 到 `run_command`。
+   - 成功结果接入 task artifact path 归属，额外 workspace root 与 WorkspaceRevision observer 继续复用既有 executor context。
+
+2. **corrected v2 contract 与 preflight 扩展**：
+   - 仅在 v2 `workspace-write` profile 中加入 `file_edit`，v1 profile 保持冻结；behavior contract 与 tool contract v2 明确 exact edit、`apply_patch` 分工和 repair 路径。
+   - 新增 `workspaceWriteClosure` preflight，workspace-write 任务启动前必须同时具备 `file_read`、`file_edit`、`apply_patch` 和至少一条 harness `acceptance.testCommands`，任一缺失即失败关闭。
+   - preflight Schema 将新检查声明为可选兼容扩展，新 artifact 总是写入该检查，既有 r11 artifact 不因新增必填字段失效。
+
+3. **`file.test.ts` 与 Gateway/benchmark 测试扩展**：
+   - 新增 overlap、无效 UTF-8、write allowlist、extra workspace root、直接符号链接和大小写敏感路径绑定负例。
+   - 新增 Gateway 源码装配测试，验证公共导出、真实工具池注册、deferred 边界和日志可见性。
+   - 新增 closure 单元与 artifact 级测试，逐项移除 read/edit/patch 或测试命令时均验证 preflight 失败。
+
+4. **`docs/project-map.md` 更新**：
+   - 记录 `file_edit` 单文件 exact edit owner、corrected v2 profile 与 workspace-write closure preflight。
+
+5. **效果**：
+   - Agent 可在真实 Gateway 工具面选择受 revision 约束的单文件精确编辑，同时保留 `apply_patch` 处理多文件和多 hunk 修改。
+   - corrected v2 不会在编辑或 harness 测试能力缺失时启动 workspace-write 样本，测试仍由 harness 执行，不向 `acceptEdits` 暴露命令执行能力。
+   - stale、路径策略、编码、符号链接和不唯一匹配均在 mutation prepare 前失败关闭，extra root 成功 mutation 仍归属于正确 workspace revision root。
+
+##### 验证结果
+
+- TypeScript 完整 build 无错误，48 项 Web asset manifest 正常生成，workspace entrypoint verifier 通过。
+- 9 个 Skills/Core/benchmark 定向测试文件共 `118/118` 通过，包含 8 个新增 P1-A 环节 2 测试；`file.test.ts` 为 `51/51`，corrected v2 contract/preflight 为 `20/20`。
+- 关键功能验证通过：Gateway 将 `file_edit` 作为 deferred workspace-write 工具注册；v2 closure 对缺失 read/edit/patch/test command 失败关闭；v1 工具束保持不变。
+- 本环节未运行全仓 Vitest 或新 Provider benchmark；POSIX 大小写路径绑定用例在 Windows 按平台条件跳过，待 Linux Gate 覆盖。
+
+#### P1-B 切片 1 实现结论：Headless capability handshake 与 usage 终态（2026-08-04）
+
+##### 已完成内容
+
+1. **`coding-run/contracts.ts` 与 `gateway-conversation-event-adapter.ts` 扩展**：
+   - 新增严格版本化的 `coding-run-capabilities/v1` 和 terminal usage completeness validator，首个 `run.started` 明确声明连续序列、唯一终态与终态 usage 能力。
+   - 完成、失败、取消和中断统一携带 `complete/incomplete` usage 摘要；Provider usage 缺失、部分覆盖、计数不可用和未到达 usage 路径均可机读区分。
+   - 保持 `AgentRunEvent v1` 顶层、Gateway WebSocket 与既有退出码不变，新字段仅作为 payload 兼容扩展。
+
+2. **`tool-agent.ts`、Agent usage 契约与 `query-runtime-message-send.ts` 接入**：
+   - 分别统计已发起模型调用和具备 Provider usage 的调用，失败调用仍计入 coverage 分母，但不改变 token、cost 或预算累计。
+   - 新计数经 Gateway `token.usage` 传播；structured-output repair 的完整、部分缺失和 Provider 失败路径均能导出准确 completeness。
+
+3. **`run-coding-agent-ci.mjs`、benchmark 与 recovery harness 收口**：
+   - CI runner 对首事件 handshake、连续序列、唯一末尾终态和终态 usage 声明失败关闭，并在 manifest/status 中记录 capability 与 `usageComplete`。
+   - benchmark 仅在最后规范化 usage 为 Provider 上报且终态声明 `complete` 时接受可信费用；部分 token 可保留诊断，但 cost 固定为不可用并停止后续真实任务。
+   - 断线恢复 manifest 从最终组合事件重新投影 capability/usage，避免继承断线前失败终态的旧证据；恢复 `status.txt` 与 manifest 使用同一检查结果。
+
+4. **公共兼容面与文档更新**：
+   - `examples/ci/compatibility.json` 冻结 capability schema 版本，`verify-coding-ci-contract.mjs` 将其纳入发布门禁。
+   - `examples/ci/README.md` 与 `docs/project-map.md` 记录 Headless 消费顺序、合法但不完整 usage 的 fail-closed 语义及各 owner 边界。
+
+5. **效果**：
+   - CI/SDK 不再通过事件数量或零 token 猜测运行是否完整，可以在首事件协商能力，并从任意唯一终态读取 usage 可信度。
+   - Provider 未上报、只覆盖部分调用或 repair 调用失败时，不会把部分费用伪装成完整账单。
+   - 本切片不新增 bare profile、默认 trace、worktree 生命周期或 TUI 性能门禁，也不改写 r11 artifact 或敏感配置。
+
+##### 验证结果
+
+- Agent 与 Core TypeScript 编译无错误。
+- 8 个 Agent/Core/CI/benchmark 定向测试文件共 `89/89` 通过，包含 4 个新增 capability、部分 usage 与 Provider 失败 coverage 测试。
+- `corepack pnpm verify:coding-ci` 通过，协议、capability、artifact、示例和双平台静态 Gate 保持一致。
+- 关键功能验证通过：唯一完成终态可标记完整 usage；失败 repair 计为 coverage 缺口；恢复 manifest 不保留旧终态 usage；不完整费用在 benchmark 中失败关闭。
+- `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；本切片未运行全仓 Vitest、新 Provider benchmark 或双平台 live Gate，累计 Provider 费用保持 `$0.16482273 / $3.00`。
+
+#### P1-B 切片 2 实现结论：bare automation profile（2026-08-04）
+
+##### 已完成内容
+
+1. **Protocol、CLI 与 Gateway 契约扩展**：
+   - `CodingRunOptions` 新增唯一合法值 `automationProfile: "bare"`，`bdd agent run` 接入 `--automation-profile bare`；CLI 与 Gateway 均对未知 profile 失败关闭。
+   - `run.started.payload.automationProfile` 回传 Gateway 实际接受的 profile，Headless 消费方不需要相信本地参数或从运行行为反推。
+   - profile 保持显式 CLI/API 契约，未新增环境变量；缺失时继续使用普通运行面，非法值不回退，避免机器环境隐式改变自动化语义。
+
+2. **`coding-run-automation-profile.ts`、`coding-run-prompt.ts` 与 `query-runtime-message-send.ts` 接入**：
+   - bare run 清空旧 conversation history，跳过项目 `AGENTS.md` 解析和 commander delta，并使用独立 bounded coding prompt 取代常驻 workspace/memory/skills prompt。
+   - 只保留本次显式附件与音频输入；未显式提供 `toolAllow` 时投影空 `toolSet`，显式 allow/deny、permission、command sandbox、turn/token/wall-time/cost budget 继续交给既有 launch policy owner。
+   - 新逻辑放在相邻小模块，超大 message-send 文件只保留装配与分支，不修改 Conversation 持久化或 Gateway WebSocket 契约。
+
+3. **`agent-run-automation.ts` 与 `tool-agent.ts` 单次隔离**：
+   - bare run 跳过 hook runner、legacy hooks、tool transcript persist hook、compaction hooks 与 StarWeaver 主动 MCP 预检，过滤非附件/音频的 meta prompt delta。
+   - runtime identity、identity authority 与 launch-spec prompt delta 仍由可信构建器生成；profile 不绕过 ToolExecutor、sandbox 或 ReAct 预算。
+   - 所有扩展 gate 均为 run-local 引用，不修改共享 Agent 实例；同一实例后续普通 run 的 hooks 与 StarWeaver 预检保持原行为。
+
+4. **Coding CI、兼容矩阵与项目地图更新**：
+   - `run-coding-agent-ci.mjs` 固定显式传入 `bare`，验证首事件实际 profile，并在 manifest/status 中记录 profile 与检查结果。
+   - `compatibility.json` 冻结 `automationProfile: "bare"`，`verify-coding-ci-contract.mjs` 将其纳入失败关闭门禁；README 记录安全默认值、握手顺序与 artifact 字段。
+   - `docs/project-map.md` 记录 Gateway/Agent automation owner、CI profile handshake 及普通 run 兼容边界。
+
+5. **效果**：
+   - Headless/CI 每次从最小、非交互上下文开始，不会继承旧对话、项目规则、commander、Hook 或隐式 Plugin/Skill/MCP 注入。
+   - bare 只收缩上下文和扩展面，不成为新的权限模式；显式输入、身份、工具限制、sandbox 与预算仍可审计且失败关闭。
+   - 普通会话与后续普通 coding run 保持既有扩展行为；本切片不实现默认脱敏 trace、worktree 生命周期或 TUI 性能 Gate。
+
+##### 验证结果
+
+- Protocol、Agent 与 Core TypeScript 编译无错误。
+- 7 个 Agent/Core/CI 定向测试文件共 `122/122` 通过，包含 4 个新增 bare 契约/隔离测试，并扩展 StarWeaver 与 CI profile 握手回归。
+- `corepack pnpm verify:coding-ci` 通过，协议、capability、automation profile、artifact、示例和双平台静态 Gate 保持一致。
+- 关键功能验证通过：bare 模型输入不含旧 history/项目规则/commander/Hook delta；StarWeaver MCP 零调用；同一 Agent 随后的普通 run 仍执行原有 hooks 与两次 StarWeaver 预检调用；显式 launch 约束保持不变。
+- `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；本切片未运行全仓 Vitest、新 Provider benchmark 或双平台 live Gate，`.env/.env.local` 与 r11 artifact 未改写，累计 Provider 费用保持 `$0.16482273 / $3.00`。
+
 ##### 后续计划
 
-按用户要求，本环节回写后暂停。恢复推进时下一步是 Structured output S2：先在已识别的 Provider 协议边界为 control frame 建立流式/非流式、Tool/无 Tool、普通文本/JSON 字符串和尾部不完整 frame 的失败 fixture，再做最小文本边界实现。先做 S2 是因为 r11 三个 `output_schema_invalid` 都包含 provider control/权限说明文本，S1 已关闭单次修复 owner，但在新 identity 上复跑 corrected v2 前仍需证明协议控制文本不会污染终态、普通正文也不会被静默改写；当前尚缺的关键闭环是 S2 故障矩阵、新 Provider artifact 与 tests 类别 `>=5/6` 的正式复核。
+P1-A 冻结 cross-file/bug 双平台 A/B 仍需要为每个新 run 创建隔离 Provider state，并写入敏感 `.env/.env.local`；该操作命中 HITL，当前不复制或改写 r11 state，A/B 保持 pending。P1-B 下一步准备做切片 3 默认脱敏 trace，先定义 run/prompt/agent/tool/policy/recovery 的关联字段、默认无正文策略与失败 fixture；先做它是因为 capability、usage 终态与 bare 运行面已经稳定，可以在不依赖敏感配置的前提下建立统一观测证据。当前还缺的关键闭环是默认脱敏 trace、worktree keep/apply/discard 与 owner-only sweep、TUI 双平台性能 Gate，以及最终新 identity Provider artifact 对 `tests.failed-diagnosis >=5/6` 的证明；按用户要求，本轮在切片 2 回写后暂停，切片 3 尚未开始。
 
 | 项目 | 优先级 | 状态 | 工作量 | 完成边界 |
 |---|---|---|---:|---|
 | 一手来源与 9+ 路线研究 | - | 已完成 | - | 已覆盖三款竞品、SS 当前 benchmark、严格 clean-room 独立实现边界和持续执行规则；未对竞品做同环境实测 |
 | P0-A corrected v2 与既有能力接线 | P0 | 已完成（implementation/control `72/72`，通过 `69/58`；P0-A 合同与证据闭环，整体 9+ 类别 Gate 仍未通过） | 2-4 人日 | 正式覆盖、零 selected infrastructure error、v2 CLI 复算、完整 build/test、TUI `5/5` 与零残留已闭环；v1/旧 hash/diagnostics 不混入；三个产品失败保留且已 `split_task` |
 | Structured output S1：有界无工具 repair owner | P0 | 已完成（单次 no-tool repair、预算/usage 与 Gateway/CLI 错误传播闭环） | 3-5 人日 | schema 已进入 Gateway/Agent 运行契约；初次终态非法时至多一次 no-tool/no-mutation 修复，受 timeout/turn/token/cost 约束并计 usage；仍只接受严格完整 JSON，失败保留原输出和明确终态 |
-| Structured output S2：provider control token 文本边界 | P0 | 已拆分，待实施 | 1-2 人日 | 只在已识别 provider 协议边界移除 control frame，普通文本和 JSON 字符串不被静默改写；流式/非流式、工具/无工具和尾部不完整 frame 故障注入通过 |
+| Structured output S2：provider control token 文本边界 | P0 | 已完成（精确 DSML 三段尾帧、流式/非流式、Tool/无 Tool 与防误删矩阵闭环） | 1-2 人日 | 仅在 OpenAI Provider 边界移除完整 JSON 后的已识别 control frame；普通文本、JSON 字符串、未知/不完整 frame 与 Anthropic 原样保留，原始字节上限不被绕过 |
 | P0-B 确定性安全闭环 | P0 | 已完成（`pre-push` Hook、dispose deadline、live Supervisor revoke、audit sink 三态、完整 TUI 审批与 non-delegable 故障注入均闭环） | 5-8 人日 | 5 项安全切片、完整 build、全仓 `5071` 测试与真实 OCI lease cleanup 已通过；审批合同为 user-interaction/non-delegable/non-rememberable，不声称抵御同主机恶意进程伪装真人 |
 | P0-C durable run 与跨重启恢复 | P0 | 已完成（r11 disconnect/restart 各 `6/6`、离线进程/断线 harness `45/45`；workspace、Marketplace install/update/uninstall、worktree stage、remote push/PR、journal/audit `ENOSPC`、subagent crash 与真实 OCI pipe/PTY 全部闭合；全仓 `5151` tests、完整 build 与零残留 Gate 通过） | 8-12 人日 | corrected v2 disconnect/restart 6/6，无重复 side effect；受控 file、Marketplace、本地 worktree 与远端 delivery 均具备 commit/uncertain/replay guard，restart-lost 与 stdin/live PTY 边界闭环，lost/uncertain 可解释 |
-| P1-A 编辑与测试闭环 | P1 | 待实施 | 4-6 人日 | cross-file/bug >=5/6，tests >=54/60，patch >=15/18，regressions <=6 |
-| P1-B Headless、观测与 worktree 收口 | P1 | 待实施 | 5-8 人日 | delivery >=5/6，bare/event/trace/keep 完整，双平台完整 Gate 通过 |
-| 9+ 评分复核 | P0 | 阶段预复核 `8.5/10`，硬 Gate 未通过；S1 已完成 | 1-2 人日 | corrected v2 `69/72`、核心类别 `6/6`、测试 `60/60`、patch `18/18`、回归 `0`；仍须完成 S2/P1，并以新 identity Provider artifact 证明 tests 类别从 `4/6` 达到 `>=5/6` 后按原权重终评；v1/r11 不改写 |
+| P1-A 编辑与测试闭环 | P1 | 进行中（环节 1 exact edit 与环节 2 Gateway/contract/profile/closure 接线已完成；冻结 A/B 待运行） | 4-6 人日 | cross-file/bug >=5/6，tests >=54/60，patch >=15/18，regressions <=6 |
+| P1-B Headless、观测与 worktree 收口 | P1 | 进行中（切片 1 capability/usage 终态与切片 2 bare automation profile 已完成；切片 3 默认脱敏 trace 待开始） | 5-8 人日 | delivery >=5/6，bare/event/trace/keep 完整，双平台完整 Gate 通过 |
+| 9+ 评分复核 | P0 | 阶段预复核 `8.5/10`，硬 Gate 未通过；S1/S2 已完成 | 1-2 人日 | corrected v2 `69/72`、核心类别 `6/6`、测试 `60/60`、patch `18/18`、回归 `0`；仍须完成 P1-A/P1-B，并以新 identity Provider artifact 证明 tests 类别从 `4/6` 达到 `>=5/6` 后按原权重终评；v1/r11 不改写 |
 | P2 高级并行控制面 | P2 | 延后，不计入 9+ 前置 | 8-15 人日 | 仅在 policy/journal/worktree/deadline/trace 故障注入通过后启动 |

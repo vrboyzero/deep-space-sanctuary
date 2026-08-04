@@ -200,6 +200,87 @@ describe("applyPrependContextToInput", () => {
 });
 
 describe("before_agent_start system prompt overrides", () => {
+  it("isolates bare automation runs from configured hooks without mutating later runs", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{ message: { content: "done" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }));
+    const runBeforeAgentStart = vi.fn(async () => ({
+      prependContext: "implicit-memory",
+      deltas: [{
+        id: "implicit-hook-delta",
+        deltaType: "memory-prelude",
+        role: "system",
+        text: "implicit-hook-memory",
+      }],
+    }));
+    const runAgentEnd = vi.fn(async () => {});
+    const runBeforeToolCall = vi.fn(async () => undefined);
+    const runAfterToolCall = vi.fn(async () => {});
+    const runToolResultPersist = vi.fn(() => undefined);
+    const snapshots: AgentPromptSnapshot[] = [];
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      systemPrompt: "base-system-prompt",
+      toolExecutor: createToolExecutor(),
+      onPromptSnapshot: (snapshot) => snapshots.push(snapshot),
+      hookRunner: {
+        runBeforeAgentStart,
+        runAgentEnd,
+        runBeforeToolCall,
+        runAfterToolCall,
+        runToolResultPersist,
+      } as any,
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-bare-hooks",
+      text: "bare prompt",
+      automationProfile: "bare",
+      meta: {
+        promptDeltas: [
+          {
+            id: "implicit-project-rule",
+            deltaType: "project-rules",
+            role: "system",
+            text: "implicit-project-rule",
+          },
+          {
+            id: "explicit-attachment",
+            deltaType: "attachment",
+            role: "attachment",
+            text: "explicit-attachment",
+          },
+        ],
+      },
+    }));
+
+    expect(runBeforeAgentStart).not.toHaveBeenCalled();
+    expect(runAgentEnd).not.toHaveBeenCalled();
+    expect(runBeforeToolCall).not.toHaveBeenCalled();
+    expect(runAfterToolCall).not.toHaveBeenCalled();
+    expect(runToolResultPersist).not.toHaveBeenCalled();
+    const barePayload = JSON.parse(String((fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(JSON.stringify(barePayload.messages)).not.toContain("implicit-project-rule");
+    expect(JSON.stringify(barePayload.messages)).not.toContain("implicit-memory");
+    expect(snapshots[0]?.deltas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "explicit-attachment", deltaType: "attachment" }),
+    ]));
+    expect(snapshots[0]?.deltas).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "implicit-project-rule" }),
+    ]));
+
+    await collectItems(agent.run({
+      conversationId: "conv-normal-hooks",
+      text: "normal prompt",
+    }));
+
+    expect(runBeforeAgentStart).toHaveBeenCalledOnce();
+    expect(runAgentEnd).toHaveBeenCalledOnce();
+  });
+
   it("uses hook-provided systemPrompt for the current run", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
       choices: [{
@@ -1840,6 +1921,85 @@ describe("compaction observability hooks", () => {
     ]));
   });
 
+  it("preserves file_read content facts when structured metadata precedes the content", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{
+          message: {
+            content: "",
+            tool_calls: [{
+              id: "call-file-structured",
+              type: "function",
+              function: {
+                name: "file_read",
+                arguments: "{\"path\":\"src/runtime/carryover.ts\"}",
+              },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        choices: [{ message: { content: "done" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }));
+    const conversationStore = new ConversationStore();
+    const fileContent = [
+      "export const carryoverLimit = 6;",
+      "export const normalizeOldFacts = false;",
+      "export const carryoverSourceMode = \"stable\";",
+      "",
+    ].join("\n");
+    const agent = new ToolEnabledAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      conversationStore,
+      toolExecutor: createToolExecutor({
+        getDefinitions: () => [{
+          type: "function" as const,
+          function: {
+            name: "file_read",
+            description: "read file",
+            parameters: {
+              type: "object",
+              properties: { path: { type: "string" } },
+            },
+          },
+        }],
+        execute: vi.fn(async () => ({
+          id: "call-file-structured",
+          name: "file_read",
+          success: true,
+          output: JSON.stringify({
+            path: "src/runtime/carryover.ts",
+            totalSize: Buffer.byteLength(fileContent),
+            bytesRead: Buffer.byteLength(fileContent),
+            truncated: false,
+            range: { offset: 0, endOffset: Buffer.byteLength(fileContent) },
+            encoding: "utf-8",
+            revision: "a".repeat(64),
+            content: fileContent,
+          }),
+          durationMs: 0,
+        })),
+      }),
+    });
+
+    await collectItems(agent.run({
+      conversationId: "conv-carryover-structured-file-read",
+      text: "read structured file",
+    }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const carryover = conversationStore.getCarryoverContext("conv-carryover-structured-file-read");
+    expect(carryover).toHaveLength(1);
+    expect(carryover[0]?.summary).toContain("normalizeOldFacts = false");
+    expect(carryover[0]?.keyFacts).toEqual(expect.arrayContaining([
+      expect.stringContaining("normalizeOldFacts = false"),
+    ]));
+  });
+
   it("uses stable conversation_read source keys based on conversation id and view", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(createJsonResponse({
@@ -2259,7 +2419,7 @@ describe("compaction observability hooks", () => {
     expect(recent[0]?.args).toBeUndefined();
   });
 
-  it("runs starweaver active notify preflight when enabled and starweaver tools are available", async () => {
+  it("skips starweaver active notify preflight for bare automation without changing later normal runs", async () => {
     const previousEnabled = process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED;
     const previousInterval = process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_POLL_INTERVAL_MS;
     process.env.BELLDANDY_STARWEAVER_ACTIVE_NOTIFY_ENABLED = "true";
@@ -2267,7 +2427,7 @@ describe("compaction observability hooks", () => {
 
     try {
       const fetchSpy = vi.spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(createJsonResponse({
+        .mockResolvedValue(createJsonResponse({
           choices: [{
             message: {
               content: "done",
@@ -2343,10 +2503,18 @@ describe("compaction observability hooks", () => {
 
       await collectItems(agent.run({
         conversationId: "conv-starweaver-active-notify",
+        text: "bare run",
+        automationProfile: "bare",
+      }));
+
+      expect(execute).not.toHaveBeenCalled();
+
+      await collectItems(agent.run({
+        conversationId: "conv-starweaver-active-notify",
         text: "继续",
       }));
 
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
       expect(execute).toHaveBeenCalledTimes(2);
       expect(execute.mock.calls[0][0].name).toBe("mcp_starweaver_central_agent_wake_notifications");
       expect(execute.mock.calls[1][0].name).toBe("mcp_starweaver_central_starweaver_command_peek");

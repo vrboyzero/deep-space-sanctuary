@@ -64,6 +64,10 @@ export const CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE = Object.freez
 });
 const FROZEN_EXECUTION_PROFILES_V2 = {
   ...FROZEN_EXECUTION_PROFILES,
+  "workspace-write": {
+    ...FROZEN_EXECUTION_PROFILES["workspace-write"],
+    toolAllow: ["file_read", "list_files", "file_edit", "apply_patch", "file_write", "file_delete"],
+  },
   "command-control": {
     agentId: CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE.id,
     maxHighRiskToolCalls: CODING_AGENT_BENCHMARK_COMMAND_CONTROL_AGENT_PROFILE.maxHighRiskToolCalls,

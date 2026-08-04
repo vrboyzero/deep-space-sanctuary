@@ -1,3 +1,5 @@
+import { ProviderControlFrameBoundary } from "./provider-control-frame.js";
+
 export type ModelResponseProtocol = "openai" | "anthropic";
 export type ModelResponseWireApi = "chat_completions" | "responses";
 
@@ -108,14 +110,19 @@ class ModelResponseAccumulator {
   private responseBytes = 0;
   private usage: ModelResponseStreamUsage | undefined;
   private finishReason: string | undefined;
+  private readonly controlFrameBoundary: ProviderControlFrameBoundary | undefined;
 
-  constructor(private readonly options: ResolvedModelResponseStreamOptions) {}
+  constructor(private readonly options: ResolvedModelResponseStreamOptions) {
+    this.controlFrameBoundary = options.protocol === "openai"
+      ? new ProviderControlFrameBoundary()
+      : undefined;
+  }
 
   addText(delta: string): ModelResponseStreamItem[] {
     if (!delta) return [];
     this.reserveResponseBytes(byteLength(delta));
-    this.contentParts.push(delta);
-    return [{ type: "text_delta", delta }];
+    const visible = this.controlFrameBoundary?.push(delta) ?? delta;
+    return this.appendVisibleText(visible);
   }
 
   addReasoning(delta: string): ModelResponseStreamItem[] {
@@ -180,7 +187,10 @@ class ModelResponseAccumulator {
     return [{ type: "usage", usage: cloneUsage(normalized) }];
   }
 
-  complete(): ModelResponseStreamResult {
+  complete(): { items: ModelResponseStreamItem[]; response: ModelResponseStreamResult } {
+    const items = this.appendVisibleText(
+      this.controlFrameBoundary?.finish(this.contentParts.join("")) ?? "",
+    );
     const toolCalls = [...this.toolsByIndex.values()]
       .sort((left, right) => left.index - right.index)
       .map((tool) => {
@@ -198,12 +208,21 @@ class ModelResponseAccumulator {
       });
     const reasoningContent = this.reasoningParts.join("");
     return {
-      content: this.contentParts.join(""),
-      ...(reasoningContent ? { reasoningContent } : {}),
-      toolCalls,
-      ...(this.usage ? { usage: cloneUsage(this.usage) } : {}),
-      ...(this.finishReason ? { finishReason: this.finishReason } : {}),
+      items,
+      response: {
+        content: this.contentParts.join(""),
+        ...(reasoningContent ? { reasoningContent } : {}),
+        toolCalls,
+        ...(this.usage ? { usage: cloneUsage(this.usage) } : {}),
+        ...(this.finishReason ? { finishReason: this.finishReason } : {}),
+      },
     };
+  }
+
+  private appendVisibleText(text: string): ModelResponseStreamItem[] {
+    if (!text) return [];
+    this.contentParts.push(text);
+    return [{ type: "text_delta", delta: text }];
   }
 
   private resolveTool(index?: number, alias?: string): MutableToolCall {
@@ -259,7 +278,9 @@ export async function* readModelResponseStream(
   for await (const event of readSseData(body, resolved)) {
     if (event.data === "[DONE]") {
       if (resolved.protocol === "openai" && resolved.wireApi === "chat_completions") {
-        yield { type: "completed", response: accumulator.complete() };
+        const completed = accumulator.complete();
+        for (const item of completed.items) yield item;
+        yield { type: "completed", response: completed.response };
         return;
       }
       continue;
@@ -281,7 +302,9 @@ export async function* readModelResponseStream(
         : handleChatCompletionsEvent(payload, accumulator);
     for (const item of handled.items) yield item;
     if (handled.completed) {
-      yield { type: "completed", response: accumulator.complete() };
+      const completed = accumulator.complete();
+      for (const item of completed.items) yield item;
+      yield { type: "completed", response: completed.response };
       return;
     }
   }

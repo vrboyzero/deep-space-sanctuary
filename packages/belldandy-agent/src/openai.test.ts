@@ -80,6 +80,29 @@ describe("OpenAIChatAgent prompt snapshot", () => {
     expect(items).toContainEqual({ type: "final", text: "Hello world" });
   });
 
+  it("removes a non-streamed provider control-frame suffix without tools", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
+      choices: [{ message: {
+        content: '{"status":"ok"}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
+      } }],
+    }));
+    const agent = new OpenAIChatAgent({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      model: "gpt-test",
+      stream: false,
+    });
+
+    const items = await collectItems(agent.run({
+      conversationId: "conv-openai-control-frame",
+      text: "return status",
+    })) as any[];
+
+    expect(items.filter((item) => item.type === "delta").map((item) => item.delta).join(""))
+      .toBe('{"status":"ok"}');
+    expect(items).toContainEqual({ type: "final", text: '{"status":"ok"}' });
+  });
+
   it("captures provider-native system blocks for single-text provider inspection", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(createJsonResponse({
       choices: [{

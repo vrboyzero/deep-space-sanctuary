@@ -324,6 +324,8 @@ export function buildRecoveredCodingCiArtifacts(input) {
     cursor: fault.disconnectedAfterSeq,
   });
   const terminal = events.at(-1);
+  const capabilities = events[0]?.payload?.capabilities ?? null;
+  const usage = terminal?.payload?.usage ?? null;
   const outputText = terminal?.payload?.output?.text;
   let result = null;
   if (typeof outputText === "string") {
@@ -350,10 +352,14 @@ export function buildRecoveredCodingCiArtifacts(input) {
       eventCount: events.length,
       terminalType: "run.completed",
       binding: { ...events[0].binding },
+      capabilities,
+      usage,
       changedPaths: [...workspaceArtifact.changedPaths],
       checks: {
         ...initialManifest.checks,
         eventContract: true,
+        capabilityHandshake: isRecord(capabilities),
+        usageComplete: isRecord(usage) && usage.status === "complete",
         artifactPolicy: true,
       },
     },

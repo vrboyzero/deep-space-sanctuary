@@ -88,6 +88,25 @@ const TOOL_BEHAVIOR_CONTRACTS: ToolBehaviorContract[] = [
     ],
   },
   {
+    name: "file_edit",
+    useWhen: [
+      "Need one unique local replacement in a previously read UTF-8 workspace file",
+      "Need stale-file protection and a smaller interface than a multi-hunk patch",
+    ],
+    avoidWhen: [
+      "The change spans multiple files or multiple hunks and should remain one reviewable apply_patch operation",
+      "The target text has not been read, is not unique, or requires regex, line-number, or generated-output semantics",
+    ],
+    preflightChecks: [
+      "Obtain the current path, exact oldText, and file_read revision before editing",
+      "Include enough surrounding text in oldText to make the match unique without rewriting unrelated content",
+    ],
+    fallbackStrategy: [
+      "Use apply_patch for multi-file, multi-hunk, add, delete, or move operations",
+      "On stale or non-unique failure, follow repairHint, call file_read again, and retry with current unique text",
+    ],
+  },
+  {
     name: "file_delete",
     useWhen: [
       "Need to remove a workspace file that is no longer needed and the target path is explicit",

@@ -154,6 +154,8 @@ export type GatewayFrame =
  * 这些字段不会创建新的领域运行状态；Gateway 仅将它们映射为本次 Agent launch 的运行时约束。
  */
 export type CodingRunOptions = {
+  /** 确定性自动化运行面；bare 仅使用显式输入并跳过隐式上下文与扩展。 */
+  automationProfile?: "bare";
   cwd?: string;
   toolAllow?: string[];
   toolDeny?: string[];

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  CODING_CI_AUTOMATION_PROFILE,
   CODING_CI_CONTRACT_VERSION,
   CODING_CI_LIMITS,
 } from "./run-coding-agent-ci.mjs";
@@ -84,6 +85,18 @@ export async function collectCodingCiContractFailures(input = {}) {
       packageJson.packageManager,
     );
     expectEqual(failures, "compatibility protocolVersion", compatibility.protocolVersion, core.CODING_RUN_PROTOCOL_VERSION);
+    expectEqual(
+      failures,
+      "compatibility capabilitySchemaVersion",
+      compatibility.capabilitySchemaVersion,
+      core.CODING_RUN_CAPABILITIES.schemaVersion,
+    );
+    expectEqual(
+      failures,
+      "compatibility automationProfile",
+      compatibility.automationProfile,
+      CODING_CI_AUTOMATION_PROFILE,
+    );
     expectEqual(
       failures,
       "compatibility artifactSchemaVersion",

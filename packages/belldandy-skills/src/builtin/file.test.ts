@@ -15,7 +15,7 @@ vi.mock("@belldandy/memory", () => ({
   getGlobalMemoryManager: () => memoryManager,
 }));
 
-const { fileDeleteTool, fileReadTool, fileWriteTool } = await import("./file.js");
+const { fileDeleteTool, fileEditTool, fileReadTool, fileWriteTool } = await import("./file.js");
 
 describe("file tools", () => {
   let tempDir: string;
@@ -53,6 +53,41 @@ describe("file tools", () => {
       const output = JSON.parse(result.output);
       expect(output.content).toBe("Hello, Belldandy!");
       expect(output.path).toBe("test.txt");
+    });
+
+    it("returns a stable edit revision that changes when the file changes", async () => {
+      const testFile = path.join(tempDir, "revision.txt");
+      await fs.writeFile(testFile, "alpha", "utf-8");
+
+      const first = await fileReadTool.execute({ path: "revision.txt" }, baseContext);
+      const unchanged = await fileReadTool.execute({ path: "revision.txt" }, baseContext);
+      expect(first.success).toBe(true);
+      expect(unchanged.success).toBe(true);
+      const firstOutput = JSON.parse(first.output);
+      const unchangedOutput = JSON.parse(unchanged.output);
+      expect(firstOutput.revision).toMatch(/^[a-f0-9]{64}$/u);
+      expect(unchangedOutput.revision).toBe(firstOutput.revision);
+
+      await fs.writeFile(testFile, "bravo", "utf-8");
+      const changed = await fileReadTool.execute({ path: "revision.txt" }, baseContext);
+      expect(changed.success).toBe(true);
+      expect(JSON.parse(changed.output).revision).not.toBe(firstOutput.revision);
+    });
+
+    it("binds edit revisions to the exact real path on case-sensitive filesystems", async () => {
+      if (process.platform === "win32") return;
+
+      const upperPath = path.join(tempDir, "CaseBound.txt");
+      const lowerPath = path.join(tempDir, "casebound.txt");
+      await fs.writeFile(upperPath, "shared inode", "utf-8");
+      await fs.link(upperPath, lowerPath);
+
+      const upper = await fileReadTool.execute({ path: "CaseBound.txt" }, baseContext);
+      const lower = await fileReadTool.execute({ path: "casebound.txt" }, baseContext);
+
+      expect(upper.success).toBe(true);
+      expect(lower.success).toBe(true);
+      expect(JSON.parse(upper.output).revision).not.toBe(JSON.parse(lower.output).revision);
     });
 
     it("should return error for non-existent file", async () => {
@@ -643,6 +678,341 @@ description: 通过额外根目录读取
       expect(result.success).toBe(true);
       await expect(fs.readFile(path.join(isolatedRoot, "nested", "output.txt"), "utf-8")).resolves.toBe("isolated");
       await expect(fs.access(path.join(tempDir, "nested", "output.txt"))).rejects.toThrow();
+    });
+  });
+
+  describe("file_edit", () => {
+    it("requires a read revision before editing and leaves the file unchanged", async () => {
+      const targetPath = path.join(tempDir, "exact-edit.txt");
+      await fs.writeFile(targetPath, "before value\n", "utf-8");
+
+      const result = await fileEditTool.execute({
+        path: "exact-edit.txt",
+        oldText: "before",
+        newText: "after",
+      }, baseContext);
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("input_error");
+      expect(result.error).toContain("revision");
+      expect(JSON.parse(result.output)).toEqual({
+        code: "read_revision_required",
+        path: "exact-edit.txt",
+        repairHint: {
+          tool: "file_read",
+          arguments: { path: "exact-edit.txt" },
+          reason: "read_before_edit",
+        },
+      });
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("before value\n");
+    });
+
+    it("rejects a stale read revision before preparing a mutation", async () => {
+      const targetPath = path.join(tempDir, "stale-edit.txt");
+      await fs.writeFile(targetPath, "original value\n", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "stale-edit.txt" }, baseContext);
+      const revision = JSON.parse(readResult.output).revision;
+      await fs.writeFile(targetPath, "current value\n", "utf-8");
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "stale-edit.txt",
+        oldText: "current",
+        newText: "edited",
+        revision,
+      }, {
+        ...baseContext,
+        workspaceRevisionId: "gateway-run-stale-edit",
+        workspaceMutationObserver,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("business_logic_error");
+      expect(JSON.parse(result.output)).toEqual({
+        code: "stale_file",
+        path: "stale-edit.txt",
+        repairHint: {
+          tool: "file_read",
+          arguments: { path: "stale-edit.txt" },
+          reason: "stale_file",
+        },
+      });
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("current value\n");
+    });
+
+    it("returns a structured repair hint when the old text is absent", async () => {
+      const targetPath = path.join(tempDir, "missing-edit.txt");
+      await fs.writeFile(targetPath, "alpha beta\n", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "missing-edit.txt" }, baseContext);
+      const revision = JSON.parse(readResult.output).revision;
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "missing-edit.txt",
+        oldText: "gamma",
+        newText: "delta",
+        revision,
+      }, {
+        ...baseContext,
+        workspaceRevisionId: "gateway-run-missing-edit",
+        workspaceMutationObserver,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("business_logic_error");
+      expect(JSON.parse(result.output)).toEqual({
+        code: "old_text_not_found",
+        path: "missing-edit.txt",
+        matchCount: 0,
+        repairHint: {
+          tool: "file_read",
+          arguments: { path: "missing-edit.txt" },
+          reason: "old_text_not_found",
+        },
+      });
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("alpha beta\n");
+    });
+
+    it("rejects non-unique old text and reports the exact match count", async () => {
+      const targetPath = path.join(tempDir, "ambiguous-edit.txt");
+      await fs.writeFile(targetPath, "alpha alpha alpha\n", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "ambiguous-edit.txt" }, baseContext);
+      const revision = JSON.parse(readResult.output).revision;
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "ambiguous-edit.txt",
+        oldText: "alpha",
+        newText: "delta",
+        revision,
+      }, {
+        ...baseContext,
+        workspaceRevisionId: "gateway-run-ambiguous-edit",
+        workspaceMutationObserver,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("business_logic_error");
+      expect(JSON.parse(result.output)).toEqual({
+        code: "old_text_not_unique",
+        path: "ambiguous-edit.txt",
+        matchCount: 3,
+        repairHint: {
+          tool: "file_read",
+          arguments: { path: "ambiguous-edit.txt" },
+          reason: "old_text_not_unique",
+        },
+      });
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("alpha alpha alpha\n");
+    });
+
+    it("replaces the unique match between workspace revision prepare and commit", async () => {
+      const targetPath = path.join(tempDir, "successful-edit.txt");
+      await fs.writeFile(targetPath, "alpha old omega\n", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "successful-edit.txt" }, baseContext);
+      const revision = JSON.parse(readResult.output).revision;
+      const callOrder: string[] = [];
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {
+          callOrder.push("prepare");
+          await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("alpha old omega\n");
+        }),
+        commitMutations: vi.fn(async () => {
+          callOrder.push("commit");
+          await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("alpha new omega\n");
+        }),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "successful-edit.txt",
+        oldText: "old",
+        newText: "new",
+        revision,
+      }, {
+        ...baseContext,
+        workspaceRevisionId: "gateway-run-successful-edit",
+        agentRunId: "gateway-run-successful-edit",
+        toolCallId: "tool-file-edit-1",
+        workspaceMutationObserver,
+      });
+
+      expect(result.success).toBe(true);
+      expect(JSON.parse(result.output)).toEqual({
+        path: "successful-edit.txt",
+        replacements: 1,
+        bytesWritten: Buffer.byteLength("alpha new omega\n", "utf-8"),
+        totalSize: Buffer.byteLength("alpha new omega\n", "utf-8"),
+      });
+      expect(callOrder).toEqual(["prepare", "commit"]);
+      expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceRevisionId: "gateway-run-successful-edit",
+        workspaceRoot: tempDir,
+        toolName: "file_edit",
+        operation: {
+          conversationId: baseContext.conversationId,
+          agentRunId: "gateway-run-successful-edit",
+          toolCallId: "tool-file-edit-1",
+        },
+        targets: [{ absolutePath: targetPath, relativePath: "successful-edit.txt" }],
+      }));
+      expect(workspaceMutationObserver.commitMutations).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceRevisionId: "gateway-run-successful-edit",
+        toolName: "file_edit",
+      }));
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("alpha new omega\n");
+    });
+
+    it("rejects overlapping old text as ambiguous", async () => {
+      const targetPath = path.join(tempDir, "overlap-edit.txt");
+      await fs.writeFile(targetPath, "aaa", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "overlap-edit.txt" }, baseContext);
+
+      const result = await fileEditTool.execute({
+        path: "overlap-edit.txt",
+        oldText: "aa",
+        newText: "b",
+        revision: JSON.parse(readResult.output).revision,
+      }, baseContext);
+
+      expect(result.success).toBe(false);
+      expect(JSON.parse(result.output)).toMatchObject({
+        code: "old_text_not_unique",
+        matchCount: 2,
+      });
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("aaa");
+    });
+
+    it("rejects invalid UTF-8 before preparing a mutation", async () => {
+      const targetPath = path.join(tempDir, "invalid-utf8.txt");
+      await fs.writeFile(targetPath, Buffer.from([0xc3, 0x28]));
+      const readResult = await fileReadTool.execute({ path: "invalid-utf8.txt" }, baseContext);
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "invalid-utf8.txt",
+        oldText: "(",
+        newText: ")",
+        revision: JSON.parse(readResult.output).revision,
+      }, { ...baseContext, workspaceMutationObserver });
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("input_error");
+      expect(JSON.parse(result.output)).toMatchObject({ code: "invalid_utf8" });
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+      await expect(fs.readFile(targetPath)).resolves.toEqual(Buffer.from([0xc3, 0x28]));
+    });
+
+    it("edits an absolute file under an explicit extra workspace root", async () => {
+      const extraRoot = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-edit-extra-"));
+      try {
+        const targetPath = path.join(extraRoot, "extra-edit.txt");
+        await fs.writeFile(targetPath, "before", "utf-8");
+        const context = { ...baseContext, extraWorkspaceRoots: [extraRoot] };
+        const readResult = await fileReadTool.execute({ path: targetPath }, context);
+        const workspaceMutationObserver = {
+          prepareMutations: vi.fn(async () => {}),
+          commitMutations: vi.fn(async () => {}),
+        };
+
+        const result = await fileEditTool.execute({
+          path: targetPath,
+          oldText: "before",
+          newText: "after",
+          revision: JSON.parse(readResult.output).revision,
+        }, {
+          ...context,
+          workspaceRevisionId: "gateway-run-extra-edit",
+          workspaceMutationObserver,
+        });
+
+        expect(result.success).toBe(true);
+        expect(JSON.parse(result.output).path).toBe("extra-edit.txt");
+        expect(workspaceMutationObserver.prepareMutations).toHaveBeenCalledWith(expect.objectContaining({
+          workspaceRoot: extraRoot,
+        }));
+        await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("after");
+      } finally {
+        await fs.rm(extraRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("enforces the write allowlist before preparing a mutation", async () => {
+      const targetPath = path.join(tempDir, "blocked", "exact-edit.txt");
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, "before", "utf-8");
+      const readResult = await fileReadTool.execute({ path: "blocked/exact-edit.txt" }, baseContext);
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "blocked/exact-edit.txt",
+        oldText: "before",
+        newText: "after",
+        revision: JSON.parse(readResult.output).revision,
+      }, {
+        ...baseContext,
+        policy: { ...baseContext.policy, allowedPaths: ["allowed"] },
+        workspaceMutationObserver,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("permission_or_policy");
+      expect(JSON.parse(result.output)).toMatchObject({ code: "path_not_allowed" });
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("before");
+    });
+
+    it("rejects a direct symlink even when its revision belongs to the linked target", async () => {
+      const targetPath = path.join(tempDir, "symlink-target.txt");
+      const linkPath = path.join(tempDir, "symlink-edit.txt");
+      await fs.writeFile(targetPath, "before", "utf-8");
+      try {
+        await fs.symlink(targetPath, linkPath, "file");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+        throw error;
+      }
+      const readResult = await fileReadTool.execute({ path: "symlink-target.txt" }, baseContext);
+      const workspaceMutationObserver = {
+        prepareMutations: vi.fn(async () => {}),
+        commitMutations: vi.fn(async () => {}),
+      };
+
+      const result = await fileEditTool.execute({
+        path: "symlink-edit.txt",
+        oldText: "before",
+        newText: "after",
+        revision: JSON.parse(readResult.output).revision,
+      }, { ...baseContext, workspaceMutationObserver });
+
+      expect(result.success).toBe(false);
+      expect(result.failureKind).toBe("permission_or_policy");
+      expect(JSON.parse(result.output)).toMatchObject({ code: "symlink_denied" });
+      expect(workspaceMutationObserver.prepareMutations).not.toHaveBeenCalled();
+      expect(workspaceMutationObserver.commitMutations).not.toHaveBeenCalled();
+      await expect(fs.readFile(targetPath, "utf-8")).resolves.toBe("before");
     });
   });
 

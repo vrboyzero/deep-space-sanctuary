@@ -477,6 +477,33 @@ function buildFileReadFingerprint(input: {
   })).digest("hex").slice(0, 32);
 }
 
+function buildFileEditRevision(input: {
+  realPath: string;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}): string {
+  return crypto.createHash("sha256").update(JSON.stringify({
+    version: 1,
+    path: input.realPath.replace(/\\/g, "/"),
+    size: input.size,
+    mtimeMs: input.mtimeMs,
+    ctimeMs: input.ctimeMs,
+  })).digest("hex");
+}
+
+function countLiteralOccurrences(value: string, search: string): number {
+  let count = 0;
+  let offset = 0;
+  while (offset <= value.length - search.length) {
+    const index = value.indexOf(search, offset);
+    if (index < 0) break;
+    count += 1;
+    offset = index + 1;
+  }
+  return count;
+}
+
 function decodeFileReadCursor(
   value: string | undefined,
   fingerprint: string,
@@ -616,6 +643,12 @@ export const fileReadTool: Tool = withToolContract({
         ctimeMs: stat.ctimeMs,
         encoding: input.value.encoding,
       });
+      const revision = buildFileEditRevision({
+        realPath: realFile,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+      });
       const cursor = decodeFileReadCursor(input.value.cursor, fingerprint);
       if (!cursor.ok) return makeError(cursor.error, "input_error");
       const offset = cursor.value?.offset ?? input.value.offset ?? 0;
@@ -670,6 +703,7 @@ export const fileReadTool: Tool = withToolContract({
             },
             ...(nextCursor ? { nextCursor } : {}),
             encoding: input.value.encoding,
+            revision,
             content,
           }),
           durationMs: Date.now() - start,
@@ -1022,6 +1056,298 @@ export const fileWriteTool: Tool = withToolContract({
   resultSchema: {
     kind: "json",
     description: "Write outcome metadata encoded as JSON text.",
+  },
+  outputPersistencePolicy: "artifact",
+});
+
+// ============ file_edit 工具 ============
+
+export const fileEditTool: Tool = withToolContract({
+  definition: {
+    name: "file_edit",
+    description: "精确替换工作区内单个 UTF-8 文件中的唯一文本。必须先调用 file_read，并传入其返回的 revision；多文件或多处修改请使用 apply_patch。",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "相对于工作区根目录的文件路径",
+        },
+        oldText: {
+          type: "string",
+          description: "必须在当前文件中恰好出现一次的原文本",
+        },
+        newText: {
+          type: "string",
+          description: "替换后的文本，可以为空字符串",
+        },
+        revision: {
+          type: "string",
+          description: "同一路径最近一次 file_read 返回的 revision",
+        },
+      },
+      required: ["path", "oldText", "newText", "revision"],
+    },
+  },
+
+  async execute(args, context): Promise<ToolCallResult> {
+    const start = Date.now();
+    const id = crypto.randomUUID();
+    const name = "file_edit";
+    const pathArg = typeof args.path === "string" ? args.path.trim() : "";
+    let resultPath = pathArg.replace(/\\/g, "/");
+
+    const makeError = (
+      error: string,
+      code: string,
+      failureKind: ToolCallResult["failureKind"],
+      repairReason = "read_before_edit",
+      matchCount?: number,
+    ): ToolCallResult => buildFailureToolCallResult({
+      id,
+      name,
+      start,
+      error,
+      failureKind,
+      output: JSON.stringify({
+        code,
+        ...(resultPath ? { path: resultPath } : {}),
+        ...(matchCount === undefined ? {} : { matchCount }),
+        repairHint: {
+          tool: "file_read",
+          arguments: { path: resultPath },
+          reason: repairReason,
+        },
+      }),
+    });
+
+    if (!pathArg) {
+      return makeError("参数错误：path 必须是非空字符串", "invalid_path", "input_error");
+    }
+    if (typeof args.revision !== "string" || !args.revision.trim()) {
+      return makeError(
+        "参数错误：revision 必须来自同一路径最近一次 file_read",
+        "read_revision_required",
+        "input_error",
+      );
+    }
+    if (typeof args.oldText !== "string" || !args.oldText) {
+      return makeError("参数错误：oldText 必须是非空字符串", "invalid_old_text", "input_error");
+    }
+    if (typeof args.newText !== "string") {
+      return makeError("参数错误：newText 必须是字符串", "invalid_new_text", "input_error");
+    }
+    const revision = args.revision.trim();
+    const oldText = args.oldText;
+    const newText = args.newText;
+
+    const scope = resolveRuntimeFilesystemScope(context);
+    const pathResult = resolveAndValidatePath(pathArg, scope.workspaceRoot, scope.extraWorkspaceRoots);
+    if (!pathResult.ok) {
+      return makeError(pathResult.error, "invalid_path", "input_error");
+    }
+
+    const { absolute, relative, effectiveRoot } = pathResult;
+    resultPath = relative;
+    const mutationWorkspaceRoot = resolveMutationWorkspaceRoot(absolute, scope);
+    if (isProtectedFile(relative)) {
+      return makeError("禁止修改 SOUL.md", "protected_file", "permission_or_policy");
+    }
+    const denied = isDeniedPath(relative, context.policy.deniedPaths);
+    if (denied) {
+      return makeError(`禁止写入路径：${denied}`, "denied_path", "permission_or_policy");
+    }
+    if (isSensitivePath(relative)) {
+      return makeError("禁止写入敏感文件路径", "sensitive_path", "permission_or_policy");
+    }
+    if (!isAllowedPath(relative, context.policy.allowedPaths)) {
+      return makeError(
+        `路径不在写入白名单中。允许的路径：${context.policy.allowedPaths.join(", ")}`,
+        "path_not_allowed",
+        "permission_or_policy",
+      );
+    }
+
+    const fileWritePolicy = context.policy.fileWrite ?? {};
+    if (fileWritePolicy.allowDotFiles === false && isDotFile(relative)) {
+      return makeError("禁止写入点文件", "dot_file_denied", "permission_or_policy");
+    }
+    const allowedExtensions = normalizeExtensions(fileWritePolicy.allowedExtensions);
+    if (!isExtensionAllowed(relative, allowedExtensions)) {
+      return makeError(
+        `文件扩展名不在允许列表中：${allowedExtensions.join(", ")}`,
+        "extension_not_allowed",
+        "permission_or_policy",
+      );
+    }
+
+    let currentText: string;
+    try {
+      const stat = await fs.lstat(absolute);
+      if (stat.isSymbolicLink()) {
+        return makeError("禁止修改符号链接文件", "symlink_denied", "permission_or_policy");
+      }
+      if (!stat.isFile()) {
+        return makeError(`路径不是文件：${relative}`, "not_a_file", "input_error");
+      }
+
+      const [realEffectiveRoot, realFile] = await Promise.all([
+        fs.realpath(effectiveRoot),
+        fs.realpath(absolute),
+      ]);
+      const realBoundary = isUnderRoot(realFile, realEffectiveRoot);
+      if (!realBoundary.ok) {
+        return makeError("文件经解析后越出工作区边界", "resolved_path_outside_workspace", "permission_or_policy");
+      }
+      const realDenied = isDeniedPath(realBoundary.relative, context.policy.deniedPaths);
+      if (realDenied) {
+        return makeError(`禁止写入路径：${realDenied}`, "denied_path", "permission_or_policy");
+      }
+      if (isSensitivePath(realBoundary.relative)) {
+        return makeError("禁止写入敏感文件路径", "sensitive_path", "permission_or_policy");
+      }
+
+      const currentRevision = buildFileEditRevision({
+        realPath: realFile,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+      });
+      if (currentRevision !== revision) {
+        return makeError(
+          "文件已在读取后发生变化；请重新调用 file_read 后再编辑",
+          "stale_file",
+          "business_logic_error",
+          "stale_file",
+        );
+      }
+
+      const raw = await fs.readFile(absolute);
+      try {
+        currentText = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+      } catch {
+        return makeError(
+          "file_edit 仅支持有效的 UTF-8 文本文件",
+          "invalid_utf8",
+          "input_error",
+        );
+      }
+
+      const statAfterRead = await fs.lstat(absolute);
+      const realFileAfterRead = await fs.realpath(absolute);
+      const revisionAfterRead = buildFileEditRevision({
+        realPath: realFileAfterRead,
+        size: statAfterRead.size,
+        mtimeMs: statAfterRead.mtimeMs,
+        ctimeMs: statAfterRead.ctimeMs,
+      });
+      if (statAfterRead.isSymbolicLink() || revisionAfterRead !== revision) {
+        return makeError(
+          "文件已在读取后发生变化；请重新调用 file_read 后再编辑",
+          "stale_file",
+          "business_logic_error",
+          "stale_file",
+        );
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return makeError(`文件不存在：${relative}`, "file_not_found", "input_error");
+      }
+      if (code === "EACCES" || code === "EPERM") {
+        return makeError(`无权访问文件：${relative}`, "file_access_denied", "permission_or_policy");
+      }
+      return makeError(
+        error instanceof Error ? error.message : String(error),
+        "file_read_failed",
+        "environment_error",
+      );
+    }
+
+    const matchCount = countLiteralOccurrences(currentText, oldText);
+    if (matchCount === 0) {
+      return makeError(
+        "未找到 oldText；请重新读取文件并确认精确文本",
+        "old_text_not_found",
+        "business_logic_error",
+        "old_text_not_found",
+        matchCount,
+      );
+    }
+    if (matchCount > 1) {
+      return makeError(
+        `oldText 在文件中出现 ${matchCount} 次；请重新读取并提供能唯一定位的更多上下文`,
+        "old_text_not_unique",
+        "business_logic_error",
+        "old_text_not_unique",
+        matchCount,
+      );
+    }
+
+    const matchIndex = currentText.indexOf(oldText);
+    const nextText = `${currentText.slice(0, matchIndex)}${newText}${currentText.slice(matchIndex + oldText.length)}`;
+
+    try {
+      const finalStat = await fs.lstat(absolute);
+      const finalRealFile = await fs.realpath(absolute);
+      const finalRevision = buildFileEditRevision({
+        realPath: finalRealFile,
+        size: finalStat.size,
+        mtimeMs: finalStat.mtimeMs,
+        ctimeMs: finalStat.ctimeMs,
+      });
+      if (finalStat.isSymbolicLink() || finalRevision !== revision) {
+        return makeError(
+          "文件已在编辑前发生变化；请重新调用 file_read 后再编辑",
+          "stale_file",
+          "business_logic_error",
+          "stale_file",
+        );
+      }
+
+      await prepareWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
+      await fs.writeFile(absolute, nextText, "utf-8");
+      await commitWorkspaceMutation(context, mutationWorkspaceRoot, name, { absolute, relative });
+      const updatedStat = await fs.stat(absolute);
+      return {
+        id,
+        name,
+        success: true,
+        output: JSON.stringify({
+          path: relative,
+          replacements: 1,
+          bytesWritten: Buffer.byteLength(nextText, "utf-8"),
+          totalSize: updatedStat.size,
+        }),
+        durationMs: Date.now() - start,
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return makeError(`文件不存在：${relative}`, "file_not_found", "input_error");
+      }
+      if (code === "EACCES" || code === "EPERM") {
+        return makeError(`无权写入文件：${relative}`, "file_access_denied", "permission_or_policy");
+      }
+      return makeError(
+        error instanceof Error ? error.message : String(error),
+        "file_write_failed",
+        "environment_error",
+      );
+    }
+  },
+}, {
+  family: "workspace-write",
+  isReadOnly: false,
+  isConcurrencySafe: false,
+  needsPermission: true,
+  riskLevel: "high",
+  channels: resolvePrivilegedWorkspaceWriteChannels(),
+  safeScopes: ["privileged"],
+  activityDescription: "Replace one unique text occurrence in a previously read workspace file",
+  resultSchema: {
+    kind: "json",
+    description: "Exact edit outcome or structured repair hint encoded as JSON text.",
   },
   outputPersistencePolicy: "artifact",
 });

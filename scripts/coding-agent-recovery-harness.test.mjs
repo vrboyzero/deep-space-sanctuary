@@ -329,16 +329,23 @@ describe("coding agent recovery harness", () => {
 
   it("builds one coherent recovered CI manifest without hiding the injected fault", () => {
     const binding = { conversationId: "conversation-recovery", agentRunId: "run-recovery" };
+    const capabilities = fixtureCapabilities();
+    const completeUsage = fixtureCompleteUsage();
     const initial = [
-      event(1, "run.started", binding),
+      event(1, "run.started", binding, { capabilities }),
       event(2, "tool.started", binding, {
         tool: { id: "tool-write-1", name: "file_write", arguments: { path: "src/recovery-target.txt" } },
       }),
-      event(3, "run.failed", binding),
+      event(3, "run.failed", binding, {
+        usage: { status: "incomplete", reason: "provider_usage_missing" },
+      }),
     ];
     const resumed = [
       event(3, "tool.completed", binding, { tool: { id: "tool-write-1", name: "file_write", success: true } }),
-      event(4, "run.completed", binding, { output: { text: "{\"summary\":\"done\"}" } }),
+      event(4, "run.completed", binding, {
+        output: { text: "{\"summary\":\"done\"}" },
+        usage: completeUsage,
+      }),
     ];
 
     expect(buildRecoveredCodingCiArtifacts({
@@ -353,8 +360,17 @@ describe("coding agent recovery harness", () => {
         eventCount: 3,
         terminalType: "run.failed",
         binding,
+        capabilities: { schemaVersion: "stale-capabilities" },
+        usage: { status: "incomplete", reason: "provider_usage_missing" },
         changedPaths: [],
-        checks: { cleanBaseline: true, eventContract: true, artifactPolicy: true, automaticPush: false },
+        checks: {
+          cleanBaseline: true,
+          eventContract: true,
+          capabilityHandshake: false,
+          usageComplete: false,
+          artifactPolicy: true,
+          automaticPush: false,
+        },
       },
       workspaceArtifact: {
         changedPaths: ["src/recovery-target.txt"],
@@ -377,8 +393,15 @@ describe("coding agent recovery harness", () => {
         cliExitCode: 0,
         eventCount: 4,
         terminalType: "run.completed",
+        capabilities,
+        usage: completeUsage,
         changedPaths: ["src/recovery-target.txt"],
-        checks: { eventContract: true, artifactPolicy: true },
+        checks: {
+          eventContract: true,
+          capabilityHandshake: true,
+          usageComplete: true,
+          artifactPolicy: true,
+        },
       },
       fault: {
         status: "recovered",
@@ -455,6 +478,27 @@ describe("coding agent recovery harness", () => {
 
 function event(seq, type, binding, payload = {}) {
   return { version: "v1", seq, timestamp: 1_700_000_000_000 + seq, type, binding, payload };
+}
+
+function fixtureCapabilities() {
+  return {
+    schemaVersion: "coding-run-capabilities/v1",
+    protocolVersion: "v1",
+    eventStream: {
+      sequence: "continuous",
+      terminal: "exactly_one",
+      usageCompleteness: "terminal",
+    },
+  };
+}
+
+function fixtureCompleteUsage() {
+  return {
+    status: "complete",
+    reason: "provider_reported_all_model_calls",
+    modelCalls: 1,
+    providerReportedModelCalls: 1,
+  };
 }
 
 async function closeWebSocketServer(server) {

@@ -11,6 +11,7 @@ import {
 
 const OCI_IMAGE_DIGEST_PATTERN = /^.+@sha256:[a-f0-9]{64}$/i;
 const BENCHMARK_TOOL_RESULT_EVENT_OUTPUT_CHAR_LIMIT = 2_048;
+const WORKSPACE_WRITE_CLOSURE_TOOLS = Object.freeze(["file_read", "file_edit", "apply_patch"]);
 
 export async function createBenchmarkPreflightArtifact(input, dependencies = {}) {
   const contractSource = await evaluateBenchmarkContractSourcePreflight(input, dependencies);
@@ -21,6 +22,10 @@ export async function createBenchmarkPreflightArtifact(input, dependencies = {})
   const profile = input.task?.executionProfile
     ? input.manifest?.suite?.executionProfiles?.[input.task.executionProfile]
     : undefined;
+  const workspaceWriteClosure = evaluateBenchmarkWorkspaceWriteClosurePreflight({
+    task: input.task,
+    profile,
+  });
   const agentProfile = await evaluateBenchmarkAgentProfilePreflight({
     stateDir: input.stateDir,
     profile,
@@ -48,9 +53,43 @@ export async function createBenchmarkPreflightArtifact(input, dependencies = {})
     manifestRevision: input.manifestRevision,
     taskId: input.task?.id,
     runId: input.runId,
-    status: [contractSource, agentProfile, executionBudget, pricing, oci, eventProjection]
+    status: [contractSource, workspaceWriteClosure, agentProfile, executionBudget, pricing, oci, eventProjection]
       .some((check) => check.status === "failed") ? "failed" : "passed",
-    checks: { contractSource, agentProfile, executionBudget, pricing, oci, eventProjection, fault },
+    checks: {
+      contractSource,
+      workspaceWriteClosure,
+      agentProfile,
+      executionBudget,
+      pricing,
+      oci,
+      eventProjection,
+      fault,
+    },
+  };
+}
+
+export function evaluateBenchmarkWorkspaceWriteClosurePreflight(input = {}) {
+  if (input.task?.executionProfile !== "workspace-write") {
+    return { status: "not_applicable", reason: "task_does_not_require_workspace_write_closure" };
+  }
+
+  const toolAllow = Array.isArray(input.profile?.toolAllow) ? input.profile.toolAllow : [];
+  const missingTools = WORKSPACE_WRITE_CLOSURE_TOOLS.filter((toolName) => !toolAllow.includes(toolName));
+  if (missingTools.length > 0) {
+    return { status: "failed", reason: "profile_capability_missing", missingTools };
+  }
+
+  const testCommands = input.task?.acceptance?.testCommands;
+  if (!Array.isArray(testCommands) || testCommands.length === 0
+    || testCommands.some((entry) => typeof entry?.command !== "string" || !entry.command.trim())) {
+    return { status: "failed", reason: "acceptance_test_commands_missing" };
+  }
+
+  return {
+    status: "passed",
+    reason: null,
+    toolAllow: [...toolAllow],
+    testCommandCount: testCommands.length,
   };
 }
 

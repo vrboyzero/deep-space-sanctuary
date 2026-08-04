@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ToolEnabledAgent, type AgentRunPromptOverride, type BelldandyAgent } from "@belldandy/agent";
-import { isAgentRunEventV1 } from "../../../coding-run/contracts.js";
+import { CODING_RUN_CAPABILITIES, isAgentRunEventV1 } from "../../../coding-run/contracts.js";
 import { startGatewayServer } from "../../../server.js";
 import { cleanupGlobalMemoryManagersForTest, resolveWebRoot, withEnv } from "../../../server-testkit.js";
 import { resolveAgentRunCliOptions, resolveAgentRunPrompt, runAgentRunCommand } from "./run.js";
@@ -49,6 +49,7 @@ describe("bdd agent run", () => {
       toolAllow: "file_read,run_command,file_read",
       toolDeny: "run_command",
       permissionMode: "accept-edits",
+      automationProfile: "bare",
       maxTurns: "3",
       maxTokens: "1200",
       maxCostUsd: "0.25",
@@ -60,6 +61,7 @@ describe("bdd agent run", () => {
         toolAllow: ["file_read", "run_command"],
         toolDeny: ["run_command"],
         permissionMode: "acceptEdits",
+        automationProfile: "bare",
         maxWallTimeMs: 5000,
         maxTurns: 3,
         maxTokens: 1200,
@@ -69,6 +71,10 @@ describe("bdd agent run", () => {
     expect(resolveAgentRunCliOptions({ permissionMode: "bypassPermissions" })).toMatchObject({
       ok: false,
       message: expect.stringContaining("permission-mode"),
+    });
+    expect(resolveAgentRunCliOptions({ automationProfile: "resident" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("automation-profile"),
     });
   });
 
@@ -121,6 +127,10 @@ describe("bdd agent run", () => {
         "run.status",
         "run.completed",
       ]);
+      expect(events[0]).toMatchObject({ payload: { capabilities: CODING_RUN_CAPABILITIES } });
+      expect(events.at(-1)).toMatchObject({
+        payload: { usage: { status: "incomplete", reason: "usage_not_reported" } },
+      });
       expect(stderr).toEqual([]);
     } finally {
       await server.close();
@@ -329,6 +339,91 @@ describe("bdd agent run", () => {
         },
       });
       expect(observedPromptOverride?.text).not.toContain("identity-only-rule");
+    } finally {
+      await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("projects a bare run without prior history, project rules, or commander deltas", async () => {
+    const stateDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "belldandy-agent-bare-profile-"));
+    const cwd = path.join(stateDir, "workspace");
+    const conversationId = "bare-profile-conversation";
+    const observedInputs: Parameters<BelldandyAgent["run"]>[0][] = [];
+    const agent: BelldandyAgent = {
+      async *run(input) {
+        observedInputs.push(input);
+        yield { type: "final", text: "done" };
+      },
+    };
+
+    try {
+      await fs.promises.mkdir(path.join(cwd, ".git"), { recursive: true });
+      await fs.promises.writeFile(path.join(cwd, "AGENTS.md"), "implicit-project-rule\n", "utf-8");
+      const server = await startGatewayServer({
+        port: 0,
+        auth: { mode: "none" },
+        webRoot: resolveWebRoot(),
+        stateDir,
+        agentFactory: () => agent,
+      });
+
+      try {
+        await withEnv({
+          BELLDANDY_HOST: "127.0.0.1",
+          BELLDANDY_PORT: String(server.port),
+          BELLDANDY_AUTH_MODE: "none",
+        }, async () => {
+          expect(await runAgentRunCommand({
+            stateDir,
+            conversationId,
+            prompt: "remember this prior turn",
+            jsonl: true,
+            writeStdout: () => {},
+            writeStderr: () => {},
+          })).toBe(0);
+          expect(await runAgentRunCommand({
+            stateDir,
+            conversationId,
+            prompt: "parallel review the project",
+            jsonl: true,
+            codingRun: {
+              cwd,
+              automationProfile: "bare",
+              toolAllow: ["file_read"],
+              toolDeny: ["run_command"],
+              permissionMode: "plan",
+              maxTurns: 2,
+              maxTokens: 800,
+            },
+            writeStdout: () => {},
+            writeStderr: () => {},
+          })).toBe(0);
+        });
+      } finally {
+        await server.close();
+      }
+
+      expect(observedInputs).toHaveLength(2);
+      const bareInput = observedInputs[1];
+      expect(bareInput.automationProfile).toBe("bare");
+      expect(bareInput.history).toEqual([]);
+      expect(bareInput.meta?.promptDeltas).toBeUndefined();
+      expect(bareInput.promptOverride).toMatchObject({
+        metadata: {
+          codingRunPromptMode: "bounded-coding-run-v1",
+          automationProfile: "bare",
+        },
+      });
+      expect(bareInput.promptOverride?.text).not.toContain("AGENTS.md");
+      expect(bareInput.meta?._agentLaunchSpec).toMatchObject({
+        cwd,
+        commandSandbox: "required",
+        toolSet: ["file_read"],
+        toolDeny: ["run_command"],
+        permissionMode: "plan",
+        toolLoopIterationBudget: 2,
+        maxTotalTokens: 800,
+      });
     } finally {
       await fs.promises.rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -738,11 +833,30 @@ describe("bdd agent run", () => {
         .toBe('{"summary":"repaired"}');
       expect(JSON.stringify(events)).not.toContain("not-json");
       expect(events.find((event) => event.type === "run.usage")).toMatchObject({
-        payload: { usage: { input: 7, output: 5, modelCalls: 2 } },
+        payload: {
+          usage: {
+            input: 7,
+            output: 5,
+            modelCalls: 2,
+            providerReportedModelCalls: 2,
+            completeness: {
+              status: "complete",
+              reason: "provider_reported_all_model_calls",
+            },
+          },
+        },
       });
       expect(events.at(-1)).toMatchObject({
         type: "run.completed",
-        payload: { output: { text: '{"summary":"repaired"}' } },
+        payload: {
+          output: { text: '{"summary":"repaired"}' },
+          usage: {
+            status: "complete",
+            reason: "provider_reported_all_model_calls",
+            modelCalls: 2,
+            providerReportedModelCalls: 2,
+          },
+        },
       });
     } finally {
       await server.close();

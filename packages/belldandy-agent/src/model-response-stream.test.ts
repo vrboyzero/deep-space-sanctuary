@@ -81,6 +81,61 @@ describe("readModelResponseStream", () => {
     expect(body.locked).toBe(false);
   });
 
+  it("removes a split provider control-frame suffix from a JSON response", async () => {
+    const expected = '{"summary":"done"}';
+    const body = createByteStream(encodeChunks(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: `${expected}</｜｜DS` } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "ML｜｜parameter>\n<" } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "/｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_" } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "calls>" }, finish_reason: "stop" }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ));
+
+    const items = await collect(body, { protocol: "openai", wireApi: "chat_completions" });
+
+    expect(items.filter((item) => item.type === "text_delta").map((item) => item.delta).join(""))
+      .toBe(expected);
+    expect(getCompleted(items).content).toBe(expected);
+  });
+
+  it("removes a provider control-frame suffix after an explicit JSON code block", async () => {
+    const expected = "```json\n{\"summary\":\"done\"}\n```";
+    const body = createByteStream(encodeChunks(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: `${expected}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>` } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ));
+
+    const items = await collect(body, { protocol: "openai", wireApi: "chat_completions" });
+
+    expect(getCompleted(items).content).toBe(expected);
+  });
+
+  it.each([
+    {
+      name: "ordinary text",
+      content: "Document this literal: </｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>",
+    },
+    {
+      name: "a JSON string value",
+      content: '"</｜｜DSML｜｜parameter>\\n</｜｜DSML｜｜invoke>\\n</｜｜DSML｜｜tool_calls>"',
+    },
+    {
+      name: "an incomplete trailing frame",
+      content: '{"summary":"done"}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜inv',
+    },
+  ])("preserves $name byte-for-byte", async ({ content }) => {
+    const body = createByteStream(encodeChunks(
+      `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ));
+
+    const items = await collect(body, { protocol: "openai", wireApi: "chat_completions" });
+
+    expect(items.filter((item) => item.type === "text_delta").map((item) => item.delta).join(""))
+      .toBe(content);
+    expect(getCompleted(items).content).toBe(content);
+  });
+
   it("parses OpenAI Responses text, reasoning, function arguments and completed usage", async () => {
     const body = createByteStream(encodeChunks(
       "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello \"}\n\n",
@@ -102,6 +157,19 @@ describe("readModelResponseStream", () => {
       toolCalls: [{ id: "call_1", name: "search", arguments: "{\"q\":\"docs\"}" }],
       usage: { inputTokens: 5, outputTokens: 6, totalTokens: 11 },
     });
+  });
+
+  it("removes a split control-frame suffix from an OpenAI Responses stream", async () => {
+    const expected = '{"summary":"done"}';
+    const body = createByteStream(encodeChunks(
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: `${expected}</｜｜DSML｜｜para` })}\n\n`,
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "meter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>" })}\n\n`,
+      `data: ${JSON.stringify({ type: "response.completed", response: {} })}\n\n`,
+    ));
+
+    const items = await collect(body, { protocol: "openai", wireApi: "responses" });
+
+    expect(getCompleted(items).content).toBe(expected);
   });
 
   it("parses Anthropic text, thinking, input_json_delta and split usage", async () => {
@@ -126,6 +194,18 @@ describe("readModelResponseStream", () => {
       toolCalls: [{ id: "tool_1", name: "read", arguments: "{\"path\":\"a.txt\"}" }],
       usage: { inputTokens: 8, outputTokens: 9, cacheReadInputTokens: 2 },
     });
+  });
+
+  it("preserves control-frame-like text from the Anthropic protocol", async () => {
+    const content = '{"summary":"done"}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>';
+    const body = createByteStream(encodeChunks(
+      `data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: content } })}\n\n`,
+      `data: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+    ));
+
+    const items = await collect(body, { protocol: "anthropic", wireApi: "chat_completions" });
+
+    expect(getCompleted(items).content).toBe(content);
   });
 
   it("rejects invalid event JSON and cancels the reader", async () => {
@@ -174,6 +254,21 @@ describe("readModelResponseStream", () => {
       protocol: "openai",
       wireApi: "chat_completions",
       maxResponseBytes: 8,
+    })).rejects.toMatchObject({ code: "response_too_large" });
+  });
+
+  it("counts removable provider control frames against the raw response limit", async () => {
+    const body = createByteStream(encodeChunks(
+      `data: ${JSON.stringify({ choices: [{ delta: {
+        content: '{"ok":true}</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
+      } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ));
+
+    await expect(collect(body, {
+      protocol: "openai",
+      wireApi: "chat_completions",
+      maxResponseBytes: 32,
     })).rejects.toMatchObject({ code: "response_too_large" });
   });
 

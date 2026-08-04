@@ -94,9 +94,12 @@ export function resolveBenchmarkRuntimePlatform(input = {}, runtime = {}) {
 export function extractBenchmarkTokenUsage(events) {
   const usageEvents = events.filter((event) => event?.type === "run.usage");
   const usage = usageEvents.at(-1)?.payload?.usage;
+  const terminalUsage = events.at(-1)?.payload?.usage;
   const status = usageEvents.length === 0
     ? "not_reached"
-    : usage?.source === "provider_reported" ? "provider_reported" : "unavailable";
+    : usage?.source === "provider_reported" && terminalUsage?.status === "complete"
+      ? "provider_reported"
+      : "unavailable";
   return {
     inputTokens: readTokenCount(usage, ["input", "inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]),
     outputTokens: readTokenCount(usage, ["output", "outputTokens", "output_tokens", "completionTokens", "completion_tokens"]),
@@ -639,6 +642,8 @@ async function executeRecoveryCodingCiProcess(input) {
           "terminal_type=run.completed",
           `changed_paths=${recovered.manifest.changedPaths.length}`,
           "event_contract=true",
+          `capability_handshake=${recovered.manifest.checks.capabilityHandshake}`,
+          `usage_complete=${recovered.manifest.checks.usageComplete}`,
           "artifact_policy=true",
           "automatic_push=false",
           "gateway_disconnect_recovered=true",

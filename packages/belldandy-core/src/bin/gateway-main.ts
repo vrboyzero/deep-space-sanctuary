@@ -173,6 +173,7 @@ import {
   fetchTool,
   applyPatchTool,
   fileReadTool,
+  fileEditTool,
   fileWriteTool,
   fileDeleteTool,
   listFilesTool,
@@ -1010,6 +1011,7 @@ const gatewayToolPoolAssembler = new ToolPoolAssembler([
       fetchTool,
       applyPatchTool,
       fileReadTool,
+      fileEditTool,
       fileWriteTool,
       fileDeleteTool,
       listFilesTool,
@@ -1338,7 +1340,7 @@ const toolExecutor: ToolExecutor = new ToolExecutor({
   stateDir,
   workspaceMutationObserver: workspaceRevisionRuntime,
   permissionController: pendingToolPermissionRuntime,
-  extraWorkspaceRoots, // 额外允许 file_read/file_write/file_delete 的根目录（如其他盘符）
+  extraWorkspaceRoots, // 额外允许 file_read/file_edit/file_write/file_delete 的根目录（如其他盘符）
   alwaysEnabledTools: toolsEnabled ? [TOOL_SETTINGS_CONTROL_NAME, TOOL_SEARCH_NAME] : [],
   policy: toolsPolicy,
   contractAccessPolicy: gatewayExecutorContractAccessPolicy,
@@ -1475,7 +1477,7 @@ if (toolsEnabled) {
 
 // 4. Log enabled tools
 if (toolsEnabled) {
-  const safeTools = "web_fetch, apply_patch, file_read, file_write, file_delete, list_files, text_search, file_glob, memory_search, memory_get, memory_read, memory_write, memory_share_promote, task_search, task_get, task_recent, conversation_list, conversation_read, experience_candidate_get, experience_candidate_list, experience_usage_get, experience_usage_list, ptc_runtime, browser_*, log_read, log_search";
+  const safeTools = "web_fetch, apply_patch, file_read, file_edit, file_write, file_delete, list_files, text_search, file_glob, memory_search, memory_get, memory_read, memory_write, memory_share_promote, task_search, task_get, task_recent, conversation_list, conversation_read, experience_candidate_get, experience_candidate_list, experience_usage_get, experience_usage_list, ptc_runtime, browser_*, log_read, log_search";
   if (dangerousToolsEnabled) {
     logger.warn("tools", "⚠️ DANGEROUS_TOOLS_ENABLED=true: run_command and command_job are active");
     logger.info("tools", `Tools enabled: ${safeTools}, run_command, command_job`);
@@ -3559,7 +3561,8 @@ function parseContextInjectionCategories(raw: string | undefined): MemoryCategor
 }
 
 function extractTaskArtifactPaths(toolName: string, result: unknown, params: Record<string, unknown>): string[] {
-  if (toolName === "file_write" && typeof params.path === "string" && params.path.trim()) {
+  if ((toolName === "file_write" || toolName === "file_edit")
+    && typeof params.path === "string" && params.path.trim()) {
     return [params.path.trim()];
   }
 
@@ -3583,7 +3586,8 @@ function extractTaskArtifactPaths(toolName: string, result: unknown, params: Rec
       return [...new Set(values)];
     }
 
-    if ((toolName === "file_write" || toolName === "file_delete") && typeof parsed.path === "string" && parsed.path.trim()) {
+    if ((toolName === "file_write" || toolName === "file_edit" || toolName === "file_delete")
+      && typeof parsed.path === "string" && parsed.path.trim()) {
       return [parsed.path.trim()];
     }
   } catch {
