@@ -36,6 +36,16 @@ export type UserWorktreeCreateInput = {
 export type UserWorktreeRetention = {
   status: "retained";
   reason: string;
+  decision?: UserWorktreeLifecycleDecision;
+  decidedAtMs?: number;
+};
+
+export type UserWorktreeLifecycleDecision = "keep" | "discard";
+
+export type UserWorktreeLifecycle = {
+  decision: UserWorktreeLifecycleDecision;
+  decidedAtMs: number;
+  receiptId: string;
 };
 
 export type UserWorktreeStatus = {
@@ -63,7 +73,24 @@ export type UserWorktreeDiff = {
   page: WorkspaceChangeSnapshotPage;
 };
 
-export type UserWorktreeOperation = "apply" | "remove" | "stage" | "commit" | "branch";
+export type UserWorktreeOperation = "keep" | "apply" | "discard" | "remove" | "stage" | "commit" | "branch";
+
+export type UserWorktreeSweepItem = {
+  worktreeId: string;
+  decision?: UserWorktreeLifecycleDecision;
+  outcome: "discarded" | "retained" | "locked" | "uncertain";
+  blockers: string[];
+};
+
+export type UserWorktreeSweepResult = {
+  owner: UserWorktreeOwner;
+  inspected: number;
+  discarded: number;
+  retained: number;
+  locked: number;
+  uncertain: number;
+  results: UserWorktreeSweepItem[];
+};
 
 export type UserWorktreeOperationReceipt = {
   receiptId: string;
@@ -141,6 +168,7 @@ type UserWorktreeRecord = {
   registeredAt: string;
   owner: UserWorktreeOwner;
   worktree: ManagedWorktree;
+  lifecycle?: UserWorktreeLifecycle;
 };
 
 type UserWorktreeOperationReceiptRecord = {
@@ -176,6 +204,14 @@ type UserWorktreeOperationAuditRecord = UserWorktreeOperationAudit & {
   receiptId: string;
   operation: UserWorktreeOperation;
   worktreeId: string;
+};
+
+type UserWorktreeOwnerLockRecord = {
+  version: 1;
+  worktreeId: string;
+  owner: UserWorktreeOwner;
+  token: string;
+  acquiredAtMs: number;
 };
 
 function buildGitEnv(): NodeJS.ProcessEnv {
@@ -238,16 +274,34 @@ function readRecord(value: unknown): UserWorktreeRecord | undefined {
   if (!candidate.owner || typeof candidate.owner !== "object" || Array.isArray(candidate.owner)) return undefined;
   const owner = candidate.owner as Record<string, unknown>;
   if (!isSafeOwnerId(owner.conversationId) || !isSafeOwnerId(owner.runId) || !isManagedWorktree(candidate.worktree)) return undefined;
+  let lifecycle: UserWorktreeLifecycle | undefined;
+  if (candidate.lifecycle !== undefined) {
+    if (!candidate.lifecycle || typeof candidate.lifecycle !== "object" || Array.isArray(candidate.lifecycle)) return undefined;
+    const storedLifecycle = candidate.lifecycle as Record<string, unknown>;
+    if ((storedLifecycle.decision !== "keep" && storedLifecycle.decision !== "discard")
+      || typeof storedLifecycle.decidedAtMs !== "number"
+      || !Number.isSafeInteger(storedLifecycle.decidedAtMs)
+      || storedLifecycle.decidedAtMs < 0
+      || typeof storedLifecycle.receiptId !== "string"
+      || !SAFE_ID_PATTERN.test(storedLifecycle.receiptId)) return undefined;
+    lifecycle = {
+      decision: storedLifecycle.decision,
+      decidedAtMs: storedLifecycle.decidedAtMs,
+      receiptId: storedLifecycle.receiptId,
+    };
+  }
   return {
     version: RECORD_VERSION,
     registeredAt: candidate.registeredAt,
     owner: { conversationId: owner.conversationId, runId: owner.runId },
     worktree: candidate.worktree,
+    ...(lifecycle ? { lifecycle } : {}),
   };
 }
 
 function isUserWorktreeOperation(value: unknown): value is UserWorktreeOperation {
-  return value === "apply" || value === "remove" || value === "stage" || value === "commit" || value === "branch";
+  return value === "keep" || value === "apply" || value === "discard" || value === "remove"
+    || value === "stage" || value === "commit" || value === "branch";
 }
 
 function readOperationReceipt(value: unknown): UserWorktreeOperationReceiptRecord | undefined {
@@ -388,10 +442,15 @@ function parsePorcelainStatus(value: string): {
   return { trackedChanges, untrackedChanges, conflictChanges };
 }
 
-function retention(): UserWorktreeRetention {
+function retention(lifecycle?: UserWorktreeLifecycle): UserWorktreeRetention {
   return {
     status: "retained",
-    reason: "user_session worktrees require an explicit user action before removal.",
+    reason: lifecycle?.decision === "keep"
+      ? "The exact owner explicitly kept this user_session worktree."
+      : lifecycle?.decision === "discard"
+        ? "The exact owner requested discard; explicit owner sweep may retry the final removal gate."
+        : "user_session worktrees require an explicit user action before removal.",
+    ...(lifecycle ? { decision: lifecycle.decision, decidedAtMs: lifecycle.decidedAtMs } : {}),
   };
 }
 
@@ -413,6 +472,7 @@ export class UserWorktreeRuntime {
   private readonly operationEvidenceDir: string;
   private readonly operationAuditDir: string;
   private readonly operationChecksDir: string;
+  private readonly ownerLocksDir: string;
   private readonly managedWorktrees: ManagedWorktreeRuntime;
   private readonly changeSnapshots: WorkspaceChangeSnapshotRuntime;
 
@@ -424,6 +484,7 @@ export class UserWorktreeRuntime {
     this.operationEvidenceDir = path.join(operationStateDir, "evidence");
     this.operationAuditDir = path.join(operationStateDir, "audit");
     this.operationChecksDir = path.join(operationStateDir, "checks");
+    this.ownerLocksDir = path.join(resolvedStateDir, "worktrees", "user-session-locks");
     this.managedWorktrees = new ManagedWorktreeRuntime(resolvedStateDir);
     this.changeSnapshots = new WorkspaceChangeSnapshotRuntime({ stateDir: resolvedStateDir });
   }
@@ -506,15 +567,7 @@ export class UserWorktreeRuntime {
   }
 
   async listStatus(): Promise<UserWorktreeStatus[]> {
-    let entries: string[];
-    try {
-      entries = await fs.readdir(this.recordsDir);
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
-      throw error;
-    }
-    const recordNames = entries.filter((entry) => entry.endsWith(".json") && SAFE_ID_PATTERN.test(entry.slice(0, -5))).sort();
-    return Promise.all(recordNames.map((entry) => this.readStatus(entry.slice(0, -5))));
+    return Promise.all((await this.listRecordIds()).map((worktreeId) => this.readStatus(worktreeId)));
   }
 
   async getStatus(worktreeId: string): Promise<UserWorktreeStatus | undefined> {
@@ -544,6 +597,121 @@ export class UserWorktreeRuntime {
     };
   }
 
+  async sweepOwner(owner: UserWorktreeOwner): Promise<UserWorktreeSweepResult> {
+    if (!isSafeOwnerId(owner.conversationId) || !isSafeOwnerId(owner.runId)) {
+      throw new Error("User worktree sweep requires an exact conversationId and runId owner.");
+    }
+    const ownedIds: string[] = [];
+    for (const worktreeId of await this.listRecordIds()) {
+      const record = await this.loadRecord(worktreeId);
+      if (record
+        && record.owner.conversationId === owner.conversationId
+        && record.owner.runId === owner.runId) {
+        ownedIds.push(worktreeId);
+      }
+    }
+    const owned = await Promise.all(ownedIds.map((worktreeId) => this.readStatus(worktreeId)));
+    const results: UserWorktreeSweepItem[] = [];
+    for (const status of owned) {
+      const record = await this.loadRecord(status.worktreeId);
+      if (!record || !hasSameOwner(status, owner)) {
+        results.push({ worktreeId: status.worktreeId, outcome: "retained", blockers: ["owner_mismatch"] });
+        continue;
+      }
+      if (record.lifecycle?.decision !== "discard") {
+        results.push({
+          worktreeId: status.worktreeId,
+          ...(record.lifecycle ? { decision: record.lifecycle.decision } : {}),
+          outcome: "retained",
+          blockers: [record.lifecycle?.decision === "keep" ? "keep_requested" : "discard_not_requested"],
+        });
+        continue;
+      }
+      const releaseOwnerLock = await this.acquireOwnerLock(status.worktreeId, owner);
+      if (!releaseOwnerLock) {
+        results.push({
+          worktreeId: status.worktreeId,
+          decision: "discard",
+          outcome: "locked",
+          blockers: ["owner_lock_busy"],
+        });
+        continue;
+      }
+      try {
+        const currentRecord = await this.loadRecord(status.worktreeId);
+        const current = await this.getStatus(status.worktreeId);
+        if (!currentRecord
+          || currentRecord.lifecycle?.decision !== "discard"
+          || currentRecord.owner.conversationId !== owner.conversationId
+          || currentRecord.owner.runId !== owner.runId) {
+          results.push({
+            worktreeId: status.worktreeId,
+            decision: "discard",
+            outcome: "retained",
+            blockers: ["owner_or_decision_changed"],
+          });
+          continue;
+        }
+        const receipt = await this.loadOperationReceipt(currentRecord.lifecycle.receiptId);
+        const audit = await this.loadOperationAudit(currentRecord.lifecycle.receiptId);
+        if (!receipt
+          || receipt.operation !== "discard"
+          || receipt.worktreeId !== status.worktreeId
+          || !audit
+          || audit.operation !== "discard"
+          || audit.worktreeId !== status.worktreeId) {
+          results.push({
+            worktreeId: status.worktreeId,
+            decision: "discard",
+            outcome: "retained",
+            blockers: ["discard_evidence_unavailable"],
+          });
+          continue;
+        }
+        if (current && (current.status !== "ready"
+          || current.currentCommit !== current.baseCommit
+          || current.dirty
+          || current.extraCommitCount !== 0)) {
+          results.push({
+            worktreeId: status.worktreeId,
+            decision: "discard",
+            outcome: "retained",
+            blockers: current.blockers.length > 0 ? current.blockers : ["discard_gate_failed"],
+          });
+          continue;
+        }
+        await this.removeWorktree(status.worktreeId, true);
+        const completedAudit = await this.finishOperationAudit(receipt, audit, "succeeded", {});
+        results.push(completedAudit
+          ? { worktreeId: status.worktreeId, decision: "discard", outcome: "discarded", blockers: [] }
+          : {
+            worktreeId: status.worktreeId,
+            decision: "discard",
+            outcome: "uncertain",
+            blockers: ["audit_persistence_failed"],
+          });
+      } catch {
+        results.push({
+          worktreeId: status.worktreeId,
+          decision: "discard",
+          outcome: "uncertain",
+          blockers: ["discard_status_uncertain"],
+        });
+      } finally {
+        await releaseOwnerLock();
+      }
+    }
+    return {
+      owner: { conversationId: owner.conversationId, runId: owner.runId },
+      inspected: owned.length,
+      discarded: results.filter((item) => item.outcome === "discarded").length,
+      retained: results.filter((item) => item.outcome === "retained").length,
+      locked: results.filter((item) => item.outcome === "locked").length,
+      uncertain: results.filter((item) => item.outcome === "uncertain").length,
+      results,
+    };
+  }
+
   async preview(input: UserWorktreeOperationPreviewInput): Promise<UserWorktreeOperationPreview> {
     const inspection = await this.inspectOperation(input);
     if (!inspection.receiptBinding) return inspection.preview;
@@ -562,127 +730,84 @@ export class UserWorktreeRuntime {
     if (receipt.operation !== input.operation || receipt.worktreeId !== input.worktreeId) {
       return this.operationFailure(input.operation, input.worktreeId, ["receipt_mismatch"]);
     }
-    if (!await this.consumeOperationReceipt(input)) {
-      const recovered = await this.loadOperationAudit(receipt.receiptId);
-      if (recovered
-        && recovered.operation === input.operation
-        && recovered.worktreeId === input.worktreeId) {
-        if (recovered.status === "started" && receipt.operation === "stage") {
-          const indexTree = await this.reconcileStartedStageOperation(receipt);
-          if (indexTree) {
-            const audit = await this.finishOperationAudit(receipt, recovered, "succeeded", { indexTree });
-            if (audit) {
-              return {
-                operation: input.operation,
-                worktreeId: input.worktreeId,
-                canConfirm: false,
-                blockers: [],
-                outcome: "succeeded",
-                applied: true,
-                audit,
-              };
-            }
-            return {
-              operation: input.operation,
-              worktreeId: input.worktreeId,
-              canConfirm: false,
-              blockers: ["audit_persistence_failed"],
-              outcome: "uncertain",
-              applied: true,
-              audit: recovered,
-            };
-          }
+    let releaseOwnerLock: (() => Promise<void>) | undefined;
+    if (!await this.hasOperationReceiptLock(receipt.receiptId)) {
+      const record = await this.loadRecord(input.worktreeId);
+      if (!record) return this.operationFailure(input.operation, input.worktreeId, ["worktree_not_found"]);
+      releaseOwnerLock = await this.acquireOwnerLock(input.worktreeId, record.owner);
+      if (!releaseOwnerLock) {
+        return this.operationFailure(input.operation, input.worktreeId, ["owner_lock_busy"]);
+      }
+    }
+    try {
+      if (!await this.consumeOperationReceipt(input)) {
+        return this.recoverConsumedOperation(input, receipt);
+      }
+      if (receipt.expiresAtMs < Date.now()) {
+        return this.operationFailure(input.operation, input.worktreeId, ["receipt_expired"]);
+      }
+
+      const inspection = await this.inspectOperation({
+        operation: input.operation,
+        worktreeId: input.worktreeId,
+        ...(input.operation === "commit" && receipt.commitMessage ? { commitMessage: receipt.commitMessage } : {}),
+        ...(input.operation === "branch" && receipt.publishedBranch ? { branchName: receipt.publishedBranch } : {}),
+      });
+      if (!inspection.receiptBinding || !this.matchesReceipt(inspection.receiptBinding, receipt)) {
+        if (!inspection.receiptBinding) return { ...inspection.preview, outcome: "failed", applied: false };
+        return this.operationFailure(input.operation, input.worktreeId, ["receipt_stale"]);
+      }
+
+      const startedAudit = await this.beginOperationAudit(receipt);
+      if (!startedAudit) {
+        return this.operationFailure(input.operation, input.worktreeId, ["audit_unavailable"]);
+      }
+      try {
+        let outcome: { indexTree?: string; commit?: string } = {};
+        if (input.operation === "keep") {
+          await this.writeLifecycleDecision(input.worktreeId, "keep", receipt.receiptId);
+        } else if (input.operation === "apply") {
+          await this.applyPatch(inspection.receiptBinding.targetRepoRoot, inspection.patch ?? "");
+        } else if (input.operation === "discard") {
+          await this.writeLifecycleDecision(input.worktreeId, "discard", receipt.receiptId);
+          await this.removeWorktree(input.worktreeId, true);
+        } else if (input.operation === "remove") {
+          await this.removeWorktree(input.worktreeId);
+        } else if (input.operation === "stage") {
+          const indexTree = await this.stageWorktree(input.worktreeId, receipt);
+          outcome = { indexTree };
+        } else if (input.operation === "commit") {
+          const commit = await this.commitWorktree(input.worktreeId, receipt);
+          outcome = { commit };
+        } else {
+          const commit = await this.publishBranch(input.worktreeId, receipt);
+          outcome = { commit };
         }
-        if (recovered.status !== "succeeded") {
+        const audit = await this.finishOperationAudit(receipt, startedAudit, "succeeded", outcome);
+        if (!audit) {
           return {
-            operation: input.operation,
-            worktreeId: input.worktreeId,
+            ...inspection.preview,
             canConfirm: false,
-            blockers: ["operation_status_uncertain"],
+            blockers: ["audit_persistence_failed"],
             outcome: "uncertain",
-            applied: false,
-            audit: recovered,
+            applied: true,
+            audit: startedAudit,
           };
         }
+        return { ...inspection.preview, outcome: "succeeded", applied: true, audit };
+      } catch {
+        const audit = await this.finishOperationAudit(receipt, startedAudit, "uncertain", {});
         return {
-          operation: input.operation,
-          worktreeId: input.worktreeId,
-          canConfirm: false,
-          blockers: [],
-          outcome: "succeeded",
-          applied: true,
-          audit: recovered,
-        };
-      }
-      if (await this.hasOperationReceiptLock(receipt.receiptId)) {
-        return {
-          operation: input.operation,
-          worktreeId: input.worktreeId,
+          ...inspection.preview,
           canConfirm: false,
           blockers: ["operation_status_uncertain"],
           outcome: "uncertain",
           applied: false,
+          audit: audit ?? startedAudit,
         };
       }
-      return this.operationFailure(input.operation, input.worktreeId, ["receipt_unavailable"]);
-    }
-    if (receipt.expiresAtMs < Date.now()) {
-      return this.operationFailure(input.operation, input.worktreeId, ["receipt_expired"]);
-    }
-
-    const inspection = await this.inspectOperation({
-      operation: input.operation,
-      worktreeId: input.worktreeId,
-      ...(input.operation === "commit" && receipt.commitMessage ? { commitMessage: receipt.commitMessage } : {}),
-      ...(input.operation === "branch" && receipt.publishedBranch ? { branchName: receipt.publishedBranch } : {}),
-    });
-    if (!inspection.receiptBinding || !this.matchesReceipt(inspection.receiptBinding, receipt)) {
-      if (!inspection.receiptBinding) return { ...inspection.preview, outcome: "failed", applied: false };
-      return this.operationFailure(input.operation, input.worktreeId, ["receipt_stale"]);
-    }
-
-    const startedAudit = await this.beginOperationAudit(receipt);
-    if (!startedAudit) {
-      return this.operationFailure(input.operation, input.worktreeId, ["audit_unavailable"]);
-    }
-    try {
-      let outcome: { indexTree?: string; commit?: string } = {};
-      if (input.operation === "apply") {
-        await this.applyPatch(inspection.receiptBinding.targetRepoRoot, inspection.patch ?? "");
-      } else if (input.operation === "remove") {
-        await this.removeWorktree(input.worktreeId);
-      } else if (input.operation === "stage") {
-        const indexTree = await this.stageWorktree(input.worktreeId, receipt);
-        outcome = { indexTree };
-      } else if (input.operation === "commit") {
-        const commit = await this.commitWorktree(input.worktreeId, receipt);
-        outcome = { commit };
-      } else {
-        const commit = await this.publishBranch(input.worktreeId, receipt);
-        outcome = { commit };
-      }
-      const audit = await this.finishOperationAudit(receipt, startedAudit, "succeeded", outcome);
-      if (!audit) {
-        return {
-          ...inspection.preview,
-          canConfirm: false,
-          blockers: ["audit_persistence_failed"],
-          outcome: "uncertain",
-          applied: true,
-          audit: startedAudit,
-        };
-      }
-      return { ...inspection.preview, outcome: "succeeded", applied: true, audit };
-    } catch {
-      const audit = await this.finishOperationAudit(receipt, startedAudit, "uncertain", {});
-      return {
-        ...inspection.preview,
-        canConfirm: false,
-        blockers: ["operation_status_uncertain"],
-        outcome: "uncertain",
-        applied: false,
-        audit: audit ?? startedAudit,
-      };
+    } finally {
+      if (releaseOwnerLock) await releaseOwnerLock();
     }
   }
 
@@ -695,6 +820,26 @@ export class UserWorktreeRuntime {
     if (!record || !worktree) {
       return { preview: await this.operationPreviewFailure(input.operation, input.worktreeId, ["worktree_not_found"]) };
     }
+    if (input.operation === "keep") {
+      const currentCommit = worktree.currentCommit ?? record.worktree.baseRef;
+      return {
+        preview: {
+          operation: "keep",
+          worktreeId: input.worktreeId,
+          canConfirm: true,
+          blockers: [],
+        },
+        receiptBinding: {
+          operation: "keep",
+          worktreeId: input.worktreeId,
+          baseCommit: record.worktree.baseRef,
+          currentCommit,
+          branch: record.worktree.branch,
+          targetRepoRoot: record.worktree.repoRoot,
+          targetHead: currentCommit,
+        },
+      };
+    }
     if (worktree.status === "unavailable" || !worktree.currentCommit) {
       return { preview: await this.operationPreviewFailure(input.operation, input.worktreeId, ["worktree_unavailable"]) };
     }
@@ -703,7 +848,9 @@ export class UserWorktreeRuntime {
     if (worktree.conflictChanges && worktree.conflictChanges > 0) blockers.push("unresolved_conflicts");
     if (input.operation !== "branch" && worktree.extraCommitCount && worktree.extraCommitCount > 0) blockers.push("extra_commits");
     if (worktree.untrackedChanges && worktree.untrackedChanges > 0) blockers.push("untracked_changes");
-    if (input.operation === "remove" && worktree.dirty) blockers.push("uncommitted_changes");
+    if ((input.operation === "remove" || input.operation === "discard") && worktree.dirty) {
+      blockers.push("uncommitted_changes");
+    }
     if (input.operation === "apply" && !worktree.trackedChanges) blockers.push("empty_patch");
     if (blockers.length > 0) {
       return { preview: await this.operationPreviewFailure(input.operation, input.worktreeId, blockers) };
@@ -1097,6 +1244,74 @@ export class UserWorktreeRuntime {
     }
   }
 
+  private async recoverConsumedOperation(
+    input: UserWorktreeOperationConfirmInput,
+    receipt: UserWorktreeOperationReceiptRecord,
+  ): Promise<UserWorktreeOperationResult> {
+    const recovered = await this.loadOperationAudit(receipt.receiptId);
+    if (recovered
+      && recovered.operation === input.operation
+      && recovered.worktreeId === input.worktreeId) {
+      if (recovered.status === "started" && receipt.operation === "stage") {
+        const indexTree = await this.reconcileStartedStageOperation(receipt);
+        if (indexTree) {
+          const audit = await this.finishOperationAudit(receipt, recovered, "succeeded", { indexTree });
+          if (audit) {
+            return {
+              operation: input.operation,
+              worktreeId: input.worktreeId,
+              canConfirm: false,
+              blockers: [],
+              outcome: "succeeded",
+              applied: true,
+              audit,
+            };
+          }
+          return {
+            operation: input.operation,
+            worktreeId: input.worktreeId,
+            canConfirm: false,
+            blockers: ["audit_persistence_failed"],
+            outcome: "uncertain",
+            applied: true,
+            audit: recovered,
+          };
+        }
+      }
+      if (recovered.status !== "succeeded") {
+        return {
+          operation: input.operation,
+          worktreeId: input.worktreeId,
+          canConfirm: false,
+          blockers: ["operation_status_uncertain"],
+          outcome: "uncertain",
+          applied: false,
+          audit: recovered,
+        };
+      }
+      return {
+        operation: input.operation,
+        worktreeId: input.worktreeId,
+        canConfirm: false,
+        blockers: [],
+        outcome: "succeeded",
+        applied: true,
+        audit: recovered,
+      };
+    }
+    if (await this.hasOperationReceiptLock(receipt.receiptId)) {
+      return {
+        operation: input.operation,
+        worktreeId: input.worktreeId,
+        canConfirm: false,
+        blockers: ["operation_status_uncertain"],
+        outcome: "uncertain",
+        applied: false,
+      };
+    }
+    return this.operationFailure(input.operation, input.worktreeId, ["receipt_unavailable"]);
+  }
+
   private matchesReceipt(
     binding: Omit<UserWorktreeOperationReceiptRecord, "version" | "receiptId" | "createdAtMs" | "expiresAtMs">,
     receipt: UserWorktreeOperationReceiptRecord,
@@ -1337,10 +1552,84 @@ export class UserWorktreeRuntime {
     }
   }
 
-  private async removeWorktree(worktreeId: string): Promise<void> {
+  private async writeLifecycleDecision(
+    worktreeId: string,
+    decision: UserWorktreeLifecycleDecision,
+    receiptId: string,
+  ): Promise<void> {
+    const record = await this.loadRecord(worktreeId);
+    if (!record || !SAFE_ID_PATTERN.test(receiptId)) {
+      throw new Error("Managed user worktree lifecycle record is unavailable.");
+    }
+    const targetPath = this.recordPath(worktreeId);
+    const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporaryPath, `${JSON.stringify({
+        ...record,
+        lifecycle: {
+          decision,
+          decidedAtMs: Date.now(),
+          receiptId,
+        },
+      }, null, 2)}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
+      await fs.rename(temporaryPath, targetPath);
+    } finally {
+      await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    }
+  }
+
+  private async acquireOwnerLock(
+    worktreeId: string,
+    owner: UserWorktreeOwner,
+  ): Promise<(() => Promise<void>) | undefined> {
+    if (!SAFE_ID_PATTERN.test(worktreeId)
+      || !isSafeOwnerId(owner.conversationId)
+      || !isSafeOwnerId(owner.runId)) return undefined;
+    const token = randomUUID();
+    const lock: UserWorktreeOwnerLockRecord = {
+      version: 1,
+      worktreeId,
+      owner: { conversationId: owner.conversationId, runId: owner.runId },
+      token,
+      acquiredAtMs: Date.now(),
+    };
+    const lockPath = this.ownerLockPath(worktreeId);
+    try {
+      await fs.mkdir(this.ownerLocksDir, { recursive: true, mode: 0o700 });
+      await fs.writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, {
+        encoding: "utf-8",
+        mode: 0o600,
+        flag: "wx",
+      });
+    } catch {
+      return undefined;
+    }
+    return async () => {
+      try {
+        const current = JSON.parse(await fs.readFile(lockPath, "utf-8")) as Partial<UserWorktreeOwnerLockRecord>;
+        if (current.version === 1
+          && current.worktreeId === worktreeId
+          && current.token === token
+          && current.owner?.conversationId === owner.conversationId
+          && current.owner?.runId === owner.runId) {
+          await fs.rm(lockPath, { force: true });
+        }
+      } catch {
+        // A missing or replaced lock is not owned by this release callback.
+      }
+    };
+  }
+
+  private async removeWorktree(worktreeId: string, forgetRecord = false): Promise<void> {
     const record = await this.loadRecord(worktreeId);
     if (!record) throw new Error("Managed user worktree record is unavailable.");
     const reconciled = await this.managedWorktrees.reconcile(record.worktree);
+    if (reconciled.status === "missing") {
+      const branch = await runGit(["branch", "--list", record.worktree.branch], record.worktree.repoRoot);
+      if (branch) throw new Error("Managed user worktree is missing while its branch still exists.");
+      if (forgetRecord) await fs.rm(this.recordPath(worktreeId), { force: true });
+      return;
+    }
     if (reconciled.status !== "created") throw new Error("Managed user worktree is unavailable for removal.");
     const current = await this.getStatus(worktreeId);
     if (!current
@@ -1355,6 +1644,7 @@ export class UserWorktreeRuntime {
     const branch = await runGit(["branch", "--list", reconciled.branch], reconciled.repoRoot);
     if (branch) await runGit(["branch", "-d", reconciled.branch], reconciled.repoRoot);
     await runGit(["worktree", "prune"], reconciled.repoRoot).catch(() => "");
+    if (forgetRecord) await fs.rm(this.recordPath(worktreeId));
   }
 
   private async operationPreviewFailure(
@@ -1432,6 +1722,18 @@ export class UserWorktreeRuntime {
     }
   }
 
+  private async listRecordIds(): Promise<string[]> {
+    try {
+      return (await fs.readdir(this.recordsDir))
+        .filter((entry) => entry.endsWith(".json") && SAFE_ID_PATTERN.test(entry.slice(0, -5)))
+        .map((entry) => entry.slice(0, -5))
+        .sort();
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
   private operationReceiptPath(receiptId: string): string {
     if (!SAFE_ID_PATTERN.test(receiptId)) throw new Error("User worktree operation receipt id is invalid.");
     return path.join(this.operationReceiptsDir, `${receiptId}.json`);
@@ -1505,7 +1807,7 @@ export class UserWorktreeRuntime {
       branch: record.worktree.branch,
       status: "unavailable",
       blockers: [],
-      retention: retention(),
+      retention: retention(record.lifecycle),
     };
     if (reconciled.status !== "created") {
       return {
@@ -1557,5 +1859,10 @@ export class UserWorktreeRuntime {
   private recordPath(worktreeId: string): string {
     if (!SAFE_ID_PATTERN.test(worktreeId)) throw new Error("User worktree id is invalid.");
     return path.join(this.recordsDir, `${worktreeId}.json`);
+  }
+
+  private ownerLockPath(worktreeId: string): string {
+    if (!SAFE_ID_PATTERN.test(worktreeId)) throw new Error("User worktree owner lock id is invalid.");
+    return path.join(this.ownerLocksDir, `${worktreeId}.lock`);
   }
 }

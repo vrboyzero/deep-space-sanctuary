@@ -81,6 +81,8 @@ export { UserWorktreeRuntime } from "./user-worktree-runtime.js";
 export type {
   UserWorktreeCreateInput,
   UserWorktreeDiff,
+  UserWorktreeLifecycle,
+  UserWorktreeLifecycleDecision,
   UserWorktreeOwner,
   UserWorktreeOperation,
   UserWorktreeOperationAudit,
@@ -92,6 +94,8 @@ export type {
   UserWorktreeOperationResult,
   UserWorktreeRetention,
   UserWorktreeStatus,
+  UserWorktreeSweepItem,
+  UserWorktreeSweepResult,
 } from "./user-worktree-runtime.js";
 export {
   GhPullRequestClient,

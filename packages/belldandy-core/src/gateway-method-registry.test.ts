@@ -39,11 +39,27 @@ describe("GatewayMethodRegistry", () => {
       requiresPairing: true,
       risk: "read",
     });
+    expect(inventory.find((item) => item.method === "workspace.worktree.keep.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.keep.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
     expect(inventory.find((item) => item.method === "workspace.worktree.apply.preview")).toMatchObject({
       requiresPairing: true,
       risk: "read",
     });
     expect(inventory.find((item) => item.method === "workspace.worktree.apply.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.discard.preview")).toMatchObject({
+      requiresPairing: true,
+      risk: "read",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.discard.confirm")).toMatchObject({
       requiresPairing: true,
       risk: "write",
     });
@@ -68,6 +84,10 @@ describe("GatewayMethodRegistry", () => {
       risk: "read",
     });
     expect(inventory.find((item) => item.method === "workspace.worktree.branch.confirm")).toMatchObject({
+      requiresPairing: true,
+      risk: "write",
+    });
+    expect(inventory.find((item) => item.method === "workspace.worktree.sweep")).toMatchObject({
       requiresPairing: true,
       risk: "write",
     });

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "tui-performance-baseline/v1",
+  "minimumSampleCount": 5,
+  "regressionPolicy": {
+    "p99Ratio": 1.5,
+    "p99AllowanceMs": 100,
+    "jitterRateRatio": 2,
+    "jitterRateAllowance": 0.1
+  },
+  "platforms": {
+    "windows-native": {
+      "capturedAt": "2026-08-04T15:52:27.629Z",
+      "sourceCommit": "3bf9eb8c5fce791c326e8143d2e06b37c6c3680f",
+      "sourceWorkspaceDirty": true,
+      "environment": {
+        "platform": "win32",
+        "arch": "x64",
+        "release": "10.0.19045",
+        "nodeVersion": "v22.23.1",
+        "terminalBackend": "conpty",
+        "wsl": false
+      },
+      "metrics": {
+        "startup": { "p99Ms": 4082.3072, "jitterRate": 0.001859 },
+        "resize": { "p99Ms": 75.5957, "jitterRate": 0.016093 },
+        "inputReplay": { "p99Ms": 46.4241, "jitterRate": 0.039994 },
+        "exit": { "p99Ms": 104.7822, "jitterRate": 0.022771 }
+      }
+    },
+    "wsl2-linux": {
+      "capturedAt": "2026-08-04T15:59:08.907Z",
+      "sourceCommit": "3bf9eb8c5fce791c326e8143d2e06b37c6c3680f",
+      "sourceWorkspaceDirty": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x86_64",
+        "release": "6.6.87.2-microsoft-standard-WSL2",
+        "nodeVersion": "v22.22.2",
+        "terminalBackend": "unix-pty",
+        "wsl": true,
+        "distribution": "Ubuntu-22.04"
+      },
+      "metrics": {
+        "startup": { "p99Ms": 18262.725509, "jitterRate": 0.034073 },
+        "resize": { "p99Ms": 78.564036, "jitterRate": 0.046519 },
+        "inputReplay": { "p99Ms": 38.334766, "jitterRate": 0.01381 },
+        "exit": { "p99Ms": 1177.337215, "jitterRate": 0.05743 }
+      }
+    }
+  }
+}

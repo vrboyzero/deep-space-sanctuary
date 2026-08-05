@@ -34,6 +34,7 @@ export async function collectCodingCiContractFailures(input = {}) {
   const packageJson = await readJson("package.json");
   const compatibility = await readJson("examples/ci/compatibility.json");
   const eventSchema = await readJson("examples/ci/schemas/agent-run-event-v1.json");
+  const traceSchema = await readJson("examples/ci/schemas/coding-run-trace-v1.json");
   const outputSchema = await readJson("examples/ci/review-output.schema.json");
   const workflow = await readText("examples/ci/github-actions/coding-agent-review.yml");
   const prompt = await readText("examples/ci/review-prompt.md");
@@ -41,6 +42,7 @@ export async function collectCodingCiContractFailures(input = {}) {
   const qualityGates = await readText(".github/workflows/quality-gates.yml");
 
   let core;
+  let traceContract;
   let compileOutputSchema;
   try {
     core = await import(pathToFileURL(path.join(
@@ -50,6 +52,14 @@ export async function collectCodingCiContractFailures(input = {}) {
       "dist",
       "coding-run",
       "contracts.js",
+    )).href);
+    traceContract = await import(pathToFileURL(path.join(
+      workspaceRoot,
+      "packages",
+      "belldandy-core",
+      "dist",
+      "coding-run",
+      "trace.js",
     )).href);
     ({ compileOutputSchema } = await import(pathToFileURL(path.join(
       workspaceRoot,
@@ -67,8 +77,12 @@ export async function collectCodingCiContractFailures(input = {}) {
   if (core && eventSchema && !isDeepStrictEqual(eventSchema, core.agentRunEventV1JsonSchema)) {
     failures.push("examples/ci/schemas/agent-run-event-v1.json drifted from the Core v1 schema export.");
   }
+  if (traceContract && traceSchema
+    && !isDeepStrictEqual(traceSchema, traceContract.codingRunTraceEventV1JsonSchema)) {
+    failures.push("examples/ci/schemas/coding-run-trace-v1.json drifted from the Core trace v1 schema export.");
+  }
   if (typeof compileOutputSchema === "function") {
-    for (const [label, schema] of [["event", eventSchema], ["review output", outputSchema]]) {
+    for (const [label, schema] of [["event", eventSchema], ["trace", traceSchema], ["review output", outputSchema]]) {
       if (!schema) continue;
       const result = compileOutputSchema(schema);
       if (!result.ok) failures.push(`${label} schema does not compile: ${result.message}`);
@@ -90,6 +104,12 @@ export async function collectCodingCiContractFailures(input = {}) {
       "compatibility capabilitySchemaVersion",
       compatibility.capabilitySchemaVersion,
       core.CODING_RUN_CAPABILITIES.schemaVersion,
+    );
+    expectEqual(
+      failures,
+      "compatibility traceSchemaVersion",
+      compatibility.traceSchemaVersion,
+      traceContract?.CODING_RUN_TRACE_POLICY?.schemaVersion,
     );
     expectEqual(
       failures,

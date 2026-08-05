@@ -45,6 +45,7 @@ describe("coding agent CI release contract", () => {
 
     expect(matrix.artifactSchemaVersion).toBe(CODING_CI_CONTRACT_VERSION);
     expect(matrix.capabilitySchemaVersion).toBe("coding-run-capabilities/v1");
+    expect(matrix.traceSchemaVersion).toBe("coding-run-trace/v1");
     expect(matrix.automationProfile).toBe(CODING_CI_AUTOMATION_PROFILE);
     expect(matrix.limits).toEqual(CODING_CI_LIMITS);
     expect(matrix.supportedOperatingSystems).toEqual(["linux", "windows"]);

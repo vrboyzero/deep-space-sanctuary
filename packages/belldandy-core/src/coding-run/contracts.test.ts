@@ -37,11 +37,33 @@ describe("coding-run public protocol boundary", () => {
         terminal: "exactly_one",
         usageCompleteness: "terminal",
       },
+      observability: {
+        trace: {
+          schemaVersion: "coding-run-trace/v1",
+          contentMode: "none",
+          bodyFields: [],
+        },
+      },
     });
     expect(isCodingRunCapabilitiesV1(CODING_RUN_CAPABILITIES)).toBe(true);
     expect(isCodingRunCapabilitiesV1({
+      schemaVersion: "coding-run-capabilities/v1",
+      protocolVersion: "v1",
+      eventStream: {
+        sequence: "continuous",
+        terminal: "exactly_one",
+        usageCompleteness: "terminal",
+      },
+    })).toBe(true);
+    expect(isCodingRunCapabilitiesV1({
       ...CODING_RUN_CAPABILITIES,
       eventStream: { ...CODING_RUN_CAPABILITIES.eventStream, terminal: "best_effort" },
+    })).toBe(false);
+    expect(isCodingRunCapabilitiesV1({
+      ...CODING_RUN_CAPABILITIES,
+      observability: {
+        trace: { ...CODING_RUN_CAPABILITIES.observability.trace, bodyFields: ["prompt"] },
+      },
     })).toBe(false);
 
     expect(isCodingRunUsageCompletenessV1({

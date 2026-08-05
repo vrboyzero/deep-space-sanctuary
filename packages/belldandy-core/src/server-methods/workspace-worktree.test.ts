@@ -280,4 +280,97 @@ describe("workspace worktree Gateway methods", () => {
       await fs.rm(rootDir, { recursive: true, force: true }).catch(() => {});
     }
   }, 20_000);
+
+  it("routes explicit keep/discard decisions and scopes sweep to the exact owner", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "belldandy-worktree-lifecycle-method-"));
+    try {
+      const repoDir = path.join(rootDir, "repo");
+      const stateDir = path.join(rootDir, "state");
+      await fs.mkdir(repoDir, { recursive: true });
+      await fs.writeFile(path.join(repoDir, "README.md"), "demo\n", "utf-8");
+      await runGit(["init"], repoDir);
+      await runGit(["config", "user.name", "Belldandy Test"], repoDir);
+      await runGit(["config", "user.email", "belldandy@example.com"], repoDir);
+      await runGit(["add", "."], repoDir);
+      await runGit(["commit", "-m", "init"], repoDir);
+
+      const managed = new ManagedWorktreeRuntime(stateDir);
+      const worktree = await managed.prepare({ id: "gateway-user-worktree-lifecycle", ownerKind: "user_session", cwd: repoDir });
+      const runtime = new UserWorktreeRuntime(stateDir);
+      const owner = { conversationId: "conversation-lifecycle", runId: "run-lifecycle" };
+      await runtime.register(worktree, owner);
+
+      const keepPreview = await handleWorkspaceWorktreeMethod(
+        {
+          type: "req",
+          id: "keep-preview",
+          method: "workspace.worktree.keep.preview",
+          params: { worktreeId: worktree.id },
+        },
+        { runtime },
+      );
+      expect(keepPreview).toMatchObject({
+        ok: true,
+        payload: { operation: "keep", canConfirm: true, receipt: { receiptId: expect.any(String) } },
+      });
+      if (!keepPreview.ok || !keepPreview.payload) throw new Error("expected keep preview to succeed");
+      const keepReceipt = (keepPreview.payload as { receipt: { receiptId: string } }).receipt.receiptId;
+      await expect(handleWorkspaceWorktreeMethod(
+        {
+          type: "req",
+          id: "keep-confirm",
+          method: "workspace.worktree.keep.confirm",
+          params: { worktreeId: worktree.id, receiptId: keepReceipt, confirm: true },
+        },
+        { runtime },
+      )).resolves.toMatchObject({ ok: true, payload: { operation: "keep", outcome: "succeeded" } });
+
+      await expect(handleWorkspaceWorktreeMethod(
+        {
+          type: "req",
+          id: "wrong-owner-sweep",
+          method: "workspace.worktree.sweep",
+          params: { conversationId: owner.conversationId, runId: "run-other" },
+        },
+        { runtime },
+      )).resolves.toMatchObject({ ok: true, payload: { inspected: 0, discarded: 0 } });
+      await expect(handleWorkspaceWorktreeMethod(
+        {
+          type: "req",
+          id: "forged-sweep",
+          method: "workspace.worktree.sweep",
+          params: { conversationId: owner.conversationId, runId: owner.runId, force: true },
+        },
+        { runtime },
+      )).resolves.toMatchObject({ ok: false, error: { code: "invalid_params" } });
+
+      const discardPreview = await handleWorkspaceWorktreeMethod(
+        {
+          type: "req",
+          id: "discard-preview",
+          method: "workspace.worktree.discard.preview",
+          params: { worktreeId: worktree.id },
+        },
+        { runtime },
+      );
+      expect(discardPreview).toMatchObject({
+        ok: true,
+        payload: { operation: "discard", canConfirm: true, receipt: { receiptId: expect.any(String) } },
+      });
+      if (!discardPreview.ok || !discardPreview.payload) throw new Error("expected discard preview to succeed");
+      const discardReceipt = (discardPreview.payload as { receipt: { receiptId: string } }).receipt.receiptId;
+      await expect(handleWorkspaceWorktreeMethod(
+        {
+          type: "req",
+          id: "discard-confirm",
+          method: "workspace.worktree.discard.confirm",
+          params: { worktreeId: worktree.id, receiptId: discardReceipt, confirm: true },
+        },
+        { runtime },
+      )).resolves.toMatchObject({ ok: true, payload: { operation: "discard", outcome: "succeeded" } });
+      await expect(runtime.getStatus(worktree.id)).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
 });

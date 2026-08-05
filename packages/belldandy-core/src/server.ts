@@ -2361,8 +2361,12 @@ async function handleReq(
     case "workspace.worktree.status":
     case "workspace.worktree.create":
     case "workspace.worktree.diff":
+    case "workspace.worktree.keep.preview":
+    case "workspace.worktree.keep.confirm":
     case "workspace.worktree.apply.preview":
     case "workspace.worktree.apply.confirm":
+    case "workspace.worktree.discard.preview":
+    case "workspace.worktree.discard.confirm":
     case "workspace.worktree.remove.preview":
     case "workspace.worktree.remove.confirm":
     case "workspace.worktree.stage.preview":
@@ -2370,7 +2374,8 @@ async function handleReq(
     case "workspace.worktree.commit.preview":
     case "workspace.worktree.commit.confirm":
     case "workspace.worktree.branch.preview":
-    case "workspace.worktree.branch.confirm": {
+    case "workspace.worktree.branch.confirm":
+    case "workspace.worktree.sweep": {
       return handleWorkspaceWorktreeMethod(req, {
         runtime: ctx.userWorktreeRuntime,
         conversationRunRegistry: ctx.conversationRunRegistry,

@@ -306,6 +306,24 @@ describe("coding agent CI runner", () => {
       isCodingRunCapabilitiesV1: isFixtureCapabilities,
       isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
     }, "managed")).toThrow(/automation profile/i);
+
+    const legacyCapabilities = fixtureCapabilities();
+    delete legacyCapabilities.observability;
+    expect(() => validateAgentRunEvents([
+      event(1, "run.started", binding, {
+        status: "running",
+        automationProfile: "bare",
+        capabilities: legacyCapabilities,
+      }),
+      event(2, "run.completed", binding, {
+        output: { text: "{\"summary\":\"ok\",\"findings\":[]}" },
+        usage: fixtureCompleteUsage(),
+      }),
+    ], isFixtureEvent, {
+      isCodingRunCapabilitiesV1: () => true,
+      isCodingRunUsageCompletenessV1: isFixtureUsageCompleteness,
+      expectedTracePolicy: fixtureCapabilities().observability.trace,
+    }, "bare")).toThrow(/trace capability/i);
   });
 
   it("collects tracked and untracked changes into one reviewable patch", async () => {
@@ -389,6 +407,8 @@ describe("coding agent CI runner", () => {
       expect(result.exitCode, `${result.stderr}\n${diagnostics}`).toBe(0);
       const manifest = JSON.parse(await fs.readFile(path.join(artifactDir, "manifest.json"), "utf-8"));
       const output = JSON.parse(await fs.readFile(path.join(artifactDir, "result.json"), "utf-8"));
+      const traceText = await fs.readFile(path.join(artifactDir, "trace.jsonl"), "utf-8");
+      const trace = traceText.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
       expect(manifest).toMatchObject({
         schemaVersion: "coding-agent-ci/v1",
         protocolVersion: "v1",
@@ -401,17 +421,30 @@ describe("coding agent CI runner", () => {
           status: "incomplete",
           reason: "usage_not_reported",
         },
+        trace: {
+          schemaVersion: "coding-run-trace/v1",
+          contentMode: "none",
+          binding: manifest.binding,
+          sourceEventCount: manifest.eventCount,
+          terminal: "run.completed",
+        },
         changedPaths: [],
         checks: {
           cleanBaseline: true,
           eventContract: true,
           capabilityHandshake: true,
           usageComplete: false,
+          traceContract: true,
           artifactPolicy: true,
           automaticPush: false,
         },
       });
       expect(output).toEqual({ summary: "clean fixture", findings: [] });
+      expect(trace.map((item) => item.seq)).toEqual(trace.map((_, index) => index + 1));
+      expect(new Set(trace.map((item) => item.domain))).toEqual(new Set(["run", "prompt", "agent"]));
+      expect(trace.every((item) => item.content?.mode === "none")).toBe(true);
+      expect(traceText).not.toContain("Review the fixture and return JSON.");
+      expect(traceText).not.toContain("clean fixture");
       await expect(fs.readFile(path.join(artifactDir, "changes.patch"), "utf-8")).resolves.toBe("");
     } finally {
       await server.close();
@@ -551,6 +584,13 @@ function fixtureCapabilities() {
       sequence: "continuous",
       terminal: "exactly_one",
       usageCompleteness: "terminal",
+    },
+    observability: {
+      trace: {
+        schemaVersion: "coding-run-trace/v1",
+        contentMode: "none",
+        bodyFields: [],
+      },
     },
   };
 }

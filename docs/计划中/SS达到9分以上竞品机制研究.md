@@ -390,6 +390,36 @@ runner 增加显式 `--source-root`；manifest、fixture 和 runner 来自 bench
 2. **隐式扩展隔离**：Given 共享 Agent 配置了 hook runner 或 legacy hooks，When 执行 bare run，Then before/after run、tool、transcript persist 与 compaction hooks 均不执行，且不改变同一 Agent 后续普通 run 的 hook 行为。
 3. **安全边界不变**：Given bare run 同时携带 identity、tool allow/deny、permission、sandbox 与预算约束，When Agent 启动并尝试工作，Then这些约束仍按既有可信 owner 生效，profile 不能扩大工具、身份或预算权限。
 
+#### P1-B 切片 4 轻量实现任务卡：worktree keep/apply/discard 与 owner-only sweep（2026-08-04）
+
+- **公共 seam**：扩展既有 `UserWorktreeRuntime.preview/confirm`，新增明确的 `keep` / `discard` 操作；保留 `apply` 和兼容的 `remove`，并新增只接受 exact `conversationId + runId` 的显式 owner sweep。Gateway 只转发 worktree ID、owner binding、receipt 与 confirmation，不接受路径、force 或任意清理范围。
+- **owner 与边界**：`UserWorktreeRuntime` 继续持有用户 worktree 记录、短期 receipt、final Git gate 与 mutation audit；每个 worktree 新增持久 owner lock，所有 confirm 和 sweep 共用同一锁。`ManagedWorktreeRuntime` 继续只负责受管路径/Git worktree 安全，不新增第二套 registry 或强制 cleanup。
+- **架构影响**：记录版本保持 v1，以可选 lifecycle 字段兼容旧记录；`keep` 只持久化明确保留决定，`discard` 在 started audit 后先记录决定，再仅移除 clean、base-aligned、无额外 commit 的受管 worktree。成功 discard 同时清理 registry，既有 apply/stage/commit/branch receipt 语义不变。
+- **失败 fixture**：错误 owner 的 sweep 必须零命中；owner lock 已占用时不得消费 receipt 或执行 Git mutation；dirty、untracked、冲突、额外提交、缺失/漂移 worktree 均保留；discard 在决定落盘后中断时，只有 exact owner 的后续显式 sweep 可以重试 final gate，不自动 replay。
+- **回滚入口**：移除 keep/discard 路由、可选 lifecycle 字段、owner lock 与 sweep 方法即可回到现有 apply/remove 行为；已保留 worktree 和旧 operation audit 继续可由现有 status/preview 检查，不需要迁移。
+- **明确排除**：不自动 sweep 全局 state、不按年龄猜测孤儿、不 force remove、不覆盖 dirty/冲突/额外提交、不自动 apply、不删除其他 owner 的 registry，也不新增环境变量或后台 watcher。
+
+行为验收：
+
+1. **明确 keep**：Given exact owner 的受管 worktree 存在，When preview 并 confirm `keep`，Then只持久化保留决定，Git worktree、分支、源码仓与变更保持不变。
+2. **安全 discard**：Given worktree clean 且仍位于 recorded base，When confirm `discard`，Then started audit、owner lock 与 final gate 均通过后移除 worktree、受管分支和 registry；若状态漂移则完整保留。
+3. **owner-only sweep**：Given 多个 owner 的记录且某个 discard 在决定落盘后中断，When另一个 owner 或持锁并发方执行 sweep，Then目标保持不变；只有 exact owner 在取得锁并重跑 final gate后可完成清理。
+
+#### P1-B 切片 5 轻量实现任务卡：TUI 分平台性能 Gate（2026-08-04）
+
+- **公共 seam**：新增版本化 `tui-performance-report/v1` 与固定 baseline；报告按 `windows-native` / `wsl2-linux` 分开记录 startup、resize、input replay、exit 的原始样本、p50/p95/p99、抖动率和 lifecycle 证据，CI 只消费报告与 baseline，不解析 ANSI transcript。
+- **owner 与边界**：共享 JavaScript contract 负责参数、统计、Schema 语义和历史退化裁决；Windows adapter 只通过仓内可选 `node-pty` 驱动 ConPTY，WSL adapter 复用 Unix `pty` 与现有 smoke 操作序列。两者只采集真实 `bdd tui` 构建产物，不持有第二套 TUI 状态机或 Gateway 运行状态。
+- **架构影响**：新增独立 benchmark runner、Unix PTY collector、固定双平台 baseline 和 package scripts；既有 `smoke:tui:wsl` 保持兼容。每个样本使用独立临时 state，按固定首帧、窄屏/恢复、mouse + bounded input replay、`Ctrl+C` 顺序执行，退出后验证终端 mode cleanup、PTY owner 与已观察进程零残留。
+- **失败 fixture**：错误平台指纹、样本不足、阶段缺失/非有限值、交互或终端清理断言失败、进程残留、p99 超过平台历史基线退化预算、抖动率超过历史预算均失败关闭；Windows 缺少 `node-pty`、WSL/Python/构建产物不可用时报告明确 infrastructure failure，不回退为模拟通过。
+- **回滚入口**：移除新增 benchmark scripts、baseline、package scripts 与项目地图条目即可恢复既有 WSL smoke；不涉及产品状态、配置迁移或 artifact 回写。
+- **明确排除**：不自动更新 baseline、不跨平台共用阈值、不引入网络/Provider/Gateway 依赖、不修改 TUI 渲染或输入逻辑、不把少量本机样本外推为所有硬件的绝对性能承诺。
+
+行为验收：
+
+1. **真实双平台序列**：Given 当前构建产物与可用 ConPTY/Unix PTY，When 分别运行 Windows 与 WSL2 Gate，Then 每个正式样本均完成首帧、窄屏/恢复、mouse + 有界输入回放和正常退出，且平台指纹不能互相替代。
+2. **统计与历史门禁**：Given 每阶段至少 5 个正式样本，When 生成报告，Then使用 nearest-rank 输出 p50/p95/p99，并以 `(p99 - p50) / max(p50, 1ms)` 输出抖动率；任一 p99 或抖动率超过对应平台历史预算时 Gate 失败。
+3. **生命周期收敛**：Given TUI 收到 `Ctrl+C` 或样本超时进入清理，When collector 结束，Then bracketed paste、mouse tracking、SGR mouse 和 alternate screen 已成对退出，PTY owner 与已观察进程均不残留；否则该样本和整个平台 Gate 均失败。
+
 ### 9.6 P2：高级并行控制面
 
 - **风险级别**：中高；会放大权限转授、成本失控、文件冲突和孤儿进程问题。
@@ -3994,19 +4024,161 @@ P0/P1 的粗略总工作量为 **24-38 人日**，不含 P2、模型调优、公
 - 关键功能验证通过：bare 模型输入不含旧 history/项目规则/commander/Hook delta；StarWeaver MCP 零调用；同一 Agent 随后的普通 run 仍执行原有 hooks 与两次 StarWeaver 预检调用；显式 launch 约束保持不变。
 - `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；本切片未运行全仓 Vitest、新 Provider benchmark 或双平台 live Gate，`.env/.env.local` 与 r11 artifact 未改写，累计 Provider 费用保持 `$0.16482273 / $3.00`。
 
-##### 后续计划
+#### P1-B 切片 3 实现结论：默认脱敏 trace（2026-08-04）
 
-P1-A 冻结 cross-file/bug 双平台 A/B 仍需要为每个新 run 创建隔离 Provider state，并写入敏感 `.env/.env.local`；该操作命中 HITL，当前不复制或改写 r11 state，A/B 保持 pending。P1-B 下一步准备做切片 3 默认脱敏 trace，先定义 run/prompt/agent/tool/policy/recovery 的关联字段、默认无正文策略与失败 fixture；先做它是因为 capability、usage 终态与 bare 运行面已经稳定，可以在不依赖敏感配置的前提下建立统一观测证据。当前还缺的关键闭环是默认脱敏 trace、worktree keep/apply/discard 与 owner-only sweep、TUI 双平台性能 Gate，以及最终新 identity Provider artifact 对 `tests.failed-diagnosis >=5/6` 的证明；按用户要求，本轮在切片 2 回写后暂停，切片 3 尚未开始。
+##### 已完成内容
+
+1. **`packages/belldandy-core/src/coding-run/trace.ts` 新建**：
+   - 新增严格版本化的 `coding-run-trace/v1` 元数据投影，覆盖 run、prompt、agent、tool、policy、recovery 六类关联。
+   - 固定 `content.mode=none`，只保留有限枚举、关联 ID、计数、结果分类和恢复保证；prompt、delta、tool 参数/输出、文件内容与错误正文均不进入 trace。
+   - 派生 prompt、policy、recovery 关联 ID 保持短 ID 可读格式，超长组合改为有界 SHA-256 trace-local ID；validator 校验 domain/event 映射、trace/source 序列连续性、唯一终态及终态位于最后 source sequence。
+
+2. **`contracts.ts`、`run-coding-agent-ci.mjs` 与相关测试扩展**：
+   - `isCodingRunCapabilitiesV1` 兼容没有 `observability` 的历史 v1 handshake，同时严格拒绝非法 trace policy。
+   - 新 CI 显式要求当前 `coding-run-trace/v1`、`contentMode=none` 和空 `bodyFields` capability；旧 artifact 不因新增字段被回写或失效。
+   - Gateway、CI、recovery harness 和 benchmark 均从最终事件流生成独立 `trace.jsonl`，断线恢复按最终合并事件重算，不保留陈旧 trace。
+
+3. **Schema、兼容矩阵与文档接线**：
+   - 新增 `examples/ci/schemas/coding-run-trace-v1.json`，并将 trace policy 纳入 `examples/ci/compatibility.json`、CI verifier、README 和 `docs/project-map.md`。
+
+4. **效果**：
+   - Headless 默认获得可审计但不携带正文的观测通道；业务 `events.jsonl` 保持原有协议和正文职责。
+   - trace validator 能在域漂移、超长关联 ID、source sequence 缺口或终态顺序异常时失败关闭，恢复证据不会因断线前快照过期而误导消费方。
+
+##### 验证结果
+
+- Core TypeScript 编译无错误（`corepack pnpm --filter @belldandy/core build`）。
+- 8 个 Core/CI/recovery/benchmark 定向测试文件共 `68/68` 通过，包含真实 Gateway、断线恢复和 trace 脱敏回归。
+- `corepack pnpm verify:coding-ci` 通过，trace schema、capability、artifact、兼容矩阵和示例保持一致。
+- 关键功能验证通过：长 ID 有界派生、旧 v1 capability 兼容、新 CI trace capability fail-closed、域/序列校验与默认正文清零。
+- 尚未运行全仓 Vitest、workspace 完整 build 和双平台 live Gate；未修改 `.env/.env.local`、r11 artifact 或 Provider 费用状态。
+
+#### P1-B 切片 4 实现结论：worktree keep/apply/discard 与 owner-only sweep（2026-08-04）
+
+##### 已完成内容
+
+1. **`user-worktree-runtime.ts` 扩展**：
+   - 在兼容旧 v1 registry 的可选字段中新增明确 `keep` / `discard` lifecycle 决定；keep 只持久化保留状态，既有 apply/remove/stage/commit/branch 行为保持兼容。
+   - discard 复用现有 receipt、started audit 与 final Git gate，只删除 clean、base-aligned、无冲突/未跟踪变更/额外 commit 的受管 worktree、分支和 registry。
+   - 新增每 worktree 持久 owner lock；confirm 在消费 receipt 前取锁，锁忙时 receipt 保持未消费并可重试，正常完成只释放 token 与 owner 均匹配的锁。
+
+2. **exact-owner sweep 与恢复对账**：
+   - sweep 先从 registry 元数据按 exact `conversationId + runId` 筛选，再读取所属 worktree 的 Git 状态，不检查或清理其他 owner。
+   - 仅对具备 discard receipt/lifecycle/audit evidence 的记录重跑 final gate；错误 owner、keep/pending、锁忙、dirty/冲突/额外 commit、证据缺失和未知状态全部保留。
+   - discard 决定落盘后中断时，只有显式 exact-owner sweep 可以完成对账；不按年龄猜测孤儿、不 force、不后台自动 replay。
+
+3. **Gateway 与公共类型接线**：
+   - 新增 `workspace.worktree.keep.*`、`workspace.worktree.discard.*` 和 `workspace.worktree.sweep` 方法，纳入统一 Gateway registry、风险分类与 server dispatch。
+   - sweep 只接受 owner binding；keep/discard 只接受 worktree ID、receipt 和显式 confirmation，拒绝 path、force 或任意范围参数。
+   - `index.ts` 导出 lifecycle/sweep 类型，`docs/project-map.md` 同步 owner、lock、恢复与排除边界。
+
+4. **效果**：
+   - 用户 worktree 从隐式长期保留升级为可审计的 keep/apply/discard 生命周期，同时保留旧 remove 客户端兼容。
+   - 并发 confirm 不会用两个不同 receipt 同时修改同一 worktree；错误 owner sweep 对目标 Git 状态读取和 mutation 均为零。
+   - interrupted discard 可以显式、安全对账，无法证明安全删除时继续保留 worktree 和诊断状态。
+
+##### 验证结果
+
+- Core TypeScript 编译无错误（`corepack pnpm --filter @belldandy/core build`）。
+- 6 个 worktree/Core/Gateway 定向测试文件共 `45/45` 通过，覆盖共享 worktree、用户 lifecycle、进程恢复、owner lock、exact-owner sweep、路由与 registry。
+- 关键故障验证通过：dirty discard 不签发 receipt；锁忙不消费 receipt；错误 owner sweep 不调用目标 `readStatus`；discard 中断后锁忙保留、解锁后 exact owner 完成清理；legacy remove 保持原 registry 语义。
+- `git diff --check` 通过，仅有既有 LF/CRLF 工作树提示；尚未运行本切片后的 workspace 完整 build、全仓 Vitest 或双平台 TUI live Gate。
+
+#### P1-B 切片 5 实现结论：TUI 分平台性能 Gate（2026-08-04）
+
+##### 已完成内容
+
+1. **`tui-performance-contract.mjs` 与 benchmark runner 新建**：
+   - 新增严格版本化的 `tui-performance-report/v1`，按 `windows-native` / `wsl2-linux` 隔离原始样本、p50/p95/p99、抖动率、平台指纹与 lifecycle 证据。
+   - Windows adapter 使用仓内 `node-pty` 和 `useConptyDll: true` 驱动真实 ConPTY；WSL2 collector 使用 Python Unix PTY，均执行首帧、窄屏/恢复、mouse 切页、256 字符输入回放与 `Ctrl+C` 退出。
+   - 每个样本使用独立临时 state，子进程环境剔除 `BELLDANDY_*` 和 token/secret/password/key 类变量；Windows native handle 清理后确定性退出，且只有 `ENOENT` 可证明 state 目录已删除。
+
+2. **baseline、Schema 与 verifier 新建**：
+   - 新增 Windows/WSL2 固定独立 baseline，以及 baseline/report JSON Schema；nearest-rank 分位数和 `(p99 - p50) / max(p50, 1ms)` 抖动率由共享 contract 唯一计算。
+   - verifier 从报告原始样本重算全部派生字段和历史退化 Gate，不信任报告内已发布汇总；报告不保存 ANSI transcript，runner 不自动改写 baseline。
+   - `package.json` 接入双平台、Windows、WSL2 benchmark 与独立 verify 命令，`benchmarks/tui-performance/README.md` 记录运行、校准与失败关闭边界。
+
+3. **测试与项目地图更新**：
+   - 新增 3 个测试文件，覆盖统计语义、平台隔离、样本/lifecycle/历史退化失败 fixture、CLI 参数、脱敏环境、报告复算、Schema 和 package script 接线。
+   - `docs/project-map.md` 记录性能 contract、平台 collector、baseline 与 verifier 的 owner 和入口。
+
+4. **效果**：
+   - TUI 性能回归现在具备可重复、可审计且按平台隔离的正式 Gate，不再以手工观感或跨平台阈值判断启动和交互性能。
+   - 正式双平台样本均完成真实交互序列，终端 mode、临时 state 与已观察进程全部收敛为零残留。
+   - 本切片不修改 TUI 产品状态机、不连接 Provider/Gateway、不自动校准阈值，也不把当前机器样本外推为所有硬件的绝对性能承诺。
+
+##### 验证结果
+
+- TypeScript 完整 build 无错误，48 项 Web asset manifest 正常生成，workspace entrypoint verifier 通过。
+- 3 个 TUI contract/runner/verifier 测试文件共 `20/20` 通过；全仓 Vitest 为 `873` 个测试文件通过、`2` 个跳过，`5229` 个测试通过、`3` 个跳过。
+- `corepack pnpm verify:coding-ci`、`corepack pnpm verify:coding-benchmark`、`corepack pnpm verify:tui-performance` 均通过；Python collector syntax 与 `git diff --check` 通过，后者仅有既有 LF/CRLF 工作树提示。
+- 正式 Gate 中 Windows/WSL2 各 `5/5` 样本通过：Windows startup/resize/input replay/exit p99 分别为 `4079.9069/79.1698/44.6447/107.2892ms`，WSL2 分别为 `17972.984686/81.377632/37.976635/1139.311512ms`，两平台终端 mode 泄漏、临时 state 残留和已观察进程残留均为 `0`。
+
+#### P1-A 收口实现结论：内容摘要 revision 与 r13 双平台 Provider A/B（2026-08-05）
+
+##### 已完成内容
+
+1. **`file.ts` 与 `file.test.ts` 修改**：
+   - `file_read` / `file_edit` revision 从 `size + mtimeMs + ctimeMs` 升级为真实路径与全文件 SHA-256 内容摘要绑定，分段读取 cursor 同样绑定内容摘要。
+   - 保留直接符号链接阻断、三次 stale 检查、UTF-8 校验和 WorkspaceRevision prepare/commit 顺序，不放宽路径或 mutation 权限。
+   - 新增 64 次同长度快速覆盖回归，关闭 WSL 粗粒度时间戳下 revision 碰撞的稳定产品风险。
+
+2. **r13 双平台 successor staging 与 Provider 证据新建**：
+   - 保持 r11/r12 identity 与 artifact 只读，新建 r13 control/implementation/harness staging；Windows/WSL identity 一致，静态 preflight `12/12`、startup-only `12/12`、formal dry-run `36` 样本通过。
+   - 修正 r13 harness junction/symlink 入口被 Node 解析回 r12 的 launcher 问题；首个未产生 Provider 请求的失败样本使用唯一 `infra1` 后缀恢复，不覆盖旧临时根。
+   - r13 control 与 implementation 原生 aggregate 均为 `18/18`；cross-file、bug、tests diagnosis 两组均为 `6/6`，selected infrastructure error 为 `0`。
+
+3. **aggregate、A/B 与 successor projection 收口**：
+   - 新增 `aggregate/control.json`、`aggregate/implementation.json` 与 `aggregate/p1a-ab-summary.json`；r11 的 54 个不变样本与 r13 implementation 的 18 个 successor 样本投影为 `72/72`。
+   - 双平台投影均为 `36/36`，tests `60/60`、patch `18/18`、regression `0`；明确标记为 `cross_revision_successor_projection`，不记作单一 identity 原生 aggregate。
+   - control/implementation 的 `file_edit` 调用均为 0，`apply_patch` 分别为 13/12 次；因此 A/B 只证明结果 Gate，不证明 `file_edit` 因果 uplift，技术债裁决保持 `record_only`。
+
+4. **效果**：
+   - 同长度快速改写不再复用旧 revision，read-before-edit 的 stale 承诺在 Windows/WSL 均可重复验证。
+   - P1-A 类别、总量、双平台、测试、patch 和回归 Gate 全部通过，r12 的唯一 WSL product workflow 失败由新 successor revision 关闭。
+   - r13 Provider 批次费用为 `$0.02441092`，累计费用为 `$0.21690633 / $3.00`，没有通过重跑产品失败或改写旧 artifact 追求结论。
+
+##### 验证结果
+
+- Windows 与 WSL2 workspace TypeScript 完整 build 均无错误，48 项 Web asset manifest 与 workspace entrypoint verifier 通过。
+- Windows 全仓 `873` 个测试文件通过、`2` 个跳过，`5229` 个测试通过、`3` 个跳过；WSL2 单 worker 全仓 suite 退出码为 0，收集 `873` 个可运行测试文件与 `5215` 个平台可运行测试。
+- WSL2 原异常 15 文件定向回归 `149/149` 通过；release-light 通过仅本次 PATH 生效的 Python zip shim 完成 `6/6`，未安装或修改系统 `zip/unzip`。
+- r13 formal `36/36`、Provider usage `36/36`、trace `36/36` 通过；1965 条 trace 全部 `content.mode=none`，敏感值、通用 token 模式命中与 `.env/.env.local` 变更均为 0。
+
+#### 9+ 评分复核实现结论：最终 scorecard（2026-08-05）
+
+##### 已完成内容
+
+1. **`9plus-scorecard.json` 新建**：
+   - 按既定七维权重 `15/20/15/15/15/10/10` 冻结最终向量 `9.0 / 9.0 / 9.0 / 9.2 / 9.1 / 9.2 / 9.0`。
+   - 加权分为 `9.065`，按一位小数记为 `9.1/10`；corrected v2、类别、核心类别、测试、patch、回归、双平台与工程 Gate 全部明确记录为通过。
+   - scorecard 内保留 r11 carry-forward 与 r13 successor 的各自 hash、`nativeAggregate=false`、A/B 零 `file_edit` 调用和 P2 延后边界。
+
+2. **最终环境与证据收口**：
+   - `verify:coding-ci`、`verify:coding-benchmark`、`verify:tui-performance` 均通过；r13 freeze、progress、aggregate、trace 与费用数量一致。
+   - Windows/WSL 相关监听端口、owned runtime 进程、release 临时根和 benchmark 容器均为 0；Docker Desktop 进程为 0、服务已停止、`docker-desktop` WSL 发行版已恢复为 Stopped。
+   - 临时 zip shim 与 Vitest 收集文件已删除，根 `.env/.env.local` SHA-256 保持不变，`git diff --check` 仅有既有 LF/CRLF 提示。
+
+3. **效果**：
+   - 9+ 结论从候选评分升级为可审计终评，P0/P1 前置范围完成，不依赖修改历史证据或把跨 revision projection 伪装为原生 aggregate。
+   - 最终评分同时保留 exact-edit 因果证据不足与 P2 延后的真实限制，不用加权分数覆盖硬 Gate 或扩大本轮完成边界。
+
+##### 验证结果
+
+- TypeScript 双平台完整编译无错误。
+- Windows 全仓 `5229` 个测试通过；WSL2 全仓 suite 退出码为 0，额外定向 `149/149` 与 release-light `6/6` 通过。
+- 最终 scorecard 权重和为 `1`、加权贡献和为 `9.065`，与发布值一致；P1-A successor projection 为 `72/72`，Windows/WSL2 各 `36/36`。
+- 36 份正式报告、36 份完整 Provider usage 与 36 份脱敏 trace 审计通过，累计费用 `$0.21690633 / $3.00`，零敏感命中、零相关运行残留。
 
 | 项目 | 优先级 | 状态 | 工作量 | 完成边界 |
 |---|---|---|---:|---|
 | 一手来源与 9+ 路线研究 | - | 已完成 | - | 已覆盖三款竞品、SS 当前 benchmark、严格 clean-room 独立实现边界和持续执行规则；未对竞品做同环境实测 |
-| P0-A corrected v2 与既有能力接线 | P0 | 已完成（implementation/control `72/72`，通过 `69/58`；P0-A 合同与证据闭环，整体 9+ 类别 Gate 仍未通过） | 2-4 人日 | 正式覆盖、零 selected infrastructure error、v2 CLI 复算、完整 build/test、TUI `5/5` 与零残留已闭环；v1/旧 hash/diagnostics 不混入；三个产品失败保留且已 `split_task` |
+| P0-A corrected v2 与既有能力接线 | P0 | 已完成（implementation/control `72/72`，通过 `69/58`；P0-A 合同与原生证据闭环，原类别缺口已由 r13 successor 关闭） | 2-4 人日 | 正式覆盖、零 selected infrastructure error、v2 CLI 复算、完整 build/test、TUI `5/5` 与零残留已闭环；v1/旧 hash/diagnostics 不混入；三个历史产品失败保留，后续修复以跨 revision successor projection 闭环 |
 | Structured output S1：有界无工具 repair owner | P0 | 已完成（单次 no-tool repair、预算/usage 与 Gateway/CLI 错误传播闭环） | 3-5 人日 | schema 已进入 Gateway/Agent 运行契约；初次终态非法时至多一次 no-tool/no-mutation 修复，受 timeout/turn/token/cost 约束并计 usage；仍只接受严格完整 JSON，失败保留原输出和明确终态 |
 | Structured output S2：provider control token 文本边界 | P0 | 已完成（精确 DSML 三段尾帧、流式/非流式、Tool/无 Tool 与防误删矩阵闭环） | 1-2 人日 | 仅在 OpenAI Provider 边界移除完整 JSON 后的已识别 control frame；普通文本、JSON 字符串、未知/不完整 frame 与 Anthropic 原样保留，原始字节上限不被绕过 |
 | P0-B 确定性安全闭环 | P0 | 已完成（`pre-push` Hook、dispose deadline、live Supervisor revoke、audit sink 三态、完整 TUI 审批与 non-delegable 故障注入均闭环） | 5-8 人日 | 5 项安全切片、完整 build、全仓 `5071` 测试与真实 OCI lease cleanup 已通过；审批合同为 user-interaction/non-delegable/non-rememberable，不声称抵御同主机恶意进程伪装真人 |
 | P0-C durable run 与跨重启恢复 | P0 | 已完成（r11 disconnect/restart 各 `6/6`、离线进程/断线 harness `45/45`；workspace、Marketplace install/update/uninstall、worktree stage、remote push/PR、journal/audit `ENOSPC`、subagent crash 与真实 OCI pipe/PTY 全部闭合；全仓 `5151` tests、完整 build 与零残留 Gate 通过） | 8-12 人日 | corrected v2 disconnect/restart 6/6，无重复 side effect；受控 file、Marketplace、本地 worktree 与远端 delivery 均具备 commit/uncertain/replay guard，restart-lost 与 stdin/live PTY 边界闭环，lost/uncertain 可解释 |
-| P1-A 编辑与测试闭环 | P1 | 进行中（环节 1 exact edit 与环节 2 Gateway/contract/profile/closure 接线已完成；冻结 A/B 待运行） | 4-6 人日 | cross-file/bug >=5/6，tests >=54/60，patch >=15/18，regressions <=6 |
-| P1-B Headless、观测与 worktree 收口 | P1 | 进行中（切片 1 capability/usage 终态与切片 2 bare automation profile 已完成；切片 3 默认脱敏 trace 待开始） | 5-8 人日 | delivery >=5/6，bare/event/trace/keep 完整，双平台完整 Gate 通过 |
-| 9+ 评分复核 | P0 | 阶段预复核 `8.5/10`，硬 Gate 未通过；S1/S2 已完成 | 1-2 人日 | corrected v2 `69/72`、核心类别 `6/6`、测试 `60/60`、patch `18/18`、回归 `0`；仍须完成 P1-A/P1-B，并以新 identity Provider artifact 证明 tests 类别从 `4/6` 达到 `>=5/6` 后按原权重终评；v1/r11 不改写 |
+| P1-A 编辑与测试闭环 | P1 | 已完成（r13 control/implementation 均 `18/18`；cross-file/bug/tests diagnosis 均 `6/6`；内容摘要 revision 风险已关闭） | 4-6 人日 | successor projection `72/72`、tests `60/60`、patch `18/18`、regressions `0`、双平台各 `36/36`；exact-edit uplift 因 `file_edit` 零调用保留为 `record_only` |
+| P1-B Headless、观测与 worktree 收口 | P1 | 已完成（五个切片闭环；TUI Windows/WSL2 各 `5/5`、全仓 `5229` tests） | 5-8 人日 | delivery >=5/6，bare/event/trace/keep 完整，双平台完整 Gate 通过 |
+| 9+ 评分复核 | P0 | 已完成，终评 `9.1/10`（加权 `9.065`，scorecard 已落盘） | 1-2 人日 | 跨 revision successor projection `72/72`、Windows/WSL2 各 `36/36`、双平台 build/test、trace/费用/敏感与零残留闭环；r11/r12 artifact 未改写，`nativeAggregate=false` |
 | P2 高级并行控制面 | P2 | 延后，不计入 9+ 前置 | 8-15 人日 | 仅在 policy/journal/worktree/deadline/trace 故障注入通过后启动 |

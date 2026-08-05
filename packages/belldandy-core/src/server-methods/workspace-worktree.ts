@@ -50,6 +50,21 @@ function readCreateInput(value: unknown):
   return { ok: true, value: { cwd, owner: { conversationId, runId } } };
 }
 
+function readOwnerInput(value: unknown):
+  | { ok: true; value: { conversationId: string; runId: string } }
+  | { ok: false; message: string } {
+  const params = asParams(value);
+  if (!params) return { ok: false, message: "params must be an object" };
+  if (Object.keys(params).some((key) => key !== "conversationId" && key !== "runId")) {
+    return { ok: false, message: "params contains unsupported fields" };
+  }
+  const conversationId = typeof params.conversationId === "string" ? params.conversationId.trim() : "";
+  const runId = typeof params.runId === "string" ? params.runId.trim() : "";
+  if (!conversationId) return { ok: false, message: "conversationId must be a non-empty string" };
+  if (!runId) return { ok: false, message: "runId must be a non-empty string" };
+  return { ok: true, value: { conversationId, runId } };
+}
+
 function readOperationPreviewInput(value: unknown, operation: UserWorktreeOperation):
   | { ok: true; value: { worktreeId: string; commitMessage?: string; branchName?: string } }
   | { ok: false; message: string } {
@@ -135,8 +150,12 @@ export async function handleWorkspaceWorktreeMethod(
     };
   }
   const operationMethod = new Map<string, { operation: UserWorktreeOperation; action: "preview" | "confirm" }>([
+    ["workspace.worktree.keep.preview", { operation: "keep", action: "preview" }],
+    ["workspace.worktree.keep.confirm", { operation: "keep", action: "confirm" }],
     ["workspace.worktree.apply.preview", { operation: "apply", action: "preview" }],
     ["workspace.worktree.apply.confirm", { operation: "apply", action: "confirm" }],
+    ["workspace.worktree.discard.preview", { operation: "discard", action: "preview" }],
+    ["workspace.worktree.discard.confirm", { operation: "discard", action: "confirm" }],
     ["workspace.worktree.remove.preview", { operation: "remove", action: "preview" }],
     ["workspace.worktree.remove.confirm", { operation: "remove", action: "confirm" }],
     ["workspace.worktree.stage.preview", { operation: "stage", action: "preview" }],
@@ -185,6 +204,22 @@ export async function handleWorkspaceWorktreeMethod(
         id: req.id,
         ok: false,
         error: { code: "confirmation_unavailable", message: "Failed to confirm the managed user worktree operation." },
+      };
+    }
+  }
+  if (req.method === "workspace.worktree.sweep") {
+    const ownerInput = readOwnerInput(req.params);
+    if (!ownerInput.ok) {
+      return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: ownerInput.message } };
+    }
+    try {
+      return { type: "res", id: req.id, ok: true, payload: await ctx.runtime.sweepOwner(ownerInput.value) };
+    } catch {
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { code: "sweep_unavailable", message: "Failed to sweep the exact owner's managed user worktrees." },
       };
     }
   }

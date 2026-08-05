@@ -340,7 +340,16 @@ export async function runGatewayConversation(input: {
         return;
       }
       binding = { conversationId, agentRunId };
-      adapter.start(binding);
+      const messageMeta = isRecord(payload.messageMeta) ? payload.messageMeta : undefined;
+      const promptTimestampMs = typeof messageMeta?.timestampMs === "number"
+        && Number.isInteger(messageMeta.timestampMs)
+        && messageMeta.timestampMs >= 0
+        ? messageMeta.timestampMs
+        : undefined;
+      adapter.start(binding, {
+        ...(promptTimestampMs === undefined ? {} : { promptId: `message:${promptTimestampMs}` }),
+        agentId: input.agentId?.trim() || "default",
+      });
       runTimeout = setTimeout(() => {
         requestStopWithGracePeriod("Coding run timed out.", true);
       }, timeoutMs);

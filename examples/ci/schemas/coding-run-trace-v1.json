@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/coding-run-trace-v1.json",
+  "title": "Star Sanctuary CodingRunTraceEvent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "seq",
+    "sourceSeq",
+    "timestampMs",
+    "domain",
+    "event",
+    "outcome",
+    "correlation",
+    "content"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coding-run-trace/v1"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sourceSeq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestampMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "domain": {
+      "enum": [
+        "run",
+        "prompt",
+        "agent",
+        "tool",
+        "policy",
+        "recovery"
+      ]
+    },
+    "event": {
+      "enum": [
+        "run.started",
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "run.interrupted",
+        "prompt.accepted",
+        "agent.started",
+        "agent.status_observed",
+        "agent.output_delta_observed",
+        "agent.usage_observed",
+        "tool.started",
+        "tool.completed",
+        "policy.approval_requested",
+        "policy.enforced",
+        "policy.budget_exhausted",
+        "recovery.checkpoint_observed",
+        "recovery.interrupted",
+        "recovery.gateway_unavailable"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "started",
+        "observed",
+        "requested",
+        "succeeded",
+        "completed",
+        "failed",
+        "denied",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentRunId",
+        "promptId",
+        "agentId"
+      ],
+      "properties": {
+        "agentRunId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "conversationId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "promptId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "agentId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "toolCallId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "policyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "recoveryId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "worktreeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        },
+        "workspaceCheckpointId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/-]{1,256}$"
+        }
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "toolName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "toolSuccess": {
+          "type": "boolean"
+        },
+        "failureKind": {
+          "enum": [
+            "input_error",
+            "permission_or_policy",
+            "environment_error",
+            "business_logic_error",
+            "unknown"
+          ]
+        },
+        "outputBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usageStatus": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "usageReason": {
+          "enum": [
+            "provider_reported_all_model_calls",
+            "provider_usage_missing",
+            "reporting_count_unavailable",
+            "usage_not_reported"
+          ]
+        },
+        "modelCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "providerReportedModelCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errorCode": {
+          "enum": [
+            "invalid_request",
+            "not_found",
+            "run_mismatch",
+            "not_active",
+            "permission_required",
+            "permission_denied",
+            "policy_denied",
+            "budget_exhausted",
+            "cancelled",
+            "interrupted",
+            "output_schema_invalid",
+            "gateway_unavailable",
+            "internal"
+          ]
+        },
+        "hadPartialResponse": {
+          "type": "boolean"
+        },
+        "recoveryGuarantee": {
+          "enum": [
+            "exact",
+            "managed_worktree",
+            "detect_only"
+          ]
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "const": "none"
+        }
+      }
+    }
+  }
+}

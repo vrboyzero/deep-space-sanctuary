@@ -1,5 +1,11 @@
 export const CODING_RUN_PROTOCOL_VERSION = "v1" as const;
 
+export const CODING_RUN_TRACE_POLICY = {
+  schemaVersion: "coding-run-trace/v1",
+  contentMode: "none",
+  bodyFields: [],
+} as const;
+
 export const CODING_RUN_CAPABILITIES = {
   schemaVersion: "coding-run-capabilities/v1",
   protocolVersion: CODING_RUN_PROTOCOL_VERSION,
@@ -8,9 +14,14 @@ export const CODING_RUN_CAPABILITIES = {
     terminal: "exactly_one",
     usageCompleteness: "terminal",
   },
+  observability: {
+    trace: CODING_RUN_TRACE_POLICY,
+  },
 } as const;
 
-export type CodingRunCapabilities = typeof CODING_RUN_CAPABILITIES;
+export type CodingRunCapabilities = Omit<typeof CODING_RUN_CAPABILITIES, "observability"> & {
+  observability?: typeof CODING_RUN_CAPABILITIES.observability;
+};
 
 export type CodingRunUsageCompleteness = {
   status: "complete" | "incomplete";
@@ -671,13 +682,24 @@ export function isAgentRunEventV1(value: unknown): value is AgentRunEvent {
 }
 
 export function isCodingRunCapabilitiesV1(value: unknown): value is CodingRunCapabilities {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["schemaVersion", "protocolVersion", "eventStream"])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["schemaVersion", "protocolVersion", "eventStream", "observability"])) {
     return false;
   }
   if (value.schemaVersion !== CODING_RUN_CAPABILITIES.schemaVersion
     || value.protocolVersion !== CODING_RUN_CAPABILITIES.protocolVersion
     || !isRecord(value.eventStream)
     || !hasOnlyKeys(value.eventStream, ["sequence", "terminal", "usageCompleteness"])) {
+    return false;
+  }
+  if (value.observability !== undefined
+    && (!isRecord(value.observability)
+      || !hasOnlyKeys(value.observability, ["trace"])
+      || !isRecord(value.observability.trace)
+      || !hasOnlyKeys(value.observability.trace, ["schemaVersion", "contentMode", "bodyFields"])
+      || value.observability.trace.schemaVersion !== CODING_RUN_TRACE_POLICY.schemaVersion
+      || value.observability.trace.contentMode !== CODING_RUN_TRACE_POLICY.contentMode
+      || !Array.isArray(value.observability.trace.bodyFields)
+      || value.observability.trace.bodyFields.length !== 0)) {
     return false;
   }
   return value.eventStream.sequence === CODING_RUN_CAPABILITIES.eventStream.sequence

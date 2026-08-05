@@ -17,7 +17,10 @@ type GatewayRunBinding = {
 };
 
 export type GatewayConversationEventAdapter = {
-  start: (binding: GatewayRunBinding) => AgentRunEvent | undefined;
+  start: (binding: GatewayRunBinding, traceContext?: {
+    promptId?: string;
+    agentId?: string;
+  }) => AgentRunEvent | undefined;
   consume: (input: { event: string; payload: unknown }) => AgentRunEvent | undefined;
   fail: (input: { code?: CodingRunErrorCode; message: string }) => AgentRunEvent | undefined;
   getTerminalEvent: () => AgentRunEvent | undefined;
@@ -55,7 +58,7 @@ export function createGatewayConversationEventAdapter(input: {
   };
 
   return {
-    start: (nextBinding) => {
+    start: (nextBinding, traceContext) => {
       if (sequencer) return undefined;
       binding = { ...nextBinding };
       sequencer = createAgentRunEventSequencer({
@@ -64,9 +67,14 @@ export function createGatewayConversationEventAdapter(input: {
         onEvent: input.onEvent,
         now: input.now,
       });
+      const promptId = getNonEmptyString(traceContext?.promptId);
       return emit("run.started", {
         status: "running",
         ...(input.automationProfile ? { automationProfile: input.automationProfile } : {}),
+        traceContext: {
+          ...(promptId ? { promptId } : {}),
+          agentId: getNonEmptyString(traceContext?.agentId) ?? "default",
+        },
         capabilities: CODING_RUN_CAPABILITIES,
       });
     },

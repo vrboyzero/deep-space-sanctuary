@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   CODING_AGENT_BENCHMARK_RUN_VERSION,
@@ -551,6 +551,14 @@ async function executeCodingCiProcess(input) {
 }
 
 async function executeRecoveryCodingCiProcess(input) {
+  const traceContract = await import(pathToFileURL(path.join(
+    input.sourceRoot,
+    "packages",
+    "belldandy-core",
+    "dist",
+    "coding-run",
+    "trace.js",
+  )).href);
   const target = resolveGatewayTarget(input.childEnv);
   const proxy = await startGatewayDisconnectProxy({
     upstreamHost: target.host,
@@ -618,6 +626,8 @@ async function executeRecoveryCodingCiProcess(input) {
       mode: "recovery-control",
     });
     const recovered = buildRecoveredCodingCiArtifacts({
+      projectCodingRunTraceEvents: traceContract.projectCodingRunTraceEvents,
+      validateCodingRunTraceEvents: traceContract.validateCodingRunTraceEvents,
       initialEvents,
       resumedEvents: continuation.events,
       initialManifest,
@@ -628,6 +638,11 @@ async function executeRecoveryCodingCiProcess(input) {
       fs.writeFile(
         path.join(input.artifactDir, "events.jsonl"),
         `${recovered.events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+        "utf-8",
+      ),
+      fs.writeFile(
+        path.join(input.artifactDir, "trace.jsonl"),
+        `${recovered.trace.map((event) => JSON.stringify(event)).join("\n")}\n`,
         "utf-8",
       ),
       writeJson(path.join(input.artifactDir, "result.json"), recovered.result),
@@ -644,6 +659,7 @@ async function executeRecoveryCodingCiProcess(input) {
           "event_contract=true",
           `capability_handshake=${recovered.manifest.checks.capabilityHandshake}`,
           `usage_complete=${recovered.manifest.checks.usageComplete}`,
+          `trace_contract=${recovered.manifest.checks.traceContract}`,
           "artifact_policy=true",
           "automatic_push=false",
           "gateway_disconnect_recovered=true",

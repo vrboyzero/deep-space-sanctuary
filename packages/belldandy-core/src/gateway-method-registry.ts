@@ -197,8 +197,12 @@ const GATEWAY_METHOD_NAMES = [
   "workspace.worktree.status",
   "workspace.worktree.create",
   "workspace.worktree.diff",
+  "workspace.worktree.keep.preview",
+  "workspace.worktree.keep.confirm",
   "workspace.worktree.apply.preview",
   "workspace.worktree.apply.confirm",
+  "workspace.worktree.discard.preview",
+  "workspace.worktree.discard.confirm",
   "workspace.worktree.remove.preview",
   "workspace.worktree.remove.confirm",
   "workspace.worktree.stage.preview",
@@ -207,6 +211,7 @@ const GATEWAY_METHOD_NAMES = [
   "workspace.worktree.commit.confirm",
   "workspace.worktree.branch.preview",
   "workspace.worktree.branch.confirm",
+  "workspace.worktree.sweep",
   "workspace.remote_delivery.targets",
   "workspace.remote_delivery.push.preview",
   "workspace.remote_delivery.push.confirm",
@@ -319,7 +324,9 @@ function isReadMethod(method: string): boolean {
     || method === "coding.run.subscribe"
     || method === "workspace.change.review.verify_after_restore"
     || method === "workspace.worktree.diff"
+    || method === "workspace.worktree.keep.preview"
     || method === "workspace.worktree.apply.preview"
+    || method === "workspace.worktree.discard.preview"
     || method === "workspace.worktree.remove.preview"
     || method === "workspace.worktree.stage.preview"
     || method === "workspace.worktree.commit.preview"

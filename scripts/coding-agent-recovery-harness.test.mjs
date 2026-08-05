@@ -7,6 +7,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 
 import {
+  projectCodingRunTraceEvents,
+  validateCodingRunTraceEvents,
+} from "../packages/belldandy-core/src/coding-run/trace.ts";
+
+import {
   buildRecoveredCodingCiArtifacts,
   mergeRecoveredAgentEvents,
   runCodingRunCursorContinuation,
@@ -14,6 +19,7 @@ import {
 } from "./coding-agent-recovery-harness.mjs";
 
 const cleanups = [];
+const traceTools = { projectCodingRunTraceEvents, validateCodingRunTraceEvents };
 
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
@@ -349,6 +355,7 @@ describe("coding agent recovery harness", () => {
     ];
 
     expect(buildRecoveredCodingCiArtifacts({
+      ...traceTools,
       initialEvents: initial,
       resumedEvents: resumed,
       initialManifest: {
@@ -389,17 +396,28 @@ describe("coding agent recovery harness", () => {
       },
     })).toMatchObject({
       result: { summary: "done" },
+      trace: expect.arrayContaining([
+        expect.objectContaining({ domain: "tool", event: "tool.completed" }),
+        expect.objectContaining({ domain: "run", event: "run.completed" }),
+      ]),
       manifest: {
         cliExitCode: 0,
         eventCount: 4,
         terminalType: "run.completed",
         capabilities,
         usage: completeUsage,
+        trace: {
+          schemaVersion: "coding-run-trace/v1",
+          contentMode: "none",
+          sourceEventCount: 4,
+          terminal: "run.completed",
+        },
         changedPaths: ["src/recovery-target.txt"],
         checks: {
           eventContract: true,
           capabilityHandshake: true,
           usageComplete: true,
+          traceContract: true,
           artifactPolicy: true,
         },
       },
@@ -432,6 +450,7 @@ describe("coding agent recovery harness", () => {
     ];
 
     expect(buildRecoveredCodingCiArtifacts({
+      ...traceTools,
       initialEvents: initial,
       resumedEvents: resumed,
       initialManifest: {
@@ -466,6 +485,7 @@ describe("coding agent recovery harness", () => {
       manifest: {
         cliExitCode: 0,
         terminalType: "run.completed",
+        checks: { traceContract: true },
       },
       fault: {
         status: "recovered",
@@ -477,7 +497,15 @@ describe("coding agent recovery harness", () => {
 });
 
 function event(seq, type, binding, payload = {}) {
-  return { version: "v1", seq, timestamp: 1_700_000_000_000 + seq, type, binding, payload };
+  return {
+    version: "v1",
+    seq,
+    timestampMs: 1_700_000_000_000 + seq,
+    source: "conversation",
+    type,
+    binding,
+    payload,
+  };
 }
 
 function fixtureCapabilities() {
@@ -488,6 +516,13 @@ function fixtureCapabilities() {
       sequence: "continuous",
       terminal: "exactly_one",
       usageCompleteness: "terminal",
+    },
+    observability: {
+      trace: {
+        schemaVersion: "coding-run-trace/v1",
+        contentMode: "none",
+        bodyFields: [],
+      },
     },
   };
 }

@@ -11,12 +11,19 @@ describe("Gateway Conversation coding-run event adapter", () => {
       onEvent: (event) => events.push(event),
     });
 
-    adapter.start({ agentRunId: "run-bare", conversationId: "conversation-bare" });
+    adapter.start(
+      { agentRunId: "run-bare", conversationId: "conversation-bare" },
+      { promptId: "message:1700000000000", agentId: "coding-agent-bare" },
+    );
 
     expect(events[0]).toMatchObject({
       type: "run.started",
       payload: {
         automationProfile: "bare",
+        traceContext: {
+          promptId: "message:1700000000000",
+          agentId: "coding-agent-bare",
+        },
         capabilities: CODING_RUN_CAPABILITIES,
       },
     });

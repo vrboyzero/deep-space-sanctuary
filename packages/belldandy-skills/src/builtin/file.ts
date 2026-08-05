@@ -386,6 +386,7 @@ function detectRegexReplaceRisk(pattern: string, flags: string): string | null {
 const DEFAULT_FILE_READ_MAX_BYTES = 100 * 1024;
 const MAX_FILE_READ_BYTES = 1024 * 1024;
 const MAX_FILE_READ_CURSOR_CHARS = 2_048;
+const FILE_HASH_CHUNK_BYTES = 64 * 1024;
 
 type FileReadInput = {
   path: string;
@@ -462,34 +463,52 @@ function normalizeFileReadLimit(
 
 function buildFileReadFingerprint(input: {
   realPath: string;
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  contentDigest: string;
   encoding: FileReadInput["encoding"];
 }): string {
   return crypto.createHash("sha256").update(JSON.stringify({
-    version: 1,
+    version: 2,
     path: input.realPath.replace(/\\/g, "/").toLowerCase(),
-    size: input.size,
-    mtimeMs: input.mtimeMs,
-    ctimeMs: input.ctimeMs,
+    contentDigest: input.contentDigest,
     encoding: input.encoding,
   })).digest("hex").slice(0, 32);
 }
 
 function buildFileEditRevision(input: {
   realPath: string;
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  contentDigest: string;
 }): string {
   return crypto.createHash("sha256").update(JSON.stringify({
-    version: 1,
+    version: 2,
     path: input.realPath.replace(/\\/g, "/"),
-    size: input.size,
-    mtimeMs: input.mtimeMs,
-    ctimeMs: input.ctimeMs,
+    contentDigest: input.contentDigest,
   })).digest("hex");
+}
+
+function hashFileContent(content: Uint8Array): string {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+async function hashFileHandle(
+  handle: Awaited<ReturnType<typeof fs.open>>,
+  size: number,
+): Promise<string> {
+  // 文件时间戳在不同平台上可能以毫秒甚至更粗粒度更新；按内容流式摘要才能让 stale 检查覆盖同长度快速改写。
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.alloc(FILE_HASH_CHUNK_BYTES);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, size - offset),
+      offset,
+    );
+    if (bytesRead === 0) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  return hash.digest("hex");
 }
 
 function countLiteralOccurrences(value: string, search: string): number {
@@ -636,29 +655,26 @@ export const fileReadTool: Tool = withToolContract({
         return makeError("禁止读取敏感文件（如 .env、密钥、凭证等）", "permission_or_policy");
       }
 
-      const fingerprint = buildFileReadFingerprint({
-        realPath: realFile,
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        ctimeMs: stat.ctimeMs,
-        encoding: input.value.encoding,
-      });
-      const revision = buildFileEditRevision({
-        realPath: realFile,
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        ctimeMs: stat.ctimeMs,
-      });
-      const cursor = decodeFileReadCursor(input.value.cursor, fingerprint);
-      if (!cursor.ok) return makeError(cursor.error, "input_error");
-      const offset = cursor.value?.offset ?? input.value.offset ?? 0;
-      if (offset > stat.size) {
-        return makeError("参数错误：offset 超出文件大小", "input_error");
-      }
-
-      // 读取文件（限制大小）
       const handle = await fs.open(absolute, "r");
       try {
+        const contentDigest = await hashFileHandle(handle, stat.size);
+        const fingerprint = buildFileReadFingerprint({
+          realPath: realFile,
+          contentDigest,
+          encoding: input.value.encoding,
+        });
+        const revision = buildFileEditRevision({
+          realPath: realFile,
+          contentDigest,
+        });
+        const cursor = decodeFileReadCursor(input.value.cursor, fingerprint);
+        if (!cursor.ok) return makeError(cursor.error, "input_error");
+        const offset = cursor.value?.offset ?? input.value.offset ?? 0;
+        if (offset > stat.size) {
+          return makeError("参数错误：offset 超出文件大小", "input_error");
+        }
+
+        // 读取文件（限制大小）
         const buffer = Buffer.alloc(Math.min(stat.size - offset, input.value.limit));
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
 
@@ -1207,21 +1223,6 @@ export const fileEditTool: Tool = withToolContract({
         return makeError("禁止写入敏感文件路径", "sensitive_path", "permission_or_policy");
       }
 
-      const currentRevision = buildFileEditRevision({
-        realPath: realFile,
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        ctimeMs: stat.ctimeMs,
-      });
-      if (currentRevision !== revision) {
-        return makeError(
-          "文件已在读取后发生变化；请重新调用 file_read 后再编辑",
-          "stale_file",
-          "business_logic_error",
-          "stale_file",
-        );
-      }
-
       const raw = await fs.readFile(absolute);
       try {
         currentText = new TextDecoder("utf-8", { fatal: true }).decode(raw);
@@ -1233,13 +1234,25 @@ export const fileEditTool: Tool = withToolContract({
         );
       }
 
+      const contentDigest = hashFileContent(raw);
+      const currentRevision = buildFileEditRevision({
+        realPath: realFile,
+        contentDigest,
+      });
+      if (currentRevision !== revision) {
+        return makeError(
+          "文件已在读取后发生变化；请重新调用 file_read 后再编辑",
+          "stale_file",
+          "business_logic_error",
+          "stale_file",
+        );
+      }
+
       const statAfterRead = await fs.lstat(absolute);
       const realFileAfterRead = await fs.realpath(absolute);
       const revisionAfterRead = buildFileEditRevision({
         realPath: realFileAfterRead,
-        size: statAfterRead.size,
-        mtimeMs: statAfterRead.mtimeMs,
-        ctimeMs: statAfterRead.ctimeMs,
+        contentDigest,
       });
       if (statAfterRead.isSymbolicLink() || revisionAfterRead !== revision) {
         return makeError(
@@ -1288,13 +1301,12 @@ export const fileEditTool: Tool = withToolContract({
     const nextText = `${currentText.slice(0, matchIndex)}${newText}${currentText.slice(matchIndex + oldText.length)}`;
 
     try {
+      const finalRaw = await fs.readFile(absolute);
       const finalStat = await fs.lstat(absolute);
       const finalRealFile = await fs.realpath(absolute);
       const finalRevision = buildFileEditRevision({
         realPath: finalRealFile,
-        size: finalStat.size,
-        mtimeMs: finalStat.mtimeMs,
-        ctimeMs: finalStat.ctimeMs,
+        contentDigest: hashFileContent(finalRaw),
       });
       if (finalStat.isSymbolicLink() || finalRevision !== revision) {
         return makeError(

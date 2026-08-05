@@ -40,11 +40,15 @@ async function createGitFixture(prefix: string) {
   return { rootDir, repoDir, nestedDir, stateDir };
 }
 
-async function createRegisteredUserWorktree(fixture: Awaited<ReturnType<typeof createGitFixture>>, id: string) {
+async function createRegisteredUserWorktree(
+  fixture: Awaited<ReturnType<typeof createGitFixture>>,
+  id: string,
+  owner = { conversationId: "conversation-1", runId: "run-1" },
+) {
   const managed = new ManagedWorktreeRuntime(fixture.stateDir);
   const worktree = await managed.prepare({ id, ownerKind: "user_session", cwd: fixture.nestedDir });
   const users = new UserWorktreeRuntime(fixture.stateDir);
-  await users.register(worktree, { conversationId: "conversation-1", runId: "run-1" });
+  await users.register(worktree, owner);
   return { worktree, users };
 }
 
@@ -86,6 +90,14 @@ describe("UserWorktreeRuntime", () => {
       const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-status-2");
       const filePath = path.join(worktree.resolvedCwd, "index.ts");
       await fs.writeFile(filePath, "export const demo = false;\n", "utf-8");
+
+      const blockedDiscard = await users.preview({ operation: "discard", worktreeId: worktree.id });
+      expect(blockedDiscard).toMatchObject({
+        operation: "discard",
+        canConfirm: false,
+        blockers: expect.arrayContaining(["uncommitted_changes"]),
+      });
+      expect(blockedDiscard.receipt).toBeUndefined();
       await expect(users.getStatus(worktree.id)).resolves.toMatchObject({
         status: "blocked",
         dirty: true,
@@ -800,6 +812,39 @@ describe("UserWorktreeRuntime", () => {
     }
   }, 20_000);
 
+  it("does not consume a receipt while another owner lock holder is active", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-confirm-lock-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-confirm-lock-1");
+      const preview = await users.preview({ operation: "keep", worktreeId: worktree.id });
+      const lockDir = path.join(fixture.stateDir, "worktrees", "user-session-locks");
+      const lockPath = path.join(lockDir, `${worktree.id}.lock`);
+      await fs.mkdir(lockDir, { recursive: true });
+      await fs.writeFile(lockPath, "occupied\n", "utf-8");
+
+      await expect(users.confirm({
+        operation: "keep",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        outcome: "failed",
+        applied: false,
+        blockers: ["owner_lock_busy"],
+      });
+
+      await fs.rm(lockPath, { force: true });
+      await expect(users.confirm({
+        operation: "keep",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({ outcome: "succeeded", applied: true });
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
   it("fails closed when the managed commit changes after branch preview", async () => {
     const fixture = await createGitFixture("belldandy-user-worktree-branch-drift-");
     try {
@@ -820,6 +865,130 @@ describe("UserWorktreeRuntime", () => {
         confirm: true,
       })).resolves.toMatchObject({ applied: false, canConfirm: false, blockers: ["receipt_stale"] });
       await expect(runGit(["branch", "--list", "feature/stale"], fixture.repoDir)).resolves.toBe("");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 25_000);
+
+  it("records an explicit keep decision without changing a dirty managed worktree", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-keep-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-keep-1");
+      const filePath = path.join(worktree.resolvedCwd, "index.ts");
+      await fs.writeFile(filePath, "export const demo = false;\n", "utf-8");
+
+      const preview = await users.preview({ operation: "keep", worktreeId: worktree.id });
+      expect(preview).toMatchObject({
+        operation: "keep",
+        worktreeId: worktree.id,
+        canConfirm: true,
+        blockers: [],
+        receipt: { receiptId: expect.any(String) },
+      });
+      const result = await users.confirm({
+        operation: "keep",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      });
+
+      expect(result).toMatchObject({ operation: "keep", outcome: "succeeded", applied: true });
+      await expect(users.getStatus(worktree.id)).resolves.toMatchObject({
+        status: "blocked",
+        retention: { status: "retained", decision: "keep", decidedAtMs: expect.any(Number) },
+      });
+      await expect(fs.readFile(filePath, "utf-8"))
+        .resolves.toSatisfy((content) => content.replace(/\r\n/g, "\n") === "export const demo = false;\n");
+      await expect(runGit(["branch", "--show-current"], worktree.worktreePath)).resolves.toBe(worktree.branch);
+      await expect(fs.readdir(path.join(fixture.stateDir, "worktrees", "user-session-locks"))).resolves.toEqual([]);
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("discards only a clean base-aligned worktree and removes its registry record", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-discard-");
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-discard-1");
+      const preview = await users.preview({ operation: "discard", worktreeId: worktree.id });
+      expect(preview).toMatchObject({
+        operation: "discard",
+        canConfirm: true,
+        receipt: { receiptId: expect.any(String) },
+      });
+
+      await expect(users.confirm({
+        operation: "discard",
+        worktreeId: worktree.id,
+        receiptId: preview.receipt?.receiptId ?? "",
+        confirm: true,
+      })).resolves.toMatchObject({
+        operation: "discard",
+        outcome: "succeeded",
+        applied: true,
+        audit: { status: "succeeded" },
+      });
+      await expect(users.getStatus(worktree.id)).resolves.toBeUndefined();
+      await expect(fs.access(worktree.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(runGit(["branch", "--list", worktree.branch], fixture.repoDir)).resolves.toBe("");
+    } finally {
+      await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
+
+  it("sweeps only an exact owner's interrupted discard and respects the persistent owner lock", async () => {
+    const fixture = await createGitFixture("belldandy-user-worktree-owner-sweep-");
+    const owner = { conversationId: "conversation-sweep", runId: "run-sweep" };
+    try {
+      const { worktree, users } = await createRegisteredUserWorktree(fixture, "user-sweep-1", owner);
+      const preview = await users.preview({ operation: "discard", worktreeId: worktree.id });
+      const removeSpy = vi.spyOn(users as any, "removeWorktree")
+        .mockRejectedValueOnce(new Error("injected discard interruption"));
+      try {
+        await expect(users.confirm({
+          operation: "discard",
+          worktreeId: worktree.id,
+          receiptId: preview.receipt?.receiptId ?? "",
+          confirm: true,
+        })).resolves.toMatchObject({ outcome: "uncertain", applied: false });
+      } finally {
+        removeSpy.mockRestore();
+      }
+      await expect(users.getStatus(worktree.id)).resolves.toMatchObject({
+        retention: { decision: "discard", decidedAtMs: expect.any(Number) },
+      });
+
+      const readStatusSpy = vi.spyOn(users as any, "readStatus");
+      try {
+        await expect(users.sweepOwner({ conversationId: "conversation-other", runId: "run-other" }))
+          .resolves.toMatchObject({ inspected: 0, discarded: 0 });
+        expect(readStatusSpy).not.toHaveBeenCalled();
+      } finally {
+        readStatusSpy.mockRestore();
+      }
+      await expect(fs.access(worktree.worktreePath)).resolves.toBeUndefined();
+
+      const lockDir = path.join(fixture.stateDir, "worktrees", "user-session-locks");
+      const lockPath = path.join(lockDir, `${worktree.id}.lock`);
+      await fs.mkdir(lockDir, { recursive: true });
+      await fs.writeFile(lockPath, "occupied\n", "utf-8");
+      await expect(users.sweepOwner(owner)).resolves.toMatchObject({
+        inspected: 1,
+        discarded: 0,
+        locked: 1,
+        results: [expect.objectContaining({ worktreeId: worktree.id, outcome: "locked" })],
+      });
+      await expect(fs.access(worktree.worktreePath)).resolves.toBeUndefined();
+
+      await fs.rm(lockPath, { force: true });
+      await expect(users.sweepOwner(owner)).resolves.toMatchObject({
+        inspected: 1,
+        discarded: 1,
+        locked: 0,
+        results: [expect.objectContaining({ worktreeId: worktree.id, outcome: "discarded" })],
+      });
+      await expect(users.getStatus(worktree.id)).resolves.toBeUndefined();
+      await expect(fs.access(worktree.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await fs.rm(fixture.rootDir, { recursive: true, force: true }).catch(() => {});
     }

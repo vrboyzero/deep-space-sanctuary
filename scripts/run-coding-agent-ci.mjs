@@ -156,6 +156,17 @@ export function validateAgentRunEvents(
     || !validators.isCodingRunCapabilitiesV1(events[0]?.payload?.capabilities)) {
     throw new Error("Agent JSONL is missing a valid run.started capability handshake.");
   }
+  const advertisedTracePolicy = events[0]?.payload?.capabilities?.observability?.trace;
+  if (validators.expectedTracePolicy !== undefined
+    && (!advertisedTracePolicy
+      || Object.keys(advertisedTracePolicy).length !== 3
+      || advertisedTracePolicy.schemaVersion !== validators.expectedTracePolicy.schemaVersion
+      || advertisedTracePolicy.contentMode !== validators.expectedTracePolicy.contentMode
+      || !Array.isArray(advertisedTracePolicy.bodyFields)
+      || JSON.stringify(advertisedTracePolicy.bodyFields)
+        !== JSON.stringify(validators.expectedTracePolicy.bodyFields))) {
+    throw new Error("Agent JSONL is missing the current trace capability declaration.");
+  }
   const automationProfile = events[0]?.payload?.automationProfile;
   if (expectedAutomationProfile !== undefined && automationProfile !== expectedAutomationProfile) {
     throw new Error(`Agent JSONL automation profile mismatch: expected ${expectedAutomationProfile}.`);
@@ -252,11 +263,24 @@ async function main() {
     "contracts.js",
   );
   const {
+    CODING_RUN_TRACE_POLICY,
     CODING_RUN_PROTOCOL_VERSION,
     isAgentRunEventV1,
     isCodingRunCapabilitiesV1,
     isCodingRunUsageCompletenessV1,
   } = await import(pathToFileURL(coreEntry).href);
+  const traceEntry = path.join(
+    options.sourceRoot,
+    "packages",
+    "belldandy-core",
+    "dist",
+    "coding-run",
+    "trace.js",
+  );
+  const {
+    projectCodingRunTraceEvents,
+    validateCodingRunTraceEvents,
+  } = await import(pathToFileURL(traceEntry).href);
   let approvalController;
   if (options.approvalContractPath) {
     const { contract, contractSha256 } = await loadBenchmarkApprovalContract(options.approvalContractPath);
@@ -315,6 +339,7 @@ async function main() {
     eventContract = validateAgentRunEvents(parsed.events, isAgentRunEventV1, {
       isCodingRunCapabilitiesV1,
       isCodingRunUsageCompletenessV1,
+      expectedTracePolicy: CODING_RUN_TRACE_POLICY,
     }, CODING_CI_AUTOMATION_PROFILE);
   } catch (error) {
     eventContractError = sanitizeDiagnostic(error instanceof Error ? error.message : error);
@@ -322,6 +347,25 @@ async function main() {
   if (parsed.errors.length > 0) {
     eventContractError = `Agent stdout contained ${parsed.errors.length} invalid JSONL record(s).`;
   }
+
+  let traceEvents = [];
+  let traceContract;
+  let traceContractError;
+  try {
+    if (eventContractError) {
+      throw new Error("Coding run trace requires a valid AgentRunEvent stream.");
+    }
+    traceEvents = projectCodingRunTraceEvents(parsed.events);
+    traceContract = validateCodingRunTraceEvents(traceEvents);
+  } catch (error) {
+    traceContractError = sanitizeDiagnostic(error instanceof Error ? error.message : error);
+  }
+  const canonicalTraceJsonl = traceEvents.map((event) => JSON.stringify(event)).join("\n");
+  await fs.writeFile(
+    path.join(options.artifactDir, "trace.jsonl"),
+    canonicalTraceJsonl ? `${canonicalTraceJsonl}\n` : "",
+    "utf-8",
+  );
 
   const cancellationArtifact = options.cancelOnRunStart
     ? buildCancellationArtifact({
@@ -383,6 +427,7 @@ async function main() {
     binding: eventContract?.binding ?? null,
     capabilities: eventContract?.capabilities ?? null,
     usage: eventContract?.usage ?? null,
+    trace: traceContract ?? null,
     changedPaths: workspaceArtifact.changedPaths,
     checks: {
       cleanBaseline: true,
@@ -390,11 +435,13 @@ async function main() {
       capabilityHandshake: Boolean(eventContract?.capabilities),
       automationProfile: eventContract?.automationProfile === CODING_CI_AUTOMATION_PROFILE,
       usageComplete: eventContract?.usage?.status === "complete",
+      traceContract: !traceContractError,
       artifactPolicy: !artifactPolicyError,
       automaticPush: false,
       approvalPolicy: child.approvalEvidence ? child.approvalEvidence.status === "passed" : null,
     },
     ...(eventContractError ? { eventContractError } : {}),
+    ...(traceContractError ? { traceContractError } : {}),
     ...(artifactPolicyError ? { artifactPolicyError } : {}),
   };
   await fs.writeFile(
@@ -413,6 +460,7 @@ async function main() {
       `capability_handshake=${manifest.checks.capabilityHandshake}`,
       `automation_profile=${manifest.automationProfile ?? "none"}`,
       `usage_complete=${manifest.checks.usageComplete}`,
+      `trace_contract=${manifest.checks.traceContract}`,
       `artifact_policy=${manifest.checks.artifactPolicy}`,
       `approval_policy=${manifest.checks.approvalPolicy ?? "not_applicable"}`,
       "automatic_push=false",
@@ -421,8 +469,8 @@ async function main() {
     "utf-8",
   );
 
-  if (eventContractError || artifactPolicyError) {
-    throw new Error(eventContractError ?? artifactPolicyError);
+  if (eventContractError || traceContractError || artifactPolicyError) {
+    throw new Error(eventContractError ?? traceContractError ?? artifactPolicyError);
   }
   if (child.exitCode !== 0) {
     process.exitCode = child.exitCode ?? 1;

@@ -337,13 +337,23 @@ export function buildRecoveredCodingCiArtifacts(input) {
     }
   }
 
+  if (typeof input.projectCodingRunTraceEvents !== "function"
+    || typeof input.validateCodingRunTraceEvents !== "function") {
+    throw new Error("Recovery requires the Core coding run trace owner.");
+  }
+  const trace = input.projectCodingRunTraceEvents(events);
+  const traceContract = input.validateCodingRunTraceEvents(trace);
+
   const {
     eventContractError: _eventContractError,
     artifactPolicyError: _artifactPolicyError,
+    traceContractError: _traceContractError,
+    trace: _trace,
     ...manifestBase
   } = initialManifest;
   return {
     events,
+    trace,
     result,
     patch: workspaceArtifact.patch,
     manifest: {
@@ -354,12 +364,14 @@ export function buildRecoveredCodingCiArtifacts(input) {
       binding: { ...events[0].binding },
       capabilities,
       usage,
+      trace: traceContract,
       changedPaths: [...workspaceArtifact.changedPaths],
       checks: {
         ...initialManifest.checks,
         eventContract: true,
         capabilityHandshake: isRecord(capabilities),
         usageComplete: isRecord(usage) && usage.status === "complete",
+        traceContract: true,
         artifactPolicy: true,
       },
     },

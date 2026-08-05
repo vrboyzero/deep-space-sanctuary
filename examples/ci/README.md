@@ -11,6 +11,7 @@
 - 每次运行固定为 300 秒、12 轮和 24000 token，这三类门禁不依赖模型价格表，始终可强制执行。
 - CI 工作区必须从干净 Git 基线开始。只读模式出现任何文件变化都会失败；敏感路径不会写入 patch artifact。
 - Gateway state 和 artifact 位于 runner 临时目录，不进入被审查工作区。公共事件与诊断按现有契约脱敏；patch 保留原始代码以便审查，因此发现敏感路径时直接拒绝产出，而不是生成损坏的“脱敏补丁”。
+- `trace.jsonl` 默认固定为 `contentMode=none`，只记录 run/prompt/agent/tool/policy/recovery 的关联 ID、固定分类和计数；不记录 prompt、模型 delta、tool arguments/output、文件内容、错误正文或密钥。
 
 ## GitHub Actions
 
@@ -39,14 +40,15 @@ node scripts/run-coding-agent-ci.mjs \
 
 `--output-schema` 同时会被 Core 序列化为本次 Agent 的输出数据契约，要求模型只返回能通过该 JSON Schema 的原始 JSON；Schema 按数据处理，不作为可执行指令。终态仍由本地 AJV 严格复核，模型提示不会放宽类型、必填字段或常量约束。
 
-Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `automationProfile`，并确认实际 profile 为 `bare`。当前 `coding-run-capabilities/v1` 声明事件序号连续、全程恰好一个且位于末尾的终态，以及终态必须携带 usage completeness。完成、失败、取消和中断都会在终态 `payload.usage` 中明确给出 `complete` 或 `incomplete`；后者仍是合法协议结果，但表示 Provider usage 不足以支持可信费用核算，自动化不得把已见到的部分 token/cost 当作完整账单。
+Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `automationProfile`，并确认实际 profile 为 `bare`。当前 `coding-run-capabilities/v1` 声明事件序号连续、全程恰好一个且位于末尾的终态、终态 usage completeness，以及默认无正文的 `coding-run-trace/v1`。完成、失败、取消和中断都会在终态 `payload.usage` 中明确给出 `complete` 或 `incomplete`；后者仍是合法协议结果，但表示 Provider usage 不足以支持可信费用核算，自动化不得把已见到的部分 token/cost 当作完整账单。`run.started.payload.traceContext` 提供本次已接受 prompt 与实际 Agent 的关联 ID；缺少持久消息 ID 的来源只使用明确标记的 run-local 关联值，不从正文生成 ID。
 
 ## Artifact
 
 | 文件 | 用途 |
 | --- | --- |
-| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、固定预算、退出码、binding、capability、终态 usage completeness 和门禁结果。`checks.usageComplete=false` 表示观测不完整，不会伪装成完整费用。 |
+| `manifest.json` | `coding-agent-ci/v1` 运行方式、实际 automation profile、固定预算、退出码、binding、capability、终态 usage completeness、trace 摘要和门禁结果。`checks.usageComplete=false` 表示费用观测不完整；`checks.traceContract=false` 表示 trace 未形成可信闭环并使 CI 失败。 |
 | `events.jsonl` | 通过运行时 guard 的 `AgentRunEvent v1` 规范化事件。 |
+| `trace.jsonl` | 由 Core `coding-run-trace/v1` owner 从最终事件流投影的连续元数据 trace；固定 `content.mode=none`，disconnect recovery 会按最终合并事件重算。 |
 | `result.json` | 通过 `review-output.schema.json` 的最终结构化输出；非完成终态时不存在。 |
 | `changes.patch` | tracked 与 untracked 变更组成的 Git binary patch；`plan` 模式应为空。 |
 | `diagnostics.log` | 脱敏后的 CLI stderr，不包含 Gateway 日志。 |
@@ -54,7 +56,7 @@ Headless 消费方应先读取首个 `run.started.payload.capabilities` 和 `aut
 
 ## 兼容、迁移与回滚
 
-- `compatibility.json` 是当前发布门禁矩阵，包含协议、capability、automation profile 与 artifact schema 版本；`schemas/agent-run-event-v1.json` 必须与 Core 导出逐项相同。Linux 与 Windows 都运行静态契约门禁，GitHub live 模板当前以 Linux runner 为基准。
+- `compatibility.json` 是当前发布门禁矩阵，包含协议、capability、trace、automation profile 与 artifact schema 版本；`schemas/agent-run-event-v1.json` 和 `schemas/coding-run-trace-v1.json` 必须分别与 Core 导出逐项相同。Linux 与 Windows 都运行静态契约门禁，GitHub live 模板当前以 Linux runner 为基准。
 - v1 只能做向后兼容扩展。删除、改名、改变必填字段、退出码或终态语义时必须新增协议或 artifact 版本，不能原地修改 v1。
 - 升级时先运行 `pnpm build` 和 `pnpm verify:coding-ci`，再在测试仓库检查 artifact。旧消费者继续读取 `version: "v1"`；无法兼容时保留旧模板并并行迁移。
 - 回滚时禁用或删除采用方 workflow，并恢复上一版 `examples/ci` 与包装器。模板没有远程仓库写权限，普通回滚不需要撤销 commit 或远程分支；`workspace-write` 的变更只存在于已结束的临时 runner，可直接丢弃对应 job/artifact。

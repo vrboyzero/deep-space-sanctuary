@@ -68,10 +68,15 @@ describe("file tools", () => {
       expect(firstOutput.revision).toMatch(/^[a-f0-9]{64}$/u);
       expect(unchangedOutput.revision).toBe(firstOutput.revision);
 
-      await fs.writeFile(testFile, "bravo", "utf-8");
-      const changed = await fileReadTool.execute({ path: "revision.txt" }, baseContext);
-      expect(changed.success).toBe(true);
-      expect(JSON.parse(changed.output).revision).not.toBe(firstOutput.revision);
+      let previousRevision = firstOutput.revision;
+      for (let index = 0; index < 64; index += 1) {
+        await fs.writeFile(testFile, String(index).padStart(5, "0"), "utf-8");
+        const changed = await fileReadTool.execute({ path: "revision.txt" }, baseContext);
+        expect(changed.success).toBe(true);
+        const changedRevision = JSON.parse(changed.output).revision;
+        expect(changedRevision).not.toBe(previousRevision);
+        previousRevision = changedRevision;
+      }
     });
 
     it("binds edit revisions to the exact real path on case-sensitive filesystems", async () => {
