@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://star-sanctuary.dev/schemas/verification-dag-v1.json",
+  "title": "Star Sanctuary verification DAG v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "taskId",
+    "generatedAt",
+    "revision",
+    "implementation",
+    "selection",
+    "nodes",
+    "execution",
+    "outcome"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "verification-dag/v1" },
+    "runId": { "$ref": "#/$defs/id" },
+    "taskId": { "$ref": "#/$defs/id" },
+    "generatedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "revision": { "$ref": "#/$defs/revision" },
+    "implementation": { "$ref": "#/$defs/implementation" },
+    "selection": { "$ref": "#/$defs/selection" },
+    "nodes": {
+      "type": "array",
+      "minItems": 0,
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "execution": { "$ref": "#/$defs/execution" },
+    "outcome": { "$ref": "#/$defs/outcome" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$)).+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "commit", "workspaceHash"],
+      "properties": {
+        "source": { "const": "git" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+        "workspaceHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "changedPaths"],
+      "properties": {
+        "status": { "enum": ["completed"] },
+        "changedPaths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relativePath" },
+          "uniqueItems": true
+        },
+        "diffHash": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "scope", "expanded", "reason"],
+      "properties": {
+        "strategy": { "const": "changed-paths-v1" },
+        "scope": { "enum": ["targeted", "expanded", "browser"] },
+        "expanded": { "type": "boolean" },
+        "reason": { "enum": ["affected-paths", "scope-unavailable", "browser-required", "no-nodes"] }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "scope", "required", "dependsOn", "command", "status", "attempts"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["acceptance", "build", "typecheck", "lint", "browser", "manual"] },
+        "scope": { "enum": ["targeted", "module", "full", "browser"] },
+        "required": { "type": "boolean" },
+        "dependsOn": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" },
+          "uniqueItems": true
+        },
+        "command": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 1000 },
+            { "type": "null" }
+          ]
+        },
+        "status": { "enum": ["planned", "passed", "failed", "skipped", "timed_out", "cancelled", "not_run"] },
+        "attempts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attempt" }
+        },
+        "firstFailure": {
+          "anyOf": [
+            { "$ref": "#/$defs/failure" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "status"],
+      "properties": {
+        "attempt": { "type": "integer", "const": 1 },
+        "status": { "enum": ["passed", "failed", "skipped", "timed_out", "cancelled", "not_run"] },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "kind", "messageHash"],
+      "properties": {
+        "status": { "enum": ["failed", "timed_out", "cancelled"] },
+        "kind": { "enum": ["test", "build", "typecheck", "lint", "browser", "manual", "infrastructure"] },
+        "messageHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "commandsExecuted", "providerCalls", "mutationCount", "retryPolicy"],
+      "properties": {
+        "mode": { "const": "plan-and-replay" },
+        "commandsExecuted": { "const": false },
+        "providerCalls": { "type": "integer", "const": 0 },
+        "mutationCount": { "type": "integer", "const": 0 },
+        "retryPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxAttempts", "preserveFirstFailure"],
+          "properties": {
+            "maxAttempts": { "type": "integer", "const": 1 },
+            "preserveFirstFailure": { "const": true }
+          }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskStatus", "verificationStatus", "reason", "firstFailureNodeId"],
+      "properties": {
+        "taskStatus": { "enum": ["implementation_completed", "verification_failed", "verification_incomplete", "completed"] },
+        "verificationStatus": { "enum": ["not_started", "passed", "failed", "incomplete"] },
+        "reason": { "enum": ["not_executed", "no_nodes", "required_failure", "required_not_run", "all_required_passed"] },
+        "firstFailureNodeId": {
+          "anyOf": [
+            { "$ref": "#/$defs/id" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

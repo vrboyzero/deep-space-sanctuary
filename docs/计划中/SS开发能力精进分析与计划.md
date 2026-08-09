@@ -1016,6 +1016,42 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 - **为什么先做它**：环境前置已关闭，当前唯一能补齐 P1-A1 证据的动作是取得完整、有效且可比较的 8 对真实结果；继续增加离线检查不会替代 task/patch/test 与 `semantic-live` uplift。
 - **当前还缺的关键闭环**：8 对有效 baseline/candidate、最终费用链、二值零回退、Provider failure、语义采用和 context-waste 聚合；未闭合前不得推进 P1-A2。
 
+### 14.8 P1-B 验证 DAG 首切片
+
+#### P1-B 首切片实现结论：验证计划合同与确定性 replay（2026-08-09）
+
+##### 已完成内容
+
+1. **`verification-dag.schema.json` 新建**：
+   - 固定 changed-path 选择、节点依赖、Browser Relay 条件、单次 attempt 与证据引用结构。
+   - 区分 `implementation_completed`、`verification_failed`、`verification_incomplete` 和 `completed`，并固定零命令执行、零 Provider、零 mutation 边界。
+
+2. **`run-verification-dag.mjs` 新建**：
+   - 根据 changed paths 与显式 affected paths 选择验证节点；scope 不足时扩大到全部节点，并闭合依赖。
+   - 拒绝绝对/父级/反斜杠路径、缺失或循环依赖、Browser 节点 ID 冲突、凭据形命令和 artifact 覆盖。
+   - 首次失败仅保存类别与 message hash；重复结果不能以成功覆盖失败。
+
+3. **测试、CLI 与项目地图接入**：
+   - 根命令 `verification:dag` 只读取请求并生成不可覆盖计划 artifact，不执行其中的测试命令。
+   - 项目地图记录 Schema 与 runner owner，明确当前不接管 command job、Browser Relay 或既有测试状态机。
+
+4. **效果**：
+   - “实现完成”和“验证完成”已有独立、可机读终态，不再需要用实现成功推断测试成功。
+   - 定向选择证据缺失时会显式扩大范围；必要节点失败或未运行均不能得到整体完成。
+   - a8 授权、P0 aggregate 与 `cost-containment-v1` 边界未改变。
+
+##### 验证结果
+
+- TypeScript 编译：本切片未修改 TypeScript；两个 Node 文件通过 `node --check`，Schema 与 `package.json` JSON 解析通过。
+- 16 个 verification DAG 定向测试全部通过，包含严格 Schema、依赖闭包/循环、路径边界、终态归类、首次失败、不覆盖 artifact 和根命令接线。
+- `corepack pnpm verification:dag -- --help` 通过；runner `commandsExecuted=false`、`providerCalls=0`、`mutationCount=0`。
+
+#### 后续计划（P1-B 尚未结束）
+
+- **下一步准备做什么**：增加现有 command job 的只读结果 Adapter，先用确定性 fixture 把 deadline、预算、cancel、exit taxonomy 与 pnpm/Vitest、`go test` 结构化结果接入 DAG replay；不解析任意 shell 文本，不启动 Provider。
+- **为什么先做它**：当前合同能正确规划和归类，但尚未消费真实执行 owner 的权威终态；先闭合 command job 证据，才能让 Browser Relay 成为同一 DAG 的可靠节点而不是第二套状态机。
+- **当前还缺的关键闭环**：真实 command job/evidence binding、测试影响 truth set `>=95%`、有界失败最小化、Browser Relay 的 DOM/console/request/screenshot artifact、预算/断线/取消资源收敛和双平台重复验证。
+
 ## 实施计划进度表
 
 | 项目 | 优先级 | 状态 | 粗略工作量 | 完成边界 |
@@ -1025,7 +1061,7 @@ P1-A1 的 language-neutral contract/fake、官方 TypeScript Language Service li
 | P1-A1：TS/JS CodeIntel 与 Context Inspector | P1 | 等待 a8 人工授权（a1-a7 均失败关闭；完整 4 任务 cohort runtime preflight、隔离 command-control profile 与 digest-pinned OCI 已在 Windows/WSL2 零费用 `4/4` passed，`providerCalls=0`；a7 累计费用仍为 `0.20708056 RMB`、余额 `39.79291944 RMB`，a1-a7 不进入 uplift 分母） | 8-12 人日 | 新授权后使用全新 attempt/artifact/state，在 Gateway 前 provision profile，并重新通过合同/状态/pricing/双平台 pairing/identity/完整 cohort Gate；再按 Windows 先结算、WSL2 后启动完成 8 对有效运行；任一 selected failure 不重试，不含自动创建 a8、外部 LSP、Go/C# GA、SCIP store 或 P1-A2 |
 | P1-A2：通用 LSP Host 与 Go canary | P1 | 等待 P1-A1 | 6-11 人日 | 通用进程宿主、pinned `gopls`、Doctor/sandbox/kill-reap、真实 Go Gate；通过后升为 production，并作为当前 9.5 必选第二后端 |
 | P1-A3：C# 条件接入 | 条件 | 延后，等待真实需求 | Spike 2-3 人日；生产另 6-10 人日 | 先关闭许可、分发、MSBuild 执行面、禁止 restore/联网与生命周期；未命中需求 Gate 不进入生产，也不阻断当前 9.5 |
-| P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 待实施 | 10-16 人日 | 多语言测试影响选择、失败最小化、独立验证终态和浏览器行为 artifact；不含云浏览器或无条件多 Agent Review |
+| P1-B：验证 DAG 与 Browser Relay 闭环 | P1 | 进行中（首切片验证 DAG Schema、changed-path/依赖/Browser 条件选择、四类终态、首次失败与不可覆盖 plan/replay artifact 已完成；16 个定向测试通过，当前保持零命令执行/Provider/mutation） | 10-16 人日 | 下一步接现有 command job 权威结果、预算/取消/exit taxonomy 与 pnpm/Vitest、`go test` 结构化 replay；随后补影响 truth set、失败最小化和 Browser 行为 artifact，不含云浏览器或无条件多 Agent Review |
 | P1-C：TaskProjection 与 Capability Closure | P1 | 待实施 | 10-15 人日 | 只读跨 owner 投影、exact-binding action、任务启动闭包和旧客户端兼容；不迁移领域真源 |
 | P2-A：受控 Supervisor 与并行 worktree | P2 | 延后，等待 P1-C | 12-20 人日 | 隔离写入、预算、60 分钟 soak、steer/cancel/reattach、fan-in 与 fault matrix；不含自动 merge/release/deploy |
 | P2-B：生态与运行前置收口 | P2 | 延后，等待公共合同稳定 | 8-14 人日 | 两个外部消费者、N-1/N conformance、真实 CI 与 OCI/语言 Doctor；不含公开发布、系统级自动安装或 sandbox 替换 |

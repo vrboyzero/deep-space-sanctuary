@@ -57,6 +57,7 @@
     "aggregate:coding-agent:baseline": "node scripts/aggregate-coding-agent-benchmark.mjs",
     "verify:coding-benchmark": "node --import tsx scripts/verify-coding-agent-benchmark-contract.mjs",
     "verify:coding-ci": "node scripts/verify-coding-ci-contract.mjs",
+    "verification:dag": "node scripts/run-verification-dag.mjs",
     "verify:command-sandbox-oci": "node --import tsx scripts/verify-command-sandbox-oci-fixture.mjs",
     "verify:extension-runtime-oci": "node scripts/verify-extension-runtime-oci-fixture.mjs",
     "verify:webchat": "node scripts/verify-webchat-modules.mjs",

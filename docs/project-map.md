@@ -251,6 +251,10 @@ star-sanctuary/
 - `benchmarks/code-intel/v1/agent-uplift-readiness.schema.json` / `scripts/run-code-intel-agent-uplift-readiness.mjs`: P1-A1 真实 Agent uplift 的离线 readiness owner；绑定 Gate/manifest/truth set、两个真实 repository snapshot、8 对双平台 cell、baseline/candidate 唯一 profile 差异和 source/runtime identity，并以不可覆盖 artifact 记录当前平台 4 个 prepared pair；跨平台 comparator 允许平台专属 dependency cache 不同，但要求 repository source 与执行合同一致；固定等待 P1 单独 Provider 授权且零 Gateway/模型/Provider/network/credential 调用
 - `benchmarks/code-intel/v1/agent-uplift-cohort-preflight.schema.json` / `agent-uplift-platform.schema.json` / `agent-uplift-report.schema.json` / `scripts/run-code-intel-agent-uplift.mjs`: P1-A1 零费用 cohort preflight、真实 paired-run 与 Gate 聚合 owner；在任何 selected cell 前固定检查四任务 source/runtime/budget/pricing、隔离 command-control profile 与本地 digest-pinned OCI，再按平台执行 baseline/candidate 并保留 Provider usage/semantic-live/patch/evaluator/context-waste 及不可覆盖 artifact 引用；以 `min($3, 全局剩余费用)` 维护 40 RMB 双平台费用链且禁止自动重试，aggregate 要求 8 对齐全、二值零回退、Provider failure=0、semantic adoption 与 context-waste Gate 同时通过，不修改 P0 aggregate 或默认成本 rollout
 
+### Verification DAG
+- `benchmarks/verification/v1/verification-dag.schema.json`: P1-B 验证 DAG 的封闭 artifact 合同；区分实现完成、验证失败、验证不完整与整体完成，固定只读 plan/replay、单次 attempt、首次失败保留和零 Provider/mutation 边界
+- `scripts/run-verification-dag.mjs`: 基于 changed paths、显式 affected paths、节点依赖和 Browser Relay 条件选择最小验证集合；scope 不足时扩大到全部节点，拒绝越界路径、循环/缺失依赖、凭据形命令和 artifact 覆盖；当前只生成或复算计划，不执行测试命令
+
 ### API / RPC / HTTP
 - `packages/belldandy-core/src/server.ts`: RPC 请求分发总入口
 - `packages/belldandy-core/src/server-methods/`: `models` / `goal` / `memory` / `dream` / `tools` / `workspace` / `workspace revision/worktree/remote delivery` / `coding run status/control/subscription/permission list` / `command job list/read/cancel` / `subtask`
